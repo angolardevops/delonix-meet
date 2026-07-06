@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: delonix
+      POSTGRES_PASSWORD: delonix_dev
+      POSTGRES_DB: delonix_meet
+    ports:
+      - "5435:5432" # 5435 no host para não colidir com outros Postgres locais
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U delonix"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+
+  coturn:
+    image: coturn/coturn:4.6-alpine
+    restart: unless-stopped
+    network_mode: host
+    command: >
+      -n
+      --listening-port=3478
+      --realm=delonix.local
+      --use-auth-secret
+      --static-auth-secret=delonix_turn_dev_secret
+      --no-tls --no-dtls
+      --min-port=49160 --max-port=49200
+      --verbose
+
+volumes:
+  pgdata:
+  redisdata:
