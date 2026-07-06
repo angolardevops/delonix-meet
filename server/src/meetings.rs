@@ -355,6 +355,42 @@ pub async fn save_minutes_by_room(
     save_minutes(State(state), auth, Path(mid), Json(req)).await
 }
 
+#[derive(Debug, Serialize)]
+pub struct RoomNotes {
+    pub title: String,
+    pub minutes: String,
+    pub transcript: String,
+}
+
+/// Ata e transcrição da reunião associada a uma sala — para o leitor da
+/// biblioteca de gravações. Só participantes da sala têm acesso.
+pub async fn notes_by_room(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(code): Path<String>,
+) -> Result<Json<RoomNotes>, ApiError> {
+    let participated: Option<(i32,)> = sqlx::query_as(
+        "SELECT 1 FROM room_participants rp JOIN rooms r ON r.id = rp.room_id
+         WHERE r.code = $1 AND rp.user_id = $2",
+    )
+    .bind(&code)
+    .bind(auth.user_id)
+    .fetch_optional(&state.db)
+    .await?;
+    if participated.is_none() {
+        return Err(ApiError::Unauthorized);
+    }
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT title, minutes, transcript FROM meetings WHERE room_code = $1
+         ORDER BY starts_at DESC LIMIT 1",
+    )
+    .bind(&code)
+    .fetch_optional(&state.db)
+    .await?;
+    let (title, minutes, transcript) = row.unwrap_or_default();
+    Ok(Json(RoomNotes { title, minutes, transcript }))
+}
+
 /// Arranca a reunião: cria a sala (se ainda não existe) e devolve o código.
 /// Reuniões de voz criam na mesma uma sala — o cliente entra sem vídeo.
 pub async fn start(

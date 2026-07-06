@@ -479,6 +479,131 @@ pub async fn list_meeting_rooms(
     Ok(Json(rooms))
 }
 
+// ---------- Estatísticas da organização (consola admin) ----------
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct WeekBucket {
+    pub week_start: DateTime<Utc>,
+    pub count: i64,
+    pub minutes: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OrgStats {
+    pub meetings_30d: i64,
+    pub meeting_minutes_30d: i64,
+    pub active_users_30d: i64,
+    pub members_total: i64,
+    pub recordings_total: i64,
+    pub recordings_bytes: i64,
+    pub video_30d: i64,
+    pub voice_30d: i64,
+    pub avg_duration_min: i64,
+    pub top_organizers: Vec<Organizer>,
+    pub meetings_per_week: Vec<WeekBucket>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct Organizer {
+    pub username: String,
+    pub count: i64,
+}
+
+/// KPIs agregados da organização: reuniões e minutos dos últimos 30 dias,
+/// utilizadores envolvidos, gravações e série semanal (8 semanas).
+/// Uma reunião "pertence" à org se o dono ou um convidado for membro.
+pub async fn org_stats(
+    State(state): State<Arc<AppState>>,
+    Path(org_id): Path<Uuid>,
+    auth: AuthUser,
+) -> Result<Json<OrgStats>, ApiError> {
+    require_member(&state, org_id, auth.user_id).await?;
+
+    const ORG_MEETING: &str = "(EXISTS (SELECT 1 FROM org_members om WHERE om.org_id = $1 AND om.user_id = m.owner_id)
+         OR EXISTS (SELECT 1 FROM meeting_invitees mi
+                    JOIN org_members om2 ON om2.user_id = mi.user_id AND om2.org_id = $1
+                    WHERE mi.meeting_id = m.id))";
+
+    let (meetings_30d, meeting_minutes_30d, video_30d, voice_30d): (i64, i64, i64, i64) =
+        sqlx::query_as(&format!(
+            "SELECT COUNT(*), COALESCE(SUM(m.duration_min), 0)::bigint,
+                    COUNT(*) FILTER (WHERE m.kind = 'video'),
+                    COUNT(*) FILTER (WHERE m.kind = 'voice')
+             FROM meetings m
+             WHERE m.starts_at >= now() - interval '30 days' AND m.starts_at <= now() AND {ORG_MEETING}"
+        ))
+        .bind(org_id)
+        .fetch_one(&state.db)
+        .await?;
+    let avg_duration_min = if meetings_30d > 0 { meeting_minutes_30d / meetings_30d } else { 0 };
+
+    let top_organizers: Vec<Organizer> = sqlx::query_as(&format!(
+        "SELECT u.username, COUNT(*) AS count FROM meetings m
+         JOIN users u ON u.id = m.owner_id
+         WHERE m.starts_at >= now() - interval '30 days' AND m.starts_at <= now() AND {ORG_MEETING}
+         GROUP BY u.username ORDER BY count DESC, u.username LIMIT 5"
+    ))
+    .bind(org_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let (active_users_30d,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(DISTINCT u) FROM (
+             SELECT m.owner_id AS u FROM meetings m
+             WHERE m.starts_at >= now() - interval '30 days'
+           UNION
+             SELECT mi.user_id FROM meeting_invitees mi
+             JOIN meetings m ON m.id = mi.meeting_id
+             WHERE m.starts_at >= now() - interval '30 days'
+         ) act
+         JOIN org_members om ON om.user_id = act.u AND om.org_id = $1",
+    )
+    .bind(org_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    let (members_total,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE org_id = $1")
+            .bind(org_id)
+            .fetch_one(&state.db)
+            .await?;
+
+    let (recordings_total, recordings_bytes): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(r.size_bytes), 0)::bigint FROM recordings r
+         WHERE EXISTS (SELECT 1 FROM org_members om WHERE om.org_id = $1 AND om.user_id = r.uploader_id)",
+    )
+    .bind(org_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    let meetings_per_week: Vec<WeekBucket> = sqlx::query_as(&format!(
+        "SELECT date_trunc('week', m.starts_at) AS week_start, COUNT(*) AS count,
+                COALESCE(SUM(m.duration_min), 0)::bigint AS minutes
+         FROM meetings m
+         WHERE m.starts_at >= date_trunc('week', now()) - interval '7 weeks'
+           AND m.starts_at < date_trunc('week', now()) + interval '1 week'
+           AND {ORG_MEETING}
+         GROUP BY 1 ORDER BY 1",
+    ))
+    .bind(org_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(OrgStats {
+        meetings_30d,
+        meeting_minutes_30d,
+        active_users_30d,
+        members_total,
+        recordings_total,
+        recordings_bytes,
+        video_30d,
+        voice_30d,
+        avg_duration_min,
+        top_organizers,
+        meetings_per_week,
+    }))
+}
+
 /// user_ids dos membros de um grupo (para iniciar chamada de grupo).
 pub async fn group_member_ids(state: &AppState, group_id: Uuid) -> Result<Vec<Uuid>, ApiError> {
     let rows: Vec<(Uuid,)> = sqlx::query_as("SELECT user_id FROM group_members WHERE group_id = $1")

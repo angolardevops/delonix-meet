@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { currentUser, logout, User } from './api'
 import Login from './pages/Login'
+import Landing from './pages/Landing'
 import Home from './pages/Home'
 import Recordings from './pages/Recordings'
 import Calendar from './pages/Calendar'
@@ -51,7 +52,13 @@ export default function App() {
     location.hash = key === 'home' ? '/' : `/${key}`
   }
 
-  if (!user) return <Login onLogin={setUser} />
+  if (!user) {
+    // Convidados com link de sala vão direto ao login; a raiz mostra a landing.
+    if (route.kind === 'room' || location.hash.startsWith('#/login')) {
+      return <Login onLogin={setUser} />
+    }
+    return <Landing onSignIn={() => { location.hash = '/login'; setRoute(parseHash()) }} />
+  }
 
   const nav: NavKey =
     route.kind === 'directory'
@@ -81,7 +88,7 @@ export default function App() {
             location.hash = '/'
           }}
         >
-          {route.kind === 'home' && <Home user={user} onEnterRoom={enterRoom} />}
+          {route.kind === 'home' && <Home user={user} onEnterRoom={enterRoom} onNavigate={navigate} />}
           {route.kind === 'directory' && <Directory />}
           {route.kind === 'recordings' && <Recordings />}
           {route.kind === 'calendar' && <Calendar onEnterRoom={enterRoom} />}

@@ -264,7 +264,27 @@ export interface Group {
   member_count: number
 }
 
+export interface WeekBucket {
+  week_start: string
+  count: number
+  minutes: number
+}
+export interface OrgStats {
+  meetings_30d: number
+  meeting_minutes_30d: number
+  active_users_30d: number
+  members_total: number
+  recordings_total: number
+  recordings_bytes: number
+  video_30d: number
+  voice_30d: number
+  avg_duration_min: number
+  top_organizers: { username: string; count: number }[]
+  meetings_per_week: WeekBucket[]
+}
+
 export const myOrgs = () => request<OrgSummary[]>('/api/orgs')
+export const orgStats = (orgId: string) => request<OrgStats>(`/api/orgs/${orgId}/stats`)
 export const createOrg = (name: string) =>
   request<OrgSummary>('/api/orgs', { method: 'POST', body: JSON.stringify({ name }) })
 export const listBranches = (orgId: string) => request<Branch[]>(`/api/orgs/${orgId}/branches`)
@@ -295,6 +315,20 @@ export async function uploadRecording(code: string, blob: Blob, name: string): P
   })
   if (!res.ok) throw new Error('upload failed')
   return res.json()
+}
+
+export interface RoomNotes {
+  title: string
+  minutes: string
+  transcript: string
+}
+export const roomNotes = (code: string) => request<RoomNotes>(`/api/rooms/${code}/notes`)
+
+/** URL de objeto para reproduzir a gravação inline (o <video> não envia Bearer). */
+export async function recordingObjectUrl(rec: Recording): Promise<string> {
+  const res = await fetch(`/api/recordings/${rec.id}`, { headers: authHeader() })
+  if (!res.ok) throw new Error('failed to load recording')
+  return URL.createObjectURL(await res.blob())
 }
 
 export async function downloadRecording(rec: Recording): Promise<void> {
