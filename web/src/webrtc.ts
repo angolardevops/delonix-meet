@@ -1,6 +1,28 @@
 import { FrameCrypto } from './e2ee'
 import { ClientMsg, Signaling } from './signaling'
 
+/**
+ * Melhora o Opus no SDP *recebido*: o fmtp do lado remoto é o que o nosso
+ * encoder respeita, por isso pedimos 128 kbps, estéreo e FEC em banda —
+ * o default do Chrome (~32 kbps mono) é o que faz o áudio soar "abafado".
+ */
+export function enhanceOpus(sdp: string): string {
+  // Linha completa do rtpmap (inclui o sufixo /2 dos canais).
+  const OPUS = /a=rtpmap:(\d+) opus\/48000(?:\/\d+)?/i.exec(sdp)
+  if (!OPUS) return sdp
+  const pt = OPUS[1]
+  const fmtpRe = new RegExp(`a=fmtp:${pt} ([^\r\n]*)`)
+  const extra = 'maxaveragebitrate=128000;stereo=1;sprop-stereo=1;useinbandfec=1'
+  const m = fmtpRe.exec(sdp)
+  if (!m) return sdp.replace(OPUS[0], `${OPUS[0]}\r\na=fmtp:${pt} ${extra}`)
+  let params = m[1]
+  for (const kv of extra.split(';')) {
+    const key = kv.split('=')[0]
+    params = params.includes(`${key}=`) ? params.replace(new RegExp(`${key}=\\d+`), kv) : `${params};${kv}`
+  }
+  return sdp.replace(fmtpRe, `a=fmtp:${pt} ${params}`)
+}
+
 /** Config extra para E2EE: o Chrome exige a flag na criação do PC. */
 function pcConfig(base: RTCConfiguration, crypto?: FrameCrypto): RTCConfiguration {
   return crypto ? ({ ...base, encodedInsertableStreams: true } as RTCConfiguration) : base
@@ -93,7 +115,7 @@ export class MeshCall implements Call {
     signal.on('peer-left', ({ peer_id }) => this.dropPeer(peer_id))
     signal.on('offer', async ({ from, sdp }) => {
       const pc = this.getOrCreatePc(from)
-      await pc.setRemoteDescription({ type: 'offer', sdp })
+      await pc.setRemoteDescription({ type: 'offer', sdp: enhanceOpus(sdp) })
       await this.flushIce(from, pc)
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
@@ -102,7 +124,7 @@ export class MeshCall implements Call {
     signal.on('answer', async ({ from, sdp }) => {
       const pc = this.pcs.get(from)
       if (!pc) return
-      await pc.setRemoteDescription({ type: 'answer', sdp })
+      await pc.setRemoteDescription({ type: 'answer', sdp: enhanceOpus(sdp) })
       await this.flushIce(from, pc)
     })
     signal.on('ice', async ({ from, candidate }) => {
@@ -250,13 +272,13 @@ export class SfuCall implements Call {
 
     signal.on('sfu-answer', (m) =>
       this.enqueue(async () => {
-        await this.pc.setRemoteDescription({ type: 'answer', sdp: m.sdp })
+        await this.pc.setRemoteDescription({ type: 'answer', sdp: enhanceOpus(m.sdp) })
         await this.flushIce()
       }),
     )
     signal.on('sfu-offer', (m) =>
       this.enqueue(async () => {
-        await this.pc.setRemoteDescription({ type: 'offer', sdp: m.sdp })
+        await this.pc.setRemoteDescription({ type: 'offer', sdp: enhanceOpus(m.sdp) })
         await this.flushIce()
         const answer = await this.pc.createAnswer()
         await this.pc.setLocalDescription(answer)

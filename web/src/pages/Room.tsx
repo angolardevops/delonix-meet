@@ -1,4 +1,4 @@
-import { CSSProperties, ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { CSSProperties, ReactNode, RefObject, useEffect, useMemo, useRef, useState } from 'react'
 import {
   currentUser, downloadRecording, iceServers, joinRoom, listRecordings, Recording,
   saveMinutesByRoom, uploadRecording,
@@ -17,7 +17,7 @@ import {
   videoConstraints,
 } from '../media'
 import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
-import { PeerInfo, Signaling } from '../signaling'
+import { BreakoutRoom, PeerInfo, Signaling } from '../signaling'
 import { Call, MeshCall, SfuCall } from '../webrtc'
 import {
   BlurIcon, CamIcon, CamOffIcon, ChatIcon, ChevronUpIcon, CloseIcon, CubeIcon, DownloadIcon, EmojiIcon, HandIcon,
@@ -29,7 +29,54 @@ interface RemotePeer {
   username: string
   host: boolean
   hand: boolean
+  camOn: boolean
+  micOn: boolean
   stream: MediaStream | null
+}
+
+/**
+ * Grelha estilo Meet: para N mosaicos 16:9 num contentor W×H, escolhe o nº de
+ * colunas que maximiza o tamanho de cada mosaico. Linhas incompletas ficam
+ * centradas (flex-wrap), sem buracos nem mosaicos esticados.
+ */
+function useGridLayout(areaRef: RefObject<HTMLDivElement | null>, count: number, active: boolean) {
+  const [size, setSize] = useState({ w: 480, h: 270 })
+  useEffect(() => {
+    // `active` garante que o efeito re-corre quando a área de vídeo passa
+    // a existir no DOM (a sala atravessa ecrãs de espera antes de montar).
+    const el = areaRef.current
+    if (!el || !active) return
+    const GAP = 12
+    const PAD = 14
+    const compute = () => {
+      const w = el.clientWidth - PAD * 2
+      const h = el.clientHeight - PAD * 2
+      if (w <= 0 || h <= 0 || count === 0) return
+      let best = { w: 480, h: 270, scale: 0 }
+      for (let cols = 1; cols <= count; cols++) {
+        const rows = Math.ceil(count / cols)
+        const cellW = (w - GAP * (cols - 1)) / cols
+        const cellH = (h - GAP * (rows - 1)) / rows
+        const scale = Math.min(cellW / 16, cellH / 9)
+        if (scale > best.scale) best = { w: Math.floor(16 * scale), h: Math.floor(9 * scale), scale }
+      }
+      setSize((s) => (s.w === best.w && s.h === best.h ? s : { w: best.w, h: best.h }))
+    }
+    compute()
+    const ro = new ResizeObserver(compute)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [areaRef, count, active])
+  return size
+}
+
+/** mm:ss (ou h:mm:ss) para o countdown das salas de grupo. */
+function fmtCountdown(secs: number): string {
+  const s = Math.max(0, secs)
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const ss = String(s % 60).padStart(2, '0')
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
 }
 
 interface ChatMsg {
@@ -126,8 +173,21 @@ export default function Room({
   const [e2eeOn, setE2eeOn] = useState(false)
 
   // Breakout rooms
-  const [breakoutRooms, setBreakoutRooms] = useState<{ code: string; label: string }[]>([])
+  const [breakoutRooms, setBreakoutRooms] = useState<BreakoutRoom[]>([])
+  const [breakoutEndsAt, setBreakoutEndsAt] = useState<number | null>(() => {
+    const v = sessionStorage.getItem(`dx_bo_ends_${code}`)
+    return v ? Number(v) : null
+  })
+  const [breakoutMinutes, setBreakoutMinutes] = useState(0)
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
   const returnTo = sessionStorage.getItem(`dx_return_${code}`)
+
+  // Relógio do countdown dos grupos (só corre quando há deadline).
+  useEffect(() => {
+    if (!breakoutEndsAt) return
+    const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000)
+    return () => clearInterval(t)
+  }, [breakoutEndsAt])
 
   // Conferência / 3D / notas AI
   const [viewMode, setViewMode] = useState<'grid' | 'stage'>('grid')
@@ -140,6 +200,7 @@ export default function Room({
   const [momSaved, setMomSaved] = useState(false)
 
   const localVideo = useRef<HTMLVideoElement>(null)
+  const videoAreaRef = useRef<HTMLDivElement>(null)
   const callRef = useRef<Call | null>(null)
   const signalRef = useRef<Signaling | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
@@ -254,11 +315,20 @@ export default function Room({
         // Breakout rooms: mover para o grupo (guardando o caminho de volta)
         // ou regressar à sala principal quando o anfitrião encerra.
         signal.on('breakout-move', (m) => {
-          if (m.back) sessionStorage.removeItem(`dx_return_${code}`)
-          else sessionStorage.setItem(`dx_return_${m.code}`, code)
+          if (m.back) {
+            sessionStorage.removeItem(`dx_return_${code}`)
+            sessionStorage.removeItem(`dx_bo_ends_${code}`)
+          } else {
+            sessionStorage.setItem(`dx_return_${m.code}`, returnTo ?? code)
+            if (m.ends_at) sessionStorage.setItem(`dx_bo_ends_${m.code}`, String(m.ends_at))
+            else sessionStorage.removeItem(`dx_bo_ends_${m.code}`)
+          }
           onSwitch?.(m.code)
         })
-        signal.on('breakouts-created', (m) => setBreakoutRooms(m.rooms))
+        signal.on('breakouts-created', (m) => {
+          setBreakoutRooms(m.rooms)
+          setBreakoutEndsAt(m.ends_at)
+        })
 
         // A grelha é orientada ao roster: tile ao entrar, stream quando chegar.
         signal.on('joined', (m) => {
@@ -270,6 +340,8 @@ export default function Room({
               username: p.username,
               host: p.host,
               hand: p.hand,
+              camOn: p.cam ?? true,
+              micOn: p.mic ?? true,
               stream: null,
             })),
           )
@@ -278,7 +350,15 @@ export default function Room({
         signal.on('peer-joined', (m) =>
           setPeers((ps) => [
             ...ps.filter((p) => p.peerId !== m.peer.peer_id),
-            { peerId: m.peer.peer_id, username: m.peer.username, host: m.peer.host, hand: m.peer.hand, stream: null },
+            {
+              peerId: m.peer.peer_id,
+              username: m.peer.username,
+              host: m.peer.host,
+              hand: m.peer.hand,
+              camOn: m.peer.cam ?? true,
+              micOn: m.peer.mic ?? true,
+              stream: null,
+            },
           ]),
         )
         signal.on('peer-left', (m) => {
@@ -287,6 +367,10 @@ export default function Room({
         })
         signal.on('hand', (m) =>
           setPeers((ps) => ps.map((p) => (p.peerId === m.from ? { ...p, hand: m.raised } : p))),
+        )
+        // Estado de câmara/mic dos outros: avatar em vez de vídeo preto.
+        signal.on('media', (m) =>
+          setPeers((ps) => ps.map((p) => (p.peerId === m.from ? { ...p, camOn: m.cam, micOn: m.mic } : p))),
         )
         signal.on('reaction', (m) => floatReaction(m.emoji, m.username))
         signal.on('recording', (m) => {
@@ -351,6 +435,14 @@ export default function Room({
       ...peers.map((p) => ({ id: p.peerId, label: p.username, stream: p.stream })),
     ])
   }, [peers, recording])
+
+  // Difunde o estado de câmara/mic sempre que muda (toggle, force-mute,
+  // voz→vídeo) — os outros trocam vídeo preto por avatar e acertam o ícone.
+  useEffect(() => {
+    if (roomState === 'in')
+      signalRef.current?.send({ type: 'media', cam: (camOn && hasLocalVideo) || sharing, mic: micOn })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camOn, micOn, hasLocalVideo, sharing, roomState])
 
   function toggleMic() {
     levelsRef.current?.resume()
@@ -642,7 +734,7 @@ export default function Room({
   }
 
   const total = peers.length + 1
-  const cols = total <= 1 ? 1 : total <= 4 ? 2 : total <= 9 ? 3 : 4
+  const tileSize = useGridLayout(videoAreaRef, total, roomState === 'in')
   const meSpeaking = speaking.has('me') && micOn
   const anyoneRecording = recording || !!remoteRecorder
 
@@ -762,10 +854,13 @@ export default function Room({
           </div>
         )}
 
-        <div className="video-area">
+        <div className="video-area" ref={videoAreaRef}>
         {(() => {
+          // Dimensões explícitas só na grelha; no modo palco mandam as regras CSS.
+          const tileStyle: CSSProperties | undefined =
+            viewMode === 'stage' ? undefined : { width: tileSize.w, height: tileSize.h }
           const selfTile = (
-            <div className={meSpeaking ? 'tile speaking' : 'tile'}>
+            <div className={meSpeaking ? 'tile speaking' : 'tile'} style={tileStyle}>
               <video
                 ref={localVideo}
                 autoPlay
@@ -795,6 +890,7 @@ export default function Room({
               isHost={isHost}
               sinkId={speakerId}
               speaking={speaking.has(p.peerId)}
+              style={tileStyle}
               onMute={() => signalRef.current?.send({ type: 'force-mute', to: p.peerId })}
               onKick={() => signalRef.current?.send({ type: 'kick', to: p.peerId })}
             />
@@ -813,7 +909,14 @@ export default function Room({
             )
           }
           return (
-            <div className="video-grid" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)`, ...parallaxStyle }}>
+            <div
+              className="video-grid"
+              style={{
+                ['--tw' as string]: `${tileSize.w}px`,
+                ['--th' as string]: `${tileSize.h}px`,
+                ...parallaxStyle,
+              }}
+            >
               {selfTile}
               {peers.map(remoteTile)}
             </div>
@@ -882,43 +985,104 @@ export default function Room({
               <div className="breakout-box">
                 <h4>Salas de grupo</h4>
                 {breakoutRooms.length === 0 ? (
-                  <div className="breakout-create">
-                    <span className="muted small">Dividir participantes em</span>
-                    {[2, 3, 4].map((n) => (
-                      <button
-                        key={n}
-                        onClick={() => signalRef.current?.send({ type: 'breakouts-create', count: n })}
-                      >
-                        {n}
-                      </button>
-                    ))}
-                    <span className="muted small">grupos</span>
-                  </div>
+                  <>
+                    <div className="breakout-create">
+                      <span className="muted small">Dividir participantes em</span>
+                      {[2, 3, 4].map((n) => (
+                        <button
+                          key={n}
+                          onClick={() =>
+                            signalRef.current?.send({
+                              type: 'breakouts-create',
+                              count: n,
+                              minutes: breakoutMinutes || null,
+                            })
+                          }
+                        >
+                          {n}
+                        </button>
+                      ))}
+                      <span className="muted small">grupos</span>
+                    </div>
+                    <label className="breakout-timer-row">
+                      <span className="muted small">Duração:</span>
+                      <select value={breakoutMinutes} onChange={(e) => setBreakoutMinutes(Number(e.target.value))}>
+                        <option value={0}>sem limite</option>
+                        {[5, 10, 15, 20, 30, 45, 60].map((m) => (
+                          <option key={m} value={m}>{m} min</option>
+                        ))}
+                      </select>
+                      <span className="muted small">(no fim, todos voltam à principal)</span>
+                    </label>
+                  </>
                 ) : (
                   <>
+                    {breakoutEndsAt && (
+                      <p className="breakout-countdown">
+                        ⏱ Termina em <strong>{fmtCountdown(breakoutEndsAt - now)}</strong>
+                      </p>
+                    )}
                     {breakoutRooms.map((b) => (
-                      <button
-                        key={b.code}
-                        className="rec-row"
-                        title="Visitar este grupo"
-                        onClick={() => {
-                          sessionStorage.setItem(`dx_return_${b.code}`, code)
-                          onSwitch?.(b.code)
-                        }}
-                      >
-                        <PeopleIcon />
-                        <span className="rec-file">
-                          {b.label}
-                          <small>{b.code}</small>
-                        </span>
-                      </button>
+                      <div key={b.code} className="breakout-group">
+                        <div className="breakout-group-head">
+                          <input
+                            className="breakout-name"
+                            defaultValue={b.label}
+                            maxLength={60}
+                            title="Renomear grupo (Enter para guardar)"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                            }}
+                            onBlur={(e) => {
+                              const label = e.target.value.trim()
+                              if (label && label !== b.label)
+                                signalRef.current?.send({ type: 'breakout-rename', code: b.code, label })
+                            }}
+                          />
+                          <button
+                            className="btn-sm ghost"
+                            title="Visitar este grupo"
+                            onClick={() => {
+                              sessionStorage.setItem(`dx_return_${b.code}`, code)
+                              onSwitch?.(b.code)
+                            }}
+                          >
+                            Visitar
+                          </button>
+                        </div>
+                        {b.people.length === 0 && <p className="muted small">Vazio</p>}
+                        {b.people.map((name) => (
+                          <div key={name} className="breakout-person">
+                            <span className="avatar-circle small">{name.slice(0, 2).toUpperCase()}</span>
+                            <span className="breakout-person-name">{name}</span>
+                            <select
+                              className="breakout-move"
+                              value={b.code}
+                              title="Mover para…"
+                              onChange={(e) =>
+                                signalRef.current?.send({ type: 'breakout-move-user', name, code: e.target.value })
+                              }
+                            >
+                              {breakoutRooms.map((o) => (
+                                <option key={o.code} value={o.code}>{o.label}</option>
+                              ))}
+                              <option value={code}>← Principal</option>
+                            </select>
+                          </div>
+                        ))}
+                      </div>
                     ))}
-                    <button
-                      className="admit-no breakout-close"
-                      onClick={() => signalRef.current?.send({ type: 'breakouts-close' })}
-                    >
-                      Encerrar grupos e chamar todos de volta
-                    </button>
+                    <div className="breakout-actions">
+                      <button className="btn-sm ghost" onClick={() => signalRef.current?.send({ type: 'breakout-add' })}>
+                        + Adicionar grupo
+                      </button>
+                      <button
+                        className="admit-no breakout-close"
+                        onClick={() => signalRef.current?.send({ type: 'breakouts-close' })}
+                      >
+                        Retornar todos à principal
+                      </button>
+                    </div>
                   </>
                 )}
               </div>
@@ -1075,11 +1239,17 @@ export default function Room({
               title="Regressar à sala principal"
               onClick={() => {
                 sessionStorage.removeItem(`dx_return_${code}`)
+                sessionStorage.removeItem(`dx_bo_ends_${code}`)
                 onSwitch?.(returnTo)
               }}
             >
               ← Sala principal
             </button>
+          )}
+          {returnTo && breakoutEndsAt && breakoutEndsAt > now && (
+            <span className="room-topo breakout-chip" title="Tempo restante neste grupo">
+              ⏱ {fmtCountdown(breakoutEndsAt - now)}
+            </span>
           )}
           {status && <span className="room-status">{status}</span>}
         </div>
@@ -1292,6 +1462,7 @@ function RemoteTile({
   isHost,
   sinkId,
   speaking,
+  style,
   onMute,
   onKick,
 }: {
@@ -1299,6 +1470,7 @@ function RemoteTile({
   isHost: boolean
   sinkId: string
   speaking: boolean
+  style?: CSSProperties
   onMute: () => void
   onKick: () => void
 }) {
@@ -1311,10 +1483,12 @@ function RemoteTile({
     const el = ref.current as (HTMLVideoElement & { setSinkId?: (id: string) => Promise<void> }) | null
     if (el?.setSinkId) void el.setSinkId(sinkId || '').catch(() => {})
   }, [sinkId, peer.stream])
-  const hasVideo = !!peer.stream?.getVideoTracks().length
-  const hasAudio = !!peer.stream?.getAudioTracks().length
+  // Vídeo só quando há track E o peer diz que a câmara está ligada —
+  // track com enabled=false chega como frames pretos, não como ausência.
+  const hasVideo = !!peer.stream?.getVideoTracks().length && peer.camOn
+  const hasAudio = !!peer.stream?.getAudioTracks().length && peer.micOn
   return (
-    <div className={speaking ? 'tile speaking' : 'tile'}>
+    <div className={speaking ? 'tile speaking' : 'tile'} style={style}>
       <video ref={ref} autoPlay playsInline style={{ display: hasVideo ? undefined : 'none' }} />
       {!hasVideo && (
         <div className="tile-avatar">

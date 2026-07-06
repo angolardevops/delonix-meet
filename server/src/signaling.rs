@@ -25,6 +25,9 @@ pub enum ClientMsg {
     Chat { text: String },
     Reaction { emoji: String },
     Hand { raised: bool },
+    /// Estado local de câmara/microfone — os outros mostram avatar/ícone
+    /// em vez de vídeo preto ou indicador de som errado.
+    Media { cam: bool, mic: bool },
     Recording { active: bool },
     Transcript { text: String },
     // Só o anfitrião:
@@ -32,7 +35,12 @@ pub enum ClientMsg {
     Deny { to: Uuid },
     ForceMute { to: Uuid },
     Kick { to: Uuid },
-    BreakoutsCreate { count: u32 },
+    BreakoutsCreate { count: u32, #[serde(default)] minutes: Option<u32> },
+    BreakoutRename { code: String, label: String },
+    BreakoutAdd,
+    /// Move um participante (identificado pelo username) para o grupo `code`
+    /// — ou de volta à principal se `code` for o da sala-mãe.
+    BreakoutMoveUser { name: String, code: String },
     BreakoutsClose,
     Leave,
     // SFU mode: SDP/ICE exchanged with the server itself, not another peer.
@@ -53,6 +61,7 @@ pub enum ServerMsg {
     Chat { from: Uuid, username: String, text: String },
     Reaction { from: Uuid, username: String, emoji: String },
     Hand { from: Uuid, raised: bool },
+    Media { from: Uuid, cam: bool, mic: bool },
     Recording { from: Uuid, username: String, active: bool },
     Transcript { from: Uuid, username: String, text: String },
     // Sala de espera:
@@ -64,8 +73,8 @@ pub enum ServerMsg {
     ForceMuted,                       // para o alvo: foste silenciado
     Kicked,                           // para o alvo: foste removido
     // Breakout rooms:
-    BreakoutMove { code: String, label: String, back: bool },
-    BreakoutsCreated { rooms: Vec<BreakoutInfo> },
+    BreakoutMove { code: String, label: String, back: bool, ends_at: Option<i64> },
+    BreakoutsCreated { rooms: Vec<BreakoutInfo>, ends_at: Option<i64> },
     Error { message: String },
     SfuOffer { sdp: String },
     SfuAnswer { sdp: String },
@@ -76,12 +85,25 @@ pub enum ServerMsg {
 pub struct BreakoutInfo {
     pub code: String,
     pub label: String,
+    /// Quem está agora neste grupo (usernames) — para o anfitrião mover pessoas.
+    pub people: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BreakoutChild {
+    pub id: Uuid,
+    pub code: String,
+    pub label: String,
 }
 
 /// Conjunto de salas de grupo ativas de uma sala principal.
 pub struct BreakoutSet {
     pub parent_code: String,
-    pub children: Vec<(Uuid, String)>, // (room_id, code)
+    pub children: Vec<BreakoutChild>,
+    /// Deadline (epoch segundos) do temporizador, se definido.
+    pub ends_at: Option<i64>,
+    /// Distingue gerações de grupos: um timer antigo não fecha grupos novos.
+    pub nonce: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -91,6 +113,9 @@ pub struct PeerInfo {
     pub host: bool,
     #[serde(default)]
     pub hand: bool,
+    /// Estado de media conhecido (true até o peer dizer o contrário).
+    pub cam: bool,
+    pub mic: bool,
 }
 
 // ---------- Hub (room registry, WS-agnostic and unit-testable) ----------
@@ -99,6 +124,8 @@ struct Peer {
     username: String,
     is_host: bool,
     hand: bool,
+    cam_on: bool,
+    mic_on: bool,
     tx: mpsc::UnboundedSender<ServerMsg>,
 }
 
@@ -139,10 +166,12 @@ impl SignalingHub {
                 username: p.username.clone(),
                 host: p.is_host,
                 hand: p.hand,
+                cam: p.cam_on,
+                mic: p.mic_on,
             })
             .collect();
         let announce = ServerMsg::PeerJoined {
-            peer: PeerInfo { peer_id, username: username.clone(), host: is_host, hand: false },
+            peer: PeerInfo { peer_id, username: username.clone(), host: is_host, hand: false, cam: true, mic: true },
         };
         for peer in room.peers.values() {
             let _ = peer.tx.send(announce.clone());
@@ -155,11 +184,13 @@ impl SignalingHub {
                         username: w.username.clone(),
                         host: false,
                         hand: false,
+                        cam: true,
+                        mic: true,
                     },
                 });
             }
         }
-        room.peers.insert(peer_id, Peer { username, is_host, hand: false, tx });
+        room.peers.insert(peer_id, Peer { username, is_host, hand: false, cam_on: true, mic_on: true, tx });
         existing
     }
 
@@ -172,7 +203,7 @@ impl SignalingHub {
         admit_tx: oneshot::Sender<bool>,
     ) {
         let mut room = self.rooms.entry(room_id).or_default();
-        let info = PeerInfo { peer_id, username: username.clone(), host: false, hand: false };
+        let info = PeerInfo { peer_id, username: username.clone(), host: false, hand: false, cam: true, mic: true };
         for peer in room.peers.values().filter(|p| p.is_host) {
             let _ = peer.tx.send(ServerMsg::WaitingJoin { peer: info.clone() });
         }
@@ -249,6 +280,20 @@ impl SignalingHub {
     }
 
     /// Lista (peer_id, é_anfitrião) dos presentes na sala.
+    /// Roster com usernames — identidade estável entre salas (o peer_id muda
+    /// a cada ligação, o username não).
+    pub fn roster_named(&self, room_id: Uuid) -> Vec<(Uuid, String, bool)> {
+        self.rooms
+            .get(&room_id)
+            .map(|r| {
+                r.peers
+                    .iter()
+                    .map(|(id, p)| (*id, p.username.clone(), p.is_host))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn roster(&self, room_id: Uuid) -> Vec<(Uuid, bool)> {
         self.rooms
             .get(&room_id)
@@ -312,6 +357,15 @@ impl SignalingHub {
                 }
                 self.broadcast(room_id, peer_id, ServerMsg::Hand { from: peer_id, raised });
             }
+            ClientMsg::Media { cam, mic } => {
+                if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                    if let Some(p) = room.peers.get_mut(&peer_id) {
+                        p.cam_on = cam;
+                        p.mic_on = mic;
+                    }
+                }
+                self.broadcast(room_id, peer_id, ServerMsg::Media { from: peer_id, cam, mic });
+            }
             ClientMsg::Recording { active } => {
                 let username = self.username_of(room_id, peer_id).unwrap_or_else(|| "?".into());
                 self.broadcast(room_id, peer_id, ServerMsg::Recording { from: peer_id, username, active });
@@ -343,6 +397,9 @@ impl SignalingHub {
             | ClientMsg::SfuAnswer { .. }
             | ClientMsg::SfuIce { .. }
             | ClientMsg::BreakoutsCreate { .. }
+            | ClientMsg::BreakoutRename { .. }
+            | ClientMsg::BreakoutAdd
+            | ClientMsg::BreakoutMoveUser { .. }
             | ClientMsg::BreakoutsClose => {}
         }
         true
@@ -374,9 +431,64 @@ pub async fn ws_handler(
     }))
 }
 
-/// Anfitrião pediu salas de grupo: cria N salas (herdam topologia/E2EE da
-/// principal), distribui os participantes round-robin e avisa o anfitrião.
-async fn breakouts_create(state: &Arc<AppState>, room_id: Uuid, owner: Uuid, count: u32) {
+/// Cria uma sala-filha de grupo (herda topologia/E2EE da principal).
+async fn breakout_new_child(
+    state: &Arc<AppState>,
+    owner: Uuid,
+    parent_name: &str,
+    topology: &str,
+    e2ee: bool,
+    label: &str,
+) -> Option<BreakoutChild> {
+    match crate::rooms::insert_room(&state.db, owner, &format!("{label} — {parent_name}"), topology, false, e2ee)
+        .await
+    {
+        Ok(r) => Some(BreakoutChild { id: r.id, code: r.code, label: label.to_string() }),
+        Err(e) => {
+            tracing::warn!(error = %e, "breakout insert_room failed");
+            None
+        }
+    }
+}
+
+/// Estado atual dos grupos (com quem está em cada um) para os anfitriões
+/// na sala principal — chamado após qualquer mudança.
+fn broadcast_breakout_state(state: &Arc<AppState>, parent_id: Uuid) {
+    let Some(set) = state.breakouts.get(&parent_id) else {
+        state.hub.broadcast_all(parent_id, ServerMsg::BreakoutsCreated { rooms: vec![], ends_at: None });
+        return;
+    };
+    let infos: Vec<BreakoutInfo> = set
+        .children
+        .iter()
+        .map(|c| BreakoutInfo {
+            code: c.code.clone(),
+            label: c.label.clone(),
+            people: state.hub.roster_named(c.id).into_iter().map(|(_, n, _)| n).collect(),
+        })
+        .collect();
+    let ends_at = set.ends_at;
+    for (id, host) in state.hub.roster(parent_id) {
+        if host {
+            state
+                .hub
+                .send_to(parent_id, id, ServerMsg::BreakoutsCreated { rooms: infos.clone(), ends_at });
+        }
+    }
+}
+
+/// Se `room_id` for filha de um conjunto de grupos, devolve o id da sala-mãe.
+fn breakout_parent_of(state: &Arc<AppState>, room_id: Uuid) -> Option<Uuid> {
+    state
+        .breakouts
+        .iter()
+        .find(|e| e.value().children.iter().any(|c| c.id == room_id))
+        .map(|e| *e.key())
+}
+
+/// Anfitrião pediu salas de grupo: cria N salas, distribui os participantes
+/// round-robin, avisa os anfitriões e (opcional) agenda o retorno automático.
+async fn breakouts_create(state: &Arc<AppState>, room_id: Uuid, owner: Uuid, count: u32, minutes: Option<u32>) {
     let count = count.clamp(2, 8) as usize;
     let parent: Option<(String, String, bool, String)> = sqlx::query_as(
         "SELECT code, topology, e2ee, name FROM rooms WHERE id = $1",
@@ -388,19 +500,18 @@ async fn breakouts_create(state: &Arc<AppState>, room_id: Uuid, owner: Uuid, cou
     .flatten();
     let Some((parent_code, topology, e2ee, name)) = parent else { return };
 
-    let mut children: Vec<(Uuid, String, String)> = Vec::new(); // (id, code, label)
+    let mut children: Vec<BreakoutChild> = Vec::new();
     for i in 1..=count {
-        let label = format!("Grupo {i}");
-        match crate::rooms::insert_room(&state.db, owner, &format!("{label} — {name}"), &topology, false, e2ee)
-            .await
-        {
-            Ok(r) => children.push((r.id, r.code, label)),
-            Err(e) => {
-                tracing::warn!(%room_id, error = %e, "breakout insert_room failed");
-                return;
-            }
+        match breakout_new_child(state, owner, &name, &topology, e2ee, &format!("Grupo {i}")).await {
+            Some(c) => children.push(c),
+            None => return,
         }
     }
+
+    let ends_at = minutes
+        .filter(|m| *m > 0)
+        .map(|m| chrono::Utc::now().timestamp() + (m.min(180) as i64) * 60);
+    let nonce = Uuid::new_v4();
 
     // Distribuir os não-anfitriões pelas salas, à vez.
     let guests: Vec<Uuid> = state
@@ -411,50 +522,129 @@ async fn breakouts_create(state: &Arc<AppState>, room_id: Uuid, owner: Uuid, cou
         .map(|(id, _)| id)
         .collect();
     for (idx, peer) in guests.iter().enumerate() {
-        let (_, code, label) = &children[idx % children.len()];
+        let c = &children[idx % children.len()];
         state.hub.send_to(
             room_id,
             *peer,
-            ServerMsg::BreakoutMove { code: code.clone(), label: label.clone(), back: false },
+            ServerMsg::BreakoutMove { code: c.code.clone(), label: c.label.clone(), back: false, ends_at },
         );
     }
 
-    let infos: Vec<BreakoutInfo> = children
-        .iter()
-        .map(|(_, code, label)| BreakoutInfo { code: code.clone(), label: label.clone() })
-        .collect();
-    for (id, host) in state.hub.roster(room_id) {
-        if host {
-            state
-                .hub
-                .send_to(room_id, id, ServerMsg::BreakoutsCreated { rooms: infos.clone() });
+    state
+        .breakouts
+        .insert(room_id, BreakoutSet { parent_code, children, ends_at, nonce });
+    broadcast_breakout_state(state, room_id);
+
+    // Temporizador: no fim, devolve todos à principal (se esta geração ainda existir).
+    if let Some(deadline) = ends_at {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let wait = (deadline - chrono::Utc::now().timestamp()).max(0) as u64;
+            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+            let still_current = state
+                .breakouts
+                .get(&room_id)
+                .map(|s| s.nonce == nonce)
+                .unwrap_or(false);
+            if still_current {
+                tracing::info!(%room_id, "breakout timer expired — returning everyone");
+                breakouts_close(&state, room_id);
+            }
+        });
+    }
+    tracing::info!(%room_id, count, ?minutes, "breakout rooms created");
+}
+
+/// Renomeia um grupo existente.
+fn breakout_rename(state: &Arc<AppState>, room_id: Uuid, code: &str, label: &str) {
+    let label = label.trim();
+    if label.is_empty() || label.len() > 60 {
+        return;
+    }
+    if let Some(mut set) = state.breakouts.get_mut(&room_id) {
+        if let Some(c) = set.children.iter_mut().find(|c| c.code == code) {
+            c.label = label.to_string();
         }
     }
-    state.breakouts.insert(
-        room_id,
-        BreakoutSet {
-            parent_code,
-            children: children.into_iter().map(|(id, code, _)| (id, code)).collect(),
-        },
-    );
-    tracing::info!(%room_id, count, "breakout rooms created");
+    broadcast_breakout_state(state, room_id);
+}
+
+/// Acrescenta mais um grupo ao conjunto ativo.
+async fn breakout_add(state: &Arc<AppState>, room_id: Uuid, owner: Uuid) {
+    let parent: Option<(String, String, bool, String)> = sqlx::query_as(
+        "SELECT code, topology, e2ee, name FROM rooms WHERE id = $1",
+    )
+    .bind(room_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some((_, topology, e2ee, name)) = parent else { return };
+    let n = state.breakouts.get(&room_id).map(|s| s.children.len()).unwrap_or(0);
+    if n == 0 || n >= 12 {
+        return;
+    }
+    if let Some(child) = breakout_new_child(state, owner, &name, &topology, e2ee, &format!("Grupo {}", n + 1)).await {
+        if let Some(mut set) = state.breakouts.get_mut(&room_id) {
+            set.children.push(child);
+        }
+        broadcast_breakout_state(state, room_id);
+    }
+}
+
+/// Move um participante (por username) para outro grupo ou de volta à
+/// principal. Procura-o na principal e em todas as filhas.
+fn breakout_move_user(state: &Arc<AppState>, room_id: Uuid, name: &str, target_code: &str) {
+    let Some(set) = state.breakouts.get(&room_id) else { return };
+    let back = target_code == set.parent_code;
+    let label = if back {
+        "Sala principal".to_string()
+    } else {
+        match set.children.iter().find(|c| c.code == target_code) {
+            Some(c) => c.label.clone(),
+            None => return,
+        }
+    };
+    let ends_at = set.ends_at;
+    // Salas onde ele pode estar: principal + todas as filhas.
+    let mut locations: Vec<Uuid> = vec![room_id];
+    locations.extend(set.children.iter().map(|c| c.id));
+    drop(set);
+    for loc in locations {
+        if let Some((peer, _, _)) = state
+            .hub
+            .roster_named(loc)
+            .into_iter()
+            .find(|(_, n, host)| n == name && !host)
+        {
+            state.hub.send_to(
+                loc,
+                peer,
+                ServerMsg::BreakoutMove { code: target_code.to_string(), label, back, ends_at },
+            );
+            return;
+        }
+    }
 }
 
 /// Fecha os grupos: devolve toda a gente à sala principal.
 fn breakouts_close(state: &Arc<AppState>, room_id: Uuid) {
     if let Some((_, set)) = state.breakouts.remove(&room_id) {
-        for (child_id, _) in &set.children {
+        for c in &set.children {
             state.hub.broadcast_all(
-                *child_id,
+                c.id,
                 ServerMsg::BreakoutMove {
                     code: set.parent_code.clone(),
                     label: "Sala principal".into(),
                     back: true,
+                    ends_at: None,
                 },
             );
         }
         // Anfitriões na sala principal limpam a lista.
-        state.hub.broadcast_all(room_id, ServerMsg::BreakoutsCreated { rooms: vec![] });
+        state
+            .hub
+            .broadcast_all(room_id, ServerMsg::BreakoutsCreated { rooms: vec![], ends_at: None });
         tracing::info!(%room_id, "breakout rooms closed");
     }
 }
@@ -537,6 +727,10 @@ async fn handle_socket(
         }
     }
     tracing::info!(%room_id, %peer_id, %username, sfu = sfu_mode, host = is_host, "peer joined");
+    // Entrou numa sala de grupo? Atualiza o mapa de grupos dos anfitriões.
+    if let Some(parent) = breakout_parent_of(&state, room_id) {
+        broadcast_breakout_state(&state, parent);
+    }
 
     // Inbound: websocket -> hub.
     while let Some(Ok(msg)) = stream.next().await {
@@ -549,8 +743,17 @@ async fn handle_socket(
                         tracing::warn!(%room_id, %peer_id, error = %e, "sfu message failed");
                     }
                 }
-                Ok(ClientMsg::BreakoutsCreate { count }) if is_host => {
-                    breakouts_create(&state, room_id, user_id, count).await;
+                Ok(ClientMsg::BreakoutsCreate { count, minutes }) if is_host => {
+                    breakouts_create(&state, room_id, user_id, count, minutes).await;
+                }
+                Ok(ClientMsg::BreakoutRename { code, label }) if is_host => {
+                    breakout_rename(&state, room_id, &code, &label);
+                }
+                Ok(ClientMsg::BreakoutAdd) if is_host => {
+                    breakout_add(&state, room_id, user_id).await;
+                }
+                Ok(ClientMsg::BreakoutMoveUser { name, code }) if is_host => {
+                    breakout_move_user(&state, room_id, &name, &code);
                 }
                 Ok(ClientMsg::BreakoutsClose) if is_host => {
                     breakouts_close(&state, room_id);
@@ -573,6 +776,9 @@ async fn handle_socket(
         state.sfu.remove_peer(room_id, peer_id).await;
     }
     state.hub.leave(room_id, peer_id);
+    if let Some(parent) = breakout_parent_of(&state, room_id) {
+        broadcast_breakout_state(&state, parent);
+    }
     writer.abort();
     tracing::info!(%room_id, %peer_id, "peer left");
 }

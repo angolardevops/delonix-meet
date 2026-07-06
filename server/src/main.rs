@@ -74,6 +74,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/quarantine/analytics", get(meetings::quarantine_analytics))
         .route("/api/missed-calls/ack", post(presence::ack_missed_calls))
         .route("/api/rooms/{code}/minutes", post(meetings::save_minutes_by_room))
+        .route("/api/rooms/{code}/notes", get(meetings::notes_by_room))
         // ---- Enterprise: organizações / diretório ----
         .route("/api/orgs", get(org::my_orgs).post(org::create_org))
         .route("/api/orgs/{org_id}/branches", get(org::list_branches).post(org::create_branch))
@@ -81,6 +82,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/orgs/{org_id}/employees/{user_id}", axum::routing::delete(org::remove_employee))
         .route("/api/orgs/{org_id}/groups", get(org::list_groups).post(org::create_group))
         .route("/api/orgs/{org_id}/meeting-rooms", get(org::list_meeting_rooms).post(org::create_meeting_room))
+        .route("/api/orgs/{org_id}/stats", get(org::org_stats))
         .route("/api/ice", get(rooms::ice_servers))
         .route("/ws", get(signaling::ws_handler))
         .route("/rtc", get(presence::rtc_handler))
