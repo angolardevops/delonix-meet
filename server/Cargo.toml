@@ -1,0 +1,31 @@
+[package]
+name = "delonix-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "migrate"] }
+argon2 = "0.5"
+jsonwebtoken = "9"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dashmap = "6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand = "0.8"
+thiserror = "2"
+sha2 = "0.10"
+hmac = "0.12"
+sha1 = "0.10"
+base64 = "0.22"
+futures-util = "0.3"
+hex = "0.4"
+webrtc = "0.17.1"
+
+[dev-dependencies]
+tokio-tungstenite = "0.24"

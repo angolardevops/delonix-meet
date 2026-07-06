@@ -1,0 +1,17 @@
+# Rust
+server/target/
+
+# Node
+web/node_modules/
+web/dist/
+
+# Flutter
+mobile/build/
+mobile/.dart_tool/
+
+# Env / secrets
+.env
+*.local
+
+# OS
+.DS_Store
