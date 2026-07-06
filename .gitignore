@@ -15,3 +15,6 @@ mobile/.dart_tool/
 
 # OS
 .DS_Store
+
+# TypeScript build cache
+*.tsbuildinfo
