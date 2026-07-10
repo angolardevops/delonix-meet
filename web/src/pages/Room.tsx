@@ -587,6 +587,12 @@ export default function Room({
 
         const signal = new Signaling(room_token, code)
         signalRef.current = signal
+        // A chamada SFU/mesh só arranca DEPOIS de sermos admitidos ('joined').
+        // Se negociarmos enquanto estamos na sala de espera, o servidor descarta
+        // a oferta e, ao ser admitido, a colisão de renegociação entra em loop e
+        // dispara o anti-flood → o convidado é desligado e a página recarrega em
+        // ciclo. O holder é preenchido mais abaixo (quando media/crypto existem).
+        const callHolder: { start: () => void } = { start: () => {} }
         signal.on('chat', (m) => {
           setChat((c) => [...c, { username: m.username, text: m.text, own: false }])
           if (panelRef.current !== 'chat') setUnreadChat((n) => n + 1)
@@ -659,6 +665,7 @@ export default function Room({
         // A grelha é orientada ao roster: tile ao entrar, stream quando chegar.
         signal.on('joined', (m) => {
           setRoomState('in')
+          callHolder.start() // arranca a chamada SÓ agora (após admissão/entrada direta)
           setStatus(spectator ? 'Sem câmara/microfone — modo espectador' : '')
           // Carrega histórico de chat (best-effort, não bloqueia a sala).
           void roomChatHistory(code).then((history) => {
@@ -810,10 +817,15 @@ export default function Room({
             setPeers((ps) => ps.map((p) => (p.peerId === peerId ? { ...p, stream: null } : p)))
           },
         }
-        callRef.current =
-          room.topology === 'sfu'
-            ? new SfuCall(signal, stream, rtcConfig, callbacks, crypto)
-            : new MeshCall(signal, stream, rtcConfig, callbacks, crypto)
+        // Preenche o holder — só arranca quando o handler 'joined' o invocar
+        // (após admissão). Guarda anti-duplo-arranque.
+        callHolder.start = () => {
+          if (callRef.current || cancelled) return
+          callRef.current =
+            room.topology === 'sfu'
+              ? new SfuCall(signal, stream, rtcConfig, callbacks, crypto)
+              : new MeshCall(signal, stream, rtcConfig, callbacks, crypto)
+        }
       } catch (err) {
         setStatus(`Erro: ${(err as Error).message}`)
       }
