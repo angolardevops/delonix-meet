@@ -27,6 +27,11 @@ pub struct Config {
     /// URL do Redis para pub/sub cross-nó (presença multi-instância).
     /// Opcional — se vazio, o servidor opera em modo single-node (sem Redis).
     pub redis_url: Option<String>,
+    /// IP EXTERNO/alcançável que o SFU anuncia nos candidatos ICE (NAT 1:1).
+    /// Em K8s, o IP da LB/nó — sem isto o SFU só anuncia o IP interno do pod
+    /// (inalcançável) e a media não estabelece. Vazio => só host candidates
+    /// (ok em local; em K8s a media depende do TURN relay). Ver sfu.rs.
+    pub sfu_external_ip: Option<String>,
 }
 
 impl Config {
@@ -68,6 +73,7 @@ impl Config {
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| std::path::PathBuf::from("recordings")),
             redis_url: env::var("REDIS_URL").ok().filter(|s| !s.is_empty()),
+            sfu_external_ip: env::var("SFU_EXTERNAL_IP").ok().filter(|s| !s.is_empty()),
         }
     }
 }
