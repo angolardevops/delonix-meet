@@ -1,0 +1,116 @@
+// ============================================================
+//  Delonix Meet — TOKENS (entrada)
+//  Monta os temas Delonix Escuro/Claro a partir dos primitivos e
+//  emite as CSS custom properties. Refino "enterprise":
+//   · AÇÃO primária = índigo (calmo, não compete com destrutivo)
+//   · MARCA = vermelho + dourado (logo, landing) — vendida, não diluída
+//   · fundos escuros ELEVADOS (sem preto puro) + sombras neutras
+//   · claro off-white arejado, texto tinta-fria acessível (AA)
+// ============================================================
+
+@use 'primitives' as p;
+@use 'semantic' as s;
+@use 'sass:map';
+
+// -- Base partilhada (tipografia, raio, movimento) — não muda com o tema.
+$base: (
+  radius:      8px,
+  radius-lg:   12px,
+  radius-sm:   6px,
+  font-display: ("Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif),
+  font-body:    ("Instrument Sans Variable", "Instrument Sans", system-ui, sans-serif),
+  font-mono:    ("IBM Plex Mono", ui-monospace, monospace),
+  ease:        cubic-bezier(0.2, 0.6, 0.2, 1),
+  dur:         160ms,
+);
+
+// -- Delonix Escuro (tema por omissão) --------------------------------
+$dark: (
+  bg:            map.get(p.$neutral, 950),   // #0e1116 near-black elevado
+  surface:       #161a21,
+  surface-2:     #1d222b,
+  surface-3:     #262c37,
+  tile-bg:       #0d1117,
+  text:          map.get(p.$neutral, 50),
+  muted:         #9ba3b0,
+  muted-2:       #7e8794,
+
+  // Ação (índigo) — botões primários, foco, links, estados ativos
+  accent:        map.get(p.$indigo, 500),
+  accent-hi:     map.get(p.$indigo, 400),
+
+  // Marca — dourado (acento secundário) + vermelho (logo/landing)
+  accent-2:      map.get(p.$gold, 500),
+  wordmark:      map.get(p.$gold, 500),   // "Meet" — dourado de marca
+  brand:         map.get(p.$brand-red, 500),
+  brand-hi:      map.get(p.$brand-red, 400),
+  grad-brand:    linear-gradient(135deg, map.get(p.$brand-red, 400), map.get(p.$brand-red, 600)),
+
+  border:        rgba(255, 255, 255, 0.10),
+  border-strong: rgba(255, 255, 255, 0.16),
+  ghost:         rgba(255, 255, 255, 0.06),
+  ghost-2:       rgba(255, 255, 255, 0.12),
+
+  success:       map.get(p.$success, dark),
+  warn:          map.get(p.$warn, dark),
+  danger:        map.get(p.$danger, dark),
+  info:          map.get(p.$info, dark),
+
+  // Sombras neutras (sem glow colorido)
+  shadow-brand:  (0 8px 24px -12px rgba(0, 0, 0, 0.60)),
+  shadow-deep:   (0 30px 70px -30px rgba(0, 0, 0, 0.80)),
+  // Escala de elevação: cartões (1) · menus/popovers (2) · modais/toasts (3)
+  elev-1:        (0 6px 22px rgba(0, 0, 0, 0.45)),
+  elev-2:        (0 10px 30px rgba(0, 0, 0, 0.50)),
+  elev-3:        (0 16px 40px rgba(0, 0, 0, 0.55)),
+);
+
+// -- Delonix Claro (novo — off-white arejado) -------------------------
+$light: (
+  bg:            map.get(p.$neutral, 50),    // #f5f7fa off-white (não branco puro)
+  surface:       #ffffff,
+  surface-2:     map.get(p.$neutral, 50),
+  surface-3:     map.get(p.$neutral, 100),
+  tile-bg:       map.get(p.$neutral, 800),   // vídeo permanece escuro
+  text:          #1a1d23,
+  muted:         #5b6472,
+  muted-2:       #79818f,
+
+  accent:        map.get(p.$indigo, 700),    // mais profundo p/ contraste em branco
+  accent-hi:     map.get(p.$indigo, 600),
+
+  // No claro o "acento secundário" funcional (KPIs, nav ativo, tabs, links)
+  // deixa de ser dourado-mostarda e passa a ink-índigo — combinação limpa.
+  accent-2:      map.get(p.$indigo, 800),
+  wordmark:      map.get(p.$gold, 700),       // "Meet" mantém-se dourado (só a marca)
+  brand:         map.get(p.$brand-red, 600),
+  brand-hi:      map.get(p.$brand-red, 500),
+  grad-brand:    linear-gradient(135deg, map.get(p.$brand-red, 500), map.get(p.$brand-red, 700)),
+
+  border:        map.get(p.$neutral, 150),
+  border-strong: map.get(p.$neutral, 200),
+  ghost:         rgba(16, 24, 40, 0.04),
+  ghost-2:       rgba(16, 24, 40, 0.08),
+
+  success:       map.get(p.$success, light),
+  warn:          map.get(p.$warn, light),
+  danger:        map.get(p.$danger, light),
+  info:          map.get(p.$info, light),
+
+  shadow-brand:  (0 1px 2px rgba(16, 24, 40, 0.06)),
+  shadow-deep:   (0 8px 28px rgba(16, 24, 40, 0.10)),
+  // Elevação claro: subtil, quase plana (estética enterprise arejada)
+  elev-1:        (0 1px 2px rgba(16, 24, 40, 0.05)),
+  elev-2:        (0 4px 14px -4px rgba(16, 24, 40, 0.10)),
+  elev-3:        (0 10px 26px -10px rgba(16, 24, 40, 0.12)),
+);
+
+// -- Emissão ----------------------------------------------------------
+:root {
+  @include s.emit($base);
+  @include s.emit($dark);
+}
+
+[data-theme="delonix-light"] {
+  @include s.emit($light);
+}

@@ -1,0 +1,12 @@
+# PostgreSQL para stage/kind — single node, sem pgpool nem repmgr.
+# As imagens de bitnami/postgresql-ha (pgpool + postgresql-repmgr)
+# foram removidas do Docker Hub em 2024; para stage usa-se o chart
+# simples (bitnami/postgresql) cujas imagens continuam acessíveis em
+# registry-1.docker.io/bitnami/postgresql.
+auth:
+  username: delonix
+  password: delonix_dev_pass
+  database: delonix_meet
+primary:
+  extendedConfiguration: |
+    max_connections = 200

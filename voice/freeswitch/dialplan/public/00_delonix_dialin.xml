@@ -1,0 +1,21 @@
+<!--
+  Delonix Meet — dialplan público (inbound do SIP trunk).
+  Drop-in em /etc/freeswitch/dialplan/public/. Encaminha qualquer chamada
+  inbound (de um DID nosso) para o IVR de dial-in em Lua.
+
+  Segurança: o contexto 'public' só deve receber tráfego já filtrado pelo
+  Kamailio (ACL do trunk). SRTP é imposto no IVR e no perfil SIP.
+-->
+<include>
+  <context name="public">
+    <extension name="delonix_dialin">
+      <!-- Aceita qualquer número destino (o DID concreto é resolvido no IVR). -->
+      <condition field="destination_number" expression="^\+?\d{6,15}$">
+        <action application="set" data="rtp_secure_media=mandatory"/>
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="lua" data="dialin_ivr.lua"/>
+        <action application="hangup"/>
+      </condition>
+    </extension>
+  </context>
+</include>

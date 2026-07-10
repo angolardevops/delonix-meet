@@ -1,0 +1,11 @@
+architecture: replication
+auth:
+  username: delonix
+  password: delonix_prod_pass
+  database: delonix_meet
+  replicationPassword: repl_prod_pass
+primary:
+  extendedConfiguration: |
+    max_connections = 500
+readReplicas:
+  replicaCount: 2

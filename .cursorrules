@@ -1,0 +1,105 @@
+# Cursor / Codex Rules — Delonix Meet
+
+## What this project is
+Self-hosted corporate video conferencing platform. Backend: Rust (axum 0.7, webrtc-rs, sqlx 0.7, tokio). Frontend: React 18 + TypeScript + Vite. Production software, multi-tenant, E2EE, server-side recording, AI meeting minutes.
+
+## Rust patterns
+
+### Handlers
+```rust
+// Standard handler pattern — always this shape
+async fn my_handler(
+    Extension(pool): Extension<PgPool>,
+    Extension(state): Extension<Arc<AppState>>,
+    Json(body): Json<MyRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // Use sqlx macros, not string queries
+    let row = sqlx::query_as!(MyRow, "SELECT ...", param).fetch_one(&pool).await?;
+    Ok(Json(row))
+}
+```
+
+### Error handling
+```rust
+// Use AppError from error.rs — never unwrap() on user data
+return Err(AppError::NotFound("resource not found".into()));
+return Err(AppError::Forbidden("cross-org access denied".into()));
+// The ? operator converts sqlx::Error to AppError automatically
+```
+
+### New module checklist
+1. Create `server/src/new_module.rs`
+2. Add `mod new_module;` to `main.rs`
+3. Add routes to the axum router in `main.rs`
+4. If new DB tables needed: create `server/migrations/NNNN_description.sql`
+
+### NEVER
+- `unwrap()` or `expect()` on user-controlled data in production paths
+- Raw SQL string queries — always use `sqlx::query!` macros
+- Return data across org boundaries — scope every query with org_id check
+- Use reqwest 0.13 — workspace is pinned to 0.12 (rustls compat)
+
+## TypeScript/React patterns
+
+### Components
+```tsx
+// Standard functional component
+export function MyComponent({ prop }: { prop: string }) {
+  const { t } = useTranslation();
+  return <div style={{ color: 'var(--text)' }}>{t('ns.key')}</div>;
+}
+```
+
+### Room grid tiles
+```tsx
+// ALWAYS inline styles for tile dimensions — never CSS vars
+// Background tabs throttle rAF; var() causes frozen transitions
+style={{ width: `${tileW}px`, height: `${tileH}px` }}
+```
+
+### Adding i18n strings
+1. Add key to `web/src/i18n.ts` in both `pt` and `en` objects
+2. Use `t('namespace.key')` in components — never hardcode strings
+
+### Adding a WS message type
+1. Add variant to the union type in `signaling.ts`
+2. Add matching arm in `signaling.rs` (Rust `match` on `msg.type`)
+3. Both must change together — the protocol is bidirectional
+
+## CSS rules
+- Colors: always `var(--token-name)` — never hex
+- Room: `.room-page` always dark (see end of styles.css) — never remove `!important` overrides
+- Themes: add under `[data-theme="name"]` at end of styles.css
+- Fonts: Space Grotesk / Instrument Sans / IBM Plex Mono — already loaded via @fontsource
+
+## Security checklist (before any PR)
+- [ ] All new endpoints rate-limited or behind auth middleware
+- [ ] Org isolation: new queries scoped to `org_id` of authenticated user
+- [ ] No `unwrap()` on external input
+- [ ] New webhook/HTTP calls: SSRF guard applied (check `webhooks.rs::is_safe_host`)
+- [ ] Cookie changes: `HttpOnly; Secure; SameSite=Strict` preserved
+- [ ] Room token: new WS endpoints verify room token before upgrading
+
+## Competitive context (shape your suggestions)
+This platform replaces Zoom/Teams/Meet for organizations with data sovereignty needs. Core features are parity; differentiators are: no cloud dependency, real E2EE, Rust performance, self-host without royalty. When suggesting features, consider what Zoom/Teams/Meet have AND what they lack.
+
+## What NOT to suggest
+- Migrating SFU to LiveKit or mediasoup (decided: stay with custom Rust SFU)
+- Using OpenAI API directly (MoM pipeline uses Claude API OR Ollama — both configurable)
+- Adding cloud storage (recordings stay on local disk by design)
+- Removing E2EE opt-outs (E2EE is always on; server recording uses explicit key delegation)
+- Upgrading reqwest to 0.13
+
+## File map (most important files)
+| File | Purpose |
+|------|---------|
+| `server/src/main.rs` | Bootstrap, router, AppState, cron jobs |
+| `server/src/auth.rs` | Registration, login, JWT, cookie |
+| `server/src/sfu.rs` | WebRTC SFU — RTP fan-out, simulcast, recording tee |
+| `server/src/signaling.rs` | WS /ws — all in-room message handling |
+| `server/src/recorder.rs` | RTP→IVF/OGG→ffmpeg→webm pipeline |
+| `web/src/webrtc.ts` | SfuCall: PeerConnection, simulcast, screen share, QoS |
+| `web/src/e2ee.ts` | Insertable Streams AES-256-GCM |
+| `web/src/media.ts` | Background effects, transcription, recording |
+| `web/src/pages/Room.tsx` | Full in-room UI (grid, controls, tools, whiteboard) |
+| `web/src/styles/` | Design tokens as CSS custom properties |

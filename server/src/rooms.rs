@@ -27,6 +27,8 @@ pub struct Room {
     pub topology: String,
     pub waiting_room: bool,
     pub e2ee: bool,
+    /// 'normal' (por defeito) ou 'training' — só treino permite salas de grupo.
+    pub format: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -52,6 +54,9 @@ pub struct CreateRoomReq {
     /// Encriptação ponta-a-ponta do media (a chave nunca passa pelo servidor).
     #[serde(default)]
     pub e2ee: bool,
+    /// 'normal' (por defeito) ou 'training' (ativa salas de grupo).
+    #[serde(default)]
+    pub format: Option<String>,
 }
 
 /// Cria uma sala (com retry em colisão de código). Reutilizado pelo endpoint
@@ -63,12 +68,13 @@ pub async fn insert_room(
     topology: &str,
     waiting_room: bool,
     e2ee: bool,
+    format: &str,
 ) -> Result<Room, ApiError> {
     for _ in 0..5 {
         let code = generate_room_code();
         let res: Result<Room, sqlx::Error> = sqlx::query_as(
-            "INSERT INTO rooms (code, name, owner_id, topology, waiting_room, e2ee) VALUES ($1, $2, $3, $4, $5, $6)
-             RETURNING id, code, name, owner_id, topology, waiting_room, e2ee, created_at",
+            "INSERT INTO rooms (code, name, owner_id, topology, waiting_room, e2ee, format) VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at",
         )
         .bind(&code)
         .bind(name)
@@ -76,6 +82,7 @@ pub async fn insert_room(
         .bind(topology)
         .bind(waiting_room)
         .bind(e2ee)
+        .bind(format)
         .fetch_one(db)
         .await;
         match res {
@@ -98,24 +105,137 @@ pub async fn create_room(
     }
     let topology = req.topology.as_deref().unwrap_or("sfu");
     if !matches!(topology, "mesh" | "sfu") {
-        return Err(ApiError::BadRequest("topology must be 'mesh' or 'sfu'".into()));
+        return Err(ApiError::BadRequest(
+            "topology must be 'mesh' or 'sfu'".into(),
+        ));
     }
-    let room = insert_room(&state.db, auth.user_id, name, topology, req.waiting_room, req.e2ee).await?;
+    let format = req.format.as_deref().unwrap_or("normal");
+    if !matches!(format, "normal" | "training") {
+        return Err(ApiError::BadRequest(
+            "format must be 'normal' or 'training'".into(),
+        ));
+    }
+    let room = insert_room(
+        &state.db,
+        auth.user_id,
+        name,
+        topology,
+        req.waiting_room,
+        req.e2ee,
+        format,
+    )
+    .await?;
     Ok(Json(room))
 }
 
 pub async fn get_room(
     State(state): State<Arc<AppState>>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(code): Path<String>,
 ) -> Result<Json<Room>, ApiError> {
     let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, created_at FROM rooms WHERE code = $1",
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at FROM rooms WHERE code = $1",
     )
     .bind(code.to_lowercase())
     .fetch_one(&state.db)
     .await?;
+    // O código da sala é a credencial (capability, estilo Meet): quem o conhece
+    // pode ver os metadados e pedir para entrar. O controlo de acesso à REUNIÃO
+    // ao vivo faz-se no join_room (não-membros vão para a sala de espera).
+    let _ = auth;
     Ok(Json(room))
+}
+
+/// Resultado da verificação de acesso a uma sala.
+pub struct RoomAccess {
+    /// Pode aceder à sala (metadados, participação, gravações) — dono, colega
+    /// de organização do dono, ou convidado explícito de uma reunião.
+    pub authorized: bool,
+    /// Entra DIRETO, sem sala de espera — o dono, quem está na agenda da
+    /// reunião (meeting_invitees) para este código, ou um co-anfitrião de
+    /// admissões persistido. Um colega de org que só recebeu o link (sem estar
+    /// na agenda) é `authorized` mas NÃO `direct`: aguarda admissão.
+    pub direct: bool,
+    /// Pode admitir convidados: o dono ou um co-anfitrião persistido em
+    /// `room_admitters`. Vai no token (`adm`) e habilita a sala de espera.
+    pub admitter: bool,
+}
+
+/// Autorização de acesso a uma sala com distinção entre entrada direta (agenda/
+/// co-anfitrião) e entrada por link (aguarda aprovação). Fecha o buraco de
+/// qualquer utilizador entrar em qualquer sala.
+pub async fn room_access(
+    state: &AppState,
+    user_id: Uuid,
+    room: &Room,
+) -> Result<RoomAccess, ApiError> {
+    if room.owner_id == user_id {
+        return Ok(RoomAccess {
+            authorized: true,
+            direct: true,
+            admitter: true,
+        });
+    }
+    // Uma única consulta devolve os sinais: colega de org (→ authorized),
+    // convidado na agenda desta sala (→ direct) e co-anfitrião persistido
+    // (→ direct + admitter, entra sem esperar e pode admitir outros).
+    let (org_mate, invitee, admitter): (bool, bool, bool) = sqlx::query_as(
+        r#"SELECT
+             EXISTS(SELECT 1 FROM org_members a JOIN org_members b ON a.org_id = b.org_id
+                    WHERE a.user_id = $1 AND b.user_id = $2),
+             EXISTS(SELECT 1 FROM meeting_invitees mi JOIN meetings m ON m.id = mi.meeting_id
+                    WHERE m.room_code = $3 AND mi.user_id = $1),
+             EXISTS(SELECT 1 FROM room_admitters WHERE room_id = $4 AND user_id = $1)"#,
+    )
+    .bind(user_id)
+    .bind(room.owner_id)
+    .bind(&room.code)
+    .bind(room.id)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(RoomAccess {
+        authorized: org_mate || invitee || admitter,
+        direct: invitee || admitter,
+        admitter,
+    })
+}
+
+/// Concede/revoga a um utilizador o estatuto de co-anfitrião de admissões,
+/// persistido para reconexões. Chamado pelo anfitrião via sinalização.
+pub async fn set_room_admitter(
+    state: &AppState,
+    room_id: Uuid,
+    user_id: Uuid,
+    granted_by: Uuid,
+    allowed: bool,
+) -> Result<(), ApiError> {
+    if allowed {
+        sqlx::query(
+            "INSERT INTO room_admitters (room_id, user_id, granted_by) VALUES ($1, $2, $3)
+             ON CONFLICT (room_id, user_id) DO NOTHING",
+        )
+        .bind(room_id)
+        .bind(user_id)
+        .bind(granted_by)
+        .execute(&state.db)
+        .await?;
+    } else {
+        sqlx::query("DELETE FROM room_admitters WHERE room_id = $1 AND user_id = $2")
+            .bind(room_id)
+            .bind(user_id)
+            .execute(&state.db)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Compat: só o sinal de acesso (usado onde a distinção direto/espera não importa).
+pub async fn can_access_room(
+    state: &AppState,
+    user_id: Uuid,
+    room: &Room,
+) -> Result<bool, ApiError> {
+    Ok(room_access(state, user_id, room).await?.authorized)
 }
 
 /// Exchange an access token for a short-lived, signed **room token** — the
@@ -127,22 +247,36 @@ pub async fn join_room(
     Path(code): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, created_at FROM rooms WHERE code = $1",
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at FROM rooms WHERE code = $1",
     )
     .bind(code.to_lowercase())
     .fetch_one(&state.db)
     .await?;
+    // Quem tem o código pode entrar (link-join estilo Meet), MAS só entra DIRETO
+    // quem é dono ou está na AGENDA da reunião (convidado explícito). Um colega
+    // de organização que apenas recebeu o link — ou um externo — vai para a SALA
+    // DE ESPERA e é admitido pelo anfitrião (ou por um co-anfitrião promovido).
+    // Isto reconcilia o isolamento multi-tenant com a partilha por link.
+    let mut access = room_access(&state, auth.user_id, &room).await?;
+    if state.presence.is_invited(&room.code, auth.user_id) {
+        access.authorized = true;
+        access.direct = true;
+    }
+    let authorized = access.authorized;
     let user = crate::users::fetch_public(&state.db, auth.user_id).await?;
 
-    // Registar participação (para a biblioteca "gravações onde participei").
-    sqlx::query(
-        "INSERT INTO room_participants (room_id, user_id) VALUES ($1, $2)
-         ON CONFLICT (room_id, user_id) DO NOTHING",
-    )
-    .bind(room.id)
-    .bind(auth.user_id)
-    .execute(&state.db)
-    .await?;
+    // Só regista participação (acesso a gravações/atas) para membros/convidados —
+    // um convidado externo não ganha acesso ao histórico só por ter o link.
+    if authorized {
+        sqlx::query(
+            "INSERT INTO room_participants (room_id, user_id) VALUES ($1, $2)
+             ON CONFLICT (room_id, user_id) DO NOTHING",
+        )
+        .bind(room.id)
+        .bind(auth.user_id)
+        .execute(&state.db)
+        .await?;
+    }
 
     let now = Utc::now().timestamp();
     let room_token = sign_jwt(
@@ -156,7 +290,9 @@ pub async fn join_room(
             name: Some(user.username),
             topo: Some(room.topology.clone()),
             owner: room.owner_id == auth.user_id,
-            wait: room.waiting_room,
+            wait: room.waiting_room || !access.direct, // sem entrada direta → sala de espera
+            adm: access.admitter, // anfitrião ou co-anfitrião persistido pode admitir
+            is_bot: false,        // join normal de utilizador humano
         },
     )?;
 
@@ -189,6 +325,128 @@ pub async fn ice_servers(
                 "credential": credential,
             }
         ]
+    })))
+}
+
+// ---------- Chat persistente ----------
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct ChatMessage {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub username: String,
+    pub message: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Últimas 200 mensagens de chat de uma sala (requer autenticação + acesso).
+pub async fn room_chat(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(code): Path<String>,
+) -> Result<Json<Vec<ChatMessage>>, ApiError> {
+    let room: Room = sqlx::query_as(
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
+         FROM rooms WHERE code = $1",
+    )
+    .bind(&code)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+
+    if !can_access_room(&state, auth.user_id, &room).await? {
+        return Err(ApiError::Unauthorized);
+    }
+
+    let msgs: Vec<ChatMessage> = sqlx::query_as(
+        "SELECT id, user_id, username, message, created_at
+         FROM room_chat_messages
+         WHERE room_id = $1
+         ORDER BY created_at ASC
+         LIMIT 200",
+    )
+    .bind(room.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(msgs))
+}
+
+// ---------- Convidar membros para sala em curso ----------
+
+#[derive(Deserialize)]
+pub struct InviteReq {
+    pub targets: Vec<Uuid>,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+pub async fn invite_to_room(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(code): Path<String>,
+    Json(req): Json<InviteReq>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let room: Room = sqlx::query_as(
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
+         FROM rooms WHERE code = $1",
+    )
+    .bind(&code)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+
+    if !can_access_room(&state, auth.user_id, &room).await? {
+        return Err(ApiError::Unauthorized);
+    }
+
+    let kind = req.kind.as_deref().unwrap_or("video");
+    if !matches!(kind, "video" | "voice") {
+        return Err(ApiError::BadRequest(
+            "kind must be 'video' or 'voice'".into(),
+        ));
+    }
+    if req.targets.is_empty() || req.targets.len() > 50 {
+        return Err(ApiError::BadRequest("targets must be 1–50 users".into()));
+    }
+
+    let caller_user = crate::users::fetch_public(&state.db, auth.user_id).await?;
+
+    // Isolamento multi-tenant: só colegas da mesma org.
+    let co: std::collections::HashSet<Uuid> = crate::org::org_co_members(&state, auth.user_id)
+        .await
+        .into_iter()
+        .collect();
+    let targets: std::collections::HashSet<Uuid> = req
+        .targets
+        .into_iter()
+        .filter(|u| *u != auth.user_id && co.contains(u))
+        .collect();
+
+    if targets.is_empty() {
+        return Err(ApiError::BadRequest("sem destinatários válidos".into()));
+    }
+
+    // Registar a chamada no hub (para que accept/decline funcione e não vá para a sala de espera).
+    state
+        .presence
+        .register_call(room.code.clone(), auth.user_id, targets.clone());
+
+    let title = format!("Convite de {} para a reunião", caller_user.username);
+    let (ringing, offline) = crate::presence::ring_users(
+        &state,
+        auth.user_id,
+        &caller_user.username,
+        targets,
+        &room.code,
+        kind,
+        &title,
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({
+        "ringing": ringing,
+        "offline": offline,
     })))
 }
 

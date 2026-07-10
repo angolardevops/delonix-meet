@@ -1,23 +1,25 @@
-import { CSSProperties, ReactNode, RefObject, useEffect, useMemo, useRef, useState } from 'react'
+import { CSSProperties, ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  currentUser, downloadRecording, iceServers, joinRoom, listRecordings, Recording,
-  saveMinutesByRoom, uploadRecording,
+  currentUser, downloadRecording, iceServers, inviteToRoom, joinRoom, listRecordings, Recording,
+  roomChatHistory, saveMinutesByRoom, saveWhiteboard, searchUsers, uploadRecording, User,
 } from '../api'
 import {
   audioConstraints,
   BackgroundEffect,
+  Denoiser,
   DeviceSets,
   HeadTracker,
   LevelWatcher,
   listDevices,
   MeetingRecorder,
+  playTestTone,
   presetBackgrounds,
-  speechSupported,
   Transcriber,
   videoConstraints,
 } from '../media'
 import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
-import { BreakoutRoom, PeerInfo, Signaling } from '../signaling'
+import { BreakoutRoom, PeerInfo, PollView, QaView, Signaling, WbStroke } from '../signaling'
+import { ThemePicker } from '../components/Shell'
 import { Call, MeshCall, SfuCall } from '../webrtc'
 import {
   BlurIcon, CamIcon, CamOffIcon, ChatIcon, ChevronUpIcon, CloseIcon, CubeIcon, DownloadIcon, EmojiIcon, HandIcon,
@@ -31,7 +33,42 @@ interface RemotePeer {
   hand: boolean
   camOn: boolean
   micOn: boolean
+  /** Foi promovido a co-admitir entradas (o anfitrião tem-no sempre). */
+  canAdmit: boolean
   stream: MediaStream | null
+  is_pstn?: boolean
+  is_bot?: boolean
+}
+
+/**
+ * Cor de fundo determinística por participante: djb2 hash → HSL escuro único.
+ * Cada pessoa tem sempre o mesmo tom independentemente da sessão.
+ */
+/** Renderiza markdown básico em linha: **bold**, *italic*, `code`, @menção. */
+function ChatText({ text }: { text: string }) {
+  // Divide por tokens de marcação e @mentions.
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|@\w+)/g)
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.startsWith('**') && part.endsWith('**'))
+          return <strong key={i}>{part.slice(2, -2)}</strong>
+        if (part.startsWith('*') && part.endsWith('*'))
+          return <em key={i}>{part.slice(1, -1)}</em>
+        if (part.startsWith('`') && part.endsWith('`'))
+          return <code key={i} className="chat-code">{part.slice(1, -1)}</code>
+        if (part.startsWith('@'))
+          return <span key={i} className="chat-mention">{part}</span>
+        return <span key={i}>{part}</span>
+      })}
+    </>
+  )
+}
+
+function peerColor(name: string): string {
+  let h = 5381
+  for (let i = 0; i < name.length; i++) h = ((h << 5) + h + name.charCodeAt(i)) | 0
+  return `hsl(${Math.abs(h) % 360}, 42%, 22%)`
 }
 
 /**
@@ -42,8 +79,6 @@ interface RemotePeer {
 function useGridLayout(areaRef: RefObject<HTMLDivElement | null>, count: number, active: boolean) {
   const [size, setSize] = useState({ w: 480, h: 270 })
   useEffect(() => {
-    // `active` garante que o efeito re-corre quando a área de vídeo passa
-    // a existir no DOM (a sala atravessa ecrãs de espera antes de montar).
     const el = areaRef.current
     if (!el || !active) return
     const GAP = 12
@@ -52,20 +87,35 @@ function useGridLayout(areaRef: RefObject<HTMLDivElement | null>, count: number,
       const w = el.clientWidth - PAD * 2
       const h = el.clientHeight - PAD * 2
       if (w <= 0 || h <= 0 || count === 0) return
+
+      // 1 pessoa: preenche TODA a área disponível (estilo Google Meet).
+      // O vídeo usa object-fit: cover para manter o ratio da câmara.
+      if (count === 1) {
+        const nw = Math.floor(w), nh = Math.floor(h)
+        setSize((s) => (s.w === nw && s.h === nh ? s : { w: nw, h: nh }))
+        return
+      }
+
+      const RATIO = 16 / 9
       let best = { w: 480, h: 270, scale: 0 }
       for (let cols = 1; cols <= count; cols++) {
         const rows = Math.ceil(count / cols)
         const cellW = (w - GAP * (cols - 1)) / cols
         const cellH = (h - GAP * (rows - 1)) / rows
-        const scale = Math.min(cellW / 16, cellH / 9)
-        if (scale > best.scale) best = { w: Math.floor(16 * scale), h: Math.floor(9 * scale), scale }
+        const scale = Math.min(cellW / RATIO, cellH)
+        if (scale > best.scale) {
+          best = { w: Math.floor(RATIO * scale), h: Math.floor(scale), scale }
+        }
       }
       setSize((s) => (s.w === best.w && s.h === best.h ? s : { w: best.w, h: best.h }))
     }
     compute()
+    // Fallback: re-calcula depois do layout estabilizar (resolve race conditions
+    // onde clientWidth ainda não reflete o tamanho flex final).
+    const raf = requestAnimationFrame(compute)
     const ro = new ResizeObserver(compute)
     ro.observe(el)
-    return () => ro.disconnect()
+    return () => { cancelAnimationFrame(raf); ro.disconnect() }
   }, [areaRef, count, active])
   return size
 }
@@ -83,6 +133,7 @@ interface ChatMsg {
   username: string
   text: string
   own: boolean
+  historical?: boolean
 }
 
 interface FloatingReaction {
@@ -92,6 +143,13 @@ interface FloatingReaction {
 }
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '🎉', '👏', '😮']
+
+// Emojis para inserir directamente numa mensagem de chat (inspirado no Teams).
+const CHAT_EMOJIS = [
+  '😀','😂','😍','🥰','😎','🤔','🙏','👍','👎','❤️',
+  '🔥','🎉','✅','⚠️','📌','💡','🚀','💪','👏','😭',
+  '😅','🤗','😤','💼','📊','📈','⏰','🔔','✍️','🫂',
+]
 let reactionSeq = 0
 
 /**
@@ -114,7 +172,7 @@ function buildMoM(lines: string[]): string {
 }
 
 type RoomState = 'connecting' | 'waiting' | 'denied' | 'kicked' | 'in' | 'e2ee-pass'
-type Panel = 'none' | 'chat' | 'people' | 'settings'
+type Panel = 'none' | 'chat' | 'people' | 'settings' | 'tools'
 
 export default function Room({
   code,
@@ -142,8 +200,12 @@ export default function Room({
   const [handRaised, setHandRaised] = useState(false)
   const [hasLocalVideo, setHasLocalVideo] = useState(true)
   const [isHost, setIsHost] = useState(false)
+  // Pode admitir convidados em espera: anfitrião OU participante promovido.
+  const [canAdmit, setCanAdmit] = useState(false)
   const [status, setStatus] = useState('A ligar…')
   const [topology, setTopology] = useState('')
+  const [isTraining, setIsTraining] = useState(false)
+  const [waitingRoomOn, setWaitingRoomOn] = useState(false)
   const [clock, setClock] = useState(() => new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }))
 
   // Dispositivos & qualidade
@@ -151,6 +213,10 @@ export default function Room({
   const [micId, setMicId] = useState('')
   const [camId, setCamId] = useState('')
   const [speakerId, setSpeakerId] = useState('')
+  // Supressão de ruído por IA (RNNoise) — LIGADA por defeito (remove teclado/
+  // ventoinha muito melhor que a nativa). Fallback seguro: se o RNNoise falhar
+  // (wasm indisponível, AudioContext), `denoiseMic` devolve a track CRUA, que
+  // mantém a supressão nativa do browser. Desliga-se nas Definições.
   const [noiseSuppression, setNoiseSuppression] = useState(true)
   const [bgMode, setBgMode] = useState<'none' | 'blur' | 'image'>('none')
   const [bgImageUrl, setBgImageUrl] = useState('')
@@ -182,33 +248,219 @@ export default function Room({
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
   const returnTo = sessionStorage.getItem(`dx_return_${code}`)
 
-  // Relógio do countdown dos grupos (só corre quando há deadline).
+  // UX estilo Meet: cartão "reunião pronta" + painel Fundos e efeitos
+  const [readyOpen, setReadyOpen] = useState(
+    () => !sessionStorage.getItem(`dx_ready_${code}`),
+  )
+  const [fxOpen, setFxOpen] = useState(false)
+  const fxPreview = useRef<HTMLVideoElement>(null)
+  const [blurLevel, setBlurLevel] = useState<'light' | 'strong'>('strong')
+  // Menu "⋮ Mais opções" + preferências de vista (estilo Meet/Zoom)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [hideSelf, setHideSelf] = useState(false)
+  const [hideNoVideo, setHideNoVideo] = useState(false)
+  const [fullscreen, setFullscreen] = useState(false)
+
   useEffect(() => {
-    if (!breakoutEndsAt) return
+    const onFs = () => setFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onFs)
+    return () => document.removeEventListener('fullscreenchange', onFs)
+  }, [])
+
+  // Ferramentas de reunião: sondagens, Q&A, temporizador
+  const [polls, setPolls] = useState<PollView[]>([])
+  const [questions, setQuestions] = useState<QaView[]>([])
+  const [meetTimerEndsAt, setMeetTimerEndsAt] = useState<number | null>(null)
+  const [serverRec, setServerRec] = useState<{ by: string } | null>(null)
+  const [qos, setQos] = useState<import('../webrtc').QosReport | null>(null)
+  const [wbOpen, setWbOpen] = useState(false)
+  const [wbStrokes, setWbStrokes] = useState<WbStroke[]>([])
+  const [secCode, setSecCode] = useState('')
+  const [secOpen, setSecOpen] = useState(false)
+  const [sttLang, setSttLang] = useState(() => localStorage.getItem('dx_stt_lang') ?? 'pt-PT')
+  const [peopleSearch, setPeopleSearch] = useState('')
+  // Convidar membros da org para a sala em curso.
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [inviteQuery, setInviteQuery] = useState('')
+  const [inviteResults, setInviteResults] = useState<User[]>([])
+  const [inviteSelected, setInviteSelected] = useState<User[]>([])
+  const [inviteBusy, setInviteBusy] = useState(false)
+  const [inviteStatus, setInviteStatus] = useState('')
+  // Teams: contador de mensagens não lidas no chat quando o painel está fechado.
+  const [unreadChat, setUnreadChat] = useState(0)
+  // Teams: picker de emoji para inserir na mensagem (diferente das reações flutuantes).
+  const [chatEmojiOpen, setChatEmojiOpen] = useState(false)
+  // @mentions: query ativa (null = inativo), lista de sugestões filtradas.
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const chatInputRef = useRef<HTMLInputElement>(null)
+  // Teams: temporizador de duração da reunião ("00:37" estilo).
+  const [elapsed, setElapsed] = useState(0)
+  const joinedAtRef = useRef<number>(0)
+  // Ref do panel atual para acessar em closures estáticas (signal.on).
+  const panelRef = useRef<Panel>('none')
+  const e2eeKeyRef = useRef<string | null>(null)
+  /** Apresentação (partilha de ecrã) em curso: minha ou de outro peer. */
+  const [presentation, setPresentation] = useState<{ peerId: string; stream: MediaStream } | null>(null)
+  const [myVotes, setMyVotes] = useState<Record<string, number>>({})
+  const [myUpvotes, setMyUpvotes] = useState<Record<string, boolean>>({})
+  const [pollQ, setPollQ] = useState('')
+  const [pollOpts, setPollOpts] = useState<string[]>(['', ''])
+  const [qaInput, setQaInput] = useState('')
+
+  // Controlos de anfitrião (runtime) + legendas CC
+  const [roomLocked, setRoomLocked] = useState(false)
+  const [hostShareOnly, setHostShareOnly] = useState(false)
+  // Partilha: se o anfitrião me concedeu permissão (quando "só anfitrião" está on).
+  const [shareAllowed, setShareAllowed] = useState(false)
+  // Anfitrião: peers a quem concedeu a permissão de partilhar.
+  const [sharePerms, setSharePerms] = useState<Set<string>>(new Set())
+  const [ccOn, setCcOn] = useState(false)
+  const [caption, setCaption] = useState<{ text: string; at: number } | null>(null)
+
+  // Relógio dos countdowns (grupos e temporizador) — só corre quando há deadline.
+  useEffect(() => {
+    if (!breakoutEndsAt && !meetTimerEndsAt) return
     const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000)
     return () => clearInterval(t)
-  }, [breakoutEndsAt])
+  }, [breakoutEndsAt, meetTimerEndsAt])
+
+  // Pré-visualização do painel Fundos e efeitos = o mesmo stream que os
+  // outros veem (com efeito aplicado, se houver).
+  useEffect(() => {
+    if (fxOpen && fxPreview.current && localVideo.current) {
+      fxPreview.current.srcObject = localVideo.current.srcObject
+    }
+  }, [fxOpen, bgMode, bgImageUrl, hasLocalVideo])
+
+  // Telemetria QoS por participante (roadmap): amostra a cada 2 s com o
+  // painel Participantes aberto — bitrate/perda por peer + RTT/uplink.
+  useEffect(() => {
+    if (panel !== 'people') return
+    const call = callRef.current
+    if (!call?.qos) return
+    let alive = true
+    const tick = async () => {
+      const r = await call.qos!().catch(() => null)
+      if (alive && r) setQos(r)
+    }
+    void tick()
+    const t = setInterval(tick, 2000)
+    return () => { alive = false; clearInterval(t) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panel])
+
+  // Código de segurança E2EE (roadmap "E2EE verificável"): SHA-256 da chave
+  // da sala em 4 grupos de 5 dígitos — todos os participantes derivam o
+  // mesmo código e podem compará-lo verbalmente (estilo Signal).
+  useEffect(() => {
+    if (!e2eeOn || !e2eeKeyRef.current) return
+    void (async () => {
+      const raw = Uint8Array.from(atob(e2eeKeyRef.current!), (c) => c.charCodeAt(0))
+      const digest = new Uint8Array(await window.crypto.subtle.digest('SHA-256', raw))
+      let digits = ''
+      for (let i = 0; i < 10 && digits.length < 20; i += 1) {
+        const n = (digest[i * 2] << 8) | digest[i * 2 + 1]
+        digits += String(n % 100000).padStart(5, '0').slice(0, 20 - digits.length)
+      }
+      setSecCode(digits.match(/.{5}/g)!.join(' '))
+    })()
+  }, [e2eeOn])
+
+  // Desbloqueio de áudio: o browser bloqueia o autoplay do áudio remoto até
+  // haver interação. A cada gesto (clique/tecla), re-tenta tocar TODOS os
+  // <audio>/<video> e retoma AudioContexts — garante que se ouve os outros.
+  useEffect(() => {
+    const unlock = () => {
+      document.querySelectorAll<HTMLMediaElement>('audio, video').forEach((el) => {
+        if (el.paused) void el.play().catch(() => {})
+      })
+    }
+    // Tenta já e a cada interação (play() em elemento a tocar é no-op).
+    unlock()
+    document.addEventListener('pointerdown', unlock)
+    document.addEventListener('keydown', unlock)
+    return () => {
+      document.removeEventListener('pointerdown', unlock)
+      document.removeEventListener('keydown', unlock)
+    }
+  }, [])
+
+  // Legendas: cada frase fica 8s no ecrã e depois desaparece.
+  useEffect(() => {
+    if (!caption) return
+    const t = setTimeout(() => setCaption(null), 8000)
+    return () => clearTimeout(t)
+  }, [caption])
+
+  // Sincroniza a ref do panel a cada render (para uso em closures estáticas).
+  panelRef.current = panel
+
+  // Temporizador de duração da reunião (estilo Teams "00:37").
+  useEffect(() => {
+    if (roomState !== 'in') return
+    if (!joinedAtRef.current) joinedAtRef.current = Date.now()
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - joinedAtRef.current) / 1000)), 1000)
+    return () => clearInterval(t)
+  }, [roomState])
+
+  // Atalhos de teclado: Ctrl+D = mic, Ctrl+E = câmara (estilo Google Meet).
+  // Clica no botão DOM em vez de chamar toggleMic/toggleCam diretamente para
+  // evitar closures obsoletas sem precisar de refatorar para useCallback.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'd') {
+          e.preventDefault()
+          document.querySelector<HTMLButtonElement>('.ctrl[aria-label*="microfone"]')?.click()
+        } else if (e.key === 'e') {
+          e.preventDefault()
+          document.querySelector<HTMLButtonElement>('.ctrl[aria-label*="mara"]')?.click()
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   // Conferência / 3D / notas AI
   const [viewMode, setViewMode] = useState<'grid' | 'stage'>('grid')
+  // Fixar (pin) um participante no palco: 'me', o peerId, ou null (segue orador).
+  const [pinnedId, setPinnedId] = useState<string | null>(null)
+  const togglePin = (id: string) => setPinnedId((cur) => (cur === id ? null : id))
+  // Layout da apresentação: plateia em baixo (default) ou na lateral direita.
+  const [presLayout, setPresLayout] = useState<'bottom' | 'side'>('bottom')
   const [parallax, setParallax] = useState(false)
   const [tilt, setTilt] = useState({ x: 0, y: 0 })
   const [notesOpen, setNotesOpen] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
+  // Transcrição PARTILHADA ligada pelo anfitrião: obriga TODOS os clientes a
+  // captar o próprio microfone → capta todos os oradores (#6). `scribeBy` é
+  // quem a iniciou (para mostrar na UI).
+  const [scribeBy, setScribeBy] = useState<string | null>(null)
   const [lines, setLines] = useState<string[]>([])
   const [interim, setInterim] = useState('')
   const [momSaved, setMomSaved] = useState(false)
 
-  const localVideo = useRef<HTMLVideoElement>(null)
+  const localVideo = useRef<HTMLVideoElement | null>(null)
   const videoAreaRef = useRef<HTMLDivElement>(null)
   const callRef = useRef<Call | null>(null)
   const signalRef = useRef<Signaling | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const cameraTrackRef = useRef<MediaStreamTrack | null>(null)
   const effectRef = useRef<BackgroundEffect | null>(null)
+  // Supressão de ruído por IA (RNNoise): o denoiser + a track crua do mic (para
+  // parar corretamente ao trocar de dispositivo/desligar).
+  const denoiserRef = useRef<Denoiser | null>(null)
+  const rawMicRef = useRef<MediaStreamTrack | null>(null)
   const uploadRef = useRef<HTMLInputElement>(null)
   const headRef = useRef<HeadTracker | null>(null)
   const transcriberRef = useRef<Transcriber | null>(null)
+  // Espelham o estado para os callbacks do motor de voz (evita closures obsoletas).
+  const transcribingRef = useRef(false)
+  const ccOnRef = useRef(false)
+  const bgModeRef = useRef<'none' | 'blur' | 'image'>('none')
   const levelsRef = useRef<LevelWatcher | null>(null)
   const recorderRef = useRef<MeetingRecorder | null>(null)
   const talkOverSince = useRef(0)
@@ -234,12 +486,21 @@ export default function Room({
     async function start() {
       try {
         // Camera+mic (máx. resolução), depois só mic, depois modo espectador — nunca bloquear a entrada.
-        // Reunião de voz: pede só o microfone (entra sem vídeo).
-        const stream = await navigator.mediaDevices
-          .getUserMedia(
-            voiceOnly ? { audio: audioConstraints() } : { audio: audioConstraints(), video: videoConstraints() },
-          )
-          .catch(() => navigator.mediaDevices.getUserMedia({ audio: audioConstraints() }))
+        // Reunião de voz: pede só o microfone (entra sem vídeo). Captura-se o
+        // motivo da falha (permissão negada vs. dispositivo ocupado/ausente)
+        // para dar uma mensagem acionável em vez de ficar preto/mudo em silêncio.
+        let permErr = ''
+        const getMedia = (c: MediaStreamConstraints) =>
+          navigator.mediaDevices.getUserMedia(c).catch((e: DOMException) => {
+            if (e?.name === 'NotAllowedError' || e?.name === 'SecurityError') permErr = 'denied'
+            else if (e?.name === 'NotReadableError' && !permErr) permErr = 'busy'
+            else if (e?.name === 'NotFoundError' && !permErr) permErr = 'missing'
+            throw e
+          })
+        const stream = await getMedia(
+          voiceOnly ? { audio: audioConstraints() } : { audio: audioConstraints(), video: videoConstraints() },
+        )
+          .catch(() => getMedia({ audio: audioConstraints() }))
           .catch(() => new MediaStream())
         stream.getVideoTracks().forEach((t) => (t.contentHint = 'motion'))
         if (cancelled) {
@@ -247,10 +508,36 @@ export default function Room({
           return
         }
         const spectator = stream.getTracks().length === 0
-        if (spectator) setStatus('Sem câmara/microfone — modo espectador')
-        setHasLocalVideo(stream.getVideoTracks().length > 0)
+        const hasVideo = stream.getVideoTracks().length > 0
+        if (permErr === 'denied' && spectator)
+          setStatus('Câmara/microfone BLOQUEADOS neste site — clica no cadeado 🔒 na barra de endereço, permite Câmara e Microfone, e recarrega a página.')
+        else if (permErr === 'denied' && !hasVideo)
+          setStatus('Câmara bloqueada — clica no cadeado 🔒 na barra de endereço, permite a Câmara, e recarrega.')
+        else if (permErr === 'missing')
+          setStatus('Não foi detetada câmara nem microfone neste dispositivo.')
+        else if (spectator) setStatus('Sem câmara/microfone — modo espectador')
+        // Pediu câmara mas só veio áudio: quase sempre a câmara está ocupada
+        // por outra app/separador (ex.: testar em duas abas no mesmo PC).
+        else if (!voiceOnly && !hasVideo)
+          setStatus('Câmara indisponível (em uso por outra app ou separador) — entraste só com áudio. Clica na câmara para tentar ligar.')
+        // O indicador de mic reflete a realidade: sem track de áudio (mic negado
+        // ou espectador) mostra-se desligado — clicar no mic readquire-o.
+        if (stream.getAudioTracks().length === 0) setMicOn(false)
+        setHasLocalVideo(hasVideo)
         localStreamRef.current = stream
         cameraTrackRef.current = stream.getVideoTracks()[0] ?? null
+
+        // Supressão de ruído por IA (RNNoise) no arranque: troca a track crua do
+        // mic pela limpa ANTES de a chamada começar. Fallback: mantém a crua.
+        const initRaw = stream.getAudioTracks()[0]
+        const initMicId = initRaw?.getSettings().deviceId ?? ''
+        if (initRaw && noiseSuppression) {
+          const clean = await denoiseMic(initRaw, true)
+          if (clean !== initRaw) {
+            stream.removeTrack(initRaw)
+            stream.addTrack(clean)
+          }
+        }
         if (localVideo.current) localVideo.current.srcObject = stream
 
         // Deteção de voz local + lista de dispositivos (labels só após permissão).
@@ -260,15 +547,18 @@ export default function Room({
         void listDevices().then((d) => {
           if (cancelled) return
           setDevices(d)
-          setMicId(stream.getAudioTracks()[0]?.getSettings().deviceId ?? '')
+          setMicId(initMicId || stream.getAudioTracks()[0]?.getSettings().deviceId || '')
           setCamId(stream.getVideoTracks()[0]?.getSettings().deviceId ?? '')
         })
         navigator.mediaDevices.addEventListener?.('devicechange', () => void listDevices().then(setDevices))
 
         const [{ room, room_token }, rtcConfig] = await Promise.all([joinRoom(code), iceServers()])
         setTopology(room.topology)
+        setIsTraining(room.format === 'training')
+        setWaitingRoomOn(room.waiting_room)
         const amHost = room.owner_id === currentUser()?.id
         setIsHost(amHost)
+        setCanAdmit(amHost) // o anfitrião pode admitir; outros só se promovidos
 
         // E2EE: deriva a chave da frase-chave ANTES de ligar; a chave nunca
         // sai deste dispositivo — o servidor/SFU só vê frames cifrados.
@@ -284,15 +574,38 @@ export default function Room({
             return
           }
           crypto = new FrameCrypto()
-          await crypto.setKey(await deriveRoomKey(pass, code))
+          const rawKey = await deriveRoomKey(pass, code)
+          // Cópia base64 ANTES do setKey (o buffer é transferido ao worker):
+          // é a chave que o anfitrião pode ceder à gravação server-side.
+          e2eeKeyRef.current = btoa(String.fromCharCode(...new Uint8Array(rawKey)))
+          await crypto.setKey(rawKey)
           setE2eeOn(true)
         }
 
-        const signal = new Signaling(room_token)
+        const signal = new Signaling(room_token, code)
         signalRef.current = signal
-        signal.on('chat', (m) => setChat((c) => [...c, { username: m.username, text: m.text, own: false }]))
+        signal.on('chat', (m) => {
+          setChat((c) => [...c, { username: m.username, text: m.text, own: false }])
+          if (panelRef.current !== 'chat') setUnreadChat((n) => n + 1)
+        })
         signal.on('error', (m) => setStatus(m.message))
-        signal.onclose = () => setStatus('Ligação terminada')
+        signal.onclose = () => {
+          if (cancelled) return // saída intencional da sala
+          // O WS caiu (rede/proxy). Sem sinalização não há renegociação → media
+          // num sentido só. Reconecta recarregando a sala (rejoin limpo), com
+          // guarda anti-loop: se cair outra vez em < 8s, pede recarregar manual.
+          const now = Date.now()
+          const last = Number(sessionStorage.getItem('dx_reconnect_at') || 0)
+          if (now - last > 8000) {
+            sessionStorage.setItem('dx_reconnect_at', String(now))
+            setStatus('Ligação perdida — a reconectar…')
+            setTimeout(() => {
+              if (!cancelled) location.reload()
+            }, 1500)
+          } else {
+            setStatus('Ligação instável. Verifica a rede / o proxy do WebSocket e recarrega a página.')
+          }
+        }
 
         // Estados da sala de espera / controlo do anfitrião.
         signal.on('waiting', () => setRoomState('waiting'))
@@ -311,6 +624,16 @@ export default function Room({
           setWaitingQueue((q) => [...q.filter((p) => p.peer_id !== m.peer.peer_id), m.peer]),
         )
         signal.on('waiting-left', (m) => setWaitingQueue((q) => q.filter((p) => p.peer_id !== m.peer_id)))
+        // O anfitrião promoveu-me (ou revogou) o poder de admitir entradas.
+        signal.on('admit-role', (m) => {
+          setCanAdmit(m.allowed || amHost)
+          setStatus(m.allowed ? 'Podes agora admitir convidados da sala de espera' : '')
+          if (!m.allowed) setWaitingQueue([])
+        })
+        // Crachá de co-anfitrião de admissões nos participantes.
+        signal.on('peer-role', (m) =>
+          setPeers((ps) => ps.map((p) => (p.peerId === m.peer_id ? { ...p, canAdmit: m.can_admit } : p))),
+        )
 
         // Breakout rooms: mover para o grupo (guardando o caminho de volta)
         // ou regressar à sala principal quando o anfitrião encerra.
@@ -334,6 +657,16 @@ export default function Room({
         signal.on('joined', (m) => {
           setRoomState('in')
           setStatus(spectator ? 'Sem câmara/microfone — modo espectador' : '')
+          // Carrega histórico de chat (best-effort, não bloqueia a sala).
+          void roomChatHistory(code).then((history) => {
+            if (cancelled) return
+            setChat(history.map((h) => ({
+              username: h.username,
+              text: h.message,
+              own: h.user_id === currentUser()?.id,
+              historical: true,
+            })))
+          }).catch(() => {})
           setPeers(
             m.peers.map((p) => ({
               peerId: p.peer_id,
@@ -342,6 +675,7 @@ export default function Room({
               hand: p.hand,
               camOn: p.cam ?? true,
               micOn: p.mic ?? true,
+              canAdmit: p.can_admit ?? p.host,
               stream: null,
             })),
           )
@@ -357,6 +691,7 @@ export default function Room({
               hand: m.peer.hand,
               camOn: m.peer.cam ?? true,
               micOn: m.peer.mic ?? true,
+              canAdmit: m.peer.can_admit ?? m.peer.host,
               stream: null,
             },
           ]),
@@ -377,21 +712,87 @@ export default function Room({
           setRemoteRecorder(m.active ? m.username : '')
           if (!m.active) void listRecordings(code).then(setRecordings).catch(() => {})
         })
+        signal.on('room-settings', (m) => {
+          setRoomLocked(m.locked)
+          setHostShareOnly(m.host_share_only)
+        })
+        signal.on('share-granted', (m) => {
+          setShareAllowed(m.allowed)
+          setStatus(m.allowed ? 'O anfitrião permitiu-te partilhar o ecrã' : 'A permissão de partilha foi revogada')
+        })
+        signal.on('polls', (m) => setPolls(m.polls))
+        signal.on('qa', (m) => setQuestions(m.questions))
+        signal.on('timer', (m) => setMeetTimerEndsAt(m.ends_at))
+        signal.on('server-recording', (m) => setServerRec(m.active ? { by: m.by } : null))
+        // Quadro branco: snapshot ao entrar + traços/limpeza em tempo real.
+        signal.on('wb-state', (m) => {
+          // Só carrega o conteúdo — NÃO abre sozinho. Abrir no snapshot fazia o
+          // quadro reaparecer a cada reload se a sala tivesse traços antigos.
+          setWbStrokes(m.strokes)
+        })
+        signal.on('wb-stroke', (m) => {
+          setWbStrokes((st) => [...st, m.stroke])
+          setWbOpen(true) // alguém desenhou → o quadro aparece a todos
+        })
+        signal.on('wb-clear', () => setWbStrokes([]))
         // Transcrição de outro participante — junta à transcrição partilhada.
         signal.on('transcript', (m) => {
           const stamp = new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
+          // A legenda ao vivo só aparece a quem tem CC ligado; as notas
+          // acumulam sempre (transcrição partilhada, legendada por orador).
+          if (ccOnRef.current) setCaption({ text: `${m.username}: ${m.text}`, at: Date.now() })
           setLines((l) => [...l, `[${stamp}] ${m.username}: ${m.text}`])
+        })
+        // O anfitrião ligou/desligou a Nota AI partilhada: todos captam o
+        // próprio microfone (#6). Segue o estado partilhado localmente.
+        signal.on('transcription', (m) => {
+          setScribeBy(m.on ? m.by : null)
+          setTranscribing(m.on)
+          if (m.on) {
+            setNotesOpen(true)
+            setStatus(`Transcrição iniciada por ${m.by} — a tua fala é captada`)
+          }
+        })
+
+        signal.on('remote-control', (m) => {
+          if (m.action === 'request') {
+            const who = peersRef.current.find((p) => p.peerId === m.from)?.username ?? 'Alguém'
+            if (window.confirm(`${who} solicitou controlo remoto do teu ecrã. Aceitar?`)) {
+              signal.send({ type: 'remote-control', to: m.from, action: 'accept', payload: null })
+            } else {
+              signal.send({ type: 'remote-control', to: m.from, action: 'deny', payload: null })
+            }
+          } else if (m.action === 'accept') {
+            alert('O anfitrião aceitou o teu pedido de controlo remoto! (Ponte de eventos DataChannel pronta).')
+          } else if (m.action === 'deny') {
+            alert('O pedido de controlo remoto foi recusado.')
+          }
         })
 
         const callbacks = {
           // Media para um peer desconhecido é descartada — o roster chega
           // sempre primeiro; evita tiles fantasma de m-lines sem publisher.
           onStream: (peerId: string, remote: MediaStream) => {
+            // Partilha de ecrã de outro participante: stream "<peer>-screen"
+            // vira a apresentação em palco (não substitui a câmara dele).
+            if (peerId.endsWith('-screen')) {
+              const owner = peerId.slice(0, -7)
+              setPresentation({ peerId: owner, stream: remote })
+              const clear = () =>
+                setPresentation((p) => (p?.peerId === owner ? null : p))
+              remote.getVideoTracks().forEach((t) => {
+                t.onended = clear
+                t.onmute = () => setTimeout(() => { if (t.muted) clear() }, 2000)
+              })
+              remote.onremovetrack = clear
+              return
+            }
             levelsRef.current?.watch(peerId, remote)
             setPeers((ps) => ps.map((p) => (p.peerId === peerId ? { ...p, stream: remote } : p)))
           },
           onPeerLeft: (peerId: string) => {
             levelsRef.current?.unwatch(peerId)
+            setPresentation((p) => (p?.peerId === peerId ? null : p))
             setPeers((ps) => ps.map((p) => (p.peerId === peerId ? { ...p, stream: null } : p)))
           },
         }
@@ -410,6 +811,8 @@ export default function Room({
       effectRef.current?.stop()
       headRef.current?.stop()
       transcriberRef.current?.stop()
+      denoiserRef.current?.stop()
+      rawMicRef.current?.stop()
       callRef.current?.hangup()
       localStreamRef.current?.getTracks().forEach((t) => t.stop())
     }
@@ -439,17 +842,35 @@ export default function Room({
   // Difunde o estado de câmara/mic sempre que muda (toggle, force-mute,
   // voz→vídeo) — os outros trocam vídeo preto por avatar e acertam o ícone.
   useEffect(() => {
+    // No SFU o ecrã é track separada — a câmara mantém o seu estado; no mesh
+    // a partilha substitui a câmara, por isso conta como "vídeo ligado".
+    const meshSharing = sharing && topology !== 'sfu'
     if (roomState === 'in')
-      signalRef.current?.send({ type: 'media', cam: (camOn && hasLocalVideo) || sharing, mic: micOn })
+      signalRef.current?.send({ type: 'media', cam: (camOn && hasLocalVideo) || meshSharing, mic: micOn })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [camOn, micOn, hasLocalVideo, sharing, roomState])
+  }, [camOn, micOn, hasLocalVideo, sharing, roomState, topology])
 
-  function toggleMic() {
+  async function toggleMic() {
     levelsRef.current?.resume()
     const track = localStreamRef.current?.getAudioTracks()[0]
     if (track) {
       track.enabled = !track.enabled
       setMicOn(track.enabled)
+      return
+    }
+    // Sem track de áudio (entrou em modo espectador ou negou o mic no início):
+    // adquire o microfone agora e liga-o à chamada, para poder falar/transcrever.
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(micId || undefined) })
+      const newTrack = s.getAudioTracks()[0]
+      if (!newTrack) throw new Error('sem microfone')
+      localStreamRef.current?.addTrack(newTrack)
+      await callRef.current?.replaceAudioTrack(newTrack)
+      if (localStreamRef.current) levelsRef.current?.watch('me', localStreamRef.current)
+      setMicId(newTrack.getSettings().deviceId ?? '')
+      setMicOn(true)
+    } catch {
+      setStatus('Não foi possível aceder ao microfone — verifica a permissão do browser')
     }
   }
 
@@ -505,32 +926,87 @@ export default function Room({
     }
   }
 
-  /** Notas AI: transcrição contínua do microfone local. */
+  /** Notas AI (só anfitrião): liga/desliga a transcrição PARTILHADA. Difunde a
+   * todos via WS → cada cliente capta o próprio microfone (#6). O estado local
+   * é atualizado pelo eco do servidor no handler `transcription`. */
   function toggleTranscription() {
-    if (transcribing) {
+    if (!isHost) return // só o anfitrião controla a transcrição partilhada
+    setNotesOpen(true)
+    signalRef.current?.send({ type: 'transcription-toggle', on: !transcribing })
+  }
+
+  // Motor de voz do browser (Web Speech; Whisper WASM como fallback no Firefox).
+  // Corre um ÚNICO motor sempre que as legendas (CC) OU as notas estiverem
+  // ativas — enquanto falo, transcreve e difunde a frase, e os outros com CC
+  // ligado veem a minha legenda. Um só motor porque a Web Speech não permite
+  // várias instâncias em simultâneo.
+  useEffect(() => {
+    transcribingRef.current = transcribing
+  }, [transcribing])
+  useEffect(() => {
+    ccOnRef.current = ccOn
+  }, [ccOn])
+  useEffect(() => {
+    const want = (ccOn || transcribing) && roomState === 'in'
+    if (want && !transcriberRef.current) {
+      const t = new Transcriber()
+      t.onFinal = (text) => {
+        const stamp = new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
+        if (ccOnRef.current) setCaption({ text: `eu: ${text}`, at: Date.now() })
+        setInterim('')
+        // Difunde a frase para os outros montarem legenda/transcrição partilhada.
+        signalRef.current?.send({ type: 'transcript', text })
+        // Só acumula nas notas quando a transcrição está ligada (CC é efémera).
+        if (transcribingRef.current) setLines((l) => [...l, `[${stamp}] eu: ${text}`])
+      }
+      t.onInterim = (text) => {
+        setInterim(text)
+        // Legenda ao vivo (estilo Meet) enquanto falo, se o CC estiver ligado.
+        if (ccOnRef.current && text) setCaption({ text: `eu: ${text}`, at: Date.now() })
+      }
+      t.onError = (message) => {
+        setStatus(message)
+        setInterim('')
+        transcriberRef.current?.stop()
+        transcriberRef.current = null
+        setTranscribing(false)
+        setCcOn(false)
+      }
+      t.start(sttLang, localStreamRef.current)
+      transcriberRef.current = t
+      if (!localStreamRef.current?.getAudioTracks().length)
+        setInterim('(à espera do microfone — se nada aparecer, verifica a permissão do browser)')
+    } else if (!want && transcriberRef.current) {
+      transcriberRef.current.stop()
+      transcriberRef.current = null
+      setInterim('')
+    }
+  }, [ccOn, transcribing, sttLang, roomState])
+
+  // Pára o motor ao sair da sala (desmontagem).
+  useEffect(
+    () => () => {
       transcriberRef.current?.stop()
       transcriberRef.current = null
-      setTranscribing(false)
-      return
-    }
-    if (!speechSupported()) {
-      setStatus('Transcrição não suportada neste browser (usa Chrome/Edge)')
-      return
-    }
-    const t = new Transcriber()
-    t.onFinal = (text) => {
-      const stamp = new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
-      setLines((l) => [...l, `[${stamp}] eu: ${text}`])
-      setInterim('')
-      // Difunde a minha frase para os outros montarem a transcrição partilhada.
-      signalRef.current?.send({ type: 'transcript', text })
-    }
-    t.onInterim = (text) => setInterim(text)
-    t.start('pt-PT')
-    transcriberRef.current = t
-    setTranscribing(true)
-    setNotesOpen(true)
-  }
+    },
+    [],
+  )
+
+  useEffect(() => {
+    bgModeRef.current = bgMode
+  }, [bgMode])
+
+  // Ref de callback do vídeo local: o `srcObject` não é uma prop do React, por
+  // isso perde-se quando o elemento <video> é REMONTADO (ex.: o meu tile muda da
+  // grelha para a plateia ao iniciar a partilha de ecrã). Ao (re)montar, volta a
+  // ligar o stream da câmara (ou a saída do efeito de fundo) — sem isto o tile
+  // fica preto mesmo com a câmara ligada.
+  const attachLocalVideo = useCallback((node: HTMLVideoElement | null) => {
+    localVideo.current = node
+    if (!node || node.srcObject) return
+    const eff = bgModeRef.current !== 'none' ? effectRef.current?.output ?? null : null
+    node.srcObject = eff ? new MediaStream([eff]) : localStreamRef.current
+  }, [])
 
   /** Gera as MoM a partir da transcrição e guarda na reunião (se houver). */
   async function saveMinutes() {
@@ -546,21 +1022,61 @@ export default function Room({
     }
   }
 
+  /** Sair da sala. Se houver transcrição por guardar, grava a ata AUTOMATICAMENTE
+   *  antes de sair (#7) — o anfitrião não perde as notas ao encerrar. */
+  async function leaveRoom() {
+    if (isHost && lines.length > 0 && !momSaved) {
+      setStatus('A guardar a ata antes de sair…')
+      try {
+        await saveMinutesByRoom(code, buildMoM(lines), lines.join('\n'))
+      } catch {
+        /* não bloqueia a saída se a gravação falhar */
+      }
+    }
+    onLeave()
+  }
+
   /** Troca o microfone e/ou reaplica a supressão de ruído. */
+  /** Aplica (ou remove) a supressão por IA e devolve a track a enviar à chamada.
+   *  Para o denoiser/track crua anteriores. Fallback: track crua se o RNNoise falhar. */
+  async function denoiseMic(rawTrack: MediaStreamTrack, ns: boolean): Promise<MediaStreamTrack> {
+    denoiserRef.current?.stop()
+    denoiserRef.current = null
+    rawMicRef.current?.stop()
+    rawMicRef.current = null
+    if (!ns) return rawTrack
+    try {
+      const d = new Denoiser()
+      const clean = await d.process(rawTrack)
+      clean.enabled = rawTrack.enabled
+      denoiserRef.current = d
+      rawMicRef.current = rawTrack // mantém viva (alimenta o denoiser)
+      return clean
+    } catch (e) {
+      console.warn('[denoise] RNNoise indisponível — supressão nativa do browser', e)
+      return rawTrack
+    }
+  }
+
   async function switchMic(deviceId: string, ns = noiseSuppression) {
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId || undefined, ns) })
-      const newTrack = s.getAudioTracks()[0]
+      // Supressão NATIVA do browser sempre ligada (robusta); `ns` controla só a
+      // camada de IA (RNNoise) aplicada em denoiseMic.
+      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId || undefined) })
+      const raw = s.getAudioTracks()[0]
+      raw.enabled = micOn
+      const devId = raw.getSettings().deviceId ?? deviceId // capturar ANTES do denoise (a track limpa não tem deviceId)
+      const sendTrack = await denoiseMic(raw, ns)
+      sendTrack.enabled = micOn
       const old = localStreamRef.current?.getAudioTracks()[0]
-      newTrack.enabled = micOn
       if (old) {
         localStreamRef.current?.removeTrack(old)
         old.stop()
       }
-      localStreamRef.current?.addTrack(newTrack)
-      await callRef.current?.replaceAudioTrack(newTrack)
+      localStreamRef.current?.addTrack(sendTrack)
+      await callRef.current?.replaceAudioTrack(sendTrack)
       if (localStreamRef.current) levelsRef.current?.watch('me', localStreamRef.current)
-      setMicId(newTrack.getSettings().deviceId ?? deviceId)
+      setMicId(devId)
     } catch {
       setStatus('Não foi possível mudar de microfone')
     }
@@ -609,7 +1125,11 @@ export default function Room({
    * 'none' repõe a câmara, 'blur' aplica vidro fosco, 'image' usa a imagem
    * dada — a mudança entre blur/imagem é instantânea (mesmo pipeline).
    */
-  async function applyBackground(mode: 'none' | 'blur' | 'image', imageUrl?: string) {
+  async function applyBackground(
+    mode: 'none' | 'blur' | 'image',
+    imageUrl?: string,
+    blur: 'light' | 'strong' = blurLevel,
+  ) {
     if (bgBusy || !cameraTrackRef.current) return
     setBgBusy(true)
     try {
@@ -625,6 +1145,8 @@ export default function Room({
       }
       effectRef.current = effectRef.current ?? new BackgroundEffect()
       const effect = effectRef.current
+      effect.blurPx = blur === 'light' ? 10 : 24
+      setBlurLevel(blur)
       if (mode === 'image' && imageUrl) await effect.setImage(imageUrl)
       else effect.mode = 'blur'
       if (!effect.started) {
@@ -650,23 +1172,42 @@ export default function Room({
   }
 
   async function toggleShare() {
+    const isSfu = topology === 'sfu'
     if (sharing) {
-      // O efeito continua a processar durante a partilha; basta repor a track.
-      const back = (bgMode !== 'none' && effectRef.current?.output) || cameraTrackRef.current
-      if (back) await callRef.current?.replaceVideoTrack(back)
-      if (localVideo.current && localStreamRef.current) {
-        localVideo.current.srcObject =
-          bgMode !== 'none' && back !== cameraTrackRef.current ? new MediaStream([back!]) : localStreamRef.current
+      if (isSfu) {
+        // SFU: o ecrã era uma track adicional — basta removê-la.
+        presentation?.stream.getTracks().forEach((t) => t.stop())
+        await callRef.current?.stopScreen()
+        setPresentation((p) => (p?.peerId === 'me' ? null : p))
+      } else {
+        // Mesh: o ecrã substituiu a câmara — repor a track.
+        const back = (bgMode !== 'none' && effectRef.current?.output) || cameraTrackRef.current
+        if (back) await callRef.current?.replaceVideoTrack(back)
+        if (localVideo.current && localStreamRef.current) {
+          localVideo.current.srcObject =
+            bgMode !== 'none' && back !== cameraTrackRef.current ? new MediaStream([back!]) : localStreamRef.current
+        }
       }
       setSharing(false)
       return
     }
     try {
-      const display = await navigator.mediaDevices.getDisplayMedia({ video: true })
+      const display = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        // Áudio do sistema/separador (Chrome/Edge; o utilizador escolhe no picker)
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      })
       const screenTrack = display.getVideoTracks()[0]
       screenTrack.contentHint = 'detail' // privilegiar nitidez de texto sobre framerate
-      await callRef.current?.replaceVideoTrack(screenTrack)
-      if (localVideo.current) localVideo.current.srcObject = display
+      if (isSfu) {
+        // Track separada: a câmara continua; todos (e a gravação) recebem
+        // o ecrã como "apresentação" própria.
+        await callRef.current?.startScreen(screenTrack, display)
+        setPresentation({ peerId: 'me', stream: display })
+      } else {
+        await callRef.current?.replaceVideoTrack(screenTrack)
+        if (localVideo.current) localVideo.current.srcObject = display
+      }
       screenTrack.onended = () => toggleShare()
       setSharing(true)
     } catch {
@@ -720,12 +1261,49 @@ export default function Room({
     setPickerOpen(false)
   }
 
+  const mentionSuggestions = mentionQuery !== null
+    ? peers.map((p) => p.username).filter((n) => n.toLowerCase().startsWith(mentionQuery)).slice(0, 5)
+    : []
+
+  // Pesquisa de membros da org para o convite.
+  useEffect(() => {
+    if (inviteQuery.trim().length < 2) { setInviteResults([]); return }
+    const t = setTimeout(() => void searchUsers(inviteQuery).then(setInviteResults).catch(() => {}), 250)
+    return () => clearTimeout(t)
+  }, [inviteQuery])
+
+  async function sendInvites() {
+    if (inviteSelected.length === 0 || inviteBusy) return
+    setInviteBusy(true)
+    try {
+      const { ringing, offline } = await inviteToRoom(code, inviteSelected.map((u) => u.id))
+      setInviteStatus(`A chamar ${ringing.length} pessoa(s)…${offline.length > 0 ? ` (${offline.length} offline)` : ''}`)
+      setInviteSelected([])
+      setInviteQuery('')
+      setTimeout(() => { setInviteOpen(false); setInviteStatus('') }, 2500)
+    } catch {
+      setInviteStatus('Erro ao convidar. Tenta novamente.')
+    } finally {
+      setInviteBusy(false)
+    }
+  }
+
+  function completeMention(name: string) {
+    const at = chatInput.lastIndexOf('@')
+    if (at === -1) return
+    const completed = chatInput.slice(0, at) + '@' + name + ' '
+    setChatInput(completed)
+    setMentionQuery(null)
+    chatInputRef.current?.focus()
+  }
+
   function sendChat() {
     const text = chatInput.trim()
     if (!text) return
     signalRef.current?.send({ type: 'chat', text })
     setChat((c) => [...c, { username: 'eu', text, own: true }])
     setChatInput('')
+    setMentionQuery(null)
   }
 
   function admit(peerId: string, ok: boolean) {
@@ -733,15 +1311,28 @@ export default function Room({
     setWaitingQueue((q) => q.filter((p) => p.peer_id !== peerId))
   }
 
-  const total = peers.length + 1
+  // Preferências de vista: esconder o meu tile e/ou participantes sem vídeo.
+  const visiblePeers = hideNoVideo
+    ? peers.filter((p) => !!p.stream?.getVideoTracks().length && p.camOn)
+    : peers
+  const showSelf = !hideSelf
+  const total = visiblePeers.length + (showSelf ? 1 : 0)
   const tileSize = useGridLayout(videoAreaRef, total, roomState === 'in')
   const meSpeaking = speaking.has('me') && micOn
   const anyoneRecording = recording || !!remoteRecorder
 
-  // Conferência: o orador ativo (a falar) vai para o palco; se ninguém fala,
-  // fica o primeiro participante. A plateia é toda a gente menos o do palco.
-  const stagePeer =
-    peers.find((p) => speaking.has(p.peerId)) ?? peers[0] ?? null
+  // Conferência: o orador ativo (a falar) vai para o palco — inclui-me a MIM
+  // (spotlight estilo Meet). Se um remoto fala, é ele; senão se eu falo, sou eu;
+  // senão fica o primeiro participante, ou eu próprio se estou sozinho.
+  // Pin tem prioridade: fixa o tile escolhido no palco (não troca com o orador).
+  const pinnedPeer = pinnedId && pinnedId !== 'me' ? peers.find((p) => p.peerId === pinnedId) ?? null : null
+  const pinnedSelf = pinnedId === 'me'
+  const remoteSpeaker = pinnedPeer ?? (pinnedSelf ? null : peers.find((p) => speaking.has(p.peerId)) ?? null)
+  const stagePeer = pinnedPeer ?? remoteSpeaker ?? peers[0] ?? null
+  // Palco em mim: fixei-me, ou sou o orador ativo, ou não há mais ninguém.
+  const stageOnSelf = pinnedSelf || (!pinnedPeer && !remoteSpeaker && (speaking.has('me') || peers.length === 0))
+  // Com pin ativo, força o modo palco (é o efeito de "não trocar toda a hora").
+  const effectiveViewMode: 'grid' | 'stage' = pinnedId ? 'stage' : viewMode
   // Transformação 3D (parallax) aplicada à área de vídeo. O scale(1.14) é
   // overscan: mantém a área sempre maior que a moldura, por isso a rotação/
   // deslocamento nunca revela o fundo escuro nos cantos. Deslocamento em %
@@ -812,39 +1403,6 @@ export default function Room({
 
   return (
     <div className="room-page">
-      {isHost && waitingQueue.length > 0 && (
-        <div className="admit-bar">
-          {waitingQueue.map((p) => (
-            <div key={p.peer_id} className="admit-item">
-              <span>
-                <strong>{p.username}</strong> quer entrar
-              </span>
-              <button className="admit-yes" onClick={() => admit(p.peer_id, true)}>
-                Admitir
-              </button>
-              <button className="admit-no" onClick={() => admit(p.peer_id, false)}>
-                Recusar
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {anyoneRecording && (
-        <div className="rec-banner">
-          <span className="rec-dot" />
-          {recording ? 'Estás a gravar esta reunião' : `${remoteRecorder} está a gravar esta reunião`} — todos os
-          participantes têm acesso à gravação no painel «Participantes».
-        </div>
-      )}
-
-      {talkOver && (
-        <div className="talkover-banner">
-          🎙️ {talkOverNames ? `${talkOverNames} estão a falar ao mesmo tempo` : 'Duas pessoas estão a falar ao mesmo tempo'} —
-          para uma boa comunicação, tentem dar espaço para cada um terminar.
-        </div>
-      )}
-
       <div className="room-body">
         {roomState === 'waiting' && (
           <div className="waiting-overlay">
@@ -856,27 +1414,50 @@ export default function Room({
 
         <div className="video-area" ref={videoAreaRef}>
         {(() => {
-          // Dimensões explícitas só na grelha; no modo palco mandam as regras CSS.
+          // Dimensões explícitas só na grelha multi-tile; solo e palco usam CSS.
+          const isSolo = total === 1
           const tileStyle: CSSProperties | undefined =
-            viewMode === 'stage' ? undefined : { width: tileSize.w, height: tileSize.h }
+            effectiveViewMode === 'stage' || presentation || isSolo ? undefined : { width: tileSize.w, height: tileSize.h }
+          // A câmara aparece quando há vídeo local e está ligada. Em mesh a
+          // partilhar, o próprio <video> mostra o ecrã (substitui a câmara); no
+          // SFU o ecrã é um tile à parte, por isso aqui mostra-se a câmara ou,
+          // se não houver, o avatar (nunca um retângulo preto).
+          const showSelfVideo = (hasLocalVideo && camOn) || (sharing && topology !== 'sfu')
           const selfTile = (
-            <div className={meSpeaking ? 'tile speaking' : 'tile'} style={tileStyle}>
+            <div
+              className={meSpeaking ? 'tile speaking' : 'tile'}
+              style={tileStyle}
+              onDoubleClick={() => togglePin('me')}
+              title="Duplo-clique para fixar/desafixar no palco"
+            >
               <video
-                ref={localVideo}
+                ref={attachLocalVideo}
                 autoPlay
                 muted
                 playsInline
                 className={hasLocalVideo && !sharing && bgMode === 'none' ? 'mirror' : undefined}
-                style={{ display: (hasLocalVideo && camOn) || sharing ? undefined : 'none' }}
+                style={{ display: showSelfVideo ? undefined : 'none' }}
               />
-              {!(hasLocalVideo && camOn) && !sharing && (
-                <div className="tile-avatar">
-                  <span className="avatar-circle">EU</span>
+              {!showSelfVideo && (
+                <div className="tile-avatar" style={{ background: peerColor(currentUser()?.username ?? 'eu') }}>
+                  <span className="avatar-circle" style={{ background: 'rgba(0,0,0,0.25)' }}>EU</span>
                 </div>
               )}
+              <button
+                className={pinnedId === 'me' ? 'tile-pin pinned' : 'tile-pin'}
+                onClick={() => togglePin('me')}
+                title={pinnedId === 'me' ? 'Desafixar do palco' : 'Fixar no palco'}
+              >
+                📌
+              </button>
               {handRaised && <span className="hand-badge">✋</span>}
+              {/* Indicador de mic muted no canto superior direito (estilo Meet). */}
+              {!micOn && (
+                <span className="tile-mic-status" aria-label="microfone desativado">
+                  <MicOffIcon />
+                </span>
+              )}
               <span className="tile-name">
-                {!micOn && <span className="name-mic-off"><MicOffIcon /></span>}
                 {micOn && meSpeaking && <SpeakingBars />}
                 eu{isHost ? ' · anfitrião' : ''}
                 {sharing ? ' (a partilhar ecrã)' : ''}
@@ -891,18 +1472,64 @@ export default function Room({
               sinkId={speakerId}
               speaking={speaking.has(p.peerId)}
               style={tileStyle}
+              pinned={pinnedId === p.peerId}
+              onPin={() => togglePin(p.peerId)}
               onMute={() => signalRef.current?.send({ type: 'force-mute', to: p.peerId })}
               onKick={() => signalRef.current?.send({ type: 'kick', to: p.peerId })}
             />
           )
 
-          if (viewMode === 'stage' && stagePeer) {
-            const audience = peers.filter((p) => p.peerId !== stagePeer.peerId)
+          // Apresentação (partilha de ecrã em track separada): palco com o
+          // ecrã em grande e a plateia (câmaras) numa fila por baixo.
+          if (presentation) {
+            const presenter =
+              presentation.peerId === 'me' ? 'Estás a apresentar' :
+              `${peers.find((p) => p.peerId === presentation.peerId)?.username ?? '?'} está a apresentar`
+            // Não me mostro a mim na plateia quando SOU eu a apresentar (o meu
+            // ecrã já é o conteúdo principal — a minha câmara seria redundante).
+            const audienceSelf = !hideSelf && presentation.peerId !== 'me'
+            return (
+              <div className={presLayout === 'side' ? 'stage-wrap pres-side' : 'stage-wrap'} style={parallaxStyle}>
+                <div className="stage-main">
+                  <PresentationTile
+                    stream={presentation.stream}
+                    label={presenter}
+                    own={presentation.peerId === 'me'}
+                    onRequestControl={() => signalRef.current?.send({ type: 'remote-control', to: presentation.peerId, action: 'request', payload: null })}
+                  />
+                  <button
+                    className="pres-layout-btn"
+                    onClick={() => setPresLayout((l) => (l === 'bottom' ? 'side' : 'bottom'))}
+                    title={presLayout === 'bottom' ? 'Participantes na lateral' : 'Participantes em baixo'}
+                  >
+                    {presLayout === 'bottom' ? '⧉ Lateral' : '⧉ Em baixo'}
+                  </button>
+                </div>
+                <div className="stage-audience">
+                  {audienceSelf && selfTile}
+                  {visiblePeers.map(remoteTile)}
+                </div>
+              </div>
+            )
+          }
+
+          if (effectiveViewMode === 'stage' && (stageOnSelf || stagePeer)) {
+            // Palco em mim (sou o orador ou estou sozinho): a minha câmara em
+            // grande, os restantes na plateia. Senão, o orador remoto no palco.
+            if (stageOnSelf || !stagePeer) {
+              return (
+                <div className="stage-wrap" style={parallaxStyle}>
+                  <div className="stage-main">{selfTile}</div>
+                  <div className="stage-audience">{visiblePeers.map(remoteTile)}</div>
+                </div>
+              )
+            }
+            const audience = visiblePeers.filter((p) => p.peerId !== stagePeer.peerId)
             return (
               <div className="stage-wrap" style={parallaxStyle}>
                 <div className="stage-main">{remoteTile(stagePeer)}</div>
                 <div className="stage-audience">
-                  {selfTile}
+                  {showSelf && selfTile}
                   {audience.map(remoteTile)}
                 </div>
               </div>
@@ -910,15 +1537,15 @@ export default function Room({
           }
           return (
             <div
-              className="video-grid"
-              style={{
+              className={isSolo ? 'video-grid video-grid--solo' : 'video-grid'}
+              style={isSolo ? parallaxStyle : {
                 ['--tw' as string]: `${tileSize.w}px`,
                 ['--th' as string]: `${tileSize.h}px`,
                 ...parallaxStyle,
               }}
             >
-              {selfTile}
-              {peers.map(remoteTile)}
+              {showSelf && selfTile}
+              {visiblePeers.map(remoteTile)}
             </div>
           )
         })()}
@@ -933,27 +1560,223 @@ export default function Room({
           ))}
         </div>
 
+        {ccOn && caption && (
+          <div className="cc-overlay" aria-live="polite">
+            {caption.text}
+          </div>
+        )}
+
+        {wbOpen && (
+          <Whiteboard
+            strokes={wbStrokes}
+            onStroke={(stroke) => {
+              setWbStrokes((st) => [...st, stroke])
+              signalRef.current?.send({ type: 'wb-stroke', stroke })
+            }}
+            onClear={() => {
+              setWbStrokes([])
+              signalRef.current?.send({ type: 'wb-clear' })
+            }}
+            onSave={async (pngBase64) => {
+              try {
+                await saveWhiteboard(`Quadro · ${code}`, code, pngBase64)
+                setStatus('Quadro guardado na biblioteca')
+              } catch {
+                setStatus('Não foi possível guardar o quadro')
+              }
+            }}
+            onClose={() => setWbOpen(false)}
+          />
+        )}
+
+        {/* Barra de dispositivos flutuante ao fundo do vídeo (estilo Google Meet):
+            o chevron do mic mostra mic+altifalante; o da câmara mostra câmara+fundo. */}
+        {deviceMenu !== 'none' && (
+          <div className="device-chips">
+            {deviceMenu === 'mic' ? (
+              <>
+                <label className="dev-chip">
+                  <MicIcon />
+                  <select value={micId} onChange={(e) => void switchMic(e.target.value)}>
+                    {devices.mics.length === 0 && <option>Microfone</option>}
+                    {devices.mics.map((d) => (
+                      <option key={d.deviceId} value={d.deviceId}>{d.label || 'Microfone'}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="dev-chip">
+                  <span className="dev-chip-emoji">🔊</span>
+                  <select value={speakerId} onChange={(e) => setSpeakerId(e.target.value)}>
+                    <option value="">Predefinido do sistema</option>
+                    {devices.speakers.map((d) => (
+                      <option key={d.deviceId} value={d.deviceId}>{d.label || 'Altifalante'}</option>
+                    ))}
+                  </select>
+                </label>
+                <button className="dev-chip icon" title="Testar os altifalantes" onClick={() => void playTestTone(speakerId)}>
+                  🎵
+                </button>
+                <button
+                  className="dev-chip icon"
+                  title="Definições"
+                  onClick={() => { setPanel('settings'); setDeviceMenu('none') }}
+                >
+                  <SettingsIcon />
+                </button>
+              </>
+            ) : (
+              <>
+                <label className="dev-chip">
+                  <CamIcon />
+                  <select value={camId} onChange={(e) => void switchCam(e.target.value)}>
+                    {devices.cams.length === 0 && <option>Câmara</option>}
+                    {devices.cams.map((d) => (
+                      <option key={d.deviceId} value={d.deviceId}>{d.label || 'Câmara'}</option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  className={bgMode === 'blur' ? 'dev-chip toggle on' : 'dev-chip toggle'}
+                  disabled={bgBusy || !hasLocalVideo}
+                  onClick={() => void applyBackground(bgMode === 'blur' ? 'none' : 'blur')}
+                >
+                  {bgMode === 'blur' ? '✓ ' : ''}Esbater fundo
+                </button>
+                <button className="dev-chip" onClick={() => { setFxOpen(true); setDeviceMenu('none') }}>
+                  Fundos e efeitos
+                </button>
+                <button
+                  className="dev-chip icon"
+                  title="Definições"
+                  onClick={() => { setPanel('settings'); setDeviceMenu('none') }}
+                >
+                  <SettingsIcon />
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {readyOpen && roomState === 'in' && (
+          <div className="ready-card">
+            <div className="ready-head">
+              <h3>A tua reunião está pronta.</h3>
+              <button
+                className="panel-close"
+                onClick={() => {
+                  sessionStorage.setItem(`dx_ready_${code}`, '1')
+                  setReadyOpen(false)
+                }}
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <p className="muted small">Partilha este link com quem quiseres incluir na reunião.</p>
+            <div className="ready-link">
+              <span className="mono">{`${location.host}/#/r/${code}`}</span>
+              <button
+                className="icon-btn"
+                title="Copiar link"
+                onClick={(e) => {
+                  void navigator.clipboard.writeText(`${location.origin}/#/r/${code}`)
+                  const el = e.currentTarget
+                  el.textContent = '✓'
+                  setTimeout(() => { el.textContent = '⧉' }, 1500)
+                }}
+              >
+                ⧉
+              </button>
+            </div>
+            <p className="muted small ready-note">
+              🛡 {waitingRoomOn
+                ? 'Quem usar o link terá de pedir autorização para participar.'
+                : 'Quem tiver o link e sessão iniciada entra diretamente.'}
+            </p>
+            <p className="muted small">A participar como <strong>{currentUser()?.username ?? 'eu'}</strong></p>
+          </div>
+        )}
+
         {panel === 'chat' && (
           <aside className="side-panel">
             <div className="panel-head">
               <h3>Mensagens na chamada</h3>
               <button className="panel-close" onClick={() => setPanel('none')}><CloseIcon /></button>
             </div>
+            <p className="chat-notice-bar">💬 Mensagens guardadas durante a reunião. Usa @ para mencionar alguém.</p>
             <div className="chat-messages">
-              {chat.map((m, i) => (
-                <div key={i} className={m.own ? 'chat-msg own' : 'chat-msg'}>
-                  <strong>{m.username}</strong> {m.text}
+              {chat.length === 0 && (
+                <div className="chat-empty-notice">
+                  <strong>Ainda sem mensagens</strong>
+                  <p>As mensagens ficam visíveis durante a reunião. Quem entrar depois não as vê.</p>
                 </div>
+              )}
+              {chat.map((m, i) => (
+                <>
+                  {!m.historical && i > 0 && chat[i - 1].historical && (
+                    <div key={`div-${i}`} className="chat-history-divider">— início desta sessão —</div>
+                  )}
+                  <div key={i} className={m.own ? 'chat-msg own' : 'chat-msg'}>
+                    <strong>{m.username}</strong> <ChatText text={m.text} />
+                  </div>
+                </>
               ))}
             </div>
-            <div className="chat-input">
-              <input
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && sendChat()}
-                placeholder="Escreve uma mensagem…"
-              />
-              <button onClick={sendChat}>➤</button>
+            <div className="chat-compose">
+              {mentionSuggestions.length > 0 && (
+                <div className="mention-suggestions">
+                  {mentionSuggestions.map((name) => (
+                    <button key={name} className="mention-item" onMouseDown={(e) => { e.preventDefault(); completeMention(name) }}>
+                      @{name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {chatEmojiOpen && (
+                <div className="chat-emoji-picker">
+                  {CHAT_EMOJIS.map((e) => (
+                    <button
+                      key={e}
+                      onClick={() => { setChatInput((t) => t + e); setChatEmojiOpen(false) }}
+                    >
+                      {e}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="chat-input">
+                <button
+                  className={chatEmojiOpen ? 'chat-emoji-btn active' : 'chat-emoji-btn'}
+                  title="Emojis"
+                  onClick={() => setChatEmojiOpen((v) => !v)}
+                >
+                  😊
+                </button>
+                <input
+                  ref={chatInputRef}
+                  value={chatInput}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setChatInput(val)
+                    // Detecta @menção: palavra após @ sem espaços.
+                    const at = val.lastIndexOf('@')
+                    if (at !== -1 && !val.slice(at + 1).includes(' ')) {
+                      setMentionQuery(val.slice(at + 1).toLowerCase())
+                    } else {
+                      setMentionQuery(null)
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { sendChat(); setChatEmojiOpen(false); setMentionQuery(null) }
+                    if (e.key === 'Escape') { setChatEmojiOpen(false); setMentionQuery(null) }
+                    if (e.key === 'Tab' && mentionSuggestions.length > 0) {
+                      e.preventDefault()
+                      completeMention(mentionSuggestions[0])
+                    }
+                  }}
+                  placeholder="Escreve uma mensagem…"
+                />
+                <button className="chat-send-btn" onClick={() => { sendChat(); setChatEmojiOpen(false) }} title="Enviar (Enter)">➤</button>
+              </div>
             </div>
           </aside>
         )}
@@ -964,24 +1787,162 @@ export default function Room({
               <h3>Participantes ({total})</h3>
               <button className="panel-close" onClick={() => setPanel('none')}><CloseIcon /></button>
             </div>
+            <button
+              className="btn-sm invite-btn"
+              onClick={() => { setInviteOpen(true); setInviteQuery(''); setInviteSelected([]); setInviteStatus('') }}
+            >
+              + Convidar membros
+            </button>
+            {inviteOpen && (
+              <div className="invite-modal">
+                <div className="invite-modal-head">
+                  <span>Convidar para a reunião</span>
+                  <button className="panel-close" onClick={() => setInviteOpen(false)}><CloseIcon /></button>
+                </div>
+                <input
+                  autoFocus
+                  placeholder="Pesquisar por nome ou email…"
+                  value={inviteQuery}
+                  onChange={(e) => setInviteQuery(e.target.value)}
+                />
+                {inviteResults.length > 0 && (
+                  <div className="invite-member-list">
+                    {inviteResults
+                      .filter((u) => !inviteSelected.some((s) => s.id === u.id) && u.id !== currentUser()?.id)
+                      .map((u) => (
+                        <button
+                          key={u.id}
+                          className="invite-member-item"
+                          onClick={() => { setInviteSelected((prev) => [...prev, u]); setInviteQuery('') }}
+                        >
+                          <span className="avatar-circle small">{u.username.slice(0, 2).toUpperCase()}</span>
+                          <span>
+                            <strong>{u.username}</strong>
+                            <small>{u.email}</small>
+                          </span>
+                        </button>
+                    ))}
+                  </div>
+                )}
+                {inviteSelected.length > 0 && (
+                  <div className="invite-selected">
+                    {inviteSelected.map((u) => (
+                      <span key={u.id} className="invite-chip">
+                        {u.username}
+                        <button onClick={() => setInviteSelected((prev) => prev.filter((s) => s.id !== u.id))}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {inviteStatus && <p className="invite-status">{inviteStatus}</p>}
+                <button
+                  className="btn-sm"
+                  disabled={inviteSelected.length === 0 || inviteBusy}
+                  onClick={() => void sendInvites()}
+                >
+                  {inviteBusy ? 'A chamar…' : `Chamar ${inviteSelected.length > 0 ? `(${inviteSelected.length})` : ''}`}
+                </button>
+              </div>
+            )}
+            <div className="people-search">
+              <span className="people-search-icon">🔍</span>
+              <input
+                type="text"
+                placeholder="Pesquisar participantes…"
+                value={peopleSearch}
+                onChange={(e) => setPeopleSearch(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
             <div className="people-list">
               <div className="person-row">
-                <span className="avatar-circle small">EU</span>
-                <span className="person-name">eu{isHost ? ' · anfitrião' : ''}</span>
+                <span className="avatar-circle small" style={{ background: peerColor(currentUser()?.username ?? 'eu') }}>EU</span>
+                <span className="person-name">
+                  <span className="pn-name">eu{isHost ? ' · anfitrião' : ''}</span>
+                  {qos && (
+                    <small className="qos-line mono">
+                      ↑ {qos.upKbps} kbps{qos.rtt != null ? ` · RTT ${qos.rtt} ms` : ''}
+                    </small>
+                  )}
+                </span>
                 {micOn ? (meSpeaking ? <SpeakingBars /> : <MicIcon />) : <span className="danger-ic"><MicOffIcon /></span>}
               </div>
-              {peers.map((p) => (
+              {peers.filter((p) => !peopleSearch || p.username.toLowerCase().includes(peopleSearch.toLowerCase())).map((p) => (
                 <div key={p.peerId} className="person-row">
-                  <span className="avatar-circle small">{p.username.slice(0, 2).toUpperCase()}</span>
+                  <span className="avatar-circle small" style={{ background: peerColor(p.username) }}>{p.username.slice(0, 2).toUpperCase()}</span>
                   <span className="person-name">
-                    {p.username}
-                    {p.host ? ' · anfitrião' : ''}
+                    <span className="pn-name">
+                      {p.username}
+                      {p.host ? ' · anfitrião' : p.canAdmit ? ' · admite entradas' : ''}
+                      {p.is_pstn ? ' · 📞 PSTN' : p.is_bot ? ' · 🤖 AI Bot' : ''}
+                    </span>
+                    {qos?.byPeer[p.peerId] && (
+                      <small className={qos.byPeer[p.peerId].lossPct > 5 ? 'qos-line mono qos-bad' : 'qos-line mono'}>
+                        ↓ {qos.byPeer[p.peerId].kbps} kbps · perda {qos.byPeer[p.peerId].lossPct}%
+                      </small>
+                    )}
                   </span>
                   {speaking.has(p.peerId) && <SpeakingBars />}
+                  {isHost && !p.host && (
+                    <button
+                      className="share-grant-btn"
+                      title={p.canAdmit ? 'Revogar poder de admitir entradas' : 'Permitir que admita convidados da sala de espera'}
+                      onClick={() =>
+                        signalRef.current?.send({ type: 'promote-admit', to: p.peerId, allowed: !p.canAdmit })
+                      }
+                    >
+                      {p.canAdmit ? '🛡 ✓' : '🛡 +'}
+                    </button>
+                  )}
+                  {isHost && hostShareOnly && !p.host && (
+                    <button
+                      className="share-grant-btn"
+                      title={sharePerms.has(p.peerId) ? 'Revogar permissão de partilha' : 'Permitir que partilhe ecrã'}
+                      onClick={() => {
+                        const next = !sharePerms.has(p.peerId)
+                        setSharePerms((s) => {
+                          const n = new Set(s)
+                          if (next) n.add(p.peerId)
+                          else n.delete(p.peerId)
+                          return n
+                        })
+                        signalRef.current?.send({ type: 'share-grant', to: p.peerId, allowed: next })
+                      }}
+                    >
+                      {sharePerms.has(p.peerId) ? '🖥 ✓' : '🖥 +'}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
             {isHost && (
+              <div className="host-controls-box">
+                <h4>Controlos do anfitrião</h4>
+                <label className="host-toggle">
+                  <input
+                    type="checkbox"
+                    checked={roomLocked}
+                    onChange={(e) => signalRef.current?.send({ type: 'room-lock', locked: e.target.checked })}
+                  />
+                  <span>
+                    <strong>Bloquear reunião</strong>
+                    <small>Ninguém entra sem ser admitido, mesmo com o link</small>
+                  </span>
+                </label>
+                <label className="host-toggle">
+                  <input
+                    type="checkbox"
+                    checked={hostShareOnly}
+                    onChange={(e) => signalRef.current?.send({ type: 'host-share-only', on: e.target.checked })}
+                  />
+                  <span>
+                    <strong>Só o anfitrião partilha ecrã</strong>
+                    <small>Restringe a partilha de ecrã ao anfitrião</small>
+                  </span>
+                </label>
+              </div>
+            )}
+            {isHost && isTraining && (
               <div className="breakout-box">
                 <h4>Salas de grupo</h4>
                 {breakoutRooms.length === 0 ? (
@@ -1103,6 +2064,173 @@ export default function Room({
           </aside>
         )}
 
+        {panel === 'tools' && (
+          <aside className="side-panel tools-panel">
+            <div className="panel-head">
+              <h3>Ferramentas de reunião</h3>
+              <button className="panel-close" onClick={() => setPanel('none')}><CloseIcon /></button>
+            </div>
+
+            <section className="tool-section">
+              <h4>⏳ Temporizador</h4>
+              {meetTimerEndsAt ? (
+                <div className="timer-row">
+                  <strong className="mono timer-big">{fmtCountdown(meetTimerEndsAt - now)}</strong>
+                  {isHost && (
+                    <button className="btn-sm ghost" onClick={() => signalRef.current?.send({ type: 'timer-clear' })}>
+                      Limpar
+                    </button>
+                  )}
+                </div>
+              ) : isHost ? (
+                <div className="timer-presets">
+                  {[5, 10, 15, 30, 60].map((m) => (
+                    <button key={m} className="btn-sm ghost" onClick={() => signalRef.current?.send({ type: 'timer-set', minutes: m })}>
+                      {m} min
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted small">O anfitrião pode definir um temporizador visível para todos.</p>
+              )}
+            </section>
+
+            <section className="tool-section">
+              <h4>📊 Sondagens</h4>
+              {isHost && (
+                <div className="poll-create">
+                  <input
+                    placeholder="Pergunta…"
+                    maxLength={200}
+                    value={pollQ}
+                    onChange={(e) => setPollQ(e.target.value)}
+                  />
+                  {pollOpts.map((o, i) => (
+                    <input
+                      key={i}
+                      placeholder={`Opção ${i + 1}`}
+                      maxLength={80}
+                      value={o}
+                      onChange={(e) => setPollOpts(pollOpts.map((x, j) => (j === i ? e.target.value : x)))}
+                    />
+                  ))}
+                  <div className="poll-create-actions">
+                    {pollOpts.length < 6 && (
+                      <button className="btn-sm ghost" onClick={() => setPollOpts([...pollOpts, ''])}>
+                        + opção
+                      </button>
+                    )}
+                    <button
+                      className="btn-sm"
+                      disabled={!pollQ.trim() || pollOpts.filter((o) => o.trim()).length < 2}
+                      onClick={() => {
+                        signalRef.current?.send({
+                          type: 'poll-create',
+                          question: pollQ,
+                          options: pollOpts.filter((o) => o.trim()),
+                        })
+                        setPollQ('')
+                        setPollOpts(['', ''])
+                      }}
+                    >
+                      Lançar sondagem
+                    </button>
+                  </div>
+                </div>
+              )}
+              {polls.length === 0 && <p className="muted small">Ainda sem sondagens.</p>}
+              {[...polls].reverse().map((p) => {
+                const total = p.counts.reduce((a, b) => a + b, 0)
+                return (
+                  <div key={p.id} className="poll-card">
+                    <div className="poll-head">
+                      <strong>{p.question}</strong>
+                      <span className="muted small">{p.by} · {total} voto{total === 1 ? '' : 's'}{p.open ? '' : ' · encerrada'}</span>
+                    </div>
+                    {p.options.map((opt, i) => {
+                      const pct = total ? Math.round((p.counts[i] / total) * 100) : 0
+                      const mine = myVotes[p.id] === i
+                      return (
+                        <button
+                          key={i}
+                          className={mine ? 'poll-opt mine' : 'poll-opt'}
+                          disabled={!p.open}
+                          onClick={() => {
+                            signalRef.current?.send({ type: 'poll-vote', poll: p.id, option: i })
+                            setMyVotes({ ...myVotes, [p.id]: i })
+                          }}
+                        >
+                          <span className="poll-bar" style={{ width: `${pct}%` }} />
+                          <span className="poll-opt-label">
+                            {mine ? '● ' : ''}{opt}
+                          </span>
+                          <span className="poll-opt-count mono">{p.counts[i]} · {pct}%</span>
+                        </button>
+                      )
+                    })}
+                    {isHost && p.open && (
+                      <button className="link small-link" onClick={() => signalRef.current?.send({ type: 'poll-close', poll: p.id })}>
+                        Encerrar sondagem
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </section>
+
+            <section className="tool-section">
+              <h4>❓ Perguntas e respostas</h4>
+              <form
+                className="qa-form"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (!qaInput.trim()) return
+                  signalRef.current?.send({ type: 'qa-ask', text: qaInput })
+                  setQaInput('')
+                }}
+              >
+                <input
+                  placeholder="Faz uma pergunta…"
+                  maxLength={300}
+                  value={qaInput}
+                  onChange={(e) => setQaInput(e.target.value)}
+                />
+                <button className="btn-sm" disabled={!qaInput.trim()}>Enviar</button>
+              </form>
+              {questions.length === 0 && <p className="muted small">Ainda sem perguntas.</p>}
+              {questions.map((q) => (
+                <div key={q.id} className={q.answered ? 'qa-card answered' : 'qa-card'}>
+                  <div className="qa-main">
+                    <span className="qa-text">{q.text}</span>
+                    <small className="muted">{q.by}{q.answered ? ' · ✓ respondida' : ''}</small>
+                  </div>
+                  <div className="qa-actions">
+                    <button
+                      className={myUpvotes[q.id] ? 'qa-vote mine' : 'qa-vote'}
+                      title="Votar nesta pergunta"
+                      onClick={() => {
+                        signalRef.current?.send({ type: 'qa-upvote', id: q.id })
+                        setMyUpvotes({ ...myUpvotes, [q.id]: !myUpvotes[q.id] })
+                      }}
+                    >
+                      👍 {q.upvotes}
+                    </button>
+                    {isHost && (
+                      <button
+                        className="qa-vote"
+                        title={q.answered ? 'Reabrir' : 'Marcar como respondida'}
+                        onClick={() => signalRef.current?.send({ type: 'qa-answered', id: q.id })}
+                      >
+                        {q.answered ? '↺' : '✓'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </section>
+          </aside>
+        )}
+
         {panel === 'settings' && (
           <aside className="side-panel">
             <div className="panel-head">
@@ -1139,15 +2267,25 @@ export default function Room({
               <label className="set-toggle">
                 <input type="checkbox" checked={noiseSuppression} onChange={() => void toggleNoiseSuppression()} />
                 <span>
-                  Supressão de ruído
-                  <small>Remove ruídos externos (teclado, ventoinha, trânsito) para um áudio mais limpo.</small>
+                  Supressão de ruído (IA)
+                  <small>RNNoise remove teclado, ventoinha e ruído de fundo — muito além da supressão do browser.</small>
                 </span>
               </label>
+              <div className="bg-section">
+                <span className="set-label">Tema</span>
+                <small className="muted">Escolhe o aspeto da aplicação.</small>
+                <ThemePicker />
+              </div>
               <div className="bg-section">
                 <span className="set-label">Fundo {bgBusy ? '· a aplicar…' : ''}</span>
                 <small className="muted">
                   IA local segmenta a pessoa; o fundo real nunca fica visível para os outros.
                 </small>
+                {!hasLocalVideo && (
+                  <small className="hint-warn">
+                    Liga a câmara para escolher um fundo — os efeitos precisam de vídeo.
+                  </small>
+                )}
                 <div className="bg-grid">
                   <button
                     className={bgMode === 'none' ? 'bg-opt selected' : 'bg-opt'}
@@ -1193,6 +2331,78 @@ export default function Room({
           </aside>
         )}
 
+        {fxOpen && (
+          <aside className="side-panel fx-panel">
+            <div className="panel-head">
+              <h3>Fundos e efeitos</h3>
+              <button className="panel-close" onClick={() => setFxOpen(false)}><CloseIcon /></button>
+            </div>
+            <div className="fx-preview-wrap">
+              <video ref={fxPreview} autoPlay muted playsInline className={bgMode === 'none' ? 'mirror' : undefined} />
+            </div>
+            <p className="muted small">
+              A IA segmenta-te localmente — o teu fundo real nunca é transmitido. {bgBusy ? 'A aplicar…' : ''}
+            </p>
+            {!hasLocalVideo && (
+              <p className="hint-warn small">Liga a câmara para usar efeitos de fundo.</p>
+            )}
+
+            <span className="set-label">Efeito esbatido</span>
+            <div className="fx-row">
+              <button
+                className={bgMode === 'none' ? 'fx-opt selected' : 'fx-opt'}
+                disabled={bgBusy || !hasLocalVideo}
+                onClick={() => void applyBackground('none')}
+                title="Sem efeito"
+              >
+                Ø
+              </button>
+              <button
+                className={bgMode === 'blur' && blurLevel === 'light' ? 'fx-opt selected' : 'fx-opt'}
+                disabled={bgBusy || !hasLocalVideo}
+                onClick={() => void applyBackground('blur', undefined, 'light')}
+                title="Desfoque leve"
+              >
+                <BlurIcon />
+                <small>leve</small>
+              </button>
+              <button
+                className={bgMode === 'blur' && blurLevel === 'strong' ? 'fx-opt selected' : 'fx-opt'}
+                disabled={bgBusy || !hasLocalVideo}
+                onClick={() => void applyBackground('blur', undefined, 'strong')}
+                title="Desfoque forte"
+              >
+                <BlurIcon />
+                <small>forte</small>
+              </button>
+              <button
+                className="fx-opt"
+                disabled={bgBusy || !hasLocalVideo}
+                onClick={() => uploadRef.current?.click()}
+                title="Carregar imagem de fundo"
+              >
+                ＋
+                <small>imagem</small>
+              </button>
+            </div>
+
+            <span className="set-label">Fundos</span>
+            <div className="fx-gallery">
+              {presets.map((p) => (
+                <button
+                  key={p.name}
+                  className={bgMode === 'image' && bgImageUrl === p.url ? 'fx-bg selected' : 'fx-bg'}
+                  disabled={bgBusy || !hasLocalVideo}
+                  onClick={() => void applyBackground('image', p.url)}
+                  title={p.name}
+                >
+                  <img src={p.url} alt={p.name} />
+                </button>
+              ))}
+            </div>
+          </aside>
+        )}
+
         {notesOpen && (
           <aside className="side-panel notes-panel">
             <div className="panel-head">
@@ -1200,9 +2410,13 @@ export default function Room({
               <button className="panel-close" onClick={() => setNotesOpen(false)}><CloseIcon /></button>
             </div>
             <p className="muted small">
-              Transcrição partilhada: cada participante que ative transcreve o seu microfone (Chrome/Edge) e as
-              frases aparecem aqui legendadas por orador. Ao terminar, gera a ata (MoM) e guarda-a na reunião.
+              Transcrição partilhada: o <strong>anfitrião</strong> inicia a Nota AI e <strong>todos</strong> os
+              participantes passam a transcrever o próprio microfone — as frases aparecem aqui legendadas por
+              orador (capta toda a gente, não só quem iniciou). Ao terminar, a ata (MoM) é gerada e guardada.
             </p>
+            {scribeBy && !isHost && (
+              <p className="muted small">🎙 Transcrição ativa (iniciada por {scribeBy}). A tua fala está a ser captada.</p>
+            )}
             <div className="notes-body">
               {lines.length === 0 && !interim && <p className="muted small">Ativa a transcrição para começar…</p>}
               {lines.map((l, i) => (
@@ -1211,26 +2425,123 @@ export default function Room({
               {interim && <div className="note-line interim">{interim}…</div>}
             </div>
             <div className="notes-actions">
-              <button className={transcribing ? 'btn-sm danger' : 'btn-sm'} onClick={toggleTranscription}>
-                {transcribing ? 'Parar transcrição' : 'Iniciar transcrição'}
-              </button>
-              <button className="btn-sm ghost" disabled={lines.length === 0} onClick={() => void saveMinutes()}>
-                {momSaved ? '✓ Guardada' : 'Guardar ata (MoM)'}
-              </button>
+              <select
+                className="stt-lang"
+                value={sttLang}
+                disabled={transcribing}
+                title="Idioma da transcrição"
+                onChange={(e) => {
+                  setSttLang(e.target.value)
+                  localStorage.setItem('dx_stt_lang', e.target.value)
+                }}
+              >
+                <option value="pt-PT">🇵🇹 Português</option>
+                <option value="en-US">🇬🇧 English</option>
+                <option value="es-ES">🇪🇸 Español</option>
+                <option value="fr-FR">🇫🇷 Français</option>
+                <option value="de-DE">🇩🇪 Deutsch</option>
+                <option value="it-IT">🇮🇹 Italiano</option>
+              </select>
+              <div className="notes-btns">
+                <button
+                  className={transcribing ? 'stt-toggle rec' : 'stt-toggle'}
+                  onClick={toggleTranscription}
+                  disabled={!isHost}
+                  title={isHost ? 'Iniciar/parar a transcrição partilhada' : 'Só o anfitrião controla a transcrição'}
+                >
+                  {transcribing ? <span className="rec-dot" aria-hidden /> : <MicIcon />}
+                  {transcribing ? 'Parar transcrição' : 'Iniciar transcrição'}
+                </button>
+                <button
+                  className="stt-save"
+                  disabled={lines.length === 0}
+                  title={lines.length === 0 ? 'Sem transcrição para guardar' : 'Gerar e guardar a ata (MoM)'}
+                  onClick={() => void saveMinutes()}
+                >
+                  {momSaved ? '✓ Guardada' : <><NoteIcon /> Guardar ata</>}
+                </button>
+              </div>
             </div>
           </aside>
+        )}
+      </div>
+
+      {/* Avisos da reunião — faixa própria por baixo do vídeo (NUNCA sobre o
+          vídeo): o vídeo encolhe para os acomodar. Cartões estilo Meet. */}
+      <div className="room-notices">
+        {canAdmit && waitingQueue.length > 0 && (
+          <div className="admit-card" role="dialog" aria-label="Sala de espera">
+            <div className="admit-card-head">
+              <span className="admit-card-title">Sala de espera</span>
+              {waitingQueue.length > 1 && (
+                <button className="admit-all-link" onClick={() => waitingQueue.forEach((p) => admit(p.peer_id, true))}>
+                  Admitir todos ({waitingQueue.length})
+                </button>
+              )}
+            </div>
+            {waitingQueue.map((p) => (
+              <div key={p.peer_id} className="admit-row">
+                <span className="admit-avatar" aria-hidden>{p.username.slice(0, 1).toUpperCase()}</span>
+                <span className="admit-name">
+                  <strong>{p.username}</strong>
+                  <small>quer entrar</small>
+                </span>
+                <button className="admit-deny" onClick={() => admit(p.peer_id, false)}>Recusar</button>
+                <button className="admit-accept" onClick={() => admit(p.peer_id, true)}>Admitir</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {serverRec && (
+          <div className="toast rec-toast">
+            <span className="rec-dot" />
+            <span><strong>{serverRec.by}</strong> ativou a gravação no servidor — o vídeo (webm) fica na biblioteca ao terminar.</span>
+          </div>
+        )}
+
+        {anyoneRecording && (
+          <div className="toast rec-toast">
+            <span className="rec-dot" />
+            <span>
+              {recording ? 'Estás a gravar esta reunião' : `${remoteRecorder} está a gravar esta reunião`} — todos os
+              participantes têm acesso à gravação no painel «Participantes».
+            </span>
+          </div>
+        )}
+
+        {talkOver && (
+          <div className="toast talk-toast">
+            <span aria-hidden>🎙️</span>
+            <span>
+              {talkOverNames ? `${talkOverNames} estão a falar ao mesmo tempo` : 'Duas pessoas estão a falar ao mesmo tempo'} —
+              dá espaço para cada um terminar.
+            </span>
+          </div>
         )}
       </div>
 
       <footer className="controls-bar">
         <div className="bar-left">
           <span className="clock">{clock}</span>
+          {roomState === 'in' && elapsed > 0 && (
+            <span className="meeting-elapsed" title="Duração da reunião">⏱ {fmtCountdown(elapsed)}</span>
+          )}
           <span className="sep">|</span>
           <span className="room-code">{code}</span>
           {topology && <span className="room-topo">{topology === 'sfu' ? 'SFU' : 'P2P'}</span>}
           {e2eeOn && (
-            <span className="room-topo e2ee-badge" title="Media encriptado de ponta a ponta — o servidor não consegue ver/ouvir">
+            <button
+              className="room-topo e2ee-badge"
+              title="E2EE ativo — clica para ver o código de segurança e comparar com os outros participantes"
+              onClick={() => setSecOpen((v) => !v)}
+            >
               🔒 E2EE
+            </button>
+          )}
+          {secOpen && secCode && (
+            <span className="sec-code" onClick={() => setSecOpen(false)} title="Código de segurança da sala">
+              🛡 <strong className="mono">{secCode}</strong> — igual em todos os participantes se ninguém estiver a intercetar
             </span>
           )}
           {returnTo && (
@@ -1251,12 +2562,27 @@ export default function Room({
               ⏱ {fmtCountdown(breakoutEndsAt - now)}
             </span>
           )}
+          {meetTimerEndsAt && (
+            <span
+              className={meetTimerEndsAt - now <= 60 ? 'room-topo breakout-chip timer-low' : 'room-topo breakout-chip'}
+              title="Temporizador da reunião"
+            >
+              ⏳ {fmtCountdown(meetTimerEndsAt - now)}
+            </span>
+          )}
+          {presentation && (
+            <span className="room-topo presenter-chip" title="Apresentação em curso">
+              🖥 {presentation.peerId === 'me'
+                ? 'A apresentar'
+                : `${peers.find((p) => p.peerId === presentation.peerId)?.username ?? ''} • apresenta`}
+            </span>
+          )}
           {status && <span className="room-status">{status}</span>}
         </div>
 
         <div className="bar-center">
           <DeviceControl
-            label={micOn ? 'Desativar microfone' : 'Ativar microfone'}
+            label={micOn ? 'Desativar microfone (Ctrl+D)' : 'Ativar microfone (Ctrl+D)'}
             off={!micOn}
             pulse={meSpeaking}
             onToggle={toggleMic}
@@ -1270,7 +2596,7 @@ export default function Room({
             {micOn ? <MicIcon /> : <MicOffIcon />}
           </DeviceControl>
           <DeviceControl
-            label={camOn ? 'Desativar câmara' : 'Ativar câmara'}
+            label={camOn ? 'Desativar câmara (Ctrl+E)' : 'Ativar câmara (Ctrl+E)'}
             off={!camOn}
             onToggle={toggleCam}
             open={deviceMenu === 'cam'}
@@ -1282,18 +2608,12 @@ export default function Room({
           >
             {camOn ? <CamIcon /> : <CamOffIcon />}
           </DeviceControl>
-          <Ctrl label="Partilhar ecrã" active={sharing} onClick={() => void toggleShare()}>
-            <ShareIcon />
-          </Ctrl>
           <Ctrl
-            label={bgMode === 'none' ? 'Ativar efeito de fundo' : 'Remover efeito de fundo'}
-            active={bgMode !== 'none'}
-            onClick={() => void applyBackground(bgMode === 'none' ? 'blur' : 'none')}
+            label={ccOn ? 'Desativar legendas automáticas' : 'Legendas automáticas (CC) — transcreve a voz em tempo real'}
+            active={ccOn}
+            onClick={() => setCcOn((v) => !v)}
           >
-            <BlurIcon />
-          </Ctrl>
-          <Ctrl label={handRaised ? 'Baixar a mão' : 'Levantar a mão'} active={handRaised} onClick={toggleHand}>
-            <HandIcon />
+            <span className="cc-badge">CC</span>
           </Ctrl>
           <div className="picker-wrap">
             {pickerOpen && (
@@ -1310,6 +2630,26 @@ export default function Room({
             </Ctrl>
           </div>
           <Ctrl
+            label={
+              hostShareOnly && !isHost && !shareAllowed
+                ? 'Partilha restrita — pede ao anfitrião para permitir'
+                : 'Partilhar ecrã'
+            }
+            active={sharing}
+            onClick={() => {
+              if (hostShareOnly && !isHost && !shareAllowed) {
+                setStatus('Partilha restrita ao anfitrião — pede-lhe para te dar permissão na lista de participantes')
+                return
+              }
+              void toggleShare()
+            }}
+          >
+            <ShareIcon />
+          </Ctrl>
+          <Ctrl label={handRaised ? 'Baixar a mão' : 'Levantar a mão'} active={handRaised} onClick={toggleHand}>
+            <HandIcon />
+          </Ctrl>
+          <Ctrl
             label={recording ? 'Parar gravação' : 'Gravar reunião'}
             active={recording}
             danger={recording}
@@ -1317,7 +2657,87 @@ export default function Room({
           >
             {recording ? <StopIcon /> : <RecordIcon />}
           </Ctrl>
-          <button className="ctrl hangup" onClick={onLeave} title="Sair da chamada">
+          <div className="picker-wrap">
+            {moreOpen && (
+              <div className="device-menu more-menu">
+                <button
+                  className="device-item"
+                  onClick={() => {
+                    setViewMode(viewMode === 'grid' ? 'stage' : 'grid')
+                    setMoreOpen(false)
+                  }}
+                >
+                  ▦ Ajustar vista: {viewMode === 'grid' ? 'Orador em palco' : 'Grelha'}
+                </button>
+                <button
+                  className="device-item"
+                  onClick={() => {
+                    if (document.fullscreenElement) void document.exitFullscreen()
+                    else void document.documentElement.requestFullscreen()
+                    setMoreOpen(false)
+                  }}
+                >
+                  ⛶ {fullscreen ? 'Sair de ecrã inteiro' : 'Ecrã inteiro'}
+                </button>
+                <button
+                  className="device-item"
+                  onClick={() => {
+                    setFxOpen(true)
+                    setMoreOpen(false)
+                  }}
+                >
+                  🖼 Fundos e efeitos
+                </button>
+                {isHost && topology === 'sfu' && (
+                  <button
+                    className="device-item"
+                    onClick={() => {
+                      setMoreOpen(false)
+                      if (serverRec) {
+                        signalRef.current?.send({ type: 'server-record', active: false })
+                        return
+                      }
+                      let key: string | null = null
+                      if (e2eeOn) {
+                        // E2EE: gravar exige ceder a chave ao servidor — só
+                        // com consentimento explícito do anfitrião.
+                        const ok = window.confirm(
+                          'Esta reunião é encriptada de ponta a ponta.\n\n' +
+                            'Para gravar no servidor, a chave desta sala é entregue ao servidor ' +
+                            'APENAS durante a gravação, e o ficheiro fica legível na biblioteca.\n\n' +
+                            'Autorizar e começar a gravar?',
+                        )
+                        if (!ok || !e2eeKeyRef.current) return
+                        key = e2eeKeyRef.current
+                      }
+                      signalRef.current?.send({ type: 'server-record', active: true, e2ee_key: key })
+                    }}
+                  >
+                    {serverRec ? '☁ Parar gravação no servidor' : '☁ Gravar no servidor (webm)'}
+                  </button>
+                )}
+                <button className="device-item" onClick={() => setHideSelf((v) => !v)}>
+                  {hideSelf ? '👁 Mostrar o meu vídeo' : '🙈 Ocultar o meu vídeo'}
+                </button>
+                <button className="device-item" onClick={() => setHideNoVideo((v) => !v)}>
+                  {hideNoVideo ? '👥 Mostrar participantes sem vídeo' : '🫥 Ocultar participantes sem vídeo'}
+                </button>
+                <button
+                  className="device-item device-action"
+                  onClick={() => {
+                    setPanel('settings')
+                    setMoreOpen(false)
+                  }}
+                >
+                  ⚙ Definições
+                </button>
+              </div>
+            )}
+            <Ctrl label="Mais opções" active={moreOpen} onClick={() => setMoreOpen(!moreOpen)}>
+              <span className="more-dots">⋮</span>
+            </Ctrl>
+          </div>
+          <button className="ctrl hangup" onClick={() => void leaveRoom()} title="Sair da chamada">
             <HangupIcon />
           </button>
         </div>
@@ -1334,6 +2754,22 @@ export default function Room({
           <Ctrl plain label={parallax ? 'Desligar efeito 3D' : 'Efeito de sala 3D'} active={parallax} onClick={() => void toggleParallax()}>
             <CubeIcon />
           </Ctrl>
+          <Ctrl
+            plain
+            label="Quadro branco colaborativo"
+            active={wbOpen}
+            onClick={() => setWbOpen((v) => !v)}
+          >
+            <span className="tools-badge">✏️</span>
+          </Ctrl>
+          <Ctrl
+            plain
+            label="Ferramentas de reunião (sondagens, Q&A, temporizador)"
+            active={panel === 'tools'}
+            onClick={() => setPanel(panel === 'tools' ? 'none' : 'tools')}
+          >
+            <span className="tools-badge">🛠</span>
+          </Ctrl>
           <Ctrl plain label="Notas AI / Ata (MoM)" active={notesOpen} onClick={() => setNotesOpen(!notesOpen)}>
             <NoteIcon />
             {transcribing && <span className="badge live">●</span>}
@@ -1342,8 +2778,9 @@ export default function Room({
             <PeopleIcon />
             <span className="badge">{total}</span>
           </Ctrl>
-          <Ctrl plain label="Chat" active={panel === 'chat'} onClick={() => setPanel(panel === 'chat' ? 'none' : 'chat')}>
+          <Ctrl plain label="Chat" active={panel === 'chat'} onClick={() => { setPanel(panel === 'chat' ? 'none' : 'chat'); setUnreadChat(0) }}>
             <ChatIcon />
+            {unreadChat > 0 && <span className="badge unread-badge">{unreadChat > 9 ? '9+' : unreadChat}</span>}
           </Ctrl>
           <Ctrl plain label="Definições" active={panel === 'settings'} onClick={() => setPanel(panel === 'settings' ? 'none' : 'settings')}>
             <SettingsIcon />
@@ -1384,7 +2821,7 @@ function Ctrl({
     .filter(Boolean)
     .join(' ')
   return (
-    <button className={cls} onClick={onClick} title={label} aria-label={label}>
+    <button className={cls} onClick={onClick} data-tip={label} aria-label={label}>
       {children}
     </button>
   )
@@ -1403,6 +2840,7 @@ function DeviceControl({
   currentId,
   onPick,
   emptyLabel,
+  extra,
 }: {
   children: ReactNode
   label: string
@@ -1415,34 +2853,219 @@ function DeviceControl({
   currentId: string
   onPick: (id: string) => void
   emptyLabel: string
+  extra?: ReactNode
 }) {
+  // Selagem: o menu de dispositivos abre agora como barra horizontal
+  // flutuante ao fundo do vídeo (estilo Google Meet) — ver DeviceChipsBar.
+  void devices
+  void currentId
+  void onPick
+  void emptyLabel
+  void extra
   return (
     <div className="device-ctrl">
       <button
         className={['ctrl', off ? 'off' : '', pulse ? 'pulse' : ''].filter(Boolean).join(' ')}
         onClick={onToggle}
-        title={label}
+        data-tip={label}
         aria-label={label}
       >
         {children}
       </button>
-      <button className={open ? 'chevron open' : 'chevron'} onClick={onChevron} aria-label="Escolher dispositivo">
+      <button className={open ? 'chevron open' : 'chevron'} onClick={onChevron} data-tip="Escolher dispositivo" aria-label="Escolher dispositivo">
         <ChevronUpIcon />
       </button>
-      {open && (
-        <div className="device-menu">
-          {devices.length === 0 && <div className="device-empty">Sem dispositivos</div>}
-          {devices.map((d) => (
-            <button
-              key={d.deviceId}
-              className={d.deviceId === currentId ? 'device-item active' : 'device-item'}
-              onClick={() => onPick(d.deviceId)}
-            >
-              {d.deviceId === currentId ? '● ' : '○ '}
-              {d.label || emptyLabel}
-            </button>
-          ))}
-        </div>
+    </div>
+  )
+}
+
+
+const WB_COLORS = ['#202124', '#C8201D', '#EDA33B', '#1c8a4d', '#2b6fd8']
+
+/**
+ * Quadro branco colaborativo: canvas em overlay, traços com coordenadas
+ * normalizadas (0..1) difundidos via signaling; redesenha ao redimensionar.
+ */
+function Whiteboard({
+  strokes,
+  onStroke,
+  onClear,
+  onSave,
+  onClose,
+}: {
+  strokes: WbStroke[]
+  onStroke: (s: WbStroke) => void
+  onClear: () => void
+  onSave: (pngBase64: string) => void | Promise<void>
+  onClose: () => void
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const drawing = useRef<WbStroke | null>(null)
+  const [color, setColor] = useState(WB_COLORS[0])
+  const [width, setWidth] = useState(3)
+
+  const drawStroke = (ctx: CanvasRenderingContext2D, s: WbStroke, W: number, H: number) => {
+    if (s.pts.length < 2) return
+    ctx.strokeStyle = s.c
+    ctx.lineWidth = s.w
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    ctx.moveTo(s.pts[0][0] * W, s.pts[0][1] * H)
+    for (const [x, y] of s.pts.slice(1)) ctx.lineTo(x * W, y * H)
+    ctx.stroke()
+  }
+
+  const redraw = () => {
+    const c = canvasRef.current
+    const wrap = wrapRef.current
+    if (!c || !wrap) return
+    c.width = wrap.clientWidth
+    c.height = wrap.clientHeight
+    const ctx = c.getContext('2d')!
+    ctx.clearRect(0, 0, c.width, c.height)
+    for (const s of strokes) drawStroke(ctx, s, c.width, c.height)
+  }
+
+  useEffect(() => {
+    redraw()
+    const ro = new ResizeObserver(redraw)
+    if (wrapRef.current) ro.observe(wrapRef.current)
+    return () => ro.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strokes])
+
+  const norm = (e: React.PointerEvent): [number, number] => {
+    const r = canvasRef.current!.getBoundingClientRect()
+    return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]
+  }
+
+  const saved = useRef(false)
+  /** Compõe fundo branco opaco + traços num PNG base64 (o canvas em si é transparente). */
+  const snapshot = (): string | null => {
+    const c = canvasRef.current
+    if (!c || strokes.length === 0) return null
+    const off = document.createElement('canvas')
+    off.width = c.width
+    off.height = c.height
+    const ctx = off.getContext('2d')!
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, off.width, off.height)
+    for (const s of strokes) drawStroke(ctx, s, off.width, off.height)
+    return off.toDataURL('image/png')
+  }
+  const save = async () => {
+    const png = snapshot()
+    if (png) { saved.current = true; await onSave(png) }
+  }
+  const closeAndSave = async () => {
+    // Auto-guardar na biblioteca ao fechar, se houver conteúdo por guardar.
+    if (!saved.current && strokes.length > 0) await save()
+    onClose()
+  }
+
+  return (
+    <div className="wb-overlay" ref={wrapRef}>
+      <canvas
+        ref={canvasRef}
+        onPointerDown={(e) => {
+          try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* pointer sintético */ }
+          drawing.current = { pts: [norm(e)], c: color, w: width }
+        }}
+        onPointerMove={(e) => {
+          const s = drawing.current
+          if (!s) return
+          const p = norm(e)
+          const last = s.pts[s.pts.length - 1]
+          if (Math.abs(p[0] - last[0]) + Math.abs(p[1] - last[1]) < 0.002) return
+          s.pts.push(p)
+          const c = canvasRef.current!
+          drawStroke(c.getContext('2d')!, { ...s, pts: s.pts.slice(-2) }, c.width, c.height)
+        }}
+        onPointerUp={() => {
+          const s = drawing.current
+          drawing.current = null
+          if (s && s.pts.length >= 2) onStroke(s)
+        }}
+      />
+      <div className="wb-toolbar">
+        {WB_COLORS.map((c) => (
+          <button
+            key={c}
+            className={c === color ? 'wb-color sel' : 'wb-color'}
+            style={{ background: c }}
+            onClick={() => setColor(c)}
+            title="Cor"
+          />
+        ))}
+        <button className={width === 3 ? 'wb-tool sel' : 'wb-tool'} onClick={() => setWidth(3)} title="Traço fino">─</button>
+        <button className={width === 8 ? 'wb-tool sel' : 'wb-tool'} onClick={() => setWidth(8)} title="Traço grosso">━</button>
+        <button className="wb-tool" onClick={() => void save()} title="Guardar na biblioteca de quadros">💾</button>
+        <button className="wb-tool" onClick={onClear} title="Limpar o quadro para todos">🗑</button>
+        <button className="wb-tool" onClick={() => void closeAndSave()} title="Fechar (guarda automaticamente)">✕</button>
+      </div>
+    </div>
+  )
+}
+
+/** Ecrã partilhado em palco (track separada da câmara). */
+function PresentationTile({ stream, label, own, onRequestControl }: { stream: MediaStream; label: string; own?: boolean; onRequestControl?: () => void }) {
+  // Callback-ref: liga o stream sempre que o <video> (re)monta e força o play —
+  // o autoplay de vídeo NÃO-mudo (a apresentação remota) é bloqueado por alguns
+  // browsers e ficava preto. Silencia-se sempre (o áudio do ecrã vem noutra
+  // track/tile), o que garante o autoplay, e re-tenta ao chegar metadados.
+  const attach = useCallback(
+    (node: HTMLVideoElement | null) => {
+      if (!node) return
+      if (node.srcObject !== stream) node.srcObject = stream
+      const tryPlay = () => node.play().catch(() => {})
+      tryPlay()
+      node.onloadedmetadata = tryPlay
+      if (import.meta.env.DEV) {
+        const vt = stream.getVideoTracks()[0]
+        console.debug('[present] attach', label, 'video?', !!vt, vt && { muted: vt.muted, enabled: vt.enabled, state: vt.readyState })
+      }
+    },
+    [stream, label],
+  )
+  // Áudio do ecrã partilhado (separador com som): reproduzido num <audio>
+  // dedicado — o <video> fica mudo para o autoplay nunca ser bloqueado, mas o
+  // som do ecrã não se perde. (Na própria apresentação não se reproduz o áudio
+  // para não haver eco.)
+  const attachAudio = useCallback(
+    (node: HTMLAudioElement | null) => {
+      if (!node || own) return
+      if (node.srcObject !== stream) node.srcObject = stream
+      node.play().catch(() => {})
+    },
+    [stream, own],
+  )
+  return (
+    <div className="tile presentation">
+      <video ref={attach} autoPlay playsInline muted />
+      {!own && <audio ref={attachAudio} autoPlay />}
+      <span className="tile-name">🖥 {label}</span>
+      <button
+        className="pres-fs-btn"
+        title="Ecrã inteiro"
+        onClick={() => {
+          const el = document.documentElement
+          if (document.fullscreenElement) void document.exitFullscreen()
+          else void el.requestFullscreen?.()
+        }}
+      >
+        ⛶
+      </button>
+      {!own && onRequestControl && (
+        <button
+          className="remote-ctrl-btn"
+          title="Solicitar Controlo Remoto"
+          onClick={onRequestControl}
+          style={{ position: 'absolute', bottom: '10px', left: '10px', zIndex: 10, background: 'var(--accent)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}
+        >
+          🎮 Solicitar Controlo
+        </button>
       )}
     </div>
   )
@@ -1463,6 +3086,8 @@ function RemoteTile({
   sinkId,
   speaking,
   style,
+  pinned,
+  onPin,
   onMute,
   onKick,
 }: {
@@ -1471,16 +3096,29 @@ function RemoteTile({
   sinkId: string
   speaking: boolean
   style?: CSSProperties
+  pinned?: boolean
+  onPin?: () => void
   onMute: () => void
   onKick: () => void
 }) {
   const ref = useRef<HTMLVideoElement>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
+  // O ÁUDIO remoto é reproduzido por um <audio> DEDICADO (o <video> fica mudo):
+  // um <video style=display:none> (câmara desligada) podia não tocar o áudio, e
+  // o autoplay de vídeo não-mudo podia ser bloqueado. O <audio> toca sempre.
   useEffect(() => {
-    if (ref.current) ref.current.srcObject = peer.stream
+    if (ref.current && ref.current.srcObject !== peer.stream) {
+      ref.current.srcObject = peer.stream
+      void ref.current.play().catch(() => {})
+    }
+    if (audioRef.current && audioRef.current.srcObject !== peer.stream) {
+      audioRef.current.srcObject = peer.stream
+      void audioRef.current.play().catch(() => {})
+    }
   }, [peer.stream])
-  // Saída de áudio (altifalantes) escolhida nas definições.
+  // Saída de áudio (altifalantes) escolhida nas definições — no <audio>.
   useEffect(() => {
-    const el = ref.current as (HTMLVideoElement & { setSinkId?: (id: string) => Promise<void> }) | null
+    const el = audioRef.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null
     if (el?.setSinkId) void el.setSinkId(sinkId || '').catch(() => {})
   }, [sinkId, peer.stream])
   // Vídeo só quando há track E o peer diz que a câmara está ligada —
@@ -1488,19 +3126,38 @@ function RemoteTile({
   const hasVideo = !!peer.stream?.getVideoTracks().length && peer.camOn
   const hasAudio = !!peer.stream?.getAudioTracks().length && peer.micOn
   return (
-    <div className={speaking ? 'tile speaking' : 'tile'} style={style}>
-      <video ref={ref} autoPlay playsInline style={{ display: hasVideo ? undefined : 'none' }} />
+    <div
+      className={speaking ? 'tile speaking' : 'tile'}
+      style={style}
+      onDoubleClick={onPin}
+      title="Duplo-clique para fixar/desafixar no palco"
+    >
+      <video ref={ref} autoPlay playsInline muted style={{ display: hasVideo ? undefined : 'none' }} />
+      <audio ref={audioRef} autoPlay />
       {!hasVideo && (
-        <div className="tile-avatar">
-          <span className="avatar-circle">{peer.username.slice(0, 2).toUpperCase()}</span>
+        <div className="tile-avatar" style={{ background: peerColor(peer.username) }}>
+          <span className="avatar-circle" style={{ background: 'rgba(0,0,0,0.25)' }}>{peer.username.slice(0, 2).toUpperCase()}</span>
         </div>
       )}
+      <button
+        className={pinned ? 'tile-pin pinned' : 'tile-pin'}
+        onClick={onPin}
+        title={pinned ? 'Desafixar do palco' : 'Fixar no palco'}
+      >
+        📌
+      </button>
       {peer.hand && <span className="hand-badge">✋</span>}
+      {/* Indicador de mic muted no canto superior direito (estilo Meet). */}
+      {!hasAudio && (
+        <span className="tile-mic-status" aria-label="microfone desativado">
+          <MicOffIcon />
+        </span>
+      )}
       <span className="tile-name">
-        {!hasAudio && <span className="name-mic-off"><MicOffIcon /></span>}
         {hasAudio && speaking && <SpeakingBars />}
         {peer.username}
         {peer.host ? ' · anfitrião' : ''}
+        {peer.is_pstn ? ' · 📞 PSTN' : peer.is_bot ? ' · 🤖 AI Bot' : ''}
       </span>
       {isHost && !peer.host && (
         <div className="host-actions">

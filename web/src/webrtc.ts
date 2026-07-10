@@ -66,7 +66,23 @@ export interface Call {
   replaceAudioTrack(track: MediaStreamTrack): Promise<void>
   /** Adiciona/substitui a track de vídeo publicada, renegociando se preciso. */
   enableVideo(track: MediaStreamTrack, stream: MediaStream): Promise<void>
+  /**
+   * Publica o ecrã como track ADICIONAL (a câmara continua a fluir).
+   * No mesh (sem SFU) cai para o comportamento antigo: substitui a câmara.
+   */
+  startScreen(track: MediaStreamTrack, stream: MediaStream): Promise<void>
+  stopScreen(): Promise<void>
+  /** Telemetria QoS por participante (só SFU): kbps recebidos e perda. */
+  qos?(): Promise<QosReport>
   hangup(): void
+}
+
+export interface QosReport {
+  /** RTT até ao SFU em ms (transporte partilhado por todos os peers). */
+  rtt: number | null
+  /** Uplink próprio: kbps enviados (todas as tracks). */
+  upKbps: number
+  byPeer: Record<string, { kbps: number; lossPct: number }>
 }
 
 /**
@@ -201,6 +217,15 @@ export class MeshCall implements Call {
     await replaceTrackOfKind(this.pcs.values(), 'audio', track)
   }
 
+  /** Mesh: sem track extra — o ecrã substitui a câmara (comportamento antigo). */
+  async startScreen(track: MediaStreamTrack) {
+    await this.replaceVideoTrack(track)
+  }
+
+  async stopScreen() {
+    /* o Room repõe a câmara via replaceVideoTrack */
+  }
+
   /** Mesh: adiciona a track em cada peer e renegoceia (re-oferta). */
   async enableVideo(track: MediaStreamTrack, stream: MediaStream) {
     for (const [peerId, pc] of this.pcs) {
@@ -234,6 +259,8 @@ export class MeshCall implements Call {
 export class SfuCall implements Call {
   private pc: RTCPeerConnection
   private pendingIce: RTCIceCandidateInit[] = []
+  private screenSender: RTCRtpSender | null = null
+  private screenAudioSender: RTCRtpSender | null = null
   /** Serializa o processamento de SDP para não intercalar negociações. */
   private queue: Promise<void> = Promise.resolve()
 
@@ -272,12 +299,23 @@ export class SfuCall implements Call {
 
     signal.on('sfu-answer', (m) =>
       this.enqueue(async () => {
-        await this.pc.setRemoteDescription({ type: 'answer', sdp: enhanceOpus(m.sdp) })
+        // Só aplica a resposta se ainda esperamos uma (a nossa oferta pode ter
+        // sido descartada por rollback numa colisão) — evita erro de estado.
+        if (this.pc.signalingState !== 'have-local-offer') return
+        await this.pc.setRemoteDescription({ type: 'answer', sdp: enhanceOpus(m.sdp) }).catch(() => {})
         await this.flushIce()
       }),
     )
     signal.on('sfu-offer', (m) =>
       this.enqueue(async () => {
+        // Perfect negotiation: se há uma oferta local pendente (glare — o servidor
+        // renegociou ao mesmo tempo que nós ofertámos), faz ROLLBACK antes de
+        // aceitar a do servidor. Sem isto o setRemoteDescription(offer) falhava e
+        // o subscritor (ex.: o anfitrião a receber um novo convidado) nunca
+        // adicionava a track → media num sentido só.
+        if (this.pc.signalingState !== 'stable') {
+          await this.pc.setLocalDescription({ type: 'rollback' }).catch(() => {})
+        }
         await this.pc.setRemoteDescription({ type: 'offer', sdp: enhanceOpus(m.sdp) })
         await this.flushIce()
         const answer = await this.pc.createAnswer()
@@ -348,6 +386,95 @@ export class SfuCall implements Call {
       await this.pc.setLocalDescription(offer)
       this.send({ type: 'sfu-offer', sdp: offer.sdp! })
     })
+  }
+
+  /**
+   * SFU: o ecrã vai como track adicional (sem simulcast) num transceiver
+   * próprio — a câmara continua a fluir; o servidor trata-o como
+   * "apresentação" e o gravador guarda-o em ficheiro separado.
+   */
+  async startScreen(track: MediaStreamTrack, stream: MediaStream) {
+    if (this.screenSender) return
+    // Avisa o SFU ANTES de a track chegar: vídeo sem rid = ecrã.
+    this.send({ type: 'screen-share', on: true })
+    const sender = this.pc.addTrack(track, stream)
+    this.crypto?.protectSender(sender)
+    void tuneVideoSender(sender)
+    this.screenSender = sender
+    // Áudio do sistema (partilha de separador/ecrã com som): 2º áudio do
+    // mesmo peer — o SFU classifica-o como "screen-audio".
+    const sysAudio = stream.getAudioTracks()[0]
+    if (sysAudio) {
+      const aSender = this.pc.addTrack(sysAudio, stream)
+      this.crypto?.protectSender(aSender)
+      this.screenAudioSender = aSender
+    }
+    this.enqueue(async () => {
+      const offer = await this.pc.createOffer()
+      await this.pc.setLocalDescription(offer)
+      this.send({ type: 'sfu-offer', sdp: offer.sdp! })
+    })
+  }
+
+  async stopScreen() {
+    const sender = this.screenSender
+    if (!sender) return
+    this.screenSender = null
+    this.send({ type: 'screen-share', on: false })
+    this.pc.removeTrack(sender)
+    if (this.screenAudioSender) {
+      this.pc.removeTrack(this.screenAudioSender)
+      this.screenAudioSender = null
+    }
+    this.enqueue(async () => {
+      const offer = await this.pc.createOffer()
+      await this.pc.setLocalDescription(offer)
+      this.send({ type: 'sfu-offer', sdp: offer.sdp! })
+    })
+  }
+
+  /** Deltas de bytes/pacotes entre chamadas ao qos() (por stat id). */
+  private lastQos = new Map<string, { bytes: number; ts: number; pkts: number; lost: number }>()
+
+  async qos(): Promise<QosReport> {
+    const out: QosReport = { rtt: null, upKbps: 0, byPeer: {} }
+    const report = await this.pc.getStats()
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/
+    report.forEach((s: Record<string, number | string | boolean>) => {
+      if (s.type === 'candidate-pair' && s.state === 'succeeded' && typeof s.currentRoundTripTime === 'number') {
+        out.rtt = Math.round((s.currentRoundTripTime as number) * 1000)
+      }
+      if (s.type === 'outbound-rtp') {
+        const prev = this.lastQos.get(String(s.id))
+        const bytes = (s.bytesSent as number) ?? 0
+        const ts = s.timestamp as number
+        if (prev && ts > prev.ts) out.upKbps += Math.max(0, Math.round(((bytes - prev.bytes) * 8) / (ts - prev.ts)))
+        this.lastQos.set(String(s.id), { bytes, ts, pkts: 0, lost: 0 })
+      }
+      if (s.type === 'inbound-rtp') {
+        // trackIdentifier = "<publisher-uuid>-<kind>-<rid>" (definido pelo SFU)
+        const tid = String(s.trackIdentifier ?? '')
+        if (!uuidRe.test(tid)) return
+        const peer = tid.slice(0, 36)
+        const prev = this.lastQos.get(String(s.id))
+        const bytes = (s.bytesReceived as number) ?? 0
+        const pkts = (s.packetsReceived as number) ?? 0
+        const lost = (s.packetsLost as number) ?? 0
+        const ts = s.timestamp as number
+        let kbps = 0
+        let lossPct = 0
+        if (prev && ts > prev.ts) {
+          kbps = Math.max(0, Math.round(((bytes - prev.bytes) * 8) / (ts - prev.ts)))
+          const dp = pkts - prev.pkts
+          const dl = lost - prev.lost
+          if (dp + dl > 0) lossPct = Math.round((100 * dl) / (dp + dl))
+        }
+        this.lastQos.set(String(s.id), { bytes, ts, pkts, lost })
+        const cur = out.byPeer[peer] ?? { kbps: 0, lossPct: 0 }
+        out.byPeer[peer] = { kbps: cur.kbps + kbps, lossPct: Math.max(cur.lossPct, lossPct) }
+      }
+    })
+    return out
   }
 
   hangup() {

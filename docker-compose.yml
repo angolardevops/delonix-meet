@@ -11,7 +11,9 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U delonix"]
+      # -d delonix_meet: liga à base certa (sem -d, o pg_isready tenta a base
+      # "delonix" = nome do utilizador, que não existe → FATAL no log a cada 5s).
+      test: ["CMD-SHELL", "pg_isready -U delonix -d delonix_meet"]
       interval: 5s
       timeout: 3s
       retries: 10

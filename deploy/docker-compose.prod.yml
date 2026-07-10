@@ -1,0 +1,29 @@
+# Override de PRODUÇÃO. Usar com:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --wait
+#
+# Lê os segredos do ambiente (exporta-os a partir de /etc/delonix/delonix.env
+# ou de um .env ao lado). NÃO comita segredos reais.
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD}
+    # Em produção, não expor o Postgres na rede — só no loopback.
+    ports:
+      - "127.0.0.1:5435:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  coturn:
+    # O segredo TEM de ser igual ao TURN_SECRET do backend.
+    # Para clientes atrás de firewalls corporativas, ativar TURN sobre TLS (5349)
+    # com um certificado válido (montar via volume e usar --cert/--pkey).
+    command: >
+      -n
+      --listening-port=3478
+      --realm=${TURN_REALM:-meet.example.com}
+      --use-auth-secret
+      --static-auth-secret=${TURN_SECRET:?define TURN_SECRET}
+      --no-tls --no-dtls
+      --min-port=49160 --max-port=49200

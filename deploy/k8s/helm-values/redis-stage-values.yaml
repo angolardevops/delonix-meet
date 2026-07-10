@@ -1,0 +1,5 @@
+# Redis para stage/kind — single master, sem sentinel nem réplicas.
+# Mais leve, adequado para um cluster kind local de desenvolvimento.
+architecture: standalone
+auth:
+  enabled: false

@@ -1,0 +1,26 @@
+# Ingress dedicado ao /ws com afinidade por sala para o cluster de stage
+# (namespace delonix-meet, host meet.delonix.local). Aplicar com:
+#   kubectl apply -f deploy/k8s/patch-live-ws-affinity.yaml
+# E remover o path /ws do ingress existente:
+#   kubectl edit ingress delonix-ingress -n delonix-meet   # apagar o bloco path: /ws
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: delonix-ws
+  namespace: delonix-meet
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$arg_room"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [meet.delonix.local]
+      secretName: delonix-tls-secret
+  rules:
+    - host: meet.delonix.local
+      http:
+        paths:
+          - path: /ws
+            pathType: Prefix
+            backend: { service: { name: delonix-server, port: { number: 8180 } } }

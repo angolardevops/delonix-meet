@@ -50,10 +50,15 @@ struct Publication {
     subscribers: Mutex<HashMap<Uuid, (Arc<TrackLocalStaticRTP>, Arc<RTCRtpSender>)>>,
     remote: Arc<TrackRemote>,
     publisher_pc: Arc<RTCPeerConnection>,
+    /// Writer da gravação server-side (ativo só durante uma gravação).
+    rec: Mutex<Option<crate::recorder::RecWriter>>,
 }
 
 struct SfuPeer {
     pc: Arc<RTCPeerConnection>,
+    /// Este peer anunciou partilha de ecrã: a próxima track de vídeo SEM rid
+    /// é o ecrã (a câmara publica sempre com rids de simulcast).
+    sharing: std::sync::atomic::AtomicBool,
     out: mpsc::UnboundedSender<ServerMsg>,
     renegotiate_tx: mpsc::UnboundedSender<()>,
     /// Slot onde o handler de `sfu-answer` entrega a resposta à renegociação.
@@ -81,11 +86,17 @@ fn wanted_rid(kind: &str, room_size: usize) -> &'static str {
 struct SfuRoom {
     peers: Mutex<HashMap<Uuid, Arc<SfuPeer>>>,
     publications: Mutex<Vec<Arc<Publication>>>,
+    /// Sessão de gravação server-side em curso (metadados; writers nas publicações).
+    recording: Mutex<Option<crate::recorder::RecordingSession>>,
 }
 
 #[derive(Default)]
 pub struct SfuState {
     rooms: DashMap<Uuid, Arc<SfuRoom>>,
+    /// Mapeia o UUID da sala para a porta UDP local que recebe a mixagem PSTN do FreeSWITCH
+    pub phantom_listeners: DashMap<Uuid, u16>,
+    /// Mapeia o UUID da sala para o IP:Porta do FreeSWITCH (PSTN Outbound)
+    pub pstn_outbounds: DashMap<Uuid, std::net::SocketAddr>,
 }
 
 fn new_api() -> Result<webrtc::api::API> {
@@ -98,7 +109,9 @@ fn new_api() -> Result<webrtc::api::API> {
         "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id",
     ] {
         media.register_header_extension(
-            RTCRtpHeaderExtensionCapability { uri: uri.to_owned() },
+            RTCRtpHeaderExtensionCapability {
+                uri: uri.to_owned(),
+            },
             RTPCodecType::Video,
             None,
         )?;
@@ -112,6 +125,23 @@ fn new_api() -> Result<webrtc::api::API> {
 }
 
 impl SfuState {
+    /// Inicia um listener UDP para pacotes RTP "PSTN" do FreeSWITCH (Fase 3 Stub)
+    pub async fn spawn_phantom_listener(self: &Arc<Self>, room_id: Uuid) -> std::io::Result<u16> {
+        if let Some(port) = self.phantom_listeners.get(&room_id) {
+            return Ok(*port);
+        }
+
+        let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+        let port = socket.local_addr()?.port();
+        self.phantom_listeners.insert(room_id, port);
+
+        // Stub: A futura lógica criará o TrackLocalStaticRTP e bombeará
+        // os pacotes do `socket` para dentro da sala.
+        tracing::info!(%room_id, port, "PSTN Phantom RTP Listener bound");
+
+        Ok(port)
+    }
+
     pub async fn add_peer(
         self: &Arc<Self>,
         room_id: Uuid,
@@ -132,6 +162,7 @@ impl SfuState {
         let (renegotiate_tx, renegotiate_rx) = mpsc::unbounded_channel();
         let peer = Arc::new(SfuPeer {
             pc: pc.clone(),
+            sharing: std::sync::atomic::AtomicBool::new(false),
             out: out.clone(),
             renegotiate_tx,
             answer_slot: Arc::new(Mutex::new(None)),
@@ -238,14 +269,44 @@ impl SfuState {
 
     /// Nova track publicada: cria subscrições em todos os outros peers e
     /// bombeia RTP até a track terminar.
-    async fn handle_publish(self: Arc<Self>, room_id: Uuid, publisher: Uuid, remote: Arc<TrackRemote>) {
+    async fn handle_publish(
+        self: Arc<Self>,
+        room_id: Uuid,
+        publisher: Uuid,
+        remote: Arc<TrackRemote>,
+    ) {
         let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
             return;
         };
         let Some(pub_peer) = self.peer(room_id, publisher).await else {
             return;
         };
-        let kind = remote.kind().to_string();
+        // Partilha de ecrã: vídeo sem rid enquanto o peer anunciou partilha —
+        // internamente é um "kind" próprio para ter slot/subscrição separados
+        // da câmara (e ficheiro próprio na gravação). O áudio do sistema da
+        // partilha (2º áudio do mesmo peer durante sharing) idem.
+        let raw_kind = remote.kind().to_string();
+        let sharing_now = pub_peer.sharing.load(std::sync::atomic::Ordering::Relaxed);
+        let is_screen = raw_kind == "video" && remote.rid().is_empty() && sharing_now;
+        let is_screen_audio = raw_kind == "audio" && sharing_now && {
+            // já existe um áudio (microfone) deste publicador?
+            let pubs = room.publications.lock().await;
+            let mut has_mic = false;
+            for p in pubs.iter() {
+                if p.publisher == publisher && p.kind == "audio" {
+                    has_mic = true;
+                    break;
+                }
+            }
+            has_mic
+        };
+        let kind = if is_screen {
+            "screen".to_string()
+        } else if is_screen_audio {
+            "screen-audio".to_string()
+        } else {
+            raw_kind
+        };
         let rid = match remote.rid() {
             "" => "f".to_string(),
             r => r.to_string(),
@@ -259,8 +320,46 @@ impl SfuState {
             subscribers: Mutex::new(HashMap::new()),
             remote: remote.clone(),
             publisher_pc: pub_peer.pc.clone(),
+            rec: Mutex::new(None),
         });
         room.publications.lock().await.push(publication.clone());
+
+        // Gravação a decorrer? Anexa um writer a esta track nova.
+        // Áudio grava sempre; vídeo grava UMA camada por publicador — a
+        // melhor que aparecer (h/f; nem sempre o browser envia a "f").
+        {
+            let mut rec_guard = room.recording.lock().await;
+            if rec_guard.is_some() {
+                let attach = if publication.kind == "audio" || publication.kind == "screen-audio" {
+                    true
+                } else if publication.kind == "video" && publication.rid == "q" {
+                    false
+                } else {
+                    // uma track gravada por (publicador, tipo) — evita duplicar
+                    // camadas de câmara; o ecrã ("screen") tem slot próprio.
+                    let pubs = room.publications.lock().await;
+                    let mut already = false;
+                    for p in pubs.iter() {
+                        if p.kind == publication.kind
+                            && p.publisher == publisher
+                            && !Arc::ptr_eq(p, &publication)
+                            && p.rec.lock().await.is_some()
+                        {
+                            already = true;
+                            break;
+                        }
+                    }
+                    !already
+                };
+                if attach {
+                    if let Some(session) = rec_guard.as_mut() {
+                        if let Some(w) = session.open_track(&publication.kind) {
+                            *publication.rec.lock().await = Some(w);
+                        }
+                    }
+                }
+            }
+        }
 
         // Subscrever todos os peers atuais (exceto o próprio publisher):
         // primeira camada a chegar liga já; se depois chegar a camada
@@ -274,14 +373,19 @@ impl SfuState {
             .map(|(id, p)| (*id, p.clone()))
             .collect();
         let room_size = peers.len() + 1;
+        // Diagnóstico (partilha de ecrã / novas tracks): que track publicou e
+        // para quantos subscritores vai. `kind=screen` confirma a deteção.
+        tracing::info!(%room_id, %publisher, kind = %publication.kind, rid = %publication.rid, subscribers = peers.len(), "sfu publish → fan-out");
         for (sub_id, sub_peer) in peers {
-            if let Err(e) = consider_subscribe(&room, &publication, sub_id, &sub_peer, room_size).await {
+            if let Err(e) =
+                consider_subscribe(&room, &publication, sub_id, &sub_peer, room_size).await
+            {
                 tracing::warn!(%room_id, %sub_id, error = %e, "sfu subscribe failed");
             }
         }
 
         // PLI periódico para vídeo: força keyframes para novos subscritores.
-        if kind == "video" {
+        if kind == "video" || kind == "screen" {
             let pc = pub_peer.pc.clone();
             let ssrc = remote.ssrc();
             tokio::spawn(async move {
@@ -289,7 +393,10 @@ impl SfuState {
                 loop {
                     ticker.tick().await;
                     if pc
-                        .write_rtcp(&[Box::new(PictureLossIndication { sender_ssrc: 0, media_ssrc: ssrc })])
+                        .write_rtcp(&[Box::new(PictureLossIndication {
+                            sender_ssrc: 0,
+                            media_ssrc: ssrc,
+                        })])
                         .await
                         .is_err()
                     {
@@ -299,19 +406,47 @@ impl SfuState {
             });
         }
 
-        // Bomba de RTP: remota -> todas as tracks locais subscritas.
+        // Bomba de RTP: remota -> todas as tracks locais subscritas
+        // (+ tee para o writer de gravação, se ativo).
         let this = self.clone();
+        let is_audio = kind == "audio";
+
         tokio::spawn(async move {
+            let pstn_socket = if is_audio {
+                tokio::net::UdpSocket::bind("0.0.0.0:0").await.ok()
+            } else {
+                None
+            };
             loop {
                 match publication.remote.read_rtp().await {
                     Ok((packet, _)) => {
-                        let subs = publication.subscribers.lock().await;
-                        for (track, _) in subs.values() {
-                            let _ = track.write_rtp(&packet).await;
+                        {
+                            let subs = publication.subscribers.lock().await;
+                            for (track, _) in subs.values() {
+                                let _ = track.write_rtp(&packet).await;
+                            }
+                        }
+                        if let Some(w) = publication.rec.lock().await.as_mut() {
+                            w.write_rtp(&packet);
+                        }
+
+                        // Envio PSTN (Outbound) se for áudio e houver um destino registado
+                        if is_audio {
+                            if let (Some(socket), Some(dest)) =
+                                (&pstn_socket, this.pstn_outbounds.get(&room_id))
+                            {
+                                use webrtc::util::Marshal;
+                                if let Ok(buf) = packet.marshal() {
+                                    let _ = socket.send_to(&buf, *dest).await;
+                                }
+                            }
                         }
                     }
                     Err(_) => break, // track terminou
                 }
+            }
+            if let Some(mut w) = publication.rec.lock().await.take() {
+                w.close();
             }
             this.unpublish(room_id, &publication).await;
         });
@@ -335,7 +470,10 @@ impl SfuState {
             if p.publisher == peer_id {
                 continue;
             }
-            groups.entry((p.publisher, p.kind.clone())).or_default().push(p);
+            groups
+                .entry((p.publisher, p.kind.clone()))
+                .or_default()
+                .push(p);
         }
         for ((_, kind), layers) in groups {
             let wanted = wanted_rid(&kind, room_size);
@@ -408,12 +546,18 @@ impl SfuState {
         tracing::info!(%room_id, publisher = %publication.publisher, kind = %publication.kind, rid = %publication.rid, "sfu track unpublished");
     }
 
-    pub async fn remove_peer(&self, room_id: Uuid, peer_id: Uuid) {
+    /// Remove um peer. Se a sala ficar vazia, devolve a sessão de gravação
+    /// em curso (se houver) para o caller finalizar — a sala é apagada aqui.
+    pub async fn remove_peer(
+        &self,
+        room_id: Uuid,
+        peer_id: Uuid,
+    ) -> Option<crate::recorder::RecordingSession> {
         let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
-            return;
+            return None;
         };
         let Some(peer) = room.peers.lock().await.remove(&peer_id) else {
-            return;
+            return None;
         };
 
         // Remover as publicações deste peer dos restantes participantes.
@@ -438,10 +582,123 @@ impl SfuState {
         let _ = peer.pc.close().await;
 
         let empty = room.peers.lock().await.is_empty();
+        let mut orphan_recording = None;
         if empty {
+            orphan_recording = room.recording.lock().await.take();
+            if orphan_recording.is_some() {
+                for publication in room.publications.lock().await.iter() {
+                    if let Some(mut w) = publication.rec.lock().await.take() {
+                        w.close();
+                    }
+                }
+            }
             self.rooms.remove_if(&room_id, |_, _| true);
         }
         tracing::info!(%room_id, %peer_id, "sfu peer removed");
+        orphan_recording
+    }
+
+    // ---------- Gravação server-side ----------
+
+    /// Inicia a gravação da sala: writers para as tracks já publicadas;
+    /// as futuras anexam-se no handle_publish. Falha se já estiver a gravar.
+    pub async fn start_recording(
+        &self,
+        room_id: Uuid,
+        by_user: Uuid,
+        by_name: &str,
+        e2ee_key: Option<Vec<u8>>,
+        recordings_dir: &std::path::Path,
+    ) -> bool {
+        let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
+            return false;
+        };
+        let mut rec = room.recording.lock().await;
+        if rec.is_some() {
+            return false;
+        }
+        let Ok(mut session) = crate::recorder::RecordingSession::new(
+            by_user,
+            by_name.to_string(),
+            e2ee_key,
+            recordings_dir,
+        )
+        .await
+        else {
+            return false;
+        };
+        // Áudios todos; vídeo = a melhor camada disponível por publicador
+        // (f > h > q — o browser nem sempre envia a camada cheia).
+        let rank = |rid: &str| match rid {
+            "f" => 3,
+            "h" => 2,
+            _ => 1,
+        };
+        let pubs = room.publications.lock().await;
+        let mut best_video: HashMap<(Uuid, String), &Arc<Publication>> = HashMap::new();
+        for p in pubs.iter() {
+            if p.kind == "audio" {
+                if let Some(w) = session.open_track("audio") {
+                    *p.rec.lock().await = Some(w);
+                }
+            } else {
+                // melhor camada por (publicador, tipo): câmara e ecrã à parte
+                let key = (p.publisher, p.kind.clone());
+                if best_video
+                    .get(&key)
+                    .map(|b| rank(&p.rid) > rank(&b.rid))
+                    .unwrap_or(true)
+                {
+                    best_video.insert(key, p);
+                }
+            }
+        }
+        for ((_, kind), p) in &best_video {
+            if let Some(w) = session.open_track(kind) {
+                *p.rec.lock().await = Some(w);
+            }
+        }
+        drop(pubs);
+        tracing::info!(%room_id, %by_user, "server recording started");
+        *rec = Some(session);
+        true
+    }
+
+    /// Para a gravação: fecha os writers e devolve a sessão para o finalize
+    /// (composição ffmpeg + inserção na biblioteca).
+    pub async fn stop_recording(&self, room_id: Uuid) -> Option<crate::recorder::RecordingSession> {
+        let room = self.rooms.get(&room_id).map(|r| r.clone())?;
+        let session = room.recording.lock().await.take()?;
+        for publication in room.publications.lock().await.iter() {
+            if let Some(mut w) = publication.rec.lock().await.take() {
+                w.close();
+            }
+        }
+        tracing::info!(%room_id, "server recording stopped");
+        Some(session)
+    }
+
+    /// Quem começou a gravação em curso, se houver.
+    pub async fn recording_by(&self, room_id: Uuid) -> Option<String> {
+        let room = self.rooms.get(&room_id).map(|r| r.clone())?;
+        let rec = room.recording.lock().await;
+        rec.as_ref().map(|s| s.by_name.clone())
+    }
+
+    /// Marca/desmarca o peer como "a partilhar ecrã" — a próxima track de
+    /// vídeo sem rid dele será tratada como ecrã.
+    pub async fn set_screen(&self, room_id: Uuid, peer_id: Uuid, on: bool) {
+        if let Some(peer) = self.peer(room_id, peer_id).await {
+            peer.sharing.store(on, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Sala sem peers? (para auto-parar a gravação quando todos saem)
+    pub async fn is_room_empty(&self, room_id: Uuid) -> bool {
+        match self.rooms.get(&room_id).map(|r| r.clone()) {
+            Some(room) => room.peers.lock().await.is_empty(),
+            None => true,
+        }
     }
 }
 
@@ -457,12 +714,21 @@ async fn subscribe_layer(
         return Ok(()); // já ligado a uma camada deste publicador/tipo
     }
     let mut subs = publication.subscribers.lock().await;
+    // stream_id = peer_id do publisher (o cliente mapeia a track ao
+    // participante); a partilha de ecrã (vídeo E áudio do sistema) vai num
+    // stream "<peer>-screen" — o mesmo elemento <video> reproduz ambos.
+    let stream_id = if publication.kind == "screen" || publication.kind == "screen-audio" {
+        format!("{}-screen", publication.publisher)
+    } else {
+        publication.publisher.to_string()
+    };
     let local = Arc::new(TrackLocalStaticRTP::new(
         publication.remote.codec().capability.clone(),
-        format!("{}-{}-{}", publication.publisher, publication.kind, publication.rid),
-        // stream_id = peer_id do publisher: é assim que o cliente mapeia
-        // a track recebida para o participante certo.
-        publication.publisher.to_string(),
+        format!(
+            "{}-{}-{}",
+            publication.publisher, publication.kind, publication.rid
+        ),
+        stream_id,
     ));
     let sender = sub_peer
         .pc
@@ -480,6 +746,7 @@ async fn subscribe_layer(
     subscribed.insert(key, (publication.rid.clone(), sender));
     drop(subs);
     drop(subscribed);
+    tracing::info!(%sub_id, publisher = %publication.publisher, kind = %publication.kind, "sfu subscribe_layer → renegotiate subscritor");
     let _ = sub_peer.renegotiate_tx.send(());
     Ok(())
 }
@@ -504,7 +771,10 @@ async fn consider_subscribe(
             // Trocar de camada: solta a antiga, liga a nova, renegoceia uma vez.
             let publications = room.publications.lock().await.clone();
             for p in &publications {
-                if p.publisher == publication.publisher && p.kind == publication.kind && p.rid == cur_rid {
+                if p.publisher == publication.publisher
+                    && p.kind == publication.kind
+                    && p.rid == cur_rid
+                {
                     p.subscribers.lock().await.remove(&sub_id);
                 }
             }
@@ -557,16 +827,14 @@ async fn renegotiation_loop(peer: Arc<SfuPeer>, mut rx: mpsc::UnboundedReceiver<
         let _ = peer.out.send(ServerMsg::SfuOffer { sdp: local.sdp });
 
         match tokio::time::timeout(Duration::from_secs(10), answer_rx).await {
-            Ok(Ok(sdp)) => {
-                match RTCSessionDescription::answer(sdp) {
-                    Ok(answer) => {
-                        if let Err(e) = peer.pc.set_remote_description(answer).await {
-                            tracing::warn!(error = %e, "sfu set_remote answer failed");
-                        }
+            Ok(Ok(sdp)) => match RTCSessionDescription::answer(sdp) {
+                Ok(answer) => {
+                    if let Err(e) = peer.pc.set_remote_description(answer).await {
+                        tracing::warn!(error = %e, "sfu set_remote answer failed");
                     }
-                    Err(e) => tracing::warn!(error = %e, "sfu bad answer"),
                 }
-            }
+                Err(e) => tracing::warn!(error = %e, "sfu bad answer"),
+            },
             _ => tracing::warn!("sfu renegotiation timed out"),
         }
         *peer.answer_slot.lock().await = None;

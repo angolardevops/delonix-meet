@@ -1,4 +1,8 @@
-use axum::{http::StatusCode, response::{IntoResponse, Response}, Json};
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
 use serde_json::json;
 
 #[derive(Debug, thiserror::Error)]
@@ -39,7 +43,9 @@ impl IntoResponse for ApiError {
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized".into()),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not found".into()),
-            ApiError::TooManyRequests => (StatusCode::TOO_MANY_REQUESTS, "too many requests".into()),
+            ApiError::TooManyRequests => {
+                (StatusCode::TOO_MANY_REQUESTS, "too many requests".into())
+            }
             ApiError::Internal(e) => {
                 tracing::error!(error = %e, "internal error");
                 // Never leak internals to the client.

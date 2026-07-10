@@ -27,7 +27,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
       <header className="land-top">
         <div className="land-top-inner">
           <span className="brand-text land-brand">
-            <span className="brand-mark">◆</span> Delonix <span>Meet</span>
+            <img src="/logo.svg" alt="" className="brand-logo" /> Delonix <span>Meet</span>
           </span>
           <nav className="land-nav">
             <button className="land-link" onClick={() => goto('features')}>{t('land.nav.features')}</button>
@@ -129,9 +129,11 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
         <div className="foot-grid">
           <div className="foot-brand">
             <span className="brand-text">
-              <span className="brand-mark">◆</span> Delonix <span>Meet</span>
+              <img src="/logo.svg" alt="" className="brand-logo" /> Delonix <span>Meet</span>
             </span>
             <p>{t('land.footer.tag')}</p>
+            <a className="link small-link" href="#/status">{t('land.statusLink')}</a>
+            <a className="link small-link" href="#/api-docs">API REST</a>
           </div>
         </div>
         <p className="foot-rights">{t('land.footer.rights')}</p>

@@ -1,13 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
+  createRecordingLink,
   downloadRecording,
+  getRecordingLink,
   listRecordingShares,
   recordingObjectUrl,
   recordingsLibrary,
   RecordingItem,
+  revokeRecordingLink,
   roomNotes,
   RoomNotes,
+  saveMinutesByRoom,
   searchUsers,
+  ShareLink,
   shareRecording,
   unshareRecording,
   User,
@@ -94,13 +99,15 @@ export default function Recordings() {
                 <td>{(r.size_bytes / 1_048_576).toFixed(1)} MB</td>
                 <td className="rec-row-actions">
                   <button className="icon-btn" title="Abrir" onClick={() => setViewTarget(r)}>▶</button>
-                  <button
-                    className="icon-btn"
-                    title="Descarregar"
-                    onClick={() => void downloadRecording(r).catch(() => setError('Falha ao descarregar'))}
-                  >
-                    <DownloadIcon />
-                  </button>
+                  {r.can_download && (
+                    <button
+                      className="icon-btn"
+                      title="Descarregar"
+                      onClick={() => void downloadRecording(r).catch((e) => setError((e as Error).message))}
+                    >
+                      <DownloadIcon />
+                    </button>
+                  )}
                   {r.owned && (
                     <button className="icon-btn" title="Partilhar" onClick={() => setShareTarget(r)}>
                       <ShareLinkIcon />
@@ -133,9 +140,11 @@ export default function Recordings() {
                 <button className="btn-sm" onClick={() => setViewTarget(r)}>
                   <NoteIcon /> Abrir
                 </button>
-                <button className="btn-sm ghost" onClick={() => void downloadRecording(r).catch(() => setError('Falha ao descarregar'))}>
-                  <DownloadIcon /> Descarregar
-                </button>
+                {r.can_download && (
+                  <button className="btn-sm ghost" onClick={() => void downloadRecording(r).catch((e) => setError((e as Error).message))}>
+                    <DownloadIcon /> Descarregar
+                  </button>
+                )}
                 {r.owned && (
                   <button className="btn-sm ghost" onClick={() => setShareTarget(r)}>
                     <ShareLinkIcon /> Partilhar{r.share_count > 0 ? ` (${r.share_count})` : ''}
@@ -162,12 +171,14 @@ export default function Recordings() {
   )
 }
 
-/** Leitor: vídeo da gravação + abas Transcrição / Ata (MoM) da reunião associada. */
+/** Leitor: vídeo da gravação + abas Transcrição / Ata (MoM) / Tarefas. */
 function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void }) {
+  const viewerVideoRef = useRef<HTMLVideoElement>(null)
   const [videoUrl, setVideoUrl] = useState('')
   const [notes, setNotes] = useState<RoomNotes | null>(null)
-  const [tab, setTab] = useState<'trans' | 'mom'>('trans')
+  const [tab, setTab] = useState<'trans' | 'mom' | 'tasks'>('trans')
   const [videoErr, setVideoErr] = useState('')
+  const [savingTask, setSavingTask] = useState(false)
 
   useEffect(() => {
     let url = ''
@@ -182,6 +193,29 @@ function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void
   const hasNotes = !!(notes && (notes.minutes || notes.transcript))
   // Transcrição guardada como linhas "[hh:mm] Nome: texto".
   const lines = notes?.transcript ? notes.transcript.split('\n').filter(Boolean) : []
+  // Tarefas = linhas "- [ ]"/"- [x]" da ata (secção Decisões e ações).
+  const momLines = notes?.minutes ? notes.minutes.split('\n') : []
+  const tasks = momLines
+    .map((l, idx) => ({ idx, m: /^- \[([ x])\] (.*)$/.exec(l) }))
+    .filter((t): t is { idx: number; m: RegExpExecArray } => !!t.m)
+    .map((t) => ({ idx: t.idx, done: t.m[1] === 'x', text: t.m[2] }))
+
+  /** Marca/desmarca uma tarefa na própria ata e persiste. */
+  async function toggleTask(lineIdx: number, done: boolean) {
+    if (!notes || savingTask) return
+    setSavingTask(true)
+    const updated = [...momLines]
+    updated[lineIdx] = updated[lineIdx].replace(/^- \[[ x]\]/, done ? '- [x]' : '- [ ]')
+    const minutes = updated.join('\n')
+    try {
+      await saveMinutesByRoom(rec.room_code, minutes, notes.transcript)
+      setNotes({ ...notes, minutes })
+    } catch {
+      /* mantém como estava */
+    } finally {
+      setSavingTask(false)
+    }
+  }
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -195,7 +229,21 @@ function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void
 
         {videoErr && <div className="error">{videoErr}</div>}
         {!videoUrl && !videoErr && <p className="muted">A carregar vídeo…</p>}
-        {videoUrl && <video className="viewer-video" src={videoUrl} controls autoPlay />}
+        {videoUrl && (
+          <div className="viewer-video-wrap">
+            <video ref={viewerVideoRef} className="viewer-video" src={videoUrl} controls autoPlay />
+            <button
+              className="pip-btn"
+              title="Destacar em janela flutuante (Picture-in-Picture)"
+              onClick={() => {
+                const v = viewerVideoRef.current as (HTMLVideoElement & { requestPictureInPicture?: () => Promise<unknown> }) | null
+                v?.requestPictureInPicture?.().catch(() => setVideoErr('O browser não suporta Picture-in-Picture'))
+              }}
+            >
+              ⧉ Destacar
+            </button>
+          </div>
+        )}
 
         <div className="viewer-tabs">
           <button className={tab === 'trans' ? 'auth-tab active' : 'auth-tab'} onClick={() => setTab('trans')}>
@@ -203,6 +251,9 @@ function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void
           </button>
           <button className={tab === 'mom' ? 'auth-tab active' : 'auth-tab'} onClick={() => setTab('mom')}>
             Ata (MoM)
+          </button>
+          <button className={tab === 'tasks' ? 'auth-tab active' : 'auth-tab'} onClick={() => setTab('tasks')}>
+            Tarefas{tasks.length > 0 ? ` (${tasks.filter((t) => !t.done).length})` : ''}
           </button>
         </div>
 
@@ -232,6 +283,27 @@ function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void
         {tab === 'mom' && hasNotes && !notes?.minutes && (
           <p className="muted small">Sem ata guardada — só transcrição.</p>
         )}
+        {tab === 'tasks' && tasks.length === 0 && (
+          <p className="muted small">
+            Sem tarefas nesta reunião — a ata gera-as a partir de frases de ação («fica responsável»,
+            «temos de», «próximo passo»…).
+          </p>
+        )}
+        {tab === 'tasks' && tasks.length > 0 && (
+          <div className="task-list">
+            {tasks.map((t) => (
+              <label key={t.idx} className={t.done ? 'task-row done' : 'task-row'}>
+                <input
+                  type="checkbox"
+                  checked={t.done}
+                  disabled={savingTask}
+                  onChange={(e) => void toggleTask(t.idx, e.target.checked)}
+                />
+                <span>{t.text}</span>
+              </label>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -243,18 +315,63 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
   const [shared, setShared] = useState<User[]>([])
   const [busy, setBusy] = useState(false)
 
+  // --- Link público ---
+  const [link, setLink] = useState<ShareLink | null | undefined>(undefined) // undefined = loading
+  const [linkPassword, setLinkPassword] = useState('')
+  const [linkExpiry, setLinkExpiry] = useState('')
+  const [linkBusy, setLinkBusy] = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
+
+  useEffect(() => {
+    void getRecordingLink(rec.id).then(setLink).catch(() => setLink(null))
+  }, [rec.id])
+
+  function linkUrl(token: string) {
+    return `${location.origin}/#/share/${token}`
+  }
+
+  async function generateLink() {
+    setLinkBusy(true)
+    try {
+      const l = await createRecordingLink(rec.id, {
+        password: linkPassword || undefined,
+        expires_at: linkExpiry ? new Date(linkExpiry).toISOString() : null,
+      })
+      setLink(l)
+      setLinkPassword('')
+    } finally {
+      setLinkBusy(false)
+    }
+  }
+
+  async function revokeLink() {
+    setLinkBusy(true)
+    try {
+      await revokeRecordingLink(rec.id)
+      setLink(null)
+    } finally {
+      setLinkBusy(false)
+    }
+  }
+
+  function copyLink(token: string) {
+    void navigator.clipboard.writeText(linkUrl(token)).then(() => {
+      setLinkCopied(true)
+      setTimeout(() => setLinkCopied(false), 2000)
+    })
+  }
+
+  // --- Partilha por utilizador ---
   async function loadShares() {
     setShared(await listRecordingShares(rec.id).catch(() => []))
   }
   useEffect(() => {
     void loadShares()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
-    if (query.trim().length < 2) {
-      setResults([])
-      return
-    }
+    if (query.trim().length < 2) { setResults([]); return }
     const t = setTimeout(async () => {
       setResults(await searchUsers(query).catch(() => []))
     }, 250)
@@ -281,18 +398,76 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal share-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>Partilhar gravação</h3>
-          <button className="panel-close" onClick={onClose}>
-            <CloseIcon />
-          </button>
+          <button className="panel-close" onClick={onClose}><CloseIcon /></button>
         </div>
+
+        {/* ---- Link público ---- */}
+        <div className="share-link-section">
+          <h4>Link público</h4>
+          {link === undefined && <p className="muted small">A carregar…</p>}
+          {link === null && (
+            <>
+              <div className="share-link-options">
+                <input
+                  type="password"
+                  placeholder="Password (opcional)"
+                  value={linkPassword}
+                  onChange={(e) => setLinkPassword(e.target.value)}
+                />
+                <label className="share-link-label">
+                  Expira em
+                  <input
+                    type="datetime-local"
+                    value={linkExpiry}
+                    onChange={(e) => setLinkExpiry(e.target.value)}
+                    min={new Date().toISOString().slice(0, 16)}
+                  />
+                </label>
+              </div>
+              <button className="btn-sm" disabled={linkBusy} onClick={() => void generateLink()}>
+                {linkBusy ? 'A gerar…' : 'Gerar link'}
+              </button>
+            </>
+          )}
+          {link && (
+            <div className="share-link-box">
+              <div className="share-link-url">
+                <span className="mono small">{linkUrl(link.token)}</span>
+                <button
+                  className="share-link-copy-btn"
+                  onClick={() => copyLink(link.token)}
+                  title="Copiar link"
+                >
+                  {linkCopied ? '✓' : '⎘'}
+                </button>
+              </div>
+              {link.expires_at && (
+                <p className="muted small share-link-password-hint">
+                  Expira em {new Date(link.expires_at).toLocaleString('pt-PT')}
+                </p>
+              )}
+              <div className="share-link-actions">
+                <button className="btn-sm ghost danger" disabled={linkBusy} onClick={() => void revokeLink()}>
+                  {linkBusy ? 'A revogar…' : 'Revogar link'}
+                </button>
+                <button className="btn-sm ghost" disabled={linkBusy} onClick={() => void revokeLink().then(() => generateLink())}>
+                  Renovar
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <hr className="share-divider" />
+
+        {/* ---- Partilha com utilizadores ---- */}
         <p className="muted small">
-          Quem adicionares poderá <strong>ver e descarregar</strong> — só de leitura, não pode voltar a partilhar.
+          Partilha direta: quem adicionares poderá <strong>ver e descarregar</strong>.
         </p>
         <input
-          autoFocus
           placeholder="Procurar por nome ou email…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}

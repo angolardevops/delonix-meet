@@ -19,69 +19,321 @@ use crate::{auth::verify_jwt, error::ApiError, AppState};
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ClientMsg {
-    Offer { to: Uuid, sdp: String },
-    Answer { to: Uuid, sdp: String },
-    Ice { to: Uuid, candidate: serde_json::Value },
-    Chat { text: String },
-    Reaction { emoji: String },
-    Hand { raised: bool },
+    Offer {
+        to: Uuid,
+        sdp: String,
+    },
+    Answer {
+        to: Uuid,
+        sdp: String,
+    },
+    Ice {
+        to: Uuid,
+        candidate: serde_json::Value,
+    },
+    Chat {
+        text: String,
+    },
+    Reaction {
+        emoji: String,
+    },
+    Hand {
+        raised: bool,
+    },
     /// Estado local de câmara/microfone — os outros mostram avatar/ícone
     /// em vez de vídeo preto ou indicador de som errado.
-    Media { cam: bool, mic: bool },
-    Recording { active: bool },
-    Transcript { text: String },
+    Media {
+        cam: bool,
+        mic: bool,
+    },
+    Recording {
+        active: bool,
+    },
+    Transcript {
+        text: String,
+    },
+    /// Anfitrião liga/desliga a transcrição PARTILHADA (Nota AI). Ao ligar,
+    /// todos os clientes transcrevem o PRÓPRIO microfone e difundem as frases —
+    /// capta todos os oradores, não só o mic de quem iniciou.
+    TranscriptionToggle {
+        on: bool,
+    },
     // Só o anfitrião:
-    Admit { to: Uuid },
-    Deny { to: Uuid },
-    ForceMute { to: Uuid },
-    Kick { to: Uuid },
-    BreakoutsCreate { count: u32, #[serde(default)] minutes: Option<u32> },
-    BreakoutRename { code: String, label: String },
+    Admit {
+        to: Uuid,
+    },
+    Deny {
+        to: Uuid,
+    },
+    ForceMute {
+        to: Uuid,
+    },
+    Kick {
+        to: Uuid,
+    },
+    // Controlos do anfitrião sobre a sala (em runtime):
+    RoomLock {
+        locked: bool,
+    },
+    HostShareOnly {
+        on: bool,
+    },
+    // Ferramentas de reunião: sondagens, Q&A e temporizador.
+    PollCreate {
+        question: String,
+        options: Vec<String>,
+    },
+    PollVote {
+        poll: Uuid,
+        option: usize,
+    },
+    PollClose {
+        poll: Uuid,
+    },
+    QaAsk {
+        text: String,
+    },
+    QaUpvote {
+        id: Uuid,
+    },
+    QaAnswered {
+        id: Uuid,
+    },
+    TimerSet {
+        minutes: u32,
+    },
+    TimerClear,
+    // Quadro branco colaborativo: traços com coordenadas normalizadas 0..1.
+    WbStroke {
+        stroke: WbStrokeData,
+    },
+    WbClear,
+    /// Gravação no servidor (só anfitrião, só salas SFU). Em salas E2EE o
+    /// anfitrião cede a chave (base64) só para a duração da gravação.
+    ServerRecord {
+        active: bool,
+        #[serde(default)]
+        e2ee_key: Option<String>,
+    },
+    /// Anuncia partilha de ecrã: a próxima track de vídeo sem rid é o ecrã.
+    ScreenShare {
+        on: bool,
+    },
+    BreakoutsCreate {
+        count: u32,
+        #[serde(default)]
+        minutes: Option<u32>,
+    },
+    BreakoutRename {
+        code: String,
+        label: String,
+    },
     BreakoutAdd,
     /// Move um participante (identificado pelo username) para o grupo `code`
     /// — ou de volta à principal se `code` for o da sala-mãe.
-    BreakoutMoveUser { name: String, code: String },
+    BreakoutMoveUser {
+        name: String,
+        code: String,
+    },
     BreakoutsClose,
     Leave,
     // SFU mode: SDP/ICE exchanged with the server itself, not another peer.
-    SfuOffer { sdp: String },
-    SfuAnswer { sdp: String },
-    SfuIce { candidate: serde_json::Value },
+    SfuOffer {
+        sdp: String,
+    },
+    SfuAnswer {
+        sdp: String,
+    },
+    SfuIce {
+        candidate: serde_json::Value,
+    },
+    RemoteControl {
+        to: Uuid,
+        action: String,
+        payload: serde_json::Value,
+    },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ServerMsg {
-    Joined { peer_id: Uuid, peers: Vec<PeerInfo> },
-    PeerJoined { peer: PeerInfo },
-    PeerLeft { peer_id: Uuid },
-    Offer { from: Uuid, sdp: String },
-    Answer { from: Uuid, sdp: String },
-    Ice { from: Uuid, candidate: serde_json::Value },
-    Chat { from: Uuid, username: String, text: String },
-    Reaction { from: Uuid, username: String, emoji: String },
-    Hand { from: Uuid, raised: bool },
-    Media { from: Uuid, cam: bool, mic: bool },
-    Recording { from: Uuid, username: String, active: bool },
-    Transcript { from: Uuid, username: String, text: String },
+    Joined {
+        peer_id: Uuid,
+        peers: Vec<PeerInfo>,
+    },
+    PeerJoined {
+        peer: PeerInfo,
+    },
+    PeerLeft {
+        peer_id: Uuid,
+    },
+    Offer {
+        from: Uuid,
+        sdp: String,
+    },
+    Answer {
+        from: Uuid,
+        sdp: String,
+    },
+    Ice {
+        from: Uuid,
+        candidate: serde_json::Value,
+    },
+    Chat {
+        from: Uuid,
+        username: String,
+        text: String,
+    },
+    Reaction {
+        from: Uuid,
+        username: String,
+        emoji: String,
+    },
+    Hand {
+        from: Uuid,
+        raised: bool,
+    },
+    Media {
+        from: Uuid,
+        cam: bool,
+        mic: bool,
+    },
+    Recording {
+        from: Uuid,
+        username: String,
+        active: bool,
+    },
+    Transcript {
+        from: Uuid,
+        username: String,
+        text: String,
+    },
+    /// Difusão: o anfitrião ligou/desligou a transcrição partilhada. Todos os
+    /// clientes começam/param de transcrever o próprio microfone.
+    Transcription {
+        on: bool,
+        by: String,
+    },
     // Sala de espera:
-    Waiting,                          // para o convidado: estás em espera
-    WaitingJoin { peer: PeerInfo },   // para o anfitrião: alguém espera
-    WaitingLeft { peer_id: Uuid },    // para o anfitrião: desistiu
-    Denied,                           // para o convidado: entrada recusada
+    Waiting, // para o convidado: estás em espera
+    WaitingJoin {
+        peer: PeerInfo,
+    }, // para o anfitrião: alguém espera
+    WaitingLeft {
+        peer_id: Uuid,
+    }, // para o anfitrião: desistiu
+    Denied,  // para o convidado: entrada recusada
     // Controlo do anfitrião:
-    ForceMuted,                       // para o alvo: foste silenciado
-    Kicked,                           // para o alvo: foste removido
+    ForceMuted, // para o alvo: foste silenciado
+    Kicked,     // para o alvo: foste removido
+    /// Definições runtime da sala (lock, só-anfitrião-partilha).
+    RoomSettings {
+        locked: bool,
+        host_share_only: bool,
+    },
+    // Ferramentas: estado completo difundido a cada mudança.
+    Polls {
+        polls: Vec<PollView>,
+    },
+    Qa {
+        questions: Vec<QaView>,
+    },
+    Timer {
+        ends_at: Option<i64>,
+    },
+    ServerRecording {
+        active: bool,
+        by: String,
+    },
+    WbStroke {
+        stroke: WbStrokeData,
+    },
+    WbClear,
+    /// Snapshot do quadro para quem entra a meio.
+    WbState {
+        strokes: Vec<WbStrokeData>,
+    },
     // Breakout rooms:
-    BreakoutMove { code: String, label: String, back: bool, ends_at: Option<i64> },
-    BreakoutsCreated { rooms: Vec<BreakoutInfo>, ends_at: Option<i64> },
-    Error { message: String },
-    SfuOffer { sdp: String },
-    SfuAnswer { sdp: String },
-    SfuIce { candidate: serde_json::Value },
+    BreakoutMove {
+        code: String,
+        label: String,
+        back: bool,
+        ends_at: Option<i64>,
+    },
+    BreakoutsCreated {
+        rooms: Vec<BreakoutInfo>,
+        ends_at: Option<i64>,
+    },
+    Error {
+        message: String,
+    },
+    SfuOffer {
+        sdp: String,
+    },
+    SfuAnswer {
+        sdp: String,
+    },
+    SfuIce {
+        candidate: serde_json::Value,
+    },
+    RemoteControl {
+        from: Uuid,
+        action: String,
+        payload: serde_json::Value,
+    },
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// Traço do quadro branco: pontos normalizados (0..1), cor CSS e espessura.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WbStrokeData {
+    pub pts: Vec<[f32; 2]>,
+    pub c: String,
+    pub w: f32,
+}
+
+// ---------- Ferramentas de reunião (estado em memória por sala) ----------
+
+/// Vista pública de uma sondagem: contagens agregadas, sem revelar quem
+/// votou em quê (o cliente lembra o próprio voto localmente).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PollView {
+    pub id: Uuid,
+    pub question: String,
+    pub options: Vec<String>,
+    pub counts: Vec<u32>,
+    pub open: bool,
+    pub by: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QaView {
+    pub id: Uuid,
+    pub text: String,
+    pub by: String,
+    pub upvotes: u32,
+    pub answered: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PollState {
+    pub id: Uuid,
+    pub question: String,
+    pub options: Vec<String>,
+    pub votes: HashMap<Uuid, usize>,
+    pub open: bool,
+    pub by: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QaState {
+    pub id: Uuid,
+    pub text: String,
+    pub by: String,
+    pub upvotes: std::collections::HashSet<Uuid>,
+    pub answered: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BreakoutInfo {
     pub code: String,
     pub label: String,
@@ -106,7 +358,7 @@ pub struct BreakoutSet {
     pub nonce: Uuid,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerInfo {
     pub peer_id: Uuid,
     pub username: String,
@@ -116,16 +368,24 @@ pub struct PeerInfo {
     /// Estado de media conhecido (true até o peer dizer o contrário).
     pub cam: bool,
     pub mic: bool,
+    #[serde(default)]
+    pub is_bot: bool,
+    #[serde(default)]
+    pub is_pstn: bool,
 }
 
 // ---------- Hub (room registry, WS-agnostic and unit-testable) ----------
 
 struct Peer {
     username: String,
+    user_id: Uuid,
     is_host: bool,
+    can_admit: bool,
     hand: bool,
     cam_on: bool,
     mic_on: bool,
+    is_bot: bool,
+    is_pstn: bool,
     tx: mpsc::UnboundedSender<ServerMsg>,
 }
 
@@ -138,59 +398,130 @@ struct WaitingPeer {
 struct Room {
     peers: HashMap<Uuid, Peer>,
     waiting: HashMap<Uuid, WaitingPeer>,
+    /// Reunião bloqueada: ninguém entra sem ser admitido (mesmo com link).
+    locked: bool,
+    /// Só o anfitrião pode partilhar ecrã.
+    host_share_only: bool,
+    // Ferramentas de reunião:
+    polls: Vec<PollState>,
+    questions: Vec<QaState>,
+    timer_ends_at: Option<i64>,
+    /// Quadro branco: traços acumulados (repostos a quem entra).
+    wb_strokes: Vec<WbStrokeData>,
 }
 
 #[derive(Default)]
 pub struct SignalingHub {
     rooms: DashMap<Uuid, Room>,
+    pub bus: Option<Arc<crate::pubsub::PubSubBus>>,
 }
 
 impl SignalingHub {
     /// Adds a peer to a room. Announces it to the others and returns the
     /// current roster (excluding the new peer itself). Hosts also receive
     /// the queue of guests already waiting.
+    pub fn apply_redis_state(
+        &self,
+        room_id: Uuid,
+        polls: Vec<PollState>,
+        questions: Vec<QaState>,
+        wb_strokes: Vec<WbStrokeData>,
+        timer_ends_at: Option<i64>,
+        locked: bool,
+        host_share_only: bool,
+    ) {
+        let mut room = self.rooms.entry(room_id).or_default();
+        room.polls = polls;
+        room.questions = questions;
+        room.wb_strokes = wb_strokes;
+        room.timer_ends_at = timer_ends_at;
+        room.locked = locked;
+        room.host_share_only = host_share_only;
+    }
+
     pub fn join(
         &self,
         room_id: Uuid,
         peer_id: Uuid,
+        user_id: Uuid,
         username: String,
         is_host: bool,
+        can_admit: bool,
+        is_bot: bool,
         tx: mpsc::UnboundedSender<ServerMsg>,
     ) -> Vec<PeerInfo> {
-        let mut room = self.rooms.entry(room_id).or_default();
-        let existing: Vec<PeerInfo> = room
-            .peers
-            .iter()
-            .map(|(id, p)| PeerInfo {
-                peer_id: *id,
-                username: p.username.clone(),
-                host: p.is_host,
-                hand: p.hand,
-                cam: p.cam_on,
-                mic: p.mic_on,
-            })
-            .collect();
-        let announce = ServerMsg::PeerJoined {
-            peer: PeerInfo { peer_id, username: username.clone(), host: is_host, hand: false, cam: true, mic: true },
-        };
-        for peer in room.peers.values() {
-            let _ = peer.tx.send(announce.clone());
+        // Collect data and mutate under the DashMap write lock, then release
+        // BEFORE broadcasting. Broadcasting calls broadcast_all_local which
+        // calls self.rooms.get() — acquiring a read lock on the same shard
+        // while a write lock is held causes a deadlock that hangs tokio threads.
+        let (existing, announce, waiting_msgs) = {
+            let mut room = self.rooms.entry(room_id).or_default();
+            let existing: Vec<PeerInfo> = room
+                .peers
+                .iter()
+                .map(|(id, p)| PeerInfo {
+                    peer_id: *id,
+                    username: p.username.clone(),
+                    host: p.is_host,
+                    hand: p.hand,
+                    cam: p.cam_on,
+                    mic: p.mic_on,
+                    is_bot: p.is_bot,
+                    is_pstn: p.is_pstn,
+                })
+                .collect();
+            let announce = ServerMsg::PeerJoined {
+                peer: PeerInfo {
+                    peer_id,
+                    username: username.clone(),
+                    host: is_host,
+                    hand: false,
+                    cam: true,
+                    mic: true,
+                    is_bot,
+                    is_pstn: false,
+                },
+            };
+            let waiting_msgs: Vec<ServerMsg> = if is_host {
+                room.waiting
+                    .iter()
+                    .map(|(id, w)| ServerMsg::WaitingJoin {
+                        peer: PeerInfo {
+                            peer_id: *id,
+                            username: w.username.clone(),
+                            host: false,
+                            hand: false,
+                            cam: true,
+                            mic: true,
+                            is_bot: false,
+                            is_pstn: false,
+                        },
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+            room.peers.insert(
+                peer_id,
+                Peer {
+                    username,
+                    user_id,
+                    is_host,
+                    can_admit,
+                    hand: false,
+                    cam_on: true,
+                    mic_on: true,
+                    is_bot,
+                    is_pstn: false,
+                    tx: tx.clone(),
+                },
+            );
+            (existing, announce, waiting_msgs)
+        }; // ← DashMap write lock released here
+        self.broadcast_all(room_id, announce);
+        for msg in waiting_msgs {
+            let _ = tx.send(msg);
         }
-        if is_host {
-            for (id, w) in room.waiting.iter() {
-                let _ = tx.send(ServerMsg::WaitingJoin {
-                    peer: PeerInfo {
-                        peer_id: *id,
-                        username: w.username.clone(),
-                        host: false,
-                        hand: false,
-                        cam: true,
-                        mic: true,
-                    },
-                });
-            }
-        }
-        room.peers.insert(peer_id, Peer { username, is_host, hand: false, cam_on: true, mic_on: true, tx });
         existing
     }
 
@@ -202,58 +533,92 @@ impl SignalingHub {
         username: String,
         admit_tx: oneshot::Sender<bool>,
     ) {
-        let mut room = self.rooms.entry(room_id).or_default();
-        let info = PeerInfo { peer_id, username: username.clone(), host: false, hand: false, cam: true, mic: true };
-        for peer in room.peers.values().filter(|p| p.is_host) {
-            let _ = peer.tx.send(ServerMsg::WaitingJoin { peer: info.clone() });
+        let info = PeerInfo {
+            peer_id,
+            username: username.clone(),
+            host: false,
+            hand: false,
+            cam: true,
+            mic: true,
+            is_bot: false,
+            is_pstn: false,
+        };
+        // Insert under lock, broadcast after lock is released.
+        {
+            let mut room = self.rooms.entry(room_id).or_default();
+            room.waiting
+                .insert(peer_id, WaitingPeer { username, admit_tx });
         }
-        room.waiting.insert(peer_id, WaitingPeer { username, admit_tx });
+        self.broadcast_hosts(room_id, ServerMsg::WaitingJoin { peer: info });
     }
 
     pub fn remove_waiting(&self, room_id: Uuid, peer_id: Uuid) {
-        if let Some(mut room) = self.rooms.get_mut(&room_id) {
-            if room.waiting.remove(&peer_id).is_some() {
-                let msg = ServerMsg::WaitingLeft { peer_id };
-                for peer in room.peers.values().filter(|p| p.is_host) {
-                    let _ = peer.tx.send(msg.clone());
-                }
-            }
+        let removed = self
+            .rooms
+            .get_mut(&room_id)
+            .map(|mut r| r.waiting.remove(&peer_id).is_some())
+            .unwrap_or(false);
+        if removed {
+            self.broadcast_hosts(room_id, ServerMsg::WaitingLeft { peer_id });
         }
     }
 
     /// Decisão do anfitrião sobre um convidado em espera.
     fn decide_waiting(&self, room_id: Uuid, host: Uuid, target: Uuid, admit: bool) {
-        let Some(mut room) = self.rooms.get_mut(&room_id) else { return };
-        if !room.peers.get(&host).map(|p| p.is_host).unwrap_or(false) {
-            return; // só o anfitrião decide
-        }
-        if let Some(w) = room.waiting.remove(&target) {
-            let _ = w.admit_tx.send(admit);
-            let msg = ServerMsg::WaitingLeft { peer_id: target };
-            for peer in room.peers.values().filter(|p| p.is_host) {
-                let _ = peer.tx.send(msg.clone());
+        let admitted_tx = {
+            let Some(mut room) = self.rooms.get_mut(&room_id) else { return };
+            if !room.peers.get(&host).map(|p| p.is_host).unwrap_or(false) {
+                return; // só o anfitrião decide
             }
+            room.waiting.remove(&target).map(|w| w.admit_tx)
+        }; // ← DashMap write lock released here
+        if let Some(tx) = admitted_tx {
+            let _ = tx.send(admit);
+            self.broadcast_hosts(room_id, ServerMsg::WaitingLeft { peer_id: target });
         }
     }
 
     pub fn leave(&self, room_id: Uuid, peer_id: Uuid) {
-        let mut empty = false;
-        if let Some(mut room) = self.rooms.get_mut(&room_id) {
-            if room.peers.remove(&peer_id).is_some() {
-                let msg = ServerMsg::PeerLeft { peer_id };
-                for peer in room.peers.values() {
-                    let _ = peer.tx.send(msg.clone());
-                }
-            }
-            empty = room.peers.is_empty() && room.waiting.is_empty();
+        let removed = self
+            .rooms
+            .get_mut(&room_id)
+            .map(|mut r| r.peers.remove(&peer_id).is_some())
+            .unwrap_or(false);
+        let empty = self
+            .rooms
+            .get(&room_id)
+            .map(|r| r.peers.is_empty() && r.waiting.is_empty())
+            .unwrap_or(false);
+        if removed {
+            self.broadcast_all(room_id, ServerMsg::PeerLeft { peer_id });
         }
         if empty {
-            self.rooms
-                .remove_if(&room_id, |_, room| room.peers.is_empty() && room.waiting.is_empty());
+            self.rooms.remove_if(&room_id, |_, room| {
+                room.peers.is_empty() && room.waiting.is_empty()
+            });
         }
     }
 
     pub fn send_to(&self, room_id: Uuid, target: Uuid, msg: ServerMsg) -> bool {
+        if let Some(bus) = &self.bus {
+            let bus = bus.clone();
+            let msg_clone = msg.clone();
+            tokio::spawn(async move {
+                bus.publish_signaling(
+                    room_id,
+                    &crate::pubsub::RedisRoomEvent::SendTo {
+                        node_id: *crate::pubsub::NODE_ID,
+                        to: target,
+                        msg: msg_clone,
+                    },
+                )
+                .await;
+            });
+        }
+        self.send_to_local(room_id, target, msg)
+    }
+
+    pub fn send_to_local(&self, room_id: Uuid, target: Uuid, msg: ServerMsg) -> bool {
         self.rooms
             .get(&room_id)
             .and_then(|room| room.peers.get(&target).map(|p| p.tx.send(msg).is_ok()))
@@ -261,6 +626,25 @@ impl SignalingHub {
     }
 
     pub fn broadcast(&self, room_id: Uuid, from: Uuid, msg: ServerMsg) {
+        if let Some(bus) = &self.bus {
+            let bus = bus.clone();
+            let msg_clone = msg.clone();
+            tokio::spawn(async move {
+                bus.publish_signaling(
+                    room_id,
+                    &crate::pubsub::RedisRoomEvent::Broadcast {
+                        node_id: *crate::pubsub::NODE_ID,
+                        from,
+                        msg: msg_clone,
+                    },
+                )
+                .await;
+            });
+        }
+        self.broadcast_local(room_id, from, msg)
+    }
+
+    pub fn broadcast_local(&self, room_id: Uuid, from: Uuid, msg: ServerMsg) {
         if let Some(room) = self.rooms.get(&room_id) {
             for (id, peer) in room.peers.iter() {
                 if *id != from {
@@ -270,10 +654,53 @@ impl SignalingHub {
         }
     }
 
-    /// Envia a todos os presentes (incluindo anfitriões) — usado pelos breakouts.
     pub fn broadcast_all(&self, room_id: Uuid, msg: ServerMsg) {
+        if let Some(bus) = &self.bus {
+            let bus = bus.clone();
+            let msg_clone = msg.clone();
+            tokio::spawn(async move {
+                bus.publish_signaling(
+                    room_id,
+                    &crate::pubsub::RedisRoomEvent::BroadcastAll {
+                        node_id: *crate::pubsub::NODE_ID,
+                        msg: msg_clone,
+                    },
+                )
+                .await;
+            });
+        }
+        self.broadcast_all_local(room_id, msg)
+    }
+
+    pub fn broadcast_all_local(&self, room_id: Uuid, msg: ServerMsg) {
         if let Some(room) = self.rooms.get(&room_id) {
             for peer in room.peers.values() {
+                let _ = peer.tx.send(msg.clone());
+            }
+        }
+    }
+
+    pub fn broadcast_hosts(&self, room_id: Uuid, msg: ServerMsg) {
+        if let Some(bus) = &self.bus {
+            let bus = bus.clone();
+            let msg_clone = msg.clone();
+            tokio::spawn(async move {
+                bus.publish_signaling(
+                    room_id,
+                    &crate::pubsub::RedisRoomEvent::BroadcastHosts {
+                        node_id: *crate::pubsub::NODE_ID,
+                        msg: msg_clone,
+                    },
+                )
+                .await;
+            });
+        }
+        self.broadcast_hosts_local(room_id, msg)
+    }
+
+    pub fn broadcast_hosts_local(&self, room_id: Uuid, msg: ServerMsg) {
+        if let Some(room) = self.rooms.get(&room_id) {
+            for peer in room.peers.values().filter(|p| p.is_host) {
                 let _ = peer.tx.send(msg.clone());
             }
         }
@@ -307,6 +734,124 @@ impl SignalingHub {
             .and_then(|room| room.peers.get(&peer_id).map(|p| p.username.clone()))
     }
 
+    /// Sala bloqueada? (usado no join para forçar sala de espera)
+    pub fn is_locked(&self, room_id: Uuid) -> bool {
+        self.rooms.get(&room_id).map(|r| r.locked).unwrap_or(false)
+    }
+
+    pub fn has_peer(&self, room_id: Uuid, peer_id: Uuid) -> bool {
+        self.rooms
+            .get(&room_id)
+            .map(|r| r.peers.contains_key(&peer_id))
+            .unwrap_or(false)
+    }
+
+    /// IDs de utilizadores actualmente na sala (para o cron de auto-ring).
+    pub fn users_in_room(&self, room_id: Uuid) -> std::collections::HashSet<Uuid> {
+        self.rooms
+            .get(&room_id)
+            .map(|room| room.peers.values().map(|p| p.user_id).collect())
+            .unwrap_or_default()
+    }
+
+    /// Difunde as definições runtime a todos os presentes.
+    pub fn broadcast_settings(&self, room_id: Uuid) {
+        if let Some(room) = self.rooms.get(&room_id) {
+            let msg = ServerMsg::RoomSettings {
+                locked: room.locked,
+                host_share_only: room.host_share_only,
+            };
+            for peer in room.peers.values() {
+                let _ = peer.tx.send(msg.clone());
+            }
+        }
+    }
+
+    fn polls_view(&self, room_id: Uuid) -> Vec<PollView> {
+        self.rooms
+            .get(&room_id)
+            .map(|r| {
+                r.polls
+                    .iter()
+                    .map(|p| {
+                        let mut counts = vec![0u32; p.options.len()];
+                        for opt in p.votes.values() {
+                            if let Some(c) = counts.get_mut(*opt) {
+                                *c += 1;
+                            }
+                        }
+                        PollView {
+                            id: p.id,
+                            question: p.question.clone(),
+                            options: p.options.clone(),
+                            counts,
+                            open: p.open,
+                            by: p.by.clone(),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn qa_view(&self, room_id: Uuid) -> Vec<QaView> {
+        self.rooms
+            .get(&room_id)
+            .map(|r| {
+                let mut qs: Vec<QaView> = r
+                    .questions
+                    .iter()
+                    .map(|q| QaView {
+                        id: q.id,
+                        text: q.text.clone(),
+                        by: q.by.clone(),
+                        upvotes: q.upvotes.len() as u32,
+                        answered: q.answered,
+                    })
+                    .collect();
+                // Não respondidas primeiro, depois por votos.
+                qs.sort_by(|a, b| a.answered.cmp(&b.answered).then(b.upvotes.cmp(&a.upvotes)));
+                qs
+            })
+            .unwrap_or_default()
+    }
+
+    fn broadcast_polls(&self, room_id: Uuid) {
+        let msg = ServerMsg::Polls {
+            polls: self.polls_view(room_id),
+        };
+        self.broadcast_all(room_id, msg);
+    }
+
+    fn broadcast_qa(&self, room_id: Uuid) {
+        let msg = ServerMsg::Qa {
+            questions: self.qa_view(room_id),
+        };
+        self.broadcast_all(room_id, msg);
+    }
+
+    /// Estado das ferramentas (para quem entra a meio).
+    pub fn tools_snapshot(&self, room_id: Uuid) -> (Vec<PollView>, Vec<QaView>, Option<i64>) {
+        let timer = self.rooms.get(&room_id).and_then(|r| r.timer_ends_at);
+        (self.polls_view(room_id), self.qa_view(room_id), timer)
+    }
+
+    /// Traços atuais do quadro branco (para quem entra a meio).
+    pub fn wb_snapshot(&self, room_id: Uuid) -> Vec<WbStrokeData> {
+        self.rooms
+            .get(&room_id)
+            .map(|r| r.wb_strokes.clone())
+            .unwrap_or_default()
+    }
+
+    /// Definições atuais (para enviar a quem acabou de entrar).
+    pub fn settings_of(&self, room_id: Uuid) -> (bool, bool) {
+        self.rooms
+            .get(&room_id)
+            .map(|r| (r.locked, r.host_share_only))
+            .unwrap_or((false, false))
+    }
+
     fn is_host(&self, room_id: Uuid, peer_id: Uuid) -> bool {
         self.rooms
             .get(&room_id)
@@ -319,7 +864,13 @@ impl SignalingHub {
     }
 
     /// Routes one client message. Returns `false` when the peer asked to leave.
-    pub fn handle(&self, room_id: Uuid, peer_id: Uuid, msg: ClientMsg) -> bool {
+    pub fn handle(
+        &self,
+        room_id: Uuid,
+        peer_id: Uuid,
+        msg: ClientMsg,
+        bus: Option<&std::sync::Arc<crate::pubsub::PubSubBus>>,
+    ) -> bool {
         // Mensagens de quem já não está na sala (ex.: expulso) são ignoradas.
         let in_room = self.username_of(room_id, peer_id).is_some();
         match msg {
@@ -332,22 +883,65 @@ impl SignalingHub {
                 self.send_to(room_id, to, ServerMsg::Answer { from: peer_id, sdp });
             }
             ClientMsg::Ice { to, candidate } => {
-                self.send_to(room_id, to, ServerMsg::Ice { from: peer_id, candidate });
+                self.send_to(
+                    room_id,
+                    to,
+                    ServerMsg::Ice {
+                        from: peer_id,
+                        candidate,
+                    },
+                );
+            }
+            ClientMsg::RemoteControl {
+                to,
+                action,
+                payload,
+            } => {
+                self.send_to(
+                    room_id,
+                    to,
+                    ServerMsg::RemoteControl {
+                        from: peer_id,
+                        action,
+                        payload,
+                    },
+                );
             }
             ClientMsg::Chat { text } => {
                 if text.is_empty() || text.len() > 4000 {
                     return true;
                 }
-                let username = self.username_of(room_id, peer_id).unwrap_or_else(|| "?".into());
-                self.broadcast(room_id, peer_id, ServerMsg::Chat { from: peer_id, username, text });
+                let text = crate::dlp::censor(&text);
+                let username = self
+                    .username_of(room_id, peer_id)
+                    .unwrap_or_else(|| "?".into());
+                self.broadcast(
+                    room_id,
+                    peer_id,
+                    ServerMsg::Chat {
+                        from: peer_id,
+                        username,
+                        text,
+                    },
+                );
             }
             ClientMsg::Reaction { emoji } => {
                 // Só emojis curtos — nada de spam de texto por aqui.
                 if emoji.is_empty() || emoji.chars().count() > 4 {
                     return true;
                 }
-                let username = self.username_of(room_id, peer_id).unwrap_or_else(|| "?".into());
-                self.broadcast(room_id, peer_id, ServerMsg::Reaction { from: peer_id, username, emoji });
+                let username = self
+                    .username_of(room_id, peer_id)
+                    .unwrap_or_else(|| "?".into());
+                self.broadcast(
+                    room_id,
+                    peer_id,
+                    ServerMsg::Reaction {
+                        from: peer_id,
+                        username,
+                        emoji,
+                    },
+                );
             }
             ClientMsg::Hand { raised } => {
                 if let Some(mut room) = self.rooms.get_mut(&room_id) {
@@ -355,7 +949,14 @@ impl SignalingHub {
                         p.hand = raised;
                     }
                 }
-                self.broadcast(room_id, peer_id, ServerMsg::Hand { from: peer_id, raised });
+                self.broadcast(
+                    room_id,
+                    peer_id,
+                    ServerMsg::Hand {
+                        from: peer_id,
+                        raised,
+                    },
+                );
             }
             ClientMsg::Media { cam, mic } => {
                 if let Some(mut room) = self.rooms.get_mut(&room_id) {
@@ -364,11 +965,29 @@ impl SignalingHub {
                         p.mic_on = mic;
                     }
                 }
-                self.broadcast(room_id, peer_id, ServerMsg::Media { from: peer_id, cam, mic });
+                self.broadcast(
+                    room_id,
+                    peer_id,
+                    ServerMsg::Media {
+                        from: peer_id,
+                        cam,
+                        mic,
+                    },
+                );
             }
             ClientMsg::Recording { active } => {
-                let username = self.username_of(room_id, peer_id).unwrap_or_else(|| "?".into());
-                self.broadcast(room_id, peer_id, ServerMsg::Recording { from: peer_id, username, active });
+                let username = self
+                    .username_of(room_id, peer_id)
+                    .unwrap_or_else(|| "?".into());
+                self.broadcast(
+                    room_id,
+                    peer_id,
+                    ServerMsg::Recording {
+                        from: peer_id,
+                        username,
+                        active,
+                    },
+                );
             }
             ClientMsg::Transcript { text } => {
                 // Frase final da fala do próprio microfone — difunde aos outros
@@ -376,8 +995,229 @@ impl SignalingHub {
                 if text.is_empty() || text.len() > 4000 {
                     return true;
                 }
-                let username = self.username_of(room_id, peer_id).unwrap_or_else(|| "?".into());
-                self.broadcast(room_id, peer_id, ServerMsg::Transcript { from: peer_id, username, text });
+                let text = crate::dlp::censor(&text);
+                let username = self
+                    .username_of(room_id, peer_id)
+                    .unwrap_or_else(|| "?".into());
+                self.broadcast(
+                    room_id,
+                    peer_id,
+                    ServerMsg::Transcript {
+                        from: peer_id,
+                        username,
+                        text,
+                    },
+                );
+            }
+            ClientMsg::TranscriptionToggle { on } => {
+                // Só o anfitrião controla a transcrição partilhada; difunde a
+                // todos (incl. quem envia) para começarem/pararem de captar.
+                if self.is_host(room_id, peer_id) {
+                    let by = self
+                        .username_of(room_id, peer_id)
+                        .unwrap_or_else(|| "?".into());
+                    self.broadcast_all(room_id, ServerMsg::Transcription { on, by });
+                }
+            }
+            ClientMsg::RoomLock { locked } => {
+                if self.is_host(room_id, peer_id) {
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        room.locked = locked;
+                    }
+                    self.broadcast_settings(room_id);
+                }
+            }
+            ClientMsg::HostShareOnly { on } => {
+                if self.is_host(room_id, peer_id) {
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        room.host_share_only = on;
+                    }
+                    self.broadcast_settings(room_id);
+                }
+            }
+            ClientMsg::PollCreate { question, options } => {
+                let question = question.trim().to_string();
+                let options: Vec<String> = options
+                    .iter()
+                    .map(|o| o.trim().to_string())
+                    .filter(|o| !o.is_empty())
+                    .collect();
+                if self.is_host(room_id, peer_id)
+                    && !question.is_empty()
+                    && question.len() <= 200
+                    && (2..=6).contains(&options.len())
+                    && options.iter().all(|o| o.len() <= 80)
+                {
+                    let by = self
+                        .username_of(room_id, peer_id)
+                        .unwrap_or_else(|| "?".into());
+                    let poll = PollState {
+                        id: Uuid::new_v4(),
+                        question,
+                        options,
+                        votes: HashMap::new(),
+                        open: true,
+                        by,
+                    };
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        if room.polls.len() < 20 {
+                            room.polls.push(poll.clone());
+                        }
+                    }
+                    self.broadcast_polls(room_id);
+                    if let Some(b) = bus {
+                        let b_cl = b.clone();
+                        tokio::spawn(async move {
+                            crate::redis_state::poll_set(b_cl.conn.clone(), room_id, &poll).await;
+                        });
+                    }
+                }
+            }
+            ClientMsg::PollVote { poll, option } => {
+                if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                    if let Some(p) = room.polls.iter_mut().find(|p| p.id == poll) {
+                        if p.open && option < p.options.len() {
+                            p.votes.insert(peer_id, option);
+                        }
+                    }
+                }
+                self.broadcast_polls(room_id);
+                if let Some(b) = bus {
+                    let b_cl = b.clone();
+                    tokio::spawn(async move {
+                        crate::redis_state::poll_vote(
+                            b_cl.conn.clone(),
+                            room_id,
+                            poll,
+                            peer_id,
+                            option,
+                        )
+                        .await;
+                    });
+                }
+            }
+            ClientMsg::PollClose { poll } => {
+                if self.is_host(room_id, peer_id) {
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        if let Some(p) = room.polls.iter_mut().find(|p| p.id == poll) {
+                            p.open = false;
+                        }
+                    }
+                    self.broadcast_polls(room_id);
+                    if let Some(b) = bus {
+                        let b_cl = b.clone();
+                        tokio::spawn(async move {
+                            crate::redis_state::poll_close(b_cl.conn.clone(), room_id, poll).await;
+                        });
+                    }
+                }
+            }
+            ClientMsg::QaAsk { text } => {
+                let text = text.trim().to_string();
+                if !text.is_empty() && text.len() <= 300 {
+                    let by = self
+                        .username_of(room_id, peer_id)
+                        .unwrap_or_else(|| "?".into());
+                    let qa = QaState {
+                        id: Uuid::new_v4(),
+                        text,
+                        by,
+                        upvotes: std::collections::HashSet::new(),
+                        answered: false,
+                    };
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        if room.questions.len() < 100 {
+                            room.questions.push(qa.clone());
+                        }
+                    }
+                    self.broadcast_qa(room_id);
+                    if let Some(b) = bus {
+                        let b_cl = b.clone();
+                        tokio::spawn(async move {
+                            crate::redis_state::qa_set(b_cl.conn.clone(), room_id, &qa).await;
+                        });
+                    }
+                }
+            }
+            ClientMsg::QaUpvote { id } => {
+                if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                    if let Some(q) = room.questions.iter_mut().find(|q| q.id == id) {
+                        if !q.upvotes.insert(peer_id) {
+                            q.upvotes.remove(&peer_id);
+                        }
+                    }
+                }
+                self.broadcast_qa(room_id);
+                if let Some(b) = bus {
+                    let b_cl = b.clone();
+                    tokio::spawn(async move {
+                        crate::redis_state::qa_upvote(b_cl.conn.clone(), room_id, id, peer_id)
+                            .await;
+                    });
+                }
+            }
+            ClientMsg::QaAnswered { id } => {
+                if self.is_host(room_id, peer_id) {
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        if let Some(q) = room.questions.iter_mut().find(|q| q.id == id) {
+                            q.answered = !q.answered;
+                        }
+                    }
+                    self.broadcast_qa(room_id);
+                    if let Some(b) = bus {
+                        let b_cl = b.clone();
+                        tokio::spawn(async move {
+                            crate::redis_state::qa_answered(b_cl.conn.clone(), room_id, id).await;
+                        });
+                    }
+                }
+            }
+            ClientMsg::TimerSet { minutes } => {
+                if self.is_host(room_id, peer_id) && (1..=240).contains(&minutes) {
+                    let ends_at = chrono::Utc::now().timestamp() + (minutes as i64) * 60;
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        room.timer_ends_at = Some(ends_at);
+                    }
+                    self.broadcast_all(
+                        room_id,
+                        ServerMsg::Timer {
+                            ends_at: Some(ends_at),
+                        },
+                    );
+                    if let Some(b) = bus {
+                        let b_cl = b.clone();
+                        tokio::spawn(async move {
+                            crate::redis_state::timer_set(b_cl.conn.clone(), room_id, ends_at)
+                                .await;
+                        });
+                    }
+                }
+            }
+            ClientMsg::WbStroke { stroke } => {
+                if stroke.pts.len() >= 2 && stroke.pts.len() <= 2000 && stroke.c.len() <= 24 {
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        // Cap de memória: quadros gigantes descartam os mais antigos.
+                        if room.wb_strokes.len() >= 3000 {
+                            room.wb_strokes.drain(0..500);
+                        }
+                        room.wb_strokes.push(stroke.clone());
+                    }
+                    self.broadcast(room_id, peer_id, ServerMsg::WbStroke { stroke });
+                }
+            }
+            ClientMsg::WbClear => {
+                if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                    room.wb_strokes.clear();
+                }
+                self.broadcast_all(room_id, ServerMsg::WbClear);
+            }
+            ClientMsg::TimerClear => {
+                if self.is_host(room_id, peer_id) {
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        room.timer_ends_at = None;
+                    }
+                    self.broadcast_all(room_id, ServerMsg::Timer { ends_at: None });
+                }
             }
             ClientMsg::Admit { to } => self.decide_waiting(room_id, peer_id, to, true),
             ClientMsg::Deny { to } => self.decide_waiting(room_id, peer_id, to, false),
@@ -400,6 +1240,8 @@ impl SignalingHub {
             | ClientMsg::BreakoutRename { .. }
             | ClientMsg::BreakoutAdd
             | ClientMsg::BreakoutMoveUser { .. }
+            | ClientMsg::ServerRecord { .. }
+            | ClientMsg::ScreenShare { .. }
             | ClientMsg::BreakoutsClose => {}
         }
         true
@@ -426,8 +1268,14 @@ pub async fn ws_handler(
     let is_host = claims.owner;
     let must_wait = claims.wait && !claims.owner;
     let user_id = claims.sub;
+    let is_bot = claims.is_bot;
+    // can_admit depends on role. Let's say host can admit by default.
+    let can_admit = is_host;
     Ok(ws.on_upgrade(move |socket| {
-        handle_socket(state, socket, room_id, user_id, username, sfu_mode, is_host, must_wait)
+        handle_socket(
+            state, socket, room_id, user_id, username, sfu_mode, is_host, must_wait, can_admit,
+            is_bot,
+        )
     }))
 }
 
@@ -440,10 +1288,22 @@ async fn breakout_new_child(
     e2ee: bool,
     label: &str,
 ) -> Option<BreakoutChild> {
-    match crate::rooms::insert_room(&state.db, owner, &format!("{label} — {parent_name}"), topology, false, e2ee)
-        .await
+    match crate::rooms::insert_room(
+        &state.db,
+        owner,
+        &format!("{label} — {parent_name}"),
+        topology,
+        false,
+        e2ee,
+        "normal",
+    )
+    .await
     {
-        Ok(r) => Some(BreakoutChild { id: r.id, code: r.code, label: label.to_string() }),
+        Ok(r) => Some(BreakoutChild {
+            id: r.id,
+            code: r.code,
+            label: label.to_string(),
+        }),
         Err(e) => {
             tracing::warn!(error = %e, "breakout insert_room failed");
             None
@@ -464,15 +1324,25 @@ fn broadcast_breakout_state(state: &Arc<AppState>, parent_id: Uuid) {
         .map(|c| BreakoutInfo {
             code: c.code.clone(),
             label: c.label.clone(),
-            people: state.hub.roster_named(c.id).into_iter().map(|(_, n, _)| n).collect(),
+            people: state
+                .hub
+                .roster_named(c.id)
+                .into_iter()
+                .map(|(_, n, _)| n)
+                .collect(),
         })
         .collect();
     let ends_at = set.ends_at;
     for (id, host) in state.hub.roster(parent_id) {
         if host {
-            state
-                .hub
-                .send_to(parent_id, id, ServerMsg::BreakoutsCreated { rooms: infos.clone(), ends_at });
+            state.hub.send_to(
+                parent_id,
+                id,
+                ServerMsg::BreakoutsCreated {
+                    rooms: infos.clone(),
+                    ends_at,
+                },
+            );
         }
     }
 }
@@ -488,21 +1358,33 @@ fn breakout_parent_of(state: &Arc<AppState>, room_id: Uuid) -> Option<Uuid> {
 
 /// Anfitrião pediu salas de grupo: cria N salas, distribui os participantes
 /// round-robin, avisa os anfitriões e (opcional) agenda o retorno automático.
-async fn breakouts_create(state: &Arc<AppState>, room_id: Uuid, owner: Uuid, count: u32, minutes: Option<u32>) {
+async fn breakouts_create(
+    state: &Arc<AppState>,
+    room_id: Uuid,
+    owner: Uuid,
+    count: u32,
+    minutes: Option<u32>,
+) {
     let count = count.clamp(2, 8) as usize;
-    let parent: Option<(String, String, bool, String)> = sqlx::query_as(
-        "SELECT code, topology, e2ee, name FROM rooms WHERE id = $1",
-    )
-    .bind(room_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
-    let Some((parent_code, topology, e2ee, name)) = parent else { return };
+    let parent: Option<(String, String, bool, String, String)> =
+        sqlx::query_as("SELECT code, topology, e2ee, name, format FROM rooms WHERE id = $1")
+            .bind(room_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    let Some((parent_code, topology, e2ee, name, format)) = parent else { return };
+    // Salas de grupo só em reuniões de formato 'training' (defesa no servidor —
+    // a UI já esconde, mas um cliente manipulado não deve conseguir criá-las).
+    if format != "training" {
+        tracing::warn!(%room_id, "breakouts pedidos numa sala não-treino — ignorado");
+        return;
+    }
 
     let mut children: Vec<BreakoutChild> = Vec::new();
     for i in 1..=count {
-        match breakout_new_child(state, owner, &name, &topology, e2ee, &format!("Grupo {i}")).await {
+        match breakout_new_child(state, owner, &name, &topology, e2ee, &format!("Grupo {i}")).await
+        {
             Some(c) => children.push(c),
             None => return,
         }
@@ -526,13 +1408,24 @@ async fn breakouts_create(state: &Arc<AppState>, room_id: Uuid, owner: Uuid, cou
         state.hub.send_to(
             room_id,
             *peer,
-            ServerMsg::BreakoutMove { code: c.code.clone(), label: c.label.clone(), back: false, ends_at },
+            ServerMsg::BreakoutMove {
+                code: c.code.clone(),
+                label: c.label.clone(),
+                back: false,
+                ends_at,
+            },
         );
     }
 
-    state
-        .breakouts
-        .insert(room_id, BreakoutSet { parent_code, children, ends_at, nonce });
+    state.breakouts.insert(
+        room_id,
+        BreakoutSet {
+            parent_code,
+            children,
+            ends_at,
+            nonce,
+        },
+    );
     broadcast_breakout_state(state, room_id);
 
     // Temporizador: no fim, devolve todos à principal (se esta geração ainda existir).
@@ -571,20 +1464,32 @@ fn breakout_rename(state: &Arc<AppState>, room_id: Uuid, code: &str, label: &str
 
 /// Acrescenta mais um grupo ao conjunto ativo.
 async fn breakout_add(state: &Arc<AppState>, room_id: Uuid, owner: Uuid) {
-    let parent: Option<(String, String, bool, String)> = sqlx::query_as(
-        "SELECT code, topology, e2ee, name FROM rooms WHERE id = $1",
-    )
-    .bind(room_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
+    let parent: Option<(String, String, bool, String)> =
+        sqlx::query_as("SELECT code, topology, e2ee, name FROM rooms WHERE id = $1")
+            .bind(room_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
     let Some((_, topology, e2ee, name)) = parent else { return };
-    let n = state.breakouts.get(&room_id).map(|s| s.children.len()).unwrap_or(0);
+    let n = state
+        .breakouts
+        .get(&room_id)
+        .map(|s| s.children.len())
+        .unwrap_or(0);
     if n == 0 || n >= 12 {
         return;
     }
-    if let Some(child) = breakout_new_child(state, owner, &name, &topology, e2ee, &format!("Grupo {}", n + 1)).await {
+    if let Some(child) = breakout_new_child(
+        state,
+        owner,
+        &name,
+        &topology,
+        e2ee,
+        &format!("Grupo {}", n + 1),
+    )
+    .await
+    {
         if let Some(mut set) = state.breakouts.get_mut(&room_id) {
             set.children.push(child);
         }
@@ -620,7 +1525,12 @@ fn breakout_move_user(state: &Arc<AppState>, room_id: Uuid, name: &str, target_c
             state.hub.send_to(
                 loc,
                 peer,
-                ServerMsg::BreakoutMove { code: target_code.to_string(), label, back, ends_at },
+                ServerMsg::BreakoutMove {
+                    code: target_code.to_string(),
+                    label,
+                    back,
+                    ends_at,
+                },
             );
             return;
         }
@@ -642,9 +1552,13 @@ fn breakouts_close(state: &Arc<AppState>, room_id: Uuid) {
             );
         }
         // Anfitriões na sala principal limpam a lista.
-        state
-            .hub
-            .broadcast_all(room_id, ServerMsg::BreakoutsCreated { rooms: vec![], ends_at: None });
+        state.hub.broadcast_all(
+            room_id,
+            ServerMsg::BreakoutsCreated {
+                rooms: vec![],
+                ends_at: None,
+            },
+        );
         tracing::info!(%room_id, "breakout rooms closed");
     }
 }
@@ -655,7 +1569,10 @@ async fn drain_while_waiting(stream: &mut SplitStream<WebSocket>) {
         match msg {
             Message::Close(_) => break,
             Message::Text(text) => {
-                if matches!(serde_json::from_str::<ClientMsg>(&text), Ok(ClientMsg::Leave)) {
+                if matches!(
+                    serde_json::from_str::<ClientMsg>(&text),
+                    Ok(ClientMsg::Leave)
+                ) {
                     break;
                 }
             }
@@ -674,28 +1591,49 @@ async fn handle_socket(
     sfu_mode: bool,
     is_host: bool,
     must_wait: bool,
+    can_admit: bool,
+    is_bot: bool,
 ) {
     let peer_id = Uuid::new_v4();
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<ServerMsg>();
 
-    // Outbound: hub -> websocket.
+    // Outbound: hub -> websocket. Um Ping periódico mantém a ligação viva
+    // (proxies fecham WebSockets ociosos): sem tráfego, o socket cairia e —
+    // como não há renegociação sem sinalização — a partilha de ecrã, o quadro
+    // branco e o estado de media deixariam de chegar aos participantes.
     let writer = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            let text = match serde_json::to_string(&msg) {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            if sink.send(Message::Text(text.into())).await.is_err() {
-                break;
+        let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(25));
+        keepalive.tick().await; // consome o tick imediato
+        loop {
+            tokio::select! {
+                msg = rx.recv() => {
+                    let Some(msg) = msg else { break };
+                    let text = match serde_json::to_string(&msg) {
+                        Ok(t) => t,
+                        Err(_) => continue,
+                    };
+                    if sink.send(Message::Text(text.into())).await.is_err() {
+                        break;
+                    }
+                }
+                _ = keepalive.tick() => {
+                    if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
 
     // Sala de espera: convidados aguardam a decisão do anfitrião.
+    // Uma sala bloqueada em runtime força espera mesmo sem waiting_room.
+    let must_wait = must_wait || (!is_host && state.hub.is_locked(room_id));
     if must_wait {
         let (admit_tx, admit_rx) = oneshot::channel::<bool>();
-        state.hub.add_waiting(room_id, peer_id, username.clone(), admit_tx);
+        state
+            .hub
+            .add_waiting(room_id, peer_id, username.clone(), admit_tx);
         let _ = tx.send(ServerMsg::Waiting);
         tracing::info!(%room_id, %peer_id, %username, "guest waiting for admission");
 
@@ -718,12 +1656,61 @@ async fn handle_socket(
         }
     }
 
-    let peers = state.hub.join(room_id, peer_id, username.clone(), is_host, tx.clone());
+    if let Some(bus) = &state.redis_bus {
+        let (polls, qa, wb, timer, (locked, host_share)) = tokio::join!(
+            crate::redis_state::poll_get_all(bus.conn.clone(), room_id),
+            crate::redis_state::qa_get_all(bus.conn.clone(), room_id),
+            crate::redis_state::wb_get_all(bus.conn.clone(), room_id),
+            crate::redis_state::timer_get(bus.conn.clone(), room_id),
+            crate::redis_state::settings_get(bus.conn.clone(), room_id)
+        );
+        state
+            .hub
+            .apply_redis_state(room_id, polls, qa, wb, timer, locked, host_share);
+    }
+
+    let peers = state.hub.join(
+        room_id,
+        peer_id,
+        user_id,
+        username.clone(),
+        is_host,
+        can_admit,
+        is_bot,
+        tx.clone(),
+    );
     let _ = tx.send(ServerMsg::Joined { peer_id, peers });
+    let (locked, host_share_only) = state.hub.settings_of(room_id);
+    if locked || host_share_only {
+        let _ = tx.send(ServerMsg::RoomSettings {
+            locked,
+            host_share_only,
+        });
+    }
+    // Ferramentas: quem entra a meio recebe sondagens/Q&A/temporizador atuais.
+    let (polls, questions, timer) = state.hub.tools_snapshot(room_id);
+    if !polls.is_empty() {
+        let _ = tx.send(ServerMsg::Polls { polls });
+    }
+    if !questions.is_empty() {
+        let _ = tx.send(ServerMsg::Qa { questions });
+    }
+    if timer.is_some() {
+        let _ = tx.send(ServerMsg::Timer { ends_at: timer });
+    }
+    if let Some(by) = state.sfu.recording_by(room_id).await {
+        let _ = tx.send(ServerMsg::ServerRecording { active: true, by });
+    }
+    let wb = state.hub.wb_snapshot(room_id);
+    if !wb.is_empty() {
+        let _ = tx.send(ServerMsg::WbState { strokes: wb });
+    }
     if sfu_mode {
         if let Err(e) = state.sfu.add_peer(room_id, peer_id, tx.clone()).await {
             tracing::error!(%room_id, %peer_id, error = %e, "sfu add_peer failed");
-            let _ = tx.send(ServerMsg::Error { message: "sfu unavailable".into() });
+            let _ = tx.send(ServerMsg::Error {
+                message: "sfu unavailable".into(),
+            });
         }
     }
     tracing::info!(%room_id, %peer_id, %username, sfu = sfu_mode, host = is_host, "peer joined");
@@ -732,13 +1719,28 @@ async fn handle_socket(
         broadcast_breakout_state(&state, parent);
     }
 
-    // Inbound: websocket -> hub.
+    // Inbound: websocket -> hub. Rate-limit por socket (anti-flood/DoS):
+    // um pico anormal de mensagens desliga o cliente abusivo.
+    let mut rl_window = std::time::Instant::now();
+    let mut rl_count: u32 = 0;
+    const MAX_MSGS_PER_SEC: u32 = 80;
     while let Some(Ok(msg)) = stream.next().await {
+        if rl_window.elapsed() >= std::time::Duration::from_secs(1) {
+            rl_window = std::time::Instant::now();
+            rl_count = 0;
+        }
+        rl_count += 1;
+        if rl_count > MAX_MSGS_PER_SEC {
+            tracing::warn!(%peer_id, "flood de mensagens WS — a desligar");
+            break;
+        }
         match msg {
             Message::Text(text) => match serde_json::from_str::<ClientMsg>(&text) {
-                Ok(msg @ (ClientMsg::SfuOffer { .. } | ClientMsg::SfuAnswer { .. } | ClientMsg::SfuIce { .. }))
-                    if sfu_mode =>
-                {
+                Ok(
+                    msg @ (ClientMsg::SfuOffer { .. }
+                    | ClientMsg::SfuAnswer { .. }
+                    | ClientMsg::SfuIce { .. }),
+                ) if sfu_mode => {
                     if let Err(e) = state.sfu.on_client_msg(room_id, peer_id, msg).await {
                         tracing::warn!(%room_id, %peer_id, error = %e, "sfu message failed");
                     }
@@ -758,13 +1760,59 @@ async fn handle_socket(
                 Ok(ClientMsg::BreakoutsClose) if is_host => {
                     breakouts_close(&state, room_id);
                 }
+                Ok(ClientMsg::ScreenShare { on }) if sfu_mode => {
+                    state.sfu.set_screen(room_id, peer_id, on).await;
+                }
+                Ok(ClientMsg::ServerRecord { active, e2ee_key }) if is_host && sfu_mode => {
+                    if active {
+                        // Chave E2EE (se cedida): 32 bytes AES-256 em base64.
+                        use base64::Engine as _;
+                        let key = e2ee_key
+                            .as_deref()
+                            .and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok())
+                            .filter(|k| k.len() == 32);
+                        if state
+                            .sfu
+                            .start_recording(
+                                room_id,
+                                user_id,
+                                &username,
+                                key,
+                                &state.config.recordings_dir,
+                            )
+                            .await
+                        {
+                            state.hub.broadcast_all(
+                                room_id,
+                                ServerMsg::ServerRecording {
+                                    active: true,
+                                    by: username.clone(),
+                                },
+                            );
+                        }
+                    } else if let Some(session) = state.sfu.stop_recording(room_id).await {
+                        crate::recorder::finalize(state.clone(), room_id, session);
+                        state.hub.broadcast_all(
+                            room_id,
+                            ServerMsg::ServerRecording {
+                                active: false,
+                                by: username.clone(),
+                            },
+                        );
+                    }
+                }
                 Ok(client_msg) => {
-                    if !state.hub.handle(room_id, peer_id, client_msg) {
+                    if !state
+                        .hub
+                        .handle(room_id, peer_id, client_msg, state.redis_bus.as_ref())
+                    {
                         break;
                     }
                 }
                 Err(_) => {
-                    let _ = tx.send(ServerMsg::Error { message: "invalid message".into() });
+                    let _ = tx.send(ServerMsg::Error {
+                        message: "invalid message".into(),
+                    });
                 }
             },
             Message::Close(_) => break,
@@ -773,7 +1821,11 @@ async fn handle_socket(
     }
 
     if sfu_mode {
-        state.sfu.remove_peer(room_id, peer_id).await;
+        // Última pessoa a sair leva a gravação órfã para finalização.
+        if let Some(session) = state.sfu.remove_peer(room_id, peer_id).await {
+            tracing::info!(%room_id, "room empty — finalizing server recording");
+            crate::recorder::finalize(state.clone(), room_id, session);
+        }
     }
     state.hub.leave(room_id, peer_id);
     if let Some(parent) = breakout_parent_of(&state, room_id) {
@@ -787,7 +1839,11 @@ async fn handle_socket(
 mod tests {
     use super::*;
 
-    fn peer() -> (Uuid, mpsc::UnboundedSender<ServerMsg>, mpsc::UnboundedReceiver<ServerMsg>) {
+    fn peer() -> (
+        Uuid,
+        mpsc::UnboundedSender<ServerMsg>,
+        mpsc::UnboundedReceiver<ServerMsg>,
+    ) {
         let (tx, rx) = mpsc::unbounded_channel();
         (Uuid::new_v4(), tx, rx)
     }
@@ -834,7 +1890,15 @@ mod tests {
         drain(&mut rx_b);
         drain(&mut rx_c);
 
-        hub.handle(room, a, ClientMsg::Offer { to: b, sdp: "sdp-offer".into() });
+        hub.handle(
+            room,
+            a,
+            ClientMsg::Offer {
+                to: b,
+                sdp: "sdp-offer".into(),
+            },
+            None,
+        );
 
         match rx_b.recv().await.unwrap() {
             ServerMsg::Offer { from, sdp } => {
@@ -843,7 +1907,10 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
-        assert!(rx_c.try_recv().is_err(), "c must not receive a targeted offer");
+        assert!(
+            rx_c.try_recv().is_err(),
+            "c must not receive a targeted offer"
+        );
     }
 
     #[tokio::test]
@@ -856,17 +1923,31 @@ mod tests {
         hub.join(room, b, "bob".into(), false, tx_b);
         drain(&mut rx_a);
 
-        hub.handle(room, b, ClientMsg::Chat { text: "olá!".into() });
+        hub.handle(
+            room,
+            b,
+            ClientMsg::Chat {
+                text: "olá!".into(),
+            },
+            None,
+        );
 
         match rx_a.recv().await.unwrap() {
-            ServerMsg::Chat { from, username, text } => {
+            ServerMsg::Chat {
+                from,
+                username,
+                text,
+            } => {
                 assert_eq!(from, b);
                 assert_eq!(username, "bob");
                 assert_eq!(text, "olá!");
             }
             other => panic!("unexpected: {other:?}"),
         }
-        assert!(rx_b.try_recv().is_err(), "sender must not echo its own chat");
+        assert!(
+            rx_b.try_recv().is_err(),
+            "sender must not echo its own chat"
+        );
     }
 
     #[tokio::test]
@@ -888,7 +1969,10 @@ mod tests {
 
         hub.leave(room, a);
         assert_eq!(hub.room_size(room), 0);
-        assert!(hub.rooms.is_empty(), "empty rooms must be garbage-collected");
+        assert!(
+            hub.rooms.is_empty(),
+            "empty rooms must be garbage-collected"
+        );
     }
 
     #[tokio::test]
@@ -901,7 +1985,14 @@ mod tests {
         hub.join(room1, a, "a".into(), false, tx_a);
         hub.join(room2, b, "b".into(), false, tx_b);
 
-        hub.handle(room1, a, ClientMsg::Chat { text: "room1 only".into() });
+        hub.handle(
+            room1,
+            a,
+            ClientMsg::Chat {
+                text: "room1 only".into(),
+            },
+            None,
+        );
         assert!(rx_b.try_recv().is_err(), "messages must never cross rooms");
         assert!(!hub.send_to(room1, b, ServerMsg::PeerLeft { peer_id: a }));
     }
@@ -927,11 +2018,11 @@ mod tests {
         }
 
         // Um não-anfitrião a tentar admitir é ignorado.
-        hub.handle(room, other, ClientMsg::Admit { to: guest });
+        hub.handle(room, other, ClientMsg::Admit { to: guest }, None);
         assert!(admit_rx.try_recv().is_err(), "non-host must not admit");
 
         // O anfitrião admite.
-        hub.handle(room, host, ClientMsg::Admit { to: guest });
+        hub.handle(room, host, ClientMsg::Admit { to: guest }, None);
         assert_eq!(admit_rx.await, Ok(true));
     }
 
@@ -947,7 +2038,7 @@ mod tests {
         let (admit_tx, admit_rx) = oneshot::channel();
         hub.add_waiting(room, guest, "guest".into(), admit_tx);
 
-        hub.handle(room, host, ClientMsg::Deny { to: guest });
+        hub.handle(room, host, ClientMsg::Deny { to: guest }, None);
         assert_eq!(admit_rx.await, Ok(false));
     }
 
@@ -977,16 +2068,25 @@ mod tests {
         hub.join(room, b, "bob".into(), false, tx_b);
         drain(&mut rx_a);
 
-        hub.handle(room, b, ClientMsg::Reaction { emoji: "🎉".into() });
+        hub.handle(
+            room,
+            b,
+            ClientMsg::Reaction {
+                emoji: "🎉".into()
+            },
+            None,
+        );
         match rx_a.recv().await.unwrap() {
-            ServerMsg::Reaction { username, emoji, .. } => {
+            ServerMsg::Reaction {
+                username, emoji, ..
+            } => {
                 assert_eq!(username, "bob");
                 assert_eq!(emoji, "🎉");
             }
             other => panic!("unexpected: {other:?}"),
         }
 
-        hub.handle(room, b, ClientMsg::Hand { raised: true });
+        hub.handle(room, b, ClientMsg::Hand { raised: true }, None);
         match rx_a.recv().await.unwrap() {
             ServerMsg::Hand { from, raised } => {
                 assert_eq!(from, b);
@@ -1015,19 +2115,29 @@ mod tests {
         drain(&mut rx_b);
 
         // Não-anfitrião não silencia ninguém.
-        hub.handle(room, a, ClientMsg::ForceMute { to: b });
+        hub.handle(room, a, ClientMsg::ForceMute { to: b }, None);
         assert!(rx_b.try_recv().is_err());
 
-        hub.handle(room, host, ClientMsg::ForceMute { to: b });
+        hub.handle(room, host, ClientMsg::ForceMute { to: b }, None);
         assert!(matches!(rx_b.recv().await.unwrap(), ServerMsg::ForceMuted));
 
-        hub.handle(room, host, ClientMsg::Kick { to: b });
+        hub.handle(room, host, ClientMsg::Kick { to: b }, None);
         assert!(matches!(rx_b.recv().await.unwrap(), ServerMsg::Kicked));
         assert_eq!(hub.room_size(room), 2, "expulso sai da sala");
         // O kick difunde peer-left aos restantes.
-        assert!(matches!(rx_a.recv().await.unwrap(), ServerMsg::PeerLeft { .. }));
+        assert!(matches!(
+            rx_a.recv().await.unwrap(),
+            ServerMsg::PeerLeft { .. }
+        ));
         // Mensagens do expulso passam a ser ignoradas.
-        hub.handle(room, b, ClientMsg::Chat { text: "ainda cá estou?".into() });
+        hub.handle(
+            room,
+            b,
+            ClientMsg::Chat {
+                text: "ainda cá estou?".into(),
+            },
+            None,
+        );
         assert!(rx_a.try_recv().is_err());
     }
 }

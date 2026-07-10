@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
+import PasswordInput from '../components/PasswordInput'
 import {
   addEmployee,
   Branch,
@@ -6,6 +7,7 @@ import {
   createGroup,
   createMeetingRoom,
   createOrg,
+  currentUser,
   Employee,
   Group,
   listBranches,
@@ -16,9 +18,10 @@ import {
   myOrgs,
   OrgSummary,
   removeEmployee,
+  updateEmployee,
 } from '../api'
 import { usePresence } from '../components/PresenceProvider'
-import { CamIcon, CloseIcon, PeopleIcon, PlusIcon, TrashIcon, VoiceCallIcon } from '../icons'
+import { CamIcon, CloseIcon, EditIcon, PeopleIcon, PlusIcon, TrashIcon, VoiceCallIcon } from '../icons'
 
 type Tab = 'directory' | 'branches' | 'groups' | 'rooms'
 
@@ -105,6 +108,14 @@ function DirectoryTab({ org }: { org: OrgSummary }) {
   const [emps, setEmps] = useState<Employee[]>([])
   const [branches, setBranches] = useState<Branch[]>([])
   const [showAdd, setShowAdd] = useState(false)
+  const [editingEmp, setEditingEmp] = useState<Employee | null>(null)
+
+  const [search, setSearch] = useState('')
+  const [roleFilter, setRoleFilter] = useState('all')
+  const [page, setPage] = useState(1)
+  const pageSize = 10
+
+  const me = useMemo(() => currentUser(), [])
 
   async function refresh() {
     setEmps(await listEmployees(org.id))
@@ -115,42 +126,96 @@ function DirectoryTab({ org }: { org: OrgSummary }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [org.id])
 
+  useEffect(() => {
+    setPage(1)
+  }, [search, roleFilter])
+
+  const filtered = useMemo(() => {
+    return emps.filter((e) => {
+      if (roleFilter !== 'all' && e.role !== roleFilter) return false
+      if (search) {
+        const term = search.toLowerCase()
+        return e.username.toLowerCase().includes(term) || 
+               (e.email && e.email.toLowerCase().includes(term)) ||
+               (e.title && e.title.toLowerCase().includes(term))
+      }
+      return true
+    })
+  }, [emps, search, roleFilter])
+
+  const totalPages = Math.ceil(filtered.length / pageSize)
+  const paginated = filtered.slice((page - 1) * pageSize, page * pageSize)
+
   return (
     <>
-      {org.role === 'admin' && (
-        <button className="btn-new small" onClick={() => setShowAdd(true)}>
-          <PlusIcon /> Adicionar employee
-        </button>
-      )}
+      <div className="filters-bar" style={{ display: 'flex', gap: '12px', marginBottom: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <input 
+          type="search" 
+          placeholder="Pesquisar membros..." 
+          value={search} 
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ flex: 1, minWidth: '200px' }}
+        />
+        <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+          <option value="all">Todos os papéis</option>
+          <option value="admin">Administradores</option>
+          <option value="member">Membros</option>
+        </select>
+        {org.role === 'admin' && (
+          <button className="btn-new small" onClick={() => setShowAdd(true)}>
+            <PlusIcon /> Adicionar
+          </button>
+        )}
+      </div>
       <div className="emp-list">
-        {emps.map((e) => (
+        {paginated.map((e) => (
           <div key={e.user_id} className="emp-row">
             <span className="avatar-wrap">
               <span className="avatar-circle small">{e.username.slice(0, 2).toUpperCase()}</span>
               <span className={isOnline(e.user_id) ? 'dot online' : 'dot'} />
             </span>
             <span className="emp-info">
-              <strong>{e.username} {e.role === 'admin' && <span className="tag-admin">admin</span>}</strong>
+              <strong>{e.username} {e.role === 'admin' && <span className="tag-admin">admin</span>} {e.user_id === me?.id && <span className="tag-admin" style={{background: 'var(--accent-2)', color: '#000'}}>tu</span>}</strong>
               <small>{[e.title, e.branch_name, e.email].filter(Boolean).join(' · ')}</small>
             </span>
             <span className="emp-actions">
-              <button className="call-btn voice" title="Chamada de voz" onClick={() => startCall({ targets: [e.user_id], kind: 'voice', title: `Chamada com ${e.username}` })}>
-                <VoiceCallIcon />
-              </button>
-              <button className="call-btn video" title="Chamada de vídeo" onClick={() => startCall({ targets: [e.user_id], kind: 'video', title: `Chamada com ${e.username}` })}>
-                <CamIcon />
-              </button>
-              {org.role === 'admin' && (
-                <button className="icon-btn" title="Remover" onClick={() => void removeEmployee(org.id, e.user_id).then(refresh)}>
-                  <TrashIcon />
-                </button>
+              {e.user_id !== me?.id && (
+                <>
+                  <button className="call-btn voice" title="Chamada de voz" onClick={() => startCall({ targets: [e.user_id], kind: 'voice', title: `Chamada com ${e.username}` })}>
+                    <VoiceCallIcon />
+                  </button>
+                  <button className="call-btn video" title="Chamada de vídeo" onClick={() => startCall({ targets: [e.user_id], kind: 'video', title: `Chamada com ${e.username}` })}>
+                    <CamIcon />
+                  </button>
+                </>
+              )}
+              {org.role === 'admin' && e.user_id !== me?.id && (
+                <>
+                  <button className="icon-btn" title="Editar" onClick={() => setEditingEmp(e)}>
+                    <EditIcon />
+                  </button>
+                  <button className="icon-btn" title="Remover" onClick={() => void removeEmployee(org.id, e.user_id).then(refresh)}>
+                    <TrashIcon />
+                  </button>
+                </>
               )}
             </span>
           </div>
         ))}
+        {paginated.length === 0 && <p className="muted">Nenhum membro encontrado.</p>}
       </div>
+      {totalPages > 1 && (
+        <div className="pagination" style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'center', alignItems: 'center' }}>
+          <button className="btn-sm ghost" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Anterior</button>
+          <span className="muted small">Página {page} de {totalPages}</span>
+          <button className="btn-sm ghost" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>Próxima</button>
+        </div>
+      )}
       {showAdd && (
         <AddEmployeeModal orgId={org.id} branches={branches} onClose={() => setShowAdd(false)} onAdded={() => { setShowAdd(false); void refresh() }} />
+      )}
+      {editingEmp && (
+        <EditEmployeeModal orgId={org.id} employee={editingEmp} branches={branches} onClose={() => setEditingEmp(null)} onSaved={() => { setEditingEmp(null); void refresh() }} />
       )}
     </>
   )
@@ -370,7 +435,7 @@ function AddEmployeeModal({
         <input autoFocus type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
         <div className="field-row">
           <label>Nome<input placeholder="username" value={username} onChange={(e) => setUsername(e.target.value)} /></label>
-          <label>Password inicial<input type="text" placeholder="mín. 8 (nova conta)" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+          <label>Password inicial<PasswordInput placeholder="mín. 8 (nova conta)" value={password} onChange={setPassword} autoComplete="new-password" /></label>
         </div>
         <div className="field-row">
           <label>Cargo<input placeholder="ex.: Engenheiro" value={title} onChange={(e) => setTitle(e.target.value)} /></label>
@@ -389,6 +454,73 @@ function AddEmployeeModal({
         </div>
         {error && <div className="error">{error}</div>}
         <button className="primary" disabled={busy || !email.trim()}>{busy ? '…' : 'Adicionar'}</button>
+      </form>
+    </div>
+  )
+}
+
+function EditEmployeeModal({
+  orgId,
+  employee,
+  branches,
+  onClose,
+  onSaved,
+}: {
+  orgId: string
+  employee: Employee
+  branches: Branch[]
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [role, setRole] = useState(employee.role)
+  const [title, setTitle] = useState(employee.title ?? '')
+  const [branchId, setBranchId] = useState(employee.branch_id ?? '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await updateEmployee(orgId, employee.user_id, {
+        role,
+        title: title.trim() || undefined,
+        branch_id: branchId || null,
+      })
+      onSaved()
+    } catch (err) {
+      setError((err as Error).message)
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <div className="modal-head">
+          <h3>Editar membro — {employee.username}</h3>
+          <button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button>
+        </div>
+        <div className="field-row">
+          <label>Cargo
+            <input placeholder="ex.: Engenheiro" value={title} onChange={(e) => setTitle(e.target.value)} />
+          </label>
+          <label>Papel
+            <select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'member')}>
+              <option value="member">Membro</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+          <label>Filial
+            <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+              <option value="">—</option>
+              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </label>
+        </div>
+        {error && <div className="error">{error}</div>}
+        <button className="primary" disabled={busy}>{busy ? '…' : 'Guardar'}</button>
       </form>
     </div>
   )

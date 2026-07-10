@@ -1,0 +1,7 @@
+# Delonix Meet — pool de nós FreeSWITCH (grupo 1).
+# Formato: setid destination flags priority attrs
+# Para escalar 300+ canais, acrescentar linhas (mais nós FreeSWITCH).
+# Em dev há 1 nó; em produção, N nós em microVMs dedicadas.
+1 sip:freeswitch:5080 0 0 weight=100
+# 1 sip:freeswitch-2:5080 0 0 weight=100
+# 1 sip:freeswitch-3:5080 0 0 weight=100

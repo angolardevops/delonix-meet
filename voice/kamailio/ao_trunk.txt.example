@@ -1,0 +1,11 @@
+# Delonix Meet — allowlist de IPs do SIP trunk (anti-toll-fraud).
+# Copiar para ao_trunk.txt e preencher com os IPs/subnets do fornecedor
+# APROVADO no RFI 5.1. NUNCA comitar o ficheiro real (só este exemplo).
+#
+# Formato do módulo 'permissions' (address list), group 1:
+#   <group> <ip>[/mask] <port> <proto> <pattern> <context_info>
+#
+# Exemplos (SUBSTITUIR pelos IPs reais do trunk):
+# 1 203.0.113.10  0 any  .*  trunk-ao-primary
+# 1 203.0.113.11  0 any  .*  trunk-ao-secondary
+# 1 198.51.100.0/24 0 any .*  didww-pop
