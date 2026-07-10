@@ -1,0 +1,21 @@
+# Não enviar artefactos de build/deps para o contexto Docker — são recriados
+# dentro da imagem e só poluíam o contexto (centenas de MB) e a cache.
+server/target/
+web/node_modules/
+web/dist/
+mobile/build/
+mobile/.dart_tool/
+
+# Assets de IA pesados (obtidos na build via fetch com SHA — ver Dockerfile.web)
+web/public/ort/
+web/public/ort-rvm/
+web/public/models/rvm/
+web/public/models/Xenova/
+
+# Dados de utilizador / segredos / git
+server/recordings/
+deploy/delonix.env
+.git/
+agents/worktrees/
+**/*.tsbuildinfo
+.DS_Store

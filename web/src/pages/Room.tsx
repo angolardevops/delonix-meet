@@ -230,6 +230,8 @@ export default function Room({
   // Gravação
   const [recording, setRecording] = useState(false)      // eu estou a gravar
   const [remoteRecorder, setRemoteRecorder] = useState('') // alguém está a gravar
+  const [recNotice, setRecNotice] = useState('') // toast transitório de início de gravação
+  const [isInstant, setIsInstant] = useState(false) // chamada instantânea (sem agenda)
   const [recordings, setRecordings] = useState<Recording[]>([])
   const [recBusy, setRecBusy] = useState(false)
 
@@ -552,9 +554,10 @@ export default function Room({
         })
         navigator.mediaDevices.addEventListener?.('devicechange', () => void listDevices().then(setDevices))
 
-        const [{ room, room_token }, rtcConfig] = await Promise.all([joinRoom(code), iceServers()])
+        const [{ room, room_token, scheduled }, rtcConfig] = await Promise.all([joinRoom(code), iceServers()])
         setTopology(room.topology)
         setIsTraining(room.format === 'training')
+        setIsInstant(scheduled === false) // só marca instantânea se o servidor o confirmar (degrada em falso)
         setWaitingRoomOn(room.waiting_room)
         const amHost = room.owner_id === currentUser()?.id
         setIsHost(amHost)
@@ -710,6 +713,7 @@ export default function Room({
         signal.on('reaction', (m) => floatReaction(m.emoji, m.username))
         signal.on('recording', (m) => {
           setRemoteRecorder(m.active ? m.username : '')
+          if (m.active) setRecNotice(`${m.username} começou a gravar a reunião`)
           if (!m.active) void listRecordings(code).then(setRecordings).catch(() => {})
         })
         signal.on('room-settings', (m) => {
@@ -723,7 +727,10 @@ export default function Room({
         signal.on('polls', (m) => setPolls(m.polls))
         signal.on('qa', (m) => setQuestions(m.questions))
         signal.on('timer', (m) => setMeetTimerEndsAt(m.ends_at))
-        signal.on('server-recording', (m) => setServerRec(m.active ? { by: m.by } : null))
+        signal.on('server-recording', (m) => {
+          setServerRec(m.active ? { by: m.by } : null)
+          if (m.active) setRecNotice(`${m.by} começou a gravar no servidor`)
+        })
         // Quadro branco: snapshot ao entrar + traços/limpeza em tempo real.
         signal.on('wb-state', (m) => {
           // Só carrega o conteúdo — NÃO abre sozinho. Abrir no snapshot fazia o
@@ -992,6 +999,14 @@ export default function Room({
     [],
   )
 
+  // Toast transitório de início de gravação — some ao fim de 6s (o banner
+  // persistente `anyoneRecording` continua a indicar que a gravação está ativa).
+  useEffect(() => {
+    if (!recNotice) return
+    const t = setTimeout(() => setRecNotice(''), 6000)
+    return () => clearTimeout(t)
+  }, [recNotice])
+
   useEffect(() => {
     bgModeRef.current = bgMode
   }, [bgMode])
@@ -1225,6 +1240,7 @@ export default function Room({
         ...peersRef.current.map((p) => ({ id: p.peerId, label: p.username, stream: p.stream })),
       ])
       setRecording(true)
+      setRecNotice('Começaste a gravar a reunião')
       signalRef.current?.send({ type: 'recording', active: true })
       return
     }
@@ -1403,6 +1419,52 @@ export default function Room({
 
   return (
     <div className="room-page">
+      {/* Barra de topo estilo Meet: info à esquerda, alertas/participantes à direita. */}
+      <header className="room-topbar">
+        <div className="rt-left">
+          <span className="rt-clock">{clock}</span>
+          <span className="rt-sep">|</span>
+          <span className="rt-code" title="Código da reunião">{code}</span>
+          <button
+            className="rt-info"
+            title="Detalhes da reunião"
+            aria-label="Detalhes da reunião"
+            onClick={() => setPanel(panel === 'people' ? 'none' : 'people')}
+          >ⓘ</button>
+          {isInstant && (
+            <span className="rt-chip instant" title="Chamada instantânea — sala virtual; só a gravação é guardada">
+              ⚡ Instantânea
+            </span>
+          )}
+          {isTraining && <span className="rt-chip">Formação</span>}
+          {e2eeOn && (
+            <button className="rt-chip e2ee" title="Encriptação de ponta a ponta ativa" onClick={() => setSecOpen((v) => !v)}>
+              🔒 E2EE
+            </button>
+          )}
+        </div>
+        <div className="rt-right">
+          {canAdmit && waitingQueue.length > 0 && (
+            <button
+              className="waiting-pill"
+              onClick={() => setPanel(panel === 'people' ? 'none' : 'people')}
+              title="Convidados à espera de admissão"
+            >
+              <PeopleIcon />
+              {waitingQueue.length} {waitingQueue.length === 1 ? 'convidado a aguardar' : 'convidados a aguardar'}
+            </button>
+          )}
+          <button
+            className="rt-count"
+            onClick={() => setPanel(panel === 'people' ? 'none' : 'people')}
+            title="Participantes"
+            aria-label={`${total} participantes`}
+          >
+            <span className="rt-avatar" aria-hidden>{(currentUser()?.username ?? '?').slice(0, 1).toUpperCase()}</span>
+            <span className="rt-count-n">{total}</span>
+          </button>
+        </div>
+      </header>
       <div className="room-body">
         {roomState === 'waiting' && (
           <div className="waiting-overlay">
@@ -2493,6 +2555,13 @@ export default function Room({
           </div>
         )}
 
+        {recNotice && (
+          <div className="toast rec-start-toast" role="status">
+            <span className="rec-dot big" />
+            <span><strong>{recNotice}</strong>. Todos os participantes foram notificados.</span>
+          </div>
+        )}
+
         {serverRec && (
           <div className="toast rec-toast">
             <span className="rec-dot" />
@@ -2523,21 +2592,10 @@ export default function Room({
 
       <footer className="controls-bar">
         <div className="bar-left">
-          <span className="clock">{clock}</span>
+          {/* Hora/código/E2EE estão agora na barra de topo (estilo Meet). Aqui
+              ficam só os indicadores dinâmicos da sessão. */}
           {roomState === 'in' && elapsed > 0 && (
             <span className="meeting-elapsed" title="Duração da reunião">⏱ {fmtCountdown(elapsed)}</span>
-          )}
-          <span className="sep">|</span>
-          <span className="room-code">{code}</span>
-          {topology && <span className="room-topo">{topology === 'sfu' ? 'SFU' : 'P2P'}</span>}
-          {e2eeOn && (
-            <button
-              className="room-topo e2ee-badge"
-              title="E2EE ativo — clica para ver o código de segurança e comparar com os outros participantes"
-              onClick={() => setSecOpen((v) => !v)}
-            >
-              🔒 E2EE
-            </button>
           )}
           {secOpen && secCode && (
             <span className="sec-code" onClick={() => setSecOpen(false)} title="Código de segurança da sala">
