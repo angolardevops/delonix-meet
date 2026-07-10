@@ -68,6 +68,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: delonix-server
+                name: delonix-server-ws  # Service dedicado → backend próprio → hash aplica-se
                 port:
                   number: 8180

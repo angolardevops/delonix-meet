@@ -65,4 +65,6 @@ spec:
         paths:
           - path: /ws
             pathType: Prefix
-            backend: { service: { name: delonix-server, port: { number: 8180 } } }
+            # Service dedicado → backend próprio no ingress-nginx → o hash aplica-se
+            # (partilhar o Service com /api/rtc descarta o upstream-hash-by).
+            backend: { service: { name: delonix-server-ws, port: { number: 8180 } } }
