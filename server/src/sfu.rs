@@ -16,12 +16,16 @@ use uuid::Uuid;
 
 use webrtc::{
     api::{
-        interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
+        interceptor_registry::register_default_interceptors, media_engine::MediaEngine,
+        setting_engine::SettingEngine, APIBuilder,
     },
-    ice_transport::ice_candidate::RTCIceCandidateInit,
+    ice_transport::{
+        ice_candidate::RTCIceCandidateInit, ice_candidate_type::RTCIceCandidateType,
+        ice_server::RTCIceServer,
+    },
     interceptor::registry::Registry,
     peer_connection::{
-        peer_connection_state::RTCPeerConnectionState,
+        configuration::RTCConfiguration, peer_connection_state::RTCPeerConnectionState,
         sdp::session_description::RTCSessionDescription, RTCPeerConnection,
     },
     rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication,
@@ -97,9 +101,68 @@ pub struct SfuState {
     pub phantom_listeners: DashMap<Uuid, u16>,
     /// Mapeia o UUID da sala para o IP:Porta do FreeSWITCH (PSTN Outbound)
     pub pstn_outbounds: DashMap<Uuid, std::net::SocketAddr>,
+    /// Config de conectividade ICE do SFU (IP externo, STUN/TURN).
+    ice: IceConfig,
 }
 
-fn new_api() -> Result<webrtc::api::API> {
+/// Config de ICE que o SFU usa para se tornar alcançável de fora do cluster.
+#[derive(Default, Clone)]
+pub struct IceConfig {
+    /// IP externo/alcançável a anunciar (NAT 1:1). Vazio => só host candidates.
+    pub external_ip: Option<String>,
+    /// Host:porta do STUN/TURN (coturn). Ex.: `172.30.0.200:3478`.
+    pub turn_host: String,
+    /// Segredo partilhado com o coturn (use-auth-secret) para credenciais TURN.
+    pub turn_secret: String,
+}
+
+impl SfuState {
+    /// Constrói o SFU com a config de ICE (a partir de `Config`).
+    pub fn new(ice: IceConfig) -> Self {
+        Self { ice, ..Default::default() }
+    }
+}
+
+/// Portos UDP efémeros do SFU (para a media). Um intervalo FIXO e conhecido
+/// permite expô-lo no K8s (Service LoadBalancer UDP). Ver deploy/k8s.
+const SFU_UDP_MIN: u16 = 50000;
+const SFU_UDP_MAX: u16 = 50200;
+
+/// Servidores ICE que o próprio SFU usa para recolher candidatos srflx/relay
+/// (via STUN/TURN). Sem isto, só há host candidates (IP interno do pod). As
+/// credenciais TURN são de curta duração (mesmo esquema `use-auth-secret` que
+/// o cliente recebe em rooms.rs `ice_servers`).
+fn sfu_ice_servers(ice: &IceConfig) -> Vec<RTCIceServer> {
+    if ice.turn_host.is_empty() {
+        return vec![];
+    }
+    let mut servers = vec![RTCIceServer {
+        urls: vec![format!("stun:{}", ice.turn_host)],
+        ..Default::default()
+    }];
+    if !ice.turn_secret.is_empty() {
+        use base64::Engine as _;
+        use hmac::{Hmac, Mac};
+        use sha1::Sha1;
+        let expiry = (chrono::Utc::now().timestamp() + 3600).to_string();
+        if let Ok(mut mac) = Hmac::<Sha1>::new_from_slice(ice.turn_secret.as_bytes()) {
+            mac.update(expiry.as_bytes());
+            let cred = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+            servers.push(RTCIceServer {
+                urls: vec![
+                    format!("turn:{}?transport=udp", ice.turn_host),
+                    format!("turn:{}?transport=tcp", ice.turn_host),
+                ],
+                username: expiry,
+                credential: cred,
+                ..Default::default()
+            });
+        }
+    }
+    servers
+}
+
+fn new_api(ice: &IceConfig) -> Result<webrtc::api::API> {
     let mut media = MediaEngine::default();
     media.register_default_codecs()?;
     // Header extensions necessárias para receber simulcast (mid + rid).
@@ -118,9 +181,24 @@ fn new_api() -> Result<webrtc::api::API> {
     }
     let mut registry = Registry::new();
     registry = register_default_interceptors(registry, &mut media)?;
+
+    // SettingEngine: torna o SFU alcançável de fora do cluster.
+    let mut settings = SettingEngine::default();
+    if let Some(ip) = ice.external_ip.as_deref().filter(|s| !s.is_empty()) {
+        // NAT 1:1 — anuncia o IP externo (LB/nó) em vez do IP interno do pod.
+        settings.set_nat_1to1_ips(vec![ip.to_string()], RTCIceCandidateType::Host);
+    }
+    // Intervalo de portas UDP fixo e conhecido (para expor no K8s).
+    settings
+        .set_udp_network(webrtc::ice::udp_network::UDPNetwork::Ephemeral(
+            webrtc::ice::udp_network::EphemeralUDP::new(SFU_UDP_MIN, SFU_UDP_MAX)
+                .map_err(|e| webrtc::Error::new(e.to_string()))?,
+        ));
+
     Ok(APIBuilder::new()
         .with_media_engine(media)
         .with_interceptor_registry(registry)
+        .with_setting_engine(settings)
         .build())
 }
 
@@ -154,10 +232,15 @@ impl SfuState {
             .or_insert_with(|| Arc::new(SfuRoom::default()))
             .clone();
 
-        let api = new_api()?;
-        // Host candidates chegam para dev/local; em produção configurar
-        // SettingEngine com NAT 1:1 / porta UDP fixa.
-        let pc = Arc::new(api.new_peer_connection(Default::default()).await?);
+        let api = new_api(&self.ice)?;
+        // NAT 1:1 + STUN/TURN configurados via SettingEngine/RTCConfiguration:
+        // o SFU recolhe candidatos host(externo)/srflx/relay → media direta
+        // quando alcançável, TURN relay como fallback (ver sfu_ice_servers).
+        let pc_config = RTCConfiguration {
+            ice_servers: sfu_ice_servers(&self.ice),
+            ..Default::default()
+        };
+        let pc = Arc::new(api.new_peer_connection(pc_config).await?);
 
         let (renegotiate_tx, renegotiate_rx) = mpsc::unbounded_channel();
         let peer = Arc::new(SfuPeer {

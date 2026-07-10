@@ -1,0 +1,66 @@
+# coturn (TURN/STUN) para o cluster de stage — relay de media WebRTC.
+#
+# PORQUÊ: em K8s a media do SFU é UDP e o IP interno do pod (10.244.x) não é
+# alcançável de fora. O coturn dá um ponto de relay alcançável: tanto o cliente
+# como o SFU (que agora recolhe candidatos relay — ver sfu.rs sfu_ice_servers)
+# ligam ao coturn e a media passa por ele, seja qual for o pod (compatível com
+# a afinidade por sala + 3 réplicas).
+#
+# REDE (kind): o coturn corre em hostNetwork e anuncia o IP da LB/nó. O nó kind
+# tem de ter os portos UDP 3478 + relay (50300-50400) alcançáveis do browser.
+# Em kind, isso normalmente exige `extraPortMappings` no cluster (ou correr o
+# coturn FORA do cluster, no host, que é o mais fiável — ver DEPLOYMENT.md).
+#
+# SEGREDO: static-auth-secret = MESMO valor que TURN_SECRET da app (o backend e
+# o SFU assinam credenciais TURN de curta duração com esse segredo).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coturn-config
+  namespace: delonix-meet
+data:
+  turnserver.conf: |
+    listening-port=3478
+    fingerprint
+    use-auth-secret
+    realm=delonix
+    # Intervalo de portos de relay (distinto do intervalo UDP do SFU 50000-50200).
+    min-port=50300
+    max-port=50400
+    no-cli
+    no-tlsv1
+    no-tlsv1_1
+    log-file=stdout
+    simple-log
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coturn
+  namespace: delonix-meet
+  labels: { app: coturn }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: coturn } }
+  template:
+    metadata:
+      labels: { app: coturn }
+    spec:
+      hostNetwork: true            # bind direto aos portos do nó (TURN precisa)
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: coturn
+          image: coturn/coturn:4.6
+          args: ["-c", "/etc/coturn/turnserver.conf", "--static-auth-secret=$(TURN_SECRET)", "--external-ip=$(EXTERNAL_IP)"]
+          env:
+            - name: TURN_SECRET
+              valueFrom: { secretKeyRef: { name: delonix-secrets, key: TURN_SECRET } }
+            - name: EXTERNAL_IP
+              # IP alcançável que o coturn anuncia (LB/nó). Ajustar ao teu cluster.
+              value: "172.30.0.200"
+          ports:
+            - { name: turn-udp, containerPort: 3478, protocol: UDP, hostPort: 3478 }
+            - { name: turn-tcp, containerPort: 3478, protocol: TCP, hostPort: 3478 }
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
