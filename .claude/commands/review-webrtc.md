@@ -15,7 +15,9 @@ Revê o código WebRTC/SFU no diff atual com foco em:
 7. **Codec negotiation:** O munge de SDP em `enhanceOpus()` (maxaveragebitrate, stereo, FEC) está nos campos corretos?
 8. **TURN reliability:** As credenciais TURN de curta duração expiram antes do fim da chamada?
 
-Referência: `docs/ai-reviewers.md` secção Justin Uberti. Citar RFCs quando relevante.
+9. **Regressões conhecidas (`docs/reference/regressions.md` R1–R5):** oferta SFU no construtor (não gateada por `joined`); convidado em espera não monta a `SfuCall`; afinidade por sala (Service dedicado `/ws`); media K8s relay-only (`FORCE_TURN_RELAY`); PTS RTP no `recorder.rs`. Sinaliza se o diff as reintroduz.
+
+Referência: `docs/ai-reviewers.md` secção Justin Uberti; `docs/reference/regressions.md`. Citar RFCs quando relevante.
 
 Formato:
 - **Bug de interop [browser]:** [descrição] — [ficheiro:linha]

@@ -15,7 +15,8 @@ Revê a infraestrutura de deploy do Delonix Meet (ficheiros em `deploy/`, `docke
 7. **Horizontal scaling:** O `DashMap` em memória quebra com 2 instâncias — o plano de Redis pub/sub está documentado?
 8. **Backup:** As gravações em disco são backeadas? O PostgreSQL tem WAL archiving?
 9. **Rollback:** Como fazer rollback de uma migração? O `server/migrations/` tem `down` migrations?
+10. **Regressões conhecidas (`docs/reference/regressions.md` R3, R4, R8, R9):** Service dedicado `delonix-server-ws` p/ `/ws` (senão o `upstream-hash-by` é descartado); media K8s relay-only (`FORCE_TURN_RELAY` + coturn alcançável); `.dockerignore` nunca exclui `web/dist`; `touch src/main.rs` + `cargo build --release` após migração. Sinaliza se o diff as reintroduz.
 
-Referência: `docs/ai-reviewers.md` secção Brendan Burns.
+Referência: `docs/ai-reviewers.md` secção Brendan Burns; `docs/reference/regressions.md`.
 
 Formato: punch list por categoria (CRÍTICO / DEVE / DEVE CONSIDERAR / ROADMAP).

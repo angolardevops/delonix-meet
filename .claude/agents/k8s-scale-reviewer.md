@@ -16,4 +16,9 @@ Revê, por ordem:
 6. **Observabilidade** — `/api/status` chega para readiness? Há métricas/tracing? Logs estruturados?
 7. **SPOF** — coturn, DB, Redis: pontos únicos de falha e o comportamento em failover.
 
+**Regressões a bloquear no diff (ver `docs/reference/regressions.md` R3, R4, R8):**
+- **R3** — `/ws` tem de usar um **Service DEDICADO** (`delonix-server-ws`); se partilhar Service com `/api`/`/rtc`, o ingress-nginx funde os backends e DESCARTA o `upstream-hash-by` → afinidade não se aplica → media num só sentido. Verificar: `curl .../ws?room=X` repetido cai sempre no mesmo pod.
+- **R4** — media K8s é relay-only (`FORCE_TURN_RELAY=1`) com coturn alcançável (stage: HOST via `deploy/run-host-coturn.sh`, `TURN_HOST=172.30.0.1:3478`). Sem isto o ICE liga mas fica preto. (Aberto: instabilidade TURN `438 Stale nonce`/`allocation timeout`.)
+- **R8** — `.dockerignore` **nunca** exclui `web/dist` (o `Dockerfile.web.stage` faz `COPY web/dist`); `vite.config.ts` lê certos de dev só no `serve`. Excluir sim: `server/target`, `web/node_modules`, `web/public/{ort,ort-rvm,models/*}`, `deploy/*.env`, `.claude/worktrees`.
+
 Reporta como runbook/diagrama quando ajudar. Confirma no cluster com `kubectl get/describe` (só leitura) mas NUNCA mutes recursos partilhados sem o utilizador pedir. `ficheiro:linha` + o modo de falha em produção.
