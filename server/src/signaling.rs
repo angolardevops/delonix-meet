@@ -108,6 +108,8 @@ pub enum ClientMsg {
         stroke: WbStrokeData,
     },
     WbClear,
+    /// Fecha o quadro branco em TODOS os participantes (não só localmente).
+    WbClose,
     /// Gravação no servidor (só anfitrião, só salas SFU). Em salas E2EE o
     /// anfitrião cede a chave (base64) só para a duração da gravação.
     ServerRecord {
@@ -249,9 +251,17 @@ pub enum ServerMsg {
         stroke: WbStrokeData,
     },
     WbClear,
+    /// Fecha o quadro em todos os participantes.
+    WbClose,
     /// Snapshot do quadro para quem entra a meio.
     WbState {
         strokes: Vec<WbStrokeData>,
+    },
+    /// Difusão fiável de quem está a apresentar (ecrã). Permite aos recetores
+    /// definir/limpar a apresentação sem depender de eventos frágeis de track.
+    Presenting {
+        from: Uuid,
+        on: bool,
     },
     // Breakout rooms:
     BreakoutMove {
@@ -1211,6 +1221,11 @@ impl SignalingHub {
                 }
                 self.broadcast_all(room_id, ServerMsg::WbClear);
             }
+            ClientMsg::WbClose => {
+                // Fechar o quadro em todos (não só localmente). Não limpa os
+                // traços — quem reabrir volta a vê-los.
+                self.broadcast_all(room_id, ServerMsg::WbClose);
+            }
             ClientMsg::TimerClear => {
                 if self.is_host(room_id, peer_id) {
                     if let Some(mut room) = self.rooms.get_mut(&room_id) {
@@ -1762,6 +1777,14 @@ async fn handle_socket(
                 }
                 Ok(ClientMsg::ScreenShare { on }) if sfu_mode => {
                     state.sfu.set_screen(room_id, peer_id, on).await;
+                    // Aviso fiável a todos: quem parou de apresentar limpa já a
+                    // apresentação nos recetores (sem esperar por eventos de
+                    // track). Ao ligar, ajuda a preparar o palco (#1/#2).
+                    state.hub.broadcast(
+                        room_id,
+                        peer_id,
+                        ServerMsg::Presenting { from: peer_id, on },
+                    );
                 }
                 Ok(ClientMsg::ServerRecord { active, e2ee_key }) if is_host && sfu_mode => {
                     if active {

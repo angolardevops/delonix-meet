@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import PasswordInput from '../components/PasswordInput'
 import {
   addEmployee,
@@ -26,6 +27,7 @@ import { CamIcon, CloseIcon, EditIcon, PeopleIcon, PlusIcon, TrashIcon, VoiceCal
 type Tab = 'directory' | 'branches' | 'groups' | 'rooms'
 
 export default function Directory() {
+  const { t } = useTranslation()
   const [orgs, setOrgs] = useState<OrgSummary[]>([])
   const [orgId, setOrgId] = useState<string>('')
   const [tab, setTab] = useState<Tab>('directory')
@@ -46,16 +48,16 @@ export default function Directory() {
 
   const org = orgs.find((o) => o.id === orgId)
 
-  if (loading) return <div className="page"><p className="muted">A carregar…</p></div>
+  if (loading) return <div className="page"><p className="muted">{t('directory.loading')}</p></div>
 
   if (orgs.length === 0) {
     return (
       <div className="page">
         <div className="empty-state">
           <PeopleIcon />
-          <p>Ainda não pertences a nenhuma organização.</p>
+          <p>{t('directory.noOrgs')}</p>
           <button className="btn-new" onClick={() => setShowCreateOrg(true)}>
-            <PlusIcon /> Criar organização
+            <PlusIcon /> {t('directory.createOrg')}
           </button>
         </div>
         {showCreateOrg && (
@@ -69,25 +71,25 @@ export default function Directory() {
     <div className="page">
       <header className="page-head">
         <h1>
-          <PeopleIcon /> Organização
+          <PeopleIcon /> {t('directory.title')}
         </h1>
         <div className="org-bar">
           <select value={orgId} onChange={(e) => setOrgId(e.target.value)} className="org-select">
             {orgs.map((o) => (
               <option key={o.id} value={o.id}>
-                {o.name} · {o.member_count} membros
+                {o.name} · {t('directory.membersCount', { count: o.member_count })}
               </option>
             ))}
           </select>
           <button className="btn-sm ghost" onClick={() => setShowCreateOrg(true)}>
-            <PlusIcon /> Nova organização
+            <PlusIcon /> {t('directory.newOrg')}
           </button>
         </div>
         <div className="tabs">
-          <button className={tab === 'directory' ? 'tab active' : 'tab'} onClick={() => setTab('directory')}>Diretório</button>
-          <button className={tab === 'branches' ? 'tab active' : 'tab'} onClick={() => setTab('branches')}>Filiais</button>
-          <button className={tab === 'groups' ? 'tab active' : 'tab'} onClick={() => setTab('groups')}>Grupos</button>
-          <button className={tab === 'rooms' ? 'tab active' : 'tab'} onClick={() => setTab('rooms')}>Salas</button>
+          <button className={tab === 'directory' ? 'tab active' : 'tab'} onClick={() => setTab('directory')}>{t('directory.tabDirectory')}</button>
+          <button className={tab === 'branches' ? 'tab active' : 'tab'} onClick={() => setTab('branches')}>{t('directory.tabBranches')}</button>
+          <button className={tab === 'groups' ? 'tab active' : 'tab'} onClick={() => setTab('groups')}>{t('directory.tabGroups')}</button>
+          <button className={tab === 'rooms' ? 'tab active' : 'tab'} onClick={() => setTab('rooms')}>{t('directory.tabRooms')}</button>
         </div>
       </header>
 
@@ -104,6 +106,7 @@ export default function Directory() {
 }
 
 function DirectoryTab({ org }: { org: OrgSummary }) {
+  const { t } = useTranslation()
   const { isOnline, startCall } = usePresence()
   const [emps, setEmps] = useState<Employee[]>([])
   const [branches, setBranches] = useState<Branch[]>([])
@@ -149,21 +152,21 @@ function DirectoryTab({ org }: { org: OrgSummary }) {
   return (
     <>
       <div className="filters-bar" style={{ display: 'flex', gap: '12px', marginBottom: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
-        <input 
-          type="search" 
-          placeholder="Pesquisar membros..." 
-          value={search} 
+        <input
+          type="search"
+          placeholder={t('directory.searchMembers')}
+          value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{ flex: 1, minWidth: '200px' }}
         />
         <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
-          <option value="all">Todos os papéis</option>
-          <option value="admin">Administradores</option>
-          <option value="member">Membros</option>
+          <option value="all">{t('directory.allRoles')}</option>
+          <option value="admin">{t('directory.admins')}</option>
+          <option value="member">{t('directory.members')}</option>
         </select>
         {org.role === 'admin' && (
           <button className="btn-new small" onClick={() => setShowAdd(true)}>
-            <PlusIcon /> Adicionar
+            <PlusIcon /> {t('directory.add')}
           </button>
         )}
       </div>
@@ -175,26 +178,26 @@ function DirectoryTab({ org }: { org: OrgSummary }) {
               <span className={isOnline(e.user_id) ? 'dot online' : 'dot'} />
             </span>
             <span className="emp-info">
-              <strong>{e.username} {e.role === 'admin' && <span className="tag-admin">admin</span>} {e.user_id === me?.id && <span className="tag-admin" style={{background: 'var(--accent-2)', color: '#000'}}>tu</span>}</strong>
+              <strong>{e.username} {e.role === 'admin' && <span className="tag-admin">{t('directory.tagAdmin')}</span>} {e.user_id === me?.id && <span className="tag-admin" style={{background: 'var(--accent-2)', color: '#000'}}>{t('directory.tagYou')}</span>}</strong>
               <small>{[e.title, e.branch_name, e.email].filter(Boolean).join(' · ')}</small>
             </span>
             <span className="emp-actions">
               {e.user_id !== me?.id && (
                 <>
-                  <button className="call-btn voice" title="Chamada de voz" onClick={() => startCall({ targets: [e.user_id], kind: 'voice', title: `Chamada com ${e.username}` })}>
+                  <button className="call-btn voice" title={t('directory.voiceCall')} onClick={() => startCall({ targets: [e.user_id], kind: 'voice', title: t('directory.callWith', { name: e.username }) })}>
                     <VoiceCallIcon />
                   </button>
-                  <button className="call-btn video" title="Chamada de vídeo" onClick={() => startCall({ targets: [e.user_id], kind: 'video', title: `Chamada com ${e.username}` })}>
+                  <button className="call-btn video" title={t('directory.videoCall')} onClick={() => startCall({ targets: [e.user_id], kind: 'video', title: t('directory.callWith', { name: e.username }) })}>
                     <CamIcon />
                   </button>
                 </>
               )}
               {org.role === 'admin' && e.user_id !== me?.id && (
                 <>
-                  <button className="icon-btn" title="Editar" onClick={() => setEditingEmp(e)}>
+                  <button className="icon-btn" title={t('directory.editMember')} onClick={() => setEditingEmp(e)}>
                     <EditIcon />
                   </button>
-                  <button className="icon-btn" title="Remover" onClick={() => void removeEmployee(org.id, e.user_id).then(refresh)}>
+                  <button className="icon-btn" title={t('directory.removeMember')} onClick={() => void removeEmployee(org.id, e.user_id).then(refresh)}>
                     <TrashIcon />
                   </button>
                 </>
@@ -202,13 +205,13 @@ function DirectoryTab({ org }: { org: OrgSummary }) {
             </span>
           </div>
         ))}
-        {paginated.length === 0 && <p className="muted">Nenhum membro encontrado.</p>}
+        {paginated.length === 0 && <p className="muted">{t('directory.noMembers')}</p>}
       </div>
       {totalPages > 1 && (
         <div className="pagination" style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'center', alignItems: 'center' }}>
-          <button className="btn-sm ghost" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Anterior</button>
-          <span className="muted small">Página {page} de {totalPages}</span>
-          <button className="btn-sm ghost" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>Próxima</button>
+          <button className="btn-sm ghost" disabled={page === 1} onClick={() => setPage(p => p - 1)}>{t('directory.prev')}</button>
+          <span className="muted small">{t('directory.pageOf', { page, total: totalPages })}</span>
+          <button className="btn-sm ghost" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>{t('directory.next')}</button>
         </div>
       )}
       {showAdd && (
@@ -222,6 +225,7 @@ function DirectoryTab({ org }: { org: OrgSummary }) {
 }
 
 function BranchesTab({ org }: { org: OrgSummary }) {
+  const { t } = useTranslation()
   const [branches, setBranches] = useState<Branch[]>([])
   const [name, setName] = useState('')
   const [location, setLocation] = useState('')
@@ -247,25 +251,26 @@ function BranchesTab({ org }: { org: OrgSummary }) {
     <>
       {org.role === 'admin' && (
         <form className="inline-form" onSubmit={add}>
-          <input placeholder="Nome da filial" value={name} onChange={(e) => setName(e.target.value)} />
-          <input placeholder="Localização" value={location} onChange={(e) => setLocation(e.target.value)} />
-          <button className="btn-sm" disabled={!name.trim()}><PlusIcon /> Adicionar</button>
+          <input placeholder={t('directory.branchName')} value={name} onChange={(e) => setName(e.target.value)} />
+          <input placeholder={t('directory.location')} value={location} onChange={(e) => setLocation(e.target.value)} />
+          <button className="btn-sm" disabled={!name.trim()}><PlusIcon /> {t('directory.add')}</button>
         </form>
       )}
       <div className="branch-grid">
         {branches.map((b) => (
           <div key={b.id} className="branch-card">
             <strong>{b.name}</strong>
-            <small>{b.location || 'sem localização'}</small>
+            <small>{b.location || t('directory.noLocation')}</small>
           </div>
         ))}
-        {branches.length === 0 && <p className="muted">Sem filiais.</p>}
+        {branches.length === 0 && <p className="muted">{t('directory.noBranches')}</p>}
       </div>
     </>
   )
 }
 
 function GroupsTab({ org }: { org: OrgSummary }) {
+  const { t } = useTranslation()
   const { startCall } = usePresence()
   const [groups, setGroups] = useState<Group[]>([])
   const [showCreate, setShowCreate] = useState(false)
@@ -281,26 +286,26 @@ function GroupsTab({ org }: { org: OrgSummary }) {
   return (
     <>
       <button className="btn-new small" onClick={() => setShowCreate(true)}>
-        <PlusIcon /> Criar grupo
+        <PlusIcon /> {t('directory.createGroup')}
       </button>
       <div className="group-grid">
         {groups.map((g) => (
           <div key={g.id} className="group-card">
             <div className="group-head">
               <strong>{g.name}</strong>
-              <small>{g.member_count} membros</small>
+              <small>{t('directory.membersCount', { count: g.member_count })}</small>
             </div>
             <div className="group-actions">
-              <button className="call-btn voice" title="Chamada de voz ao grupo" onClick={() => startCall({ groupId: g.id, kind: 'voice', title: g.name })}>
+              <button className="call-btn voice" title={t('directory.groupVoiceCall')} onClick={() => startCall({ groupId: g.id, kind: 'voice', title: g.name })}>
                 <VoiceCallIcon />
               </button>
-              <button className="call-btn video" title="Chamada de vídeo ao grupo" onClick={() => startCall({ groupId: g.id, kind: 'video', title: g.name })}>
+              <button className="call-btn video" title={t('directory.groupVideoCall')} onClick={() => startCall({ groupId: g.id, kind: 'video', title: g.name })}>
                 <CamIcon />
               </button>
             </div>
           </div>
         ))}
-        {groups.length === 0 && <p className="muted">Sem grupos.</p>}
+        {groups.length === 0 && <p className="muted">{t('directory.noGroups')}</p>}
       </div>
       {showCreate && (
         <CreateGroupModal orgId={org.id} onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); void refresh() }} />
@@ -310,6 +315,7 @@ function GroupsTab({ org }: { org: OrgSummary }) {
 }
 
 function RoomsTab({ org }: { org: OrgSummary }) {
+  const { t } = useTranslation()
   const [rooms, setRooms] = useState<MeetingRoom[]>([])
   const [name, setName] = useState('')
   const [location, setLocation] = useState('')
@@ -336,24 +342,24 @@ function RoomsTab({ org }: { org: OrgSummary }) {
   return (
     <>
       <p className="muted small" style={{ marginTop: '1rem' }}>
-        Salas de reunião presenciais — usadas ao agendar para detetar dupla-marcação da mesma sala.
+        {t('directory.roomsHint')}
       </p>
       {org.role === 'admin' && (
         <form className="inline-form" onSubmit={add}>
-          <input placeholder="Nome da sala" value={name} onChange={(e) => setName(e.target.value)} />
-          <input placeholder="Localização" value={location} onChange={(e) => setLocation(e.target.value)} />
-          <input placeholder="Lotação" type="number" min={0} value={capacity} onChange={(e) => setCapacity(e.target.value)} style={{ maxWidth: 110 }} />
-          <button className="btn-sm" disabled={!name.trim()}><PlusIcon /> Adicionar</button>
+          <input placeholder={t('directory.roomName')} value={name} onChange={(e) => setName(e.target.value)} />
+          <input placeholder={t('directory.location')} value={location} onChange={(e) => setLocation(e.target.value)} />
+          <input placeholder={t('directory.capacity')} type="number" min={0} value={capacity} onChange={(e) => setCapacity(e.target.value)} style={{ maxWidth: 110 }} />
+          <button className="btn-sm" disabled={!name.trim()}><PlusIcon /> {t('directory.add')}</button>
         </form>
       )}
       <div className="branch-grid">
         {rooms.map((r) => (
           <div key={r.id} className="branch-card">
             <strong>🚪 {r.name}</strong>
-            <small>{[r.location, r.capacity ? `${r.capacity} lugares` : ''].filter(Boolean).join(' · ') || 'sem detalhes'}</small>
+            <small>{[r.location, r.capacity ? t('directory.roomSeats', { count: r.capacity }) : ''].filter(Boolean).join(' · ') || t('directory.noRoomDetails')}</small>
           </div>
         ))}
-        {rooms.length === 0 && <p className="muted">Sem salas presenciais.</p>}
+        {rooms.length === 0 && <p className="muted">{t('directory.noRooms')}</p>}
       </div>
     </>
   )
@@ -362,6 +368,7 @@ function RoomsTab({ org }: { org: OrgSummary }) {
 // ---------- modais ----------
 
 function CreateOrgModal({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
+  const { t } = useTranslation()
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -379,10 +386,10 @@ function CreateOrgModal({ onClose, onCreated }: { onClose: () => void; onCreated
   return (
     <div className="modal-overlay" onClick={onClose}>
       <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <div className="modal-head"><h3>Criar organização</h3><button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button></div>
-        <input autoFocus placeholder="Nome da empresa" value={name} onChange={(e) => setName(e.target.value)} />
+        <div className="modal-head"><h3>{t('directory.createOrg')}</h3><button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button></div>
+        <input autoFocus placeholder={t('directory.companyName')} value={name} onChange={(e) => setName(e.target.value)} />
         {error && <div className="error">{error}</div>}
-        <button className="primary" disabled={busy || !name.trim()}>{busy ? '…' : 'Criar'}</button>
+        <button className="primary" disabled={busy || !name.trim()}>{busy ? '…' : t('directory.create')}</button>
       </form>
     </div>
   )
@@ -399,6 +406,7 @@ function AddEmployeeModal({
   onClose: () => void
   onAdded: () => void
 }) {
+  const { t } = useTranslation()
   const [email, setEmail] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -430,22 +438,22 @@ function AddEmployeeModal({
   return (
     <div className="modal-overlay" onClick={onClose}>
       <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <div className="modal-head"><h3>Adicionar employee</h3><button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button></div>
-        <p className="muted small">Se o email já tiver conta, é ligado à organização. Senão, é criada uma conta com a password indicada.</p>
+        <div className="modal-head"><h3>{t('directory.addEmployee')}</h3><button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button></div>
+        <p className="muted small">{t('directory.addEmployeeHint')}</p>
         <input autoFocus type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
         <div className="field-row">
-          <label>Nome<input placeholder="username" value={username} onChange={(e) => setUsername(e.target.value)} /></label>
-          <label>Password inicial<PasswordInput placeholder="mín. 8 (nova conta)" value={password} onChange={setPassword} autoComplete="new-password" /></label>
+          <label>{t('directory.name')}<input placeholder={t('directory.usernamePh')} value={username} onChange={(e) => setUsername(e.target.value)} /></label>
+          <label>{t('directory.initialPassword')}<PasswordInput placeholder={t('directory.initialPasswordPh')} value={password} onChange={setPassword} autoComplete="new-password" /></label>
         </div>
         <div className="field-row">
-          <label>Cargo<input placeholder="ex.: Engenheiro" value={title} onChange={(e) => setTitle(e.target.value)} /></label>
-          <label>Papel
+          <label>{t('directory.role')}<input placeholder={t('directory.rolePh')} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
+          <label>{t('directory.roleField')}
             <select value={role} onChange={(e) => setRole(e.target.value)}>
-              <option value="member">Membro</option>
-              <option value="admin">Admin</option>
+              <option value="member">{t('directory.roleMember')}</option>
+              <option value="admin">{t('directory.roleAdmin')}</option>
             </select>
           </label>
-          <label>Filial
+          <label>{t('directory.branch')}
             <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
               <option value="">—</option>
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
@@ -453,7 +461,7 @@ function AddEmployeeModal({
           </label>
         </div>
         {error && <div className="error">{error}</div>}
-        <button className="primary" disabled={busy || !email.trim()}>{busy ? '…' : 'Adicionar'}</button>
+        <button className="primary" disabled={busy || !email.trim()}>{busy ? '…' : t('directory.add')}</button>
       </form>
     </div>
   )
@@ -472,6 +480,7 @@ function EditEmployeeModal({
   onClose: () => void
   onSaved: () => void
 }) {
+  const { t } = useTranslation()
   const [role, setRole] = useState(employee.role)
   const [title, setTitle] = useState(employee.title ?? '')
   const [branchId, setBranchId] = useState(employee.branch_id ?? '')
@@ -499,20 +508,20 @@ function EditEmployeeModal({
     <div className="modal-overlay" onClick={onClose}>
       <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="modal-head">
-          <h3>Editar membro — {employee.username}</h3>
+          <h3>{t('directory.editMemberTitle', { name: employee.username })}</h3>
           <button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button>
         </div>
         <div className="field-row">
-          <label>Cargo
-            <input placeholder="ex.: Engenheiro" value={title} onChange={(e) => setTitle(e.target.value)} />
+          <label>{t('directory.role')}
+            <input placeholder={t('directory.rolePh')} value={title} onChange={(e) => setTitle(e.target.value)} />
           </label>
-          <label>Papel
+          <label>{t('directory.roleField')}
             <select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'member')}>
-              <option value="member">Membro</option>
-              <option value="admin">Admin</option>
+              <option value="member">{t('directory.roleMember')}</option>
+              <option value="admin">{t('directory.roleAdmin')}</option>
             </select>
           </label>
-          <label>Filial
+          <label>{t('directory.branch')}
             <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
               <option value="">—</option>
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
@@ -520,13 +529,14 @@ function EditEmployeeModal({
           </label>
         </div>
         {error && <div className="error">{error}</div>}
-        <button className="primary" disabled={busy}>{busy ? '…' : 'Guardar'}</button>
+        <button className="primary" disabled={busy}>{busy ? '…' : t('common.save')}</button>
       </form>
     </div>
   )
 }
 
 function CreateGroupModal({ orgId, onClose, onCreated }: { orgId: string; onClose: () => void; onCreated: () => void }) {
+  const { t } = useTranslation()
   const [name, setName] = useState('')
   const [emps, setEmps] = useState<Employee[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -557,8 +567,8 @@ function CreateGroupModal({ orgId, onClose, onCreated }: { orgId: string; onClos
   return (
     <div className="modal-overlay" onClick={onClose}>
       <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <div className="modal-head"><h3>Criar grupo</h3><button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button></div>
-        <input autoFocus placeholder="Nome do grupo (ex.: Engenharia)" value={name} onChange={(e) => setName(e.target.value)} />
+        <div className="modal-head"><h3>{t('directory.createGroup')}</h3><button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button></div>
+        <input autoFocus placeholder={t('directory.groupNamePh')} value={name} onChange={(e) => setName(e.target.value)} />
         <div className="pick-list">
           {list.map((e) => (
             <label key={e.user_id} className="pick-row">
@@ -568,7 +578,7 @@ function CreateGroupModal({ orgId, onClose, onCreated }: { orgId: string; onClos
             </label>
           ))}
         </div>
-        <button className="primary" disabled={busy || !name.trim()}>{busy ? '…' : `Criar grupo (${selected.size})`}</button>
+        <button className="primary" disabled={busy || !name.trim()}>{busy ? '…' : t('directory.createGroupCount', { count: selected.size })}</button>
       </form>
     </div>
   )
