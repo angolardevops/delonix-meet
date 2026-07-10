@@ -4,6 +4,18 @@
  */
 import { accessTokenValue, tryRefreshToken } from './api'
 
+/** Verdadeiro se o JWT expirou (ou expira nos próximos 30s). Decodifica só o
+ *  payload — sem verificar assinatura (é só para decidir refrescar antes de ligar). */
+function jwtExpired(token: string): boolean {
+  try {
+    const payload = token.split('.')[1]
+    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))
+    return typeof json.exp === 'number' && Date.now() / 1000 >= json.exp - 30
+  } catch {
+    return true
+  }
+}
+
 export interface IncomingCall {
   room_code: string
   kind: 'video' | 'voice'
@@ -51,9 +63,18 @@ export class Presence {
     this.open()
   }
 
-  private open() {
-    const token = accessTokenValue()
+  private async open() {
+    let token = accessTokenValue()
     if (!token) return
+    // Refresca ANTES de ligar se o token expirou — evita o 401 inicial no /rtc
+    // (o WS não passa pelo fluxo automático de refresh do request()). Sessões
+    // antigas ficavam com a presença em baixo até um reconnect tardio.
+    if (jwtExpired(token)) {
+      const ok = await tryRefreshToken()
+      if (!ok || this.closed) return // sessão expirada → aguarda login manual
+      token = accessTokenValue()
+      if (!token) return
+    }
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     const ws = new WebSocket(`${proto}://${location.host}/rtc?token=${token}`)
     this.ws = ws
