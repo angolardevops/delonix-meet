@@ -296,10 +296,20 @@ pub async fn join_room(
         },
     )?;
 
+    // `scheduled` = existe uma reunião agendada (agenda/calendário) para esta
+    // sala. Chamadas instantâneas (sem agenda) são salas virtuais: o único
+    // artefacto persistente é a gravação (a ata é no-op sem reunião associada).
+    let scheduled: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM meetings WHERE room_code = $1)")
+            .bind(&room.code)
+            .fetch_one(&state.db)
+            .await?;
+
     Ok(Json(json!({
         "room": room,
         "room_token": room_token,
         "ws_path": format!("/ws?token={room_token}"),
+        "scheduled": scheduled,
     })))
 }
 

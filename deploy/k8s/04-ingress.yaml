@@ -25,13 +25,6 @@ spec:
                 name: delonix-server
                 port:
                   number: 8180
-          - path: /ws
-            pathType: Prefix
-            backend:
-              service:
-                name: delonix-server
-                port:
-                  number: 8180
           - path: /rtc
             pathType: Prefix
             backend:
@@ -46,3 +39,35 @@ spec:
                 name: delonix-web
                 port:
                   number: 80
+---
+# Ingress DEDICADO ao /ws com afinidade por sala (consistent-hash pelo `room`).
+# O SFU é in-memory por pod: todos os pares de uma sala TÊM de cair no mesmo pod,
+# senão não trocam media (admissão/partilha/vídeo falham). O cliente envia
+# /ws?token=...&room=CODE. O /rtc (presença) fica no ingress principal — é
+# propagado por Redis e não precisa de afinidade.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: delonix-ws
+  namespace: delonix-meet
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$arg_room"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - meet.delonix.local
+      secretName: delonix-tls-secret
+  rules:
+    - host: meet.delonix.local
+      http:
+        paths:
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: delonix-server
+                port:
+                  number: 8180

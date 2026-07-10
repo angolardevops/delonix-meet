@@ -2933,3 +2933,75 @@ button.link:hover {
   .room-page [data-tip]::after { display: none; }  /* sem tooltips no toque */
   .room-page .side-panel { width: 100%; margin: 0; border-radius: 12px 12px 0 0; }
 }
+
+/* ============================================================
+   Barra de topo da sala (inspirada no Google Meet) + waiting pill
+   + toast de início de gravação.
+   ============================================================ */
+.room-page .room-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.55rem 1rem; gap: 1rem; flex: none;
+  color: var(--text); font-size: 0.92rem;
+}
+.room-topbar .rt-left { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.room-topbar .rt-right { display: flex; align-items: center; gap: 0.6rem; }
+.room-topbar .rt-clock { font-weight: 500; }
+.room-topbar .rt-sep { color: var(--muted-2); }
+.room-topbar .rt-code { letter-spacing: 0.3px; color: var(--text); }
+.room-topbar .rt-info {
+  width: 26px; height: 26px; border-radius: 50%; background: transparent; color: var(--muted);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 0.95rem;
+}
+.room-topbar .rt-info:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+
+/* Chips de contexto (Instantânea / Formação / E2EE) */
+.room-topbar .rt-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.74rem; font-weight: 600; padding: 3px 9px; border-radius: 100px;
+  background: rgba(255,255,255,0.08); color: var(--text-2); border: 1px solid var(--border);
+}
+.room-topbar .rt-chip.instant { color: var(--accent-2); border-color: color-mix(in oklab, var(--accent-2) 40%, transparent); }
+.room-topbar .rt-chip.e2ee { color: #7fe0a8; border-color: rgba(127,224,168,0.35); }
+
+/* Waiting pill (creme/âmbar, como o "N convidado a aguardar" do Meet) */
+.room-topbar .waiting-pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 13px 6px 11px; border-radius: 100px;
+  background: #fdf1d6; color: #5f4b18; font-weight: 600; font-size: 0.82rem;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.3);
+  animation: waiting-pulse 2s ease-in-out infinite;
+}
+.room-topbar .waiting-pill svg { width: 16px; height: 16px; }
+.room-topbar .waiting-pill:hover { background: #fbe8bd; }
+@keyframes waiting-pulse {
+  0%, 100% { box-shadow: 0 1px 6px rgba(0,0,0,0.3); }
+  50% { box-shadow: 0 1px 6px rgba(0,0,0,0.3), 0 0 0 4px rgba(237,163,59,0.18); }
+}
+
+/* Contador de participantes (avatar + número) */
+.room-topbar .rt-count {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 12px 4px 4px; border-radius: 100px; background: rgba(255,255,255,0.08); color: var(--text);
+  font-weight: 600; font-size: 0.85rem;
+}
+.room-topbar .rt-count:hover { background: rgba(255,255,255,0.14); }
+.room-topbar .rt-avatar {
+  width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--accent-hi), var(--accent)); color: #fff; font-size: 0.78rem; font-weight: 700;
+}
+
+/* Toast de início de gravação — prominente, centrado no topo, some ao fim de 6s */
+.room-page .rec-start-toast {
+  border: 1px solid rgba(234,67,53,0.4);
+  animation: rec-toast-in 0.25s ease;
+}
+.room-page .rec-dot.big { width: 11px; height: 11px; }
+@keyframes rec-toast-in {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@media (max-width: 640px) {
+  .room-topbar .rt-code, .room-topbar .rt-chip { display: none; }
+  .room-topbar .waiting-pill { font-size: 0.75rem; padding: 5px 10px; }
+}

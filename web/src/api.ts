@@ -151,7 +151,7 @@ export const createRoom = (
 export const getRoom = (code: string) => request<Room>(`/api/rooms/${code}`)
 
 export const joinRoom = (code: string) =>
-  request<{ room: Room; room_token: string }>(`/api/rooms/${code}/join`, { method: 'POST' })
+  request<{ room: Room; room_token: string; scheduled?: boolean }>(`/api/rooms/${code}/join`, { method: 'POST' })
 
 export const iceServers = () => request<RTCConfiguration>('/api/ice')
 
