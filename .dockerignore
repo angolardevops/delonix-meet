@@ -2,7 +2,8 @@
 # dentro da imagem e só poluíam o contexto (centenas de MB) e a cache.
 server/target/
 web/node_modules/
-web/dist/
+# NÃO ignorar web/dist/ — o Dockerfile.web.stage copia o dist pré-compilado.
+# (O Dockerfile.web de origem recompila, por isso tê-lo no contexto é inócuo.)
 mobile/build/
 mobile/.dart_tool/
 
