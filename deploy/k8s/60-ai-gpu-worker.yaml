@@ -1,0 +1,91 @@
+# Worker de IA server-side agendável em GPU — OPT-IN (fora da kustomization).
+#
+# CONTEXTO: a IA em tempo real (matting RVM, segmentação, transcrição ao vivo)
+# corre no CLIENTE (WebGPU/WASM no browser) — o backend NÃO precisa de GPU para
+# isso. Este worker faz IA em LOTE no servidor: transcreve as gravações
+# (recorder.rs → RECORDINGS_DIR/<id>.webm) com faster-whisper na GPU e preenche
+# a transcrição + a ATA (MoM) na BD. Implementação: ai-worker/ (Python).
+#
+# Pré-requisitos no cluster:
+#   - Pool de nós com GPU NVIDIA + NVIDIA device plugin (expõe nvidia.com/gpu).
+#   - runtimeClass "nvidia" e (recomendado) taint dedicado nos nós GPU.
+#   - PVC `recordings` (ReadWriteMany) partilhado com o backend, e `ai-models`
+#     para persistir o modelo (~3GB) entre reinícios.
+#   - Migração 0016 aplicada (colunas transcript/minutes/transcribed_at).
+#
+#   docker build -f ai-worker/Dockerfile -t ghcr.io/OWNER/delonix-ai-worker .
+#   kubectl apply -f deploy/k8s/60-ai-gpu-worker.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-ai-worker
+  namespace: delonix
+  labels: { app: delonix-ai-worker }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: delonix-ai-worker } }
+  template:
+    metadata: { labels: { app: delonix-ai-worker } }
+    spec:
+      runtimeClassName: nvidia # usa o NVIDIA container runtime (se configurado)
+      # Só agenda em nós com GPU:
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      # Tolera o taint típico dos pools de GPU:
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: worker
+          image: ghcr.io/OWNER/delonix-ai-worker:latest
+          envFrom:
+            - secretRef: { name: delonix-secrets } # DATABASE_URL
+          env:
+            - { name: RECORDINGS_DIR, value: /recordings }
+            - { name: WHISPER_MODEL, value: large-v3 }
+            - { name: WHISPER_DEVICE, value: cuda }
+            - { name: WHISPER_COMPUTE, value: float16 }
+            - { name: HF_HOME, value: /models }
+          resources:
+            # A GPU é um recurso agendável: 1 GPU inteira por pod.
+            limits:
+              nvidia.com/gpu: 1
+              cpu: "4"
+              memory: "12Gi"
+            requests:
+              cpu: "500m"
+              memory: "4Gi"
+          volumeMounts:
+            - { name: recordings, mountPath: /recordings, readOnly: true }
+            - { name: models, mountPath: /models }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        # MESMO volume onde o backend grava as gravações (RWX: NFS/CephFS/EFS…).
+        - name: recordings
+          persistentVolumeClaim: { claimName: recordings }
+        # Cache do modelo faster-whisper (~3GB) — evita re-descarregar.
+        - name: models
+          persistentVolumeClaim: { claimName: ai-models }
+---
+# Autoscale por profundidade de fila (ex.: KEDA) faz mais sentido que CPU para
+# lotes. Exemplo com HPA de CPU (simples) — trocar por KEDA ScaledObject se
+# usares uma fila de trabalhos:
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: delonix-ai-worker, namespace: delonix }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: delonix-ai-worker }
+  # HPA só escala a zero com o feature-gate HPAScaleToZero (alpha). Para
+  # escala-a-zero real numa fila de lotes, usar KEDA (ScaledObject). Default: 1.
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 60 } }

@@ -16,27 +16,46 @@ Plataforma de videoconferência self-hosted — alternativa ao Google Meet com b
 
 ## Arrancar em desenvolvimento
 
+**Um comando** (via [Makefile](Makefile)) — sobe infra + backend + frontend e imprime as URLs:
+
 ```bash
-# 1. Infraestrutura (Postgres na porta 5435, Redis, coturn)
-docker compose up -d
-
-# 2. Backend (porta 8180; corre as migrações automaticamente)
-cd server && cargo run
-
-# 3. Frontend (porta 5173, com proxy para o backend)
-cd web && npm install && npm run dev
+make dev      # ambiente de dev pronto a usar   ·   make stop / make down para parar
+make help     # lista todos os alvos
 ```
 
-Abre http://localhost:5173.
+Ou manualmente:
+
+```bash
+docker compose up -d                 # 1. Infra (Postgres 5435, Redis, coturn)
+cd server && cargo run               # 2. Backend (8180; migrações automáticas)
+cd web && npm install && npm run dev # 3. Frontend (5173, proxy p/ o backend)
+```
+
+Abre http://localhost:5173. (Nota: o backend faz fail-closed — `make dev` já
+define `DELONIX_ALLOW_INSECURE=1`; a correr à mão, usar `deploy/run-dev-server.sh`.)
+
+> **Dev vs. produção:** desde o endurecimento de segurança, o servidor faz
+> **panic no arranque** sem segredos fortes (fail-closed). Em dev usa a flag:
+> `bash deploy/run-dev-server.sh` (define `DELONIX_ALLOW_INSECURE=1`).
 
 ### Variáveis de ambiente (backend)
 
-| Variável | Default | Descrição |
+| Variável | Default (dev) | Descrição |
 |---|---|---|
 | `DATABASE_URL` | `postgres://delonix:delonix_dev@localhost:5435/delonix_meet` | Postgres |
 | `BIND_ADDR` | `0.0.0.0:8180` | endereço do servidor |
-| `JWT_SECRET` | (dev) | **obrigatório mudar em produção** |
-| `TURN_HOST` / `TURN_SECRET` | `localhost:3478` / (dev) | coturn |
+| `JWT_SECRET` | — | **obrigatório em produção** (≥32 bytes) |
+| `TURN_HOST` / `TURN_SECRET` | `localhost:3478` / — | coturn (segredo == `--static-auth-secret`) |
+| `CORS_ORIGINS` | vazio | allowlist de origens (vazio = same-origin) |
+| `RECORDINGS_DIR` | `recordings` | disco das gravações |
+| `COOKIE_INSECURE` | — | `1` só se servir em HTTP puro (cookie sem `Secure`) |
+| `DELONIX_ALLOW_INSECURE` | — | `1` aceita defaults de dev — **nunca em produção** |
+
+## Produção
+
+Guia completo (segredos, TLS, nginx, systemd, coturn, checklist e
+**go-live de sexta-feira**) em **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+Deploy num comando: `bash deploy/deploy.sh`.
 
 ## Testar manualmente uma chamada
 

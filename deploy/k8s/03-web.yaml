@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-web
+  namespace: delonix-meet
+  labels:
+    app: delonix-web
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: delonix-web
+  template:
+    metadata:
+      labels:
+        app: delonix-web
+    spec:
+      containers:
+        - name: web
+          image: delonix-web:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-web
+  namespace: delonix-meet
+spec:
+  selector:
+    app: delonix-web
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: http

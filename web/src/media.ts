@@ -28,13 +28,81 @@ export function audioConstraints(deviceId?: string, noiseSuppression = true): Me
   }
 }
 
+/**
+ * Supressão de ruído por IA (RNNoise via AudioWorklet WASM) — remove teclado,
+ * ventoinha, ruído de fundo muito melhor que a supressão nativa do browser.
+ * Recebe a track do microfone e devolve uma track "limpa" para enviar à chamada.
+ */
+export class Denoiser {
+  private ctx: AudioContext | null = null
+  private node: import('@sapphi-red/web-noise-suppressor').RnnoiseWorkletNode | null = null
+  private source: MediaStreamAudioSourceNode | null = null
+  private dest: MediaStreamAudioDestinationNode | null = null
+
+  get active(): boolean {
+    return !!this.node
+  }
+
+  // Se o AudioContext for suspenso (política de autoplay, tab em 2º plano), a
+  // track "limpa" fica MUDA e não recupera — os participantes deixam de ouvir.
+  // Este handler retoma-o sempre que possível.
+  private resume = () => {
+    if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume().catch(() => {})
+  }
+
+  /** Encaminha a track do mic pelo RNNoise; devolve a track processada. */
+  async process(track: MediaStreamTrack): Promise<MediaStreamTrack> {
+    const [{ loadRnnoise, RnnoiseWorkletNode }, wasmUrl, wasmSimdUrl, workletUrl] = await Promise.all([
+      import('@sapphi-red/web-noise-suppressor'),
+      import('@sapphi-red/web-noise-suppressor/rnnoise.wasm?url').then((m) => m.default),
+      import('@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url').then((m) => m.default),
+      import('@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url').then((m) => m.default),
+    ])
+    // RNNoise trabalha a 48 kHz — fixa a taxa para não reamostrar mal.
+    this.ctx = new AudioContext({ sampleRate: 48000 })
+    const wasmBinary = await loadRnnoise({ url: wasmUrl, simdUrl: wasmSimdUrl })
+    await this.ctx.audioWorklet.addModule(workletUrl)
+    this.source = this.ctx.createMediaStreamSource(new MediaStream([track]))
+    this.node = new RnnoiseWorkletNode(this.ctx, { maxChannels: 1, wasmBinary })
+    this.dest = this.ctx.createMediaStreamDestination()
+    this.source.connect(this.node).connect(this.dest)
+    // Garante que arranca a processar (contextos criados sem gesto começam
+    // 'suspended') e mantém-no vivo se o browser o suspender.
+    await this.ctx.resume().catch(() => {})
+    this.ctx.onstatechange = this.resume
+    document.addEventListener('visibilitychange', this.resume)
+    return this.dest.stream.getAudioTracks()[0]
+  }
+
+  stop() {
+    document.removeEventListener('visibilitychange', this.resume)
+    try {
+      this.node?.destroy()
+    } catch {
+      /* já destruído */
+    }
+    this.source?.disconnect()
+    this.node?.disconnect()
+    if (this.ctx) this.ctx.onstatechange = null
+    void this.ctx?.close()
+    this.ctx = null
+    this.node = null
+    this.source = null
+    this.dest = null
+  }
+}
+
 /** Pede a resolução máxima da câmara (o browser dá o melhor que o hardware tiver). */
 export function videoConstraints(deviceId?: string): MediaTrackConstraints {
   return {
     ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
     width: { ideal: 3840 },
     height: { ideal: 2160 },
-    frameRate: { ideal: 30 },
+    // Só `ideal` (nunca `min`): pedir 60fps quando a câmara aguenta, mas SEM
+    // restrição obrigatória — um `min` fazia o getUserMedia falhar em câmaras
+    // que não garantem o framerate (pouca luz/driver) → caía para áudio-só,
+    // deixando o vídeo preto e o mic aparentemente "muted".
+    frameRate: { ideal: 60 },
   }
 }
 
@@ -62,6 +130,9 @@ export class BackgroundEffect {
   private ctx = this.canvas.getContext('2d')!
   private person = document.createElement('canvas')
   private personCtx = this.person.getContext('2d')!
+  /** Instantâneo do frame (para o RVM: máscara e pessoa vêm do MESMO frame). */
+  private frame = document.createElement('canvas')
+  private frameCtx = this.frame.getContext('2d')!
   /** Máscara na resolução do modelo. */
   private maskSmall = document.createElement('canvas')
   private maskSmallCtx = this.maskSmall.getContext('2d')!
@@ -70,11 +141,18 @@ export class BackgroundEffect {
   private maskSmooth = document.createElement('canvas')
   private maskSmoothCtx = this.maskSmooth.getContext('2d')!
   private segmenter: import('@mediapipe/tasks-vision').ImageSegmenter | null = null
+  /** Matting de alta qualidade (RVM). Preferido; MediaPipe é o fallback. */
+  private matte: import('./matte').RvmMatte | null = null
+  private matteTried = false
   private running = false
   private out: MediaStreamTrack | null = null
   private bgImage: HTMLImageElement | null = null
+  /** true quando a segmentação corre no delegate GPU do cliente. */
+  usingGpu = false
 
   mode: BackgroundMode = 'blur'
+  /** Intensidade do desfoque (px) — "leve" ≈ 10, "forte" ≈ 24. */
+  blurPx = 24
 
   /** Define a imagem de fundo (dataURL/objectURL) e muda para modo imagem. */
   async setImage(url: string): Promise<void> {
@@ -100,7 +178,22 @@ export class BackgroundEffect {
 
   /** Track processada; a original fica intacta para poder ser reposta. */
   async start(cameraTrack: MediaStreamTrack): Promise<MediaStreamTrack> {
-    if (!this.segmenter) {
+    // 1ª escolha: matting dedicado (RVM) — cabelo/bordas muito melhores. Carrega
+    // sob demanda (code-split do ONNX Runtime). Se falhar, usa-se o MediaPipe.
+    if (!this.matte && !this.matteTried) {
+      this.matteTried = true
+      try {
+        const { RvmMatte } = await import('./matte')
+        const m = new RvmMatte()
+        if (await m.init()) {
+          this.matte = m
+          this.usingGpu = m.usingWebGpu
+        }
+      } catch (e) {
+        console.warn('[background] RVM indisponível', e)
+      }
+    }
+    if (!this.matte && !this.segmenter) {
       const { ImageSegmenter, FilesetResolver } = await import('@mediapipe/tasks-vision')
       const fileset = await FilesetResolver.forVisionTasks('/mediapipe-wasm')
       const make = (delegate: 'GPU' | 'CPU') =>
@@ -109,8 +202,15 @@ export class BackgroundEffect {
           runningMode: 'VIDEO',
           outputConfidenceMasks: true,
         })
-      // Nem todas as GPUs/drivers aguentam o delegate GPU — cair para CPU.
-      this.segmenter = await make('GPU').catch(() => make('CPU'))
+      // Acelera na GPU do cliente quando disponível (render muito melhor); nem
+      // todas as GPUs/drivers aguentam o delegate GPU — cai para CPU sem falhar.
+      this.segmenter = await make('GPU')
+        .then((s) => {
+          this.usingGpu = true
+          return s
+        })
+        .catch(() => make('CPU'))
+      console.info(`[background] segmentação em ${this.usingGpu ? 'GPU' : 'CPU'}`)
     }
 
     this.raw = cameraTrack
@@ -138,6 +238,8 @@ export class BackgroundEffect {
     this.canvas.height = h
     this.person.width = w
     this.person.height = h
+    this.frame.width = w
+    this.frame.height = h
   }
 
   private scheduleFrame() {
@@ -152,7 +254,7 @@ export class BackgroundEffect {
   }
 
   private renderFrame() {
-    if (!this.running || !this.segmenter) return
+    if (!this.running) return
     if (this.video.readyState < 2) {
       this.scheduleFrame()
       return
@@ -160,20 +262,36 @@ export class BackgroundEffect {
     if (this.video.videoWidth && this.video.videoWidth !== this.canvas.width) {
       this.resize(this.video.videoWidth, this.video.videoHeight)
     }
-    try {
-      this.segmenter.segmentForVideo(this.video, performance.now(), (result) => {
-        const mask = result.confidenceMasks?.[0]
-        if (!mask) return
-        this.compose(mask)
-        mask.close()
-      })
-    } catch {
-      /* frame perdido — segue para o próximo */
+    const W = this.canvas.width
+    const H = this.canvas.height
+    if (this.matte) {
+      // RVM (assíncrono). Só arranca uma corrida de cada vez; congela o frame
+      // atual para que a máscara e a pessoa venham do MESMO instante (sem
+      // desalinhamento em movimento). Enquanto ocupado, o canvas mantém o
+      // último resultado — a track de saída continua a fluir.
+      if (!this.matte.busy) {
+        this.frameCtx.drawImage(this.video, 0, 0, W, H)
+        void this.matte.run(this.frame, W, H).then((alpha) => {
+          if (alpha && this.running) this.composeMatte(alpha)
+        })
+      }
+    } else if (this.segmenter) {
+      try {
+        this.segmenter.segmentForVideo(this.video, performance.now(), (result) => {
+          const mask = result.confidenceMasks?.[0]
+          if (!mask) return
+          this.composeMediapipe(mask)
+          mask.close()
+        })
+      } catch {
+        /* frame perdido — segue para o próximo */
+      }
     }
     this.scheduleFrame()
   }
 
-  private compose(mask: import('@mediapipe/tasks-vision').MPMask) {
+  /** Caminho MediaPipe: converte a máscara de confiança em alfa e compõe. */
+  private composeMediapipe(mask: import('@mediapipe/tasks-vision').MPMask) {
     const mw = mask.width
     const mh = mask.height
     if (this.maskSmall.width !== mw) {
@@ -183,32 +301,47 @@ export class BackgroundEffect {
       this.maskSmooth.height = mh
       this.maskPixels = null
     }
-    // 1) Confiança -> alfa com curva suave e LIGEIRA EROSÃO: só >0.5 conta
-    //    como pessoa, rampa 0.5..0.8. Puxa a borda para dentro (esconde o
-    //    halo do fundo a "vazar") e feather do lado da pessoa, sem serrilhar.
+    // Confiança -> alfa com curva suave. Rampa 0.30..0.62: inclusiva no limite
+    // (recupera cabelo, a zona de menor confiança do modelo leve).
     const conf = mask.getAsFloat32Array()
     if (!this.maskPixels) this.maskPixels = this.maskSmallCtx.createImageData(mw, mh)
     const px = this.maskPixels.data
     for (let i = 0; i < conf.length; i++) {
-      const a = Math.min(1, Math.max(0, (conf[i] - 0.5) / 0.3))
+      const a = Math.min(1, Math.max(0, (conf[i] - 0.3) / 0.32))
       px[i * 4 + 3] = a * a * (3 - 2 * a) * 255 // smoothstep
     }
     this.maskSmallCtx.putImageData(this.maskPixels, 0, 0)
-
-    // 2) Suavização temporal LEVE (85% frame novo + 15% histórico): estabiliza
-    //    a borda sem deixar rasto/fantasma quando a pessoa ou a câmara mexem.
-    this.maskSmoothCtx.globalAlpha = 0.85
+    // Máscara rígida por frame (sem mistura temporal → sem rasto).
+    this.maskSmoothCtx.clearRect(0, 0, mw, mh)
     this.maskSmoothCtx.drawImage(this.maskSmall, 0, 0)
-    this.maskSmoothCtx.globalAlpha = 1
+    this.composite(this.video)
+  }
 
+  /** Caminho RVM: o alfa contínuo já vem do modelo; só o desenhamos na máscara. */
+  private composeMatte(alpha: HTMLCanvasElement) {
+    if (this.maskSmooth.width !== alpha.width) {
+      this.maskSmooth.width = alpha.width
+      this.maskSmooth.height = alpha.height
+    }
+    this.maskSmoothCtx.clearRect(0, 0, alpha.width, alpha.height)
+    this.maskSmoothCtx.drawImage(alpha, 0, 0)
+    this.composite(this.frame)
+  }
+
+  /**
+   * Composição final partilhada: pessoa recortada (com feather) sobre o fundo
+   * recuado (DoF + vinheta) e uma sombra de contacto para profundidade.
+   * `personSrc` é a fonte de imagem do frame que originou a máscara atual.
+   */
+  private composite(personSrc: CanvasImageSource) {
     const W = this.canvas.width
     const H = this.canvas.height
 
-    // 3) Pessoa recortada com pena na borda (blur aplicado à máscara
-    //    ampliada, não à imagem — borda macia sem fantasma).
+    // Pessoa recortada com pena na borda (blur na máscara ampliada — o cabelo
+    // funde-se suavemente no fundo em vez de um corte duro).
     this.personCtx.save()
     this.personCtx.clearRect(0, 0, W, H)
-    this.personCtx.drawImage(this.video, 0, 0, W, H)
+    this.personCtx.drawImage(personSrc, 0, 0, W, H)
     this.personCtx.globalCompositeOperation = 'destination-in'
     this.personCtx.filter = `blur(${Math.max(2, W / 480)}px)`
     this.personCtx.imageSmoothingEnabled = true
@@ -216,23 +349,35 @@ export class BackgroundEffect {
     this.personCtx.drawImage(this.maskSmooth, 0, 0, W, H)
     this.personCtx.restore()
 
-    // 4) Fundo por baixo, sempre a cobrir 100% do frame.
+    // Fundo recuado (DoF + escurecimento) para a pessoa saltar para a frente.
     this.ctx.save()
     if (this.mode === 'image' && this.bgImage) {
+      this.ctx.filter = `blur(${Math.max(2, W / 340)}px) brightness(0.94)`
       drawCover(this.ctx, this.bgImage, W, H)
+      this.ctx.filter = 'none'
     } else {
-      // Vidro fosco: desenho ligeiramente ampliado (o blur não "vaza" nas
-      // margens), desfocado e saturado, com um véu subtil por cima.
-      this.ctx.filter = 'blur(24px) saturate(1.2) brightness(1.05)'
-      this.ctx.drawImage(this.video, -W * 0.06, -H * 0.06, W * 1.12, H * 1.12)
+      this.ctx.filter = `blur(${this.blurPx}px) saturate(1.2) brightness(1.02)`
+      this.ctx.drawImage(personSrc, -W * 0.06, -H * 0.06, W * 1.12, H * 1.12)
       this.ctx.filter = 'none'
       this.ctx.fillStyle = 'rgba(255,255,255,0.07)'
       this.ctx.fillRect(0, 0, W, H)
     }
+    // Vinheta radial: escurece as margens e concentra o foco na pessoa.
+    const vg = this.ctx.createRadialGradient(W / 2, H * 0.46, Math.min(W, H) * 0.22, W / 2, H * 0.52, Math.max(W, H) * 0.72)
+    vg.addColorStop(0, 'rgba(0, 0, 0, 0)')
+    vg.addColorStop(1, 'rgba(0, 0, 0, 0.32)')
+    this.ctx.fillStyle = vg
+    this.ctx.fillRect(0, 0, W, H)
     this.ctx.restore()
 
-    // 5) Pessoa por cima do fundo.
+    // Pessoa em primeiro plano com sombra de contacto curta (profundidade).
+    this.ctx.save()
+    this.ctx.shadowColor = 'rgba(0, 0, 0, 0.4)'
+    this.ctx.shadowBlur = Math.max(4, W / 260)
+    this.ctx.shadowOffsetX = 0
+    this.ctx.shadowOffsetY = Math.max(1, H / 400)
     this.ctx.drawImage(this.person, 0, 0)
+    this.ctx.restore()
   }
 
   /** Para o processamento e devolve a track original da câmara. */
@@ -351,21 +496,173 @@ export function speechSupported(): boolean {
 }
 
 /**
- * Transcrição contínua do áudio local (Web Speech API do browser). Nota:
- * captura só o microfone deste dispositivo, não o áudio remoto. Chrome/Edge
- * suportam; Firefox não. `onFinal` recebe cada frase confirmada.
+ * Motor Whisper local (WASM em worker): transcreve blocos de fala do
+ * microfone com deteção de silêncio. Funciona em QUALQUER browser — é o
+ * fallback quando não há Web Speech API (Firefox) e não envia áudio a lado
+ * nenhum (modelo self-hosted em /models, runtime em /ort).
  */
-export class Transcriber {
-  private rec: SpeechRecognitionLike | null = null
-  private running = false
+/**
+ * Limpa a saída do whisper-tiny, que alucina em áudio pouco claro/música:
+ * remove marcadores de não-fala ("(música)", "[aplausos]"…), créditos de
+ * legendas fantasma, e colapsa repetições consecutivas ("É bom. - É bom.").
+ */
+function cleanWhisper(raw: string): string {
+  const t = raw.trim()
+  if (!t) return ''
+  // Marcador de não-fala isolado (música/aplausos/risos/silêncio/inaudível).
+  if (/^[([\-\s]*(m[úu]sica|music|aplausos|applause|risos|laughter|sil[êe]ncio|silence|inaud[íi]vel|ru[íi]do|noise)[)\]\-.\s]*$/i.test(t)) return ''
+  // Alucinações típicas em silêncio (créditos de legendas).
+  if (/amara\.org|legendas pela comunidade|subtitles? by|subscribe/i.test(t)) return ''
+  // Colapsa segmentos consecutivos iguais (separados por " - " ou por frase).
+  const norm = (s: string) => s.toLowerCase().replace(/[.!?…\s]+$/, '').trim()
+  const parts = t.split(/\s*[-–—]\s*|(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean)
+  const out: string[] = []
+  for (const p of parts) {
+    if (!out.length || norm(out[out.length - 1]) !== norm(p)) out.push(p)
+  }
+  return out.join(' ').trim()
+}
+
+class WhisperEngine {
+  private worker: Worker | null = null
+  private ctx: AudioContext | null = null
+  private proc: ScriptProcessorNode | null = null
+  private source: MediaStreamAudioSourceNode | null = null
+  private ownStream: MediaStream | null = null
+  private buf: Float32Array[] = []
+  private bufLen = 0
+  private speechRun = 0
+  private silenceRun = 0
+  private lang = 'pt'
   onFinal: ((text: string) => void) | null = null
   onInterim: ((text: string) => void) | null = null
 
-  start(lang = 'pt-PT') {
+  async start(lang: string, stream?: MediaStream | null): Promise<boolean> {
+    this.lang = lang.split('-')[0] // 'pt-PT' -> 'pt'
+    this.worker = new Worker(new URL('./whisperWorker.ts', import.meta.url), { type: 'module' })
+    this.worker.onmessage = (e) => {
+      const m = e.data as { op: string; text?: string; message?: string }
+      if (m.op === 'final' && m.text) {
+        const t = cleanWhisper(m.text)
+        if (t) this.onFinal?.(t)
+      }
+      if (m.op === 'ready') this.onInterim?.('')
+      if (m.op === 'error') console.warn('[whisper]', m.message)
+    }
+    this.onInterim?.('(a carregar modelo de voz local…)')
+    this.worker.postMessage({ op: 'warmup' })
+
+    let audio = stream
+    if (!audio || audio.getAudioTracks().length === 0) {
+      this.ownStream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null)
+      audio = this.ownStream ?? undefined
+    }
+    if (!audio) return false
+
+    // 16 kHz mono para o Whisper; blocos fecham por silêncio (~0,7 s) ou 8 s.
+    this.ctx = new AudioContext({ sampleRate: 16000 })
+    this.source = this.ctx.createMediaStreamSource(audio)
+    this.proc = this.ctx.createScriptProcessor(4096, 1, 1)
+    const SILENCE = 0.012
+    this.proc.onaudioprocess = (ev) => {
+      const data = ev.inputBuffer.getChannelData(0)
+      let sum = 0
+      for (const v of data) sum += v * v
+      const rms = Math.sqrt(sum / data.length)
+      this.buf.push(new Float32Array(data))
+      this.bufLen += data.length
+      if (rms > SILENCE) {
+        this.speechRun += data.length
+        this.silenceRun = 0
+      } else {
+        this.silenceRun += data.length
+      }
+      const SR = 16000
+      const closeBySilence = this.speechRun > 0.6 * SR && this.silenceRun > 0.7 * SR
+      const closeByLength = this.bufLen >= 8 * SR
+      if (closeBySilence || closeByLength) this.flush()
+      // Sem fala nenhuma há >6 s: descarta para não acumular ruído.
+      if (this.speechRun === 0 && this.bufLen > 6 * SR) this.reset()
+    }
+    this.source.connect(this.proc)
+    this.proc.connect(this.ctx.destination)
+    return true
+  }
+
+  private flush() {
+    if (this.speechRun === 0) {
+      this.reset()
+      return
+    }
+    const pcm = new Float32Array(this.bufLen)
+    let o = 0
+    for (const b of this.buf) {
+      pcm.set(b, o)
+      o += b.length
+    }
+    this.reset()
+    this.worker?.postMessage({ op: 'chunk', pcm, lang: this.lang }, [pcm.buffer])
+  }
+
+  private reset() {
+    this.buf = []
+    this.bufLen = 0
+    this.speechRun = 0
+    this.silenceRun = 0
+  }
+
+  stop() {
+    this.flush()
+    this.proc?.disconnect()
+    this.source?.disconnect()
+    void this.ctx?.close()
+    this.ownStream?.getTracks().forEach((t) => t.stop())
+    // Deixa o último bloco terminar antes de matar o worker.
+    const w = this.worker
+    setTimeout(() => w?.terminate(), 20_000)
+    this.worker = null
+    this.proc = null
+    this.ctx = null
+  }
+}
+
+/**
+ * Transcrição contínua do áudio local. Usa a Web Speech API quando existe
+ * (Chrome/Edge — melhor latência) e cai para Whisper WASM local nos outros
+ * browsers (Firefox/Safari). `onFinal` recebe cada frase confirmada.
+ */
+export class Transcriber {
+  private rec: SpeechRecognitionLike | null = null
+  private whisper: WhisperEngine | null = null
+  private running = false
+  private lang = 'pt-PT'
+  private stream?: MediaStream | null
+  private usedWhisper = false
+  onFinal: ((text: string) => void) | null = null
+  onInterim: ((text: string) => void) | null = null
+  /** Erro legível (permissão negada, sem microfone, etc.). */
+  onError: ((message: string) => void) | null = null
+
+  /**
+   * Arranca o melhor motor disponível. `stream` alimenta o Whisper (mic).
+   * `preferLocal` força o Whisper WASM (100% no dispositivo, privado) em vez da
+   * Web Speech do Chrome — que ENVIA áudio para servidores da Google, o que
+   * quebra a soberania de dados. Sem `preferLocal`, usa Web Speech quando
+   * existe e cai automaticamente no Whisper se a Google estiver inacessível
+   * (erro `network`) — típico numa rede self-hosted/offline.
+   */
+  start(lang = 'pt-PT', stream?: MediaStream | null, preferLocal = false) {
+    this.lang = lang
+    this.stream = stream
+    this.running = true
     const Ctor = ((window as unknown as { webkitSpeechRecognition?: SpeechRecognitionCtor; SpeechRecognition?: SpeechRecognitionCtor })
       .webkitSpeechRecognition ??
       (window as unknown as { SpeechRecognition?: SpeechRecognitionCtor }).SpeechRecognition) as SpeechRecognitionCtor | undefined
-    if (!Ctor) return false
+    if (!Ctor || preferLocal) {
+      // Sem Web Speech (Firefox) ou modo 100% local: Whisper WASM.
+      this.startWhisper()
+      return true
+    }
     const rec = new Ctor()
     rec.continuous = true
     rec.interimResults = true
@@ -381,7 +678,7 @@ export class Transcriber {
     }
     // Reinicia sozinho (a API pára após silêncio prolongado).
     rec.onend = () => {
-      if (this.running) {
+      if (this.running && this.rec) {
         try {
           rec.start()
         } catch {
@@ -389,9 +686,28 @@ export class Transcriber {
         }
       }
     }
-    rec.onerror = () => {}
+    rec.onerror = (e) => {
+      // `no-speech`/`aborted` são transitórios (a API reinicia sozinha via onend);
+      // só se reporta/atua no que impede mesmo a captura.
+      const err = (e as { error?: string }).error ?? ''
+      if (err === 'not-allowed' || err === 'service-not-allowed') {
+        this.onError?.('Permissão de microfone negada — autoriza o microfone para transcrever.')
+      } else if (err === 'audio-capture') {
+        this.onError?.('Microfone não encontrado — liga um microfone e tenta de novo.')
+      } else if (err === 'network' || err === 'language-not-supported') {
+        // Chrome Web Speech precisa dos servidores da Google — inacessíveis
+        // numa rede self-hosted/offline. Cai para o Whisper local (privado).
+        this.rec = null
+        try {
+          rec.stop()
+        } catch {
+          /* ignore */
+        }
+        this.onInterim?.('(rede sem acesso à Google — a mudar para transcrição local…)')
+        this.startWhisper()
+      }
+    }
     this.rec = rec
-    this.running = true
     try {
       rec.start()
     } catch {
@@ -400,11 +716,52 @@ export class Transcriber {
     return true
   }
 
+  /** Arranca o motor Whisper WASM local (uma só vez). */
+  private startWhisper() {
+    if (this.usedWhisper || !this.running) return
+    this.usedWhisper = true
+    this.whisper = new WhisperEngine()
+    this.whisper.onFinal = (t) => this.onFinal?.(t)
+    this.whisper.onInterim = (t) => this.onInterim?.(t)
+    void this.whisper.start(this.lang, this.stream).then((ok) => {
+      if (!ok && this.running)
+        this.onError?.('Sem acesso ao microfone para transcrição — verifica a permissão do browser.')
+    })
+  }
+
   stop() {
     this.running = false
     this.rec?.stop()
     this.rec = null
+    this.whisper?.stop()
+    this.whisper = null
   }
+}
+
+/** Toca um tom curto no altifalante escolhido — "Testar os altifalantes". */
+export async function playTestTone(sinkId?: string): Promise<void> {
+  const ctx = new AudioContext()
+  const dest = ctx.createMediaStreamDestination()
+  const gain = ctx.createGain()
+  gain.gain.value = 0.15
+  gain.connect(dest)
+  // Duas notas (lá4 → mi5), como o teste do Meet.
+  for (const [freq, at] of [[440, 0], [659, 0.35]] as const) {
+    const osc = ctx.createOscillator()
+    osc.frequency.value = freq
+    osc.connect(gain)
+    osc.start(ctx.currentTime + at)
+    osc.stop(ctx.currentTime + at + 0.3)
+  }
+  const audio = new Audio()
+  audio.srcObject = dest.stream
+  const sinkable = audio as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }
+  if (sinkId && sinkable.setSinkId) await sinkable.setSinkId(sinkId).catch(() => {})
+  await audio.play().catch(() => {})
+  setTimeout(() => {
+    audio.pause()
+    void ctx.close()
+  }, 900)
 }
 
 /** Fundos predefinidos gerados localmente (gradientes suaves). */

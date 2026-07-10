@@ -1,0 +1,19 @@
+# Template — METALLB_RANGE é substituído em runtime por 'make metallb-kind'
+# (kind: subnet da rede docker kind  |  prod: range estático via Ansible)
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: delonix-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - METALLB_RANGE
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: delonix-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+  - delonix-pool

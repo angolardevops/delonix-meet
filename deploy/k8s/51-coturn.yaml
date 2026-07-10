@@ -1,0 +1,58 @@
+# coturn (TURN/STUN) — relay de media para NAT/firewalls restritivos.
+#
+# ⚠️  O TURN precisa de hostNetwork + IP público alcançável + um intervalo de
+#     portas UDP abertas no nó. Isto NÃO cabe no PSS "restricted", por isso vive
+#     no namespace delonix-data (baseline). Em muitos setups é mais simples
+#     correr o coturn FORA do cluster (VM com IP público) — ver deploy/DEPLOYMENT.md.
+#
+# Requisitos antes de aplicar:
+#   1) EXTERNAL_IP = IP público do nó (o coturn anuncia-o aos clientes).
+#   2) static-auth-secret = MESMO valor que o TURN_SECRET da app (o backend
+#      assina credenciais TURN com esse segredo — ver rooms.rs ice_servers()).
+#   3) Portas UDP 3478 + 49160-49200 abertas no firewall do nó.
+apiVersion: v1
+kind: Secret
+metadata: { name: coturn-auth, namespace: delonix-data }
+type: Opaque
+stringData:
+  TURN_SECRET: "CHANGE_ME_same_as_app_TURN_SECRET"
+  EXTERNAL_IP: "CHANGE_ME_node_public_ip"
+  REALM: "turn.example.com"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: coturn, namespace: delonix-data, labels: { app: coturn } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: coturn } }
+  template:
+    metadata: { labels: { app: coturn } }
+    spec:
+      hostNetwork: true # relay precisa das portas do nó
+      dnsPolicy: ClusterFirstWithHostNet
+      # Fixar num nó com IP público estável:
+      # nodeSelector: { delonix.io/turn: "true" }
+      containers:
+        - name: coturn
+          image: coturn/coturn:4.6-alpine
+          env:
+            - { name: TURN_SECRET, valueFrom: { secretKeyRef: { name: coturn-auth, key: TURN_SECRET } } }
+            - { name: EXTERNAL_IP, valueFrom: { secretKeyRef: { name: coturn-auth, key: EXTERNAL_IP } } }
+            - { name: REALM, valueFrom: { secretKeyRef: { name: coturn-auth, key: REALM } } }
+          command: ["/bin/sh", "-c"]
+          args:
+            - >
+              exec turnserver -n --no-cli
+              --use-auth-secret --static-auth-secret="$TURN_SECRET"
+              --realm="$REALM" --external-ip="$EXTERNAL_IP"
+              --listening-port=3478 --min-port=49160 --max-port=49200
+              --no-multicast-peers --no-loopback-peers --stale-nonce=600
+          ports:
+            - { name: turn-udp, containerPort: 3478, protocol: UDP }
+            - { name: turn-tcp, containerPort: 3478, protocol: TCP }
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }

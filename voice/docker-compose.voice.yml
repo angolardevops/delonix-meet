@@ -1,0 +1,34 @@
+# Delonix Meet — camada de MEDIA do dial-in PSTN (dev).
+#   docker compose -f voice/docker-compose.voice.yml up -d
+#
+# Kamailio (borda SIP/SBC) → FreeSWITCH (IVR + conferência). O control plane é o
+# backend Rust já existente (não está aqui). Segredos vêm do ambiente.
+#
+# Produção: cada componente numa microVM dedicada (isolamento de jitter de media);
+# ver voice/README.md.
+services:
+  kamailio:
+    image: kamailio/kamailio:5.8
+    restart: unless-stopped
+    network_mode: host   # SIP/RTP precisam de portas host previsíveis
+    volumes:
+      - ./kamailio/kamailio.cfg:/etc/kamailio/kamailio.cfg:ro
+      - ./kamailio/dispatcher.list:/etc/kamailio/dispatcher.list:ro
+      # ACL do trunk (IPs do fornecedor 5.1) e TLS — montados, nunca comitados:
+      - ${DELONIX_VOICE_ACL:-./kamailio/ao_trunk.txt}:/etc/kamailio/ao_trunk.txt:ro
+      - ${DELONIX_TLS_DIR:-/etc/ssl/delonix}:/etc/kamailio/tls:ro
+
+  freeswitch:
+    image: safarov/freeswitch:latest
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      # Injetados nas vars globais (vars.xml.inc). NUNCA hardcoded.
+      DELONIX_CONTROL_URL: ${DELONIX_CONTROL_URL:-http://127.0.0.1:8180}
+      VOICE_INTERNAL_SECRET: ${VOICE_INTERNAL_SECRET:?define VOICE_INTERNAL_SECRET}
+    volumes:
+      - ./freeswitch/dialplan/public/00_delonix_dialin.xml:/etc/freeswitch/dialplan/public/00_delonix_dialin.xml:ro
+      - ./freeswitch/autoload_configs/conference.conf.xml:/etc/freeswitch/autoload_configs/conference.conf.xml:ro
+      - ./freeswitch/scripts/dialin_ivr.lua:/usr/share/freeswitch/scripts/dialin_ivr.lua:ro
+      - ./freeswitch/vars.xml.inc:/etc/freeswitch/vars.xml.inc:ro
+      - ${DELONIX_TLS_DIR:-/etc/ssl/delonix}:/etc/freeswitch/tls:ro

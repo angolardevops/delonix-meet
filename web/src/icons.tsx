@@ -61,6 +61,12 @@ export const SettingsIcon = () => (
   </svg>
 )
 
+export const MenuIcon = () => (
+  <svg {...base} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+    <path d="M3 6h18M3 12h18M3 18h18" />
+  </svg>
+)
+
 export const RecordIcon = () => (
   <svg {...base}>
     <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2" />
@@ -185,6 +191,12 @@ export const PlusIcon = () => (
 export const TrashIcon = () => (
   <svg {...base} width={16} height={16}>
     <path d="M7 4V3a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v1h4v2H3V4h4Zm-1 4h12l-1 12a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 8Z" />
+  </svg>
+)
+
+export const EditIcon = () => (
+  <svg {...base} width={16} height={16}>
+    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z" />
   </svg>
 )
 

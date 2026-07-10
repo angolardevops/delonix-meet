@@ -1,0 +1,64 @@
+// ============================================================
+//  Delonix Meet — tokens PRIMITIVOS (valores crus, escala única)
+//  Nunca consumidos diretamente pelos componentes; alimentam a
+//  camada semântica (_semantic + tokens.scss) que emite as CSS
+//  custom properties temáveis em runtime.
+// ============================================================
+
+// ---- Neutros frios (base enterprise: cinza levemente azulado) ----
+$neutral: (
+  0:    #ffffff,
+  25:   #fafbfc,
+  50:   #f5f7fa,
+  100:  #eceff3,
+  150:  #e2e6ec,
+  200:  #d3d9e0,
+  300:  #b4bcc7,
+  400:  #8b95a3,
+  500:  #667080,
+  600:  #4d5663,
+  700:  #363d47,
+  750:  #2a2f38,
+  800:  #1f242c,
+  850:  #181c22,
+  900:  #12151a,
+  950:  #0e1116,
+  1000: #0a0c10,
+);
+
+// ---- Índigo — cor de AÇÃO (primária interativa) ----
+$indigo: (
+  300: #9db0ff,
+  400: #7b93ff,
+  500: #5b7cfa,   // ação (dark)
+  600: #4c6fff,
+  700: #3f5fe0,   // ação (light — mais profundo p/ contraste em branco)
+  800: #3550c0,
+);
+
+// ---- Vermelho Delonix — cor de MARCA (logo, landing, destaque) ----
+$brand-red: (
+  400: #f26430,   // topo do gradiente
+  500: #d8352e,
+  600: #c8201d,   // vermelho do logo
+  700: #a81a18,
+);
+
+// ---- Dourado Delonix — acento secundário de marca ----
+$gold: (
+  400: #f0b755,
+  500: #eda33b,
+  600: #d98a28,
+  700: #b8801f,   // legível sobre branco
+);
+
+// ---- Feedback ----
+$success: (dark: #3fbf7a, light: #1f9d57);
+$warn:    (dark: #e0a83f, light: #b7791f);
+$danger:  (dark: #ef4444, light: #dc2f28);
+$info:    (dark: #5b8bff, light: #3f6fe0);
+
+// ---- Helper: lê um degrau de uma escala ----
+@function step($scale, $k) {
+  @return map-get($scale, $k);
+}

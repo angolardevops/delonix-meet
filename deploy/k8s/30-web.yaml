@@ -1,0 +1,65 @@
+# Frontend (SPA + Nginx rootless). É STATELESS — escala horizontalmente à
+# vontade. Este é o tier onde o autoscale é seguro e eficaz.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-web
+  namespace: delonix
+  labels: { app: delonix-web }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: delonix-web }
+  template:
+    metadata:
+      labels: { app: delonix-web }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: web
+          image: ghcr.io/OWNER/delonix-web:latest # sobrescrito pela kustomization
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /index.html, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false # nginx precisa de /tmp e cache
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-web
+  namespace: delonix
+  labels: { app: delonix-web }
+spec:
+  selector: { app: delonix-web }
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: delonix-web
+  namespace: delonix
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: delonix-web
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }

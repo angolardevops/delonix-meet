@@ -12,6 +12,19 @@ mobile/.dart_tool/
 # Env / secrets
 .env
 *.local
+deploy/delonix.env
+
+# Assets de IA self-hosted pesados — FORA do git (obtidos por deploy.sh /
+# Dockerfile / deploy/fetch-whisper.sh, com SHA-256 fixado). Ver
+# docs/reference/architecture.md. Os .tflite do MediaPipe (fallback, ~2 MB)
+# ficam versionados — não têm script de fetch.
+web/public/ort/
+web/public/ort-rvm/
+web/public/models/rvm/
+web/public/models/Xenova/
+
+# Worktrees transitórios de agentes
+agents/worktrees/
 
 # OS
 .DS_Store
@@ -21,3 +34,6 @@ mobile/.dart_tool/
 
 # Gravações de reuniões (dados de utilizador — nunca versionar)
 server/recordings/
+.dev/
+voice/tls/
+voice/kamailio/ao_trunk.txt

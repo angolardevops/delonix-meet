@@ -1,0 +1,14 @@
+# Delonix Meet — Kamailio TLS (sinalização SIP sobre TLS, obrigatório).
+# Copiar para tls.cfg. Certificado montado por volume em /etc/kamailio/tls
+# (dev: self-signed; produção: CA real). NUNCA comitar chaves privadas.
+[server:default]
+method = TLSv1.2+
+verify_certificate = no        # dev; em produção com mTLS ao trunk, mudar para yes
+require_certificate = no
+private_key = /etc/kamailio/tls/privkey.pem
+certificate = /etc/kamailio/tls/fullchain.pem
+
+[client:default]
+method = TLSv1.2+
+verify_certificate = yes        # valida o certificado do trunk
+require_certificate = yes

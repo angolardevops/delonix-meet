@@ -1,0 +1,9 @@
+architecture: replication
+auth:
+  enabled: false
+sentinel:
+  enabled: true
+  masterSet: mymaster
+  quorum: 2
+replica:
+  replicaCount: 3

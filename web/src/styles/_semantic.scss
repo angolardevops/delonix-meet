@@ -1,0 +1,13 @@
+// ============================================================
+//  Delonix Meet — camada SEMÂNTICA
+//  Recebe um mapa {nome-do-token: valor} e emite-o como CSS
+//  custom properties (--nome: valor). É isto que permite trocar
+//  de tema em runtime via [data-theme] mantendo o SCSS como
+//  fonte única dos valores.
+// ============================================================
+
+@mixin emit($tokens) {
+  @each $name, $value in $tokens {
+    --#{$name}: #{$value};
+  }
+}

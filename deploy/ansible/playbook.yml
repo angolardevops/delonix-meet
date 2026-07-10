@@ -1,0 +1,218 @@
+---
+- name: Prepare OS and Install Kubernetes (Kubeadm)
+  hosts: all
+  become: yes
+  tasks:
+    - name: Disable swap
+      command: swapoff -a
+      when: ansible_swaptotal_mb > 0
+
+    - name: Remove swap from fstab
+      replace:
+        path: /etc/fstab
+        regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+        replace: '# \1'
+
+    - name: Load kernel modules for containerd and k8s
+      modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: Configure sysctl for Kubernetes and High Performance
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      loop:
+        - { key: 'net.ipv4.ip_forward', value: '1' }
+        - { key: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+        - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+        - { key: 'net.core.somaxconn', value: '65535' }
+        - { key: 'net.ipv4.tcp_max_syn_backlog', value: '65535' }
+        - { key: 'fs.file-max', value: '2097152' }
+        - { key: 'net.ipv4.ip_local_port_range', value: '1024 65000' }
+        - { key: 'net.ipv4.tcp_rmem', value: '4096 87380 16777216' }
+        - { key: 'net.ipv4.tcp_wmem', value: '4096 65536 16777216' }
+
+    - name: Install containerd and apt dependencies
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - containerd
+        state: present
+        update_cache: yes
+
+    - name: Configure containerd to use systemd cgroup driver
+      shell: |
+        mkdir -p /etc/containerd
+        containerd config default > /etc/containerd/config.toml
+        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+      notify: Restart containerd
+
+    - name: Add Google Cloud public signing key
+      apt_key:
+        url: https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key
+        state: present
+
+    - name: Add Kubernetes apt repository
+      apt_repository:
+        repo: "deb https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
+        state: present
+
+    - name: Install kubelet, kubeadm and kubectl
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+
+    - name: Hold kubelet, kubeadm, kubectl
+      dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+
+  handlers:
+    - name: Restart containerd
+      service:
+        name: containerd
+        state: restarted
+
+- name: Initialize Control Plane
+  hosts: kube_control_plane
+  become: yes
+  tasks:
+    - name: Check if cluster is initialized
+      stat:
+        path: /etc/kubernetes/admin.conf
+      register: kubeadm_conf
+
+    - name: Initialize the Kubernetes cluster
+      command: kubeadm init --pod-network-cidr=192.168.0.0/16
+      when: not kubeadm_conf.stat.exists
+
+    - name: Create .kube directory for user
+      file:
+        path: "/home/{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}/.kube"
+        state: directory
+        mode: 0755
+
+    - name: Copy admin.conf to user's .kube config
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "/home/{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}/.kube/config"
+        remote_src: yes
+        owner: "{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}"
+
+    - name: Install Calico Network Plugin
+      become_user: "{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}"
+      command: kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+      when: not kubeadm_conf.stat.exists
+
+- name: Install NGINX Ingress Controller (bare-metal)
+  hosts: kube_control_plane
+  become: yes
+  tasks:
+    - name: Adicionar repo Helm ingress-nginx
+      become_user: "{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}"
+      shell: |
+        helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+        helm repo update ingress-nginx
+      environment:
+        PATH: "/usr/local/bin:/usr/bin:/bin:{{ ansible_env.PATH }}"
+        KUBECONFIG: "/home/{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}/.kube/config"
+      ignore_errors: true
+
+    - name: Instalar ingress-nginx com LoadBalancer (MetalLB fornece o IP)
+      become_user: "{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}"
+      shell: >
+        helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx
+        --namespace ingress-nginx --create-namespace
+        --set controller.service.type=LoadBalancer
+        --wait --timeout 120s
+      environment:
+        KUBECONFIG: "/home/{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}/.kube/config"
+
+- name: Install MetalLB Load Balancer (bare-metal / kubeadm)
+  hosts: kube_control_plane
+  become: yes
+  vars:
+    # Override no inventory.ini:  metallb_ip_range=192.168.1.200-192.168.1.250
+    metallb_ip_range: "{{ hostvars[inventory_hostname]['metallb_ip_range'] | default('192.168.1.200-192.168.1.250') }}"
+    metallb_version: "v0.14.9"
+  tasks:
+    - name: Adicionar repo Helm MetalLB
+      become_user: "{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}"
+      shell: |
+        helm repo add metallb https://metallb.github.io/metallb
+        helm repo update metallb
+      environment:
+        PATH: "/usr/local/bin:/usr/bin:/bin:{{ ansible_env.PATH }}"
+        KUBECONFIG: "/home/{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}/.kube/config"
+      ignore_errors: true
+
+    - name: Instalar MetalLB via Helm
+      become_user: "{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}"
+      shell: >
+        helm upgrade --install metallb metallb/metallb
+        -n metallb-system --create-namespace
+        --version {{ metallb_version }}
+        --set speaker.frr.enabled=false
+        --wait --timeout 120s
+      environment:
+        KUBECONFIG: "/home/{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}/.kube/config"
+
+    - name: Criar IPAddressPool e L2Advertisement
+      become_user: "{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}"
+      shell: |
+        cat <<'MANIFEST' | kubectl apply -f -
+        apiVersion: metallb.io/v1beta1
+        kind: IPAddressPool
+        metadata:
+          name: delonix-pool
+          namespace: metallb-system
+        spec:
+          addresses:
+          - {{ metallb_ip_range }}
+        ---
+        apiVersion: metallb.io/v1beta1
+        kind: L2Advertisement
+        metadata:
+          name: delonix-l2
+          namespace: metallb-system
+        spec:
+          ipAddressPools:
+          - delonix-pool
+        MANIFEST
+      environment:
+        KUBECONFIG: "/home/{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}/.kube/config"
+
+    - name: Aguardar IP externo no ingress-nginx-controller
+      become_user: "{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}"
+      shell: >
+        kubectl get svc ingress-nginx-controller -n ingress-nginx
+        --no-headers -o custom-columns="IP:status.loadBalancer.ingress[0].ip"
+      environment:
+        KUBECONFIG: "/home/{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}/.kube/config"
+      register: ingress_ip
+      retries: 12
+      delay: 10
+      until: ingress_ip.stdout | trim != "<none>" and ingress_ip.stdout | trim != ""
+      ignore_errors: true
+
+    - name: Mostrar IP externo do ingress
+      debug:
+        msg: >
+          MetalLB atribuiu {{ ingress_ip.stdout | trim }} ao ingress-nginx.
+          Adicionar ao DNS ou /etc/hosts:  {{ ingress_ip.stdout | trim }}  meet.delonix.local

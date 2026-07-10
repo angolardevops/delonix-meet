@@ -1,0 +1,18 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    # URL do servidor Let's Encrypt para produção
+    server: https://acme-v02.api.letsencrypt.org/directory
+    # Email usado para registo e notificações de validade
+    email: admin@delonix.app
+    # Nome do Secret onde o private key do emissor será guardado
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    # Habilita o HTTP-01 challenge provider
+    solvers:
+    - http01:
+        ingress:
+          class: nginx

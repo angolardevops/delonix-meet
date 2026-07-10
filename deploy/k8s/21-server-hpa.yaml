@@ -1,0 +1,29 @@
+# Autoscale do BACKEND — OPT-IN (não incluído na kustomization por omissão).
+#
+# ⚠️  Só aplicar DEPOIS de garantir afinidade por-sala no encaminhamento, senão
+#     participantes da mesma sala caem em pods diferentes e o SFU (em memória)
+#     não os liga. Ver README "Escalar o backend": encaminhar /ws com
+#     consistent-hash pela sala (nginx-ingress: upstream-hash-by) — requer o
+#     código da sala no caminho do WebSocket.
+#
+#   kubectl apply -f deploy/k8s/21-server-hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: delonix-server
+  namespace: delonix
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: delonix-server
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300 # evita flapping durante reuniões

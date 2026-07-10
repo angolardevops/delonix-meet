@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Logótipo Delonix — globo em rede com anéis orbitais e pinos.
+       Primárias da marca: vermelho (#C4161C→#F26430) e dourado (#EDA33B). -->
+  <defs>
+    <radialGradient id="sphere" cx="38%" cy="32%" r="75%">
+      <stop offset="0%" stop-color="#F26430"/>
+      <stop offset="55%" stop-color="#DA2B1F"/>
+      <stop offset="100%" stop-color="#B5121B"/>
+    </radialGradient>
+    <linearGradient id="pin" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#F26430"/>
+      <stop offset="100%" stop-color="#C4161C"/>
+    </linearGradient>
+    <clipPath id="globe"><circle cx="256" cy="256" r="92"/></clipPath>
+  </defs>
+
+  <!-- anéis orbitais segmentados -->
+  <g fill="none" stroke="#C4161C" stroke-linecap="round">
+    <circle cx="256" cy="256" r="120" stroke-width="17" stroke-dasharray="160 38" transform="rotate(18 256 256)"/>
+    <circle cx="256" cy="256" r="154" stroke-width="17" stroke-dasharray="210 44" transform="rotate(-34 256 256)"/>
+    <circle cx="256" cy="256" r="188" stroke-width="17" stroke-dasharray="260 48" transform="rotate(52 256 256)"/>
+  </g>
+
+  <!-- pinos (satélites) -->
+  <g stroke="url(#pin)" stroke-width="26" stroke-linecap="round">
+    <line x1="245" y1="166" x2="228" y2="52"/>
+    <line x1="325" y1="196" x2="424" y2="128"/>
+    <line x1="322" y1="322" x2="398" y2="412"/>
+    <line x1="250" y1="348" x2="238" y2="458"/>
+    <line x1="168" y1="288" x2="52" y2="326"/>
+  </g>
+  <g fill="url(#pin)">
+    <circle cx="224" cy="40" r="27"/>
+    <circle cx="436" cy="119" r="27"/>
+    <circle cx="407" cy="424" r="27"/>
+    <circle cx="237" cy="470" r="27"/>
+    <circle cx="40" cy="330" r="27"/>
+  </g>
+
+  <!-- globo -->
+  <circle cx="256" cy="256" r="92" fill="url(#sphere)"/>
+  <g clip-path="url(#globe)" fill="none" stroke="#EDA33B" stroke-width="6" opacity="0.9">
+    <path d="M 150 226 Q 256 286 362 210"/>
+    <path d="M 156 300 Q 262 344 360 282"/>
+    <path d="M 236 160 Q 300 256 260 352"/>
+    <path d="M 178 178 Q 216 262 190 340"/>
+  </g>
+  <g fill="#A31217">
+    <circle cx="238" cy="252" r="8"/>
+    <circle cx="308" cy="238" r="8"/>
+    <circle cx="282" cy="318" r="8"/>
+    <circle cx="199" cy="296" r="8"/>
+  </g>
+</svg>

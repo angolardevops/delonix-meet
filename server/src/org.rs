@@ -30,6 +30,117 @@ pub struct OrgSummary {
     pub slug: String,
     pub role: String,
     pub member_count: i64,
+    #[serde(default)]
+    pub domain: String,
+    #[serde(default)]
+    pub retention_days: i32,
+    pub max_groups: Option<i32>,
+    pub max_rooms: Option<i32>,
+    pub max_meetings: Option<i32>,
+}
+
+#[derive(Deserialize)]
+pub struct OrgSettingsReq {
+    #[serde(default)]
+    pub domain: String,
+    #[serde(default)]
+    pub retention_days: i32,
+    #[serde(default)]
+    pub max_groups: Option<i32>,
+    #[serde(default)]
+    pub max_rooms: Option<i32>,
+    #[serde(default)]
+    pub max_meetings: Option<i32>,
+    /// Dial-in PSTN: backend de media ('freeswitch' | 'provider').
+    #[serde(default)]
+    pub voice_media_backend: Option<String>,
+    /// Dial-in PSTN: modelo de DID ('shared' | 'dedicated').
+    #[serde(default)]
+    pub voice_did_model: Option<String>,
+}
+
+/// Definições da organização (só admin): domínio de produção + retenção.
+/// O domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a
+/// retenção (>0) apaga gravações mais antigas que N dias.
+pub async fn update_settings(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<OrgSettingsReq>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+    // Normaliza o domínio: sem esquema, sem barra final, minúsculas.
+    let domain = req
+        .domain
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/')
+        .to_lowercase();
+    if domain.len() > 253 || domain.contains(' ') {
+        return Err(ApiError::BadRequest("domínio inválido".into()));
+    }
+    let retention = req.retention_days.clamp(0, 3650);
+    // Quotas: None/negativo => ilimitado (NULL).
+    let norm = |v: Option<i32>| v.filter(|n| *n >= 0);
+    // Dial-in PSTN: valida os enums (None => mantém o atual via COALESCE).
+    let backend = req
+        .voice_media_backend
+        .as_deref()
+        .and_then(|b| matches!(b, "freeswitch" | "provider").then(|| b.to_string()));
+    let did_model = req
+        .voice_did_model
+        .as_deref()
+        .and_then(|m| matches!(m, "shared" | "dedicated").then(|| m.to_string()));
+    sqlx::query(
+        "UPDATE organizations SET domain = $1, retention_days = $2,
+             max_groups = $3, max_rooms = $4, max_meetings = $5,
+             voice_media_backend = COALESCE($7, voice_media_backend),
+             voice_did_model = COALESCE($8, voice_did_model)
+         WHERE id = $6",
+    )
+    .bind(&domain)
+    .bind(retention)
+    .bind(norm(req.max_groups))
+    .bind(norm(req.max_rooms))
+    .bind(norm(req.max_meetings))
+    .bind(org_id)
+    .bind(backend)
+    .bind(did_model)
+    .execute(&state.db)
+    .await?;
+    Ok(Json(
+        serde_json::json!({ "ok": true, "domain": domain, "retention_days": retention }),
+    ))
+}
+
+/// Faz cumprir uma quota da organização: se o limite (`limit_col`) estiver
+/// definido e a contagem atual em `count_sql` já o atingir, devolve 409.
+/// `count_sql` deve contar por `org_id = $1` (grupos/salas) — ver chamadas.
+async fn enforce_quota(
+    state: &AppState,
+    org_id: Uuid,
+    limit_col: &str,
+    count_sql: &str,
+) -> Result<(), ApiError> {
+    let limit: Option<i32> = sqlx::query_scalar(&format!(
+        "SELECT {limit_col} FROM organizations WHERE id = $1"
+    ))
+    .bind(org_id)
+    .fetch_one(&state.db)
+    .await?;
+    if let Some(max) = limit {
+        let count: i64 = sqlx::query_scalar(count_sql)
+            .bind(org_id)
+            .fetch_one(&state.db)
+            .await?;
+        if count >= max as i64 {
+            return Err(ApiError::Conflict(format!(
+                "limite da organização atingido ({max})"
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -68,7 +179,7 @@ pub async fn role_in_org(
     user_id: Uuid,
 ) -> Result<Option<String>, ApiError> {
     let row: Option<(String,)> =
-        sqlx::query_as("SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2")
+        sqlx::query_as("SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL")
             .bind(org_id)
             .bind(user_id)
             .fetch_optional(&state.db)
@@ -84,11 +195,33 @@ async fn require_admin(state: &AppState, org_id: Uuid, user_id: Uuid) -> Result<
     }
 }
 
+/// Igual a `require_admin`, exposto para outros módulos (webhooks, retenção).
+pub async fn require_admin_pub(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), ApiError> {
+    require_admin(state, org_id, user_id).await
+}
+
 async fn require_member(state: &AppState, org_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
     match role_in_org(state, org_id, user_id).await? {
         Some(_) => Ok(()),
         None => Err(ApiError::NotFound),
     }
+}
+
+pub async fn require_member_pub(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), ApiError> {
+    require_member(state, org_id, user_id).await
+}
+
+/// Slugify exposto para o registo de organizações (auth.rs).
+pub fn slugify_pub(name: &str) -> String {
+    slugify(name)
 }
 
 fn slugify(name: &str) -> String {
@@ -101,7 +234,11 @@ fn slugify(name: &str) -> String {
         }
     }
     let trimmed = out.trim_matches('-').to_string();
-    if trimmed.is_empty() { "org".into() } else { trimmed }
+    if trimmed.is_empty() {
+        "org".into()
+    } else {
+        trimmed
+    }
 }
 
 // ---------- organizations ----------
@@ -120,11 +257,25 @@ pub async fn create_org(
     if name.is_empty() || name.len() > 120 {
         return Err(ApiError::BadRequest("nome da organização inválido".into()));
     }
+    // Backstop anti-abuso: um utilizador não pode criar organizações sem limite.
+    let owned: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM organizations WHERE created_by = $1")
+        .bind(auth.user_id)
+        .fetch_one(&state.db)
+        .await?;
+    if owned >= 20 {
+        return Err(ApiError::Conflict(
+            "limite de organizações por utilizador atingido".into(),
+        ));
+    }
     // slug único com sufixo em colisão.
     let base = slugify(name);
     let mut org: Option<Organization> = None;
     for i in 0..6 {
-        let slug = if i == 0 { base.clone() } else { format!("{base}-{i}") };
+        let slug = if i == 0 {
+            base.clone()
+        } else {
+            format!("{base}-{i}")
+        };
         let res: Result<Organization, sqlx::Error> = sqlx::query_as(
             "INSERT INTO organizations (name, slug, created_by) VALUES ($1, $2, $3)
              RETURNING id, name, slug, created_by, created_at",
@@ -162,7 +313,8 @@ pub async fn my_orgs(
     let orgs: Vec<OrgSummary> = sqlx::query_as(
         r#"
         SELECT o.id, o.name, o.slug, m.role,
-               (SELECT COUNT(*) FROM org_members mm WHERE mm.org_id = o.id) AS member_count
+               (SELECT COUNT(*) FROM org_members mm WHERE mm.org_id = o.id) AS member_count,
+               o.domain, o.retention_days, o.max_groups, o.max_rooms, o.max_meetings
         FROM organizations o
         JOIN org_members m ON m.org_id = o.id AND m.user_id = $1
         ORDER BY o.name
@@ -250,6 +402,19 @@ pub async fn add_employee(
     if !email.contains('@') {
         return Err(ApiError::BadRequest("email inválido".into()));
     }
+    // Org-first: o email do colaborador tem de ser do domínio da organização.
+    let org_domain: Option<(String,)> =
+        sqlx::query_as("SELECT email_domain FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_optional(&state.db)
+            .await?;
+    if let Some((dom,)) = org_domain {
+        if !dom.is_empty() && email.split('@').nth(1) != Some(dom.as_str()) {
+            return Err(ApiError::BadRequest(format!(
+                "o email tem de ser do domínio da organização (@{dom})"
+            )));
+        }
+    }
     let role = req.role.as_deref().unwrap_or("member");
     if !matches!(role, "admin" | "member") {
         return Err(ApiError::BadRequest("role inválido".into()));
@@ -270,8 +435,10 @@ pub async fn add_employee(
                 .filter(|s| s.len() >= 2)
                 .unwrap_or_else(|| email.split('@').next().unwrap_or("employee").to_string());
             let password = req.password.as_deref().unwrap_or("changeme123");
-            if password.len() < 8 {
-                return Err(ApiError::BadRequest("password mínima 8 caracteres".into()));
+            if !(8..=128).contains(&password.len()) {
+                return Err(ApiError::BadRequest(
+                    "password deve ter 8-128 caracteres".into(),
+                ));
             }
             let hash = crate::auth::hash_password(password)?;
             let row: Result<(Uuid,), sqlx::Error> = sqlx::query_as(
@@ -327,12 +494,71 @@ pub async fn list_employees(
         r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name
            FROM org_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN branches b ON b.id = m.branch_id
-           WHERE m.org_id = $1 ORDER BY u.username"#,
+           WHERE m.org_id = $1 AND m.archived_at IS NULL ORDER BY u.username"#,
     )
     .bind(org_id)
     .fetch_all(&state.db)
     .await?;
     Ok(Json(emps))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateEmployeeReq {
+    pub role: Option<String>,
+    pub title: Option<String>,
+    pub branch_id: Option<Uuid>,
+}
+
+pub async fn update_employee(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((org_id, user_id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<UpdateEmployeeReq>,
+) -> Result<Json<Employee>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+    if let Some(role) = &req.role {
+        if !matches!(role.as_str(), "admin" | "member") {
+            return Err(ApiError::BadRequest("role inválido".into()));
+        }
+    }
+    if let Some(role) = &req.role {
+        sqlx::query("UPDATE org_members SET role = $1 WHERE org_id = $2 AND user_id = $3")
+            .bind(role)
+            .bind(org_id)
+            .bind(user_id)
+            .execute(&state.db)
+            .await?;
+    }
+    if let Some(title) = &req.title {
+        let title = title.trim();
+        sqlx::query("UPDATE org_members SET title = $1 WHERE org_id = $2 AND user_id = $3")
+            .bind(title)
+            .bind(org_id)
+            .bind(user_id)
+            .execute(&state.db)
+            .await?;
+    }
+    if req.branch_id.is_some() || req.role.is_some() {
+        if let Some(branch_id) = req.branch_id {
+            sqlx::query("UPDATE org_members SET branch_id = $1 WHERE org_id = $2 AND user_id = $3")
+                .bind(branch_id)
+                .bind(org_id)
+                .bind(user_id)
+                .execute(&state.db)
+                .await?;
+        }
+    }
+    let emp: Employee = sqlx::query_as(
+        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name
+           FROM org_members m JOIN users u ON u.id = m.user_id
+           LEFT JOIN branches b ON b.id = m.branch_id
+           WHERE m.org_id = $1 AND m.user_id = $2"#,
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(emp))
 }
 
 pub async fn remove_employee(
@@ -342,13 +568,20 @@ pub async fn remove_employee(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_admin(&state, org_id, auth.user_id).await?;
     if user_id == auth.user_id {
-        return Err(ApiError::BadRequest("não podes remover-te a ti próprio".into()));
+        return Err(ApiError::BadRequest(
+            "não podes arquivar o teu próprio acesso".into(),
+        ));
     }
-    sqlx::query("DELETE FROM org_members WHERE org_id = $1 AND user_id = $2")
-        .bind(org_id)
-        .bind(user_id)
-        .execute(&state.db)
-        .await?;
+    // Soft delete: archived_at + archived_by para auditoria futura
+    sqlx::query(
+        "UPDATE org_members SET archived_at = NOW(), archived_by = $3
+         WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .bind(auth.user_id)
+    .execute(&state.db)
+    .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -372,6 +605,13 @@ pub async fn create_group(
     if name.is_empty() || name.len() > 120 {
         return Err(ApiError::BadRequest("nome do grupo inválido".into()));
     }
+    enforce_quota(
+        &state,
+        org_id,
+        "max_groups",
+        "SELECT COUNT(*) FROM employee_groups WHERE org_id = $1",
+    )
+    .await?;
     let (group_id,): (Uuid,) = sqlx::query_as(
         "INSERT INTO employee_groups (org_id, name, created_by) VALUES ($1, $2, $3) RETURNING id",
     )
@@ -451,6 +691,13 @@ pub async fn create_meeting_room(
     if name.is_empty() || name.len() > 120 {
         return Err(ApiError::BadRequest("nome da sala inválido".into()));
     }
+    enforce_quota(
+        &state,
+        org_id,
+        "max_rooms",
+        "SELECT COUNT(*) FROM meeting_rooms WHERE org_id = $1",
+    )
+    .await?;
     let room: MeetingRoom = sqlx::query_as(
         "INSERT INTO meeting_rooms (org_id, name, location, capacity) VALUES ($1, $2, $3, $4)
          RETURNING id, org_id, name, location, capacity",
@@ -517,9 +764,11 @@ pub async fn org_stats(
     Path(org_id): Path<Uuid>,
     auth: AuthUser,
 ) -> Result<Json<OrgStats>, ApiError> {
-    require_member(&state, org_id, auth.user_id).await?;
+    // Least-privilege: KPIs da org (volume, leaderboard nominal) só para admins.
+    require_admin(&state, org_id, auth.user_id).await?;
 
-    const ORG_MEETING: &str = "(EXISTS (SELECT 1 FROM org_members om WHERE om.org_id = $1 AND om.user_id = m.owner_id)
+    const ORG_MEETING: &str =
+        "(EXISTS (SELECT 1 FROM org_members om WHERE om.org_id = $1 AND om.user_id = m.owner_id)
          OR EXISTS (SELECT 1 FROM meeting_invitees mi
                     JOIN org_members om2 ON om2.user_id = mi.user_id AND om2.org_id = $1
                     WHERE mi.meeting_id = m.id))";
@@ -535,7 +784,11 @@ pub async fn org_stats(
         .bind(org_id)
         .fetch_one(&state.db)
         .await?;
-    let avg_duration_min = if meetings_30d > 0 { meeting_minutes_30d / meetings_30d } else { 0 };
+    let avg_duration_min = if meetings_30d > 0 {
+        meeting_minutes_30d / meetings_30d
+    } else {
+        0
+    };
 
     let top_organizers: Vec<Organizer> = sqlx::query_as(&format!(
         "SELECT u.username, COUNT(*) AS count FROM meetings m
@@ -605,11 +858,185 @@ pub async fn org_stats(
 }
 
 /// user_ids dos membros de um grupo (para iniciar chamada de grupo).
-pub async fn group_member_ids(state: &AppState, group_id: Uuid) -> Result<Vec<Uuid>, ApiError> {
-    let rows: Vec<(Uuid,)> = sqlx::query_as("SELECT user_id FROM group_members WHERE group_id = $1")
-        .bind(group_id)
+/// Organizações a que um utilizador pertence (para disparar webhooks dos
+/// eventos das suas reuniões/gravações).
+pub async fn orgs_of_user(state: &AppState, user_id: Uuid) -> Vec<Uuid> {
+    sqlx::query_as::<_, (Uuid,)>("SELECT org_id FROM org_members WHERE user_id = $1 AND archived_at IS NULL")
+        .bind(user_id)
         .fetch_all(&state.db)
+        .await
+        .map(|rows| rows.into_iter().map(|r| r.0).collect())
+        .unwrap_or_default()
+}
+
+/// Organizações onde `user_id` é admin (para analytics/ações administrativas).
+pub async fn admin_orgs_of_user(state: &AppState, user_id: Uuid) -> Vec<Uuid> {
+    sqlx::query_as::<_, (Uuid,)>(
+        "SELECT org_id FROM org_members WHERE user_id = $1 AND role = 'admin' AND archived_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map(|rows| rows.into_iter().map(|r| r.0).collect())
+    .unwrap_or_default()
+}
+
+/// Utilizadores que partilham pelo menos uma organização com `user_id` (exclui
+/// o próprio). Base do isolamento multi-tenant em presença/pesquisa/chamadas.
+pub async fn org_co_members(state: &AppState, user_id: Uuid) -> Vec<Uuid> {
+    sqlx::query_as::<_, (Uuid,)>(
+        "SELECT DISTINCT b.user_id FROM org_members a
+         JOIN org_members b ON a.org_id = b.org_id
+         WHERE a.user_id = $1 AND b.user_id <> $1
+           AND a.archived_at IS NULL AND b.archived_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map(|rows| rows.into_iter().map(|r| r.0).collect())
+    .unwrap_or_default()
+}
+
+/// Domínio de produção da primeira organização do utilizador (para links
+/// partilháveis); vazio se nenhuma org tiver domínio configurado.
+pub async fn primary_domain(state: &AppState, user_id: Uuid) -> String {
+    sqlx::query_as::<_, (String,)>(
+        "SELECT o.domain FROM organizations o
+         JOIN org_members m ON m.org_id = o.id
+         WHERE m.user_id = $1 AND o.domain <> '' ORDER BY o.name LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .map(|r| r.0)
+    .unwrap_or_default()
+}
+
+// ---------- SSO Config (admin) ----------
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct SsoConfigPublic {
+    pub org_id: Uuid,
+    pub issuer_url: String,
+    pub client_id: String,
+    pub enforce_sso: bool,
+}
+
+#[derive(Deserialize)]
+pub struct SsoConfigReq {
+    pub issuer_url: String,
+    pub client_id: String,
+    /// Vazio → mantém o segredo existente (no-op em update sem nova rotação).
+    #[serde(default)]
+    pub client_secret: String,
+    pub enforce_sso: bool,
+}
+
+/// `GET /api/orgs/:org_id/sso` — lê a config OIDC (sem devolver o segredo).
+pub async fn get_sso_config(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<Option<SsoConfigPublic>>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+    let row: Option<SsoConfigPublic> = sqlx::query_as(
+        "SELECT org_id, issuer_url, client_id, enforce_sso
+         FROM org_sso_configs WHERE org_id = $1",
+    )
+    .bind(org_id)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(Json(row))
+}
+
+/// `PUT /api/orgs/:org_id/sso` — cria ou atualiza a config OIDC.
+/// O `client_secret` só é atualizado se for enviado não-vazio.
+pub async fn upsert_sso_config(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<SsoConfigReq>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+
+    let issuer = req.issuer_url.trim().to_string();
+    let client_id = req.client_id.trim().to_string();
+    if issuer.is_empty() || client_id.is_empty() {
+        return Err(ApiError::BadRequest(
+            "issuer_url e client_id são obrigatórios".into(),
+        ));
+    }
+    // Validação mínima do issuer URL.
+    if !issuer.starts_with("https://") {
+        return Err(ApiError::BadRequest(
+            "issuer_url deve começar por https://".into(),
+        ));
+    }
+
+    if req.client_secret.trim().is_empty() {
+        // Atualizar sem tocar no segredo (rotação lazy).
+        sqlx::query(
+            "INSERT INTO org_sso_configs (org_id, issuer_url, client_id, client_secret, enforce_sso)
+             VALUES ($1, $2, $3, '', $4)
+             ON CONFLICT (org_id) DO UPDATE
+             SET issuer_url = EXCLUDED.issuer_url,
+                 client_id  = EXCLUDED.client_id,
+                 enforce_sso = EXCLUDED.enforce_sso,
+                 updated_at = now()",
+        )
+        .bind(org_id)
+        .bind(&issuer)
+        .bind(&client_id)
+        .bind(req.enforce_sso)
+        .execute(&state.db)
         .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO org_sso_configs (org_id, issuer_url, client_id, client_secret, enforce_sso)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (org_id) DO UPDATE
+             SET issuer_url     = EXCLUDED.issuer_url,
+                 client_id      = EXCLUDED.client_id,
+                 client_secret  = EXCLUDED.client_secret,
+                 enforce_sso    = EXCLUDED.enforce_sso,
+                 updated_at     = now()",
+        )
+        .bind(org_id)
+        .bind(&issuer)
+        .bind(&client_id)
+        .bind(req.client_secret.trim())
+        .bind(req.enforce_sso)
+        .execute(&state.db)
+        .await?;
+    }
+
+    tracing::info!(%org_id, %issuer, "SSO config upserted");
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `DELETE /api/orgs/:org_id/sso` — remove a config OIDC (desativa SSO).
+pub async fn delete_sso_config(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+    sqlx::query("DELETE FROM org_sso_configs WHERE org_id = $1")
+        .bind(org_id)
+        .execute(&state.db)
+        .await?;
+    tracing::info!(%org_id, "SSO config deleted");
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+pub async fn group_member_ids(state: &AppState, group_id: Uuid) -> Result<Vec<Uuid>, ApiError> {
+    let rows: Vec<(Uuid,)> =
+        sqlx::query_as("SELECT user_id FROM group_members WHERE group_id = $1")
+            .bind(group_id)
+            .fetch_all(&state.db)
+            .await?;
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 

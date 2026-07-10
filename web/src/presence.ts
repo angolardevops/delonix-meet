@@ -2,7 +2,7 @@
  * Cliente de presença: WebSocket pessoal que se mantém ligado enquanto a app
  * está aberta, para receber chamadas estilo WhatsApp em qualquer página.
  */
-import { accessTokenValue } from './api'
+import { accessTokenValue, tryRefreshToken } from './api'
 
 export interface IncomingCall {
   room_code: string
@@ -19,6 +19,8 @@ export type PresenceEvent =
   | { type: 'declined'; room_code: string; by_id: string; by_name: string }
   | { type: 'cancelled'; room_code: string }
   | { type: 'presence'; online: string[] }
+  | { type: 'user-online'; user_id: string }
+  | { type: 'user-offline'; user_id: string }
   | { type: 'meeting-declined'; meeting_id: string; meeting_title: string; by_id: string; by_name: string; reason: string }
   | { type: 'missed-calls'; calls: MissedCall[] }
   | { type: 'error'; message: string }
@@ -39,10 +41,13 @@ export class Presence {
   private handlers = new Set<Handler>()
   private closed = false
   private reconnectTimer: number | null = null
+  // Backoff exponencial: 2s → 4s → 8s → … → 30s máx.
+  private backoff = 2000
   online = new Set<string>()
 
   connect() {
     this.closed = false
+    this.backoff = 2000
     this.open()
   }
 
@@ -55,12 +60,24 @@ export class Presence {
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data) as PresenceEvent
       if (msg.type === 'presence') this.online = new Set(msg.online)
+      else if (msg.type === 'user-online') this.online = new Set([...this.online, msg.user_id])
+      else if (msg.type === 'user-offline') { this.online = new Set([...this.online].filter(id => id !== msg.user_id)) }
+      // Ligação estável: repõe o backoff.
+      this.backoff = 2000
       this.handlers.forEach((h) => h(msg))
     }
     ws.onclose = () => {
       if (this.closed) return
-      // Reconexão simples com backoff curto.
-      this.reconnectTimer = window.setTimeout(() => this.open(), 2000)
+      const delay = this.backoff
+      this.backoff = Math.min(this.backoff * 2, 30_000)
+      // Renova o token antes de reconectar — o access token tem 15 min de TTL
+      // e o WS não passa pelo fluxo automático de refresh do `request()`.
+      this.reconnectTimer = window.setTimeout(async () => {
+        if (this.closed) return
+        const ok = await tryRefreshToken()
+        if (!ok) return // sessão expirada — aguarda login manual
+        this.open()
+      }, delay)
     }
   }
 

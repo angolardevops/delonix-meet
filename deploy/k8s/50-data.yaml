@@ -1,0 +1,100 @@
+# Data plane (Postgres + Redis) em namespace próprio. As BDs precisam de mais
+# latitude que os pods "restricted" da app, por isso vivem aqui (PSS baseline).
+# Em produção séria, preferir um Postgres GERIDO (RDS/CloudSQL/…) e remover isto.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: delonix-data
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-auth
+  namespace: delonix-data
+type: Opaque
+stringData:
+  # DEVE ser a MESMA password usada no DATABASE_URL do Secret da app (delonix).
+  POSTGRES_PASSWORD: "CHANGE_ME_same_as_app_DATABASE_URL"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: delonix-data
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: { matchLabels: { app: postgres } }
+  template:
+    metadata: { labels: { app: postgres } }
+    spec:
+      securityContext: { fsGroup: 999, runAsUser: 999, runAsNonRoot: true }
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          args: ["-c", "max_connections=200"]
+          env:
+            - { name: POSTGRES_DB, value: delonix_meet }
+            - { name: POSTGRES_USER, value: delonix }
+            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: postgres-auth, key: POSTGRES_PASSWORD } } }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports: [{ name: pg, containerPort: 5432 }]
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "delonix", "-d", "delonix_meet"] }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "2", memory: "2Gi" }
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 20Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: postgres, namespace: delonix-data }
+spec:
+  selector: { app: postgres }
+  ports: [{ name: pg, port: 5432, targetPort: pg }]
+---
+# Redis — cache/rate-limit distribuído (ainda NÃO usado pelo backend; ver
+# server/src/rate_limit.rs "trocar por Redis ao escalar"). Fica pronto.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: { name: redis, namespace: delonix-data }
+spec:
+  serviceName: redis
+  replicas: 1
+  selector: { matchLabels: { app: redis } }
+  template:
+    metadata: { labels: { app: redis } }
+    spec:
+      securityContext: { fsGroup: 999, runAsUser: 999, runAsNonRoot: true }
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["--appendonly", "yes"]
+          ports: [{ name: redis, containerPort: 6379 }]
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+          volumeMounts: [{ name: data, mountPath: /data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: redis, namespace: delonix-data }
+spec:
+  selector: { app: redis }
+  ports: [{ name: redis, port: 6379, targetPort: redis }]

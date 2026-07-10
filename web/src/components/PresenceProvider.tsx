@@ -43,6 +43,37 @@ export default function PresenceProvider({
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 8000)
   }
 
+  // Notificação de sistema (desktop) quando entra uma chamada e a app NÃO está
+  // visível (outro separador/minimizada). Clicar traz a janela para a frente.
+  const callNotif = useRef<Notification | null>(null)
+  function notifyIncoming(caller: string, title: string, kind: 'video' | 'voice') {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return
+    if (document.visibilityState === 'visible') return // já se vê o popup na app
+    try {
+      callNotif.current?.close()
+      const n = new Notification(`📞 ${caller} está a ligar`, {
+        body: title || (kind === 'voice' ? 'Chamada de voz' : 'Videochamada'),
+        tag: 'delonix-call',
+        requireInteraction: true,
+        icon: '/icon-192.png',
+      })
+      n.onclick = () => {
+        window.focus()
+        n.close()
+      }
+      callNotif.current = n
+    } catch {
+      /* Notifications indisponíveis — o toque + popup na app já avisam */
+    }
+  }
+
+  // Pede permissão de notificações uma vez (silencioso se recusado).
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      void Notification.requestPermission().catch(() => {})
+    }
+  }, [])
+
   useEffect(() => {
     const p = new Presence()
     presenceRef.current = p
@@ -58,6 +89,7 @@ export default function PresenceProvider({
               ? cur
               : [...cur, { room_code: e.room_code, kind: e.kind, caller_name: e.caller_name, title: e.title }],
           )
+          notifyIncoming(e.caller_name, e.title, e.kind)
           break
         case 'ringing':
           // O chamador entra logo na sala e aguarda os outros.
@@ -84,29 +116,43 @@ export default function PresenceProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Toca enquanto há chamadas a receber (tom sintético via WebAudio).
+  // Toque enquanto há chamadas a receber — tom sintético quente estilo telemóvel
+  // (não é possível embutir o som proprietário do Galaxy; recria-se um toque
+  // agradável de dois sinos com harmónico suave e ligeiro eco).
   useEffect(() => {
     if (incoming.length === 0) {
       ringAudio.current?.pause()
+      callNotif.current?.close()
       return
     }
     const ctx = new AudioContext()
     let stopped = false
-    const beep = () => {
-      if (stopped) return
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.frequency.value = 480
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime)
-      gain.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + 0.05)
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.9)
-      osc.start()
-      osc.stop(ctx.currentTime + 1)
+    // Uma nota "marimba": fundamental + 2º harmónico, ataque rápido, cauda suave.
+    const note = (f: number, at: number, dur = 0.34, vol = 0.16) => {
+      for (const [mult, g] of [[1, vol], [2, vol * 0.35]] as const) {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.type = 'sine'
+        osc.frequency.value = f * mult
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+        const s = ctx.currentTime + at
+        gain.gain.setValueAtTime(0.0001, s)
+        gain.gain.exponentialRampToValueAtTime(g, s + 0.02)
+        gain.gain.exponentialRampToValueAtTime(0.0001, s + dur)
+        osc.start(s)
+        osc.stop(s + dur + 0.02)
+      }
     }
-    beep()
-    const iv = setInterval(beep, 2000)
+    const ring = () => {
+      if (stopped) return
+      // "din-don" ascendente-descendente (E5 → C#6 → A5).
+      note(659.25, 0)
+      note(1108.73, 0.16)
+      note(880.0, 0.34, 0.5)
+    }
+    ring()
+    const iv = setInterval(ring, 1800)
     return () => {
       stopped = true
       clearInterval(iv)

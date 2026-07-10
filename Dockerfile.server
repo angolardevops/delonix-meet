@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1
+# ============================================================
+#  Delonix Meet — imagem do backend (Rust axum + SFU)
+#  Runtime ROOTLESS: distroless :nonroot (uid 65532, sem shell, sem root).
+#  Build compatível com Docker BuildKit E com Podman/Buildah (rootless).
+# ============================================================
+
+FROM rust:1-bookworm AS build
+WORKDIR /src
+# As migrações são embutidas em compile-time (sqlx::migrate!) — a imagem final
+# não precisa de ficheiros .sql. Copia-se o crate inteiro e compila-se em release.
+COPY server ./server
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/server/target \
+    cd server && cargo build --release && \
+    cp target/release/delonix-server /usr/local/bin/delonix-server && \
+    strip /usr/local/bin/delonix-server
+
+# Runtime mínimo, sem root. `cc` traz a glibc/libssl necessárias ao binário.
+FROM gcr.io/distroless/cc-debian12:nonroot
+COPY --from=build /usr/local/bin/delonix-server /app/delonix-server
+USER nonroot:nonroot
+EXPOSE 8180
+ENV BIND_ADDR=0.0.0.0:8180
+# Health: GET /health -> "ok"
+ENTRYPOINT ["/app/delonix-server"]

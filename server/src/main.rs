@@ -1,18 +1,31 @@
+mod actions;
+mod apikeys;
 mod auth;
 mod config;
+mod dlp;
 mod error;
 mod meetings;
+mod mls;
 mod org;
 mod presence;
+mod pubsub;
+mod redis_state;
 mod rate_limit;
+mod recorder;
 mod recordings;
 mod rooms;
 mod sfu;
 mod signaling;
 mod users;
+mod voice;
+mod webhooks;
+mod whiteboards;
 
 use axum::{
+    extract::DefaultBodyLimit,
+    http::HeaderValue,
     middleware,
+    response::Response,
     routing::{get, post},
     Router,
 };
@@ -20,19 +33,51 @@ use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
+/// Limite de corpo por omissão (endpoints JSON). Rotas de upload/quadros
+/// sobrepõem este valor com o seu próprio limite.
+const DEFAULT_BODY_LIMIT: usize = 1024 * 1024; // 1 MB
+const WHITEBOARD_BODY_LIMIT: usize = 12 * 1024 * 1024; // PNG 8MB → base64 ~11MB
+
+/// Cabeçalhos de segurança nas respostas da API (defesa-em-profundidade;
+/// a CSP completa da SPA é definida no Nginx — ver deploy/nginx-delonix.conf).
+async fn security_headers(req: axum::extract::Request, next: middleware::Next) -> Response {
+    let mut res = next.run(req).await;
+    let h = res.headers_mut();
+    h.insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
+    h.insert("X-Frame-Options", HeaderValue::from_static("DENY"));
+    h.insert("Referrer-Policy", HeaderValue::from_static("no-referrer"));
+    h.insert(
+        "Strict-Transport-Security",
+        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+    );
+    res
+}
+
 use config::Config;
 use rate_limit::RateLimiter;
 use signaling::SignalingHub;
 
 pub struct AppState {
     pub config: Config,
+    /// Instante de arranque (para o uptime da status page).
+    pub started: std::time::Instant,
     pub db: sqlx::PgPool,
     pub hub: SignalingHub,
     pub sfu: Arc<sfu::SfuState>,
     pub presence: presence::PresenceHub,
     pub auth_limiter: RateLimiter,
+    /// Anti-brute-force por conta (email) no login.
+    pub login_limiter: RateLimiter,
+    /// Rate-limit da API pública v1 (por IP do cliente).
+    pub v1_limiter: RateLimiter,
+    /// Anti-brute-force de PIN no dial-in PSTN (por DID). Só conta falhas.
+    pub voice_pin_limiter: RateLimiter,
     /// Salas de grupo ativas: sala principal -> conjunto de salas filhas.
     pub breakouts: dashmap::DashMap<uuid::Uuid, signaling::BreakoutSet>,
+    /// Cliente HTTP partilhado para envio de webhooks (sem redirects, timeout 8s).
+    /// Criado uma vez para reutilizar o connection pool TLS entre eventos.
+    pub webhook_client: reqwest::Client,
+    pub redis_bus: Option<Arc<pubsub::PubSubBus>>,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
@@ -40,6 +85,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/register", post(auth::register))
         .route("/login", post(auth::login))
         .route("/refresh", post(auth::refresh))
+        .route("/logout", post(auth::logout))
+        // SSO / OIDC
+        .route("/sso/check", get(auth::sso_check))
+        .route("/sso/login", get(auth::sso_login))
+        .route("/sso/callback", get(auth::sso_callback))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             rate_limit::auth_rate_limit,
@@ -47,27 +97,53 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/health", get(|| async { "ok" }))
+        .route("/api/status", get(status))
         .nest("/api/auth", auth_routes)
-        .route("/api/users/me", get(users::me))
+        .route("/api/users/me", get(users::me).patch(users::update_me))
+        .nest("/api/mls", mls::router())
         .route("/api/users/search", get(users::search))
         .route("/api/rooms", post(rooms::create_room))
         .route("/api/rooms/{code}", get(rooms::get_room))
         .route("/api/rooms/{code}/join", post(rooms::join_room))
+        .route("/api/rooms/{code}/chat", get(rooms::room_chat))
+        .route("/api/rooms/{code}/invite", post(rooms::invite_to_room))
         .route(
             "/api/rooms/{code}/recordings",
-            get(recordings::list).post(recordings::upload),
+            get(recordings::list)
+                .post(recordings::upload)
+                // Só o upload de gravações pode ser grande.
+                .layer(DefaultBodyLimit::max(recordings::MAX_RECORDING_BYTES)),
         )
         .route("/api/recordings", get(recordings::library))
+        .route(
+            "/api/whiteboards",
+            get(whiteboards::list)
+                .post(whiteboards::save)
+                .layer(DefaultBodyLimit::max(WHITEBOARD_BODY_LIMIT)),
+        )
+        .route("/api/whiteboards/{id}", axum::routing::delete(whiteboards::delete))
+        .route("/api/whiteboards/{id}/png", get(whiteboards::png))
+        .route("/api/whiteboards/{id}/share", post(whiteboards::set_share))
+        .route("/api/whiteboards/shared/{token}", get(whiteboards::shared_png))
         .route("/api/recordings/{id}", get(recordings::download))
         .route(
             "/api/recordings/{id}/share",
             post(recordings::share).get(recordings::shares),
         )
         .route("/api/recordings/{id}/share/{user_id}", axum::routing::delete(recordings::unshare))
+        .route(
+            "/api/recordings/{id}/link",
+            get(recordings::get_link)
+                .post(recordings::create_link)
+                .delete(recordings::revoke_link),
+        )
+        .route("/api/share/{token}", get(recordings::public_share))
+        .route("/api/share/{token}/download", get(recordings::public_share_download))
         .route("/api/meetings", get(meetings::list).post(meetings::create))
         .route("/api/meetings/conflicts", post(meetings::check_conflicts))
         .route("/api/meetings/{id}", axum::routing::delete(meetings::delete))
         .route("/api/meetings/{id}/start", post(meetings::start))
+        .route("/api/meetings/{id}/ics", get(meetings::ics))
         .route("/api/meetings/{id}/minutes", post(meetings::save_minutes))
         .route("/api/meetings/{id}/invitees", get(meetings::invitees))
         .route("/api/meetings/{id}/respond", post(meetings::respond))
@@ -75,23 +151,125 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/missed-calls/ack", post(presence::ack_missed_calls))
         .route("/api/rooms/{code}/minutes", post(meetings::save_minutes_by_room))
         .route("/api/rooms/{code}/notes", get(meetings::notes_by_room))
+        // ---- Agenda de reunião + Plano de Ação 5W2H ----
+        .route(
+            "/api/meetings/{id}/agenda",
+            get(actions::list_agenda).post(actions::add_agenda_item),
+        )
+        .route(
+            "/api/meetings/{id}/agenda/{item_id}",
+            axum::routing::patch(actions::patch_agenda_item)
+                .delete(actions::delete_agenda_item),
+        )
+        .route(
+            "/api/meetings/{id}/action-plan",
+            get(actions::get_action_plan).put(actions::upsert_action_plan),
+        )
+        .route(
+            "/api/meetings/{id}/action-plan/items",
+            post(actions::add_action_item),
+        )
+        .route(
+            "/api/action-items/{item_id}",
+            axum::routing::patch(actions::patch_action_item)
+                .delete(actions::delete_action_item),
+        )
         // ---- Enterprise: organizações / diretório ----
         .route("/api/orgs", get(org::my_orgs).post(org::create_org))
         .route("/api/orgs/{org_id}/branches", get(org::list_branches).post(org::create_branch))
         .route("/api/orgs/{org_id}/employees", get(org::list_employees).post(org::add_employee))
-        .route("/api/orgs/{org_id}/employees/{user_id}", axum::routing::delete(org::remove_employee))
+        .route("/api/orgs/{org_id}/employees/{user_id}", axum::routing::delete(org::remove_employee).patch(org::update_employee))
         .route("/api/orgs/{org_id}/groups", get(org::list_groups).post(org::create_group))
         .route("/api/orgs/{org_id}/meeting-rooms", get(org::list_meeting_rooms).post(org::create_meeting_room))
         .route("/api/orgs/{org_id}/stats", get(org::org_stats))
+        .route("/api/orgs/{org_id}/settings", post(org::update_settings))
+        .route(
+            "/api/orgs/{org_id}/sso",
+            get(org::get_sso_config)
+                .put(org::upsert_sso_config)
+                .delete(org::delete_sso_config),
+        )
+        .route("/api/orgs/{org_id}/webhooks", get(webhooks::list).post(webhooks::create))
+        .route("/api/orgs/{org_id}/webhooks/{hook_id}", axum::routing::delete(webhooks::delete))
+        // ---- Dial-in PSTN (control plane) ----
+        .route("/api/voice/rooms", post(voice::create_room))
+        .route("/api/voice/rooms/{id}", get(voice::get_room))
+        .route("/api/voice/rooms/{id}/participants", get(voice::list_participants))
+        .route("/api/voice/rooms/{id}/close", post(voice::close_room))
+        .route("/api/orgs/{org_id}/voice/dids", get(voice::list_dids).post(voice::create_did))
+        .route("/api/orgs/{org_id}/voice/cdr", get(voice::list_cdr))
+        .route("/api/orgs/{org_id}/voice/billing", get(voice::billing_summary))
+        // API interna de IVR (autenticada por segredo partilhado, usada pela media)
+        .route("/api/voice/ivr/validate", post(voice::ivr_validate_pin))
+        .route("/api/voice/ivr/cdr", post(voice::ivr_record_cdr))
+        // Gestão de chaves de API (admin da org, sessão)
+        .route("/api/orgs/{org_id}/api-keys", get(apikeys::list).post(apikeys::create))
+        .route("/api/orgs/{org_id}/api-keys/{key_id}", axum::routing::delete(apikeys::revoke))
+        // ---- API pública v1 (autenticada por chave de API, com rate-limit) ----
+        .nest(
+            "/api/v1",
+            Router::new()
+                .route("/org", get(apikeys::v1_org))
+                .route("/rooms", post(apikeys::v1_create_room))
+                .route("/rooms/{code}", get(apikeys::v1_get_room))
+                .route("/rooms/{code}/join-bot", post(apikeys::v1_join_bot_room))
+                .route("/recordings", get(apikeys::v1_recordings))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    rate_limit::v1_rate_limit,
+                )),
+        )
         .route("/api/ice", get(rooms::ice_servers))
         .route("/ws", get(signaling::ws_handler))
         .route("/rtc", get(presence::rtc_handler))
-        .layer(axum::extract::DefaultBodyLimit::max(
-            recordings::MAX_RECORDING_BYTES,
+        .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
+        .layer(middleware::from_fn(security_headers))
+        .layer(build_cors(&state))
+        // Só regista método + caminho (NUNCA a query — evita gravar os JWT que
+        // vão em ?token= nas ligações WebSocket).
+        .layer(TraceLayer::new_for_http().make_span_with(
+            |req: &axum::http::Request<axum::body::Body>| {
+                tracing::info_span!("http", method = %req.method(), path = %req.uri().path())
+            },
         ))
-        .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive()) // dev only; restrict origins in production
         .with_state(state)
+}
+
+/// CORS por allowlist (`CORS_ORIGINS`). Sem origens configuradas: só same-origin
+/// em produção; permissive apenas quando DELONIX_ALLOW_INSECURE=1 (dev).
+fn build_cors(state: &Arc<AppState>) -> CorsLayer {
+    use tower_http::cors::Any;
+    if !state.config.cors_origins.is_empty() {
+        let origins: Vec<HeaderValue> = state
+            .config
+            .cors_origins
+            .iter()
+            .filter_map(|o| o.parse().ok())
+            .collect();
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else if std::env::var("DELONIX_ALLOW_INSECURE").ok().as_deref() == Some("1") {
+        CorsLayer::permissive()
+    } else {
+        CorsLayer::new() // same-origin: o Nginx serve app e API no mesmo host
+    }
+}
+
+/// Status público (roadmap "status page"): saúde dos componentes + uptime.
+/// Sem autenticação — não expõe dados, só disponibilidade.
+async fn status(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+) -> axum::Json<serde_json::Value> {
+    let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
+    axum::Json(serde_json::json!({
+        "status": if db_ok { "ok" } else { "degraded" },
+        "api": true,
+        "db": db_ok,
+        "uptime_secs": state.started.elapsed().as_secs(),
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
 }
 
 #[tokio::main]
@@ -117,15 +295,88 @@ async fn main() {
         .await
         .expect("migrations failed");
 
+    let webhook_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("falha ao criar HTTP client para webhooks");
+
+    // Redis pub/sub: opcional — só ativo se REDIS_URL estiver definido.
+    let redis_bus = if let Some(url) = &config.redis_url {
+        match pubsub::PubSubBus::connect(url).await {
+            Ok(bus) => {
+                tracing::info!("Redis pub/sub ativo — modo multi-nó HA");
+                Some(bus)
+            }
+            Err(e) => {
+                tracing::warn!("Redis indisponível ({e}) — a arrancar em modo single-node");
+                None
+            }
+        }
+    } else {
+        tracing::info!("REDIS_URL não definido — modo single-node");
+        None
+    };
+
+    let mut presence_hub = presence::PresenceHub::default();
+    presence_hub.bus = redis_bus.clone();
+
+    let mut hub = SignalingHub::default();
+    hub.bus = redis_bus.clone();
+
     let state = Arc::new(AppState {
+        started: std::time::Instant::now(),
         db,
-        hub: SignalingHub::default(),
+        hub,
         breakouts: dashmap::DashMap::new(),
         sfu: Arc::new(sfu::SfuState::default()),
-        presence: presence::PresenceHub::default(),
+        presence: presence_hub,
         auth_limiter: RateLimiter::new(20, Duration::from_secs(60)),
+        login_limiter: RateLimiter::new(8, Duration::from_secs(300)),
+        v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
+        voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
+        webhook_client,
         config: config.clone(),
+        redis_bus: redis_bus.clone(),
     });
+
+    // Subscriber Redis: ouve mensagens de outros nós e entrega localmente.
+    if let Some(bus) = redis_bus {
+        let state_ref = Arc::downgrade(&state);
+        pubsub::start_subscriber(bus.clone(), move |user_id, msg| {
+            if let Some(s) = state_ref.upgrade() {
+                s.presence.send_to_user(user_id, msg);
+            }
+        });
+
+        let state_ref2 = Arc::downgrade(&state);
+        pubsub::start_signaling_subscriber(bus, move |room_id, event| {
+            if let Some(s) = state_ref2.upgrade() {
+                match event {
+                    pubsub::RedisRoomEvent::Broadcast { node_id, from, msg } => {
+                        if node_id != *pubsub::NODE_ID {
+                            s.hub.broadcast_local(room_id, from, msg);
+                        }
+                    }
+                    pubsub::RedisRoomEvent::SendTo { node_id, to, msg } => {
+                        if node_id != *pubsub::NODE_ID && s.hub.has_peer(room_id, to) {
+                            s.hub.send_to_local(room_id, to, msg);
+                        }
+                    }
+                    pubsub::RedisRoomEvent::BroadcastAll { node_id, msg } => {
+                        if node_id != *pubsub::NODE_ID {
+                            s.hub.broadcast_all_local(room_id, msg);
+                        }
+                    }
+                    pubsub::RedisRoomEvent::BroadcastHosts { node_id, msg } => {
+                        if node_id != *pubsub::NODE_ID {
+                            s.hub.broadcast_hosts_local(room_id, msg);
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     // Cron: sweep de quarentena a cada 5 min (marca não-respondentes de
     // reuniões já começadas). Idempotente; as leituras fazem sweep na mesma.
@@ -140,6 +391,46 @@ async fn main() {
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, "quarantine sweep failed"),
                 }
+            }
+        });
+    }
+
+    // Cron: retenção de gravações (DLP-lite) a cada hora — apaga as que
+    // passaram do prazo configurado por organização.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+            loop {
+                ticker.tick().await;
+                recorder::retention_sweep(&state).await;
+            }
+        });
+    }
+
+    // Cron: extensão do horizonte de recorrência — gera instâncias para os
+    // próximos 6 meses para todas as reuniões recorrentes ainda ativas.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(86400)); // diário
+            loop {
+                ticker.tick().await;
+                meetings::extend_recurrence_horizon(&state.db).await;
+            }
+        });
+    }
+
+    // Cron: auto-ring — a cada minuto verifica reuniões que começam agora
+    // e chama os convidados que ainda não estão na sala.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                meetings::ring_upcoming_meetings(&state).await;
             }
         });
     }

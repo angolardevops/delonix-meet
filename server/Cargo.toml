@@ -26,6 +26,13 @@ base64 = "0.22"
 futures-util = "0.3"
 hex = "0.4"
 webrtc = "0.17.1"
+anyhow = "1.0.103"
+aes-gcm = "0.11.0"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+openidconnect = { version = "4", default-features = false, features = ["reqwest", "rustls-tls"] }
+url = "2"
+redis = { version = "0.27", default-features = false, features = ["tokio-comp", "connection-manager"] }
+regex = "1.13.0"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

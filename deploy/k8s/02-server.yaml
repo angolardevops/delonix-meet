@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-server
+  namespace: delonix-meet
+  labels:
+    app: delonix-server
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: delonix-server
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: delonix-server
+    spec:
+      containers:
+        - name: server
+          image: delonix-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8180
+              name: http
+          envFrom:
+            - configMapRef:
+                name: delonix-config
+            - secretRef:
+                name: delonix-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-server
+  namespace: delonix-meet
+spec:
+  selector:
+    app: delonix-server
+  ports:
+    - protocol: TCP
+      port: 8180
+      targetPort: http

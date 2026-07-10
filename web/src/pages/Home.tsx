@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   createRoom,
+  downloadMeetingIcs,
   getRoom,
   listMeetings,
   Meeting,
@@ -62,11 +63,12 @@ export default function Home({
     })()
   }, [])
 
-  async function newMeeting(waitingRoom = false, e2ee = false) {
+  async function newMeeting(waitingRoom = false, e2ee = false, format: 'normal' | 'training' = 'normal') {
     setError('')
     setCreating(true)
     try {
-      const room = await createRoom(`Reunião de ${user.username}`, 'sfu', waitingRoom, e2ee)
+      const label = format === 'training' ? 'Treino' : 'Reunião'
+      const room = await createRoom(`${label} de ${user.username}`, 'sfu', waitingRoom, e2ee, format)
       onEnterRoom(room.code)
     } catch (err) {
       setError((err as Error).message)
@@ -77,7 +79,14 @@ export default function Home({
   async function join(e: FormEvent) {
     e.preventDefault()
     setError('')
-    const code = joinCode.trim().toLowerCase().replace(/^.*\/r\//, '')
+    // Aceita link completo, código com sufixo (?voice) ou código puro:
+    // extrai o padrão do código (xxx-xxxx-xxx) de qualquer texto colado.
+    const raw = joinCode.trim().toLowerCase()
+    const code = (raw.match(/[a-z]+-[a-z]+-[a-z]+/) ?? [raw.replace(/^.*\/r\//, '')])[0]
+    if (!code) {
+      setError(t('dash.notFound'))
+      return
+    }
     try {
       const room = await getRoom(code)
       onEnterRoom(room.code)
@@ -141,6 +150,13 @@ export default function Home({
         <button className="link" onClick={() => void newMeeting(false, true)}>
           {t('dash.e2ee')}
         </button>
+        <button
+          className="link"
+          title="Reunião de treino: ativa as salas de grupo (breakouts)"
+          onClick={() => void newMeeting(false, false, 'training')}
+        >
+          🎓 {t('dash.training', 'Reunião de treino')}
+        </button>
       </div>
       {error && <div className="error">{error}</div>}
 
@@ -165,6 +181,13 @@ export default function Home({
                   {m.kind === 'voice' ? ' · 🎙' : ''}
                 </span>
               </div>
+              <button
+                className="icon-btn"
+                title="Adicionar ao calendário (Google/Outlook — .ics)"
+                onClick={() => void downloadMeetingIcs(m.id, m.title).catch(() => {})}
+              >
+                📅
+              </button>
               <button className="btn-ghost dash-enter" onClick={() => void enterMeeting(m)}>
                 {t('dash.enter')}
               </button>

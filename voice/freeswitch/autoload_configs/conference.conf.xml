@@ -1,0 +1,23 @@
+<!--
+  Delonix Meet — perfil de conferência 'delonix' (SRTP obrigatório).
+  Drop-in em /etc/freeswitch/autoload_configs/conference.conf.xml (ou incluir).
+  Cada sala de conferência é criada dinamicamente com o nome = room_code.
+-->
+<configuration name="conference.conf" description="Delonix conference">
+  <profiles>
+    <profile name="delonix">
+      <param name="rate" value="8000"/>
+      <param name="interval" value="20"/>
+      <param name="energy-level" value="100"/>
+      <param name="comfort-noise" value="true"/>
+      <!-- Codecs de telefonia; Opus opcional se o trunk suportar. -->
+      <param name="conference-flags" value="video-mute-exit"/>
+      <param name="caller-controls" value="default"/>
+      <!-- SRTP obrigatório — sem media em claro. -->
+      <param name="rtp-secure-media" value="mandatory"/>
+      <param name="tls" value="true"/>
+      <!-- Sem PIN aqui: o PIN é validado no IVR contra o control plane. -->
+      <param name="max-members" value="0"/>
+    </profile>
+  </profiles>
+</configuration>
