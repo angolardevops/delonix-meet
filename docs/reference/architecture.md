@@ -97,3 +97,5 @@ Entidades-núcleo e relações (ver `server/migrations/` para o esquema exato):
 ## 8. Invariantes que qualquer mudança tem de respeitar
 
 Ver a lista completa em [`AGENTS.md` §3](../../AGENTS.md) e [`HARNESS.md` §6](../../HARNESS.md). Resumo: segredos fail-closed · isolamento multi-tenant em TODOS os endpoints · room tokens curtos · SSRF guard nos webhooks · rate limit (token bucket no WS) · cookie refresh Secure · E2EE real com key delegation explícita · autorização de host controls no servidor · afinidade por sala em multi-réplica.
+
+**Regressões a não reintroduzir:** [`regressions.md`](regressions.md) — catálogo R1–R12 (sintoma → causa raiz → regra → ficheiros) de armadilhas onde a "correção óbvia" quebra media/deploy. Ler antes de mexer em `webrtc.ts`/`sfu.rs`/`Room.tsx`/`deploy/`. Os revisores em `agents/` verificam-nas no diff.

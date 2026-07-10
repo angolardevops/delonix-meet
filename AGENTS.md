@@ -77,8 +77,12 @@ Para compute/performance, combinar **Graydon Hoare** (Rust, alocações) + **Bre
 - **Vite proxy** `/ws` e `/rtc` precisam de `ws: true` — reiniciar Vite após mudanças. `vite.config.ts` só lê certos de dev no `serve` (nunca no `build`, senão a imagem Docker falha).
 - **Rebuild release** após migração; **não** atualizar reqwest para 0.13.
 - **Web Speech** só Chrome/Edge e envia áudio à Google — fallback automático para Whisper WASM local.
-- **K8s multi-réplica** exige afinidade por sala (ver §4) — foi a causa de media num só sentido.
+- **K8s multi-réplica** exige afinidade por sala (ver §4) — foi a causa de media num só sentido. `/ws` precisa de Service DEDICADO (`delonix-server-ws`), senão o ingress descarta o `upstream-hash-by`.
+- **Oferta SFU no construtor** da `SfuCall` (não gateada por `joined`) e **convidado em espera não monta a `SfuCall`** — senão media morta / reload em loop após admitir.
+- **Media K8s = relay-only** (`FORCE_TURN_RELAY=1` + coturn alcançável), senão o ICE liga mas fica preto. Em local não ligar.
+- **`.dockerignore` nunca exclui `web/dist`** (o `Dockerfile.web.stage` copia-o).
 - **mkcert em Firefox**: o Firefox não confia na store do SO — `security.enterprise_roots.enabled=true` ou importar a rootCA.
+- **Regressões completas (não reintroduzir):** [`docs/reference/regressions.md`](docs/reference/regressions.md) — R1–R12 com sintoma/causa/regra/ficheiros.
 
 ## 9. Próximas prioridades
 
