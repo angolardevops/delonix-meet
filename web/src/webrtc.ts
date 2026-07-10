@@ -333,17 +333,15 @@ export class SfuCall implements Call {
     // via roster, mas garantimos o callback para libertar o stream.
     signal.on('peer-left', ({ peer_id }) => this.cb.onPeerLeft(peer_id))
 
-    // Oferta inicial (publica as nossas tracks) só depois do `joined` —
-    // um convidado na sala de espera ainda não tem PC no servidor.
-    let started = false
-    signal.on('joined', () => {
-      if (started) return
-      started = true
-      this.enqueue(async () => {
-        const offer = await this.pc.createOffer()
-        await this.pc.setLocalDescription(offer)
-        this.send({ type: 'sfu-offer', sdp: offer.sdp! })
-      })
+    // Oferta inicial (publica as nossas tracks). A SfuCall só é construída
+    // DEPOIS do `joined` (ver Room.tsx `callHolder` — o convidado na sala de
+    // espera não negocia). Como o evento `joined` já disparou antes de esta PC
+    // existir, ofertamos JÁ na construção — esperar por outro `joined` (que não
+    // volta) deixava o servidor sem PC e sem media.
+    this.enqueue(async () => {
+      const offer = await this.pc.createOffer()
+      await this.pc.setLocalDescription(offer)
+      this.send({ type: 'sfu-offer', sdp: offer.sdp! })
     })
   }
 
