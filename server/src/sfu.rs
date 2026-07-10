@@ -114,6 +114,8 @@ pub struct IceConfig {
     pub turn_host: String,
     /// Segredo partilhado com o coturn (use-auth-secret) para credenciais TURN.
     pub turn_secret: String,
+    /// Força relay-only (a media do SFU passa sempre pelo TURN). Ver Config.
+    pub force_relay: bool,
 }
 
 impl SfuState {
@@ -238,6 +240,13 @@ impl SfuState {
         // quando alcançável, TURN relay como fallback (ver sfu_ice_servers).
         let pc_config = RTCConfiguration {
             ice_servers: sfu_ice_servers(&self.ice),
+            // Relay-only quando configurado: em K8s os host candidates do pod
+            // não transportam media; obriga o SFU a usar só o relay TURN.
+            ice_transport_policy: if self.ice.force_relay {
+                webrtc::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy::Relay
+            } else {
+                webrtc::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy::All
+            },
             ..Default::default()
         };
         let pc = Arc::new(api.new_peer_connection(pc_config).await?);

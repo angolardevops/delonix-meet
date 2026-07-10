@@ -326,7 +326,9 @@ pub async fn ice_servers(
     mac.update(username.as_bytes());
     let credential = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
 
-    Ok(Json(json!({
+    // `iceTransportPolicy: relay` força a media do CLIENTE a passar pelo TURN —
+    // em K8s os host candidates do SFU não a transportam (ver Config).
+    let mut cfg = json!({
         "iceServers": [
             { "urls": [format!("stun:{}", state.config.turn_host)] },
             {
@@ -335,7 +337,11 @@ pub async fn ice_servers(
                 "credential": credential,
             }
         ]
-    })))
+    });
+    if state.config.force_turn_relay {
+        cfg["iceTransportPolicy"] = json!("relay");
+    }
+    Ok(Json(cfg))
 }
 
 // ---------- Chat persistente ----------

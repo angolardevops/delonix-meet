@@ -333,6 +333,7 @@ async fn main() {
             external_ip: config.sfu_external_ip.clone(),
             turn_host: config.turn_host.clone(),
             turn_secret: config.turn_secret.clone(),
+            force_relay: config.force_turn_relay,
         })),
         presence: presence_hub,
         auth_limiter: RateLimiter::new(20, Duration::from_secs(60)),
