@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import {
   createRecordingLink,
   downloadRecording,
@@ -20,6 +21,7 @@ import {
 import { CloseIcon, DownloadIcon, FilmIcon, NoteIcon, ShareLinkIcon, TrashIcon } from '../icons'
 
 export default function Recordings() {
+  const { t } = useTranslation()
   const [items, setItems] = useState<RecordingItem[]>([])
   const [loading, setLoading] = useState(true)
   const [shareTarget, setShareTarget] = useState<RecordingItem | null>(null)
@@ -50,25 +52,25 @@ export default function Recordings() {
     <div className="page">
       <header className="page-head">
         <h1>
-          <FilmIcon /> Gravações
+          <FilmIcon /> {t('recordings.title')}
         </h1>
-        <p className="muted">Reuniões em que participaste e gravações partilhadas contigo.</p>
+        <p className="muted">{t('recordings.subtitle')}</p>
         <div className="seg view-toggle">
           <button className={view === 'cards' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('cards')}>
-            ▦ Cartões
+            ▦ {t('recordings.viewCards')}
           </button>
           <button className={view === 'table' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('table')}>
-            ☰ Tabela
+            ☰ {t('recordings.viewTable')}
           </button>
         </div>
       </header>
 
-      {loading && <p className="muted">A carregar…</p>}
+      {loading && <p className="muted">{t('recordings.loading')}</p>}
       {error && <div className="error">{error}</div>}
       {!loading && items.length === 0 && (
         <div className="empty-state">
           <FilmIcon />
-          <p>Ainda não há gravações. Grava uma reunião e ela aparecerá aqui.</p>
+          <p>{t('recordings.empty')}</p>
         </div>
       )}
 
@@ -76,11 +78,11 @@ export default function Recordings() {
         <table className="members-table rec-table">
           <thead>
             <tr>
-              <th>Nome</th>
-              <th>Sala</th>
-              <th>Autor</th>
-              <th>Data</th>
-              <th>Tamanho</th>
+              <th>{t('recordings.colName')}</th>
+              <th>{t('recordings.colRoom')}</th>
+              <th>{t('recordings.colAuthor')}</th>
+              <th>{t('recordings.colDate')}</th>
+              <th>{t('recordings.colSize')}</th>
               <th></th>
             </tr>
           </thead>
@@ -91,25 +93,25 @@ export default function Recordings() {
                   <button className="link rec-name-link" onClick={() => setViewTarget(r)}>
                     {r.filename.replace(/\.webm$/, '')}
                   </button>
-                  {!r.owned && <span className="rec-badge shared inline">Partilhada</span>}
+                  {!r.owned && <span className="rec-badge shared inline">{t('recordings.shared')}</span>}
                 </td>
                 <td className="mono">{r.room_code}</td>
                 <td>{r.uploader_name}</td>
                 <td>{new Date(r.created_at).toLocaleString('pt-PT')}</td>
                 <td>{(r.size_bytes / 1_048_576).toFixed(1)} MB</td>
                 <td className="rec-row-actions">
-                  <button className="icon-btn" title="Abrir" onClick={() => setViewTarget(r)}>▶</button>
+                  <button className="icon-btn" title={t('recordings.open')} onClick={() => setViewTarget(r)}>▶</button>
                   {r.can_download && (
                     <button
                       className="icon-btn"
-                      title="Descarregar"
+                      title={t('recordings.download')}
                       onClick={() => void downloadRecording(r).catch((e) => setError((e as Error).message))}
                     >
                       <DownloadIcon />
                     </button>
                   )}
                   {r.owned && (
-                    <button className="icon-btn" title="Partilhar" onClick={() => setShareTarget(r)}>
+                    <button className="icon-btn" title={t('recordings.share')} onClick={() => setShareTarget(r)}>
                       <ShareLinkIcon />
                     </button>
                   )}
@@ -124,30 +126,30 @@ export default function Recordings() {
       <div className="rec-cards">
         {items.map((r) => (
           <div key={r.id} className="rec-card">
-            <button className="rec-thumb" onClick={() => setViewTarget(r)} title="Reproduzir e ver ata">
+            <button className="rec-thumb" onClick={() => setViewTarget(r)} title={t('recordings.play')}>
               <FilmIcon />
               <span className="rec-play">▶</span>
-              {!r.owned && <span className="rec-badge shared">Partilhada</span>}
+              {!r.owned && <span className="rec-badge shared">{t('recordings.shared')}</span>}
             </button>
             <div className="rec-body">
               <strong className="rec-title">{r.filename}</strong>
               <div className="rec-meta">
-                Sala {r.room_code} · {r.uploader_name}
+                {t('recordings.room', { code: r.room_code })} · {r.uploader_name}
                 <br />
                 {new Date(r.created_at).toLocaleString('pt-PT')} · {(r.size_bytes / 1_048_576).toFixed(1)} MB
               </div>
               <div className="rec-actions">
                 <button className="btn-sm" onClick={() => setViewTarget(r)}>
-                  <NoteIcon /> Abrir
+                  <NoteIcon /> {t('recordings.open')}
                 </button>
                 {r.can_download && (
                   <button className="btn-sm ghost" onClick={() => void downloadRecording(r).catch((e) => setError((e as Error).message))}>
-                    <DownloadIcon /> Descarregar
+                    <DownloadIcon /> {t('recordings.download')}
                   </button>
                 )}
                 {r.owned && (
                   <button className="btn-sm ghost" onClick={() => setShareTarget(r)}>
-                    <ShareLinkIcon /> Partilhar{r.share_count > 0 ? ` (${r.share_count})` : ''}
+                    <ShareLinkIcon /> {t('recordings.share')}{r.share_count > 0 ? ` (${r.share_count})` : ''}
                   </button>
                 )}
               </div>
@@ -173,6 +175,7 @@ export default function Recordings() {
 
 /** Leitor: vídeo da gravação + abas Transcrição / Ata (MoM) / Tarefas. */
 function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void }) {
+  const { t } = useTranslation()
   const viewerVideoRef = useRef<HTMLVideoElement>(null)
   const [videoUrl, setVideoUrl] = useState('')
   const [notes, setNotes] = useState<RoomNotes | null>(null)
@@ -184,7 +187,7 @@ function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void
     let url = ''
     void recordingObjectUrl(rec)
       .then((u) => { url = u; setVideoUrl(u) })
-      .catch(() => setVideoErr('Não foi possível carregar o vídeo'))
+      .catch(() => setVideoErr(t('recordings.loadVideoFail')))
     void roomNotes(rec.room_code).then(setNotes).catch(() => setNotes({ title: '', minutes: '', transcript: '' }))
     return () => { if (url) URL.revokeObjectURL(url) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -228,39 +231,38 @@ function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void
         </div>
 
         {videoErr && <div className="error">{videoErr}</div>}
-        {!videoUrl && !videoErr && <p className="muted">A carregar vídeo…</p>}
+        {!videoUrl && !videoErr && <p className="muted">{t('recordings.loadingVideo')}</p>}
         {videoUrl && (
           <div className="viewer-video-wrap">
             <video ref={viewerVideoRef} className="viewer-video" src={videoUrl} controls autoPlay />
             <button
               className="pip-btn"
-              title="Destacar em janela flutuante (Picture-in-Picture)"
+              title={t('recordings.pipTitle')}
               onClick={() => {
                 const v = viewerVideoRef.current as (HTMLVideoElement & { requestPictureInPicture?: () => Promise<unknown> }) | null
-                v?.requestPictureInPicture?.().catch(() => setVideoErr('O browser não suporta Picture-in-Picture'))
+                v?.requestPictureInPicture?.().catch(() => setVideoErr(t('recordings.pipUnsupported')))
               }}
             >
-              ⧉ Destacar
+              ⧉ {t('recordings.pip')}
             </button>
           </div>
         )}
 
         <div className="viewer-tabs">
           <button className={tab === 'trans' ? 'auth-tab active' : 'auth-tab'} onClick={() => setTab('trans')}>
-            Transcrição
+            {t('recordings.tabTranscript')}
           </button>
           <button className={tab === 'mom' ? 'auth-tab active' : 'auth-tab'} onClick={() => setTab('mom')}>
-            Ata (MoM)
+            {t('recordings.tabMom')}
           </button>
           <button className={tab === 'tasks' ? 'auth-tab active' : 'auth-tab'} onClick={() => setTab('tasks')}>
-            Tarefas{tasks.length > 0 ? ` (${tasks.filter((t) => !t.done).length})` : ''}
+            {t('recordings.tabTasks')}{tasks.length > 0 ? ` (${tasks.filter((t) => !t.done).length})` : ''}
           </button>
         </div>
 
         {!hasNotes && (
           <p className="muted small">
-            Esta gravação não tem notas associadas — ativa as «Notas AI» durante a reunião para gerar
-            transcrição e ata.
+            {t('recordings.noNotes')}
           </p>
         )}
         {tab === 'trans' && lines.length > 0 && (
@@ -281,12 +283,11 @@ function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void
         )}
         {tab === 'mom' && notes?.minutes && <pre className="viewer-mom">{notes.minutes}</pre>}
         {tab === 'mom' && hasNotes && !notes?.minutes && (
-          <p className="muted small">Sem ata guardada — só transcrição.</p>
+          <p className="muted small">{t('recordings.noMom')}</p>
         )}
         {tab === 'tasks' && tasks.length === 0 && (
           <p className="muted small">
-            Sem tarefas nesta reunião — a ata gera-as a partir de frases de ação («fica responsável»,
-            «temos de», «próximo passo»…).
+            {t('recordings.noTasks')}
           </p>
         )}
         {tab === 'tasks' && tasks.length > 0 && (
@@ -310,6 +311,7 @@ function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void
 }
 
 function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void }) {
+  const { t } = useTranslation()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<User[]>([])
   const [shared, setShared] = useState<User[]>([])
@@ -400,25 +402,25 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal share-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>Partilhar gravação</h3>
+          <h3>{t('recordings.shareRecording')}</h3>
           <button className="panel-close" onClick={onClose}><CloseIcon /></button>
         </div>
 
         {/* ---- Link público ---- */}
         <div className="share-link-section">
-          <h4>Link público</h4>
-          {link === undefined && <p className="muted small">A carregar…</p>}
+          <h4>{t('recordings.publicLink')}</h4>
+          {link === undefined && <p className="muted small">{t('recordings.loading')}</p>}
           {link === null && (
             <>
               <div className="share-link-options">
                 <input
                   type="password"
-                  placeholder="Password (opcional)"
+                  placeholder={t('recordings.passwordOptional')}
                   value={linkPassword}
                   onChange={(e) => setLinkPassword(e.target.value)}
                 />
                 <label className="share-link-label">
-                  Expira em
+                  {t('recordings.expiresIn')}
                   <input
                     type="datetime-local"
                     value={linkExpiry}
@@ -428,7 +430,7 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
                 </label>
               </div>
               <button className="btn-sm" disabled={linkBusy} onClick={() => void generateLink()}>
-                {linkBusy ? 'A gerar…' : 'Gerar link'}
+                {linkBusy ? t('recordings.generating') : t('recordings.generateLink')}
               </button>
             </>
           )}
@@ -439,22 +441,22 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
                 <button
                   className="share-link-copy-btn"
                   onClick={() => copyLink(link.token)}
-                  title="Copiar link"
+                  title={t('recordings.copyLink')}
                 >
                   {linkCopied ? '✓' : '⎘'}
                 </button>
               </div>
               {link.expires_at && (
                 <p className="muted small share-link-password-hint">
-                  Expira em {new Date(link.expires_at).toLocaleString('pt-PT')}
+                  {t('recordings.expiresOn', { date: new Date(link.expires_at).toLocaleString('pt-PT') })}
                 </p>
               )}
               <div className="share-link-actions">
                 <button className="btn-sm ghost danger" disabled={linkBusy} onClick={() => void revokeLink()}>
-                  {linkBusy ? 'A revogar…' : 'Revogar link'}
+                  {linkBusy ? t('recordings.revoking') : t('recordings.revokeLink')}
                 </button>
                 <button className="btn-sm ghost" disabled={linkBusy} onClick={() => void revokeLink().then(() => generateLink())}>
-                  Renovar
+                  {t('recordings.renew')}
                 </button>
               </div>
             </div>
@@ -465,10 +467,10 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
 
         {/* ---- Partilha com utilizadores ---- */}
         <p className="muted small">
-          Partilha direta: quem adicionares poderá <strong>ver e descarregar</strong>.
+          <Trans i18nKey="recordings.directShareHint"><strong>ver e descarregar</strong></Trans>
         </p>
         <input
-          placeholder="Procurar por nome ou email…"
+          placeholder={t('recordings.searchUsers')}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -481,14 +483,14 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
                   <strong>{u.username}</strong>
                   <small>{u.email}</small>
                 </span>
-                {sharedIds.has(u.id) ? <span className="muted small">já tem acesso</span> : <span className="add-plus">+</span>}
+                {sharedIds.has(u.id) ? <span className="muted small">{t('recordings.alreadyHasAccess')}</span> : <span className="add-plus">+</span>}
               </button>
             ))}
           </div>
         )}
         <div className="shared-list">
-          <h4>Com acesso ({shared.length})</h4>
-          {shared.length === 0 && <p className="muted small">Ainda não partilhaste com ninguém.</p>}
+          <h4>{t('recordings.withAccess', { count: shared.length })}</h4>
+          {shared.length === 0 && <p className="muted small">{t('recordings.noneShared')}</p>}
           {shared.map((u) => (
             <div key={u.id} className="shared-row">
               <span className="avatar-circle small">{u.username.slice(0, 2).toUpperCase()}</span>
@@ -496,7 +498,7 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
                 <strong>{u.username}</strong>
                 <small>{u.email}</small>
               </span>
-              <button className="icon-btn" title="Remover acesso" onClick={() => void remove(u)}>
+              <button className="icon-btn" title={t('recordings.removeAccess')} onClick={() => void remove(u)}>
                 <TrashIcon />
               </button>
             </div>

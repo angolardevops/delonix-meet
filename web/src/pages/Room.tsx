@@ -742,6 +742,13 @@ export default function Room({
           setWbOpen(true) // alguém desenhou → o quadro aparece a todos
         })
         signal.on('wb-clear', () => setWbStrokes([]))
+        // Alguém fechou o quadro → fecha em todos (#4).
+        signal.on('wb-close', () => setWbOpen(false))
+        // Aviso fiável de apresentação: ao parar, limpa já a apresentação desse
+        // peer nos recetores (sem esperar por eventos de track) (#2).
+        signal.on('presenting', (m) => {
+          if (!m.on) setPresentation((p) => (p?.peerId === m.from ? null : p))
+        })
         // Transcrição de outro participante — junta à transcrição partilhada.
         signal.on('transcript', (m) => {
           const stamp = new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
@@ -755,10 +762,10 @@ export default function Room({
         signal.on('transcription', (m) => {
           setScribeBy(m.on ? m.by : null)
           setTranscribing(m.on)
-          if (m.on) {
-            setNotesOpen(true)
-            setStatus(`Transcrição iniciada por ${m.by} — a tua fala é captada`)
-          }
+          // NÃO abrir o painel de notas nos outros participantes — só quem
+          // inicia (o anfitrião, via toggleTranscription) o abre. Aos restantes
+          // basta um aviso de que a sua fala está a ser captada (#5).
+          if (m.on) setStatus(`Transcrição iniciada por ${m.by} — a tua fala é captada`)
         })
 
         signal.on('remote-control', (m) => {
@@ -1647,7 +1654,7 @@ export default function Room({
                 setStatus('Não foi possível guardar o quadro')
               }
             }}
-            onClose={() => setWbOpen(false)}
+            onClose={() => { setWbOpen(false); signalRef.current?.send({ type: 'wb-close' }) }}
           />
         )}
 
@@ -2816,7 +2823,12 @@ export default function Room({
             plain
             label="Quadro branco colaborativo"
             active={wbOpen}
-            onClick={() => setWbOpen((v) => !v)}
+            onClick={() => {
+              const next = !wbOpen
+              setWbOpen(next)
+              // Fechar propaga a todos; abrir é local (aparece nos outros quando desenho).
+              if (!next) signalRef.current?.send({ type: 'wb-close' })
+            }}
           >
             <span className="tools-badge">✏️</span>
           </Ctrl>

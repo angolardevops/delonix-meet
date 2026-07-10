@@ -71,7 +71,9 @@ export type ServerMsg =
   | { type: 'server-recording'; active: boolean; by: string }
   | { type: 'wb-stroke'; stroke: WbStroke }
   | { type: 'wb-clear' }
+  | { type: 'wb-close' }
   | { type: 'wb-state'; strokes: WbStroke[] }
+  | { type: 'presenting'; from: string; on: boolean }
   | { type: 'breakout-move'; code: string; label: string; back: boolean; ends_at: number | null }
   | { type: 'breakouts-created'; rooms: BreakoutRoom[]; ends_at: number | null }
   | { type: 'error'; message: string }
@@ -110,6 +112,7 @@ export type ClientMsg =
   | { type: 'server-record'; active: boolean; e2ee_key?: string | null }
   | { type: 'wb-stroke'; stroke: WbStroke }
   | { type: 'wb-clear' }
+  | { type: 'wb-close' }
   | { type: 'screen-share'; on: boolean }
   | { type: 'breakouts-create'; count: number; minutes: number | null }
   | { type: 'breakout-rename'; code: string; label: string }
