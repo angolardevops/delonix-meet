@@ -63,3 +63,20 @@ spec:
     - protocol: TCP
       port: 8180
       targetPort: http
+---
+# Service DEDICADO ao /ws — os MESMOS pods, mas um backend distinto no
+# ingress-nginx. Sem isto, o /ws e o /api/rtc partilhavam o mesmo backend e o
+# `upstream-hash-by: $arg_room` era descartado (o round-robin ganhava) → a
+# afinidade por sala NÃO se aplicava e o SFU voltava ao split-brain.
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-server-ws
+  namespace: delonix-meet
+spec:
+  selector:
+    app: delonix-server
+  ports:
+    - protocol: TCP
+      port: 8180
+      targetPort: http

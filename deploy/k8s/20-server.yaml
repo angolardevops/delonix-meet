@@ -56,3 +56,16 @@ spec:
   selector: { app: delonix-server }
   ports:
     - { name: http, port: 8180, targetPort: http }
+---
+# Service dedicado ao /ws (mesmos pods, backend distinto no ingress) — necessário
+# para o consistent-hash por sala se aplicar só ao /ws. Ver 40-ingress.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-server-ws
+  namespace: delonix
+  labels: { app: delonix-server }
+spec:
+  selector: { app: delonix-server }
+  ports:
+    - { name: http, port: 8180, targetPort: http }
