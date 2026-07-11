@@ -163,14 +163,15 @@ build: ## Compila backend (release) + frontend (produção)
 	@printf "$(G)  ✓ build concluído$(Z)\n"
 
 .PHONY: test
-test: check-docs ## Corre os testes (fitness functions + cargo test + typecheck do frontend)
+test: fitness ## Corre os testes (fitness functions + cargo test + typecheck do frontend)
 	@printf "$(C)▶ testes$(Z)\n"
 	@cd server && cargo test --release
 	@cd web && node_modules/.bin/tsc -p tsconfig.json --noEmit && printf "$(G)  ✓ tsc limpo$(Z)\n"
 
-.PHONY: check-docs
-check-docs: ## Fitness function: falha se HARNESS.md divergir do código (módulos/migrações)
+.PHONY: fitness
+fitness: ## Fitness functions de arquitetura (Fowler): docs em sincronia + afinidade por sala (R3)
 	@bash scripts/check-docs-drift.sh
+	@bash scripts/check-room-affinity.sh
 
 .PHONY: migrate
 migrate: ## Corre as migrações pendentes (sqlx migrate run)
