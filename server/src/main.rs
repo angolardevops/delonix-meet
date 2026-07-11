@@ -83,6 +83,28 @@ pub struct AppState {
     pub metrics: Arc<metrics::Metrics>,
 }
 
+impl AppState {
+    /// Abre uma transação com o CONTEXTO DE TENANT do utilizador para as
+    /// políticas Row-Level Security (RLS). Define `app.user_id` (LOCAL à
+    /// transação) — as políticas filtram por `org_id IN (orgs do utilizador)`.
+    /// FAIL-CLOSED: numa tabela com RLS FORCE, uma query fora deste contexto
+    /// (sem `app.user_id`) devolve ZERO linhas em vez de vazar cross-org.
+    /// Ver docs/adr/0002-tenant-isolation-rls.md e a migração 0024. As queries
+    /// a tabelas com RLS TÊM de correr nesta `tx` (e no fim `tx.commit()`).
+    pub async fn tenant_tx(
+        &self,
+        user_id: uuid::Uuid,
+    ) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, sqlx::Error> {
+        let mut tx = self.db.begin().await?;
+        // set_config(name, value, is_local=true) — parametrizado (sem injeção).
+        sqlx::query("SELECT set_config('app.user_id', $1, true)")
+            .bind(user_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        Ok(tx)
+    }
+}
+
 pub fn build_router(state: Arc<AppState>) -> Router {
     let auth_routes = Router::new()
         .route("/register", post(auth::register))

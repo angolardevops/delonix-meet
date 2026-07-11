@@ -605,20 +605,32 @@ pub async fn create_group(
     if name.is_empty() || name.len() > 120 {
         return Err(ApiError::BadRequest("nome do grupo inválido".into()));
     }
-    enforce_quota(
-        &state,
-        org_id,
-        "max_groups",
-        "SELECT COUNT(*) FROM employee_groups WHERE org_id = $1",
-    )
-    .await?;
+    // RLS (migração 0024): employee_groups corre no contexto de tenant. O limite
+    // de quota vive em `organizations` (sem RLS); o COUNT dos grupos existentes
+    // corre na MESMA tx (sob RLS) para ser correto. Ver AppState::tenant_tx.
+    let mut tx = state.tenant_tx(auth.user_id).await?;
+    let limit: Option<i32> = sqlx::query_scalar("SELECT max_groups FROM organizations WHERE id = $1")
+        .bind(org_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if let Some(max) = limit {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM employee_groups WHERE org_id = $1")
+            .bind(org_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        if count >= max as i64 {
+            return Err(ApiError::Conflict(format!(
+                "limite da organização atingido ({max})"
+            )));
+        }
+    }
     let (group_id,): (Uuid,) = sqlx::query_as(
         "INSERT INTO employee_groups (org_id, name, created_by) VALUES ($1, $2, $3) RETURNING id",
     )
     .bind(org_id)
     .bind(name)
     .bind(auth.user_id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
 
     // O criador entra sempre; membros validados como pertencentes à org.
@@ -629,7 +641,7 @@ pub async fn create_group(
             sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
                 .bind(group_id)
                 .bind(uid)
-                .execute(&state.db)
+                .execute(&mut *tx)
                 .await?;
         }
     }
@@ -639,8 +651,9 @@ pub async fn create_group(
          FROM employee_groups g WHERE g.id = $1",
     )
     .bind(group_id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(Json(group))
 }
 
@@ -650,13 +663,17 @@ pub async fn list_groups(
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<Group>>, ApiError> {
     require_member(&state, org_id, auth.user_id).await?;
+    // RLS: employee_groups tem Row-Level Security (migração 0024). A query corre
+    // no contexto de tenant do utilizador — ver AppState::tenant_tx / ADR-0002.
+    let mut tx = state.tenant_tx(auth.user_id).await?;
     let groups: Vec<Group> = sqlx::query_as(
         "SELECT g.id, g.org_id, g.name, (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS member_count
          FROM employee_groups g WHERE g.org_id = $1 ORDER BY g.name",
     )
     .bind(org_id)
-    .fetch_all(&state.db)
+    .fetch_all(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(Json(groups))
 }
 
