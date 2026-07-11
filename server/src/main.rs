@@ -219,7 +219,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                     rate_limit::v1_rate_limit,
                 )),
         )
-        .route("/api/ice", get(rooms::ice_servers))
+        // /api/ice devolve credenciais TURN de curta duração — rate-limit por IP
+        // (partilha o v1_limiter) para uma conta não esgotar o pool de relay do
+        // coturn (DoS cross-tenant). Ver security review + coturn --total-quota.
+        .route(
+            "/api/ice",
+            get(rooms::ice_servers).layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::v1_rate_limit,
+            )),
+        )
         .route("/ws", get(signaling::ws_handler))
         .route("/rtc", get(presence::rtc_handler))
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))

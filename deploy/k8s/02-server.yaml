@@ -19,10 +19,24 @@ spec:
       labels:
         app: delonix-server
     spec:
+      # O SFU é in-memory por pod: dar tempo para as sessões drenarem no SIGTERM
+      # (rollout/drain) em vez de cortar abruptamente. Com maxUnavailable:0 +
+      # afinidade por sala, os clientes reconectam à mesma sala/pod.
+      terminationGracePeriodSeconds: 45
+      # Imagem distroless :nonroot (uid 65532) — hardening seguro. NÃO ligar
+      # readOnlyRootFilesystem sem volume writable p/ RECORDINGS_DIR (gravações).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532 # uid numérico do :nonroot do distroless (o K8s não
+        runAsGroup: 65532 # resolve o nome "nonroot" p/ verificar non-root)
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: server
           image: delonix-server:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
           ports:
             - containerPort: 8180
               name: http
@@ -80,3 +94,16 @@ spec:
     - protocol: TCP
       port: 8180
       targetPort: http
+---
+# Drain de nó não pode tirar mais de 1 réplica de cada vez (o SFU é in-memory
+# por pod; perder 2/3 em simultâneo cortava muitas salas). Exige replicas>=2.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: delonix-server
+  namespace: delonix-meet
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: delonix-server

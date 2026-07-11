@@ -72,6 +72,13 @@ spec:
             tcpSocket: { port: 3478 }
             initialDelaySeconds: 2
             periodSeconds: 10
+          # coturn é SPOF (replicas:1 — o hairpin relay-a-relay exige que SFU e
+          # browser caiam no MESMO coturn, logo não escala trivialmente; ver o
+          # task de HA). Liveness reinicia-o se o listener travar.
+          livenessProbe:
+            tcpSocket: { port: 3478 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
           resources:
             requests: { cpu: "100m", memory: "128Mi" }
             limits: { cpu: "1", memory: "512Mi" }
