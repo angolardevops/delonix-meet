@@ -1609,6 +1609,8 @@ async fn handle_socket(
     can_admit: bool,
     is_bot: bool,
 ) {
+    // Gauge de ligações /ws ativas (dec automático no fim do handler).
+    let _ws_guard = crate::metrics::WsGuard::signaling(state.metrics.clone());
     let peer_id = Uuid::new_v4();
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<ServerMsg>();

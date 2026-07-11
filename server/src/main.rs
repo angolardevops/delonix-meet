@@ -5,6 +5,7 @@ mod config;
 mod dlp;
 mod error;
 mod meetings;
+mod metrics;
 mod mls;
 mod org;
 mod presence;
@@ -78,6 +79,8 @@ pub struct AppState {
     /// Criado uma vez para reutilizar o connection pool TLS entre eventos.
     pub webhook_client: reqwest::Client,
     pub redis_bus: Option<Arc<pubsub::PubSubBus>>,
+    /// Contadores de observabilidade expostos em `/metrics` (ver metrics.rs).
+    pub metrics: Arc<metrics::Metrics>,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
@@ -98,6 +101,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/api/status", get(status))
+        .route("/metrics", get(metrics_handler))
         .nest("/api/auth", auth_routes)
         .route("/api/users/me", get(users::me).patch(users::update_me))
         .nest("/api/mls", mls::router())
@@ -276,6 +280,22 @@ fn build_cors(state: &Arc<AppState>) -> CorsLayer {
 }
 
 /// Status público (roadmap "status page"): saúde dos componentes + uptime.
+/// `/metrics` — exposição Prometheus (ver metrics.rs). Sem autenticação: só
+/// contadores de saúde agregados, nenhum dado de tenant. Em produção, restringir
+/// o acesso ao scraper via NetworkPolicy/ingress interno.
+async fn metrics_handler(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+) -> impl axum::response::IntoResponse {
+    let body = state.metrics.render(state.started.elapsed().as_secs());
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    )
+}
+
 /// Sem autenticação — não expõe dados, só disponibilidade.
 async fn status(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
@@ -342,17 +362,21 @@ async fn main() {
     let mut hub = SignalingHub::default();
     hub.bus = redis_bus.clone();
 
+    let metrics = Arc::new(metrics::Metrics::default());
     let state = Arc::new(AppState {
         started: std::time::Instant::now(),
         db,
         hub,
         breakouts: dashmap::DashMap::new(),
-        sfu: Arc::new(sfu::SfuState::new(sfu::IceConfig {
-            external_ip: config.sfu_external_ip.clone(),
-            turn_host: config.turn_host.clone(),
-            turn_secret: config.turn_secret.clone(),
-            force_relay: config.force_turn_relay,
-        })),
+        sfu: Arc::new(sfu::SfuState::new(
+            sfu::IceConfig {
+                external_ip: config.sfu_external_ip.clone(),
+                turn_host: config.turn_host.clone(),
+                turn_secret: config.turn_secret.clone(),
+                force_relay: config.force_turn_relay,
+            },
+            metrics.clone(),
+        )),
         presence: presence_hub,
         auth_limiter: RateLimiter::new(20, Duration::from_secs(60)),
         login_limiter: RateLimiter::new(8, Duration::from_secs(300)),
@@ -361,6 +385,7 @@ async fn main() {
         webhook_client,
         config: config.clone(),
         redis_bus: redis_bus.clone(),
+        metrics,
     });
 
     // Subscriber Redis: ouve mensagens de outros nós e entrega localmente.

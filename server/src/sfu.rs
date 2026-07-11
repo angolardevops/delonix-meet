@@ -103,6 +103,8 @@ pub struct SfuState {
     pub pstn_outbounds: DashMap<Uuid, std::net::SocketAddr>,
     /// Config de conectividade ICE do SFU (IP externo, STUN/TURN).
     ice: IceConfig,
+    /// Contadores de observabilidade partilhados (ver metrics.rs).
+    metrics: Arc<crate::metrics::Metrics>,
 }
 
 /// Config de ICE que o SFU usa para se tornar alcançável de fora do cluster.
@@ -119,9 +121,9 @@ pub struct IceConfig {
 }
 
 impl SfuState {
-    /// Constrói o SFU com a config de ICE (a partir de `Config`).
-    pub fn new(ice: IceConfig) -> Self {
-        Self { ice, ..Default::default() }
+    /// Constrói o SFU com a config de ICE (a partir de `Config`) e os contadores.
+    pub fn new(ice: IceConfig, metrics: Arc<crate::metrics::Metrics>) -> Self {
+        Self { ice, metrics, ..Default::default() }
     }
 }
 
@@ -234,6 +236,7 @@ impl SfuState {
         peer_id: Uuid,
         out: mpsc::UnboundedSender<ServerMsg>,
     ) -> Result<()> {
+        crate::metrics::Metrics::bump(&self.metrics.sfu_peers_total);
         let room = self
             .rooms
             .entry(room_id)
@@ -299,10 +302,28 @@ impl SfuState {
 
         {
             let state = self.clone();
+            // Guarda para o gauge não driftar: só conta um inc (no 1º Connected)
+            // e um dec (no 1º estado terminal), independentemente de repetições.
+            let counted = Arc::new(std::sync::atomic::AtomicBool::new(false));
             pc.on_peer_connection_state_change(Box::new(move |s| {
                 tracing::info!(%room_id, %peer_id, state = %s, "sfu pc state");
                 let state = state.clone();
+                let counted = counted.clone();
                 Box::pin(async move {
+                    use std::sync::atomic::Ordering::Relaxed;
+                    match s {
+                        RTCPeerConnectionState::Connected => {
+                            if !counted.swap(true, Relaxed) {
+                                crate::metrics::Metrics::inc(&state.metrics.sfu_pc_connected);
+                            }
+                        }
+                        RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
+                            if counted.swap(false, Relaxed) {
+                                crate::metrics::Metrics::dec(&state.metrics.sfu_pc_connected);
+                            }
+                        }
+                        _ => {}
+                    }
                     if s == RTCPeerConnectionState::Failed {
                         state.remove_peer(room_id, peer_id).await;
                     }
@@ -410,6 +431,7 @@ impl SfuState {
             r => r.to_string(),
         };
         tracing::info!(%room_id, %publisher, kind, rid, "sfu track published");
+        crate::metrics::Metrics::bump(&self.metrics.sfu_publications_total);
 
         let publication = Arc::new(Publication {
             publisher,
