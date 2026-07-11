@@ -2366,6 +2366,107 @@ button.link:hover {
 /* Anel a pulsar do mic centra-se no ícone, não na pill toda. */
 .room-page .device-ctrl > .ctrl.pulse::after { inset: 1px auto 1px 1px; width: 48px; }
 
+/* ════════════════════════════════════════════════════════════════
+   POLISH ELEGANTE DA BARRA DE CONTROLOS — material, profundidade e
+   micro-interações (nível Google Meet / Teams). Curva de easing única,
+   lift subtil no hover, halos nos estados ativos. Só na sala (dark).
+   ════════════════════════════════════════════════════════════════ */
+.room-page {
+  --ease-ctrl: cubic-bezier(0.34, 1.56, 0.64, 1); /* overshoot suave */
+  --ctrl-idle: rgba(255, 255, 255, 0.09);
+  --ctrl-hover: rgba(255, 255, 255, 0.16);
+}
+
+/* Barra: "prateleira flutuante" — gradiente vertical subtil + hairline
+   superior para separar do vídeo, sem pesar. */
+.room-page .controls-bar {
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0.28) 60%, transparent 100%);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 0.85rem; padding-bottom: 0.85rem;
+}
+
+/* Botão base: material com borda interna 1px, transição suave em várias
+   propriedades. */
+.room-page .ctrl {
+  background: var(--ctrl-idle);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  transition: background 0.2s var(--ease-ctrl), transform 0.18s var(--ease-ctrl),
+    box-shadow 0.2s ease, color 0.15s ease;
+}
+.room-page .ctrl svg { transition: transform 0.18s var(--ease-ctrl); }
+
+/* Lift no hover — só nos botões autónomos e nas pills (filhos diretos do
+   centro), nunca no .ctrl DENTRO da pill (senão desalinha). */
+.room-page .bar-center > .ctrl:hover,
+.room-page .bar-center > .device-ctrl:hover {
+  background: var(--ctrl-hover);
+  transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+.room-page .bar-center > .ctrl:hover svg { transform: scale(1.08); }
+.room-page .bar-center > .ctrl:active,
+.room-page .bar-center > .device-ctrl:active { transform: translateY(0) scale(0.93); }
+
+/* Estado ATIVO (painel/ferramenta ligada): acento + halo suave. */
+.room-page .ctrl.active {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 60%, transparent),
+    0 6px 18px color-mix(in oklab, var(--accent) 40%, transparent);
+}
+.room-page .bar-center > .ctrl.active:hover { filter: brightness(1.08); transform: translateY(-2px); }
+
+/* Mic/câmara DESLIGADOS: pill vermelha com halo de aviso. */
+.room-page .device-ctrl:has(> .ctrl.off) {
+  background: var(--danger);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--danger) 55%, transparent),
+    0 6px 18px color-mix(in oklab, var(--danger) 38%, transparent);
+}
+
+/* Pill de dispositivo: divisória interna subtil entre ícone e chevron. */
+.room-page .device-ctrl {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  transition: background 0.2s var(--ease-ctrl), transform 0.18s var(--ease-ctrl),
+    box-shadow 0.2s ease;
+}
+.room-page .device-ctrl > .chevron { box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.08); }
+
+/* Terminar chamada: pílula premium com gradiente e sombra de cor. */
+.room-page .ctrl.hangup {
+  background: linear-gradient(180deg,
+    color-mix(in oklab, var(--danger) 92%, white) 0%, var(--danger) 100%);
+  box-shadow: 0 4px 14px color-mix(in oklab, var(--danger) 45%, transparent);
+}
+.room-page .bar-center > .ctrl.hangup:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 8px 22px color-mix(in oklab, var(--danger) 55%, transparent);
+}
+
+/* Cluster direito (painéis): mesmo material, hover coerente, ativo com acento. */
+.room-page .bar-right .ctrl { background: transparent; box-shadow: none; }
+.room-page .bar-right .ctrl:hover { background: var(--ctrl-hover); transform: translateY(-1px); }
+.room-page .bar-right .ctrl.active,
+.room-page .bar-right .ctrl.plain.active {
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+  color: var(--accent-2);
+}
+
+/* Timer/relógio (canto): pílula de vidro subtil. */
+.room-page .bar-left .pill,
+.room-page .bar-left .clock-pill {
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  border-radius: 100px; padding: 0.3rem 0.7rem;
+  backdrop-filter: blur(6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-page .ctrl,
+  .room-page .device-ctrl,
+  .room-page .ctrl svg { transition: none; }
+  .room-page .bar-center > .ctrl:hover,
+  .room-page .bar-center > .device-ctrl:hover { transform: none; }
+}
+
 /* ---- Barra de dispositivos flutuante (estilo Google Meet) ---- */
 .room-page .device-chips {
   position: absolute; left: 50%; bottom: 1rem; transform: translateX(-50%);
