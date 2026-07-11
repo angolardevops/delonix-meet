@@ -205,6 +205,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Gestão de chaves de API (admin da org, sessão)
         .route("/api/orgs/{org_id}/api-keys", get(apikeys::list).post(apikeys::create))
         .route("/api/orgs/{org_id}/api-keys/{key_id}", axum::routing::delete(apikeys::revoke))
+        // ══════════════════════════════════════════════════════════════════
+        //  FRONTEIRA DE CONTRATO DE API (ver docs/reference/api-contract.md)
+        //  Tudo ACIMA (`/api/...` sem versão) é a **BFF interna** do próprio web
+        //  Delonix — contrato NÃO estável, pode mudar com o frontend a par.
+        //  Tudo em `/api/v1` ABAIXO é a **superfície pública versionada** —
+        //  contrato estável (SDK, mobile, integrações), autenticada por API key,
+        //  com rate-limit e (a caminho) testes de contrato. Não misturar: um
+        //  endpoint novo é interno até ser promovido conscientemente a v1.
+        // ══════════════════════════════════════════════════════════════════
         // ---- API pública v1 (autenticada por chave de API, com rate-limit) ----
         .nest(
             "/api/v1",
