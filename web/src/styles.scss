@@ -2459,7 +2459,42 @@ button.link:hover {
   backdrop-filter: blur(6px);
 }
 
+/* ════════════════════════════════════════════════════════════════
+   EFEITO DE FALA NO MIC (estilo Google Meet) — quando falas, a pill do
+   micro ganha um ANEL DOURADO a respirar + as barras de voz animadas por
+   dentro, na cor --speaking (#FFD600). Sinal claro e inconfundível.
+   ════════════════════════════════════════════════════════════════ */
+/* Halo do mic em DOURADO (não vermelho) para casar com as barras. */
+.room-page .device-ctrl > .ctrl.pulse { background: transparent !important; }
+.room-page .device-ctrl > .ctrl.pulse::after {
+  animation: mic-halo-gold 1.4s ease-in-out infinite;
+}
+@keyframes mic-halo-gold {
+  0%, 100% {
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--speaking) 34%, transparent),
+                0 0 0 8px color-mix(in oklab, var(--speaking) 12%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in oklab, var(--speaking) 60%, transparent),
+                0 0 0 14px color-mix(in oklab, var(--speaking) 24%, transparent);
+  }
+}
+/* A pill inteira ganha um anel dourado subtil + brilho enquanto falas. */
+.room-page .device-ctrl:has(> .ctrl.pulse) {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--speaking) 65%, transparent),
+    0 0 18px color-mix(in oklab, var(--speaking) 38%, transparent),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+/* Barras de voz dentro do botão do mic: maiores e nítidas. */
+.room-page .device-ctrl > .ctrl .speaking-bars { height: 22px; gap: 2.5px; }
+.room-page .device-ctrl > .ctrl .speaking-bars i { width: 3.5px; }
+
 @media (prefers-reduced-motion: reduce) {
+  .room-page .ctrl,
+  .room-page .device-ctrl,
+  .room-page .ctrl svg { transition: none; }
+  .room-page .bar-center > .ctrl:hover,
+  .room-page .bar-center > .device-ctrl:hover { transform: none; }
   .room-page .ctrl,
   .room-page .device-ctrl,
   .room-page .ctrl svg { transition: none; }
