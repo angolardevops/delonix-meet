@@ -50,6 +50,12 @@
 - `apikeys.rs` — API keys por org (hash + scopes)
 - `rate_limit.rs` — rate limit por IP/conta (DashMap, lockout login 8/5min)
 - `error.rs` — `AppError` unificado → HTTP status + JSON body
+- `users.rs` — perfis de utilizador (perfil público, `me`, update, pesquisa)
+- `actions.rs` — agenda de reunião (tópicos com execução) + Plano de Ação 5W2H
+- `mls.rs` — MLS key agreement para E2EE em grupo (key packages, welcome)
+- `dlp.rs` — DLP (censura/redação de conteúdo sensível)
+- `pubsub.rs` — Redis pub/sub para entrega cross-nó (presença/sinalização)
+- `redis_state.rs` — estado in-room em Redis (whiteboard, timer, sondagens, settings) partilhado entre pods
 
 ### Frontend — `web/src/` (React + TypeScript + Vite)
 | Ficheiro/pasta | Função |
@@ -75,7 +81,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0015) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0023) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 
