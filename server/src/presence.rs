@@ -370,23 +370,14 @@ async fn handle(state: Arc<AppState>, socket: WebSocket, user_id: Uuid, username
     // Gauge de ligações /rtc ativas (dec automático no Drop).
     let _ws_guard = crate::metrics::WsGuard::presence(state.metrics.clone());
 
-    // Rate-limit por socket = TOKEN BUCKET (120 burst / 60 sustained). Janela
-    // fixa apertada cortava rajadas legítimas (ver R6); o /rtc é menos bursty
-    // que o /ws, daí limites mais baixos que a sinalização.
-    const RL_BURST: f64 = 120.0;
-    const RL_REFILL_PER_SEC: f64 = 60.0;
-    let mut rl_tokens: f64 = RL_BURST;
-    let mut rl_last = std::time::Instant::now();
+    // Rate-limit por socket = TOKEN BUCKET (120 burst / 60 sustained; o /rtc é
+    // menos bursty que o /ws). Mesma struct testada — ver R6 / rate_limit.rs.
+    let mut rl = crate::rate_limit::TokenBucket::new(120.0, 60.0);
     while let Some(Ok(msg)) = stream.next().await {
-        let now = std::time::Instant::now();
-        rl_tokens =
-            (rl_tokens + now.duration_since(rl_last).as_secs_f64() * RL_REFILL_PER_SEC).min(RL_BURST);
-        rl_last = now;
-        if rl_tokens < 1.0 {
+        if !rl.allow() {
             tracing::warn!(%user_id, "flood de mensagens de presença (token bucket) — a desligar");
             break;
         }
-        rl_tokens -= 1.0;
         let Message::Text(text) = msg else {
             if matches!(msg, Message::Close(_)) { break }
             continue;

@@ -46,6 +46,42 @@ impl RateLimiter {
     }
 }
 
+/// Token bucket por-socket para o rate-limit dos WebSockets (`/ws`, `/rtc`).
+/// Absorve rajadas legítimas (ICE/renegociação) até `burst` e limita o ritmo
+/// sustentado a `refill_per_sec`. Substitui a janela fixa apertada que cortava o
+/// próprio anfitrião durante a rajada de ICE — ver regressão **R6**. NÃO voltar a
+/// janela fixa: os testes abaixo codificam esta invariante.
+pub struct TokenBucket {
+    tokens: f64,
+    last: Instant,
+    burst: f64,
+    refill_per_sec: f64,
+}
+
+impl TokenBucket {
+    pub fn new(burst: f64, refill_per_sec: f64) -> Self {
+        Self { tokens: burst, last: Instant::now(), burst, refill_per_sec }
+    }
+
+    /// Núcleo testável: consome 1 token no instante `now`. `true` = permitido.
+    pub fn allow_at(&mut self, now: Instant) -> bool {
+        self.tokens = (self.tokens
+            + now.saturating_duration_since(self.last).as_secs_f64() * self.refill_per_sec)
+            .min(self.burst);
+        self.last = now;
+        if self.tokens < 1.0 {
+            return false;
+        }
+        self.tokens -= 1.0;
+        true
+    }
+
+    /// Consome 1 token agora. `true` = permitido; `false` = flood → desligar.
+    pub fn allow(&mut self) -> bool {
+        self.allow_at(Instant::now())
+    }
+}
+
 /// IP real do cliente. Só confia em `X-Forwarded-For` quando o peer é um proxy
 /// local/privado (o Nginx); caso contrário usa o IP da ligação. Impede que um
 /// atacante direto forje o XFF para escapar ao rate-limit.
@@ -98,6 +134,55 @@ pub async fn v1_rate_limit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- Regressão R6: rate-limit do WS = token bucket, NÃO janela fixa ----
+    // Estes testes codificam a invariante que já custou uma sessão: uma janela
+    // fixa apertada corta o anfitrião na rajada de ICE. O bucket TEM de absorver
+    // a rajada até `burst` e só limitar o ritmo sustentado.
+
+    #[test]
+    fn r6_token_bucket_absorve_rajada_ate_burst() {
+        let mut tb = TokenBucket::new(600.0, 300.0);
+        let t0 = Instant::now();
+        // A rajada inteira de 600 (ex.: ICE/renegociação) passa no MESMO instante.
+        for i in 0..600 {
+            assert!(tb.allow_at(t0), "token {i} da rajada devia passar");
+        }
+        // O 601.º no mesmo instante é cortado (bucket esgotado).
+        assert!(!tb.allow_at(t0), "601.º sem refill devia ser cortado");
+    }
+
+    #[test]
+    fn r6_token_bucket_refila_ao_ritmo_sustentado() {
+        let mut tb = TokenBucket::new(600.0, 300.0);
+        let t0 = Instant::now();
+        for _ in 0..600 {
+            tb.allow_at(t0);
+        }
+        assert!(!tb.allow_at(t0), "esgotado no instante inicial");
+        // Passado 1s, refilaram 300 tokens (o ritmo sustentado) — nem mais nem menos.
+        let t1 = t0 + Duration::from_secs(1);
+        for i in 0..300 {
+            assert!(tb.allow_at(t1), "token refilado {i} devia passar");
+        }
+        assert!(!tb.allow_at(t1), "301.º após 1s excede o sustentado de 300/s");
+    }
+
+    #[test]
+    fn r6_uma_janela_fixa_apertada_cortaria_a_rajada() {
+        // Prova por contraste: a janela fixa antiga (80/s) cortaria a rajada de
+        // ICE que o bucket absorve. Documenta PORQUÊ não voltar a janela fixa.
+        let fixed = RateLimiter::new(80, Duration::from_secs(1));
+        let mut cut_at = None;
+        for i in 0..600 {
+            if !fixed.check("host") {
+                cut_at = Some(i);
+                break;
+            }
+        }
+        assert_eq!(cut_at, Some(80), "janela fixa 80/s corta ao 81.º da rajada");
+        // ...enquanto o token bucket deixa passar os 600 (teste acima). Por isso R6.
+    }
 
     #[test]
     fn blocks_after_limit_within_window() {
