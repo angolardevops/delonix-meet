@@ -136,9 +136,9 @@ button.link:hover {
 /* ---- Room (estilo Meet) ---- */
 .room-page {
   height: 100vh; display: flex; flex-direction: column; background: var(--bg); overflow: hidden;
-  /* Token local: cor do orador ativo. Fidelidade ao Google Meet → azul-claro
-     (#8ab4f8), tal como o Meet usa no anel do tile e nas barras de voz. */
-  --speaking: #8ab4f8;
+  /* Token local: cor do orador ativo. Azul-Google forte (#1a73e8) — o azul de
+     marca do Google, usado no anel do tile, nas barras de voz e no halo do mic. */
+  --speaking: #1a73e8;
 }
 .room-code { font-family: monospace; font-size: 0.95rem; color: var(--text); }
 .room-status { color: var(--accent-2); font-size: 0.85rem; }
