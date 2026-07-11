@@ -30,10 +30,17 @@ docker run -d --name "$NAME" --restart unless-stopped --network host \
   --fingerprint --use-auth-secret \
   --static-auth-secret="$TURN_SECRET" \
   --realm=delonix \
-  --min-port=50300 --max-port=50400 \
+  --min-port=49152 --max-port=59152 \
+  --total-quota=5000 \
   --external-ip="$EXTERNAL_IP" \
   --allowed-peer-ip="$EXTERNAL_IP" \
+  --denied-peer-ip=169.254.0.0-169.254.255.255 \
+  --no-multicast-peers \
   --no-cli --no-tlsv1 --no-tlsv1_1 >/dev/null
+
+# denied-peer-ip + no-loopback/multicast: fecha SSRF-via-TURN p/ metadata cloud,
+# CIDR de pods e loopback, mantendo o relay p/ o EXTERNAL_IP (hairpin). NÃO
+# negar RFC1918 em bloco se o EXTERNAL_IP for privado. total-quota limita DoS.
 
 # --allowed-peer-ip=$EXTERNAL_IP: AUTORIZA o hairpin relay-a-relay. Em
 # relay-only nos dois lados (SFU + cliente), o candidato de cada um é

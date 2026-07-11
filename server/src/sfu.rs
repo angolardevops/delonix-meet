@@ -147,18 +147,24 @@ fn sfu_ice_servers(ice: &IceConfig) -> Vec<RTCIceServer> {
         use hmac::{Hmac, Mac};
         use sha1::Sha1;
         let expiry = (chrono::Utc::now().timestamp() + 3600).to_string();
-        if let Ok(mut mac) = Hmac::<Sha1>::new_from_slice(ice.turn_secret.as_bytes()) {
-            mac.update(expiry.as_bytes());
-            let cred = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
-            servers.push(RTCIceServer {
-                urls: vec![
-                    format!("turn:{}?transport=udp", ice.turn_host),
-                    format!("turn:{}?transport=tcp", ice.turn_host),
-                ],
-                username: expiry,
-                credential: cred,
-                ..Default::default()
-            });
+        match Hmac::<Sha1>::new_from_slice(ice.turn_secret.as_bytes()) {
+            Ok(mut mac) => {
+                mac.update(expiry.as_bytes());
+                let cred =
+                    base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+                servers.push(RTCIceServer {
+                    urls: vec![
+                        format!("turn:{}?transport=udp", ice.turn_host),
+                        format!("turn:{}?transport=tcp", ice.turn_host),
+                    ],
+                    username: expiry,
+                    credential: cred,
+                    ..Default::default()
+                });
+            }
+            // Sem candidato TURN, o SFU em relay-only (FORCE_TURN_RELAY) fica sem
+            // NENHUM candidato → media morta silenciosa. Não engolir o erro.
+            Err(e) => tracing::error!("SFU sem TURN: HMAC do turn_secret falhou: {e}"),
         }
     }
     servers

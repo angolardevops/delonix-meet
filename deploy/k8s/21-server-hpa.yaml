@@ -11,7 +11,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: delonix-server
-  namespace: delonix
+  namespace: delonix-meet
 spec:
   scaleTargetRef:
     apiVersion: apps/v1

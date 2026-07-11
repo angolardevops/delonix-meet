@@ -47,13 +47,25 @@ spec:
             - { name: EXTERNAL_IP, value: "172.30.0.201" }
           command: ["/bin/sh", "-c"]
           args:
+            # allowed-peer-ip=VIP autoriza o hairpin. denied-peer-ip fecha o
+            # SSRF-via-TURN para alvos internos sensíveis SEM tocar no relay para
+            # o VIP (que é o único peer real em relay-only): metadata cloud
+            # (169.254) e loopback. O CIDR de pods (10.244) NÃO pode ser negado — o
+            # próprio relay do coturn vive num IP de pod (hairpin). NÃO negar RFC1918 em
+            # bloco — o VIP 172.30.0.201 é 172.16/12 e partiria a media.
+            # total-quota + range largo de portas evitam esgotamento (DoS
+            # cross-tenant). Ajustar o denied de pods se o podCIDR do cluster
+            # não for 10.244.0.0/16.
             - >
               exec turnserver -n --no-cli --log-file=stdout --simple-log
               --use-auth-secret --static-auth-secret="$TURN_SECRET"
               --realm=delonix --external-ip="$EXTERNAL_IP"
               --allowed-peer-ip="$EXTERNAL_IP"
-              --listening-port=3478 --min-port=50300 --max-port=50400
-              --fingerprint --no-multicast-peers --stale-nonce=600
+              --denied-peer-ip=169.254.0.0-169.254.255.255
+              --no-multicast-peers
+              --listening-port=3478 --min-port=49152 --max-port=59152
+              --total-quota=5000
+              --fingerprint --stale-nonce=600
           ports:
             - { name: turn-udp, containerPort: 3478, protocol: UDP }
           readinessProbe:
@@ -63,14 +75,15 @@ spec:
           resources:
             requests: { cpu: "100m", memory: "128Mi" }
             limits: { cpu: "1", memory: "512Mi" }
-          # NÃO usar `drop: [ALL]` + allowPrivilegeEscalation:false: o binário
-          # turnserver tem file-capabilities (cap_net_bind_service p/ a porta
-          # 3478 <1024); com no-new-privs o exec dá EPERM ("Operation not
-          # permitted"). Restricted PSS exigiria add NET_BIND_SERVICE; o
-          # namespace delonix-meet não o força.
+          # A porta 3478 é >1024 e NÃO precisa de NET_BIND_SERVICE. O motivo de
+          # `allowPrivilegeEscalation:true` é outro: o binário turnserver desta
+          # imagem tem file-capabilities (setcap); com no-new-privs
+          # (`allowPrivilegeEscalation:false`) o exec dá EPERM ("Operation not
+          # permitted"). Mesmo assim dropamos TODAS as caps exceto a que o
+          # binário precisa — coturn parseia UDP não confiável, limitar importa.
           securityContext:
             allowPrivilegeEscalation: true
-            capabilities: { add: ["NET_BIND_SERVICE"] }
+            capabilities: { drop: ["ALL"], add: ["NET_BIND_SERVICE"] }
 ---
 apiVersion: v1
 kind: Service
