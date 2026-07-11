@@ -1734,21 +1734,25 @@ async fn handle_socket(
         broadcast_breakout_state(&state, parent);
     }
 
-    // Inbound: websocket -> hub. Rate-limit por socket (anti-flood/DoS):
-    // um pico anormal de mensagens desliga o cliente abusivo.
-    let mut rl_window = std::time::Instant::now();
-    let mut rl_count: u32 = 0;
-    const MAX_MSGS_PER_SEC: u32 = 80;
+    // Inbound: websocket -> hub. Rate-limit por socket = TOKEN BUCKET
+    // (600 burst / 300 sustained). Uma janela fixa apertada cortava o próprio
+    // anfitrião durante a rajada de ICE/renegociação — ver regressão R6 em
+    // docs/reference/regressions.md. NÃO voltar a janela fixa: o bucket absorve
+    // a rajada legítima e só desliga floods sustentados reais.
+    const RL_BURST: f64 = 600.0;
+    const RL_REFILL_PER_SEC: f64 = 300.0;
+    let mut rl_tokens: f64 = RL_BURST;
+    let mut rl_last = std::time::Instant::now();
     while let Some(Ok(msg)) = stream.next().await {
-        if rl_window.elapsed() >= std::time::Duration::from_secs(1) {
-            rl_window = std::time::Instant::now();
-            rl_count = 0;
-        }
-        rl_count += 1;
-        if rl_count > MAX_MSGS_PER_SEC {
-            tracing::warn!(%peer_id, "flood de mensagens WS — a desligar");
+        let now = std::time::Instant::now();
+        rl_tokens = (rl_tokens + now.duration_since(rl_last).as_secs_f64() * RL_REFILL_PER_SEC)
+            .min(RL_BURST);
+        rl_last = now;
+        if rl_tokens < 1.0 {
+            tracing::warn!(%peer_id, "flood de mensagens WS (token bucket esgotado) — a desligar");
             break;
         }
+        rl_tokens -= 1.0;
         match msg {
             Message::Text(text) => match serde_json::from_str::<ClientMsg>(&text) {
                 Ok(

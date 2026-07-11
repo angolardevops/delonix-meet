@@ -5,7 +5,14 @@ metadata:
   namespace: delonix-meet
 data:
   BIND_ADDR: "0.0.0.0:8180"
-  TURN_HOST: "coturn.delonix-meet.svc.cluster.local:3478"
+  # IP do LoadBalancer do coturn (51-coturn.yaml) — alcançável pelo SFU (pod)
+  # E pelo browser. NÃO usar DNS de ClusterIP (o browser não o resolve) — ver
+  # docs/reference/regressions.md R4. Em prod (LB de cloud), pôr o IP público.
+  TURN_HOST: "172.30.0.201:3478"
+  # SFU E cliente relay-only (contorna IPs de pod inalcançáveis + evita explosão
+  # de candidatos ICE num host multi-homed). Exige coturn com --allowed-peer-ip.
+  FORCE_TURN_RELAY: "1"
+  SFU_EXTERNAL_IP: ""
   # URL interno para a app interagir com Redis Sentinel (HA)
   REDIS_URL: "redis://delonix-redis-master.delonix-meet.svc.cluster.local:6379"
 ---

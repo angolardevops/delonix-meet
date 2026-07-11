@@ -310,11 +310,12 @@ stage: image-push ## Build + kind load + deploy k8s completo no cluster kind loc
 	  -f deploy/k8s/helm-values/postgres-stage-values.yaml -n delonix-meet
 	@helm upgrade --install delonix-redis bitnami/redis \
 	  -f deploy/k8s/helm-values/redis-stage-values.yaml -n delonix-meet
-	@printf "$(C)▶ Aplicação Delonix (config + server + web + ingress)...$(Z)\n"
+	@printf "$(C)▶ Aplicação Delonix (config + server + web + ingress + coturn)...$(Z)\n"
 	@kubectl apply -f deploy/k8s/01-config.yaml
 	@kubectl apply -f deploy/k8s/02-server.yaml
 	@kubectl apply -f deploy/k8s/03-web.yaml
 	@kubectl apply -f deploy/k8s/04-ingress.yaml
+	@kubectl apply -f deploy/k8s/51-coturn.yaml   # media relay (R4) — imprescindível
 	@printf "$(G)  ✓ Stage (Kind) pronto!$(Z)\n"
 	@LB_IP=$$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
 	    --no-headers -o custom-columns="IP:status.loadBalancer.ingress[0].ip" 2>/dev/null | grep -v '<none>'); \
@@ -354,6 +355,7 @@ prod: ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
 	@kubectl apply -f deploy/k8s/02-server.yaml
 	@kubectl apply -f deploy/k8s/03-web.yaml
 	@sed "s/meet.delonix.local/$(DOMAIN)/g" deploy/k8s/04-ingress.yaml | kubectl apply -f -
+	@kubectl apply -f deploy/k8s/51-coturn.yaml   # media relay (R4). Prod: trocar VIP metallb por LB de cloud + IP público em 01-config/51-coturn
 	@printf "$(G)  ✓ Deploy de Produção concluído! O Cert-Manager obterá os certificados para $(DOMAIN).$(Z)\n"
 
 .PHONY: destroy
