@@ -14,6 +14,7 @@ mod redis_state;
 mod rate_limit;
 mod recorder;
 mod recordings;
+mod room_tools;
 mod rooms;
 mod sfu;
 mod signaling;
