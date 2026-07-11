@@ -136,8 +136,9 @@ button.link:hover {
 /* ---- Room (estilo Meet) ---- */
 .room-page {
   height: 100vh; display: flex; flex-direction: column; background: var(--bg); overflow: hidden;
-  /* Token local: cor do orador ativo — amarelo quente, distinto do vermelho da marca. */
-  --speaking: #FFD600;
+  /* Token local: cor do orador ativo. Fidelidade ao Google Meet → azul-claro
+     (#8ab4f8), tal como o Meet usa no anel do tile e nas barras de voz. */
+  --speaking: #8ab4f8;
 }
 .room-code { font-family: monospace; font-size: 0.95rem; color: var(--text); }
 .room-status { color: var(--accent-2); font-size: 0.85rem; }
@@ -2464,30 +2465,31 @@ button.link:hover {
    micro ganha um ANEL DOURADO a respirar + as barras de voz animadas por
    dentro, na cor --speaking (#FFD600). Sinal claro e inconfundível.
    ════════════════════════════════════════════════════════════════ */
-/* Halo do mic em DOURADO (não vermelho) para casar com as barras. */
+/* Halo do mic em AZUL do Meet (via --speaking) — glow subtil e limpo, como o
+   anel do orador ativo no Google Meet. */
 .room-page .device-ctrl > .ctrl.pulse { background: transparent !important; }
 .room-page .device-ctrl > .ctrl.pulse::after {
-  animation: mic-halo-gold 1.4s ease-in-out infinite;
+  animation: mic-halo-speak 1.6s ease-in-out infinite;
 }
-@keyframes mic-halo-gold {
+@keyframes mic-halo-speak {
   0%, 100% {
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--speaking) 34%, transparent),
-                0 0 0 8px color-mix(in oklab, var(--speaking) 12%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--speaking) 30%, transparent),
+                0 0 10px color-mix(in oklab, var(--speaking) 14%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 5px color-mix(in oklab, var(--speaking) 60%, transparent),
-                0 0 0 14px color-mix(in oklab, var(--speaking) 24%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--speaking) 50%, transparent),
+                0 0 16px color-mix(in oklab, var(--speaking) 26%, transparent);
   }
 }
-/* A pill inteira ganha um anel dourado subtil + brilho enquanto falas. */
+/* A pill do micro ganha um anel azul limpo (Meet) enquanto falas. */
 .room-page .device-ctrl:has(> .ctrl.pulse) {
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--speaking) 65%, transparent),
-    0 0 18px color-mix(in oklab, var(--speaking) 38%, transparent),
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--speaking) 55%, transparent),
+    0 0 14px color-mix(in oklab, var(--speaking) 30%, transparent),
     inset 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
-/* Barras de voz dentro do botão do mic: maiores e nítidas. */
-.room-page .device-ctrl > .ctrl .speaking-bars { height: 22px; gap: 2.5px; }
-.room-page .device-ctrl > .ctrl .speaking-bars i { width: 3.5px; }
+/* Barras de voz dentro do botão do mic: proporção Meet (finas, nítidas, azul). */
+.room-page .device-ctrl > .ctrl .speaking-bars { height: 20px; gap: 2.5px; }
+.room-page .device-ctrl > .ctrl .speaking-bars i { width: 3px; }
 
 @media (prefers-reduced-motion: reduce) {
   .room-page .ctrl,
