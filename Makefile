@@ -169,9 +169,10 @@ test: fitness ## Corre os testes (fitness functions + cargo test + typecheck do 
 	@cd web && node_modules/.bin/tsc -p tsconfig.json --noEmit && printf "$(G)  ✓ tsc limpo$(Z)\n"
 
 .PHONY: fitness
-fitness: ## Fitness functions de arquitetura (Fowler): docs em sincronia + afinidade por sala (R3)
+fitness: ## Fitness functions de arquitetura (Fowler): docs, afinidade por sala (R3), isolamento RLS (ADR-0002)
 	@bash scripts/check-docs-drift.sh
 	@bash scripts/check-room-affinity.sh
+	@bash scripts/check-tenant-rls.sh
 
 .PHONY: migrate
 migrate: ## Corre as migrações pendentes (sqlx migrate run)
