@@ -26,12 +26,13 @@ Formato: **Sintoma** → **Causa raiz** → **Regra** (o que nunca fazer) → fi
 - **Regra:** manter o Service dedicado `delonix-server-ws` + ingress `upstream-hash-by: $arg_room` e o cliente a enviar `/ws?...&room=CODE`. Verificar: `curl .../ws?room=X` repetido cai sempre no mesmo pod. `/rtc` NÃO precisa de afinidade.
 - **Ficheiros:** `deploy/k8s/*-ingress.yaml`, `*-server.yaml` (Service `delonix-server-ws`), `web/src/signaling.ts` (`&room=`).
 
-### R4 — ICE "liga" mas o vídeo fica preto em K8s
-- **Sintoma:** `pc connected`, `track published`, mas o tile do outro fica preto (sem frames).
-- **Causa raiz:** o IP do pod (10.244.x) é inalcançável de fora; os host candidates do SFU não transportam media. O par ICE passa o check por um caminho que não entrega RTP.
-- **Regra:** em K8s ligar `FORCE_TURN_RELAY=1` (relay-only: `iceTransportPolicy:relay` no `/api/ice` e no `RTCConfiguration` do SFU) com **coturn alcançável** (stage: no HOST via `deploy/run-host-coturn.sh`, `TURN_HOST=172.30.0.1:3478`, `SFU_EXTERNAL_IP=` vazio). Em local (systemd, mesmo host) **NÃO** ligar relay-only — host candidates chegam.
-- **Ficheiros:** `server/src/config.rs` (`force_turn_relay`), `server/src/rooms.rs` (`ice_servers`), `server/src/sfu.rs` (`RTCConfiguration`), `deploy/run-host-coturn.sh`.
-- **⚠ Aberto:** a alocação TURN é instável (`438 Stale nonce`/`allocation timeout`/`refresh lifetime=0`) → media corta. Ver memória `k8s-media-turn`. Retomar: `stale-nonce` no coturn, refresh do TURN client no webrtc-rs 0.17.1, `subscribe_layer` no `sfu.rs`; produção → coturn em VM com IP público.
+### R4 — ICE "liga" mas o vídeo fica preto em K8s (hairpin relay-a-relay)
+- **Sintoma:** `pc connected`, `track published`, mas o tile do outro fica preto (sem frames). Logs coturn: sessões com `reason: allocation timeout` e **`peer usage: rp=0`** (nunca relayou um pacote de peer).
+- **Causa raiz:** o IP do pod (10.244.x) é inalcançável de fora → o SFU precisa de relay. MAS forçar `iceTransportPolicy:relay` nos **DOIS** lados pelo MESMO coturn faz o candidato de cada lado ser `coturn_ip:porta` → o "peer" que cada alocação tenta alcançar é o **próprio IP do coturn** → o coturn nega (hairpin: `403 Forbidden IP` p/ o próprio IP e loopback) → `peer rp=0` → timeout → preto. **NÃO é** instabilidade do cliente TURN nem o `438 Stale nonce` (esse é tratado pelo webrtc-rs: atualiza nonce e reenvia; ver `relay_conn.rs`).
+- **Regra:** relay-only **só no SFU** (`sfu.rs` `RTCConfiguration`); o **cliente fica `all`** (`/api/ice` NÃO emite `iceTransportPolicy:relay`) para oferecer candidato host/srflx com IP real. O par vira cliente-host(IP real) ↔ SFU-relay, e o peer da alocação do SFU é o IP real do cliente — que o coturn relaya. coturn alcançável (stage: HOST via `deploy/run-host-coturn.sh`, sem `--Verbose`, `TURN_HOST=172.30.0.1:3478`). Em local não ligar relay.
+- **Diagnóstico (repro sem 2 browsers):** dentro do container, `turnutils_peer -p 3480 &` + `turnutils_uclient -W <secret> -u t -e <IP-real> -r 3480 -p 3478 -n 5 <coturn-ip>` → 0% perda com IP real, 100% com o próprio IP do coturn. Confirma o hairpin.
+- **Ficheiros:** `server/src/config.rs` (`force_turn_relay`), `server/src/rooms.rs` (`ice_servers` — cliente `all`), `server/src/sfu.rs` (`RTCConfiguration` relay-only), `deploy/run-host-coturn.sh`.
+- **⚠ Limitação:** se AMBOS os lados forem mesmo obrigados a relay (NAT simétrico sem srflx), o hairpin volta → produção precisa de coturn com IP alcançável + ≥1 lado com candidato não-relay, ou TURN dedicado. Ver memória `k8s-media-turn`.
 
 ### R5 — `IVFWriter` PTS pela contagem de frames (gravação em velocidade errada)
 - **Sintoma:** vídeo gravado acelerado/lento.

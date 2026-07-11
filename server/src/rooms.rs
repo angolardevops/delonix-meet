@@ -326,9 +326,18 @@ pub async fn ice_servers(
     mac.update(username.as_bytes());
     let credential = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
 
-    // `iceTransportPolicy: relay` força a media do CLIENTE a passar pelo TURN —
-    // em K8s os host candidates do SFU não a transportam (ver Config).
-    let mut cfg = json!({
+    // O CLIENTE fica sempre em `all` (STUN+TURN, escolhe o melhor par ICE).
+    // NÃO forçar relay-only no cliente: só o SFU é relay-only (o IP de pod
+    // 10.244.x é inalcançável — ver Config/sfu.rs). Se AMBOS os lados fossem
+    // relay-only pelo MESMO coturn, o candidato de cada lado seria
+    // `coturn_ip:porta`, portanto o "peer" que cada alocação tenta alcançar
+    // seria o PRÓPRIO IP do coturn — que o coturn nega (403 Forbidden IP,
+    // hairpin relay-a-relay) → `peer rp=0` → media morta / vídeo preto.
+    // Com o cliente em `all`, o par fica cliente-host/srflx (IP real) ↔
+    // SFU-relay, e o peer da alocação do SFU é o IP real do cliente — que o
+    // coturn relaya normalmente. O cliente alcança o coturn via STUN/TURN
+    // (é o ponto de encontro) para o próprio srflx e para o relay do SFU.
+    let cfg = json!({
         "iceServers": [
             { "urls": [format!("stun:{}", state.config.turn_host)] },
             {
@@ -338,9 +347,6 @@ pub async fn ice_servers(
             }
         ]
     });
-    if state.config.force_turn_relay {
-        cfg["iceTransportPolicy"] = json!("relay");
-    }
     Ok(Json(cfg))
 }
 
