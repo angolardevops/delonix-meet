@@ -32,7 +32,15 @@ docker run -d --name "$NAME" --restart unless-stopped --network host \
   --realm=delonix \
   --min-port=50300 --max-port=50400 \
   --external-ip="$EXTERNAL_IP" \
+  --allowed-peer-ip="$EXTERNAL_IP" \
   --no-cli --no-tlsv1 --no-tlsv1_1 >/dev/null
+
+# --allowed-peer-ip=$EXTERNAL_IP: AUTORIZA o hairpin relay-a-relay. Em
+# relay-only nos dois lados (SFU + cliente), o candidato de cada um é
+# `EXTERNAL_IP:porta`, logo o "peer" de cada alocação é o PRÓPRIO IP do
+# coturn — negado por omissão (403 Forbidden IP) → vídeo preto. Este flag é
+# aditivo (exceção; não bloqueia relay p/ IPs reais). Provado com turnutils:
+# sem o flag, relay p/ EXTERNAL_IP = 100% perda; com o flag = 0%.
 
 sleep 2
 docker logs "$NAME" 2>&1 | tail -4
