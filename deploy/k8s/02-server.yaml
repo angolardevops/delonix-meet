@@ -18,6 +18,12 @@ spec:
     metadata:
       labels:
         app: delonix-server
+      # Descoberta pelo Prometheus (scrape do POD diretamente em :8180/metrics —
+      # NÃO exposto no ingress, que só encaminha /api,/ws,/rtc). Ver metrics.rs.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8180"
+        prometheus.io/path: "/metrics"
     spec:
       # O SFU é in-memory por pod: dar tempo para as sessões drenarem no SIGTERM
       # (rollout/drain) em vez de cortar abruptamente. Com maxUnavailable:0 +
