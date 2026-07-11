@@ -51,8 +51,9 @@ Formato: **Sintoma** → **Causa raiz** → **Regra** (o que nunca fazer) → fi
 ### R6 — Rate-limit WS derruba o próprio anfitrião
 - **Sintoma:** o host cai durante a rajada de ICE/renegociação.
 - **Causa raiz:** janela fixa apertada não absorve a rajada legítima de ICE.
-- **Regra:** manter **token bucket** (600 burst / 300 sustained) em `signaling.rs`. Não voltar a janela fixa baixa.
-- **Ficheiros:** `server/src/signaling.rs`.
+- **Regra:** manter **token bucket** (600 burst / 300 sustained no `/ws`; 120/60 no `/rtc`). Não voltar a janela fixa baixa.
+- **Guardado por:** `rate_limit::TokenBucket` (struct única, usada por `signaling.rs` e `presence.rs`) + testes deterministas `r6_*` em `server/src/rate_limit.rs` (correm em `make test`). Um deles prova por contraste que a janela fixa cortaria a rajada.
+- **Ficheiros:** `server/src/rate_limit.rs` (`TokenBucket`), `server/src/signaling.rs`, `server/src/presence.rs`.
 
 ### R7 — Ações de sala partilhadas decididas no cliente
 - **Sintoma:** whiteboard fecha só para um; screen-share parado não limpa a apresentação para os outros; painel de transcrição abre para todos.
