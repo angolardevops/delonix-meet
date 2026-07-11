@@ -254,19 +254,18 @@ Ver `docs/competitive-positioning.md` para análise completa. Resumo:
 
 ## 10. Painel de revisores especializados
 
-Ver `docs/ai-reviewers.md` para perfis detalhados. Invocar como persona num prompt quando precisares de revisão especializada:
+**Subagentes autónomos** em `agents/` (invocar via Agent/`@nome`) — especialistas Delonix, cada um com o catálogo de regressões (`docs/reference/regressions.md`) no radar. Usar PROACTIVAMENTE nas áreas respetivas:
 
-| Persona | Especialidade | Invocar para |
+| Agente | Especialidade | Invocar para (ficheiros) |
 |---|---|---|
-| **Graydon Hoare** | Criador do Rust | Safety, lifetimes, async Tokio, zero-cost abstractions |
-| **Brendan Burns** | Co-criador do Kubernetes | Deploy, HA, resource limits, horizontal scaling, operador K8s |
-| **Justin Uberti** | Co-criador do WebRTC (ex-Google Meet/Hangouts) | SFU design, ICE, simulcast, congestion control, codec negotiation |
-| **Lars Bak** | Motor V8 (Google) → performance JS/WASM | WASM Whisper, Web Workers, JS engine bottlenecks |
-| **Lea Verou** | CSS/Web Standards (ex-W3C) | Design tokens, CSS architecture, acessibilidade |
-| **Adam Langley** | TLS/crypto (Google BoringSSL) | E2EE, TLS config, DTLS, key management |
-| **Phil Karlton / Mike Belshe** | HTTP/2, SPDY (Google/Microsoft) | Protocolo WebSocket, multiplexing, cabeçalhos |
-| **Zoom Platform Architect** (persona composta) | Reliability, escala de milhões de calls | Resiliência, fallback, TURN reliability, bitrate adaptation |
-| **MS Teams Compliance Architect** (persona composta) | eDiscovery, DLP, auditoria | Retenção de dados, audit logs, SCIM, DLP hooks |
+| **delonix-code** | Rust supremo (nível criador): safety, ownership/lifetimes, async Tokio, unsafe, perf hot-path RTP | `server/src/*.rs` (sobretudo `sfu.rs`, `recorder.rs`, `signaling.rs`) |
+| **delonix-devops** | Platform engineering: K8s, Docker, Ansible, Terraform, coturn/rede WebRTC, ingress, metallb, afinidade, media | `deploy/`, `deploy/k8s/`, Dockerfiles, Makefile, TURN |
+| **delonix-frontend** | Frontend supremo: React/TS/CSS4/HTML5/JS + UX Meet/Teams/Zoom | `web/src/**` (`Room.tsx`, `webrtc.ts`, `presence.ts`, `styles/`) |
+| **delonix-security-compliance** | Segurança (cripto/E2EE/TLS/DTLS/JWT/SSRF/rate-limit/cross-org) + compliance (eDiscovery/DLP/SCIM/audit/BNA/LGPD) | `auth.rs`, `e2ee.ts`, `webhooks.rs`, `config.rs`, `org.rs`, endpoints novos |
+| **webrtc-sfu-reviewer** | WebRTC/SFU (Justin Uberti): ICE, simulcast, codecs, media num-só-sentido | `sfu.rs`, `webrtc.ts`, `e2ee.ts`, `recorder.rs` |
+| **competitive-strategist** | Posicionamento vs Zoom/Teams/Meet, priorização de roadmap | features novas, decisões de produto |
+
+Personas adicionais (invocar em prompt, perfis em `docs/ai-reviewers.md`): **Lars Bak** (WASM/Worker), **Lea Verou** (CSS/a11y), **Zoom Reliability Architect** (fallback/TURN/redes degradadas).
 
 ---
 

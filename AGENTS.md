@@ -56,21 +56,20 @@ Portas dev: backend `8180`, frontend `5173`, Postgres `5435`, Redis `6379`, cotu
 
 **TS/React**: componentes funcionais + hooks; estado global via Context; mensagens WS tipadas (discriminant union); tokens CSS via custom properties (nunca hardcode de cor); i18n `useTranslation()`. **Nunca `var()` para dimensões de tiles** (transições congelam em background) — dimensões inline por tile.
 
-## 7. Painel de revisores (invocar como persona)
+## 7. Painel de revisores
 
-Ver [`docs/ai-reviewers.md`](docs/ai-reviewers.md) para perfis completos. Resumo:
+**Subagentes autónomos** em `agents/` (invocar via Agent/`@`) — especialistas Delonix, cada um com o catálogo de regressões no radar:
 
-| Persona | Domínio | Invocar para |
+| Agente | Domínio | Invocar para |
 |---|---|---|
-| **Graydon Hoare** (criador do Rust) | Safety, async Tokio, zero-cost | `sfu.rs`, `recorder.rs`, hot path RTP |
-| **Brendan Burns** (co-criador do K8s) | HA, scaling, operações, afinidade por sala | `deploy/`, `deploy/k8s/`, rollout |
-| **Justin Uberti** (co-criador do WebRTC, Google Meet) | ICE, simulcast, codecs, E2EE | `sfu.rs`, `webrtc.ts` |
-| **Adam Langley** (BoringSSL, Google) | E2EE, TLS/DTLS, JWT, SSRF, cookies | `auth.rs`, `e2ee.ts`, `webhooks.rs` |
-| **Lars Bak** (V8, Google) | WASM/Worker perf | `whisperWorker.ts`, `matte.ts` |
-| **Skype/Teams Media Architect** (composta, MS) | calling stack, resiliência, compliance | media, retenção, audit |
-| **Zoom Reliability Architect** (composta) | redes degradadas, fallback, escala | congestion, TURN, reconnect |
+| **delonix-code** | Rust supremo (nível criador): safety, ownership, async Tokio, perf hot-path | `server/src/*.rs`, sobretudo `sfu.rs`/`recorder.rs`/`signaling.rs` |
+| **delonix-devops** | Platform eng.: K8s, Docker, Ansible, Terraform, coturn/rede, afinidade, media | `deploy/`, `deploy/k8s/`, Dockerfiles, ingress, TURN |
+| **delonix-frontend** | Frontend supremo: React/TS/CSS4/HTML5/JS + UX Meet/Teams/Zoom | `web/src/**`, `Room.tsx`, `webrtc.ts`, `styles/` |
+| **delonix-security-compliance** | Segurança (cripto/E2EE/auth/SSRF) + compliance (eDiscovery/DLP/SCIM/BNA/LGPD) | `auth.rs`, `e2ee.ts`, `webhooks.rs`, `config.rs`, endpoints novos |
+| **webrtc-sfu-reviewer** | WebRTC/SFU (Justin Uberti): ICE, simulcast, codecs, media num-só-sentido | `sfu.rs`, `webrtc.ts`, `e2ee.ts`, `recorder.rs` |
+| **competitive-strategist** | Posicionamento vs Zoom/Teams/Meet, priorização de roadmap | features novas, decisões de produto |
 
-Para compute/performance, combinar **Graydon Hoare** (Rust, alocações) + **Brendan Burns** (recursos/limites K8s) + **Lars Bak** (WASM cliente).
+Personas adicionais (invocar em prompt quando útil): **Lars Bak** (WASM/Worker — `whisperWorker.ts`), **Zoom Reliability Architect** (redes degradadas, fallback TURN). Perfis completos em [`docs/ai-reviewers.md`](docs/ai-reviewers.md).
 
 ## 8. Gotchas conhecidos
 
