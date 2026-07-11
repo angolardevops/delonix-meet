@@ -1,58 +1,88 @@
-# coturn (TURN/STUN) — relay de media para NAT/firewalls restritivos.
+# coturn (TURN/STUN) — relay de media WebRTC.
 #
-# ⚠️  O TURN precisa de hostNetwork + IP público alcançável + um intervalo de
-#     portas UDP abertas no nó. Isto NÃO cabe no PSS "restricted", por isso vive
-#     no namespace delonix-data (baseline). Em muitos setups é mais simples
-#     correr o coturn FORA do cluster (VM com IP público) — ver deploy/DEPLOYMENT.md.
+# DUAS TOPOLOGIAS (escolhe uma):
 #
-# Requisitos antes de aplicar:
-#   1) EXTERNAL_IP = IP público do nó (o coturn anuncia-o aos clientes).
-#   2) static-auth-secret = MESMO valor que o TURN_SECRET da app (o backend
-#      assina credenciais TURN com esse segredo — ver rooms.rs ice_servers()).
-#   3) Portas UDP 3478 + 49160-49200 abertas no firewall do nó.
-apiVersion: v1
-kind: Secret
-metadata: { name: coturn-auth, namespace: delonix-data }
-type: Opaque
-stringData:
-  TURN_SECRET: "CHANGE_ME_same_as_app_TURN_SECRET"
-  EXTERNAL_IP: "CHANGE_ME_node_public_ip"
-  REALM: "turn.example.com"
+# (A) IN-CLUSTER + LoadBalancer  ← DEFAULT (stage/kind e prod com LB real)
+#     coturn corre como pod normal; um Service LoadBalancer dá-lhe um IP
+#     alcançável. O SFU (pod) relaya via ClusterIP/VIP e o browser via VIP —
+#     ambos SEM o double-NAT do docker. PROVADO em kind: relay pod→VIP e
+#     host→VIP a 0% perda (turnutils). É o padrão de produção K8s.
+#     CRÍTICO: `--external-ip` E `--allowed-peer-ip` = o IP do LoadBalancer.
+#       - external-ip: o coturn anuncia os candidatos relay nesse IP.
+#       - allowed-peer-ip: em relay-only nos DOIS lados, o "peer" de cada
+#         alocação é o próprio IP do coturn (hairpin) → sem este flag o coturn
+#         nega (403 Forbidden IP) e o vídeo fica preto. Ver docs/reference/regressions.md R4.
+#     Os clientes só precisam da porta 3478 (o relay-a-relay é interno ao
+#     coturn), por isso o LB expõe apenas UDP 3478.
+#
+# (B) FORA DO CLUSTER (VM com IP público)  ← alternativa prod sem LB no cluster
+#     Correr coturn numa VM (deploy/run-host-coturn.sh serve de base) e apontar
+#     TURN_HOST para o IP público. NÃO usar coturn-no-host da MESMA máquina do
+#     kind: o retorno UDP pod→bridge-docker é partido pelo SNAT (100% perda).
+#
+# Requisito comum: static-auth-secret = MESMO valor que TURN_SECRET da app
+# (o backend assina credenciais TURN com esse segredo — rooms.rs/sfu.rs).
+#
+# Config da app (01-config.yaml / configmap): TURN_HOST=<IP-do-LB>:3478,
+# FORCE_TURN_RELAY=1 (SFU e cliente relay-only), SFU_EXTERNAL_IP="" (vazio).
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: coturn, namespace: delonix-data, labels: { app: coturn } }
+metadata: { name: coturn, namespace: delonix-meet, labels: { app: coturn } }
 spec:
   replicas: 1
   selector: { matchLabels: { app: coturn } }
   template:
     metadata: { labels: { app: coturn } }
     spec:
-      hostNetwork: true # relay precisa das portas do nó
-      dnsPolicy: ClusterFirstWithHostNet
-      # Fixar num nó com IP público estável:
-      # nodeSelector: { delonix.io/turn: "true" }
       containers:
         - name: coturn
-          image: coturn/coturn:4.6-alpine
+          image: coturn/coturn:4.6
+          imagePullPolicy: IfNotPresent
           env:
-            - { name: TURN_SECRET, valueFrom: { secretKeyRef: { name: coturn-auth, key: TURN_SECRET } } }
-            - { name: EXTERNAL_IP, valueFrom: { secretKeyRef: { name: coturn-auth, key: EXTERNAL_IP } } }
-            - { name: REALM, valueFrom: { secretKeyRef: { name: coturn-auth, key: REALM } } }
+            # TURN_SECRET tem de ser IGUAL ao da app (Secret delonix-secrets).
+            - { name: TURN_SECRET, valueFrom: { secretKeyRef: { name: delonix-secrets, key: TURN_SECRET } } }
+            # IP do LoadBalancer (metallb). MUDAR se o pool/VIP mudar, ou para
+            # o IP público numa cloud com LB real.
+            - { name: EXTERNAL_IP, value: "172.30.0.201" }
           command: ["/bin/sh", "-c"]
           args:
             - >
-              exec turnserver -n --no-cli
+              exec turnserver -n --no-cli --log-file=stdout --simple-log
               --use-auth-secret --static-auth-secret="$TURN_SECRET"
-              --realm="$REALM" --external-ip="$EXTERNAL_IP"
-              --listening-port=3478 --min-port=49160 --max-port=49200
-              --no-multicast-peers --no-loopback-peers --stale-nonce=600
+              --realm=delonix --external-ip="$EXTERNAL_IP"
+              --allowed-peer-ip="$EXTERNAL_IP"
+              --listening-port=3478 --min-port=50300 --max-port=50400
+              --fingerprint --no-multicast-peers --stale-nonce=600
           ports:
             - { name: turn-udp, containerPort: 3478, protocol: UDP }
-            - { name: turn-tcp, containerPort: 3478, protocol: TCP }
+          readinessProbe:
+            tcpSocket: { port: 3478 }
+            initialDelaySeconds: 2
+            periodSeconds: 10
           resources:
             requests: { cpu: "100m", memory: "128Mi" }
             limits: { cpu: "1", memory: "512Mi" }
+          # NÃO usar `drop: [ALL]` + allowPrivilegeEscalation:false: o binário
+          # turnserver tem file-capabilities (cap_net_bind_service p/ a porta
+          # 3478 <1024); com no-new-privs o exec dá EPERM ("Operation not
+          # permitted"). Restricted PSS exigiria add NET_BIND_SERVICE; o
+          # namespace delonix-meet não o força.
           securityContext:
-            allowPrivilegeEscalation: false
-            capabilities: { drop: ["ALL"] }
+            allowPrivilegeEscalation: true
+            capabilities: { add: ["NET_BIND_SERVICE"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coturn
+  namespace: delonix-meet
+  labels: { app: coturn }
+spec:
+  type: LoadBalancer
+  # Fixa o VIP para bater com EXTERNAL_IP acima e TURN_HOST na config.
+  # Tem de estar dentro do pool metallb (deploy/k8s/metallb-pool.yaml).
+  loadBalancerIP: "172.30.0.201"
+  selector: { app: coturn }
+  ports:
+    - { name: turn-udp, port: 3478, targetPort: 3478, protocol: UDP }
