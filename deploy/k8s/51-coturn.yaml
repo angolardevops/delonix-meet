@@ -26,6 +26,17 @@
 # Config da app (01-config.yaml / configmap): TURN_HOST=<IP-do-LB>:3478,
 # FORCE_TURN_RELAY=1 (SFU e cliente relay-only), SFU_EXTERNAL_IP="" (vazio).
 ---
+# HA — decisão consciente: replicas:1 é CORRETO para a topologia atual.
+# Em relay-only nos dois lados, o SFU (pod) e o browser relayam UM pelo outro
+# ATRAVÉS de alocações no MESMO turnserver (hairpin). Duas réplicas partiriam:
+# o SFU (source IP A) e o browser (source IP B) podem cair em pods diferentes
+# → relay-A e relay-B em turnservers distintos → sem entrega. `sessionAffinity:
+# ClientIP` no Service NÃO resolve (afina por IP, e os dois lados TÊM IPs
+# diferentes). Escalar coturn exige um REDESENHO (dar ao SFU um candidato
+# alcançável não-relay via SFU_EXTERNAL_IP+porta exposta → o browser relaya e o
+# peer passa a ser um IP real, não o próprio coturn → alocações independentes,
+# aí sim N réplicas). Enquanto for hairpin: 1 réplica + liveness rápida. Sem PDB
+# (com 1 réplica um PDB só bloquearia drains de nó sem dar proteção).
 apiVersion: apps/v1
 kind: Deployment
 metadata: { name: coturn, namespace: delonix-meet, labels: { app: coturn } }
@@ -72,13 +83,17 @@ spec:
             tcpSocket: { port: 3478 }
             initialDelaySeconds: 2
             periodSeconds: 10
-          # coturn é SPOF (replicas:1 — o hairpin relay-a-relay exige que SFU e
-          # browser caiam no MESMO coturn, logo não escala trivialmente; ver o
-          # task de HA). Liveness reinicia-o se o listener travar.
+          # Liveness PROTOCOL-LEVEL: um STUN binding real (não só TCP accept)
+          # — valida que o listener UDP responde. Reinicia o pod se o turnserver
+          # travar mas mantiver o socket aberto. turnutils_stunclient devolve 0
+          # e imprime o reflexive addr quando o STUN responde.
           livenessProbe:
-            tcpSocket: { port: 3478 }
+            exec:
+              command: ["sh", "-c", "turnutils_stunclient -p 3478 127.0.0.1 >/dev/null 2>&1"]
             initialDelaySeconds: 10
             periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
           resources:
             requests: { cpu: "100m", memory: "128Mi" }
             limits: { cpu: "1", memory: "512Mi" }
@@ -103,6 +118,12 @@ spec:
   # Fixa o VIP para bater com EXTERNAL_IP acima e TURN_HOST na config.
   # Tem de estar dentro do pool metallb (deploy/k8s/metallb-pool.yaml).
   loadBalancerIP: "172.30.0.201"
+  # externalTrafficPolicy fica em Cluster (default): com replicas:1 o SNAT extra
+  # do kube-proxy é irrelevante e evita a armadilha do metallb L2. NÃO mudar
+  # para Local sem antes escalar coturn (ver comentário do Deployment): em L2 o
+  # metallb anuncia o VIP a partir de UM nó; com Local, tráfego que chegue a um
+  # nó sem pod coturn seria descartado.
+  externalTrafficPolicy: Cluster
   selector: { app: coturn }
   ports:
     - { name: turn-udp, port: 3478, targetPort: 3478, protocol: UDP }

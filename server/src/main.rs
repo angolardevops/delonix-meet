@@ -458,6 +458,39 @@ async fn main() {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
+    .with_graceful_shutdown(shutdown_signal())
     .await
     .unwrap();
+}
+
+/// Espera SIGTERM (K8s rollout/drain) ou Ctrl-C. Quando dispara, o axum PÁRA de
+/// aceitar novas ligações e deixa os handlers HTTP em curso terminar dentro do
+/// `terminationGracePeriodSeconds` (45s, ver 02-server.yaml). O endpoint do pod
+/// já foi removido do Service, portanto não chegam novos WS ao pod a terminar;
+/// os WS existentes correm até ao fim da graça e o cliente reconecta (reload em
+/// Room.tsx). NOTA: o drain PROATIVO dos WS (difundir "server-shutdown" para os
+/// clientes fecharem já, em vez de esperar a graça) fica deferido de propósito —
+/// mexeria no loop de inbound do signaling (território das regressões R1/R2) e
+/// exige teste dedicado de 2 browsers.
+async fn shutdown_signal() {
+    use tokio::signal;
+    let ctrl_c = async {
+        let _ = signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(e) => tracing::error!("falha a instalar handler de SIGTERM: {e}"),
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
+    tracing::info!("sinal de shutdown recebido — a drenar (graceful, sem aceitar novas ligações)");
 }

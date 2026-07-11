@@ -1,24 +1,34 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# Sem `namespace:` global — cada recurso já declara o seu (delonix / delonix-data).
-
-# Autoscale do backend (21-server-hpa.yaml) é OPT-IN — ver README antes de o
-# adicionar (exige afinidade por-sala). Postgres/Redis/coturn assumem-se geridos
-# ou externos (referenciados pelo Secret/ConfigMap).
+# FONTE ÚNICA de deploy — os MESMOS ficheiros que `make stage`/`prod` aplicam
+# (namespace delonix-meet). Não há "Set B" duplicado: os manifests 10/20/30/40
+# (namespace delonix) foram eliminados porque causavam drift — a correção de
+# config ia para lá e nunca chegava ao cluster (ver docs/reference/regressions.md R4).
+# Sem `namespace:` global — cada recurso declara o seu (delonix-meet / metallb-system).
+#
+# Alternativa ao Makefile:  kubectl apply -k deploy/k8s
+# (para stage/kind, correr antes: `make metallb` + `make infra-pull`, e prover a
+#  base de dados via helm — ver os targets `stage`/`prod` do Makefile.)
 resources:
   - 00-namespace.yaml
-  - 10-config-secret.yaml
-  - 20-server.yaml
-  - 30-web.yaml
-  - 40-ingress.yaml
-  - 50-data.yaml # Postgres + Redis (remover se usares BD gerida)
-  - 51-coturn.yaml # TURN (ou correr fora do cluster — ver README)
+  - 01-config.yaml # ConfigMap + Secret (stage). Prod: usar gestor de segredos.
+  - 02-server.yaml # Deployment + Services (/api + /ws dedicado) + PDB
+  - 03-web.yaml
+  - 04-ingress.yaml # /api,/rtc + /ws (upstream-hash-by:$arg_room — afinidade R3)
+  - 05-cert-manager.yaml # ClusterIssuer (prod; .local usa mkcert/CA interna)
+  - 51-coturn.yaml # TURN in-cluster + LoadBalancer (media relay — R4)
+  - metallb-pool.yaml # pool de VIPs (inclui o do coturn: 172.30.0.201)
+  # Dados (Postgres/Redis): por omissão via helm (bitnami) — ver Makefile.
+  # Alternativa em manifest plano: descomentar 50-data.yaml.
+  # - 50-data.yaml
+  # Autoscale do backend (21-server-hpa.yaml) é OPT-IN — só COM afinidade por
+  # sala. AI GPU worker (60-ai-gpu-worker.yaml) idem, opcional.
 
 # Aponta para o teu registo/tag. Ex.: kustomize edit set image ...
 images:
-  - name: ghcr.io/OWNER/delonix-server
-    newName: ghcr.io/OWNER/delonix-server
+  - name: delonix-server
+    newName: delonix-server
     newTag: latest
-  - name: ghcr.io/OWNER/delonix-web
-    newName: ghcr.io/OWNER/delonix-web
+  - name: delonix-web
+    newName: delonix-web
     newTag: latest
