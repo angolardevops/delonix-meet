@@ -367,6 +367,8 @@ async fn handle(state: Arc<AppState>, socket: WebSocket, user_id: Uuid, username
         tx: tx.clone(),
         writer,
     };
+    // Gauge de ligações /rtc ativas (dec automático no Drop).
+    let _ws_guard = crate::metrics::WsGuard::presence(state.metrics.clone());
 
     // Rate-limit por socket = TOKEN BUCKET (120 burst / 60 sustained). Janela
     // fixa apertada cortava rajadas legítimas (ver R6); o /rtc é menos bursty
