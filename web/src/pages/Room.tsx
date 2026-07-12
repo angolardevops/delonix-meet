@@ -1998,7 +1998,10 @@ export default function Room({
           </div>
         )}
 
-        {readyOpen && roomState === 'in' && (
+        {/* Cartão "reunião pronta" (link de convite): SÓ para o anfitrião —
+            um convidado não é dono da reunião e não deve ser convidado a
+            partilhar o link como se a tivesse criado. */}
+        {readyOpen && isHost && roomState === 'in' && (
           <div className="ready-card">
             <div className="ready-head">
               <h3>A tua reunião está pronta.</h3>
