@@ -19,6 +19,8 @@ import {
   User,
 } from '../api'
 import { CloseIcon, DownloadIcon, FilmIcon, NoteIcon, ShareLinkIcon, TrashIcon } from '../icons'
+import PageHeader from '../components/PageHeader'
+import EmptyState from '../components/EmptyState'
 
 export default function Recordings() {
   const { t } = useTranslation()
@@ -50,28 +52,26 @@ export default function Recordings() {
 
   return (
     <div className="page">
-      <header className="page-head">
-        <h1>
-          <FilmIcon /> {t('recordings.title')}
-        </h1>
-        <p className="muted">{t('recordings.subtitle')}</p>
-        <div className="seg view-toggle">
-          <button className={view === 'cards' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('cards')}>
-            ▦ {t('recordings.viewCards')}
-          </button>
-          <button className={view === 'table' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('table')}>
-            ☰ {t('recordings.viewTable')}
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        icon={<FilmIcon />}
+        title={t('recordings.title')}
+        subtitle={t('recordings.subtitle')}
+        actions={
+          <div className="seg view-toggle">
+            <button className={view === 'cards' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('cards')}>
+              ▦ {t('recordings.viewCards')}
+            </button>
+            <button className={view === 'table' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('table')}>
+              ☰ {t('recordings.viewTable')}
+            </button>
+          </div>
+        }
+      />
 
       {loading && <p className="muted">{t('recordings.loading')}</p>}
       {error && <div className="error">{error}</div>}
       {!loading && items.length === 0 && (
-        <div className="empty-state">
-          <FilmIcon />
-          <p>{t('recordings.empty')}</p>
-        </div>
+        <EmptyState icon={<FilmIcon />} title={t('recordings.empty')} />
       )}
 
       {view === 'table' && items.length > 0 && (

@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { myOrgs, updateMe, User } from '../api'
 import CommandPalette from './CommandPalette'
+import NotificationCenter from './NotificationCenter'
 import { setLanguage } from '../i18n'
 import { appNameParts, getAppName, getLoginBg, setAppName, setLoginBg } from '../branding'
 import PasswordInput from './PasswordInput'
@@ -385,6 +386,7 @@ export default function Shell({
           ))}
         </nav>
         <div className="shell-nav-foot">
+          <NotificationCenter onNavigate={onNavigate} />
           <button className="nav-item" data-tour="settings" onClick={() => setSettingsOpen(true)} title={collapsed ? t('settings.title') : undefined}>
             <SettingsIcon />
             <span>{t('settings.title')}</span>

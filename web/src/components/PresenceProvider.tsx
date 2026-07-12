@@ -14,6 +14,8 @@ interface PresenceCtx {
   online: Set<string>
   isOnline: (id: string) => boolean
   startCall: (opts: { targets?: string[]; groupId?: string; kind: 'video' | 'voice'; title?: string }) => void
+  missed: MissedCall[]
+  ackMissed: () => void
 }
 
 const Ctx = createContext<PresenceCtx | null>(null)
@@ -165,8 +167,11 @@ export default function PresenceProvider({
       online,
       isOnline: (id: string) => online.has(id),
       startCall: (opts) => presenceRef.current?.startCall(opts),
+      missed,
+      ackMissed: dismissMissed,
     }),
-    [online],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [online, missed],
   )
 
   function accept(c: Ringing) {
