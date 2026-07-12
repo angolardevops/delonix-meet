@@ -3436,6 +3436,41 @@ button.link:hover {
 .layout-opt small { color: var(--muted); font-size: 0.72rem; }
 .layout-ico { font-size: 1.05rem; width: 22px; text-align: center; flex: none; }
 
+/* ============================================================
+   Pre-join (green room) — pages/Room.tsx roomState 'prejoin'
+   ============================================================ */
+.prejoin-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: var(--space-4); }
+.prejoin-card {
+  width: min(520px, 94vw); display: flex; flex-direction: column; gap: var(--space-3);
+  background: var(--surface, #292a2d); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: var(--space-5); box-shadow: var(--shadow-2);
+  animation: tour-card-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.prejoin-title { margin: 0; font-size: 1.3rem; font-family: 'Space Grotesk Variable', sans-serif; }
+.prejoin-code { margin: -4px 0 0; color: var(--muted); font-size: 0.86rem; }
+.prejoin-code code { font-family: 'IBM Plex Mono', monospace; }
+.prejoin-preview {
+  position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius-md);
+  background: var(--tile-bg, #0e1219); overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.prejoin-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); /* espelho, como o tile local */ }
+.prejoin-avatar { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--muted); }
+.prejoin-avatar .tile-avatar { width: 72px; height: 72px; font-size: 1.7rem; }
+.prejoin-mic-live { position: absolute; top: 10px; left: 12px; font-size: 0.95rem; animation: tour-pulse 1.2s ease-out infinite; }
+.prejoin-toggles { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
+.prejoin-devices { display: flex; flex-wrap: wrap; gap: 8px; }
+.prejoin-devices .dev-chip { flex: 1 1 180px; }
+.prejoin-status { margin: 0; color: var(--accent-2, #eda33b); font-size: 0.84rem; }
+.prejoin-actions { display: flex; justify-content: space-between; align-items: center; margin-top: var(--space-2); }
+.prejoin-join {
+  background: var(--accent, #c8201d); color: #fff; border: none; cursor: pointer;
+  padding: 0.7rem 1.6rem; border-radius: 999px; font-size: 0.95rem; font-weight: 600;
+  transition: transform 0.15s var(--ease-ctrl, ease), box-shadow 0.15s;
+}
+.prejoin-join:hover { transform: translateY(-1px); box-shadow: 0 8px 22px color-mix(in oklab, var(--accent, #c8201d) 45%, transparent); }
+.prejoin-join:active { transform: scale(0.97); }
+
 /* Painel lateral unificado — tira de abas (Pessoas · Chat · Ferramentas). */
 .panel-tabs { display: flex; gap: 2px; }
 .panel-tab {

@@ -172,7 +172,7 @@ function buildMoM(lines: string[]): string {
   return out.join('\n')
 }
 
-type RoomState = 'connecting' | 'waiting' | 'denied' | 'kicked' | 'in' | 'e2ee-pass'
+type RoomState = 'prejoin' | 'connecting' | 'waiting' | 'denied' | 'kicked' | 'in' | 'e2ee-pass'
 type Panel = 'none' | 'chat' | 'people' | 'settings' | 'tools'
 
 // Tira de abas do painel lateral unificado (Pessoas · Chat · Ferramentas),
@@ -222,7 +222,21 @@ export default function Room({
   onLeave: () => void
   onSwitch?: (code: string) => void
 }) {
-  const [roomState, setRoomState] = useState<RoomState>('connecting')
+  // Pre-join (green room): por omissão entra-se pelo ecrã de preparação.
+  // SALTA-SE quando: (a) chamada de voz atendida (o outro lado está à espera do
+  // ring) ou (b) rejoin recente (< 60s) — o auto-reconnect por reload (onclose)
+  // e as trocas de breakout não devem voltar a mostrar o prejoin.
+  const [joinIntent, setJoinIntent] = useState<boolean>(() => {
+    const recent = Date.now() - Number(sessionStorage.getItem(`dx_rejoin_${code}`) || 0) < 60_000
+    return Boolean(voiceOnly) || recent
+  })
+  const joinIntentRef = useRef(joinIntent)
+  const [roomState, setRoomState] = useState<RoomState>(joinIntent ? 'connecting' : 'prejoin')
+  // Stream do preview do prejoin — entregue à chamada no join (handoff), para
+  // não readquirir a câmara (evita flicker e "câmara ocupada" em alguns SOs).
+  const previewStreamRef = useRef<MediaStream | null>(null)
+  const prejoinPermErrRef = useRef('')
+  const prejoinVideoRef = useRef<HTMLVideoElement | null>(null)
   const [peers, setPeers] = useState<RemotePeer[]>([])
   const [waitingQueue, setWaitingQueue] = useState<PeerInfo[]>([])
   const [reactions, setReactions] = useState<FloatingReaction[]>([])
@@ -522,7 +536,64 @@ export default function Room({
     return () => clearInterval(t)
   }, [])
 
+  // ---- Pre-join (green room): SÓ media local para o preview. ----
+  // NÃO cria Signaling nem SfuCall (alinhado com R2: nada de ofertas antes de
+  // entrar). O stream é entregue ao efeito principal no clique em Entrar.
   useEffect(() => {
+    if (roomState !== 'prejoin') return
+    let cancelled = false
+    const levels = new LevelWatcher((s) => setSpeaking(new Set(s)))
+    ;(async () => {
+      let permErr = ''
+      const getMedia = (c: MediaStreamConstraints) =>
+        navigator.mediaDevices.getUserMedia(c).catch((e: DOMException) => {
+          if (e?.name === 'NotAllowedError' || e?.name === 'SecurityError') permErr = 'denied'
+          else if (e?.name === 'NotReadableError' && !permErr) permErr = 'busy'
+          else if (e?.name === 'NotFoundError' && !permErr) permErr = 'missing'
+          throw e
+        })
+      const stream = await getMedia({ audio: audioConstraints(), video: videoConstraints() })
+        .catch(() => getMedia({ audio: audioConstraints() }))
+        .catch(() => new MediaStream())
+      if (cancelled) {
+        stream.getTracks().forEach((t) => t.stop())
+        return
+      }
+      stream.getVideoTracks().forEach((t) => (t.contentHint = 'motion'))
+      previewStreamRef.current = stream
+      prejoinPermErrRef.current = permErr
+      const hasVideo = stream.getVideoTracks().length > 0
+      setHasLocalVideo(hasVideo)
+      if (stream.getAudioTracks().length === 0) setMicOn(false)
+      if (permErr === 'denied' && stream.getTracks().length === 0)
+        setStatus('Câmara/microfone BLOQUEADOS neste site — clica no cadeado 🔒 na barra de endereço, permite Câmara e Microfone, e recarrega a página.')
+      else if (permErr === 'missing') setStatus('Não foi detetada câmara nem microfone neste dispositivo.')
+      else if (stream.getTracks().length === 0) setStatus('Sem câmara/microfone — vais entrar em modo espectador')
+      else if (!hasVideo) setStatus('Câmara indisponível — vais entrar só com áudio.')
+      if (prejoinVideoRef.current) prejoinVideoRef.current.srcObject = stream
+      levels.watch('me', stream) // indicador "o mic está a captar-te"
+      void listDevices().then((d) => {
+        if (cancelled) return
+        setDevices(d)
+        setMicId(stream.getAudioTracks()[0]?.getSettings().deviceId ?? '')
+        setCamId(stream.getVideoTracks()[0]?.getSettings().deviceId ?? '')
+      })
+    })()
+    return () => {
+      cancelled = true
+      levels.close()
+      // Handoff: se estamos a ENTRAR, o efeito principal assume o stream — não
+      // parar as tracks. Só descarta se saímos do prejoin sem entrar (unmount).
+      if (!joinIntentRef.current) {
+        previewStreamRef.current?.getTracks().forEach((t) => t.stop())
+        previewStreamRef.current = null
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomState === 'prejoin'])
+
+  useEffect(() => {
+    if (!joinIntent) return // à espera do Entrar do prejoin (nada foi iniciado)
     let cancelled = false
     async function start() {
       try {
@@ -538,11 +609,19 @@ export default function Room({
             else if (e?.name === 'NotFoundError' && !permErr) permErr = 'missing'
             throw e
           })
-        const stream = await getMedia(
-          voiceOnly ? { audio: audioConstraints() } : { audio: audioConstraints(), video: videoConstraints() },
-        )
-          .catch(() => getMedia({ audio: audioConstraints() }))
-          .catch(() => new MediaStream())
+        // Handoff do prejoin: reutiliza o stream do preview (dispositivos e
+        // toggles escolhidos lá) em vez de readquirir — sem flicker e sem risco
+        // de "câmara ocupada". Sem prejoin (voz/rejoin), adquire como sempre.
+        const handoff = previewStreamRef.current
+        previewStreamRef.current = null
+        if (handoff) permErr = prejoinPermErrRef.current
+        const stream =
+          handoff ??
+          (await getMedia(
+            voiceOnly ? { audio: audioConstraints() } : { audio: audioConstraints(), video: videoConstraints() },
+          )
+            .catch(() => getMedia({ audio: audioConstraints() }))
+            .catch(() => new MediaStream()))
         stream.getVideoTracks().forEach((t) => (t.contentHint = 'motion'))
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop())
@@ -575,6 +654,8 @@ export default function Room({
         if (initRaw && noiseSuppression) {
           const clean = await denoiseMic(initRaw, true)
           if (clean !== initRaw) {
+            // Preserva o mute escolhido no prejoin (a track limpa nasce enabled).
+            clean.enabled = initRaw.enabled
             stream.removeTrack(initRaw)
             stream.addTrack(clean)
           }
@@ -646,6 +727,9 @@ export default function Room({
           const last = Number(sessionStorage.getItem('dx_reconnect_at') || 0)
           if (now - last > 8000) {
             sessionStorage.setItem('dx_reconnect_at', String(now))
+            // Renova o rejoin AGORA (o carimbo do join pode ter > 60s): o reload
+            // de reconexão tem de saltar o prejoin e voltar direto à chamada.
+            sessionStorage.setItem(`dx_rejoin_${code}`, String(now))
             setStatus('Ligação perdida — a reconectar…')
             setTimeout(() => {
               if (!cancelled) location.reload()
@@ -659,6 +743,7 @@ export default function Room({
         signal.on('waiting', () => setRoomState('waiting'))
         signal.on('denied', () => setRoomState('denied'))
         signal.on('kicked', () => {
+          sessionStorage.removeItem(`dx_rejoin_${code}`)
           setRoomState('kicked')
           callRef.current?.hangup()
         })
@@ -704,6 +789,9 @@ export default function Room({
         // A grelha é orientada ao roster: tile ao entrar, stream quando chegar.
         signal.on('joined', (m) => {
           setRoomState('in')
+          // Marca o rejoin recente: o reload de reconexão (onclose) e os breakouts
+          // saltam o prejoin dentro desta janela (ver init do joinIntent).
+          sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
           callHolder.start() // arranca a chamada SÓ agora (após admissão/entrada direta)
           setStatus(spectator ? 'Sem câmara/microfone — modo espectador' : '')
           // Carrega histórico de chat (best-effort, não bloqueia a sala).
@@ -883,7 +971,7 @@ export default function Room({
       callRef.current?.hangup()
       localStreamRef.current?.getTracks().forEach((t) => t.stop())
     }
-  }, [code, passTry])
+  }, [code, passTry, joinIntent])
 
   // Aviso de fala simultânea: ≥2 pessoas a falar durante >1.5s seguidos.
   useEffect(() => {
@@ -1100,6 +1188,7 @@ export default function Room({
   /** Sair da sala. Se houver transcrição por guardar, grava a ata AUTOMATICAMENTE
    *  antes de sair (#7) — o anfitrião não perde as notas ao encerrar. */
   async function leaveRoom() {
+    sessionStorage.removeItem(`dx_rejoin_${code}`) // saída intencional → próximo acesso volta ao prejoin
     if (isHost && lines.length > 0 && !momSaved) {
       setStatus('A guardar a ata antes de sair…')
       try {
@@ -1109,6 +1198,48 @@ export default function Room({
       }
     }
     onLeave()
+  }
+
+  // ---- Handlers do pre-join (operam SÓ no stream de preview; sem SfuCall) ----
+  function prejoinJoin() {
+    joinIntentRef.current = true // antes do setState: o cleanup do prejoin lê isto (handoff)
+    setJoinIntent(true)
+    setRoomState('connecting')
+  }
+  function prejoinToggle(kind: 'mic' | 'cam') {
+    const s = previewStreamRef.current
+    const t = kind === 'mic' ? s?.getAudioTracks()[0] : s?.getVideoTracks()[0]
+    if (!t) return // sem dispositivo (espectador) — nada a alternar
+    t.enabled = !t.enabled
+    if (kind === 'mic') setMicOn(t.enabled)
+    else setCamOn(t.enabled)
+  }
+  async function prejoinSwitch(kind: 'mic' | 'cam', deviceId: string) {
+    const s = previewStreamRef.current
+    if (!s || !deviceId) return
+    try {
+      const ns = await navigator.mediaDevices.getUserMedia(
+        kind === 'mic' ? { audio: audioConstraints(deviceId) } : { video: videoConstraints(deviceId) },
+      )
+      const nt = kind === 'mic' ? ns.getAudioTracks()[0] : ns.getVideoTracks()[0]
+      const old = kind === 'mic' ? s.getAudioTracks()[0] : s.getVideoTracks()[0]
+      if (old) {
+        nt.enabled = old.enabled // preserva o mute do toggle
+        old.stop()
+        s.removeTrack(old)
+      }
+      if (kind === 'cam') nt.contentHint = 'motion'
+      s.addTrack(nt)
+      if (kind === 'mic') setMicId(deviceId)
+      else {
+        setCamId(deviceId)
+        setHasLocalVideo(true)
+      }
+      // Track trocada → re-liga o <video> do preview.
+      if (prejoinVideoRef.current) prejoinVideoRef.current.srcObject = s
+    } catch {
+      setStatus('Não foi possível trocar de dispositivo')
+    }
   }
 
   /** Troca o microfone e/ou reaplica a supressão de ruído. */
@@ -1426,6 +1557,94 @@ export default function Room({
     const names = [...speaking].map((id) => (id === 'me' ? 'tu' : peers.find((p) => p.peerId === id)?.username ?? '')).filter(Boolean)
     return names.join(' e ')
   }, [talkOver, speaking, peers])
+
+  // ---- Pre-join (green room): preview + dispositivos ANTES de entrar. ----
+  if (roomState === 'prejoin') {
+    const me = currentUser()?.username ?? 'eu'
+    return (
+      <div className="room-page prejoin-page">
+        <div className="prejoin-card">
+          <h2 className="prejoin-title">Pronto para entrar?</h2>
+          <p className="prejoin-code">Sala <code>{code}</code></p>
+          <div className="prejoin-preview">
+            {hasLocalVideo && camOn ? (
+              <video
+                // Callback ref: o <video> monta DEPOIS do stream chegar (hasLocalVideo)
+                // — liga o preview aqui, qualquer que seja a ordem (cf. attachLocalVideo).
+                ref={(node) => {
+                  prejoinVideoRef.current = node
+                  if (node && !node.srcObject) node.srcObject = previewStreamRef.current
+                }}
+                autoPlay
+                playsInline
+                muted
+                className="prejoin-video"
+              />
+            ) : (
+              <div className="prejoin-avatar">
+                <span className="tile-avatar" style={{ background: peerColor(me) }}>
+                  {me.slice(0, 1).toUpperCase()}
+                </span>
+                <small>{hasLocalVideo ? 'Câmara desligada' : 'Sem câmara'}</small>
+              </div>
+            )}
+            {micOn && speaking.has('me') && <span className="prejoin-mic-live" title="O microfone está a captar-te">🎙</span>}
+            <div className="prejoin-toggles">
+              <button
+                className={micOn ? 'ctrl' : 'ctrl off'}
+                onClick={() => prejoinToggle('mic')}
+                title={micOn ? 'Desligar microfone' : 'Ligar microfone'}
+                aria-pressed={!micOn}
+              >
+                {micOn ? <MicIcon /> : <MicOffIcon />}
+              </button>
+              <button
+                className={camOn && hasLocalVideo ? 'ctrl' : 'ctrl off'}
+                onClick={() => prejoinToggle('cam')}
+                title={camOn ? 'Desligar câmara' : 'Ligar câmara'}
+                aria-pressed={!camOn}
+              >
+                {camOn && hasLocalVideo ? <CamIcon /> : <CamOffIcon />}
+              </button>
+            </div>
+          </div>
+
+          <div className="prejoin-devices">
+            <label className="dev-chip">
+              <MicIcon />
+              <select value={micId} onChange={(e) => void prejoinSwitch('mic', e.target.value)}>
+                {devices.mics.length === 0 && <option value="">Microfone</option>}
+                {devices.mics.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>{d.label || 'Microfone'}</option>
+                ))}
+              </select>
+            </label>
+            <label className="dev-chip">
+              <CamIcon />
+              <select value={camId} onChange={(e) => void prejoinSwitch('cam', e.target.value)}>
+                {devices.cams.length === 0 && <option value="">Câmara</option>}
+                {devices.cams.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>{d.label || 'Câmara'}</option>
+                ))}
+              </select>
+            </label>
+            <button className="dev-chip icon" title="Testar os altifalantes" onClick={() => void playTestTone(speakerId)}>
+              🔊 Testar som
+            </button>
+          </div>
+
+          {status && <p className="prejoin-status">{status}</p>}
+
+          <div className="prejoin-actions">
+            <button className="btn-ghost small" onClick={() => onLeave()}>Cancelar</button>
+            <button className="prejoin-join" onClick={prejoinJoin}>
+              Entrar agora
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (roomState === 'e2ee-pass') {
     return (
