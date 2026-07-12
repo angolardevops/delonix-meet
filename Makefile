@@ -167,6 +167,7 @@ test: fitness ## Corre os testes (fitness functions + cargo test + typecheck do 
 	@printf "$(C)▶ testes$(Z)\n"
 	@cd server && cargo test --release
 	@cd web && node_modules/.bin/tsc -p tsconfig.json --noEmit && printf "$(G)  ✓ tsc limpo$(Z)\n"
+	@cd web && node_modules/.bin/vitest run && printf "$(G)  ✓ vitest (R1/R2)$(Z)\n"
 
 .PHONY: fitness
 fitness: ## Fitness functions de arquitetura (Fowler): docs, afinidade por sala (R3), isolamento RLS (ADR-0002)

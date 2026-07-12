@@ -21,6 +21,7 @@ import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
 import { BreakoutRoom, PeerInfo, PollView, QaView, Signaling, WbStroke } from '../signaling'
 import { ThemePicker } from '../components/Shell'
 import { Call, MeshCall, SfuCall } from '../webrtc'
+import { makeCallHolderStart } from '../sfuLifecycle'
 import {
   BlurIcon, CamIcon, CamOffIcon, ChatIcon, ChevronUpIcon, CloseIcon, CubeIcon, DownloadIcon, EmojiIcon, HandIcon,
   HangupIcon, MicIcon, MicOffIcon, NoteIcon, PeopleIcon, RecordIcon, SettingsIcon, ShareIcon, StageIcon, StopIcon,
@@ -818,14 +819,16 @@ export default function Room({
           },
         }
         // Preenche o holder — só arranca quando o handler 'joined' o invocar
-        // (após admissão). Guarda anti-duplo-arranque.
-        callHolder.start = () => {
-          if (callRef.current || cancelled) return
-          callRef.current =
+        // (após admissão). A guarda (idempotência + não-montar-em-espera = R1/R2)
+        // vive em makeCallHolderStart, testada em sfuLifecycle.test.ts.
+        callHolder.start = makeCallHolderStart({
+          ref: callRef,
+          isCancelled: () => cancelled,
+          create: () =>
             room.topology === 'sfu'
               ? new SfuCall(signal, stream, rtcConfig, callbacks, crypto)
-              : new MeshCall(signal, stream, rtcConfig, callbacks, crypto)
-        }
+              : new MeshCall(signal, stream, rtcConfig, callbacks, crypto),
+        })
       } catch (err) {
         setStatus(`Erro: ${(err as Error).message}`)
       }
