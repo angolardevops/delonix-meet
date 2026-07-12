@@ -175,6 +175,42 @@ function buildMoM(lines: string[]): string {
 type RoomState = 'connecting' | 'waiting' | 'denied' | 'kicked' | 'in' | 'e2ee-pass'
 type Panel = 'none' | 'chat' | 'people' | 'settings' | 'tools'
 
+// Tira de abas do painel lateral unificado (Pessoas · Chat · Ferramentas),
+// estilo Teams/Zoom — troca de painel sem fechar. Pura UI sobre o estado `panel`.
+function PanelTabs({
+  active,
+  onSelect,
+  unreadChat,
+  total,
+}: {
+  active: Panel
+  onSelect: (p: Panel) => void
+  unreadChat: number
+  total: number
+}) {
+  const tabs: { key: Panel; label: string; badge?: number }[] = [
+    { key: 'people', label: 'Pessoas', badge: total },
+    { key: 'chat', label: 'Chat', badge: unreadChat || undefined },
+    { key: 'tools', label: 'Ferramentas' },
+  ]
+  return (
+    <div className="panel-tabs" role="tablist">
+      {tabs.map((tb) => (
+        <button
+          key={tb.key}
+          role="tab"
+          aria-selected={active === tb.key}
+          className={active === tb.key ? 'panel-tab active' : 'panel-tab'}
+          onClick={() => onSelect(tb.key)}
+        >
+          {tb.label}
+          {tb.badge ? <span className="panel-tab-badge">{tb.badge}</span> : null}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function Room({
   code,
   voiceOnly = false,
@@ -1785,7 +1821,7 @@ export default function Room({
         {panel === 'chat' && (
           <aside className="side-panel">
             <div className="panel-head">
-              <h3>Mensagens na chamada</h3>
+              <PanelTabs active={panel} onSelect={(p) => { setPanel(p); if (p === 'chat') setUnreadChat(0) }} unreadChat={unreadChat} total={total} />
               <button className="panel-close" onClick={() => setPanel('none')}><CloseIcon /></button>
             </div>
             <p className="chat-notice-bar">💬 Mensagens guardadas durante a reunião. Usa @ para mencionar alguém.</p>
@@ -1870,7 +1906,7 @@ export default function Room({
         {panel === 'people' && (
           <aside className="side-panel">
             <div className="panel-head">
-              <h3>Participantes ({total})</h3>
+              <PanelTabs active={panel} onSelect={(p) => { setPanel(p); if (p === 'chat') setUnreadChat(0) }} unreadChat={unreadChat} total={total} />
               <button className="panel-close" onClick={() => setPanel('none')}><CloseIcon /></button>
             </div>
             <button
@@ -2153,7 +2189,7 @@ export default function Room({
         {panel === 'tools' && (
           <aside className="side-panel tools-panel">
             <div className="panel-head">
-              <h3>Ferramentas de reunião</h3>
+              <PanelTabs active={panel} onSelect={(p) => { setPanel(p); if (p === 'chat') setUnreadChat(0) }} unreadChat={unreadChat} total={total} />
               <button className="panel-close" onClick={() => setPanel('none')}><CloseIcon /></button>
             </div>
 

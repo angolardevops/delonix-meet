@@ -3435,3 +3435,21 @@ button.link:hover {
 .layout-opt > span:last-child { display: flex; flex-direction: column; line-height: 1.2; }
 .layout-opt small { color: var(--muted); font-size: 0.72rem; }
 .layout-ico { font-size: 1.05rem; width: 22px; text-align: center; flex: none; }
+
+/* Painel lateral unificado — tira de abas (Pessoas · Chat · Ferramentas). */
+.panel-tabs { display: flex; gap: 2px; }
+.panel-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border-radius: 8px; background: none; border: none;
+  color: var(--muted); font-size: 0.86rem; font-weight: 500; cursor: pointer; transition: all 0.12s;
+}
+.panel-tab:hover { color: var(--text); background: var(--surface-3, rgba(255, 255, 255, 0.06)); }
+.panel-tab.active {
+  color: var(--text);
+  background: color-mix(in oklab, var(--accent-2, #eda33b) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent-2, #eda33b) 30%, transparent);
+}
+.panel-tab-badge {
+  min-width: 16px; height: 16px; padding: 0 4px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent, #c8201d); color: #fff; font-size: 0.62rem; font-weight: 700; border-radius: 9px; line-height: 1;
+}
