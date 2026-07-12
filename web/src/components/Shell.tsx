@@ -4,6 +4,7 @@ import { updateMe, User } from '../api'
 import { setLanguage } from '../i18n'
 import { appNameParts, getAppName, getLoginBg, setAppName, setLoginBg } from '../branding'
 import PasswordInput from './PasswordInput'
+import OnboardingTour from './OnboardingTour'
 import { CalendarIcon, ClockIcon, CloseIcon, FilmIcon, HomeIcon, MenuIcon, NoteIcon, PeopleIcon, SettingsIcon, StageIcon } from '../icons'
 
 export type NavKey = 'home' | 'directory' | 'recordings' | 'calendar' | 'analytics' | 'roadmap' | 'whiteboards'
@@ -164,6 +165,16 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
                 <h3>{t('settings.language')}</h3>
                 <LanguageToggle />
               </section>
+              <section className="settings-group">
+                <h3>{t('tour.settingsTitle', 'Introdução')}</h3>
+                <small className="muted">{t('tour.settingsHint', 'Faz de novo o tour guiado da plataforma.')}</small>
+                <button
+                  className="btn-sm"
+                  onClick={() => { onClose(); window.dispatchEvent(new Event('dx-start-tour')) }}
+                >
+                  {t('tour.replay', 'Ver introdução')}
+                </button>
+              </section>
             </>
           )}
 
@@ -286,6 +297,7 @@ export default function Shell({
           {NAV.map((n) => (
             <button
               key={n.key}
+              data-tour={`nav-${n.key}`}
               className={active === n.key ? 'nav-item active' : 'nav-item'}
               onClick={() => onNavigate(n.key)}
               title={collapsed ? t(n.labelKey) : undefined}
@@ -296,7 +308,7 @@ export default function Shell({
           ))}
         </nav>
         <div className="shell-nav-foot">
-          <button className="nav-item" onClick={() => setSettingsOpen(true)} title={collapsed ? t('settings.title') : undefined}>
+          <button className="nav-item" data-tour="settings" onClick={() => setSettingsOpen(true)} title={collapsed ? t('settings.title') : undefined}>
             <SettingsIcon />
             <span>{t('settings.title')}</span>
           </button>
@@ -308,6 +320,7 @@ export default function Shell({
       </aside>
       <main className="shell-main">{children}</main>
       {settingsOpen && <SettingsModal user={user} onClose={() => setSettingsOpen(false)} onLogout={onLogout} />}
+      <OnboardingTour />
     </div>
   )
 }

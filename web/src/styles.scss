@@ -3187,3 +3187,61 @@ button.link:hover {
   .room-topbar .rt-code, .room-topbar .rt-chip { display: none; }
   .room-topbar .waiting-pill { font-size: 0.75rem; padding: 5px 10px; }
 }
+
+/* ============================================================
+   Onboarding tour animado (components/OnboardingTour.tsx)
+   Spotlight sobre elementos reais + cartão-guia, com Skip.
+   ============================================================ */
+.tour-root { position: fixed; inset: 0; z-index: 4000; }
+.tour-blocker { position: absolute; inset: 0; }
+.tour-dim {
+  position: absolute; inset: 0;
+  background: rgba(3, 5, 9, 0.66); backdrop-filter: blur(2px);
+  animation: tour-fade 0.25s ease;
+}
+.tour-hole {
+  position: fixed; border-radius: 12px; pointer-events: none;
+  box-shadow: 0 0 0 9999px rgba(3, 5, 9, 0.66);
+  outline: 2px solid var(--accent-2, #eda33b);
+  transition:
+    top 0.35s cubic-bezier(0.4, 0, 0.2, 1), left 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tour-hole::after {
+  content: ''; position: absolute; inset: -3px; border-radius: 14px;
+  border: 2px solid var(--accent-2, #eda33b); animation: tour-pulse 1.8s ease-out infinite;
+}
+@keyframes tour-pulse { 0% { transform: scale(1); opacity: 0.7; } 100% { transform: scale(1.14); opacity: 0; } }
+@keyframes tour-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes tour-card-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes tour-card-in-center { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translateX(-50%); } }
+
+.tour-card {
+  position: fixed; z-index: 4001;
+  background: var(--surface-2, #12151c);
+  border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 14px;
+  padding: 20px 20px 16px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  color: var(--text, #f4f6fa); animation: tour-card-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tour-card.center { transform: translateX(-50%); animation: tour-card-in-center 0.34s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.tour-card h3 {
+  margin: 6px 0 8px; font-family: 'Space Grotesk Variable', sans-serif; font-size: 1.15rem;
+}
+.tour-card p { margin: 0; color: var(--text-2, #9ba3b2); line-height: 1.5; font-size: 0.92rem; }
+.tour-skip {
+  position: absolute; top: 12px; right: 14px; background: none; border: none;
+  color: var(--text-2, #9ba3b2); font-size: 0.76rem; cursor: pointer;
+}
+.tour-skip:hover { color: var(--text, #f4f6fa); }
+.tour-step-num {
+  font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--accent-2, #eda33b); font-weight: 600;
+}
+.tour-dots { display: flex; gap: 6px; margin: 14px 0; }
+.tour-dots span {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16); transition: all 0.3s;
+}
+.tour-dots span.on { background: var(--accent-2, #eda33b); width: 20px; border-radius: 4px; }
+.tour-dots span.past { background: rgba(255, 255, 255, 0.35); }
+.tour-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 4px; }
