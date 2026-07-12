@@ -29,8 +29,15 @@ export PATH := $(NODE_BIN):$(PATH)
 
 # ---- Kubernetes / kind ----
 KIND_CLUSTER      ?= delonix-stage
-IMAGE_SERVER      ?= delonix-server:latest
-IMAGE_WEB         ?= delonix-web:latest
+# Versionamento de imagens: tag derivada do git (ex.: v1.0.0-31-g89689ca).
+# Cada `make image-push` gera uma tag NOVA e faz pin nos Deployments
+# (kubectl set image) → rollouts deterministas, sem o problema do :latest
+# stale. Override: make image-push IMAGE_TAG=v1.1.0
+IMAGE_TAG         ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+IMAGE_SERVER_REPO ?= delonix-server
+IMAGE_WEB_REPO    ?= delonix-web
+IMAGE_SERVER      := $(IMAGE_SERVER_REPO):$(IMAGE_TAG)
+IMAGE_WEB         := $(IMAGE_WEB_REPO):$(IMAGE_TAG)
 METALLB_VERSION   ?= v0.14.9
 
 # Cores
@@ -195,33 +202,40 @@ migrate: ## Corre as migrações pendentes (sqlx migrate run)
 #   diretamente no containerd do nó, sem precisar de registry externo.
 
 .PHONY: image
-image: ## Constrói delonix-server:latest e delonix-web:latest para kind
+image: ## Constrói delonix-server e delonix-web com a tag versionada ($(IMAGE_TAG))
 	@printf "$(C)▶ build $(IMAGE_SERVER) (Rust — pode demorar ~10 min sem cache)$(Z)\n"
+	@# SEMPRE rebuild do frontend: o dist tem de refletir o código atual
+	@# (um dist stale foi a causa de "estilos perdidos" em stage — nunca reusar).
+	@export PATH="$(NODE_BIN):$$PATH"; \
+	  cd web && { [ -d node_modules ] || npm ci; } && npm run build
 	@docker build -f Dockerfile.server -t $(IMAGE_SERVER) .
 	@printf "$(C)▶ build $(IMAGE_WEB) (dist local → nginx, rápido)$(Z)\n"
-	@# Garante que o dist existe antes de empacotar
-	@[ -d web/dist ] || { \
-	  export PATH="$(NODE_BIN):$$PATH"; \
-	  cd web && npm ci && npm run build; \
-	}
 	@docker build -f Dockerfile.web.stage -t $(IMAGE_WEB) .
-	@printf "$(G)  ✓ imagens prontas localmente$(Z)\n"
+	@# :latest acompanha a última build (bootstrap dos manifests em cluster novo).
+	@docker tag $(IMAGE_SERVER) $(IMAGE_SERVER_REPO):latest
+	@docker tag $(IMAGE_WEB) $(IMAGE_WEB_REPO):latest
+	@printf "$(G)  ✓ imagens prontas: tag $(Y)$(IMAGE_TAG)$(Z)$(G) (+latest)$(Z)\n"
 	@docker images --format "  {{.Repository}}:{{.Tag}}  ({{.Size}})" \
-	  | grep -E "^  delonix-(server|web):" || true
+	  | grep -E "^  delonix-(server|web):($(IMAGE_TAG)|latest)" || true
 
 .PHONY: push
-push: ## Carrega imagens Delonix no cluster kind (kind load docker-image)
-	@printf "$(C)▶ kind load $(IMAGE_SERVER) → $(KIND_CLUSTER)$(Z)\n"
+push: ## kind load + PIN da tag versionada nos Deployments (rollout determinista)
+	@printf "$(C)▶ kind load $(IMAGE_SERVER) + $(IMAGE_WEB) → $(KIND_CLUSTER)$(Z)\n"
 	@kind load docker-image $(IMAGE_SERVER) --name $(KIND_CLUSTER)
-	@printf "$(C)▶ kind load $(IMAGE_WEB) → $(KIND_CLUSTER)$(Z)\n"
 	@kind load docker-image $(IMAGE_WEB) --name $(KIND_CLUSTER)
-	@printf "$(G)  ✓ imagens carregadas no kind '$(KIND_CLUSTER)'$(Z)\n"
-	@printf "   Rollout automático dos pods com a nova imagem:\n"
-	@kubectl rollout restart deployment/delonix-server deployment/delonix-web \
-	  -n delonix-meet 2>/dev/null || true
+	@$(MAKE) --no-print-directory pin
+
+.PHONY: pin
+pin: ## Fixa a tag $(IMAGE_TAG) nos Deployments e espera o rollout
+	@printf "$(C)▶ pin das imagens nos Deployments (tag $(IMAGE_TAG))$(Z)\n"
+	@kubectl -n delonix-meet set image deployment/delonix-server server=$(IMAGE_SERVER)
+	@kubectl -n delonix-meet set image deployment/delonix-web web=$(IMAGE_WEB)
+	@kubectl -n delonix-meet rollout status deployment/delonix-server --timeout=180s
+	@kubectl -n delonix-meet rollout status deployment/delonix-web --timeout=120s
+	@printf "$(G)  ✓ cluster a correr $(IMAGE_SERVER) / $(IMAGE_WEB)$(Z)\n"
 
 .PHONY: image-push
-image-push: image push ## Build + kind load (pipeline completo para o stage k8s)
+image-push: image push ## Build versionado + kind load + pin (pipeline completo p/ stage k8s)
 
 # Pré-puxa imagens da infra (Bitnami Postgres/Redis) do Docker Hub e
 # injeta-as no kind. Resolve o ImagePullBackOff quando o cluster não
@@ -323,6 +337,9 @@ stage: image-push ## Build + kind load + deploy k8s completo no cluster kind loc
 	@kubectl apply -f deploy/k8s/03-web.yaml
 	@kubectl apply -f deploy/k8s/04-ingress.yaml
 	@kubectl apply -f deploy/k8s/51-coturn.yaml   # media relay (R4) — imprescindível
+	@# Os manifests referenciam :latest (bootstrap) — re-pina a tag versionada
+	@# desta build, senão o apply desfazia o pin do image-push.
+	@$(MAKE) --no-print-directory pin
 	@printf "$(G)  ✓ Stage (Kind) pronto!$(Z)\n"
 	@LB_IP=$$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
 	    --no-headers -o custom-columns="IP:status.loadBalancer.ingress[0].ip" 2>/dev/null | grep -v '<none>'); \
