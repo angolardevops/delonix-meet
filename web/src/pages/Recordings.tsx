@@ -346,7 +346,12 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
     }
   }
 
-  async function revokeLink() {
+  // skipConfirm: usado pelo "Renovar" (que já é revogar+recriar de propósito).
+  async function revokeLink(skipConfirm = false) {
+    // Confirmação: sem ela, um duplo-clique em "Revogar" acerta no botão
+    // "Gerar link" que aparece NA MESMA posição → revoga e recria de imediato
+    // (parecia que "revogar recria outro link").
+    if (!skipConfirm && !confirm(t('recordings.confirmRevoke'))) return
     setLinkBusy(true)
     try {
       await revokeRecordingLink(rec.id)
@@ -455,7 +460,7 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
                 <button className="btn-sm ghost danger" disabled={linkBusy} onClick={() => void revokeLink()}>
                   {linkBusy ? t('recordings.revoking') : t('recordings.revokeLink')}
                 </button>
-                <button className="btn-sm ghost" disabled={linkBusy} onClick={() => void revokeLink().then(() => generateLink())}>
+                <button className="btn-sm ghost" disabled={linkBusy} onClick={() => void revokeLink(true).then(() => generateLink())}>
                   {t('recordings.renew')}
                 </button>
               </div>
