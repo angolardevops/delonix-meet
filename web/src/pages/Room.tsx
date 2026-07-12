@@ -434,6 +434,8 @@ export default function Room({
   const togglePin = (id: string) => setPinnedId((cur) => (cur === id ? null : id))
   // Layout da apresentação: plateia em baixo (default) ou na lateral direita.
   const [presLayout, setPresLayout] = useState<'bottom' | 'side'>('bottom')
+  // Menu do seletor de esquema (Galeria / Orador / Lado-a-lado) — estilo Teams/Zoom.
+  const [layoutMenu, setLayoutMenu] = useState(false)
   const [parallax, setParallax] = useState(false)
   const [tilt, setTilt] = useState({ x: 0, y: 0 })
   const [notesOpen, setNotesOpen] = useState(false)
@@ -2823,14 +2825,57 @@ export default function Room({
         </div>
 
         <div className="bar-right">
-          <Ctrl
-            plain
-            label={viewMode === 'grid' ? 'Modo conferência (palco)' : 'Modo grelha'}
-            active={viewMode === 'stage'}
-            onClick={() => setViewMode(viewMode === 'grid' ? 'stage' : 'grid')}
-          >
-            <StageIcon />
-          </Ctrl>
+          <div className="layout-picker">
+            <Ctrl
+              plain
+              label="Esquema da vista"
+              active={layoutMenu || viewMode === 'stage'}
+              onClick={() => setLayoutMenu((v) => !v)}
+            >
+              <StageIcon />
+            </Ctrl>
+            {layoutMenu && (
+              <>
+                <div className="menu-backdrop" onClick={() => setLayoutMenu(false)} />
+                <div className="device-menu layout-menu">
+                  <div className="layout-menu-title">Esquema</div>
+                  <button
+                    className={effectiveViewMode === 'grid' && !presentation ? 'layout-opt active' : 'layout-opt'}
+                    onClick={() => { setViewMode('grid'); setPinnedId(null); setLayoutMenu(false) }}
+                  >
+                    <span className="layout-ico">▦</span>
+                    <span><strong>Galeria</strong><small>Todos em grelha</small></span>
+                  </button>
+                  <button
+                    className={effectiveViewMode === 'stage' && !presentation ? 'layout-opt active' : 'layout-opt'}
+                    onClick={() => { setViewMode('stage'); setLayoutMenu(false) }}
+                  >
+                    <span className="layout-ico">▮</span>
+                    <span><strong>Orador em palco</strong><small>Foco em quem fala</small></span>
+                  </button>
+                  {presentation && (
+                    <>
+                      <div className="layout-menu-sep" />
+                      <button
+                        className={presLayout === 'bottom' ? 'layout-opt active' : 'layout-opt'}
+                        onClick={() => { setPresLayout('bottom'); setLayoutMenu(false) }}
+                      >
+                        <span className="layout-ico">⬓</span>
+                        <span><strong>Apresentação</strong><small>Plateia em baixo</small></span>
+                      </button>
+                      <button
+                        className={presLayout === 'side' ? 'layout-opt active' : 'layout-opt'}
+                        onClick={() => { setPresLayout('side'); setLayoutMenu(false) }}
+                      >
+                        <span className="layout-ico">◧</span>
+                        <span><strong>Lado a lado</strong><small>Plateia à direita</small></span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
           <Ctrl plain label={parallax ? 'Desligar efeito 3D' : 'Efeito de sala 3D'} active={parallax} onClick={() => void toggleParallax()}>
             <CubeIcon />
           </Ctrl>
