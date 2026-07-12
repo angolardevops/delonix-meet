@@ -159,7 +159,7 @@ para paridade/liderança:
 | Onboarding — tour guiado animado com skip | ✅ feito ([OnboardingTour.tsx](../web/src/components/OnboardingTour.tsx)) |
 | PR-5 — seletor de esquema da sala (Galeria/Orador/Lado a lado) | ✅ feito ([Room.tsx](../web/src/pages/Room.tsx)) — a validar em browser real |
 | PR-5 — painel da sala com abas (Pessoas · Chat · Ferramentas) | ✅ feito ([Room.tsx](../web/src/pages/Room.tsx) `PanelTabs`) — pura UI, a validar em browser real |
-| PR-5 — pre-join rico (green room) | 📋 planeado ([room-prejoin-plan.md](room-prejoin-plan.md)) — toca no ciclo da SfuCall (R1/R2), exige teste com 2 browsers |
+| PR-5 — pre-join rico (green room) | ✅ implementado ([room-prejoin-plan.md](room-prejoin-plan.md)) — verificado headless (espectador, join, reconnect-skip); falta o teste de media 2-browsers (§4 do plano) |
 
 **Correção honesta à revisão inicial:** a leitura do código revelou que dois "achados"
 estavam sobre-avaliados — (a) os **hex hardcoded em JSX** são, na maioria, legítimos

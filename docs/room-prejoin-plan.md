@@ -1,12 +1,11 @@
-# Plano — Pre-join (green room) da sala
+# Pre-join (green room) da sala — desenho + plano de teste
 
-> **Porque é um plano e não já código:** o pre-join reescreve a sequência de
-> entrada da sala, que cria a `SfuCall`. É exatamente onde vivem as regressões
-> **R1** (oferta no construtor) e **R2** (convidado não monta SfuCall em espera) —
-> ["Regressão já custou uma sessão"](reference/regressions.md). Este tipo de
-> mudança **tem de ser validada com 2 browsers reais** (media bidirecional), o que
-> o preview headless não permite. Documenta-se o desenho seguro + o plano de teste
-> para se implementar e verificar corretamente (não às cegas).
+> **Estado: IMPLEMENTADO** em [Room.tsx](../web/src/pages/Room.tsx) (`roomState
+> 'prejoin'`, handoff do preview, skip por voz/rejoin). Verificado headless em
+> modo espectador: prejoin → Entrar → `joined` → sala (barra + painéis), skip no
+> reload de reconexão, Cancelar limpa e volta. **Falta SÓ o passo 4** do plano de
+> teste (§4): media bidirecional com 2 browsers reais com câmara — obrigatório
+> antes de considerar fechado (R1/R2 vivem aqui).
 
 ---
 
