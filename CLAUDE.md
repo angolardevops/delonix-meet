@@ -206,6 +206,8 @@ cargo build --release    # depois de migração nova, SEMPRE rebuild antes de re
 
 **Testar chamada:** abrir duas abas `http://localhost:5173` em browsers diferentes, criar sala (SFU), juntar ambos, verificar vídeo e áudio bidirecionais.
 
+**Deploy após alterações (REGRA):** depois de alterações merged, correr SEMPRE `make image-push` — gera imagens **versionadas** (tag `git describe`, ex.: `v1.0.0-16-g6d447e0`), faz `kind load` e **pina** a tag nos Deployments (`make pin`) com rollout status. Nunca confiar no `:latest` (imagem stale já causou "estilos perdidos" em stage). Dois destinos de teste distintos: `meet.delonix.local` → **cluster** (VIP 172.30.0.200); `cloud.delonix.local` → **nginx local** (127.0.0.1, serve `/var/www/delonix`) → atualizar com `bash deploy/publish-web.sh`.
+
 **Bases de dados de teste:** usar emails `@teste.local`. Limpar no fim: `DELETE FROM users WHERE email ~ '@teste\.local$'` e apagar `.webm` órfãos em `recordings/`.
 
 ---
