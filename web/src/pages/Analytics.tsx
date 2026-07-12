@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { UsageChart } from '../components/UsageChart'
 import {
   ApiKeyInfo,
   createApiKey,
@@ -344,7 +345,7 @@ function OrgWebhooks({ orgId }: { orgId: string }) {
         </div>
       ))}
       <div className="wh-form">
-        <select value={kind} onChange={(e) => setKind(e.target.value)}>
+        <select className="dx-select" value={kind} onChange={(e) => setKind(e.target.value)}>
           {WH_KINDS.map((k) => (
             <option key={k.k} value={k.k}>{k.label}</option>
           ))}
@@ -414,8 +415,6 @@ export default function Analytics() {
   }, [period, orgId])
 
   const max = Math.max(1, ...rows.map((r) => r.count))
-  const weekMax = Math.max(1, ...(stats?.meetings_per_week.map((w) => w.count) ?? []))
-  const weekMinMax = Math.max(1, ...(stats?.meetings_per_week.map((w) => w.minutes) ?? []))
   const fmtWeek = (iso: string) =>
     new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short' })
   const fmtGb = (b: number) =>
@@ -478,32 +477,11 @@ export default function Analytics() {
               <header className="dash-card-head">
                 <h2>{t('admin.usageTitle')}</h2>
               </header>
-              <div className="week-chart">
-                {stats.meetings_per_week.length === 0 && (
-                  <p className="dash-empty">—</p>
-                )}
-                {stats.meetings_per_week.map((w) => (
-                  <div
-                    key={w.week_start}
-                    className="week-col"
-                    title={`${fmtWeek(w.week_start)}: ${w.count} · ${w.minutes} min`}
-                  >
-                    <span className="week-count">{w.count}</span>
-                    <span className="week-inner">
-                      <span className="week-bar" style={{ height: `${(w.count / weekMax) * 100}%` }} />
-                      <span
-                        className="week-bar minutes"
-                        style={{ height: `${(w.minutes / weekMinMax) * 100}%` }}
-                      />
-                    </span>
-                    <span className="week-label">{fmtWeek(w.week_start)}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="chart-legend">
-                <span><i className="dot count" /> {t('admin.legMeetings')}</span>
-                <span><i className="dot minutes" /> {t('admin.legMinutes')}</span>
-              </div>
+              <UsageChart
+                weeks={stats.meetings_per_week}
+                fmtWeek={fmtWeek}
+                labels={{ meetings: t('admin.legMeetings'), minutes: t('admin.legMinutes') }}
+              />
             </section>
 
             <section className="dash-card">
