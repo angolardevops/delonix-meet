@@ -18,7 +18,8 @@ Formato: **Sintoma** → **Causa raiz** → **Regra** (o que nunca fazer) → fi
 - **Sintoma:** admitir da sala de espera → o convidado faz reload; por vezes flood/desconexão.
 - **Causa raiz:** o convidado montava a `SfuCall` **enquanto aguardava** admissão → oferta stale → glare/rollback repetido → rajada de mensagens → o rate-limit WS derruba → o cliente recarrega.
 - **Regra:** convidado em espera **não** cria `SfuCall`. A call só nasce no handler `joined` (após admissão real). `callHolder.start()` é idempotente (`if (callRef.current || cancelled) return`).
-- **Ficheiros:** `web/src/pages/Room.tsx` (`callHolder`, handler `joined`).
+- **Ficheiros:** `web/src/pages/Room.tsx` (`callHolder`, handler `joined`), `web/src/sfuLifecycle.ts` (`makeCallHolderStart` — a guarda extraída).
+- **Guardado por (R1+R2):** `web/src/sfuLifecycle.ts` (a guarda de idempotência/não-montar-em-espera vive num só sítio testado) + `web/src/sfuLifecycle.test.ts` (vitest: 3 testes que codificam R2; correm em `make test`). R1 (oferta no construtor) fica garantido pelo `SfuCall` que o `create` instancia.
 
 ### R3 — Media num só sentido / falha admissão / screen-share em K8s multi-réplica
 - **Sintoma:** com ≥2 réplicas, media só num sentido; admissão e partilha de ecrã falham intermitentemente.
