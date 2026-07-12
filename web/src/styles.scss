@@ -3443,33 +3443,54 @@ button.link:hover {
 .prejoin-card {
   width: min(520px, 94vw); display: flex; flex-direction: column; gap: var(--space-3);
   background: var(--surface, #292a2d); border: 1px solid var(--border);
-  border-radius: var(--radius-lg); padding: var(--space-5); box-shadow: var(--shadow-2);
+  border-radius: 10px; padding: var(--space-5); box-shadow: 0 8px 26px rgba(0, 0, 0, 0.28);
   animation: tour-card-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .prejoin-title { margin: 0; font-size: 1.3rem; font-family: 'Space Grotesk Variable', sans-serif; }
 .prejoin-code { margin: -4px 0 0; color: var(--muted); font-size: 0.86rem; }
 .prejoin-code code { font-family: 'IBM Plex Mono', monospace; }
 .prejoin-preview {
-  position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius-md);
-  background: var(--tile-bg, #0e1219); overflow: hidden;
-  display: flex; align-items: center; justify-content: center;
+  position: relative; aspect-ratio: 16 / 9; border-radius: 8px;
+  background: var(--tile-bg, #0e1219); border: 1px solid var(--border);
+  overflow: hidden; display: flex; align-items: center; justify-content: center;
 }
 .prejoin-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); /* espelho, como o tile local */ }
 .prejoin-avatar { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--muted); }
-.prejoin-avatar .tile-avatar { width: 72px; height: 72px; font-size: 1.7rem; }
+/* Avatar CIRCULAR (o .tile-avatar base é o preenchimento retangular do tile). */
+.prejoin-avatar .tile-avatar {
+  width: 72px; height: 72px; border-radius: 50%;
+  font-size: 1.7rem; font-weight: 600; color: rgba(255, 255, 255, 0.92);
+}
 .prejoin-mic-live { position: absolute; top: 10px; left: 12px; font-size: 0.95rem; animation: tour-pulse 1.2s ease-out infinite; }
 .prejoin-toggles { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
-.prejoin-devices { display: flex; flex-wrap: wrap; gap: 8px; }
-.prejoin-devices .dev-chip { flex: 1 1 180px; }
+/* Dispositivos: grelha equilibrada (mic | câmara) + testar som a toda a largura. */
+.prejoin-devices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.room-page .prejoin-devices .dev-chip {
+  width: 100%; max-width: none; justify-content: flex-start;
+  border-radius: 8px; box-shadow: none; padding: 0.5rem 0.7rem;
+}
+.prejoin-devices .dev-chip select { flex: 1; min-width: 0; }
+.prejoin-devices .dev-chip.icon { grid-column: 1 / -1; justify-content: center; }
 .prejoin-status { margin: 0; color: var(--accent-2, #eda33b); font-size: 0.84rem; }
 .prejoin-actions { display: flex; justify-content: space-between; align-items: center; margin-top: var(--space-2); }
+.room-page .prejoin-actions .btn-ghost { border-radius: 8px; }
 .prejoin-join {
   background: var(--accent, #c8201d); color: #fff; border: none; cursor: pointer;
-  padding: 0.7rem 1.6rem; border-radius: 999px; font-size: 0.95rem; font-weight: 600;
-  transition: transform 0.15s var(--ease-ctrl, ease), box-shadow 0.15s;
+  padding: 0.65rem 1.5rem; border-radius: 8px; font-size: 0.95rem; font-weight: 600;
+  transition: transform 0.15s var(--ease-ctrl, ease), filter 0.15s;
 }
-.prejoin-join:hover { transform: translateY(-1px); box-shadow: 0 8px 22px color-mix(in oklab, var(--accent, #c8201d) 45%, transparent); }
-.prejoin-join:active { transform: scale(0.97); }
+.prejoin-join:hover { transform: translateY(-1px); filter: brightness(1.08); }
+.prejoin-join:active { transform: scale(0.98); }
+
+/* Fundo da sala: profundidade subtil (vinheta escura + brilhos de marca a ~4%)
+   — dá elegância sem competir com os vídeos. Depois do bloco de tokens da sala
+   (mesma especificidade, esta regra vem mais tarde → vence o flat var(--bg)). */
+.room-page {
+  background:
+    radial-gradient(1100px 520px at 16% -12%, rgba(200, 32, 29, 0.045), transparent 62%),
+    radial-gradient(950px 520px at 88% 110%, rgba(237, 163, 59, 0.035), transparent 62%),
+    radial-gradient(1500px 950px at 50% 40%, #242629 0%, #1b1c1f 55%, #141518 100%);
+}
 
 /* Painel lateral unificado — tira de abas (Pessoas · Chat · Ferramentas). */
 .panel-tabs { display: flex; gap: 2px; }
