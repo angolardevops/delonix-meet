@@ -1,0 +1,78 @@
+---
+# DNS zero-touch — cria/atualiza o registo A do `domain` → IP alcançável.
+# Fornecedores: none (skip) | hosts (/etc/hosts) | cloudflare | route53.
+# As chamadas de API delegam no controlador (onde estão os tokens no ambiente).
+
+# ---- Resolver o IP alvo do registo ----
+- name: "Multi-host — ler o IP do LoadBalancer do ingress"
+  ansible.builtin.command: >-
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf get svc ingress-nginx-controller
+    -n ingress-nginx --no-headers
+    -o jsonpath={.status.loadBalancer.ingress[0].ip}
+  register: _lb_ip
+  changed_when: false
+  retries: 12
+  delay: 10
+  until: _lb_ip.stdout | trim | length > 0
+  when:
+    - deploy_mode == 'multi-host'
+    - dns_provider != 'none'
+  failed_when: false
+
+- name: "Definir o IP do registo DNS"
+  ansible.builtin.set_fact:
+    dns_record_ip: >-
+      {{ (_lb_ip.stdout | trim) if (deploy_mode == 'multi-host') else public_ip_effective }}
+
+- name: "Sem domínio/IP ou provider none → nada a fazer no DNS"
+  ansible.builtin.debug:
+    msg: "DNS ignorado (provider={{ dns_provider }}, domínio='{{ domain }}', ip='{{ dns_record_ip | default('') }}')."
+  when: dns_provider == 'none' or domain | length == 0 or (dns_record_ip | default('') | length == 0)
+
+# ---- /etc/hosts (dev/stage numa máquina só) ----
+- name: "Escrever /etc/hosts"
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '\s{{ domain | regex_escape() }}$'
+    line: "{{ dns_record_ip }}  {{ domain }}"
+    state: present
+  become: true
+  when:
+    - dns_provider == 'hosts'
+    - domain | length > 0
+    - dns_record_ip | default('') | length > 0
+
+# ---- Cloudflare ----
+- name: "Cloudflare — registo A"
+  community.general.cloudflare_dns:
+    zone: "{{ dns_cloudflare_zone }}"
+    record: "{{ domain }}"
+    type: A
+    value: "{{ dns_record_ip }}"
+    proxied: "{{ dns_proxied }}"
+    ttl: 120
+    solo: true
+    state: present
+    api_token: "{{ lookup('ansible.builtin.env', 'CLOUDFLARE_API_TOKEN') }}"
+  delegate_to: localhost
+  when:
+    - dns_provider == 'cloudflare'
+    - domain | length > 0
+    - dns_record_ip | default('') | length > 0
+
+# ---- Route53 ----
+- name: "Route53 — registo A"
+  amazon.aws.route53:
+    state: present
+    zone: "{{ dns_route53_zone }}"
+    record: "{{ domain }}"
+    type: A
+    ttl: 120
+    value: "{{ dns_record_ip }}"
+    overwrite: true
+    wait: true
+  delegate_to: localhost
+  when:
+    - dns_provider == 'route53'
+    - domain | length > 0
+    - dns_record_ip | default('') | length > 0

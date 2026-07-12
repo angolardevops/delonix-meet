@@ -1,0 +1,187 @@
+---
+# Single-host — infra (docker) + config 12-factor + build/publish + systemd + nginx + TLS.
+# Idempotente. Segredos e TLS já vêm resolvidos pelas roles anteriores.
+
+# ---- Pacotes base ----
+- name: "Instalar nginx + utilitários"
+  ansible.builtin.apt:
+    name: [nginx, curl, ca-certificates]
+    state: present
+    update_cache: true
+
+# ---- Diretórios ----
+- name: "Diretórios da app"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "/etc/delonix", mode: "0750" }
+    - { path: "{{ web_root }}", mode: "0755" }
+    - { path: "{{ recordings_dir }}", mode: "0750" }
+    - { path: "/var/www/acme", mode: "0755" }
+
+# ---- Config 12-factor (env) ----
+- name: "Render do ficheiro de ambiente (segredos gerados)"
+  ansible.builtin.template:
+    src: delonix.env.j2
+    dest: "{{ env_file }}"
+    mode: "0640"
+  notify: restart delonix-server
+
+# ---- Infra (Postgres/Redis/coturn via docker compose, override de prod) ----
+- name: "Subir a infra (docker compose prod)"
+  ansible.builtin.command:
+    cmd: >-
+      docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --wait
+    chdir: "{{ repo_root }}"
+  environment:
+    POSTGRES_PASSWORD: "{{ postgres_password }}"
+    TURN_SECRET: "{{ turn_secret }}"
+    TURN_REALM: "{{ turn_realm }}"
+  register: _infra
+  changed_when: "'Started' in _infra.stderr or 'Created' in _infra.stderr"
+
+# ---- Build backend (release) + frontend (dist) ----
+- name: "Detetar bin do Node (nvm) se não configurado"
+  ansible.builtin.shell: >-
+    ls -d {{ ansible_env.HOME }}/.nvm/versions/node/v*/bin 2>/dev/null | tail -1
+  register: _node_detect
+  changed_when: false
+  failed_when: false
+  when: node_bin | length == 0
+
+- name: "Fixar node_bin efetivo"
+  ansible.builtin.set_fact:
+    node_bin_eff: "{{ node_bin if (node_bin | length > 0) else (_node_detect.stdout | default('') | trim) }}"
+
+- name: "Build (cargo release + npm build)"
+  ansible.builtin.command:
+    cmd: make build
+    chdir: "{{ repo_root }}"
+  environment:
+    PATH: "{{ (node_bin_eff + ':') if (node_bin_eff | length > 0) else '' }}{{ ansible_env.PATH }}"
+  register: _build
+  changed_when: true
+
+- name: "Publicar a SPA compilada no web_root"
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/web/dist/"
+    dest: "{{ web_root }}/"
+    remote_src: true
+    mode: "0644"
+    directory_mode: "0755"
+
+# ---- systemd (backend) ----
+- name: "Instalar unit systemd do delonix-server"
+  ansible.builtin.template:
+    src: delonix-server.service.j2
+    dest: /etc/systemd/system/delonix-server.service
+    mode: "0644"
+  notify: restart delonix-server
+
+- name: "Ativar + arrancar o delonix-server"
+  ansible.builtin.systemd:
+    name: delonix-server
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: "Aplicar restarts pendentes antes do smoke"
+  ansible.builtin.meta: flush_handlers
+
+- name: "Esperar o backend responder (/health)"
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8180/health
+    status_code: 200
+  register: _health
+  retries: 20
+  delay: 3
+  until: _health.status == 200
+
+# ---- TLS: emissão Let's Encrypt (diferida até o nginx servir o :80) ----
+- name: "Let's Encrypt — emissão zero-touch"
+  when:
+    - tls_effective_mode == 'letsencrypt'
+    - tls_needs_certbot | default(false)
+  block:
+    - name: "nginx bootstrap (só :80 p/ challenge ACME)"
+      ansible.builtin.template:
+        src: nginx-acme-bootstrap.conf.j2
+        dest: /etc/nginx/sites-available/delonix.conf
+        mode: "0644"
+
+    - name: "Ativar site (symlink) + desativar default"
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/delonix.conf
+        dest: /etc/nginx/sites-enabled/delonix.conf
+        state: link
+        force: true
+
+    - name: "Remover default do nginx"
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: "Testar + recarregar nginx (bootstrap)"
+      ansible.builtin.command: nginx -t
+      changed_when: false
+      notify: reload nginx
+
+    - name: "flush p/ garantir nginx recarregado antes do certbot"
+      ansible.builtin.meta: flush_handlers
+
+    - name: "certbot certonly (idempotente: só se não houver cert)"
+      ansible.builtin.command:
+        cmd: >-
+          certbot certonly --non-interactive --agree-tos -m {{ acme_email }}
+          {{ '--staging' if acme_staging else '' }}
+          {% if certbot_dns_plugin == 'dns-cloudflare' %}--dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini
+          {% elif certbot_dns_plugin == 'dns-route53' %}--dns-route53
+          {% else %}--webroot -w /var/www/acme{% endif %}
+          -d {{ domain }} --keep-until-expiring
+        creates: "{{ tls_cert_path }}"
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ lookup('ansible.builtin.env', 'AWS_ACCESS_KEY_ID') }}"
+        AWS_SECRET_ACCESS_KEY: "{{ lookup('ansible.builtin.env', 'AWS_SECRET_ACCESS_KEY') }}"
+
+    - name: "Hook de renovação: recarregar nginx"
+      ansible.builtin.copy:
+        dest: /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+        mode: "0755"
+        content: "#!/bin/sh\nsystemctl reload nginx\n"
+
+# ---- nginx: config HTTPS completa ----
+- name: "nginx — config de produção (HTTPS)"
+  ansible.builtin.template:
+    src: nginx-delonix.conf.j2
+    dest: /etc/nginx/sites-available/delonix.conf
+    mode: "0644"
+
+- name: "Ativar site + remover default"
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/delonix.conf
+    dest: /etc/nginx/sites-enabled/delonix.conf
+    state: link
+    force: true
+
+- name: "Remover default do nginx"
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+
+- name: "Testar config nginx"
+  ansible.builtin.command: nginx -t
+  changed_when: false
+  notify: reload nginx
+
+- name: "Recarregar nginx agora"
+  ansible.builtin.meta: flush_handlers
+
+- name: "Resumo single-host"
+  ansible.builtin.debug:
+    msg:
+      - "✔ Delonix single-host pronto."
+      - "URL:   https://{{ served_host }}"
+      - "TLS:   {{ tls_effective_mode }}  ({{ tls_cert_path }})"
+      - "Env:   {{ env_file }}  (12-factor, segredos gerados)"

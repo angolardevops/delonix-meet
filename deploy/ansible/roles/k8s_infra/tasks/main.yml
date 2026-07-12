@@ -1,0 +1,185 @@
+---
+# Multi-host — provisiona o cluster Kubernetes (kubeadm) em todos os nós e,
+# no control-plane, instala Calico + ingress-nginx (LoadBalancer) + MetalLB.
+# Corre em kube_control_plane:kube_node. Tarefas control-plane-only são gated.
+
+# ===================== PREP DE SO (todos os nós) =====================
+- name: "Desativar swap"
+  ansible.builtin.command: swapoff -a
+  when: ansible_swaptotal_mb > 0
+  changed_when: false
+
+- name: "Remover swap do fstab"
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+    replace: '# \1'
+
+- name: "Módulos de kernel (overlay, br_netfilter)"
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: [overlay, br_netfilter]
+
+- name: "sysctl p/ k8s + alta performance (media WebRTC)"
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: true
+  loop:
+    - { key: 'net.ipv4.ip_forward', value: '1' }
+    - { key: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+    - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+    - { key: 'net.core.somaxconn', value: '65535' }
+    - { key: 'net.core.rmem_max', value: '16777216' }
+    - { key: 'net.core.wmem_max', value: '16777216' }
+    - { key: 'fs.file-max', value: '2097152' }
+    - { key: 'net.ipv4.ip_local_port_range', value: '1024 65000' }
+
+- name: "Instalar containerd + dependências"
+  ansible.builtin.apt:
+    name: [apt-transport-https, ca-certificates, curl, gnupg, containerd]
+    state: present
+    update_cache: true
+
+- name: "containerd — cgroup systemd"
+  ansible.builtin.shell: |
+    mkdir -p /etc/containerd
+    containerd config default > /etc/containerd/config.toml
+    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+  args:
+    creates: /etc/containerd/config.toml
+  notify: restart containerd
+
+- name: "Chave + repo apt do Kubernetes (v1.29)"
+  block:
+    - ansible.builtin.apt_key:
+        url: https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key
+        state: present
+    - ansible.builtin.apt_repository:
+        repo: "deb https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
+        state: present
+
+- name: "Instalar kubelet, kubeadm, kubectl"
+  ansible.builtin.apt:
+    name: [kubelet, kubeadm, kubectl]
+    state: present
+    update_cache: true
+
+- name: "Hold kubelet/kubeadm/kubectl"
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: [kubelet, kubeadm, kubectl]
+
+- name: "Instalar Helm (se ausente)"
+  ansible.builtin.shell: |
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
+
+# ===================== CONTROL-PLANE =====================
+- name: "Bloco control-plane"
+  when: inventory_hostname in groups['kube_control_plane']
+  vars:
+    _user: "{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}"
+    _kubeconfig: "/home/{{ ansible_user | default(ansible_env.SUDO_USER | default('root')) }}/.kube/config"
+    _metallb_range: "{{ k8s_metallb_range if (k8s_metallb_range | length > 0) else (hostvars[inventory_hostname].metallb_ip_range | default('192.168.1.200-192.168.1.250')) }}"
+  block:
+    - name: "Cluster já inicializado?"
+      ansible.builtin.stat:
+        path: /etc/kubernetes/admin.conf
+      register: _kubeadm_conf
+
+    - name: "kubeadm init"
+      ansible.builtin.command: kubeadm init --pod-network-cidr=192.168.0.0/16
+      when: not _kubeadm_conf.stat.exists
+
+    - name: "kubeconfig p/ o utilizador"
+      block:
+        - ansible.builtin.file:
+            path: "/home/{{ _user }}/.kube"
+            state: directory
+            mode: "0755"
+        - ansible.builtin.copy:
+            src: /etc/kubernetes/admin.conf
+            dest: "{{ _kubeconfig }}"
+            remote_src: true
+            owner: "{{ _user }}"
+
+    - name: "Calico CNI"
+      ansible.builtin.command: kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+      environment:
+        KUBECONFIG: "{{ _kubeconfig }}"
+      when: not _kubeadm_conf.stat.exists
+
+    - name: "Gerar comando de join dos workers"
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: _join_cmd
+      changed_when: false
+
+    - name: "Guardar join-command p/ os workers"
+      ansible.builtin.set_fact:
+        k8s_join_command: "{{ _join_cmd.stdout }}"
+
+    - name: "Helm — ingress-nginx (LoadBalancer)"
+      ansible.builtin.shell: |
+        helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx || true
+        helm repo update ingress-nginx
+        helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+          --namespace ingress-nginx --create-namespace \
+          --set controller.service.type=LoadBalancer --wait --timeout 180s
+      environment:
+        KUBECONFIG: "{{ _kubeconfig }}"
+
+    - name: "Helm — MetalLB"
+      ansible.builtin.shell: |
+        helm repo add metallb https://metallb.github.io/metallb || true
+        helm repo update metallb
+        helm upgrade --install metallb metallb/metallb \
+          -n metallb-system --create-namespace \
+          --set speaker.frr.enabled=false --wait --timeout 180s
+      environment:
+        KUBECONFIG: "{{ _kubeconfig }}"
+
+    - name: "MetalLB — IPAddressPool + L2Advertisement"
+      ansible.builtin.shell: |
+        cat <<'MANIFEST' | kubectl apply -f -
+        apiVersion: metallb.io/v1beta1
+        kind: IPAddressPool
+        metadata: { name: delonix-pool, namespace: metallb-system }
+        spec: { addresses: [ "{{ _metallb_range }}" ] }
+        ---
+        apiVersion: metallb.io/v1beta1
+        kind: L2Advertisement
+        metadata: { name: delonix-l2, namespace: metallb-system }
+        spec: { ipAddressPools: [ delonix-pool ] }
+        MANIFEST
+      environment:
+        KUBECONFIG: "{{ _kubeconfig }}"
+
+    - name: "Aguardar IP externo do ingress"
+      ansible.builtin.command: >-
+        kubectl get svc ingress-nginx-controller -n ingress-nginx --no-headers
+        -o jsonpath={.status.loadBalancer.ingress[0].ip}
+      environment:
+        KUBECONFIG: "{{ _kubeconfig }}"
+      register: _ing_ip
+      retries: 18
+      delay: 10
+      until: _ing_ip.stdout | trim | length > 0
+      changed_when: false
+
+    - name: "IP do LoadBalancer"
+      ansible.builtin.debug:
+        msg: "ingress-nginx LB = {{ _ing_ip.stdout | trim }}"
+
+# ===================== WORKERS =====================
+- name: "Juntar workers ao cluster"
+  ansible.builtin.command: "{{ hostvars[groups['kube_control_plane'][0]].k8s_join_command }}"
+  args:
+    creates: /etc/kubernetes/kubelet.conf
+  when:
+    - inventory_hostname in groups['kube_node']
+    - groups['kube_node'] | length > 0

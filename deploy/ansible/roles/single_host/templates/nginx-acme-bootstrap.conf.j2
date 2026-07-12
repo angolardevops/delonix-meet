@@ -1,0 +1,14 @@
+# GERADO por Ansible — nginx bootstrap (só :80) para o 1º challenge Let's Encrypt.
+# Substituído pela config HTTPS completa assim que o certificado é emitido.
+server {
+    listen 80 default_server;
+    server_name {{ ([served_host] + ([domain] if (domain and domain != served_host) else [])) | join(' ') }};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/acme;
+    }
+    location / {
+        return 200 'delonix acme bootstrap';
+        add_header Content-Type text/plain;
+    }
+}

@@ -1,0 +1,11 @@
+---
+- name: reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+
+- name: restart delonix-server
+  ansible.builtin.systemd:
+    name: delonix-server
+    state: restarted
+    daemon_reload: true

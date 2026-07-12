@@ -1,0 +1,74 @@
+# ============================================================
+#  Delonix Meet — variáveis derivadas (NÃO editar; edita deploy/config.yml)
+#
+#  Carrega deploy/config.yml e deriva tudo. Os SEGREDOS são gerados e
+#  persistidos por lookup('password', ...) — cria o ficheiro na 1ª vez e
+#  devolve SEMPRE o mesmo valor depois (idempotente, zero-touch).
+# ============================================================
+
+# ---- Carregar a config declarativa (o único ficheiro humano) ----
+_config_path: "{{ playbook_dir }}/../config.yml"
+cfg: "{{ lookup('ansible.builtin.file', _config_path) | from_yaml }}"
+
+# ---- Atalhos de topo ----
+deploy_mode: "{{ cfg.deploy_mode | default('single-host') }}"
+domain: "{{ cfg.domain | default('') | trim }}"
+public_ip_cfg: "{{ cfg.public_ip | default('auto') }}"
+
+# Host que o TLS/nginx/DNS servem: domínio se houver, senão o IP efetivo
+# (public_ip_effective é resolvido pela role preflight e fica como fact).
+served_host: "{{ domain if domain else (hostvars[inventory_hostname].public_ip_effective | default(public_ip_cfg)) }}"
+
+# ---- TLS ----
+tls_mode_cfg: "{{ cfg.tls.mode | default('auto') }}"
+acme_email: "{{ cfg.tls.acme_email | default('') | trim }}"
+acme_staging: "{{ cfg.tls.acme_staging | default(false) }}"
+# tls_effective_mode (letsencrypt|selfsigned) é decidido na role preflight.
+
+# ---- DNS ----
+dns_provider: "{{ cfg.dns.provider | default('none') }}"
+dns_cloudflare_zone: "{{ cfg.dns.cloudflare_zone | default('') }}"
+dns_route53_zone: "{{ cfg.dns.route53_zone | default('') }}"
+dns_proxied: "{{ cfg.dns.proxied | default(false) }}"
+
+# ---- coturn / media ----
+turn_realm: "{{ cfg.turn.realm | default('') | ternary(cfg.turn.realm | default(''), (domain if domain else 'delonix.local')) }}"
+turn_min_port: "{{ cfg.turn.min_port | default(49152) }}"
+turn_max_port: "{{ cfg.turn.max_port | default(59152) }}"
+
+# ---- Caminhos single-host ----
+# Raiz do repositório no host alvo (localhost: derivada; remoto: override em config.yml).
+repo_root: "{{ cfg.paths.repo_root | default((playbook_dir + '/../..') | realpath) }}"
+# bin do Node (nvm). Auto-deteta o mais recente; override em config.yml.
+node_bin: "{{ cfg.paths.node_bin | default('') }}"
+env_file: "{{ cfg.paths.env_file | default('/etc/delonix/delonix.env') }}"
+web_root: "{{ cfg.paths.web_root | default('/var/www/delonix') }}"
+recordings_dir: "{{ cfg.paths.recordings_dir | default('/var/lib/delonix/recordings') }}"
+tls_dir: "{{ cfg.paths.tls_dir | default('/etc/ssl/delonix') }}"
+
+# ---- Kubernetes (multi-host) ----
+k8s_metallb_range: "{{ cfg.kubernetes.metallb_ip_range | default('') }}"
+k8s_postgres_ha: "{{ cfg.kubernetes.postgres_ha | default(true) }}"
+k8s_redis_sentinel: "{{ cfg.kubernetes.redis_sentinel | default(true) }}"
+k8s_server_replicas: "{{ cfg.kubernetes.server_replicas | default(3) }}"
+k8s_web_replicas: "{{ cfg.kubernetes.web_replicas | default(3) }}"
+coturn_vip: "{{ cfg.kubernetes.coturn_ip | default('') }}"
+# Host servido no cluster (nome no ingress). Domínio se houver; senão nome local.
+k8s_host: "{{ domain if domain else 'meet.delonix.local' }}"
+_kubeconfig: /etc/kubernetes/admin.conf
+_k8s_dir: "{{ playbook_dir }}/../k8s"
+
+# ============================================================
+#  SEGREDOS — gerados uma vez e persistidos (idempotente).
+#  Escopo por domínio (ou por modo, sem domínio) → deploy/ansible/.secrets/<escopo>/
+#  Rodar um segredo: apagar o ficheiro respetivo e re-deploy (JWT desloga todos).
+# ============================================================
+_secrets_dir: "{{ playbook_dir }}/.secrets/{{ domain if domain else deploy_mode }}"
+
+jwt_secret: "{{ lookup('ansible.builtin.password', _secrets_dir + '/jwt_secret chars=hexdigits length=64') }}"
+turn_secret: "{{ lookup('ansible.builtin.password', _secrets_dir + '/turn_secret chars=hexdigits length=48') }}"
+postgres_password: "{{ lookup('ansible.builtin.password', _secrets_dir + '/postgres_password chars=ascii_letters,digits length=32') }}"
+voice_secret: "{{ lookup('ansible.builtin.password', _secrets_dir + '/voice_secret chars=hexdigits length=32') }}"
+
+# DATABASE_URL derivada (single-host: Postgres local no loopback).
+database_url: "postgres://delonix:{{ postgres_password }}@127.0.0.1:5435/delonix_meet"

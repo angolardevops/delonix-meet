@@ -1,0 +1,177 @@
+---
+# Multi-host — deploy da app: infra (Helm), segredos/config gerados, coturn VIP
+# zero-touch, TLS (cert-manager LE ou self-signed) e manifestos. Corre no
+# control-plane com kubeconfig /etc/kubernetes/admin.conf.
+
+- name: "Host do Postgres (HA vs single)"
+  ansible.builtin.set_fact:
+    _pg_host: "{{ 'delonix-postgres-postgresql-ha-pgpool' if k8s_postgres_ha else 'delonix-postgres-postgresql' }}"
+    _tmp: /tmp/delonix-deploy
+
+- name: "Dir temporário de manifestos"
+  ansible.builtin.file:
+    path: "{{ _tmp }}"
+    state: directory
+    mode: "0700"
+
+- name: "Namespace"
+  ansible.builtin.copy:
+    src: "{{ _k8s_dir }}/00-namespace.yaml"
+    dest: "{{ _tmp }}/00-namespace.yaml"
+- name: "Aplicar namespace"
+  ansible.builtin.command: "kubectl --kubeconfig={{ _kubeconfig }} apply -f {{ _tmp }}/00-namespace.yaml"
+  changed_when: false
+
+# ---- Infra via Helm (password = segredo gerado, coerente com o Secret) ----
+- name: "Helm repo bitnami"
+  ansible.builtin.shell: |
+    helm repo add bitnami https://charts.bitnami.com/bitnami || true
+    helm repo update bitnami
+  environment: { KUBECONFIG: "{{ _kubeconfig }}" }
+  changed_when: false
+
+- name: "Helm — PostgreSQL"
+  ansible.builtin.command:
+    cmd: >-
+      helm upgrade --install delonix-postgres
+      bitnami/{{ 'postgresql-ha' if k8s_postgres_ha else 'postgresql' }}
+      -n delonix-meet --create-namespace
+      -f {{ _k8s_dir }}/helm-values/postgres-values.yaml
+      --set {{ 'postgresql.username=delonix,postgresql.password=' ~ postgres_password ~ ',postgresql.database=delonix_meet' if k8s_postgres_ha else 'auth.username=delonix,auth.password=' ~ postgres_password ~ ',auth.database=delonix_meet' }}
+  environment: { KUBECONFIG: "{{ _kubeconfig }}" }
+
+- name: "Helm — Redis (sem auth, como a app espera)"
+  ansible.builtin.command:
+    cmd: >-
+      helm upgrade --install delonix-redis bitnami/redis
+      -n delonix-meet --create-namespace
+      -f {{ _k8s_dir }}/helm-values/redis-values.yaml
+      --set auth.enabled=false
+      {{ '--set sentinel.enabled=true' if k8s_redis_sentinel else '--set architecture=standalone' }}
+  environment: { KUBECONFIG: "{{ _kubeconfig }}" }
+
+# ---- coturn: Service primeiro → resolver o VIP → Deployment ----
+- name: "Render Service coturn"
+  ansible.builtin.template:
+    src: coturn-svc.yaml.j2
+    dest: "{{ _tmp }}/coturn-svc.yaml"
+- name: "Aplicar Service coturn"
+  ansible.builtin.command: "kubectl --kubeconfig={{ _kubeconfig }} apply -f {{ _tmp }}/coturn-svc.yaml"
+  changed_when: false
+
+- name: "Resolver o VIP do coturn (LoadBalancer)"
+  ansible.builtin.command: >-
+    kubectl --kubeconfig={{ _kubeconfig }} get svc coturn -n delonix-meet --no-headers
+    -o jsonpath={.status.loadBalancer.ingress[0].ip}
+  register: _coturn_ip
+  retries: 18
+  delay: 10
+  until: _coturn_ip.stdout | trim | length > 0
+  changed_when: false
+
+- name: "Fixar coturn_vip_eff"
+  ansible.builtin.set_fact:
+    coturn_vip_eff: "{{ coturn_vip if (coturn_vip | length > 0) else (_coturn_ip.stdout | trim) }}"
+
+- name: "Render Deployment coturn (EXTERNAL_IP = VIP)"
+  ansible.builtin.template:
+    src: coturn-deploy.yaml.j2
+    dest: "{{ _tmp }}/coturn-deploy.yaml"
+- name: "Aplicar Deployment coturn"
+  ansible.builtin.command: "kubectl --kubeconfig={{ _kubeconfig }} apply -f {{ _tmp }}/coturn-deploy.yaml"
+  changed_when: false
+
+# ---- Secret + ConfigMap gerados (TURN_HOST = VIP) ----
+- name: "Render Secret + ConfigMap"
+  ansible.builtin.template:
+    src: app-config.yaml.j2
+    dest: "{{ _tmp }}/app-config.yaml"
+    mode: "0600"
+- name: "Aplicar Secret + ConfigMap"
+  ansible.builtin.command: "kubectl --kubeconfig={{ _kubeconfig }} apply -f {{ _tmp }}/app-config.yaml"
+  changed_when: false
+
+# ---- TLS ----
+- name: "TLS Let's Encrypt (cert-manager)"
+  when: tls_effective_mode == 'letsencrypt'
+  block:
+    - name: "Instalar cert-manager"
+      ansible.builtin.command: >-
+        kubectl --kubeconfig={{ _kubeconfig }} apply -f
+        https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml
+      changed_when: false
+    - name: "Esperar cert-manager pronto"
+      ansible.builtin.command: >-
+        kubectl --kubeconfig={{ _kubeconfig }} wait --namespace cert-manager
+        --for=condition=ready pod --selector=app.kubernetes.io/instance=cert-manager --timeout=180s
+      changed_when: false
+    - name: "Render + aplicar ClusterIssuer"
+      ansible.builtin.template:
+        src: clusterissuer.yaml.j2
+        dest: "{{ _tmp }}/clusterissuer.yaml"
+    - name: "Aplicar ClusterIssuer"
+      ansible.builtin.command: "kubectl --kubeconfig={{ _kubeconfig }} apply -f {{ _tmp }}/clusterissuer.yaml"
+      changed_when: false
+
+- name: "TLS self-signed (Secret delonix-tls-secret)"
+  when: tls_effective_mode == 'selfsigned'
+  block:
+    - community.crypto.openssl_privatekey:
+        path: "{{ _tmp }}/tls.key"
+        size: 2048
+    - community.crypto.openssl_csr:
+        path: "{{ _tmp }}/tls.csr"
+        privatekey_path: "{{ _tmp }}/tls.key"
+        common_name: "{{ k8s_host }}"
+        subject_alt_name: ["DNS:{{ k8s_host }}"]
+    - community.crypto.x509_certificate:
+        path: "{{ _tmp }}/tls.crt"
+        privatekey_path: "{{ _tmp }}/tls.key"
+        csr_path: "{{ _tmp }}/tls.csr"
+        provider: selfsigned
+        selfsigned_not_after: "+3650d"
+    - name: "Criar/atualizar Secret TLS"
+      ansible.builtin.shell: >-
+        kubectl --kubeconfig={{ _kubeconfig }} create secret tls delonix-tls-secret
+        --cert={{ _tmp }}/tls.crt --key={{ _tmp }}/tls.key -n delonix-meet
+        --dry-run=client -o yaml | kubectl --kubeconfig={{ _kubeconfig }} apply -f -
+      changed_when: false
+
+# ---- App (server + web + dados) ----
+- name: "Copiar manifestos estáticos da app"
+  ansible.builtin.copy:
+    src: "{{ _k8s_dir }}/{{ item }}"
+    dest: "{{ _tmp }}/{{ item }}"
+  loop: [02-server.yaml, 03-web.yaml, 50-data.yaml]
+
+- name: "Aplicar server + web + dados"
+  ansible.builtin.command: "kubectl --kubeconfig={{ _kubeconfig }} apply -f {{ _tmp }}/{{ item }}"
+  loop: [50-data.yaml, 02-server.yaml, 03-web.yaml]
+  changed_when: false
+
+# ---- Ingress (domínio + cert-manager quando LE) ----
+- name: "Render + aplicar Ingress"
+  ansible.builtin.template:
+    src: ingress.yaml.j2
+    dest: "{{ _tmp }}/ingress.yaml"
+- name: "Aplicar Ingress"
+  ansible.builtin.command: "kubectl --kubeconfig={{ _kubeconfig }} apply -f {{ _tmp }}/ingress.yaml"
+  changed_when: false
+
+- name: "IP do ingress (para DNS/summary)"
+  ansible.builtin.command: >-
+    kubectl --kubeconfig={{ _kubeconfig }} get svc ingress-nginx-controller -n ingress-nginx
+    --no-headers -o jsonpath={.status.loadBalancer.ingress[0].ip}
+  register: _final_ing_ip
+  changed_when: false
+  failed_when: false
+
+- name: "Resumo multi-host"
+  ansible.builtin.debug:
+    msg:
+      - "✔ Delonix multi-host pronto."
+      - "URL:         https://{{ k8s_host }}"
+      - "Ingress LB:  {{ _final_ing_ip.stdout | default('?') | trim }}"
+      - "coturn VIP:  {{ coturn_vip_eff }}"
+      - "TLS:         {{ tls_effective_mode }}"
+      - "DNS '{{ k8s_host }}' → {{ _final_ing_ip.stdout | default('?') | trim }} ({{ dns_provider }})"

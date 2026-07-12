@@ -1,4 +1,7 @@
 ---
+# ⚠️ LEGADO — provisiona só a infra k8s (kubeadm+MetalLB+ingress), sem app/TLS/DNS.
+# Preferir o deploy zero-touch: `make deploy` (deploy/ansible/site.yml) que orquestra
+# tudo (single OU multi-host) a partir de deploy/config.yml. Ver docs/ops/zero-touch-deploy.md.
 - name: Prepare OS and Install Kubernetes (Kubeadm)
   hosts: all
   become: yes

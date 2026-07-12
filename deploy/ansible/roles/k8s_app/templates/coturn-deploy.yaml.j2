@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: coturn, namespace: delonix-meet, labels: { app: coturn } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: coturn } }
+  template:
+    metadata: { labels: { app: coturn } }
+    spec:
+      containers:
+        - name: coturn
+          image: coturn/coturn:4.6
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: TURN_SECRET, valueFrom: { secretKeyRef: { name: delonix-secrets, key: TURN_SECRET } } }
+            # EXTERNAL_IP = VIP do LoadBalancer (resolvido zero-touch pelo Ansible).
+            - { name: EXTERNAL_IP, value: "{{ coturn_vip_eff }}" }
+          command: ["/bin/sh", "-c"]
+          args:
+            - >
+              exec turnserver -n --no-cli --log-file=stdout --simple-log
+              --use-auth-secret --static-auth-secret="$TURN_SECRET"
+              --realm={{ turn_realm }} --external-ip="$EXTERNAL_IP"
+              --allowed-peer-ip="$EXTERNAL_IP"
+              --denied-peer-ip=169.254.0.0-169.254.255.255
+              --no-multicast-peers
+              --listening-port=3478 --min-port={{ turn_min_port }} --max-port={{ turn_max_port }}
+              --total-quota=5000
+              --fingerprint --stale-nonce=600
+          ports:
+            - { name: turn-udp, containerPort: 3478, protocol: UDP }
+          readinessProbe:
+            tcpSocket: { port: 3478 }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "turnutils_stunclient -p 3478 127.0.0.1 >/dev/null 2>&1"]
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
+          securityContext:
+            allowPrivilegeEscalation: true
+            capabilities: { drop: ["ALL"], add: ["NET_BIND_SERVICE"] }

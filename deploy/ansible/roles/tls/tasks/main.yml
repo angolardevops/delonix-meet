@@ -1,0 +1,88 @@
+---
+# TLS zero-touch. tls_effective_mode (decidido na preflight):
+#   selfsigned  → gera cert self-signed agora (SAN = domínio + IP).
+#   letsencrypt → instala certbot (+ plugin DNS se aplicável); a EMISSÃO é
+#                 feita pela role single_host depois do nginx servir o :80.
+
+# ---------- SELF-SIGNED ----------
+- name: "Self-signed — bloco"
+  when: tls_effective_mode == 'selfsigned'
+  block:
+    - name: "Diretório de certificados"
+      ansible.builtin.file:
+        path: "{{ tls_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: "Chave privada"
+      community.crypto.openssl_privatekey:
+        path: "{{ tls_dir }}/privkey.pem"
+        size: 2048
+        mode: "0600"
+
+    - name: "CSR com SAN (domínio + IP)"
+      community.crypto.openssl_csr:
+        path: "{{ tls_dir }}/delonix.csr"
+        privatekey_path: "{{ tls_dir }}/privkey.pem"
+        common_name: "{{ served_host }}"
+        subject_alt_name: "{{ _san_list }}"
+      vars:
+        _san_list: >-
+          {{ ([ 'DNS:' + domain ] if domain else [])
+             + ([ 'IP:' + public_ip_effective ] if (public_ip_effective | default('') | length > 0) else [])
+             + [ 'DNS:localhost', 'IP:127.0.0.1' ] }}
+
+    - name: "Certificado self-signed (fullchain.pem)"
+      community.crypto.x509_certificate:
+        path: "{{ tls_dir }}/fullchain.pem"
+        privatekey_path: "{{ tls_dir }}/privkey.pem"
+        csr_path: "{{ tls_dir }}/delonix.csr"
+        provider: selfsigned
+        selfsigned_not_after: "+3650d"
+        mode: "0644"
+
+    - name: "Definir caminhos do cert (self-signed)"
+      ansible.builtin.set_fact:
+        tls_cert_path: "{{ tls_dir }}/fullchain.pem"
+        tls_key_path: "{{ tls_dir }}/privkey.pem"
+        tls_needs_certbot: false
+
+# ---------- LET'S ENCRYPT (preparação) ----------
+- name: "Let's Encrypt — bloco"
+  when: tls_effective_mode == 'letsencrypt'
+  block:
+    - name: "Escolher plugin de challenge (DNS-01 se houver provider)"
+      ansible.builtin.set_fact:
+        certbot_dns_plugin: >-
+          {{ 'dns-cloudflare' if dns_provider == 'cloudflare'
+             else ('dns-route53' if dns_provider == 'route53' else '') }}
+
+    - name: "Instalar certbot (+ plugin DNS)"
+      ansible.builtin.apt:
+        name: "{{ ['certbot'] + _plugin_pkgs }}"
+        state: present
+        update_cache: true
+      vars:
+        _plugin_pkgs: >-
+          {{ ['python3-certbot-dns-cloudflare'] if certbot_dns_plugin == 'dns-cloudflare'
+             else (['python3-certbot-dns-route53'] if certbot_dns_plugin == 'dns-route53' else []) }}
+
+    - name: "Credenciais Cloudflare para o certbot (DNS-01)"
+      ansible.builtin.copy:
+        dest: /etc/letsencrypt/cloudflare.ini
+        mode: "0600"
+        content: "dns_cloudflare_api_token = {{ lookup('ansible.builtin.env', 'CLOUDFLARE_API_TOKEN') }}\n"
+      when: certbot_dns_plugin == 'dns-cloudflare'
+
+    - name: "Webroot para o challenge HTTP-01"
+      ansible.builtin.file:
+        path: /var/www/acme
+        state: directory
+        mode: "0755"
+      when: certbot_dns_plugin == ''
+
+    - name: "Definir caminhos do cert (Let's Encrypt) — emissão diferida"
+      ansible.builtin.set_fact:
+        tls_cert_path: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"
+        tls_key_path: "/etc/letsencrypt/live/{{ domain }}/privkey.pem"
+        tls_needs_certbot: true

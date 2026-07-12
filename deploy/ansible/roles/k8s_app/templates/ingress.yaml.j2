@@ -1,0 +1,45 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: delonix-ingress
+  namespace: delonix-meet
+  annotations:
+{% if tls_effective_mode == 'letsencrypt' %}
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+{% endif %}
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: "delonix-server"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["{{ k8s_host }}"]
+      secretName: delonix-tls-secret
+  rules:
+    - host: "{{ k8s_host }}"
+      http:
+        paths:
+          - { path: /api, pathType: Prefix, backend: { service: { name: delonix-server, port: { number: 8180 } } } }
+          - { path: /rtc, pathType: Prefix, backend: { service: { name: delonix-server, port: { number: 8180 } } } }
+          - { path: /,    pathType: Prefix, backend: { service: { name: delonix-web,    port: { number: 80 } } } }
+---
+# Ingress DEDICADO ao /ws com afinidade por sala (R3). NÃO fundir com o principal.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: delonix-ws
+  namespace: delonix-meet
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$arg_room"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["{{ k8s_host }}"]
+      secretName: delonix-tls-secret
+  rules:
+    - host: "{{ k8s_host }}"
+      http:
+        paths:
+          - { path: /ws, pathType: Prefix, backend: { service: { name: delonix-server-ws, port: { number: 8180 } } } }
