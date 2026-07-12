@@ -207,6 +207,7 @@ Modelo completo em [DEPLOYMENT.md](DEPLOYMENT.md) (checklist) e `HARNESS.md` §6
 | Documento | Para quê |
 |---|---|
 | [docs/onboarding.md](docs/onboarding.md) | **Onboarding de engenharia** — C4, UML 2, flowchart do system design, receitas |
+| [docs/ux-review.md](docs/ux-review.md) | **Revisão de UI/UX enterprise** (vs Teams/Zoom) — sidebar, design system, sala |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Desenho do sistema, fases, monorepo |
 | [docs/ops/platform-engineering.md](docs/ops/platform-engineering.md) | **Runbook DevOps/SRE/Platform** — produção, hosts, media, scaling, incidentes |
 | [docs/ops/zero-touch-deploy.md](docs/ops/zero-touch-deploy.md) | **Deploy zero-touch** — `make deploy`, 12-factor, IP/DNS/TLS/segredos automáticos |
