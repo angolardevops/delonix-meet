@@ -8,7 +8,7 @@ A alternativa séria ao Google Meet / Zoom / Teams para quem tem requisitos de *
 conformidade (BNA/LGPD) e self-hosting**. E2EE real, SFU próprio em Rust, multi-tenant com
 isolamento por organização, e deploy de binário único sem runtime externo.
 
-[Arquitetura](ARCHITECTURE.md) · [Deploy (single-host)](DEPLOYMENT.md) · [Runbook DevOps/SRE](docs/ops/platform-engineering.md) · [Regressões](docs/reference/regressions.md)
+[Onboarding (dev novo)](docs/onboarding.md) · [Arquitetura](ARCHITECTURE.md) · [Deploy (single-host)](DEPLOYMENT.md) · [Runbook DevOps/SRE](docs/ops/platform-engineering.md) · [Regressões](docs/reference/regressions.md)
 
 </div>
 
@@ -206,6 +206,7 @@ Modelo completo em [DEPLOYMENT.md](DEPLOYMENT.md) (checklist) e `HARNESS.md` §6
 
 | Documento | Para quê |
 |---|---|
+| [docs/onboarding.md](docs/onboarding.md) | **Onboarding de engenharia** — C4, UML 2, flowchart do system design, receitas |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Desenho do sistema, fases, monorepo |
 | [docs/ops/platform-engineering.md](docs/ops/platform-engineering.md) | **Runbook DevOps/SRE/Platform** — produção, hosts, media, scaling, incidentes |
 | [docs/ops/zero-touch-deploy.md](docs/ops/zero-touch-deploy.md) | **Deploy zero-touch** — `make deploy`, 12-factor, IP/DNS/TLS/segredos automáticos |
