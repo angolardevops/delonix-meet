@@ -3413,3 +3413,25 @@ button.link:hover {
 .notif-time { font-size: 0.72rem; color: var(--muted); }
 .notif-cta { flex: none; background: none; border: 1px solid var(--border); color: var(--text); font-size: 0.76rem; padding: 3px 9px; border-radius: 999px; cursor: pointer; }
 .notif-cta:hover { border-color: color-mix(in oklab, var(--accent) 40%, var(--border)); }
+
+/* ============================================================
+   Seletor de esquema da sala (Galeria / Orador / Lado a lado)
+   ============================================================ */
+.layout-picker { position: relative; }
+.menu-backdrop { position: fixed; inset: 0; z-index: 25; }
+.layout-menu { left: auto; right: 0; transform: none; bottom: 56px; min-width: 244px; padding: 6px; }
+.layout-menu-title { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 6px 8px 4px; font-weight: 700; }
+.layout-menu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
+.layout-opt {
+  display: flex; align-items: center; gap: 0.6rem; width: 100%;
+  padding: 0.5rem 0.6rem; border-radius: 8px; background: none; color: var(--text);
+  text-align: left; cursor: pointer; transition: background 0.12s;
+}
+.layout-opt:hover { background: var(--surface-3, rgba(255, 255, 255, 0.06)); }
+.layout-opt.active {
+  background: color-mix(in oklab, var(--accent-2, #eda33b) 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent-2, #eda33b) 34%, transparent);
+}
+.layout-opt > span:last-child { display: flex; flex-direction: column; line-height: 1.2; }
+.layout-opt small { color: var(--muted); font-size: 0.72rem; }
+.layout-ico { font-size: 1.05rem; width: 22px; text-align: center; flex: none; }
