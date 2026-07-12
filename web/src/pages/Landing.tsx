@@ -5,16 +5,27 @@ import { LanguageToggle } from '../components/Shell'
 
 type Feature = { t: string; d: string }
 type FaqItem = { q: string; a: string }
+type Testimonial = { q: string; n: string; r: string }
+type Plan = { name: string; monthly: number | null; popular?: boolean; desc: string; cta: string; features: string[] }
 
 /** Landing pública — só funcionalidades e afirmações verdadeiras do produto. */
 export default function Landing({ onSignIn }: { onSignIn: () => void }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const ta = <T,>(key: string): T => t(key, { returnObjects: true }) as T
   const [faqOpen, setFaqOpen] = useState(0)
+  const [billing, setBilling] = useState<'monthly' | 'annual'>('monthly')
 
   const features = ta<Feature[]>('land.features')
   const secPoints = ta<string[]>('land.secPoints')
   const faq = ta<FaqItem[]>('land.faq')
+  const testimonials = ta<Testimonial[]>('land.testimonials')
+  const plans = ta<Plan[]>('land.plans')
+
+  // Preço por utilizador/mês em Kz; anual = 20% de desconto (como o protótipo).
+  const fmtPrice = (monthly: number) => {
+    const v = billing === 'annual' ? Math.round(monthly * 0.8) : monthly
+    return `${v.toLocaleString(i18n.language.startsWith('pt') ? 'pt-PT' : 'en-US')} Kz`
+  }
 
 
   const goto = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
@@ -32,6 +43,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
           <nav className="land-nav">
             <button className="land-link" onClick={() => goto('features')}>{t('land.nav.features')}</button>
             <button className="land-link" onClick={() => goto('security')}>{t('land.nav.security')}</button>
+            <button className="land-link" onClick={() => goto('pricing')}>{t('land.nav.pricing')}</button>
             <button className="land-link" onClick={() => goto('faq')}>{t('land.nav.faq')}</button>
           </nav>
           <div className="land-top-actions">
@@ -98,6 +110,71 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
               <li key={p}>✓ {p}</li>
             ))}
           </ul>
+        </div>
+      </section>
+
+      <section className="land-section" id="testimonials">
+        <h2 className="center">{t('land.testTitle')}</h2>
+        <div className="test-grid">
+          {testimonials.map((q) => (
+            <figure key={q.n} className="test-card">
+              <blockquote>“{q.q}”</blockquote>
+              <figcaption>
+                <span className="avatar-circle small">{q.n.split(' ').map((w) => w[0]).slice(0, 2).join('')}</span>
+                <span className="test-who">
+                  <strong>{q.n}</strong>
+                  <small>{q.r}</small>
+                </span>
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      </section>
+
+      <section className="land-section" id="pricing">
+        <p className="eyebrow center">{t('land.priceEyebrow')}</p>
+        <h2 className="center">{t('land.priceTitle')}</h2>
+        <p className="land-section-sub">{t('land.priceSub')}</p>
+        <div className="billing-toggle" role="group" aria-label={t('land.priceEyebrow')}>
+          <button
+            className={billing === 'monthly' ? 'billing-btn active' : 'billing-btn'}
+            onClick={() => setBilling('monthly')}
+          >
+            {t('land.monthly')}
+          </button>
+          <button
+            className={billing === 'annual' ? 'billing-btn active' : 'billing-btn'}
+            onClick={() => setBilling('annual')}
+          >
+            {t('land.annual')} <em>{t('land.save')}</em>
+          </button>
+        </div>
+        <div className="plans-grid">
+          {plans.map((p) => (
+            <div key={p.name} className={p.popular ? 'plan-card popular' : 'plan-card'}>
+              {p.popular && <span className="plan-badge">{t('land.popular')}</span>}
+              <h3>{p.name}</h3>
+              <p className="plan-desc">{p.desc}</p>
+              <p className="plan-price">
+                {p.monthly == null ? (
+                  <strong>{t('land.custom')}</strong>
+                ) : (
+                  <>
+                    <strong>{fmtPrice(p.monthly)}</strong>
+                    <small>{t('land.perUser')}</small>
+                  </>
+                )}
+              </p>
+              <ul className="plan-features">
+                {p.features.map((f) => (
+                  <li key={f}>✓ {f}</li>
+                ))}
+              </ul>
+              <button className={p.popular ? 'btn-new plan-cta' : 'btn-ghost plan-cta'} onClick={onSignIn}>
+                {p.cta}
+              </button>
+            </div>
+          ))}
         </div>
       </section>
 

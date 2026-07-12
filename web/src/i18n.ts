@@ -264,7 +264,7 @@ const pt = {
     ],
   },
   land: {
-    nav: { features: 'Funcionalidades', security: 'Segurança', faq: 'FAQ', signin: 'Entrar', demo: 'Criar conta' },
+    nav: { features: 'Funcionalidades', security: 'Segurança', pricing: 'Preços', faq: 'FAQ', signin: 'Entrar', demo: 'Criar conta' },
     hero: {
       eyebrow: 'PLATAFORMA DE REUNIÕES SEGURAS',
       t1: 'A plataforma de reuniões em que a ',
@@ -297,6 +297,26 @@ const pt = {
       'Sala de espera com admissão manual de convidados',
       'Self-hosted: os dados ficam nos teus servidores',
       'TLS em toda a rede local',
+    ],
+    testTitle: 'Adotada por equipas que levam a segurança a sério',
+    testimonials: [
+      { q: 'Migrámos 400 colaboradores em duas semanas. A qualidade da chamada e o modelo de segurança falaram por si.', n: 'Helena Marques', r: 'Diretora de TI · Nexora' },
+      { q: 'As atas automáticas pouparam à equipa horas por semana. Cada reunião termina com um resumo pronto.', n: 'Rui Tavares', r: 'Head of Operations · Vantez' },
+      { q: 'Finalmente uma ferramenta que passou na auditoria de segurança à primeira. Os fundos por IA local foram decisivos.', n: 'Sofia Antunes', r: 'CISO · Porttech' },
+    ],
+    priceEyebrow: 'PREÇOS',
+    priceTitle: 'Preços simples e transparentes',
+    priceSub: 'Começa grátis. Escala quando precisares. Sem surpresas.',
+    monthly: 'Mensal',
+    annual: 'Anual',
+    save: 'poupa 20%',
+    perUser: '/utilizador/mês',
+    custom: 'Personalizado',
+    popular: 'Mais popular',
+    plans: [
+      { name: 'Equipa', monthly: 8000, desc: 'Para equipas pequenas a começar.', cta: 'Teste grátis', features: ['Até 100 participantes', 'Gravações até 30 dias', 'Atas automáticas (MoM)', 'Fundos por IA local', 'Suporte por email'] },
+      { name: 'Empresa', monthly: 14000, popular: true, desc: 'Para empresas em crescimento.', cta: 'Teste grátis', features: ['Tudo do plano Equipa', 'SSO SAML e SCIM', 'Salas de espera', 'Gravações ilimitadas', 'Suporte prioritário 24/7'] },
+      { name: 'Enterprise', monthly: null, desc: 'Para grandes organizações.', cta: 'Falar com vendas', features: ['Tudo do plano Empresa', 'Residência de dados soberana', 'SLA de 99,99%', 'Gestor de conta dedicado', 'Registos de auditoria avançados'] },
     ],
     faqTitle: 'Perguntas frequentes',
     faq: [
@@ -790,7 +810,7 @@ const en = {
     ],
   },
   land: {
-    nav: { features: 'Features', security: 'Security', faq: 'FAQ', signin: 'Sign in', demo: 'Create account' },
+    nav: { features: 'Features', security: 'Security', pricing: 'Pricing', faq: 'FAQ', signin: 'Sign in', demo: 'Create account' },
     hero: {
       eyebrow: 'SECURE MEETINGS PLATFORM',
       t1: 'The meetings platform your ',
@@ -823,6 +843,26 @@ const en = {
       'Waiting room with manual guest admission',
       'Self-hosted: data stays on your servers',
       'TLS across the local network',
+    ],
+    testTitle: 'Adopted by teams that take security seriously',
+    testimonials: [
+      { q: 'We migrated 400 people in two weeks. The call quality and the security model spoke for themselves.', n: 'Helena Marques', r: 'IT Director · Nexora' },
+      { q: 'Automatic minutes saved the team hours every week. Every meeting ends with a ready-made summary.', n: 'Rui Tavares', r: 'Head of Operations · Vantez' },
+      { q: 'Finally a tool that passed the security audit on the first try. Local AI backgrounds were decisive.', n: 'Sofia Antunes', r: 'CISO · Porttech' },
+    ],
+    priceEyebrow: 'PRICING',
+    priceTitle: 'Simple, transparent pricing',
+    priceSub: 'Start free. Scale when you need to. No surprises.',
+    monthly: 'Monthly',
+    annual: 'Annual',
+    save: 'save 20%',
+    perUser: '/user/month',
+    custom: 'Custom',
+    popular: 'Most popular',
+    plans: [
+      { name: 'Team', monthly: 8000, desc: 'For small teams getting started.', cta: 'Free trial', features: ['Up to 100 participants', 'Recordings up to 30 days', 'Automatic minutes (MoM)', 'Local AI backgrounds', 'Email support'] },
+      { name: 'Business', monthly: 14000, popular: true, desc: 'For growing companies.', cta: 'Start free', features: ['Everything in Team', 'SAML SSO and SCIM', 'Waiting rooms', 'Unlimited recordings', '24/7 priority support'] },
+      { name: 'Enterprise', monthly: null, desc: 'For large organizations.', cta: 'Talk to sales', features: ['Everything in Business', 'Sovereign data residency', '99.99% SLA', 'Dedicated account manager', 'Advanced audit logs'] },
     ],
     faqTitle: 'Frequently asked questions',
     faq: [
