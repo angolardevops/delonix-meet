@@ -293,7 +293,7 @@ pub async fn register(
     let mut tx = state.db.begin().await?;
     let user: crate::users::UserPublic = sqlx::query_as(
         "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3)
-         RETURNING id, email, username, created_at",
+         RETURNING id, email, username, created_at, COALESCE(locale, 'pt') AS locale",
     )
     .bind(&email)
     .bind(&username)
@@ -692,7 +692,7 @@ pub async fn sso_callback(
 
     // Just-in-Time Provisioning: procurar ou criar o utilizador.
     let existing: Option<crate::users::UserPublic> =
-        sqlx::query_as("SELECT id, email, username, created_at FROM users WHERE email = $1")
+        sqlx::query_as("SELECT id, email, username, created_at, COALESCE(locale, 'pt') AS locale FROM users WHERE email = $1")
             .bind(&email)
             .fetch_optional(&state.db)
             .await?;
@@ -720,7 +720,7 @@ pub async fn sso_callback(
             let new_user: crate::users::UserPublic = sqlx::query_as(
                 "INSERT INTO users (email, username, password_hash, sso_provider, sso_subject)
                  VALUES ($1, $2, $3, $4, $5)
-                 RETURNING id, email, username, created_at",
+                 RETURNING id, email, username, created_at, COALESCE(locale, 'pt') AS locale",
             )
             .bind(&email)
             .bind(&name)
