@@ -44,3 +44,6 @@ server/recordings/
 .dev/
 voice/tls/
 voice/kamailio/ao_trunk.txt
+
+# Preview local (path da máquina)
+agents/launch.json
