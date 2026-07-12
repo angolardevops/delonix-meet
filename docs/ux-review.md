@@ -146,4 +146,27 @@ para paridade/liderança:
 4. **PR-4 (P1, 2 dias):** command palette (Cmd-K) + centro de notificações.
 5. **PR-5 (P1/P2):** painel unificado da sala (abas) + pre-join rico + seletor de layout.
 
-*Relatório de revisão — não altera código. Ver [onboarding.md](onboarding.md) para o mapa da UI e [HARNESS.md](../HARNESS.md) §5 para o design system atual.*
+---
+
+## Estado de implementação
+
+| Item | Estado |
+|---|---|
+| PR-1 — sidebar agrupada + avatar→menu + `aria-current`/`:focus-visible` | ✅ feito |
+| PR-2 — command palette (Cmd-K) + role-gating da secção Admin | ✅ feito |
+| Centro de notificações (sino + painel: chamadas perdidas + convites) | ✅ feito |
+| Design system — `<PageHeader>` + `<EmptyState>` + tokens de escala + foco | ✅ primitivos criados e adotados (Recordings, notificações); adoção nas restantes páginas é incremental |
+| Onboarding — tour guiado animado com skip | ✅ feito ([OnboardingTour.tsx](../web/src/components/OnboardingTour.tsx)) |
+| PR-5 — painel unificado da sala (abas) + pre-join rico + seletor de layout | ⬜ pendente |
+
+**Correção honesta à revisão inicial:** a leitura do código revelou que dois "achados"
+estavam sobre-avaliados — (a) os **hex hardcoded em JSX** são, na maioria, legítimos
+(paleta do quadro branco em canvas, cores de categoria de gráficos), não violações de
+tokens; (b) os **overrides de tokens da sala** e as **variantes de botão** são
+**intencionais**, não drift — pelo que a "consolidação" agressiva foi deliberadamente
+evitada para não regredir. O ganho real de design system são os **primitivos partilhados**
+(acima), adotados incrementalmente.
+
+---
+
+*Relatório de revisão. Ver [onboarding.md](onboarding.md) para o mapa da UI e [HARNESS.md](../HARNESS.md) §5 para o design system atual.*
