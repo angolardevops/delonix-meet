@@ -136,6 +136,7 @@ export default function App() {
           user={user}
           active={nav}
           onNavigate={navigate}
+          onEnterRoom={enterRoom}
           onLogout={() => {
             logout()
             setUser(null)

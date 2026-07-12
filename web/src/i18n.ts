@@ -37,6 +37,15 @@ const pt = {
     org: 'Organização',
     admin: 'Administração',
   },
+  cmd: {
+    title: 'Comandos',
+    searchLabel: 'Procurar',
+    placeholder: 'Procurar páginas e ações…',
+    navigate: 'Ir para',
+    actions: 'Ações',
+    newMeeting: 'Nova reunião',
+    empty: 'Sem resultados',
+  },
   settings: {
     title: 'Definições',
     appearance: 'Aparência',
@@ -540,6 +549,15 @@ const en = {
     library: 'Library',
     org: 'Organization',
     admin: 'Administration',
+  },
+  cmd: {
+    title: 'Commands',
+    searchLabel: 'Search',
+    placeholder: 'Search pages and actions…',
+    navigate: 'Go to',
+    actions: 'Actions',
+    newMeeting: 'New meeting',
+    empty: 'No results',
   },
   settings: {
     title: 'Settings',
