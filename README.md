@@ -160,6 +160,20 @@ Testes de regressão codificados: `rate_limit` (R6, token bucket) e `sfuLifecycl
 
 ## Deploy em produção
 
+**Zero-touch (recomendado)** — um só ficheiro (`deploy/config.yml`), um só comando. IPs, DNS
+público, TLS (self-signed ou Let's Encrypt) e segredos gerados **sem intervenção humana**,
+single **ou** multi-host:
+
+```bash
+make deploy-config     # cria deploy/config.yml a partir do exemplo
+# edita deploy/config.yml (deploy_mode, domain, tls, dns)
+make deploy            # faz tudo (Ansible + 12-factor)
+```
+
+Guia completo: [docs/ops/zero-touch-deploy.md](docs/ops/zero-touch-deploy.md).
+
+Caminhos alternativos / manuais:
+
 | Modelo | Quando | Como | Guia |
 |---|---|---|---|
 | **Single-host** (systemd + nginx) | 1 servidor, IP público | `bash deploy/deploy.sh` / `make prod-legacy` | [DEPLOYMENT.md](DEPLOYMENT.md) |
@@ -194,6 +208,7 @@ Modelo completo em [DEPLOYMENT.md](DEPLOYMENT.md) (checklist) e `HARNESS.md` §6
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Desenho do sistema, fases, monorepo |
 | [docs/ops/platform-engineering.md](docs/ops/platform-engineering.md) | **Runbook DevOps/SRE/Platform** — produção, hosts, media, scaling, incidentes |
+| [docs/ops/zero-touch-deploy.md](docs/ops/zero-touch-deploy.md) | **Deploy zero-touch** — `make deploy`, 12-factor, IP/DNS/TLS/segredos automáticos |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Deploy single-host bare-metal, go-live |
 | [deploy/k8s/README.md](deploy/k8s/README.md) | Manifestos Kubernetes, HA de estado |
 | [docs/reference/architecture.md](docs/reference/architecture.md) | Referência estável de arquitetura |

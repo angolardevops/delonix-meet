@@ -396,6 +396,33 @@ restore: ## Reconstrói o cluster e faz o restore das bases de dados
 prod-legacy: ## Deploy bare-metal legado (systemd + nginx)
 	@bash deploy/deploy.sh
 
+# ============================================================
+#  DEPLOY ZERO-TOUCH — single-host OU multi-host (Ansible + 12-factor)
+#  IPs, DNS, TLS e segredos gerados sem intervenção humana.
+#  Único ficheiro a editar: deploy/config.yml (ver deploy/config.example.yml).
+#  Docs: docs/ops/zero-touch-deploy.md
+# ============================================================
+ANSIBLE_ARGS ?=
+
+.PHONY: deploy
+deploy: ## Deploy zero-touch (lê deploy/config.yml; single ou multi)
+	@if [ ! -f deploy/config.yml ]; then \
+	  cp deploy/config.example.yml deploy/config.yml; \
+	  printf "$(Y)  criei deploy/config.yml — edita (domain/tls/dns/modo) e corre 'make deploy' de novo$(Z)\n"; \
+	  exit 1; \
+	fi
+	@printf "$(C)▶ deploy zero-touch (Ansible)$(Z)\n"
+	@cd deploy/ansible && ansible-playbook site.yml $(ANSIBLE_ARGS)
+
+.PHONY: deploy-check
+deploy-check: ## Dry-run do deploy (ansible --check --diff, não altera nada)
+	@cd deploy/ansible && ansible-playbook site.yml --check --diff $(ANSIBLE_ARGS)
+
+.PHONY: deploy-config
+deploy-config: ## Cria deploy/config.yml a partir do exemplo (se não existir)
+	@[ -f deploy/config.yml ] && printf "$(Y)  deploy/config.yml já existe$(Z)\n" \
+	  || { cp deploy/config.example.yml deploy/config.yml; printf "$(G)  ✓ criado deploy/config.yml — edita-o$(Z)\n"; }
+
 
 # ============================================================
 #  VOICE — camada de media do dial-in PSTN (opcional)

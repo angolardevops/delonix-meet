@@ -13,6 +13,13 @@ mobile/.dart_tool/
 .env
 *.local
 deploy/delonix.env
+# Deploy 12-factor: config real e artefactos gerados sem intervenção humana
+# (segredos idempotentes, certificados, kubeconfig). NUNCA versionar.
+deploy/config.yml
+deploy/ansible/.secrets/
+deploy/ansible/.generated/
+deploy/ansible/*.retry
+deploy/ansible/fetched/
 
 # Assets de IA self-hosted pesados — FORA do git (obtidos por deploy.sh /
 # Dockerfile / deploy/fetch-whisper.sh, com SHA-256 fixado). Ver

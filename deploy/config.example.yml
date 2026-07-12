@@ -1,0 +1,79 @@
+# ============================================================
+#  Delonix Meet — configuração declarativa de deploy (12-factor)
+#
+#  ⚑ ESTE é o ÚNICO ficheiro que um humano edita. Copia-o e preenche:
+#        cp deploy/config.example.yml deploy/config.yml
+#     Depois:  make deploy            (single ou multi, decidido aqui)
+#
+#  Tudo o resto — IPs, DNS, certificados TLS e segredos — é gerado
+#  automaticamente pelo Ansible SEM intervenção humana, e de forma
+#  idempotente (correr de novo não estraga nem regenera segredos).
+#
+#  deploy/config.yml está no .gitignore (não comitar valores reais).
+# ============================================================
+
+# ---- Modo de deploy ----------------------------------------
+# single-host : 1 servidor (docker infra + systemd + nginx). Simples.
+# multi-host  : cluster Kubernetes (kubeadm + MetalLB + Helm). HA.
+deploy_mode: single-host
+
+# ---- Domínio & rede ----------------------------------------
+# domain vazio ("") ⇒ serve por IP com certificado self-signed (dev/interno).
+# Com domínio público ⇒ TLS Let's Encrypt automático (ver tls.mode: auto).
+domain: ""                       # ex.: meet.example.com
+
+# IP público/alcançável do host (single-host) ou do LB (multi-host).
+#   auto  ⇒ o Ansible deteta (single: IP de saída; multi: lê do MetalLB/LB).
+public_ip: auto                  # auto | 203.0.113.10
+
+# ---- TLS (gerado sem intervenção) --------------------------
+tls:
+  # auto       : Let's Encrypt se (domain + acme_email + DNS público); senão self-signed.
+  # selfsigned : sempre self-signed (openssl, SAN = domain + IP). Interno/dev.
+  # letsencrypt: força ACME (exige domain público alcançável + acme_email).
+  mode: auto
+  acme_email: ""                 # obrigatório para Let's Encrypt (avisos de validade)
+  acme_staging: false            # true = ambiente de teste do LE (não conta p/ rate-limit)
+
+# ---- DNS público (opcional, sem intervenção) ---------------
+# Cria/atualiza o registo A do `domain` a apontar para `public_ip`.
+#   none       : não mexe no DNS (assumes que já existe / geres externamente).
+#   hosts      : escreve /etc/hosts local (dev/stage numa máquina só).
+#   cloudflare : community.general.cloudflare_dns  (CLOUDFLARE_API_TOKEN no ambiente).
+#   route53    : amazon.aws.route53               (AWS_ACCESS_KEY_ID/SECRET no ambiente).
+dns:
+  provider: none
+  cloudflare_zone: ""            # ex.: example.com  (para provider: cloudflare)
+  route53_zone: ""              # ex.: example.com. (para provider: route53, com ponto final)
+  proxied: false                # cloudflare: passar o registo pela proxy laranja (media UDP ⇒ false)
+
+# ---- coturn / media ----------------------------------------
+turn:
+  realm: ""                      # vazio ⇒ usa o `domain` (ou "delonix.local" sem domínio)
+  # Portas do relay RTP abertas no firewall (ver docs/ops/platform-engineering.md §3.1).
+  min_port: 49152
+  max_port: 59152
+  # multi-host: coturn in-cluster + Service LoadBalancer (R4). O VIP é derivado do MetalLB.
+
+# ---- Segredos ----------------------------------------------
+# Gerados fortes e persistidos UMA vez em deploy/ansible/.secrets/<escopo>.yml
+# (gitignored). Reusados em cada deploy → idempotente; trocar JWT desloga todos.
+# Para rodar um segredo: apagar a linha respetiva do ficheiro e re-deploy.
+secrets:
+  auto_generate: true
+
+# ---- Multi-host (Kubernetes) — só usado se deploy_mode: multi-host ----
+kubernetes:
+  metallb_ip_range: ""           # ex.: 192.168.1.200-192.168.1.250  (vazio ⇒ do inventory.ini)
+  coturn_ip: ""                  # VIP do coturn (dentro do pool). Vazio ⇒ MetalLB atribui dinâmico.
+  postgres_ha: true              # true = chart postgresql-ha (repmgr); false = single-node
+  redis_sentinel: true           # true = Redis Sentinel; false = standalone
+  server_replicas: 3
+  web_replicas: 3
+
+# ---- Caminhos single-host ----------------------------------
+paths:
+  env_file: /etc/delonix/delonix.env
+  web_root: /var/www/delonix
+  recordings_dir: /var/lib/delonix/recordings
+  tls_dir: /etc/ssl/delonix

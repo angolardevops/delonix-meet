@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: delonix-config
+  namespace: delonix-meet
+data:
+  BIND_ADDR: "0.0.0.0:8180"
+  # VIP do coturn (resolvido zero-touch). Browser E SFU alcançam-no. Ver R4.
+  TURN_HOST: "{{ coturn_vip_eff }}:3478"
+  FORCE_TURN_RELAY: "1"
+  SFU_EXTERNAL_IP: ""
+  REDIS_URL: "redis://delonix-redis-master.delonix-meet.svc.cluster.local:6379"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: delonix-secrets
+  namespace: delonix-meet
+type: Opaque
+stringData:
+  DATABASE_URL: "postgres://delonix:{{ postgres_password }}@{{ _pg_host }}.delonix-meet.svc.cluster.local:5432/delonix_meet"
+  JWT_SECRET: "{{ jwt_secret }}"
+  TURN_SECRET: "{{ turn_secret }}"
+  VOICE_INTERNAL_SECRET: "{{ voice_secret }}"
+  POSTGRES_PASSWORD: "{{ postgres_password }}"
+  POSTGRES_USER: "delonix"
+  POSTGRES_DB: "delonix_meet"

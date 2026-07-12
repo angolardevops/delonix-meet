@@ -19,6 +19,7 @@
 | Demo / QA num portátil | kind + k8s local | `make stage` | §5.2 |
 | Produção pequena (1 host) | systemd + nginx **ou** docker-compose | `make prod-legacy` / compose | §4 · [DEPLOYMENT.md](../../DEPLOYMENT.md) |
 | Produção HA (multi-host) | Kubernetes + Helm + coturn LB | `make prod` | §5.3 |
+| **Zero-touch (single ou multi)** | Ansible + 12-factor, IP/DNS/TLS/segredos automáticos | `make deploy` | [zero-touch-deploy.md](zero-touch-deploy.md) |
 
 Regra de ouro: **começa pelo modelo mais simples que serve a tua carga** (§2 dimensiona).
 Um único host bem afinado aguenta dezenas de salas pequenas. Só migra para K8s multi-host
@@ -347,6 +348,7 @@ Wire num pipeline CI: `make build && make test` (inclui `cargo test`, `tsc`, `vi
 | Documento | Conteúdo |
 |---|---|
 | [README.md](../../README.md) | Arranque rápido, estrutura, dev, portas |
+| [docs/ops/zero-touch-deploy.md](zero-touch-deploy.md) | Deploy zero-touch (12-factor) — `make deploy`, IP/DNS/TLS/segredos automáticos |
 | [ARCHITECTURE.md](../../ARCHITECTURE.md) | Desenho do sistema, fases, monorepo |
 | [DEPLOYMENT.md](../../DEPLOYMENT.md) | Deploy single-host bare-metal (systemd+nginx), go-live |
 | [deploy/k8s/README.md](../../deploy/k8s/README.md) | Manifestos K8s, HA de estado |

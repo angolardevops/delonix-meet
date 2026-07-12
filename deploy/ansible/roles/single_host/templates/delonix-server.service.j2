@@ -1,0 +1,21 @@
+# GERADO por Ansible — systemd (system) unit do backend Delonix.
+[Unit]
+Description=Delonix Meet — servidor (API + sinalização + SFU)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile={{ env_file }}
+WorkingDirectory={{ repo_root }}/server
+ExecStart={{ repo_root }}/server/target/release/delonix-server
+Restart=on-failure
+RestartSec=5
+# WebRTC/WS consomem muitos file descriptors.
+LimitNOFILE=65535
+# Endurecimento básico.
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
