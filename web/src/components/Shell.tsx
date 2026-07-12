@@ -1,6 +1,7 @@
 import { ReactNode, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { updateMe, User } from '../api'
+import { myOrgs, updateMe, User } from '../api'
+import CommandPalette from './CommandPalette'
 import { setLanguage } from '../i18n'
 import { appNameParts, getAppName, getLoginBg, setAppName, setLoginBg } from '../branding'
 import PasswordInput from './PasswordInput'
@@ -280,19 +281,40 @@ export default function Shell({
   active,
   onNavigate,
   onLogout,
+  onEnterRoom,
   children,
 }: {
   user: User
   active: NavKey
   onNavigate: (k: NavKey) => void
   onLogout: () => void
+  onEnterRoom: (code: string, voice?: boolean) => void
   children: ReactNode
 }) {
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('dx_nav_collapsed') === '1')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [acctOpen, setAcctOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [isAdmin, setIsAdmin] = useState(false)
   const acctRef = useRef<HTMLDivElement>(null)
+  // Papel: admin de alguma org → mostra a secção Administração + Análises.
+  useEffect(() => {
+    let alive = true
+    myOrgs().then((orgs) => { if (alive) setIsAdmin(orgs.some((o) => o.role === 'admin')) }).catch(() => {})
+    return () => { alive = false }
+  }, [])
+  // Atalho global do command palette (Cmd/Ctrl-K).
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault()
+        setPaletteOpen((o) => !o)
+      }
+    }
+    window.addEventListener('keydown', on)
+    return () => window.removeEventListener('keydown', on)
+  }, [])
   const [brand, setBrand] = useState<[string, string]>(appNameParts)
   // Fecha o menu de conta ao clicar fora ou premir Esc.
   useEffect(() => {
@@ -332,8 +354,18 @@ export default function Shell({
             {brand[0]} <span>{brand[1]}</span>
           </span>
         </div>
+        <button
+          className="nav-search"
+          onClick={() => setPaletteOpen(true)}
+          title={collapsed ? t('cmd.title', 'Comandos') : undefined}
+          aria-label={t('cmd.title', 'Comandos')}
+        >
+          <span className="nav-search-icon" aria-hidden="true">⌕</span>
+          <span className="nav-search-label">{t('cmd.searchLabel', 'Procurar')}</span>
+          <kbd className="nav-search-kbd">⌘K</kbd>
+        </button>
         <nav>
-          {NAV_SECTIONS.map((section) => (
+          {NAV_SECTIONS.filter((s) => s.titleKey !== 'navSection.admin' || isAdmin).map((section) => (
             <div className="nav-section" key={section.titleKey}>
               <div className="nav-section-label">{t(section.titleKey)}</div>
               {section.items.map((n) => (
@@ -396,6 +428,15 @@ export default function Shell({
       <main className="shell-main">{children}</main>
       {settingsOpen && <SettingsModal user={user} onClose={() => setSettingsOpen(false)} onLogout={onLogout} />}
       <OnboardingTour />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onNavigate={onNavigate}
+        onEnterRoom={onEnterRoom}
+        onLogout={onLogout}
+        username={user.username}
+        isAdmin={isAdmin}
+      />
     </div>
   )
 }
