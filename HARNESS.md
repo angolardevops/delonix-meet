@@ -51,6 +51,7 @@
 - `apikeys.rs` — API keys por org (hash + scopes)
 - `rate_limit.rs` — rate limit por IP/conta (DashMap, lockout login 8/5min)
 - `error.rs` — `AppError` unificado → HTTP status + JSON body
+- `metrics.rs` — contadores atómicos de observabilidade (WS, SFU) expostos em `/metrics` (Prometheus)
 - `users.rs` — perfis de utilizador (perfil público, `me`, update, pesquisa)
 - `actions.rs` — agenda de reunião (tópicos com execução) + Plano de Ação 5W2H
 - `mls.rs` — MLS key agreement para E2EE em grupo (key packages, welcome)
@@ -82,7 +83,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0023) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0024) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 
