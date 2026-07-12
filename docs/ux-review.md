@@ -157,7 +157,8 @@ para paridade/liderança:
 | Centro de notificações (sino + painel: chamadas perdidas + convites) | ✅ feito |
 | Design system — `<PageHeader>` + `<EmptyState>` + tokens de escala + foco | ✅ primitivos criados e adotados (Recordings, notificações); adoção nas restantes páginas é incremental |
 | Onboarding — tour guiado animado com skip | ✅ feito ([OnboardingTour.tsx](../web/src/components/OnboardingTour.tsx)) |
-| PR-5 — painel unificado da sala (abas) + pre-join rico + seletor de layout | ⬜ pendente |
+| PR-5 — seletor de esquema da sala (Galeria/Orador/Lado a lado) | ✅ feito ([Room.tsx](../web/src/pages/Room.tsx)) — a validar em browser real |
+| PR-5 — pre-join rico (green room) + painel da sala com abas | ⬜ pendente (toca no ciclo da SfuCall — exige teste com 2 browsers) |
 
 **Correção honesta à revisão inicial:** a leitura do código revelou que dois "achados"
 estavam sobre-avaliados — (a) os **hex hardcoded em JSX** são, na maioria, legítimos
