@@ -31,6 +31,12 @@ const pt = {
     logout: 'Terminar sessão',
     toggle: 'Recolher / expandir menu',
   },
+  navSection: {
+    work: 'Trabalho',
+    library: 'Biblioteca',
+    org: 'Organização',
+    admin: 'Administração',
+  },
   settings: {
     title: 'Definições',
     appearance: 'Aparência',
@@ -528,6 +534,12 @@ const en = {
     analytics: 'Analytics',
     logout: 'Sign out',
     toggle: 'Collapse / expand menu',
+  },
+  navSection: {
+    work: 'Work',
+    library: 'Library',
+    org: 'Organization',
+    admin: 'Administration',
   },
   settings: {
     title: 'Settings',

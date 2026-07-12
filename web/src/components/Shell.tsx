@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { updateMe, User } from '../api'
 import { setLanguage } from '../i18n'
@@ -9,15 +9,38 @@ import { CalendarIcon, ClockIcon, CloseIcon, FilmIcon, HomeIcon, MenuIcon, NoteI
 
 export type NavKey = 'home' | 'directory' | 'recordings' | 'calendar' | 'analytics' | 'roadmap' | 'whiteboards'
 
-const NAV: { key: NavKey; labelKey: string; icon: ReactNode }[] = [
-  { key: 'home', labelKey: 'nav.home', icon: <HomeIcon /> },
-  { key: 'directory', labelKey: 'nav.org', icon: <PeopleIcon /> },
-  { key: 'calendar', labelKey: 'nav.calendar', icon: <CalendarIcon /> },
-  { key: 'recordings', labelKey: 'nav.recordings', icon: <FilmIcon /> },
-  { key: 'whiteboards', labelKey: 'nav.whiteboards', icon: <NoteIcon /> },
-  { key: 'analytics', labelKey: 'nav.analytics', icon: <ClockIcon /> },
-  // Roadmap só visível em desenvolvimento local (nunca em stage/prod)
-  ...(import.meta.env.DEV ? [{ key: 'roadmap' as NavKey, labelKey: 'road.navLabel', icon: <StageIcon /> }] : []),
+type NavItem = { key: NavKey; labelKey: string; icon: ReactNode }
+type NavSection = { titleKey: string; items: NavItem[] }
+
+// Navegação agrupada por secção (padrão enterprise: Teams/Slack) — comunica
+// hierarquia e escala melhor que uma lista plana. Ver docs/ux-review.md.
+const NAV_SECTIONS: NavSection[] = [
+  {
+    titleKey: 'navSection.work',
+    items: [
+      { key: 'home', labelKey: 'nav.home', icon: <HomeIcon /> },
+      { key: 'calendar', labelKey: 'nav.calendar', icon: <CalendarIcon /> },
+    ],
+  },
+  {
+    titleKey: 'navSection.library',
+    items: [
+      { key: 'recordings', labelKey: 'nav.recordings', icon: <FilmIcon /> },
+      { key: 'whiteboards', labelKey: 'nav.whiteboards', icon: <NoteIcon /> },
+    ],
+  },
+  {
+    titleKey: 'navSection.org',
+    items: [{ key: 'directory', labelKey: 'nav.org', icon: <PeopleIcon /> }],
+  },
+  {
+    titleKey: 'navSection.admin',
+    items: [
+      { key: 'analytics', labelKey: 'nav.analytics', icon: <ClockIcon /> },
+      // Roadmap só visível em desenvolvimento local (nunca em stage/prod)
+      ...(import.meta.env.DEV ? [{ key: 'roadmap' as NavKey, labelKey: 'road.navLabel', icon: <StageIcon /> }] : []),
+    ],
+  },
 ]
 
 export function applyTheme(theme: 'default' | 'delonix-light') {
@@ -268,7 +291,23 @@ export default function Shell({
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('dx_nav_collapsed') === '1')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [acctOpen, setAcctOpen] = useState(false)
+  const acctRef = useRef<HTMLDivElement>(null)
   const [brand, setBrand] = useState<[string, string]>(appNameParts)
+  // Fecha o menu de conta ao clicar fora ou premir Esc.
+  useEffect(() => {
+    if (!acctOpen) return
+    const onDoc = (e: MouseEvent) => {
+      if (acctRef.current && !acctRef.current.contains(e.target as Node)) setAcctOpen(false)
+    }
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setAcctOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onEsc)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onEsc)
+    }
+  }, [acctOpen])
   useEffect(() => {
     const on = () => setBrand(appNameParts())
     window.addEventListener('dx-branding', on)
@@ -294,17 +333,23 @@ export default function Shell({
           </span>
         </div>
         <nav>
-          {NAV.map((n) => (
-            <button
-              key={n.key}
-              data-tour={`nav-${n.key}`}
-              className={active === n.key ? 'nav-item active' : 'nav-item'}
-              onClick={() => onNavigate(n.key)}
-              title={collapsed ? t(n.labelKey) : undefined}
-            >
-              {n.icon}
-              <span>{t(n.labelKey)}</span>
-            </button>
+          {NAV_SECTIONS.map((section) => (
+            <div className="nav-section" key={section.titleKey}>
+              <div className="nav-section-label">{t(section.titleKey)}</div>
+              {section.items.map((n) => (
+                <button
+                  key={n.key}
+                  data-tour={`nav-${n.key}`}
+                  className={active === n.key ? 'nav-item active' : 'nav-item'}
+                  aria-current={active === n.key ? 'page' : undefined}
+                  onClick={() => onNavigate(n.key)}
+                  title={collapsed ? t(n.labelKey) : undefined}
+                >
+                  {n.icon}
+                  <span>{t(n.labelKey)}</span>
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="shell-nav-foot">
@@ -312,9 +357,39 @@ export default function Shell({
             <SettingsIcon />
             <span>{t('settings.title')}</span>
           </button>
-          <div className="nav-user">
-            <span className="avatar-circle small">{initials}</span>
-            <span className="nav-user-name">{user.username}</span>
+          <div className="nav-account" ref={acctRef}>
+            <button
+              className="nav-user"
+              data-tour="account"
+              aria-haspopup="menu"
+              aria-expanded={acctOpen}
+              onClick={() => setAcctOpen((o) => !o)}
+              title={collapsed ? user.username : undefined}
+            >
+              <span className="avatar-circle small">{initials}</span>
+              <span className="nav-user-name">{user.username}</span>
+              <span className="nav-user-caret" aria-hidden="true">▾</span>
+            </button>
+            {acctOpen && (
+              <div className="nav-account-menu" role="menu">
+                <div className="acct-head">
+                  <span className="avatar-circle small">{initials}</span>
+                  <div className="acct-id">
+                    <strong>{user.username}</strong>
+                    <small>{user.email}</small>
+                  </div>
+                </div>
+                <button role="menuitem" onClick={() => { setAcctOpen(false); setSettingsOpen(true) }}>
+                  <SettingsIcon /> {t('settings.title')}
+                </button>
+                <button role="menuitem" onClick={() => { setAcctOpen(false); window.dispatchEvent(new Event('dx-start-tour')) }}>
+                  {t('tour.replay', 'Ver introdução')}
+                </button>
+                <button role="menuitem" className="acct-danger" onClick={onLogout}>
+                  {t('nav.logout')}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </aside>
