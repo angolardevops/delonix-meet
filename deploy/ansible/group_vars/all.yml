@@ -31,6 +31,11 @@ dns_cloudflare_zone: "{{ cfg.dns.cloudflare_zone | default('') }}"
 dns_route53_zone: "{{ cfg.dns.route53_zone | default('') }}"
 dns_proxied: "{{ cfg.dns.proxied | default(false) }}"
 
+# ---- IA local (Ollama: tradução de legendas + resumo MoM) ----
+ollama_enabled: "{{ cfg.kubernetes.ollama_enabled | default(true) }}"
+# Em produção com GPU NVIDIA (device plugin instalado), liga para inferência rápida:
+ollama_gpu: "{{ cfg.kubernetes.ollama_gpu | default(false) }}"
+
 # ---- coturn / media ----
 turn_realm: "{{ cfg.turn.realm | default('') | ternary(cfg.turn.realm | default(''), (domain if domain else 'delonix.local')) }}"
 turn_min_port: "{{ cfg.turn.min_port | default(49152) }}"

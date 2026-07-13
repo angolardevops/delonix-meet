@@ -1,7 +1,7 @@
 import { CSSProperties, ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   currentUser, downloadRecording, iceServers, inviteToRoom, joinRoom, listRecordings, postQos, Recording,
-  roomChatHistory, saveMinutesByRoom, saveWhiteboard, searchUsers, uploadRecording, User,
+  roomChatHistory, saveMinutesByRoom, saveWhiteboard, searchUsers, translateCaption, uploadRecording, User,
 } from '../api'
 import {
   audioConstraints,
@@ -380,6 +380,10 @@ export default function Room({
   const [sharePerms, setSharePerms] = useState<Set<string>>(new Set())
   const [ccOn, setCcOn] = useState(false)
   const [caption, setCaption] = useState<{ text: string; at: number } | null>(null)
+  // Tradução das legendas via LLM local ('' = original, sem tradução).
+  const [ccLang, setCcLang] = useState(() => localStorage.getItem('dx_cc_lang') ?? '')
+  const ccLangRef = useRef(ccLang)
+  const ccSeqRef = useRef(0)
 
   // Relógio dos countdowns (grupos e temporizador) — só corre quando há deadline.
   useEffect(() => {
@@ -926,7 +930,7 @@ export default function Room({
           const stamp = new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
           // A legenda ao vivo só aparece a quem tem CC ligado; as notas
           // acumulam sempre (transcrição partilhada, legendada por orador).
-          if (ccOnRef.current) setCaption({ text: `${m.username}: ${m.text}`, at: Date.now() })
+          if (ccOnRef.current) showCaption(m.username, m.text)
           setLines((l) => [...l, `[${stamp}] ${m.username}: ${m.text}`])
         })
         // O anfitrião ligou/desligou a Nota AI partilhada: todos captam o
@@ -1144,12 +1148,31 @@ export default function Room({
     ccOnRef.current = ccOn
   }, [ccOn])
   useEffect(() => {
+    ccLangRef.current = ccLang
+    localStorage.setItem('dx_cc_lang', ccLang)
+  }, [ccLang])
+
+  /** Mostra a legenda já (original) e, com tradução ativa, substitui pela
+   *  versão traduzida quando o LLM local responder — só se ainda for a linha
+   *  mais recente (seq), para traduções lentas não taparem falas novas. */
+  function showCaption(prefix: string, text: string) {
+    const seq = ++ccSeqRef.current
+    setCaption({ text: `${prefix}: ${text}`, at: Date.now() })
+    const target = ccLangRef.current
+    if (!target) return
+    void translateCaption(text, target)
+      .then((r) => {
+        if (ccSeqRef.current === seq) setCaption({ text: `${prefix}: ${r.text}`, at: Date.now() })
+      })
+      .catch(() => {})
+  }
+  useEffect(() => {
     const want = (ccOn || transcribing) && roomState === 'in'
     if (want && !transcriberRef.current) {
       const t = new Transcriber()
       t.onFinal = (text) => {
         const stamp = new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
-        if (ccOnRef.current) setCaption({ text: `eu: ${text}`, at: Date.now() })
+        if (ccOnRef.current) showCaption('eu', text)
         setInterim('')
         // Difunde a frase para os outros montarem legenda/transcrição partilhada.
         signalRef.current?.send({ type: 'transcript', text })
@@ -1159,7 +1182,7 @@ export default function Room({
       t.onInterim = (text) => {
         setInterim(text)
         // Legenda ao vivo (estilo Meet) enquanto falo, se o CC estiver ligado.
-        if (ccOnRef.current && text) setCaption({ text: `eu: ${text}`, at: Date.now() })
+        if (ccOnRef.current && text) showCaption('eu', text)
       }
       t.onError = (message) => {
         setStatus(message)
@@ -2674,6 +2697,22 @@ export default function Room({
                     <option key={d.deviceId} value={d.deviceId}>{d.label || 'Altifalante'}</option>
                   ))}
                 </select>
+              </label>
+
+              <label className="set-label">
+                Traduzir legendas (IA local)
+                <select value={ccLang} onChange={(e) => setCcLang(e.target.value)}>
+                  <option value="">Sem tradução — idioma original</option>
+                  <option value="pt">Português</option>
+                  <option value="en">English</option>
+                  <option value="fr">Français</option>
+                  <option value="es">Español</option>
+                  <option value="de">Deutsch</option>
+                </select>
+                <small className="muted">
+                  As legendas (CC) chegam no idioma original e são substituídas
+                  pela tradução do LLM local — nada sai do servidor.
+                </small>
               </label>
 
               <label className="set-toggle">

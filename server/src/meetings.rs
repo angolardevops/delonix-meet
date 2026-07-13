@@ -485,6 +485,10 @@ pub async fn save_minutes(
         .bind(id)
         .execute(&state.db)
         .await?;
+    // A transcrição (ata bruta) ficou persistida acima; em background o LLM
+    // local gera o resumo elegante e substitui `minutes` (ai.rs — no-op sem
+    // OLLAMA_URL; se falhar, fica a ata por regras enviada pelo cliente).
+    crate::ai::spawn_mom_summary(state.clone(), id);
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

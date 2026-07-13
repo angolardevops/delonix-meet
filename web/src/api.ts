@@ -513,6 +513,10 @@ export interface OrgStats {
 export const postQos = (code: string, s: { rtt_ms: number | null; loss_pct: number; up_kbps: number }) =>
   request(`/api/rooms/${code}/qos`, { method: 'POST', body: JSON.stringify(s) })
 
+/** Tradução de uma linha de legenda via LLM local (Ollama in-cluster). */
+export const translateCaption = (text: string, target: string) =>
+  request<{ text: string }>('/api/translate', { method: 'POST', body: JSON.stringify({ text, target }) })
+
 export const myOrgs = () => request<OrgSummary[]>('/api/orgs')
 export const orgStats = (orgId: string) => request<OrgStats>(`/api/orgs/${orgId}/stats`)
 
