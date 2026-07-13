@@ -215,7 +215,7 @@ export default function Recordings() {
       <div className="rec-cards">
         {shown.map((r) => (
           <div key={r.id} className="rec-card">
-            <button className="rec-thumb" onClick={() => setViewTarget(r)} title={t('recordings.play')}>
+            <button className="rec-thumb" style={{ background: recColor(r.filename) }} onClick={() => setViewTarget(r)} title={t('recordings.play')}>
               <FilmIcon />
               <span className="rec-play">▶</span>
               {!r.owned && <span className="rec-badge shared">{t('recordings.shared')}</span>}
