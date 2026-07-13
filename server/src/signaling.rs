@@ -8,7 +8,10 @@ use axum::{
 use dashmap::DashMap;
 use futures_util::{stream::SplitStream, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
@@ -154,6 +157,15 @@ pub enum ClientMsg {
         action: String,
         payload: serde_json::Value,
     },
+    /// Anfitrião autoriza/revoga a partilha de ecrã de um participante.
+    ShareGrant {
+        to: Uuid,
+        allowed: bool,
+    },
+    /// Não-anfitrião pede ao anfitrião autorização para partilhar o ecrã.
+    ShareRequest,
+    /// Apresentador (ou anfitrião) abre o quadro branco em todos.
+    WbOpen,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -291,6 +303,19 @@ pub enum ServerMsg {
         action: String,
         payload: serde_json::Value,
     },
+    /// Resposta do anfitrião a um pedido de partilha (ou grant direto).
+    ShareGranted {
+        allowed: bool,
+    },
+    /// Pedido de partilha de ecrã de um não-anfitrião (entregue aos anfitriões).
+    ShareRequest {
+        from: Uuid,
+        username: String,
+    },
+    /// O apresentador abriu o quadro branco — abre em todos.
+    WbOpen {
+        by: String,
+    },
 }
 
 /// Traço do quadro branco: pontos normalizados (0..1), cor CSS e espessura.
@@ -412,6 +437,10 @@ pub(crate) struct Room {
     locked: bool,
     /// Só o anfitrião pode partilhar ecrã.
     host_share_only: bool,
+    /// Autorizações de partilha de ecrã dadas pelo anfitrião (por peer).
+    share_grants: HashSet<Uuid>,
+    /// Quem está a apresentar agora — gateia controlo remoto e wb-open.
+    presenter: Option<Uuid>,
     // Ferramentas de reunião:
     pub(crate) polls: Vec<PollState>,
     pub(crate) questions: Vec<QaState>,
@@ -592,7 +621,13 @@ impl SignalingHub {
         let removed = self
             .rooms
             .get_mut(&room_id)
-            .map(|mut r| r.peers.remove(&peer_id).is_some())
+            .map(|mut r| {
+                r.share_grants.remove(&peer_id);
+                if r.presenter == Some(peer_id) {
+                    r.presenter = None;
+                }
+                r.peers.remove(&peer_id).is_some()
+            })
             .unwrap_or(false);
         let empty = self
             .rooms
@@ -862,6 +897,25 @@ impl SignalingHub {
             .unwrap_or((false, false))
     }
 
+    /// O peer tem autorização do anfitrião para partilhar o ecrã?
+    pub(crate) fn share_allowed(&self, room_id: Uuid, peer_id: Uuid) -> bool {
+        self.rooms
+            .get(&room_id)
+            .map(|r| r.share_grants.contains(&peer_id))
+            .unwrap_or(false)
+    }
+
+    /// Regista quem está a apresentar (para controlo remoto e wb-open).
+    pub(crate) fn set_presenter(&self, room_id: Uuid, peer_id: Uuid, on: bool) {
+        if let Some(mut room) = self.rooms.get_mut(&room_id) {
+            if on {
+                room.presenter = Some(peer_id);
+            } else if room.presenter == Some(peer_id) {
+                room.presenter = None;
+            }
+        }
+    }
+
     pub(crate) fn is_host(&self, room_id: Uuid, peer_id: Uuid) -> bool {
         self.rooms
             .get(&room_id)
@@ -907,6 +961,18 @@ impl SignalingHub {
                 action,
                 payload,
             } => {
+                // Controlo remoto só existe sobre a tela partilhada: pedidos a
+                // quem não está a apresentar são descartados (respostas passam).
+                if action == "request" {
+                    let target_presenting = self
+                        .rooms
+                        .get(&room_id)
+                        .map(|r| r.presenter == Some(to))
+                        .unwrap_or(false);
+                    if !target_presenting {
+                        return true;
+                    }
+                }
                 self.send_to(
                     room_id,
                     to,
@@ -916,6 +982,54 @@ impl SignalingHub {
                         payload,
                     },
                 );
+            }
+            ClientMsg::ShareGrant { to, allowed } => {
+                if self.is_host(room_id, peer_id) {
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        if allowed {
+                            room.share_grants.insert(to);
+                        } else {
+                            room.share_grants.remove(&to);
+                        }
+                    }
+                    self.send_to(room_id, to, ServerMsg::ShareGranted { allowed });
+                }
+            }
+            ClientMsg::ShareRequest => {
+                // Com "só o anfitrião partilha", os pedidos são recusados logo.
+                let blocked = self
+                    .rooms
+                    .get(&room_id)
+                    .map(|r| r.host_share_only)
+                    .unwrap_or(false);
+                if blocked {
+                    self.send_to(room_id, peer_id, ServerMsg::ShareGranted { allowed: false });
+                } else {
+                    let username = self
+                        .username_of(room_id, peer_id)
+                        .unwrap_or_else(|| "?".into());
+                    self.broadcast_hosts(
+                        room_id,
+                        ServerMsg::ShareRequest {
+                            from: peer_id,
+                            username,
+                        },
+                    );
+                }
+            }
+            ClientMsg::WbOpen => {
+                // Só o apresentador atual (ou o anfitrião) abre o quadro a todos.
+                let is_presenter = self
+                    .rooms
+                    .get(&room_id)
+                    .map(|r| r.presenter == Some(peer_id))
+                    .unwrap_or(false);
+                if is_presenter || self.is_host(room_id, peer_id) {
+                    let by = self
+                        .username_of(room_id, peer_id)
+                        .unwrap_or_else(|| "?".into());
+                    self.broadcast(room_id, peer_id, ServerMsg::WbOpen { by });
+                }
             }
             ClientMsg::Chat { text } => {
                 if text.is_empty() || text.len() > 4000 {
@@ -1597,7 +1711,21 @@ async fn handle_socket(
                     breakouts_close(&state, room_id);
                 }
                 Ok(ClientMsg::ScreenShare { on }) if sfu_mode => {
+                    // Não-anfitrião só partilha com autorização do anfitrião
+                    // (share-grant) — validado AQUI, não confiado no cliente.
+                    if on && !is_host && !state.hub.share_allowed(room_id, peer_id) {
+                        state.hub.send_to(
+                            room_id,
+                            peer_id,
+                            ServerMsg::Error {
+                                message: "A partilha de ecrã requer autorização do anfitrião"
+                                    .into(),
+                            },
+                        );
+                        continue;
+                    }
                     state.sfu.set_screen(room_id, peer_id, on).await;
+                    state.hub.set_presenter(room_id, peer_id, on);
                     // Aviso fiável a todos: quem parou de apresentar limpa já a
                     // apresentação nos recetores (sem esperar por eventos de
                     // track). Ao ligar, ajuda a preparar o palco (#1/#2).
