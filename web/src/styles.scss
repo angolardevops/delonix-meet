@@ -3437,6 +3437,39 @@ button.link:hover {
 .layout-ico { font-size: 1.05rem; width: 22px; text-align: center; flex: none; }
 
 /* ============================================================
+   Login split-panel (tela do template NgolaCloud)
+   ============================================================ */
+.auth-page.auth-split { display: flex; align-items: stretch; justify-content: center; gap: 0; }
+.auth-panel {
+  display: none; /* mobile: só o cartão */
+  flex-direction: column; justify-content: center; gap: 22px;
+  width: min(460px, 38vw); padding: 48px 44px;
+  background:
+    radial-gradient(700px 420px at 20% 0%, rgba(200, 32, 29, 0.10), transparent 60%),
+    radial-gradient(600px 400px at 90% 100%, rgba(237, 163, 59, 0.07), transparent 60%),
+    var(--surface);
+  border-right: 1px solid var(--border);
+}
+@media (min-width: 980px) {
+  .auth-page.auth-split { justify-content: stretch; }
+  .auth-panel { display: flex; }
+  .auth-page.auth-split .auth-card { margin: auto; }
+}
+.auth-panel-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.auth-panel-title {
+  margin: 0; font-family: 'Space Grotesk Variable', sans-serif;
+  font-size: 1.9rem; line-height: 1.2; letter-spacing: -0.5px; max-width: 340px;
+}
+.auth-panel-points { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.auth-panel-points li { color: var(--text-2); font-size: 0.94rem; }
+.auth-panel-quote {
+  margin: 18px 0 0; padding: 18px 20px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+}
+.auth-panel-quote blockquote { margin: 0 0 8px; font-size: 0.93rem; line-height: 1.5; }
+.auth-panel-quote figcaption { color: var(--text-2); font-size: 0.8rem; }
+
+/* ============================================================
    Admin: Qualidade das chamadas (amostras QoS agregadas)
    ============================================================ */
 .quality-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }

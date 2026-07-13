@@ -75,11 +75,30 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
   const loginBg = getLoginBg()
 
   return (
-    <div className="auth-page">
+    <div className="auth-page auth-split">
       {loginBg && <div className="auth-bg" style={{ backgroundImage: `url(${loginBg})` }} />}
       <div className="auth-lang">
         <LanguageToggle />
       </div>
+
+      {/* Painel de marca (tela do template NgolaCloud) — só apresentação. */}
+      <aside className="auth-panel" aria-hidden>
+        <div className="auth-panel-brand">
+          <img src="/logo.svg" alt="" className="brand-logo" />
+          <span className="brand-text">{brand0} <span>{brand1}</span></span>
+        </div>
+        <h2 className="auth-panel-title">{t('login.panelTitle')}</h2>
+        <ul className="auth-panel-points">
+          {(t('login.panelPoints', { returnObjects: true }) as string[]).map((p) => (
+            <li key={p}>✓ {p}</li>
+          ))}
+        </ul>
+        <figure className="auth-panel-quote">
+          <blockquote>“{t('login.quote')}”</blockquote>
+          <figcaption>{t('login.quoteBy')}</figcaption>
+        </figure>
+      </aside>
+
       <div className="auth-card">
         <img src="/logo.svg" alt="" className="brand-logo auth-logo" />
         <h1 className="logo">

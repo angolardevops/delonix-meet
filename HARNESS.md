@@ -209,7 +209,7 @@ cargo build --release    # depois de migração nova, SEMPRE rebuild antes de re
 
 **Deploy após alterações (REGRA):** depois de alterações merged, correr SEMPRE `make image-push` — gera imagens **versionadas** (tag `git describe`, ex.: `v1.0.0-16-g6d447e0`), faz `kind load` e **pina** a tag nos Deployments (`make pin`) com rollout status. Nunca confiar no `:latest` (imagem stale já causou "estilos perdidos" em stage). Dois destinos de teste distintos: `meet.delonix.local` → **cluster** (VIP 172.30.0.200); `cloud.delonix.local` → **nginx local** (127.0.0.1, serve `/var/www/delonix`) → atualizar com `bash deploy/publish-web.sh`.
 
-**Bases de dados de teste:** usar emails `@teste.local`. Limpar no fim: `DELETE FROM users WHERE email ~ '@teste\.local$'` e apagar `.webm` órfãos em `recordings/`.
+**Bases de dados de teste:** usar emails `@teste.local`. Limpar no fim: `DELETE FROM users WHERE email ~ '@teste\.local$'`. **⚠ Gravações: NUNCA `rm *.webm` em bloco** — apagar SÓ os ids criados pelo teste (regista-os ao criar), confirmando primeiro na BD que `uploader_id` é um utilizador `@teste.local`. Um `rm` cego já destruiu uma gravação real do utilizador (12/07/2026).
 
 ---
 
