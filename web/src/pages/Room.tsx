@@ -1656,13 +1656,15 @@ export default function Room({
 
           <div className="prejoin-actions">
             <button className="btn-ghost small" onClick={() => onLeave()}>Cancelar</button>
-            {/* Vista de gestão do anfitrião; convidados são reencaminhados de volta. */}
-            <button className="btn-ghost small" onClick={() => (location.hash = `/lobby/${code}`)}>
-              Sala de espera
-            </button>
-            <button className="prejoin-join" onClick={prejoinJoin}>
-              Entrar agora
-            </button>
+            <div className="prejoin-actions-right">
+              {/* Vista de gestão do anfitrião; convidados são reencaminhados de volta. */}
+              <button className="btn-ghost small" onClick={() => (location.hash = `/lobby/${code}`)}>
+                Sala de espera
+              </button>
+              <button className="prejoin-join" onClick={prejoinJoin}>
+                Entrar agora
+              </button>
+            </div>
           </div>
         </div>
       </div>

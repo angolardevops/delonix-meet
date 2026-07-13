@@ -3686,16 +3686,21 @@ button.link:hover {
 }
 .prejoin-mic-live { position: absolute; top: 10px; left: 12px; font-size: 0.95rem; animation: tour-pulse 1.2s ease-out infinite; }
 .prejoin-toggles { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
-/* Dispositivos: grelha equilibrada (mic | câmara) + testar som a toda a largura. */
-.prejoin-devices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* Dispositivos: grelha equilibrada (mic | câmara) + testar som a toda a largura.
+   minmax(0,1fr) + min-width:0: sem isto, rótulos longos de dispositivo ("Raptor
+   Lake-P/U/H cAVS…") forçam min-content e a grelha transborda do cartão. */
+.prejoin-devices { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.prejoin-devices .dev-chip { min-width: 0; }
 .room-page .prejoin-devices .dev-chip {
   width: 100%; max-width: none; justify-content: flex-start;
   border-radius: 8px; box-shadow: none; padding: 0.5rem 0.7rem;
 }
 .prejoin-devices .dev-chip select { flex: 1; min-width: 0; }
 .prejoin-devices .dev-chip.icon { grid-column: 1 / -1; justify-content: center; }
-.prejoin-status { margin: 0; color: var(--accent-2, #eda33b); font-size: 0.84rem; }
+.prejoin-status { margin: 0; color: var(--accent-2, #eda33b); font-size: 0.84rem; text-align: center; }
+/* Rodapé: Cancelar à esquerda; ações agrupadas à direita (hierarquia clara). */
 .prejoin-actions { display: flex; justify-content: space-between; align-items: center; margin-top: var(--space-2); }
+.prejoin-actions-right { display: flex; align-items: center; gap: 10px; }
 .room-page .prejoin-actions .btn-ghost { border-radius: 8px; }
 .prejoin-join {
   background: var(--accent, #c8201d); color: #fff; border: none; cursor: pointer;
