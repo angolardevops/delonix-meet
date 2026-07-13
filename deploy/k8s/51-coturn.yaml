@@ -67,6 +67,11 @@ spec:
             # total-quota + range largo de portas evitam esgotamento (DoS
             # cross-tenant). Ajustar o denied de pods se o podCIDR do cluster
             # não for 10.244.0.0/16.
+            # stale-nonce=3600 (era 600): o 438 É tratado pelo cliente webrtc-rs
+            # (verificado na fonte, relay_conn.rs — ver memória k8s-media-turn),
+            # mas cada re-nonce é um ciclo de retry no caminho da media; 1h
+            # elimina esse churn em reuniões típicas. Credenciais REST (HMAC de
+            # curta duração) continuam a limitar o replay.
             - >
               exec turnserver -n --no-cli --log-file=stdout --simple-log
               --use-auth-secret --static-auth-secret="$TURN_SECRET"
@@ -76,7 +81,7 @@ spec:
               --no-multicast-peers
               --listening-port=3478 --min-port=49152 --max-port=59152
               --total-quota=5000
-              --fingerprint --stale-nonce=600
+              --fingerprint --stale-nonce=3600
           ports:
             - { name: turn-udp, containerPort: 3478, protocol: UDP }
           readinessProbe:
