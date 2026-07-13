@@ -327,6 +327,90 @@ pub async fn v1_recordings(
     Ok(Json(serde_json::json!({ "recordings": items })))
 }
 
+// ---------- Reuniões (sync de calendário e MoM — nk_delonix_meet) ----------
+
+#[derive(Deserialize)]
+pub struct MeetingsQuery {
+    /// Cursor incremental: devolve reuniões criadas, com ata AI atualizada ou
+    /// com início desde este instante. Omisso => tudo (limitado a 500).
+    #[serde(default)]
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// `GET /api/v1/meetings?since=<rfc3339>` — reuniões da organização (dono é
+/// membro), incremental para o cron de sync do Odoo (idempotente no cliente).
+pub async fn v1_meetings(
+    State(state): State<Arc<AppState>>,
+    key: ApiKeyAuth,
+    axum::extract::Query(q): axum::extract::Query<MeetingsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(
+        Uuid,
+        String,
+        String,
+        String,
+        chrono::DateTime<chrono::Utc>,
+        i32,
+        Option<String>,
+        chrono::DateTime<chrono::Utc>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    )> = sqlx::query_as(
+        "SELECT m.id, m.title, m.description, m.kind, m.starts_at, m.duration_min,
+                m.room_code, m.created_at, m.minutes_ai_at
+         FROM meetings m
+         WHERE EXISTS (SELECT 1 FROM org_members om
+                       WHERE om.org_id = $1 AND om.user_id = m.owner_id)
+           AND ($2::timestamptz IS NULL
+                OR m.created_at >= $2 OR m.starts_at >= $2 OR m.minutes_ai_at >= $2)
+         ORDER BY m.starts_at LIMIT 500",
+    )
+    .bind(key.org_id)
+    .bind(q.since)
+    .fetch_all(&state.db)
+    .await?;
+    let items: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|(id, title, description, kind, starts_at, duration_min, room_code, created_at, minutes_ai_at)| {
+            serde_json::json!({
+                "id": id, "title": title, "description": description, "kind": kind,
+                "starts_at": starts_at, "duration_min": duration_min,
+                "room_code": room_code, "created_at": created_at,
+                "minutes_ai_at": minutes_ai_at,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "meetings": items })))
+}
+
+/// `GET /api/v1/meetings/{id}/notes` — ata (MoM) + transcrição (ata bruta).
+/// `minutes_ai_at` presente => o MoM já é a versão final do LLM local.
+pub async fn v1_meeting_notes(
+    State(state): State<Arc<AppState>>,
+    key: ApiKeyAuth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let row: Option<(String, String, String, Option<chrono::DateTime<chrono::Utc>>)> =
+        sqlx::query_as(
+            "SELECT m.title, m.minutes, m.transcript, m.minutes_ai_at
+             FROM meetings m
+             WHERE m.id = $1
+               AND EXISTS (SELECT 1 FROM org_members om
+                           WHERE om.org_id = $2 AND om.user_id = m.owner_id)",
+        )
+        .bind(id)
+        .bind(key.org_id)
+        .fetch_optional(&state.db)
+        .await?;
+    let Some((title, minutes, transcript, minutes_ai_at)) = row else {
+        return Err(ApiError::NotFound);
+    };
+    Ok(Json(serde_json::json!({
+        "id": id, "title": title, "minutes": minutes,
+        "transcript": transcript, "minutes_ai_at": minutes_ai_at,
+    })))
+}
+
 /// `GET /api/v1/org` — dados da organização da chave.
 pub async fn v1_org(
     State(state): State<Arc<AppState>>,

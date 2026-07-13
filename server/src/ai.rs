@@ -122,12 +122,37 @@ pub fn spawn_mom_summary(state: Arc<AppState>, meeting_id: Uuid) {
             tracing::warn!(%meeting_id, "MoM AI: Ollama indisponível — mantém ata por regras");
             return;
         };
-        let _ = sqlx::query("UPDATE meetings SET minutes = $1 WHERE id = $2")
+        let _ = sqlx::query("UPDATE meetings SET minutes = $1, minutes_ai_at = now() WHERE id = $2")
             .bind(summary.chars().take(200_000).collect::<String>())
             .bind(meeting_id)
             .execute(&state.db)
             .await;
         tracing::info!(%meeting_id, "MoM AI: ata resumida via Ollama");
+        // Notifica integrações (ex.: nk_delonix_meet no Odoo) que o MoM final
+        // está pronto — o webhook só acelera o pull; o cron do Odoo apanha na
+        // mesma se este ping se perder.
+        let owner: Option<(Uuid, String)> =
+            sqlx::query_as("SELECT owner_id, title FROM meetings WHERE id = $1")
+                .bind(meeting_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten();
+        if let Some((owner_id, title)) = owner {
+            let payload = serde_json::json!({ "meeting_id": meeting_id, "title": title });
+            for org_id in crate::org::orgs_of_user(&state, owner_id).await {
+                crate::webhooks::fire(
+                    state.clone(),
+                    org_id,
+                    crate::webhooks::Event {
+                        name: "meeting.mom_ready".into(),
+                        title: "Delonix Meet".into(),
+                        text: format!("Ata pronta: {title}"),
+                        payload: payload.clone(),
+                    },
+                );
+            }
+        }
     });
 }
 
