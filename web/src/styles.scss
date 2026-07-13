@@ -1695,7 +1695,9 @@ button.link:hover {
 
 /* ---- F1: Auth split (abas, SSO stub) + toggle de idioma ---- */
 .auth-page { position: relative; }
-.auth-lang { position: absolute; top: 18px; right: 18px; }
+/* (0,2,1) — vence o '.auth-page > :not(.auth-bg){position:relative}' (0,2,0)
+   que empurrava o toggle para o fluxo flex (canto esquerdo, cortado). */
+.auth-page > div.auth-lang { position: absolute; top: 18px; right: 18px; z-index: 2; }
 .lang-toggle {
   display: inline-flex; background: var(--surface-2); border: 1px solid var(--border);
   border-radius: 100px; padding: 3px; gap: 2px;

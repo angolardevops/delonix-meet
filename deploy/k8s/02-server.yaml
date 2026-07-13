@@ -70,6 +70,29 @@ spec:
             limits:
               cpu: 1000m
               memory: 1Gi
+          volumeMounts:
+            # Gravações PARTILHADAS entre as réplicas e persistentes a restarts.
+            # kind = nó único → RWO serve (todos os pods no mesmo nó partilham o
+            # PV local-path). Produção MULTI-NÓ: trocar por RWX (NFS/CephFS) ou
+            # object storage (MinIO/S3) — RWO prenderia todas as réplicas a um nó.
+            - name: recordings
+              mountPath: /var/lib/delonix/recordings
+      volumes:
+        - name: recordings
+          persistentVolumeClaim:
+            claimName: delonix-recordings
+---
+# PVC das gravações (ver nota RWO/RWX acima).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: delonix-recordings
+  namespace: delonix-meet
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
 ---
 apiVersion: v1
 kind: Service
