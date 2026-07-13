@@ -433,6 +433,18 @@ pub async fn v1_org(
 
 // ---------- Provisão de organização (segredo de plataforma) ----------
 
+/// Config OIDC opcional a aplicar à org acabada de criar — deixa o provisionador
+/// (Odoo) apontar a org ao seu próprio IdP num só passo, sem um segundo pedido
+/// autenticado por sessão de admin (que a org recém-criada ainda não tem).
+#[derive(Deserialize)]
+pub struct ProvisionSso {
+    pub issuer_url: String,
+    pub client_id: String,
+    pub client_secret: String,
+    #[serde(default)]
+    pub enforce_sso: bool,
+}
+
 #[derive(Deserialize)]
 pub struct ProvisionOrgReq {
     /// Nome da organização (== nome da empresa no sistema chamador).
@@ -440,6 +452,13 @@ pub struct ProvisionOrgReq {
     /// Rótulo da chave de API emitida (default "Integration").
     #[serde(default)]
     pub key_name: Option<String>,
+    /// Domínio de email da org — necessário para o ``/api/auth/sso/login?domain=``
+    /// resolver esta org. Opcional.
+    #[serde(default)]
+    pub email_domain: Option<String>,
+    /// Config OIDC a aplicar (opcional).
+    #[serde(default)]
+    pub sso: Option<ProvisionSso>,
 }
 
 #[derive(Serialize)]
@@ -449,6 +468,8 @@ pub struct ProvisionedOrg {
     pub name: String,
     /// A chave de API completa (`dlx_...`) — só devolvida AGORA, guarda-se o hash.
     pub api_key: String,
+    /// True se uma config OIDC foi aplicada (fecha o SSO sem SQL manual).
+    pub sso_configured: bool,
 }
 
 /// Comparação em tempo constante para não abrir um oráculo de temporização
@@ -595,12 +616,53 @@ pub async fn v1_provision_org(
     .execute(&state.db)
     .await?;
 
+    // Domínio de email (best-effort — o índice único pode colidir com outra
+    // org; nesse caso fica por definir e o admin resolve).
+    if let Some(domain) = req
+        .email_domain
+        .as_ref()
+        .map(|d| d.trim().to_lowercase())
+        .filter(|d| !d.is_empty())
+    {
+        let _ = sqlx::query("UPDATE organizations SET email_domain = $1 WHERE id = $2")
+            .bind(&domain)
+            .bind(org_id)
+            .execute(&state.db)
+            .await;
+    }
+
+    // Config OIDC (fecha o SSO no mesmo passo — sem SQL manual). Mesmo
+    // armazenamento que upsert_sso_config (client_secret em claro).
+    let mut sso_configured = false;
+    if let Some(sso) = &req.sso {
+        let issuer = sso.issuer_url.trim();
+        if !issuer.is_empty() && !sso.client_id.trim().is_empty() {
+            sqlx::query(
+                "INSERT INTO org_sso_configs (org_id, issuer_url, client_id, client_secret, enforce_sso)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (org_id) DO UPDATE
+                 SET issuer_url = EXCLUDED.issuer_url, client_id = EXCLUDED.client_id,
+                     client_secret = EXCLUDED.client_secret, enforce_sso = EXCLUDED.enforce_sso,
+                     updated_at = now()",
+            )
+            .bind(org_id)
+            .bind(issuer)
+            .bind(sso.client_id.trim())
+            .bind(sso.client_secret.trim())
+            .bind(sso.enforce_sso)
+            .execute(&state.db)
+            .await?;
+            sso_configured = true;
+        }
+    }
+
     crate::audit::log(&state.db, Some(org_id), service_user_id, "org.provisioned", name).await;
     Ok(Json(ProvisionedOrg {
         org_id,
         slug,
         name: name.to_string(),
         api_key: key,
+        sso_configured,
     }))
 }
 
