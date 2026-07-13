@@ -765,6 +765,13 @@ pub struct OrgStats {
     pub avg_duration_min: i64,
     pub top_organizers: Vec<Organizer>,
     pub meetings_per_week: Vec<WeekBucket>,
+    /// Qualidade das chamadas (amostras QoS dos clientes, últimos 30 dias).
+    pub quality_samples_30d: i64,
+    pub avg_rtt_ms: Option<i64>,
+    pub avg_loss_pct: f64,
+    /// % de amostras boas (perda < 2%) e fracas (perda > 5%).
+    pub pct_good: i64,
+    pub pct_poor: i64,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -859,6 +866,28 @@ pub async fn org_stats(
     .fetch_all(&state.db)
     .await?;
 
+    // Qualidade das chamadas: agregado das amostras QoS dos membros da org
+    // (rooms não têm org_id — o scoping é pelo utilizador que reporta).
+    let (quality_samples_30d, avg_rtt_ms, avg_loss_pct, pct_good, pct_poor): (
+        i64,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+    ) = sqlx::query_as(
+        "SELECT COUNT(*),
+                AVG(q.rtt_ms)::float8,
+                AVG(q.loss_pct)::float8,
+                (100.0 * COUNT(*) FILTER (WHERE q.loss_pct < 2.0) / NULLIF(COUNT(*), 0))::float8,
+                (100.0 * COUNT(*) FILTER (WHERE q.loss_pct > 5.0) / NULLIF(COUNT(*), 0))::float8
+         FROM call_quality_samples q
+         JOIN org_members om ON om.user_id = q.user_id AND om.org_id = $1
+         WHERE q.created_at > now() - interval '30 days'",
+    )
+    .bind(org_id)
+    .fetch_one(&state.db)
+    .await?;
+
     Ok(Json(OrgStats {
         meetings_30d,
         meeting_minutes_30d,
@@ -871,6 +900,11 @@ pub async fn org_stats(
         avg_duration_min,
         top_organizers,
         meetings_per_week,
+        quality_samples_30d,
+        avg_rtt_ms: avg_rtt_ms.map(|v| v.round() as i64),
+        avg_loss_pct: (avg_loss_pct.unwrap_or(0.0) * 10.0).round() / 10.0,
+        pct_good: pct_good.unwrap_or(0.0).round() as i64,
+        pct_poor: pct_poor.unwrap_or(0.0).round() as i64,
     }))
 }
 

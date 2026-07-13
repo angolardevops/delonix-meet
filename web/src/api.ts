@@ -498,7 +498,16 @@ export interface OrgStats {
   avg_duration_min: number
   top_organizers: { username: string; count: number }[]
   meetings_per_week: WeekBucket[]
+  quality_samples_30d: number
+  avg_rtt_ms: number | null
+  avg_loss_pct: number
+  pct_good: number
+  pct_poor: number
 }
+
+/** Amostra de qualidade de chamada (QoS) reportada durante a reunião. */
+export const postQos = (code: string, s: { rtt_ms: number | null; loss_pct: number; up_kbps: number }) =>
+  request(`/api/rooms/${code}/qos`, { method: 'POST', body: JSON.stringify(s) })
 
 export const myOrgs = () => request<OrgSummary[]>('/api/orgs')
 export const orgStats = (orgId: string) => request<OrgStats>(`/api/orgs/${orgId}/stats`)
