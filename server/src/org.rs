@@ -779,6 +779,10 @@ pub struct OrgStats {
     /// % de amostras boas (perda < 2%) e fracas (perda > 5%).
     pub pct_good: i64,
     pub pct_poor: i64,
+    /// Período homólogo anterior (30–60 dias atrás) para os deltas dos KPIs.
+    pub meetings_prev_30d: i64,
+    pub meeting_minutes_prev_30d: i64,
+    pub active_users_prev_30d: i64,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -815,6 +819,16 @@ pub async fn org_stats(
         .bind(org_id)
         .fetch_one(&state.db)
         .await?;
+    let (meetings_prev_30d, meeting_minutes_prev_30d): (i64, i64) = sqlx::query_as(&format!(
+        "SELECT COUNT(*), COALESCE(SUM(m.duration_min), 0)::bigint
+         FROM meetings m
+         WHERE m.starts_at >= now() - interval '60 days'
+           AND m.starts_at < now() - interval '30 days' AND {ORG_MEETING}"
+    ))
+    .bind(org_id)
+    .fetch_one(&state.db)
+    .await?;
+
     let avg_duration_min = if meetings_30d > 0 {
         meeting_minutes_30d / meetings_30d
     } else {
@@ -839,6 +853,21 @@ pub async fn org_stats(
              SELECT mi.user_id FROM meeting_invitees mi
              JOIN meetings m ON m.id = mi.meeting_id
              WHERE m.starts_at >= now() - interval '30 days'
+         ) act
+         JOIN org_members om ON om.user_id = act.u AND om.org_id = $1",
+    )
+    .bind(org_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    let (active_users_prev_30d,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(DISTINCT u) FROM (
+             SELECT m.owner_id AS u FROM meetings m
+             WHERE m.starts_at >= now() - interval '60 days' AND m.starts_at < now() - interval '30 days'
+           UNION
+             SELECT mi.user_id FROM meeting_invitees mi
+             JOIN meetings m ON m.id = mi.meeting_id
+             WHERE m.starts_at >= now() - interval '60 days' AND m.starts_at < now() - interval '30 days'
          ) act
          JOIN org_members om ON om.user_id = act.u AND om.org_id = $1",
     )
@@ -912,6 +941,9 @@ pub async fn org_stats(
         avg_loss_pct: (avg_loss_pct.unwrap_or(0.0) * 10.0).round() / 10.0,
         pct_good: pct_good.unwrap_or(0.0).round() as i64,
         pct_poor: pct_poor.unwrap_or(0.0).round() as i64,
+        meetings_prev_30d,
+        meeting_minutes_prev_30d,
+        active_users_prev_30d,
     }))
 }
 

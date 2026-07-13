@@ -69,7 +69,9 @@ function ChatText({ text }: { text: string }) {
 function peerColor(name: string): string {
   let h = 5381
   for (let i = 0; i < name.length; i++) h = ((h << 5) + h + name.charCodeAt(i)) | 0
-  return `hsl(${Math.abs(h) % 360}, 42%, 22%)`
+  // Duotone (estilo template): dois tons do mesmo matiz — mantém contraste com texto branco.
+  const hue = Math.abs(h) % 360
+  return `linear-gradient(135deg, hsl(${hue}, 45%, 27%), hsl(${(hue + 35) % 360}, 50%, 16%))`
 }
 
 /**

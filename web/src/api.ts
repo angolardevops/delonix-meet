@@ -504,6 +504,9 @@ export interface OrgStats {
   avg_loss_pct: number
   pct_good: number
   pct_poor: number
+  meetings_prev_30d: number
+  meeting_minutes_prev_30d: number
+  active_users_prev_30d: number
 }
 
 /** Amostra de qualidade de chamada (QoS) reportada durante a reunião. */

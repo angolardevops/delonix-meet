@@ -32,6 +32,7 @@ export default function Recordings() {
   const [view, setView] = useState<'cards' | 'table'>(
     (localStorage.getItem('dx_rec_view') as 'cards' | 'table') || 'cards',
   )
+  const [search, setSearch] = useState('')
   function switchView(v: 'cards' | 'table') {
     setView(v)
     localStorage.setItem('dx_rec_view', v)
@@ -49,6 +50,16 @@ export default function Recordings() {
   useEffect(() => {
     void refresh()
   }, [])
+
+  const q = search.trim().toLowerCase()
+  const shown = q
+    ? items.filter(
+        (r) =>
+          r.filename.toLowerCase().includes(q) ||
+          r.room_code.toLowerCase().includes(q) ||
+          r.uploader_name.toLowerCase().includes(q),
+      )
+    : items
 
   return (
     <div className="page">
@@ -68,13 +79,28 @@ export default function Recordings() {
         }
       />
 
+      {!loading && items.length > 0 && (
+        <div className="rec-search">
+          <input
+            type="search"
+            placeholder={t('recordings.searchPh')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            autoComplete="off"
+          />
+        </div>
+      )}
+
       {loading && <p className="muted">{t('recordings.loading')}</p>}
       {error && <div className="error">{error}</div>}
       {!loading && items.length === 0 && (
         <EmptyState icon={<FilmIcon />} title={t('recordings.empty')} />
       )}
+      {!loading && items.length > 0 && shown.length === 0 && (
+        <p className="muted">{t('recordings.noResults')}</p>
+      )}
 
-      {view === 'table' && items.length > 0 && (
+      {view === 'table' && shown.length > 0 && (
         <table className="members-table rec-table">
           <thead>
             <tr>
@@ -87,7 +113,7 @@ export default function Recordings() {
             </tr>
           </thead>
           <tbody>
-            {items.map((r) => (
+            {shown.map((r) => (
               <tr key={r.id}>
                 <td>
                   <button className="link rec-name-link" onClick={() => setViewTarget(r)}>
@@ -124,7 +150,7 @@ export default function Recordings() {
 
       {view === 'cards' && (
       <div className="rec-cards">
-        {items.map((r) => (
+        {shown.map((r) => (
           <div key={r.id} className="rec-card">
             <button className="rec-thumb" onClick={() => setViewTarget(r)} title={t('recordings.play')}>
               <FilmIcon />

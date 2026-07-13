@@ -1982,9 +1982,31 @@ button.link:hover {
 
 /* ---- F2.3: Consola Admin ---- */
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1rem; }
+.kpi-delta {
+  position: absolute; top: 10px; right: 12px;
+  font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-2);
+}
+.kpi-delta.up { color: var(--ok, #2e9e5b); }
+.kpi-delta.down { color: var(--danger, #c8201d); }
+.quality-bars { display: grid; gap: 0.55rem; margin-bottom: 1rem; }
+.qbar-row { display: grid; grid-template-columns: 4.2rem 1fr 3rem; align-items: center; gap: 0.6rem; }
+.qbar-label { font-size: 0.85rem; color: var(--text-2); }
+.qbar-track { height: 7px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.qbar-fill { display: block; height: 100%; border-radius: 999px; }
+.qbar-fill.good { background: var(--ok, #2e9e5b); }
+.qbar-fill.mid { background: var(--accent-2, #eda33b); }
+.qbar-fill.poor { background: var(--danger, #c8201d); }
+.qbar-pct { font-size: 0.78rem; color: var(--text-2); text-align: right; }
+.rec-search { margin: 0 0 1rem; }
+.rec-search input {
+  width: 100%; max-width: 380px; padding: 0.55rem 0.8rem;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  color: var(--text); border-radius: 6px; font-size: 0.92rem;
+}
 .kpi-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: 7px;
   padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: 0.2rem;
+  position: relative; /* ancora o .kpi-delta */
 }
 .kpi-v { font-family: var(--font-display); font-size: 1.55rem; font-weight: 700; color: var(--accent-2); }
 .kpi-l { color: var(--muted); font-size: 0.82rem; }
