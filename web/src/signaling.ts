@@ -65,6 +65,8 @@ export type ServerMsg =
   | { type: 'kicked' }
   | { type: 'room-settings'; locked: boolean; host_share_only: boolean }
   | { type: 'share-granted'; allowed: boolean }
+  | { type: 'share-request'; from: string; username: string }
+  | { type: 'wb-open'; by: string }
   | { type: 'polls'; polls: PollView[] }
   | { type: 'qa'; questions: QaView[] }
   | { type: 'timer'; ends_at: number | null }
@@ -101,6 +103,8 @@ export type ClientMsg =
   | { type: 'room-lock'; locked: boolean }
   | { type: 'host-share-only'; on: boolean }
   | { type: 'share-grant'; to: string; allowed: boolean }
+  | { type: 'share-request' }
+  | { type: 'wb-open' }
   | { type: 'poll-create'; question: string; options: string[] }
   | { type: 'poll-vote'; poll: string; option: number }
   | { type: 'poll-close'; poll: string }

@@ -241,6 +241,15 @@ export default function Room({
   const prejoinVideoRef = useRef<HTMLVideoElement | null>(null)
   const [peers, setPeers] = useState<RemotePeer[]>([])
   const [waitingQueue, setWaitingQueue] = useState<PeerInfo[]>([])
+  // Pedidos in-room com diálogo próprio (nada de confirm()/alert() nativos):
+  const [ctrlAsk, setCtrlAsk] = useState<{ from: string; username: string } | null>(null)
+  const [shareAsk, setShareAsk] = useState<{ from: string; username: string } | null>(null)
+  // Partilha pedida por não-anfitrião: arranca sozinha quando o grant chegar.
+  const pendingShareRef = useRef(false)
+  // Handlers WS registam-se uma vez — este ref aponta sempre ao toggleShare
+  // do render atual (evita closure obsoleta de `sharing`/`topology`).
+  const toggleShareRef = useRef<() => void>(() => {})
+  toggleShareRef.current = () => void toggleShare()
   const [reactions, setReactions] = useState<FloatingReaction[]>([])
   const [chat, setChat] = useState<ChatMsg[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -875,6 +884,18 @@ export default function Room({
         })
         signal.on('share-granted', (m) => {
           setShareAllowed(m.allowed)
+          const wasPending = pendingShareRef.current
+          pendingShareRef.current = false
+          if (m.allowed && wasPending) {
+            // O grant chegou em resposta ao pedido: arranca a partilha já.
+            setStatus('O anfitrião autorizou — a iniciar partilha de ecrã…')
+            toggleShareRef.current()
+            return
+          }
+          if (!m.allowed && wasPending) {
+            setStatus('O anfitrião recusou o pedido de partilha de ecrã')
+            return
+          }
           setStatus(m.allowed ? 'O anfitrião permitiu-te partilhar o ecrã' : 'A permissão de partilha foi revogada')
         })
         signal.on('polls', (m) => setPolls(m.polls))
@@ -924,16 +945,19 @@ export default function Room({
         signal.on('remote-control', (m) => {
           if (m.action === 'request') {
             const who = peersRef.current.find((p) => p.peerId === m.from)?.username ?? 'Alguém'
-            if (window.confirm(`${who} solicitou controlo remoto do teu ecrã. Aceitar?`)) {
-              signal.send({ type: 'remote-control', to: m.from, action: 'accept', payload: null })
-            } else {
-              signal.send({ type: 'remote-control', to: m.from, action: 'deny', payload: null })
-            }
+            setCtrlAsk({ from: m.from, username: who })
           } else if (m.action === 'accept') {
-            alert('O anfitrião aceitou o teu pedido de controlo remoto! (Ponte de eventos DataChannel pronta).')
+            setStatus('🎮 Pedido aceite — controlo remoto da tela partilhada ativo')
           } else if (m.action === 'deny') {
-            alert('O pedido de controlo remoto foi recusado.')
+            setStatus('O pedido de controlo remoto foi recusado')
           }
+        })
+        // Pedido de partilha de um não-anfitrião → diálogo Permitir/Negar.
+        signal.on('share-request', (m) => setShareAsk({ from: m.from, username: m.username }))
+        // O apresentador abriu o quadro branco → abre em todos.
+        signal.on('wb-open', (m) => {
+          setWbOpen(true)
+          setStatus(`Quadro branco partilhado por ${m.by}`)
         })
 
         const callbacks = {
@@ -2263,7 +2287,7 @@ export default function Room({
                       {p.canAdmit ? '🛡 ✓' : '🛡 +'}
                     </button>
                   )}
-                  {isHost && hostShareOnly && !p.host && (
+                  {isHost && !p.host && (
                     <button
                       className="share-grant-btn"
                       title={sharePerms.has(p.peerId) ? 'Revogar permissão de partilha' : 'Permitir que partilhe ecrã'}
@@ -2863,6 +2887,66 @@ export default function Room({
           </div>
         )}
 
+        {ctrlAsk && (
+          <div className="admit-card" role="dialog" aria-label="Pedido de controlo remoto">
+            <div className="admit-row">
+              <span className="admit-avatar" aria-hidden>🎮</span>
+              <span className="admit-name">
+                <strong>{ctrlAsk.username}</strong>
+                <small>pede controlo remoto da tua tela partilhada</small>
+              </span>
+              <button
+                className="admit-deny"
+                onClick={() => {
+                  signalRef.current?.send({ type: 'remote-control', to: ctrlAsk.from, action: 'deny', payload: null })
+                  setCtrlAsk(null)
+                }}
+              >
+                Recusar
+              </button>
+              <button
+                className="admit-accept"
+                onClick={() => {
+                  signalRef.current?.send({ type: 'remote-control', to: ctrlAsk.from, action: 'accept', payload: null })
+                  setCtrlAsk(null)
+                }}
+              >
+                Aceitar
+              </button>
+            </div>
+          </div>
+        )}
+
+        {shareAsk && isHost && (
+          <div className="admit-card" role="dialog" aria-label="Pedido de partilha de ecrã">
+            <div className="admit-row">
+              <span className="admit-avatar" aria-hidden>🖥</span>
+              <span className="admit-name">
+                <strong>{shareAsk.username}</strong>
+                <small>quer partilhar o ecrã</small>
+              </span>
+              <button
+                className="admit-deny"
+                onClick={() => {
+                  signalRef.current?.send({ type: 'share-grant', to: shareAsk.from, allowed: false })
+                  setShareAsk(null)
+                }}
+              >
+                Negar
+              </button>
+              <button
+                className="admit-accept"
+                onClick={() => {
+                  signalRef.current?.send({ type: 'share-grant', to: shareAsk.from, allowed: true })
+                  setShareAsk(null)
+                }}
+              >
+                Permitir
+              </button>
+            </div>
+          </div>
+        )}
+
         {recNotice && (
           <div className="toast rec-start-toast" role="status">
             <span className="rec-dot big" />
@@ -2997,14 +3081,22 @@ export default function Room({
           </div>
           <Ctrl
             label={
-              hostShareOnly && !isHost && !shareAllowed
-                ? 'Partilha restrita — pede ao anfitrião para permitir'
+              !isHost && !shareAllowed && !sharing
+                ? 'Partilhar ecrã (requer autorização do anfitrião)'
                 : 'Partilhar ecrã'
             }
             active={sharing}
             onClick={() => {
-              if (hostShareOnly && !isHost && !shareAllowed) {
-                setStatus('Partilha restrita ao anfitrião — pede-lhe para te dar permissão na lista de participantes')
+              // Não-anfitrião sem grant: pede autorização ao anfitrião e a
+              // partilha arranca sozinha quando o grant chegar.
+              if (!sharing && !isHost && !shareAllowed) {
+                if (hostShareOnly) {
+                  setStatus('Só o anfitrião pode partilhar o ecrã nesta reunião')
+                  return
+                }
+                pendingShareRef.current = true
+                signalRef.current?.send({ type: 'share-request' })
+                setStatus('Pedido de partilha enviado ao anfitrião — aguarda autorização')
                 return
               }
               void toggleShare()
@@ -3170,7 +3262,9 @@ export default function Room({
             onClick={() => {
               const next = !wbOpen
               setWbOpen(next)
-              // Fechar propaga a todos; abrir é local (aparece nos outros quando desenho).
+              // Fechar propaga a todos; abrir também, quando sou o apresentador
+              // ou anfitrião (o servidor valida) — os outros veem "partilhado".
+              if (next && (sharing || isHost)) signalRef.current?.send({ type: 'wb-open' })
               if (!next) signalRef.current?.send({ type: 'wb-close' })
             }}
           >
