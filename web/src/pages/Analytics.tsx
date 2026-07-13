@@ -438,14 +438,24 @@ export default function Analytics() {
   const delta = (cur: number, prev: number): number | null =>
     prev > 0 ? Math.round(((cur - prev) / prev) * 100) : null
 
-  const kpis: { v: string; l: string; d?: number | null }[] = stats
+  // Qualidade média 0–5 ponderada pela distribuição real das amostras QoS
+  // (boa=5, média=3.5, fraca=1.5). '—' sem amostras.
+  const qMidPct = stats ? Math.max(0, 100 - stats.pct_good - stats.pct_poor) : 0
+  const qScore = stats && stats.quality_samples_30d > 0
+    ? ((stats.pct_good * 5 + qMidPct * 3.5 + stats.pct_poor * 1.5) / 100).toLocaleString(locale, { maximumFractionDigits: 1 })
+    : null
+
+  // 4 KPIs do template; os restantes indicadores vivem no cartão de uso.
+  const kpis: { v: string; l: string; d?: number | null; tag?: string }[] = stats
     ? [
         { v: stats.meetings_30d.toLocaleString(locale), l: t('admin.kMeetings'), d: delta(stats.meetings_30d, stats.meetings_prev_30d) },
         { v: stats.meeting_minutes_30d.toLocaleString(locale), l: t('admin.kMinutes'), d: delta(stats.meeting_minutes_30d, stats.meeting_minutes_prev_30d) },
-        { v: `${stats.avg_duration_min} min`, l: t('admin.kAvgDur') },
         { v: `${stats.active_users_30d} / ${stats.members_total}`, l: t('admin.kActive'), d: delta(stats.active_users_30d, stats.active_users_prev_30d) },
-        { v: `${stats.video_30d} / ${stats.voice_30d}`, l: t('admin.kKinds') },
-        { v: `${stats.recordings_total} · ${fmtGb(stats.recordings_bytes)}`, l: t('admin.kRecs') },
+        {
+          v: qScore != null ? `${qScore} / 5` : '—',
+          l: t('admin.kQuality'),
+          tag: qScore != null ? (stats.avg_loss_pct < 5 ? t('admin.qStable') : t('admin.qUnstable')) : undefined,
+        },
       ]
     : []
 
@@ -489,6 +499,7 @@ export default function Analytics() {
                     {k.d > 0 ? '+' : ''}{k.d}%
                   </span>
                 )}
+                {k.tag && <span className="kpi-delta up">{k.tag}</span>}
                 <span className="kpi-v">{k.v}</span>
                 <span className="kpi-l">{k.l}</span>
               </div>
@@ -505,6 +516,10 @@ export default function Analytics() {
                 fmtWeek={fmtWeek}
                 labels={{ meetings: t('admin.legMeetings'), minutes: t('admin.legMinutes') }}
               />
+              <p className="muted small usage-substats">
+                {t('admin.kAvgDur')}: {stats.avg_duration_min} min · {t('admin.kKinds')}: {stats.video_30d} / {stats.voice_30d}
+                {' · '}{t('admin.kRecs')}: {stats.recordings_total} · {fmtGb(stats.recordings_bytes)}
+              </p>
             </section>
 
             <section className="dash-card">
@@ -556,25 +571,59 @@ export default function Analytics() {
               )}
             </section>
 
+            {/* Linha 2 do template: Membros (largo) | Postura de segurança. */}
+            {members.length > 0 && (
+              <section className="dash-card members-card">
+                <header className="dash-card-head">
+                  <h2>{t('admin.membersTitle')}</h2>
+                  <span className="muted small">{t('admin.membersSub')}</span>
+                </header>
+                <table className="members-table">
+                  <thead>
+                    <tr>
+                      <th>{t('admin.colName')}</th>
+                      <th>{t('admin.colRole')}</th>
+                      <th>SSO</th>
+                      <th>{t('admin.colActive')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {members.map((m) => (
+                      <tr key={m.user_id}>
+                        <td>
+                          <span className="avatar-circle small">{m.username.slice(0, 2).toUpperCase()}</span>
+                          <span className="member-name">
+                            {m.username}
+                            {(m.title || m.branch_name) && (
+                              <small className="muted">{[m.title, m.branch_name].filter(Boolean).join(' · ')}</small>
+                            )}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={m.role === 'admin' ? 'posture-tag on' : 'posture-tag'}>
+                            {m.role === 'admin' ? t('admin.roleAdmin') : t('admin.roleMember')}
+                          </span>
+                        </td>
+                        {/* Estado por org (OIDC configurado); por-membro chega com o SCIM. */}
+                        <td>{ssoActive ? <span className="posture-tag on">{t('admin.active')}</span> : <span className="muted">—</span>}</td>
+                        <td className="muted">{fmtAgo(m.last_active)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+            )}
+
             <section className="dash-card">
               <header className="dash-card-head">
-                <h2>{t('admin.auditTitle')}</h2>
+                <h2>{t('admin.secTitle')}</h2>
               </header>
-              {audit.length === 0 && <p className="dash-empty">{t('admin.auditEmpty')}</p>}
-              {audit.length > 0 && (
-                <div className="audit-list">
-                  {audit.map((a) => (
-                    <div key={a.id} className="audit-row">
-                      <span className="audit-action mono">{a.action}</span>
-                      <span className="audit-detail">
-                        <strong>{a.actor}</strong>
-                        {a.target && <small> · {a.target}</small>}
-                      </span>
-                      <span className="audit-time">{new Date(a.created_at).toLocaleString('pt-PT')}</span>
-                    </div>
-                  ))}
+              {posture.map((p) => (
+                <div key={p.l} className="posture-row">
+                  <span>{p.l}</span>
+                  <span className={p.on ? 'posture-tag on' : 'posture-tag'}>{p.v}</span>
                 </div>
-              )}
+              ))}
             </section>
 
             <section className="dash-card">
@@ -600,57 +649,25 @@ export default function Analytics() {
 
             <section className="dash-card">
               <header className="dash-card-head">
-                <h2>{t('admin.secTitle')}</h2>
+                <h2>{t('admin.auditTitle')}</h2>
               </header>
-              {posture.map((p) => (
-                <div key={p.l} className="posture-row">
-                  <span>{p.l}</span>
-                  <span className={p.on ? 'posture-tag on' : 'posture-tag'}>{p.v}</span>
+              {audit.length === 0 && <p className="dash-empty">{t('admin.auditEmpty')}</p>}
+              {audit.length > 0 && (
+                <div className="audit-list">
+                  {audit.map((a) => (
+                    <div key={a.id} className="audit-row">
+                      <span className="audit-action mono">{a.action}</span>
+                      <span className="audit-detail">
+                        <strong>{a.actor}</strong>
+                        {a.target && <small> · {a.target}</small>}
+                      </span>
+                      <span className="audit-time">{new Date(a.created_at).toLocaleString('pt-PT')}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </section>
           </div>
-
-          {members.length > 0 && (
-            <section className="dash-card members-card">
-              <header className="dash-card-head">
-                <h2>{t('admin.membersTitle')}</h2>
-                <span className="muted small">{t('admin.membersSub')}</span>
-              </header>
-              <table className="members-table">
-                <thead>
-                  <tr>
-                    <th>{t('admin.colName')}</th>
-                    <th>{t('admin.colRole')}</th>
-                    <th>{t('admin.colTitle')}</th>
-                    <th>{t('admin.colBranch')}</th>
-                    <th>SSO</th>
-                    <th>{t('admin.colActive')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {members.map((m) => (
-                    <tr key={m.user_id}>
-                      <td>
-                        <span className="avatar-circle small">{m.username.slice(0, 2).toUpperCase()}</span>
-                        {m.username}
-                      </td>
-                      <td>
-                        <span className={m.role === 'admin' ? 'posture-tag on' : 'posture-tag'}>
-                          {m.role === 'admin' ? t('admin.roleAdmin') : t('admin.roleMember')}
-                        </span>
-                      </td>
-                      <td>{m.title || '—'}</td>
-                      <td>{m.branch_name || '—'}</td>
-                      {/* Estado por org (OIDC configurado); por-membro chega com o SCIM. */}
-                      <td>{ssoActive ? <span className="posture-tag on">{t('admin.active')}</span> : <span className="muted">—</span>}</td>
-                      <td className="muted">{fmtAgo(m.last_active)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </section>
-          )}
 
           {isAdmin && currentOrg && (
             <section className="dash-card integrations-card">

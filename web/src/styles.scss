@@ -1940,12 +1940,49 @@ button.link:hover {
 .lobby-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.2rem; }
 .lobby-title-row h1 { margin: 0 0 0.2rem; font-family: var(--font-display); }
 .lobby-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.2rem; }
+/* Switch iOS (template) — input escondido, track+thumb desenhados. */
+.dx-switch { position: relative; width: 40px; height: 22px; flex: none; }
+.dx-switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.dx-switch .track {
+  display: block; width: 100%; height: 100%; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  transition: background 0.18s;
+}
+.dx-switch .track::after {
+  content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: transform 0.18s;
+}
+.dx-switch input:checked + .track { background: var(--ok, #2e9e5b); border-color: transparent; }
+.dx-switch input:checked + .track::after { transform: translateX(18px); }
+/* Ícone colorido do cartão-toggle (template). */
+.lobby-toggle-ic {
+  width: 34px; height: 34px; border-radius: 7px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 1rem;
+}
+.lobby-toggle-ic.lock { background: rgba(237, 163, 59, 0.16); }
+.lobby-toggle-ic.screen { background: rgba(90, 160, 220, 0.16); }
+/* Botões do template: admitir=verde, recusar=vermelho quadrado. */
+.lobby-admit {
+  background: var(--ok, #2e9e5b); color: #fff; border: none; cursor: pointer;
+  padding: 0.45rem 1rem; border-radius: 6px; font-weight: 600; font-size: 0.85rem;
+}
+.lobby-admit:hover { filter: brightness(1.1); }
+.lobby-admit.all { background: rgba(46, 158, 91, 0.16); color: var(--ok, #2e9e5b); }
+.lobby-deny {
+  background: var(--surface-2); color: var(--danger, #c8201d); border: 1px solid var(--border);
+  width: 30px; height: 30px; border-radius: 6px; cursor: pointer; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.lobby-mic { color: var(--ok, #2e9e5b); }
+.lobby-mic.off { color: var(--danger, #c8201d); }
 .lobby-toggle {
   display: flex; align-items: center; justify-content: space-between; gap: 1rem;
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
   padding: 0.9rem 1.1rem; cursor: pointer;
 }
-.lobby-toggle span { display: flex; flex-direction: column; gap: 2px; }
+/* Só o bloco de texto é coluna (o ícone e o switch são spans irmãos). */
+.lobby-toggle > span:nth-child(2) { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .lobby-toggle small { color: var(--text-2); font-size: 0.8rem; }
 .lobby-toggle input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
 .lobby-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: start; }
@@ -2137,9 +2174,12 @@ button.link:hover {
 .rec-badge.inline { position: static; margin-left: 0.5rem; }
 .rec-row-actions { display: flex; gap: 0.3rem; justify-content: flex-end; }
 
-/* ---- Analítico melhorado ---- */
-.kpi-grid { grid-template-columns: repeat(6, 1fr); }
-.admin-grid { grid-template-columns: 1fr 1fr 0.8fr; }
+/* ---- Analítico melhorado (layout do template: 4 KPIs + 2 colunas) ---- */
+.kpi-grid { grid-template-columns: repeat(4, 1fr); }
+.admin-grid { grid-template-columns: 1.4fr 0.7fr; }
+.usage-substats { margin: 0.7rem 0 0; }
+.member-name { display: inline-flex; flex-direction: column; gap: 1px; vertical-align: middle; margin-left: 0.5rem; }
+.member-name small { font-size: 0.74rem; }
 .week-col { position: relative; }
 .week-inner .week-bar { width: 22px; }
 .week-bar.minutes { background: linear-gradient(180deg, #7ec3ff, #3d7dd8); }
