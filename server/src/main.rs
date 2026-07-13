@@ -259,6 +259,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .route("/rooms/{code}", get(apikeys::v1_get_room))
                 .route("/rooms/{code}/join-bot", post(apikeys::v1_join_bot_room))
                 .route("/recordings", get(apikeys::v1_recordings))
+                // Sync de calendário + MoM (integração Odoo nk_delonix_meet —
+                // ver docs/nk-delonix-meet-integration.md).
+                .route("/meetings", get(apikeys::v1_meetings))
+                .route("/meetings/{id}/notes", get(apikeys::v1_meeting_notes))
                 .layer(middleware::from_fn_with_state(
                     state.clone(),
                     rate_limit::v1_rate_limit,
