@@ -31,6 +31,15 @@ if docker ps --format '{{.Names}}' | grep -qx "$NODE"; then
       done | paste -sd+ - | bc | xargs -I{} echo "[prune-builds] {} tags removidas do nó"
   # Órfãs (não usadas por nenhum pod) — pause/infra em uso ficam.
   docker exec "$NODE" crictl rmi --prune 2>/dev/null | tail -1 || true
+
+  # Rede de segurança: com o disco >85% o kubelet faz image-GC por conta
+  # própria e pode apagar a tag pinada (aconteceu a 14/07 — rollout ficou em
+  # ImagePullBackOff). Confirmar que a pinada continua no nó.
+  for img in delonix-server delonix-web; do
+    if ! docker exec "$NODE" crictl inspecti "docker.io/library/$img:$PINNED" >/dev/null 2>&1; then
+      echo "[prune-builds] AVISO: $img:$PINNED AUSENTE do nó — correr 'make image-push' antes de qualquer rollout!"
+    fi
+  done
 fi
 
 df -h / | tail -1
