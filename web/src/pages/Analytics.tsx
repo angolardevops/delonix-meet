@@ -384,7 +384,7 @@ export default function Analytics() {
   const [ssoActive, setSsoActive] = useState(false)
   const [integTab, setIntegTab] = useState<IntegTab>('settings')
 
-  const locale = i18n.language.startsWith('en') ? 'en-GB' : 'pt-PT'
+  const locale = i18n.language.startsWith('en') ? 'en-GB' : i18n.language.startsWith('fr') ? 'fr-FR' : 'pt-PT'
 
   const loadOrgs = () =>
     void myOrgs()
@@ -423,6 +423,16 @@ export default function Analytics() {
     new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short' })
   const fmtGb = (b: number) =>
     b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${(b / 1024 ** 2).toFixed(0)} MB`
+  // Última atividade relativa (fonte: audit_logs); acima de 30 dias mostra a data.
+  const fmtAgo = (iso: string | null | undefined) => {
+    if (!iso) return '—'
+    const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000)
+    const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
+    if (mins < 60) return rtf.format(-Math.max(mins, 0), 'minute')
+    if (mins < 60 * 24) return rtf.format(-Math.round(mins / 60), 'hour')
+    if (mins < 60 * 24 * 30) return rtf.format(-Math.round(mins / 1440), 'day')
+    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' })
+  }
 
   const kpis = stats
     ? [
@@ -589,6 +599,7 @@ export default function Analytics() {
                     <th>{t('admin.colRole')}</th>
                     <th>{t('admin.colTitle')}</th>
                     <th>{t('admin.colBranch')}</th>
+                    <th>{t('admin.colActive')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -605,6 +616,7 @@ export default function Analytics() {
                       </td>
                       <td>{m.title || '—'}</td>
                       <td>{m.branch_name || '—'}</td>
+                      <td className="muted">{fmtAgo(m.last_active)}</td>
                     </tr>
                   ))}
                 </tbody>

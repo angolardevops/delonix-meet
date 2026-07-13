@@ -1725,6 +1725,9 @@ button.link:hover {
   display: flex; align-items: center; gap: 0.8rem; margin: 1rem 0 0.6rem; color: var(--muted); font-size: 0.82rem;
 }
 .auth-divider::before, .auth-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.auth-terms { margin: 14px 0 0; font-size: 0.78rem; color: var(--text-2); text-align: center; }
+.auth-terms a { color: var(--text-2); text-decoration: underline; }
+.auth-terms a:hover { color: var(--text); }
 .sso-btn {
   width: 100%; padding: 0.65rem; background: var(--ghost);
   border: 1px solid var(--border-strong); color: var(--text); font-size: 0.92rem;
@@ -1844,6 +1847,12 @@ button.link:hover {
 .land-sec h2 { text-align: left; }
 .sec-points { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.65rem; }
 .sec-points li { color: var(--text); font-size: 0.95rem; }
+.trust-badges { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.4rem; }
+.trust-badge {
+  background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 999px;
+  padding: 0.35rem 0.85rem; font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-2);
+  white-space: nowrap;
+}
 .sec-badges { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
 .sec-badge {
   background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 7px;
@@ -1915,6 +1924,18 @@ button.link:hover {
 .foot-link { color: var(--muted); font-size: 0.88rem; cursor: pointer; }
 .foot-link:hover { color: var(--text); }
 .foot-rights { text-align: center; color: var(--muted); font-size: 0.8rem; margin: 2.4rem 0 0; }
+
+/* ---- Termos & Privacidade (#/legal, página pública) ---- */
+.legal-page { min-height: 100vh; background: var(--bg); color: var(--text); }
+.legal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  max-width: 760px; margin: 0 auto; padding: 1.2rem 1.4rem;
+  border-bottom: 1px solid var(--border);
+}
+.legal-body { max-width: 760px; margin: 0 auto; padding: 2rem 1.4rem 4rem; }
+.legal-body h1 { font-family: var(--font-display); font-size: 1.6rem; margin: 0 0 0.3rem; }
+.legal-body h2 { font-family: var(--font-display); font-size: 1.15rem; margin: 2.2rem 0 0.8rem; }
+.legal-body p { color: var(--text-2); font-size: 0.93rem; line-height: 1.65; margin: 0 0 0.8rem; }
 
 @media (max-width: 900px) {
   .land-hero { grid-template-columns: 1fr; padding-top: 2.5rem; }

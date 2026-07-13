@@ -162,6 +162,9 @@ pub struct Employee {
     pub title: String,
     pub branch_id: Option<Uuid>,
     pub branch_name: Option<String>,
+    /// Último evento de auditoria do membro (login, etc.). Só preenchido na listagem.
+    #[sqlx(default)]
+    pub last_active: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -493,7 +496,8 @@ pub async fn list_employees(
 ) -> Result<Json<Vec<Employee>>, ApiError> {
     require_member(&state, org_id, auth.user_id).await?;
     let emps: Vec<Employee> = sqlx::query_as(
-        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name
+        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name,
+                  (SELECT MAX(a.created_at) FROM audit_logs a WHERE a.actor_id = m.user_id) AS last_active
            FROM org_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN branches b ON b.id = m.branch_id
            WHERE m.org_id = $1 AND m.archived_at IS NULL ORDER BY u.username"#,

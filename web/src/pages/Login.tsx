@@ -195,6 +195,9 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
         {ssoEnabled && !ssoEnforced && (
           <p className="sso-hint">{t('login.ssoAvailable')}</p>
         )}
+        <p className="auth-terms">
+          {t('login.termsPre')} <a href="#/legal">{t('login.termsLink')}</a>.
+        </p>
       </div>
     </div>
   )
