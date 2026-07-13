@@ -3451,6 +3451,17 @@ button.link:hover {
 .quality-stat.poor strong { color: var(--accent); }
 .quality-note { margin: 10px 0 0; }
 
+.audit-list { display: flex; flex-direction: column; max-height: 320px; overflow-y: auto; }
+.audit-row {
+  display: flex; align-items: baseline; gap: 10px; padding: 7px 2px;
+  border-bottom: 1px solid var(--border); font-size: 0.84rem;
+}
+.audit-row:last-child { border-bottom: none; }
+.audit-action { flex: none; color: var(--accent-2); font-size: 0.76rem; }
+.audit-detail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audit-detail small { color: var(--text-2); }
+.audit-time { flex: none; color: var(--text-2); font-size: 0.74rem; }
+
 /* ============================================================
    Landing: Testemunhos + Preços (portados do template NgolaCloud)
    ============================================================ */

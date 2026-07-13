@@ -511,6 +511,17 @@ export const postQos = (code: string, s: { rtt_ms: number | null; loss_pct: numb
 
 export const myOrgs = () => request<OrgSummary[]>('/api/orgs')
 export const orgStats = (orgId: string) => request<OrgStats>(`/api/orgs/${orgId}/stats`)
+
+export interface AuditEntry {
+  id: number
+  actor: string
+  action: string
+  target: string
+  created_at: string
+}
+/** Registos de auditoria da organização (só admins). */
+export const listAudit = (orgId: string, limit = 100) =>
+  request<AuditEntry[]>(`/api/orgs/${orgId}/audit?limit=${limit}`)
 export const createOrg = (name: string) =>
   request<OrgSummary>('/api/orgs', { method: 'POST', body: JSON.stringify({ name }) })
 export const listBranches = (orgId: string) => request<Branch[]>(`/api/orgs/${orgId}/branches`)

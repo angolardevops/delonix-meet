@@ -109,6 +109,7 @@ pub async fn update_settings(
     .bind(did_model)
     .execute(&state.db)
     .await?;
+    crate::audit::log(&state.db, Some(org_id), auth.user_id, "org.settings_updated", &domain).await;
     Ok(Json(
         serde_json::json!({ "ok": true, "domain": domain, "retention_days": retention }),
     ))
@@ -481,6 +482,7 @@ pub async fn add_employee(
     .bind(user_id)
     .fetch_one(&state.db)
     .await?;
+    crate::audit::log(&state.db, Some(org_id), auth.user_id, "member.added", &emp.email).await;
     Ok(Json(emp))
 }
 
@@ -582,6 +584,7 @@ pub async fn remove_employee(
     .bind(auth.user_id)
     .execute(&state.db)
     .await?;
+    crate::audit::log(&state.db, Some(org_id), auth.user_id, "member.removed", &user_id.to_string()).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

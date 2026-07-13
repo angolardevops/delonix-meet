@@ -237,6 +237,7 @@ pub async fn create(
     .bind(auth.user_id)
     .fetch_one(&state.db)
     .await?;
+    crate::audit::log(&state.db, Some(org_id), auth.user_id, "webhook.created", &hook.url).await;
     Ok(axum::Json(hook))
 }
 
@@ -293,5 +294,6 @@ pub async fn delete(
         .bind(org_id)
         .execute(&state.db)
         .await?;
+    crate::audit::log(&state.db, Some(org_id), auth.user_id, "webhook.deleted", &hook_id.to_string()).await;
     Ok(axum::Json(serde_json::json!({ "ok": true })))
 }

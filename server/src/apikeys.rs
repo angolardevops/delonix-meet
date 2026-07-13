@@ -137,6 +137,7 @@ pub async fn create(
     .bind(auth.user_id)
     .fetch_one(&state.db)
     .await?;
+    crate::audit::log(&state.db, Some(org_id), auth.user_id, "apikey.created", &name).await;
     Ok(Json(CreatedKey {
         id,
         name,
@@ -156,6 +157,7 @@ pub async fn revoke(
         .bind(org_id)
         .execute(&state.db)
         .await?;
+    crate::audit::log(&state.db, Some(org_id), auth.user_id, "apikey.revoked", &key_id.to_string()).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
