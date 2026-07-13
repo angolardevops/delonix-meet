@@ -96,6 +96,14 @@ const pt = {
     confirmDelete: 'Eliminar o quadro «{{title}}»?',
   },
   login: {
+    panelTitle: 'Reuniões encriptadas para toda a empresa.',
+    panelPoints: [
+      'Encriptação ponta-a-ponta em cada chamada',
+      'Fundos por IA que nunca saem do dispositivo',
+      'Atas automáticas no fim de cada reunião',
+    ],
+    quote: 'A Delonix passou na nossa auditoria de segurança à primeira.',
+    quoteBy: 'Sofia Antunes · CISO, Porttech',
     tabLogin: 'Entrar',
     tabRegister: 'Criar organização',
     tagline: 'Videochamadas seguras e encriptadas',
@@ -651,6 +659,14 @@ const en = {
     confirmDelete: 'Delete whiteboard “{{title}}”?',
   },
   login: {
+    panelTitle: 'Encrypted meetings for the whole company.',
+    panelPoints: [
+      'End-to-end encryption on every call',
+      'AI backgrounds that never leave the device',
+      'Automatic minutes at the end of every meeting',
+    ],
+    quote: 'Delonix passed our security audit on the first try.',
+    quoteBy: 'Sofia Antunes · CISO, Porttech',
     tabLogin: 'Sign in',
     tabRegister: 'Create organization',
     tagline: 'Secure, encrypted video calls',
