@@ -1117,6 +1117,7 @@ export default function Room({
       await h.start(new MediaStream([cameraTrackRef.current]))
       headRef.current = h
       setParallax(true)
+      setStatus('Efeito 3D ligado — move a cabeça e sente a profundidade da sala')
     } catch {
       setStatus('Efeito 3D indisponível neste dispositivo')
     }
@@ -1587,9 +1588,13 @@ export default function Room({
   // (relativo ao próprio tamanho) para acompanhar o overscan.
   const parallaxStyle: CSSProperties = parallax
     ? {
-        transform: `perspective(1600px) rotateY(${tilt.x * 4}deg) rotateX(${tilt.y * -4}deg) scale(1.14) translate(${tilt.x * 1.6}%, ${tilt.y * 1.6}%)`,
+        // Ângulos e deslocamento maiores (4→7deg, 1.6→2.8%) para o efeito ser
+        // claramente percetível; o overscan sobe em conjunto (1.14→1.2) para a
+        // rotação continuar a não revelar o fundo nos cantos.
+        transform: `perspective(1400px) rotateY(${tilt.x * 7}deg) rotateX(${tilt.y * -7}deg) scale(1.2) translate(${tilt.x * 2.8}%, ${tilt.y * 2.8}%)`,
         transformOrigin: 'center center',
-        transition: 'transform 0.09s ease-out',
+        transition: 'transform 0.12s cubic-bezier(0.22, 0.61, 0.36, 1)',
+        willChange: 'transform',
       }
     : {}
 
@@ -3529,11 +3534,111 @@ function PresentationTile({ stream, label, own, onRequestControl }: { stream: Me
     },
     [stream, own],
   )
+
+  // ---- Zoom & pan estilo Meet na tela partilhada ----
+  // Roda do rato/duplo-clique amplia (centrado no cursor); com zoom, arrasta-se
+  // para navegar. O pan é limitado para as margens do vídeo nunca entrarem.
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+  const [zoom, setZoomState] = useState(1)
+  const [pan, setPanState] = useState({ x: 0, y: 0 })
+  const [panning, setPanning] = useState(false)
+  const zoomRef = useRef(1)
+  const panRef = useRef({ x: 0, y: 0 })
+  const dragRef = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null)
+
+  const applyZoom = useCallback((next: number, cx?: number, cy?: number) => {
+    const el = viewportRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const z0 = zoomRef.current
+    const z = Math.min(4, Math.max(1, next))
+    let { x, y } = panRef.current
+    // Zoom centrado no cursor: o ponto por baixo do rato fica no sítio.
+    if (cx != null && cy != null && z !== z0) {
+      const ox = cx - rect.left - rect.width / 2
+      const oy = cy - rect.top - rect.height / 2
+      x = (x - ox) * (z / z0) + ox
+      y = (y - oy) * (z / z0) + oy
+    }
+    const maxX = (rect.width * (z - 1)) / 2
+    const maxY = (rect.height * (z - 1)) / 2
+    x = z === 1 ? 0 : Math.min(maxX, Math.max(-maxX, x))
+    y = z === 1 ? 0 : Math.min(maxY, Math.max(-maxY, y))
+    zoomRef.current = z
+    panRef.current = { x, y }
+    setZoomState(z)
+    setPanState({ x, y })
+  }, [])
+
+  // Listener nativo: o onWheel do React é passive → sem preventDefault a
+  // página fazia scroll em vez de zoom.
+  useEffect(() => {
+    const el = viewportRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
+      applyZoom(zoomRef.current * factor, e.clientX, e.clientY)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [applyZoom])
+
+  // Nova apresentação → repõe o zoom.
+  useEffect(() => {
+    zoomRef.current = 1
+    panRef.current = { x: 0, y: 0 }
+    setZoomState(1)
+    setPanState({ x: 0, y: 0 })
+  }, [stream])
+
   return (
     <div className="tile presentation">
-      <video ref={attach} autoPlay playsInline muted />
+      <div
+        ref={viewportRef}
+        className={zoom > 1 ? (panning ? 'pres-viewport panning' : 'pres-viewport pannable') : 'pres-viewport'}
+        onPointerDown={(e) => {
+          if (zoomRef.current <= 1) return
+          e.currentTarget.setPointerCapture?.(e.pointerId)
+          dragRef.current = { sx: e.clientX, sy: e.clientY, px: panRef.current.x, py: panRef.current.y }
+          setPanning(true)
+        }}
+        onPointerMove={(e) => {
+          const d = dragRef.current
+          const el = viewportRef.current
+          if (!d || !el) return
+          const rect = el.getBoundingClientRect()
+          const z = zoomRef.current
+          const maxX = (rect.width * (z - 1)) / 2
+          const maxY = (rect.height * (z - 1)) / 2
+          const x = Math.min(maxX, Math.max(-maxX, d.px + (e.clientX - d.sx)))
+          const y = Math.min(maxY, Math.max(-maxY, d.py + (e.clientY - d.sy)))
+          panRef.current = { x, y }
+          setPanState({ x, y })
+        }}
+        onPointerUp={() => { dragRef.current = null; setPanning(false) }}
+        onPointerCancel={() => { dragRef.current = null; setPanning(false) }}
+        onDoubleClick={(e) => applyZoom(zoomRef.current > 1 ? 1 : 2, e.clientX, e.clientY)}
+      >
+        <video
+          ref={attach}
+          autoPlay
+          playsInline
+          muted
+          style={{
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transition: panning ? 'none' : 'transform 0.15s ease-out',
+          }}
+        />
+      </div>
       {!own && <audio ref={attachAudio} autoPlay />}
       <span className="tile-name">🖥 {label}</span>
+      <div className="pres-zoom-ctrls" role="group" aria-label="Zoom da apresentação">
+        <button title="Reduzir" onClick={() => applyZoom(zoomRef.current / 1.25)}>−</button>
+        <span className="mono">{Math.round(zoom * 100)}%</span>
+        <button title="Ampliar" onClick={() => applyZoom(zoomRef.current * 1.25)}>+</button>
+        {zoom > 1 && <button title="Repor (100%)" onClick={() => applyZoom(1)}>⟲</button>}
+      </div>
       <button
         className="pres-fs-btn"
         title="Ecrã inteiro"
