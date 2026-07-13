@@ -319,8 +319,8 @@ stage: image-push ## Build + kind load + deploy k8s completo no cluster kind loc
 	@printf "$(C)▶ Namespace + Secret TLS...$(Z)\n"
 	@kubectl apply -f deploy/k8s/00-namespace.yaml
 	@kubectl create secret tls delonix-tls-secret \
-	  --cert=deploy/certs/meet.delonix.local.crt \
-	  --key=deploy/certs/meet.delonix.local.key \
+	  --cert=deploy/certs/wildcard.delonix.local.crt \
+	  --key=deploy/certs/wildcard.delonix.local.key \
 	  -n delonix-meet --dry-run=client -o yaml | kubectl apply -f -
 	@printf "$(C)▶ Helm: Postgres (single-node) + Redis (standalone)...$(Z)\n"
 	@# Usa bitnami/postgresql em vez de postgresql-ha: o chart HA (pgpool +
