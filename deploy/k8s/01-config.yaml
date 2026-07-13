@@ -13,6 +13,8 @@ data:
   # de candidatos ICE num host multi-homed). Exige coturn com --allowed-peer-ip.
   FORCE_TURN_RELAY: "1"
   SFU_EXTERNAL_IP: ""
+  # Gravações no PVC partilhado (montado em 02-server.yaml).
+  RECORDINGS_DIR: "/var/lib/delonix/recordings"
   # URL interno para a app interagir com Redis Sentinel (HA)
   REDIS_URL: "redis://delonix-redis-master.delonix-meet.svc.cluster.local:6379"
 ---
