@@ -624,6 +624,7 @@ export default function Analytics() {
                     <th>{t('admin.colRole')}</th>
                     <th>{t('admin.colTitle')}</th>
                     <th>{t('admin.colBranch')}</th>
+                    <th>SSO</th>
                     <th>{t('admin.colActive')}</th>
                   </tr>
                 </thead>
@@ -641,6 +642,8 @@ export default function Analytics() {
                       </td>
                       <td>{m.title || '—'}</td>
                       <td>{m.branch_name || '—'}</td>
+                      {/* Estado por org (OIDC configurado); por-membro chega com o SCIM. */}
+                      <td>{ssoActive ? <span className="posture-tag on">{t('admin.active')}</span> : <span className="muted">—</span>}</td>
                       <td className="muted">{fmtAgo(m.last_active)}</td>
                     </tr>
                   ))}

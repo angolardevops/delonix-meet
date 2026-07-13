@@ -29,18 +29,22 @@ export default function Recordings() {
   const [shareTarget, setShareTarget] = useState<RecordingItem | null>(null)
   const [viewTarget, setViewTarget] = useState<RecordingItem | null>(null)
   const [error, setError] = useState('')
-  const [view, setView] = useState<'cards' | 'table'>(
-    (localStorage.getItem('dx_rec_view') as 'cards' | 'table') || 'cards',
+  const [view, setView] = useState<'library' | 'cards' | 'table'>(
+    (localStorage.getItem('dx_rec_view') as 'library' | 'cards' | 'table') || 'library',
   )
   const [search, setSearch] = useState('')
-  function switchView(v: 'cards' | 'table') {
+  // Vista biblioteca (template): item selecionado abre no leitor à direita.
+  const [selected, setSelected] = useState<RecordingItem | null>(null)
+  function switchView(v: 'library' | 'cards' | 'table') {
     setView(v)
     localStorage.setItem('dx_rec_view', v)
   }
 
   async function refresh() {
     try {
-      setItems(await recordingsLibrary())
+      const list = await recordingsLibrary()
+      setItems(list)
+      setSelected((cur) => cur ?? list[0] ?? null)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -69,6 +73,9 @@ export default function Recordings() {
         subtitle={t('recordings.subtitle')}
         actions={
           <div className="seg view-toggle">
+            <button className={view === 'library' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('library')}>
+              ▤ {t('recordings.viewLibrary')}
+            </button>
             <button className={view === 'cards' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('cards')}>
               ▦ {t('recordings.viewCards')}
             </button>
@@ -98,6 +105,43 @@ export default function Recordings() {
       )}
       {!loading && items.length > 0 && shown.length === 0 && (
         <p className="muted">{t('recordings.noResults')}</p>
+      )}
+
+      {view === 'library' && shown.length > 0 && (
+        <div className="rec-split">
+          <aside className="rec-split-list">
+            {shown.map((r) => (
+              <button
+                key={r.id}
+                className={selected?.id === r.id ? 'rec-item active' : 'rec-item'}
+                onClick={() => setSelected(r)}
+              >
+                <span className="rec-item-thumb"><FilmIcon /></span>
+                <span className="rec-item-info">
+                  <strong>{r.filename.replace(/\.webm$/, '')}</strong>
+                  <small>
+                    {new Date(r.created_at).toLocaleDateString('pt-PT', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    {' · '}{(r.size_bytes / 1_048_576).toFixed(1)} MB
+                    {!r.owned && <> · {t('recordings.shared')}</>}
+                  </small>
+                </span>
+              </button>
+            ))}
+          </aside>
+          <section className="rec-split-viewer">
+            {selected ? (
+              <ViewerBody
+                key={selected.id}
+                rec={selected}
+                showHeader
+                onShare={() => setShareTarget(selected)}
+                onError={setError}
+              />
+            ) : (
+              <EmptyState icon={<FilmIcon />} title={t('recordings.empty')} />
+            )}
+          </section>
+        </div>
       )}
 
       {view === 'table' && shown.length > 0 && (
@@ -199,8 +243,19 @@ export default function Recordings() {
   )
 }
 
-/** Leitor: vídeo da gravação + abas Transcrição / Ata (MoM) / Tarefas. */
-function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void }) {
+/** Corpo do leitor: vídeo + (opcional) cabeçalho com meta/ações + abas
+ *  Transcrição / Ata (MoM) / Tarefas. Usado inline na biblioteca e no modal. */
+function ViewerBody({
+  rec,
+  showHeader = false,
+  onShare,
+  onError,
+}: {
+  rec: RecordingItem
+  showHeader?: boolean
+  onShare?: () => void
+  onError?: (msg: string) => void
+}) {
   const { t } = useTranslation()
   const viewerVideoRef = useRef<HTMLVideoElement>(null)
   const [videoUrl, setVideoUrl] = useState('')
@@ -247,15 +302,7 @@ function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal viewer" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h3>{notes?.title || rec.filename.replace(/\.webm$/, '')}</h3>
-          <button className="panel-close" onClick={onClose}>
-            <CloseIcon />
-          </button>
-        </div>
-
+    <div className="viewer-body">
         {videoErr && <div className="error">{videoErr}</div>}
         {!videoUrl && !videoErr && <p className="muted">{t('recordings.loadingVideo')}</p>}
         {videoUrl && (
@@ -271,6 +318,33 @@ function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void
             >
               ⧉ {t('recordings.pip')}
             </button>
+          </div>
+        )}
+
+        {showHeader && (
+          <div className="viewer-head">
+            <div className="viewer-head-info">
+              <h3>{notes?.title || rec.filename.replace(/\.webm$/, '')}</h3>
+              <small className="muted">
+                {new Date(rec.created_at).toLocaleString('pt-PT')} · {(rec.size_bytes / 1_048_576).toFixed(1)} MB
+                {' · '}{t('recordings.room', { code: rec.room_code })} · {rec.uploader_name}
+              </small>
+            </div>
+            <div className="viewer-head-actions">
+              {rec.can_download && (
+                <button
+                  className="btn-sm ghost"
+                  onClick={() => void downloadRecording(rec).catch((e) => onError?.((e as Error).message))}
+                >
+                  <DownloadIcon /> {t('recordings.download')}
+                </button>
+              )}
+              {rec.owned && onShare && (
+                <button className="btn-sm" onClick={onShare}>
+                  <ShareLinkIcon /> {t('recordings.share')}{rec.share_count > 0 ? ` (${rec.share_count})` : ''}
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -331,6 +405,22 @@ function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void
             ))}
           </div>
         )}
+    </div>
+  )
+}
+
+/** Leitor em modal (vistas Cartões/Tabela). */
+function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void }) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal viewer" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>{rec.filename.replace(/\.webm$/, '')}</h3>
+          <button className="panel-close" onClick={onClose}>
+            <CloseIcon />
+          </button>
+        </div>
+        <ViewerBody rec={rec} />
       </div>
     </div>
   )
