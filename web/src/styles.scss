@@ -1925,6 +1925,42 @@ button.link:hover {
 .foot-link:hover { color: var(--text); }
 .foot-rights { text-align: center; color: var(--muted); font-size: 0.8rem; margin: 2.4rem 0 0; }
 
+/* ---- Sala de espera dedicada do anfitrião (#/lobby/CODE) ---- */
+.lobby-page { min-height: 100vh; background: var(--bg); color: var(--text); }
+.lobby-head {
+  display: flex; align-items: center; justify-content: space-between;
+  max-width: 1080px; margin: 0 auto; padding: 1.2rem 1.4rem;
+  border-bottom: 1px solid var(--border);
+}
+.lobby-code {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px;
+  padding: 3px 10px; font-size: 0.85rem; color: var(--text-2);
+}
+.lobby-body { max-width: 1080px; margin: 0 auto; padding: 1.6rem 1.4rem 3rem; }
+.lobby-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.2rem; }
+.lobby-title-row h1 { margin: 0 0 0.2rem; font-family: var(--font-display); }
+.lobby-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.2rem; }
+.lobby-toggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.9rem 1.1rem; cursor: pointer;
+}
+.lobby-toggle span { display: flex; flex-direction: column; gap: 2px; }
+.lobby-toggle small { color: var(--text-2); font-size: 0.8rem; }
+.lobby-toggle input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+.lobby-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: start; }
+.lobby-row { display: flex; align-items: center; gap: 0.7rem; padding: 0.55rem 0; border-top: 1px solid var(--border); }
+.lobby-row:first-of-type { border-top: none; }
+.lobby-row-name { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.lobby-row-name small { color: var(--text-2); font-size: 0.76rem; }
+.count-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 22px; border-radius: 999px; padding: 0 6px;
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  font-size: 0.75rem; color: var(--text-2); vertical-align: middle;
+}
+@media (max-width: 800px) { .lobby-toggles, .lobby-grid { grid-template-columns: 1fr; } }
+
 /* ---- Termos & Privacidade (#/legal, página pública) ---- */
 .legal-page { min-height: 100vh; background: var(--bg); color: var(--text); }
 .legal-head {
@@ -1997,6 +2033,34 @@ button.link:hover {
 .qbar-fill.mid { background: var(--accent-2, #eda33b); }
 .qbar-fill.poor { background: var(--danger, #c8201d); }
 .qbar-pct { font-size: 0.78rem; color: var(--text-2); text-align: right; }
+/* Biblioteca (template): lista à esquerda, leitor inline à direita. */
+.rec-split { display: grid; grid-template-columns: 320px 1fr; gap: 1.2rem; align-items: start; }
+.rec-split-list { display: flex; flex-direction: column; gap: 0.55rem; }
+.rec-item {
+  display: flex; align-items: center; gap: 0.7rem; text-align: left; width: 100%;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 7px;
+  padding: 0.65rem 0.75rem; cursor: pointer; color: var(--text);
+}
+.rec-item:hover { border-color: var(--border-strong); }
+.rec-item.active { border-color: var(--accent); background: var(--surface-2); }
+.rec-item-thumb {
+  width: 44px; height: 34px; flex: none; border-radius: 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--surface-2), rgba(200, 32, 29, 0.18));
+  color: var(--accent-2);
+}
+.rec-item-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rec-item-info strong { font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rec-item-info small { color: var(--text-2); font-size: 0.76rem; }
+.rec-split-viewer {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 1rem 1.2rem 1.2rem; min-width: 0;
+}
+.viewer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin: 0.8rem 0 0.4rem; }
+.viewer-head-info h3 { margin: 0 0 0.15rem; }
+.viewer-head-actions { display: flex; gap: 0.5rem; flex: none; }
+@media (max-width: 900px) { .rec-split { grid-template-columns: 1fr; } }
+
 .rec-search { margin: 0 0 1rem; }
 .rec-search input {
   width: 100%; max-width: 380px; padding: 0.55rem 0.8rem;

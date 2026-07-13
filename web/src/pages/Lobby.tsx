@@ -1,96 +1,200 @@
-import { FormEvent, useState } from 'react'
-import { createRoom, getRoom, User } from '../api'
+import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { currentUser, joinRoom } from '../api'
+import { ClientMsg, PeerInfo, Signaling } from '../signaling'
 
-export default function Lobby({
-  user,
-  onEnterRoom,
-  onLogout,
-}: {
-  user: User
-  onEnterRoom: (code: string) => void
-  onLogout: () => void
-}) {
-  const [roomName, setRoomName] = useState('')
-  const [topology, setTopology] = useState<'sfu' | 'mesh'>('sfu')
-  const [waitingRoom, setWaitingRoom] = useState(false)
-  const [joinCode, setJoinCode] = useState('')
-  const [error, setError] = useState('')
+/** Sala de espera dedicada do anfitrião (vista do template): gerir a fila,
+ *  quem está na reunião e as definições da sala — antes de entrar com media.
+ *  REGRA (R2): esta página NUNCA cria SfuCall — é só sinalização; a media
+ *  nasce apenas dentro da Room, depois de `joined`. */
+export default function Lobby({ code }: { code: string }) {
+  const { t } = useTranslation()
+  const signalRef = useRef<Signaling | null>(null)
+  const [status, setStatus] = useState('')
+  const [connected, setConnected] = useState(false)
+  const [peers, setPeers] = useState<PeerInfo[]>([])
+  const [waiting, setWaiting] = useState<PeerInfo[]>([])
+  const [locked, setLocked] = useState(false)
+  const [hostShare, setHostShare] = useState(false)
 
-  async function create(e: FormEvent) {
-    e.preventDefault()
-    setError('')
-    try {
-      const room = await createRoom(roomName || `Reunião de ${user.username}`, topology, waitingRoom)
-      onEnterRoom(room.code)
-    } catch (err) {
-      setError((err as Error).message)
+  useEffect(() => {
+    let cancelled = false
+    let signal: Signaling | null = null
+    void (async () => {
+      try {
+        const { room, room_token } = await joinRoom(code)
+        if (cancelled) return
+        // Só o anfitrião gere a sala de espera; convidados vão direto à sala.
+        if (room.owner_id !== currentUser()?.id) {
+          location.hash = `/r/${code}`
+          return
+        }
+        signal = new Signaling(room_token, code)
+        signalRef.current = signal
+        signal.on('joined', (m) => {
+          setConnected(true)
+          setPeers(m.peers)
+        })
+        signal.on('peer-joined', (m) =>
+          setPeers((p) => [...p.filter((x) => x.peer_id !== m.peer.peer_id), m.peer]))
+        signal.on('peer-left', (m) => setPeers((p) => p.filter((x) => x.peer_id !== m.peer_id)))
+        signal.on('waiting-join', (m) =>
+          setWaiting((q) => [...q.filter((x) => x.peer_id !== m.peer.peer_id), m.peer]))
+        signal.on('waiting-left', (m) => setWaiting((q) => q.filter((x) => x.peer_id !== m.peer_id)))
+        signal.on('room-settings', (m) => {
+          setLocked(m.locked)
+          setHostShare(m.host_share_only)
+        })
+        signal.on('media', (m) =>
+          setPeers((p) => p.map((x) => (x.peer_id === m.from ? { ...x, cam: m.cam, mic: m.mic } : x))))
+        signal.on('error', (m) => setStatus(m.message))
+      } catch (e) {
+        setStatus((e as Error).message)
+      }
+    })()
+    return () => {
+      cancelled = true
+      signal?.close()
     }
-  }
+  }, [code])
 
-  async function join(e: FormEvent) {
-    e.preventDefault()
-    setError('')
-    try {
-      const room = await getRoom(joinCode.trim().toLowerCase())
-      onEnterRoom(room.code)
-    } catch {
-      setError('Sala não encontrada — verifica o código')
-    }
-  }
+  const send = (msg: ClientMsg) => signalRef.current?.send(msg)
+  const me = currentUser()
 
   return (
     <div className="lobby-page">
-      <header className="topbar">
-        <h1 className="logo">
-          Delonix <span>Meet</span>
-        </h1>
-        <div className="topbar-right">
-          <span className="me">{user.username}</span>
-          <button className="link" onClick={onLogout}>
-            Sair
+      <header className="lobby-head">
+        <a href="#/" className="brand-text">
+          <img src="/logo.svg" alt="" className="brand-logo" /> Delonix <span>Meet</span>
+        </a>
+        <span className="mono lobby-code">{code}</span>
+      </header>
+
+      <main className="lobby-body">
+        <div className="lobby-title-row">
+          <div>
+            <h1>{t('lobby.title')}</h1>
+            <p className="muted">{t('lobby.sub')}</p>
+          </div>
+          <button className="primary" onClick={() => (location.hash = `/r/${code}`)}>
+            {t('lobby.enter')}
           </button>
         </div>
-      </header>
-      <main className="lobby-main">
-        <h2>Videochamadas seguras para todos</h2>
-        <p className="muted">Cria uma sala e partilha o código, ou entra numa sala existente.</p>
-        <div className="lobby-actions">
-          <form onSubmit={create} className="lobby-card">
-            <h3>Nova reunião</h3>
+
+        {status && <div className="error">{status}</div>}
+        {!connected && !status && <p className="muted">{t('lobby.connecting')}</p>}
+
+        <div className="lobby-toggles">
+          <label className="lobby-toggle">
+            <span>
+              <strong>{t('lobby.lock')}</strong>
+              <small>{t('lobby.lockDesc')}</small>
+            </span>
             <input
-              placeholder="Nome da reunião (opcional)"
-              value={roomName}
-              onChange={(e) => setRoomName(e.target.value)}
+              type="checkbox"
+              checked={locked}
+              onChange={(e) => {
+                setLocked(e.target.checked)
+                send({ type: 'room-lock', locked: e.target.checked })
+              }}
             />
-            <label className="topo-select">
-              Topologia
-              <select value={topology} onChange={(e) => setTopology(e.target.value as 'sfu' | 'mesh')}>
-                <option value="sfu">SFU — escala para salas grandes (recomendado)</option>
-                <option value="mesh">Mesh — P2P direto, salas até ~6</option>
-              </select>
-            </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={waitingRoom}
-                onChange={(e) => setWaitingRoom(e.target.checked)}
-              />
-              Sala de espera — os convidados só entram quando o anfitrião os admitir
-            </label>
-            <button className="primary">Criar sala</button>
-          </form>
-          <form onSubmit={join} className="lobby-card">
-            <h3>Entrar com código</h3>
+          </label>
+          <label className="lobby-toggle">
+            <span>
+              <strong>{t('lobby.hostShare')}</strong>
+              <small>{t('lobby.hostShareDesc')}</small>
+            </span>
             <input
-              placeholder="ex.: abc-defg-hij"
-              value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value)}
-              required
+              type="checkbox"
+              checked={hostShare}
+              onChange={(e) => {
+                setHostShare(e.target.checked)
+                send({ type: 'host-share-only', on: e.target.checked })
+              }}
             />
-            <button className="primary">Entrar</button>
-          </form>
+          </label>
         </div>
-        {error && <div className="error">{error}</div>}
+
+        <div className="lobby-grid">
+          <section className="dash-card">
+            <header className="dash-card-head">
+              <h2>
+                {t('lobby.waitingTitle')} <span className="count-badge">{waiting.length}</span>
+              </h2>
+              {waiting.length > 1 && (
+                <button
+                  className="btn-sm"
+                  onClick={() => waiting.forEach((w) => send({ type: 'admit', to: w.peer_id }))}
+                >
+                  {t('lobby.admitAll')}
+                </button>
+              )}
+            </header>
+            {waiting.length === 0 && <p className="dash-empty">{t('lobby.empty')}</p>}
+            {waiting.map((w) => (
+              <div key={w.peer_id} className="lobby-row">
+                <span className="avatar-circle small">{w.username.slice(0, 2).toUpperCase()}</span>
+                <span className="lobby-row-name">
+                  <strong>{w.username}</strong>
+                  <small>{t('lobby.wants')}</small>
+                </span>
+                <button
+                  className="btn-sm ghost"
+                  title={t('lobby.deny')}
+                  onClick={() => send({ type: 'deny', to: w.peer_id })}
+                >
+                  ✕
+                </button>
+                <button className="btn-sm" onClick={() => send({ type: 'admit', to: w.peer_id })}>
+                  {t('lobby.admit')}
+                </button>
+              </div>
+            ))}
+          </section>
+
+          <section className="dash-card">
+            <header className="dash-card-head">
+              <h2>
+                {t('lobby.inTitle')} <span className="count-badge">{peers.length + (connected ? 1 : 0)}</span>
+              </h2>
+            </header>
+            {connected && (
+              <div className="lobby-row">
+                <span className="avatar-circle small">{(me?.username ?? 'eu').slice(0, 2).toUpperCase()}</span>
+                <span className="lobby-row-name">
+                  <strong>{me?.username ?? 'eu'}</strong>
+                  <small>{t('lobby.you')}</small>
+                </span>
+                <span className="posture-tag on">HOST</span>
+              </div>
+            )}
+            {peers.map((p) => (
+              <div key={p.peer_id} className="lobby-row">
+                <span className="avatar-circle small">{p.username.slice(0, 2).toUpperCase()}</span>
+                <span className="lobby-row-name">
+                  <strong>{p.username}</strong>
+                  <small>{p.mic ? t('lobby.micOn') : t('lobby.micOff')}</small>
+                </span>
+                {p.mic && (
+                  <button
+                    className="btn-sm ghost"
+                    title={t('lobby.mute')}
+                    onClick={() => send({ type: 'force-mute', to: p.peer_id })}
+                  >
+                    {t('lobby.mute')}
+                  </button>
+                )}
+                <button
+                  className="btn-sm ghost"
+                  title={t('lobby.remove')}
+                  onClick={() => send({ type: 'kick', to: p.peer_id })}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </section>
+        </div>
       </main>
     </div>
   )

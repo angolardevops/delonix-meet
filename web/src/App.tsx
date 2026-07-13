@@ -13,6 +13,7 @@ import Status from './pages/Status'
 import ApiDocs from './pages/ApiDocs'
 import Legal from './pages/Legal'
 import Room from './pages/Room'
+import Lobby from './pages/Lobby'
 import SharePage from './pages/SharePage'
 import Shell, { NavKey } from './components/Shell'
 import PresenceProvider from './components/PresenceProvider'
@@ -26,6 +27,7 @@ type Route =
   | { kind: 'analytics' }
   | { kind: 'roadmap' }
   | { kind: 'room'; code: string; voice: boolean }
+  | { kind: 'lobby'; code: string }
   | { kind: 'share'; token: string }
 
 function parseHash(): Route {
@@ -34,6 +36,8 @@ function parseHash(): Route {
   if (roomVoice) return { kind: 'room', code: roomVoice[1], voice: true }
   const room = h.match(/^#\/r\/([a-z-]+)$/)
   if (room) return { kind: 'room', code: room[1], voice: false }
+  const lobby = h.match(/^#\/lobby\/([a-z-]+)$/)
+  if (lobby) return { kind: 'lobby', code: lobby[1] }
   const share = h.match(/^#\/share\/([a-f0-9]+)$/)
   if (share) return { kind: 'share', token: share[1] }
   if (h.startsWith('#/directory')) return { kind: 'directory' }
@@ -131,7 +135,9 @@ export default function App() {
       </div>
     )}
     <PresenceProvider onEnterRoom={enterRoom}>
-      {route.kind === 'room' ? (
+      {route.kind === 'lobby' ? (
+        <Lobby code={route.code} />
+      ) : route.kind === 'room' ? (
         <Room code={route.code} voiceOnly={route.voice} onLeave={leaveRoom} onSwitch={(c) => enterRoom(c)} />
       ) : (
         <Shell
