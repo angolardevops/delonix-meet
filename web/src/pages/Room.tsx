@@ -23,8 +23,8 @@ import { ThemePicker } from '../components/Shell'
 import { Call, MeshCall, SfuCall } from '../webrtc'
 import { makeCallHolderStart } from '../sfuLifecycle'
 import {
-  BlurIcon, CamIcon, CamOffIcon, ChatIcon, ChevronUpIcon, CloseIcon, CubeIcon, DownloadIcon, EmojiIcon, HandIcon,
-  HangupIcon, MicIcon, MicOffIcon, NoteIcon, PeopleIcon, RecordIcon, SettingsIcon, ShareIcon, StageIcon, StopIcon,
+  BlurIcon, CamIcon, CamOffIcon, ChatIcon, ChevronUpIcon, CloseIcon, DownloadIcon, EmojiIcon, HandIcon,
+  HangupIcon, MicIcon, MicOffIcon, NoteIcon, PeopleIcon, RecordIcon, SettingsIcon, ShareIcon, StopIcon,
 } from '../icons'
 
 interface RemotePeer {
@@ -512,8 +512,6 @@ export default function Room({
   const togglePin = (id: string) => setPinnedId((cur) => (cur === id ? null : id))
   // Layout da apresentação: plateia em baixo (default) ou na lateral direita.
   const [presLayout, setPresLayout] = useState<'bottom' | 'side'>('bottom')
-  // Menu do seletor de esquema (Galeria / Orador / Lado-a-lado) — estilo Teams/Zoom.
-  const [layoutMenu, setLayoutMenu] = useState(false)
   const [parallax, setParallax] = useState(false)
   const [tilt, setTilt] = useState({ x: 0, y: 0 })
   const [notesOpen, setNotesOpen] = useState(false)
@@ -2064,7 +2062,17 @@ export default function Room({
                 <CloseIcon />
               </button>
             </div>
-            <p className="muted small">Partilha este link com quem quiseres incluir na reunião.</p>
+            <button
+              className="ready-add-btn"
+              onClick={() => {
+                setPanel('people')
+                sessionStorage.setItem(`dx_ready_${code}`, '1')
+                setReadyOpen(false)
+              }}
+            >
+              <PeopleIcon /> Adicionar participantes
+            </button>
+            <p className="muted small ready-or">Ou partilhe este link da reunião com as outras pessoas que quer incluir na reunião.</p>
             <div className="ready-link">
               <span className="mono">{`${location.host}/#/r/${code}`}</span>
               <button
@@ -2082,7 +2090,7 @@ export default function Room({
             </div>
             <p className="muted small ready-note">
               🛡 {waitingRoomOn
-                ? 'Quem usar o link terá de pedir autorização para participar.'
+                ? 'As pessoas que utilizarem este link terão de pedir autorização para participar.'
                 : 'Quem tiver o link e sessão iniciada entra diretamente.'}
             </p>
             <p className="muted small">A participar como <strong>{currentUser()?.username ?? 'eu'}</strong></p>
@@ -3121,12 +3129,37 @@ export default function Room({
                 <button
                   className="device-item"
                   onClick={() => {
-                    setViewMode(viewMode === 'grid' ? 'stage' : 'grid')
+                    setViewMode('grid')
+                    setPinnedId(null)
                     setMoreOpen(false)
                   }}
                 >
-                  ▦ Ajustar vista: {viewMode === 'grid' ? 'Orador em palco' : 'Grelha'}
+                  <span style={{ opacity: effectiveViewMode === 'grid' && !presentation ? 1 : 0.4, marginRight: 4 }}>✓</span>▦ Grelha
                 </button>
+                <button
+                  className="device-item"
+                  onClick={() => {
+                    setViewMode('stage')
+                    setMoreOpen(false)
+                  }}
+                >
+                  <span style={{ opacity: effectiveViewMode === 'stage' && !presentation ? 1 : 0.4, marginRight: 4 }}>✓</span>▮ Orador em palco
+                </button>
+                {presentation && <>
+                  <button
+                    className="device-item"
+                    onClick={() => { setPresLayout('bottom'); setMoreOpen(false) }}
+                  >
+                    <span style={{ opacity: presLayout === 'bottom' ? 1 : 0.4, marginRight: 4 }}>✓</span>⬓ Apresentação — plateia em baixo
+                  </button>
+                  <button
+                    className="device-item"
+                    onClick={() => { setPresLayout('side'); setMoreOpen(false) }}
+                  >
+                    <span style={{ opacity: presLayout === 'side' ? 1 : 0.4, marginRight: 4 }}>✓</span>◧ Apresentação — lado a lado
+                  </button>
+                </>}
+                <div className="device-sep" />
                 <button
                   className="device-item"
                   onClick={() => {
@@ -3181,6 +3214,12 @@ export default function Room({
                   {hideNoVideo ? '👥 Mostrar participantes sem vídeo' : '🫥 Ocultar participantes sem vídeo'}
                 </button>
                 <button
+                  className="device-item"
+                  onClick={() => void toggleParallax()}
+                >
+                  <span style={{ opacity: parallax ? 1 : 0.4, marginRight: 4 }}>✓</span>🎲 Efeito de sala 3D
+                </button>
+                <button
                   className="device-item device-action"
                   onClick={() => {
                     setPanel('settings')
@@ -3201,60 +3240,6 @@ export default function Room({
         </div>
 
         <div className="bar-right">
-          <div className="layout-picker">
-            <Ctrl
-              plain
-              label="Esquema da vista"
-              active={layoutMenu || viewMode === 'stage'}
-              onClick={() => setLayoutMenu((v) => !v)}
-            >
-              <StageIcon />
-            </Ctrl>
-            {layoutMenu && (
-              <>
-                <div className="menu-backdrop" onClick={() => setLayoutMenu(false)} />
-                <div className="device-menu layout-menu">
-                  <div className="layout-menu-title">Esquema</div>
-                  <button
-                    className={effectiveViewMode === 'grid' && !presentation ? 'layout-opt active' : 'layout-opt'}
-                    onClick={() => { setViewMode('grid'); setPinnedId(null); setLayoutMenu(false) }}
-                  >
-                    <span className="layout-ico">▦</span>
-                    <span><strong>Galeria</strong><small>Todos em grelha</small></span>
-                  </button>
-                  <button
-                    className={effectiveViewMode === 'stage' && !presentation ? 'layout-opt active' : 'layout-opt'}
-                    onClick={() => { setViewMode('stage'); setLayoutMenu(false) }}
-                  >
-                    <span className="layout-ico">▮</span>
-                    <span><strong>Orador em palco</strong><small>Foco em quem fala</small></span>
-                  </button>
-                  {presentation && (
-                    <>
-                      <div className="layout-menu-sep" />
-                      <button
-                        className={presLayout === 'bottom' ? 'layout-opt active' : 'layout-opt'}
-                        onClick={() => { setPresLayout('bottom'); setLayoutMenu(false) }}
-                      >
-                        <span className="layout-ico">⬓</span>
-                        <span><strong>Apresentação</strong><small>Plateia em baixo</small></span>
-                      </button>
-                      <button
-                        className={presLayout === 'side' ? 'layout-opt active' : 'layout-opt'}
-                        onClick={() => { setPresLayout('side'); setLayoutMenu(false) }}
-                      >
-                        <span className="layout-ico">◧</span>
-                        <span><strong>Lado a lado</strong><small>Plateia à direita</small></span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-          <Ctrl plain label={parallax ? 'Desligar efeito 3D' : 'Efeito de sala 3D'} active={parallax} onClick={() => void toggleParallax()}>
-            <CubeIcon />
-          </Ctrl>
           <Ctrl
             plain
             label="Quadro branco colaborativo"
@@ -3262,8 +3247,6 @@ export default function Room({
             onClick={() => {
               const next = !wbOpen
               setWbOpen(next)
-              // Fechar propaga a todos; abrir também, quando sou o apresentador
-              // ou anfitrião (o servidor valida) — os outros veem "partilhado".
               if (next && (sharing || isHost)) signalRef.current?.send({ type: 'wb-open' })
               if (!next) signalRef.current?.send({ type: 'wb-close' })
             }}
@@ -3289,9 +3272,6 @@ export default function Room({
           <Ctrl plain label="Chat" active={panel === 'chat'} onClick={() => { setPanel(panel === 'chat' ? 'none' : 'chat'); setUnreadChat(0) }}>
             <ChatIcon />
             {unreadChat > 0 && <span className="badge unread-badge">{unreadChat > 9 ? '9+' : unreadChat}</span>}
-          </Ctrl>
-          <Ctrl plain label="Definições" active={panel === 'settings'} onClick={() => setPanel(panel === 'settings' ? 'none' : 'settings')}>
-            <SettingsIcon />
           </Ctrl>
         </div>
       </footer>
