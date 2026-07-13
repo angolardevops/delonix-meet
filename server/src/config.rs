@@ -20,6 +20,11 @@ pub struct Config {
     /// Segredo partilhado que a camada de media (FreeSWITCH/provider) usa para
     /// chamar a API interna de IVR. Vazio => API interna de voz DESATIVADA.
     pub voice_internal_secret: String,
+    /// Segredo de plataforma que autoriza o provisionamento de organizações via
+    /// `POST /api/v1/admin/orgs` (ex.: o Odoo cria a org de cada empresa e
+    /// recebe a chave de API). Vazio => endpoint de provisão DESATIVADO
+    /// (fail-closed). Não é uma chave de org — é anterior a qualquer org.
+    pub provisioning_secret: String,
     /// Tarifa estimada por minuto (inbound) para o cálculo de custo no CDR.
     pub voice_tariff_inbound: f64,
     /// Diretório onde as gravações são armazenadas (lido uma vez no arranque).
@@ -70,6 +75,7 @@ impl Config {
             cors_origins,
             cookie_secure: env::var("COOKIE_INSECURE").ok().as_deref() != Some("1"),
             voice_internal_secret: env::var("VOICE_INTERNAL_SECRET").unwrap_or_default(),
+            provisioning_secret: env::var("PROVISIONING_SECRET").unwrap_or_default(),
             voice_tariff_inbound: env::var("VOICE_TARIFF_INBOUND")
                 .ok()
                 .and_then(|v| v.parse().ok())

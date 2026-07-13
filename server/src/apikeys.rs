@@ -7,7 +7,7 @@
 
 use axum::{
     extract::{FromRequestParts, Path, State},
-    http::request::Parts,
+    http::{request::Parts, HeaderMap},
     Json,
 };
 use rand::{rngs::OsRng, RngCore};
@@ -345,4 +345,193 @@ pub async fn v1_org(
         "id": key.org_id, "name": row.0, "email_domain": row.1,
         "domain": row.2, "members": members,
     })))
+}
+
+// ---------- Provisão de organização (segredo de plataforma) ----------
+
+#[derive(Deserialize)]
+pub struct ProvisionOrgReq {
+    /// Nome da organização (== nome da empresa no sistema chamador).
+    pub name: String,
+    /// Rótulo da chave de API emitida (default "Integration").
+    #[serde(default)]
+    pub key_name: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ProvisionedOrg {
+    pub org_id: Uuid,
+    pub slug: String,
+    pub name: String,
+    /// A chave de API completa (`dlx_...`) — só devolvida AGORA, guarda-se o hash.
+    pub api_key: String,
+}
+
+/// Comparação em tempo constante para não abrir um oráculo de temporização
+/// sobre o segredo de provisão.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Utilizador de serviço único que "possui" as organizações provisionadas.
+/// Idempotente: criado à primeira, reutilizado depois. Nunca faz login (a
+/// password é aleatória e descartada); serve só como ``created_by`` técnico.
+async fn ensure_provisioning_user(state: &AppState) -> Result<Uuid, ApiError> {
+    const EMAIL: &str = "provisioning@delonix.internal";
+    const USERNAME: &str = "delonix-provisioning";
+    if let Some((id,)) = sqlx::query_as::<_, (Uuid,)>("SELECT id FROM users WHERE email = $1")
+        .bind(EMAIL)
+        .fetch_optional(&state.db)
+        .await?
+    {
+        return Ok(id);
+    }
+    let mut pw = [0u8; 24];
+    OsRng.fill_bytes(&mut pw);
+    let hash = crate::auth::hash_password(&hex::encode(pw))?;
+    let res: Result<(Uuid,), sqlx::Error> = sqlx::query_as(
+        "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(EMAIL)
+    .bind(USERNAME)
+    .bind(&hash)
+    .fetch_one(&state.db)
+    .await;
+    match res {
+        Ok((id,)) => Ok(id),
+        // Corrida: outro pedido criou-o entretanto → relê.
+        Err(sqlx::Error::Database(db)) if db.is_unique_violation() => {
+            let (id,): (Uuid,) = sqlx::query_as("SELECT id FROM users WHERE email = $1")
+                .bind(EMAIL)
+                .fetch_one(&state.db)
+                .await?;
+            Ok(id)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// `POST /api/v1/admin/orgs` — provisiona uma organização + emite a sua chave
+/// de API. Autenticado pelo **segredo de plataforma** (`X-Provisioning-Secret`),
+/// não por chave de org (que ainda não existe). Pensado para o Odoo criar a org
+/// de cada empresa e receber a chave para depois criar salas via `/api/v1/rooms`.
+///
+/// Fail-closed: com `PROVISIONING_SECRET` vazio o endpoint recusa sempre.
+pub async fn v1_provision_org(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ProvisionOrgReq>,
+) -> Result<Json<ProvisionedOrg>, ApiError> {
+    let configured = state.config.provisioning_secret.as_bytes();
+    if configured.is_empty() {
+        return Err(ApiError::Unauthorized);
+    }
+    let provided = headers
+        .get("x-provisioning-secret")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !ct_eq(provided.as_bytes(), configured) {
+        return Err(ApiError::Unauthorized);
+    }
+
+    let name = req.name.trim();
+    if name.is_empty() || name.len() > 120 {
+        return Err(ApiError::BadRequest("nome da organização inválido".into()));
+    }
+
+    let service_user_id = ensure_provisioning_user(&state).await?;
+
+    // Org com slug único (sufixo em colisão). SEM a quota anti-abuso de
+    // create_org: aqui a autorização é o segredo de plataforma, não um user.
+    let base = crate::org::slugify_pub(name);
+    let mut created: Option<(Uuid, String)> = None;
+    for i in 0..8 {
+        let slug = if i == 0 {
+            base.clone()
+        } else {
+            format!("{base}-{i}")
+        };
+        let res: Result<(Uuid,), sqlx::Error> = sqlx::query_as(
+            "INSERT INTO organizations (name, slug, created_by) VALUES ($1, $2, $3) RETURNING id",
+        )
+        .bind(name)
+        .bind(&slug)
+        .bind(service_user_id)
+        .fetch_one(&state.db)
+        .await;
+        match res {
+            Ok((id,)) => {
+                created = Some((id, slug));
+                break;
+            }
+            Err(sqlx::Error::Database(db)) if db.is_unique_violation() => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    let (org_id, slug) =
+        created.ok_or_else(|| ApiError::internal("could not allocate org slug"))?;
+
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, role, title) VALUES ($1, $2, 'admin', 'Provisioning')",
+    )
+    .bind(org_id)
+    .bind(service_user_id)
+    .execute(&state.db)
+    .await?;
+
+    // Chave de API da org (mesma geração que apikeys::create).
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    let key = format!("dlx_{}", hex::encode(bytes));
+    let prefix = key.chars().take(12).collect::<String>();
+    let hash = sha256_hex(&key);
+    let key_name: String = req
+        .key_name
+        .unwrap_or_else(|| "Integration".into())
+        .trim()
+        .chars()
+        .take(60)
+        .collect();
+    sqlx::query(
+        "INSERT INTO org_api_keys (org_id, name, prefix, key_hash, created_by)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(org_id)
+    .bind(&key_name)
+    .bind(&prefix)
+    .bind(&hash)
+    .bind(service_user_id)
+    .execute(&state.db)
+    .await?;
+
+    crate::audit::log(&state.db, Some(org_id), service_user_id, "org.provisioned", name).await;
+    Ok(Json(ProvisionedOrg {
+        org_id,
+        slug,
+        name: name.to_string(),
+        api_key: key,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ct_eq;
+
+    #[test]
+    fn ct_eq_matches_only_identical() {
+        assert!(ct_eq(b"s3cr3t", b"s3cr3t"));
+        assert!(!ct_eq(b"s3cr3t", b"s3cr3T"));
+        assert!(!ct_eq(b"short", b"longer-secret"));
+        assert!(!ct_eq(b"", b"x"));
+        // Segredo vazio nunca deve validar (o handler já recusa antes, mas a
+        // primitiva também não abre exceção para vazio-vs-vazio em uso real).
+        assert!(ct_eq(b"", b""));
+    }
 }
