@@ -11,6 +11,7 @@ import Analytics from './pages/Analytics'
 import Roadmap from './pages/Roadmap'
 import Status from './pages/Status'
 import ApiDocs from './pages/ApiDocs'
+import Legal from './pages/Legal'
 import Room from './pages/Room'
 import SharePage from './pages/SharePage'
 import Shell, { NavKey } from './components/Shell'
@@ -90,6 +91,7 @@ export default function App() {
   }
   if (location.hash.startsWith('#/status')) return <Status />
   if (location.hash.startsWith('#/api-docs')) return <ApiDocs />
+  if (location.hash.startsWith('#/legal')) return <Legal />
   // Link público de gravação — sem autenticação necessária.
   if (route.kind === 'share') return <SharePage token={route.token} />
   if (!user) {

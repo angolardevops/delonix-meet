@@ -473,6 +473,7 @@ export interface Employee {
   title: string
   branch_id: string | null
   branch_name: string | null
+  last_active?: string | null
 }
 export interface Group {
   id: string

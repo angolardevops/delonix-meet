@@ -110,6 +110,12 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
               <li key={p}>✓ {p}</li>
             ))}
           </ul>
+          {/* Selos verdadeiros — sem certificações que não temos (SOC2/ISO ficam para quando existirem). */}
+          <div className="trust-badges">
+            {ta<string[]>('land.secBadges').map((b) => (
+              <span key={b} className="trust-badge">{b}</span>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -211,6 +217,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
             <p>{t('land.footer.tag')}</p>
             <a className="link small-link" href="#/status">{t('land.statusLink')}</a>
             <a className="link small-link" href="#/api-docs">API REST</a>
+            <a className="link small-link" href="#/legal">{t('land.legalLink')}</a>
           </div>
         </div>
         <p className="foot-rights">{t('land.footer.rights')}</p>
