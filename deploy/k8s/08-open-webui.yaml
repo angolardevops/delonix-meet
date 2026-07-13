@@ -1,0 +1,110 @@
+# Open WebUI — consola web para o Ollama in-cluster (07-ollama.yaml), em
+# https://ai.delonix.local (wildcard *.delonix.local, secret delonix-tls-secret).
+# Serve para operar a IA do Meet: puxar/testar modelos, afinar prompts do MoM e
+# da tradução, e acompanhar o desempenho — sem tocar no cluster por kubectl.
+# (Ref.: linuxtips "Descomplicando Ollama" — padrão Ollama + WebUI no K8s.)
+#
+# A primeira conta criada no WebUI é o admin (auth própria do WebUI).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: open-webui-data
+  namespace: delonix-meet
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-open-webui
+  namespace: delonix-meet
+  labels:
+    app: delonix-open-webui
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # PVC RWO
+  selector:
+    matchLabels:
+      app: delonix-open-webui
+  template:
+    metadata:
+      labels:
+        app: delonix-open-webui
+    spec:
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: open-webui
+          image: ghcr.io/open-webui/open-webui:main
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: OLLAMA_BASE_URL
+              value: "http://delonix-ollama.delonix-meet.svc.cluster.local:11434"
+            # Sem telemetria/chamadas externas — soberania como no resto do stack.
+            - { name: ENABLE_OPENAI_API, value: "false" }
+            - { name: WEBUI_NAME, value: "Delonix AI" }
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          volumeMounts:
+            - { name: data, mountPath: /app/backend/data }
+          securityContext:
+            allowPrivilegeEscalation: false
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: open-webui-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-open-webui
+  namespace: delonix-meet
+spec:
+  selector:
+    app: delonix-open-webui
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: delonix-ai
+  namespace: delonix-meet
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "512m" # upload de modelos GGUF
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600" # respostas longas do LLM
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [ai.delonix.local]
+      secretName: delonix-tls-secret
+  rules:
+    - host: ai.delonix.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: delonix-open-webui
+                port: { number: 8080 }
