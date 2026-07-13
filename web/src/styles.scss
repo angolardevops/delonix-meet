@@ -3437,6 +3437,21 @@ button.link:hover {
 .layout-ico { font-size: 1.05rem; width: 22px; text-align: center; flex: none; }
 
 /* ============================================================
+   Admin: Qualidade das chamadas (amostras QoS agregadas)
+   ============================================================ */
+.quality-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.quality-stat {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px;
+}
+.quality-stat strong { font-size: 1.3rem; font-family: 'Space Grotesk Variable', sans-serif; }
+.quality-stat small { color: var(--text-2); font-size: 0.76rem; }
+.quality-stat.good strong { color: #3ddc97; }
+.quality-stat.poor strong { color: var(--accent); }
+.quality-note { margin: 10px 0 0; }
+
+/* ============================================================
    Landing: Testemunhos + Preços (portados do template NgolaCloud)
    ============================================================ */
 .land-section h2.center { text-align: center; }

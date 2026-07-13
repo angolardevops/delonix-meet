@@ -473,6 +473,53 @@ pub async fn invite_to_room(
     })))
 }
 
+#[derive(Deserialize)]
+pub struct QosSample {
+    pub rtt_ms: Option<i32>,
+    pub loss_pct: f32,
+    pub up_kbps: i32,
+}
+
+/// Recebe uma amostra de qualidade (QoS) do cliente durante a chamada (~1/30s).
+/// Alimenta o cartão "Qualidade das chamadas" do admin (org_stats). Valores
+/// clampados; autorização igual à do resto da sala (can_access_room).
+pub async fn post_qos(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(code): Path<String>,
+    Json(s): Json<QosSample>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let room: Room = sqlx::query_as(
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
+         FROM rooms WHERE code = $1",
+    )
+    .bind(&code)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+
+    if !can_access_room(&state, auth.user_id, &room).await? {
+        return Err(ApiError::Unauthorized);
+    }
+
+    let rtt = s.rtt_ms.map(|v| v.clamp(0, 10_000));
+    let loss = if s.loss_pct.is_finite() { s.loss_pct.clamp(0.0, 100.0) } else { 0.0 };
+    let up = s.up_kbps.clamp(0, 100_000);
+    sqlx::query(
+        "INSERT INTO call_quality_samples (room_id, user_id, rtt_ms, loss_pct, up_kbps)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(room.id)
+    .bind(auth.user_id)
+    .bind(rtt)
+    .bind(loss)
+    .bind(up)
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

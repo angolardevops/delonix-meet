@@ -486,6 +486,39 @@ export default function Analytics() {
 
             <section className="dash-card">
               <header className="dash-card-head">
+                <h2>{t('admin.qualityTitle')}</h2>
+              </header>
+              {stats.quality_samples_30d === 0 ? (
+                <p className="dash-empty">{t('admin.qualityEmpty')}</p>
+              ) : (
+                <>
+                  <div className="quality-grid">
+                    <div className="quality-stat">
+                      <strong>{stats.avg_rtt_ms != null ? `${stats.avg_rtt_ms} ms` : '—'}</strong>
+                      <small>{t('admin.qualityAvg')}</small>
+                    </div>
+                    <div className="quality-stat">
+                      <strong>{stats.avg_loss_pct}%</strong>
+                      <small>{t('admin.qualityLoss')}</small>
+                    </div>
+                    <div className="quality-stat good">
+                      <strong>{stats.pct_good}%</strong>
+                      <small>{t('admin.qualityGood')}</small>
+                    </div>
+                    <div className="quality-stat poor">
+                      <strong>{stats.pct_poor}%</strong>
+                      <small>{t('admin.qualityPoor')}</small>
+                    </div>
+                  </div>
+                  <p className="muted small quality-note">
+                    {t('admin.qualitySamples', { count: stats.quality_samples_30d })}
+                  </p>
+                </>
+              )}
+            </section>
+
+            <section className="dash-card">
+              <header className="dash-card-head">
                 <h2>{t('admin.topOrganizers')}</h2>
               </header>
               {stats.top_organizers.length === 0 && <p className="dash-empty">—</p>}

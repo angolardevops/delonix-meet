@@ -1,6 +1,6 @@
 import { CSSProperties, ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  currentUser, downloadRecording, iceServers, inviteToRoom, joinRoom, listRecordings, Recording,
+  currentUser, downloadRecording, iceServers, inviteToRoom, joinRoom, listRecordings, postQos, Recording,
   roomChatHistory, saveMinutesByRoom, saveWhiteboard, searchUsers, uploadRecording, User,
 } from '../api'
 import {
@@ -401,6 +401,23 @@ export default function Room({
     return () => { alive = false; clearInterval(t) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panel])
+
+  // Reporte de QoS ao servidor (~1/30s durante a chamada): alimenta o cartão
+  // "Qualidade das chamadas" do admin. Best-effort — falhas são ignoradas.
+  useEffect(() => {
+    if (roomState !== 'in') return
+    const report = async () => {
+      const r = await callRef.current?.qos?.().catch(() => null)
+      if (!r) return
+      const losses = Object.values(r.byPeer).map((p) => p.lossPct)
+      const loss = losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : 0
+      void postQos(code, { rtt_ms: r.rtt, loss_pct: Math.round(loss * 10) / 10, up_kbps: r.upKbps }).catch(() => {})
+    }
+    const first = setTimeout(() => void report(), 10_000)
+    const t = setInterval(() => void report(), 30_000)
+    return () => { clearTimeout(first); clearInterval(t) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomState, code])
 
   // Código de segurança E2EE (roadmap "E2EE verificável"): SHA-256 da chave
   // da sala em 4 grupos de 5 dígitos — todos os participantes derivam o
