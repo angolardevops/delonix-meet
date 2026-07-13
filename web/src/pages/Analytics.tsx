@@ -434,12 +434,16 @@ export default function Analytics() {
     return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' })
   }
 
-  const kpis = stats
+  // Delta vs. período homólogo (30–60 dias atrás). Sem base de comparação → sem chip.
+  const delta = (cur: number, prev: number): number | null =>
+    prev > 0 ? Math.round(((cur - prev) / prev) * 100) : null
+
+  const kpis: { v: string; l: string; d?: number | null }[] = stats
     ? [
-        { v: stats.meetings_30d.toLocaleString(locale), l: t('admin.kMeetings') },
-        { v: stats.meeting_minutes_30d.toLocaleString(locale), l: t('admin.kMinutes') },
+        { v: stats.meetings_30d.toLocaleString(locale), l: t('admin.kMeetings'), d: delta(stats.meetings_30d, stats.meetings_prev_30d) },
+        { v: stats.meeting_minutes_30d.toLocaleString(locale), l: t('admin.kMinutes'), d: delta(stats.meeting_minutes_30d, stats.meeting_minutes_prev_30d) },
         { v: `${stats.avg_duration_min} min`, l: t('admin.kAvgDur') },
-        { v: `${stats.active_users_30d} / ${stats.members_total}`, l: t('admin.kActive') },
+        { v: `${stats.active_users_30d} / ${stats.members_total}`, l: t('admin.kActive'), d: delta(stats.active_users_30d, stats.active_users_prev_30d) },
         { v: `${stats.video_30d} / ${stats.voice_30d}`, l: t('admin.kKinds') },
         { v: `${stats.recordings_total} · ${fmtGb(stats.recordings_bytes)}`, l: t('admin.kRecs') },
       ]
@@ -480,6 +484,11 @@ export default function Analytics() {
           <div className="kpi-grid">
             {kpis.map((k) => (
               <div key={k.l} className="kpi-card">
+                {k.d != null && (
+                  <span className={`kpi-delta ${k.d > 0 ? 'up' : k.d < 0 ? 'down' : ''}`}>
+                    {k.d > 0 ? '+' : ''}{k.d}%
+                  </span>
+                )}
                 <span className="kpi-v">{k.v}</span>
                 <span className="kpi-l">{k.l}</span>
               </div>
@@ -506,6 +515,22 @@ export default function Analytics() {
                 <p className="dash-empty">{t('admin.qualityEmpty')}</p>
               ) : (
                 <>
+                  {/* Distribuição Boa/Média/Fraca (amostras QoS reais; média = resto). */}
+                  <div className="quality-bars">
+                    {[
+                      { l: t('admin.qGood'), v: stats.pct_good, c: 'good' },
+                      { l: t('admin.qMid'), v: Math.max(0, 100 - stats.pct_good - stats.pct_poor), c: 'mid' },
+                      { l: t('admin.qPoor'), v: stats.pct_poor, c: 'poor' },
+                    ].map((b) => (
+                      <div key={b.c} className="qbar-row">
+                        <span className="qbar-label">{b.l}</span>
+                        <span className="qbar-track">
+                          <span className={`qbar-fill ${b.c}`} style={{ width: `${b.v}%` }} />
+                        </span>
+                        <span className="qbar-pct mono">{b.v}%</span>
+                      </div>
+                    ))}
+                  </div>
                   <div className="quality-grid">
                     <div className="quality-stat">
                       <strong>{stats.avg_rtt_ms != null ? `${stats.avg_rtt_ms} ms` : '—'}</strong>
