@@ -249,6 +249,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1",
             Router::new()
                 .route("/org", get(apikeys::v1_org))
+                // Provisão de org — auth por segredo de plataforma (não por
+                // chave de org, que ainda não existe). Ver apikeys::v1_provision_org.
+                .route("/admin/orgs", post(apikeys::v1_provision_org))
                 .route("/rooms", post(apikeys::v1_create_room))
                 .route("/rooms/{code}", get(apikeys::v1_get_room))
                 .route("/rooms/{code}/join-bot", post(apikeys::v1_join_bot_room))
