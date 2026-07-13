@@ -47,3 +47,4 @@ voice/kamailio/ao_trunk.txt
 
 # Preview local (path da máquina)
 .claude/launch.json
+backups/
