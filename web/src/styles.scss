@@ -2314,10 +2314,21 @@ button.link:hover {
 }
 .ready-link .mono { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 0.82rem; }
 .ready-note { margin: 0.4rem 0; }
+.ready-add-btn {
+  display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+  width: 100%; padding: 0.6rem 1rem; margin-bottom: 0.5rem;
+  background: var(--accent); color: #fff; border: none; border-radius: 6px;
+  font-size: 0.9rem; font-weight: 600; cursor: pointer;
+  transition: background 0.15s;
+  &:hover { background: var(--accent-hi); }
+  svg { width: 18px; height: 18px; fill: #fff; }
+}
+.ready-or { margin: 0.1rem 0 0.4rem; font-size: 0.8rem; }
 
 .device-check { display: inline-block; width: 1.1em; color: var(--accent-2); font-weight: 700; }
 .device-item { display: flex; align-items: center; gap: 0.35rem; }
 .device-action { border-top: 1px solid var(--border); color: var(--accent-2); }
+.device-sep { height: 1px; background: var(--border); margin: 0.2rem 0; }
 .mic-meter {
   display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.8rem;
   border-top: 1px solid var(--border);
