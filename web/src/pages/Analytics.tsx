@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { UsageChart } from '../components/UsageChart'
 import {
   ApiKeyInfo,
+  AuditEntry,
+  listAudit,
   createApiKey,
   createWebhook,
   deleteSsoConfig,
@@ -375,6 +377,7 @@ export default function Analytics() {
   const [orgs, setOrgs] = useState<OrgSummary[]>([])
   const [orgId, setOrgId] = useState<string>('')
   const [stats, setStats] = useState<OrgStats | null>(null)
+  const [audit, setAudit] = useState<AuditEntry[]>([])
   const [members, setMembers] = useState<Employee[]>([])
   const [rows, setRows] = useState<QuarantineRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -402,6 +405,7 @@ export default function Analytics() {
       return
     }
     void orgStats(orgId).then(setStats).catch(() => setStats(null))
+    void listAudit(orgId, 50).then(setAudit).catch(() => setAudit([]))
     void listEmployees(orgId).then(setMembers).catch(() => setMembers([]))
     void getSsoConfig(orgId).then((c) => setSsoActive(!!c)).catch(() => setSsoActive(false))
   }, [orgId])
@@ -438,7 +442,7 @@ export default function Analytics() {
     { l: t('admin.secItems.waiting'), v: t('admin.available'), on: true },
     { l: t('admin.secItems.sso'), v: ssoActive ? t('admin.active') : t('admin.secSoon'), on: ssoActive },
     { l: t('admin.secItems.scim'), v: t('admin.secSoon'), on: false },
-    { l: t('admin.secItems.audit'), v: t('admin.secSoon'), on: false },
+    { l: t('admin.secItems.audit'), v: t('admin.active'), on: true },
   ]
 
   return (
@@ -514,6 +518,27 @@ export default function Analytics() {
                     {t('admin.qualitySamples', { count: stats.quality_samples_30d })}
                   </p>
                 </>
+              )}
+            </section>
+
+            <section className="dash-card">
+              <header className="dash-card-head">
+                <h2>{t('admin.auditTitle')}</h2>
+              </header>
+              {audit.length === 0 && <p className="dash-empty">{t('admin.auditEmpty')}</p>}
+              {audit.length > 0 && (
+                <div className="audit-list">
+                  {audit.map((a) => (
+                    <div key={a.id} className="audit-row">
+                      <span className="audit-action mono">{a.action}</span>
+                      <span className="audit-detail">
+                        <strong>{a.actor}</strong>
+                        {a.target && <small> · {a.target}</small>}
+                      </span>
+                      <span className="audit-time">{new Date(a.created_at).toLocaleString('pt-PT')}</span>
+                    </div>
+                  ))}
+                </div>
               )}
             </section>
 

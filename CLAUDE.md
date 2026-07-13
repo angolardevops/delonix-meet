@@ -49,6 +49,7 @@
 - `whiteboards.rs` — CRUD quadro branco persistente
 - `voice.rs` — PSTN (stub, aguarda operador)
 - `apikeys.rs` — API keys por org (hash + scopes)
+- `audit.rs` — registos de auditoria (escrita best-effort nos eventos-chave; leitura admin em `/api/orgs/{id}/audit`)
 - `rate_limit.rs` — rate limit por IP/conta (DashMap, lockout login 8/5min)
 - `error.rs` — `AppError` unificado → HTTP status + JSON body
 - `metrics.rs` — contadores atómicos de observabilidade (WS, SFU) expostos em `/metrics` (Prometheus)
@@ -83,7 +84,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0025) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0026) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 

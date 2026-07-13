@@ -1,5 +1,6 @@
 mod actions;
 mod apikeys;
+mod audit;
 mod auth;
 mod config;
 mod dlp;
@@ -210,6 +211,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/orgs/{org_id}/groups", get(org::list_groups).post(org::create_group))
         .route("/api/orgs/{org_id}/meeting-rooms", get(org::list_meeting_rooms).post(org::create_meeting_room))
         .route("/api/orgs/{org_id}/stats", get(org::org_stats))
+        .route("/api/orgs/{org_id}/audit", get(audit::list))
         .route("/api/orgs/{org_id}/settings", post(org::update_settings))
         .route(
             "/api/orgs/{org_id}/sso",

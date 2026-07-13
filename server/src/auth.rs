@@ -328,6 +328,7 @@ pub async fn register(
     .await?;
     tx.commit().await?;
 
+    crate::audit::log(&state.db, Some(org_id), user.id, "org.created", &org_name).await;
     Ok(auth_ok(&state, issue_tokens(&state, user).await?))
 }
 
@@ -370,6 +371,7 @@ pub async fn login(
                 created_at,
                 locale: "pt".into(),
             };
+            crate::audit::log(&state.db, None, user.id, "auth.login", &user.email).await;
             Ok(auth_ok(&state, issue_tokens(&state, user).await?))
         }
         _ => {
