@@ -22,6 +22,14 @@ import { CloseIcon, DownloadIcon, FilmIcon, NoteIcon, ShareLinkIcon, TrashIcon }
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
+/** Thumb duotone estável por nome (mesma técnica dos tiles da sala). */
+function recColor(name: string): string {
+  let h = 5381
+  for (let i = 0; i < name.length; i++) h = ((h << 5) + h + name.charCodeAt(i)) | 0
+  const hue = Math.abs(h) % 360
+  return `linear-gradient(135deg, hsl(${hue}, 42%, 30%), hsl(${(hue + 35) % 360}, 48%, 18%))`
+}
+
 export default function Recordings() {
   const { t } = useTranslation()
   const [items, setItems] = useState<RecordingItem[]>([])
@@ -86,7 +94,7 @@ export default function Recordings() {
         }
       />
 
-      {!loading && items.length > 0 && (
+      {!loading && items.length > 0 && view !== 'library' && (
         <div className="rec-search">
           <input
             type="search"
@@ -103,20 +111,31 @@ export default function Recordings() {
       {!loading && items.length === 0 && (
         <EmptyState icon={<FilmIcon />} title={t('recordings.empty')} />
       )}
-      {!loading && items.length > 0 && shown.length === 0 && (
+      {!loading && items.length > 0 && shown.length === 0 && view !== 'library' && (
         <p className="muted">{t('recordings.noResults')}</p>
       )}
 
-      {view === 'library' && shown.length > 0 && (
+      {view === 'library' && items.length > 0 && (
         <div className="rec-split">
           <aside className="rec-split-list">
+            {/* Template: pesquisa no topo da lista, não da página. */}
+            <div className="rec-search in-list">
+              <input
+                type="search"
+                placeholder={t('recordings.searchPh')}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+            {shown.length === 0 && <p className="muted small">{t('recordings.noResults')}</p>}
             {shown.map((r) => (
               <button
                 key={r.id}
                 className={selected?.id === r.id ? 'rec-item active' : 'rec-item'}
                 onClick={() => setSelected(r)}
               >
-                <span className="rec-item-thumb"><FilmIcon /></span>
+                <span className="rec-item-thumb" style={{ background: recColor(r.filename) }}><FilmIcon /></span>
                 <span className="rec-item-info">
                   <strong>{r.filename.replace(/\.webm$/, '')}</strong>
                   <small>

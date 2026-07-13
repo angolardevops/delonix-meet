@@ -86,32 +86,40 @@ export default function Lobby({ code }: { code: string }) {
 
         <div className="lobby-toggles">
           <label className="lobby-toggle">
+            <span className="lobby-toggle-ic lock">🔒</span>
             <span>
               <strong>{t('lobby.lock')}</strong>
               <small>{t('lobby.lockDesc')}</small>
             </span>
-            <input
-              type="checkbox"
-              checked={locked}
-              onChange={(e) => {
-                setLocked(e.target.checked)
-                send({ type: 'room-lock', locked: e.target.checked })
-              }}
-            />
+            <span className="dx-switch">
+              <input
+                type="checkbox"
+                checked={locked}
+                onChange={(e) => {
+                  setLocked(e.target.checked)
+                  send({ type: 'room-lock', locked: e.target.checked })
+                }}
+              />
+              <span className="track" />
+            </span>
           </label>
           <label className="lobby-toggle">
+            <span className="lobby-toggle-ic screen">🖥️</span>
             <span>
               <strong>{t('lobby.hostShare')}</strong>
               <small>{t('lobby.hostShareDesc')}</small>
             </span>
-            <input
-              type="checkbox"
-              checked={hostShare}
-              onChange={(e) => {
-                setHostShare(e.target.checked)
-                send({ type: 'host-share-only', on: e.target.checked })
-              }}
-            />
+            <span className="dx-switch">
+              <input
+                type="checkbox"
+                checked={hostShare}
+                onChange={(e) => {
+                  setHostShare(e.target.checked)
+                  send({ type: 'host-share-only', on: e.target.checked })
+                }}
+              />
+              <span className="track" />
+            </span>
           </label>
         </div>
 
@@ -123,7 +131,7 @@ export default function Lobby({ code }: { code: string }) {
               </h2>
               {waiting.length > 1 && (
                 <button
-                  className="btn-sm"
+                  className="lobby-admit all"
                   onClick={() => waiting.forEach((w) => send({ type: 'admit', to: w.peer_id }))}
                 >
                   {t('lobby.admitAll')}
@@ -139,13 +147,13 @@ export default function Lobby({ code }: { code: string }) {
                   <small>{t('lobby.wants')}</small>
                 </span>
                 <button
-                  className="btn-sm ghost"
+                  className="lobby-deny"
                   title={t('lobby.deny')}
                   onClick={() => send({ type: 'deny', to: w.peer_id })}
                 >
                   ✕
                 </button>
-                <button className="btn-sm" onClick={() => send({ type: 'admit', to: w.peer_id })}>
+                <button className="lobby-admit" onClick={() => send({ type: 'admit', to: w.peer_id })}>
                   {t('lobby.admit')}
                 </button>
               </div>
@@ -173,19 +181,18 @@ export default function Lobby({ code }: { code: string }) {
                 <span className="avatar-circle small">{p.username.slice(0, 2).toUpperCase()}</span>
                 <span className="lobby-row-name">
                   <strong>{p.username}</strong>
-                  <small>{p.mic ? t('lobby.micOn') : t('lobby.micOff')}</small>
+                  <small>{p.host ? t('lobby.roleHost') : t('lobby.roleMember')}</small>
                 </span>
-                {p.mic && (
-                  <button
-                    className="btn-sm ghost"
-                    title={t('lobby.mute')}
-                    onClick={() => send({ type: 'force-mute', to: p.peer_id })}
-                  >
-                    {t('lobby.mute')}
-                  </button>
-                )}
                 <button
-                  className="btn-sm ghost"
+                  className={p.mic ? 'lobby-deny lobby-mic' : 'lobby-deny lobby-mic off'}
+                  title={p.mic ? t('lobby.mute') : t('lobby.micOff')}
+                  disabled={!p.mic}
+                  onClick={() => send({ type: 'force-mute', to: p.peer_id })}
+                >
+                  🎙
+                </button>
+                <button
+                  className="lobby-deny"
                   title={t('lobby.remove')}
                   onClick={() => send({ type: 'kick', to: p.peer_id })}
                 >

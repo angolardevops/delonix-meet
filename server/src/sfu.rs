@@ -607,8 +607,8 @@ impl SfuState {
             if let Err(e) = subscribe_layer(publication, peer_id, &peer).await {
                 tracing::warn!(%room_id, %peer_id, error = %e, "sfu subscribe existing failed");
             }
-            // Keyframe imediato para o novo subscritor.
-            if publication.kind == "video" {
+            // Keyframe imediato para o novo subscritor (câmara E ecrã partilhado).
+            if publication.kind == "video" || publication.kind == "screen" {
                 let _ = publication
                     .publisher_pc
                     .write_rtcp(&[Box::new(PictureLossIndication {

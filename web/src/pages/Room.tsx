@@ -2607,6 +2607,12 @@ export default function Room({
               <button className="panel-close" onClick={() => setPanel('none')}><CloseIcon /></button>
             </div>
             <div className="settings-body">
+              {/* Ordem do template: Tema primeiro, depois dispositivos, ruído e fundo. */}
+              <div className="bg-section">
+                <span className="set-label">Tema</span>
+                <small className="muted">Escolhe o aspeto da aplicação.</small>
+                <ThemePicker />
+              </div>
               <label className="set-label">
                 Microfone
                 <select value={micId} onChange={(e) => void switchMic(e.target.value)}>
@@ -2640,11 +2646,6 @@ export default function Room({
                   <small>RNNoise remove teclado, ventoinha e ruído de fundo — muito além da supressão do browser.</small>
                 </span>
               </label>
-              <div className="bg-section">
-                <span className="set-label">Tema</span>
-                <small className="muted">Escolhe o aspeto da aplicação.</small>
-                <ThemePicker />
-              </div>
               <div className="bg-section">
                 <span className="set-label">Fundo {bgBusy ? '· a aplicar…' : ''}</span>
                 <small className="muted">
