@@ -49,13 +49,18 @@ spec:
             # Sem telemetria/chamadas externas — soberania como no resto do stack.
             - { name: ENABLE_OPENAI_API, value: "false" }
             - { name: WEBUI_NAME, value: "Delonix AI" }
+          # O 1º arranque descarrega o modelo de embeddings (HuggingFace) e
+          # inicializa a BD — pode demorar minutos. O startupProbe dá até 10 min
+          # antes de o liveness poder matar o contentor.
+          startupProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 10
+            failureThreshold: 60
           readinessProbe:
             httpGet: { path: /health, port: 8080 }
-            initialDelaySeconds: 10
             periodSeconds: 10
           livenessProbe:
             httpGet: { path: /health, port: 8080 }
-            initialDelaySeconds: 60
             periodSeconds: 30
           resources:
             requests:
