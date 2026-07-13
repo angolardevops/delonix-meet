@@ -17,6 +17,7 @@ resources:
   - 04-ingress.yaml # /api,/rtc + /ws (upstream-hash-by:$arg_room — afinidade R3)
   - 05-cert-manager.yaml # ClusterIssuer (prod; .local usa mkcert/CA interna)
   - 07-ollama.yaml # LLM local (tradução de legendas + resumo MoM — ai.rs)
+  - 08-open-webui.yaml # consola do Ollama em https://ai.delonix.local
   - 51-coturn.yaml # TURN in-cluster + LoadBalancer (media relay — R4)
   - metallb-pool.yaml # pool de VIPs (inclui o do coturn: 172.30.0.201)
   # Dados (Postgres/Redis): por omissão via helm (bitnami) — ver Makefile.
