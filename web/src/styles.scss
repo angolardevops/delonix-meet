@@ -2418,6 +2418,30 @@ button.link:hover {
 /* ---- F7.2: apresentação (partilha de ecrã em track separada) ---- */
 .tile.presentation { width: 100%; height: 100%; aspect-ratio: auto; background: #000; }
 .tile.presentation video { object-fit: contain; }
+/* Zoom & pan da apresentação (estilo Meet). O viewport corta o vídeo ampliado;
+   com zoom o cursor vira grab e o arrasto navega dentro da tela partilhada. */
+.pres-viewport {
+  position: absolute; inset: 0; overflow: hidden; touch-action: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.pres-viewport video { width: 100%; height: 100%; will-change: transform; }
+.pres-viewport.pannable { cursor: grab; }
+.pres-viewport.panning { cursor: grabbing; }
+.pres-zoom-ctrls {
+  position: absolute; bottom: 10px; right: 54px; z-index: 10;
+  display: flex; align-items: center; gap: 2px;
+  background: rgba(0, 0, 0, 0.55); border-radius: 999px; padding: 3px 6px;
+  opacity: 0; transition: opacity 0.15s;
+}
+.tile.presentation:hover .pres-zoom-ctrls,
+.pres-zoom-ctrls:focus-within { opacity: 1; }
+.pres-zoom-ctrls button {
+  background: none; border: none; color: #fff; width: 24px; height: 24px;
+  cursor: pointer; font-size: 1rem; line-height: 1; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.pres-zoom-ctrls button:hover { background: rgba(255, 255, 255, 0.15); }
+.pres-zoom-ctrls .mono { color: #fff; font-size: 0.72rem; min-width: 38px; text-align: center; }
 
 
 /* ---- Branding: logótipo Delonix ---- */
