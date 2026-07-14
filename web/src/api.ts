@@ -546,6 +546,50 @@ export const listGroups = (orgId: string) => request<Group[]>(`/api/orgs/${orgId
 export const createGroup = (orgId: string, name: string, memberIds: string[]) =>
   request<Group>(`/api/orgs/${orgId}/groups`, { method: 'POST', body: JSON.stringify({ name, member_ids: memberIds }) })
 
+// ---------- Integração Odoo (nk_delonix_meet) ----------
+
+export interface OdooConfig {
+  org_id: string
+  odoo_enabled: boolean
+  odoo_url: string | null
+  odoo_db: string | null
+  odoo_token_prefix: string | null
+  odoo_admin_id: string | null
+  odoo_synced_at: string | null
+  hide_org_creation: boolean
+  hide_sso_button: boolean
+}
+
+export interface OdooConfigSaveReq {
+  odoo_enabled: boolean
+  odoo_url: string | null
+  odoo_db: string | null
+  hide_org_creation: boolean
+  hide_sso_button: boolean
+}
+
+export const getOdooConfig = (orgId: string) =>
+  request<OdooConfig>(`/api/orgs/${orgId}/integration/odoo`)
+
+export const saveOdooConfig = (orgId: string, cfg: OdooConfigSaveReq) =>
+  request<{ ok: boolean }>(`/api/orgs/${orgId}/integration/odoo`, {
+    method: 'PUT',
+    body: JSON.stringify(cfg),
+  })
+
+export const rotateOdooToken = (orgId: string) =>
+  request<{ token: string; prefix: string }>(`/api/orgs/${orgId}/integration/odoo/token`, {
+    method: 'POST',
+  })
+
+/** Configurações públicas da plataforma (sem autenticação). */
+export interface PlatformSettings {
+  hide_org_creation: boolean
+  hide_sso_button: boolean
+}
+export const getPlatformSettings = () =>
+  fetch('/api/public/settings').then((r) => r.json() as Promise<PlatformSettings>)
+
 export function accessTokenValue(): string | null {
   return accessToken
 }

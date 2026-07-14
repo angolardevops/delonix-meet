@@ -11,6 +11,10 @@ import {
   deleteWebhook,
   Employee,
   getSsoConfig,
+  getOdooConfig,
+  saveOdooConfig,
+  rotateOdooToken,
+  OdooConfig,
   listApiKeys,
   listEmployees,
   listWebhooks,
@@ -365,10 +369,180 @@ function OrgWebhooks({ orgId }: { orgId: string }) {
   )
 }
 
+// ---------- Integração Odoo ----------
+
+function OrgOdooIntegration({ orgId }: { orgId: string }) {
+  const { t } = useTranslation()
+  const [cfg, setCfg] = useState<OdooConfig | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [newToken, setNewToken] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [err, setErr] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    getOdooConfig(orgId)
+      .then(setCfg)
+      .catch(() => setCfg(null))
+      .finally(() => setLoading(false))
+  }, [orgId])
+
+  async function save() {
+    if (!cfg) return
+    setSaving(true)
+    setErr('')
+    try {
+      await saveOdooConfig(orgId, {
+        odoo_enabled: cfg.odoo_enabled,
+        odoo_url: cfg.odoo_url,
+        odoo_db: cfg.odoo_db,
+        hide_org_creation: cfg.hide_org_creation,
+        hide_sso_button: cfg.hide_sso_button,
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (e) {
+      setErr((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function genToken() {
+    try {
+      const res = await rotateOdooToken(orgId)
+      setNewToken(res.token)
+      setCfg((c) => c ? { ...c, odoo_token_prefix: res.prefix } : c)
+    } catch (e) {
+      setErr((e as Error).message)
+    }
+  }
+
+  function copyToken() {
+    if (!newToken) return
+    void navigator.clipboard.writeText(newToken)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  if (loading) return <p className="muted">{t('common.loading')}</p>
+
+  return (
+    <div className="odoo-panel">
+      <p className="odoo-desc muted small">
+        {t('admin.odooDesc', 'Integra o Delonix Meet com o Odoo via módulo nk_delonix_meet. O token de integração autentica o módulo Odoo para provisionar utilizadores e sincronizar reuniões.')}
+      </p>
+
+      <div className="field-row">
+        <label className="field-label">{t('admin.odooEnabled', 'Integração Odoo')}</label>
+        <label className="switch-wrap">
+          <input
+            type="checkbox"
+            checked={cfg?.odoo_enabled ?? false}
+            onChange={(e) => setCfg((c) => c ? { ...c, odoo_enabled: e.target.checked } : c)}
+          />
+          <span className="switch-track" />
+        </label>
+      </div>
+
+      <div className="field-row">
+        <label className="field-label">{t('admin.odooUrl', 'URL do Odoo')}</label>
+        <input
+          className="field-input"
+          placeholder="http://localhost:8090"
+          value={cfg?.odoo_url ?? ''}
+          onChange={(e) => setCfg((c) => c ? { ...c, odoo_url: e.target.value || null } : c)}
+        />
+      </div>
+
+      <div className="field-row">
+        <label className="field-label">{t('admin.odooDB', 'Base de dados Odoo')}</label>
+        <input
+          className="field-input"
+          placeholder="mycompany"
+          value={cfg?.odoo_db ?? ''}
+          onChange={(e) => setCfg((c) => c ? { ...c, odoo_db: e.target.value || null } : c)}
+        />
+      </div>
+
+      {/* Token de integração */}
+      <div className="odoo-token-section">
+        <label className="field-label">{t('admin.odooToken', 'Token de integração')}</label>
+        {cfg?.odoo_token_prefix ? (
+          <div className="token-row">
+            <code className="token-prefix">{cfg.odoo_token_prefix}…</code>
+            <button className="btn-sm" onClick={() => void genToken()}>
+              {t('admin.odooRotate', 'Rotar token')}
+            </button>
+          </div>
+        ) : (
+          <button className="btn-sm accent" onClick={() => void genToken()}>
+            {t('admin.odooGenToken', 'Gerar token')}
+          </button>
+        )}
+        {newToken && (
+          <div className="token-reveal">
+            <p className="muted small">{t('admin.odooTokenOnce', 'Guarda este token agora — não será mostrado novamente.')}</p>
+            <div className="token-copy-row">
+              <code className="token-full">{newToken}</code>
+              <button className="btn-sm" onClick={copyToken}>
+                {copied ? t('common.copied', '✓ Copiado') : t('common.copy', 'Copiar')}
+              </button>
+            </div>
+          </div>
+        )}
+        {cfg?.odoo_synced_at && (
+          <p className="muted small odoo-sync-at">
+            {t('admin.odooLastSync', 'Último sync')}: {new Date(cfg.odoo_synced_at).toLocaleString('pt-PT')}
+          </p>
+        )}
+      </div>
+
+      <hr className="odoo-sep" />
+
+      {/* Visibilidade da UI pública */}
+      <p className="field-label bold">{t('admin.odooVisibility', 'Visibilidade da plataforma')}</p>
+
+      <div className="field-row">
+        <label className="field-label">{t('admin.hideOrgCreation', 'Ocultar "Criar organização"')}</label>
+        <label className="switch-wrap">
+          <input
+            type="checkbox"
+            checked={cfg?.hide_org_creation ?? false}
+            onChange={(e) => setCfg((c) => c ? { ...c, hide_org_creation: e.target.checked } : c)}
+          />
+          <span className="switch-track" />
+        </label>
+      </div>
+      <p className="muted small odoo-hint">{t('admin.hideOrgCreationHint', 'Remove o tab «Criar conta» da página de login. Útil quando todos os utilizadores são provisionados via Odoo.')}</p>
+
+      <div className="field-row">
+        <label className="field-label">{t('admin.hideSsoButton', 'Ocultar botão SSO')}</label>
+        <label className="switch-wrap">
+          <input
+            type="checkbox"
+            checked={cfg?.hide_sso_button ?? false}
+            onChange={(e) => setCfg((c) => c ? { ...c, hide_sso_button: e.target.checked } : c)}
+          />
+          <span className="switch-track" />
+        </label>
+      </div>
+      <p className="muted small odoo-hint">{t('admin.hideSsoButtonHint', 'Remove o botão «Entrar com SSO». Com integração Odoo activa, a autenticação é feita por email/senha (online/offline).')}</p>
+
+      {err && <div className="error">{err}</div>}
+      <button className="primary odoo-save" disabled={saving || !cfg} onClick={() => void save()}>
+        {saved ? t('common.saved', '✓ Guardado') : saving ? '…' : t('common.save', 'Guardar')}
+      </button>
+    </div>
+  )
+}
+
 type Period = 'week' | 'month' | 'quarter' | 'year'
 const PERIODS: Period[] = ['week', 'month', 'quarter', 'year']
 
-type IntegTab = 'settings' | 'sso' | 'webhooks' | 'apikeys'
+type IntegTab = 'settings' | 'sso' | 'webhooks' | 'apikeys' | 'odoo'
 
 /** Consola de administração: KPIs reais da org + membros + postura + quarentena. */
 export default function Analytics() {
@@ -677,6 +851,7 @@ export default function Analytics() {
               <nav className="integ-tabs">
                 {([
                   { key: 'settings', label: t('admin.settingsTitle', 'Definições') },
+                  { key: 'odoo', label: '🔗 Odoo' },
                   { key: 'sso', label: t('admin.ssoTitle', 'SSO / OIDC') },
                   { key: 'webhooks', label: t('admin.webhooksTitle', 'Webhooks') },
                   { key: 'apikeys', label: t('admin.apiKeysTitle', 'API Keys') },
@@ -692,6 +867,7 @@ export default function Analytics() {
               </nav>
               <div className="integ-body">
                 {integTab === 'settings' && <OrgSettings org={currentOrg} onSaved={loadOrgs} />}
+                {integTab === 'odoo' && <OrgOdooIntegration orgId={currentOrg.id} />}
                 {integTab === 'sso' && <OrgSso orgId={currentOrg.id} />}
                 {integTab === 'webhooks' && <OrgWebhooks orgId={currentOrg.id} />}
                 {integTab === 'apikeys' && <OrgApiKeys orgId={currentOrg.id} />}

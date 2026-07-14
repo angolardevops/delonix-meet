@@ -9,6 +9,7 @@ mod error;
 mod meetings;
 mod metrics;
 mod mls;
+mod odoo;
 mod org;
 mod presence;
 mod pubsub;
@@ -238,6 +239,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Gestão de chaves de API (admin da org, sessão)
         .route("/api/orgs/{org_id}/api-keys", get(apikeys::list).post(apikeys::create))
         .route("/api/orgs/{org_id}/api-keys/{key_id}", axum::routing::delete(apikeys::revoke))
+        // ---- Integração Odoo (nk_delonix_meet) ----
+        .route(
+            "/api/orgs/{org_id}/integration/odoo",
+            get(odoo::get_config).put(odoo::save_config),
+        )
+        .route(
+            "/api/orgs/{org_id}/integration/odoo/token",
+            post(odoo::rotate_token),
+        )
+        // Configurações públicas da plataforma (sem autenticação — usado na login page)
+        .route("/api/public/settings", get(odoo::public_settings))
         // ══════════════════════════════════════════════════════════════════
         //  FRONTEIRA DE CONTRATO DE API (ver docs/reference/api-contract.md)
         //  Tudo ACIMA (`/api/...` sem versão) é a **BFF interna** do próprio web
@@ -263,6 +275,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 // ver docs/nk-delonix-meet-integration.md).
                 .route("/meetings", get(apikeys::v1_meetings))
                 .route("/meetings/{id}/notes", get(apikeys::v1_meeting_notes))
+                // Integração Odoo: provisioning e listagem de utilizadores
+                .route("/integration/odoo/provision", post(odoo::provision))
+                .route("/integration/odoo/users", get(odoo::list_users))
                 .layer(middleware::from_fn_with_state(
                     state.clone(),
                     rate_limit::v1_rate_limit,
