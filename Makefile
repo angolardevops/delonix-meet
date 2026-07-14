@@ -462,10 +462,14 @@ deploy-kaeso: export-images ## Build + export + Ansible deploy no preprod kaeso 
 	@[ -f deploy/ansible/.env.kaeso ] || { \
 	  printf "$(Y)  ✗ Cria deploy/ansible/.env.kaeso com ANSIBLE_BECOME_PASSWORD=<senha>$(Z)\n"; exit 1; }
 	@set -a && . deploy/ansible/.env.kaeso && set +a && \
+	  _PASS_FILE=$$(mktemp) && \
+	  printf '%s' "$$ANSIBLE_BECOME_PASSWORD" > "$$_PASS_FILE" && \
 	  cd deploy/ansible && ansible-playbook site.yml \
-	  -i inventory.ini \
-	  --limit kaeso01 \
-	  $(ANSIBLE_ARGS)
+	    -i inventory.ini \
+	    --limit kaeso01 \
+	    --become-password-file "$$_PASS_FILE" \
+	    $(ANSIBLE_ARGS); \
+	  _RC=$$?; rm -f "$$_PASS_FILE"; exit $$_RC
 
 
 # ============================================================
