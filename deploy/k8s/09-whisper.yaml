@@ -7,17 +7,10 @@
 #
 # Build: docker build -t delonix-whisper:<tag> whisper-server/ && kind load ...
 # (o `make image-push` NÃO constrói esta imagem — é opt-in; ver docs).
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: whisper-models
-  namespace: delonix-meet
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources:
-    requests:
-      storage: 4Gi
----
+#
+# O modelo vem EMBUTIDO na imagem (o cluster kind é offline: os pods não têm
+# DNS/internet, logo o download do modelo no arranque falharia). Sem PVC — a
+# imagem é auto-contida. Trocar de modelo = rebuild com --build-arg MODEL=...
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -28,7 +21,7 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate # PVC RWO do cache de modelos
+    type: Recreate # 1 réplica CPU-pesada; evita 2 pods a competir por CPU
   selector:
     matchLabels:
       app: delonix-whisper
@@ -68,14 +61,9 @@ spec:
             limits:
               cpu: "4"
               memory: "4Gi"
-          volumeMounts:
-            - { name: models, mountPath: /models }
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
-      volumes:
-        - name: models
-          persistentVolumeClaim: { claimName: whisper-models }
 ---
 apiVersion: v1
 kind: Service

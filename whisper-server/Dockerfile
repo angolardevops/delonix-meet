@@ -14,11 +14,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 
-# O modelo é descarregado no 1º arranque para /models (PVC) e reutilizado.
 ENV HF_HOME=/models \
     WHISPER_MODEL=small \
     WHISPER_DEVICE=cpu \
     WHISPER_COMPUTE=int8
+
+# Embute o modelo na imagem (o cluster kind é OFFLINE — sem DNS/internet nos
+# pods, o download no 1º arranque falha com "name resolution"). O build corre
+# no host (com internet) e o modelo fica cacheado em /models dentro da imagem.
+# Trocar WHISPER_MODEL exige rebuild (--build-arg MODEL=...).
+ARG MODEL=small
+ENV WHISPER_MODEL=${MODEL}
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('${MODEL}', device='cpu', compute_type='int8')"
 
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "4000000"]
