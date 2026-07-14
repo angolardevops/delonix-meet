@@ -1,0 +1,21 @@
+# Configmap preprod kaeso — overrides sobre 01-config.yaml do repo
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: delonix-config
+  namespace: delonix-meet
+data:
+  DATABASE_URL: postgres://delonix:{{ postgres_password }}@delonix-postgres-postgresql.delonix-meet.svc.cluster.local:5432/delonix_meet
+  REDIS_URL: redis://delonix-redis-master.delonix-meet.svc.cluster.local:6379
+  JWT_SECRET: "{{ jwt_secret }}"
+  TURN_SECRET: "{{ turn_secret }}"
+  TURN_HOST: "{{ public_ip_effective }}:3478"
+  TURN_REALM: "{{ turn_realm }}"
+  FORCE_TURN_RELAY: "1"
+  COOKIE_INSECURE: "0"
+  RECORDINGS_DIR: /var/lib/delonix/recordings
+  OLLAMA_URL: >-
+    {{ 'http://delonix-ollama.delonix-meet.svc.cluster.local:11434'
+       if ollama_enabled | bool else '' }}
+  OLLAMA_MODEL_TRANSLATE: "{{ ollama_model_translate }}"
+  OLLAMA_MODEL_SUMMARY: "{{ ollama_model_summary }}"
