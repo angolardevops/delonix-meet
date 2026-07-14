@@ -1,14 +1,10 @@
-# Configmap preprod kaeso — overrides sobre 01-config.yaml do repo
+# ConfigMap — variáveis não sensíveis do Delonix Meet (preprod kind)
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: delonix-config
   namespace: delonix-meet
 data:
-  DATABASE_URL: postgres://delonix:{{ postgres_password }}@delonix-postgres-postgresql.delonix-meet.svc.cluster.local:5432/delonix_meet
-  REDIS_URL: redis://delonix-redis-master.delonix-meet.svc.cluster.local:6379
-  JWT_SECRET: "{{ jwt_secret }}"
-  TURN_SECRET: "{{ turn_secret }}"
   TURN_HOST: "{{ public_ip_effective }}:3478"
   TURN_REALM: "{{ turn_realm }}"
   FORCE_TURN_RELAY: "1"
@@ -19,3 +15,16 @@ data:
        if ollama_enabled | bool else '' }}
   OLLAMA_MODEL_TRANSLATE: "{{ ollama_model_translate }}"
   OLLAMA_MODEL_SUMMARY: "{{ ollama_model_summary }}"
+---
+# Secret — credenciais sensíveis (base64 transparente via stringData)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: delonix-secrets
+  namespace: delonix-meet
+type: Opaque
+stringData:
+  DATABASE_URL: "postgres://delonix:{{ postgres_password }}@delonix-postgres-postgresql.delonix-meet.svc.cluster.local:5432/delonix_meet"
+  REDIS_URL: "redis://delonix-redis-master.delonix-meet.svc.cluster.local:6379"
+  JWT_SECRET: "{{ jwt_secret }}"
+  TURN_SECRET: "{{ turn_secret }}"
