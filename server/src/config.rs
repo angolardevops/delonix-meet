@@ -20,6 +20,11 @@ pub struct Config {
     /// Segredo partilhado que a camada de media (FreeSWITCH/provider) usa para
     /// chamar a API interna de IVR. Vazio => API interna de voz DESATIVADA.
     pub voice_internal_secret: String,
+    /// Segredo de plataforma que autoriza o provisionamento de organizações via
+    /// `POST /api/v1/admin/orgs` (ex.: o Odoo cria a org de cada empresa e
+    /// recebe a chave de API). Vazio => endpoint de provisão DESATIVADO
+    /// (fail-closed). Não é uma chave de org — é anterior a qualquer org.
+    pub provisioning_secret: String,
     /// Tarifa estimada por minuto (inbound) para o cálculo de custo no CDR.
     pub voice_tariff_inbound: f64,
     /// Diretório onde as gravações são armazenadas (lido uma vez no arranque).
@@ -37,6 +42,14 @@ pub struct Config {
     /// media; sem relay-only o ICE liga por um par que passa o check mas fica
     /// preto. `FORCE_TURN_RELAY=1` exige coturn alcançável. Off em local.
     pub force_turn_relay: bool,
+    /// URL do Ollama in-cluster (LLM local — soberania: o texto nunca sai do
+    /// datacenter). Vazio => IA desligada, fail-open: o MoM fica por regras
+    /// (cliente) e a tradução de legendas não aparece.
+    pub ollama_url: Option<String>,
+    /// Modelo para tradução das legendas (rápido; ex.: qwen2.5:1.5b).
+    pub ollama_model_translate: String,
+    /// Modelo para o resumo da ata (qualidade; ex.: qwen2.5:7b em prod).
+    pub ollama_model_summary: String,
 }
 
 impl Config {
@@ -70,6 +83,7 @@ impl Config {
             cors_origins,
             cookie_secure: env::var("COOKIE_INSECURE").ok().as_deref() != Some("1"),
             voice_internal_secret: env::var("VOICE_INTERNAL_SECRET").unwrap_or_default(),
+            provisioning_secret: env::var("PROVISIONING_SECRET").unwrap_or_default(),
             voice_tariff_inbound: env::var("VOICE_TARIFF_INBOUND")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -80,6 +94,11 @@ impl Config {
             redis_url: env::var("REDIS_URL").ok().filter(|s| !s.is_empty()),
             sfu_external_ip: env::var("SFU_EXTERNAL_IP").ok().filter(|s| !s.is_empty()),
             force_turn_relay: env::var("FORCE_TURN_RELAY").ok().as_deref() == Some("1"),
+            ollama_url: env::var("OLLAMA_URL").ok().filter(|s| !s.is_empty()),
+            ollama_model_translate: env::var("OLLAMA_MODEL_TRANSLATE")
+                .unwrap_or_else(|_| "qwen2.5:1.5b".into()),
+            ollama_model_summary: env::var("OLLAMA_MODEL_SUMMARY")
+                .unwrap_or_else(|_| "qwen2.5:1.5b".into()),
         }
     }
 }

@@ -109,7 +109,14 @@ pub async fn update_settings(
     .bind(did_model)
     .execute(&state.db)
     .await?;
-    crate::audit::log(&state.db, Some(org_id), auth.user_id, "org.settings_updated", &domain).await;
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "org.settings_updated",
+        &domain,
+    )
+    .await;
     Ok(Json(
         serde_json::json!({ "ok": true, "domain": domain, "retention_days": retention }),
     ))
@@ -182,12 +189,13 @@ pub async fn role_in_org(
     org_id: Uuid,
     user_id: Uuid,
 ) -> Result<Option<String>, ApiError> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL")
-            .bind(org_id)
-            .bind(user_id)
-            .fetch_optional(&state.db)
-            .await?;
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?;
     Ok(row.map(|r| r.0))
 }
 
@@ -485,7 +493,14 @@ pub async fn add_employee(
     .bind(user_id)
     .fetch_one(&state.db)
     .await?;
-    crate::audit::log(&state.db, Some(org_id), auth.user_id, "member.added", &emp.email).await;
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "member.added",
+        &emp.email,
+    )
+    .await;
     Ok(Json(emp))
 }
 
@@ -588,7 +603,14 @@ pub async fn remove_employee(
     .bind(auth.user_id)
     .execute(&state.db)
     .await?;
-    crate::audit::log(&state.db, Some(org_id), auth.user_id, "member.removed", &user_id.to_string()).await;
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "member.removed",
+        &user_id.to_string(),
+    )
+    .await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -616,15 +638,17 @@ pub async fn create_group(
     // de quota vive em `organizations` (sem RLS); o COUNT dos grupos existentes
     // corre na MESMA tx (sob RLS) para ser correto. Ver AppState::tenant_tx.
     let mut tx = state.tenant_tx(auth.user_id).await?;
-    let limit: Option<i32> = sqlx::query_scalar("SELECT max_groups FROM organizations WHERE id = $1")
-        .bind(org_id)
-        .fetch_one(&mut *tx)
-        .await?;
-    if let Some(max) = limit {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM employee_groups WHERE org_id = $1")
+    let limit: Option<i32> =
+        sqlx::query_scalar("SELECT max_groups FROM organizations WHERE id = $1")
             .bind(org_id)
             .fetch_one(&mut *tx)
             .await?;
+    if let Some(max) = limit {
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM employee_groups WHERE org_id = $1")
+                .bind(org_id)
+                .fetch_one(&mut *tx)
+                .await?;
         if count >= max as i64 {
             return Err(ApiError::Conflict(format!(
                 "limite da organização atingido ({max})"
@@ -951,12 +975,14 @@ pub async fn org_stats(
 /// Organizações a que um utilizador pertence (para disparar webhooks dos
 /// eventos das suas reuniões/gravações).
 pub async fn orgs_of_user(state: &AppState, user_id: Uuid) -> Vec<Uuid> {
-    sqlx::query_as::<_, (Uuid,)>("SELECT org_id FROM org_members WHERE user_id = $1 AND archived_at IS NULL")
-        .bind(user_id)
-        .fetch_all(&state.db)
-        .await
-        .map(|rows| rows.into_iter().map(|r| r.0).collect())
-        .unwrap_or_default()
+    sqlx::query_as::<_, (Uuid,)>(
+        "SELECT org_id FROM org_members WHERE user_id = $1 AND archived_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map(|rows| rows.into_iter().map(|r| r.0).collect())
+    .unwrap_or_default()
 }
 
 /// Organizações onde `user_id` é admin (para analytics/ações administrativas).

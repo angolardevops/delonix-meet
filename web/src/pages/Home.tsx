@@ -1,18 +1,20 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, ReactNode, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   createRoom,
   downloadMeetingIcs,
   getRoom,
   listMeetings,
+  listWhiteboards,
   Meeting,
   recordingsLibrary,
   RecordingItem,
   startMeeting,
   User,
+  WhiteboardMeta,
 } from '../api'
 import { NavKey } from '../components/Shell'
-import { CalendarIcon, FilmIcon } from '../icons'
+import { CalendarIcon, FilmIcon, NoteIcon, PeopleIcon } from '../icons'
 
 // Ícone de vídeo local (evita conflito de nomes com CamIcon).
 function VideoBadge() {
@@ -38,6 +40,7 @@ export default function Home({
   const [error, setError] = useState('')
   const [upcoming, setUpcoming] = useState<Meeting[]>([])
   const [recent, setRecent] = useState<RecordingItem[]>([])
+  const [boards, setBoards] = useState<WhiteboardMeta[]>([])
 
   const locale = i18n.language.startsWith('en') ? 'en-GB' : 'pt-PT'
   const hour = new Date().getHours()
@@ -59,6 +62,11 @@ export default function Home({
         setRecent((await recordingsLibrary()).slice(0, 3))
       } catch {
         /* idem para gravações */
+      }
+      try {
+        setBoards((await listWhiteboards()).slice(0, 3))
+      } catch {
+        /* idem para quadros */
       }
     })()
   }, [])
@@ -121,7 +129,12 @@ export default function Home({
     <div className="home">
       <header className="dash-greet">
         <h1>{t(greetKey, { name: user.username })}</h1>
-        <p className="home-sub">{t('dash.greetSub')}</p>
+        <p className="home-sub">
+          <span className="home-date">
+            {new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' })}
+          </span>
+          {' — '}{t('dash.greetSub')}
+        </p>
       </header>
 
       <div className="home-actions">
@@ -159,6 +172,24 @@ export default function Home({
         </button>
       </div>
       {error && <div className="error">{error}</div>}
+
+      {/* Atalhos para as áreas principais — a Home é a porta de entrada. */}
+      <div className="home-shortcuts">
+        {([
+          { k: 'calendar', ic: <CalendarIcon />, l: t('nav.calendar'), d: t('dash.scCalendar') },
+          { k: 'recordings', ic: <FilmIcon />, l: t('nav.recordings'), d: t('dash.scRecs') },
+          { k: 'whiteboards', ic: <NoteIcon />, l: t('nav.whiteboards'), d: t('dash.scWb') },
+          { k: 'directory', ic: <PeopleIcon />, l: t('nav.org'), d: t('dash.scOrg') },
+        ] as { k: NavKey; ic: ReactNode; l: string; d: string }[]).map((s) => (
+          <button key={s.k} className="shortcut-tile" onClick={() => onNavigate(s.k)}>
+            <span className="shortcut-ic">{s.ic}</span>
+            <span className="shortcut-txt">
+              <strong>{s.l}</strong>
+              <small>{s.d}</small>
+            </span>
+          </button>
+        ))}
+      </div>
 
       <div className="dash-grid">
         <section className="dash-card">
@@ -219,6 +250,33 @@ export default function Home({
             </div>
           ))}
         </section>
+
+        {boards.length > 0 && (
+          <section className="dash-card">
+            <header className="dash-card-head">
+              <h2>
+                <NoteIcon /> {t('dash.wbRecent')}
+              </h2>
+              <button className="link" onClick={() => onNavigate('whiteboards')}>
+                {t('dash.viewAll')}
+              </button>
+            </header>
+            {boards.map((w) => (
+              <div key={w.id} className="dash-row">
+                <div className="dash-row-main">
+                  <strong>{w.title}</strong>
+                  <span className="dash-meta">
+                    {fmtDate(w.created_at)}
+                    {w.room_code && <> · <span className="mono">{w.room_code}</span></>}
+                  </span>
+                </div>
+                <button className="btn-ghost dash-enter" onClick={() => onNavigate('whiteboards')}>
+                  {t('dash.open')}
+                </button>
+              </div>
+            ))}
+          </section>
+        )}
       </div>
 
       <p className="dash-secure">🔒 {t('dash.secure')}</p>

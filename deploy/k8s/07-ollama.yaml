@@ -1,0 +1,100 @@
+# Ollama in-cluster — LLM local para o Delonix Meet (soberania: nada sai do
+# datacenter). Usos: tradução em tempo real das legendas e resumo elegante da
+# ata (MoM) no fecho da reunião (server/src/ai.rs).
+#
+# Em kind/dev corre em CPU com um modelo pequeno (qwen2.5:1.5b, ~1GB) — o pull
+# acontece no postStart e fica persistido no PVC. Em produção, subir o modelo
+# via OLLAMA_MODEL_* no configmap (ex.: qwen2.5:7b) e, com GPU, ver a variante
+# do role Ansible (ollama_gpu=true) que adiciona nvidia.com/gpu aos limits.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  namespace: delonix-meet
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 12Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-ollama
+  namespace: delonix-meet
+  labels:
+    app: delonix-ollama
+spec:
+  replicas: 1
+  # Recreate: o PVC de modelos é RWO — duas réplicas em rolling update
+  # bloqueariam no attach do volume.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: delonix-ollama
+  template:
+    metadata:
+      labels:
+        app: delonix-ollama
+    spec:
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 11434
+          env:
+            # Mantém o modelo carregado entre pedidos (legendas chegam em fluxo).
+            - { name: OLLAMA_KEEP_ALIVE, value: "30m" }
+          lifecycle:
+            # Pré-carrega o modelo depois de o servidor arrancar (com retry:
+            # o postStart corre em paralelo com o arranque do ollama serve).
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    for i in $(seq 1 60); do
+                      ollama pull qwen2.5:1.5b && ollama pull qwen2.5:7b && exit 0
+                      sleep 5
+                    done
+                    exit 0 # não matar o pod por falha de pull (rede offline)
+          readinessProbe:
+            httpGet: { path: /api/tags, port: 11434 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/tags, port: 11434 }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "2Gi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+          volumeMounts:
+            - { name: models, mountPath: /root/.ollama }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        - name: models
+          persistentVolumeClaim: { claimName: ollama-models }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-ollama
+  namespace: delonix-meet
+spec:
+  selector:
+    app: delonix-ollama
+  ports:
+    - port: 11434
+      targetPort: 11434

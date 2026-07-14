@@ -123,7 +123,11 @@ pub struct IceConfig {
 impl SfuState {
     /// Constrói o SFU com a config de ICE (a partir de `Config`) e os contadores.
     pub fn new(ice: IceConfig, metrics: Arc<crate::metrics::Metrics>) -> Self {
-        Self { ice, metrics, ..Default::default() }
+        Self {
+            ice,
+            metrics,
+            ..Default::default()
+        }
     }
 }
 
@@ -199,11 +203,10 @@ fn new_api(ice: &IceConfig) -> Result<webrtc::api::API> {
         settings.set_nat_1to1_ips(vec![ip.to_string()], RTCIceCandidateType::Host);
     }
     // Intervalo de portas UDP fixo e conhecido (para expor no K8s).
-    settings
-        .set_udp_network(webrtc::ice::udp_network::UDPNetwork::Ephemeral(
-            webrtc::ice::udp_network::EphemeralUDP::new(SFU_UDP_MIN, SFU_UDP_MAX)
-                .map_err(|e| webrtc::Error::new(e.to_string()))?,
-        ));
+    settings.set_udp_network(webrtc::ice::udp_network::UDPNetwork::Ephemeral(
+        webrtc::ice::udp_network::EphemeralUDP::new(SFU_UDP_MIN, SFU_UDP_MAX)
+            .map_err(|e| webrtc::Error::new(e.to_string()))?,
+    ));
 
     Ok(APIBuilder::new()
         .with_media_engine(media)
@@ -607,8 +610,8 @@ impl SfuState {
             if let Err(e) = subscribe_layer(publication, peer_id, &peer).await {
                 tracing::warn!(%room_id, %peer_id, error = %e, "sfu subscribe existing failed");
             }
-            // Keyframe imediato para o novo subscritor.
-            if publication.kind == "video" {
+            // Keyframe imediato para o novo subscritor (câmara E ecrã partilhado).
+            if publication.kind == "video" || publication.kind == "screen" {
                 let _ = publication
                     .publisher_pc
                     .write_rtcp(&[Box::new(PictureLossIndication {

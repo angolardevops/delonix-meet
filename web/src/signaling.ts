@@ -12,6 +12,12 @@ export interface PollView {
   counts: number[]
   open: boolean
   by: string
+  /** Quiz: índice da certa — só chega depois de a sondagem fechar. */
+  correct: number | null
+  /** Quiz com tempo: epoch ms do fim da votação. */
+  ends_at: number | null
+  total_right: number
+  total_wrong: number
 }
 
 export interface QaView {
@@ -54,6 +60,7 @@ export type ServerMsg =
   | { type: 'media'; from: string; cam: boolean; mic: boolean }
   | { type: 'recording'; from: string; username: string; active: boolean }
   | { type: 'transcript'; from: string; username: string; text: string }
+  | { type: 'transcript-interim'; from: string; username: string; text: string }
   | { type: 'transcription'; on: boolean; by: string }
   | { type: 'waiting' }
   | { type: 'waiting-join'; peer: PeerInfo }
@@ -65,6 +72,8 @@ export type ServerMsg =
   | { type: 'kicked' }
   | { type: 'room-settings'; locked: boolean; host_share_only: boolean }
   | { type: 'share-granted'; allowed: boolean }
+  | { type: 'share-request'; from: string; username: string }
+  | { type: 'wb-open'; by: string }
   | { type: 'polls'; polls: PollView[] }
   | { type: 'qa'; questions: QaView[] }
   | { type: 'timer'; ends_at: number | null }
@@ -92,6 +101,7 @@ export type ClientMsg =
   | { type: 'media'; cam: boolean; mic: boolean }
   | { type: 'recording'; active: boolean }
   | { type: 'transcript'; text: string }
+  | { type: 'transcript-interim'; text: string }
   | { type: 'transcription-toggle'; on: boolean }
   | { type: 'admit'; to: string }
   | { type: 'deny'; to: string }
@@ -101,7 +111,9 @@ export type ClientMsg =
   | { type: 'room-lock'; locked: boolean }
   | { type: 'host-share-only'; on: boolean }
   | { type: 'share-grant'; to: string; allowed: boolean }
-  | { type: 'poll-create'; question: string; options: string[] }
+  | { type: 'share-request' }
+  | { type: 'wb-open' }
+  | { type: 'poll-create'; question: string; options: string[]; correct_option?: number | null; duration_secs?: number | null }
   | { type: 'poll-vote'; poll: string; option: number }
   | { type: 'poll-close'; poll: string }
   | { type: 'qa-ask'; text: string }

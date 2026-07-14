@@ -11,6 +11,10 @@ import {
   deleteWebhook,
   Employee,
   getSsoConfig,
+  getOdooConfig,
+  saveOdooConfig,
+  rotateOdooToken,
+  OdooConfig,
   listApiKeys,
   listEmployees,
   listWebhooks,
@@ -25,6 +29,10 @@ import {
   SsoConfig,
   updateOrgSettings,
   Webhook,
+  getPlatformStorage,
+  savePlatformStorage,
+  testPlatformStorage,
+  StorageConfig,
 } from '../api'
 import { ClockIcon } from '../icons'
 
@@ -365,10 +373,310 @@ function OrgWebhooks({ orgId }: { orgId: string }) {
   )
 }
 
+// ---------- Integração Odoo ----------
+
+function OrgOdooIntegration({ orgId }: { orgId: string }) {
+  const { t } = useTranslation()
+  const [cfg, setCfg] = useState<OdooConfig | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [newToken, setNewToken] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [err, setErr] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    getOdooConfig(orgId)
+      .then(setCfg)
+      .catch(() => setCfg(null))
+      .finally(() => setLoading(false))
+  }, [orgId])
+
+  async function save() {
+    if (!cfg) return
+    setSaving(true)
+    setErr('')
+    try {
+      await saveOdooConfig(orgId, {
+        odoo_enabled: cfg.odoo_enabled,
+        odoo_url: cfg.odoo_url,
+        odoo_db: cfg.odoo_db,
+        hide_org_creation: cfg.hide_org_creation,
+        hide_sso_button: cfg.hide_sso_button,
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (e) {
+      setErr((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function genToken() {
+    try {
+      const res = await rotateOdooToken(orgId)
+      setNewToken(res.token)
+      setCfg((c) => c ? { ...c, odoo_token_prefix: res.prefix } : c)
+    } catch (e) {
+      setErr((e as Error).message)
+    }
+  }
+
+  function copyToken() {
+    if (!newToken) return
+    void navigator.clipboard.writeText(newToken)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  if (loading) return <p className="muted">{t('common.loading')}</p>
+
+  return (
+    <div className="odoo-panel">
+      <p className="odoo-desc muted small">
+        {t('admin.odooDesc', 'Integra o Delonix Meet com o Odoo via módulo nk_delonix_meet. O token de integração autentica o módulo Odoo para provisionar utilizadores e sincronizar reuniões.')}
+      </p>
+
+      <div className="field-row">
+        <label className="field-label">{t('admin.odooEnabled', 'Integração Odoo')}</label>
+        <label className="switch-wrap">
+          <input
+            type="checkbox"
+            checked={cfg?.odoo_enabled ?? false}
+            onChange={(e) => setCfg((c) => c ? { ...c, odoo_enabled: e.target.checked } : c)}
+          />
+          <span className="switch-track" />
+        </label>
+      </div>
+
+      <div className="field-row">
+        <label className="field-label">{t('admin.odooUrl', 'URL do Odoo')}</label>
+        <input
+          className="field-input"
+          placeholder="http://localhost:8090"
+          value={cfg?.odoo_url ?? ''}
+          onChange={(e) => setCfg((c) => c ? { ...c, odoo_url: e.target.value || null } : c)}
+        />
+      </div>
+
+      <div className="field-row">
+        <label className="field-label">{t('admin.odooDB', 'Base de dados Odoo')}</label>
+        <input
+          className="field-input"
+          placeholder="mycompany"
+          value={cfg?.odoo_db ?? ''}
+          onChange={(e) => setCfg((c) => c ? { ...c, odoo_db: e.target.value || null } : c)}
+        />
+      </div>
+
+      {/* Token de integração */}
+      <div className="odoo-token-section">
+        <label className="field-label">{t('admin.odooToken', 'Token de integração')}</label>
+        {cfg?.odoo_token_prefix ? (
+          <div className="token-row">
+            <code className="token-prefix">{cfg.odoo_token_prefix}…</code>
+            <button className="btn-sm" onClick={() => void genToken()}>
+              {t('admin.odooRotate', 'Rotar token')}
+            </button>
+          </div>
+        ) : (
+          <button className="btn-sm accent" onClick={() => void genToken()}>
+            {t('admin.odooGenToken', 'Gerar token')}
+          </button>
+        )}
+        {newToken && (
+          <div className="token-reveal">
+            <p className="muted small">{t('admin.odooTokenOnce', 'Guarda este token agora — não será mostrado novamente.')}</p>
+            <div className="token-copy-row">
+              <code className="token-full">{newToken}</code>
+              <button className="btn-sm" onClick={copyToken}>
+                {copied ? t('common.copied', '✓ Copiado') : t('common.copy', 'Copiar')}
+              </button>
+            </div>
+          </div>
+        )}
+        {cfg?.odoo_synced_at && (
+          <p className="muted small odoo-sync-at">
+            {t('admin.odooLastSync', 'Último sync')}: {new Date(cfg.odoo_synced_at).toLocaleString('pt-PT')}
+          </p>
+        )}
+      </div>
+
+      <hr className="odoo-sep" />
+
+      {/* Visibilidade da UI pública */}
+      <p className="field-label bold">{t('admin.odooVisibility', 'Visibilidade da plataforma')}</p>
+
+      <div className="field-row">
+        <label className="field-label">{t('admin.hideOrgCreation', 'Ocultar "Criar organização"')}</label>
+        <label className="switch-wrap">
+          <input
+            type="checkbox"
+            checked={cfg?.hide_org_creation ?? false}
+            onChange={(e) => setCfg((c) => c ? { ...c, hide_org_creation: e.target.checked } : c)}
+          />
+          <span className="switch-track" />
+        </label>
+      </div>
+      <p className="muted small odoo-hint">{t('admin.hideOrgCreationHint', 'Remove o tab «Criar conta» da página de login. Útil quando todos os utilizadores são provisionados via Odoo.')}</p>
+
+      <div className="field-row">
+        <label className="field-label">{t('admin.hideSsoButton', 'Ocultar botão SSO')}</label>
+        <label className="switch-wrap">
+          <input
+            type="checkbox"
+            checked={cfg?.hide_sso_button ?? false}
+            onChange={(e) => setCfg((c) => c ? { ...c, hide_sso_button: e.target.checked } : c)}
+          />
+          <span className="switch-track" />
+        </label>
+      </div>
+      <p className="muted small odoo-hint">{t('admin.hideSsoButtonHint', 'Remove o botão «Entrar com SSO». Com integração Odoo activa, a autenticação é feita por email/senha (online/offline).')}</p>
+
+      {err && <div className="error">{err}</div>}
+      <button className="primary odoo-save" disabled={saving || !cfg} onClick={() => void save()}>
+        {saved ? t('common.saved', '✓ Guardado') : saving ? '…' : t('common.save', 'Guardar')}
+      </button>
+    </div>
+  )
+}
+
+// ---------- Armazenamento remoto (TrueNAS NFS / Nextcloud WebDAV) ----------
+
+function PlatformStoragePanel() {
+  const [cfg, setCfg] = useState<StorageConfig | null>(null)
+  const [type, setType] = useState<'local' | 'nfs' | 'webdav'>('local')
+  const [nfsServer, setNfsServer] = useState('')
+  const [nfsPath, setNfsPath] = useState('')
+  const [wdUrl, setWdUrl] = useState('')
+  const [wdUser, setWdUser] = useState('')
+  const [wdPwd, setWdPwd] = useState('')
+  const [wdPath, setWdPath] = useState('/remote.php/dav/files/{user}/Delonix')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [testMsg, setTestMsg] = useState('')
+
+  useEffect(() => {
+    getPlatformStorage()
+      .then((s) => {
+        setCfg(s)
+        setType(s.storage_type)
+        setNfsServer(s.nfs_server ?? '')
+        setNfsPath(s.nfs_path ?? '')
+        setWdUrl(s.webdav_url ?? '')
+        setWdUser(s.webdav_user ?? '')
+        setWdPath(s.webdav_path)
+      })
+      .catch(() => {})
+  }, [])
+
+  async function save() {
+    setBusy(true); setMsg('')
+    try {
+      await savePlatformStorage({
+        storage_type: type,
+        nfs_server: nfsServer || undefined,
+        nfs_path: nfsPath || undefined,
+        webdav_url: wdUrl || undefined,
+        webdav_user: wdUser || undefined,
+        webdav_password: wdPwd || undefined,
+        webdav_path: wdPath || undefined,
+      })
+      setMsg('✓ Configuração guardada'); setWdPwd('')
+      setCfg((c) => c ? { ...c, storage_type: type, webdav_password_set: !!(c.webdav_password_set || wdPwd) } : c)
+    } catch (e) { setMsg(`Erro: ${(e as Error).message}`) } finally { setBusy(false) }
+  }
+
+  async function test() {
+    setBusy(true); setTestMsg('')
+    try {
+      const r = await testPlatformStorage()
+      setTestMsg(r.message)
+    } catch (e) { setTestMsg(`Erro: ${(e as Error).message}`) } finally { setBusy(false) }
+  }
+
+  function downloadPvc() {
+    const a = document.createElement('a')
+    a.href = '/api/v1/platform/storage/pvc-manifest'
+    a.download = 'delonix-recordings-pv.yaml'
+    a.click()
+  }
+
+  return (
+    <div className="odoo-panel">
+      <p className="odoo-desc">
+        Armazenamento para gravações e anexos. Por omissão as gravações ficam no volume local do pod.
+        Configura aqui TrueNAS (NFS) ou Nextcloud/SharePoint (WebDAV) para persistência partilhada em multi-réplica.
+      </p>
+
+      <div className="field-row">
+        <label className="field-label">Tipo de armazenamento</label>
+        <select value={type} onChange={(e) => setType(e.target.value as typeof type)} className="select-ctl">
+          <option value="local">💽 Local (padrão)</option>
+          <option value="nfs">🗄 TrueNAS / NFS</option>
+          <option value="webdav">☁ Nextcloud / WebDAV</option>
+        </select>
+      </div>
+
+      {type === 'nfs' && (
+        <>
+          <hr className="odoo-sep" />
+          <p className="odoo-hint">O K8s cria um PersistentVolume com este servidor NFS. Descarrega o manifesto abaixo e aplica com <code>kubectl apply</code>.</p>
+          <div className="field-row">
+            <label className="field-label">Servidor NFS</label>
+            <input value={nfsServer} onChange={(e) => setNfsServer(e.target.value)} placeholder="192.168.1.10" />
+          </div>
+          <div className="field-row">
+            <label className="field-label">Path de exportação</label>
+            <input value={nfsPath} onChange={(e) => setNfsPath(e.target.value)} placeholder="/mnt/pool/delonix" />
+          </div>
+          <button className="secondary" onClick={downloadPvc} type="button">⬇ Descarregar manifesto K8s PVC</button>
+        </>
+      )}
+
+      {type === 'webdav' && (
+        <>
+          <hr className="odoo-sep" />
+          <p className="odoo-hint">Gravações enviadas por WebDAV após processamento. Compatível com Nextcloud, ownCloud e SharePoint.</p>
+          <div className="field-row">
+            <label className="field-label">URL base WebDAV</label>
+            <input value={wdUrl} onChange={(e) => setWdUrl(e.target.value)} placeholder="https://cloud.empresa.com" />
+          </div>
+          <div className="field-row">
+            <label className="field-label">Utilizador</label>
+            <input value={wdUser} onChange={(e) => setWdUser(e.target.value)} placeholder="delonix-service" />
+          </div>
+          <div className="field-row">
+            <label className="field-label">Password {cfg?.webdav_password_set && <span className="odoo-hint">(definida — deixa em branco para manter)</span>}</label>
+            <input type="password" value={wdPwd} onChange={(e) => setWdPwd(e.target.value)} placeholder={cfg?.webdav_password_set ? '••••••••' : 'nova password'} />
+          </div>
+          <div className="field-row">
+            <label className="field-label">Path remoto</label>
+            <input value={wdPath} onChange={(e) => setWdPath(e.target.value)} placeholder="/remote.php/dav/files/{user}/Delonix" />
+          </div>
+        </>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button className="primary odoo-save" onClick={save} disabled={busy}>
+          {busy ? '…' : '💾 Guardar'}
+        </button>
+        <button className="secondary" onClick={test} disabled={busy} type="button">
+          🔌 Testar ligação
+        </button>
+      </div>
+      {msg && <p className={msg.startsWith('✓') ? 'odoo-sync-at' : 'error'} style={{ marginTop: 8 }}>{msg}</p>}
+      {testMsg && <p className="odoo-hint" style={{ marginTop: 6 }}>{testMsg}</p>}
+    </div>
+  )
+}
+
 type Period = 'week' | 'month' | 'quarter' | 'year'
 const PERIODS: Period[] = ['week', 'month', 'quarter', 'year']
 
-type IntegTab = 'settings' | 'sso' | 'webhooks' | 'apikeys'
+type IntegTab = 'settings' | 'sso' | 'webhooks' | 'apikeys' | 'odoo' | 'storage'
 
 /** Consola de administração: KPIs reais da org + membros + postura + quarentena. */
 export default function Analytics() {
@@ -438,14 +746,24 @@ export default function Analytics() {
   const delta = (cur: number, prev: number): number | null =>
     prev > 0 ? Math.round(((cur - prev) / prev) * 100) : null
 
-  const kpis: { v: string; l: string; d?: number | null }[] = stats
+  // Qualidade média 0–5 ponderada pela distribuição real das amostras QoS
+  // (boa=5, média=3.5, fraca=1.5). '—' sem amostras.
+  const qMidPct = stats ? Math.max(0, 100 - stats.pct_good - stats.pct_poor) : 0
+  const qScore = stats && stats.quality_samples_30d > 0
+    ? ((stats.pct_good * 5 + qMidPct * 3.5 + stats.pct_poor * 1.5) / 100).toLocaleString(locale, { maximumFractionDigits: 1 })
+    : null
+
+  // 4 KPIs do template; os restantes indicadores vivem no cartão de uso.
+  const kpis: { v: string; l: string; d?: number | null; tag?: string }[] = stats
     ? [
         { v: stats.meetings_30d.toLocaleString(locale), l: t('admin.kMeetings'), d: delta(stats.meetings_30d, stats.meetings_prev_30d) },
         { v: stats.meeting_minutes_30d.toLocaleString(locale), l: t('admin.kMinutes'), d: delta(stats.meeting_minutes_30d, stats.meeting_minutes_prev_30d) },
-        { v: `${stats.avg_duration_min} min`, l: t('admin.kAvgDur') },
         { v: `${stats.active_users_30d} / ${stats.members_total}`, l: t('admin.kActive'), d: delta(stats.active_users_30d, stats.active_users_prev_30d) },
-        { v: `${stats.video_30d} / ${stats.voice_30d}`, l: t('admin.kKinds') },
-        { v: `${stats.recordings_total} · ${fmtGb(stats.recordings_bytes)}`, l: t('admin.kRecs') },
+        {
+          v: qScore != null ? `${qScore} / 5` : '—',
+          l: t('admin.kQuality'),
+          tag: qScore != null ? (stats.avg_loss_pct < 5 ? t('admin.qStable') : t('admin.qUnstable')) : undefined,
+        },
       ]
     : []
 
@@ -489,6 +807,7 @@ export default function Analytics() {
                     {k.d > 0 ? '+' : ''}{k.d}%
                   </span>
                 )}
+                {k.tag && <span className="kpi-delta up">{k.tag}</span>}
                 <span className="kpi-v">{k.v}</span>
                 <span className="kpi-l">{k.l}</span>
               </div>
@@ -505,6 +824,10 @@ export default function Analytics() {
                 fmtWeek={fmtWeek}
                 labels={{ meetings: t('admin.legMeetings'), minutes: t('admin.legMinutes') }}
               />
+              <p className="muted small usage-substats">
+                {t('admin.kAvgDur')}: {stats.avg_duration_min} min · {t('admin.kKinds')}: {stats.video_30d} / {stats.voice_30d}
+                {' · '}{t('admin.kRecs')}: {stats.recordings_total} · {fmtGb(stats.recordings_bytes)}
+              </p>
             </section>
 
             <section className="dash-card">
@@ -556,25 +879,59 @@ export default function Analytics() {
               )}
             </section>
 
+            {/* Linha 2 do template: Membros (largo) | Postura de segurança. */}
+            {members.length > 0 && (
+              <section className="dash-card members-card">
+                <header className="dash-card-head">
+                  <h2>{t('admin.membersTitle')}</h2>
+                  <span className="muted small">{t('admin.membersSub')}</span>
+                </header>
+                <table className="members-table">
+                  <thead>
+                    <tr>
+                      <th>{t('admin.colName')}</th>
+                      <th>{t('admin.colRole')}</th>
+                      <th>SSO</th>
+                      <th>{t('admin.colActive')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {members.map((m) => (
+                      <tr key={m.user_id}>
+                        <td>
+                          <span className="avatar-circle small">{m.username.slice(0, 2).toUpperCase()}</span>
+                          <span className="member-name">
+                            {m.username}
+                            {(m.title || m.branch_name) && (
+                              <small className="muted">{[m.title, m.branch_name].filter(Boolean).join(' · ')}</small>
+                            )}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={m.role === 'admin' ? 'posture-tag on' : 'posture-tag'}>
+                            {m.role === 'admin' ? t('admin.roleAdmin') : t('admin.roleMember')}
+                          </span>
+                        </td>
+                        {/* Estado por org (OIDC configurado); por-membro chega com o SCIM. */}
+                        <td>{ssoActive ? <span className="posture-tag on">{t('admin.active')}</span> : <span className="muted">—</span>}</td>
+                        <td className="muted">{fmtAgo(m.last_active)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+            )}
+
             <section className="dash-card">
               <header className="dash-card-head">
-                <h2>{t('admin.auditTitle')}</h2>
+                <h2>{t('admin.secTitle')}</h2>
               </header>
-              {audit.length === 0 && <p className="dash-empty">{t('admin.auditEmpty')}</p>}
-              {audit.length > 0 && (
-                <div className="audit-list">
-                  {audit.map((a) => (
-                    <div key={a.id} className="audit-row">
-                      <span className="audit-action mono">{a.action}</span>
-                      <span className="audit-detail">
-                        <strong>{a.actor}</strong>
-                        {a.target && <small> · {a.target}</small>}
-                      </span>
-                      <span className="audit-time">{new Date(a.created_at).toLocaleString('pt-PT')}</span>
-                    </div>
-                  ))}
+              {posture.map((p) => (
+                <div key={p.l} className="posture-row">
+                  <span>{p.l}</span>
+                  <span className={p.on ? 'posture-tag on' : 'posture-tag'}>{p.v}</span>
                 </div>
-              )}
+              ))}
             </section>
 
             <section className="dash-card">
@@ -600,57 +957,25 @@ export default function Analytics() {
 
             <section className="dash-card">
               <header className="dash-card-head">
-                <h2>{t('admin.secTitle')}</h2>
+                <h2>{t('admin.auditTitle')}</h2>
               </header>
-              {posture.map((p) => (
-                <div key={p.l} className="posture-row">
-                  <span>{p.l}</span>
-                  <span className={p.on ? 'posture-tag on' : 'posture-tag'}>{p.v}</span>
+              {audit.length === 0 && <p className="dash-empty">{t('admin.auditEmpty')}</p>}
+              {audit.length > 0 && (
+                <div className="audit-list">
+                  {audit.map((a) => (
+                    <div key={a.id} className="audit-row">
+                      <span className="audit-action mono">{a.action}</span>
+                      <span className="audit-detail">
+                        <strong>{a.actor}</strong>
+                        {a.target && <small> · {a.target}</small>}
+                      </span>
+                      <span className="audit-time">{new Date(a.created_at).toLocaleString('pt-PT')}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </section>
           </div>
-
-          {members.length > 0 && (
-            <section className="dash-card members-card">
-              <header className="dash-card-head">
-                <h2>{t('admin.membersTitle')}</h2>
-                <span className="muted small">{t('admin.membersSub')}</span>
-              </header>
-              <table className="members-table">
-                <thead>
-                  <tr>
-                    <th>{t('admin.colName')}</th>
-                    <th>{t('admin.colRole')}</th>
-                    <th>{t('admin.colTitle')}</th>
-                    <th>{t('admin.colBranch')}</th>
-                    <th>SSO</th>
-                    <th>{t('admin.colActive')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {members.map((m) => (
-                    <tr key={m.user_id}>
-                      <td>
-                        <span className="avatar-circle small">{m.username.slice(0, 2).toUpperCase()}</span>
-                        {m.username}
-                      </td>
-                      <td>
-                        <span className={m.role === 'admin' ? 'posture-tag on' : 'posture-tag'}>
-                          {m.role === 'admin' ? t('admin.roleAdmin') : t('admin.roleMember')}
-                        </span>
-                      </td>
-                      <td>{m.title || '—'}</td>
-                      <td>{m.branch_name || '—'}</td>
-                      {/* Estado por org (OIDC configurado); por-membro chega com o SCIM. */}
-                      <td>{ssoActive ? <span className="posture-tag on">{t('admin.active')}</span> : <span className="muted">—</span>}</td>
-                      <td className="muted">{fmtAgo(m.last_active)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </section>
-          )}
 
           {isAdmin && currentOrg && (
             <section className="dash-card integrations-card">
@@ -660,6 +985,8 @@ export default function Analytics() {
               <nav className="integ-tabs">
                 {([
                   { key: 'settings', label: t('admin.settingsTitle', 'Definições') },
+                  { key: 'odoo', label: '🔗 Odoo' },
+                  { key: 'storage', label: '💾 Armazenamento' },
                   { key: 'sso', label: t('admin.ssoTitle', 'SSO / OIDC') },
                   { key: 'webhooks', label: t('admin.webhooksTitle', 'Webhooks') },
                   { key: 'apikeys', label: t('admin.apiKeysTitle', 'API Keys') },
@@ -675,6 +1002,8 @@ export default function Analytics() {
               </nav>
               <div className="integ-body">
                 {integTab === 'settings' && <OrgSettings org={currentOrg} onSaved={loadOrgs} />}
+                {integTab === 'odoo' && <OrgOdooIntegration orgId={currentOrg.id} />}
+                {integTab === 'storage' && <PlatformStoragePanel />}
                 {integTab === 'sso' && <OrgSso orgId={currentOrg.id} />}
                 {integTab === 'webhooks' && <OrgWebhooks orgId={currentOrg.id} />}
                 {integTab === 'apikeys' && <OrgApiKeys orgId={currentOrg.id} />}

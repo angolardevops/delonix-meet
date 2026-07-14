@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { login, registerOrg, ssoCheck, ssoRedirect, User } from '../api'
+import { login, registerOrg, ssoCheck, ssoRedirect, getPlatformSettings, User } from '../api'
 import { LanguageToggle } from '../components/Shell'
 import PasswordInput from '../components/PasswordInput'
 import { appNameParts, getLoginBg } from '../branding'
@@ -14,6 +14,21 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
+
+  // Flags da plataforma (integração Odoo pode ocultar registo e SSO)
+  const [hideOrgCreation, setHideOrgCreation] = useState(false)
+  const [hideSsoButton, setHideSsoButton] = useState(false)
+
+  useEffect(() => {
+    getPlatformSettings()
+      .then((s) => {
+        setHideOrgCreation(s.hide_org_creation)
+        setHideSsoButton(s.hide_sso_button)
+        if (s.hide_org_creation && mode === 'register') setMode('login')
+      })
+      .catch(() => {/* sem settings públicas — manter defaults */})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // SSO state
   const [ssoEnabled, setSsoEnabled] = useState(false)
@@ -114,13 +129,15 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
           >
             {t('login.tabLogin')}
           </button>
-          <button
-            className={mode === 'register' ? 'auth-tab active' : 'auth-tab'}
-            onClick={() => setMode('register')}
-            type="button"
-          >
-            {t('login.tabRegister')}
-          </button>
+          {!hideOrgCreation && (
+            <button
+              className={mode === 'register' ? 'auth-tab active' : 'auth-tab'}
+              onClick={() => setMode('register')}
+              type="button"
+            >
+              {t('login.tabRegister')}
+            </button>
+          )}
         </div>
 
         {mode === 'register' && <p className="auth-hint">{t('login.orgHint')}</p>}
@@ -181,19 +198,23 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
           </button>
         )}
 
-        <div className="auth-divider">
-          <span>{t('common.or')}</span>
-        </div>
-        {/* SSO: funcional se o domínio tem OIDC configurado; info se não. */}
-        <button
-          className="sso-btn"
-          onClick={handleSsoClick}
-          disabled={ssoChecking}
-        >
-          {ssoEnabled ? t('login.ssoGo') : t('login.sso')}
-        </button>
-        {ssoEnabled && !ssoEnforced && (
-          <p className="sso-hint">{t('login.ssoAvailable')}</p>
+        {!hideSsoButton && (
+          <>
+            <div className="auth-divider">
+              <span>{t('common.or')}</span>
+            </div>
+            {/* SSO: activo se o domínio tem OIDC configurado. */}
+            <button
+              className="sso-btn"
+              onClick={handleSsoClick}
+              disabled={ssoChecking}
+            >
+              {ssoEnabled ? t('login.ssoGo') : t('login.sso')}
+            </button>
+            {ssoEnabled && !ssoEnforced && (
+              <p className="sso-hint">{t('login.ssoAvailable')}</p>
+            )}
+          </>
         )}
         <p className="auth-terms">
           {t('login.termsPre')} <a href="#/legal">{t('login.termsLink')}</a>.

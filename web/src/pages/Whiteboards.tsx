@@ -8,7 +8,7 @@ import {
   whiteboardPngUrl,
   WhiteboardMeta,
 } from '../api'
-import { ShareLinkIcon, TrashIcon } from '../icons'
+import { CloseIcon, DownloadIcon, ShareLinkIcon, TrashIcon } from '../icons'
 
 /** Miniatura autenticada de um quadro (o endpoint PNG exige Bearer). */
 function Thumb({ id, title }: { id: string; title: string }) {
@@ -27,11 +27,44 @@ function Thumb({ id, title }: { id: string; title: string }) {
   return url ? <img className="wb-thumb" src={url} alt={title} /> : <div className="wb-thumb ph" />
 }
 
+/** Quadro em tamanho real dentro do lightbox (fetch autenticado → blob). */
+function FullBoard({ id, title, loadingLabel, downloadLabel }: {
+  id: string
+  title: string
+  loadingLabel: string
+  downloadLabel: string
+}) {
+  const [url, setUrl] = useState<string>()
+  useEffect(() => {
+    let live = true
+    let made: string | undefined
+    authedBlobUrl(whiteboardPngUrl(id))
+      .then((u) => {
+        if (live) { made = u; setUrl(u) }
+        else URL.revokeObjectURL(u)
+      })
+      .catch(() => {})
+    return () => { live = false; if (made) URL.revokeObjectURL(made) }
+  }, [id])
+  if (!url) return <p className="muted">{loadingLabel}</p>
+  return (
+    <>
+      <img className="wb-full" src={url} alt={title} />
+      <a className="btn-sm ghost wb-download" href={url} download={`${title}.png`}>
+        <DownloadIcon /> {downloadLabel}
+      </a>
+    </>
+  )
+}
+
 /** Biblioteca de quadros brancos guardados (por organização). */
 export default function Whiteboards() {
   const { t } = useTranslation()
   const [items, setItems] = useState<WhiteboardMeta[]>([])
   const [loading, setLoading] = useState(true)
+  // Lightbox: o endpoint PNG exige Bearer — abrir o URL cru num separador
+  // novo dá "unauthorized"; o quadro abre aqui via blob autenticado.
+  const [view, setView] = useState<WhiteboardMeta | null>(null)
 
   const refresh = () =>
     listWhiteboards().then(setItems).catch(() => setItems([])).finally(() => setLoading(false))
@@ -69,9 +102,9 @@ export default function Whiteboards() {
         <div className="wb-grid">
           {items.map((w) => (
             <article key={w.id} className="wb-card">
-              <a href={whiteboardPngUrl(w.id)} target="_blank" rel="noreferrer" className="wb-thumb-link">
+              <button className="wb-thumb-link" onClick={() => setView(w)} title={w.title}>
                 <Thumb id={w.id} title={w.title} />
-              </a>
+              </button>
               <div className="wb-card-body">
                 <h3 title={w.title}>{w.title}</h3>
                 <p className="wb-meta">
@@ -93,6 +126,23 @@ export default function Whiteboards() {
               </div>
             </article>
           ))}
+        </div>
+      )}
+
+      {view && (
+        <div className="modal-overlay" onClick={() => setView(null)}>
+          <div className="modal wb-viewer" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h3>{view.title}</h3>
+              <button className="panel-close" onClick={() => setView(null)}><CloseIcon /></button>
+            </div>
+            <FullBoard
+              id={view.id}
+              title={view.title}
+              loadingLabel={t('common.loading')}
+              downloadLabel={t('recordings.download')}
+            />
+          </div>
         </div>
       )}
     </div>

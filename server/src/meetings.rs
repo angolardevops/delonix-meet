@@ -485,6 +485,10 @@ pub async fn save_minutes(
         .bind(id)
         .execute(&state.db)
         .await?;
+    // A transcrição (ata bruta) ficou persistida acima; em background o LLM
+    // local gera o resumo elegante e substitui `minutes` (ai.rs — no-op sem
+    // OLLAMA_URL; se falhar, fica a ata por regras enviada pelo cliente).
+    crate::ai::spawn_mom_summary(state.clone(), id);
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -636,7 +640,9 @@ pub async fn start(
             .await?;
         let targets: std::collections::HashSet<Uuid> = invitees.into_iter().map(|r| r.0).collect();
         // Registar a chamada para que os convidados entrem diretamente (sem sala de espera).
-        state.presence.register_call(room.code.clone(), auth.user_id, targets.clone());
+        state
+            .presence
+            .register_call(room.code.clone(), auth.user_id, targets.clone());
         let (ringing, offline) = crate::presence::ring_users(
             &state,
             auth.user_id,
@@ -1170,7 +1176,9 @@ pub async fn ring_upcoming_meetings(state: &Arc<AppState>) {
         }
 
         // Registar a chamada para que os convidados entrem diretamente (sem sala de espera).
-        state.presence.register_call(room_code.clone(), owner_id, targets.clone());
+        state
+            .presence
+            .register_call(room_code.clone(), owner_id, targets.clone());
         let (ringing, offline) = crate::presence::ring_users(
             state,
             owner_id,

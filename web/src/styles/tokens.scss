@@ -14,9 +14,12 @@
 
 // -- Base partilhada (tipografia, raio, movimento) — não muda com o tema.
 $base: (
-  radius:      8px,
-  radius-lg:   12px,
-  radius-sm:   6px,
+  // Raios reduzidos (14/07): look "enterprise flat" — controlos 4px,
+  // superfícies 6px, destaques 8px. Coerente com os --radius-* do bloco
+  // de escala em styles.scss.
+  radius:      6px,
+  radius-lg:   8px,
+  radius-sm:   4px,
   font-display: ("Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif),
   font-body:    ("Instrument Sans Variable", "Instrument Sans", system-ui, sans-serif),
   font-mono:    ("IBM Plex Mono", ui-monospace, monospace),

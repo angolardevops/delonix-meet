@@ -19,8 +19,8 @@
 
 - name: "Validar deploy_mode"
   ansible.builtin.assert:
-    that: deploy_mode in ['single-host', 'multi-host']
-    fail_msg: "deploy_mode inválido ({{ deploy_mode }}) — usa 'single-host' ou 'multi-host'."
+    that: deploy_mode in ['single-host', 'multi-host', 'kind']
+    fail_msg: "deploy_mode inválido ({{ deploy_mode }}) — usa 'single-host', 'multi-host' ou 'kind'."
 
 - name: "Let's Encrypt exige domínio + email"
   ansible.builtin.assert:
@@ -75,6 +75,13 @@
     public_ip_effective: "{{ public_ip_cfg if public_ip_cfg != 'auto' else '' }}"
     cacheable: true
   when: deploy_mode == 'multi-host'
+
+# Kind: IP fixo do servidor remoto (sem cloud LB).
+- name: Kind — IP fixo do servidor remoto
+  ansible.builtin.set_fact:
+    public_ip_effective: "{{ public_ip_cfg }}"
+    cacheable: true
+  when: deploy_mode == 'kind'
 
 # ---- Decidir o modo de TLS efetivo ----
 - name: "Decidir tls_effective_mode"

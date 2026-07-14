@@ -1,7 +1,7 @@
 import { CSSProperties, ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   currentUser, downloadRecording, iceServers, inviteToRoom, joinRoom, listRecordings, postQos, Recording,
-  roomChatHistory, saveMinutesByRoom, saveWhiteboard, searchUsers, uploadRecording, User,
+  roomChatHistory, saveMinutesByRoom, saveWhiteboard, searchUsers, translateCaption, uploadRecording, User,
 } from '../api'
 import {
   audioConstraints,
@@ -18,13 +18,14 @@ import {
   videoConstraints,
 } from '../media'
 import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
+import { Btn, SelectCtl } from '../components/ui'
 import { BreakoutRoom, PeerInfo, PollView, QaView, Signaling, WbStroke } from '../signaling'
 import { ThemePicker } from '../components/Shell'
 import { Call, MeshCall, SfuCall } from '../webrtc'
 import { makeCallHolderStart } from '../sfuLifecycle'
 import {
-  BlurIcon, CamIcon, CamOffIcon, ChatIcon, ChevronUpIcon, CloseIcon, CubeIcon, DownloadIcon, EmojiIcon, HandIcon,
-  HangupIcon, MicIcon, MicOffIcon, NoteIcon, PeopleIcon, RecordIcon, SettingsIcon, ShareIcon, StageIcon, StopIcon,
+  BlurIcon, CamIcon, CamOffIcon, ChatIcon, ChevronUpIcon, CloseIcon, DownloadIcon, EmojiIcon, HandIcon,
+  HangupIcon, MicIcon, MicOffIcon, NoteIcon, PeopleIcon, RecordIcon, SettingsIcon, ShareIcon, StopIcon,
 } from '../icons'
 
 interface RemotePeer {
@@ -241,6 +242,15 @@ export default function Room({
   const prejoinVideoRef = useRef<HTMLVideoElement | null>(null)
   const [peers, setPeers] = useState<RemotePeer[]>([])
   const [waitingQueue, setWaitingQueue] = useState<PeerInfo[]>([])
+  // Pedidos in-room com diálogo próprio (nada de confirm()/alert() nativos):
+  const [ctrlAsk, setCtrlAsk] = useState<{ from: string; username: string } | null>(null)
+  const [shareAsk, setShareAsk] = useState<{ from: string; username: string } | null>(null)
+  // Partilha pedida por não-anfitrião: arranca sozinha quando o grant chegar.
+  const pendingShareRef = useRef(false)
+  // Handlers WS registam-se uma vez — este ref aponta sempre ao toggleShare
+  // do render atual (evita closure obsoleta de `sharing`/`topology`).
+  const toggleShareRef = useRef<() => void>(() => {})
+  toggleShareRef.current = () => void toggleShare()
   const [reactions, setReactions] = useState<FloatingReaction[]>([])
   const [chat, setChat] = useState<ChatMsg[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -356,11 +366,84 @@ export default function Room({
   const e2eeKeyRef = useRef<string | null>(null)
   /** Apresentação (partilha de ecrã) em curso: minha ou de outro peer. */
   const [presentation, setPresentation] = useState<{ peerId: string; stream: MediaStream } | null>(null)
-  const [myVotes, setMyVotes] = useState<Record<string, number>>({})
+  const [myVotes, setMyVotes] = useState<Record<string, number>>(() => {
+    // Recupera os votos desta sala (sobrevive a reloads a meio do quiz).
+    try {
+      return JSON.parse(sessionStorage.getItem(`dx_votes_${code}`) ?? '{}')
+    } catch {
+      return {}
+    }
+  })
   const [myUpvotes, setMyUpvotes] = useState<Record<string, boolean>>({})
   const [pollQ, setPollQ] = useState('')
   const [pollOpts, setPollOpts] = useState<string[]>(['', ''])
+  // Quiz: resposta certa (índice em pollOpts) + duração da votação (0 = sem tempo).
+  const [pollCorrect, setPollCorrect] = useState<number | null>(null)
+  const [pollDur, setPollDur] = useState(0)
+  // Popup de sondagem visível a TODOS: dispensados + janela de revelação pós-fecho.
+  const [pollDismissed, setPollDismissed] = useState<Record<string, boolean>>({})
+  const [revealUntil, setRevealUntil] = useState<Record<string, number>>({})
+  const [winnerFx, setWinnerFx] = useState(false)
+  const [pollNow, setPollNow] = useState(() => Date.now())
+  const pollPrevOpenRef = useRef<Record<string, boolean>>({})
+  const pollCloseSentRef = useRef<Record<string, boolean>>({})
   const [qaInput, setQaInput] = useState('')
+
+  // Relógio de 1s para as contagens de quiz (só com sondagem aberta com prazo
+  // ou janela de revelação ativa).
+  useEffect(() => {
+    const need =
+      polls.some((p) => p.open && p.ends_at) ||
+      Object.values(revealUntil).some((t) => t > Date.now())
+    if (!need) return
+    const t = setInterval(() => setPollNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [polls, revealUntil])
+
+  // Persiste os meus votos por sala: um reload a meio do quiz não pode
+  // apagar a memória de em quem votei (senão a festa nunca dispara).
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(`dx_votes_${code}`, JSON.stringify(myVotes))
+    } catch { /* storage cheio — segue sem persistir */ }
+  }, [myVotes, code])
+
+  // Fecho do quiz: revelação no popup (mesmo que tenha sido dispensado — o
+  // resultado merece reaparecer) e festa para quem acertou. Dispara tanto na
+  // transição aberta→fechada como quando a sondagem já chega fechada (reload),
+  // com guarda em sessionStorage para nunca celebrar duas vezes.
+  useEffect(() => {
+    for (const p of polls) {
+      const was = pollPrevOpenRef.current[p.id]
+      const closedNow = was && !p.open
+      const arrivedClosed = was === undefined && !p.open
+      if (closedNow) {
+        setRevealUntil((m) => ({ ...m, [p.id]: Date.now() + 10_000 }))
+        setPollDismissed((m) => (m[p.id] ? { ...m, [p.id]: false } : m))
+      }
+      if ((closedNow || arrivedClosed) && p.correct != null && myVotes[p.id] === p.correct) {
+        const guard = `dx_fx_${p.id}`
+        if (!sessionStorage.getItem(guard)) {
+          sessionStorage.setItem(guard, '1')
+          setWinnerFx(true)
+          window.setTimeout(() => setWinnerFx(false), 4500)
+        }
+      }
+      pollPrevOpenRef.current[p.id] = p.open
+    }
+  }, [polls, myVotes])
+
+  // O anfitrião fecha o quiz quando o tempo acaba — o servidor valida (host),
+  // revela a resposta certa a todos e persiste o resultado no meeting.
+  useEffect(() => {
+    if (!isHost) return
+    for (const p of polls) {
+      if (p.open && p.ends_at && pollNow >= p.ends_at && !pollCloseSentRef.current[p.id]) {
+        pollCloseSentRef.current[p.id] = true
+        signalRef.current?.send({ type: 'poll-close', poll: p.id })
+      }
+    }
+  }, [polls, pollNow, isHost])
 
   // Controlos de anfitrião (runtime) + legendas CC
   const [roomLocked, setRoomLocked] = useState(false)
@@ -371,6 +454,15 @@ export default function Room({
   const [sharePerms, setSharePerms] = useState<Set<string>>(new Set())
   const [ccOn, setCcOn] = useState(false)
   const [caption, setCaption] = useState<{ text: string; at: number } | null>(null)
+  // Tradução das legendas via LLM local ('' = original, sem tradução).
+  const [ccLang, setCcLang] = useState(() => localStorage.getItem('dx_cc_lang') ?? '')
+  const ccLangRef = useRef(ccLang)
+  const ccSeqRef = useRef(0)
+  // Throttle do envio de legendas parciais (interim) aos outros.
+  const interimSentAtRef = useRef(0)
+  // Debounce/single-flight da tradução de legendas parciais (não sobrecarregar
+  // o LLM local com um pedido por cada palavra).
+  const interimXlateRef = useRef<{ timer: number | null; busy: boolean }>({ timer: null, busy: false })
 
   // Relógio dos countdowns (grupos e temporizador) — só corre quando há deadline.
   useEffect(() => {
@@ -503,8 +595,6 @@ export default function Room({
   const togglePin = (id: string) => setPinnedId((cur) => (cur === id ? null : id))
   // Layout da apresentação: plateia em baixo (default) ou na lateral direita.
   const [presLayout, setPresLayout] = useState<'bottom' | 'side'>('bottom')
-  // Menu do seletor de esquema (Galeria / Orador / Lado-a-lado) — estilo Teams/Zoom.
-  const [layoutMenu, setLayoutMenu] = useState(false)
   const [parallax, setParallax] = useState(false)
   const [tilt, setTilt] = useState({ x: 0, y: 0 })
   const [notesOpen, setNotesOpen] = useState(false)
@@ -540,6 +630,13 @@ export default function Room({
   const talkOverSince = useRef(0)
   const peersRef = useRef<RemotePeer[]>([])
   peersRef.current = peers
+  // Refs que espelham estado para callbacks sem closures obsoletas (beforeunload, WS handlers).
+  const linesRef = useRef<string[]>([])
+  const isHostRef = useRef(false)
+  const momSavedRef = useRef(false)
+  linesRef.current = lines
+  isHostRef.current = isHost
+  momSavedRef.current = momSaved
 
   function floatReaction(emoji: string, username: string) {
     const id = ++reactionSeq
@@ -875,6 +972,18 @@ export default function Room({
         })
         signal.on('share-granted', (m) => {
           setShareAllowed(m.allowed)
+          const wasPending = pendingShareRef.current
+          pendingShareRef.current = false
+          if (m.allowed && wasPending) {
+            // O grant chegou em resposta ao pedido: arranca a partilha já.
+            setStatus('O anfitrião autorizou — a iniciar partilha de ecrã…')
+            toggleShareRef.current()
+            return
+          }
+          if (!m.allowed && wasPending) {
+            setStatus('O anfitrião recusou o pedido de partilha de ecrã')
+            return
+          }
           setStatus(m.allowed ? 'O anfitrião permitiu-te partilhar o ecrã' : 'A permissão de partilha foi revogada')
         })
         signal.on('polls', (m) => setPolls(m.polls))
@@ -882,7 +991,14 @@ export default function Room({
         signal.on('timer', (m) => setMeetTimerEndsAt(m.ends_at))
         signal.on('server-recording', (m) => {
           setServerRec(m.active ? { by: m.by } : null)
-          if (m.active) setRecNotice(`${m.by} começou a gravar no servidor`)
+          if (m.active) {
+            setRecNotice(`${m.by} começou a gravar no servidor`)
+          } else if (isHostRef.current && linesRef.current.length > 0 && !momSavedRef.current) {
+            // Gravação parou → guardar ata automaticamente sem bloquear o UI
+            saveMinutesByRoom(code, buildMoM(linesRef.current), linesRef.current.join('\n'))
+              .then(() => { setMomSaved(true); setStatus('Ata guardada automaticamente ao parar a gravação') })
+              .catch(() => {})
+          }
         })
         // Quadro branco: snapshot ao entrar + traços/limpeza em tempo real.
         signal.on('wb-state', (m) => {
@@ -907,8 +1023,13 @@ export default function Room({
           const stamp = new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
           // A legenda ao vivo só aparece a quem tem CC ligado; as notas
           // acumulam sempre (transcrição partilhada, legendada por orador).
-          if (ccOnRef.current) setCaption({ text: `${m.username}: ${m.text}`, at: Date.now() })
+          if (ccOnRef.current) showCaption(m.username, m.text)
           setLines((l) => [...l, `[${stamp}] ${m.username}: ${m.text}`])
+        })
+        // Legenda PARCIAL de outro orador — atualiza a legenda ao vivo (estilo
+        // Meet), sem esperar pelo fim da frase. Efémera: não vai para as notas.
+        signal.on('transcript-interim', (m) => {
+          if (ccOnRef.current) showCaption(m.username, m.text, true)
         })
         // O anfitrião ligou/desligou a Nota AI partilhada: todos captam o
         // próprio microfone (#6). Segue o estado partilhado localmente.
@@ -924,16 +1045,19 @@ export default function Room({
         signal.on('remote-control', (m) => {
           if (m.action === 'request') {
             const who = peersRef.current.find((p) => p.peerId === m.from)?.username ?? 'Alguém'
-            if (window.confirm(`${who} solicitou controlo remoto do teu ecrã. Aceitar?`)) {
-              signal.send({ type: 'remote-control', to: m.from, action: 'accept', payload: null })
-            } else {
-              signal.send({ type: 'remote-control', to: m.from, action: 'deny', payload: null })
-            }
+            setCtrlAsk({ from: m.from, username: who })
           } else if (m.action === 'accept') {
-            alert('O anfitrião aceitou o teu pedido de controlo remoto! (Ponte de eventos DataChannel pronta).')
+            setStatus('🎮 Pedido aceite — controlo remoto da tela partilhada ativo')
           } else if (m.action === 'deny') {
-            alert('O pedido de controlo remoto foi recusado.')
+            setStatus('O pedido de controlo remoto foi recusado')
           }
+        })
+        // Pedido de partilha de um não-anfitrião → diálogo Permitir/Negar.
+        signal.on('share-request', (m) => setShareAsk({ from: m.from, username: m.username }))
+        // O apresentador abriu o quadro branco → abre em todos.
+        signal.on('wb-open', (m) => {
+          setWbOpen(true)
+          setStatus(`Quadro branco partilhado por ${m.by}`)
         })
 
         const callbacks = {
@@ -991,6 +1115,27 @@ export default function Room({
       localStreamRef.current?.getTracks().forEach((t) => t.stop())
     }
   }, [code, passTry, joinIntent])
+
+  // Guardar ata via fetch keepalive quando o utilizador fecha o tab sem clicar Sair.
+  // keepalive: true garante que o pedido completa mesmo após o unload da página.
+  useEffect(() => {
+    function handleUnload() {
+      if (!isHostRef.current || linesRef.current.length === 0 || momSavedRef.current) return
+      const token = localStorage.getItem('dlx_token')
+      if (!token) return
+      fetch(`/api/rooms/${code}/minutes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          minutes: buildMoM(linesRef.current),
+          transcript: linesRef.current.join('\n'),
+        }),
+        keepalive: true,
+      })
+    }
+    window.addEventListener('beforeunload', handleUnload)
+    return () => window.removeEventListener('beforeunload', handleUnload)
+  }, [code])
 
   // Aviso de fala simultânea: ≥2 pessoas a falar durante >1.5s seguidos.
   useEffect(() => {
@@ -1095,6 +1240,7 @@ export default function Room({
       await h.start(new MediaStream([cameraTrackRef.current]))
       headRef.current = h
       setParallax(true)
+      setStatus('Efeito 3D ligado — move a cabeça e sente a profundidade da sala')
     } catch {
       setStatus('Efeito 3D indisponível neste dispositivo')
     }
@@ -1121,12 +1267,50 @@ export default function Room({
     ccOnRef.current = ccOn
   }, [ccOn])
   useEffect(() => {
+    ccLangRef.current = ccLang
+    localStorage.setItem('dx_cc_lang', ccLang)
+  }, [ccLang])
+
+  /** Mostra a legenda já (original) e, com tradução ativa, substitui pela
+   *  versão traduzida do LLM local — só se ainda for a linha mais recente (seq),
+   *  para traduções lentas não taparem falas novas. `interim` (parcial): a
+   *  tradução é debounced e single-flight, senão bombardeávamos o Ollama com um
+   *  pedido por palavra; a versão final (não-interim) traduz sempre. */
+  function showCaption(prefix: string, text: string, interim = false) {
+    const seq = ++ccSeqRef.current
+    setCaption({ text: `${prefix}: ${text}`, at: Date.now() })
+    const target = ccLangRef.current
+    if (!target) return
+    const applyTranslation = () => {
+      const x = interimXlateRef.current
+      x.busy = true
+      void translateCaption(text, target)
+        .then((r) => {
+          if (ccSeqRef.current === seq) setCaption({ text: `${prefix}: ${r.text}`, at: Date.now() })
+        })
+        .catch(() => {})
+        .finally(() => { x.busy = false })
+    }
+    if (!interim) {
+      applyTranslation()
+      return
+    }
+    // Parcial: agenda a tradução ~400ms depois da última palavra; se já houver
+    // um pedido em curso, deixa-o terminar (single-flight) e a final corrige.
+    const x = interimXlateRef.current
+    if (x.timer != null) window.clearTimeout(x.timer)
+    x.timer = window.setTimeout(() => {
+      x.timer = null
+      if (!x.busy) applyTranslation()
+    }, 400)
+  }
+  useEffect(() => {
     const want = (ccOn || transcribing) && roomState === 'in'
     if (want && !transcriberRef.current) {
       const t = new Transcriber()
       t.onFinal = (text) => {
         const stamp = new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
-        if (ccOnRef.current) setCaption({ text: `eu: ${text}`, at: Date.now() })
+        if (ccOnRef.current) showCaption('eu', text)
         setInterim('')
         // Difunde a frase para os outros montarem legenda/transcrição partilhada.
         signalRef.current?.send({ type: 'transcript', text })
@@ -1136,7 +1320,17 @@ export default function Room({
       t.onInterim = (text) => {
         setInterim(text)
         // Legenda ao vivo (estilo Meet) enquanto falo, se o CC estiver ligado.
-        if (ccOnRef.current && text) setCaption({ text: `eu: ${text}`, at: Date.now() })
+        if (ccOnRef.current && text) showCaption('eu', text)
+        // Difunde a legenda PARCIAL aos outros (throttle ~250ms) — é isto que
+        // acaba com a sensação de "standby": eles veem a fala em tempo real, sem
+        // esperar pelo fim da frase. Só quando a transcrição partilhada está on.
+        if (transcribingRef.current && text) {
+          const now = Date.now()
+          if (now - interimSentAtRef.current >= 250) {
+            interimSentAtRef.current = now
+            signalRef.current?.send({ type: 'transcript-interim', text })
+          }
+        }
       }
       t.onError = (message) => {
         setStatus(message)
@@ -1565,9 +1759,13 @@ export default function Room({
   // (relativo ao próprio tamanho) para acompanhar o overscan.
   const parallaxStyle: CSSProperties = parallax
     ? {
-        transform: `perspective(1600px) rotateY(${tilt.x * 4}deg) rotateX(${tilt.y * -4}deg) scale(1.14) translate(${tilt.x * 1.6}%, ${tilt.y * 1.6}%)`,
+        // Ângulos e deslocamento maiores (4→7deg, 1.6→2.8%) para o efeito ser
+        // claramente percetível; o overscan sobe em conjunto (1.14→1.2) para a
+        // rotação continuar a não revelar o fundo nos cantos.
+        transform: `perspective(1400px) rotateY(${tilt.x * 7}deg) rotateX(${tilt.y * -7}deg) scale(1.2) translate(${tilt.x * 2.8}%, ${tilt.y * 2.8}%)`,
         transformOrigin: 'center center',
-        transition: 'transform 0.09s ease-out',
+        transition: 'transform 0.12s cubic-bezier(0.22, 0.61, 0.36, 1)',
+        willChange: 'transform',
       }
     : {}
 
@@ -1932,6 +2130,19 @@ export default function Room({
           </div>
         )}
 
+        {/* Festa de quem acerta no quiz: taça + fogo de artifício (~4.5s). */}
+        {winnerFx && (
+          <div className="winner-overlay" aria-hidden>
+            {Array.from({ length: 14 }, (_, i) => (
+              <span key={i} className={`fw p${i % 7}`} style={{ animationDelay: `${(i % 5) * 0.25}s` }} />
+            ))}
+            <div className="winner-card">
+              <span className="winner-trophy">🏆</span>
+              <strong>Acertaste!</strong>
+            </div>
+          </div>
+        )}
+
         {wbOpen && (
           <Whiteboard
             strokes={wbStrokes}
@@ -2040,7 +2251,17 @@ export default function Room({
                 <CloseIcon />
               </button>
             </div>
-            <p className="muted small">Partilha este link com quem quiseres incluir na reunião.</p>
+            <button
+              className="ready-add-btn"
+              onClick={() => {
+                setPanel('people')
+                sessionStorage.setItem(`dx_ready_${code}`, '1')
+                setReadyOpen(false)
+              }}
+            >
+              <PeopleIcon /> Adicionar participantes
+            </button>
+            <p className="muted small ready-or">Ou partilhe este link da reunião com as outras pessoas que quer incluir na reunião.</p>
             <div className="ready-link">
               <span className="mono">{`${location.host}/#/r/${code}`}</span>
               <button
@@ -2058,7 +2279,7 @@ export default function Room({
             </div>
             <p className="muted small ready-note">
               🛡 {waitingRoomOn
-                ? 'Quem usar o link terá de pedir autorização para participar.'
+                ? 'As pessoas que utilizarem este link terão de pedir autorização para participar.'
                 : 'Quem tiver o link e sessão iniciada entra diretamente.'}
             </p>
             <p className="muted small">A participar como <strong>{currentUser()?.username ?? 'eu'}</strong></p>
@@ -2263,7 +2484,7 @@ export default function Room({
                       {p.canAdmit ? '🛡 ✓' : '🛡 +'}
                     </button>
                   )}
-                  {isHost && hostShareOnly && !p.host && (
+                  {isHost && !p.host && (
                     <button
                       className="share-grant-btn"
                       title={sharePerms.has(p.peerId) ? 'Revogar permissão de partilha' : 'Permitir que partilhe ecrã'}
@@ -2454,9 +2675,9 @@ export default function Room({
               ) : isHost ? (
                 <div className="timer-presets">
                   {[5, 10, 15, 30, 60].map((m) => (
-                    <button key={m} className="btn-sm ghost" onClick={() => signalRef.current?.send({ type: 'timer-set', minutes: m })}>
+                    <Btn key={m} variant="ghost" onClick={() => signalRef.current?.send({ type: 'timer-set', minutes: m })}>
                       {m} min
-                    </button>
+                    </Btn>
                   ))}
                 </div>
               ) : (
@@ -2475,34 +2696,72 @@ export default function Room({
                     onChange={(e) => setPollQ(e.target.value)}
                   />
                   {pollOpts.map((o, i) => (
-                    <input
-                      key={i}
-                      placeholder={`Opção ${i + 1}`}
-                      maxLength={80}
-                      value={o}
-                      onChange={(e) => setPollOpts(pollOpts.map((x, j) => (j === i ? e.target.value : x)))}
-                    />
+                    <div key={i} className="poll-opt-edit">
+                      <input
+                        placeholder={`Opção ${i + 1}`}
+                        maxLength={80}
+                        value={o}
+                        onChange={(e) => setPollOpts(pollOpts.map((x, j) => (j === i ? e.target.value : x)))}
+                      />
+                      <label
+                        className={pollCorrect === i ? 'poll-correct-pick on' : 'poll-correct-pick'}
+                        title="Marcar como resposta certa (modo quiz)"
+                      >
+                        <input
+                          type="radio"
+                          name="poll-correct"
+                          checked={pollCorrect === i}
+                          onChange={() => setPollCorrect(i)}
+                        />
+                        ✓
+                      </label>
+                    </div>
                   ))}
                   <div className="poll-create-actions">
                     {pollOpts.length < 6 && (
-                      <button className="btn-sm ghost" onClick={() => setPollOpts([...pollOpts, ''])}>
+                      <Btn variant="ghost" onClick={() => setPollOpts([...pollOpts, ''])}>
                         + opção
-                      </button>
+                      </Btn>
+                    )}
+                    <SelectCtl
+                      className="poll-dur"
+                      title="Duração da votação (quiz com tempo)"
+                      value={pollDur}
+                      onChange={(e) => setPollDur(Number(e.target.value))}
+                    >
+                      <option value={0}>Sem tempo</option>
+                      <option value={30}>30 s</option>
+                      <option value={60}>1 min</option>
+                      <option value={120}>2 min</option>
+                      <option value={300}>5 min</option>
+                    </SelectCtl>
+                    {pollCorrect != null && (
+                      <Btn variant="ghost" title="Sondagem normal (sem resposta certa)" onClick={() => setPollCorrect(null)}>
+                        limpar certa
+                      </Btn>
                     )}
                     <button
                       className="btn-sm"
                       disabled={!pollQ.trim() || pollOpts.filter((o) => o.trim()).length < 2}
                       onClick={() => {
+                        // O índice da certa refere-se à lista FILTRADA (opções
+                        // vazias saem — remapeia para não apontar à errada).
+                        const opts = pollOpts.map((o, i) => ({ o: o.trim(), i })).filter((x) => x.o)
+                        const correctIdx = pollCorrect != null ? opts.findIndex((x) => x.i === pollCorrect) : -1
                         signalRef.current?.send({
                           type: 'poll-create',
                           question: pollQ,
-                          options: pollOpts.filter((o) => o.trim()),
+                          options: opts.map((x) => x.o),
+                          correct_option: correctIdx >= 0 ? correctIdx : null,
+                          duration_secs: pollDur || null,
                         })
                         setPollQ('')
                         setPollOpts(['', ''])
+                        setPollCorrect(null)
+                        setPollDur(0)
                       }}
                     >
-                      Lançar sondagem
+                      {pollCorrect != null ? 'Lançar quiz' : 'Lançar sondagem'}
                     </button>
                   </div>
                 </div>
@@ -2510,20 +2769,32 @@ export default function Room({
               {polls.length === 0 && <p className="muted small">Ainda sem sondagens.</p>}
               {[...polls].reverse().map((p) => {
                 const total = p.counts.reduce((a, b) => a + b, 0)
+                const revealed = !p.open && p.correct != null
+                const remaining =
+                  p.open && p.ends_at ? Math.max(0, Math.ceil((p.ends_at - pollNow) / 1000)) : null
                 return (
                   <div key={p.id} className="poll-card">
                     <div className="poll-head">
                       <strong>{p.question}</strong>
-                      <span className="muted small">{p.by} · {total} voto{total === 1 ? '' : 's'}{p.open ? '' : ' · encerrada'}</span>
+                      <span className="muted small">
+                        {p.by} · {total} voto{total === 1 ? '' : 's'}{p.open ? '' : ' · encerrada'}
+                        {remaining != null && <span className="poll-countdown mono"> · ⏳ {remaining}s</span>}
+                      </span>
                     </div>
                     {p.options.map((opt, i) => {
                       const pct = total ? Math.round((p.counts[i] / total) * 100) : 0
                       const mine = myVotes[p.id] === i
+                      const cls = [
+                        'poll-opt',
+                        mine ? 'mine' : '',
+                        revealed && i === p.correct ? 'correct' : '',
+                        revealed && mine && i !== p.correct ? 'wrong' : '',
+                      ].filter(Boolean).join(' ')
                       return (
                         <button
                           key={i}
-                          className={mine ? 'poll-opt mine' : 'poll-opt'}
-                          disabled={!p.open}
+                          className={cls}
+                          disabled={!p.open || (p.ends_at != null && pollNow > p.ends_at)}
                           onClick={() => {
                             signalRef.current?.send({ type: 'poll-vote', poll: p.id, option: i })
                             setMyVotes({ ...myVotes, [p.id]: i })
@@ -2531,12 +2802,19 @@ export default function Room({
                         >
                           <span className="poll-bar" style={{ width: `${pct}%` }} />
                           <span className="poll-opt-label">
-                            {mine ? '● ' : ''}{opt}
+                            {revealed && i === p.correct ? '✅ ' : mine ? '● ' : ''}{opt}
                           </span>
                           <span className="poll-opt-count mono">{p.counts[i]} · {pct}%</span>
                         </button>
                       )
                     })}
+                    {revealed && (
+                      <p className="poll-quiz-totals">
+                        <span className="ok">✅ {p.total_right} certa{p.total_right === 1 ? '' : 's'}</span>
+                        {' · '}
+                        <span className="bad">❌ {p.total_wrong} errada{p.total_wrong === 1 ? '' : 's'}</span>
+                      </p>
+                    )}
                     {isHost && p.open && (
                       <button className="link small-link" onClick={() => signalRef.current?.send({ type: 'poll-close', poll: p.id })}>
                         Encerrar sondagem
@@ -2564,7 +2842,7 @@ export default function Room({
                   value={qaInput}
                   onChange={(e) => setQaInput(e.target.value)}
                 />
-                <button className="btn-sm" disabled={!qaInput.trim()}>Enviar</button>
+                <Btn disabled={!qaInput.trim()}>Enviar</Btn>
               </form>
               {questions.length === 0 && <p className="muted small">Ainda sem perguntas.</p>}
               {questions.map((q) => (
@@ -2607,6 +2885,12 @@ export default function Room({
               <button className="panel-close" onClick={() => setPanel('none')}><CloseIcon /></button>
             </div>
             <div className="settings-body">
+              {/* Ordem do template: Tema primeiro, depois dispositivos, ruído e fundo. */}
+              <div className="bg-section">
+                <span className="set-label">Tema</span>
+                <small className="muted">Escolhe o aspeto da aplicação.</small>
+                <ThemePicker />
+              </div>
               <label className="set-label">
                 Microfone
                 <select value={micId} onChange={(e) => void switchMic(e.target.value)}>
@@ -2633,6 +2917,22 @@ export default function Room({
                 </select>
               </label>
 
+              <label className="set-label">
+                Traduzir legendas (IA local)
+                <select value={ccLang} onChange={(e) => setCcLang(e.target.value)}>
+                  <option value="">Sem tradução — idioma original</option>
+                  <option value="pt">Português</option>
+                  <option value="en">English</option>
+                  <option value="fr">Français</option>
+                  <option value="es">Español</option>
+                  <option value="de">Deutsch</option>
+                </select>
+                <small className="muted">
+                  As legendas (CC) chegam no idioma original e são substituídas
+                  pela tradução do LLM local — nada sai do servidor.
+                </small>
+              </label>
+
               <label className="set-toggle">
                 <input type="checkbox" checked={noiseSuppression} onChange={() => void toggleNoiseSuppression()} />
                 <span>
@@ -2640,11 +2940,6 @@ export default function Room({
                   <small>RNNoise remove teclado, ventoinha e ruído de fundo — muito além da supressão do browser.</small>
                 </span>
               </label>
-              <div className="bg-section">
-                <span className="set-label">Tema</span>
-                <small className="muted">Escolhe o aspeto da aplicação.</small>
-                <ThemePicker />
-              </div>
               <div className="bg-section">
                 <span className="set-label">Fundo {bgBusy ? '· a aplicar…' : ''}</span>
                 <small className="muted">
@@ -2862,6 +3157,131 @@ export default function Room({
           </div>
         )}
 
+        {ctrlAsk && (
+          <div className="admit-card" role="dialog" aria-label="Pedido de controlo remoto">
+            <div className="admit-row">
+              <span className="admit-avatar" aria-hidden>🎮</span>
+              <span className="admit-name">
+                <strong>{ctrlAsk.username}</strong>
+                <small>pede controlo remoto da tua tela partilhada</small>
+              </span>
+              <button
+                className="admit-deny"
+                onClick={() => {
+                  signalRef.current?.send({ type: 'remote-control', to: ctrlAsk.from, action: 'deny', payload: null })
+                  setCtrlAsk(null)
+                }}
+              >
+                Recusar
+              </button>
+              <button
+                className="admit-accept"
+                onClick={() => {
+                  signalRef.current?.send({ type: 'remote-control', to: ctrlAsk.from, action: 'accept', payload: null })
+                  setCtrlAsk(null)
+                }}
+              >
+                Aceitar
+              </button>
+            </div>
+          </div>
+        )}
+
+        {shareAsk && isHost && (
+          <div className="admit-card" role="dialog" aria-label="Pedido de partilha de ecrã">
+            <div className="admit-row">
+              <span className="admit-avatar" aria-hidden>🖥</span>
+              <span className="admit-name">
+                <strong>{shareAsk.username}</strong>
+                <small>quer partilhar o ecrã</small>
+              </span>
+              <button
+                className="admit-deny"
+                onClick={() => {
+                  signalRef.current?.send({ type: 'share-grant', to: shareAsk.from, allowed: false })
+                  setShareAsk(null)
+                }}
+              >
+                Negar
+              </button>
+              <button
+                className="admit-accept"
+                onClick={() => {
+                  signalRef.current?.send({ type: 'share-grant', to: shareAsk.from, allowed: true })
+                  setShareAsk(null)
+                }}
+              >
+                Permitir
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Sondagem/quiz publicada a TODOS: cartão flutuante para votar sem
+            abrir o painel; após o fecho mostra a revelação por uns segundos. */}
+        {(() => {
+          const p = [...polls]
+            .reverse()
+            .find((x) => !pollDismissed[x.id] && (x.open || (revealUntil[x.id] ?? 0) > pollNow))
+          if (!p) return null
+          const total = p.counts.reduce((a, b) => a + b, 0)
+          const revealed = !p.open && p.correct != null
+          const remaining =
+            p.open && p.ends_at ? Math.max(0, Math.ceil((p.ends_at - pollNow) / 1000)) : null
+          return (
+            <div className="admit-card poll-popup" role="dialog" aria-label="Sondagem">
+              <div className="admit-card-head">
+                <span className="admit-card-title">
+                  {p.correct != null || revealed ? '🏅 Quiz' : '📊 Sondagem'} · {p.by}
+                  {remaining != null && <span className="poll-countdown mono"> · ⏳ {remaining}s</span>}
+                </span>
+                <button
+                  className="panel-close"
+                  aria-label="Dispensar"
+                  onClick={() => setPollDismissed((m) => ({ ...m, [p.id]: true }))}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+              <strong className="poll-popup-q">{p.question}</strong>
+              {p.options.map((opt, i) => {
+                const pct = total ? Math.round((p.counts[i] / total) * 100) : 0
+                const mine = myVotes[p.id] === i
+                const cls = [
+                  'poll-opt',
+                  mine ? 'mine' : '',
+                  revealed && i === p.correct ? 'correct' : '',
+                  revealed && mine && i !== p.correct ? 'wrong' : '',
+                ].filter(Boolean).join(' ')
+                return (
+                  <button
+                    key={i}
+                    className={cls}
+                    disabled={!p.open || (p.ends_at != null && pollNow > p.ends_at)}
+                    onClick={() => {
+                      signalRef.current?.send({ type: 'poll-vote', poll: p.id, option: i })
+                      setMyVotes({ ...myVotes, [p.id]: i })
+                    }}
+                  >
+                    <span className="poll-bar" style={{ width: `${pct}%` }} />
+                    <span className="poll-opt-label">
+                      {revealed && i === p.correct ? '✅ ' : mine ? '● ' : ''}{opt}
+                    </span>
+                    <span className="poll-opt-count mono">{p.counts[i]} · {pct}%</span>
+                  </button>
+                )
+              })}
+              {revealed && (
+                <p className="poll-quiz-totals">
+                  <span className="ok">✅ {p.total_right} certa{p.total_right === 1 ? '' : 's'}</span>
+                  {' · '}
+                  <span className="bad">❌ {p.total_wrong} errada{p.total_wrong === 1 ? '' : 's'}</span>
+                </p>
+              )}
+            </div>
+          )
+        })()}
+
         {recNotice && (
           <div className="toast rec-start-toast" role="status">
             <span className="rec-dot big" />
@@ -2996,14 +3416,22 @@ export default function Room({
           </div>
           <Ctrl
             label={
-              hostShareOnly && !isHost && !shareAllowed
-                ? 'Partilha restrita — pede ao anfitrião para permitir'
+              !isHost && !shareAllowed && !sharing
+                ? 'Partilhar ecrã (requer autorização do anfitrião)'
                 : 'Partilhar ecrã'
             }
             active={sharing}
             onClick={() => {
-              if (hostShareOnly && !isHost && !shareAllowed) {
-                setStatus('Partilha restrita ao anfitrião — pede-lhe para te dar permissão na lista de participantes')
+              // Não-anfitrião sem grant: pede autorização ao anfitrião e a
+              // partilha arranca sozinha quando o grant chegar.
+              if (!sharing && !isHost && !shareAllowed) {
+                if (hostShareOnly) {
+                  setStatus('Só o anfitrião pode partilhar o ecrã nesta reunião')
+                  return
+                }
+                pendingShareRef.current = true
+                signalRef.current?.send({ type: 'share-request' })
+                setStatus('Pedido de partilha enviado ao anfitrião — aguarda autorização')
                 return
               }
               void toggleShare()
@@ -3028,12 +3456,37 @@ export default function Room({
                 <button
                   className="device-item"
                   onClick={() => {
-                    setViewMode(viewMode === 'grid' ? 'stage' : 'grid')
+                    setViewMode('grid')
+                    setPinnedId(null)
                     setMoreOpen(false)
                   }}
                 >
-                  ▦ Ajustar vista: {viewMode === 'grid' ? 'Orador em palco' : 'Grelha'}
+                  <span style={{ opacity: effectiveViewMode === 'grid' && !presentation ? 1 : 0.4, marginRight: 4 }}>✓</span>▦ Grelha
                 </button>
+                <button
+                  className="device-item"
+                  onClick={() => {
+                    setViewMode('stage')
+                    setMoreOpen(false)
+                  }}
+                >
+                  <span style={{ opacity: effectiveViewMode === 'stage' && !presentation ? 1 : 0.4, marginRight: 4 }}>✓</span>▮ Orador em palco
+                </button>
+                {presentation && <>
+                  <button
+                    className="device-item"
+                    onClick={() => { setPresLayout('bottom'); setMoreOpen(false) }}
+                  >
+                    <span style={{ opacity: presLayout === 'bottom' ? 1 : 0.4, marginRight: 4 }}>✓</span>⬓ Apresentação — plateia em baixo
+                  </button>
+                  <button
+                    className="device-item"
+                    onClick={() => { setPresLayout('side'); setMoreOpen(false) }}
+                  >
+                    <span style={{ opacity: presLayout === 'side' ? 1 : 0.4, marginRight: 4 }}>✓</span>◧ Apresentação — lado a lado
+                  </button>
+                </>}
+                <div className="device-sep" />
                 <button
                   className="device-item"
                   onClick={() => {
@@ -3088,6 +3541,12 @@ export default function Room({
                   {hideNoVideo ? '👥 Mostrar participantes sem vídeo' : '🫥 Ocultar participantes sem vídeo'}
                 </button>
                 <button
+                  className="device-item"
+                  onClick={() => void toggleParallax()}
+                >
+                  <span style={{ opacity: parallax ? 1 : 0.4, marginRight: 4 }}>✓</span>🎲 Efeito de sala 3D
+                </button>
+                <button
                   className="device-item device-action"
                   onClick={() => {
                     setPanel('settings')
@@ -3108,60 +3567,6 @@ export default function Room({
         </div>
 
         <div className="bar-right">
-          <div className="layout-picker">
-            <Ctrl
-              plain
-              label="Esquema da vista"
-              active={layoutMenu || viewMode === 'stage'}
-              onClick={() => setLayoutMenu((v) => !v)}
-            >
-              <StageIcon />
-            </Ctrl>
-            {layoutMenu && (
-              <>
-                <div className="menu-backdrop" onClick={() => setLayoutMenu(false)} />
-                <div className="device-menu layout-menu">
-                  <div className="layout-menu-title">Esquema</div>
-                  <button
-                    className={effectiveViewMode === 'grid' && !presentation ? 'layout-opt active' : 'layout-opt'}
-                    onClick={() => { setViewMode('grid'); setPinnedId(null); setLayoutMenu(false) }}
-                  >
-                    <span className="layout-ico">▦</span>
-                    <span><strong>Galeria</strong><small>Todos em grelha</small></span>
-                  </button>
-                  <button
-                    className={effectiveViewMode === 'stage' && !presentation ? 'layout-opt active' : 'layout-opt'}
-                    onClick={() => { setViewMode('stage'); setLayoutMenu(false) }}
-                  >
-                    <span className="layout-ico">▮</span>
-                    <span><strong>Orador em palco</strong><small>Foco em quem fala</small></span>
-                  </button>
-                  {presentation && (
-                    <>
-                      <div className="layout-menu-sep" />
-                      <button
-                        className={presLayout === 'bottom' ? 'layout-opt active' : 'layout-opt'}
-                        onClick={() => { setPresLayout('bottom'); setLayoutMenu(false) }}
-                      >
-                        <span className="layout-ico">⬓</span>
-                        <span><strong>Apresentação</strong><small>Plateia em baixo</small></span>
-                      </button>
-                      <button
-                        className={presLayout === 'side' ? 'layout-opt active' : 'layout-opt'}
-                        onClick={() => { setPresLayout('side'); setLayoutMenu(false) }}
-                      >
-                        <span className="layout-ico">◧</span>
-                        <span><strong>Lado a lado</strong><small>Plateia à direita</small></span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-          <Ctrl plain label={parallax ? 'Desligar efeito 3D' : 'Efeito de sala 3D'} active={parallax} onClick={() => void toggleParallax()}>
-            <CubeIcon />
-          </Ctrl>
           <Ctrl
             plain
             label="Quadro branco colaborativo"
@@ -3169,7 +3574,7 @@ export default function Room({
             onClick={() => {
               const next = !wbOpen
               setWbOpen(next)
-              // Fechar propaga a todos; abrir é local (aparece nos outros quando desenho).
+              if (next && (sharing || isHost)) signalRef.current?.send({ type: 'wb-open' })
               if (!next) signalRef.current?.send({ type: 'wb-close' })
             }}
           >
@@ -3194,9 +3599,6 @@ export default function Room({
           <Ctrl plain label="Chat" active={panel === 'chat'} onClick={() => { setPanel(panel === 'chat' ? 'none' : 'chat'); setUnreadChat(0) }}>
             <ChatIcon />
             {unreadChat > 0 && <span className="badge unread-badge">{unreadChat > 9 ? '9+' : unreadChat}</span>}
-          </Ctrl>
-          <Ctrl plain label="Definições" active={panel === 'settings'} onClick={() => setPanel(panel === 'settings' ? 'none' : 'settings')}>
-            <SettingsIcon />
           </Ctrl>
         </div>
       </footer>
@@ -3454,11 +3856,111 @@ function PresentationTile({ stream, label, own, onRequestControl }: { stream: Me
     },
     [stream, own],
   )
+
+  // ---- Zoom & pan estilo Meet na tela partilhada ----
+  // Roda do rato/duplo-clique amplia (centrado no cursor); com zoom, arrasta-se
+  // para navegar. O pan é limitado para as margens do vídeo nunca entrarem.
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+  const [zoom, setZoomState] = useState(1)
+  const [pan, setPanState] = useState({ x: 0, y: 0 })
+  const [panning, setPanning] = useState(false)
+  const zoomRef = useRef(1)
+  const panRef = useRef({ x: 0, y: 0 })
+  const dragRef = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null)
+
+  const applyZoom = useCallback((next: number, cx?: number, cy?: number) => {
+    const el = viewportRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const z0 = zoomRef.current
+    const z = Math.min(4, Math.max(1, next))
+    let { x, y } = panRef.current
+    // Zoom centrado no cursor: o ponto por baixo do rato fica no sítio.
+    if (cx != null && cy != null && z !== z0) {
+      const ox = cx - rect.left - rect.width / 2
+      const oy = cy - rect.top - rect.height / 2
+      x = (x - ox) * (z / z0) + ox
+      y = (y - oy) * (z / z0) + oy
+    }
+    const maxX = (rect.width * (z - 1)) / 2
+    const maxY = (rect.height * (z - 1)) / 2
+    x = z === 1 ? 0 : Math.min(maxX, Math.max(-maxX, x))
+    y = z === 1 ? 0 : Math.min(maxY, Math.max(-maxY, y))
+    zoomRef.current = z
+    panRef.current = { x, y }
+    setZoomState(z)
+    setPanState({ x, y })
+  }, [])
+
+  // Listener nativo: o onWheel do React é passive → sem preventDefault a
+  // página fazia scroll em vez de zoom.
+  useEffect(() => {
+    const el = viewportRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
+      applyZoom(zoomRef.current * factor, e.clientX, e.clientY)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [applyZoom])
+
+  // Nova apresentação → repõe o zoom.
+  useEffect(() => {
+    zoomRef.current = 1
+    panRef.current = { x: 0, y: 0 }
+    setZoomState(1)
+    setPanState({ x: 0, y: 0 })
+  }, [stream])
+
   return (
     <div className="tile presentation">
-      <video ref={attach} autoPlay playsInline muted />
+      <div
+        ref={viewportRef}
+        className={zoom > 1 ? (panning ? 'pres-viewport panning' : 'pres-viewport pannable') : 'pres-viewport'}
+        onPointerDown={(e) => {
+          if (zoomRef.current <= 1) return
+          e.currentTarget.setPointerCapture?.(e.pointerId)
+          dragRef.current = { sx: e.clientX, sy: e.clientY, px: panRef.current.x, py: panRef.current.y }
+          setPanning(true)
+        }}
+        onPointerMove={(e) => {
+          const d = dragRef.current
+          const el = viewportRef.current
+          if (!d || !el) return
+          const rect = el.getBoundingClientRect()
+          const z = zoomRef.current
+          const maxX = (rect.width * (z - 1)) / 2
+          const maxY = (rect.height * (z - 1)) / 2
+          const x = Math.min(maxX, Math.max(-maxX, d.px + (e.clientX - d.sx)))
+          const y = Math.min(maxY, Math.max(-maxY, d.py + (e.clientY - d.sy)))
+          panRef.current = { x, y }
+          setPanState({ x, y })
+        }}
+        onPointerUp={() => { dragRef.current = null; setPanning(false) }}
+        onPointerCancel={() => { dragRef.current = null; setPanning(false) }}
+        onDoubleClick={(e) => applyZoom(zoomRef.current > 1 ? 1 : 2, e.clientX, e.clientY)}
+      >
+        <video
+          ref={attach}
+          autoPlay
+          playsInline
+          muted
+          style={{
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transition: panning ? 'none' : 'transform 0.15s ease-out',
+          }}
+        />
+      </div>
       {!own && <audio ref={attachAudio} autoPlay />}
       <span className="tile-name">🖥 {label}</span>
+      <div className="pres-zoom-ctrls" role="group" aria-label="Zoom da apresentação">
+        <button title="Reduzir" onClick={() => applyZoom(zoomRef.current / 1.25)}>−</button>
+        <span className="mono">{Math.round(zoom * 100)}%</span>
+        <button title="Ampliar" onClick={() => applyZoom(zoomRef.current * 1.25)}>+</button>
+        {zoom > 1 && <button title="Repor (100%)" onClick={() => applyZoom(1)}>⟲</button>}
+      </div>
       <button
         className="pres-fs-btn"
         title="Ecrã inteiro"

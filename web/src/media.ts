@@ -453,9 +453,10 @@ export class HeadTracker {
           // Centro da cabeça -> offset [-1..1]. Câmara é espelhada => invert x.
           const tx = -(cx - 0.5) * 2
           const ty = (cy - 0.5) * 2
-          // Suavização exponencial.
-          this.x += (tx - this.x) * 0.25
-          this.y += (ty - this.y) * 0.25
+          // Suavização exponencial — 0.35 dá resposta mais direta ao movimento
+          // da cabeça (0.25 sentia-se "a nadar") sem tremer.
+          this.x += (tx - this.x) * 0.35
+          this.y += (ty - this.y) * 0.35
           this.onUpdate?.(this.x, this.y)
         }
       } catch {

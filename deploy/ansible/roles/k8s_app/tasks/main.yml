@@ -149,6 +149,25 @@
   loop: [50-data.yaml, 02-server.yaml, 03-web.yaml]
   changed_when: false
 
+# ---- Ollama (LLM local: tradução de legendas + resumo MoM) ----
+- name: "Copiar + aplicar Ollama"
+  when: ollama_enabled
+  block:
+    - name: "Copiar manifesto Ollama"
+      ansible.builtin.copy:
+        src: "{{ _k8s_dir }}/07-ollama.yaml"
+        dest: "{{ _tmp }}/07-ollama.yaml"
+    - name: "Aplicar Ollama"
+      ansible.builtin.command: "kubectl --kubeconfig={{ _kubeconfig }} apply -f {{ _tmp }}/07-ollama.yaml"
+      changed_when: false
+    # GPU (opcional): acrescenta nvidia.com/gpu ao deployment sem duplicar YAML.
+    - name: "Ollama em GPU (patch nvidia.com/gpu)"
+      when: ollama_gpu
+      ansible.builtin.command: >-
+        kubectl --kubeconfig={{ _kubeconfig }} -n delonix-meet patch deployment delonix-ollama
+        --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/resources/limits/nvidia.com~1gpu","value":"1"}]'
+      changed_when: false
+
 # ---- Ingress (domínio + cert-manager quando LE) ----
 - name: "Render + aplicar Ingress"
   ansible.builtin.template:
