@@ -3049,6 +3049,36 @@ button.link:hover {
 .integ-panel { /* inner panel — no extra card wrapper */ }
 .integ-panel .dash-card-head { margin-bottom: 0.6rem; }
 
+/* ---- Painel Odoo ---- */
+.odoo-panel { display: flex; flex-direction: column; gap: 0.9rem; padding: 0.2rem 0; }
+.odoo-desc { margin: 0 0 0.4rem; }
+.odoo-sep { border: none; border-top: 1px solid var(--border); margin: 0.4rem 0; }
+.odoo-hint { margin: -0.5rem 0 0; color: var(--muted); }
+.odoo-save { align-self: flex-start; margin-top: 0.4rem; }
+.odoo-sync-at { margin-top: 0.3rem; }
+.odoo-token-section { display: flex; flex-direction: column; gap: 0.5rem; }
+.token-row { display: flex; align-items: center; gap: 0.6rem; }
+.token-prefix { font-family: var(--font-mono); font-size: 0.85rem; background: var(--surface-2); padding: 0.2rem 0.5rem; border-radius: 4px; }
+.token-reveal { background: rgba(61,191,122,.08); border: 1px solid var(--success); border-radius: 7px; padding: 0.7rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.token-copy-row { display: flex; align-items: center; gap: 0.6rem; }
+.token-full { font-family: var(--font-mono); font-size: 0.78rem; word-break: break-all; flex: 1; color: var(--success); }
+.field-label.bold { font-weight: 600; }
+.field-row { display: flex; align-items: center; gap: 0.8rem; }
+.field-row .field-label { flex: 1; font-size: 0.9rem; color: var(--text-2); }
+.field-row .field-input { flex: 1.5; }
+.switch-wrap { display: flex; align-items: center; cursor: pointer; }
+.switch-wrap input[type=checkbox] { display: none; }
+.switch-track {
+  width: 36px; height: 20px; background: var(--border); border-radius: 10px;
+  position: relative; transition: background 0.2s;
+}
+.switch-track::after {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 14px; height: 14px; border-radius: 50%; background: var(--text-2); transition: transform 0.2s;
+}
+.switch-wrap input:checked ~ .switch-track { background: var(--accent); }
+.switch-wrap input:checked ~ .switch-track::after { transform: translateX(16px); background: #fff; }
+
 /* ---- Consola: chaves de API ---- */
 .apikey-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0; border-top: 1px solid var(--border); }
 .apikey-prefix { font-family: var(--font-mono); font-size: 0.85rem; }
