@@ -929,6 +929,8 @@ button.link:hover {
 .btn-sm.ghost { background: var(--surface-2); color: var(--text); }
 .btn-sm.ghost:hover { background: var(--surface-3); box-shadow: none; }
 .btn-sm.danger { background: #c0392b; }
+.btn-sm.success { background: var(--ok, #2e9e5b); }
+.btn-sm.success:hover { filter: brightness(1.12); }
 .btn-sm.danger:hover { background: #e74c3c; box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4); }
 .icon-btn { background: none; color: var(--muted); padding: 0.4rem; border-radius: 4px; }
 .icon-btn:hover { color: #ff8a80; background: var(--surface-2); }
