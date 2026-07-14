@@ -68,12 +68,21 @@ mod tests {
 
     #[test]
     fn test_mask_profanity() {
-        assert_eq!(mask_profanity("isto é uma merda pegada"), "isto é uma ***** pegada");
-        assert_eq!(mask_profanity("that is pure shit man"), "that is pure **** man");
+        assert_eq!(
+            mask_profanity("isto é uma merda pegada"),
+            "isto é uma ***** pegada"
+        );
+        assert_eq!(
+            mask_profanity("that is pure shit man"),
+            "that is pure **** man"
+        );
         // Conservador: só palavras isoladas (fronteira \b) — compostos e
         // substrings inocentes NÃO são apanhados (evita falsos positivos).
         assert_eq!(mask_profanity("that is bullshit"), "that is bullshit");
-        assert_eq!(mask_profanity("a pucará e o cornaça"), "a pucará e o cornaça");
+        assert_eq!(
+            mask_profanity("a pucará e o cornaça"),
+            "a pucará e o cornaça"
+        );
         // Case-insensitive:
         assert_eq!(mask_profanity("MERDA total"), "***** total");
     }

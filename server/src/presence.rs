@@ -246,7 +246,9 @@ impl PresenceHub {
         // mesma sala não anulam os anteriores (evita falso "sala de espera").
         match self.calls.get_mut(&room_code) {
             Some(mut entry) => entry.targets.extend(targets),
-            None => { self.calls.insert(room_code, ActiveCall { caller, targets }); }
+            None => {
+                self.calls.insert(room_code, ActiveCall { caller, targets });
+            }
         }
     }
 
@@ -307,7 +309,9 @@ impl Drop for PresenceGuard {
             tokio::spawn(async move {
                 let co_members = crate::org::org_co_members(&state, user_id).await;
                 for uid in co_members {
-                    state.presence.send_or_publish(uid, CallServerMsg::UserOffline { user_id });
+                    state
+                        .presence
+                        .send_or_publish(uid, CallServerMsg::UserOffline { user_id });
                 }
             });
         }
@@ -334,7 +338,9 @@ async fn handle(state: Arc<AppState>, socket: WebSocket, user_id: Uuid, username
     // Notificar os colegas online que este utilizador acabou de entrar
     // (atualização incremental — cada nó entrega ao WS local ou publica no Redis).
     for uid in &co_members {
-        state.presence.send_or_publish(*uid, CallServerMsg::UserOnline { user_id });
+        state
+            .presence
+            .send_or_publish(*uid, CallServerMsg::UserOnline { user_id });
     }
 
     // Chamadas perdidas enquanto esteve offline (não vistas).
