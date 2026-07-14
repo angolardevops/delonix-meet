@@ -26,8 +26,16 @@ use crate::{auth::AuthUser, error::ApiError, AppState};
 
 // ---------- helpers ----------
 
-fn sha256_hex(s: &str) -> String {
+pub fn sha256_hex_pub(s: &str) -> String {
     hex::encode(Sha256::digest(s.as_bytes()))
+}
+
+fn sha256_hex(s: &str) -> String {
+    sha256_hex_pub(s)
+}
+
+pub fn gen_token_pub() -> String {
+    gen_token()
 }
 
 fn gen_token() -> String {
@@ -67,18 +75,32 @@ impl FromRequestParts<Arc<AppState>> for OdooTokenAuth {
             })
             .ok_or(ApiError::Unauthorized)?;
 
-        if !raw.starts_with("dlxo_") {
-            return Err(ApiError::Unauthorized);
-        }
         let hash = sha256_hex(&raw);
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT id FROM organizations
-             WHERE odoo_token_hash = $1 AND odoo_enabled = TRUE",
-        )
-        .bind(&hash)
-        .fetch_optional(&state.db)
-        .await?;
-        let (org_id,) = row.ok_or(ApiError::Unauthorized)?;
+
+        // Aceitar dlxo_ (token de integração Odoo) OU dlx_ (API key da org).
+        // O fluxo de auto-provisão via /admin/orgs gera uma dlx_ key que o
+        // módulo nk_delonix_meet usa diretamente sem passo extra de token.
+        let org_id: Option<Uuid> = if raw.starts_with("dlxo_") {
+            sqlx::query_scalar(
+                "SELECT id FROM organizations
+                 WHERE odoo_token_hash = $1 AND odoo_enabled = TRUE",
+            )
+            .bind(&hash)
+            .fetch_optional(&state.db)
+            .await?
+        } else if raw.starts_with("dlx_") {
+            sqlx::query_scalar(
+                "SELECT org_id FROM org_api_keys
+                 WHERE key_hash = $1 AND revoked_at IS NULL",
+            )
+            .bind(&hash)
+            .fetch_optional(&state.db)
+            .await?
+        } else {
+            return Err(ApiError::Unauthorized);
+        };
+
+        let org_id = org_id.ok_or(ApiError::Unauthorized)?;
         Ok(OdooTokenAuth { org_id })
     }
 }

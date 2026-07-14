@@ -21,6 +21,7 @@ mod room_tools;
 mod rooms;
 mod sfu;
 mod signaling;
+mod storage;
 mod users;
 mod voice;
 mod webhooks;
@@ -278,6 +279,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 // Integração Odoo: provisioning e listagem de utilizadores
                 .route("/integration/odoo/provision", post(odoo::provision))
                 .route("/integration/odoo/users", get(odoo::list_users))
+                // Storage remoto: TrueNAS NFS / Nextcloud WebDAV
+                .route("/platform/storage", get(storage::get_storage).put(storage::save_storage))
+                .route("/platform/storage/test", post(storage::test_storage))
+                .route("/platform/storage/pvc-manifest", get(storage::pvc_manifest))
                 .layer(middleware::from_fn_with_state(
                     state.clone(),
                     rate_limit::v1_rate_limit,

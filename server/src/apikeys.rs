@@ -489,6 +489,16 @@ pub struct ProvisionOrgReq {
     /// Config OIDC a aplicar (opcional).
     #[serde(default)]
     pub sso: Option<ProvisionSso>,
+    /// Se `true`, activa a integração Odoo e devolve também um `dlxo_...` token
+    /// pronto a colar no módulo nk_delonix_meet. Requer `odoo_url` e `odoo_db`.
+    #[serde(default)]
+    pub setup_odoo: bool,
+    /// URL base da instância Odoo (ex.: `http://localhost:8090`).
+    #[serde(default)]
+    pub odoo_url: Option<String>,
+    /// Base de dados Odoo da empresa.
+    #[serde(default)]
+    pub odoo_db: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -500,6 +510,10 @@ pub struct ProvisionedOrg {
     pub api_key: String,
     /// True se uma config OIDC foi aplicada (fecha o SSO sem SQL manual).
     pub sso_configured: bool,
+    /// Token de integração Odoo (`dlxo_...`) — presente só se `setup_odoo=true`.
+    /// Mostrar uma vez ao utilizador: o servidor guarda apenas o hash.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub odoo_token: Option<String>,
 }
 
 /// Comparação em tempo constante para não abrir um oráculo de temporização
@@ -686,6 +700,31 @@ pub async fn v1_provision_org(
         }
     }
 
+    // Integração Odoo — activar e gerar dlxo_ token num só passo.
+    let odoo_token = if req.setup_odoo {
+        let raw = crate::odoo::gen_token_pub();
+        let hash = crate::odoo::sha256_hex_pub(&raw);
+        let prefix: String = raw.chars().take(12).collect();
+        let url = req.odoo_url.as_deref().unwrap_or("").trim();
+        let db = req.odoo_db.as_deref().unwrap_or("").trim();
+        sqlx::query(
+            "UPDATE organizations
+             SET odoo_enabled = TRUE, odoo_token_hash = $1, odoo_token_prefix = $2,
+                 odoo_url = NULLIF($3,''), odoo_db = NULLIF($4,'')
+             WHERE id = $5",
+        )
+        .bind(&hash)
+        .bind(&prefix)
+        .bind(url)
+        .bind(db)
+        .bind(org_id)
+        .execute(&state.db)
+        .await?;
+        Some(raw)
+    } else {
+        None
+    };
+
     crate::audit::log(
         &state.db,
         Some(org_id),
@@ -700,6 +739,7 @@ pub async fn v1_provision_org(
         name: name.to_string(),
         api_key: key,
         sso_configured,
+        odoo_token,
     }))
 }
 

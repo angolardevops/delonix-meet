@@ -590,6 +590,42 @@ export interface PlatformSettings {
 export const getPlatformSettings = () =>
   fetch('/api/public/settings').then((r) => r.json() as Promise<PlatformSettings>)
 
+// ---------- Platform storage ----------
+
+export interface StorageConfig {
+  storage_type: 'local' | 'nfs' | 'webdav'
+  nfs_server: string | null
+  nfs_path: string | null
+  webdav_url: string | null
+  webdav_user: string | null
+  webdav_password_set: boolean
+  webdav_path: string
+}
+
+export interface StorageConfigSaveReq {
+  storage_type: string
+  nfs_server?: string
+  nfs_path?: string
+  webdav_url?: string
+  webdav_user?: string
+  webdav_password?: string
+  webdav_path?: string
+}
+
+export const getPlatformStorage = () =>
+  request<StorageConfig>('/api/v1/platform/storage')
+
+export const savePlatformStorage = (cfg: StorageConfigSaveReq) =>
+  request<{ ok: boolean }>('/api/v1/platform/storage', {
+    method: 'PUT',
+    body: JSON.stringify(cfg),
+  })
+
+export const testPlatformStorage = () =>
+  request<{ ok: boolean; type: string; message: string }>('/api/v1/platform/storage/test', {
+    method: 'POST',
+  })
+
 export function accessTokenValue(): string | null {
   return accessToken
 }

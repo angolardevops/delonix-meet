@@ -322,7 +322,21 @@ function ViewerBody({
 
   return (
     <div className="viewer-body">
-        {videoErr && <div className="error">{videoErr}</div>}
+        {videoErr && (
+          <div className="video-err-wrap">
+            <div className="error">{videoErr}</div>
+            <p className="muted small">{t('recordings.loadVideoHint')}</p>
+            <button
+              className="secondary small"
+              onClick={() => {
+                const a = document.createElement('a')
+                a.href = `/api/recordings/${rec.id}?dl=1`
+                a.download = rec.filename
+                a.click()
+              }}
+            >⬇ {t('recordings.download')}</button>
+          </div>
+        )}
         {!videoUrl && !videoErr && <p className="muted">{t('recordings.loadingVideo')}</p>}
         {videoUrl && (
           <div className="viewer-video-wrap">
