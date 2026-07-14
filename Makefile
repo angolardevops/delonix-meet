@@ -440,6 +440,31 @@ deploy-config: ## Cria deploy/config.yml a partir do exemplo (se não existir)
 	@[ -f deploy/config.yml ] && printf "$(Y)  deploy/config.yml já existe$(Z)\n" \
 	  || { cp deploy/config.example.yml deploy/config.yml; printf "$(G)  ✓ criado deploy/config.yml — edita-o$(Z)\n"; }
 
+# ---- PREPROD KAESO (kind remoto em 172.16.20.117) ----
+#  Fluxo: build local → export de imagens → Ansible SSH → kind load → apply manifests
+#  Pré-req: chave SSH ou --ask-become-pass (sysadmin@172.16.20.117)
+#
+#  make export-images   → gera /tmp/dlx-images/*.tar.gz (só build, sem deploy)
+#  make deploy-kaeso    → export-images + ansible (deploy completo)
+
+.PHONY: export-images
+export-images: image ## Exporta imagens Docker para /tmp/dlx-images/ (transfer. para kind remoto)
+	@printf "$(C)▶ a exportar imagens para /tmp/dlx-images/$(Z)\n"
+	@mkdir -p /tmp/dlx-images
+	@docker save $(IMAGE_SERVER) | gzip > /tmp/dlx-images/delonix-server.tar.gz
+	@docker save $(IMAGE_WEB)    | gzip > /tmp/dlx-images/delonix-web.tar.gz
+	@printf "$(G)  ✓ imagens exportadas:$(Z)\n"
+	@ls -lh /tmp/dlx-images/*.tar.gz
+
+.PHONY: deploy-kaeso
+deploy-kaeso: export-images ## Build + export + Ansible deploy no preprod kaeso (kind remoto)
+	@printf "$(C)▶ deploy preprod kaeso (172.16.20.117)$(Z)\n"
+	@cd deploy/ansible && ansible-playbook site.yml \
+	  -i inventory.ini \
+	  --limit kaeso01 \
+	  --ask-become-pass \
+	  $(ANSIBLE_ARGS)
+
 
 # ============================================================
 #  VOICE — camada de media do dial-in PSTN (opcional)

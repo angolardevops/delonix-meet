@@ -1,0 +1,68 @@
+# Ingress dual-domain — serve meet.kaeso.net (interno) e meet.kaeso.co (externo)
+# com o mesmo backend. TLS self-signed wildcard (secret delonix-tls).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: delonix-meet
+  namespace: delonix-meet
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # WebSocket /ws com afinidade por sala (SFU in-memory por pod)
+    nginx.ingress.kubernetes.io/upstream-hash-by: $arg_room
+    nginx.ingress.kubernetes.io/proxy-body-size: 512m
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - "{{ domain }}"
+{% if domain_external | length > 0 %}
+        - "{{ domain_external }}"
+{% endif %}
+      secretName: delonix-tls
+  rules:
+    - host: "{{ domain }}"
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: delonix-server, port: { number: 8180 } }
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service: { name: delonix-server-ws, port: { number: 8180 } }
+          - path: /rtc
+            pathType: Prefix
+            backend:
+              service: { name: delonix-server, port: { number: 8180 } }
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service: { name: delonix-server, port: { number: 8180 } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: delonix-web, port: { number: 80 } }
+{% if domain_external | length > 0 %}
+    - host: "{{ domain_external }}"
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: delonix-server, port: { number: 8180 } }
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service: { name: delonix-server-ws, port: { number: 8180 } }
+          - path: /rtc
+            pathType: Prefix
+            backend:
+              service: { name: delonix-server, port: { number: 8180 } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: delonix-web, port: { number: 80 } }
+{% endif %}

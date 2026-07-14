@@ -1,0 +1,31 @@
+# coturn — relay TURN para WebRTC no cluster kind
+# O IP do pod kind (10.244.x) não é alcançável de fora → coturn no host faz relay.
+# Configuração mínima para preprod.
+
+listening-port=3478
+tls-listening-port=5349
+
+# IP do servidor preprod
+listening-ip={{ public_ip_effective }}
+relay-ip={{ public_ip_effective }}
+external-ip={{ public_ip_effective }}
+
+realm={{ turn_realm }}
+server-name={{ domain }}
+
+use-auth-secret
+static-auth-secret={{ turn_secret }}
+
+# Portas relay RTP
+min-port={{ turn_min_port }}
+max-port={{ turn_max_port }}
+
+# Segurança: sem UDP mux (mais simples para preprod), sem loopback peers
+no-loopback-peers
+no-multicast-peers
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+
+log-file=/var/log/coturn/turnserver.log
+verbose
