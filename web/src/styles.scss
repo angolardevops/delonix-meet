@@ -3655,7 +3655,7 @@ button.link:hover {
 :root {
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
   --space-5: 24px; --space-6: 32px; --space-8: 48px;
-  --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px;
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px;
   --shadow-1: 0 2px 8px rgba(0, 0, 0, 0.18);
   --shadow-2: 0 16px 44px rgba(0, 0, 0, 0.42);
   --ring: 0 0 0 3px color-mix(in oklab, var(--accent) 40%, transparent);
@@ -3927,3 +3927,58 @@ button.link:hover {
   min-width: 16px; height: 16px; padding: 0 4px; display: inline-flex; align-items: center; justify-content: center;
   background: var(--accent, #c8201d); color: #fff; font-size: 0.62rem; font-weight: 700; border-radius: 9px; line-height: 1;
 }
+
+/* ============================================================
+   SISTEMA DE CONTROLO ÚNICO — uniformização global (14/07)
+   No FIM do ficheiro de propósito: à mesma especificidade, esta
+   camada vence os 280+ border-radius/tamanhos hardcoded acumulados.
+   3 tiers: botão de ação · botão-ícone quadrado · superfícies.
+   ============================================================ */
+:root { --ctl-h: 30px; }
+
+/* Tier 1 — botões de ação pequenos: MESMA altura, tipografia e raio
+   em toda a app (painéis da sala, dashboards, lobby, modais). */
+.btn-sm,
+.chip-btn,
+.seg-btn,
+.poll-dur,
+.admit-accept,
+.admit-deny,
+.lobby-admit,
+.integ-tab,
+.auth-tab,
+.tool-section .btn-sm.ghost {
+  height: var(--ctl-h);
+  padding: 0 12px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: 0.82rem; line-height: 1;
+  border-radius: var(--radius-sm);
+}
+.chip-btn { border-radius: var(--radius-sm); } /* deixa de ser pill */
+
+/* Tier 2 — botões-ícone quadrados (recusar, marcar certa, ações de linha). */
+.lobby-deny,
+.poll-correct-pick,
+.icon-btn {
+  height: var(--ctl-h); width: var(--ctl-h); padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm); flex: none;
+}
+
+/* Inputs/selects — raio único; altura única nos painéis de ferramentas. */
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+select,
+textarea {
+  border-radius: var(--radius-sm);
+}
+.tool-section input:not([type='radio']),
+.tool-section select,
+.qa-form input,
+.poll-create input {
+  height: var(--ctl-h); padding: 0 10px; font-size: 0.86rem;
+}
+
+/* Tier 3 — superfícies/cartões: raio médio único. */
+.dash-card, .kpi-card, .rec-card, .rec-item, .poll-card, .admit-card,
+.lobby-toggle, .shortcut-tile, .modal, .side-panel, .prejoin-card,
+.rec-split-viewer, .wb-card, .toast { border-radius: var(--radius-md); }
