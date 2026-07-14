@@ -351,13 +351,13 @@
     KUBECONFIG: "{{ kind_kubeconfig }}"
   changed_when: false
 
-- name: Configmap da app (overrides preprod)
+- name: ConfigMap + Secret da app (overrides preprod)
   ansible.builtin.template:
     src: app-configmap.yaml.j2
     dest: /tmp/dlx-configmap.yaml
-    mode: "0644"
+    mode: "0600"
 
-- name: Aplicar configmap
+- name: Aplicar ConfigMap e Secret
   ansible.builtin.command: kubectl apply -f /tmp/dlx-configmap.yaml
   environment:
     KUBECONFIG: "{{ kind_kubeconfig }}"
@@ -452,16 +452,37 @@
 # 11. PIN IMAGES + ROLLOUT
 # ============================================================
 
+# Recreate evita maxSurge em nó com poucos recursos (single-replica preprod)
+- name: Estratégia Recreate em single-replica
+  ansible.builtin.command: >-
+    kubectl patch deployment {{ item }} -n delonix-meet
+    -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  when: k8s_server_replicas | int == 1
+  loop:
+    - delonix-server
+    - delonix-web
+  changed_when: false
+
+# Remover deployment Ollama quando desligado (pode ter ficado de deploy anterior)
+- name: Remover Ollama quando desligado
+  ansible.builtin.command: kubectl delete deployment delonix-ollama -n delonix-meet --ignore-not-found
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  when: not (ollama_enabled | bool)
+  changed_when: false
+
 - name: Aguardar server rollout
   ansible.builtin.command: >-
-    kubectl rollout status deployment/delonix-server -n delonix-meet --timeout=300s
+    kubectl rollout status deployment/delonix-server -n delonix-meet --timeout=600s
   environment:
     KUBECONFIG: "{{ kind_kubeconfig }}"
   changed_when: false
 
 - name: Aguardar web rollout
   ansible.builtin.command: >-
-    kubectl rollout status deployment/delonix-web -n delonix-meet --timeout=180s
+    kubectl rollout status deployment/delonix-web -n delonix-meet --timeout=300s
   environment:
     KUBECONFIG: "{{ kind_kubeconfig }}"
   changed_when: false
