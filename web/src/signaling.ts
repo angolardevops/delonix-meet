@@ -12,6 +12,12 @@ export interface PollView {
   counts: number[]
   open: boolean
   by: string
+  /** Quiz: índice da certa — só chega depois de a sondagem fechar. */
+  correct: number | null
+  /** Quiz com tempo: epoch ms do fim da votação. */
+  ends_at: number | null
+  total_right: number
+  total_wrong: number
 }
 
 export interface QaView {
@@ -105,7 +111,7 @@ export type ClientMsg =
   | { type: 'share-grant'; to: string; allowed: boolean }
   | { type: 'share-request' }
   | { type: 'wb-open' }
-  | { type: 'poll-create'; question: string; options: string[] }
+  | { type: 'poll-create'; question: string; options: string[]; correct_option?: number | null; duration_secs?: number | null }
   | { type: 'poll-vote'; poll: string; option: number }
   | { type: 'poll-close'; poll: string }
   | { type: 'qa-ask'; text: string }
