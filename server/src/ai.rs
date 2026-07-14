@@ -122,11 +122,12 @@ pub fn spawn_mom_summary(state: Arc<AppState>, meeting_id: Uuid) {
             tracing::warn!(%meeting_id, "MoM AI: Ollama indisponível — mantém ata por regras");
             return;
         };
-        let _ = sqlx::query("UPDATE meetings SET minutes = $1, minutes_ai_at = now() WHERE id = $2")
-            .bind(summary.chars().take(200_000).collect::<String>())
-            .bind(meeting_id)
-            .execute(&state.db)
-            .await;
+        let _ =
+            sqlx::query("UPDATE meetings SET minutes = $1, minutes_ai_at = now() WHERE id = $2")
+                .bind(summary.chars().take(200_000).collect::<String>())
+                .bind(meeting_id)
+                .execute(&state.db)
+                .await;
         tracing::info!(%meeting_id, "MoM AI: ata resumida via Ollama");
         // Notifica integrações (ex.: nk_delonix_meet no Odoo) que o MoM final
         // está pronto — o webhook só acelera o pull; o cron do Odoo apanha na
@@ -172,7 +173,9 @@ pub async fn translate_caption(
     Json(req): Json<TranslateReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     if state.config.ollama_url.is_none() {
-        return Err(ApiError::BadRequest("tradução indisponível (sem LLM local)".into()));
+        return Err(ApiError::BadRequest(
+            "tradução indisponível (sem LLM local)".into(),
+        ));
     }
     let text: String = req.text.trim().chars().take(500).collect();
     if text.is_empty() {

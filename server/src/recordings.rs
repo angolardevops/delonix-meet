@@ -413,7 +413,14 @@ pub async fn create_link(
     .fetch_one(&state.db)
     .await?;
 
-    crate::audit::log(&state.db, None, auth.user_id, "recording.link_created", &id.to_string()).await;
+    crate::audit::log(
+        &state.db,
+        None,
+        auth.user_id,
+        "recording.link_created",
+        &id.to_string(),
+    )
+    .await;
     Ok(Json(link))
 }
 
@@ -461,7 +468,14 @@ pub async fn revoke_link(
         .bind(id)
         .execute(&state.db)
         .await?;
-    crate::audit::log(&state.db, None, auth.user_id, "recording.link_revoked", &id.to_string()).await;
+    crate::audit::log(
+        &state.db,
+        None,
+        auth.user_id,
+        "recording.link_revoked",
+        &id.to_string(),
+    )
+    .await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

@@ -137,7 +137,14 @@ pub async fn create(
     .bind(auth.user_id)
     .fetch_one(&state.db)
     .await?;
-    crate::audit::log(&state.db, Some(org_id), auth.user_id, "apikey.created", &name).await;
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "apikey.created",
+        &name,
+    )
+    .await;
     Ok(Json(CreatedKey {
         id,
         name,
@@ -157,7 +164,14 @@ pub async fn revoke(
         .bind(org_id)
         .execute(&state.db)
         .await?;
-    crate::audit::log(&state.db, Some(org_id), auth.user_id, "apikey.revoked", &key_id.to_string()).await;
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "apikey.revoked",
+        &key_id.to_string(),
+    )
+    .await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -371,14 +385,26 @@ pub async fn v1_meetings(
     .await?;
     let items: Vec<serde_json::Value> = rows
         .into_iter()
-        .map(|(id, title, description, kind, starts_at, duration_min, room_code, created_at, minutes_ai_at)| {
-            serde_json::json!({
-                "id": id, "title": title, "description": description, "kind": kind,
-                "starts_at": starts_at, "duration_min": duration_min,
-                "room_code": room_code, "created_at": created_at,
-                "minutes_ai_at": minutes_ai_at,
-            })
-        })
+        .map(
+            |(
+                id,
+                title,
+                description,
+                kind,
+                starts_at,
+                duration_min,
+                room_code,
+                created_at,
+                minutes_ai_at,
+            )| {
+                serde_json::json!({
+                    "id": id, "title": title, "description": description, "kind": kind,
+                    "starts_at": starts_at, "duration_min": duration_min,
+                    "room_code": room_code, "created_at": created_at,
+                    "minutes_ai_at": minutes_ai_at,
+                })
+            },
+        )
         .collect();
     Ok(Json(serde_json::json!({ "meetings": items })))
 }
@@ -390,18 +416,22 @@ pub async fn v1_meeting_notes(
     key: ApiKeyAuth,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let row: Option<(String, String, String, Option<chrono::DateTime<chrono::Utc>>)> =
-        sqlx::query_as(
-            "SELECT m.title, m.minutes, m.transcript, m.minutes_ai_at
+    let row: Option<(
+        String,
+        String,
+        String,
+        Option<chrono::DateTime<chrono::Utc>>,
+    )> = sqlx::query_as(
+        "SELECT m.title, m.minutes, m.transcript, m.minutes_ai_at
              FROM meetings m
              WHERE m.id = $1
                AND EXISTS (SELECT 1 FROM org_members om
                            WHERE om.org_id = $2 AND om.user_id = m.owner_id)",
-        )
-        .bind(id)
-        .bind(key.org_id)
-        .fetch_optional(&state.db)
-        .await?;
+    )
+    .bind(id)
+    .bind(key.org_id)
+    .fetch_optional(&state.db)
+    .await?;
     let Some((title, minutes, transcript, minutes_ai_at)) = row else {
         return Err(ApiError::NotFound);
     };
@@ -656,7 +686,14 @@ pub async fn v1_provision_org(
         }
     }
 
-    crate::audit::log(&state.db, Some(org_id), service_user_id, "org.provisioned", name).await;
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        service_user_id,
+        "org.provisioned",
+        name,
+    )
+    .await;
     Ok(Json(ProvisionedOrg {
         org_id,
         slug,

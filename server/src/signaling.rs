@@ -858,8 +858,7 @@ impl SignalingHub {
                         }
                         let (total_right, total_wrong) = match (p.open, p.correct) {
                             (false, Some(c)) => {
-                                let right =
-                                    p.votes.values().filter(|&&v| v == c).count() as u32;
+                                let right = p.votes.values().filter(|&&v| v == c).count() as u32;
                                 (right, p.votes.len() as u32 - right)
                             }
                             _ => (0, 0),
@@ -907,12 +906,7 @@ impl SignalingHub {
 
     /// Fecha uma sondagem (só anfitrião) e devolve o snapshot final — usado
     /// pela camada async para persistir o resultado no meeting da sala.
-    pub(crate) fn close_poll(
-        &self,
-        room_id: Uuid,
-        peer_id: Uuid,
-        poll: Uuid,
-    ) -> Option<PollState> {
+    pub(crate) fn close_poll(&self, room_id: Uuid, peer_id: Uuid, poll: Uuid) -> Option<PollState> {
         if !self.is_host(room_id, peer_id) {
             return None;
         }
@@ -2120,7 +2114,16 @@ mod tests {
         let (host, tx_h, mut rx_h) = peer();
         let (other, tx_o, _rx_o) = peer();
         hub.join(room, host, host, "host".into(), true, true, false, tx_h);
-        hub.join(room, other, other, "other".into(), false, false, false, tx_o);
+        hub.join(
+            room,
+            other,
+            other,
+            "other".into(),
+            false,
+            false,
+            false,
+            tx_o,
+        );
         drain(&mut rx_h);
 
         let guest = Uuid::new_v4();

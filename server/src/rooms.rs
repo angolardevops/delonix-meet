@@ -503,7 +503,11 @@ pub async fn post_qos(
     }
 
     let rtt = s.rtt_ms.map(|v| v.clamp(0, 10_000));
-    let loss = if s.loss_pct.is_finite() { s.loss_pct.clamp(0.0, 100.0) } else { 0.0 };
+    let loss = if s.loss_pct.is_finite() {
+        s.loss_pct.clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
     let up = s.up_kbps.clamp(0, 100_000);
     sqlx::query(
         "INSERT INTO call_quality_samples (room_id, user_id, rtt_ms, loss_pct, up_kbps)
