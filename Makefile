@@ -459,10 +459,12 @@ export-images: image ## Exporta imagens Docker para /tmp/dlx-images/ (transfer. 
 .PHONY: deploy-kaeso
 deploy-kaeso: export-images ## Build + export + Ansible deploy no preprod kaeso (kind remoto)
 	@printf "$(C)▶ deploy preprod kaeso (172.16.20.117)$(Z)\n"
-	@cd deploy/ansible && ansible-playbook site.yml \
+	@[ -f deploy/ansible/.env.kaeso ] || { \
+	  printf "$(Y)  ✗ Cria deploy/ansible/.env.kaeso com ANSIBLE_BECOME_PASSWORD=<senha>$(Z)\n"; exit 1; }
+	@set -a && . deploy/ansible/.env.kaeso && set +a && \
+	  cd deploy/ansible && ansible-playbook site.yml \
 	  -i inventory.ini \
 	  --limit kaeso01 \
-	  --ask-become-pass \
 	  $(ANSIBLE_ARGS)
 
 

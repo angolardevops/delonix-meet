@@ -1,5 +1,12 @@
 ---
 # kind_host — Deploy Delonix Meet num servidor remoto com recursos limitados.
+
+# public_ip_effective é definido no Play 0 (localhost). Em plays subsequentes
+# noutros hosts o fact não está disponível — definir aqui diretamente do config.
+- name: Definir public_ip_effective a partir do config
+  ansible.builtin.set_fact:
+    public_ip_effective: "{{ cfg.public_ip }}"
+    cacheable: true
 # Instala Docker + kind + kubectl + Helm; corre coturn no host como systemd;
 # cria cluster kind com port-mapping 80/443; aplica manifests K8s com overrides
 # de recursos (1 réplica, postgres/redis standalone).
@@ -440,7 +447,7 @@
 - name: Resumo do deploy
   ansible.builtin.debug:
     msg:
-      - "✓ Delonix Meet preprod activo"
+      - ✓ Delonix Meet preprod activo
       - "  Interno:  https://{{ domain }}"
       - "  Externo:  https://{{ domain_external }}"
       - "  IP:       {{ public_ip_effective }}"
