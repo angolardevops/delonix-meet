@@ -454,6 +454,8 @@ export default function Room({
   const [sharePerms, setSharePerms] = useState<Set<string>>(new Set())
   const [ccOn, setCcOn] = useState(false)
   const [caption, setCaption] = useState<{ text: string; at: number } | null>(null)
+  // Transcrição no servidor (Whisper) em vez do motor do browser (opt-in).
+  const [serverAsr, setServerAsr] = useState(() => localStorage.getItem('dx_asr_server') === '1')
   // Tradução das legendas via LLM local ('' = original, sem tradução).
   const [ccLang, setCcLang] = useState(() => localStorage.getItem('dx_cc_lang') ?? '')
   const ccLangRef = useRef(ccLang)
@@ -1349,7 +1351,7 @@ export default function Room({
       transcriberRef.current = null
       setInterim('')
     }
-  }, [ccOn, transcribing, sttLang, roomState])
+  }, [ccOn, transcribing, sttLang, roomState, serverAsr])
 
   // Pára o motor ao sair da sala (desmontagem).
   useEffect(
@@ -2938,6 +2940,25 @@ export default function Room({
                 <span>
                   Supressão de ruído (IA)
                   <small>RNNoise remove teclado, ventoinha e ruído de fundo — muito além da supressão do browser.</small>
+                </span>
+              </label>
+
+              <label className="set-toggle">
+                <input
+                  type="checkbox"
+                  checked={serverAsr}
+                  onChange={(e) => {
+                    setServerAsr(e.target.checked)
+                    localStorage.setItem('dx_asr_server', e.target.checked ? '1' : '0')
+                  }}
+                />
+                <span>
+                  Transcrição no servidor (mais precisa)
+                  <small>
+                    Whisper no teu servidor em vez do reconhecimento do browser — muito mais
+                    preciso e soberano (o áudio não sai do datacenter). Aplica-se ao ligar as
+                    legendas/notas a seguir.
+                  </small>
                 </span>
               </label>
               <div className="bg-section">

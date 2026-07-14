@@ -1,0 +1,90 @@
+# Delonix Whisper — ASR streaming soberano (whisper-server/). Substitui o
+# whisper-tiny WASM do browser por um Whisper maior no servidor: precisão muito
+# superior e o áudio nunca sai do datacenter (sem Web Speech/Google).
+#
+# CPU por defeito (modelo `small` int8 — aceitável em CPU). Em produção com GPU,
+# ver o role Ansible (whisper_gpu=true) ou trocar image/env por CUDA + large-v3.
+#
+# Build: docker build -t delonix-whisper:<tag> whisper-server/ && kind load ...
+# (o `make image-push` NÃO constrói esta imagem — é opt-in; ver docs).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: whisper-models
+  namespace: delonix-meet
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-whisper
+  namespace: delonix-meet
+  labels:
+    app: delonix-whisper
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # PVC RWO do cache de modelos
+  selector:
+    matchLabels:
+      app: delonix-whisper
+  template:
+    metadata:
+      labels:
+        app: delonix-whisper
+    spec:
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: whisper
+          image: delonix-whisper:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - { name: WHISPER_MODEL, value: "small" }   # base|small|medium|large-v3
+            - { name: WHISPER_DEVICE, value: "cpu" }     # cuda em GPU
+            - { name: WHISPER_COMPUTE, value: "int8" }   # float16 em GPU
+            - { name: HF_HOME, value: "/models" }
+          # O 1º arranque descarrega o modelo (~0.5–1.5GB) para o PVC.
+          startupProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "4"
+              memory: "4Gi"
+          volumeMounts:
+            - { name: models, mountPath: /models }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        - name: models
+          persistentVolumeClaim: { claimName: whisper-models }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-whisper
+  namespace: delonix-meet
+spec:
+  selector:
+    app: delonix-whisper
+  ports:
+    - port: 8000
+      targetPort: 8000
