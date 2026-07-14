@@ -328,8 +328,15 @@
 # 10. MANIFESTS K8S
 # ============================================================
 
+# ---- Copiar manifests K8s para o servidor remoto ----
+- name: Copiar manifests K8s para o servidor
+  ansible.builtin.copy:
+    src: "/tmp/dlx-k8s/"
+    dest: /tmp/dlx-k8s/
+    mode: "0644"
+
 - name: Namespace
-  ansible.builtin.command: kubectl apply -f {{ _k8s_dir }}/00-namespace.yaml
+  ansible.builtin.command: kubectl apply -f /tmp/dlx-k8s/00-namespace.yaml
   environment:
     KUBECONFIG: "{{ kind_kubeconfig }}"
   changed_when: false
@@ -357,7 +364,7 @@
   changed_when: false
 
 - name: Aplicar manifestos de dados (PVCs, storage)
-  ansible.builtin.command: kubectl apply -f {{ _k8s_dir }}/50-data.yaml
+  ansible.builtin.command: kubectl apply -f /tmp/dlx-k8s/50-data.yaml
   environment:
     KUBECONFIG: "{{ kind_kubeconfig }}"
   changed_when: false
@@ -395,7 +402,7 @@
 
 - name: Aplicar manifesto server (1 réplica)
   ansible.builtin.shell: |
-    cat {{ _k8s_dir }}/02-server.yaml \
+    cat /tmp/dlx-k8s/02-server.yaml \
       | sed 's/replicas: [0-9]*/replicas: {{ k8s_server_replicas }}/' \
       | kubectl apply -f -
   environment:
@@ -404,7 +411,7 @@
 
 - name: Aplicar manifesto web (1 réplica)
   ansible.builtin.shell: |
-    cat {{ _k8s_dir }}/03-web.yaml \
+    cat /tmp/dlx-k8s/03-web.yaml \
       | sed 's/replicas: [0-9]*/replicas: {{ k8s_web_replicas }}/' \
       | kubectl apply -f -
   environment:
@@ -412,7 +419,7 @@
   changed_when: false
 
 - name: Aplicar Ollama (se habilitado)
-  ansible.builtin.command: kubectl apply -f {{ _k8s_dir }}/07-ollama.yaml
+  ansible.builtin.command: kubectl apply -f /tmp/dlx-k8s/07-ollama.yaml
   environment:
     KUBECONFIG: "{{ kind_kubeconfig }}"
   when: ollama_enabled | bool
