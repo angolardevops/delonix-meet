@@ -239,17 +239,12 @@
   changed_when: false
 
 - name: Detectar subnet da rede kind (IPv4)
-  ansible.builtin.shell: |
-    docker network inspect kind 2>/dev/null \
-      | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-for cfg in data[0]['IPAM']['Config']:
-    subnet = cfg.get('Subnet', '')
-    if subnet and ':' not in subnet:
-        print(subnet)
-        break
-"
+  ansible.builtin.shell: >-
+    docker network inspect kind 2>/dev/null
+    | grep '"Subnet"'
+    | grep -v ':'
+    | awk -F'"' '{print $4}'
+    | head -1
   register: _kind_subnet
   changed_when: false
 
