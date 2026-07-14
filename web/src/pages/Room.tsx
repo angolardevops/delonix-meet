@@ -18,6 +18,7 @@ import {
   videoConstraints,
 } from '../media'
 import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
+import { Btn, SelectCtl } from '../components/ui'
 import { BreakoutRoom, PeerInfo, PollView, QaView, Signaling, WbStroke } from '../signaling'
 import { ThemePicker } from '../components/Shell'
 import { Call, MeshCall, SfuCall } from '../webrtc'
@@ -2600,9 +2601,9 @@ export default function Room({
               ) : isHost ? (
                 <div className="timer-presets">
                   {[5, 10, 15, 30, 60].map((m) => (
-                    <button key={m} className="btn-sm ghost" onClick={() => signalRef.current?.send({ type: 'timer-set', minutes: m })}>
+                    <Btn key={m} variant="ghost" onClick={() => signalRef.current?.send({ type: 'timer-set', minutes: m })}>
                       {m} min
-                    </button>
+                    </Btn>
                   ))}
                 </div>
               ) : (
@@ -2644,11 +2645,11 @@ export default function Room({
                   ))}
                   <div className="poll-create-actions">
                     {pollOpts.length < 6 && (
-                      <button className="btn-sm ghost" onClick={() => setPollOpts([...pollOpts, ''])}>
+                      <Btn variant="ghost" onClick={() => setPollOpts([...pollOpts, ''])}>
                         + opção
-                      </button>
+                      </Btn>
                     )}
-                    <select
+                    <SelectCtl
                       className="poll-dur"
                       title="Duração da votação (quiz com tempo)"
                       value={pollDur}
@@ -2659,11 +2660,11 @@ export default function Room({
                       <option value={60}>1 min</option>
                       <option value={120}>2 min</option>
                       <option value={300}>5 min</option>
-                    </select>
+                    </SelectCtl>
                     {pollCorrect != null && (
-                      <button className="btn-sm ghost" title="Sondagem normal (sem resposta certa)" onClick={() => setPollCorrect(null)}>
+                      <Btn variant="ghost" title="Sondagem normal (sem resposta certa)" onClick={() => setPollCorrect(null)}>
                         limpar certa
-                      </button>
+                      </Btn>
                     )}
                     <button
                       className="btn-sm"
@@ -2767,7 +2768,7 @@ export default function Room({
                   value={qaInput}
                   onChange={(e) => setQaInput(e.target.value)}
                 />
-                <button className="btn-sm" disabled={!qaInput.trim()}>Enviar</button>
+                <Btn disabled={!qaInput.trim()}>Enviar</Btn>
               </form>
               {questions.length === 0 && <p className="muted small">Ainda sem perguntas.</p>}
               {questions.map((q) => (

@@ -104,6 +104,8 @@ CSS custom properties in `web/src/styles/`. Never hardcode colors.
 
 **Room always dark:** `.room-page` reaffirms dark tokens with `!important` at end of `styles.css` — room ignores light themes.
 
+**Unified control system (2026-07-14):** full reference in `docs/reference/design-system.md`. Tokens `--radius-sm/md/lg` = 4/6/8px, `--ctl-h` = 30px; uniformization layer at the END of `styles.scss` (3 tiers). New controls MUST use the kit `web/src/components/ui.tsx` (`Btn`/`IconBtn`/`Card`/`Field`/`SelectCtl`/`Switch`) — no ad-hoc buttons, no hardcoded radius/height. Themes = token maps in `styles/tokens.scss` under `[data-theme=…]`, never scattered overrides.
+
 **Fonts:** Space Grotesk (headings), Instrument Sans (body), IBM Plex Mono (mono) — self-hosted via @fontsource.
 
 ---

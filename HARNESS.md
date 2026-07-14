@@ -165,6 +165,11 @@ Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **
 
 **Regra da sala:** `.room-page` e `.waiting-page` reafirmam tokens dark **com `!important`** no fim de `styles.css`. A sala é sempre escura independentemente do tema da app.
 
+**Sistema de controlo único (14/07/2026)** — referência completa em `docs/reference/design-system.md`:
+- Tokens: `--radius-sm: 4px` (controlos) · `--radius-md: 6px` (superfícies) · `--radius-lg: 8px` · `--ctl-h: 30px` (altura única dos controlos). Camada de uniformização no FIM de `styles.scss` (3 tiers: ação / botão-ícone / superfícies) vence os valores históricos hardcoded.
+- **Componentes novos usam o kit `web/src/components/ui.tsx`** (`Btn`/`IconBtn`/`Card`/`Field`/`TextInput`/`SelectCtl`/`Switch`) — nunca `<button className=…>` ad-hoc, nunca `border-radius`/`height` hardcoded na página. Variante nova = classe no CSS + entrada no kit. Migração do código existente é oportunista (referência: painel Ferramentas em `Room.tsx`).
+- **Temas** = mapas de tokens em `styles/tokens.scss` emitidos sob `[data-theme=…]` — nunca overrides espalhados; testar os 4 temas + sala sempre escura (regressão #67).
+
 **Fontes:** Space Grotesk (títulos), Instrument Sans (corpo), IBM Plex Mono (mono) — self-hosted via @fontsource.
 
 **Logo:** Globo vermelho com grelha dourada, anéis segmentados, 5 pinos. SVG em `web/public/logo.svg`. Usar `.brand-logo` para renderizar.

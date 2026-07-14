@@ -54,7 +54,7 @@ Portas dev: backend `8180`, frontend `5173`, Postgres `5435`, Redis `6379`, cotu
 
 **Rust**: `AppError` para todos os erros de handler — nunca `unwrap()` em produção. `sqlx::query!`/`query_as!` (verificação compile-time). Migrações `server/migrations/NNNN_*.sql` sequenciais. Novo módulo → declarar em `main.rs` + registar rotas.
 
-**TS/React**: componentes funcionais + hooks; estado global via Context; mensagens WS tipadas (discriminant union); tokens CSS via custom properties (nunca hardcode de cor); i18n `useTranslation()`. **Nunca `var()` para dimensões de tiles** (transições congelam em background) — dimensões inline por tile.
+**TS/React**: componentes funcionais + hooks; estado global via Context; mensagens WS tipadas (discriminant union); tokens CSS via custom properties (nunca hardcode de cor); i18n `useTranslation()`. **Nunca `var()` para dimensões de tiles** (transições congelam em background) — dimensões inline por tile. **Controlos novos = kit `web/src/components/ui.tsx`** (`Btn`/`IconBtn`/`Card`/`Field`/`SelectCtl`/`Switch`); zero `border-radius`/`height` hardcoded (tokens 4/6/8px + `--ctl-h` 30px); temas = mapas em `styles/tokens.scss` sob `[data-theme=…]` — ver `docs/reference/design-system.md`.
 
 ## 7. Painel de revisores
 
