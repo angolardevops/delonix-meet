@@ -19,7 +19,7 @@ data:
   # desliga a IA (MoM volta a ser por regras no cliente).
   OLLAMA_URL: "http://delonix-ollama.delonix-meet.svc.cluster.local:11434"
   OLLAMA_MODEL_TRANSLATE: "qwen2.5:1.5b"
-  OLLAMA_MODEL_SUMMARY: "qwen2.5:1.5b"
+  OLLAMA_MODEL_SUMMARY: qwen2.5:7b
   # URL interno para a app interagir com Redis Sentinel (HA)
   REDIS_URL: "redis://delonix-redis-master.delonix-meet.svc.cluster.local:6379"
 ---
