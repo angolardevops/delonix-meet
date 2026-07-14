@@ -628,6 +628,83 @@ class WhisperEngine {
 }
 
 /**
+ * Transcrição via Whisper SERVER-SIDE (whisper-server/, WS `/asr`). Precisão
+ * muito superior ao whisper-tiny WASM e sem depender da Google — o áudio (PCM
+ * 16 kHz) vai só ao teu servidor. A segmentação (interim/final) é feita no
+ * servidor; o cliente só capta e faz stream do microfone.
+ */
+export class ServerWhisperEngine {
+  private ws: WebSocket | null = null
+  private ctx: AudioContext | null = null
+  private proc: ScriptProcessorNode | null = null
+  private source: MediaStreamAudioSourceNode | null = null
+  private ownStream: MediaStream | null = null
+  onFinal: ((text: string) => void) | null = null
+  onInterim: ((text: string) => void) | null = null
+  onError: ((message: string) => void) | null = null
+
+  async start(lang: string, stream?: MediaStream | null): Promise<boolean> {
+    const short = lang.split('-')[0]
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+    this.ws = new WebSocket(`${proto}://${location.host}/asr?lang=${encodeURIComponent(short)}`)
+    this.ws.binaryType = 'arraybuffer'
+    this.onInterim?.('(a ligar à transcrição do servidor…)')
+    this.ws.onopen = () => this.onInterim?.('')
+    this.ws.onmessage = (e) => {
+      try {
+        const m = JSON.parse(e.data as string) as { type: string; text?: string; message?: string }
+        if (m.type === 'final' && m.text) this.onFinal?.(m.text.trim())
+        else if (m.type === 'interim' && m.text) this.onInterim?.(m.text.trim())
+        else if (m.type === 'error') console.warn('[asr]', m.message)
+      } catch {
+        /* ignora frames não-JSON */
+      }
+    }
+    this.ws.onerror = () => this.onError?.('Transcrição do servidor indisponível — a usar o motor local.')
+
+    let audio = stream
+    if (!audio || audio.getAudioTracks().length === 0) {
+      this.ownStream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null)
+      audio = this.ownStream ?? undefined
+    }
+    if (!audio) return false
+
+    // 16 kHz mono → Int16; stream contínuo (o servidor segmenta).
+    this.ctx = new AudioContext({ sampleRate: 16000 })
+    this.source = this.ctx.createMediaStreamSource(audio)
+    this.proc = this.ctx.createScriptProcessor(4096, 1, 1)
+    this.proc.onaudioprocess = (ev) => {
+      if (this.ws?.readyState !== WebSocket.OPEN) return
+      const f32 = ev.inputBuffer.getChannelData(0)
+      const i16 = new Int16Array(f32.length)
+      for (let i = 0; i < f32.length; i++) {
+        const s = Math.max(-1, Math.min(1, f32[i]))
+        i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff
+      }
+      this.ws.send(i16.buffer)
+    }
+    this.source.connect(this.proc)
+    this.proc.connect(this.ctx.destination)
+    return true
+  }
+
+  stop() {
+    this.proc?.disconnect()
+    this.source?.disconnect()
+    void this.ctx?.close()
+    this.ownStream?.getTracks().forEach((t) => t.stop())
+    try {
+      this.ws?.close()
+    } catch {
+      /* ignore */
+    }
+    this.ws = null
+    this.proc = null
+    this.ctx = null
+  }
+}
+
+/**
  * Transcrição contínua do áudio local. Usa a Web Speech API quando existe
  * (Chrome/Edge — melhor latência) e cai para Whisper WASM local nos outros
  * browsers (Firefox/Safari). `onFinal` recebe cada frase confirmada.
@@ -635,6 +712,7 @@ class WhisperEngine {
 export class Transcriber {
   private rec: SpeechRecognitionLike | null = null
   private whisper: WhisperEngine | null = null
+  private serverWhisper: ServerWhisperEngine | null = null
   private running = false
   private lang = 'pt-PT'
   private stream?: MediaStream | null
@@ -656,6 +734,23 @@ export class Transcriber {
     this.lang = lang
     this.stream = stream
     this.running = true
+    // Whisper SERVER-SIDE (opt-in, `dx_asr_server`): precisão muito superior ao
+    // WASM local, soberano (áudio só vai ao teu servidor). Cai para o motor
+    // seguinte em erro (serviço em baixo / não implantado).
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('dx_asr_server') === '1') {
+      const sw = new ServerWhisperEngine()
+      sw.onFinal = (t) => this.onFinal?.(t)
+      sw.onInterim = (t) => this.onInterim?.(t)
+      sw.onError = () => {
+        // Serviço indisponível → degrada para Web Speech / WASM local.
+        this.serverWhisper?.stop()
+        this.serverWhisper = null
+        if (this.running) this.start(lang, stream, preferLocal)
+      }
+      void sw.start(this.lang, this.stream)
+      this.serverWhisper = sw
+      return true
+    }
     const Ctor = ((window as unknown as { webkitSpeechRecognition?: SpeechRecognitionCtor; SpeechRecognition?: SpeechRecognitionCtor })
       .webkitSpeechRecognition ??
       (window as unknown as { SpeechRecognition?: SpeechRecognitionCtor }).SpeechRecognition) as SpeechRecognitionCtor | undefined
@@ -736,6 +831,8 @@ export class Transcriber {
     this.rec = null
     this.whisper?.stop()
     this.whisper = null
+    this.serverWhisper?.stop()
+    this.serverWhisper = null
   }
 }
 

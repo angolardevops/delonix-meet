@@ -32,6 +32,16 @@ spec:
                 name: delonix-server
                 port:
                   number: 8180
+          # ASR streaming (Whisper server-side) — WS do browser para o serviço
+          # de transcrição soberano (09-whisper.yaml). Sem afinidade por sala:
+          # cada cliente tem a sua própria ligação de áudio.
+          - path: /asr
+            pathType: Prefix
+            backend:
+              service:
+                name: delonix-whisper
+                port:
+                  number: 8000
           - path: /
             pathType: Prefix
             backend:

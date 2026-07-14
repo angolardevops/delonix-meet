@@ -7,6 +7,10 @@
 
 FROM rust:1-bookworm AS build
 WORKDIR /src
+# Limita a paralelização do rustc: em hosts com RAM pressionada, o link em
+# release de todos os codegen units em paralelo pode ser morto por OOM
+# (cargo devolve exit 101). 6 jobs é seguro sem penalizar muito o tempo.
+ENV CARGO_BUILD_JOBS=6
 # As migrações são embutidas em compile-time (sqlx::migrate!) — a imagem final
 # não precisa de ficheiros .sql. Copia-se o crate inteiro e compila-se em release.
 COPY server ./server
