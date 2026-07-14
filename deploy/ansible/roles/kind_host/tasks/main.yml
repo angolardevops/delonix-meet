@@ -331,7 +331,7 @@
 # ---- Copiar manifests K8s para o servidor remoto ----
 - name: Copiar manifests K8s para o servidor
   ansible.builtin.copy:
-    src: "/tmp/dlx-k8s/"
+    src: "{{ _k8s_dir }}/"
     dest: /tmp/dlx-k8s/
     mode: "0644"
 
