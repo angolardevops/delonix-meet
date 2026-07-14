@@ -458,6 +458,11 @@ export default function Room({
   const [ccLang, setCcLang] = useState(() => localStorage.getItem('dx_cc_lang') ?? '')
   const ccLangRef = useRef(ccLang)
   const ccSeqRef = useRef(0)
+  // Throttle do envio de legendas parciais (interim) aos outros.
+  const interimSentAtRef = useRef(0)
+  // Debounce/single-flight da tradução de legendas parciais (não sobrecarregar
+  // o LLM local com um pedido por cada palavra).
+  const interimXlateRef = useRef<{ timer: number | null; busy: boolean }>({ timer: null, busy: false })
 
   // Relógio dos countdowns (grupos e temporizador) — só corre quando há deadline.
   useEffect(() => {
@@ -1007,6 +1012,11 @@ export default function Room({
           if (ccOnRef.current) showCaption(m.username, m.text)
           setLines((l) => [...l, `[${stamp}] ${m.username}: ${m.text}`])
         })
+        // Legenda PARCIAL de outro orador — atualiza a legenda ao vivo (estilo
+        // Meet), sem esperar pelo fim da frase. Efémera: não vai para as notas.
+        signal.on('transcript-interim', (m) => {
+          if (ccOnRef.current) showCaption(m.username, m.text, true)
+        })
         // O anfitrião ligou/desligou a Nota AI partilhada: todos captam o
         // próprio microfone (#6). Segue o estado partilhado localmente.
         signal.on('transcription', (m) => {
@@ -1227,18 +1237,37 @@ export default function Room({
   }, [ccLang])
 
   /** Mostra a legenda já (original) e, com tradução ativa, substitui pela
-   *  versão traduzida quando o LLM local responder — só se ainda for a linha
-   *  mais recente (seq), para traduções lentas não taparem falas novas. */
-  function showCaption(prefix: string, text: string) {
+   *  versão traduzida do LLM local — só se ainda for a linha mais recente (seq),
+   *  para traduções lentas não taparem falas novas. `interim` (parcial): a
+   *  tradução é debounced e single-flight, senão bombardeávamos o Ollama com um
+   *  pedido por palavra; a versão final (não-interim) traduz sempre. */
+  function showCaption(prefix: string, text: string, interim = false) {
     const seq = ++ccSeqRef.current
     setCaption({ text: `${prefix}: ${text}`, at: Date.now() })
     const target = ccLangRef.current
     if (!target) return
-    void translateCaption(text, target)
-      .then((r) => {
-        if (ccSeqRef.current === seq) setCaption({ text: `${prefix}: ${r.text}`, at: Date.now() })
-      })
-      .catch(() => {})
+    const applyTranslation = () => {
+      const x = interimXlateRef.current
+      x.busy = true
+      void translateCaption(text, target)
+        .then((r) => {
+          if (ccSeqRef.current === seq) setCaption({ text: `${prefix}: ${r.text}`, at: Date.now() })
+        })
+        .catch(() => {})
+        .finally(() => { x.busy = false })
+    }
+    if (!interim) {
+      applyTranslation()
+      return
+    }
+    // Parcial: agenda a tradução ~400ms depois da última palavra; se já houver
+    // um pedido em curso, deixa-o terminar (single-flight) e a final corrige.
+    const x = interimXlateRef.current
+    if (x.timer != null) window.clearTimeout(x.timer)
+    x.timer = window.setTimeout(() => {
+      x.timer = null
+      if (!x.busy) applyTranslation()
+    }, 400)
   }
   useEffect(() => {
     const want = (ccOn || transcribing) && roomState === 'in'
@@ -1257,6 +1286,16 @@ export default function Room({
         setInterim(text)
         // Legenda ao vivo (estilo Meet) enquanto falo, se o CC estiver ligado.
         if (ccOnRef.current && text) showCaption('eu', text)
+        // Difunde a legenda PARCIAL aos outros (throttle ~250ms) — é isto que
+        // acaba com a sensação de "standby": eles veem a fala em tempo real, sem
+        // esperar pelo fim da frase. Só quando a transcrição partilhada está on.
+        if (transcribingRef.current && text) {
+          const now = Date.now()
+          if (now - interimSentAtRef.current >= 250) {
+            interimSentAtRef.current = now
+            signalRef.current?.send({ type: 'transcript-interim', text })
+          }
+        }
       }
       t.onError = (message) => {
         setStatus(message)

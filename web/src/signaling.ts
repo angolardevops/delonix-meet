@@ -60,6 +60,7 @@ export type ServerMsg =
   | { type: 'media'; from: string; cam: boolean; mic: boolean }
   | { type: 'recording'; from: string; username: string; active: boolean }
   | { type: 'transcript'; from: string; username: string; text: string }
+  | { type: 'transcript-interim'; from: string; username: string; text: string }
   | { type: 'transcription'; on: boolean; by: string }
   | { type: 'waiting' }
   | { type: 'waiting-join'; peer: PeerInfo }
@@ -100,6 +101,7 @@ export type ClientMsg =
   | { type: 'media'; cam: boolean; mic: boolean }
   | { type: 'recording'; active: boolean }
   | { type: 'transcript'; text: string }
+  | { type: 'transcript-interim'; text: string }
   | { type: 'transcription-toggle'; on: boolean }
   | { type: 'admit'; to: string }
   | { type: 'deny'; to: string }
