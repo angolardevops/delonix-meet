@@ -59,7 +59,7 @@ spec:
                   - -c
                   - |
                     for i in $(seq 1 60); do
-                      ollama pull qwen2.5:1.5b && exit 0
+                      ollama pull qwen2.5:1.5b && ollama pull qwen2.5:7b && exit 0
                       sleep 5
                     done
                     exit 0 # não matar o pod por falha de pull (rede offline)
@@ -74,10 +74,10 @@ spec:
           resources:
             requests:
               cpu: "250m"
-              memory: "1Gi"
+              memory: "2Gi"
             limits:
               cpu: "4"
-              memory: "6Gi"
+              memory: "8Gi"
           volumeMounts:
             - { name: models, mountPath: /root/.ollama }
           securityContext:
