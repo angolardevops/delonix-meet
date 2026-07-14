@@ -2044,13 +2044,114 @@ button.link:hover {
 .legal-body h2 { font-family: var(--font-display); font-size: 1.15rem; margin: 2.2rem 0 0.8rem; }
 .legal-body p { color: var(--text-2); font-size: 0.93rem; line-height: 1.65; margin: 0 0 0.8rem; }
 
+/* ============================================================
+   Portal público — animações e secções novas (IA local + integrações)
+   ============================================================ */
+/* Scroll-reveal: entrada suave ao aparecer no viewport (JS: .is-visible). */
+.reveal {
+  opacity: 0; transform: translateY(18px);
+  transition: opacity 0.6s cubic-bezier(0.22, 0.61, 0.36, 1),
+              transform 0.6s cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: opacity, transform;
+}
+.reveal.is-visible { opacity: 1; transform: none; }
+.reveal.delay-2 { transition-delay: 0.12s; }
+
+/* Hero: brilho de marca animado por trás + parallax leve do preview. */
+.land-hero { position: relative; overflow: hidden; }
+.land-hero-glow {
+  position: absolute; inset: -20% -10% auto -10%; height: 460px; z-index: 0;
+  background:
+    radial-gradient(60% 60% at 22% 30%, color-mix(in oklab, var(--accent) 24%, transparent), transparent 70%),
+    radial-gradient(50% 50% at 82% 20%, color-mix(in oklab, var(--accent-2, #eda33b) 20%, transparent), transparent 70%);
+  filter: blur(20px); pointer-events: none;
+  animation: hero-drift 14s ease-in-out infinite alternate;
+}
+.land-hero-copy, .land-preview { position: relative; z-index: 1; }
+.land-preview { transform: translateY(calc(var(--hero-shift, 0px) * -1)); }
+@keyframes hero-drift {
+  from { transform: translate3d(-2%, 0, 0) scale(1); opacity: 0.9; }
+  to { transform: translate3d(3%, 12px, 0) scale(1.06); opacity: 1; }
+}
+
+/* Chips flutuantes do preview — bob suave e desfasado. */
+.chip.float { animation: chip-bob 4.5s ease-in-out infinite; }
+.chip.float.a { animation-delay: 0s; }
+.chip.float.b { animation-delay: 0.9s; }
+.chip.float.c { animation-delay: 1.8s; }
+.chip.float.d { right: 6%; top: -0.7rem; animation-delay: 2.6s; }
+@keyframes chip-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+.preview-tile .avatar-circle { animation: tile-breathe 6s ease-in-out infinite; }
+@keyframes tile-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+
+/* Banda de IA local (soberania). */
+.land-ai { padding: 3.5rem 1.4rem; position: relative; }
+.land-ai-inner {
+  max-width: 1180px; margin: 0 auto;
+  background:
+    linear-gradient(180deg, var(--surface), var(--surface-2)),
+    radial-gradient(80% 120% at 100% 0%, color-mix(in oklab, var(--accent) 12%, transparent), transparent 60%);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-lg);
+  padding: 2.4rem clamp(1.2rem, 3vw, 2.6rem);
+  display: grid; grid-template-columns: 0.9fr 1.4fr; gap: 2.4rem; align-items: center;
+}
+.land-ai-head h2 { text-align: left; font-size: clamp(1.5rem, 2.6vw, 2rem); margin: 0 0 0.6rem; }
+.ai-sov-badge {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 0.4rem;
+  background: color-mix(in oklab, var(--ok, #2e9e5b) 18%, transparent);
+  border: 1px solid color-mix(in oklab, var(--ok, #2e9e5b) 45%, transparent);
+  color: #9ff0bf; border-radius: 999px; padding: 0.35rem 0.9rem;
+  font-family: var(--font-mono); font-size: 0.76rem;
+}
+.ai-points { display: grid; gap: 1rem; }
+.ai-point {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 1.1rem 1.2rem; transition: border-color 0.15s, transform 0.15s;
+}
+.ai-point:hover { border-color: var(--accent); transform: translateX(3px); }
+.ai-point-ic { font-size: 1.3rem; }
+.ai-point h3 { font-family: var(--font-display); font-size: 1rem; margin: 0.4rem 0 0.3rem; }
+.ai-point p { color: var(--muted); font-size: 0.9rem; line-height: 1.55; margin: 0; }
+
+/* Faixa de integrações. */
+.land-integ { max-width: 1180px; margin: 0 auto; padding: 3.5rem 1.4rem 1rem; text-align: center; }
+.integ-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.7rem; margin-top: 1.6rem; }
+.integ-chip {
+  background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 999px;
+  padding: 0.5rem 1.1rem; font-family: var(--font-mono); font-size: 0.82rem; color: var(--text-2);
+  transition: border-color 0.15s, color 0.15s, transform 0.15s;
+}
+.integ-chip:hover { border-color: var(--accent); color: var(--text); transform: translateY(-2px); }
+
+/* CTA final com brilho. */
+.land-final { position: relative; overflow: hidden; }
+.land-final-glow {
+  position: absolute; inset: auto -10% -60% -10%; height: 340px; z-index: 0;
+  background: radial-gradient(50% 80% at 50% 100%, color-mix(in oklab, var(--accent) 20%, transparent), transparent 70%);
+  filter: blur(20px); pointer-events: none;
+}
+.land-final h2, .land-final p, .land-final .land-ctas { position: relative; z-index: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .land-hero-glow, .chip.float, .preview-tile .avatar-circle { animation: none; }
+  .land-preview { transform: none; }
+}
+
 @media (max-width: 900px) {
   .land-hero { grid-template-columns: 1fr; padding-top: 2.5rem; }
   .land-nav { display: none; }
   .land-metrics { grid-template-columns: 1fr 1fr; }
   .feat-grid, .test-grid, .plan-grid { grid-template-columns: 1fr; }
   .land-sec { grid-template-columns: 1fr; }
+  .land-ai-inner { grid-template-columns: 1fr; gap: 1.4rem; }
+  .land-ai-head h2 { text-align: center; }
   .foot-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 720px) {
+  .feat-grid { grid-template-columns: 1fr; }
 }
 
 /* ---- F2.2: Dashboard (saudação + próximas reuniões + gravações recentes) ---- */
