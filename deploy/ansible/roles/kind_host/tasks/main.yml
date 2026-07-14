@@ -76,7 +76,6 @@
     url: https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
     dest: /usr/local/bin/kind
     mode: "0755"
-    checksum: sha256:b89aefb7c4e4dd3a77f9a1d00d6a73985e77bfbdc1fafad73ac0cb1f40dc8ccd
 
 - name: kubectl binary
   ansible.builtin.get_url:
