@@ -365,7 +365,14 @@ export default function Room({
   const e2eeKeyRef = useRef<string | null>(null)
   /** Apresentação (partilha de ecrã) em curso: minha ou de outro peer. */
   const [presentation, setPresentation] = useState<{ peerId: string; stream: MediaStream } | null>(null)
-  const [myVotes, setMyVotes] = useState<Record<string, number>>({})
+  const [myVotes, setMyVotes] = useState<Record<string, number>>(() => {
+    // Recupera os votos desta sala (sobrevive a reloads a meio do quiz).
+    try {
+      return JSON.parse(sessionStorage.getItem(`dx_votes_${code}`) ?? '{}')
+    } catch {
+      return {}
+    }
+  })
   const [myUpvotes, setMyUpvotes] = useState<Record<string, boolean>>({})
   const [pollQ, setPollQ] = useState('')
   const [pollOpts, setPollOpts] = useState<string[]>(['', ''])
@@ -392,14 +399,31 @@ export default function Room({
     return () => clearInterval(t)
   }, [polls, revealUntil])
 
-  // Transição aberta→fechada: abre a janela de revelação no popup e, num quiz,
-  // quem acertou recebe a festa (troféu + fogo de artifício) por uns segundos.
+  // Persiste os meus votos por sala: um reload a meio do quiz não pode
+  // apagar a memória de em quem votei (senão a festa nunca dispara).
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(`dx_votes_${code}`, JSON.stringify(myVotes))
+    } catch { /* storage cheio — segue sem persistir */ }
+  }, [myVotes, code])
+
+  // Fecho do quiz: revelação no popup (mesmo que tenha sido dispensado — o
+  // resultado merece reaparecer) e festa para quem acertou. Dispara tanto na
+  // transição aberta→fechada como quando a sondagem já chega fechada (reload),
+  // com guarda em sessionStorage para nunca celebrar duas vezes.
   useEffect(() => {
     for (const p of polls) {
       const was = pollPrevOpenRef.current[p.id]
-      if (was && !p.open) {
+      const closedNow = was && !p.open
+      const arrivedClosed = was === undefined && !p.open
+      if (closedNow) {
         setRevealUntil((m) => ({ ...m, [p.id]: Date.now() + 10_000 }))
-        if (p.correct != null && myVotes[p.id] === p.correct) {
+        setPollDismissed((m) => (m[p.id] ? { ...m, [p.id]: false } : m))
+      }
+      if ((closedNow || arrivedClosed) && p.correct != null && myVotes[p.id] === p.correct) {
+        const guard = `dx_fx_${p.id}`
+        if (!sessionStorage.getItem(guard)) {
+          sessionStorage.setItem(guard, '1')
           setWinnerFx(true)
           window.setTimeout(() => setWinnerFx(false), 4500)
         }
