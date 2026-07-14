@@ -238,19 +238,28 @@
     KUBECONFIG: "{{ kind_kubeconfig }}"
   changed_when: false
 
-- name: Detectar subnet da rede kind
+- name: Detectar subnet da rede kind (IPv4)
   ansible.builtin.shell: |
-    docker network inspect kind \
-      --format '{{ "{{" }}range .IPAM.Config{{ "}}" }}{{ "{{" }}.Subnet{{ "}}" }}{{ "{{" }}end{{ "}}" }}' \
-      | grep -v ':' | head -1
+    docker network inspect kind 2>/dev/null \
+      | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for cfg in data[0]['IPAM']['Config']:
+    subnet = cfg.get('Subnet', '')
+    if subnet and ':' not in subnet:
+        print(subnet)
+        break
+"
   register: _kind_subnet
   changed_when: false
 
 - name: Calcular pool MetalLB (.200-.250)
   ansible.builtin.set_fact:
-    _metallb_pool: >-
-      {{ _kind_subnet.stdout.strip() | regex_replace('/\d+$', '') | regex_replace('\.\d+$', '') }}.200-{{
-         _kind_subnet.stdout.strip() | regex_replace('/\d+$', '') | regex_replace('\.\d+$', '') }}.250
+    _metallb_prefix: "{{ _kind_subnet.stdout.strip() | regex_replace('/\\d+$', '') | regex_replace('\\.\\d+$', '') }}"
+
+- name: Definir intervalo MetalLB
+  ansible.builtin.set_fact:
+    _metallb_pool: "{{ _metallb_prefix }}.200-{{ _metallb_prefix }}.250"
 
 - name: Aplicar IPAddressPool + L2Advertisement
   ansible.builtin.shell: |
