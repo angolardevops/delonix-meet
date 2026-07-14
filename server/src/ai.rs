@@ -81,13 +81,18 @@ pub async fn summarize_minutes(state: &AppState, title: &str, transcript: &str) 
         transcript.to_string()
     };
     let prompt = format!(
-        "És um assistente de atas de reunião. A partir da transcrição bruta da \
-         reunião \"{title}\", escreve uma ata (Minutes of Meeting) organizada e \
-         elegante em português europeu, em Markdown, com EXATAMENTE estas secções:\n\
+        "És um assistente de atas de reunião. A transcrição abaixo vem de \
+         reconhecimento de voz automático e PODE conter erros (palavras trocadas \
+         por outras de som parecido, pontuação/maiúsculas em falta, frases \
+         cortadas). Ao redigir a ata, INFERE pelo contexto a palavra que fez \
+         sentido — corrige silenciosamente os erros óbvios de transcrição, mas \
+         NUNCA inventes factos, nomes, números ou decisões que não estejam lá.\n\n\
+         A partir da transcrição da reunião \"{title}\", escreve uma ata (Minutes \
+         of Meeting) organizada e elegante em português europeu, em Markdown, com \
+         EXATAMENTE estas secções:\n\
          ## Resumo\n(2-4 frases)\n## Pontos discutidos\n(lista)\n## Decisões\n(lista; \
          'Nenhuma registada.' se não houver)\n## Decisões e ações\n(uma linha `- [ ] \
          tarefa — responsável` por ação; 'Nenhuma registada.' se não houver)\n\n\
-         Baseia-te APENAS na transcrição — não inventes factos, nomes nem datas.\n\n\
          Transcrição:\n{window}"
     );
     generate(
