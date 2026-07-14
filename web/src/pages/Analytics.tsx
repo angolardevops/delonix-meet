@@ -29,6 +29,10 @@ import {
   SsoConfig,
   updateOrgSettings,
   Webhook,
+  getPlatformStorage,
+  savePlatformStorage,
+  testPlatformStorage,
+  StorageConfig,
 } from '../api'
 import { ClockIcon } from '../icons'
 
@@ -539,10 +543,140 @@ function OrgOdooIntegration({ orgId }: { orgId: string }) {
   )
 }
 
+// ---------- Armazenamento remoto (TrueNAS NFS / Nextcloud WebDAV) ----------
+
+function PlatformStoragePanel() {
+  const [cfg, setCfg] = useState<StorageConfig | null>(null)
+  const [type, setType] = useState<'local' | 'nfs' | 'webdav'>('local')
+  const [nfsServer, setNfsServer] = useState('')
+  const [nfsPath, setNfsPath] = useState('')
+  const [wdUrl, setWdUrl] = useState('')
+  const [wdUser, setWdUser] = useState('')
+  const [wdPwd, setWdPwd] = useState('')
+  const [wdPath, setWdPath] = useState('/remote.php/dav/files/{user}/Delonix')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [testMsg, setTestMsg] = useState('')
+
+  useEffect(() => {
+    getPlatformStorage()
+      .then((s) => {
+        setCfg(s)
+        setType(s.storage_type)
+        setNfsServer(s.nfs_server ?? '')
+        setNfsPath(s.nfs_path ?? '')
+        setWdUrl(s.webdav_url ?? '')
+        setWdUser(s.webdav_user ?? '')
+        setWdPath(s.webdav_path)
+      })
+      .catch(() => {})
+  }, [])
+
+  async function save() {
+    setBusy(true); setMsg('')
+    try {
+      await savePlatformStorage({
+        storage_type: type,
+        nfs_server: nfsServer || undefined,
+        nfs_path: nfsPath || undefined,
+        webdav_url: wdUrl || undefined,
+        webdav_user: wdUser || undefined,
+        webdav_password: wdPwd || undefined,
+        webdav_path: wdPath || undefined,
+      })
+      setMsg('✓ Configuração guardada'); setWdPwd('')
+      setCfg((c) => c ? { ...c, storage_type: type, webdav_password_set: !!(c.webdav_password_set || wdPwd) } : c)
+    } catch (e) { setMsg(`Erro: ${(e as Error).message}`) } finally { setBusy(false) }
+  }
+
+  async function test() {
+    setBusy(true); setTestMsg('')
+    try {
+      const r = await testPlatformStorage()
+      setTestMsg(r.message)
+    } catch (e) { setTestMsg(`Erro: ${(e as Error).message}`) } finally { setBusy(false) }
+  }
+
+  function downloadPvc() {
+    const a = document.createElement('a')
+    a.href = '/api/v1/platform/storage/pvc-manifest'
+    a.download = 'delonix-recordings-pv.yaml'
+    a.click()
+  }
+
+  return (
+    <div className="odoo-panel">
+      <p className="odoo-desc">
+        Armazenamento para gravações e anexos. Por omissão as gravações ficam no volume local do pod.
+        Configura aqui TrueNAS (NFS) ou Nextcloud/SharePoint (WebDAV) para persistência partilhada em multi-réplica.
+      </p>
+
+      <div className="field-row">
+        <label className="field-label">Tipo de armazenamento</label>
+        <select value={type} onChange={(e) => setType(e.target.value as typeof type)} className="select-ctl">
+          <option value="local">💽 Local (padrão)</option>
+          <option value="nfs">🗄 TrueNAS / NFS</option>
+          <option value="webdav">☁ Nextcloud / WebDAV</option>
+        </select>
+      </div>
+
+      {type === 'nfs' && (
+        <>
+          <hr className="odoo-sep" />
+          <p className="odoo-hint">O K8s cria um PersistentVolume com este servidor NFS. Descarrega o manifesto abaixo e aplica com <code>kubectl apply</code>.</p>
+          <div className="field-row">
+            <label className="field-label">Servidor NFS</label>
+            <input value={nfsServer} onChange={(e) => setNfsServer(e.target.value)} placeholder="192.168.1.10" />
+          </div>
+          <div className="field-row">
+            <label className="field-label">Path de exportação</label>
+            <input value={nfsPath} onChange={(e) => setNfsPath(e.target.value)} placeholder="/mnt/pool/delonix" />
+          </div>
+          <button className="secondary" onClick={downloadPvc} type="button">⬇ Descarregar manifesto K8s PVC</button>
+        </>
+      )}
+
+      {type === 'webdav' && (
+        <>
+          <hr className="odoo-sep" />
+          <p className="odoo-hint">Gravações enviadas por WebDAV após processamento. Compatível com Nextcloud, ownCloud e SharePoint.</p>
+          <div className="field-row">
+            <label className="field-label">URL base WebDAV</label>
+            <input value={wdUrl} onChange={(e) => setWdUrl(e.target.value)} placeholder="https://cloud.empresa.com" />
+          </div>
+          <div className="field-row">
+            <label className="field-label">Utilizador</label>
+            <input value={wdUser} onChange={(e) => setWdUser(e.target.value)} placeholder="delonix-service" />
+          </div>
+          <div className="field-row">
+            <label className="field-label">Password {cfg?.webdav_password_set && <span className="odoo-hint">(definida — deixa em branco para manter)</span>}</label>
+            <input type="password" value={wdPwd} onChange={(e) => setWdPwd(e.target.value)} placeholder={cfg?.webdav_password_set ? '••••••••' : 'nova password'} />
+          </div>
+          <div className="field-row">
+            <label className="field-label">Path remoto</label>
+            <input value={wdPath} onChange={(e) => setWdPath(e.target.value)} placeholder="/remote.php/dav/files/{user}/Delonix" />
+          </div>
+        </>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button className="primary odoo-save" onClick={save} disabled={busy}>
+          {busy ? '…' : '💾 Guardar'}
+        </button>
+        <button className="secondary" onClick={test} disabled={busy} type="button">
+          🔌 Testar ligação
+        </button>
+      </div>
+      {msg && <p className={msg.startsWith('✓') ? 'odoo-sync-at' : 'error'} style={{ marginTop: 8 }}>{msg}</p>}
+      {testMsg && <p className="odoo-hint" style={{ marginTop: 6 }}>{testMsg}</p>}
+    </div>
+  )
+}
+
 type Period = 'week' | 'month' | 'quarter' | 'year'
 const PERIODS: Period[] = ['week', 'month', 'quarter', 'year']
 
-type IntegTab = 'settings' | 'sso' | 'webhooks' | 'apikeys' | 'odoo'
+type IntegTab = 'settings' | 'sso' | 'webhooks' | 'apikeys' | 'odoo' | 'storage'
 
 /** Consola de administração: KPIs reais da org + membros + postura + quarentena. */
 export default function Analytics() {
@@ -852,6 +986,7 @@ export default function Analytics() {
                 {([
                   { key: 'settings', label: t('admin.settingsTitle', 'Definições') },
                   { key: 'odoo', label: '🔗 Odoo' },
+                  { key: 'storage', label: '💾 Armazenamento' },
                   { key: 'sso', label: t('admin.ssoTitle', 'SSO / OIDC') },
                   { key: 'webhooks', label: t('admin.webhooksTitle', 'Webhooks') },
                   { key: 'apikeys', label: t('admin.apiKeysTitle', 'API Keys') },
@@ -868,6 +1003,7 @@ export default function Analytics() {
               <div className="integ-body">
                 {integTab === 'settings' && <OrgSettings org={currentOrg} onSaved={loadOrgs} />}
                 {integTab === 'odoo' && <OrgOdooIntegration orgId={currentOrg.id} />}
+                {integTab === 'storage' && <PlatformStoragePanel />}
                 {integTab === 'sso' && <OrgSso orgId={currentOrg.id} />}
                 {integTab === 'webhooks' && <OrgWebhooks orgId={currentOrg.id} />}
                 {integTab === 'apikeys' && <OrgApiKeys orgId={currentOrg.id} />}

@@ -630,6 +630,13 @@ export default function Room({
   const talkOverSince = useRef(0)
   const peersRef = useRef<RemotePeer[]>([])
   peersRef.current = peers
+  // Refs que espelham estado para callbacks sem closures obsoletas (beforeunload, WS handlers).
+  const linesRef = useRef<string[]>([])
+  const isHostRef = useRef(false)
+  const momSavedRef = useRef(false)
+  linesRef.current = lines
+  isHostRef.current = isHost
+  momSavedRef.current = momSaved
 
   function floatReaction(emoji: string, username: string) {
     const id = ++reactionSeq
@@ -984,7 +991,14 @@ export default function Room({
         signal.on('timer', (m) => setMeetTimerEndsAt(m.ends_at))
         signal.on('server-recording', (m) => {
           setServerRec(m.active ? { by: m.by } : null)
-          if (m.active) setRecNotice(`${m.by} começou a gravar no servidor`)
+          if (m.active) {
+            setRecNotice(`${m.by} começou a gravar no servidor`)
+          } else if (isHostRef.current && linesRef.current.length > 0 && !momSavedRef.current) {
+            // Gravação parou → guardar ata automaticamente sem bloquear o UI
+            saveMinutesByRoom(code, buildMoM(linesRef.current), linesRef.current.join('\n'))
+              .then(() => { setMomSaved(true); setStatus('Ata guardada automaticamente ao parar a gravação') })
+              .catch(() => {})
+          }
         })
         // Quadro branco: snapshot ao entrar + traços/limpeza em tempo real.
         signal.on('wb-state', (m) => {
@@ -1101,6 +1115,27 @@ export default function Room({
       localStreamRef.current?.getTracks().forEach((t) => t.stop())
     }
   }, [code, passTry, joinIntent])
+
+  // Guardar ata via fetch keepalive quando o utilizador fecha o tab sem clicar Sair.
+  // keepalive: true garante que o pedido completa mesmo após o unload da página.
+  useEffect(() => {
+    function handleUnload() {
+      if (!isHostRef.current || linesRef.current.length === 0 || momSavedRef.current) return
+      const token = localStorage.getItem('dlx_token')
+      if (!token) return
+      fetch(`/api/rooms/${code}/minutes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          minutes: buildMoM(linesRef.current),
+          transcript: linesRef.current.join('\n'),
+        }),
+        keepalive: true,
+      })
+    }
+    window.addEventListener('beforeunload', handleUnload)
+    return () => window.removeEventListener('beforeunload', handleUnload)
+  }, [code])
 
   // Aviso de fala simultânea: ≥2 pessoas a falar durante >1.5s seguidos.
   useEffect(() => {
