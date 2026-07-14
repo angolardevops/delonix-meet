@@ -242,8 +242,8 @@
   ansible.builtin.shell: >-
     docker network inspect kind 2>/dev/null
     | grep '"Subnet"'
-    | grep -v ':'
     | awk -F'"' '{print $4}'
+    | grep -v ':'
     | head -1
   register: _kind_subnet
   changed_when: false
