@@ -2566,7 +2566,12 @@ button.link:hover {
   0%, 80% { opacity: 1; }
   100% { opacity: 0; }
 }
-.poll-create-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+/* Ações de criação de sondagem: os controlos de config (+opção, duração,
+   limpar) partilham a 1ª linha; o botão de lançar ocupa a sua própria linha
+   a toda a largura — nunca aperta nem parte o rótulo no painel estreito. */
+.poll-create-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.poll-create-actions .poll-dur { flex: 1 1 auto; min-width: 90px; }
+.poll-create-actions > .btn-sm:not(.ghost) { flex: 1 0 100%; }
 .poll-card {
   border: 1px solid var(--border); border-radius: 7px; padding: 0.7rem 0.8rem; margin-bottom: 0.7rem;
   display: grid; gap: 0.4rem;
@@ -4056,6 +4061,7 @@ button.link:hover {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   font-size: 0.82rem; line-height: 1;
   border-radius: var(--radius-sm);
+  white-space: nowrap; /* rótulo nunca parte em duas linhas (painel estreito) */
 }
 .chip-btn { border-radius: var(--radius-sm); } /* deixa de ser pill */
 
