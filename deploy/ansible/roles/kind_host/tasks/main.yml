@@ -399,15 +399,15 @@
 - name: Pré-pull + kind load postgres
   ansible.builtin.shell: |
     IMG="{{ _pg_image.stdout.strip() or 'bitnami/postgresql:16' }}"
-    docker pull "$IMG"
-    kind load docker-image "$IMG" --name {{ kind_cluster_name }}
+    docker pull --platform linux/amd64 "$IMG"
+    docker save "$IMG" | kind load image-archive /dev/stdin --name {{ kind_cluster_name }}
   changed_when: false
 
 - name: Pré-pull + kind load redis
   ansible.builtin.shell: |
     IMG="{{ _redis_image.stdout.strip() or 'bitnami/redis:7.2' }}"
-    docker pull "$IMG"
-    kind load docker-image "$IMG" --name {{ kind_cluster_name }}
+    docker pull --platform linux/amd64 "$IMG"
+    docker save "$IMG" | kind load image-archive /dev/stdin --name {{ kind_cluster_name }}
   changed_when: false
 
 - name: Instalar Postgres standalone via Helm
