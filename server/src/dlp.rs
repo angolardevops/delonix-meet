@@ -15,6 +15,31 @@ static API_KEY_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"sk-[a-zA-Z0-9]{32}").unwrap()
 });
 
+/// Palavras ofensivas (PT + EN) a mascarar nas legendas/transcrição — lista
+/// deliberadamente curta e conservadora (só termos claramente ofensivos), para
+/// não censurar palavras legítimas. `(?i)` = case-insensitive; `\b` = fronteira
+/// de palavra (não apanha substrings inocentes). Ajustável por org no futuro.
+static PROFANITY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)\b(?:merda|caralho|foda(?:-se)?|fode(?:-te)?|cabr[ãa]o|puta|putas|filho da puta|foda|porra|cona|badalhoc[oa]|corno|otári[oa]|fuck(?:ing|ed|er)?|shit|bitch|asshole|bastard|cunt|dick(?:head)?|motherfucker)\b",
+    )
+    .unwrap()
+});
+
+/// Substitui palavras ofensivas por asteriscos do mesmo comprimento
+/// (mantém a cadência da frase sem exibir o palavrão).
+pub fn mask_profanity(text: &str) -> String {
+    PROFANITY_RE
+        .replace_all(text, |c: &regex::Captures| "*".repeat(c[0].chars().count()))
+        .into_owned()
+}
+
+/// Limpeza de legenda/transcrição: censura DLP (PII) + máscara de palavrões.
+/// Usar em todo o texto de fala difundido a outros participantes.
+pub fn clean_caption(text: &str) -> String {
+    mask_profanity(&censor(text))
+}
+
 /// Redige informações sensíveis de um texto.
 pub fn censor(text: &str) -> String {
     let mut safe = text.to_string();
@@ -40,6 +65,25 @@ pub fn censor(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_mask_profanity() {
+        assert_eq!(mask_profanity("isto é uma merda pegada"), "isto é uma ***** pegada");
+        assert_eq!(mask_profanity("that is pure shit man"), "that is pure **** man");
+        // Conservador: só palavras isoladas (fronteira \b) — compostos e
+        // substrings inocentes NÃO são apanhados (evita falsos positivos).
+        assert_eq!(mask_profanity("that is bullshit"), "that is bullshit");
+        assert_eq!(mask_profanity("a pucará e o cornaça"), "a pucará e o cornaça");
+        // Case-insensitive:
+        assert_eq!(mask_profanity("MERDA total"), "***** total");
+    }
+
+    #[test]
+    fn test_clean_caption_pii_and_profanity() {
+        let out = clean_caption("paga com o cartão 1234 5678 1234 5678 seu merda");
+        assert!(out.contains("[CARTÃO DE CRÉDITO BLOQUEADO PELO DLP]"));
+        assert!(out.contains("*****") && !out.contains("merda"));
+    }
 
     #[test]
     fn test_censor_credit_card() {

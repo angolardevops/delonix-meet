@@ -55,6 +55,11 @@ pub enum ClientMsg {
     Transcript {
         text: String,
     },
+    /// Legenda ao vivo (parcial) — enquanto a pessoa ainda fala. Difundida a
+    /// todos e substituída pela `Transcript` final; NUNCA persiste na ata.
+    TranscriptInterim {
+        text: String,
+    },
     /// Anfitrião liga/desliga a transcrição PARTILHADA (Nota AI). Ao ligar,
     /// todos os clientes transcrevem o PRÓPRIO microfone e difundem as frases —
     /// capta todos os oradores, não só o mic de quem iniciou.
@@ -224,6 +229,13 @@ pub enum ServerMsg {
         active: bool,
     },
     Transcript {
+        from: Uuid,
+        username: String,
+        text: String,
+    },
+    /// Legenda ao vivo (parcial) de um orador — atualiza a legenda em tempo
+    /// real; é substituída pela `Transcript` final.
+    TranscriptInterim {
         from: Uuid,
         username: String,
         text: String,
@@ -1174,7 +1186,8 @@ impl SignalingHub {
                 if text.is_empty() || text.len() > 4000 {
                     return true;
                 }
-                let text = crate::dlp::censor(&text);
+                // Limpeza: PII (DLP) + máscara de palavrões antes de difundir.
+                let text = crate::dlp::clean_caption(&text);
                 let username = self
                     .username_of(room_id, peer_id)
                     .unwrap_or_else(|| "?".into());
@@ -1182,6 +1195,27 @@ impl SignalingHub {
                     room_id,
                     peer_id,
                     ServerMsg::Transcript {
+                        from: peer_id,
+                        username,
+                        text,
+                    },
+                );
+            }
+            ClientMsg::TranscriptInterim { text } => {
+                // Legenda ao vivo (parcial): difunde já para a legenda dos outros
+                // acompanhar em tempo real, sem esperar pelo fim da frase. Não
+                // persiste na ata (efémera; é substituída pela final).
+                if text.is_empty() || text.len() > 4000 {
+                    return true;
+                }
+                let text = crate::dlp::clean_caption(&text);
+                let username = self
+                    .username_of(room_id, peer_id)
+                    .unwrap_or_else(|| "?".into());
+                self.broadcast(
+                    room_id,
+                    peer_id,
+                    ServerMsg::TranscriptInterim {
                         from: peer_id,
                         username,
                         text,
