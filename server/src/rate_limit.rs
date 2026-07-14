@@ -60,7 +60,12 @@ pub struct TokenBucket {
 
 impl TokenBucket {
     pub fn new(burst: f64, refill_per_sec: f64) -> Self {
-        Self { tokens: burst, last: Instant::now(), burst, refill_per_sec }
+        Self {
+            tokens: burst,
+            last: Instant::now(),
+            burst,
+            refill_per_sec,
+        }
     }
 
     /// Núcleo testável: consome 1 token no instante `now`. `true` = permitido.
@@ -165,7 +170,10 @@ mod tests {
         for i in 0..300 {
             assert!(tb.allow_at(t1), "token refilado {i} devia passar");
         }
-        assert!(!tb.allow_at(t1), "301.º após 1s excede o sustentado de 300/s");
+        assert!(
+            !tb.allow_at(t1),
+            "301.º após 1s excede o sustentado de 300/s"
+        );
     }
 
     #[test]

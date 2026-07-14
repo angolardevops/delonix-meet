@@ -1,10 +1,11 @@
 ---
 # ============================================================
-#  Delonix Meet — deploy zero-touch (single-host OU multi-host)
+#  Delonix Meet — deploy zero-touch (single-host | multi-host | kind)
 #
 #  Modo escolhido em deploy/config.yml (deploy_mode). Correr via:
 #     make deploy               (lê deploy/config.yml)
-#  ou  cd deploy/ansible && ansible-playbook site.yml
+#     make deploy-kaeso         (preprod kaeso — kind remoto)
+#  ou  cd deploy/ansible && ansible-playbook site.yml --ask-become-pass
 #
 #  Idempotente: IPs, DNS, TLS e segredos gerados sem intervenção humana.
 # ============================================================
@@ -54,3 +55,13 @@
       when: deploy_mode == 'multi-host'
     - role: k8s_app
       when: deploy_mode == 'multi-host'
+
+# ---- Play 4: KIND — servidor remoto com recursos limitados (preprod/stage) ----
+# Imagens exportadas localmente antes do play via `make export-images`.
+- name: Kind — deploy preprod num servidor remoto
+  hosts: kind_host
+  become: true
+  gather_facts: true
+  roles:
+    - role: kind_host
+      when: deploy_mode == 'kind'

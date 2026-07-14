@@ -8,7 +8,10 @@ use axum::{
 use dashmap::DashMap;
 use futures_util::{stream::SplitStream, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
@@ -52,6 +55,11 @@ pub enum ClientMsg {
     Transcript {
         text: String,
     },
+    /// Legenda ao vivo (parcial) — enquanto a pessoa ainda fala. Difundida a
+    /// todos e substituída pela `Transcript` final; NUNCA persiste na ata.
+    TranscriptInterim {
+        text: String,
+    },
     /// Anfitrião liga/desliga a transcrição PARTILHADA (Nota AI). Ao ligar,
     /// todos os clientes transcrevem o PRÓPRIO microfone e difundem as frases —
     /// capta todos os oradores, não só o mic de quem iniciou.
@@ -82,6 +90,12 @@ pub enum ClientMsg {
     PollCreate {
         question: String,
         options: Vec<String>,
+        /// Quiz: índice da resposta certa (opcional).
+        #[serde(default)]
+        correct_option: Option<usize>,
+        /// Quiz com tempo: duração da votação em segundos (opcional).
+        #[serde(default)]
+        duration_secs: Option<u64>,
     },
     PollVote {
         poll: Uuid,
@@ -154,6 +168,15 @@ pub enum ClientMsg {
         action: String,
         payload: serde_json::Value,
     },
+    /// Anfitrião autoriza/revoga a partilha de ecrã de um participante.
+    ShareGrant {
+        to: Uuid,
+        allowed: bool,
+    },
+    /// Não-anfitrião pede ao anfitrião autorização para partilhar o ecrã.
+    ShareRequest,
+    /// Apresentador (ou anfitrião) abre o quadro branco em todos.
+    WbOpen,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,6 +229,13 @@ pub enum ServerMsg {
         active: bool,
     },
     Transcript {
+        from: Uuid,
+        username: String,
+        text: String,
+    },
+    /// Legenda ao vivo (parcial) de um orador — atualiza a legenda em tempo
+    /// real; é substituída pela `Transcript` final.
+    TranscriptInterim {
         from: Uuid,
         username: String,
         text: String,
@@ -291,6 +321,19 @@ pub enum ServerMsg {
         action: String,
         payload: serde_json::Value,
     },
+    /// Resposta do anfitrião a um pedido de partilha (ou grant direto).
+    ShareGranted {
+        allowed: bool,
+    },
+    /// Pedido de partilha de ecrã de um não-anfitrião (entregue aos anfitriões).
+    ShareRequest {
+        from: Uuid,
+        username: String,
+    },
+    /// O apresentador abriu o quadro branco — abre em todos.
+    WbOpen {
+        by: String,
+    },
 }
 
 /// Traço do quadro branco: pontos normalizados (0..1), cor CSS e espessura.
@@ -313,6 +356,14 @@ pub struct PollView {
     pub counts: Vec<u32>,
     pub open: bool,
     pub by: String,
+    /// Quiz: índice da resposta certa — SÓ revelado depois de fechar (None
+    /// enquanto aberta, mesmo que exista, para ninguém fazer batota).
+    pub correct: Option<usize>,
+    /// Quiz com tempo: epoch ms do fim da votação (contagem no cliente).
+    pub ends_at: Option<i64>,
+    /// Totais revelados no fecho (0 enquanto aberta ou sem resposta certa).
+    pub total_right: u32,
+    pub total_wrong: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -332,6 +383,11 @@ pub struct PollState {
     pub votes: HashMap<Uuid, usize>,
     pub open: bool,
     pub by: String,
+    // Quiz (serde default: polls antigas no Redis continuam a desserializar).
+    #[serde(default)]
+    pub correct: Option<usize>,
+    #[serde(default)]
+    pub ends_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -412,6 +468,10 @@ pub(crate) struct Room {
     locked: bool,
     /// Só o anfitrião pode partilhar ecrã.
     host_share_only: bool,
+    /// Autorizações de partilha de ecrã dadas pelo anfitrião (por peer).
+    share_grants: HashSet<Uuid>,
+    /// Quem está a apresentar agora — gateia controlo remoto e wb-open.
+    presenter: Option<Uuid>,
     // Ferramentas de reunião:
     pub(crate) polls: Vec<PollState>,
     pub(crate) questions: Vec<QaState>,
@@ -592,7 +652,13 @@ impl SignalingHub {
         let removed = self
             .rooms
             .get_mut(&room_id)
-            .map(|mut r| r.peers.remove(&peer_id).is_some())
+            .map(|mut r| {
+                r.share_grants.remove(&peer_id);
+                if r.presenter == Some(peer_id) {
+                    r.presenter = None;
+                }
+                r.peers.remove(&peer_id).is_some()
+            })
             .unwrap_or(false);
         let empty = self
             .rooms
@@ -790,6 +856,13 @@ impl SignalingHub {
                                 *c += 1;
                             }
                         }
+                        let (total_right, total_wrong) = match (p.open, p.correct) {
+                            (false, Some(c)) => {
+                                let right = p.votes.values().filter(|&&v| v == c).count() as u32;
+                                (right, p.votes.len() as u32 - right)
+                            }
+                            _ => (0, 0),
+                        };
                         PollView {
                             id: p.id,
                             question: p.question.clone(),
@@ -797,6 +870,11 @@ impl SignalingHub {
                             counts,
                             open: p.open,
                             by: p.by.clone(),
+                            // A resposta certa só sai do servidor após o fecho.
+                            correct: if p.open { None } else { p.correct },
+                            ends_at: p.ends_at,
+                            total_right,
+                            total_wrong,
                         }
                     })
                     .collect()
@@ -824,6 +902,24 @@ impl SignalingHub {
                 qs
             })
             .unwrap_or_default()
+    }
+
+    /// Fecha uma sondagem (só anfitrião) e devolve o snapshot final — usado
+    /// pela camada async para persistir o resultado no meeting da sala.
+    pub(crate) fn close_poll(&self, room_id: Uuid, peer_id: Uuid, poll: Uuid) -> Option<PollState> {
+        if !self.is_host(room_id, peer_id) {
+            return None;
+        }
+        let snap = self.rooms.get_mut(&room_id).and_then(|mut r| {
+            r.polls.iter_mut().find(|p| p.id == poll).map(|p| {
+                p.open = false;
+                p.clone()
+            })
+        });
+        if snap.is_some() {
+            self.broadcast_polls(room_id);
+        }
+        snap
     }
 
     pub(crate) fn broadcast_polls(&self, room_id: Uuid) {
@@ -860,6 +956,25 @@ impl SignalingHub {
             .get(&room_id)
             .map(|r| (r.locked, r.host_share_only))
             .unwrap_or((false, false))
+    }
+
+    /// O peer tem autorização do anfitrião para partilhar o ecrã?
+    pub(crate) fn share_allowed(&self, room_id: Uuid, peer_id: Uuid) -> bool {
+        self.rooms
+            .get(&room_id)
+            .map(|r| r.share_grants.contains(&peer_id))
+            .unwrap_or(false)
+    }
+
+    /// Regista quem está a apresentar (para controlo remoto e wb-open).
+    pub(crate) fn set_presenter(&self, room_id: Uuid, peer_id: Uuid, on: bool) {
+        if let Some(mut room) = self.rooms.get_mut(&room_id) {
+            if on {
+                room.presenter = Some(peer_id);
+            } else if room.presenter == Some(peer_id) {
+                room.presenter = None;
+            }
+        }
     }
 
     pub(crate) fn is_host(&self, room_id: Uuid, peer_id: Uuid) -> bool {
@@ -907,6 +1022,18 @@ impl SignalingHub {
                 action,
                 payload,
             } => {
+                // Controlo remoto só existe sobre a tela partilhada: pedidos a
+                // quem não está a apresentar são descartados (respostas passam).
+                if action == "request" {
+                    let target_presenting = self
+                        .rooms
+                        .get(&room_id)
+                        .map(|r| r.presenter == Some(to))
+                        .unwrap_or(false);
+                    if !target_presenting {
+                        return true;
+                    }
+                }
                 self.send_to(
                     room_id,
                     to,
@@ -916,6 +1043,54 @@ impl SignalingHub {
                         payload,
                     },
                 );
+            }
+            ClientMsg::ShareGrant { to, allowed } => {
+                if self.is_host(room_id, peer_id) {
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        if allowed {
+                            room.share_grants.insert(to);
+                        } else {
+                            room.share_grants.remove(&to);
+                        }
+                    }
+                    self.send_to(room_id, to, ServerMsg::ShareGranted { allowed });
+                }
+            }
+            ClientMsg::ShareRequest => {
+                // Com "só o anfitrião partilha", os pedidos são recusados logo.
+                let blocked = self
+                    .rooms
+                    .get(&room_id)
+                    .map(|r| r.host_share_only)
+                    .unwrap_or(false);
+                if blocked {
+                    self.send_to(room_id, peer_id, ServerMsg::ShareGranted { allowed: false });
+                } else {
+                    let username = self
+                        .username_of(room_id, peer_id)
+                        .unwrap_or_else(|| "?".into());
+                    self.broadcast_hosts(
+                        room_id,
+                        ServerMsg::ShareRequest {
+                            from: peer_id,
+                            username,
+                        },
+                    );
+                }
+            }
+            ClientMsg::WbOpen => {
+                // Só o apresentador atual (ou o anfitrião) abre o quadro a todos.
+                let is_presenter = self
+                    .rooms
+                    .get(&room_id)
+                    .map(|r| r.presenter == Some(peer_id))
+                    .unwrap_or(false);
+                if is_presenter || self.is_host(room_id, peer_id) {
+                    let by = self
+                        .username_of(room_id, peer_id)
+                        .unwrap_or_else(|| "?".into());
+                    self.broadcast(room_id, peer_id, ServerMsg::WbOpen { by });
+                }
             }
             ClientMsg::Chat { text } => {
                 if text.is_empty() || text.len() > 4000 {
@@ -1005,7 +1180,8 @@ impl SignalingHub {
                 if text.is_empty() || text.len() > 4000 {
                     return true;
                 }
-                let text = crate::dlp::censor(&text);
+                // Limpeza: PII (DLP) + máscara de palavrões antes de difundir.
+                let text = crate::dlp::clean_caption(&text);
                 let username = self
                     .username_of(room_id, peer_id)
                     .unwrap_or_else(|| "?".into());
@@ -1013,6 +1189,27 @@ impl SignalingHub {
                     room_id,
                     peer_id,
                     ServerMsg::Transcript {
+                        from: peer_id,
+                        username,
+                        text,
+                    },
+                );
+            }
+            ClientMsg::TranscriptInterim { text } => {
+                // Legenda ao vivo (parcial): difunde já para a legenda dos outros
+                // acompanhar em tempo real, sem esperar pelo fim da frase. Não
+                // persiste na ata (efémera; é substituída pela final).
+                if text.is_empty() || text.len() > 4000 {
+                    return true;
+                }
+                let text = crate::dlp::clean_caption(&text);
+                let username = self
+                    .username_of(room_id, peer_id)
+                    .unwrap_or_else(|| "?".into());
+                self.broadcast(
+                    room_id,
+                    peer_id,
+                    ServerMsg::TranscriptInterim {
                         from: peer_id,
                         username,
                         text,
@@ -1597,7 +1794,21 @@ async fn handle_socket(
                     breakouts_close(&state, room_id);
                 }
                 Ok(ClientMsg::ScreenShare { on }) if sfu_mode => {
+                    // Não-anfitrião só partilha com autorização do anfitrião
+                    // (share-grant) — validado AQUI, não confiado no cliente.
+                    if on && !is_host && !state.hub.share_allowed(room_id, peer_id) {
+                        state.hub.send_to(
+                            room_id,
+                            peer_id,
+                            ServerMsg::Error {
+                                message: "A partilha de ecrã requer autorização do anfitrião"
+                                    .into(),
+                            },
+                        );
+                        continue;
+                    }
                     state.sfu.set_screen(room_id, peer_id, on).await;
+                    state.hub.set_presenter(room_id, peer_id, on);
                     // Aviso fiável a todos: quem parou de apresentar limpa já a
                     // apresentação nos recetores (sem esperar por eventos de
                     // track). Ao ligar, ajuda a preparar o palco (#1/#2).
@@ -1643,6 +1854,58 @@ async fn handle_socket(
                                 by: username.clone(),
                             },
                         );
+                    }
+                }
+                Ok(ClientMsg::PollClose { poll }) => {
+                    // Fecho + revelação via hub (valida anfitrião); o resultado
+                    // final persiste no meeting da sala (jsonb `polls`) — as
+                    // sondagens/quizzes ficam guardadas com a reunião.
+                    if let Some(p) = state.hub.close_poll(room_id, peer_id, poll) {
+                        let db = state.db.clone();
+                        tokio::spawn(async move {
+                            let code: Option<(String,)> =
+                                sqlx::query_as("SELECT code FROM rooms WHERE id = $1")
+                                    .bind(room_id)
+                                    .fetch_optional(&db)
+                                    .await
+                                    .ok()
+                                    .flatten();
+                            let Some((code,)) = code else { return };
+                            let mut counts = vec![0u32; p.options.len()];
+                            for v in p.votes.values() {
+                                if let Some(c) = counts.get_mut(*v) {
+                                    *c += 1;
+                                }
+                            }
+                            let right = p
+                                .correct
+                                .map(|c| p.votes.values().filter(|&&v| v == c).count())
+                                .unwrap_or(0);
+                            let entry = serde_json::json!([{
+                                "question": p.question,
+                                "options": p.options,
+                                "counts": counts,
+                                "correct": p.correct,
+                                "total_votes": p.votes.len(),
+                                "total_right": right,
+                                "total_wrong": p.votes.len().saturating_sub(right),
+                                "by": p.by,
+                            }]);
+                            let _ = sqlx::query(
+                                "UPDATE meetings SET polls = polls || $1::jsonb
+                                 WHERE room_code = $2",
+                            )
+                            .bind(entry)
+                            .bind(&code)
+                            .execute(&db)
+                            .await;
+                        });
+                    }
+                    if let Some(b) = state.redis_bus.as_ref() {
+                        let b = b.clone();
+                        tokio::spawn(async move {
+                            crate::redis_state::poll_close(b.conn.clone(), room_id, poll).await;
+                        });
                     }
                 }
                 Ok(client_msg) => {
@@ -1851,7 +2114,16 @@ mod tests {
         let (host, tx_h, mut rx_h) = peer();
         let (other, tx_o, _rx_o) = peer();
         hub.join(room, host, host, "host".into(), true, true, false, tx_h);
-        hub.join(room, other, other, "other".into(), false, false, false, tx_o);
+        hub.join(
+            room,
+            other,
+            other,
+            "other".into(),
+            false,
+            false,
+            false,
+            tx_o,
+        );
         drain(&mut rx_h);
 
         let guest = Uuid::new_v4();

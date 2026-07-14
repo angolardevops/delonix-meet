@@ -1,4 +1,5 @@
 mod actions;
+mod ai;
 mod apikeys;
 mod audit;
 mod auth;
@@ -8,6 +9,7 @@ mod error;
 mod meetings;
 mod metrics;
 mod mls;
+mod odoo;
 mod org;
 mod presence;
 mod pubsub;
@@ -19,6 +21,7 @@ mod room_tools;
 mod rooms;
 mod sfu;
 mod signaling;
+mod storage;
 mod users;
 mod voice;
 mod webhooks;
@@ -135,6 +138,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/rooms/{code}/join", post(rooms::join_room))
         .route("/api/rooms/{code}/chat", get(rooms::room_chat))
         .route("/api/rooms/{code}/qos", post(rooms::post_qos))
+        // Tradução de legendas em tempo real via LLM local (ai.rs / Ollama).
+        .route("/api/translate", post(ai::translate_caption))
         .route("/api/rooms/{code}/invite", post(rooms::invite_to_room))
         .route(
             "/api/rooms/{code}/recordings",
@@ -235,6 +240,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Gestão de chaves de API (admin da org, sessão)
         .route("/api/orgs/{org_id}/api-keys", get(apikeys::list).post(apikeys::create))
         .route("/api/orgs/{org_id}/api-keys/{key_id}", axum::routing::delete(apikeys::revoke))
+        // ---- Integração Odoo (nk_delonix_meet) ----
+        .route(
+            "/api/orgs/{org_id}/integration/odoo",
+            get(odoo::get_config).put(odoo::save_config),
+        )
+        .route(
+            "/api/orgs/{org_id}/integration/odoo/token",
+            post(odoo::rotate_token),
+        )
+        // Configurações públicas da plataforma (sem autenticação — usado na login page)
+        .route("/api/public/settings", get(odoo::public_settings))
         // ══════════════════════════════════════════════════════════════════
         //  FRONTEIRA DE CONTRATO DE API (ver docs/reference/api-contract.md)
         //  Tudo ACIMA (`/api/...` sem versão) é a **BFF interna** do próprio web
@@ -249,10 +265,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1",
             Router::new()
                 .route("/org", get(apikeys::v1_org))
+                // Provisão de org — auth por segredo de plataforma (não por
+                // chave de org, que ainda não existe). Ver apikeys::v1_provision_org.
+                .route("/admin/orgs", post(apikeys::v1_provision_org))
                 .route("/rooms", post(apikeys::v1_create_room))
                 .route("/rooms/{code}", get(apikeys::v1_get_room))
                 .route("/rooms/{code}/join-bot", post(apikeys::v1_join_bot_room))
                 .route("/recordings", get(apikeys::v1_recordings))
+                // Sync de calendário + MoM (integração Odoo nk_delonix_meet —
+                // ver docs/nk-delonix-meet-integration.md).
+                .route("/meetings", get(apikeys::v1_meetings))
+                .route("/meetings/{id}/notes", get(apikeys::v1_meeting_notes))
+                // Integração Odoo: provisioning e listagem de utilizadores
+                .route("/integration/odoo/provision", post(odoo::provision))
+                .route("/integration/odoo/users", get(odoo::list_users))
+                // Storage remoto: TrueNAS NFS / Nextcloud WebDAV
+                .route("/platform/storage", get(storage::get_storage).put(storage::save_storage))
+                .route("/platform/storage/test", post(storage::test_storage))
+                .route("/platform/storage/pvc-manifest", get(storage::pvc_manifest))
                 .layer(middleware::from_fn_with_state(
                     state.clone(),
                     rate_limit::v1_rate_limit,

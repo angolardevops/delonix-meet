@@ -360,24 +360,66 @@ pub async fn login(
     // Verify against a dummy hash when the user doesn't exist so timing
     // doesn't leak account existence.
     const DUMMY: &str = "$argon2id$v=19$m=19456,t=2,p=1$YWFhYWFhYWFhYWFhYWFhYQ$m6vRnxkbG10eB0QdjqfLd8Y6M3holKAAvfeFXTiXBdU";
-    match row {
-        Some((id, email, username, password_hash, created_at))
-            if verify_password(&req.password, &password_hash) =>
+
+    let Some((id, user_email, username, password_hash, created_at)) = row else {
+        let _ = verify_password(&req.password, DUMMY);
+        return Err(ApiError::Unauthorized);
+    };
+
+    // Integração Odoo: se a org do utilizador tem integração activa, validar
+    // contra o Odoo primeiro. Em modo offline (Odoo inacessível), usa o hash
+    // Argon2 guardado na última autenticação online bem-sucedida.
+    let odoo_cfg = crate::odoo::org_odoo_config(&state.db, &email).await;
+    let authenticated = if let Some((_, odoo_url, odoo_db)) = odoo_cfg {
+        match crate::odoo::odoo_authenticate(
+            &state.webhook_client,
+            &odoo_url,
+            &odoo_db,
+            &email,
+            &req.password,
+        )
+        .await
         {
-            let user = crate::users::UserPublic {
-                id,
-                email,
-                username,
-                created_at,
-                locale: "pt".into(),
-            };
-            crate::audit::log(&state.db, None, user.id, "auth.login", &user.email).await;
-            Ok(auth_ok(&state, issue_tokens(&state, user).await?))
+            crate::odoo::OdooAuthResult::Ok(odoo_uid) => {
+                // Online: sincroniza hash para uso offline posterior
+                if let Ok(h) = hash_password(&req.password) {
+                    let _ = sqlx::query(
+                        "UPDATE users SET password_hash = $1, odoo_uid = $2 WHERE id = $3",
+                    )
+                    .bind(&h)
+                    .bind(odoo_uid)
+                    .bind(id)
+                    .execute(&state.db)
+                    .await;
+                }
+                true
+            }
+            crate::odoo::OdooAuthResult::Offline => {
+                // Offline: hash local válido apenas se a senha não mudou no Odoo
+                !password_hash.is_empty() && verify_password(&req.password, &password_hash)
+            }
+            crate::odoo::OdooAuthResult::InvalidCredentials => {
+                // Senha alterada no Odoo — rejeitar mesmo que o hash local coincida
+                let _ = verify_password(&req.password, DUMMY);
+                false
+            }
         }
-        _ => {
-            let _ = verify_password(&req.password, DUMMY);
-            Err(ApiError::Unauthorized)
-        }
+    } else {
+        verify_password(&req.password, &password_hash)
+    };
+
+    if authenticated {
+        let user = crate::users::UserPublic {
+            id,
+            email: user_email,
+            username,
+            created_at,
+            locale: "pt".into(),
+        };
+        crate::audit::log(&state.db, None, user.id, "auth.login", &user.email).await;
+        Ok(auth_ok(&state, issue_tokens(&state, user).await?))
+    } else {
+        Err(ApiError::Unauthorized)
     }
 }
 

@@ -8,6 +8,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Epoch em milissegundos (prazos de quiz).
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 impl SignalingHub {
     /// Trata as mensagens de ferramentas de colaboração (chamado por `handle`).
     pub(crate) fn handle_tool_msg(
@@ -18,7 +26,12 @@ impl SignalingHub {
         bus: Option<&Arc<PubSubBus>>,
     ) {
         match msg {
-            ClientMsg::PollCreate { question, options } => {
+            ClientMsg::PollCreate {
+                question,
+                options,
+                correct_option,
+                duration_secs,
+            } => {
                 let question = question.trim().to_string();
                 let options: Vec<String> = options
                     .iter()
@@ -30,10 +43,17 @@ impl SignalingHub {
                     && question.len() <= 200
                     && (2..=6).contains(&options.len())
                     && options.iter().all(|o| o.len() <= 80)
+                    && correct_option.map_or(true, |c| c < options.len())
                 {
                     let by = self
                         .username_of(room_id, peer_id)
                         .unwrap_or_else(|| "?".into());
+                    // Quiz com tempo: o fim vai a todos (contagem no cliente);
+                    // o servidor rejeita votos após o prazo e o anfitrião
+                    // fecha/revela quando o tempo acaba.
+                    let ends_at = duration_secs
+                        .filter(|d| *d > 0)
+                        .map(|d| now_ms() + (d.min(3600) as i64) * 1000);
                     let poll = PollState {
                         id: Uuid::new_v4(),
                         question,
@@ -41,6 +61,8 @@ impl SignalingHub {
                         votes: HashMap::new(),
                         open: true,
                         by,
+                        correct: correct_option,
+                        ends_at,
                     };
                     if let Some(mut room) = self.rooms.get_mut(&room_id) {
                         if room.polls.len() < 20 {
@@ -59,7 +81,9 @@ impl SignalingHub {
             ClientMsg::PollVote { poll, option } => {
                 if let Some(mut room) = self.rooms.get_mut(&room_id) {
                     if let Some(p) = room.polls.iter_mut().find(|p| p.id == poll) {
-                        if p.open && option < p.options.len() {
+                        // 1.5s de tolerância para latência no fim do quiz.
+                        let within_time = p.ends_at.map_or(true, |e| now_ms() <= e + 1500);
+                        if p.open && within_time && option < p.options.len() {
                             p.votes.insert(peer_id, option);
                         }
                     }

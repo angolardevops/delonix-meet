@@ -513,6 +513,10 @@ export interface OrgStats {
 export const postQos = (code: string, s: { rtt_ms: number | null; loss_pct: number; up_kbps: number }) =>
   request(`/api/rooms/${code}/qos`, { method: 'POST', body: JSON.stringify(s) })
 
+/** Tradução de uma linha de legenda via LLM local (Ollama in-cluster). */
+export const translateCaption = (text: string, target: string) =>
+  request<{ text: string }>('/api/translate', { method: 'POST', body: JSON.stringify({ text, target }) })
+
 export const myOrgs = () => request<OrgSummary[]>('/api/orgs')
 export const orgStats = (orgId: string) => request<OrgStats>(`/api/orgs/${orgId}/stats`)
 
@@ -541,6 +545,86 @@ export const removeEmployee = (orgId: string, userId: string) =>
 export const listGroups = (orgId: string) => request<Group[]>(`/api/orgs/${orgId}/groups`)
 export const createGroup = (orgId: string, name: string, memberIds: string[]) =>
   request<Group>(`/api/orgs/${orgId}/groups`, { method: 'POST', body: JSON.stringify({ name, member_ids: memberIds }) })
+
+// ---------- Integração Odoo (nk_delonix_meet) ----------
+
+export interface OdooConfig {
+  org_id: string
+  odoo_enabled: boolean
+  odoo_url: string | null
+  odoo_db: string | null
+  odoo_token_prefix: string | null
+  odoo_admin_id: string | null
+  odoo_synced_at: string | null
+  hide_org_creation: boolean
+  hide_sso_button: boolean
+}
+
+export interface OdooConfigSaveReq {
+  odoo_enabled: boolean
+  odoo_url: string | null
+  odoo_db: string | null
+  hide_org_creation: boolean
+  hide_sso_button: boolean
+}
+
+export const getOdooConfig = (orgId: string) =>
+  request<OdooConfig>(`/api/orgs/${orgId}/integration/odoo`)
+
+export const saveOdooConfig = (orgId: string, cfg: OdooConfigSaveReq) =>
+  request<{ ok: boolean }>(`/api/orgs/${orgId}/integration/odoo`, {
+    method: 'PUT',
+    body: JSON.stringify(cfg),
+  })
+
+export const rotateOdooToken = (orgId: string) =>
+  request<{ token: string; prefix: string }>(`/api/orgs/${orgId}/integration/odoo/token`, {
+    method: 'POST',
+  })
+
+/** Configurações públicas da plataforma (sem autenticação). */
+export interface PlatformSettings {
+  hide_org_creation: boolean
+  hide_sso_button: boolean
+}
+export const getPlatformSettings = () =>
+  fetch('/api/public/settings').then((r) => r.json() as Promise<PlatformSettings>)
+
+// ---------- Platform storage ----------
+
+export interface StorageConfig {
+  storage_type: 'local' | 'nfs' | 'webdav'
+  nfs_server: string | null
+  nfs_path: string | null
+  webdav_url: string | null
+  webdav_user: string | null
+  webdav_password_set: boolean
+  webdav_path: string
+}
+
+export interface StorageConfigSaveReq {
+  storage_type: string
+  nfs_server?: string
+  nfs_path?: string
+  webdav_url?: string
+  webdav_user?: string
+  webdav_password?: string
+  webdav_path?: string
+}
+
+export const getPlatformStorage = () =>
+  request<StorageConfig>('/api/v1/platform/storage')
+
+export const savePlatformStorage = (cfg: StorageConfigSaveReq) =>
+  request<{ ok: boolean }>('/api/v1/platform/storage', {
+    method: 'PUT',
+    body: JSON.stringify(cfg),
+  })
+
+export const testPlatformStorage = () =>
+  request<{ ok: boolean; type: string; message: string }>('/api/v1/platform/storage/test', {
+    method: 'POST',
+  })
 
 export function accessTokenValue(): string | null {
   return accessToken

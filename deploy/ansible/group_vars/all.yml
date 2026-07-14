@@ -31,6 +31,12 @@ dns_cloudflare_zone: "{{ cfg.dns.cloudflare_zone | default('') }}"
 dns_route53_zone: "{{ cfg.dns.route53_zone | default('') }}"
 dns_proxied: "{{ cfg.dns.proxied | default(false) }}"
 
+# ---- IA local (Ollama: tradução de legendas + resumo MoM) ----
+ollama_enabled: "{{ cfg.kubernetes.ollama_enabled | default(cfg.ollama.enabled | default(true)) }}"
+ollama_gpu: "{{ cfg.kubernetes.ollama_gpu | default(cfg.ollama.gpu | default(false)) }}"
+ollama_model_translate: "{{ cfg.ollama.model_translate | default('qwen2.5:1.5b') }}"
+ollama_model_summary: "{{ cfg.ollama.model_summary | default('qwen2.5:7b') }}"
+
 # ---- coturn / media ----
 turn_realm: "{{ cfg.turn.realm | default('') | ternary(cfg.turn.realm | default(''), (domain if domain else 'delonix.local')) }}"
 turn_min_port: "{{ cfg.turn.min_port | default(49152) }}"
@@ -46,7 +52,7 @@ web_root: "{{ cfg.paths.web_root | default('/var/www/delonix') }}"
 recordings_dir: "{{ cfg.paths.recordings_dir | default('/var/lib/delonix/recordings') }}"
 tls_dir: "{{ cfg.paths.tls_dir | default('/etc/ssl/delonix') }}"
 
-# ---- Kubernetes (multi-host) ----
+# ---- Kubernetes (multi-host / kind) ----
 k8s_metallb_range: "{{ cfg.kubernetes.metallb_ip_range | default('') }}"
 k8s_postgres_ha: "{{ cfg.kubernetes.postgres_ha | default(true) }}"
 k8s_redis_sentinel: "{{ cfg.kubernetes.redis_sentinel | default(true) }}"
@@ -55,6 +61,11 @@ k8s_web_replicas: "{{ cfg.kubernetes.web_replicas | default(3) }}"
 coturn_vip: "{{ cfg.kubernetes.coturn_ip | default('') }}"
 # Host servido no cluster (nome no ingress). Domínio se houver; senão nome local.
 k8s_host: "{{ domain if domain else 'meet.delonix.local' }}"
+# Segundo hostname (externo) para o ingress — usado em deploy_mode=kind.
+domain_external: "{{ cfg.domain_external | default('') | trim }}"
+# kind: nome do cluster e kubeconfig no host remoto.
+kind_cluster_name: delonix-preprod
+kind_kubeconfig: /root/.kube/config
 _kubeconfig: /etc/kubernetes/admin.conf
 _k8s_dir: "{{ playbook_dir }}/../k8s"
 

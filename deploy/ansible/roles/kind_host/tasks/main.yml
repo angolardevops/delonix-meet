@@ -1,0 +1,500 @@
+---
+# kind_host — Deploy Delonix Meet num servidor remoto com recursos limitados.
+
+# public_ip_effective é definido no Play 0 (localhost). Em plays subsequentes
+# noutros hosts o fact não está disponível — definir aqui diretamente do config.
+- name: Definir public_ip_effective a partir do config
+  ansible.builtin.set_fact:
+    public_ip_effective: "{{ cfg.public_ip }}"
+    cacheable: true
+# Instala Docker + kind + kubectl + Helm; corre coturn no host como systemd;
+# cria cluster kind com port-mapping 80/443; aplica manifests K8s com overrides
+# de recursos (1 réplica, postgres/redis standalone).
+#
+# Pré-requisito: as imagens Docker (delonix-server, delonix-web) foram construídas
+# localmente com `make image` e estão disponíveis em /tmp/dlx-images/ como .tar.gz
+# (gerados pelo play de preflight via `make export-images`).
+
+# ============================================================
+# 1. PACOTES BASE
+# ============================================================
+
+- name: Instalar dependências base
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - coturn
+      - openssl
+      - python3-cryptography
+    state: present
+    update_cache: true
+
+# ============================================================
+# 2. DOCKER CE
+# ============================================================
+
+- name: Chave GPG Docker
+  ansible.builtin.apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    keyring: /etc/apt/keyrings/docker.gpg
+    state: present
+
+- name: Repositório Docker CE
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg]
+      https://download.docker.com/linux/ubuntu
+      {{ ansible_distribution_release }} stable
+    filename: docker-ce
+    state: present
+
+- name: Instalar Docker CE
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Serviço Docker activo
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+- name: sysadmin no grupo docker
+  ansible.builtin.user:
+    name: "{{ ansible_user }}"
+    groups: docker
+    append: true
+
+# ============================================================
+# 3. KIND + KUBECTL + HELM
+# ============================================================
+
+- name: kind binary
+  ansible.builtin.get_url:
+    url: https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+    dest: /usr/local/bin/kind
+    mode: "0755"
+
+- name: kubectl binary
+  ansible.builtin.get_url:
+    url: https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl
+    dest: /usr/local/bin/kubectl
+    mode: "0755"
+
+- name: Helm (instalar se ausente)
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    creates: /usr/local/bin/helm
+
+# ============================================================
+# 4. COTURN NO HOST (relay TURN para WebRTC em kind)
+# Padrão stage do projecto: coturn no host físico, não no cluster.
+# O servidor Delonix usa FORCE_TURN_RELAY=1 + TURN_HOST={{ public_ip_effective }}.
+# ============================================================
+
+- name: Diretório de coturn
+  ansible.builtin.file:
+    path: /etc/coturn
+    state: directory
+    mode: "0750"
+
+- name: Configuração do coturn
+  ansible.builtin.template:
+    src: coturn.conf.j2
+    dest: /etc/turnserver.conf
+    mode: "0640"
+  notify: restart coturn
+
+- name: Coturn activo
+  ansible.builtin.systemd:
+    name: coturn
+    state: started
+    enabled: true
+
+# ============================================================
+# 5. TLS — certificado self-signed wildcard local
+#    SANs: domínio principal + domínio externo + IP
+# ============================================================
+
+- name: Diretório TLS
+  ansible.builtin.file:
+    path: /etc/ssl/delonix
+    state: directory
+    mode: "0755"
+
+- name: Chave privada TLS
+  community.crypto.openssl_privatekey:
+    path: /etc/ssl/delonix/privkey.pem
+    size: 2048
+    mode: "0640"
+
+- name: CSR wildcard (ambos os domínios + IP)
+  community.crypto.openssl_csr:
+    path: /etc/ssl/delonix/delonix.csr
+    privatekey_path: /etc/ssl/delonix/privkey.pem
+    common_name: "{{ domain }}"
+    subject_alt_name: "{{ _san }}"
+  vars:
+    _san: >-
+      {{
+        ['DNS:' + domain, 'DNS:*.' + (domain | regex_replace('^[^.]+\\.', ''))]
+        + (['DNS:' + domain_external,
+            'DNS:*.' + (domain_external | regex_replace('^[^.]+\\.', ''))]
+           if domain_external | length > 0 else [])
+        + ['IP:' + public_ip_effective, 'DNS:localhost', 'IP:127.0.0.1']
+      }}
+
+- name: Certificado self-signed (10 anos, preprod)
+  community.crypto.x509_certificate:
+    path: /etc/ssl/delonix/fullchain.pem
+    privatekey_path: /etc/ssl/delonix/privkey.pem
+    csr_path: /etc/ssl/delonix/delonix.csr
+    provider: selfsigned
+    selfsigned_not_after: +3650d
+    mode: "0644"
+
+# ============================================================
+# 6. KIND CLUSTER
+# ============================================================
+
+- name: Verificar se cluster kind já existe
+  ansible.builtin.command: kind get clusters
+  register: _kind_clusters
+  changed_when: false
+
+- name: Render kind-cluster.yaml
+  ansible.builtin.template:
+    src: kind-cluster.yaml.j2
+    dest: /tmp/kind-cluster.yaml
+    mode: "0644"
+
+- name: Criar cluster kind (idempotente)
+  ansible.builtin.command: kind create cluster --name {{ kind_cluster_name }} --config /tmp/kind-cluster.yaml
+  when: kind_cluster_name not in _kind_clusters.stdout
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+
+- name: kubeconfig acessível para o utilizador
+  ansible.builtin.file:
+    path: /home/{{ ansible_user }}/.kube
+    state: directory
+    mode: "0755"
+    owner: "{{ ansible_user }}"
+
+- name: Copiar kubeconfig para o utilizador
+  ansible.builtin.shell: |
+    kind export kubeconfig --name {{ kind_cluster_name }} \
+      --kubeconfig /home/{{ ansible_user }}/.kube/config
+    chown {{ ansible_user }}:{{ ansible_user }} /home/{{ ansible_user }}/.kube/config
+  changed_when: false
+
+# ============================================================
+# 7. INGRESS-NGINX (sabor kind)
+# ============================================================
+
+- name: Instalar ingress-nginx (sabor kind)
+  ansible.builtin.command: >-
+    kubectl apply -f
+    https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  register: _ingress_apply
+  changed_when: "'configured' in _ingress_apply.stdout or 'created' in _ingress_apply.stdout"
+
+- name: Aguardar ingress-nginx pronto
+  ansible.builtin.command: >-
+    kubectl rollout status deployment/ingress-nginx-controller
+    -n ingress-nginx --timeout=180s
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+# ============================================================
+# 8. METALB (kind-compatible via manifests v0.14)
+# ============================================================
+
+- name: MetalLB — CRDs e controller
+  ansible.builtin.command: >-
+    kubectl apply -f
+    https://raw.githubusercontent.com/metallb/metallb/v0.14.5/config/manifests/metallb-native.yaml
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  register: _metallb_apply
+  changed_when: "'configured' in _metallb_apply.stdout or 'created' in _metallb_apply.stdout"
+
+- name: Aguardar MetalLB controller
+  ansible.builtin.command: >-
+    kubectl rollout status deployment/controller -n metallb-system --timeout=120s
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+- name: Detectar subnet da rede kind (IPv4)
+  ansible.builtin.shell: >-
+    docker network inspect kind 2>/dev/null
+    | grep '"Subnet"'
+    | awk -F'"' '{print $4}'
+    | grep -v ':'
+    | head -1
+  register: _kind_subnet
+  changed_when: false
+
+- name: Calcular pool MetalLB (.200-.250)
+  ansible.builtin.set_fact:
+    _metallb_prefix: "{{ _kind_subnet.stdout.strip() | regex_replace('/\\d+$', '') | regex_replace('\\.\\d+$', '') }}"
+
+- name: Definir intervalo MetalLB
+  ansible.builtin.set_fact:
+    _metallb_pool: "{{ _metallb_prefix }}.200-{{ _metallb_prefix }}.250"
+
+- name: Aplicar IPAddressPool + L2Advertisement
+  ansible.builtin.shell: |
+    cat <<'MANIFEST' | kubectl apply -f -
+    apiVersion: metallb.io/v1beta1
+    kind: IPAddressPool
+    metadata:
+      name: delonix-pool
+      namespace: metallb-system
+    spec:
+      addresses:
+        - {{ _metallb_pool }}
+    ---
+    apiVersion: metallb.io/v1beta1
+    kind: L2Advertisement
+    metadata:
+      name: delonix-l2
+      namespace: metallb-system
+    spec:
+      ipAddressPools:
+        - delonix-pool
+    MANIFEST
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+# ============================================================
+# 9. TRANSFERIR IMAGENS DOCKER (local → remoto → kind load)
+# ============================================================
+
+- name: Diretório para os tarballs no servidor
+  ansible.builtin.file:
+    path: /tmp/dlx-images
+    state: directory
+    mode: "0755"
+
+- name: Copiar imagem server (tar.gz)
+  ansible.builtin.copy:
+    src: /tmp/dlx-images/delonix-server.tar.gz
+    dest: /tmp/dlx-images/delonix-server.tar.gz
+    mode: "0644"
+
+- name: Copiar imagem web (tar.gz)
+  ansible.builtin.copy:
+    src: /tmp/dlx-images/delonix-web.tar.gz
+    dest: /tmp/dlx-images/delonix-web.tar.gz
+    mode: "0644"
+
+- name: Carregar imagens no Docker do servidor
+  ansible.builtin.shell: |
+    docker load < /tmp/dlx-images/delonix-server.tar.gz
+    docker load < /tmp/dlx-images/delonix-web.tar.gz
+  register: _docker_load
+  changed_when: true
+
+- name: Obter tags carregadas
+  ansible.builtin.shell: |
+    docker load < /tmp/dlx-images/delonix-server.tar.gz 2>&1 | grep 'Loaded image' | awk '{print $NF}' | head -1
+  register: _server_img
+  changed_when: false
+
+- name: Injectar imagens no cluster kind
+  ansible.builtin.shell: |
+    kind load docker-image delonix-server --name {{ kind_cluster_name }}
+    kind load docker-image delonix-web    --name {{ kind_cluster_name }}
+    kind load docker-image delonix-server:latest --name {{ kind_cluster_name }} 2>/dev/null || true
+    kind load docker-image delonix-web:latest    --name {{ kind_cluster_name }} 2>/dev/null || true
+  changed_when: true
+
+# ============================================================
+# 10. MANIFESTS K8S
+# ============================================================
+
+# ---- Copiar manifests K8s para o servidor remoto ----
+- name: Copiar manifests K8s para o servidor
+  ansible.builtin.copy:
+    src: "{{ _k8s_dir }}/"
+    dest: /tmp/dlx-k8s/
+    mode: "0644"
+
+- name: Namespace
+  ansible.builtin.command: kubectl apply -f /tmp/dlx-k8s/00-namespace.yaml
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+- name: Secret TLS (wildcard self-signed)
+  ansible.builtin.shell: |
+    kubectl create secret tls delonix-tls \
+      --cert=/etc/ssl/delonix/fullchain.pem \
+      --key=/etc/ssl/delonix/privkey.pem \
+      -n delonix-meet --dry-run=client -o yaml | kubectl apply -f -
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+- name: ConfigMap + Secret da app (overrides preprod)
+  ansible.builtin.template:
+    src: app-configmap.yaml.j2
+    dest: /tmp/dlx-configmap.yaml
+    mode: "0600"
+
+- name: Aplicar ConfigMap e Secret
+  ansible.builtin.command: kubectl apply -f /tmp/dlx-configmap.yaml
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+- name: Aplicar manifestos de dados (PVCs, storage)
+  ansible.builtin.command: kubectl apply -f /tmp/dlx-k8s/50-data.yaml
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+- name: Helm repos (bitnami)
+  ansible.builtin.shell: |
+    helm repo add bitnami https://charts.bitnami.com/bitnami 2>/dev/null || true
+    helm repo update bitnami
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+# Pré-pull das imagens infra + kind load — evita timeout do Helm em ligações lentas
+# Infra (postgres/redis): o containerd do kind faz pull diretamente do registry.
+# Não usar kind load docker-image/image-archive — ambos usam --all-platforms
+# e falham com imagens multi-arch do bitnami (digest das outras arch não existe localmente).
+
+- name: Instalar Postgres standalone via Helm
+  ansible.builtin.shell: |
+    helm upgrade --install delonix-postgres bitnami/postgresql \
+      -n delonix-meet \
+      --set auth.database=delonix_meet \
+      --set auth.username=delonix \
+      --set auth.password="{{ postgres_password }}" \
+      --set primary.resources.requests.memory=256Mi \
+      --set primary.resources.requests.cpu=100m \
+      --set primary.resources.limits.memory=512Mi \
+      --wait --timeout 600s
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+- name: Instalar Redis standalone via Helm
+  ansible.builtin.shell: |
+    helm upgrade --install delonix-redis bitnami/redis \
+      -n delonix-meet \
+      --set auth.enabled=false \
+      --set architecture=standalone \
+      --set master.resources.requests.memory=128Mi \
+      --set master.resources.requests.cpu=50m \
+      --set master.resources.limits.memory=256Mi \
+      --wait --timeout 300s
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+- name: Aplicar manifesto server (1 réplica)
+  ansible.builtin.shell: |
+    cat /tmp/dlx-k8s/02-server.yaml \
+      | sed 's/replicas: [0-9]*/replicas: {{ k8s_server_replicas }}/' \
+      | kubectl apply -f -
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+- name: Aplicar manifesto web (1 réplica)
+  ansible.builtin.shell: |
+    cat /tmp/dlx-k8s/03-web.yaml \
+      | sed 's/replicas: [0-9]*/replicas: {{ k8s_web_replicas }}/' \
+      | kubectl apply -f -
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+- name: Aplicar Ollama (se habilitado)
+  ansible.builtin.command: kubectl apply -f /tmp/dlx-k8s/07-ollama.yaml
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  when: ollama_enabled | bool
+  changed_when: false
+
+- name: Ingress (dual-domain)
+  ansible.builtin.template:
+    src: ingress.yaml.j2
+    dest: /tmp/dlx-ingress.yaml
+    mode: "0644"
+
+- name: Aplicar ingress
+  ansible.builtin.command: kubectl apply -f /tmp/dlx-ingress.yaml
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+# ============================================================
+# 11. PIN IMAGES + ROLLOUT
+# ============================================================
+
+# Recreate evita maxSurge em nó com poucos recursos (single-replica preprod)
+- name: Estratégia Recreate em single-replica
+  ansible.builtin.command: >-
+    kubectl patch deployment {{ item }} -n delonix-meet
+    -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  when: k8s_server_replicas | int == 1
+  loop:
+    - delonix-server
+    - delonix-web
+  changed_when: false
+
+# Remover deployment Ollama quando desligado (pode ter ficado de deploy anterior)
+- name: Remover Ollama quando desligado
+  ansible.builtin.command: kubectl delete deployment delonix-ollama -n delonix-meet --ignore-not-found
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  when: not (ollama_enabled | bool)
+  changed_when: false
+
+- name: Aguardar server rollout
+  ansible.builtin.command: >-
+    kubectl rollout status deployment/delonix-server -n delonix-meet --timeout=600s
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+- name: Aguardar web rollout
+  ansible.builtin.command: >-
+    kubectl rollout status deployment/delonix-web -n delonix-meet --timeout=300s
+  environment:
+    KUBECONFIG: "{{ kind_kubeconfig }}"
+  changed_when: false
+
+- name: Resumo do deploy
+  ansible.builtin.debug:
+    msg:
+      - ✓ Delonix Meet preprod activo
+      - "  Interno:  https://{{ domain }}"
+      - "  Externo:  https://{{ domain_external }}"
+      - "  IP:       {{ public_ip_effective }}"
+      - "  Cluster:  {{ kind_cluster_name }}"
+      - "  TLS:      self-signed (adicionar CA ao browser para eliminar aviso)"
+      - "  TURN:     {{ public_ip_effective }}:3478 (coturn no host)"
+      - "  Ollama:   {{ 'activo (' + ollama_model_summary + ')' if ollama_enabled | bool else 'desligado' }}"

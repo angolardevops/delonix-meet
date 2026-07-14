@@ -15,6 +15,11 @@ data:
   SFU_EXTERNAL_IP: ""
   # Gravações no PVC partilhado (montado em 02-server.yaml).
   RECORDINGS_DIR: "/var/lib/delonix/recordings"
+  # LLM local (07-ollama.yaml): tradução de legendas + resumo da ata. Vazio
+  # desliga a IA (MoM volta a ser por regras no cliente).
+  OLLAMA_URL: "http://delonix-ollama.delonix-meet.svc.cluster.local:11434"
+  OLLAMA_MODEL_TRANSLATE: "qwen2.5:1.5b"
+  OLLAMA_MODEL_SUMMARY: qwen2.5:7b
   # URL interno para a app interagir com Redis Sentinel (HA)
   REDIS_URL: "redis://delonix-redis-master.delonix-meet.svc.cluster.local:6379"
 ---
@@ -25,6 +30,10 @@ metadata:
   namespace: delonix-meet
 type: Opaque
 stringData:
+  # Segredo de plataforma: autoriza POST /api/v1/admin/orgs (provisão de orgs
+  # pelo Odoo/nk_delonix_meet, header X-Provisioning-Secret). Vazio = endpoint
+  # desativado (fail-closed). Em prod: gestor de segredos, NUNCA este ficheiro.
+  PROVISIONING_SECRET: "dlxprov_bcdc13c52115d2b67942298b6d548b65f47980470090a2e0"
   # Stage: bitnami/postgresql single-node (svc: delonix-postgres-postgresql).
   # Prod: bitnami/postgresql-ha → delonix-postgres-primary (ver 10-config-secret.yaml).
   DATABASE_URL: "postgres://delonix:delonix_dev_pass@delonix-postgres-postgresql.delonix-meet.svc.cluster.local:5432/delonix_meet"
