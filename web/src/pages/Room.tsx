@@ -369,7 +369,56 @@ export default function Room({
   const [myUpvotes, setMyUpvotes] = useState<Record<string, boolean>>({})
   const [pollQ, setPollQ] = useState('')
   const [pollOpts, setPollOpts] = useState<string[]>(['', ''])
+  // Quiz: resposta certa (índice em pollOpts) + duração da votação (0 = sem tempo).
+  const [pollCorrect, setPollCorrect] = useState<number | null>(null)
+  const [pollDur, setPollDur] = useState(0)
+  // Popup de sondagem visível a TODOS: dispensados + janela de revelação pós-fecho.
+  const [pollDismissed, setPollDismissed] = useState<Record<string, boolean>>({})
+  const [revealUntil, setRevealUntil] = useState<Record<string, number>>({})
+  const [winnerFx, setWinnerFx] = useState(false)
+  const [pollNow, setPollNow] = useState(() => Date.now())
+  const pollPrevOpenRef = useRef<Record<string, boolean>>({})
+  const pollCloseSentRef = useRef<Record<string, boolean>>({})
   const [qaInput, setQaInput] = useState('')
+
+  // Relógio de 1s para as contagens de quiz (só com sondagem aberta com prazo
+  // ou janela de revelação ativa).
+  useEffect(() => {
+    const need =
+      polls.some((p) => p.open && p.ends_at) ||
+      Object.values(revealUntil).some((t) => t > Date.now())
+    if (!need) return
+    const t = setInterval(() => setPollNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [polls, revealUntil])
+
+  // Transição aberta→fechada: abre a janela de revelação no popup e, num quiz,
+  // quem acertou recebe a festa (troféu + fogo de artifício) por uns segundos.
+  useEffect(() => {
+    for (const p of polls) {
+      const was = pollPrevOpenRef.current[p.id]
+      if (was && !p.open) {
+        setRevealUntil((m) => ({ ...m, [p.id]: Date.now() + 10_000 }))
+        if (p.correct != null && myVotes[p.id] === p.correct) {
+          setWinnerFx(true)
+          window.setTimeout(() => setWinnerFx(false), 4500)
+        }
+      }
+      pollPrevOpenRef.current[p.id] = p.open
+    }
+  }, [polls, myVotes])
+
+  // O anfitrião fecha o quiz quando o tempo acaba — o servidor valida (host),
+  // revela a resposta certa a todos e persiste o resultado no meeting.
+  useEffect(() => {
+    if (!isHost) return
+    for (const p of polls) {
+      if (p.open && p.ends_at && pollNow >= p.ends_at && !pollCloseSentRef.current[p.id]) {
+        pollCloseSentRef.current[p.id] = true
+        signalRef.current?.send({ type: 'poll-close', poll: p.id })
+      }
+    }
+  }, [polls, pollNow, isHost])
 
   // Controlos de anfitrião (runtime) + legendas CC
   const [roomLocked, setRoomLocked] = useState(false)
@@ -1982,6 +2031,19 @@ export default function Room({
           </div>
         )}
 
+        {/* Festa de quem acerta no quiz: taça + fogo de artifício (~4.5s). */}
+        {winnerFx && (
+          <div className="winner-overlay" aria-hidden>
+            {Array.from({ length: 14 }, (_, i) => (
+              <span key={i} className={`fw p${i % 7}`} style={{ animationDelay: `${(i % 5) * 0.25}s` }} />
+            ))}
+            <div className="winner-card">
+              <span className="winner-trophy">🏆</span>
+              <strong>Acertaste!</strong>
+            </div>
+          </div>
+        )}
+
         {wbOpen && (
           <Whiteboard
             strokes={wbStrokes}
@@ -2535,13 +2597,26 @@ export default function Room({
                     onChange={(e) => setPollQ(e.target.value)}
                   />
                   {pollOpts.map((o, i) => (
-                    <input
-                      key={i}
-                      placeholder={`Opção ${i + 1}`}
-                      maxLength={80}
-                      value={o}
-                      onChange={(e) => setPollOpts(pollOpts.map((x, j) => (j === i ? e.target.value : x)))}
-                    />
+                    <div key={i} className="poll-opt-edit">
+                      <input
+                        placeholder={`Opção ${i + 1}`}
+                        maxLength={80}
+                        value={o}
+                        onChange={(e) => setPollOpts(pollOpts.map((x, j) => (j === i ? e.target.value : x)))}
+                      />
+                      <label
+                        className={pollCorrect === i ? 'poll-correct-pick on' : 'poll-correct-pick'}
+                        title="Marcar como resposta certa (modo quiz)"
+                      >
+                        <input
+                          type="radio"
+                          name="poll-correct"
+                          checked={pollCorrect === i}
+                          onChange={() => setPollCorrect(i)}
+                        />
+                        ✓
+                      </label>
+                    </div>
                   ))}
                   <div className="poll-create-actions">
                     {pollOpts.length < 6 && (
@@ -2549,20 +2624,45 @@ export default function Room({
                         + opção
                       </button>
                     )}
+                    <select
+                      className="poll-dur"
+                      title="Duração da votação (quiz com tempo)"
+                      value={pollDur}
+                      onChange={(e) => setPollDur(Number(e.target.value))}
+                    >
+                      <option value={0}>Sem tempo</option>
+                      <option value={30}>30 s</option>
+                      <option value={60}>1 min</option>
+                      <option value={120}>2 min</option>
+                      <option value={300}>5 min</option>
+                    </select>
+                    {pollCorrect != null && (
+                      <button className="btn-sm ghost" title="Sondagem normal (sem resposta certa)" onClick={() => setPollCorrect(null)}>
+                        limpar certa
+                      </button>
+                    )}
                     <button
                       className="btn-sm"
                       disabled={!pollQ.trim() || pollOpts.filter((o) => o.trim()).length < 2}
                       onClick={() => {
+                        // O índice da certa refere-se à lista FILTRADA (opções
+                        // vazias saem — remapeia para não apontar à errada).
+                        const opts = pollOpts.map((o, i) => ({ o: o.trim(), i })).filter((x) => x.o)
+                        const correctIdx = pollCorrect != null ? opts.findIndex((x) => x.i === pollCorrect) : -1
                         signalRef.current?.send({
                           type: 'poll-create',
                           question: pollQ,
-                          options: pollOpts.filter((o) => o.trim()),
+                          options: opts.map((x) => x.o),
+                          correct_option: correctIdx >= 0 ? correctIdx : null,
+                          duration_secs: pollDur || null,
                         })
                         setPollQ('')
                         setPollOpts(['', ''])
+                        setPollCorrect(null)
+                        setPollDur(0)
                       }}
                     >
-                      Lançar sondagem
+                      {pollCorrect != null ? 'Lançar quiz' : 'Lançar sondagem'}
                     </button>
                   </div>
                 </div>
@@ -2570,20 +2670,32 @@ export default function Room({
               {polls.length === 0 && <p className="muted small">Ainda sem sondagens.</p>}
               {[...polls].reverse().map((p) => {
                 const total = p.counts.reduce((a, b) => a + b, 0)
+                const revealed = !p.open && p.correct != null
+                const remaining =
+                  p.open && p.ends_at ? Math.max(0, Math.ceil((p.ends_at - pollNow) / 1000)) : null
                 return (
                   <div key={p.id} className="poll-card">
                     <div className="poll-head">
                       <strong>{p.question}</strong>
-                      <span className="muted small">{p.by} · {total} voto{total === 1 ? '' : 's'}{p.open ? '' : ' · encerrada'}</span>
+                      <span className="muted small">
+                        {p.by} · {total} voto{total === 1 ? '' : 's'}{p.open ? '' : ' · encerrada'}
+                        {remaining != null && <span className="poll-countdown mono"> · ⏳ {remaining}s</span>}
+                      </span>
                     </div>
                     {p.options.map((opt, i) => {
                       const pct = total ? Math.round((p.counts[i] / total) * 100) : 0
                       const mine = myVotes[p.id] === i
+                      const cls = [
+                        'poll-opt',
+                        mine ? 'mine' : '',
+                        revealed && i === p.correct ? 'correct' : '',
+                        revealed && mine && i !== p.correct ? 'wrong' : '',
+                      ].filter(Boolean).join(' ')
                       return (
                         <button
                           key={i}
-                          className={mine ? 'poll-opt mine' : 'poll-opt'}
-                          disabled={!p.open}
+                          className={cls}
+                          disabled={!p.open || (p.ends_at != null && pollNow > p.ends_at)}
                           onClick={() => {
                             signalRef.current?.send({ type: 'poll-vote', poll: p.id, option: i })
                             setMyVotes({ ...myVotes, [p.id]: i })
@@ -2591,12 +2703,19 @@ export default function Room({
                         >
                           <span className="poll-bar" style={{ width: `${pct}%` }} />
                           <span className="poll-opt-label">
-                            {mine ? '● ' : ''}{opt}
+                            {revealed && i === p.correct ? '✅ ' : mine ? '● ' : ''}{opt}
                           </span>
                           <span className="poll-opt-count mono">{p.counts[i]} · {pct}%</span>
                         </button>
                       )
                     })}
+                    {revealed && (
+                      <p className="poll-quiz-totals">
+                        <span className="ok">✅ {p.total_right} certa{p.total_right === 1 ? '' : 's'}</span>
+                        {' · '}
+                        <span className="bad">❌ {p.total_wrong} errada{p.total_wrong === 1 ? '' : 's'}</span>
+                      </p>
+                    )}
                     {isHost && p.open && (
                       <button className="link small-link" onClick={() => signalRef.current?.send({ type: 'poll-close', poll: p.id })}>
                         Encerrar sondagem
@@ -2998,6 +3117,71 @@ export default function Room({
             </div>
           </div>
         )}
+
+        {/* Sondagem/quiz publicada a TODOS: cartão flutuante para votar sem
+            abrir o painel; após o fecho mostra a revelação por uns segundos. */}
+        {(() => {
+          const p = [...polls]
+            .reverse()
+            .find((x) => !pollDismissed[x.id] && (x.open || (revealUntil[x.id] ?? 0) > pollNow))
+          if (!p) return null
+          const total = p.counts.reduce((a, b) => a + b, 0)
+          const revealed = !p.open && p.correct != null
+          const remaining =
+            p.open && p.ends_at ? Math.max(0, Math.ceil((p.ends_at - pollNow) / 1000)) : null
+          return (
+            <div className="admit-card poll-popup" role="dialog" aria-label="Sondagem">
+              <div className="admit-card-head">
+                <span className="admit-card-title">
+                  {p.correct != null || revealed ? '🏅 Quiz' : '📊 Sondagem'} · {p.by}
+                  {remaining != null && <span className="poll-countdown mono"> · ⏳ {remaining}s</span>}
+                </span>
+                <button
+                  className="panel-close"
+                  aria-label="Dispensar"
+                  onClick={() => setPollDismissed((m) => ({ ...m, [p.id]: true }))}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+              <strong className="poll-popup-q">{p.question}</strong>
+              {p.options.map((opt, i) => {
+                const pct = total ? Math.round((p.counts[i] / total) * 100) : 0
+                const mine = myVotes[p.id] === i
+                const cls = [
+                  'poll-opt',
+                  mine ? 'mine' : '',
+                  revealed && i === p.correct ? 'correct' : '',
+                  revealed && mine && i !== p.correct ? 'wrong' : '',
+                ].filter(Boolean).join(' ')
+                return (
+                  <button
+                    key={i}
+                    className={cls}
+                    disabled={!p.open || (p.ends_at != null && pollNow > p.ends_at)}
+                    onClick={() => {
+                      signalRef.current?.send({ type: 'poll-vote', poll: p.id, option: i })
+                      setMyVotes({ ...myVotes, [p.id]: i })
+                    }}
+                  >
+                    <span className="poll-bar" style={{ width: `${pct}%` }} />
+                    <span className="poll-opt-label">
+                      {revealed && i === p.correct ? '✅ ' : mine ? '● ' : ''}{opt}
+                    </span>
+                    <span className="poll-opt-count mono">{p.counts[i]} · {pct}%</span>
+                  </button>
+                )
+              })}
+              {revealed && (
+                <p className="poll-quiz-totals">
+                  <span className="ok">✅ {p.total_right} certa{p.total_right === 1 ? '' : 's'}</span>
+                  {' · '}
+                  <span className="bad">❌ {p.total_wrong} errada{p.total_wrong === 1 ? '' : 's'}</span>
+                </p>
+              )}
+            </div>
+          )
+        })()}
 
         {recNotice && (
           <div className="toast rec-start-toast" role="status">

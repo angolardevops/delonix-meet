@@ -30,6 +30,10 @@ metadata:
   namespace: delonix-meet
 type: Opaque
 stringData:
+  # Segredo de plataforma: autoriza POST /api/v1/admin/orgs (provisão de orgs
+  # pelo Odoo/nk_delonix_meet, header X-Provisioning-Secret). Vazio = endpoint
+  # desativado (fail-closed). Em prod: gestor de segredos, NUNCA este ficheiro.
+  PROVISIONING_SECRET: "dlxprov_bcdc13c52115d2b67942298b6d548b65f47980470090a2e0"
   # Stage: bitnami/postgresql single-node (svc: delonix-postgres-postgresql).
   # Prod: bitnami/postgresql-ha → delonix-postgres-primary (ver 10-config-secret.yaml).
   DATABASE_URL: "postgres://delonix:delonix_dev_pass@delonix-postgres-postgresql.delonix-meet.svc.cluster.local:5432/delonix_meet"

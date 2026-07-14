@@ -85,6 +85,12 @@ pub enum ClientMsg {
     PollCreate {
         question: String,
         options: Vec<String>,
+        /// Quiz: índice da resposta certa (opcional).
+        #[serde(default)]
+        correct_option: Option<usize>,
+        /// Quiz com tempo: duração da votação em segundos (opcional).
+        #[serde(default)]
+        duration_secs: Option<u64>,
     },
     PollVote {
         poll: Uuid,
@@ -338,6 +344,14 @@ pub struct PollView {
     pub counts: Vec<u32>,
     pub open: bool,
     pub by: String,
+    /// Quiz: índice da resposta certa — SÓ revelado depois de fechar (None
+    /// enquanto aberta, mesmo que exista, para ninguém fazer batota).
+    pub correct: Option<usize>,
+    /// Quiz com tempo: epoch ms do fim da votação (contagem no cliente).
+    pub ends_at: Option<i64>,
+    /// Totais revelados no fecho (0 enquanto aberta ou sem resposta certa).
+    pub total_right: u32,
+    pub total_wrong: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -357,6 +371,11 @@ pub struct PollState {
     pub votes: HashMap<Uuid, usize>,
     pub open: bool,
     pub by: String,
+    // Quiz (serde default: polls antigas no Redis continuam a desserializar).
+    #[serde(default)]
+    pub correct: Option<usize>,
+    #[serde(default)]
+    pub ends_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -825,6 +844,14 @@ impl SignalingHub {
                                 *c += 1;
                             }
                         }
+                        let (total_right, total_wrong) = match (p.open, p.correct) {
+                            (false, Some(c)) => {
+                                let right =
+                                    p.votes.values().filter(|&&v| v == c).count() as u32;
+                                (right, p.votes.len() as u32 - right)
+                            }
+                            _ => (0, 0),
+                        };
                         PollView {
                             id: p.id,
                             question: p.question.clone(),
@@ -832,6 +859,11 @@ impl SignalingHub {
                             counts,
                             open: p.open,
                             by: p.by.clone(),
+                            // A resposta certa só sai do servidor após o fecho.
+                            correct: if p.open { None } else { p.correct },
+                            ends_at: p.ends_at,
+                            total_right,
+                            total_wrong,
                         }
                     })
                     .collect()
@@ -859,6 +891,29 @@ impl SignalingHub {
                 qs
             })
             .unwrap_or_default()
+    }
+
+    /// Fecha uma sondagem (só anfitrião) e devolve o snapshot final — usado
+    /// pela camada async para persistir o resultado no meeting da sala.
+    pub(crate) fn close_poll(
+        &self,
+        room_id: Uuid,
+        peer_id: Uuid,
+        poll: Uuid,
+    ) -> Option<PollState> {
+        if !self.is_host(room_id, peer_id) {
+            return None;
+        }
+        let snap = self.rooms.get_mut(&room_id).and_then(|mut r| {
+            r.polls.iter_mut().find(|p| p.id == poll).map(|p| {
+                p.open = false;
+                p.clone()
+            })
+        });
+        if snap.is_some() {
+            self.broadcast_polls(room_id);
+        }
+        snap
     }
 
     pub(crate) fn broadcast_polls(&self, room_id: Uuid) {
@@ -1771,6 +1826,58 @@ async fn handle_socket(
                                 by: username.clone(),
                             },
                         );
+                    }
+                }
+                Ok(ClientMsg::PollClose { poll }) => {
+                    // Fecho + revelação via hub (valida anfitrião); o resultado
+                    // final persiste no meeting da sala (jsonb `polls`) — as
+                    // sondagens/quizzes ficam guardadas com a reunião.
+                    if let Some(p) = state.hub.close_poll(room_id, peer_id, poll) {
+                        let db = state.db.clone();
+                        tokio::spawn(async move {
+                            let code: Option<(String,)> =
+                                sqlx::query_as("SELECT code FROM rooms WHERE id = $1")
+                                    .bind(room_id)
+                                    .fetch_optional(&db)
+                                    .await
+                                    .ok()
+                                    .flatten();
+                            let Some((code,)) = code else { return };
+                            let mut counts = vec![0u32; p.options.len()];
+                            for v in p.votes.values() {
+                                if let Some(c) = counts.get_mut(*v) {
+                                    *c += 1;
+                                }
+                            }
+                            let right = p
+                                .correct
+                                .map(|c| p.votes.values().filter(|&&v| v == c).count())
+                                .unwrap_or(0);
+                            let entry = serde_json::json!([{
+                                "question": p.question,
+                                "options": p.options,
+                                "counts": counts,
+                                "correct": p.correct,
+                                "total_votes": p.votes.len(),
+                                "total_right": right,
+                                "total_wrong": p.votes.len().saturating_sub(right),
+                                "by": p.by,
+                            }]);
+                            let _ = sqlx::query(
+                                "UPDATE meetings SET polls = polls || $1::jsonb
+                                 WHERE room_code = $2",
+                            )
+                            .bind(entry)
+                            .bind(&code)
+                            .execute(&db)
+                            .await;
+                        });
+                    }
+                    if let Some(b) = state.redis_bus.as_ref() {
+                        let b = b.clone();
+                        tokio::spawn(async move {
+                            crate::redis_state::poll_close(b.conn.clone(), room_id, poll).await;
+                        });
                     }
                 }
                 Ok(client_msg) => {
