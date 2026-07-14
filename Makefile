@@ -451,8 +451,8 @@ deploy-config: ## Cria deploy/config.yml a partir do exemplo (se não existir)
 export-images: image ## Exporta imagens Docker para /tmp/dlx-images/ (transfer. para kind remoto)
 	@printf "$(C)▶ a exportar imagens para /tmp/dlx-images/$(Z)\n"
 	@mkdir -p /tmp/dlx-images
-	@docker save $(IMAGE_SERVER) | gzip > /tmp/dlx-images/delonix-server.tar.gz
-	@docker save $(IMAGE_WEB)    | gzip > /tmp/dlx-images/delonix-web.tar.gz
+	@docker save $(IMAGE_SERVER) $(IMAGE_SERVER_REPO):latest | gzip > /tmp/dlx-images/delonix-server.tar.gz
+	@docker save $(IMAGE_WEB)    $(IMAGE_WEB_REPO):latest    | gzip > /tmp/dlx-images/delonix-web.tar.gz
 	@printf "$(G)  ✓ imagens exportadas:$(Z)\n"
 	@ls -lh /tmp/dlx-images/*.tar.gz
 
