@@ -48,3 +48,7 @@ voice/kamailio/ao_trunk.txt
 # Preview local (path da máquina)
 .claude/launch.json
 backups/
+
+# Credenciais de ambiente (12-factor — nunca no repo)
+deploy/ansible/.env.*
+deploy/ansible/vault/
