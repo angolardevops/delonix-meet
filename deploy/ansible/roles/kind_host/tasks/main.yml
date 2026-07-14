@@ -378,37 +378,9 @@
   changed_when: false
 
 # Pré-pull das imagens infra + kind load — evita timeout do Helm em ligações lentas
-- name: Detectar imagem postgres usada pelo chart
-  ansible.builtin.shell: |
-    helm template delonix-postgres bitnami/postgresql \
-      --set auth.database=delonix_meet -n delonix-meet 2>/dev/null \
-      | grep '^\s*image:' | grep -i postgres | head -1 \
-      | awk '{gsub(/"/, "", $2); print $2}'
-  register: _pg_image
-  changed_when: false
-
-- name: Detectar imagem redis usada pelo chart
-  ansible.builtin.shell: |
-    helm template delonix-redis bitnami/redis \
-      --set architecture=standalone -n delonix-meet 2>/dev/null \
-      | grep '^\s*image:' | grep -i redis | head -1 \
-      | awk '{gsub(/"/, "", $2); print $2}'
-  register: _redis_image
-  changed_when: false
-
-- name: Pré-pull + kind load postgres
-  ansible.builtin.shell: |
-    IMG="{{ _pg_image.stdout.strip() or 'bitnami/postgresql:16' }}"
-    docker pull --platform linux/amd64 "$IMG"
-    docker save "$IMG" | kind load image-archive /dev/stdin --name {{ kind_cluster_name }}
-  changed_when: false
-
-- name: Pré-pull + kind load redis
-  ansible.builtin.shell: |
-    IMG="{{ _redis_image.stdout.strip() or 'bitnami/redis:7.2' }}"
-    docker pull --platform linux/amd64 "$IMG"
-    docker save "$IMG" | kind load image-archive /dev/stdin --name {{ kind_cluster_name }}
-  changed_when: false
+# Infra (postgres/redis): o containerd do kind faz pull diretamente do registry.
+# Não usar kind load docker-image/image-archive — ambos usam --all-platforms
+# e falham com imagens multi-arch do bitnami (digest das outras arch não existe localmente).
 
 - name: Instalar Postgres standalone via Helm
   ansible.builtin.shell: |
