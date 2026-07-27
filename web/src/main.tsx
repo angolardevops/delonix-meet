@@ -2,8 +2,12 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import { initTheme } from './components/Shell'
 // Fontes do design system (self-hosted — nada sai da rede local).
-import '@fontsource-variable/space-grotesk'
-import '@fontsource-variable/instrument-sans'
+// Família única IBM Plex (Sans + Mono): corpo, títulos e dados numéricos
+// partilham a mesma métrica — é o que dá o look «consola» do template.
+import '@fontsource/ibm-plex-sans/400.css'
+import '@fontsource/ibm-plex-sans/500.css'
+import '@fontsource/ibm-plex-sans/600.css'
+import '@fontsource/ibm-plex-sans/700.css'
 import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
 import './i18n'

@@ -1,6 +1,6 @@
-import { ReactNode, useEffect, useRef, useState } from 'react'
+import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { myOrgs, updateMe, User } from '../api'
+import { createRoom, getRoom, myOrgs, updateMe, User } from '../api'
 import CommandPalette from './CommandPalette'
 import NotificationCenter from './NotificationCenter'
 import { setLanguage } from '../i18n'
@@ -276,6 +276,90 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
   )
 }
 
+/**
+ * Barra de aplicação (topo do conteúdo). Concentra o que antes só existia na
+ * Home — criar reunião e entrar por código — para ficar acessível de qualquer
+ * página, além da data e do interruptor de tema.
+ */
+function AppBar({ onEnterRoom, username }: { onEnterRoom: (code: string, voice?: boolean) => void; username: string }) {
+  const { t, i18n } = useTranslation()
+  const [code, setCode] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [err, setErr] = useState('')
+  const [theme, setTheme] = useState<'default' | 'delonix-light'>(
+    (localStorage.getItem('dx_theme') as 'default' | 'delonix-light') ?? 'default'
+  )
+  const locale = i18n.language.startsWith('en') ? 'en-GB' : i18n.language.startsWith('fr') ? 'fr-FR' : 'pt-PT'
+  const now = new Date()
+  const dateLabel = `${now.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' })} · ${now.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`
+
+  function toggleTheme() {
+    const next = theme === 'default' ? 'delonix-light' : 'default'
+    setTheme(next)
+    applyTheme(next)
+  }
+
+  async function newMeeting() {
+    setErr('')
+    setCreating(true)
+    try {
+      const room = await createRoom(`Reunião de ${username}`, 'sfu', false, false, 'normal')
+      onEnterRoom(room.code)
+    } catch (e) {
+      setErr((e as Error).message)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function join(e: FormEvent) {
+    e.preventDefault()
+    setErr('')
+    // Aceita link completo, código com sufixo ou código puro (mesma regra da Home).
+    const raw = code.trim().toLowerCase()
+    const parsed = (raw.match(/[a-z]+-[a-z]+-[a-z]+/) ?? [raw.replace(/^.*\/r\//, '')])[0]
+    if (!parsed) {
+      setErr(t('dash.notFound'))
+      return
+    }
+    try {
+      const room = await getRoom(parsed)
+      onEnterRoom(room.code)
+    } catch {
+      setErr(t('dash.notFound'))
+    }
+  }
+
+  return (
+    <header className="app-bar">
+      <span className="app-bar-date">{dateLabel}</span>
+      {err && <span className="app-bar-err">{err}</span>}
+      <div className="app-bar-right">
+        <button
+          className="app-bar-icon"
+          onClick={toggleTheme}
+          title={t('common.theme', 'Tema')}
+          aria-label={t('common.theme', 'Tema')}
+        >
+          {theme === 'default' ? '◐' : '◑'}
+        </button>
+        <button className="app-bar-new" disabled={creating} onClick={() => void newMeeting()}>
+          {creating ? t('dash.creating') : t('dash.newMeeting')}
+        </button>
+        <form className="app-bar-join" onSubmit={join}>
+          <input
+            placeholder={t('dash.joinPh')}
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            aria-label={t('dash.joinPh')}
+          />
+          <button disabled={!code.trim()}>{t('dash.join')}</button>
+        </form>
+      </div>
+    </header>
+  )
+}
+
 /** Layout com barra lateral de navegação e topo — partilhado por Home/Gravações/Calendário. */
 export default function Shell({
   user,
@@ -351,6 +435,7 @@ export default function Shell({
           <button className="nav-burger" onClick={toggleCollapse} aria-label={t('nav.toggle')} title={t('nav.toggle')}>
             <MenuIcon />
           </button>
+          <span className="brand-square" aria-hidden="true">{(brand[0] || 'D').trim().charAt(0).toUpperCase()}</span>
           <span className="brand-text">
             {brand[0]} <span>{brand[1]}</span>
           </span>
@@ -427,7 +512,10 @@ export default function Shell({
           </div>
         </div>
       </aside>
-      <main className="shell-main">{children}</main>
+      <main className="shell-main">
+        <AppBar onEnterRoom={onEnterRoom} username={user.username} />
+        <div className="shell-body">{children}</div>
+      </main>
       {settingsOpen && <SettingsModal user={user} onClose={() => setSettingsOpen(false)} onLogout={onLogout} />}
       <OnboardingTour />
       <CommandPalette

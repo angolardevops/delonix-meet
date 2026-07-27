@@ -3733,7 +3733,7 @@ button.link:hover {
 }
 .tour-card.center { transform: translateX(-50%); animation: tour-card-in-center 0.34s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .tour-card h3 {
-  margin: 6px 0 8px; font-family: 'Space Grotesk Variable', sans-serif; font-size: 1.15rem;
+  margin: 6px 0 8px; font-family: var(--font-display); font-size: 1.15rem;
 }
 .tour-card p { margin: 0; color: var(--text-2, #9ba3b2); line-height: 1.5; font-size: 0.92rem; }
 .tour-skip {
@@ -3913,7 +3913,7 @@ button.link:hover {
 }
 .auth-panel-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .auth-panel-title {
-  margin: 0; font-family: 'Space Grotesk Variable', sans-serif;
+  margin: 0; font-family: var(--font-display);
   font-size: 1.9rem; line-height: 1.2; letter-spacing: -0.5px; max-width: 340px;
 }
 .auth-panel-points { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
@@ -3934,7 +3934,7 @@ button.link:hover {
   background: var(--surface-2); border: 1px solid var(--border);
   border-radius: 8px; padding: 12px 14px;
 }
-.quality-stat strong { font-size: 1.3rem; font-family: 'Space Grotesk Variable', sans-serif; }
+.quality-stat strong { font-size: 1.3rem; font-family: var(--font-display); }
 .quality-stat small { color: var(--text-2); font-size: 0.76rem; }
 .quality-stat.good strong { color: #3ddc97; }
 .quality-stat.poor strong { color: var(--accent); }
@@ -3995,7 +3995,7 @@ button.link:hover {
 .plan-card h3 { margin: 0 0 6px; font-size: 1.25rem; }
 .plan-desc { margin: 0 0 20px; color: var(--text-2); font-size: 0.88rem; min-height: 38px; }
 .plan-price { margin: 0 0 22px; display: flex; align-items: baseline; gap: 6px; }
-.plan-price strong { font-size: 1.9rem; font-family: 'Space Grotesk Variable', sans-serif; letter-spacing: -0.5px; }
+.plan-price strong { font-size: 1.9rem; font-family: var(--font-display); letter-spacing: -0.5px; }
 .plan-price small { color: var(--text-2); font-size: 0.8rem; }
 .plan-features { list-style: none; margin: 0 0 26px; padding: 0; display: flex; flex-direction: column; gap: 10px; flex: 1; }
 .plan-features li { font-size: 0.88rem; color: var(--text-2); }
@@ -4016,7 +4016,7 @@ button.link:hover {
   border-radius: 10px; padding: var(--space-5); box-shadow: 0 8px 26px rgba(0, 0, 0, 0.28);
   animation: tour-card-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.prejoin-title { margin: 0; font-size: 1.3rem; font-family: 'Space Grotesk Variable', sans-serif; }
+.prejoin-title { margin: 0; font-size: 1.3rem; font-family: var(--font-display); }
 .prejoin-code { margin: -4px 0 0; color: var(--muted); font-size: 0.86rem; }
 .prejoin-code code { font-family: 'IBM Plex Mono', monospace; }
 .prejoin-preview {
@@ -4140,3 +4140,364 @@ textarea {
 .dash-card, .kpi-card, .rec-card, .rec-item, .poll-card, .admit-card,
 .lobby-toggle, .shortcut-tile, .modal, .side-panel, .prejoin-card,
 .rec-split-viewer, .wb-card, .toast { border-radius: var(--radius-md); }
+
+/* ============================================================
+   CONSOLA — alinhamento com o template (27/07/2026)
+   Última camada do ficheiro DE PROPÓSITO: à mesma especificidade
+   vence os valores históricos acumulados (mesma técnica do bloco
+   "SISTEMA DE CONTROLO ÚNICO" acima).
+
+   Três ideias que o template traz e que esta camada implementa:
+    1. DENSIDADE — a app é uma consola de trabalho, não uma landing:
+       raiz a 15px, cabeçalhos de cartão com 10px de padding, linhas
+       de lista com 9px. Cabe mais informação sem apertar o texto.
+    2. RAIL CONSTANTE — a barra lateral é escura nos DOIS temas
+       (tokens --sb-*). Dá uma âncora de identidade fixa e impede que
+       a navegação compita com o conteúdo no tema claro.
+    3. SEPARAÇÃO POR LINHA, NÃO POR SOMBRA — cartões com borda de 1px
+       e sombra mínima; a hierarquia vem da luminância da superfície.
+   ============================================================ */
+
+/* ---- 1. Densidade global ---------------------------------- */
+/* Toda a app dimensiona em rem: mexer na raiz compacta o conjunto
+   de forma proporcional, sem tocar em centenas de declarações. */
+html { font-size: 15px; }
+body { -webkit-font-smoothing: antialiased; }
+
+/* ---- 2. Rail de navegação: escuro em qualquer tema --------- */
+.shell-nav {
+  width: 224px;
+  padding: 0 0 8px;
+  background: var(--sb-bg);
+  color: var(--sb-text);
+  border-right: 1px solid var(--sb-line);
+}
+.shell.collapsed .shell-nav { width: 60px; padding: 0 0 8px; }
+
+.shell-brand {
+  gap: 9px; padding: 14px 16px 10px; margin: 0; border-bottom: none;
+}
+.shell.collapsed .shell-brand { justify-content: center; padding: 14px 0 10px; }
+/* Quadrado de marca com a inicial — mantém o vermelho/dourado Delonix. */
+.brand-square {
+  width: 26px; height: 26px; flex: none; border-radius: var(--radius-md);
+  display: grid; place-items: center;
+  background: var(--grad-brand); color: #fff;
+  font-weight: 700; font-size: 0.8rem; line-height: 1;
+}
+.shell-nav .brand-text { font-size: 0.93rem; font-weight: 700; color: #fff; letter-spacing: -0.01em; }
+.shell-nav .nav-burger { width: 26px; height: 26px; border-radius: var(--radius-sm); color: var(--sb-text); }
+.shell-nav .nav-burger:hover { background: var(--sb-hover); }
+.shell-nav .nav-burger svg { width: 17px; height: 17px; }
+
+.nav-search {
+  margin: 4px 12px 8px; padding: 6px 10px; gap: 8px;
+  background: var(--sb-hover); border: 1px solid var(--sb-line);
+  border-radius: var(--radius-sm); color: var(--muted-2); font-size: 0.8rem;
+}
+.nav-search:hover { border-color: var(--accent); color: var(--sb-text); }
+.shell.collapsed .nav-search { margin: 4px 8px 8px; justify-content: center; }
+
+.shell-nav nav { padding-bottom: 8px; }
+.nav-section-label {
+  padding: 8px 14px 2px; font-size: 0.66rem; font-weight: 600;
+  letter-spacing: 0.09em; color: var(--muted-2); opacity: 1;
+}
+.nav-section { padding: 3px 8px; gap: 1px; }
+.nav-section + .nav-section { margin-top: 0; }
+
+.nav-item {
+  gap: 9px; padding: 7px 10px; border-radius: var(--radius-sm);
+  font-size: 0.83rem; font-weight: 500; color: var(--sb-text);
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
+}
+.nav-item svg { width: 16px; height: 16px; opacity: 0.85; }
+/* Sem translateX: num rail denso o deslize lê-se como instabilidade. */
+.nav-item:hover { background: var(--sb-hover); color: #fff; transform: none; }
+.nav-item:hover svg { transform: none; }
+.nav-item.active {
+  background: rgba(122, 138, 255, 0.18); color: #a8b2ff; font-weight: 600;
+  box-shadow: inset 2px 0 0 #7a8aff;
+}
+/* A barra de acento passa a ser o inset acima — sem pseudo-elemento nem glow. */
+.nav-item.active::before { content: none; }
+
+.shell-nav-foot { border-top: 1px solid var(--sb-line); padding: 8px; margin-top: auto; }
+.nav-user { padding: 8px 10px 4px; border-radius: var(--radius-sm); color: var(--sb-text); }
+.nav-user:hover { background: var(--sb-hover); }
+.nav-user-name { font-size: 0.8rem; font-weight: 600; color: #fff; }
+.nav-user-caret { color: var(--muted-2); }
+.nav-account-menu { border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--elev-2); }
+.nav-account-menu [role='menuitem'] { border-radius: var(--radius-sm); font-size: 0.83rem; padding: 7px 10px; }
+.nav-item:focus-visible, .nav-user:focus-visible, .nav-burger:focus-visible {
+  box-shadow: 0 0 0 2px var(--sb-bg), 0 0 0 4px color-mix(in oklab, #7a8aff 65%, transparent);
+}
+/* O sino de notificações vive no rail escuro — herda as cores da sidebar. */
+.shell-nav-foot .notif-bell { color: var(--sb-text); }
+.shell-nav-foot .notif-bell:hover { background: var(--sb-hover); color: #fff; }
+
+/* ---- 3. Barra de aplicação (topo do conteúdo) -------------- */
+.shell-main { display: flex; flex-direction: column; overflow: hidden; }
+.shell-body { flex: 1; overflow-y: auto; min-height: 0; }
+
+.app-bar {
+  flex: none; display: flex; align-items: center; gap: 12px;
+  padding: 9px 24px; background: var(--hdr-bg);
+  border-bottom: 1px solid var(--border);
+}
+/* Só a primeira letra: `capitalize` daria «27 De Julho» em PT/FR. */
+.app-bar-date { font-size: 0.8rem; color: var(--muted); }
+.app-bar-date::first-letter { text-transform: uppercase; }
+.app-bar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.app-bar-icon {
+  width: 28px; height: 28px; flex: none; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: transparent; color: var(--muted);
+  display: grid; place-items: center; cursor: pointer; font-size: 0.85rem;
+}
+.app-bar-icon:hover { border-color: var(--accent); color: var(--accent-text); }
+.app-bar-new {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: var(--radius-sm);
+  background: var(--accent); color: #fff; font-weight: 600; font-size: 0.83rem;
+  border: none; cursor: pointer;
+}
+.app-bar-new:hover { filter: brightness(1.1); }
+.app-bar-new:disabled { opacity: 0.6; cursor: default; filter: none; }
+/* Campo de código: input e botão fundidos numa só peça (como no template). */
+.app-bar-join {
+  display: flex; align-items: center; overflow: hidden;
+  background: var(--input-bg); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.app-bar-join input {
+  width: 150px; margin: 0; padding: 6px 12px; border: none; background: transparent;
+  box-shadow: none; font-family: var(--font-mono); font-size: 0.78rem;
+}
+.app-bar-join input:focus { outline: none; box-shadow: none; background: transparent; }
+.app-bar-join button {
+  padding: 6px 12px; border: none; border-left: 1px solid var(--border);
+  background: transparent; color: var(--accent-text); font-weight: 600; font-size: 0.8rem; cursor: pointer;
+}
+.app-bar-join button:hover:not(:disabled) { background: var(--accent-soft); }
+.app-bar-join button:disabled { color: var(--muted-2); cursor: default; }
+.app-bar-err { color: var(--danger); font-size: 0.78rem; }
+@media (max-width: 860px) {
+  .app-bar-date, .app-bar-join { display: none; }
+}
+
+/* ---- 4. Páginas e cartões densos --------------------------- */
+.page, .home { padding: 22px 26px; }
+.home { max-width: 1200px; }
+.page-head { margin-bottom: 14px; }
+.page-head h1, .dash-greet h1 { font-size: 1.45rem; letter-spacing: -0.02em; }
+.dash-greet { margin-bottom: 0; }
+/* A saudação já não repete a data: essa passou para a barra de topo. */
+.dash-greet .home-sub { font-size: 0.85rem; margin: 4px 0 0; }
+
+.dash-grid { gap: 12px; margin-top: 16px; grid-template-columns: 1.45fr 1fr; }
+.dash-card {
+  padding: 0; overflow: hidden;
+  border-radius: var(--radius-md); box-shadow: var(--shadow);
+}
+.dash-card-head {
+  margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border);
+}
+.dash-card-head h2 { font-size: 0.83rem; font-weight: 600; }
+.dash-card-head h2 svg { width: 15px; height: 15px; }
+/* Links funcionais em índigo: o dourado é da MARCA (wordmark, landing) e
+   perde significado se também marcar navegação. */
+button.link { color: var(--accent-text); margin-top: 0; }
+button.link:hover { color: var(--accent); }
+button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: none; }
+.dash-card-head .link { font-size: 0.78rem; }
+/* Ação de linha: discreta por omissão, ganha o acento ao passar o rato. */
+.dash-enter {
+  padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-sm);
+  background: var(--accent); color: #fff; border: none;
+}
+.dash-enter:hover { filter: brightness(1.1); background: var(--accent); }
+.dash-empty { padding: 14px; margin: 0; font-size: 0.82rem; }
+.dash-row {
+  padding: 9px 14px; gap: 12px;
+  border-top: none; border-bottom: 1px solid var(--border-soft);
+}
+.dash-row:last-child { border-bottom: none; }
+.dash-row:hover { background: var(--surface-2); }
+.dash-row-main strong { font-size: 0.83rem; font-weight: 600; }
+.dash-meta { font-size: 0.72rem; color: var(--muted-2); }
+.dash-secure { font-family: var(--font-mono); font-size: 0.7rem; margin-top: 14px; }
+
+/* Atalhos: cartões de 4 colunas, como os "quick cards" do template. */
+.home-shortcuts { grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; }
+.shortcut-tile {
+  flex-direction: column; align-items: flex-start; gap: 0;
+  padding: 12px 14px; border-radius: var(--radius-md); box-shadow: var(--shadow);
+}
+.shortcut-tile:hover { border-color: var(--accent); transform: none; }
+.shortcut-ic { width: auto; height: auto; background: none; color: var(--accent-text); margin-bottom: 6px; }
+.shortcut-ic svg { width: 16px; height: 16px; }
+.shortcut-txt strong { font-size: 0.83rem; font-weight: 600; }
+.shortcut-txt small { font-size: 0.72rem; color: var(--muted-2); }
+@media (max-width: 1000px) { .home-shortcuts { grid-template-columns: repeat(2, 1fr); } }
+
+/* A ação primária e o campo de código migraram para a barra de topo;
+   na Home ficam só as variantes (sala de espera, E2EE, treino). */
+.home .home-actions { display: none; }
+.home-extra { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+.home-extra .link {
+  padding: 4px 11px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--muted); font-size: 0.78rem; text-decoration: none;
+}
+.home-extra .link:hover { border-color: var(--accent); color: var(--accent-text); }
+
+/* ---- 5. Superfícies: borda fina, sombra mínima -------------- */
+.dash-card, .kpi-card, .rec-card, .rec-item, .wb-card, .shortcut-tile, .quality-card {
+  border-color: var(--border);
+}
+.dash-card, .kpi-card, .rec-card, .wb-card { box-shadow: var(--shadow); }
+/* Separadores internos (linhas de tabela/lista) usam o tom mais leve. */
+.rec-table td, .rec-table th, .member-row, .dir-row, .audit-row {
+  border-color: var(--border-soft);
+}
+
+/* ---- 6. Sala: chrome do template --------------------------- */
+/* Mantém-se a regra de ouro: a sala é escura em qualquer tema. Muda
+   a paleta (cinza-Meet → cinza-frio da consola) e a forma dos
+   controlos (círculos → quadrados de 38px com grupos agrupados). */
+.room-page,
+.waiting-page {
+  --bg: #0d0f14;
+  --surface: #171a22;
+  --surface-2: #1c1f28;
+  --surface-3: #232735;
+  --text: #e8eaf0;
+  --text-2: #8b92a8;
+  --muted: #8b92a8;
+  --muted-2: #6a7086;
+  --border: #262a34;
+  --border-soft: #20242e;
+  --ghost: rgba(127, 140, 180, 0.10);
+  --ghost-2: rgba(127, 140, 180, 0.18);
+  --tile-bg: #161a26;
+  --danger: #e05252;
+  --ctrl-hover: #232735;
+}
+.room-page .room-topbar {
+  background: #12141a; border-bottom: 1px solid #20242e; padding: 7px 14px; font-size: 0.83rem;
+}
+.room-page .room-topbar .rt-chip { border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.66rem; }
+.room-page .room-topbar .rt-count { border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--border); }
+/* Palco/grelha: gradiente frio em vez de cinza chapado. */
+.room-page .video-area { background: linear-gradient(160deg, #1b2030, #12141c); }
+.room-page .tile { background: linear-gradient(150deg, #242a3d, #161a26); border-radius: var(--radius-md); }
+.room-page .tile-name { border-radius: 3px; font-family: var(--font-mono); }
+
+/* Barra de controlos: fundo próprio + grupos agrupados. */
+.room-page .controls-bar {
+  background: #12141a; border-top: 1px solid #20242e; padding: 8px 16px;
+}
+.room-page .bar-center { gap: 8px; }
+.room-page .ctrl {
+  width: 38px !important; height: 38px !important;
+  border-radius: var(--radius-sm) !important;
+  background: transparent; color: #aeb4c6;
+}
+.room-page .ctrl:hover { background: var(--ctrl-hover); color: var(--text); }
+.room-page .ctrl svg { width: 19px; height: 19px; }
+.room-page .ctrl.off { background: var(--danger) !important; color: #fff; }
+.room-page .ctrl.active { background: var(--accent-soft) !important; color: #9aa5ff; }
+.room-page .ctrl.plain { background: transparent; }
+.room-page .ctrl.plain:hover { background: var(--ctrl-hover); }
+.room-page .ctrl.pulse { background: var(--accent) !important; color: #fff; }
+.room-page .ctrl.pulse::after { border-radius: var(--radius-sm); }
+.room-page .ctrl.hangup {
+  width: 52px !important; height: 38px !important;
+  border-radius: var(--radius-sm) !important; background: var(--danger) !important;
+}
+.room-page .ctrl .badge { border-radius: 3px !important; background: var(--surface-3); border-color: var(--border); }
+.room-page .device-ctrl .chevron {
+  width: 16px; height: 16px; border-radius: var(--radius-sm) !important;
+  border: 1px solid var(--border); background: var(--surface-3);
+  right: -2px; bottom: -2px; font-size: 0.6rem;
+}
+.room-page .clock {
+  font-family: var(--font-mono); font-size: 0.75rem;
+  padding: 4px 10px; border-radius: 3px;
+  background: var(--surface-2); border: 1px solid var(--border); color: #aeb4c6;
+}
+
+/* Painel lateral: encostado (sem margem flutuante) — ganha altura útil. */
+.room-page .side-panel {
+  width: 320px; margin: 0; padding: 0; border-radius: 0 !important;
+  background: #14161d; border-left: 1px solid #20242e;
+}
+.room-page .panel-head {
+  margin: 0; padding: 10px 12px; border-bottom: 1px solid #20242e;
+}
+.room-page .panel-head h3 { font-size: 0.87rem; }
+/* O corpo do painel é o que faz scroll; o cabeçalho fica fixo. */
+.room-page .side-panel > *:not(.panel-head) { padding-left: 12px; padding-right: 12px; }
+.room-page .side-panel > *:last-child { padding-bottom: 12px; }
+.room-page .device-menu { border-radius: var(--radius-md) !important; background: var(--surface); border: 1px solid var(--border); }
+.room-page .device-item { border-radius: var(--radius-sm) !important; }
+.room-page .cc-overlay, .room-page .wb-toolbar, .room-page .poll-card,
+.room-page .qa-card, .room-page .breakout-group, .room-page .ready-card {
+  border-radius: var(--radius-md) !important;
+}
+.room-page input, .room-page select, .room-page .btn-sm,
+.room-page .btn-new, .room-page .btn-ghost { border-radius: var(--radius-sm) !important; }
+.room-page .seg-btn, .room-page .lang-btn { border-radius: var(--radius-sm) !important; }
+
+/* Grupos de controlos da sala: duas peças agrupadas (dispositivos | sessão)
+   + o botão de terminar solto. Torna legível, num relance, o que afeta o
+   MEU sinal e o que afeta A REUNIÃO. */
+.room-page .ctrl-group {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px;
+  background: var(--surface); border: 1px solid #232735; border-radius: var(--radius-md);
+}
+.room-page .ctrl-group .picker-wrap { display: inline-flex; }
+.room-page .ctrl.hangup { margin-left: 8px; }
+/* Ações de linha não precisam de anel: a cor sólida já as destaca. */
+.dash-enter { box-shadow: none; }
+.dash-enter:hover { box-shadow: none; }
+
+/* Dispositivos: a pill Meet (50px, cantos 100px, chevron colado) dá lugar
+   ao par de quadrados de 38px do template. O chevron passa a caret no
+   canto — continua a abrir a lista de microfones/câmaras. */
+.room-page .device-ctrl {
+  height: 38px; background: transparent; border-radius: var(--radius-sm) !important;
+  position: relative;
+}
+.room-page .device-ctrl > .ctrl {
+  width: 38px !important; height: 38px !important;
+  border-radius: var(--radius-sm) !important; background: transparent !important;
+}
+.room-page .device-ctrl > .ctrl:hover { background: var(--ctrl-hover) !important; }
+.room-page .device-ctrl:has(> .ctrl.off) { background: transparent; }
+.room-page .device-ctrl > .ctrl.off { background: var(--danger) !important; color: #fff; }
+.room-page .device-ctrl > .ctrl.pulse { background: var(--accent) !important; }
+.room-page .device-ctrl > .ctrl.pulse::after { inset: 0; width: auto; }
+.room-page .device-ctrl > .chevron {
+  position: absolute !important; right: -3px !important; bottom: -3px !important;
+  width: 15px !important; height: 15px !important; padding: 0 !important;
+  border-radius: 3px !important; border: 1px solid var(--border) !important;
+  background: var(--surface-3) !important; color: #aeb4c6;
+}
+.room-page .device-ctrl > .chevron:hover { background: var(--ctrl-hover) !important; color: #fff; }
+.room-page .device-ctrl > .chevron.open { background: var(--accent) !important; color: #fff; }
+.room-page .device-ctrl > .chevron svg { width: 9px !important; height: 9px !important; }
+
+/* Avatares: gradientes frios. O vermelho/dourado fica reservado à MARCA
+   (logo, wordmark, landing) — num tile de vídeo só criava ruído quente. */
+.avatar-circle { background: linear-gradient(135deg, #7c6cf0, #4f7df9); }
+.room-page .tile-avatar { background: linear-gradient(150deg, #242a3d, #161a26); }
+/* Terminar: vermelho chapado, sem gradiente nem halo — na consola a cor
+   já é o sinal, o glow só competia com o estado "a falar". */
+.room-page .ctrl.hangup { background: var(--danger) !important; box-shadow: none; }
+.room-page .ctrl.hangup:hover { background: var(--danger) !important; filter: brightness(1.15); box-shadow: none; }
+.room-page .ctrl.hangup svg { width: 19px; height: 19px; }
+
+/* Páginas de altura total dentro do Shell: passam a medir-se pelo corpo
+   (que já desconta a barra de topo), não pela viewport — senão ficavam
+   ~46px demasiado altas e apareciam com scroll parasita. */
+.shell-body > .cal-page { height: 100%; }

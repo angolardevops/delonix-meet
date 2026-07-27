@@ -3481,6 +3481,10 @@ export default function Room({
         </div>
 
         <div className="bar-center">
+          {/* Dois grupos visuais: DISPOSITIVOS (o que os outros recebem de mim)
+              e SESSÃO (o que faço na reunião). Só agrupamento — nenhuma lógica
+              de media depende desta estrutura. */}
+          <div className="ctrl-group ctrl-group-devices">
           <DeviceControl
             label={micOn ? 'Desativar microfone (Ctrl+D)' : 'Ativar microfone (Ctrl+D)'}
             off={!micOn}
@@ -3508,6 +3512,8 @@ export default function Room({
           >
             {camOn ? <CamIcon /> : <CamOffIcon />}
           </DeviceControl>
+          </div>
+          <div className="ctrl-group ctrl-group-session">
           <Ctrl
             label={ccOn ? 'Desativar legendas automáticas' : 'Legendas automáticas (CC) — transcreve a voz em tempo real'}
             active={ccOn}
@@ -3675,6 +3681,7 @@ export default function Room({
             <Ctrl label="Mais opções" active={moreOpen} onClick={() => setMoreOpen(!moreOpen)}>
               <span className="more-dots">⋮</span>
             </Ctrl>
+          </div>
           </div>
           <button className="ctrl hangup" onClick={() => void leaveRoom()} title="Sair da chamada">
             <HangupIcon />
