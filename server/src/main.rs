@@ -20,6 +20,8 @@ mod recordings;
 mod room_tools;
 mod rooms;
 mod sfu;
+#[cfg(test)]
+mod sfu_e2e;
 mod signaling;
 mod storage;
 mod users;

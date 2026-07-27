@@ -164,6 +164,16 @@ cargo build --release
 
 ## Known gotchas
 
+- **Glare has TWO halves:** deferring the client offer server-side is NOT enough — the client's `rollback` discards its own offer, so the client must **re-offer** after answering. Guarded by `sfu_e2e.rs` + `glare.test.ts` (R13).
+- **SFU negotiation goes through ONE per-peer channel** (`NegoMsg` → `negotiation_loop`): client offers (screen share, camera on), client answers and server renegotiations are all serialized. webrtc-rs has no rollback — a client offer arriving while ours is pending is **deferred**, never applied out of state (R13).
+- **No periodic PLI** — keyframes on demand only: new subscription, layer switch, or subscriber PLI/FIR forwarded to the publisher (1 s rate limit) (R14).
+- **Simulcast layer is re-evaluated** from room size AND the subscriber's RTCP-reported loss, on every join/leave and loss-level change (R15).
+- **Call `touch_subs()` after ANY subscriber change** — the RTP pump uses a snapshot invalidated by `subs_version` (R16).
+- **Remote audio lives in `AudioSink`, never inside a tile** — hiding a tile must never mute anyone (R19).
+- **Active-speaker selection (top-N):** the SFU forwards only the 3 loudest mics. Three traps that silence people: always renumber forwarded audio (suppression would otherwise look like packet loss and downgrade their video), decay energy on a TIMER not per packet (with DTX a silent speaker sends nothing and would stay pinned in the top-N), and never suppress mics whose RFC 6464 level extension was not negotiated. Recording, PSTN and screen audio always get everything (R22).
+- **`video-interest` is sent on every change** — the visible page while paginating, ALL peers when not. Going silent does not mean "all" (R23).
+- **Publishing media needs a negotiation fallback** — `replaceAudioTrack` reuses the `recvonly` transceiver and renegotiates (R20).
+
 - Vite proxy: `/ws` and `/rtc` need `ws: true`. Changes require Vite restart.
 - Web Speech API: Chrome/Edge only. Firefox falls back to Whisper WASM.
 - `getUserMedia`: requires secure context (HTTPS or localhost).
@@ -198,4 +208,4 @@ cargo build --release
 - **K8s media is relay-only** (`FORCE_TURN_RELAY=1` → `iceTransportPolicy:relay` on `/api/ice` and SFU `RTCConfiguration`) with a reachable coturn (stage: on the HOST via `deploy/run-host-coturn.sh`). Without it ICE connects but the tile stays black. Do NOT enable on local (systemd, same host). Open issue: unstable TURN allocation (`438 Stale nonce`).
 - **`.dockerignore` must NOT exclude `web/dist`** (`Dockerfile.web.stage` copies it); `vite.config.ts` reads dev certs only in `serve`.
 - **Server is authoritative** for shared room actions: `wb-close`, `Presenting`/clear-presentation on stop-share are broadcast/validated in `signaling.rs`; the client does not decide alone.
-- **Reference:** stable knowledge base in `docs/reference/architecture.md`; **regressions never to reintroduce in `docs/reference/regressions.md` (R1–R12)**; autonomous reviewer subagents in `agents/`.
+- **Reference:** stable knowledge base in `docs/reference/architecture.md`; **regressions never to reintroduce in `docs/reference/regressions.md` (R1–R24)**; autonomous reviewer subagents in `agents/`.

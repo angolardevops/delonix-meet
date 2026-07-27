@@ -21,7 +21,7 @@ import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
 import { Btn, SelectCtl } from '../components/ui'
 import { BreakoutRoom, PeerInfo, PollView, QaView, Signaling, WbStroke } from '../signaling'
 import { ThemePicker } from '../components/Shell'
-import { Call, MeshCall, SfuCall } from '../webrtc'
+import { Call, MeshCall, SCREEN_CONSTRAINTS, SfuCall } from '../webrtc'
 import { makeCallHolderStart } from '../sfuLifecycle'
 import {
   BlurIcon, CamIcon, CamOffIcon, ChatIcon, ChevronUpIcon, CloseIcon, DownloadIcon, EmojiIcon, HandIcon,
@@ -324,6 +324,9 @@ export default function Room({
   const [moreOpen, setMoreOpen] = useState(false)
   const [hideSelf, setHideSelf] = useState(false)
   const [hideNoVideo, setHideNoVideo] = useState(false)
+  const [gridPage, setGridPage] = useState(0)
+  /** Esta sala já chegou a paginar? (ver o efeito de `video-interest`) */
+  const paginatedOnceRef = useRef(false)
   const [fullscreen, setFullscreen] = useState(false)
 
   useEffect(() => {
@@ -628,6 +631,7 @@ export default function Room({
   const ccOnRef = useRef(false)
   const bgModeRef = useRef<'none' | 'blur' | 'image'>('none')
   const levelsRef = useRef<LevelWatcher | null>(null)
+  const deviceChangeRef = useRef<(() => void) | null>(null)
   const recorderRef = useRef<MeetingRecorder | null>(null)
   const talkOverSince = useRef(0)
   const peersRef = useRef<RemotePeer[]>([])
@@ -660,7 +664,7 @@ export default function Room({
   useEffect(() => {
     if (roomState !== 'prejoin') return
     let cancelled = false
-    const levels = new LevelWatcher((s) => setSpeaking(new Set(s)))
+    const levels = new LevelWatcher((s) => setSpeaking((prev) => (sameSet(prev, s) ? prev : new Set(s))))
     ;(async () => {
       let permErr = ''
       const getMedia = (c: MediaStreamConstraints) =>
@@ -781,7 +785,7 @@ export default function Room({
         if (localVideo.current) localVideo.current.srcObject = stream
 
         // Deteção de voz local + lista de dispositivos (labels só após permissão).
-        const levels = new LevelWatcher((s) => setSpeaking(new Set(s)))
+        const levels = new LevelWatcher((s) => setSpeaking((prev) => (sameSet(prev, s) ? prev : new Set(s))))
         levelsRef.current = levels
         levels.watch('me', stream)
         void listDevices().then((d) => {
@@ -790,7 +794,11 @@ export default function Room({
           setMicId(initMicId || stream.getAudioTracks()[0]?.getSettings().deviceId || '')
           setCamId(stream.getVideoTracks()[0]?.getSettings().deviceId ?? '')
         })
-        navigator.mediaDevices.addEventListener?.('devicechange', () => void listDevices().then(setDevices))
+        // Guardado em ref para poder ser removido no cleanup: sem isso,
+        // cada re-entrada na sala acumulava mais um listener vivo.
+        const onDeviceChange = () => void listDevices().then(setDevices).catch(() => {})
+        deviceChangeRef.current = onDeviceChange
+        navigator.mediaDevices.addEventListener?.('devicechange', onDeviceChange)
 
         const [{ room, room_token, scheduled }, rtcConfig] = await Promise.all([joinRoom(code), iceServers()])
         setTopology(room.topology)
@@ -1107,6 +1115,10 @@ export default function Room({
     start()
     return () => {
       cancelled = true
+      if (deviceChangeRef.current) {
+        navigator.mediaDevices.removeEventListener?.('devicechange', deviceChangeRef.current)
+        deviceChangeRef.current = null
+      }
       levelsRef.current?.close()
       effectRef.current?.stop()
       headRef.current?.stop()
@@ -1197,9 +1209,27 @@ export default function Room({
 
   async function toggleCam() {
     const existing = localStreamRef.current?.getVideoTracks()[0]
-    if (existing) {
-      existing.enabled = !existing.enabled
-      setCamOn(existing.enabled)
+    if (existing && camOn) {
+      // DESLIGAR: liberta mesmo a câmara — o LED apaga e o encoder pára.
+      // `enabled = false` (o que se fazia antes) mantinha a captura e a
+      // codificação a correr e o indicador do sistema aceso, o que num
+      // produto que se vende por soberania de dados não é aceitável.
+      // O transceiver fica de pé (`replaceTrack(null)`), por isso voltar a
+      // ligar não renegoceia nem perde o simulcast.
+      setCamOn(false)
+      setHasLocalVideo(false)
+      await callRef.current?.disableVideo()
+      if (parallax) {
+        headRef.current?.stop()
+        headRef.current = null
+        setParallax(false)
+        setTilt({ x: 0, y: 0 })
+      }
+      effectRef.current?.stop()
+      localStreamRef.current?.removeTrack(existing)
+      existing.stop()
+      cameraTrackRef.current = null
+      if (localVideo.current) localVideo.current.srcObject = localStreamRef.current
       return
     }
     // Voz -> vídeo: adquirir câmara e publicar (renegoceia no SFU).
@@ -1613,11 +1643,7 @@ export default function Room({
       return
     }
     try {
-      const display = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        // Áudio do sistema/separador (Chrome/Edge; o utilizador escolhe no picker)
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      })
+      const display = await navigator.mediaDevices.getDisplayMedia(SCREEN_CONSTRAINTS)
       const screenTrack = display.getVideoTracks()[0]
       screenTrack.contentHint = 'detail' // privilegiar nitidez de texto sobre framerate
       if (isSfu) {
@@ -1734,9 +1760,18 @@ export default function Room({
   }
 
   // Preferências de vista: esconder o meu tile e/ou participantes sem vídeo.
-  const visiblePeers = hideNoVideo
+  const filteredPeers = hideNoVideo
     ? peers.filter((p) => !!p.stream?.getVideoTracks().length && p.camOn)
     : peers
+  // Paginação: acima de TILES_PER_PAGE ninguém consegue ver (nem o browser
+  // descodificar) mais tiles com proveito. O áudio NÃO é paginado — vive no
+  // AudioSink e ouve-se toda a gente esteja em que página estiver.
+  const pageCount = Math.max(1, Math.ceil(filteredPeers.length / TILES_PER_PAGE))
+  const page = Math.min(gridPage, pageCount - 1)
+  const visiblePeers =
+    filteredPeers.length > TILES_PER_PAGE
+      ? filteredPeers.slice(page * TILES_PER_PAGE, page * TILES_PER_PAGE + TILES_PER_PAGE)
+      : filteredPeers
   const showSelf = !hideSelf
   const total = visiblePeers.length + (showSelf ? 1 : 0)
   const tileSize = useGridLayout(videoAreaRef, total, roomState === 'in')
@@ -1770,6 +1805,34 @@ export default function Room({
         willChange: 'transform',
       }
     : {}
+
+  // De quem precisamos MESMO de vídeo agora. Vai ao SFU (`video-interest`),
+  // que deixa de enviar o resto — é aqui que a paginação poupa banda a sério,
+  // e não apenas ciclos de decoder. Inclui sempre quem está no palco e quem
+  // está fixado, mesmo que caiam fora da página atual.
+  const videoInterest = useMemo(() => {
+    // Sem paginação ativa o interesse é TODA a gente. Isto é essencial: se a
+    // sala encolher abaixo do limiar e deixássemos simplesmente de enviar, o
+    // servidor ficaria com a última página em memória e quem estivesse fora
+    // dela nunca mais receberia vídeo.
+    const source = filteredPeers.length > TILES_PER_PAGE ? visiblePeers : filteredPeers
+    const ids = new Set(source.map((p) => p.peerId))
+    if (stagePeer) ids.add(stagePeer.peerId)
+    if (pinnedPeer) ids.add(pinnedPeer.peerId)
+    return [...ids].sort()
+  }, [visiblePeers, filteredPeers, stagePeer, pinnedPeer])
+
+  useEffect(() => {
+    if (roomState !== 'in' || topology !== 'sfu') return
+    // Numa sala que NUNCA paginou não há nada a informar: o default do servidor
+    // (interesse desconhecido = todos) já é o correto. Assim que pagina uma vez,
+    // passamos a informar sempre — inclusive quando encolhe e deixa de paginar,
+    // senão o servidor ficava preso na última página (R23).
+    if (filteredPeers.length > TILES_PER_PAGE) paginatedOnceRef.current = true
+    if (!paginatedOnceRef.current) return
+    signalRef.current?.send({ type: 'video-interest', peers: videoInterest })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoInterest.join(','), roomState, topology, filteredPeers.length])
 
   const talkOverNames = useMemo(() => {
     if (!talkOver) return ''
@@ -1978,6 +2041,10 @@ export default function Room({
           </div>
         )}
 
+        {/* Áudio de TODOS os participantes, independente do que a grelha
+            mostra (ver AudioSink). Fora do `video-area` de propósito. */}
+        <AudioSink peers={peers} sinkId={speakerId} />
+
         <div className="video-area" ref={videoAreaRef}>
         {(() => {
           // Dimensões explícitas só na grelha multi-tile; solo e palco usam CSS.
@@ -2035,7 +2102,6 @@ export default function Room({
               key={p.peerId}
               peer={p}
               isHost={isHost}
-              sinkId={speakerId}
               speaking={speaking.has(p.peerId)}
               style={tileStyle}
               pinned={pinnedId === p.peerId}
@@ -2102,17 +2168,45 @@ export default function Room({
             )
           }
           return (
-            <div
-              className={isSolo ? 'video-grid video-grid--solo' : 'video-grid'}
-              style={isSolo ? parallaxStyle : {
-                ['--tw' as string]: `${tileSize.w}px`,
-                ['--th' as string]: `${tileSize.h}px`,
-                ...parallaxStyle,
-              }}
-            >
-              {showSelf && selfTile}
-              {visiblePeers.map(remoteTile)}
-            </div>
+            <>
+              <div
+                className={isSolo ? 'video-grid video-grid--solo' : 'video-grid'}
+                style={isSolo ? parallaxStyle : {
+                  ['--tw' as string]: `${tileSize.w}px`,
+                  ['--th' as string]: `${tileSize.h}px`,
+                  ...parallaxStyle,
+                }}
+              >
+                {showSelf && selfTile}
+                {visiblePeers.map(remoteTile)}
+              </div>
+              {pageCount > 1 && (
+                <div className="grid-pager" role="navigation" aria-label="Páginas de participantes">
+                  <button
+                    onClick={() => setGridPage((p) => Math.max(0, p - 1))}
+                    disabled={page === 0}
+                    title="Página anterior"
+                    aria-label="Página anterior"
+                  >
+                    ‹
+                  </button>
+                  <span className="mono">
+                    {page + 1} / {pageCount}
+                  </span>
+                  <button
+                    onClick={() => setGridPage((p) => Math.min(pageCount - 1, p + 1))}
+                    disabled={page >= pageCount - 1}
+                    title="Página seguinte"
+                    aria-label="Página seguinte"
+                  >
+                    ›
+                  </button>
+                  <small className="muted">
+                    {filteredPeers.length} participantes · ouves todos
+                  </small>
+                </div>
+              )}
+            </>
           )
         })()}
         </div>
@@ -4007,6 +4101,27 @@ function PresentationTile({ stream, label, own, onRequestControl }: { stream: Me
   )
 }
 
+/**
+ * Atualizador de "quem está a falar" que só troca o estado quando o CONJUNTO
+ * muda. O `LevelWatcher` dispara a cada 180 ms; `setSpeaking(new Set(s))`
+ * criava sempre uma identidade nova, pelo que a sala inteira (componente de
+ * milhares de linhas, N tiles de vídeo) re-renderizava ~5,5×/s do princípio ao
+ * fim da reunião, mesmo em silêncio absoluto — CPU roubado aos decoders.
+ */
+function sameSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false
+  for (const v of a) if (!b.has(v)) return false
+  return true
+}
+
+/**
+ * Tiles de vídeo por página. Acima disto o browser descodifica fluxos que
+ * ninguém consegue ver: numa sala de 40 eram 39 decoders a correr para desenhar
+ * retângulos de 100 px. Com a paginação o cliente só pede (`video-interest`) o
+ * vídeo da página visível e o SFU deixa mesmo de o enviar.
+ */
+const TILES_PER_PAGE = 24
+
 /** Barras animadas tipo Meet quando alguém está a falar. */
 function SpeakingBars() {
   return (
@@ -4016,10 +4131,47 @@ function SpeakingBars() {
   )
 }
 
+/**
+ * Reprodução do ÁUDIO de todos os participantes, num sítio só, SEMPRE montado.
+ *
+ * Antes, cada `<audio>` vivia dentro do `RemoteTile`. Como a grelha esconde
+ * tiles (opção «Ocultar participantes sem vídeo», palco, futura paginação),
+ * esconder um tile DESMONTAVA o `<audio>` e a pessoa deixava de se ouvir — com
+ * a câmara desligada a ser o caso mais comum, ativar essa opção deixava o
+ * utilizador praticamente surdo, sem qualquer pista da causa.
+ *
+ * Regra: o que está no ecrã é decisão de layout; o que se ouve não pode
+ * depender do layout.
+ */
+function AudioSink({ peers, sinkId }: { peers: RemotePeer[]; sinkId: string }) {
+  return (
+    <div className="audio-sink" aria-hidden style={{ display: 'none' }}>
+      {peers.map((p) => (
+        <PeerAudio key={p.peerId} stream={p.stream} sinkId={sinkId} />
+      ))}
+    </div>
+  )
+}
+
+function PeerAudio({ stream, sinkId }: { stream: MediaStream | null; sinkId: string }) {
+  const ref = useRef<HTMLAudioElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || el.srcObject === stream) return
+    el.srcObject = stream
+    void el.play().catch(() => {})
+  }, [stream])
+  // Saída de áudio (altifalantes) escolhida nas definições.
+  useEffect(() => {
+    const el = ref.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null
+    if (el?.setSinkId) void el.setSinkId(sinkId || '').catch(() => {})
+  }, [sinkId, stream])
+  return <audio ref={ref} autoPlay />
+}
+
 function RemoteTile({
   peer,
   isHost,
-  sinkId,
   speaking,
   style,
   pinned,
@@ -4029,7 +4181,6 @@ function RemoteTile({
 }: {
   peer: RemotePeer
   isHost: boolean
-  sinkId: string
   speaking: boolean
   style?: CSSProperties
   pinned?: boolean
@@ -4038,25 +4189,12 @@ function RemoteTile({
   onKick: () => void
 }) {
   const ref = useRef<HTMLVideoElement>(null)
-  const audioRef = useRef<HTMLAudioElement>(null)
-  // O ÁUDIO remoto é reproduzido por um <audio> DEDICADO (o <video> fica mudo):
-  // um <video style=display:none> (câmara desligada) podia não tocar o áudio, e
-  // o autoplay de vídeo não-mudo podia ser bloqueado. O <audio> toca sempre.
   useEffect(() => {
     if (ref.current && ref.current.srcObject !== peer.stream) {
       ref.current.srcObject = peer.stream
       void ref.current.play().catch(() => {})
     }
-    if (audioRef.current && audioRef.current.srcObject !== peer.stream) {
-      audioRef.current.srcObject = peer.stream
-      void audioRef.current.play().catch(() => {})
-    }
   }, [peer.stream])
-  // Saída de áudio (altifalantes) escolhida nas definições — no <audio>.
-  useEffect(() => {
-    const el = audioRef.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null
-    if (el?.setSinkId) void el.setSinkId(sinkId || '').catch(() => {})
-  }, [sinkId, peer.stream])
   // Vídeo só quando há track E o peer diz que a câmara está ligada —
   // track com enabled=false chega como frames pretos, não como ausência.
   const hasVideo = !!peer.stream?.getVideoTracks().length && peer.camOn
@@ -4069,7 +4207,6 @@ function RemoteTile({
       title="Duplo-clique para fixar/desafixar no palco"
     >
       <video ref={ref} autoPlay playsInline muted style={{ display: hasVideo ? undefined : 'none' }} />
-      <audio ref={audioRef} autoPlay />
       {!hasVideo && (
         <div className="tile-avatar" style={{ background: peerColor(peer.username) }}>
           <span className="avatar-circle" style={{ background: 'rgba(0,0,0,0.25)' }}>{peer.username.slice(0, 2).toUpperCase()}</span>

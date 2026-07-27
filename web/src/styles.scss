@@ -2634,6 +2634,25 @@ button.link:hover {
 .pres-zoom-ctrls button:hover { background: rgba(255, 255, 255, 0.15); }
 .pres-zoom-ctrls .mono { color: #fff; font-size: 0.72rem; min-width: 38px; text-align: center; }
 
+/* ---- Paginação da grelha (salas grandes) ----
+   Só aparece acima de TILES_PER_PAGE participantes. A legenda "ouves todos"
+   é deliberada: paginar o VÍDEO nunca corta áudio (ver AudioSink / R19), e o
+   utilizador tem de o saber sem ter de experimentar. */
+.grid-pager {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 6px 0 2px; flex: none;
+}
+.grid-pager button {
+  background: var(--ctrl-bg); border: none; color: #fff;
+  width: 30px; height: var(--ctl-h, 30px); border-radius: var(--radius-sm, 4px);
+  cursor: pointer; font-size: 1.1rem; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.grid-pager button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.2); }
+.grid-pager button:disabled { opacity: 0.35; cursor: default; }
+.grid-pager .mono { color: #fff; font-size: 0.78rem; min-width: 46px; text-align: center; }
+.grid-pager .muted { font-size: 0.72rem; }
+
 
 /* ---- Branding: logótipo Delonix ---- */
 .brand-logo { width: 26px; height: 26px; vertical-align: -0.35em; }

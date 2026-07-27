@@ -59,6 +59,10 @@
 - `dlp.rs` — DLP (censura/redação de conteúdo sensível)
 - `pubsub.rs` — Redis pub/sub para entrega cross-nó (presença/sinalização)
 - `redis_state.rs` — estado in-room em Redis (whiteboard, timer, sondagens, settings) partilhado entre pods
+- `ai.rs` — IA local via Ollama in-cluster: tradução de legendas em tempo real e resumo da ata. Fail-open sem `OLLAMA_URL` (o MoM cai para as regras do cliente); o texto das reuniões nunca sai para uma cloud externa
+- `odoo.rs` — integração Odoo (módulo `nk_delonix_meet`): token `dlxo_<hex>`, provisionamento de utilizadores via `/api/v1/integration/odoo/provision`, validação de senha contra o Odoo (online) com fallback ao hash Argon2 em cache (offline)
+- `sfu_e2e.rs` — testes ponta-a-ponta do SFU com `RTCPeerConnection`s reais no papel de browser (media a fluir nos dois sentidos + R13/glare). Só compila em `#[cfg(test)]`
+- `storage.rs` — armazenamento remoto da plataforma (TrueNAS NFS / Nextcloud WebDAV); registo único em `platform_storage`, gerido pelo admin global
 
 ### Frontend — `web/src/` (React + TypeScript + Vite)
 | Ficheiro/pasta | Função |
@@ -84,7 +88,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0026) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0030) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 
@@ -309,4 +313,16 @@ Personas adicionais (invocar em prompt, perfis em `docs/ai-reviewers.md`): **Lar
 - **`.dockerignore` NÃO pode excluir `web/dist`:** o `Dockerfile.web.stage` faz `COPY web/dist` (usa o build local); excluir `web/dist` parte o `make stage`. Excluir sim: `server/target`, `web/node_modules`, `web/public/{ort,ort-rvm,models/*}`, `deploy/*.env`, `agents/worktrees` (contexto Docker de 4.5GB→<1MB; sem isto o cache serve imagem stale e o Rust não recompila).
 - **Media K8s = relay-only via coturn (`FORCE_TURN_RELAY=1`):** em K8s o IP do pod (10.244.x) é inalcançável de fora e os host candidates do SFU não transportam media → sem relay-only o ICE "liga" mas fica preto. `FORCE_TURN_RELAY=1` põe `iceTransportPolicy:relay` no `/api/ice` E no `RTCConfiguration` do SFU; exige coturn alcançável (em stage: no HOST via `deploy/run-host-coturn.sh`, `TURN_HOST=172.30.0.1:3478`). Em local (systemd, mesmo host) NÃO ligar — host candidates chegam. **Aberto:** alocação TURN instável (`438 Stale nonce`/`allocation timeout`) → ver [[k8s-media-turn]] / `docs/reference/regressions.md`. Não é `/rtc` (presença = Redis, sem afinidade nem relay).
 - **Servidor é autoritativo em ações de sala partilhadas:** `wb-open`/`wb-close` (quadro branco abre/fecha em TODOS; abrir só apresentador/anfitrião), `Presenting`/limpar apresentação ao parar screen-share, e abrir o painel de transcrição são difundidos/validados pelo servidor (`signaling.rs`) — o cliente NÃO decide sozinho. O painel de transcrição é host-only (não abre para todos ao ligar). **Partilha de ecrã de não-anfitrião exige `share-grant` do anfitrião** (grants por sala no hub; `ScreenShare` sem grant → Error — não confiar no cliente); fluxo: `share-request` → cartão Permitir/Negar no anfitrião → grant → partilha arranca no requerente. Controlo remoto: `remote-control request` só é entregue a quem está a apresentar (`presenter` por sala no hub).
+- **Glare são DUAS metades:** adiar a oferta no servidor (`NegoMsg`) NÃO chega — o `rollback` do cliente descarta a oferta dele, por isso o cliente tem de **RE-OFERTAR** depois de responder. Guardado por `sfu_e2e.rs` + `glare.test.ts`. Ver R13.
+- **Negociação SFU = canal único por peer (`NegoMsg`):** ofertas do cliente (ecrã, câmara), respostas e renegociações do servidor passam TODAS pela `negotiation_loop`. O webrtc-rs **não tem rollback** (nem implícito nem explícito a partir de `have-local-offer`), por isso uma oferta do cliente que chegue com a nossa pendente é **adiada**, nunca aplicada fora de estado — era aí que a partilha de ecrã se perdia em silêncio. Ver R13.
+- **Sem PLI periódico:** keyframes só a pedido (subscrição nova, troca de camada, PLI/FIR reencaminhado do subscritor, rate-limit 1 s). O antigo ticker de 3 s por camada queimava bitrate para sempre. Ver R14.
+- **Camada simulcast é reavaliada:** `reevaluate_peer` decide a partir do tamanho da sala **e** da perda reportada por RTCP (`Quality`). Chamada em cada entrada/saída e em cada mudança de nível de perda. Ver R15.
+- **`touch_subs()` a seguir a QUALQUER alteração de subscritores:** a bomba de RTP usa um snapshot invalidado por `subs_version` (escritas fora do lock). Esquecer isto = media a ir para quem saiu. Ver R16.
+- **Áudio remoto vive no `AudioSink`, nunca dentro de um tile:** esconder um tile não pode silenciar ninguém. Ver R19.
+- **Publicar media exige fallback de negociação:** `replaceAudioTrack` reaproveita o transceiver `recvonly` e renegoceia — sem isso quem entra sem mic fica mudo para sempre. Ver R20.
+- **Gravação só grava VP8/Opus** (`recordable_codec`); outro codec → track excluída + `error!`. Gravar VP9/H264 com o depacketizer VP8 produzia ficheiro corrompido sem erro. Ver R18.
+- **Estado alimentado por timer tem de comparar antes de `setState`** (`sameSet` no `LevelWatcher`): sem isso a sala re-renderizava 5,5×/s em silêncio. Ver R21.
+- **Seleção de oradores (top-N):** o SFU só reencaminha os 3 microfones mais ativos. Três armadilhas que silenciam gente: renumerar SEMPRE o áudio (`AudioMeter::next_seq` — sem isso a supressão parece perda e baixa o vídeo), decair a energia por TEMPO e não por pacote (com DTX quem se cala não envia nada e ficaria preso no top-N), e NUNCA suprimir microfones sem a extensão RFC 6464 negociada. Gravação, PSTN e áudio de ecrã recebem sempre tudo. Ver R22.
+- **`video-interest` é enviado SEMPRE que o conjunto muda** — a página visível quando pagina, TODOS os peers quando não pagina. "Deixar de enviar" não significa "todos": o servidor ficaria com a última página. Ver R23.
+- **Desligar a câmara liberta-a mesmo** (`disableVideo` → `replaceTrack(null)` + `track.stop()`), reutilizando o `videoSender` guardado — criar transceiver novo por religação faz crescer a SDP e perde o simulcast. Ver R24.
 - **Harness:** manter `HARNESS.md`, `AGENTS.md`, `GEMINI.md` coerentes; a referência estável está em `docs/reference/architecture.md` (+ `docs/reference/regressions.md` = regressões a não reintroduzir); revisores autónomos em `agents/`.

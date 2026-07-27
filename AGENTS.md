@@ -81,7 +81,12 @@ Personas adicionais (invocar em prompt quando útil): **Lars Bak** (WASM/Worker 
 - **Media K8s = relay-only** (`FORCE_TURN_RELAY=1` + coturn alcançável), senão o ICE liga mas fica preto. Em local não ligar.
 - **`.dockerignore` nunca exclui `web/dist`** (o `Dockerfile.web.stage` copia-o).
 - **mkcert em Firefox**: o Firefox não confia na store do SO — `security.enterprise_roots.enabled=true` ou importar a rootCA.
-- **Regressões completas (não reintroduzir):** [`docs/reference/regressions.md`](docs/reference/regressions.md) — R1–R12 com sintoma/causa/regra/ficheiros.
+- **Glare = duas metades:** servidor adia a oferta E cliente re-oferta após rollback (senão o ecrã desaparece na mesma). Ver R13.
+- **Negociação SFU:** ofertas do cliente E do servidor passam pelo canal único `NegoMsg`/`negotiation_loop` — o webrtc-rs não tem rollback, uma oferta do cliente em glare é ADIADA, nunca aplicada fora de estado (R13).
+- **Sem PLI periódico** — keyframes só a pedido/reencaminhados do subscritor (R14). **`touch_subs()`** a seguir a qualquer alteração de subscritores (R16).
+- **Áudio remoto no `AudioSink`, nunca dentro de um tile** — esconder um tile não pode silenciar ninguém (R19).
+- **Top-N de oradores:** renumerar o áudio, decair por tempo (DTX!), nunca suprimir sem extensão RFC 6464; gravação/PSTN recebem tudo (R22). **`video-interest`** enviado sempre, com "todos" quando não pagina (R23).
+- **Regressões completas (não reintroduzir):** [`docs/reference/regressions.md`](docs/reference/regressions.md) — R1–R24 com sintoma/causa/regra/ficheiros.
 
 ## 9. Próximas prioridades
 

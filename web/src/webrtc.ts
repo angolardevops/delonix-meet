@@ -11,16 +11,27 @@ export function enhanceOpus(sdp: string): string {
   const OPUS = /a=rtpmap:(\d+) opus\/48000(?:\/\d+)?/i.exec(sdp)
   if (!OPUS) return sdp
   const pt = OPUS[1]
-  const fmtpRe = new RegExp(`a=fmtp:${pt} ([^\r\n]*)`)
-  const extra = 'maxaveragebitrate=128000;stereo=1;sprop-stereo=1;useinbandfec=1'
-  const m = fmtpRe.exec(sdp)
-  if (!m) return sdp.replace(OPUS[0], `${OPUS[0]}\r\na=fmtp:${pt} ${extra}`)
-  let params = m[1]
-  for (const kv of extra.split(';')) {
-    const key = kv.split('=')[0]
-    params = params.includes(`${key}=`) ? params.replace(new RegExp(`${key}=\\d+`), kv) : `${params};${kv}`
+  // `usedtx=1`: em silêncio o encoder deixa de enviar (≈0 kbps em vez de 128).
+  // Numa sala de N pessoas, N-1 estão caladas a cada instante — é a diferença
+  // entre (N-1)×128 kbps de downlink e praticamente nada.
+  const extra = 'maxaveragebitrate=128000;stereo=1;sprop-stereo=1;useinbandfec=1;usedtx=1'
+  // GLOBAL: cada m-line de áudio (microfone E áudio do ecrã partilhado) tem o
+  // seu `a=fmtp`. Com `replace` não-global só a PRIMEIRA era tratada, e o áudio
+  // da partilha de ecrã ficava com os defaults do browser.
+  const fmtpReG = new RegExp(`a=fmtp:${pt} ([^\r\n]*)`, 'g')
+  if (!fmtpReG.test(sdp)) {
+    fmtpReG.lastIndex = 0
+    return sdp.replace(new RegExp(`(a=rtpmap:${pt} opus/48000(?:/\\d+)?)`, 'g'), `$1\r\na=fmtp:${pt} ${extra}`)
   }
-  return sdp.replace(fmtpRe, `a=fmtp:${pt} ${params}`)
+  fmtpReG.lastIndex = 0
+  return sdp.replace(fmtpReG, (_full, params: string) => {
+    let out = params
+    for (const kv of extra.split(';')) {
+      const key = kv.split('=')[0]
+      out = out.includes(`${key}=`) ? out.replace(new RegExp(`${key}=\\d+`), kv) : `${out};${kv}`
+    }
+    return `a=fmtp:${pt} ${out}`
+  })
 }
 
 /** Config extra para E2EE: o Chrome exige a flag na criação do PC. */
@@ -67,6 +78,14 @@ export interface Call {
   /** Adiciona/substitui a track de vídeo publicada, renegociando se preciso. */
   enableVideo(track: MediaStreamTrack, stream: MediaStream): Promise<void>
   /**
+   * Para de publicar vídeo SEM desmontar o transceiver (`replaceTrack(null)`).
+   * Permite que o `Room` liberte mesmo a câmara (LED apaga, encoder pára) e
+   * volte a ligá-la depois com `enableVideo` — sem renegociar e, no SFU, sem
+   * perder as `sendEncodings` de simulcast, que só podem ser definidas na
+   * criação do transceiver.
+   */
+  disableVideo(): Promise<void>
+  /**
    * Publica o ecrã como track ADICIONAL (a câmara continua a fluir).
    * No mesh (sem SFU) cai para o comportamento antigo: substitui a câmara.
    */
@@ -90,16 +109,40 @@ export interface QosReport {
  * sobe até aqui quando a largura de banda de upload permite e desce sozinho
  * quando não — é isto que dá a adaptação automática à rede.
  */
-async function tuneVideoSender(sender: RTCRtpSender) {
+async function tuneVideoSender(sender: RTCRtpSender, maxBitrate = 6_000_000, degradation: RTCDegradationPreference = 'balanced') {
   try {
     const params = sender.getParameters()
-    params.degradationPreference = 'balanced'
+    params.degradationPreference = degradation
     if (!params.encodings?.length) params.encodings = [{}]
-    params.encodings[0].maxBitrate = 6_000_000
+    params.encodings[0].maxBitrate = maxBitrate
     await sender.setParameters(params)
   } catch {
     /* parâmetros não suportados — segue com defaults */
   }
+}
+
+/**
+ * Teto do ecrã partilhado. É MUITO mais baixo que o da câmara (6 Mbps) por uma
+ * razão estrutural: o ecrã não tem simulcast, logo TODOS os subscritores
+ * recebem exatamente este fluxo — não há camada leve para quem tem rede fraca.
+ * 2,5 Mbps a 1080p com `degradationPreference: 'maintain-resolution'` mantém o
+ * texto legível (o que interessa numa apresentação) e baixa o framerate quando
+ * a banda aperta, em vez de desfocar.
+ */
+const SCREEN_MAX_BITRATE = 2_500_000
+
+/**
+ * Constraints do ecrã partilhado. Sem limite explícito, um monitor 4K era
+ * capturado a 4K/60 e enviado tal-qual a toda a gente.
+ */
+export const SCREEN_CONSTRAINTS: DisplayMediaStreamOptions = {
+  video: {
+    width: { max: 1920 },
+    height: { max: 1080 },
+    frameRate: { ideal: 5, max: 15 },
+  },
+  // Áudio do sistema/separador (Chrome/Edge; o utilizador escolhe no picker)
+  audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
 }
 
 async function replaceTrackOfKind(pcs: Iterable<RTCPeerConnection>, kind: string, track: MediaStreamTrack) {
@@ -107,6 +150,26 @@ async function replaceTrackOfKind(pcs: Iterable<RTCPeerConnection>, kind: string
     const sender = pc.getSenders().find((s) => s.track?.kind === kind)
     if (sender) await sender.replaceTrack(track)
   }
+}
+
+/**
+ * Sender que já ESTÁ a enviar `kind`, ou um transceiver `recvonly`/inativo do
+ * mesmo tipo que possa ser convertido em emissor.
+ *
+ * Sem isto, quem entrava sem microfone (permissão negada, modo espectador, ou
+ * só com câmara) nunca conseguia falar: `getSenders().find(s => s.track?.kind)`
+ * não encontrava nada — o sender de um transceiver `recvonly` tem `track` a
+ * `null` — e o `replaceAudioTrack` era um no-op silencioso. O botão do mic
+ * acendia, o medidor de nível mexia, e não saía um único pacote.
+ */
+function reusableTransceiver(pc: RTCPeerConnection, kind: 'audio' | 'video'): RTCRtpTransceiver | null {
+  return (
+    pc.getTransceivers().find((t) => {
+      if (t.direction === 'stopped' || t.currentDirection === 'stopped') return false
+      const tk = t.receiver.track?.kind ?? t.sender.track?.kind
+      return tk === kind && !t.sender.track
+    }) ?? null
+  )
 }
 
 /**
@@ -213,8 +276,29 @@ export class MeshCall implements Call {
     await replaceTrackOfKind(this.pcs.values(), 'video', track)
   }
 
+  /** Mesh: mesma lógica do SFU — publicar o mic mesmo sem sender ativo. */
   async replaceAudioTrack(track: MediaStreamTrack) {
-    await replaceTrackOfKind(this.pcs.values(), 'audio', track)
+    const stream = new MediaStream([track])
+    for (const [peerId, pc] of this.pcs) {
+      const active = pc.getSenders().find((s) => s.track?.kind === 'audio')
+      if (active) {
+        await active.replaceTrack(track)
+        continue
+      }
+      const reusable = reusableTransceiver(pc, 'audio')
+      let sender: RTCRtpSender
+      if (reusable) {
+        await reusable.sender.replaceTrack(track)
+        reusable.direction = 'sendrecv'
+        sender = reusable.sender
+      } else {
+        sender = pc.addTrack(track, stream)
+      }
+      this.crypto?.protectSender(sender)
+      const offer = await pc.createOffer()
+      await pc.setLocalDescription(offer)
+      this.signal.send({ type: 'offer', to: peerId, sdp: offer.sdp! })
+    }
   }
 
   /** Mesh: sem track extra — o ecrã substitui a câmara (comportamento antigo). */
@@ -243,6 +327,13 @@ export class MeshCall implements Call {
     }
   }
 
+  async disableVideo() {
+    for (const pc of this.pcs.values()) {
+      const sender = pc.getSenders().find((s) => s.track?.kind === 'video')
+      if (sender) await sender.replaceTrack(null)
+    }
+  }
+
   hangup() {
     for (const [id] of this.pcs) this.dropPeer(id)
     this.crypto?.close()
@@ -259,6 +350,10 @@ export class MeshCall implements Call {
 export class SfuCall implements Call {
   private pc: RTCPeerConnection
   private pendingIce: RTCIceCandidateInit[] = []
+  /** Sender da CÂMARA (não do ecrã). Guardado para o poder reutilizar em
+   *  `enableVideo` depois de um `disableVideo` — sem isto, cada ciclo
+   *  desligar/ligar acrescentava uma m-line nova de vídeo à sessão. */
+  private videoSender: RTCRtpSender | null = null
   private screenSender: RTCRtpSender | null = null
   private screenAudioSender: RTCRtpSender | null = null
   /** Serializa o processamento de SDP para não intercalar negociações. */
@@ -278,6 +373,7 @@ export class SfuCall implements Call {
         track.kind === 'video'
           ? addSimulcastVideo(this.pc, track, localStream)
           : this.pc.addTrack(track, localStream)
+      if (track.kind === 'video') this.videoSender = sender
       this.crypto?.protectSender(sender)
     }
     if (localStream.getTracks().length === 0) {
@@ -313,7 +409,8 @@ export class SfuCall implements Call {
         // aceitar a do servidor. Sem isto o setRemoteDescription(offer) falhava e
         // o subscritor (ex.: o anfitrião a receber um novo convidado) nunca
         // adicionava a track → media num sentido só.
-        if (this.pc.signalingState !== 'stable') {
+        const rolledBack = this.pc.signalingState !== 'stable'
+        if (rolledBack) {
           await this.pc.setLocalDescription({ type: 'rollback' }).catch(() => {})
         }
         await this.pc.setRemoteDescription({ type: 'offer', sdp: enhanceOpus(m.sdp) })
@@ -321,6 +418,21 @@ export class SfuCall implements Call {
         const answer = await this.pc.createAnswer()
         await this.pc.setLocalDescription(answer)
         this.send({ type: 'sfu-answer', sdp: answer.sdp! })
+        // O rollback DESCARTOU a nossa oferta — e com ela a negociação das
+        // tracks que ela publicava (ecrã, câmara). A resposta que o servidor
+        // acabar por mandar a essa oferta já não nos serve: estamos `stable` e
+        // o handler de `sfu-answer` descarta-a. Nada mais voltaria a propor
+        // aquelas tracks e a partilha de ecrã desaparecia em silêncio — o
+        // mesmo sintoma da R13, agora do lado do cliente. Por isso RE-OFERTAMOS.
+        //
+        // Não usamos `onnegotiationneeded` (que faria isto sozinho no browser)
+        // porque toda a negociação desta classe é explícita e serializada pela
+        // fila; misturar os dois daria ofertas a competir.
+        if (rolledBack) {
+          const reoffer = await this.pc.createOffer()
+          await this.pc.setLocalDescription(reoffer)
+          this.send({ type: 'sfu-offer', sdp: reoffer.sdp! })
+        }
       }),
     )
     signal.on('sfu-ice', (m) =>
@@ -362,8 +474,33 @@ export class SfuCall implements Call {
     await replaceTrackOfKind([this.pc], 'video', track)
   }
 
+  /**
+   * SFU: publica o microfone. Se já há sender de áudio ativo, troca a track;
+   * senão reaproveita o transceiver `recvonly` (ou cria um) e RENEGOCEIA — sem
+   * isto, quem entrasse sem mic ficava mudo para o resto da sessão.
+   */
   async replaceAudioTrack(track: MediaStreamTrack) {
-    await replaceTrackOfKind([this.pc], 'audio', track)
+    const active = this.pc.getSenders().find((s) => s.track?.kind === 'audio')
+    if (active) {
+      await active.replaceTrack(track)
+      return
+    }
+    const stream = new MediaStream([track])
+    const reusable = reusableTransceiver(this.pc, 'audio')
+    let sender: RTCRtpSender
+    if (reusable) {
+      await reusable.sender.replaceTrack(track)
+      reusable.direction = 'sendrecv'
+      sender = reusable.sender
+    } else {
+      sender = this.pc.addTrack(track, stream)
+    }
+    this.crypto?.protectSender(sender)
+    this.enqueue(async () => {
+      const offer = await this.pc.createOffer()
+      await this.pc.setLocalDescription(offer)
+      this.send({ type: 'sfu-offer', sdp: offer.sdp! })
+    })
   }
 
   /**
@@ -372,18 +509,30 @@ export class SfuCall implements Call {
    * intercalar com renegociações do servidor.
    */
   async enableVideo(track: MediaStreamTrack, stream: MediaStream) {
-    const sender = this.pc.getSenders().find((s) => s.track?.kind === 'video')
+    // Reutiliza o sender da câmara mesmo que esteja com `track === null`
+    // (câmara desligada): mantém o simulcast e dispensa renegociação.
+    const sender = this.videoSender ?? this.pc.getSenders().find((s) => s.track?.kind === 'video')
     if (sender) {
+      this.videoSender = sender
       await sender.replaceTrack(track)
       return
     }
     const s = addSimulcastVideo(this.pc, track, stream)
+    this.videoSender = s
     this.crypto?.protectSender(s)
     this.enqueue(async () => {
       const offer = await this.pc.createOffer()
       await this.pc.setLocalDescription(offer)
       this.send({ type: 'sfu-offer', sdp: offer.sdp! })
     })
+  }
+
+  async disableVideo() {
+    const sender = this.videoSender ?? this.pc.getSenders().find((s) => s.track?.kind === 'video')
+    if (sender) {
+      this.videoSender = sender
+      await sender.replaceTrack(null)
+    }
   }
 
   /**
@@ -397,7 +546,7 @@ export class SfuCall implements Call {
     this.send({ type: 'screen-share', on: true })
     const sender = this.pc.addTrack(track, stream)
     this.crypto?.protectSender(sender)
-    void tuneVideoSender(sender)
+    void tuneVideoSender(sender, SCREEN_MAX_BITRATE, 'maintain-resolution')
     this.screenSender = sender
     // Áudio do sistema (partilha de separador/ecrã com som): 2º áudio do
     // mesmo peer — o SFU classifica-o como "screen-audio".
