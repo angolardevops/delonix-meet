@@ -20,27 +20,39 @@ $base: (
   radius:      6px,
   radius-lg:   8px,
   radius-sm:   4px,
-  font-display: ("Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif),
-  font-body:    ("Instrument Sans Variable", "Instrument Sans", system-ui, sans-serif),
+  // Família única IBM Plex (27/07): títulos e corpo partilham métrica —
+  // é o que dá a densidade de consola do template. Mono continua Plex Mono.
+  font-display: ("IBM Plex Sans", system-ui, sans-serif),
+  font-body:    ("IBM Plex Sans", system-ui, sans-serif),
   font-mono:    ("IBM Plex Mono", ui-monospace, monospace),
   ease:        cubic-bezier(0.2, 0.6, 0.2, 1),
   dur:         160ms,
 );
 
 // -- Delonix Escuro (tema por omissão) --------------------------------
+//    Paleta "consola" (27/07): cinzas frios levemente azulados, sem preto
+//    puro. O fundo sobe de #0e1116 para #14161d e os cartões destacam-se
+//    por 8 pontos de luminância em vez de por sombra — é o que torna
+//    tabelas e listas densas legíveis sem cartões "a flutuar".
 $dark: (
-  bg:            map.get(p.$neutral, 950),   // #0e1116 near-black elevado
-  surface:       #161a21,
-  surface-2:     #1d222b,
-  surface-3:     #262c37,
+  bg:            #14161d,
+  bg-2:          #12141a,                    // faixas/áreas recuadas
+  surface:       #1c1f28,                    // cartões, modais
+  surface-2:     #1a1d26,                    // hover de linha, superfície aninhada
+  surface-3:     #232735,                    // controlos elevados, menus
+  input-bg:      #171a22,                    // campos de formulário
   tile-bg:       #0d1117,
-  text:          map.get(p.$neutral, 50),
-  muted:         #9ba3b0,
-  muted-2:       #7e8794,
+  text:          #e8eaf0,
+  text-2:        #8b92a8,                    // texto secundário (era dangling)
+  muted:         #8b92a8,
+  muted-2:       #6a7086,
+  dim:           #6a7086,                    // metadados, timestamps
 
   // Ação (índigo) — botões primários, foco, links, estados ativos
-  accent:        map.get(p.$indigo, 500),
-  accent-hi:     map.get(p.$indigo, 400),
+  accent:        #5c6cf2,
+  accent-hi:     #7c88f5,
+  accent-text:   #9aa5ff,                    // índigo legível sobre fundo escuro
+  accent-soft:   #242b4e,                    // preenchimento de estado ativo/chip
 
   // Marca — dourado (acento secundário) + vermelho (logo/landing)
   accent-2:      map.get(p.$gold, 500),
@@ -49,38 +61,59 @@ $dark: (
   brand-hi:      map.get(p.$brand-red, 400),
   grad-brand:    linear-gradient(135deg, map.get(p.$brand-red, 400), map.get(p.$brand-red, 600)),
 
-  border:        rgba(255, 255, 255, 0.10),
-  border-strong: rgba(255, 255, 255, 0.16),
-  ghost:         rgba(255, 255, 255, 0.06),
-  ghost-2:       rgba(255, 255, 255, 0.12),
+  border:        #262a34,
+  border-soft:   #20242e,                    // separadores dentro do cartão
+  border-strong: #333949,
+  ghost:         rgba(127, 140, 180, 0.09),
+  ghost-2:       rgba(127, 140, 180, 0.16),
+  ghost-3:       rgba(127, 140, 180, 0.24),
 
-  success:       map.get(p.$success, dark),
-  warn:          map.get(p.$warn, dark),
-  danger:        map.get(p.$danger, dark),
+  // Barra lateral — no escuro é um degrau abaixo do fundo da página.
+  sb-bg:         #12141a,
+  sb-text:       #aeb4c6,
+  sb-line:       #262a34,
+  sb-hover:      rgba(127, 140, 180, 0.10),
+  hdr-bg:        #14161d,
+
+  success:       #3fb970,
+  ok:            #3fb970,
+  warn:          #d9a13c,
+  warning:       #d9a13c,
+  danger:        #e05252,
   info:          map.get(p.$info, dark),
 
-  // Sombras neutras (sem glow colorido)
+  // Sombras: no escuro a elevação vem da luminância, a sombra só ancora.
+  shadow:        (0 1px 2px rgba(0, 0, 0, 0.30)),
   shadow-brand:  (0 8px 24px -12px rgba(0, 0, 0, 0.60)),
   shadow-deep:   (0 30px 70px -30px rgba(0, 0, 0, 0.80)),
   // Escala de elevação: cartões (1) · menus/popovers (2) · modais/toasts (3)
-  elev-1:        (0 6px 22px rgba(0, 0, 0, 0.45)),
-  elev-2:        (0 10px 30px rgba(0, 0, 0, 0.50)),
-  elev-3:        (0 16px 40px rgba(0, 0, 0, 0.55)),
+  elev-1:        (0 1px 2px rgba(0, 0, 0, 0.30)),
+  elev-2:        (0 12px 32px rgba(0, 0, 0, 0.45)),
+  elev-3:        (0 16px 40px rgba(0, 0, 0, 0.50)),
 );
 
-// -- Delonix Claro (novo — off-white arejado) -------------------------
+// -- Delonix Claro (off-white arejado) --------------------------------
+//    A barra lateral NÃO acompanha o tema: fica navy em ambos. Dá à app
+//    uma âncora de identidade constante e impede que o rail de navegação
+//    compita com o conteúdo (padrão Linear/Vercel/consolas de cloud).
 $light: (
-  bg:            map.get(p.$neutral, 50),    // #f5f7fa off-white (não branco puro)
+  bg:            #f4f5f7,
+  bg-2:          #eef0f4,
   surface:       #ffffff,
-  surface-2:     map.get(p.$neutral, 50),
+  surface-2:     #f8f9fb,
   surface-3:     map.get(p.$neutral, 100),
+  input-bg:      #ffffff,
   tile-bg:       map.get(p.$neutral, 800),   // vídeo permanece escuro
-  text:          #1a1d23,
-  muted:         #5b6472,
-  muted-2:       #79818f,
+  text:          #1c2333,
+  text-2:        #5f6a82,
+  muted:         #5f6a82,
+  muted-2:       #8b94a8,
+  dim:           #8b94a8,
 
-  accent:        map.get(p.$indigo, 700),    // mais profundo p/ contraste em branco
-  accent-hi:     map.get(p.$indigo, 600),
+  accent:        #3947c9,                    // mais profundo p/ contraste em branco
+  accent-hi:     #4b5ad9,
+  accent-text:   #3947c9,
+  accent-soft:   #e6e9fb,
 
   // No claro o "acento secundário" funcional (KPIs, nav ativo, tabs, links)
   // deixa de ser dourado-mostarda e passa a ink-índigo — combinação limpa.
@@ -90,16 +123,28 @@ $light: (
   brand-hi:      map.get(p.$brand-red, 500),
   grad-brand:    linear-gradient(135deg, map.get(p.$brand-red, 500), map.get(p.$brand-red, 700)),
 
-  border:        map.get(p.$neutral, 150),
+  border:        #e2e5eb,
+  border-soft:   #eef0f4,
   border-strong: map.get(p.$neutral, 200),
   ghost:         rgba(16, 24, 40, 0.04),
   ghost-2:       rgba(16, 24, 40, 0.08),
+  ghost-3:       rgba(16, 24, 40, 0.12),
 
-  success:       map.get(p.$success, light),
-  warn:          map.get(p.$warn, light),
-  danger:        map.get(p.$danger, light),
+  // Rail navy constante — os tokens sb-* são deliberadamente escuros aqui.
+  sb-bg:         #1e2a45,
+  sb-text:       #c6cfe4,
+  sb-line:       rgba(255, 255, 255, 0.10),
+  sb-hover:      rgba(255, 255, 255, 0.08),
+  hdr-bg:        #ffffff,
+
+  success:       #1e8a4c,
+  ok:            #1e8a4c,
+  warn:          #a06d10,
+  warning:       #a06d10,
+  danger:        #c03535,
   info:          map.get(p.$info, light),
 
+  shadow:        (0 1px 2px rgba(28, 35, 51, 0.06)),
   shadow-brand:  (0 1px 2px rgba(16, 24, 40, 0.06)),
   shadow-deep:   (0 8px 28px rgba(16, 24, 40, 0.10)),
   // Elevação claro: subtil, quase plana (estética enterprise arejada)

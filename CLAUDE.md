@@ -154,27 +154,44 @@ O refresh token vive em `dlx_refresh` (`HttpOnly; SameSite=Strict; Path=/api/aut
 
 Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **primitivos → semânticos → componentes**.
 
-| Token | Valor | Uso |
-|---|---|---|
-| `--accent` | `#C8201D` | Vermelho Delonix — CTAs primários |
-| `--accent-hi` | `#F26430` | Hover/gradient start |
-| `--accent-2` | `#EDA33B` | Dourado — acentos de texto, "Meet" no wordmark |
-| `--bg` | `#07090D` | Fundo principal dark |
-| `--surface` | `#0B0E13` | Cards/modais |
-| `--surface-2` | `#12151C` | Hover/nested surfaces |
-| `--text` | `#F4F6FA` | Texto primário |
-| `--text-2` | `#9BA3B2` | Texto secundário |
-| Sala: `--room-bg` | `#202124` | Cinza Meet — sala ignora temas claros |
-| Sala: `--ctrl-bg` | `#3c4043` | Botões de controlo na sala |
+**Separação AÇÃO / MARCA:** o índigo é a cor de **ação** (botões primários, foco, links, nav ativo); o vermelho + dourado são a **marca** (logo, wordmark «Meet», landing, quadrado da sidebar). Nunca usar o vermelho para navegação nem o índigo para o logo.
 
-**Regra da sala:** `.room-page` e `.waiting-page` reafirmam tokens dark **com `!important`** no fim de `styles.css`. A sala é sempre escura independentemente do tema da app.
+| Token | Escuro | Claro | Uso |
+| --- | --- | --- | --- |
+| `--accent` | `#5c6cf2` | `#3947c9` | Ação primária, foco |
+| `--accent-hi` | `#7c88f5` | `#4b5ad9` | Hover da ação |
+| `--accent-text` | `#9aa5ff` | `#3947c9` | Índigo legível como texto/link |
+| `--accent-soft` | `#242b4e` | `#e6e9fb` | Preenchimento de estado ativo/chip |
+| `--bg` | `#14161d` | `#f4f5f7` | Fundo da página |
+| `--surface` | `#1c1f28` | `#ffffff` | Cartões/modais |
+| `--surface-2` | `#1a1d26` | `#f8f9fb` | Hover de linha, superfície aninhada |
+| `--input-bg` | `#171a22` | `#ffffff` | Campos de formulário |
+| `--border` | `#262a34` | `#e2e5eb` | Contorno de superfície |
+| `--border-soft` | `#20242e` | `#eef0f4` | Separadores DENTRO do cartão |
+| `--text` / `--text-2` | `#e8eaf0` / `#8b92a8` | `#1c2333` / `#5f6a82` | Texto primário/secundário |
+| `--sb-bg` / `--sb-text` | `#12141a` / `#aeb4c6` | `#1e2a45` / `#c6cfe4` | **Rail de navegação — escuro nos DOIS temas** |
+| `--hdr-bg` | `#14161d` | `#ffffff` | Barra de aplicação (topo) |
+| `--accent-2` | `#EDA33B` | índigo escuro | Dourado de marca (wordmark) |
+| `--brand` | `#D8352E` | `#C8201D` | Vermelho Delonix (logo, landing) |
+
+**Regra da sala:** `.room-page` e `.waiting-page` reafirmam tokens dark **com `!important`** no fim de `styles.scss`. A sala é sempre escura independentemente do tema da app. Chrome da sala: fundo `#0d0f14`, barras `#12141a`, palco `linear-gradient(160deg,#1b2030,#12141c)`, painel lateral 320px encostado.
+
+**Rail sempre escuro:** a barra lateral usa os tokens `--sb-*`, que são deliberadamente escuros também no tema claro (navy `#1e2a45`). Não a fazer seguir o tema — é âncora de identidade e evita que a navegação compita com o conteúdo.
 
 **Sistema de controlo único (14/07/2026)** — referência completa em `docs/reference/design-system.md`:
 - Tokens: `--radius-sm: 4px` (controlos) · `--radius-md: 6px` (superfícies) · `--radius-lg: 8px` · `--ctl-h: 30px` (altura única dos controlos). Camada de uniformização no FIM de `styles.scss` (3 tiers: ação / botão-ícone / superfícies) vence os valores históricos hardcoded.
 - **Componentes novos usam o kit `web/src/components/ui.tsx`** (`Btn`/`IconBtn`/`Card`/`Field`/`TextInput`/`SelectCtl`/`Switch`) — nunca `<button className=…>` ad-hoc, nunca `border-radius`/`height` hardcoded na página. Variante nova = classe no CSS + entrada no kit. Migração do código existente é oportunista (referência: painel Ferramentas em `Room.tsx`).
 - **Temas** = mapas de tokens em `styles/tokens.scss` emitidos sob `[data-theme=…]` — nunca overrides espalhados; testar os 4 temas + sala sempre escura (regressão #67).
 
-**Fontes:** Space Grotesk (títulos), Instrument Sans (corpo), IBM Plex Mono (mono) — self-hosted via @fontsource.
+**Camada CONSOLA (27/07/2026)** — no fim de `styles.scss`, DEPOIS do bloco de controlo único (à mesma especificidade, a última vence):
+
+- Densidade: `html { font-size: 15px }`. A app dimensiona quase toda em `rem`, por isso a raiz é o botão único de densidade — não apertar tamanhos página a página.
+- `.app-bar` (topo do conteúdo, em `Shell.tsx`): data, tema, «Nova reunião» e campo de código. Estas ações **saíram da Home** — não as duplicar lá.
+- Estrutura do Shell: `.shell-main` (flex column, overflow hidden) → `.app-bar` + `.shell-body` (o que faz scroll). Páginas de altura total dentro do Shell usam `height: 100%`, nunca `100vh` (a barra já ocupa ~46px).
+- Superfícies separam-se por **borda de 1px + luminância**, não por sombra: `--shadow` é 1px, `--border-soft` para separadores internos.
+- Sala: controlos quadrados de 38px agrupados em `.ctrl-group` (dispositivos | sessão) + terminar solto. A pill Meet de 50px foi substituída; o chevron de dispositivo é um caret de 15px no canto.
+
+**Fontes:** IBM Plex Sans (títulos e corpo) + IBM Plex Mono (código, horas, códigos de sala) — self-hosted via @fontsource. Família única de propósito: é o que dá a métrica de consola.
 
 **Logo:** Globo vermelho com grelha dourada, anéis segmentados, 5 pinos. SVG em `web/public/logo.svg`. Usar `.brand-logo` para renderizar.
 

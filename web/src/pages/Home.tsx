@@ -1,9 +1,8 @@
-import { FormEvent, ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   createRoom,
   downloadMeetingIcs,
-  getRoom,
   listMeetings,
   listWhiteboards,
   Meeting,
@@ -16,15 +15,6 @@ import {
 import { NavKey } from '../components/Shell'
 import { CalendarIcon, FilmIcon, NoteIcon, PeopleIcon } from '../icons'
 
-// Ícone de vídeo local (evita conflito de nomes com CamIcon).
-function VideoBadge() {
-  return (
-    <svg width={26} height={26} viewBox="0 0 24 24" fill="currentColor">
-      <path d="M4 6h11a1 1 0 0 1 1 1v3.5l4-3.5v10l-4-3.5V17a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z" />
-    </svg>
-  )
-}
-
 export default function Home({
   user,
   onEnterRoom,
@@ -35,7 +25,6 @@ export default function Home({
   onNavigate: (k: NavKey) => void
 }) {
   const { t, i18n } = useTranslation()
-  const [joinCode, setJoinCode] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
   const [upcoming, setUpcoming] = useState<Meeting[]>([])
@@ -84,25 +73,6 @@ export default function Home({
     }
   }
 
-  async function join(e: FormEvent) {
-    e.preventDefault()
-    setError('')
-    // Aceita link completo, código com sufixo (?voice) ou código puro:
-    // extrai o padrão do código (xxx-xxxx-xxx) de qualquer texto colado.
-    const raw = joinCode.trim().toLowerCase()
-    const code = (raw.match(/[a-z]+-[a-z]+-[a-z]+/) ?? [raw.replace(/^.*\/r\//, '')])[0]
-    if (!code) {
-      setError(t('dash.notFound'))
-      return
-    }
-    try {
-      const room = await getRoom(code)
-      onEnterRoom(room.code)
-    } catch {
-      setError(t('dash.notFound'))
-    }
-  }
-
   async function enterMeeting(m: Meeting) {
     setError('')
     try {
@@ -127,44 +97,23 @@ export default function Home({
 
   return (
     <div className="home">
+      {/* A data e as ações primárias (nova reunião / entrar por código) vivem
+          agora na barra de topo do Shell — aqui ficam só as variantes. */}
       <header className="dash-greet">
         <h1>{t(greetKey, { name: user.username })}</h1>
-        <p className="home-sub">
-          <span className="home-date">
-            {new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' })}
-          </span>
-          {' — '}{t('dash.greetSub')}
-        </p>
+        <p className="home-sub">{t('dash.greetSub')}</p>
       </header>
 
-      <div className="home-actions">
-        <button className="btn-new" disabled={creating} onClick={() => void newMeeting(false)}>
-          <VideoBadge />
-          {creating ? t('dash.creating') : t('dash.newMeeting')}
-        </button>
-
-        <form className="join-box" onSubmit={join}>
-          <span className="join-icon">⌨</span>
-          <input
-            placeholder={t('dash.joinPh')}
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value)}
-          />
-          <button className="join-btn" disabled={!joinCode.trim()}>
-            {t('dash.join')}
-          </button>
-        </form>
-      </div>
-
       <div className="home-extra">
-        <button className="link" onClick={() => void newMeeting(true)}>
+        <button className="link" disabled={creating} onClick={() => void newMeeting(true)}>
           {t('dash.waitingRoom')}
         </button>
-        <button className="link" onClick={() => void newMeeting(false, true)}>
+        <button className="link" disabled={creating} onClick={() => void newMeeting(false, true)}>
           {t('dash.e2ee')}
         </button>
         <button
           className="link"
+          disabled={creating}
           title="Reunião de treino: ativa as salas de grupo (breakouts)"
           onClick={() => void newMeeting(false, false, 'training')}
         >
