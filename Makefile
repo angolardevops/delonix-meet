@@ -192,6 +192,23 @@ migrate: ## Corre as migrações pendentes (sqlx migrate run)
 #  IMAGENS DOCKER — build local + carregamento no kind
 # ============================================================
 
+# MOTOR DE BUILD — delonix, com docker como alternativa.
+#   Esta plataforma NÃO tem docker por princípio: o delonix-runtime é
+#   daemonless e rootless, e a regra do workspace é nunca depender de um socket
+#   docker global (ver HARNESS.md da raiz do ngolacloud). O `delonix build`
+#   aceita os mesmos flags (-f/-t/--build-arg/--no-cache), por isso a troca é
+#   directa; quem tiver um ambiente clássico com docker continua a funcionar.
+BUILDER ?= $(shell command -v delonix >/dev/null 2>&1 && echo delonix || echo docker)
+ifeq ($(BUILDER),delonix)
+  IMG_BUILD := delonix build
+  IMG_TAG_CMD := delonix image tag
+  IMG_LS    := delonix image ls
+else
+  IMG_BUILD := docker build
+  IMG_TAG_CMD := docker tag
+  IMG_LS    := docker images
+endif
+
 # make image   → constrói delonix-server:latest e delonix-web:latest
 # make push    → kind load docker-image (carrega no cluster kind)
 # make image-push → build + load (o que é preciso antes de make stage)
@@ -208,15 +225,14 @@ image: ## Constrói delonix-server e delonix-web com a tag versionada ($(IMAGE_T
 	@# (um dist stale foi a causa de "estilos perdidos" em stage — nunca reusar).
 	@export PATH="$(NODE_BIN):$$PATH"; \
 	  cd web && { [ -d node_modules ] || npm ci; } && npm run build
-	@docker build -f Dockerfile.server -t $(IMAGE_SERVER) .
+	@$(IMG_BUILD) -f Dockerfile.server -t $(IMAGE_SERVER) .
 	@printf "$(C)▶ build $(IMAGE_WEB) (dist local → nginx, rápido)$(Z)\n"
-	@docker build -f Dockerfile.web.stage -t $(IMAGE_WEB) .
+	@$(IMG_BUILD) -f Dockerfile.web.stage -t $(IMAGE_WEB) .
 	@# :latest acompanha a última build (bootstrap dos manifests em cluster novo).
-	@docker tag $(IMAGE_SERVER) $(IMAGE_SERVER_REPO):latest
-	@docker tag $(IMAGE_WEB) $(IMAGE_WEB_REPO):latest
+	@$(IMG_TAG_CMD) $(IMAGE_SERVER) $(IMAGE_SERVER_REPO):latest
+	@$(IMG_TAG_CMD) $(IMAGE_WEB) $(IMAGE_WEB_REPO):latest
 	@printf "$(G)  ✓ imagens prontas: tag $(Y)$(IMAGE_TAG)$(Z)$(G) (+latest)$(Z)\n"
-	@docker images --format "  {{.Repository}}:{{.Tag}}  ({{.Size}})" \
-	  | grep -E "^  delonix-(server|web):($(IMAGE_TAG)|latest)" || true
+	@$(IMG_LS) 2>/dev/null | grep -E "delonix-(server|web)" || true
 
 .PHONY: push
 push: ## kind load + PIN da tag versionada nos Deployments (rollout determinista)
