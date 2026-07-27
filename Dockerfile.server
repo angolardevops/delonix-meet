@@ -14,9 +14,13 @@ ENV CARGO_BUILD_JOBS=6
 # As migrações são embutidas em compile-time (sqlx::migrate!) — a imagem final
 # não precisa de ficheiros .sql. Copia-se o crate inteiro e compila-se em release.
 COPY server ./server
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/server/target \
-    cd server && cargo build --release && \
+# SEM `--mount=type=cache`: o motor de build da plataforma é o `delonix build`
+# (daemonless/rootless) e ainda só suporta `--mount=type=secret` — com os cache
+# mounts o build falhava com «só type=secret é suportado». O trade-off é
+# recompilar as dependências a cada alteração no server/ (~10 min); se isso
+# passar a doer, o caminho é cargo-chef (camada de deps em cache de LAYER, que
+# funciona sem BuildKit), não voltar aos cache mounts.
+RUN cd server && cargo build --release && \
     cp target/release/delonix-server /usr/local/bin/delonix-server && \
     strip /usr/local/bin/delonix-server
 
