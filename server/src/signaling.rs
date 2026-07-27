@@ -43,6 +43,12 @@ pub enum ClientMsg {
     Hand {
         raised: bool,
     },
+    /// De que participantes este cliente quer receber VÍDEO (a página da
+    /// grelha visível). O SFU deixa de enviar o resto — ver
+    /// `SfuState::set_video_interest`. Áudio nunca depende disto.
+    VideoInterest {
+        peers: Vec<Uuid>,
+    },
     /// Estado local de câmara/microfone — os outros mostram avatar/ícone
     /// em vez de vídeo preto ou indicador de som errado.
     Media {
@@ -442,6 +448,15 @@ pub struct PeerInfo {
 
 // ---------- Hub (room registry, WS-agnostic and unit-testable) ----------
 
+/// Acima deste número de participantes as legendas PARCIAIS deixam de ser
+/// difundidas (a final continua). O fan-out é n×n e o ganho de ver a frase a
+/// formar-se não compensa milhares de mensagens por segundo numa sala grande.
+const INTERIM_MAX_ROOM: usize = 12;
+/// Parciais por segundo aceites de CADA emissor (o cliente já se auto-limita a
+/// 4/s; isto impede que um cliente alterado ou modificado inunde a sala).
+const INTERIM_BURST: f64 = 8.0;
+const INTERIM_PER_SEC: f64 = 4.0;
+
 struct Peer {
     username: String,
     user_id: Uuid,
@@ -453,6 +468,8 @@ struct Peer {
     is_bot: bool,
     is_pstn: bool,
     tx: mpsc::UnboundedSender<ServerMsg>,
+    /// Travão das legendas parciais deste peer (ver `allow_interim`).
+    interim: crate::rate_limit::TokenBucket,
 }
 
 struct WaitingPeer {
@@ -487,6 +504,23 @@ pub struct SignalingHub {
 }
 
 impl SignalingHub {
+    /// Quantos participantes há na sala (0 se não existir).
+    fn peer_count(&self, room_id: Uuid) -> usize {
+        self.rooms.get(&room_id).map(|r| r.peers.len()).unwrap_or(0)
+    }
+
+    /// Consome um token do travão de legendas parciais deste peer.
+    fn allow_interim(&self, room_id: Uuid, peer_id: Uuid) -> bool {
+        match self.rooms.get_mut(&room_id) {
+            Some(mut room) => room
+                .peers
+                .get_mut(&peer_id)
+                .map(|p| p.interim.allow())
+                .unwrap_or(false),
+            None => false,
+        }
+    }
+
     /// Adds a peer to a room. Announces it to the others and returns the
     /// current roster (excluding the new peer itself). Hosts also receive
     /// the queue of guests already waiting.
@@ -584,6 +618,10 @@ impl SignalingHub {
                     is_bot,
                     is_pstn: false,
                     tx: tx.clone(),
+                    interim: crate::rate_limit::TokenBucket::new(
+                        INTERIM_BURST,
+                        INTERIM_PER_SEC,
+                    ),
                 },
             );
             (existing, announce, waiting_msgs)
@@ -1202,6 +1240,19 @@ impl SignalingHub {
                 if text.is_empty() || text.len() > 4000 {
                     return true;
                 }
+                // Fan-out O(n²): cada cliente transcreve o PRÓPRIO microfone e
+                // difunde, logo n emissores × n destinatários. A 4 msg/s por
+                // cliente, uma sala de 30 gerava ~3500 msg/s a sair de um só
+                // nó — cada uma a provocar um `setState` em todos os browsers.
+                // Duas travagens: numa sala grande as parciais deixam de valer
+                // o custo (a legenda FINAL chega na mesma), e um limite por
+                // emissor impede um cliente rápido de dominar o canal.
+                if self.peer_count(room_id) > INTERIM_MAX_ROOM {
+                    return true;
+                }
+                if !self.allow_interim(room_id, peer_id) {
+                    return true;
+                }
                 let text = crate::dlp::clean_caption(&text);
                 let username = self
                     .username_of(room_id, peer_id)
@@ -1278,6 +1329,7 @@ impl SignalingHub {
             | ClientMsg::BreakoutMoveUser { .. }
             | ClientMsg::ServerRecord { .. }
             | ClientMsg::ScreenShare { .. }
+            | ClientMsg::VideoInterest { .. }
             | ClientMsg::BreakoutsClose => {}
         }
         true
@@ -1792,6 +1844,13 @@ async fn handle_socket(
                 }
                 Ok(ClientMsg::BreakoutsClose) if is_host => {
                     breakouts_close(&state, room_id);
+                }
+                Ok(ClientMsg::VideoInterest { peers }) if sfu_mode => {
+                    // Limite defensivo: o cliente não define quantas
+                    // subscrições o servidor mantém abertas.
+                    let mut peers = peers;
+                    peers.truncate(64);
+                    state.sfu.set_video_interest(room_id, peer_id, peers).await;
                 }
                 Ok(ClientMsg::ScreenShare { on }) if sfu_mode => {
                     // Não-anfitrião só partilha com autorização do anfitrião

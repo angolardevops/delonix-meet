@@ -41,6 +41,90 @@ Formato: **Sintoma** → **Causa raiz** → **Regra** (o que nunca fazer) → fi
 - **Ficheiros:** `deploy/k8s/51-coturn.yaml` (Deployment+LB), `deploy/k8s/01-config.yaml` (`TURN_HOST`/`FORCE_TURN_RELAY`), `Makefile` (targets `stage`/`prod` aplicam o `51-coturn.yaml`), `server/src/rooms.rs` (`ice_servers` relay-only), `server/src/sfu.rs` (`RTCConfiguration` relay-only). O webrtc-rs TURN client trata o `438 Stale nonce` sozinho (não é bug).
 - **⚠ Deploy-path (não regredir):** só existe UM conjunto de manifests (namespace `delonix-meet`) — o `make stage`/`prod` e o `kustomization.yaml` aplicam os mesmos ficheiros. Os antigos duplicados 10/20/30/40 (namespace `delonix`) foram eliminados porque causavam drift (a config ia para lá e nunca chegava ao cluster). Editar `01-config.yaml` + `51-coturn.yaml`, não recriar um "Set B".
 
+### R13 — Glare do lado do SERVIDOR: partilha de ecrã que nunca aparece
+- **Sintoma:** partilha de ecrã (ou ligar a câmara a meio) simplesmente não chega aos outros. Intermitente — acontece quando alguém entra/sai na mesma janela de tempo. Nos logs, só um `warn` "sfu message failed".
+- **Causa raiz:** o cliente TAMBÉM oferta (`startScreen`/`stopScreen`/`enableVideo` em `webrtc.ts`). Se o `renegotiation_loop` do servidor tinha uma oferta por responder (espera até 10 s), o `set_remote_description(offer)` do cliente caía em `HaveLocalOffer + SetRemote(Offer)` — transição **inexistente** em `webrtc-rs` 0.17 (`signaling_state.rs`), que **não faz rollback implícito** e nem sequer aceita `set_local_description(rollback)` a partir de `have-local-offer`. A oferta era descartada; o cliente fazia rollback e respondia à oferta do servidor, ficando com a track de ecrã adicionada mas **nunca negociada** e sem nada que voltasse a ofertar.
+- **Regra:** ofertas do cliente, respostas do cliente e renegociações do servidor passam TODAS pelo canal único `NegoMsg` → `negotiation_loop` (um peer = uma negociação de cada vez). Uma oferta do cliente que chegue com a nossa pendente é **adiada** (`deferred`) e aplicada quando a PC volta a `stable` — nunca descartada. Em timeout, re-ofertar (`have-local-offer → SetLocal(offer)` É válido) até 3 vezes. **Não** voltar a aplicar `set_remote_description` diretamente no `on_client_msg`.
+- **Observabilidade:** `delonix_sfu_offers_deferred_total` (glare a acontecer) e `delonix_sfu_renegotiations_failed_total` (peer que ficou sem media nova).
+- **⚠ São DUAS metades — adiar no servidor não chega.** O cliente resolve o glare com `rollback`, e o rollback **descarta a oferta dele**: as tracks que ela publicava ficam por negociar, e a resposta que o servidor acabar por mandar à oferta adiada é descartada pelo cliente (já está `stable`). Sem uma **RE-OFERTA** do cliente logo a seguir a responder, a partilha de ecrã desaparecia à mesma — mesmo com o servidor corrigido. Esta metade foi descoberta pelo teste e2e, não por leitura do código.
+- **Guardado por:** `server/src/sfu_e2e.rs` (`client_offer_during_server_offer_is_deferred_not_dropped` — prova que o servidor adia em vez de perder) + `web/src/glare.test.ts` (prova o rollback→resposta→re-oferta; e que SEM glare não se re-oferta, senão era renegociação a mais em cada subscrição).
+- **Nota de âmbito:** o cliente de teste em Rust é webrtc-rs e **não tem rollback**, por isso não consegue encenar a metade do cliente — daí o teste do lado web.
+- **Ficheiros:** `server/src/sfu.rs` (`NegoMsg`, `negotiation_loop`, `run_renegotiation`, `apply_client_offer`).
+
+### R14 — PLI periódico a queimar bitrate (vídeo aos "solavancos")
+- **Sintoma:** vídeo com picos de bitrate e blocos/"pumping" regulares em redes limitadas; CPU do publicador acima do esperado.
+- **Causa raiz:** um ticker de PLI de 3 s **por publicação** — e com simulcast cada camada é uma publicação, logo 3 tickers por câmara — forçava um keyframe a cada 3 s para sempre, mesmo sem subscritores novos. A task só morria quando a PC fechava, pelo que continuava a correr contra SSRCs já mortos (ex.: partilha de ecrã parada). Existia porque o PLI/FIR **dos subscritores era deitado fora** na drenagem de RTCP do sender, deixando o ticker como única forma de recuperar um keyframe perdido.
+- **Regra:** keyframes só a pedido — subscrição nova, troca de camada, ou PLI/FIR **reencaminhado** do subscritor para o publicador (com rate-limit de 1 s por publicação, `Publication::pli_allowed`). Não reintroduzir tickers periódicos.
+- **Observabilidade:** `delonix_sfu_keyframes_requested_total`.
+- **Ficheiros:** `server/src/sfu.rs` (`request_keyframe`, drenagem RTCP em `subscribe_layer`).
+
+### R15 — Camada simulcast fixa: o downlink não escalava para quem já estava na sala
+- **Sintoma:** salas grandes continuam pesadas para os participantes antigos; só quem entra por último recebe camada leve.
+- **Causa raiz:** a camada era decidida **apenas** quando chegava uma publicação nova. Ao entrar o 9.º participante, só ele subscrevia em `q`; os 8 anteriores mantinham `h`/`f` para sempre. Não havia qualquer sinal de rede a influenciar a escolha — um participante em ligação fraca recebia a camada cheia até o vídeo colapsar.
+- **Regra:** `reevaluate_peer` reavalia TODAS as subscrições de um peer a partir de (tamanho da sala + `Quality.shift` derivado dos Receiver Reports RTCP dele). Chamada em cada entrada/saída (`reevaluate_room`) e sempre que a perda de pacotes muda de nível. `pick_layer` mantém a camada atual enquanto a desejada não existir — senão o arranque `q`→`h`→`f` de cada publicador gerava 3 renegociações.
+- **Observabilidade:** `delonix_sfu_layer_switches_total`, `delonix_sfu_degraded_subscribers`.
+- **Guardado por:** testes `layer_follows_room_size_and_loss`, `quality_downgrades_fast_and_upgrades_slow`, `pick_layer_keeps_current_while_wanted_is_missing` em `server/src/sfu.rs`.
+- **Ficheiros:** `server/src/sfu.rs` (`wanted_rid`, `Quality`, `pick_layer`, `reevaluate_peer`).
+
+### R16 — Lock dos subscritores retido através do `await` (um cliente lento trava a sala)
+- **Sintoma:** com um participante em rede má, TODA a sala engasga; entradas/saídas ficam lentas.
+- **Causa raiz:** a bomba de RTP fazia `subscribers.lock().await` e escrevia para cada subscritor **com o lock retido**. Uma escrita lenta bloqueava a entrega a todos os outros (head-of-line blocking) e, pior, o `remove_peer` esperava por esse mesmo lock **enquanto retinha `publications`** — bastava um cliente lento para congelar a sala inteira.
+- **Regra:** a bomba mantém um **snapshot** dos destinos e só volta a pegar no lock quando `Publication::subs_version` muda; as escritas acontecem FORA do lock. Chamar `touch_subs()` SEMPRE a seguir a inserir/remover subscritores, senão o snapshot fica stale (media a ir para quem saiu / a não ir para quem entrou).
+- **Ficheiros:** `server/src/sfu.rs` (`Publication::subs_version`/`touch_subs`, bomba de RTP em `handle_publish`).
+
+### R17 — Gravação perdida quando a sala cai por falha de ICE
+- **Sintoma:** gravação server-side desaparece; `tmp-<uuid>` órfão no volume de gravações.
+- **Causa raiz:** `on_peer_connection_state_change(Failed)` chamava `remove_peer` e **descartava** o `Option<RecordingSession>` devolvido. Se era o último peer, a sessão nunca chegava ao `recorder::finalize`.
+- **Regra:** a sessão vai para `SfuState::orphan_recordings` e o `remove_peer` seguinte (do `signaling.rs`) recolhe-a — inclusive quando a sala já não existe.
+- **Observabilidade:** `delonix_sfu_recordings_orphaned_total`.
+- **Ficheiros:** `server/src/sfu.rs` (`orphan_recordings`, `remove_peer`).
+
+### R18 — Gravação corrompida em silêncio quando o codec não é VP8/Opus
+- **Sintoma:** gravação na biblioteca com vídeo ilegível, sem qualquer erro.
+- **Causa raiz:** `recorder.rs` despacketiza **sempre** como VP8 e escreve IVF `VP80`. O `MediaEngine` regista VP9/H264/AV1, por isso basta o browser negociar outro codec: o depacketizer devolve lixo, o `is_key` lê bits errados e o ffmpeg compõe na mesma.
+- **Regra:** `recordable_codec()` verifica o mime real da track antes de abrir writer; codec não suportado → track **excluída** da gravação + `error!` no log. Melhor não gravar do que gravar corrompido. (Aberto: restringir o `MediaEngine` a VP8+Opus resolveria de vez, ao custo do H264.)
+- **Ficheiros:** `server/src/sfu.rs` (`recordable_codec`, `handle_publish`, `start_recording`), `server/src/recorder.rs`.
+
+### R19 — Esconder um tile SILENCIA o participante
+- **Sintoma:** ativar «Ocultar participantes sem vídeo» e deixar de ouvir essas pessoas. Como a maioria está com a câmara desligada, o utilizador fica praticamente surdo sem perceber porquê.
+- **Causa raiz:** o `<audio>` de cada peer vivia **dentro** do `RemoteTile`. Qualquer decisão de layout que escondesse o tile (filtro, palco, paginação) desmontava o elemento e parava a reprodução.
+- **Regra:** o áudio de TODOS os participantes é reproduzido pelo componente `AudioSink`, sempre montado e **fora** da `video-area`. O que está no ecrã é layout; o que se ouve não pode depender do layout. Não voltar a pôr `<audio>` dentro de um tile.
+- **Ficheiros:** `web/src/pages/Room.tsx` (`AudioSink`, `PeerAudio`, `RemoteTile`).
+
+### R20 — Quem entra sem microfone nunca consegue falar
+- **Sintoma:** entrar com o mic negado/ocupado (ou em modo espectador), clicar depois no microfone: o botão acende, o medidor de nível mexe, e ninguém ouve.
+- **Causa raiz:** `replaceAudioTrack` procurava `getSenders().find(s => s.track?.kind === 'audio')`. Sem áudio inicial não há sender nenhum (só câmara) ou o transceiver é `recvonly` com `sender.track === null` → **no-op silencioso**, sem renegociação. `enableVideo` tinha o fallback de `addTrack`; o áudio não.
+- **Regra:** `replaceAudioTrack` (SFU **e** mesh) reaproveita o transceiver `recvonly` (`reusableTransceiver` → `replaceTrack` + `direction = 'sendrecv'`) ou faz `addTrack`, e **renegoceia**. Qualquer caminho novo de publicação de media tem de ter fallback de negociação.
+- **Ficheiros:** `web/src/webrtc.ts` (`reusableTransceiver`, `SfuCall.replaceAudioTrack`, `MeshCall.replaceAudioTrack`).
+
+### R21 — Re-render da sala 5,5×/segundo em silêncio absoluto
+- **Sintoma:** CPU alto na sala, tiles a engasgar com muitos participantes.
+- **Causa raiz:** `new LevelWatcher(s => setSpeaking(new Set(s)))` — o watcher dispara a cada 180 ms e o `new Set` cria sempre identidade nova, pelo que o componente `Room` (milhares de linhas, N tiles) re-renderizava ~5,5×/s durante toda a reunião, mesmo sem ninguém a falar, arrastando o efeito de talk-over.
+- **Regra:** comparar o conjunto (`sameSet`) e devolver o estado anterior quando não muda. Vale para qualquer estado alimentado por um timer.
+- **Ficheiros:** `web/src/pages/Room.tsx` (`sameSet`, `LevelWatcher`).
+
+### R22 — Seleção de oradores: as três armadilhas que silenciam gente
+O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink de áudio de O(n) → O(1)). Três detalhes, cada um capaz de **silenciar participantes**, e nenhum óbvio:
+- **Renumeração obrigatória.** O `TrackLocalStaticRTP` reescreve SSRC e payload type mas **preserva a sequência de origem**. Suprimir pacotes sem renumerar deixa buracos que o recetor reporta como perda — e essa perda falsa faz o `Quality` (R15) baixar a camada de **vídeo** dele sem razão. Todo o áudio reencaminhado passa por `AudioMeter::next_seq()`.
+- **O decaimento é por TEMPO, não por pacote.** Com o DTX ligado, quem se cala deixa de enviar pacotes; um decaimento por-pacote nunca correria e essa pessoa ficaria eternamente no top-N a **bloquear a entrada de quem começa a falar**. `AudioMeter::decay()` é chamado uma vez por tick do seletor. `observe_level` só faz o ataque (`fetch_max`).
+- **Sem extensão de nível, não se suprime.** Se a extensão RFC 6464 não foi negociada, a energia é 0 para toda a gente e a ordenação seria arbitrária — silenciava pessoas ao acaso. Esses microfones passam **sempre** (`audio_level_id != 0` é condição para entrar na seleção).
+- **Gravação, PSTN e áudio de ecrã nunca são suprimidos** — a seleção é uma decisão de entrega ao vivo, não pode apagar ninguém da ata nem da chamada telefónica. Na bomba de RTP, o writer e o PSTN vêm **antes** do teste de `forwarding`.
+- **Observabilidade:** `delonix_sfu_audio_suppressed`.
+- **Ficheiros:** `server/src/sfu.rs` (`AudioMeter`, `speaker_selector`, bomba de RTP), `server/src/sfu.rs` `new_api` (registo da extensão).
+
+### R23 — Paginação da grelha: o servidor tem de saber quando ela desliga
+- **Sintoma:** a sala encolhe abaixo do limiar de paginação e alguns participantes ficam sem vídeo para sempre.
+- **Causa raiz:** o cliente envia `video-interest` com a página visível e o SFU deixa de enviar o resto. Se o cliente simplesmente **parasse** de enviar quando a paginação deixa de ser precisa, o servidor ficava com a última página em memória.
+- **Regra:** o cliente envia `video-interest` **sempre** que o conjunto muda — com a página visível quando pagina, e com **todos** os peers quando não pagina. Nunca "deixar de enviar" como forma de dizer "todos". No servidor, `video_interest: None` (nunca recebido) = todos, para clientes antigos.
+- **Nota:** só afeta `video`. Áudio e ecrã partilhado nunca dependem do interesse — ver R19.
+- **Ficheiros:** `web/src/pages/Room.tsx` (`videoInterest`), `server/src/sfu.rs` (`set_video_interest`, `reevaluate_peer`), `server/src/signaling.rs` (`ClientMsg::VideoInterest`).
+
+### R24 — Desligar a câmara não pode acrescentar m-lines
+- **Sintoma:** depois de alguns ciclos desligar/ligar câmara, a SDP cresce e o simulcast desaparece.
+- **Causa raiz:** libertar mesmo a câmara (`track.stop()`, para o LED apagar) faz `getSenders().find(s => s.track?.kind === 'video')` deixar de encontrar nada — e o `enableVideo` criava um transceiver **novo** a cada religação. As `sendEncodings` de simulcast só podem ser definidas na criação do transceiver, pelo que o novo vinha sem elas.
+- **Regra:** `SfuCall` guarda `videoSender`; `disableVideo()` faz `replaceTrack(null)` (mantém o transceiver, não renegoceia) e `enableVideo()` reutiliza esse sender. Não voltar a `enabled = false` (mantinha a captura e o LED acesos) nem a criar transceiver por religação.
+- **Ficheiros:** `web/src/webrtc.ts` (`videoSender`, `disableVideo`), `web/src/pages/Room.tsx` (`toggleCam`).
+
 ### R5 — `IVFWriter` PTS pela contagem de frames (gravação em velocidade errada)
 - **Sintoma:** vídeo gravado acelerado/lento.
 - **Causa raiz:** o `IVFWriter` da lib usa contador de frames como PTS.

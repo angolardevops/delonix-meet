@@ -126,6 +126,9 @@ export type ClientMsg =
   | { type: 'wb-clear' }
   | { type: 'wb-close' }
   | { type: 'screen-share'; on: boolean }
+  /** De quem queremos VÍDEO (página visível da grelha). O SFU deixa de enviar
+   *  o resto — o áudio de todos e o ecrã partilhado nunca dependem disto. */
+  | { type: 'video-interest'; peers: string[] }
   | { type: 'breakouts-create'; count: number; minutes: number | null }
   | { type: 'breakout-rename'; code: string; label: string }
   | { type: 'breakout-add' }
