@@ -104,20 +104,32 @@ export default function Home({
         <p className="home-sub">{t('dash.greetSub')}</p>
       </header>
 
+      {/* Chips outline, etiqueta curta: a explicação vive no tooltip. Eram
+          frases inteiras que ocupavam meia linha do dashboard. */}
       <div className="home-extra">
-        <button className="link" disabled={creating} onClick={() => void newMeeting(true)}>
+        <button
+          className="chip-outline"
+          disabled={creating}
+          title={t('dash.waitingRoomHint')}
+          onClick={() => void newMeeting(true)}
+        >
           {t('dash.waitingRoom')}
         </button>
-        <button className="link" disabled={creating} onClick={() => void newMeeting(false, true)}>
+        <button
+          className="chip-outline"
+          disabled={creating}
+          title={t('dash.e2eeHint')}
+          onClick={() => void newMeeting(false, true)}
+        >
           {t('dash.e2ee')}
         </button>
         <button
-          className="link"
+          className="chip-outline"
           disabled={creating}
-          title="Reunião de treino: ativa as salas de grupo (breakouts)"
+          title={t('dash.trainingHint', 'Ativa as salas de grupo (breakouts)')}
           onClick={() => void newMeeting(false, false, 'training')}
         >
-          🎓 {t('dash.training', 'Reunião de treino')}
+          {t('dash.training', 'Reunião de treino')}
         </button>
       </div>
       {error && <div className="error">{error}</div>}
