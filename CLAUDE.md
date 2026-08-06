@@ -60,7 +60,9 @@
 - `pubsub.rs` — Redis pub/sub para entrega cross-nó (presença/sinalização)
 - `redis_state.rs` — estado in-room em Redis (whiteboard, timer, sondagens, settings) partilhado entre pods
 - `ai.rs` — IA local via Ollama in-cluster: tradução de legendas em tempo real e resumo da ata. Fail-open sem `OLLAMA_URL` (o MoM cai para as regras do cliente); o texto das reuniões nunca sai para uma cloud externa
-- `odoo.rs` — integração Odoo (módulo `nk_delonix_meet`): token `dlxo_<hex>`, provisionamento de utilizadores via `/api/v1/integration/odoo/provision`, validação de senha contra o Odoo (online) com fallback ao hash Argon2 em cache (offline)
+- `odoo.rs` — integração Odoo (módulo `nk_delonix_meet`): token `dlxo_<hex>`, provisionamento de utilizadores via `/api/v1/integration/odoo/provision`, descoberta da config Odoo de um utilizador (`org_odoo_config`)
+- `odoo_sso.rs` — **login com conta Odoo**: autentica em `/web/session/authenticate`, cria a organização a partir da EMPRESA do utilizador (chave `(odoo_db, company_id)`) e sincroniza em segundo plano todos os utilizadores internos activos. Fail-closed sem `PLATFORM_ODOO_URL`/`PLATFORM_ODOO_DB`
+- `meetings_v1.rs` — recurso `meetings` da API pública v1 (POST/PATCH/DELETE): cria REUNIÃO + sala com anfitrião humano (`host_email`) e convidados por email, idempotente por `external_ref`. É o que a integração de calendário usa — `/api/v1/rooms` cria salas sem anfitrião nem convidados, e ninguém consegue ser admitido nelas
 - `sfu_e2e.rs` — testes ponta-a-ponta do SFU com `RTCPeerConnection`s reais no papel de browser (media a fluir nos dois sentidos + R13/glare). Só compila em `#[cfg(test)]`
 - `storage.rs` — armazenamento remoto da plataforma (TrueNAS NFS / Nextcloud WebDAV); registo único em `platform_storage`, gerido pelo admin global
 
@@ -88,7 +90,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0030) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0032) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 
