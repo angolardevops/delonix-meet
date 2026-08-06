@@ -362,6 +362,15 @@ pub async fn login(
     const DUMMY: &str = "$argon2id$v=19$m=19456,t=2,p=1$YWFhYWFhYWFhYWFhYWFhYQ$m6vRnxkbG10eB0QdjqfLd8Y6M3holKAAvfeFXTiXBdU";
 
     let Some((id, user_email, username, password_hash, created_at)) = row else {
+        // Sem conta local: antes de recusar, tenta o Odoo da plataforma. É o
+        // que faz o PRIMEIRO login criar a organização e trazer os colegas —
+        // sem isto, alguém teria de provisionar antes de alguém poder entrar.
+        // Devolve `None` quando o login por Odoo está desligado ou as
+        // credenciais não servem, e aí o 401 mantém-se.
+        if let Some(user) = crate::odoo_sso::try_first_login(&state, &email, &req.password).await {
+            crate::audit::log(&state.db, None, user.id, "auth.login_odoo", &user.email).await;
+            return Ok(auth_ok(&state, issue_tokens(&state, user).await?));
+        }
         let _ = verify_password(&req.password, DUMMY);
         return Err(ApiError::Unauthorized);
     };
@@ -370,8 +379,12 @@ pub async fn login(
     // contra o Odoo primeiro. Em modo offline (Odoo inacessível), usa o hash
     // Argon2 guardado na última autenticação online bem-sucedida.
     let odoo_cfg = crate::odoo::org_odoo_config(&state.db, &email).await;
-    let authenticated = if let Some((_, odoo_url, odoo_db)) = odoo_cfg {
-        match crate::odoo::odoo_authenticate(
+    let authenticated = if let Some((org_id, odoo_url, odoo_db)) = odoo_cfg {
+        // Usa o mesmo cliente do primeiro login (odoo_sso): além do uid, dá a
+        // SESSÃO, e é ela que permite reler o directório. Sem isso, os
+        // colegas admitidos no Odoo depois do primeiro login nunca chegavam
+        // aqui — a sincronização era um evento único, não um estado.
+        match crate::odoo_sso::login(
             &state.webhook_client,
             &odoo_url,
             &odoo_db,
@@ -380,28 +393,40 @@ pub async fn login(
         )
         .await
         {
-            crate::odoo::OdooAuthResult::Ok(odoo_uid) => {
-                // Online: sincroniza hash para uso offline posterior
+            Ok(Some(session)) => {
+                // Online: guarda o hash para o modo offline seguinte.
                 if let Ok(h) = hash_password(&req.password) {
                     let _ = sqlx::query(
                         "UPDATE users SET password_hash = $1, odoo_uid = $2 WHERE id = $3",
                     )
                     .bind(&h)
-                    .bind(odoo_uid)
+                    .bind(session.uid)
                     .bind(id)
                     .execute(&state.db)
                     .await;
                 }
+                // Re-sincroniza o directório se estiver velho (>1h). Corre em
+                // segundo plano: o login não paga a leitura.
+                crate::odoo_sso::spawn_directory_sync(
+                    state.clone(),
+                    org_id,
+                    odoo_url.clone(),
+                    session,
+                    false,
+                );
                 true
             }
-            crate::odoo::OdooAuthResult::Offline => {
-                // Offline: hash local válido apenas se a senha não mudou no Odoo
-                !password_hash.is_empty() && verify_password(&req.password, &password_hash)
-            }
-            crate::odoo::OdooAuthResult::InvalidCredentials => {
-                // Senha alterada no Odoo — rejeitar mesmo que o hash local coincida
+            Ok(None) => {
+                // Senha alterada/revogada no Odoo — rejeitar mesmo que o hash
+                // local ainda coincida. O Odoo é a fonte de verdade.
                 let _ = verify_password(&req.password, DUMMY);
                 false
+            }
+            Err(_) => {
+                // Odoo inacessível: vale o hash Argon2 da última autenticação
+                // online. É o que mantém as reuniões a funcionar quando é o
+                // ERP que está em baixo.
+                !password_hash.is_empty() && verify_password(&req.password, &password_hash)
             }
         }
     } else {
