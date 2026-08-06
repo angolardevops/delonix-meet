@@ -28,6 +28,7 @@ Princípios: **self-hosted first** · **security by design** · **enterprise sem
 6. **Cookie `dlx_refresh`** sempre `HttpOnly; SameSite=Strict; Secure` (exceto `COOKIE_INSECURE=1` em dev HTTP).
 7. **E2EE real**: chave AES-256 gerada no cliente, nunca vai ao servidor exceto para gravação (key delegation explícita com confirm()).
 8. **Validação no servidor**: host controls (lock/share-only/kick/promote-admit) validados em `signaling.rs`, nunca confiados no cliente.
+9. **Uma conta tem UMA autoridade de autenticação, explícita**: `users.odoo_org_id` — a org que a gere, gravada quando a conta nasce de um Odoo e nunca reescrita por outra. NULL = conta local. Nunca resolver o provedor de autenticação por email nem por pertença a org (`LIMIT 1` sem ordem = autoridade por sorteio), e uma sincronização de directório nunca reclama uma conta que já existe — nem de outra org, nem local. Ver R25.
 
 ## 4. Arquitetura — decisões não óbvias
 

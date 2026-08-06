@@ -85,6 +85,7 @@ The workspace pins `reqwest = { version = "0.12", features = ["rustls-tls"] }`. 
 5. **Rate limiting:** Login lockout 8 attempts/5min; `/api/v1` rate-limited by IP; WS rate-limited per socket.
 6. **Cookie security:** `dlx_refresh` always `Secure` except with `COOKIE_INSECURE=1`.
 7. **Server-side authorization:** Host controls (lock/kick/share-only) validated in `signaling.rs`, never trusted from client.
+8. **One account, one explicit authentication authority:** `users.odoo_org_id` — the org that MANAGES the account, written when it is born from an Odoo and never rewritten by another. NULL = local account, authenticated locally. Never resolve the auth provider by email or by org membership (`LIMIT 1` with no `ORDER BY` = picking the authority by lottery), and a directory sync never claims an account that already exists — neither another org's nor a local one. Both halves are required. See R25.
 
 ---
 
