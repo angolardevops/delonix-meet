@@ -16,6 +16,20 @@ pub struct Config {
     pub room_token_ttl_secs: i64,
     /// Origens permitidas para CORS (allowlist). Vazio => same-origin only.
     pub cors_origins: Vec<String>,
+    /// Odoo da PLATAFORMA (`PLATFORM_ODOO_URL` / `PLATFORM_ODOO_DB`): a
+    /// instância contra a qual se validam credenciais de quem ainda NÃO tem
+    /// conta aqui. É o que permite entrar com a conta Odoo e ver a
+    /// organização e os colegas aparecerem sozinhos (ver odoo_sso.rs).
+    /// Vazio (omissão) => o login por conta Odoo está DESLIGADO e o
+    /// comportamento é o de sempre: só entra quem já foi provisionado.
+    pub platform_odoo_url: Option<String>,
+    pub platform_odoo_db: Option<String>,
+    /// Hosts isentos da guarda anti-SSRF dos webhooks (`WEBHOOK_ALLOW_HOSTS`,
+    /// separados por vírgula). Vazio (omissão) => nenhum destino interno é
+    /// alcançável, que é o comportamento seguro. Existe porque o integrador
+    /// típico — um Odoo on-prem em `10.x` ou `localhost` — seria bloqueado e
+    /// ficaria sem o webhook de aceleração. Nomes exactos, nunca redes.
+    pub webhook_allow_hosts: Vec<String>,
     pub cookie_secure: bool,
     /// Segredo partilhado que a camada de media (FreeSWITCH/provider) usa para
     /// chamar a API interna de IVR. Vazio => API interna de voz DESATIVADA.
@@ -62,15 +76,7 @@ impl Config {
                 "DELONIX_ALLOW_INSECURE=1 — a usar segredos de desenvolvimento. NÃO usar em produção."
             );
         }
-        let cors_origins = env::var("CORS_ORIGINS")
-            .ok()
-            .map(|s| {
-                s.split(',')
-                    .map(|o| o.trim().to_string())
-                    .filter(|o| !o.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let cors_origins = csv_env("CORS_ORIGINS");
         Self {
             database_url: secret("DATABASE_URL", DEV_DB, insecure, 0),
             bind_addr: env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8180".into()),
@@ -81,6 +87,12 @@ impl Config {
             refresh_ttl_secs: 30 * 24 * 3600,
             room_token_ttl_secs: 5 * 60,
             cors_origins,
+            platform_odoo_url: env::var("PLATFORM_ODOO_URL")
+                .ok()
+                .map(|u| u.trim_end_matches('/').to_string())
+                .filter(|u| !u.is_empty()),
+            platform_odoo_db: env::var("PLATFORM_ODOO_DB").ok().filter(|d| !d.is_empty()),
+            webhook_allow_hosts: csv_env("WEBHOOK_ALLOW_HOSTS"),
             cookie_secure: env::var("COOKIE_INSECURE").ok().as_deref() != Some("1"),
             voice_internal_secret: env::var("VOICE_INTERNAL_SECRET").unwrap_or_default(),
             provisioning_secret: env::var("PROVISIONING_SECRET").unwrap_or_default(),
@@ -101,6 +113,19 @@ impl Config {
                 .unwrap_or_else(|_| "qwen2.5:1.5b".into()),
         }
     }
+}
+
+/// Lê uma variável de ambiente com valores separados por vírgula.
+fn csv_env(var: &str) -> Vec<String> {
+    env::var(var)
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .map(|o| o.trim().to_string())
+                .filter(|o| !o.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Lê um segredo do ambiente. Em produção (insecure=false) faz panic se estiver

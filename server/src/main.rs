@@ -7,9 +7,11 @@ mod config;
 mod dlp;
 mod error;
 mod meetings;
+mod meetings_v1;
 mod metrics;
 mod mls;
 mod odoo;
+mod odoo_sso;
 mod org;
 mod presence;
 mod pubsub;
@@ -276,7 +278,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .route("/recordings", get(apikeys::v1_recordings))
                 // Sync de calendário + MoM (integração Odoo nk_delonix_meet —
                 // ver docs/nk-delonix-meet-integration.md).
-                .route("/meetings", get(apikeys::v1_meetings))
+                //
+                // O POST/PATCH/DELETE vive em `meetings_v1.rs`: cria a REUNIÃO
+                // (com anfitrião humano e convidados), não só uma sala solta —
+                // ver o cabeçalho desse módulo para o porquê.
+                .route(
+                    "/meetings",
+                    get(apikeys::v1_meetings).post(meetings_v1::create),
+                )
+                .route(
+                    "/meetings/{id}",
+                    axum::routing::patch(meetings_v1::patch).delete(meetings_v1::delete),
+                )
+                // "Começar agora": faz tocar nos dispositivos dos convidados.
+                .route("/meetings/{id}/ring", post(meetings_v1::ring))
                 .route("/meetings/{id}/notes", get(apikeys::v1_meeting_notes))
                 // Integração Odoo: provisioning e listagem de utilizadores
                 .route("/integration/odoo/provision", post(odoo::provision))
