@@ -1,0 +1,76 @@
+# ════════════════════════════════════════════════════════════════════
+#  CONTEXTO 1 — Servidor com domínio público
+#
+#  Para: reuniões com participantes de FORA da empresa (clientes,
+#  parceiros, candidatos). Certificado Let's Encrypt, sem avisos no
+#  browser de ninguém.
+#
+#  Antes de correr, tens de ter:
+#    ⚑ um domínio, com registo A a apontar para o IP deste servidor
+#      (verifica:  dig +short meet.empresa.com)
+#    ⚑ portas 80 e 443 (TCP) abertas — o 80 é para o desafio ACME
+#    ⚑ portas 3478 (UDP+TCP) e 49152–59152 (UDP) abertas
+#    ⚑ acesso SSH com sudo ao servidor
+#
+#  Usar:  cp deploy/contexts/publico.yml deploy/config.yml
+#         $EDITOR deploy/config.yml     # preencher os ⚑
+#         make deploy
+# ════════════════════════════════════════════════════════════════════
+
+deploy_mode: single-host
+
+# ⚑ O domínio pelo qual as pessoas entram. É também o realm do TURN e o
+#   nome no certificado.
+domain: ""                       # ex.: meet.empresa.com
+
+# `auto` deteta o IP de saída do servidor. Só preencher à mão se o
+# servidor estiver atrás de NAT e o IP público for outro — caso em que
+# esse é o valor que interessa, porque é o que os clientes alcançam.
+public_ip: auto
+
+tls:
+  # `auto` = Let's Encrypt quando há domínio + email + DNS público a
+  # resolver; cai para self-signed se alguma dessas faltar. Preferir
+  # sobre `letsencrypt` fixo: não parte o deploy se o DNS ainda não
+  # propagou, só emite um certificado temporário.
+  mode: auto
+  # ⚑ Obrigatório para o Let's Encrypt. Recebe os avisos de expiração —
+  #   usa uma lista, não o endereço de uma pessoa que pode sair.
+  acme_email: ""                 # ex.: sistemas@empresa.com
+  # `true` no primeiro ensaio: o ambiente de teste do LE não conta para o
+  # limite de 5 emissões por domínio por semana. Passar a `false` para
+  # o certificado a sério.
+  acme_staging: false
+
+dns:
+  # `none` = o registo A já existe (o mais comum). Os outros criam-no por
+  # ti; exigem as credenciais no ambiente.
+  provider: none
+  cloudflare_zone: ""            # provider: cloudflare  (CLOUDFLARE_API_TOKEN)
+  route53_zone: ""               # provider: route53     (AWS_ACCESS_KEY_ID/SECRET)
+  # A proxy da Cloudflare NÃO passa UDP: com ela ligada, a media morre.
+  proxied: false
+
+turn:
+  realm: ""                      # vazio ⇒ usa o `domain`
+  min_port: 49152
+  max_port: 59152
+
+secrets:
+  auto_generate: true
+
+paths:
+  env_file: /etc/delonix/delonix.env
+  web_root: /var/www/delonix
+  # ⚑ Disco com espaço e NOS BACKUPS. Uma hora de reunião gravada anda
+  #   pelas centenas de MB.
+  recordings_dir: /var/lib/delonix/recordings
+  tls_dir: /etc/ssl/delonix
+
+# ---- Depois do deploy ----------------------------------------------
+#  Verificar (docs/deployment.md §8):
+#    curl -sI https://<domain>/ | grep -i strict-transport
+#    curl -s  https://<domain>/api/status
+#  E o teste que conta: dois DISPOSITIVOS diferentes numa reunião, com
+#  vídeo e áudio nos dois sentidos. Duas abas do mesmo browser não
+#  provam nada sobre a media.

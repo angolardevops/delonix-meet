@@ -1,0 +1,102 @@
+# ════════════════════════════════════════════════════════════════════
+#  CONTEXTO 3 — Cluster Kubernetes (alta disponibilidade)
+#
+#  Para: quando o serviço não pode parar para uma actualização, ou
+#  quando um servidor já não chega. Um nó cai, os outros continuam.
+#
+#  Custa complexidade real. Só vale a pena se PELO MENOS UMA destas
+#  for verdade — se nenhuma for, `publico.yml` faz o mesmo com uma
+#  fracção das peças móveis:
+#    · actualizar sem janela de manutenção
+#    · mais gente em simultâneo do que um servidor aguenta
+#    · política interna que exige redundância
+#
+#  Antes de correr, tens de ter:
+#    ⚑ 3+ nós (1 control-plane + 2 workers, no mínimo)
+#    ⚑ uma gama de IPs LIVRE na tua rede para o MetalLB — IPs que o
+#      DHCP não vá atribuir a mais ninguém
+#    ⚑ ReadWriteMany para as gravações (NFS/CephFS) — ver a nota abaixo
+#    ⚑ o inventário em deploy/ansible/inventory.ini
+#
+#  Usar:  cp deploy/contexts/cluster.yml deploy/config.yml
+#         $EDITOR deploy/config.yml     # preencher os ⚑
+#         make deploy
+#  Publicar código novo depois:  make image-push
+# ════════════════════════════════════════════════════════════════════
+
+deploy_mode: multi-host
+
+# ⚑ Domínio público a apontar para o VIP do ingress.
+domain: ""                       # ex.: meet.empresa.com
+
+# `auto` lê o VIP atribuído pelo MetalLB ao ingress.
+public_ip: auto
+
+tls:
+  mode: auto
+  acme_email: ""                 # ⚑ obrigatório para Let's Encrypt
+  acme_staging: false
+
+dns:
+  provider: none
+  cloudflare_zone: ""
+  route53_zone: ""
+  proxied: false                 # a proxy da Cloudflare não passa UDP
+
+turn:
+  realm: ""                      # vazio ⇒ usa o `domain`
+  min_port: 49152
+  max_port: 59152
+
+secrets:
+  auto_generate: true
+
+kubernetes:
+  # ⚑ Gama para o MetalLB. Tem de estar FORA do alcance do DHCP: dois
+  #   donos para o mesmo IP dá falhas intermitentes difíceis de ver.
+  metallb_ip_range: ""           # ex.: 192.168.1.200-192.168.1.250
+
+  # VIP fixo do coturn, dentro da gama acima. Vale a pena fixá-lo: é o
+  # endereço que os clientes usam para a media, e um IP dinâmico obriga
+  # a mexer no DNS/firewall sempre que o Service é recriado.
+  coturn_ip: ""                  # ex.: 192.168.1.201
+
+  postgres_ha: true              # repmgr — sem isto, a BD é o ponto único de falha
+  redis_sentinel: true
+  server_replicas: 3
+  web_replicas: 3
+
+paths:
+  env_file: /etc/delonix/delonix.env
+  web_root: /var/www/delonix
+  recordings_dir: /var/lib/delonix/recordings
+  tls_dir: /etc/ssl/delonix
+
+# ---- Três coisas que só falham em cluster ---------------------------
+#
+# 1. FORCE_TURN_RELAY=1 NÃO É OPCIONAL.
+#    O IP do pod (10.244.x) é inalcançável de fora e os host candidates
+#    do SFU não transportam media. Sem relay-only, o ICE "liga" por um
+#    par que passa o check e a imagem fica PRETA — o sintoma mais caro
+#    de diagnosticar. Já vem no configmap; não o retires.
+#
+# 2. AFINIDADE POR SALA, com Service DEDICADO para /ws.
+#    O SFU é in-memory por pod: todos os participantes de uma sala têm
+#    de cair no MESMO pod (o Redis propaga sinalização, não RTP). O
+#    ingress faz `upstream-hash-by: $arg_room` — mas se /ws partilhar o
+#    Service com /api e /rtc, o ingress-nginx funde-os num backend e
+#    DESCARTA o hash. Verificar depois do deploy:
+#        curl -s .../ws?room=X   (repetido) → sempre o mesmo pod
+#    Sem isto: media num só sentido e partilha de ecrã a falhar.
+#
+# 3. GRAVAÇÕES EXIGEM RWX EM MULTI-NÓ.
+#    ReadWriteOnce só funciona com todos os pods no mesmo nó. Com o
+#    `server_replicas: 3` acima, é preciso NFS, CephFS ou object storage
+#    — senão as gravações aparecem e desaparecem consoante o pod que
+#    responde.
+#
+# ---- Publicar código novo -------------------------------------------
+#  make image-push   — build versionado (git describe) + load + pin.
+#  NUNCA confiar no `:latest`: um `kubectl apply -f 02-server.yaml`
+#  avulso repõe essa tag, que pode estar obsoleta no nó, e reintroduz a
+#  versão antiga em silêncio. A seguir a um apply manual: `make pin`.
