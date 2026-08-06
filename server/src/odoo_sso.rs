@@ -403,20 +403,43 @@ pub async fn upsert_member(
     Ok(user_id)
 }
 
-/// True quando o directório desta org está velho o suficiente para valer uma
-/// releitura ao Odoo.
-async fn sync_is_stale(state: &AppState, org_id: Uuid) -> bool {
-    let last: Option<(Option<chrono::DateTime<chrono::Utc>>,)> =
-        sqlx::query_as("SELECT odoo_synced_at FROM organizations WHERE id = $1")
-            .bind(org_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-    match last.and_then(|(t,)| t) {
-        None => true,
-        Some(t) => (chrono::Utc::now() - t).num_seconds() > SYNC_MAX_AGE_SECS,
-    }
+/// Reivindica a sincronização do directório desta org, ATOMICAMENTE.
+///
+/// Devolve o `odoo_synced_at` anterior quando a reivindicação foi ganha (para
+/// poder ser reposto se a sync falhar), e `None` quando outro pedido já a tem.
+///
+/// BUG CORRIGIDO AQUI: isto era um `sync_is_stale` que só LIA, e o carimbo
+/// `odoo_synced_at` só era escrito no FIM da sincronização. Entre o teste e a
+/// escrita cabiam todos os logins concorrentes: cada um via o directório velho,
+/// cada um disparava uma leitura completa de N utilizadores ao ERP e um `upsert`
+/// por cada um. Numa manhã de segunda — toda a empresa a entrar ao mesmo tempo —
+/// é uma debandada contra o Odoo e contra o Postgres, exactamente quando ambos
+/// estão mais ocupados.
+///
+/// Um `UPDATE ... WHERE <velho> RETURNING` resolve-o sem lock aplicacional: o
+/// Postgres serializa as escritas na linha, e só uma transacção vê a condição
+/// satisfeita. As outras recebem zero linhas e desistem.
+async fn claim_directory_sync(
+    state: &AppState,
+    org_id: Uuid,
+    force: bool,
+) -> Option<Option<chrono::DateTime<chrono::Utc>>> {
+    let row: Option<(Option<chrono::DateTime<chrono::Utc>>,)> = sqlx::query_as(
+        "UPDATE organizations
+            SET odoo_synced_at = now()
+          WHERE id = $1
+            AND ($2 OR odoo_synced_at IS NULL
+                    OR odoo_synced_at < now() - make_interval(secs => $3))
+      RETURNING (SELECT o.odoo_synced_at FROM organizations o WHERE o.id = $1)",
+    )
+    .bind(org_id)
+    .bind(force)
+    .bind(SYNC_MAX_AGE_SECS as f64)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    row.map(|(prev,)| prev)
 }
 
 /// Sincroniza TODOS os utilizadores internos activos da empresa para a org.
@@ -429,13 +452,25 @@ pub fn spawn_directory_sync(
     force: bool,
 ) {
     tokio::spawn(async move {
-        if !force && !sync_is_stale(&state, org_id).await {
-            return;
-        }
+        // Reivindica ANTES de ler o Odoo — ver `claim_directory_sync`.
+        let Some(prev_synced_at) = claim_directory_sync(&state, org_id, force).await else {
+            return; // outro pedido já a está a fazer, ou ainda está fresca
+        };
+        // Uma sync que falha não pode ficar com o carimbo de sucesso: isso
+        // adiaria a próxima tentativa por `SYNC_MAX_AGE_SECS` inteiros. Repõe-se
+        // o valor anterior e a org volta a estar elegível de imediato.
+        let unclaim = || async {
+            let _ = sqlx::query("UPDATE organizations SET odoo_synced_at = $1 WHERE id = $2")
+                .bind(prev_synced_at)
+                .bind(org_id)
+                .execute(&state.db)
+                .await;
+        };
         let users = match active_users(&state.webhook_client, &odoo_url, &session).await {
             Ok(u) => u,
             Err(e) => {
                 tracing::warn!(error = %e, %org_id, "sync do directório Odoo falhou");
+                unclaim().await;
                 return;
             }
         };

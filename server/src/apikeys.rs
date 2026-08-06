@@ -616,6 +616,27 @@ pub async fn v1_provision_org(
     // A empresa Odoo já tem organização? (criada por um login SSO anterior,
     // ou por um provisionamento repetido). Reutiliza-se em vez de duplicar —
     // ver o comentário em `odoo_company_id`.
+    // `odoo_company_id` é `#[serde(default)]`, portanto um módulo Odoo ANTIGO
+    // não o envia. Sem ele não há chave de deduplicação — e deixar passar em
+    // silêncio criava exactamente a organização duplicada que este bloco existe
+    // para evitar, para a população que ele mais precisa de servir.
+    //
+    // Não se pode desdobrar para "dedup só por `odoo_db`": uma base de dados
+    // Odoo hospeda VÁRIAS empresas, e isso fundiria tenants distintos — pior que
+    // duplicar. Fica fail-closed com a acção concreta: actualizar o módulo.
+    if req
+        .odoo_db
+        .as_deref()
+        .map(|d| !d.trim().is_empty())
+        .unwrap_or(false)
+        && req.odoo_company_id.is_none()
+    {
+        return Err(ApiError::BadRequest(
+            "odoo_db enviado sem odoo_company_id: sem os dois não é possível              reconhecer a empresa e o provisionamento criaria uma organização              duplicada. Actualiza o módulo nk_delonix_meet para enviar              odoo_company_id."
+                .into(),
+        ));
+    }
+
     let existing_org: Option<(Uuid, String)> = match (&req.odoo_db, req.odoo_company_id) {
         (Some(db), Some(cid)) if !db.trim().is_empty() => sqlx::query_as(
             "SELECT id, slug FROM organizations WHERE odoo_db = $1 AND odoo_company_id = $2",
