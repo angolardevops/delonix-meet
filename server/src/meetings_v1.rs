@@ -478,15 +478,22 @@ pub async fn create(
         .fetch_optional(&state.db)
         .await?;
         if let Some((meeting_id,)) = found {
-            // A linha de mapeamento cai em cascata com a reunião, portanto se
-            // existe a reunião existe. Ainda assim tratamos o `None` como
-            // "criar de novo" em vez de rebentar.
-            if let Ok(meeting) = meeting_in_org(&state, key.org_id, meeting_id).await {
-                let host_email = email_of(&state, meeting.owner_id).await;
-                return Ok(Json(
-                    build_resp(&state, key.org_id, &meeting, host_email, vec![], true).await?,
-                ));
-            }
+            // A linha de mapeamento cai em CASCATA com a reunião (migração 0031),
+            // portanto se a linha existe a reunião existe. Quando mesmo assim não
+            // se consegue resolver, o estado é incoerente e dizê-lo é o correcto.
+            //
+            // BUG CORRIGIDO AQUI: isto era `if let Ok(...)`, e o `Err` caía para o
+            // "criar de novo" logo abaixo. Esse caminho não podia ter sucesso: a
+            // linha de mapeamento velha continua lá, portanto o INSERT do
+            // `external_ref` colide sempre; o tratamento da colisão APAGA a
+            // reunião e a sala acabadas de criar, relê o MESMO `meeting_id` que
+            // já falhara e propaga o erro à mesma. Ou seja — devolvia erro na
+            // mesma, depois de escrever e apagar na base de dados para nada.
+            let meeting = meeting_in_org(&state, key.org_id, meeting_id).await?;
+            let host_email = email_of(&state, meeting.owner_id).await;
+            return Ok(Json(
+                build_resp(&state, key.org_id, &meeting, host_email, vec![], true).await?,
+            ));
         }
     }
 
