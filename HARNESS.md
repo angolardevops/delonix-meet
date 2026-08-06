@@ -210,6 +210,7 @@ Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **
 7. **E2EE real:** chave AES-256 gerada no cliente, nunca vai ao servidor exceto para gravação (key delegation explícita com confirm() do utilizador).
 8. **Validação no servidor:** autorização de host controls (lock/share-only/kick) validada em `signaling.rs`, não confiada no cliente.
 9. **reqwest 0.12 com rustls-tls** (não 0.13) para compatibilidade com a versão do rustls no workspace.
+10. **Uma conta tem UMA autoridade de autenticação, explícita:** `users.odoo_org_id` — a org que a gere, gravada quando a conta nasce de um Odoo e nunca reescrita por outra. NULL = conta local, autenticada localmente. **Nunca** resolver o provedor de autenticação por email nem por pertença a org (`LIMIT 1` sem ordem = escolher a autoridade por sorteio). E uma sincronização de directório **nunca reclama uma conta que já existe** — nem de outra org, nem local. As duas metades são precisas; fechar só uma deixa a porta entreaberta. Ver R25.
 
 ---
 

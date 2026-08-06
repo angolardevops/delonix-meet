@@ -159,12 +159,39 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** migrações re-embebem só com `touch server/src/main.rs`; após migração nova sempre `cargo build --release` antes de restart. reqwest **0.12 rustls-tls** (não 0.13).
 - **Ficheiros:** `server/src/main.rs`, `server/Cargo.toml`.
 
+### R30 — O Ansible voltava a confiar no `:latest`
+- **Sintoma:** o deploy kind injecta no cluster uma imagem velha, ou a tarefa falha por não encontrar a tag.
+- **Causa raiz:** `kind_host` usava `image_tag | default('latest')` com `image_tag` **indefinido em lado nenhum** — logo era sempre `:latest`. Só que o `make export-images` deixou de exportar `:latest` DE PROPÓSITO (é a regra «nunca confiar no `:latest`», ver R9 e o HARNESS.md). Um `default` silencioso para a tag errada é precisamente o que essa regra proíbe.
+- **Regra:** a tag é **obrigatória e explícita** (`assert` no role), passada pelo `make` (`-e image_tag=$(IMAGE_TAG)`, o mesmo `git describe` com que as imagens foram construídas). Nunca um `| default('latest')`.
+- **Ficheiros:** `deploy/ansible/roles/kind_host/tasks/main.yml`, `Makefile` (`deploy-kaeso`).
+
+### R31 — Um default global partiu um modo de deploy inteiro
+- **Sintoma:** todos os deploys single-host abortam à saída da caixa, sem ninguém ter escolhido motor nenhum.
+- **Causa raiz:** o default global passou a `container_engine: delonix` (para o caminho kind) e o role `single_host` tem uma guarda que falha para tudo o que não seja docker — o compose dele usa `-f a -f b` e `--wait`, que o delonix não suporta.
+- **Regra:** um default global novo tem de ser confrontado com TODAS as guardas que dependem dessa variável. Fixado nos `vars` da play (vence `group_vars`, perde para `-e`), portanto quem escolher outro motor de propósito continua a receber a mensagem da guarda — que passou a nomear a causa real em vez de sugerir só «usa docker».
+- **Ficheiros:** `deploy/ansible/site.yml`, `deploy/ansible/roles/single_host/tasks/main.yml`, `deploy/ansible/group_vars/all.yml`.
+
 ## Auth / presença
 
 ### R10 — `/rtc` devolve 401 na primeira ligação
 - **Causa raiz:** access token expirado ao abrir o WS de presença.
 - **Regra:** `presence.ts` refresca o token proativamente (`jwtExpired()`) **antes** de ligar o `/rtc`.
 - **Ficheiros:** `web/src/presence.ts`.
+
+### R25 — Tomada de conta: a autoridade de autenticação escolhida por sorteio
+- **Sintoma:** nenhum. É a pior classe — o atacante entra como a vítima e tudo parece normal. Descoberto em revisão de código, nunca em produção (2026-08-06).
+- **Causa raiz:** quatro elos, cada um razoável sozinho. (1) `PUT /integration/odoo` só exige `require_admin` da PRÓPRIA org — qualquer utilizador cria uma org e aponta-a a um Odoo que controla. (2) `odoo_sso::upsert_member` casava por email e fazia `UPDATE users SET odoo_uid, odoo_managed = TRUE` — reclamava a conta de quem fosse listado no directório desse Odoo. (3) `odoo::org_odoo_config` escolhia contra QUE Odoo validar a password juntando por `org_members` com `LIMIT 1` e **sem `ORDER BY`** — para quem estivesse em várias orgs, saía uma arbitrária. (4) `auth::login` valida então a password contra esse Odoo, que responde "autenticado" ao que o atacante quiser — e o código grava essa password como hash local da vítima.
+- **Regra:** a autoridade de autenticação de uma conta é **`users.odoo_org_id`** — a org que a GERE, gravada quando a conta nasce de um Odoo e nunca reescrita por outra. NULL = conta local, autenticada localmente. **Nunca** resolver o provedor de autenticação por email nem por pertença a org. E uma sincronização de directório **nunca reclama uma conta existente**: nem de outra org (a mesma regra `ForeignOrg` que `meetings_v1::resolve_org_user` já aplicava), nem local — ligar uma conta local a um Odoo é acto do DONO, não efeito lateral de alguém escrever o endereço dela algures. As duas metades são precisas: fechar só uma deixa a porta entreaberta.
+- **Armadilha ao corrigir:** o caminho de corrida do `unique_violation` relia por email e devolvia o `id` — reabria a reclamação por essa porta. Tem de reaplicar a MESMA regra de autoridade.
+- **Custo conhecido:** quem já tenha conta local e apareça depois no Odoo da org **não entra por SSO** até existir um fluxo deliberado de ligação de conta. Por desenhar.
+- **Ficheiros:** `server/migrations/0033_user_odoo_authority.sql`, `server/src/odoo_sso.rs` (`upsert_member`), `server/src/odoo.rs` (`org_odoo_config`), `server/src/auth.rs` (login).
+
+### R26 — Debandada de sincronizações de directório contra o ERP
+- **Sintoma:** numa manhã de segunda (toda a empresa a entrar), o Odoo e o Postgres levam N leituras completas do directório em paralelo, uma por login.
+- **Causa raiz:** o carimbo `odoo_synced_at` só era escrito no FIM da sincronização e o teste de frescura só LIA. Entre o teste e a escrita cabiam todos os logins concorrentes.
+- **Regra:** reivindicar a sync **ATOMICAMENTE antes** de a fazer — `UPDATE ... WHERE <velho> RETURNING`, que o Postgres serializa na linha; quem recebe zero linhas desiste. Sem lock aplicacional. Uma sync que FALHA repõe o carimbo anterior, senão adia a tentativa seguinte por `SYNC_MAX_AGE_SECS` inteiros.
+- **Medido:** com 5 reivindicações simultâneas ganha exactamente 1. O `RETURNING` com subconsulta correlacionada devolve o valor ANTERIOR (é disso que a reposição depende).
+- **Ficheiros:** `server/src/odoo_sso.rs` (`claim_directory_sync`, `spawn_directory_sync`).
 
 ## Frontend
 
@@ -175,3 +202,23 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 ### R12 — Poda de chaves i18n apaga chaves genéricas
 - **Regra:** a poda por regex é greedy (apagou `common.save`) — cuidado com chaves curtas/genéricas ao podar.
 - **Ficheiros:** `web/src/i18n.ts`.
+
+## API pública v1
+
+### R27 — Convidados "ignorados" eram APAGADOS da reunião
+- **Sintoma:** um `PATCH /api/v1/meetings/{id}` com convidados que o servidor ignora remove-os da reunião; com a lista TODA ignorada, a lista de convidados desaparece inteira.
+- **Causa raiz:** a remoção era `NOT (user_id = ANY(<resolvidos>))`. Um convidado devolvido como `skipped` não entra nos resolvidos e era portanto apagado — apesar de o chamador o ter listado e de a resposta lhe dizer «ignorado», não «removido». Com tudo ignorado os resolvidos ficam vazios, e em Postgres `x = ANY('{}')` é **FALSE** → `NOT FALSE` é TRUE para todas as linhas.
+- **Regra:** decidir a remoção pelos **emails PEDIDOS**, nunca pelos que resolveram. Quem foi pedido fica, tenha ou não sido possível (re)adicioná-lo.
+- **Ficheiros:** `server/src/meetings_v1.rs` (`PATCH`, bloco `invitees`).
+
+### R28 — Fallback de idempotência inalcançável E destrutivo
+- **Sintoma:** erro devolvido depois de a base de dados ter criado e apagado uma reunião e uma sala para nada.
+- **Causa raiz:** com a linha de `meeting_external_refs` presente mas a reunião irresolúvel, um `if let Ok(...)` caía para «criar de novo». Esse caminho não pode ter sucesso: a linha velha continua lá, o INSERT do `external_ref` colide sempre, o tratamento da colisão APAGA a reunião e a sala acabadas de criar, relê o MESMO id que já falhara e propaga o erro à mesma.
+- **Regra:** a linha de mapeamento cai em CASCATA com a reunião (migração 0031) — se a linha existe, a reunião existe. Não a conseguir resolver é estado **incoerente**: dizê-lo, não mascarar com um «criar de novo» que escreve e apaga sem poder ter sucesso.
+- **Ficheiros:** `server/src/meetings_v1.rs` (`POST`, bloco de idempotência).
+
+### R29 — Deduplicação de org que não deduplica
+- **Sintoma:** o provisionamento cria uma organização DUPLICADA para uma empresa Odoo que já tem uma — exactamente para os módulos antigos, que é a população que o bloco existe para servir.
+- **Causa raiz:** a dedup exigia `odoo_db` E `odoo_company_id`, mas o segundo é `#[serde(default)]` — um módulo Odoo antigo não o envia, o `match` não casa, e cria-se org nova em silêncio.
+- **Regra:** **fail-closed**. Não desdobrar para «dedup só por `odoo_db`»: uma BD Odoo hospeda VÁRIAS empresas e isso fundiria tenants distintos — pior que duplicar. Recusar com a acção concreta (actualizar o módulo).
+- **Ficheiros:** `server/src/apikeys.rs` (`provision`).
