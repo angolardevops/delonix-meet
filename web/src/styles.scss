@@ -66,22 +66,25 @@ button {
 button:active {
   transform: scale(0.97);
 }
+/* AÇÃO, não marca. Isto usava `--grad-brand` (o gradiente vermelho/dourado),
+   contra a regra do design system: o índigo é a cor de ação — botões
+   primários, foco, links, nav ativo — e o vermelho+dourado são a MARCA (logo,
+   wordmark, landing). Um "Entrar" vermelho lê-se como ação destrutiva e
+   gasta a marca num sítio onde ela não vende nada.
+   O tratamento também mudou para o registo do template: cor chapada e
+   brightness no hover, sem gradiente animado, sem levitar. */
 button.primary {
   width: 100%;
   padding: 0.75rem;
   margin-top: 0.5rem;
-  background: var(--grad-brand);
-  background-size: 200% auto;
-  color: white;
+  background: var(--accent);
+  color: #fff;
   font-weight: 600;
-  box-shadow: 0 4px 14px 0 color-mix(in oklab, var(--accent) 35%, transparent);
-  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: filter var(--dur, 160ms) var(--ease, ease),
+              background-color var(--dur, 160ms) var(--ease, ease);
 }
-button.primary:hover { 
-  background-position: right center;
-  box-shadow: 0 6px 20px color-mix(in oklab, var(--accent) 45%, transparent);
-  transform: translateY(-2px);
-}
+button.primary:hover:not(:disabled) { filter: brightness(1.1); }
+button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
 button.link { 
   background: none; color: var(--accent-2); margin-top: 0.8rem; 
   font-weight: 500;
@@ -805,22 +808,22 @@ button.link:hover {
 .chip-btn.on { background: color-mix(in oklab, var(--success) 20%, transparent); color: var(--success); border-color: var(--success); }
 .chip-btn.danger { margin-left: auto; color: var(--danger); }
 .chip-btn.danger:hover { background: color-mix(in oklab, var(--danger) 14%, transparent); }
+/* Ação primária ("+ Agendar", "Nova reunião"): índigo chapado, não o
+   gradiente de MARCA. Mesmo motivo do `button.primary` — vermelho é a marca,
+   índigo é o que se carrega. Raio 4px: o template não usa nada acima de 6px,
+   e isto tinha 10px com sombra colorida e levitação no hover. */
 .btn-new {
-  display: inline-flex; align-items: center; gap: 0.55rem;
-  background: var(--grad-brand);
-  background-size: 200% auto;
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  background: var(--accent);
   color: #fff; font-weight: 600;
-  padding: 0.75rem 1.4rem; border-radius: 10px; font-size: 1rem;
-  box-shadow: 0 6px 16px 0 color-mix(in oklab, var(--accent) 35%, transparent);
-  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  padding: 0.5rem 0.9rem;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 0.92rem;
+  transition: filter var(--dur, 160ms) var(--ease, ease);
 }
-.btn-new:hover { 
-  background-position: right center;
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px color-mix(in oklab, var(--accent) 45%, transparent);
-}
-.btn-new:active { transform: scale(0.95); }
-.btn-new.small { padding: 0.55rem 1rem; font-size: 0.92rem; margin-top: 0.9rem; border-radius: 8px; }
+.btn-new:hover:not(:disabled) { filter: brightness(1.1); }
+.btn-new:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-new.small { padding: 0.42rem 0.8rem; font-size: 0.86rem; margin-top: 0; }
 
 .empty-state {
   display: flex; flex-direction: column; align-items: center; gap: 0.8rem;
@@ -1046,7 +1049,7 @@ button.link:hover {
   border-bottom: 2px solid transparent; border-radius: 0; font-size: 0.95rem;
 }
 .tab:hover { color: var(--text); }
-.tab.active { color: var(--accent-2); border-bottom-color: var(--accent); }
+.tab.active { color: var(--accent-text); border-bottom-color: var(--accent); }
 
 .emp-list { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 1rem; }
 .emp-row {
@@ -1061,16 +1064,22 @@ button.link:hover {
 .dot.online { background: #3fbf7a; }
 .emp-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .emp-info small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tag-admin { font-size: 0.65rem; background: rgba(200,32,29,.14); color: var(--accent-2); padding: 1px 6px; border-radius: 3px; vertical-align: middle; }
+.tag-admin {
+  font-size: 0.65rem; background: var(--accent-soft); color: var(--accent-text);
+  padding: 1px 6px; border-radius: 3px; vertical-align: middle;
+}
 .emp-actions { display: flex; gap: 0.4rem; flex: none; }
 .call-btn {
-  width: 40px; height: 40px; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center; color: #fff;
+  width: 28px; height: 28px; border-radius: var(--radius-sm, 4px);
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid var(--border); color: var(--text-2);
+  transition: border-color var(--dur, 160ms) var(--ease, ease),
+              color var(--dur, 160ms) var(--ease, ease);
 }
-.call-btn.voice { background: #1b6b45; }
-.call-btn.voice:hover { background: #21855690; filter: brightness(1.2); }
-.call-btn.video { background: var(--accent); }
-.call-btn.video:hover { filter: brightness(1.12); }
+.call-btn svg { width: 15px; height: 15px; }
+/* A cor entra só no hover: identifica a ação sem gritar em cada linha. */
+.call-btn.voice:hover { border-color: var(--ok, #3fb970); color: var(--ok, #3fb970); }
+.call-btn.video:hover { border-color: var(--accent); color: var(--accent-text); }
 
 .inline-form { display: flex; gap: 0.5rem; margin: 1rem 0; flex-wrap: wrap; }
 .inline-form input { width: auto; flex: 1; min-width: 160px; margin: 0; }
@@ -1289,13 +1298,19 @@ button.link:hover {
 .seg-btn { background: none; color: var(--muted); padding: 0.4rem 0.9rem; border-radius: 4px; font-size: 0.88rem; }
 .seg-btn.active { background: var(--accent); color: #fff; }
 .cal-right .btn-new.small { margin-top: 0; }
+/* Ação SECUNDÁRIA ao lado da primária: contorno neutro que acende a acento,
+   a mesma forma dos chips. Usava um amarelo `#FFD600` cravado no CSS — nem
+   token do sistema era, e competia com a ação primária ao lado. */
 .btn-meet-now {
   display: inline-flex; align-items: center; gap: 0.4rem;
-  background: rgba(255,214,0,0.12); color: #FFD600;
-  border: 1px solid rgba(255,214,0,0.3); border-radius: 8px;
-  padding: 0.55rem 1rem; font-size: 0.92rem; font-weight: 600; cursor: pointer;
+  background: var(--surface); color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  padding: 0.42rem 0.8rem; font-size: 0.86rem; font-weight: 600; cursor: pointer;
 }
-.btn-meet-now:hover { background: rgba(255,214,0,0.2); }
+.btn-meet-now:hover:not(:disabled) {
+  border-color: var(--accent); color: var(--accent-text);
+}
 .btn-meet-now:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* ---- Mês ---- */
@@ -2240,11 +2255,20 @@ button.link:hover {
   color: var(--text); border-radius: 6px; font-size: 0.92rem;
 }
 .kpi-card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 7px;
-  padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: 0.2rem;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-md, 6px);
+  /* padding-right generoso: a etiqueta de estado é posicionada ao canto
+     superior direito e colidia com números longos (ex.: "1 / 121"). */
+  padding: 1.1rem 3.75rem 1.1rem 1.2rem;
+  display: flex; flex-direction: column; gap: 0.2rem;
   position: relative; /* ancora o .kpi-delta */
 }
-.kpi-v { font-family: var(--font-display); font-size: 1.55rem; font-weight: 700; color: var(--accent-2); }
+/* Mono e ACENTO — o número é um dado, não a marca. Estava no dourado
+   (`--accent-2`), o que punha a cor de marca a competir com a leitura. */
+.kpi-v {
+  font-family: var(--font-mono); font-size: 1.4rem; font-weight: 700;
+  color: var(--accent-text); letter-spacing: -0.01em;
+}
 .kpi-l { color: var(--muted); font-size: 0.82rem; }
 .admin-grid { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 1rem; margin-bottom: 1rem; }
 
@@ -2254,7 +2278,8 @@ button.link:hover {
 .week-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 0.3rem; }
 .week-bar {
   width: 100%; max-width: 44px; min-height: 3px; border-radius: 3px 6px 2px 2px;
-  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  /* Gradiente de ACENTO (claro -> escuro), como o template. */
+  background: linear-gradient(180deg, var(--accent-hi), var(--accent));
 }
 .week-label { font-family: var(--font-mono); font-size: 0.62rem; color: var(--muted); white-space: nowrap; }
 
@@ -3926,6 +3951,75 @@ button.link:hover {
 .auth-panel-quote figcaption { color: var(--text-2); font-size: 0.8rem; }
 
 /* ============================================================
+   LOGIN — cartão único (template de consola)
+   Substitui o split-panel: o template põe o foco na entrada e a marca
+   vive no cabeçalho do próprio cartão. Vem DEPOIS do bloco split para
+   vencer à mesma especificidade; as regras `.auth-panel*` acima ficam
+   inertes porque o JSX já não emite esses elementos.
+   ============================================================ */
+.auth-page {
+  /* O halo de acento é o único elemento decorativo — dá profundidade sem
+     imagem nenhuma, e vive por baixo do fundo opcional de marca. */
+  background:
+    radial-gradient(900px 500px at 70% 20%, rgba(92, 108, 242, 0.16), transparent),
+    var(--bg);
+  display: grid;
+  place-items: center;
+}
+.auth-page .auth-card {
+  width: min(360px, 92vw);
+  padding: 26px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 6px);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  text-align: left;               /* o template alinha à esquerda */
+}
+.auth-brand { display: flex; align-items: center; gap: 10px; }
+.auth-mark {
+  width: 32px; height: 32px; flex: 0 0 32px;
+  display: grid; place-items: center;
+  border-radius: var(--radius-md, 6px);
+  background: linear-gradient(135deg, var(--accent), #3b4bd9);
+  color: #fff; font-weight: 700; font-size: 14px;
+}
+.auth-brand-name { font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }
+.auth-brand-name span { color: var(--accent-2); }
+.auth-page .tagline { margin: 6px 0 0; font-size: 12px; color: var(--text-2); }
+
+.auth-page .auth-tabs { margin: 18px 0 12px; }
+.auth-page form { display: flex; flex-direction: column; gap: 9px; }
+.auth-page form input,
+.auth-page form .pw-wrap input {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  padding: 9px 12px;
+  font-size: 12.5px;
+}
+.auth-page form button.primary {
+  padding: 9px; border-radius: var(--radius-sm, 4px);
+  font-weight: 600; font-size: 12.5px;
+}
+.auth-page form button.primary:hover { filter: brightness(1.1); }
+.auth-page .auth-divider { margin: 12px 0 9px; font-size: 10.5px; }
+.auth-page .sso-btn {
+  padding: 9px; border-radius: var(--radius-sm, 4px);
+  background: transparent; border: 1px solid var(--border);
+  color: var(--accent-text); font-weight: 600; font-size: 12.5px;
+}
+.auth-page .sso-btn:hover { background: var(--surface-2); }
+
+/* Rodapé de confiança: mono, discreto — diz o que a plataforma garante
+   sem ocupar espaço da acção. */
+.auth-assurance {
+  margin: 16px 0 0; text-align: center;
+  font: 400 10px var(--font-mono, ui-monospace, monospace);
+  color: var(--dim, var(--text-2));
+}
+.auth-page .auth-terms { margin: 10px 0 0; font-size: 10.5px; }
+
+/* ============================================================
    Admin: Qualidade das chamadas (amostras QoS agregadas)
    ============================================================ */
 .quality-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
@@ -4344,11 +4438,17 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
    na Home ficam só as variantes (sala de espera, E2EE, treino). */
 .home .home-actions { display: none; }
 .home-extra { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+/* `.chip-outline` é a forma do template: contorno neutro que passa a acento
+   no hover. Vale para .link também, para não partir usos antigos. */
+.home-extra .chip-outline,
 .home-extra .link {
   padding: 4px 11px; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: var(--surface); color: var(--muted); font-size: 0.78rem; text-decoration: none;
+  background: var(--surface); color: var(--muted); font-size: 0.78rem;
+  text-decoration: none; white-space: nowrap;
 }
+.home-extra .chip-outline:hover:not(:disabled),
 .home-extra .link:hover { border-color: var(--accent); color: var(--accent-text); }
+.home-extra .chip-outline:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ---- 5. Superfícies: borda fina, sombra mínima -------------- */
 .dash-card, .kpi-card, .rec-card, .rec-item, .wb-card, .shortcut-tile, .quality-card {

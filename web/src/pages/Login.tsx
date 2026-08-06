@@ -90,35 +90,20 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
   const loginBg = getLoginBg()
 
   return (
-    <div className="auth-page auth-split">
+    // Cartão único centrado sobre um radial-gradient de acento (handoff §1).
+    // O painel de marca lateral saiu: o template põe o foco na entrada, e a
+    // marca vive no cabeçalho do próprio cartão.
+    <div className="auth-page">
       {loginBg && <div className="auth-bg" style={{ backgroundImage: `url(${loginBg})` }} />}
       <div className="auth-lang">
         <LanguageToggle />
       </div>
 
-      {/* Painel de marca (tela do template NgolaCloud) — só apresentação. */}
-      <aside className="auth-panel" aria-hidden>
-        <div className="auth-panel-brand">
-          <img src="/logo.svg" alt="" className="brand-logo" />
-          <span className="brand-text">{brand0} <span>{brand1}</span></span>
-        </div>
-        <h2 className="auth-panel-title">{t('login.panelTitle')}</h2>
-        <ul className="auth-panel-points">
-          {(t('login.panelPoints', { returnObjects: true }) as string[]).map((p) => (
-            <li key={p}>✓ {p}</li>
-          ))}
-        </ul>
-        <figure className="auth-panel-quote">
-          <blockquote>“{t('login.quote')}”</blockquote>
-          <figcaption>{t('login.quoteBy')}</figcaption>
-        </figure>
-      </aside>
-
       <div className="auth-card">
-        <img src="/logo.svg" alt="" className="brand-logo auth-logo" />
-        <h1 className="logo">
-          {brand0} <span>{brand1}</span>
-        </h1>
+        <div className="auth-brand">
+          <span className="auth-mark" aria-hidden>{brand0.charAt(0)}</span>
+          <span className="auth-brand-name">{brand0} <span>{brand1}</span></span>
+        </div>
         <p className="tagline">{t('login.tagline')}</p>
 
         <div className="auth-tabs">
@@ -216,6 +201,9 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
             )}
           </>
         )}
+        {/* Rodapé de confiança (handoff §1): diz o que a plataforma garante,
+            em mono discreto, sem competir com a acção de entrar. */}
+        <p className="auth-assurance">{t('login.assurance')}</p>
         <p className="auth-terms">
           {t('login.termsPre')} <a href="#/legal">{t('login.termsLink')}</a>.
         </p>
