@@ -178,7 +178,7 @@ pub async fn revoke(
 // ---------- API pública v1 (autenticada por chave) ----------
 
 /// Constrói o link partilhável de uma sala com o domínio de produção da org.
-async fn room_link(state: &AppState, org_id: Uuid, code: &str) -> String {
+pub async fn room_link(state: &AppState, org_id: Uuid, code: &str) -> String {
     let domain: Option<(String,)> =
         sqlx::query_as("SELECT domain FROM organizations WHERE id = $1 AND domain <> ''")
             .bind(org_id)
@@ -499,6 +499,16 @@ pub struct ProvisionOrgReq {
     /// Base de dados Odoo da empresa.
     #[serde(default)]
     pub odoo_db: Option<String>,
+    /// Id da EMPRESA no Odoo (`res.company`). Com `odoo_db`, identifica a
+    /// organização de forma estável — a mesma chave que o login por conta
+    /// Odoo usa (`odoo_sso::ensure_org`).
+    ///
+    /// Sem isto, provisionar uma empresa que já tinha entrado por SSO criava
+    /// uma SEGUNDA organização para a mesma empresa: os utilizadores ficavam
+    /// numa e a chave de API na outra, e a criação de reuniões respondia
+    /// «o anfitrião pertence a outra organização» (409).
+    #[serde(default)]
+    pub odoo_company_id: Option<i32>,
 }
 
 #[derive(Serialize)]
@@ -527,6 +537,12 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
         diff |= x ^ y;
     }
     diff == 0
+}
+
+/// Ver `ensure_provisioning_user`. Exposto para o login por conta Odoo, que
+/// também precisa de um dono técnico para a org que acabou de nascer.
+pub async fn ensure_provisioning_user_pub(state: &AppState) -> Result<Uuid, ApiError> {
+    ensure_provisioning_user(state).await
 }
 
 /// Utilizador de serviço único que "possui" as organizações provisionadas.
@@ -597,22 +613,42 @@ pub async fn v1_provision_org(
 
     let service_user_id = ensure_provisioning_user(&state).await?;
 
+    // A empresa Odoo já tem organização? (criada por um login SSO anterior,
+    // ou por um provisionamento repetido). Reutiliza-se em vez de duplicar —
+    // ver o comentário em `odoo_company_id`.
+    let existing_org: Option<(Uuid, String)> = match (&req.odoo_db, req.odoo_company_id) {
+        (Some(db), Some(cid)) if !db.trim().is_empty() => sqlx::query_as(
+            "SELECT id, slug FROM organizations WHERE odoo_db = $1 AND odoo_company_id = $2",
+        )
+        .bind(db.trim())
+        .bind(cid)
+        .fetch_optional(&state.db)
+        .await?,
+        _ => None,
+    };
+
     // Org com slug único (sufixo em colisão). SEM a quota anti-abuso de
     // create_org: aqui a autorização é o segredo de plataforma, não um user.
     let base = crate::org::slugify_pub(name);
-    let mut created: Option<(Uuid, String)> = None;
+    let mut created: Option<(Uuid, String)> = existing_org;
     for i in 0..8 {
+        if created.is_some() {
+            break; // a empresa Odoo já tinha org — só falta emitir a chave
+        }
         let slug = if i == 0 {
             base.clone()
         } else {
             format!("{base}-{i}")
         };
         let res: Result<(Uuid,), sqlx::Error> = sqlx::query_as(
-            "INSERT INTO organizations (name, slug, created_by) VALUES ($1, $2, $3) RETURNING id",
+            "INSERT INTO organizations (name, slug, created_by, odoo_db, odoo_company_id)
+             VALUES ($1, $2, $3, $4, $5) RETURNING id",
         )
         .bind(name)
         .bind(&slug)
         .bind(service_user_id)
+        .bind(req.odoo_db.as_deref().map(str::trim).filter(|d| !d.is_empty()))
+        .bind(req.odoo_company_id)
         .fetch_one(&state.db)
         .await;
         match res {
@@ -620,15 +656,36 @@ pub async fn v1_provision_org(
                 created = Some((id, slug));
                 break;
             }
-            Err(sqlx::Error::Database(db)) if db.is_unique_violation() => continue,
+            // Corrida na chave da empresa Odoo: outro pedido criou-a agora.
+            Err(sqlx::Error::Database(db)) if db.is_unique_violation() => {
+                if let (Some(dbn), Some(cid)) = (&req.odoo_db, req.odoo_company_id) {
+                    if let Some(row) = sqlx::query_as::<_, (Uuid, String)>(
+                        "SELECT id, slug FROM organizations
+                         WHERE odoo_db = $1 AND odoo_company_id = $2",
+                    )
+                    .bind(dbn.trim())
+                    .bind(cid)
+                    .fetch_optional(&state.db)
+                    .await?
+                    {
+                        created = Some(row);
+                        break;
+                    }
+                }
+                continue; // colisão só de slug: tenta o sufixo seguinte
+            }
             Err(e) => return Err(e.into()),
         }
     }
     let (org_id, slug) =
         created.ok_or_else(|| ApiError::internal("could not allocate org slug"))?;
 
+    // `DO NOTHING`: a org pode já existir (reprovisionamento, ou criada antes
+    // por um login SSO) e o utilizador de serviço já ser membro dela.
     sqlx::query(
-        "INSERT INTO org_members (org_id, user_id, role, title) VALUES ($1, $2, 'admin', 'Provisioning')",
+        "INSERT INTO org_members (org_id, user_id, role, title)
+         VALUES ($1, $2, 'admin', 'Provisioning')
+         ON CONFLICT (org_id, user_id) DO NOTHING",
     )
     .bind(org_id)
     .bind(service_user_id)
