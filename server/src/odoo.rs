@@ -89,13 +89,14 @@ impl FromRequestParts<Arc<AppState>> for OdooTokenAuth {
             .fetch_optional(&state.db)
             .await?
         } else if raw.starts_with("dlx_") {
-            sqlx::query_scalar(
-                "SELECT org_id FROM org_api_keys
-                 WHERE key_hash = $1 AND revoked_at IS NULL",
-            )
-            .bind(&hash)
-            .fetch_optional(&state.db)
-            .await?
+            // `org_api_keys` NÃO tem coluna de revogação — revogar é apagar a
+            // linha (ver apikeys::revoke). Filtrar por `revoked_at IS NULL`
+            // rebentava com "column does not exist" (500) e deixava TODO o
+            // caminho /api/v1/integration/odoo/* inacessível com chave dlx_.
+            sqlx::query_scalar("SELECT org_id FROM org_api_keys WHERE key_hash = $1")
+                .bind(&hash)
+                .fetch_optional(&state.db)
+                .await?
         } else {
             return Err(ApiError::Unauthorized);
         };
@@ -203,9 +204,12 @@ pub async fn rotate_token(
     let prefix = token[..12].to_string(); // "dlxo_XXXXXX"
     let hash = sha256_hex(&token);
 
+    // Activa a integração no mesmo passo: o extractor exige
+    // `odoo_enabled = TRUE` para tokens `dlxo_`, portanto rodar a chave numa
+    // org ainda desactivada produzia um token que nunca autenticava.
     sqlx::query(
         "UPDATE organizations
-         SET odoo_token_hash = $1, odoo_token_prefix = $2
+         SET odoo_token_hash = $1, odoo_token_prefix = $2, odoo_enabled = TRUE
          WHERE id = $3",
     )
     .bind(&hash)
@@ -412,55 +416,12 @@ pub async fn public_settings(
     })))
 }
 
-// ---------- validação de credenciais Odoo (usada em auth::login) ----------
-
-pub enum OdooAuthResult {
-    /// Autenticação válida; uid do utilizador no Odoo.
-    Ok(i32),
-    /// Credenciais inválidas (Odoo respondeu uid=false).
-    InvalidCredentials,
-    /// Odoo inacessível — usar hash local (modo offline).
-    Offline,
-}
-
-/// Valida email/password contra o endpoint JSON-RPC do Odoo.
-/// Timeout de 4 s para não bloquear logins quando o Odoo está lento.
-pub async fn odoo_authenticate(
-    client: &reqwest::Client,
-    odoo_url: &str,
-    odoo_db: &str,
-    email: &str,
-    password: &str,
-) -> OdooAuthResult {
-    let url = format!("{odoo_url}/web/session/authenticate");
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "call",
-        "id": 1,
-        "params": {
-            "db": odoo_db,
-            "login": email,
-            "password": password
-        }
-    });
-
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(4),
-        client.post(&url).json(&body).send(),
-    )
-    .await;
-
-    match result {
-        Err(_) | Ok(Err(_)) => OdooAuthResult::Offline,
-        Ok(Ok(resp)) => match resp.json::<serde_json::Value>().await {
-            Err(_) => OdooAuthResult::Offline,
-            Ok(json) => match json["result"]["uid"].as_i64() {
-                Some(uid) if uid > 0 => OdooAuthResult::Ok(uid as i32),
-                _ => OdooAuthResult::InvalidCredentials,
-            },
-        },
-    }
-}
+// ---------- descoberta da config Odoo de um utilizador ----------
+//
+// NOTA: o cliente de autenticação vive em `odoo_sso.rs`. Havia aqui um
+// `odoo_authenticate` que só devolvia o uid; foi substituído porque o login
+// precisa da SESSÃO (cookie) para depois reler o directório de utilizadores —
+// com só o uid, a sincronização era um evento único em vez de um estado.
 
 /// Devolve (org_id, odoo_url, odoo_db) se o utilizador pertence a uma org
 /// com integração Odoo activa e URL/BD configuradas.

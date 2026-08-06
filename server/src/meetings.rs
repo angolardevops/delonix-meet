@@ -335,7 +335,7 @@ pub async fn create(
 
 /// Dispara um evento de reunião para os webhooks das organizações do dono.
 /// O link usa o domínio de produção da org, se configurado (settings).
-async fn fire_meeting_webhook(
+pub(crate) async fn fire_meeting_webhook(
     state: &Arc<AppState>,
     meeting: &Meeting,
     owner: Uuid,
@@ -560,7 +560,14 @@ pub async fn start(
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let meeting: Meeting = sqlx::query_as(
-        "SELECT id, owner_id, title, description, kind, starts_at, duration_min, room_code, created_at, room_ref, minutes, transcript
+        // A lista TEM de cobrir todos os campos de `Meeting` — o `FromRow`
+        // derivado faz `try_get` de cada um e uma coluna em falta é um erro em
+        // runtime (não em compilação). Foi assim que a recorrência (0022)
+        // partiu `start` e `ics` em silêncio.
+        "SELECT id, owner_id, title, description, kind, starts_at, duration_min, room_code,
+                created_at, room_ref, minutes, transcript,
+                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
+                recurrence_byday, recurrence_parent_id
          FROM meetings WHERE id = $1",
     )
     .bind(id)
@@ -669,7 +676,14 @@ pub async fn ics(
     Path(id): Path<Uuid>,
 ) -> Result<axum::response::Response, ApiError> {
     let meeting: Meeting = sqlx::query_as(
-        "SELECT id, owner_id, title, description, kind, starts_at, duration_min, room_code, created_at, room_ref, minutes, transcript
+        // A lista TEM de cobrir todos os campos de `Meeting` — o `FromRow`
+        // derivado faz `try_get` de cada um e uma coluna em falta é um erro em
+        // runtime (não em compilação). Foi assim que a recorrência (0022)
+        // partiu `start` e `ics` em silêncio.
+        "SELECT id, owner_id, title, description, kind, starts_at, duration_min, room_code,
+                created_at, room_ref, minutes, transcript,
+                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
+                recurrence_byday, recurrence_parent_id
          FROM meetings WHERE id = $1",
     )
     .bind(id)
