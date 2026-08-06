@@ -1,0 +1,27 @@
+---
+# container_engine — motor de containers a usar no host (delonix | docker | podman).
+#
+# É A ÚNICA variável que se muda para trocar de motor. Todo o resto (comandos de
+# build/save/load/compose) deriva daqui em `tasks/facts.yml`, para nenhum playbook
+# ter de repetir um `when: container_engine == "..."` por cada comando.
+#
+# O mesmo nome de variável existe no Ansible do delonix-meet (deploy/ansible),
+# deliberadamente — um operador que saiba trocar de motor num sabe no outro.
+container_engine: delonix
+
+# Versão do delonix a instalar. `latest` usa a release mais recente do GitHub;
+# fixar (ex.: "v0.35.1") torna o deploy reprodutível — recomendado em produção.
+# `delonix cluster load` (usado para pôr imagens num cluster kind-mode sem registo)
+# exige >= v0.35.1.
+delonix_version: latest
+
+# Instalar o motor sem privilégios (rootless). O delonix é rootless-first e o
+# podman suporta-o nativamente; o docker rootless exige um instalador próprio, por
+# isso `docker` ignora este valor e instala o daemon normal (documentado, não
+# silencioso — ver `install-docker.yml`).
+container_engine_rootless: true
+
+# Utilizador dono do motor rootless (delonix/podman). Sem isto o motor ficaria
+# instalado à conta do `become` (root) e as imagens não estariam onde o deploy
+# as procura depois.
+container_engine_user: "{{ ansible_user | default(lookup('env', 'USER')) }}"

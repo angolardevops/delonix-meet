@@ -653,16 +653,35 @@ pub async fn patch(
         if list.len() > 200 {
             return Err(ApiError::BadRequest("máximo de 200 convidados".into()));
         }
-        let (keep, sk) =
+        let (_keep, sk) =
             add_invitees(&state, key.org_id, meeting.id, meeting.owner_id, list).await?;
         skipped = sk;
-        // Remove quem saiu da lista. Quem se manteve conserva o `status`
-        // (aceite/recusado) — reescrever o conjunto todo perderia respostas.
+        // Remove quem saiu da lista — decidido pelos EMAILS PEDIDOS, não pelos
+        // que resolveram para um utilizador.
+        //
+        // BUG CORRIGIDO AQUI: a condição era `NOT (user_id = ANY(<resolvidos>))`.
+        // Um convidado que o `add_invitees` devolvia como `skipped` (de outra
+        // org, ou email inválido) não entra nos resolvidos — e era portanto
+        // APAGADO da reunião, apesar de o chamador o ter mesmo listado e de a
+        // resposta lhe dizer «ignorado», não «removido». Pior: com a lista toda
+        // ignorada os resolvidos ficam vazios, e em Postgres
+        // `x = ANY('{}')` é FALSE, logo `NOT FALSE` é TRUE para todas as linhas
+        // — a lista de convidados inteira desaparecia.
+        //
+        // Pelo email, quem foi pedido fica, tenha ou não sido possível
+        // (re)adicioná-lo, e quem o chamador omitiu sai. Quem se manteve conserva
+        // o `status` (aceite/recusado) — reescrever o conjunto todo perderia
+        // respostas.
+        let requested: Vec<String> = list.iter().filter_map(|i| normalize_email(&i.email)).collect();
         sqlx::query(
-            "DELETE FROM meeting_invitees WHERE meeting_id = $1 AND NOT (user_id = ANY($2))",
+            "DELETE FROM meeting_invitees mi
+             USING users u
+             WHERE mi.meeting_id = $1
+               AND u.id = mi.user_id
+               AND NOT (lower(u.email) = ANY($2))",
         )
         .bind(meeting.id)
-        .bind(&keep)
+        .bind(&requested)
         .execute(&state.db)
         .await?;
     }

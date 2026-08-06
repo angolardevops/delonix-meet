@@ -426,16 +426,27 @@ pub async fn public_settings(
 /// Devolve (org_id, odoo_url, odoo_db) se o utilizador pertence a uma org
 /// com integração Odoo activa e URL/BD configuradas.
 pub async fn org_odoo_config(db: &sqlx::PgPool, email: &str) -> Option<(Uuid, String, String)> {
+    // A autoridade é a org que GERE a conta (`users.odoo_org_id`), não "uma
+    // qualquer org a que o email pertença".
+    //
+    // A forma anterior juntava por `org_members` com `LIMIT 1` e SEM `ORDER BY`:
+    // para quem estivesse em mais do que uma org com Odoo, saía uma arbitrária —
+    // e podia sair diferente entre dois logins seguidos. Como é esta função que
+    // decide CONTRA QUE ODOO a password é validada, isso era escolher a
+    // autoridade de autenticação por sorteio. Com a sincronização de directório
+    // a poder reclamar contas por email (fechado em `odoo_sso::upsert_member`),
+    // as duas coisas juntas davam tomada de conta.
+    //
+    // `odoo_org_id` NULL = conta local: não devolve nada, e o `auth::login` cai
+    // no caminho da password local, que é o correcto para ela.
     sqlx::query_as::<_, (Uuid, String, String)>(
         "SELECT o.id, o.odoo_url, o.odoo_db
          FROM organizations o
-         JOIN org_members m ON m.org_id = o.id
-         JOIN users u ON u.id = m.user_id
+         JOIN users u ON u.odoo_org_id = o.id
          WHERE u.email = $1
            AND o.odoo_enabled = TRUE
            AND o.odoo_url IS NOT NULL
-           AND o.odoo_db IS NOT NULL
-         LIMIT 1",
+           AND o.odoo_db IS NOT NULL",
     )
     .bind(email)
     .fetch_optional(db)

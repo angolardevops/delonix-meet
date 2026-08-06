@@ -1,0 +1,41 @@
+---
+# container_engine — instala e configura o motor de containers do host.
+#
+# ESPELHO do role canónico em `delonix-deploy`
+# (collections/ansible_collections/ngolacloud/platform/roles/container_engine).
+# A cópia é deliberada: este Ansible tem de correr sozinho, sem puxar uma
+# collection de um repositório privado. Se mexeres na tabela de comandos
+# (`facts.yml`), mexe NOS DOIS — a variável `container_engine` e os factos
+# `engine_*` são o contrato partilhado entre os dois repositórios.
+#
+# Os roles que CORREM cargas (imagens, serviços) consomem os factos `engine_*`
+# produzidos por `facts.yml` e nunca invocam `docker`/`podman`/`delonix` pelo nome.
+#
+# Uso mínimo:
+#     - include_role: { name: container_engine }
+#     - command: "{{ engine_build }} -t app:1 ."
+#
+# Só factos (sem instalar nada), quando o motor já lá está:
+#     - include_role:
+#         name: container_engine
+#         tasks_from: facts
+
+- name: "Derivar os comandos do motor"
+  ansible.builtin.import_tasks: facts.yml
+
+- name: "Instalar o motor '{{ container_engine }}'"
+  ansible.builtin.include_tasks: "install-{{ container_engine }}.yml"
+  when: container_engine_install | default(true) | bool
+
+- name: "Confirmar que o motor responde"
+  ansible.builtin.command: "{{ engine_cli }} --version"
+  register: _engine_version
+  changed_when: false
+  # Sem `become` de propósito nos motores rootless: o que interessa é que o
+  # UTILIZADOR do deploy o consegue correr, não o root. Um motor instalado mas
+  # inutilizável pela conta que faz o deploy é a falha que se quer apanhar aqui.
+  become: "{{ not engine_rootless }}"
+
+- name: "Motor pronto"
+  ansible.builtin.debug:
+    msg: "{{ container_engine }}: {{ _engine_version.stdout_lines | first | default('?') }}"

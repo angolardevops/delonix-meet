@@ -52,6 +52,18 @@ web_root: "{{ cfg.paths.web_root | default('/var/www/delonix') }}"
 recordings_dir: "{{ cfg.paths.recordings_dir | default('/var/lib/delonix/recordings') }}"
 tls_dir: "{{ cfg.paths.tls_dir | default('/etc/ssl/delonix') }}"
 
+# ---- Motor de containers (delonix | docker | podman) ----
+# UMA variável decide o motor em todo o deploy: instalação, build, save/load das
+# imagens e os serviços por compose. Os roles usam os factos `engine_*` do role
+# `container_engine` e nunca invocam um motor pelo nome.
+#
+# O MESMO nome de variável existe no Ansible do delonix-deploy (role canónico) —
+# quem sabe trocar de motor num, sabe no outro.
+#
+# `delonix` é o default da plataforma (rootless, daemonless, sem socket global).
+# Para o modo kind, `delonix cluster load` exige delonix >= v0.35.1.
+container_engine: delonix
+
 # ---- Kubernetes (multi-host / kind) ----
 k8s_metallb_range: "{{ cfg.kubernetes.metallb_ip_range | default('') }}"
 k8s_postgres_ha: "{{ cfg.kubernetes.postgres_ha | default(true) }}"

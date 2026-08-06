@@ -1,0 +1,63 @@
+---
+# Comandos derivados do motor escolhido — a tradução acontece AQUI, uma vez, e
+# todos os outros roles usam `engine_*` sem saber qual o motor.
+#
+# Porquê factos e não `when:` espalhados: cada `when: container_engine == "docker"`
+# repetido é um sítio onde um motor novo (ou uma diferença de sintaxe) é esquecido
+# em silêncio. Um role que precise de algo que um motor NÃO faz falha alto (ver
+# `engine_compose` no podman) em vez de correr o comando errado.
+
+- name: "Comandos do motor '{{ container_engine }}'"
+  ansible.builtin.set_fact:
+    engine_cli: "{{ _engine_map[container_engine].cli }}"
+    engine_build: "{{ _engine_map[container_engine].build }}"
+    engine_save: "{{ _engine_map[container_engine].save }}"
+    engine_load: "{{ _engine_map[container_engine].load }}"
+    engine_run: "{{ _engine_map[container_engine].run }}"
+    engine_compose: "{{ _engine_map[container_engine].compose }}"
+    engine_ps: "{{ _engine_map[container_engine].ps }}"
+    engine_rootless: "{{ container_engine != 'docker' and container_engine_rootless }}"
+  vars:
+    _engine_map:
+      delonix:
+        cli: delonix
+        build: delonix build
+        # FORMA DE CHAMADA (a mesma para os três motores, de propósito):
+        #     {{ engine_save }} <imagem> -o <ficheiro>
+        #
+        # É a que o `make export-images` já exercita. Antes, o `-o` vinha
+        # embutido no facto para docker/podman (`docker save -o`) mas não para o
+        # delonix — não havia UMA ordem de argumentos que servisse os três, e a
+        # razão de existir deste ficheiro é justamente essa tradução acontecer
+        # aqui uma vez. Sem chamadores ainda, o defeito estava só à espera do
+        # primeiro.
+        save: delonix image save
+        load: delonix image load -i
+        run: delonix container run
+        # Suporte nativo a docker-compose.yml desde v0.29.0 (parser próprio).
+        compose: delonix compose
+        ps: delonix container ls
+      docker:
+        cli: docker
+        build: docker build
+        save: docker save
+        load: docker load -i
+        run: docker run
+        compose: docker compose
+        ps: docker ps
+      podman:
+        cli: podman
+        build: podman build
+        save: podman save
+        load: podman load -i
+        run: podman run
+        # `podman compose` delega no podman-compose/docker-compose instalado —
+        # instalado por `install-podman.yml` precisamente por isto.
+        compose: podman compose
+        ps: podman ps
+
+- name: "Motor desconhecido — falha explícita antes de qualquer instalação"
+  ansible.builtin.fail:
+    msg: >-
+      container_engine='{{ container_engine }}' inválido — usa delonix, docker ou podman.
+  when: container_engine not in ['delonix', 'docker', 'podman']

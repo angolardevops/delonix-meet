@@ -24,6 +24,17 @@
   hosts: single_host
   become: true
   gather_facts: true
+  vars:
+    # O compose desta play usa `-f a -f b` E `--wait`, e o motor `delonix` não
+    # suporta multi-ficheiro (documentado como por-fazer no delonix-runtime).
+    # O default global passou a `delonix` para o caminho kind, e a guarda no
+    # role `single_host` passou a disparar em TODOS os deploys single-host —
+    # abortavam à saída da caixa, sem ninguém ter escolhido motor nenhum.
+    #
+    # Fixado AQUI e não no role: `vars` de play vence `group_vars/all`, mas
+    # perde para `-e container_engine=…`. Quem escolher outro motor de propósito
+    # continua a receber a mensagem da guarda, que é a informação certa.
+    container_engine: docker
   roles:
     - role: preflight            # resolve public_ip_effective NESTE host também
       when: deploy_mode == 'single-host'

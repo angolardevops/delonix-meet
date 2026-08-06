@@ -1,0 +1,62 @@
+---
+# Serviço de container gerido pelo systemd, persistente ao reboot.
+#
+#     - include_role:
+#         name: container_engine
+#         tasks_from: quadlet
+#       vars:
+#         quadlet_name: minha-app
+#         quadlet_image: ghcr.io/org/app:1.2.3
+#         quadlet_ports: ["8080:80"]        # opcional
+#         quadlet_env: { KEY: value }       # opcional
+#         quadlet_volumes: ["/srv/app:/data"]  # opcional
+#
+# **Quadlet é do podman.** Nos outros motores isto gera uma unit systemd
+# equivalente que invoca o CLI respectivo — o resultado (serviço que arranca no
+# boot e reinicia em falha) é o mesmo, o mecanismo não. É deliberado não fingir
+# que os três têm quadlet: o podman gera a unit a partir do `.container` pelo
+# `podman-system-generator`, os outros não têm nada equivalente.
+
+- name: "Comandos do motor (se este ficheiro for incluído sozinho)"
+  ansible.builtin.import_tasks: facts.yml
+  when: engine_cli is not defined
+
+- name: "Directório das units ({{ 'utilizador' if engine_rootless else 'sistema' }})"
+  become: "{{ not engine_rootless }}"
+  ansible.builtin.file:
+    path: "{{ _unit_dir }}"
+    state: directory
+    mode: "0755"
+  vars:
+    _unit_dir: "{{ (ansible_env.HOME ~ '/.config/containers/systemd') if engine_rootless else '/etc/containers/systemd' }}"
+  when: container_engine == 'podman'
+
+- name: "Quadlet .container (podman)"
+  become: "{{ not engine_rootless }}"
+  ansible.builtin.template:
+    src: quadlet.container.j2
+    dest: "{{ ((ansible_env.HOME ~ '/.config/containers/systemd') if engine_rootless else '/etc/containers/systemd') ~ '/' ~ quadlet_name ~ '.container' }}"
+    mode: "0644"
+  when: container_engine == 'podman'
+  notify: recarregar systemd
+
+- name: "Unit systemd equivalente ({{ container_engine }})"
+  become: "{{ not engine_rootless }}"
+  ansible.builtin.template:
+    src: engine-service.j2
+    dest: "{{ ((ansible_env.HOME ~ '/.config/systemd/user') if engine_rootless else '/etc/systemd/system') ~ '/' ~ quadlet_name ~ '.service' }}"
+    mode: "0644"
+  when: container_engine != 'podman'
+  notify: recarregar systemd
+
+- name: "Recarregar o systemd antes de arrancar"
+  ansible.builtin.meta: flush_handlers
+
+- name: "Serviço {{ quadlet_name }} activo e no boot"
+  become: "{{ not engine_rootless }}"
+  ansible.builtin.systemd:
+    name: "{{ quadlet_name }}.service"
+    state: started
+    enabled: true
+    scope: "{{ 'user' if engine_rootless else 'system' }}"
+    daemon_reload: true
