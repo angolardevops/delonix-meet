@@ -29,11 +29,33 @@
     mode: "0640"
   notify: restart delonix-server
 
-# ---- Infra (Postgres/Redis/coturn via docker compose, override de prod) ----
-- name: "Subir a infra (docker compose prod)"
+# ---- Infra (Postgres/Redis/coturn via compose, override de prod) ----
+# O motor sai do role `container_engine` (`container_engine: delonix|docker|
+# podman`): os três leem o MESMO docker-compose.yml.
+# NOTA para o motor `delonix`: `--wait` e multi-ficheiro (`-f a -f b`) NÃO estão
+# implementados no compose nativo dele (ver HARNESS.md do delonix-runtime) — este
+# host precisa de `container_engine: docker` enquanto usar as duas flags, e
+# falha alto abaixo em vez de arrancar a infra pela metade em silêncio.
+- name: "Comandos do motor"
+  ansible.builtin.include_role:
+    name: container_engine
+    tasks_from: facts
+
+- name: "compose multi-ficheiro + --wait não é suportado por este motor"
+  ansible.builtin.fail:
+    msg: >-
+      container_engine='{{ container_engine }}' não suporta `-f a -f b` nem
+      `--wait` no compose, e esta play precisa dos dois. O modo single-host
+      corre em `docker` por omissão (ver `vars` da play em site.yml) — só chegas
+      aqui se passaste `-e container_engine={{ container_engine }}`. Tira esse
+      override, ou funde os dois ficheiros compose num só e substitui o `--wait`
+      por um sondar de saúde.
+  when: container_engine != 'docker'
+
+- name: "Subir a infra (compose prod, {{ container_engine }})"
   ansible.builtin.command:
     cmd: >-
-      docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --wait
+      {{ engine_compose }} -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --wait
     chdir: "{{ repo_root }}"
   environment:
     POSTGRES_PASSWORD: "{{ postgres_password }}"

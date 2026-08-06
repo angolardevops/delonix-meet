@@ -1,0 +1,52 @@
+---
+# podman — daemonless como o delonix, rootless nativo. É a alternativa suportada
+# para quem já tem podman padronizado na frota.
+
+- name: "podman + dependências rootless"
+  become: true
+  ansible.builtin.package:
+    name: "{{ _podman_pkgs }}"
+    state: present
+  vars:
+    # Os nomes divergem entre famílias — confirmado nos repositórios de cada uma
+    # (mesma armadilha já documentada na golden VM: `uidmap` é `shadow-utils` em
+    # RHEL, `iproute2` é `iproute`).
+    _podman_pkgs: >-
+      {{ ['podman', 'slirp4netns', 'fuse-overlayfs']
+         + (['uidmap'] if ansible_os_family == 'Debian' else ['shadow-utils']) }}
+
+- name: "podman-compose (para `podman compose`)"
+  become: true
+  ansible.builtin.package:
+    name: podman-compose
+    state: present
+  register: _pcompose
+  # `podman compose` delega num compose externo; se o pacote não existir na
+  # distro, o resto do deploy (build/run/save/load) continua válido.
+  failed_when: false
+
+- name: "AVISO: `podman compose` indisponível"
+  ansible.builtin.debug:
+    msg: >-
+      podman-compose não estava disponível nesta distro. `engine_compose` vai
+      falhar se for usado — instala-o (pip install podman-compose) ou usa
+      quadlet/systemd para os serviços.
+  when: _pcompose is failed
+
+- name: "Intervalo subuid/subgid de {{ container_engine_user }}"
+  become: true
+  ansible.builtin.command: "usermod --add-subuids 100000-165535 --add-subgids 100000-165535 {{ container_engine_user }}"
+  register: _subid
+  changed_when: _subid.rc == 0
+  failed_when: _subid.rc not in [0, 4] # 4 = intervalo já existe
+  when: container_engine_rootless | bool
+
+# Serviços rootless têm de sobreviver ao logout da conta — sem linger, o systemd
+# do utilizador morre com a última sessão e leva os containers com ele.
+- name: "Linger para {{ container_engine_user }} (serviços rootless persistentes)"
+  become: true
+  ansible.builtin.command: "loginctl enable-linger {{ container_engine_user }}"
+  register: _linger
+  changed_when: _linger.rc == 0
+  failed_when: false
+  when: container_engine_rootless | bool

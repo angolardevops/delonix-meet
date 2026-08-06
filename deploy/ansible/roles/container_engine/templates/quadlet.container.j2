@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+# Quadlet do podman: o podman-system-generator transforma isto numa unit systemd
+# no arranque. Editar aqui, nunca a unit gerada.
+[Unit]
+Description=({{ quadlet_name }}) container gerido por quadlet
+
+[Container]
+Image={{ quadlet_image }}
+ContainerName={{ quadlet_name }}
+{% for p in quadlet_ports | default([]) %}
+PublishPort={{ p }}
+{% endfor %}
+{% for v in quadlet_volumes | default([]) %}
+Volume={{ v }}
+{% endfor %}
+{% for k, v in (quadlet_env | default({})).items() %}
+Environment={{ k }}={{ v }}
+{% endfor %}
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,54 @@
+---
+# docker — daemon + socket global. Suportado para ambientes que já o tenham como
+# padrão; NÃO é o motor por omissão da plataforma (ver o HARNESS.md da raiz: o
+# princípio é não depender de um socket docker global).
+
+- name: "AVISO: container_engine_rootless não se aplica ao docker"
+  ansible.builtin.debug:
+    msg: >-
+      container_engine_rootless=true foi pedido, mas este role instala o docker
+      com daemon (rootful). O rootless do docker tem instalador próprio
+      (dockerd-rootless-setuptool.sh) e um modelo de sockets diferente — pedir
+      podman ou delonix é o caminho rootless suportado aqui.
+  when: container_engine_rootless | bool
+
+- name: "docker.io (repositórios da distro)"
+  become: true
+  ansible.builtin.package:
+    name: "{{ 'docker.io' if ansible_os_family == 'Debian' else 'docker' }}"
+    state: present
+
+- name: "Serviço docker a correr e no boot"
+  become: true
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+# Sem isto, todo o comando do deploy precisaria de `become` — e as imagens
+# construídas como root ficariam invisíveis para a conta que faz o resto.
+- name: "{{ container_engine_user }} no grupo docker"
+  become: true
+  ansible.builtin.user:
+    name: "{{ container_engine_user }}"
+    groups: docker
+    append: true
+  notify: reiniciar sessao ssh
+
+- name: "Compose v2 (plugin) presente"
+  become: true
+  ansible.builtin.package:
+    name: docker-compose-v2
+    state: present
+  register: _compose_pkg
+  # Nem todas as distros empacotam o plugin com este nome; falhar aqui pararia um
+  # deploy que só precisa de build/run. O `engine_compose` avisa se faltar.
+  failed_when: false
+
+- name: "AVISO: `docker compose` pode não existir neste host"
+  ansible.builtin.debug:
+    msg: >-
+      O pacote docker-compose-v2 não estava disponível. `docker compose` só
+      funcionará se o plugin já estiver instalado por outra via — instala-o antes
+      de usar tarefas que dependam de `engine_compose`.
+  when: _compose_pkg is failed or _compose_pkg is skipped

@@ -203,20 +203,44 @@ ifeq ($(BUILDER),delonix)
   IMG_BUILD := delonix build
   IMG_TAG_CMD := delonix image tag
   IMG_LS    := delonix image ls
+  IMG_PULL  := delonix image pull
+  # Carregar imagem no cluster SEM registo: `delonix cluster load` empacota a
+  # imagem do store local e importa-a no containerd de cada nó — o equivalente
+  # exacto do `kind load docker-image`, mas sem o binário `kind` (que é um
+  # cliente docker e exigiria um provider Docker/Podman que esta máquina não
+  # tem por princípio). Requer delonix >= v0.35.0.
+  IMG_LOAD  := delonix cluster load
+  # `delonix image save` exige `-o` (docker/podman escrevem em stdout por
+  # omissão) — daí a forma `<cmd> <imagem> -o <ficheiro>` no export-images.
+  IMG_SAVE  := delonix image save
+  # Um nó kind precisa de delegação de cgroup2 — sem o scope o kubelet arranca
+  # em loop e o cluster nunca fica Ready (a mensagem do próprio `cluster create`
+  # avisa disso).
+  CLUSTER_CREATE := systemd-run --user --scope -q -p Delegate=yes delonix cluster create
+  # O kubeconfig do cluster kind-mode: usado só se existir, para o kubectl deste
+  # Makefile apontar ao cluster certo sem depender do ~/.kube/config ambiente.
+  DLX_KUBECONFIG := $(HOME)/.local/share/delonix/clusters/$(KIND_CLUSTER)-kubeconfig.yaml
+  ifneq ($(wildcard $(DLX_KUBECONFIG)),)
+    export KUBECONFIG := $(DLX_KUBECONFIG)
+  endif
 else
   IMG_BUILD := docker build
   IMG_TAG_CMD := docker tag
   IMG_LS    := docker images
+  IMG_PULL  := docker pull
+  IMG_LOAD  := kind load docker-image
+  IMG_SAVE  := docker save
+  CLUSTER_CREATE := kind create cluster
 endif
 
 # make image   → constrói delonix-server:latest e delonix-web:latest
-# make push    → kind load docker-image (carrega no cluster kind)
+# make push    → carrega as imagens no cluster ($(IMG_LOAD))
 # make image-push → build + load (o que é preciso antes de make stage)
 #
-# Porquê kind load em vez de registry?
-#   O cluster kind corre em containers docker sem acesso ao Docker Hub
-#   (offline / rate-limit). kind load docker-image injeta a imagem
-#   diretamente no containerd do nó, sem precisar de registry externo.
+# Porquê carregar em vez de registry?
+#   O cluster corre sem acesso ao Docker Hub (offline / rate-limit). Carregar
+#   injeta a imagem diretamente no containerd do nó, sem registry externo.
+#   Com delonix: `cluster load` (v0.35.0+); com docker: `kind load docker-image`.
 
 .PHONY: image
 image: ## Constrói delonix-server e delonix-web com a tag versionada ($(IMAGE_TAG))
@@ -235,10 +259,10 @@ image: ## Constrói delonix-server e delonix-web com a tag versionada ($(IMAGE_T
 	@$(IMG_LS) 2>/dev/null | grep -E "delonix-(server|web)" || true
 
 .PHONY: push
-push: ## kind load + PIN da tag versionada nos Deployments (rollout determinista)
-	@printf "$(C)▶ kind load $(IMAGE_SERVER) + $(IMAGE_WEB) → $(KIND_CLUSTER)$(Z)\n"
-	@kind load docker-image $(IMAGE_SERVER) --name $(KIND_CLUSTER)
-	@kind load docker-image $(IMAGE_WEB) --name $(KIND_CLUSTER)
+push: ## load das imagens no cluster + PIN da tag versionada nos Deployments
+	@printf "$(C)▶ load $(IMAGE_SERVER) + $(IMAGE_WEB) → $(KIND_CLUSTER)$(Z)\n"
+	@$(IMG_LOAD) $(IMAGE_SERVER) --name $(KIND_CLUSTER)
+	@$(IMG_LOAD) $(IMAGE_WEB) --name $(KIND_CLUSTER)
 	@$(MAKE) --no-print-directory pin
 
 .PHONY: pin
@@ -251,7 +275,7 @@ pin: ## Fixa a tag $(IMAGE_TAG) nos Deployments e espera o rollout
 	@printf "$(G)  ✓ cluster a correr $(IMAGE_SERVER) / $(IMAGE_WEB)$(Z)\n"
 
 .PHONY: image-push
-image-push: image push ## Build versionado + kind load + pin (pipeline completo p/ stage k8s)
+image-push: image push ## Build versionado + load no cluster + pin (pipeline completo p/ stage k8s)
 
 # Pré-puxa imagens da infra (Bitnami Postgres/Redis) do Docker Hub e
 # injeta-as no kind. Resolve o ImagePullBackOff quando o cluster não
@@ -261,7 +285,7 @@ image-push: image push ## Build versionado + kind load + pin (pipeline completo 
 # para stage/kind porque o chart postgresql-HA (pgpool + postgresql-repmgr)
 # removeu as suas imagens do Docker Hub em 2024 para o OCI registry privado.
 .PHONY: infra-pull
-infra-pull: ## Pré-carrega imagens Bitnami (Postgres single/Redis standalone) no kind
+infra-pull: ## Pré-carrega imagens Bitnami (Postgres single/Redis standalone) no cluster
 	@printf "$(C)▶ a extrair imagens da infra (charts de stage)...$(Z)\n"
 	@IMGS=$$(helm template delonix-postgres bitnami/postgresql \
 	    -f deploy/k8s/helm-values/postgres-stage-values.yaml -n delonix-meet 2>/dev/null \
@@ -272,9 +296,9 @@ infra-pull: ## Pré-carrega imagens Bitnami (Postgres single/Redis standalone) n
 	 for img in $$IMGS; do \
 	   [ -z "$$img" ] && continue; \
 	   printf "  ▷ $$img\n"; \
-	   docker pull "$$img" -q 2>/dev/null \
+	   $(IMG_PULL) "$$img" 2>/dev/null \
 	     || printf "  $(Y)  ! pull falhou — sem acesso ao registo para $$img$(Z)\n"; \
-	   kind load docker-image "$$img" --name $(KIND_CLUSTER) 2>/dev/null || true; \
+	   $(IMG_LOAD) "$$img" --name $(KIND_CLUSTER) 2>/dev/null || true; \
 	 done
 	@printf "$(G)  ✓ imagens da infra carregadas no kind$(Z)\n"
 
@@ -317,8 +341,8 @@ metallb-kind: ## Instala MetalLB no kind e cria pool com IPs da rede docker kind
 # ============================================================
 .PHONY: stage
 stage: image-push ## Build + kind load + deploy k8s completo no cluster kind local
-	@printf "$(C)▶ Criando cluster kind '$(KIND_CLUSTER)' (idempotente)...$(Z)\n"
-	@kind create cluster --name $(KIND_CLUSTER) 2>/dev/null || true
+	@printf "$(C)▶ Criando cluster '$(KIND_CLUSTER)' (idempotente)...$(Z)\n"
+	@$(CLUSTER_CREATE) --name $(KIND_CLUSTER) 2>/dev/null || true
 	@printf "$(C)▶ Instalando NGINX Ingress Controller...$(Z)\n"
 	@kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
 	@kubectl wait --namespace ingress-nginx \
@@ -467,8 +491,13 @@ deploy-config: ## Cria deploy/config.yml a partir do exemplo (se não existir)
 export-images: image ## Exporta imagens Docker para /tmp/dlx-images/ (transfer. para kind remoto)
 	@printf "$(C)▶ a exportar imagens para /tmp/dlx-images/$(Z)\n"
 	@mkdir -p /tmp/dlx-images
-	@docker save $(IMAGE_SERVER) $(IMAGE_SERVER_REPO):latest | gzip > /tmp/dlx-images/delonix-server.tar.gz
-	@docker save $(IMAGE_WEB)    $(IMAGE_WEB_REPO):latest    | gzip > /tmp/dlx-images/delonix-web.tar.gz
+	@# Uma imagem por arquivo: o `delonix image save` guarda UMA referência por
+	@# arquivo (o docker aceita várias). A tag versionada é a que o deploy usa;
+	@# `:latest` deixou de ser exportada de propósito — era ela que dava o
+	@# "imagem stale" documentado no HARNESS.md.
+	@$(IMG_SAVE) $(IMAGE_SERVER) -o /tmp/dlx-images/delonix-server.tar
+	@$(IMG_SAVE) $(IMAGE_WEB)    -o /tmp/dlx-images/delonix-web.tar
+	@gzip -f /tmp/dlx-images/delonix-server.tar /tmp/dlx-images/delonix-web.tar
 	@printf "$(G)  ✓ imagens exportadas:$(Z)\n"
 	@ls -lh /tmp/dlx-images/*.tar.gz
 
@@ -483,6 +512,7 @@ deploy-kaeso: export-images ## Build + export + Ansible deploy no preprod kaeso 
 	  cd deploy/ansible && ansible-playbook site.yml \
 	    -i inventory.ini \
 	    --limit kaeso01 \
+	    -e image_tag=$(IMAGE_TAG) \
 	    --become-password-file "$$_PASS_FILE" \
 	    $(ANSIBLE_ARGS); \
 	  _RC=$$?; rm -f "$$_PASS_FILE"; exit $$_RC

@@ -1,0 +1,13 @@
+---
+# O grupo `docker` só entra em vigor numa sessão nova — o Ansible reutiliza a
+# ligação SSH, por isso é preciso reiniciá-la explicitamente ou o primeiro
+# `docker ps` sem `become` falha com "permission denied on /var/run/docker.sock"
+# logo a seguir a um deploy que correu "com sucesso".
+- name: reiniciar sessao ssh
+  ansible.builtin.meta: reset_connection
+
+- name: recarregar systemd
+  become: "{{ not engine_rootless }}"
+  ansible.builtin.systemd:
+    daemon_reload: true
+    scope: "{{ 'user' if engine_rootless else 'system' }}"
