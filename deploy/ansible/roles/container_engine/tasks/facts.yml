@@ -7,6 +7,16 @@
 # em silêncio. Um role que precise de algo que um motor NÃO faz falha alto (ver
 # `engine_compose` no podman) em vez de correr o comando errado.
 
+# PRIMEIRO, senão nunca chega a correr: o `set_fact` abaixo indexa
+# `_engine_map[container_engine]`, e uma chave desconhecida rebenta AÍ com
+# `object of type 'dict' has no attribute 'bogus'` — medido. A mensagem que
+# nomeia os motores válidos ficava inalcançável, que é o mesmo que não existir.
+- name: "Motor desconhecido — falha explícita antes de qualquer instalação"
+  ansible.builtin.fail:
+    msg: >-
+      container_engine='{{ container_engine }}' inválido — usa delonix, docker ou podman.
+  when: container_engine not in ['delonix', 'docker', 'podman']
+
 - name: "Comandos do motor '{{ container_engine }}'"
   ansible.builtin.set_fact:
     engine_cli: "{{ _engine_map[container_engine].cli }}"
@@ -55,9 +65,3 @@
         # instalado por `install-podman.yml` precisamente por isto.
         compose: podman compose
         ps: podman ps
-
-- name: "Motor desconhecido — falha explícita antes de qualquer instalação"
-  ansible.builtin.fail:
-    msg: >-
-      container_engine='{{ container_engine }}' inválido — usa delonix, docker ou podman.
-  when: container_engine not in ['delonix', 'docker', 'podman']
