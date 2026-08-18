@@ -52,3 +52,7 @@ backups/
 # Credenciais de ambiente (12-factor — nunca no repo)
 deploy/ansible/.env.*
 deploy/ansible/vault/
+
+# Configuração local de ferramentas de agente (fica na máquina, não no repo).
+.claude/
+CLAUDE.md
