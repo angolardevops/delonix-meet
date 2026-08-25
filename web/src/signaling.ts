@@ -49,6 +49,9 @@ export interface PeerInfo {
 
 export type ServerMsg =
   | { type: 'joined'; peer_id: string; peers: PeerInfo[] }
+  /** Este nó vai fechar. Reconectar daqui a `reconnect_in_ms` (mais jitter)
+   *  migra a sala para outro pod — ver `callRecovery`/Room.tsx. */
+  | { type: 'draining'; reconnect_in_ms: number }
   | { type: 'peer-joined'; peer: PeerInfo }
   | { type: 'peer-left'; peer_id: string }
   | { type: 'offer'; from: string; sdp: string }

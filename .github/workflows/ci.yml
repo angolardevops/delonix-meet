@@ -131,7 +131,7 @@ jobs:
   # negativas» — e um teste de isolamento contra um duplo prova o duplo, não o
   # produto.
   isolamento:
-    name: Isolamento entre inquilinos e MFA
+    name: Isolamento, MFA, gravação e drain
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -170,6 +170,7 @@ jobs:
           # default de produção não muda.
           DELONIX_ALLOW_INSECURE=1 COOKIE_INSECURE=1 AUTH_RATE_PER_MIN=2000 \
             RECORDINGS_DIR=/tmp/gravacoes \
+            DRAIN_READINESS_SECS=2 DRAIN_GRACE_SECS=25 DRAIN_RECONNECT_MS=1000 \
             ./server/target/release/delonix-server > /tmp/servidor.log 2>&1 &
           for i in $(seq 1 60); do
             curl -sf http://localhost:8180/api/status >/dev/null && exit 0
@@ -213,6 +214,9 @@ jobs:
           # indicador aceso a reunião inteira e ficava sem nada nem aviso.
           # Precisa do vite (carrega o arnês de media), por isso corre aqui.
           APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
+          # O DRAIN vai por último: manda SIGTERM ao servidor e espera que ele
+          # feche. Qualquer teste depois deste ficaria sem servidor.
+          APP=http://localhost:5174 node web/e2e/drain.mjs
 
       # Sem isto, uma falha de interface no CI é um timeout sem contexto. Com a
       # imagem do momento da falha, diagnostica-se sem ter de reproduzir.

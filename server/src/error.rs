@@ -17,6 +17,11 @@ pub enum ApiError {
     NotFound,
     #[error("too many requests")]
     TooManyRequests,
+    /// Este nó não pode servir AGORA, mas outro pode — é o caso do drain. É
+    /// diferente de `Unauthorized` (nunca pode) e de `Internal` (avariou): diz
+    /// ao cliente para voltar a tentar, e o balanceador manda-o para outro pod.
+    #[error("{0}")]
+    ServiceUnavailable(String),
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -46,6 +51,7 @@ impl IntoResponse for ApiError {
             ApiError::TooManyRequests => {
                 (StatusCode::TOO_MANY_REQUESTS, "too many requests".into())
             }
+            ApiError::ServiceUnavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m.clone()),
             ApiError::Internal(e) => {
                 tracing::error!(error = %e, "internal error");
                 // Never leak internals to the client.

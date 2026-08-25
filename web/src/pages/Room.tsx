@@ -874,6 +874,23 @@ export default function Room({
           if (panelRef.current !== 'chat') setUnreadChat((n) => n + 1)
         })
         signal.on('error', (m) => setStatus(m.message))
+        // Este nó vai fechar. Não é um erro nem uma expulsão: a chamada
+        // continua a funcionar, e migra-se quando o servidor disser.
+        //
+        // O JITTER não é enfeite. Um pod a drenar avisa a sala INTEIRA no mesmo
+        // instante; sem jitter, vinte pessoas reconectam no mesmo milissegundo
+        // e o pod novo leva com a sala toda de uma vez — trocava-se um
+        // encerramento ordenado por uma avalanche.
+        signal.on('draining', ({ reconnect_in_ms }) => {
+          if (cancelled) return
+          setStatus('O servidor vai reiniciar — a mudar de nó, sem sair da reunião.')
+          const jitter = Math.round(reconnect_in_ms * Math.random())
+          sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
+          setTimeout(() => {
+            if (!cancelled) location.reload()
+          }, reconnect_in_ms + jitter)
+        })
+
         signal.onclose = () => {
           if (cancelled) return // saída intencional da sala
           // O WS caiu (rede/proxy). Sem sinalização não há renegociação → media

@@ -28,7 +28,10 @@ spec:
       # O SFU é in-memory por pod: dar tempo para as sessões drenarem no SIGTERM
       # (rollout/drain) em vez de cortar abruptamente. Com maxUnavailable:0 +
       # afinidade por sala, os clientes reconectam à mesma sala/pod.
-      terminationGracePeriodSeconds: 45
+      # 60 s: tem de ser MAIOR que o DRAIN_GRACE_SECS do servidor (40) mais o
+      # DRAIN_READINESS_SECS (12), senão o SIGKILL chega a meio do drain e as
+      # salas caem à mesma — que era exactamente o que acontecia com 45 s.
+      terminationGracePeriodSeconds: 60
       # Imagem distroless :nonroot (uid 65532) — hardening seguro. NÃO ligar
       # readOnlyRootFilesystem sem volume writable p/ RECORDINGS_DIR (gravações).
       securityContext:
@@ -51,12 +54,25 @@ spec:
                 name: delonix-config
             - secretRef:
                 name: delonix-secrets
+          # READINESS aponta para /ready, NÃO para /health.
+          #
+          # Apontava para o /health, que devolve `ok` enquanto o processo
+          # viver — incluindo durante o encerramento. O K8s mantinha o pod nos
+          # endpoints do Service e continuava a mandar-lhe entradas novas, que
+          # morriam com ele. O /ready devolve 503 assim que o SIGTERM chega.
+          #
+          # `failureThreshold: 1` para o pod sair dos endpoints à PRIMEIRA
+          # falha: cada sonda a mais são 10 s de gente a entrar num pod que já
+          # está a fechar.
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: http
             initialDelaySeconds: 5
-            periodSeconds: 10
+            periodSeconds: 5
+            failureThreshold: 1
+          # LIVENESS continua no /health: um pod a drenar está vivo e deve ser
+          # DEIXADO TERMINAR, não reiniciado a meio.
           livenessProbe:
             httpGet:
               path: /health

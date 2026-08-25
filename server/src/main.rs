@@ -73,6 +73,14 @@ use signaling::SignalingHub;
 
 pub struct AppState {
     pub config: Config,
+    /// O pod está a DRENAR (recebeu SIGTERM e vai fechar).
+    ///
+    /// Enquanto está a true: o `/ready` devolve 503 (o K8s tira o pod dos
+    /// endpoints do Service, e as entradas NOVAS deixam de chegar aqui), as
+    /// salas em curso continuam, e os participantes são avisados para
+    /// migrarem. É a diferença entre uma actualização que ninguém nota e uma
+    /// que derruba todas as reuniões do pod — que era o comportamento antes.
+    pub draining: std::sync::atomic::AtomicBool,
     /// Instante de arranque (para o uptime da status page).
     pub started: std::time::Instant,
     pub db: sqlx::PgPool,
@@ -137,7 +145,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         ));
 
     Router::new()
+        // LIVENESS: o processo está vivo? Responde `ok` mesmo a drenar — um
+        // pod a drenar não deve ser REINICIADO, deve ser deixado terminar.
         .route("/health", get(|| async { "ok" }))
+        // READINESS: pode receber tráfego NOVO? Enquanto drena, NÃO.
+        //
+        // Antes, a readiness apontava para o `/health`, que devolve sempre
+        // `ok` — o K8s mantinha o pod nos endpoints durante o encerramento e
+        // continuava a mandar-lhe entradas novas, que morriam com ele.
+        .route("/ready", get(readiness))
         .route("/api/status", get(status))
         .route("/metrics", get(metrics_handler))
         .nest("/api/auth", auth_routes)
@@ -459,6 +475,7 @@ async fn main() {
 
     let metrics = Arc::new(metrics::Metrics::default());
     let state = Arc::new(AppState {
+        draining: std::sync::atomic::AtomicBool::new(false),
         started: std::time::Instant::now(),
         db,
         hub,
@@ -581,7 +598,7 @@ async fn main() {
         });
     }
 
-    let app = build_router(state);
+    let app = build_router(state.clone());
     let listener = tokio::net::TcpListener::bind(&config.bind_addr)
         .await
         .expect("failed to bind");
@@ -590,7 +607,13 @@ async fn main() {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown({
+        let state = state.clone();
+        async move {
+            shutdown_signal().await;
+            drenar(state).await;
+        }
+    })
     .await
     .unwrap();
 }
@@ -604,6 +627,17 @@ async fn main() {
 /// clientes fecharem já, em vez de esperar a graça) fica deferido de propósito —
 /// mexeria no loop de inbound do signaling (território das regressões R1/R2) e
 /// exige teste dedicado de 2 browsers.
+/// Readiness: 200 enquanto aceita tráfego novo, 503 enquanto drena.
+async fn readiness(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+) -> impl axum::response::IntoResponse {
+    if state.draining.load(std::sync::atomic::Ordering::Relaxed) {
+        (axum::http::StatusCode::SERVICE_UNAVAILABLE, "draining")
+    } else {
+        (axum::http::StatusCode::OK, "ready")
+    }
+}
+
 async fn shutdown_signal() {
     use tokio::signal;
     let ctrl_c = async {
@@ -624,5 +658,60 @@ async fn shutdown_signal() {
         _ = ctrl_c => {}
         _ = terminate => {}
     }
-    tracing::info!("sinal de shutdown recebido — a drenar (graceful, sem aceitar novas ligações)");
+    tracing::info!("sinal de shutdown recebido — a drenar");
+}
+
+/// Drena o pod: pára de aceitar tráfego novo, avisa quem está em chamada, e
+/// espera que as salas esvaziem antes de deixar o servidor fechar.
+///
+/// Antes desta função, o SIGTERM só fazia o axum parar de ACEITAR ligações. As
+/// WebSockets em curso não fecham sozinhas, por isso o processo ficava a
+/// aguardá-las até o K8s mandar SIGKILL ao fim do `terminationGracePeriod` — e
+/// aí todas as reuniões daquele pod caíam de uma vez. Com a afinidade por sala
+/// (ADR-0001) a concentrar salas no mesmo pod, isso é muita gente ao mesmo
+/// tempo.
+async fn drenar(state: Arc<AppState>) {
+    use std::sync::atomic::Ordering::Relaxed;
+    state.draining.store(true, Relaxed);
+
+    // A readiness passa a falhar; o K8s tira o pod dos endpoints. Só depois
+    // disso é que avisar os clientes serve de alguma coisa: se avisássemos
+    // primeiro, eles reconectavam e o balanceador mandava-os de volta para
+    // aqui.
+    let espera_readiness = std::time::Duration::from_secs(state.config.drain_readiness_secs);
+    tracing::info!(
+        segundos = espera_readiness.as_secs(),
+        "drain: readiness em 503 — a aguardar que o balanceador retire este pod"
+    );
+    tokio::time::sleep(espera_readiness).await;
+
+    // Avisa TODA a gente em chamada. O cliente reconecta depois do atraso que
+    // vai na mensagem, e como este pod já não está nos endpoints, o hash por
+    // sala manda a sala INTEIRA para o mesmo pod novo — que é o que permite a
+    // migração sem partir o SFU, que é in-memory por pod.
+    let salas = state
+        .hub
+        .broadcast_draining(state.config.drain_reconnect_ms);
+    tracing::info!(salas, "drain: participantes avisados para migrar");
+
+    // Espera que esvaziem. Sai mal a última saia — não se gasta o orçamento
+    // todo por hábito.
+    let limite = std::time::Duration::from_secs(state.config.drain_grace_secs);
+    let inicio = std::time::Instant::now();
+    while inicio.elapsed() < limite {
+        let restantes = state.hub.peers_ligados();
+        if restantes == 0 {
+            tracing::info!(
+                segundos = inicio.elapsed().as_secs(),
+                "drain: todas as salas esvaziaram"
+            );
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    tracing::warn!(
+        restantes = state.hub.peers_ligados(),
+        segundos = limite.as_secs(),
+        "drain: prazo esgotado — a fechar com participantes ainda ligados"
+    );
 }

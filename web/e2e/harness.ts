@@ -31,6 +31,8 @@ declare global {
       publicadores: () => string[]
       /** Liga/desliga a gravação no SERVIDOR (só o anfitrião pode). */
       gravar: (on: boolean) => void
+      /** Chamado quando o nó avisa que vai fechar (ver ServerMsg::Draining). */
+      aoDrenar: ((reconnectInMs: number) => void) | null
     }
   }
 }
@@ -55,6 +57,7 @@ window.__dlx = {
   pedirQualidade: () => {},
   publicadores: () => [],
   gravar: () => {},
+  aoDrenar: null,
 }
 
 async function main() {
@@ -91,6 +94,10 @@ async function main() {
     signal.send({ type: 'video-interest', peers: Object.keys(quality), quality })
     log(`pedida qualidade: ${JSON.stringify(quality)}`)
   }
+  signal.on('draining', ({ reconnect_in_ms }) => {
+    log(`nó a drenar — migrar em ${reconnect_in_ms} ms`)
+    window.__dlx.aoDrenar?.(reconnect_in_ms)
+  })
   window.__dlx.gravar = (on) => {
     signal.send({ type: 'server-record', active: on })
     log(`gravação no servidor: ${on ? 'ligada' : 'desligada'}`)
