@@ -256,6 +256,9 @@ struct SfuPeer {
     /// ver). `None` = todos — é o default e o comportamento de clientes antigos.
     /// Áudio e ecrã partilhado nunca dependem disto.
     video_interest: Mutex<Option<std::collections::HashSet<Uuid>>>,
+    /// Camada sugerida pelo cliente por publicador (ver `wanted_rid`). Vazio =
+    /// sem sugestão, e decide-se pelo tamanho da sala como sempre.
+    quality_hints: Mutex<HashMap<Uuid, String>>,
 }
 
 /// Mensagens da máquina de negociação de um peer.
@@ -282,21 +285,83 @@ enum NegoMsg {
 /// Camada desejada para um subscritor: parte do tamanho da sala (salas grandes
 /// recebem camadas mais leves) e desce `shift` degraus se a rede DELE estiver a
 /// perder pacotes. É a combinação dos dois que faz o downlink escalar.
-fn wanted_rid(kind: &str, room_size: usize, shift: u8) -> &'static str {
+/// Camada a servir a um subscritor.
+///
+/// A regra de arbitragem, e é a única coisa a reter daqui: **o cliente pede, a
+/// realidade da rede corta**.
+///
+/// - `hint` é o que o cliente pediu (`layerPolicy.ts`). Só ele sabe o tamanho a
+///   que o tile está desenhado, se a aba está em segundo plano, se a máquina
+///   está travada por CPU, a bateria e a poupança de dados. Antes disto o
+///   servidor adivinhava tudo isso pelo NÚMERO DE PARTICIPANTES: uma sala de
+///   dez servia `q` até ao orador em palco a ocupar 70% do ecrã, e uma de três
+///   servia `f` a tiles de 90 px.
+/// - `shift` vem dos Receiver Reports — perda MEDIDA. Aplica-se por cima da
+///   sugestão e nunca é anulado por ela: um cliente não pode pedir que a perda
+///   de pacotes não exista.
+/// - Sem sugestão (cliente antigo), decide-se como sempre se decidiu, pelo
+///   tamanho da sala. É o que mantém os clientes em cache antiga a funcionar.
+fn wanted_rid(kind: &str, room_size: usize, shift: u8, hint: Option<&str>) -> &'static str {
     if kind != "video" {
         return "f";
     }
     // 2 = f, 1 = h, 0 = q
-    let base: u8 = match room_size {
-        n if n > 8 => 0,
-        n if n > 4 => 1,
-        _ => 2,
+    let base: u8 = match hint {
+        Some("f") => 2,
+        Some("h") => 1,
+        Some("q") => 0,
+        // Sugestão ausente ou com um valor que não reconhecemos: cai no
+        // comportamento antigo em vez de escolher um default arbitrário.
+        _ => match room_size {
+            n if n > 8 => 0,
+            n if n > 4 => 1,
+            _ => 2,
+        },
     };
     match base.saturating_sub(shift) {
         2 => "f",
         1 => "h",
         _ => "q",
     }
+}
+
+/// Quantas camadas ALTAS (`f`) um único subscritor pode segurar.
+///
+/// A sugestão do cliente é dado vindo de fora: um cliente alterado podia pedir
+/// `f` de cinquenta publicadores e obrigar o nó a encaminhar dezenas de Mbps
+/// para uma só sessão. Duas chegam para o caso legítimo — palco mais partilha
+/// de ecrã; o resto desce para `h`.
+const MAX_FULL_LAYERS_PER_SUB: usize = 2;
+
+/// Limita quantas camadas `f` a sugestão de UM cliente pode pedir, e ignora
+/// rótulos que não conhecemos.
+///
+/// A sugestão vem de fora e é tratada como tal. Sem tecto, um cliente alterado
+/// pedia `f` de cinquenta publicadores e obrigava o nó a encaminhar dezenas de
+/// Mbps para uma só sessão — sem sequer precisar de os desenhar.
+///
+/// Quando há excesso, a escolha de quem fica em `f` é feita por ordem de UUID:
+/// arbitrária, mas DETERMINISTA (a mesma sugestão dá sempre o mesmo resultado,
+/// o que evita trocas de camada a oscilar). O servidor não tem como saber qual
+/// o tile importante — quem sabe é o cliente, e um cliente honesto nunca chega
+/// ao tecto.
+fn cap_full_layers(hints: HashMap<Uuid, String>) -> HashMap<Uuid, String> {
+    let mut cheias: Vec<Uuid> = hints
+        .iter()
+        .filter(|(_, v)| v.as_str() == "f")
+        .map(|(k, _)| *k)
+        .collect();
+    let mut out: HashMap<Uuid, String> = hints
+        .into_iter()
+        .filter(|(_, v)| matches!(v.as_str(), "q" | "h" | "f"))
+        .collect();
+    if cheias.len() > MAX_FULL_LAYERS_PER_SUB {
+        cheias.sort();
+        for id in cheias.into_iter().skip(MAX_FULL_LAYERS_PER_SUB) {
+            out.insert(id, "h".to_string());
+        }
+    }
+    out
 }
 
 fn rid_rank(rid: &str) -> u8 {
@@ -602,6 +667,7 @@ impl SfuState {
             subscribed: Mutex::new(HashMap::new()),
             quality: Quality::default(),
             video_interest: Mutex::new(None),
+            quality_hints: Mutex::new(HashMap::new()),
         });
         room.peers.lock().await.insert(peer_id, peer.clone());
 
@@ -1015,6 +1081,7 @@ impl SfuState {
             }
             let current = peer.subscribed.lock().await.clone();
             let interest = peer.video_interest.lock().await.clone();
+            let hints = peer.quality_hints.lock().await.clone();
             for (key, layers) in groups {
                 // Vídeo de câmara fora da página que o cliente está a ver: se
                 // estava ligado, DESLIGA (é aqui que a paginação poupa banda a
@@ -1035,7 +1102,12 @@ impl SfuState {
                     }
                     continue;
                 }
-                let wanted = wanted_rid(&key.1, room_size, shift);
+                let wanted = wanted_rid(
+                    &key.1,
+                    room_size,
+                    shift,
+                    hints.get(&key.0).map(|s| s.as_str()),
+                );
                 let cur_rid = current.get(&key).map(|(rid, _)| rid.as_str());
                 let Some(chosen) = pick_layer(&layers, wanted, cur_rid) else {
                     continue;
@@ -1314,11 +1386,13 @@ impl SfuState {
         room_id: Uuid,
         peer_id: Uuid,
         peers: Vec<Uuid>,
+        quality: Option<HashMap<Uuid, String>>,
     ) {
         let Some(peer) = self.peer(room_id, peer_id).await else {
             return;
         };
         *peer.video_interest.lock().await = Some(peers.into_iter().collect());
+        *peer.quality_hints.lock().await = cap_full_layers(quality.unwrap_or_default());
         self.clone().reevaluate_peer(room_id, peer_id).await;
     }
 
@@ -1802,17 +1876,17 @@ mod tests {
     /// participante em rede fraca recebia a camada cheia até o vídeo colapsar.
     #[test]
     fn layer_follows_room_size_and_loss() {
-        assert_eq!(wanted_rid("video", 2, 0), "f");
-        assert_eq!(wanted_rid("video", 6, 0), "h");
-        assert_eq!(wanted_rid("video", 12, 0), "q");
+        assert_eq!(wanted_rid("video", 2, 0, None), "f");
+        assert_eq!(wanted_rid("video", 6, 0, None), "h");
+        assert_eq!(wanted_rid("video", 12, 0, None), "q");
         // Rede má num 1:1 → desce mesmo com a sala pequena.
-        assert_eq!(wanted_rid("video", 2, 1), "h");
-        assert_eq!(wanted_rid("video", 2, 2), "q");
+        assert_eq!(wanted_rid("video", 2, 1, None), "h");
+        assert_eq!(wanted_rid("video", 2, 2, None), "q");
         // Nunca abaixo da camada mais leve.
-        assert_eq!(wanted_rid("video", 12, 2), "q");
+        assert_eq!(wanted_rid("video", 12, 2, None), "q");
         // Áudio e ecrã não têm simulcast.
-        assert_eq!(wanted_rid("audio", 12, 2), "f");
-        assert_eq!(wanted_rid("screen", 12, 2), "f");
+        assert_eq!(wanted_rid("audio", 12, 2, None), "f");
+        assert_eq!(wanted_rid("screen", 12, 2, None), "f");
     }
 
     #[test]
@@ -1902,6 +1976,96 @@ mod tests {
     /// `pick_layer` NÃO pode trocar de camada só porque a desejada ainda não
     /// chegou: no arranque de um publicador as camadas chegam `q`→`h`→`f` e
     /// isso provocaria uma renegociação por cada uma.
+    #[test]
+    fn a_sugestao_do_cliente_manda_no_que_o_servidor_nao_pode_saber() {
+        // Era isto que faltava: o servidor adivinhava a camada pelo NÚMERO DE
+        // PARTICIPANTES. Numa sala de doze, o orador em palco a ocupar 70% do
+        // ecrã recebia `q` — porque a sala era grande.
+        assert_eq!(wanted_rid("video", 12, 0, Some("f")), "f");
+        // E o simétrico: numa sala de duas pessoas, uma miniatura recebia `f`.
+        assert_eq!(wanted_rid("video", 2, 0, Some("q")), "q");
+        assert_eq!(wanted_rid("video", 6, 0, Some("h")), "h");
+    }
+
+    #[test]
+    fn a_perda_medida_corta_por_cima_da_sugestao() {
+        // A regra de arbitragem: o cliente pede, a realidade da rede corta. Um
+        // cliente não pode pedir que a perda de pacotes não exista.
+        assert_eq!(wanted_rid("video", 2, 1, Some("f")), "h");
+        assert_eq!(wanted_rid("video", 2, 2, Some("f")), "q");
+        assert_eq!(wanted_rid("video", 12, 2, Some("f")), "q");
+    }
+
+    #[test]
+    fn sugestao_desconhecida_cai_no_comportamento_antigo() {
+        // Um cliente de uma versão futura (ou alterado) que mande um rótulo que
+        // não conhecemos não pode fazer o servidor escolher um default
+        // arbitrário — decide-se como sempre se decidiu.
+        assert_eq!(wanted_rid("video", 12, 0, Some("ultra")), "q");
+        assert_eq!(wanted_rid("video", 2, 0, Some("")), "f");
+    }
+
+    #[test]
+    fn audio_e_ecra_ignoram_a_sugestao() {
+        // Não têm camadas: servir-lhes outra coisa que não `f` seria servir nada.
+        assert_eq!(wanted_rid("audio", 12, 2, Some("q")), "f");
+        assert_eq!(wanted_rid("screen", 12, 2, Some("q")), "f");
+    }
+
+    #[test]
+    fn o_tecto_de_camadas_cheias_protege_o_no() {
+        // A sugestão vem de fora. Sem tecto, um cliente alterado pedia `f` de
+        // cinquenta publicadores e obrigava o nó a encaminhar dezenas de Mbps
+        // para uma só sessão — sem sequer precisar de os desenhar.
+        let mut h = HashMap::new();
+        for _ in 0..8 {
+            h.insert(Uuid::new_v4(), "f".to_string());
+        }
+        let capped = cap_full_layers(h);
+        let cheias = capped.values().filter(|v| v.as_str() == "f").count();
+        assert_eq!(cheias, MAX_FULL_LAYERS_PER_SUB);
+        // As excedentes descem para `h`, não desaparecem — o participante
+        // continua a ver toda a gente, só que não tudo em qualidade máxima.
+        assert_eq!(capped.len(), 8);
+        assert_eq!(capped.values().filter(|v| v.as_str() == "h").count(), 6);
+    }
+
+    #[test]
+    fn o_tecto_e_determinista() {
+        // Duas avaliações da MESMA sugestão têm de dar o mesmo resultado, senão
+        // as camadas oscilavam e cada oscilação é uma renegociação.
+        let ids: Vec<Uuid> = (0..6).map(|_| Uuid::new_v4()).collect();
+        let build = || {
+            ids.iter()
+                .map(|id| (*id, "f".to_string()))
+                .collect::<HashMap<_, _>>()
+        };
+        assert_eq!(cap_full_layers(build()), cap_full_layers(build()));
+    }
+
+    #[test]
+    fn o_tecto_deixa_passar_um_pedido_legitimo() {
+        // Palco + partilha de ecrã: o caso normal não pode ser penalizado.
+        let mut h = HashMap::new();
+        h.insert(Uuid::new_v4(), "f".to_string());
+        h.insert(Uuid::new_v4(), "f".to_string());
+        h.insert(Uuid::new_v4(), "q".to_string());
+        let capped = cap_full_layers(h);
+        assert_eq!(capped.values().filter(|v| v.as_str() == "f").count(), 2);
+    }
+
+    #[test]
+    fn rotulos_invalidos_sao_deitados_fora_em_vez_de_gravados() {
+        let mut h = HashMap::new();
+        let bom = Uuid::new_v4();
+        h.insert(bom, "h".to_string());
+        h.insert(Uuid::new_v4(), "'; DROP TABLE rooms; --".to_string());
+        h.insert(Uuid::new_v4(), "F".to_string()); // maiúscula não é o mesmo
+        let capped = cap_full_layers(h);
+        assert_eq!(capped.len(), 1);
+        assert_eq!(capped.get(&bom).map(|s| s.as_str()), Some("h"));
+    }
+
     #[test]
     fn renegotiate_flag_is_restored_when_the_queue_rejects() {
         let flag = AtomicBool::new(false);

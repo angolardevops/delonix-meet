@@ -23,6 +23,7 @@ import { BreakoutRoom, PeerInfo, PollView, QaView, Signaling, WbStroke } from '.
 import { ThemePicker } from '../components/Shell'
 import { Call, MeshCall, SCREEN_CONSTRAINTS, SfuCall } from '../webrtc'
 import type { CallState } from '../callRecovery'
+import { chooseLayers, type LocalConditions, type TileSignal } from '../layerPolicy'
 import { makeCallHolderStart } from '../sfuLifecycle'
 import {
   BlurIcon, CamIcon, CamOffIcon, ChatIcon, ChevronUpIcon, CloseIcon, DownloadIcon, EmojiIcon, HandIcon,
@@ -269,6 +270,8 @@ export default function Room({
   const [status, setStatus] = useState('A ligar…')
   /** Estado da ligação de media — alimenta o indicador de recuperação. */
   const [callState, setCallState] = useState<CallState>('connecting')
+  /** Condições locais que alimentam a política de camada (ver layerPolicy.ts). */
+  const [conditions, setConditions] = useState<LocalConditions>({})
   const [topology, setTopology] = useState('')
   const [isTraining, setIsTraining] = useState(false)
   const [waitingRoomOn, setWaitingRoomOn] = useState(false)
@@ -508,9 +511,31 @@ export default function Room({
   // "Qualidade das chamadas" do admin. Best-effort — falhas são ignoradas.
   useEffect(() => {
     if (roomState !== 'in') return
+    // Amostra-se a cada 5 s e REPORTA-SE a cada sexta (≈30 s). A amostragem
+    // mais frequente serve a política de camada, que precisa de reagir a uma
+    // rede a degradar em segundos e não em meio minuto; o reporte mantém a
+    // mesma cadência de antes, para não multiplicar por seis a escrita na base
+    // de dados. Uma só recolha de `getStats()` alimenta as duas coisas.
+    //
+    // 5 s e não 1 s: o Chrome actualiza as estatísticas ~1×/s, e duas leituras
+    // dentro do mesmo intervalo trazem o mesmo carimbo temporal — o delta dá
+    // zero e a política reagiria a um falso «sem media» (ver R37).
+    let n = 0
     const report = async () => {
       const r = await callRef.current?.qos?.().catch(() => null)
       if (!r) return
+      setConditions({
+        backgrounded: document.visibilityState === 'hidden',
+        cpuLimited: r.limitedBy === 'cpu',
+        lossPct: r.lossPct,
+        rttMs: r.rttMs ?? undefined,
+        // A banda ESTIMADA é do uplink; para o downlink não há estimativa
+        // portável. Sem número, a política não orçamenta — inventar um tecto
+        // seria pior do que não ter nenhum.
+        downlinkKbps: null,
+        dataSaver: Boolean((navigator as { connection?: { saveData?: boolean } }).connection?.saveData),
+      })
+      if (n++ % 6 !== 0) return
       // Envia-se a amostra COMPLETA, não uma média de três números. A média
       // entre publicadores era o que escondia o participante inaudível numa
       // sala em que todos os outros estavam bem — o `extractQuality` agrega
@@ -533,8 +558,8 @@ export default function Room({
         limited_by: r.limitedBy,
       }).catch(() => {})
     }
-    const first = setTimeout(() => void report(), 10_000)
-    const t = setInterval(() => void report(), 30_000)
+    const first = setTimeout(() => void report(), 5_000)
+    const t = setInterval(() => void report(), 5_000)
     return () => { clearTimeout(first); clearInterval(t) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomState, code])
@@ -1863,17 +1888,46 @@ export default function Room({
     return [...ids].sort()
   }, [visiblePeers, filteredPeers, stagePeer, pinnedPeer])
 
+  // QUE qualidade pedir de cada um. A decisão vive em `layerPolicy.ts` (pura e
+  // testada); aqui só se recolhem os sinais que só o cliente conhece — o
+  // tamanho a que cada tile está MESMO a ser desenhado, quem está em palco ou
+  // fixado, e quem está a partilhar ecrã.
+  //
+  // Antes disto o servidor adivinhava a camada pelo NÚMERO DE PARTICIPANTES:
+  // numa sala de doze, o orador em palco a ocupar 70% do ecrã recebia `q`.
+  const videoQuality = useMemo(() => {
+    const stageW = Math.round(window.innerWidth * 0.7)
+    const tiles: TileSignal[] = videoInterest.map((peerId) => {
+      const emPalco = effectiveViewMode === 'stage' && stagePeer?.peerId === peerId
+      return {
+        peerId,
+        // Em palco o tile ocupa a área toda; na grelha vale a largura medida
+        // pelo `useGridLayout`, que é a largura real em px de CSS.
+        widthPx: emPalco ? stageW : tileSize.w,
+        pinned: pinnedPeer?.peerId === peerId,
+        onStage: emPalco,
+        speaking: speaking.has(peerId),
+        presenting: presentation?.peerId === peerId,
+      }
+    })
+    return chooseLayers(tiles, conditions)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoInterest.join(','), tileSize.w, effectiveViewMode, stagePeer?.peerId, pinnedPeer?.peerId, presentation?.peerId, speaking, conditions])
+
   useEffect(() => {
     if (roomState !== 'in' || topology !== 'sfu') return
-    // Numa sala que NUNCA paginou não há nada a informar: o default do servidor
-    // (interesse desconhecido = todos) já é o correto. Assim que pagina uma vez,
-    // passamos a informar sempre — inclusive quando encolhe e deixa de paginar,
-    // senão o servidor ficava preso na última página (R23).
+    // R23 continua válido para o INTERESSE: assim que uma sala pagina uma vez,
+    // passa a informar sempre — inclusive quando encolhe e deixa de paginar,
+    // senão o servidor ficava preso na última página.
     if (filteredPeers.length > TILES_PER_PAGE) paginatedOnceRef.current = true
-    if (!paginatedOnceRef.current) return
-    signalRef.current?.send({ type: 'video-interest', peers: videoInterest })
+    // Mas a QUALIDADE informa-se desde o início, pagine-se ou não: numa sala de
+    // três pessoas o servidor servia `f` a toda a gente, miniaturas incluídas, e
+    // é precisamente aí que a sugestão poupa banda. A lista de `peers` quando
+    // não se pagina é «toda a gente», que é o default do servidor — por isso
+    // enviar sempre é um superconjunto seguro do comportamento antigo.
+    signalRef.current?.send({ type: 'video-interest', peers: videoInterest, quality: videoQuality })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoInterest.join(','), roomState, topology, filteredPeers.length])
+  }, [videoInterest.join(','), JSON.stringify(videoQuality), roomState, topology, filteredPeers.length])
 
   const talkOverNames = useMemo(() => {
     if (!talkOver) return ''

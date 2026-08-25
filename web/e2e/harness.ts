@@ -25,6 +25,10 @@ declare global {
       error: string | null
       /** Estatísticas CRUAS — para diagnosticar o que o browser reporta mesmo. */
       raw: () => Promise<Record<string, unknown>[]>
+      /** Envia a sugestão de camada (ver layerPolicy.ts) pelo fio, como a app faz. */
+      pedirQualidade: (quality: Record<string, 'q' | 'h' | 'f'>) => void
+      /** Publicadores de quem estamos a receber media. */
+      publicadores: () => string[]
     }
   }
 }
@@ -46,6 +50,8 @@ window.__dlx = {
   ready: false,
   error: null,
   raw: async () => [],
+  pedirQualidade: () => {},
+  publicadores: () => [],
 }
 
 async function main() {
@@ -78,6 +84,11 @@ async function main() {
   })
 
   window.__dlx.qos = () => call.qos()
+  window.__dlx.pedirQualidade = (quality) => {
+    signal.send({ type: 'video-interest', peers: Object.keys(quality), quality })
+    log(`pedida qualidade: ${JSON.stringify(quality)}`)
+  }
+  window.__dlx.publicadores = () => window.__dlx.streams.filter((s) => !s.endsWith('-screen'))
   window.__dlx.raw = async () => {
     const pc = (call as unknown as { pc: RTCPeerConnection }).pc
     const out: Record<string, unknown>[] = []

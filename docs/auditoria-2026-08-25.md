@@ -76,7 +76,7 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | Capacidade | Estado comprovado | Lacuna | Risco |
 |---|---|---|---|
 | Simulcast 3 camadas (q/h/f) | ✅ | — | — |
-| Selecção de camada adaptativa | 🟡 | `wanted_rid(kind, room_size, shift)` (`sfu.rs:283`) usa **só** tamanho da sala e um *shift* por perda. **Não** entra: tamanho do tile, orador activo, palco, pin, aba em background, RTT, jitter, CPU, bateria, data-saver, preferência | **Alto** — desperdício de banda na rede-alvo | 
+| Selecção de camada adaptativa | 🟡 → ✅ **feito e MEDIDO** | a decisão passou para o cliente (`layerPolicy.ts`), que é quem conhece o tamanho do tile, palco, pin, aba em segundo plano, CPU, bateria, poupança de dados e preferência. O servidor aplica a perda medida por cima e limita camadas altas por subscritor. Medido com dois Chromium contra o SFU: `q`→235 kbps, sugestão `h`→**325**, sugestão `q`→**93** (3,5× menos banda) | Baixo (era Alto) | 
 | `video-interest` (não enviar a tiles invisíveis) | ✅ | binário (subscrever/não), não é sugestão de qualidade | — |
 | Suspender vídeo em background preservando áudio | 🔴 | não existe | Médio |
 | Perfis de qualidade nomeados | 🔴 | não há audio-only / data-saver / 180p…1080p / screen-texto vs movimento | Médio |
@@ -216,9 +216,12 @@ Pela ordem do mandato, e pelo risco medido:
    `getStats()`.
 4. **Testes em rede degradada** com emulação, e só depois publicar metas. É
    agora o passo que desbloqueia tudo o resto: já há o que medir, falta medir.
-5. **Adaptação de simulcast** com os sinais que agora existem — o
-   `wanted_rid()` continua a decidir só por tamanho da sala, mas o cliente já
-   sabe reportar jitter, congelamento, CPU e banda estimada.
+5. ~~**Adaptação de simulcast.**~~ **Endereçado e medido.** Falta o sinal de
+   BATERIA ligado de verdade (`navigator.getBattery()` não está a alimentar as
+   condições) e uma estimativa de banda DESCENDENTE — hoje a política não
+   orçamenta, porque não há número portável para isso.
 6. **HA do SFU** (registry, health/capacity, placement, drain).
+7. **Perfis de qualidade nomeados** (audio-only, data-saver, 180p…1080p): a
+   política já os sabe aplicar, falta a escolha na interface.
 
 Nada de features cosméticas antes destas.

@@ -49,6 +49,17 @@ pub enum ClientMsg {
     /// `SfuState::set_video_interest`. Áudio nunca depende disto.
     VideoInterest {
         peers: Vec<Uuid>,
+        /// Camada DESEJADA por publicador (`"q"` | `"h"` | `"f"`), decidida no
+        /// cliente — é lá que se sabe o tamanho a que o tile está desenhado, se
+        /// a aba está em segundo plano, se a máquina está travada por CPU, a
+        /// bateria e a poupança de dados. Ver `web/src/layerPolicy.ts`.
+        ///
+        /// Ausente (cliente antigo) => o servidor decide como sempre decidiu,
+        /// pelo tamanho da sala. É uma SUGESTÃO: a perda medida por RTCP corta
+        /// por cima dela, e o servidor limita quantas camadas altas um
+        /// subscritor pode segurar.
+        #[serde(default)]
+        quality: Option<std::collections::HashMap<Uuid, String>>,
     },
     /// Estado local de câmara/microfone — os outros mostram avatar/ícone
     /// em vez de vídeo preto ou indicador de som errado.
@@ -1972,12 +1983,15 @@ async fn handle_socket(
                 Ok(ClientMsg::BreakoutsClose) if is_host => {
                     breakouts_close(&state, room_id);
                 }
-                Ok(ClientMsg::VideoInterest { peers }) if sfu_mode => {
+                Ok(ClientMsg::VideoInterest { peers, quality }) if sfu_mode => {
                     // Limite defensivo: o cliente não define quantas
                     // subscrições o servidor mantém abertas.
                     let mut peers = peers;
                     peers.truncate(64);
-                    state.sfu.set_video_interest(room_id, peer_id, peers).await;
+                    state
+                        .sfu
+                        .set_video_interest(room_id, peer_id, peers, quality)
+                        .await;
                 }
                 Ok(ClientMsg::ScreenShare { on }) if sfu_mode => {
                     // Não-anfitrião só partilha com autorização do anfitrião
@@ -2144,6 +2158,44 @@ mod tests {
 
     fn drain(rx: &mut mpsc::Receiver<ServerMsg>) {
         while rx.try_recv().is_ok() {}
+    }
+
+    // ---------------------------------------------------------------
+    //  Formato do fio (o que o cliente manda tem de ser aceite)
+    // ---------------------------------------------------------------
+    //
+    // Um `ClientMsg` que não desserializa é DESCARTADO EM SILÊNCIO pelo
+    // handler — não há erro, não há log, a funcionalidade simplesmente não
+    // acontece. É a classe de falha mais cara que há neste ficheiro, e a
+    // única defesa é testar o formato exacto que o cliente escreve.
+
+    #[test]
+    fn video_interest_aceita_a_sugestao_de_qualidade() {
+        let id = Uuid::new_v4();
+        let raw = format!(
+            r#"{{"type":"video-interest","peers":["{id}"],"quality":{{"{id}":"q"}}}}"#
+        );
+        let msg: ClientMsg = serde_json::from_str(&raw).expect("o cliente escreve isto");
+        match msg {
+            ClientMsg::VideoInterest { peers, quality } => {
+                assert_eq!(peers, vec![id]);
+                let q = quality.expect("a sugestão tem de chegar");
+                assert_eq!(q.get(&id).map(|s| s.as_str()), Some("q"));
+            }
+            _ => panic!("desserializou para a variante errada"),
+        }
+    }
+
+    #[test]
+    fn video_interest_sem_qualidade_continua_a_ser_aceite() {
+        // Cliente com a app em cache antiga: tem de continuar a funcionar.
+        let id = Uuid::new_v4();
+        let raw = format!(r#"{{"type":"video-interest","peers":["{id}"]}}"#);
+        let msg: ClientMsg = serde_json::from_str(&raw).expect("cliente antigo");
+        match msg {
+            ClientMsg::VideoInterest { quality, .. } => assert!(quality.is_none()),
+            _ => panic!("variante errada"),
+        }
     }
 
     // ---------------------------------------------------------------

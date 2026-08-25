@@ -263,3 +263,17 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Causa raiz:** o Chrome actualiza as estatísticas ~1×/s. Duas leituras dentro do mesmo intervalo trazem o **mesmo carimbo temporal**; como toda a extracção é por delta, o resultado é zero. Sondar a 500 ms produzia uma matriz inteira de falsos negativos.
 - **Regra:** nunca sondar o `getStats()` abaixo de ~1,5 s. Vale para o arnês de teste E para qualquer painel ao vivo.
 - **Ficheiros:** `e2e/netem-matrix.mjs`.
+
+### R38 — Camada simulcast escolhida por adivinhação: o palco servido em `q`
+- **Sintoma:** numa sala de dez, o orador em palco a ocupar 70% do ecrã aparece borratado. Na simétrica, uma sala de três gasta banda a servir vídeo inteiro a miniaturas de 90 px.
+- **Causa raiz:** `wanted_rid(kind, room_size, shift)` decidia com DOIS sinais — o número de participantes e um degrau por perda. O servidor não tem como saber o tamanho a que um tile está desenhado, se a aba está em segundo plano, se a máquina está travada por CPU, a bateria ou a poupança de dados; estava a inferir tudo isso do número de pessoas na sala.
+- **Regra:** **o cliente pede, a realidade da rede corta.** A camada desejada por publicador é decidida no cliente (`web/src/layerPolicy.ts`) e enviada no `video-interest`; o servidor aplica por cima o degrau da perda MEDIDA por RTCP — que nunca é anulado pela sugestão — e limita a `MAX_FULL_LAYERS_PER_SUB` quantas camadas altas um subscritor pode segurar, porque a sugestão vem de fora.
+- **Compatibilidade:** sugestão ausente ou com rótulo desconhecido ⇒ decide-se como sempre se decidiu, pelo tamanho da sala. Clientes com a app em cache antiga continuam a funcionar.
+- **Medido** (2026-08-25, dois Chromium contra o SFU): subscritor em `q` = 235 kbps; sugestão `h` = 325; sugestão `q` = 93. A sugestão vale 3,5× em downlink.
+- **Ficheiros:** `web/src/layerPolicy.ts`, `server/src/sfu.rs` (`wanted_rid`, `cap_full_layers`), `server/src/signaling.rs` (`VideoInterest`).
+
+### R39 — Mensagem do cliente que não desserializa morre em SILÊNCIO
+- **Sintoma:** uma funcionalidade nova simplesmente não acontece. Sem erro, sem log, sem nada para ver.
+- **Causa raiz:** o handler faz `match serde_json::from_str::<ClientMsg>(&text)` e os casos que não casam caem num braço vazio. Um campo novo com a forma errada — ou um `#[serde(default)]` em falta — descarta a mensagem INTEIRA.
+- **Regra:** todo o campo novo num `ClientMsg` leva um teste que desserializa **o JSON exacto que o cliente escreve**, mais um que prova que a mensagem SEM o campo continua a ser aceite (clientes com a app em cache antiga).
+- **Ficheiros:** `server/src/signaling.rs`, testes `video_interest_aceita_a_sugestao_de_qualidade` e `video_interest_sem_qualidade_continua_a_ser_aceite`.
