@@ -170,16 +170,26 @@ build: ## Compila backend (release) + frontend (produção)
 	@printf "$(G)  ✓ build concluído$(Z)\n"
 
 .PHONY: test
-test: fitness ## Corre os testes (fitness functions + cargo test + typecheck do frontend)
+test: fitness web-deps ## Corre os testes (fitness functions + cargo test + typecheck do frontend)
 	@printf "$(C)▶ testes$(Z)\n"
 	@cd server && cargo test --release
 	@cd web && node_modules/.bin/tsc -p tsconfig.json --noEmit && printf "$(G)  ✓ tsc limpo$(Z)\n"
 	@cd web && node_modules/.bin/vitest run && printf "$(G)  ✓ vitest (R1/R2)$(Z)\n"
 
+.PHONY: web-deps
+web-deps: ## Garante web/node_modules (npm ci) — sem isto o `make test` morria com um 'Error 127' opaco
+	@if [ ! -x web/node_modules/.bin/tsc ]; then \
+	  printf "$(C)▶ web/node_modules ausente — npm ci$(Z)\n"; \
+	  cd web && npm ci; \
+	fi
+
 .PHONY: fitness
-fitness: ## Fitness functions de arquitetura (Fowler): docs, afinidade por sala (R3), isolamento RLS (ADR-0002)
+fitness: ## Fitness functions (Fowler): higiene, docs, afinidade por sala (R3), clippy, deps, RLS (ADR-0002)
+	@bash scripts/check-repo-hygiene.sh
 	@bash scripts/check-docs-drift.sh
 	@bash scripts/check-room-affinity.sh
+	@bash scripts/check-clippy-ratchet.sh
+	@bash scripts/check-dep-audit.sh
 	@bash scripts/check-tenant-rls.sh
 
 .PHONY: migrate

@@ -1,0 +1,157 @@
+# ============================================================
+#  CI do Delonix Meet.
+#
+#  Nota que poupa meia hora a quem vier a seguir: **nenhum job precisa de
+#  Postgres**. O backend usa a API de RUNTIME do sqlx (`query`, `query_as`),
+#  não as macros `query!`, por isso não há verificação de SQL em compile time
+#  e não é preciso `DATABASE_URL` nem `.sqlx/` no build. Isso é uma limitação
+#  real — um nome de coluna errado só falha em execução — e está escrita como
+#  tal no HARNESS.md; aqui é o que torna o CI simples e rápido.
+# ============================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Nada de `RUSTFLAGS: -D warnings`: a árvore herda avisos (`dead_code` em
+  # `redis_state.rs`, `rooms.rs`, …) e isso deixaria o CI vermelho no primeiro
+  # dia sem nada de novo ter partido. Quem trata dos avisos é a catraca do
+  # clippy — que já os conta, porque o clippy corre também os lints do rustc.
+
+jobs:
+  backend:
+    name: Backend (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+
+      - name: Formatação (cargo fmt --check)
+        run: cargo fmt --manifest-path server/Cargo.toml --check
+
+      - name: Catraca do clippy (o número de avisos não sobe)
+        run: bash scripts/check-clippy-ratchet.sh
+
+      - name: Testes
+        run: cargo test --manifest-path server/Cargo.toml --release
+
+      - name: Build de release
+        run: cargo build --manifest-path server/Cargo.toml --release
+
+  frontend:
+    name: Frontend (TypeScript/React)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Tipos (tsc --noEmit)
+        run: node_modules/.bin/tsc -p tsconfig.json --noEmit
+
+      - name: Testes (vitest — guarda as regressões R1/R2/R13)
+        run: node_modules/.bin/vitest run
+
+      - name: Build de produção
+        run: npm run build
+
+  fitness:
+    name: Fitness functions (arquitectura + higiene)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Higiene do repo (chaves, artefactos, dumps, migrações)
+        run: bash scripts/check-repo-hygiene.sh
+
+      - name: Drift documental (módulos, migrações, versões, SQL)
+        run: bash scripts/check-docs-drift.sh
+
+      - name: Afinidade por sala (ADR-0001 / regressão R3)
+        run: bash scripts/check-room-affinity.sh
+
+      # O check-tenant-rls.sh exige um cluster vivo e faz skip sem ele. Não é
+      # executado aqui de propósito: um teste que faz skip em silêncio no CI
+      # dá luz verde sem ter provado nada. Corre onde há cluster (`make prod`).
+
+  seguranca:
+    name: Segurança das dependências
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      - name: cargo-audit (RustSec)
+        run: cargo install cargo-audit --locked
+
+      # Catraca, não portão absoluto: a árvore entra com 7 avisos altos/críticos
+      # por transitividade das bibliotecas de IA no browser, cada um com a razão
+      # escrita em scripts/dep-audit-accepted.txt. Um portão absoluto ficaria
+      # vermelho no primeiro dia e seria desligado na semana seguinte — e depois
+      # ninguém repararia no aviso NOVO, que é o que este passo existe para ver.
+      - name: Catraca do audit (npm + cargo)
+        run: bash scripts/check-dep-audit.sh
+
+  # SBOM: artefacto por build, para inventário e resposta a CVE. Não é um
+  # portão — é prova do que foi enviado.
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: SBOM do backend (CycloneDX)
+        run: |
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --manifest-path server/Cargo.toml --format json
+
+      - name: SBOM do frontend (CycloneDX)
+        working-directory: web
+        run: |
+          npm ci
+          npx --yes @cyclonedx/cyclonedx-npm --output-file ../delonix-web.cdx.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            server/*.cdx.json
+            server/**/*.cdx.json
+            delonix-web.cdx.json
+          if-no-files-found: warn

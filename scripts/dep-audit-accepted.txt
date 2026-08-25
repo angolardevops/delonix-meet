@@ -1,0 +1,28 @@
+# Pacotes npm com avisos ALTOS/CRÍTICOS aceites conscientemente, com a razão.
+# Estado a 2026-08-25: 7 avisos (6 altos + 1 crítico). Nenhum é uma decisão de
+# «não fazer nada» — é uma decisão de não fazer AGORA, com o porquê escrito.
+# REVER a cada release. A catraca só deixa passar o que está nesta lista.
+#
+# --- cadeia do ONNX no browser (efeitos de fundo + Whisper local) ---
+protobufjs        # CRÍTICO. Entra por onnx-proto ← onnxruntime-web. Corre no
+                  # BROWSER e o que faz parse são os modelos ONNX, que são
+                  # self-hosted e servidos pela nossa origem
+                  # (env.allowRemoteModels=false em whisperWorker.ts) — o input
+                  # não é controlado por terceiros. Corrigir exige subir o
+                  # onnxruntime-web, que arrasta o @xenova/transformers e a
+                  # cadeia de matting (matte.ts avisa que duas versões do
+                  # runtime não podem colidir). Precisa de teste de media, não
+                  # de um `npm audit fix`.
+onnx-proto        # Só existe para arrastar o protobufjs. Mesma decisão.
+onnxruntime-web   # Idem — é a raiz da cadeia acima.
+@xenova/transformers  # O `fix --force` propõe descer para 1.4.2, que é uma
+                  # regressão de funcionalidade no Whisper local. Recusado.
+sharp             # Vulnerabilidades da libvips. É uma dependência de NODE do
+                  # transformers.js (processamento de imagem do lado do
+                  # servidor) e NUNCA entra no bundle do browser — não está na
+                  # superfície de ataque desta aplicação.
+#
+# --- cadeia de BUILD (vite) — não vai para produção ---
+postcss           # Path traversal por sourceMappingURL ao ler ficheiros .map.
+                  # Só corre no build, sobre os nossos próprios ficheiros.
+nanoid            # DoS com tamanho negativo/zero. Dependência do vite, build.
