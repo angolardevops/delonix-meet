@@ -453,6 +453,7 @@ async fn main() {
             },
             metrics.clone(),
             config.nego_queue_cap,
+            config.rec_queue_cap,
         )),
         presence: presence_hub,
         auth_limiter: RateLimiter::new(20, Duration::from_secs(60)),

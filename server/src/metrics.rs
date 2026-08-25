@@ -109,6 +109,12 @@ pub struct Metrics {
     /// Amostras em que o encoder estava travado por CPU do cliente — o
     /// problema é a máquina, não a rede, e sem isto conta como «rede má».
     pub qos_cpu_limited_total: AtomicU64,
+
+    /// Pacotes RTP perdidos por a fila de escrita da gravação estar cheia.
+    /// `> 0` significa gravação DEGRADADA: o disco não acompanhou. Existe
+    /// porque a alternativa — bloquear o executor até o disco alcançar — é
+    /// pior, e porque uma gravação corrompida em silêncio é a R18.
+    pub recording_packets_dropped_total: AtomicU64,
 }
 
 impl Metrics {
@@ -193,6 +199,9 @@ impl Metrics {
              # HELP delonix_qos_cpu_limited_total Amostras com o encoder travado por CPU do cliente.\n\
              # TYPE delonix_qos_cpu_limited_total counter\n\
              delonix_qos_cpu_limited_total {}\n\
+             # HELP delonix_recording_packets_dropped_total Pacotes perdidos por fila de gravação cheia.\n\
+             # TYPE delonix_recording_packets_dropped_total counter\n\
+             delonix_recording_packets_dropped_total {}\n\
              # HELP delonix_uptime_seconds Uptime do processo em segundos.\n\
              # TYPE delonix_uptime_seconds gauge\n\
              delonix_uptime_seconds {}\n",
@@ -219,6 +228,7 @@ impl Metrics {
             self.qos_poor_total.load(Relaxed),
             self.qos_turn_relay_total.load(Relaxed),
             self.qos_cpu_limited_total.load(Relaxed),
+            self.recording_packets_dropped_total.load(Relaxed),
             uptime_secs,
         )
     }

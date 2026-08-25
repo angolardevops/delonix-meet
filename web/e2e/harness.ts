@@ -29,6 +29,8 @@ declare global {
       pedirQualidade: (quality: Record<string, 'q' | 'h' | 'f'>) => void
       /** Publicadores de quem estamos a receber media. */
       publicadores: () => string[]
+      /** Liga/desliga a gravação no SERVIDOR (só o anfitrião pode). */
+      gravar: (on: boolean) => void
     }
   }
 }
@@ -52,6 +54,7 @@ window.__dlx = {
   raw: async () => [],
   pedirQualidade: () => {},
   publicadores: () => [],
+  gravar: () => {},
 }
 
 async function main() {
@@ -87,6 +90,10 @@ async function main() {
   window.__dlx.pedirQualidade = (quality) => {
     signal.send({ type: 'video-interest', peers: Object.keys(quality), quality })
     log(`pedida qualidade: ${JSON.stringify(quality)}`)
+  }
+  window.__dlx.gravar = (on) => {
+    signal.send({ type: 'server-record', active: on })
+    log(`gravação no servidor: ${on ? 'ligada' : 'desligada'}`)
   }
   window.__dlx.publicadores = () => window.__dlx.streams.filter((s) => !s.endsWith('-screen'))
   window.__dlx.raw = async () => {

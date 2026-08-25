@@ -82,6 +82,12 @@ pub struct Config {
     /// núcleos do nó e a composição de uma gravação degrada as chamadas VIVAS
     /// que estão a decorrer no mesmo pod.
     pub ffmpeg_threads: u32,
+    /// Capacidade da fila de escrita de CADA track em gravação
+    /// (`REC_QUEUE_CAP`, default 2048 ≈ vários segundos de vídeo). A escrita
+    /// corre numa thread dedicada; a fila é o que impede um disco lento de
+    /// virar consumo de memória sem fim. Cheia, perdem-se pacotes — contados
+    /// em `delonix_recording_packets_dropped_total`, nunca em silêncio.
+    pub rec_queue_cap: usize,
     /// Capacidade da fila de renegociação do SFU por peer (`NEGO_QUEUE_CAP`).
     /// Coalescível: o estado de subscrição mais recente vence, por isso
     /// transbordar descarta o pedido mais novo e conta a métrica.
@@ -135,6 +141,7 @@ impl Config {
                 .unwrap_or_else(|_| "qwen2.5:1.5b".into()),
             ws_queue_cap: bounded_env("WS_QUEUE_CAP", 512, 32, 65_536),
             nego_queue_cap: bounded_env("NEGO_QUEUE_CAP", 64, 4, 4_096),
+            rec_queue_cap: bounded_env("REC_QUEUE_CAP", 2_048, 64, 65_536),
             ffmpeg_timeout_secs: bounded_env("FFMPEG_TIMEOUT_SECS", 3_600, 30, 86_400) as u64,
             ffmpeg_threads: bounded_env("FFMPEG_THREADS", 2, 1, 64) as u32,
         }

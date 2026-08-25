@@ -435,6 +435,8 @@ pub struct SfuState {
     /// 0 (o `Default`) significa «usa o default do código» — só o `SfuState`
     /// construído pelo `main` traz o valor da configuração.
     nego_cap: usize,
+    /// Capacidade da fila de escrita de cada track em gravação (`REC_QUEUE_CAP`).
+    rec_cap: usize,
 }
 
 /// Config de ICE que o SFU usa para se tornar alcançável de fora do cluster.
@@ -452,12 +454,28 @@ pub struct IceConfig {
 
 impl SfuState {
     /// Constrói o SFU com a config de ICE (a partir de `Config`) e os contadores.
-    pub fn new(ice: IceConfig, metrics: Arc<crate::metrics::Metrics>, nego_cap: usize) -> Self {
+    pub fn new(
+        ice: IceConfig,
+        metrics: Arc<crate::metrics::Metrics>,
+        nego_cap: usize,
+        rec_cap: usize,
+    ) -> Self {
         Self {
             ice,
             metrics,
             nego_cap,
+            rec_cap,
             ..Default::default()
+        }
+    }
+
+    /// Capacidade efectiva da fila de gravação (default do código quando o
+    /// `SfuState` vem de `Default`, como nos testes).
+    fn rec_cap(&self) -> usize {
+        if self.rec_cap == 0 {
+            2_048
+        } else {
+            self.rec_cap
         }
     }
 
@@ -924,7 +942,11 @@ impl SfuState {
                 };
                 if attach {
                     if let Some(session) = rec_guard.as_mut() {
-                        if let Some(w) = session.open_track(&publication.kind) {
+                        if let Some(w) = session.open_track(
+                            &publication.kind,
+                            self.rec_cap(),
+                            self.metrics.clone(),
+                        ) {
                             *publication.rec.lock().await = Some(w);
                         }
                     }
@@ -1026,8 +1048,15 @@ impl SfuState {
                     Err(_) => break, // track terminou
                 }
             }
-            if let Some(mut w) = publication.rec.lock().await.take() {
-                w.close();
+            // O writer é RETIRADO primeiro (o guard morre no fim da linha) e só
+            // depois se espera. Fechar com o lock na mão prendia a publicação
+            // durante todo o esvaziamento da fila.
+            let rec = publication.rec.lock().await.take();
+            if let Some(w) = rec {
+                let perdidos = w.close().await;
+                if perdidos > 0 {
+                    tracing::warn!(%room_id, perdidos, "gravação DEGRADADA: pacotes perdidos por disco lento");
+                }
             }
             this.unpublish(room_id, &publication).await;
         });
@@ -1261,9 +1290,23 @@ impl SfuState {
         if empty {
             orphan_recording = room.recording.lock().await.take();
             if orphan_recording.is_some() {
-                for publication in room.publications.lock().await.iter() {
-                    if let Some(mut w) = publication.rec.lock().await.take() {
-                        w.close();
+                // Recolhe TODOS os writers com o lock, larga o lock, e só então
+                // espera. Esperar dentro do `for` seguraria o lock das
+                // publicações durante o esvaziamento de cada ficheiro (R16).
+                let writers = {
+                    let pubs = room.publications.lock().await;
+                    let mut v = Vec::new();
+                    for publication in pubs.iter() {
+                        if let Some(w) = publication.rec.lock().await.take() {
+                            v.push(w);
+                        }
+                    }
+                    v
+                };
+                for w in writers {
+                    let perdidos = w.close().await;
+                    if perdidos > 0 {
+                        tracing::warn!(%room_id, perdidos, "gravação DEGRADADA: pacotes perdidos por disco lento");
                     }
                 }
             }
@@ -1327,7 +1370,7 @@ impl SfuState {
                 continue;
             }
             if p.kind == "audio" {
-                if let Some(w) = session.open_track("audio") {
+                if let Some(w) = session.open_track("audio", self.rec_cap(), self.metrics.clone()) {
                     *p.rec.lock().await = Some(w);
                 }
             } else {
@@ -1343,7 +1386,7 @@ impl SfuState {
             }
         }
         for ((_, kind), p) in &best_video {
-            if let Some(w) = session.open_track(kind) {
+            if let Some(w) = session.open_track(kind, self.rec_cap(), self.metrics.clone()) {
                 *p.rec.lock().await = Some(w);
             }
         }
@@ -1358,10 +1401,26 @@ impl SfuState {
     pub async fn stop_recording(&self, room_id: Uuid) -> Option<crate::recorder::RecordingSession> {
         let room = self.rooms.get(&room_id).map(|r| r.clone())?;
         let session = room.recording.lock().await.take()?;
-        for publication in room.publications.lock().await.iter() {
-            if let Some(mut w) = publication.rec.lock().await.take() {
-                w.close();
+        // Mesma ordem de sempre: recolher com o lock, largar, esperar fora.
+        // A espera é OBRIGATÓRIA aqui — o `finalize` invoca o ffmpeg logo a
+        // seguir, e um ficheiro por esvaziar dá uma gravação truncada sem um
+        // único erro pelo caminho.
+        let writers = {
+            let pubs = room.publications.lock().await;
+            let mut v = Vec::new();
+            for publication in pubs.iter() {
+                if let Some(w) = publication.rec.lock().await.take() {
+                    v.push(w);
+                }
             }
+            v
+        };
+        let mut perdidos_total = 0u64;
+        for w in writers {
+            perdidos_total += w.close().await;
+        }
+        if perdidos_total > 0 {
+            tracing::warn!(%room_id, perdidos = perdidos_total, "gravação DEGRADADA: pacotes perdidos por disco lento");
         }
         tracing::info!(%room_id, "server recording stopped");
         Some(session)
