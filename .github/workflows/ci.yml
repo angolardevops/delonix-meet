@@ -181,6 +181,13 @@ jobs:
       - name: Isolamento e permissões negativas
         run: node web/e2e/isolamento.mjs
 
+      # A auditoria é atacada DIRECTAMENTE por SQL, não pela API: um teste que
+      # só usa a API prova que a API não deixa, não que os dados estão
+      # protegidos. E o adversário que interessa numa auditoria é quem TEM
+      # privilégios.
+      - name: Auditoria imutável (ataque directo à base de dados)
+        run: PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/auditoria.mjs
+
       # O MFA precisa do mesmo servidor a correr. O teste implementa o TOTP em
       # JavaScript de propósito: é uma segunda implementação independente do
       # RFC 6238, e vê-la concordar com a de Rust vale muito mais do que ver a

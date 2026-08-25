@@ -29,7 +29,7 @@ Três avisos de leitura:
 |---|---|---|
 | Backend Rust | 17 606 linhas, 33 módulos | `wc -l server/src/*.rs` |
 | Frontend TS/React | 16 978 linhas, 46 ficheiros | `wc -l web/src/**` |
-| Migrações | 0001–0036, contíguas | `ls server/migrations` |
+| Migrações | 0001–0037, contíguas | `ls server/migrations` |
 | `cargo test --release` | **46 passados, 0 falhados, 4 ignorados** | medido antes de mexer |
 | `tsc --noEmit` | limpo | medido |
 | `vitest` | 14 passados (3 ficheiros) | medido |
@@ -100,7 +100,7 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | RBAC | 🟡 | **2 papéis**: `admin` \| `member` (`org.rs:431`). O pedido são **15** (platform admin, security admin, compliance officer, co-host, presenter, recording editor, auditor read-only, …) | Alto |
 | Autorização validada no servidor | ✅ | host controls em `signaling.rs`, não confiados no cliente | — |
 | Isolamento multi-tenant | ✅ | `can_access_room`/`org::*`; RLS em `employee_groups` com fitness function | — |
-| Auditoria | 🟡 | `audit.rs` escreve *best-effort* nos eventos-chave; **não é imutável** | Médio |
+| Auditoria imutável | 🟡 → ✅ **feito e atacado por SQL** | cadeia de hash por org com verificação em `/audit/verify`; gatilhos recusam UPDATE/DELETE; a trilha sobrevive à conta apagada; escritas falhadas são ERRO com métrica. Detecção provada com os gatilhos desactivados | Baixo (era Médio) |
 | Retenção | ✅ | *sweep* de retenção em `main.rs` | — |
 | DLP | ✅ | `dlp.rs` (NIF, cartão, chaves de API, profanidade) com testes | — |
 | Legal hold / eDiscovery / exportação de evidências | 🔴 | **zero** | Alto |
