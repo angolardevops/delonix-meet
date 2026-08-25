@@ -46,7 +46,14 @@ jobs:
       - name: Catraca do clippy (o número de avisos não sobe)
         run: bash scripts/check-clippy-ratchet.sh
 
+      # E2E_TIMEOUT_FACTOR: os testes de media montam RTCPeerConnections a
+      # sério (ICE, DTLS, primeiro RTP). Numa máquina de desenvolvimento
+      # resolvem-se em ~0,1 s; num runner partilhado com 2 vCPU chegaram a
+      # estourar os 30 s e a falhar sem nada estar partido. Um portão que falha
+      # ao acaso perde a credibilidade toda.
       - name: Testes
+        env:
+          E2E_TIMEOUT_FACTOR: 4
         run: cargo test --manifest-path server/Cargo.toml --release
 
       - name: Build de release

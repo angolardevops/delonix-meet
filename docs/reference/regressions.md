@@ -362,3 +362,10 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **A escrita continua a não falhar a operação principal** (recusar um login porque a auditoria está em baixo é pior que o problema), mas passou a ser **ERRO** e a contar em `delonix_audit_write_failures_total`: uma trilha partida é uma falha de conformidade em curso, não um aviso perdido no log.
 - **Provado atacando a tabela por SQL**, não pela API — um teste que só usa a API prova que a API não deixa, não que os dados estão protegidos. Com os gatilhos DESACTIVADOS: alterar uma linha é detectado («o registo nº 1 foi ALTERADO depois de escrito») e apagar uma do meio também («falta o registo nº 2: a numeração salta para 3»).
 - **Ficheiros:** migração 0037, `server/src/audit.rs`, teste `web/e2e/auditoria.mjs`.
+
+### R50 — Portão de CI calibrado para o portátil de quem o escreveu
+- **Sintoma:** o CI falha ao acaso num teste que passa sempre em local. Aqui foi o `sfu_e2e::media_flows_both_ways`, com «timeout à espera de: B recebe áudio+vídeo de A».
+- **Causa raiz:** os testes de media montam `RTCPeerConnection`s a sério — ICE, DTLS e o primeiro RTP. Numa máquina de desenvolvimento resolvem-se em ~0,1 s; num runner de CI partilhado com 2 vCPU chegam a estourar os 30 s. Não é uma avaria do produto: é o mesmo trabalho numa máquina muito mais lenta.
+- **Regra:** prazos de teste ponta-a-ponta são **generosos e ajustáveis** (`E2E_TIMEOUT_FACTOR`, ×4 no CI), nunca calibrados para o ambiente de quem os escreveu. **Um portão que falha ao acaso perde a credibilidade toda** — à terceira vez, quem o vê vermelho assume flake e segue, e a partir daí ele não protege nada.
+- **E a mensagem de timeout tem de dizer o que falta para o distinguir:** o prazo, o número de tentativas e o tempo decorrido. Sem isso, um timeout não separa «o produto está partido» de «a máquina é lenta» — e foi exactamente essa dúvida que custou uma ida ao CI.
+- **Ficheiros:** `server/src/sfu_e2e.rs` (`prazo`, `eventually`), `.github/workflows/ci.yml`.
