@@ -250,3 +250,76 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Causa raiz:** a doc dizia `axum 0.7`/`sqlx 0.7` com o código em 0.8, e anunciava `sqlx::query!` com verificação em compile time quando `server/src` tem 118 chamadas à API de runtime e ZERO macros.
 - **Regra:** o `check-docs-drift.sh` compara as versões das crates estruturais com o `Cargo.toml` e recusa qualquer doc que anuncie SQL verificado em compile time enquanto o código usar a API de runtime. **Um portão que nunca se viu ficar vermelho não prova nada** — os dois foram verificados a falhar com o drift reintroduzido de propósito.
 - **Ficheiros:** `scripts/check-docs-drift.sh`, `HARNESS.md`, `AGENTS.md`, `GEMINI.md`.
+
+### R36 — Par de candidatos lido pelo estado `succeeded`: TURN «nunca em uso»
+- **Sintoma:** a métrica de uso de TURN responde **sempre** que a media é directa, e o par de candidatos vem a `null`. Nenhum erro, nenhum aviso — só um número errado com ar de certo.
+- **Causa raiz:** a extracção procurava o `candidate-pair` com `state === 'succeeded'`. Medido contra Chromium a sério: o Chrome mantém **treze** pares em `in-progress`/`waiting` muito depois de a ligação estar feita, e o `succeeded` só aparece de forma transitória. Resultado: `null` em **16 de 16** amostras — e, com o par nulo, `turnRelay` fica sempre `false`.
+- **Regra:** o par escolhido vem do **`transport.selectedCandidatePairId`**, que é o que a especificação define. O `succeeded`/`nominated` fica só como recuo para browsers que não publiquem o `transport`.
+- **A lição que interessa mais do que o bug:** os testes sintéticos passaram os dois lados com a mesma suposição errada — o fixture foi escrito por quem escreveu o código. Só correr contra um browser a sério o apanhou. Um teste cujo fixture nasce da mesma cabeça que o código não é uma verificação independente.
+- **Ficheiros:** `web/src/callQuality.ts`, teste `segue o selectedCandidatePairId do transport`.
+
+### R37 — Sondar o `getStats()` mais depressa do que o browser o actualiza
+- **Sintoma:** um teste conclui «sem media» numa chamada perfeitamente saudável — no cenário de REFERÊNCIA, que é onde um falso negativo mais se nota.
+- **Causa raiz:** o Chrome actualiza as estatísticas ~1×/s. Duas leituras dentro do mesmo intervalo trazem o **mesmo carimbo temporal**; como toda a extracção é por delta, o resultado é zero. Sondar a 500 ms produzia uma matriz inteira de falsos negativos.
+- **Regra:** nunca sondar o `getStats()` abaixo de ~1,5 s. Vale para o arnês de teste E para qualquer painel ao vivo.
+- **Ficheiros:** `e2e/netem-matrix.mjs`.
+
+### R38 — Camada simulcast escolhida por adivinhação: o palco servido em `q`
+- **Sintoma:** numa sala de dez, o orador em palco a ocupar 70% do ecrã aparece borratado. Na simétrica, uma sala de três gasta banda a servir vídeo inteiro a miniaturas de 90 px.
+- **Causa raiz:** `wanted_rid(kind, room_size, shift)` decidia com DOIS sinais — o número de participantes e um degrau por perda. O servidor não tem como saber o tamanho a que um tile está desenhado, se a aba está em segundo plano, se a máquina está travada por CPU, a bateria ou a poupança de dados; estava a inferir tudo isso do número de pessoas na sala.
+- **Regra:** **o cliente pede, a realidade da rede corta.** A camada desejada por publicador é decidida no cliente (`web/src/layerPolicy.ts`) e enviada no `video-interest`; o servidor aplica por cima o degrau da perda MEDIDA por RTCP — que nunca é anulado pela sugestão — e limita a `MAX_FULL_LAYERS_PER_SUB` quantas camadas altas um subscritor pode segurar, porque a sugestão vem de fora.
+- **Compatibilidade:** sugestão ausente ou com rótulo desconhecido ⇒ decide-se como sempre se decidiu, pelo tamanho da sala. Clientes com a app em cache antiga continuam a funcionar.
+- **Medido** (2026-08-25, dois Chromium contra o SFU): subscritor em `q` = 235 kbps; sugestão `h` = 325; sugestão `q` = 93. A sugestão vale 3,5× em downlink.
+- **Ficheiros:** `web/src/layerPolicy.ts`, `server/src/sfu.rs` (`wanted_rid`, `cap_full_layers`), `server/src/signaling.rs` (`VideoInterest`).
+
+### R39 — Mensagem do cliente que não desserializa morre em SILÊNCIO
+- **Sintoma:** uma funcionalidade nova simplesmente não acontece. Sem erro, sem log, sem nada para ver.
+- **Causa raiz:** o handler faz `match serde_json::from_str::<ClientMsg>(&text)` e os casos que não casam caem num braço vazio. Um campo novo com a forma errada — ou um `#[serde(default)]` em falta — descarta a mensagem INTEIRA.
+- **Regra:** todo o campo novo num `ClientMsg` leva um teste que desserializa **o JSON exacto que o cliente escreve**, mais um que prova que a mensagem SEM o campo continua a ser aceite (clientes com a app em cache antiga).
+- **Ficheiros:** `server/src/signaling.rs`, testes `video_interest_aceita_a_sugestao_de_qualidade` e `video_interest_sem_qualidade_continua_a_ser_aceite`.
+
+### R40 — Escrita de gravação a bloquear o executor do Tokio
+- **Sintoma:** com o volume de gravações lento ou cheio, salas SEM GRAVAÇÃO NENHUMA ficam lentas. A ligação entre as duas coisas não é óbvia e o sintoma não aponta para a gravação.
+- **Causa raiz:** `RecWriter::write_rtp` era chamado de dentro da task async que reencaminha RTP e escrevia com `std::fs::File`, que é **síncrono**. Um worker do Tokio bloqueado numa escrita não serve só aquela gravação — serve todas as salas que calharem naquela thread. O `BufWriter` reduziu a frequência das syscalls; não tirou a escrita do executor.
+- **Regra:** a escrita corre numa **thread dedicada** por track, alimentada por uma fila LIMITADA (`REC_QUEUE_CAP`). O `write_rtp` faz `try_send` e nunca bloqueia.
+- **A parte que é fácil estragar:** o `close()` tem de **esperar** a thread esvaziar a fila E fechar o ficheiro, porque o `finalize` invoca o ffmpeg logo a seguir. Fechar sem esperar dá uma gravação truncada sem um único erro pelo caminho — é a família da R18. O `close` é `async` e faz o `join` em `spawn_blocking` (fazer `join` no executor seria repor o problema que a mudança resolve). E recolhe-se o writer com o lock na mão, larga-se o lock, e só depois se espera (R16).
+- **Fila cheia = perda CONTADA, nunca silenciosa:** `delonix_recording_packets_dropped_total` e um aviso a cada 500. Uma gravação degradada tem de ser visível; a alternativa (bloquear até o disco alcançar) é pior, e perder em silêncio é o pior de todos.
+- **Validado com gravações REAIS** (2026-08-25, três execuções): 12 s gravados ⇒ artefactos de **12,000000 s** e **12,020000 s**, VP8 1280×720 + Opus 48 kHz estéreo, `recording_packets_dropped_total = 0`. Uma fila por esvaziar teria dado um ficheiro mais curto — é essa a prova.
+- **Por validar:** só o caminho de REMUX (`-c copy`, um publicador) foi exercitado. O de RECOMPOSIÇÃO (vários publicadores → reencode VP9+Opus) não: não se conseguiu pôr dois publicadores em simultâneo neste arnês. É o caminho com mais risco e continua sem prova.
+- **Ficheiros:** `server/src/recorder.rs` (`RecWriter`, `RecSink`), `server/src/sfu.rs` (os três fechos), `server/src/config.rs`.
+
+## Criptografia / E2EE
+
+### R41 — Endpoints MLS abertos, sem autenticação, a responder «feito»
+- **Sintoma:** nenhum. É esse o problema — `/api/mls/key-packages`, `/api/mls/rooms/{id}/key-packages` e `/api/mls/welcome` respondiam `201`/`200`/`202` com `"status": "delivered"` a **qualquer pessoa**, sem sessão, sem token, sem verificação de pertença à sala.
+- **Causa raiz:** o `mls.rs` foi escrito como desenho da camada MLS futura e o router ficou registado no `main.rs`. Os handlers não têm sequer extractor `AuthUser`.
+- **Regra:** **uma superfície que responde «feito» sem fazer nada é pior do que não existir.** Um integrador constrói contra ela e um auditor conta-a como capacidade. O módulo fica como documento de desenho; as rotas saem do router até haver MLS a sério — com `AuthUser` e `can_access_room`, que é o que lhes falta.
+- **Medido** (2026-08-25): antes, 201/200/202 sem autenticação nenhuma; depois, **404** nas três.
+- **Ficheiros:** `server/src/main.rs`, `server/src/mls.rs`.
+
+### R42 — Worker de cifra a deixar passar frames EM CLARO sem chave
+- **Sintoma:** media não cifrada a sair de uma sala marcada como E2EE, sem nada que o reporte.
+- **Causa raiz:** `encryptFrame` fazia `if (!key) { controller.enqueue(frame); return }` — fail-**open**. Hoje o `setKey` é esperado antes de existir um único sender, por isso não acontecia; mas a garantia de confidencialidade estava a depender da ordem de chamadas num ficheiro de 4000 linhas noutro módulo.
+- **Regra:** **fail-closed em cifra, sempre.** Sem chave, o frame é DESCARTADO. Sem media é um sintoma visível que alguém reporta; media em claro numa sala E2EE é uma quebra silenciosa que ninguém vê. Vale igual na decifra: entregar ciphertext ao descodificador é entregar-lhe ruído.
+- **Ficheiros:** `web/src/e2ee.ts`.
+
+### R43 — Segredo dentro de um tipo que deriva `Debug`
+- **Sintoma:** a chave AES-256 da sala num ficheiro de log, em base64, pronta a ler.
+- **Causa raiz:** o `ClientMsg` deriva `Debug` e a chave E2EE cedida pelo anfitrião viajava lá dentro como `String`. Nenhum log a imprimia — mas bastava um `tracing::debug!(?msg)` acrescentado por boas razões num dia mau.
+- **Regra:** material de chave nunca vive num tipo que derive `Debug` sem redacção. Usa-se `signaling::Secret`, cujo `Debug` imprime `[segredo redigido]` e cujo `Drop` sobrescreve os bytes. Vale para qualquer segredo novo — tokens, passwords, chaves de API em trânsito.
+- **Ficheiros:** `server/src/signaling.rs` (`Secret`), `server/src/recorder.rs` (limpeza dos bytes descodificados).
+
+### R44 — Rota registada sem autenticação, sem nada que o detecte
+- **Sintoma:** um endpoint aberto ao mundo, e nenhum sinal disso. Foi assim que o `/api/mls/*` esteve a responder `201`/`200`/`202` a qualquer pessoa (R41) — encontrado por acaso, numa auditoria manual.
+- **Causa raiz:** não há middleware de autenticação global. Cada handler declara a sua — por extractor (`AuthUser`, `ApiKey`, `OdooTokenAuth`) ou por guarda no corpo (`check_media_secret`). Um handler que se esqueça fica simplesmente aberto, e compila.
+- **Regra:** `check-route-auth.sh` percorre as **93 rotas** (incluindo as de routers ANINHADOS) e exige que cada uma tenha autenticação ou esteja em `scripts/rotas-publicas.txt` **com a razão escrita**. Acrescentar uma linha a esse ficheiro é uma decisão de segurança: se não se souber escrever a razão, a rota não devia ser pública.
+- **O portão também falha** quando uma rota está na lista mas já ganhou autenticação (lista velha), quando a lista refere rotas que já não existem, e quando não consegue LER um handler (closure inline, assinatura não encontrada) — porque uma rota que o portão não vê é uma rota sem portão.
+- **A primeira versão deste portão aprovou a reintrodução do `/api/mls` sem uma queixa**: não olhava para dentro de `.nest(...)`, que é exactamente onde o buraco estava. Um portão que não apanha o caso que o originou é decoração. Corrigido e reprovado nas quatro classes: router aninhado, rota nova sem auth, handler inline, e autenticação removida de um handler existente.
+- **Ficheiros:** `scripts/check-route-auth.sh`, `scripts/rotas-publicas.txt`.
+
+### R45 — Teste de isolamento com a expectativa errada
+- **Sintoma:** um teste de segurança a acusar vulnerabilidade onde há desenho — ou, pior no sentido inverso, a passar porque exige a coisa errada.
+- **Causa raiz:** exigiu-se que a org A levasse `403` ao ler uma sala da org B. Leva `200`, e está certo: o código da sala é uma **capability** à maneira do Meet. Quem o conhece vê os metadados e pode PEDIR para entrar; quem não é membro cai na sala de espera.
+- **Regra:** a invariante a testar não é «o pedido é recusado», é **«A nunca obtém acesso DIRECTO à media de outra organização»** — e isso verifica-se no WebSocket, não no código HTTP. Medido: o dono recebe `joined`, a outra org recebe `waiting`.
+- **A lição geral:** antes de chamar vulnerabilidade a um `200`, lê-se o desenho e verifica-se a segunda metade da promessa. O comentário no `join_room` dizia que os não-membros vão para a sala de espera; podia estar desactualizado, e por isso foi verificado no fio.
+- **Ficheiros:** `web/e2e/isolamento.mjs`.

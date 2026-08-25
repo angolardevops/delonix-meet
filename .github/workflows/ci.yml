@@ -89,6 +89,9 @@ jobs:
       - name: Drift documental (módulos, migrações, versões, SQL)
         run: bash scripts/check-docs-drift.sh
 
+      - name: Autorização de rotas (nenhuma rota aberta por esquecimento)
+        run: bash scripts/check-route-auth.sh
+
       - name: Afinidade por sala (ADR-0001 / regressão R3)
         run: bash scripts/check-room-affinity.sh
 
@@ -121,6 +124,60 @@ jobs:
       # ninguém repararia no aviso NOVO, que é o que este passo existe para ver.
       - name: Catraca do audit (npm + cargo)
         run: bash scripts/check-dep-audit.sh
+
+  # Isolamento entre inquilinos, contra um servidor A SÉRIO com Postgres a
+  # sério. É o critério de saída do §5.4 do mandato — «nenhum endpoint
+  # cross-tenant; testes automáticos de isolamento; testes de permissões
+  # negativas» — e um teste de isolamento contra um duplo prova o duplo, não o
+  # produto.
+  isolamento:
+    name: Isolamento entre inquilinos
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: delonix
+          POSTGRES_PASSWORD: delonix_dev
+          POSTGRES_DB: delonix_meet
+        ports: ['5435:5432']
+        options: >-
+          --health-cmd "pg_isready -U delonix -d delonix_meet"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      - name: Build do servidor
+        run: cargo build --manifest-path server/Cargo.toml --release
+
+      - name: Arrancar o servidor (migrações incluídas)
+        run: |
+          DELONIX_ALLOW_INSECURE=1 COOKIE_INSECURE=1 \
+            ./server/target/release/delonix-server > /tmp/servidor.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8180/api/status >/dev/null && exit 0
+            sleep 2
+          done
+          echo "o servidor não arrancou:"; cat /tmp/servidor.log; exit 1
+
+      - name: Isolamento e permissões negativas
+        run: node web/e2e/isolamento.mjs
+
+      - name: Log do servidor (se falhar)
+        if: failure()
+        run: cat /tmp/servidor.log
 
   # SBOM: artefacto por build, para inventário e resposta a CVE. Não é um
   # portão — é prova do que foi enviado.

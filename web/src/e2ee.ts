@@ -22,10 +22,20 @@ function cryptoOffset(kind, type) {
 }
 
 async function encryptFrame(frame, controller, kind) {
-  if (!key) { controller.enqueue(frame); return }
+  // FAIL-CLOSED. Sem chave, o frame é DESCARTADO — nunca emitido em claro.
+  // A versão anterior deixava-o passar, e numa sala marcada como E2EE isso
+  // era media não cifrada a sair sem que nada o reportasse. Hoje o
+  // setKey é esperado antes de existir um único sender, por isso na prática
+  // não acontecia; mas a garantia não pode depender da ordem de chamadas num
+  // ficheiro de 4000 linhas noutro módulo. Sem media é um sintoma visível;
+  // media em claro numa sala E2EE é uma quebra silenciosa de confidencialidade.
+  if (!key) { return }
   const data = new Uint8Array(frame.data)
   const offset = cryptoOffset(kind, frame.type)
-  if (data.byteLength <= offset) { controller.enqueue(frame); return }
+  // Frame demasiado pequeno para ter payload a cifrar. Descarta-se, não se
+  // deixa passar: o receptor descartá-lo-ia na mesma (o limiar dele é maior),
+  // por isso deixá-lo sair só o expunha sem chegar a servir para nada.
+  if (data.byteLength <= offset) { return }
   const header = data.slice(0, offset)
   const payload = data.slice(offset)
   const iv = crypto.getRandomValues(new Uint8Array(IV_LEN))
@@ -41,7 +51,9 @@ async function encryptFrame(frame, controller, kind) {
 }
 
 async function decryptFrame(frame, controller, kind) {
-  if (!key) { controller.enqueue(frame); return }
+  // Fail-closed também aqui: sem chave, entregar o frame ao descodificador
+  // seria entregar-lhe ciphertext — ruído, não media.
+  if (!key) { return }
   const data = new Uint8Array(frame.data)
   const offset = cryptoOffset(kind, frame.type)
   // header + tag GCM (16) + IV — abaixo disto não é um frame nosso.

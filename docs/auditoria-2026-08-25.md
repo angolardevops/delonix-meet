@@ -29,7 +29,7 @@ Três avisos de leitura:
 |---|---|---|
 | Backend Rust | 17 606 linhas, 33 módulos | `wc -l server/src/*.rs` |
 | Frontend TS/React | 16 978 linhas, 46 ficheiros | `wc -l web/src/**` |
-| Migrações | 0001–0033, contíguas | `ls server/migrations` |
+| Migrações | 0001–0034, contíguas | `ls server/migrations` |
 | `cargo test --release` | **46 passados, 0 falhados, 4 ignorados** | medido antes de mexer |
 | `tsc --noEmit` | limpo | medido |
 | `vitest` | 14 passados (3 ficheiros) | medido |
@@ -62,29 +62,29 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | CI (Rust/TS/SQL/manifests) | 🔴 → ✅ **feito nesta sessão** | — | — | `make test` exit 0 num worktree limpo |
 | `cargo fmt` / clippy / audit / SBOM | 🔴 → ✅ **feito nesta sessão** | dívida herdada escrita e travada por catraca | — | catracas vistas a falhar |
 | Filas limitadas + backpressure | 🔴 → ✅ **feito nesta sessão** | — | — | 7 testes novos (R32/R33) |
-| Nunca bloquear o executor Tokio | 🟡 **melhorado nesta sessão** | `BufWriter` de 64 KiB corta as syscalls de uma-por-pacote-RTP para uma-por-64-KiB, mas a escrita **continua síncrona no executor**. A correcção completa (thread dedicada + fila limitada por track) fica por fazer: mexe no caminho de fecho, onde errar dá gravação truncada em silêncio, e não há ffmpeg nem media real nesta máquina para a validar | Médio (era Alto) | gravar com o volume saturado e medir latência de RTP |
+| Nunca bloquear o executor Tokio | 🟡 → ✅ **feito e VALIDADO com gravação real** | escrita numa thread dedicada por track, fila limitada (`REC_QUEUE_CAP`), `close()` assíncrono que espera o esvaziamento antes do ffmpeg. Medido em 3 execuções: 12 s gravados ⇒ artefactos de **12,000000 s** e **12,020000 s**, VP8 1280×720 + Opus, zero pacotes perdidos. **Só o caminho de remux** foi exercitado; o de recomposição multi-publicador continua sem prova | Baixo (era Alto) | 4 testes + gravação real ponta-a-ponta |
 | `ffmpeg` fora do executor + limites | 🟡 → ✅ **feito nesta sessão** | timeout (`FFMPEG_TIMEOUT_SECS`), `-threads` (`FFMPEG_THREADS`), `-nostdin`, `kill_on_drop`, e o processo é morto e colhido ao exceder. **Falta sandbox e limite de memória** (precisa de cgroups/setrlimit) | Baixo (era Alto) | 3 testes em `run_bounded` (acaba a tempo / estoura o tecto / falha) |
-| Máquina de estados de chamada | 🔴 | não existe. Não há `connecting/degraded/reconnecting/recovering/failed` | Alto | estado observável em cada transição |
-| **ICE restart** | 🔴 | **zero ocorrências de `restartIce()` no frontend** | **Crítico** — a recuperação de rede depende de reload da página (`Room.tsx:853`, `dx_reconnect_at`) | cortar a rede 10 s e a chamada volta sem reload |
-| Reconnect token / silent rejoin | 🔴 | não existe | Alto | refresh do browser não perde a sessão de media |
-| Backoff exponencial | 🟡 | existe só no `/rtc` (`presence.ts:93`, 2 s→30 s) e **sem jitter**; o `/ws` não tem | Médio | N clientes a reentrar não sincronizam |
+| Máquina de estados de chamada | 🔴 → ✅ **feita nesta sessão** | os 7 estados em `callRecovery.ts`, decisão pura e testada | — | 16 testes, incl. percurso completo de uma quebra |
+| **ICE restart** | 🔴 → ✅ **feito E VALIDADO contra SFU real** | medido a 2026-08-25 com dois Chromium contra o SFU Rust: um dos peers fez `connected → degraded → reconnecting → **connected**` e ficou estável nos 30 s seguintes. Continua por validar contra uma rede a MUDAR DE CAMINHO de propósito (Wi-Fi→móvel) | Baixo (era Crítico) | percurso de recuperação observado ponta-a-ponta |
+| Reconnect token / silent rejoin | 🔴 | não existe. O reload deixou de ser a primeira resposta (passou a última, ao fim de 6 tentativas), mas continua a ser o último recurso | Médio | refresh do browser não perde a sessão de media |
+| Backoff exponencial | 🟡 → ✅ **feito nesta sessão** | com **jitter** nos dois caminhos: ICE restart e `/rtc`. Sem jitter, uma falha da sala inteira punha todos a reiniciar no mesmo instante | — | `backoffDelay` testado no intervalo [metade, inteiro] |
 | HA do SFU (registry, drain, placement) | 🔴 | há afinidade por sala (ADR-0001) — que **não é HA**. Morrer o pod mata as salas | **Crítico** | `kubectl delete pod` e as salas recuperam noutro nó |
-| Testes de fiabilidade com browsers reais | 🔴 | 0 testes E2E; os `sfu_e2e` usam `RTCPeerConnection` de servidor, não browsers | Alto | matriz 1:1/5/10/25/50 |
+| Testes de fiabilidade com browsers reais | 🔴 → 🟡 **arnês feito, matriz por medir** | `web/e2e/harness.html` carrega a PILHA REAL do cliente contra o SFU Rust, com dois Chromium a sério — provado a funcionar. A matriz de 12 cenários **não é publicável** a partir deste arnês: com o servidor em contentor, o ICE cai aos ~10 s (ver `e2e/README.md`) | Médio (era Alto) | matriz 1:1/5/10/25/50 |
 
 ### Programa II — Qualidade de áudio e vídeo
 
 | Capacidade | Estado comprovado | Lacuna | Risco |
 |---|---|---|---|
 | Simulcast 3 camadas (q/h/f) | ✅ | — | — |
-| Selecção de camada adaptativa | 🟡 | `wanted_rid(kind, room_size, shift)` (`sfu.rs:283`) usa **só** tamanho da sala e um *shift* por perda. **Não** entra: tamanho do tile, orador activo, palco, pin, aba em background, RTT, jitter, CPU, bateria, data-saver, preferência | **Alto** — desperdício de banda na rede-alvo | 
+| Selecção de camada adaptativa | 🟡 → ✅ **feito e MEDIDO** | a decisão passou para o cliente (`layerPolicy.ts`), que é quem conhece o tamanho do tile, palco, pin, aba em segundo plano, CPU, bateria, poupança de dados e preferência. O servidor aplica a perda medida por cima e limita camadas altas por subscritor. Medido com dois Chromium contra o SFU: `q`→235 kbps, sugestão `h`→**325**, sugestão `q`→**93** (3,5× menos banda) | Baixo (era Alto) | 
 | `video-interest` (não enviar a tiles invisíveis) | ✅ | binário (subscrever/não), não é sugestão de qualidade | — |
 | Suspender vídeo em background preservando áudio | 🔴 | não existe | Médio |
 | Perfis de qualidade nomeados | 🔴 | não há audio-only / data-saver / 180p…1080p / screen-texto vs movimento | Médio |
 | Pipeline de áudio com IA no browser | 🟡 | `@sapphi-red/web-noise-suppressor` está nas dependências; **não há** de-reverberação, voice isolation, VAD, normalização, limiter, nem perfis reunião/aula/podcast/música | Médio |
-| Delonix Call Quality Score (0–100) | 🔴 | não existe | Médio |
-| Métricas de chamada | 🟡 | recolhe-se **3** (`rtt_ms`, `loss_pct`, `up_kbps` — migração 0025). Das ~25 pedidas faltam NACK, PLI, FIR, frames descartados, freeze duration, audio concealment, time-to-first-audio/video, join time, par de candidatos, uso de TURN, reconexões | Alto — sem isto não há SLO defensável |
+| Delonix Call Quality Score (0–100) | 🔴 → ✅ **feito nesta sessão** | modelo de penalizações transparente em `callQuality.ts`, com os limiares ancorados na G.114. **Não é MOS e não está calibrado contra ouvido humano** — é escala interna, comparável consigo mesma | Médio |
+| Métricas de chamada | 🟡 → ✅ **feito nesta sessão** | de **3** para **~20** por amostra: jitter, downlink, NACK/PLI/FIR, frames descartados, congelamento, ocultação de áudio (PLC), par de candidatos, TURN em uso, limitação do encoder. Persistidas (migração 0034) e agregadas em `/metrics`. **Ainda em falta:** time-to-first-audio/video, join time, ICE gathering time e contagem de reconexões — precisam de instrumentação de TEMPO no cliente, não vêm do `getStats()` | Médio (era Alto) |
 | Observabilidade do SFU (Prometheus) | ✅ | boa: 13 contadores + 4 novos de filas | — |
-| Testes em rede degradada (emulação) | 🔴 | nenhum | **Alto** — é o mercado-alvo |
+| Testes em rede degradada (emulação) | 🔴 → 🟡 | `e2e/netem-matrix.mjs` com `tc netem` a moldar o caminho REAL (UDP incluído — o estrangulamento do DevTools não serve, só afecta HTTP). Provado EXACTO onde mediu: `loss 10%` → 10,2 % medidos; `loss 20%` → 21 %. Falta-lhe um transporte estável para a matriz completa | Médio (era Alto) |
 
 ### Programa III — Enterprise, IAM, governance
 
@@ -167,9 +167,10 @@ commits anteriores e deve ser tratada como comprometida.
 
 ## 4. As três lacunas que mandam na ordem de execução
 
-1. **Não há recuperação de chamada.** Zero `restartIce()`. Numa rede que oscila
-   — o caso normal do mercado-alvo — a única recuperação é **recarregar a
-   página**. Isto anula, na prática, boa parte do valor do resto.
+1. ~~**Não há recuperação de chamada.**~~ **Endereçado** — `callRecovery.ts` +
+   ICE restart na `SfuCall`. Continua a faltar a prova contra rede real, e
+   faltam o *reconnect token* e o *silent rejoin*: um refresh do browser ainda
+   perde a sessão de media.
 2. **A afinidade por sala não é HA.** Concentrar as salas no mesmo pod resolve o
    *split-brain* e **agrava** o raio de dano: matar o pod mata as salas todas.
 3. **A adaptação de qualidade ignora tudo o que interessa.** Decidir a camada
@@ -198,6 +199,20 @@ Tem de ser dito por inteiro:
 
 ---
 
+### Programa III — E2EE (consolidação de 2026-08-25)
+
+| Capacidade | Estado | Nota |
+|---|---|---|
+| Protocolo documentado e auditável | 🔴 → ✅ | `docs/reference/e2ee.md`: formato byte a byte, modelo de ameaça, e a lista do que **não** protege |
+| Interoperabilidade JS↔Rust do formato | 🔴 → ✅ | 6 testes que reconstroem em Rust o que o worker produz — sem eles, uma divergência daria gravações em ruído sem erro nenhum |
+| Fail-closed na cifra | 🔴 → ✅ | R42 |
+| Segredos fora do `Debug` | 🔴 → ✅ | R43 |
+| Rotas MLS abertas sem autenticação | 🔴 → ✅ | R41 — 201/200/202 → 404 |
+| Autenticação por remetente | 🔴 | chave partilhada: qualquer participante pode forjar frames de outro |
+| Forward secrecy / rotação de chave | 🔴 | a chave é função pura de (frase, sala) — quem a descobrir decifra todo o passado |
+| Chat e legendas em E2EE | 🔴 | passam pelo servidor em claro |
+| PBKDF2 ≥ 600 000 iterações | 🔴 | 250 000 hoje; subir sem negociação parte salas com versões mistas |
+
 ## 6. Próxima prioridade
 
 Pela ordem do mandato, e pelo risco medido:
@@ -206,10 +221,21 @@ Pela ordem do mandato, e pelo risco medido:
    tecto e travão de CPU nesta sessão; falta mover a escrita IVF/OGG para uma
    thread dedicada com fila limitada por track, **com teste contra uma gravação
    real** (não há ffmpeg nem media nesta máquina).
-2. **Máquina de estados de chamada + ICE restart + rejoin silencioso.**
-3. **Métricas de chamada completas** — sem elas não há Call Quality Score nem
-   SLO com números.
-4. **Testes em rede degradada** com emulação, e só depois publicar metas.
-5. **HA do SFU** (registry, health/capacity, placement, drain).
+2. **Validar o ICE restart contra rede real** (a máquina de estados e o restart
+   já existem; o que falta é a prova), e implementar *reconnect token* +
+   *silent rejoin* — hoje um refresh do browser ainda perde a sessão de media.
+3. ~~**Métricas de chamada completas.**~~ **Endereçado** — ~20 métricas por
+   amostra + o Delonix Call Quality Score. Falta a instrumentação de TEMPO
+   (time-to-first-audio/video, join time, ICE gathering), que não vem do
+   `getStats()`.
+4. **Testes em rede degradada** com emulação, e só depois publicar metas. É
+   agora o passo que desbloqueia tudo o resto: já há o que medir, falta medir.
+5. ~~**Adaptação de simulcast.**~~ **Endereçado e medido.** Falta o sinal de
+   BATERIA ligado de verdade (`navigator.getBattery()` não está a alimentar as
+   condições) e uma estimativa de banda DESCENDENTE — hoje a política não
+   orçamenta, porque não há número portável para isso.
+6. **HA do SFU** (registry, health/capacity, placement, drain).
+7. **Perfis de qualidade nomeados** (audio-only, data-saver, 180p…1080p): a
+   política já os sabe aplicar, falta a escolha na interface.
 
 Nada de features cosméticas antes destas.

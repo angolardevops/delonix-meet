@@ -88,6 +88,33 @@ pub struct Metrics {
     /// descartar é correcto — mas se isto sobe, o `negotiation_loop` não está
     /// a acompanhar o ritmo de alterações de subscrição.
     pub nego_queue_dropped_total: AtomicU64,
+
+    // ---- Qualidade de chamada (amostras reportadas pelos clientes) ----
+    //
+    // Contadores em processo, e não uma consulta à base de dados no `/metrics`:
+    // um scrape não pode arrastar o Postgres consigo. A média lê-se em
+    // Prometheus como `score_sum / samples_total`, que é a forma idiomática e
+    // permite `rate()` por janela em vez de uma média desde o arranque.
+    /// Amostras de qualidade recebidas (cumulativo).
+    pub qos_samples_total: AtomicU64,
+    /// Soma das pontuações Delonix recebidas. Só conta amostras que a TRAZEM.
+    pub qos_score_sum: AtomicU64,
+    /// Amostras COM pontuação (denominador da média — clientes antigos não a
+    /// enviam, e misturá-los baixava a média sem que nada tivesse piorado).
+    pub qos_scored_total: AtomicU64,
+    /// Amostras com pontuação < 60 («fraca» ou pior).
+    pub qos_poor_total: AtomicU64,
+    /// Amostras em que a media passou por TURN relay (custo e latência).
+    pub qos_turn_relay_total: AtomicU64,
+    /// Amostras em que o encoder estava travado por CPU do cliente — o
+    /// problema é a máquina, não a rede, e sem isto conta como «rede má».
+    pub qos_cpu_limited_total: AtomicU64,
+
+    /// Pacotes RTP perdidos por a fila de escrita da gravação estar cheia.
+    /// `> 0` significa gravação DEGRADADA: o disco não acompanhou. Existe
+    /// porque a alternativa — bloquear o executor até o disco alcançar — é
+    /// pior, e porque uma gravação corrompida em silêncio é a R18.
+    pub recording_packets_dropped_total: AtomicU64,
 }
 
 impl Metrics {
@@ -154,6 +181,27 @@ impl Metrics {
              # HELP delonix_nego_queue_dropped_total Renegociações do SFU coalescidas por fila cheia.\n\
              # TYPE delonix_nego_queue_dropped_total counter\n\
              delonix_nego_queue_dropped_total {}\n\
+             # HELP delonix_qos_samples_total Amostras de qualidade recebidas dos clientes.\n\
+             # TYPE delonix_qos_samples_total counter\n\
+             delonix_qos_samples_total {}\n\
+             # HELP delonix_qos_scored_total Amostras que trazem pontuação (denominador da média).\n\
+             # TYPE delonix_qos_scored_total counter\n\
+             delonix_qos_scored_total {}\n\
+             # HELP delonix_qos_score_sum Soma das pontuações Delonix (média = sum/scored).\n\
+             # TYPE delonix_qos_score_sum counter\n\
+             delonix_qos_score_sum {}\n\
+             # HELP delonix_qos_poor_total Amostras com pontuação abaixo de 60.\n\
+             # TYPE delonix_qos_poor_total counter\n\
+             delonix_qos_poor_total {}\n\
+             # HELP delonix_qos_turn_relay_total Amostras com media a passar por TURN relay.\n\
+             # TYPE delonix_qos_turn_relay_total counter\n\
+             delonix_qos_turn_relay_total {}\n\
+             # HELP delonix_qos_cpu_limited_total Amostras com o encoder travado por CPU do cliente.\n\
+             # TYPE delonix_qos_cpu_limited_total counter\n\
+             delonix_qos_cpu_limited_total {}\n\
+             # HELP delonix_recording_packets_dropped_total Pacotes perdidos por fila de gravação cheia.\n\
+             # TYPE delonix_recording_packets_dropped_total counter\n\
+             delonix_recording_packets_dropped_total {}\n\
              # HELP delonix_uptime_seconds Uptime do processo em segundos.\n\
              # TYPE delonix_uptime_seconds gauge\n\
              delonix_uptime_seconds {}\n",
@@ -174,6 +222,13 @@ impl Metrics {
             self.ws_queue_dropped_total.load(Relaxed),
             self.ws_slow_consumer_kills_total.load(Relaxed),
             self.nego_queue_dropped_total.load(Relaxed),
+            self.qos_samples_total.load(Relaxed),
+            self.qos_scored_total.load(Relaxed),
+            self.qos_score_sum.load(Relaxed),
+            self.qos_poor_total.load(Relaxed),
+            self.qos_turn_relay_total.load(Relaxed),
+            self.qos_cpu_limited_total.load(Relaxed),
+            self.recording_packets_dropped_total.load(Relaxed),
             uptime_secs,
         )
     }

@@ -1,3 +1,21 @@
+//! Interface Message Layer Security (MLS, RFC 9420) — **DESENHO, NÃO SERVIÇO**.
+//!
+//! Descreve a camada que há-de substituir a chave AES-GCM partilhada e estática
+//! por acordo de chaves de grupo com forward secrecy e autenticação por
+//! remetente (ver `docs/reference/e2ee.md` para o que a chave partilhada NÃO
+//! protege).
+//!
+//! **As rotas estão DESREGISTADAS no `main.rs`.** Estes handlers são stubs: não
+//! guardam nada, não verificam nada, e não têm sequer extractor de
+//! autenticação — devolviam `201`/`200`/`202` com `"status": "delivered"` a
+//! qualquer pessoa, sem sessão e sem verificação de pertença à sala.
+//!
+//! Para voltarem a ser servidas falta-lhes, no mínimo: `AuthUser`, verificação
+//! de acesso à sala (`can_access_room`), persistência dos KeyPackages, e a
+//! máquina de estados MLS por trás. Enquanto isso não existir, a ausência é
+//! mais honesta do que a resposta.
+#![allow(dead_code)]
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -11,10 +29,6 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 use crate::AppState;
-
-/// Stub para a interface Message Layer Security (MLS) - RFC 9420.
-/// Esta camada garantirá E2EE (End-to-End Encryption) robusto e contínuo para
-/// mensagens de Chat e metadados na sala, substituindo a chave partilhada AES-GCM estática.
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct KeyPackageReq {

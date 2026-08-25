@@ -1,5 +1,19 @@
 import { FrameCrypto } from './e2ee'
 import { ClientMsg, Signaling } from './signaling'
+import {
+  callQualityScore,
+  extractQuality,
+  type QualityCursor,
+  type QualitySample,
+  type StatEntry,
+} from './callQuality'
+import {
+  DEFAULT_RECOVERY,
+  onGraceExpired,
+  onPeerState,
+  type CallState,
+  type RecoveryConfig,
+} from './callRecovery'
 
 /**
  * Melhora o Opus no SDP *recebido*: o fmtp do lado remoto é o que o nosso
@@ -70,6 +84,11 @@ export interface CallCallbacks {
   onStream: (peerId: string, stream: MediaStream) => void
   /** A ligação de media com o participante caiu. */
   onPeerLeft: (peerId: string) => void
+  /**
+   * Estado da ligação de media mudou (ver `callRecovery.ts`). Opcional: quem
+   * não o fornecer mantém o comportamento anterior, sem recuperação visível.
+   */
+  onState?: (state: CallState) => void
 }
 
 export interface Call {
@@ -96,12 +115,18 @@ export interface Call {
   hangup(): void
 }
 
-export interface QosReport {
-  /** RTT até ao SFU em ms (transporte partilhado por todos os peers). */
-  rtt: number | null
-  /** Uplink próprio: kbps enviados (todas as tracks). */
-  upKbps: number
-  byPeer: Record<string, { kbps: number; lossPct: number }>
+/**
+ * Amostra completa de qualidade + a pontuação Delonix (0–100).
+ *
+ * Substituiu um relatório de TRÊS números (RTT, uplink, perda por peer). A
+ * auditoria de 2026-08-25 mediu que era o que havia das ~25 métricas que o §4.4
+ * pede — e com três números não há diagnóstico nem SLO defensável.
+ */
+export type QosReport = QualitySample & {
+  /** Delonix Call Quality Score, 0–100. Ver `callQuality.ts` para o modelo
+   *  e, sobretudo, para o que ele NÃO é (não é MOS, não está calibrado
+   *  contra julgamento humano). */
+  score: number
 }
 
 /**
@@ -359,12 +384,19 @@ export class SfuCall implements Call {
   /** Serializa o processamento de SDP para não intercalar negociações. */
   private queue: Promise<void> = Promise.resolve()
 
+  // ---- Recuperação de chamada (ver callRecovery.ts) ----
+  private state: CallState = 'connecting'
+  private attempts = 0
+  private graceTimer: ReturnType<typeof setTimeout> | null = null
+  private restartTimer: ReturnType<typeof setTimeout> | null = null
+
   constructor(
     private signal: Signaling,
     localStream: MediaStream,
     rtcConfig: RTCConfiguration,
     private cb: CallCallbacks,
     private crypto?: FrameCrypto,
+    private recovery: RecoveryConfig = DEFAULT_RECOVERY,
   ) {
     this.pc = new RTCPeerConnection(pcConfig(rtcConfig, crypto))
 
@@ -392,6 +424,12 @@ export class SfuCall implements Call {
       const stream = e.streams[0]
       if (stream) this.cb.onStream(stream.id, stream)
     }
+
+    // Recuperação de media. Antes disto não existia handler nenhum: uma PC que
+    // caísse em `failed` — mudança de Wi-Fi para dados móveis, NAT a refazer o
+    // binding, portátil a acordar da suspensão — ficava morta até o utilizador
+    // recarregar a página.
+    this.pc.onconnectionstatechange = () => this.onPcState(this.pc.connectionState)
 
     signal.on('sfu-answer', (m) =>
       this.enqueue(async () => {
@@ -463,6 +501,98 @@ export class SfuCall implements Call {
 
   private enqueue(task: () => Promise<void>) {
     this.queue = this.queue.then(task).catch((e) => console.warn('[sfu]', e))
+  }
+
+  // ------------------------------------------------------------------
+  //  Recuperação de media. A DECISÃO vive em `callRecovery.ts` (pura e
+  //  testada); aqui só se executa o que ela mandar.
+  // ------------------------------------------------------------------
+
+  private setState(next: CallState) {
+    if (next === this.state) return
+    this.state = next
+    console.debug('[sfu] estado da chamada ->', next)
+    this.cb.onState?.(next)
+  }
+
+  private clearTimers() {
+    if (this.graceTimer) clearTimeout(this.graceTimer)
+    if (this.restartTimer) clearTimeout(this.restartTimer)
+    this.graceTimer = null
+    this.restartTimer = null
+  }
+
+  private onPcState(pcState: RTCPeerConnectionState) {
+    const d = onPeerState(pcState, this.state, this.attempts, this.recovery)
+    this.attempts = d.attempts
+    // Voltou a haver media: qualquer temporizador pendente é obsoleto. Sem
+    // isto, uma recuperação espontânea deixava um restart agendado a disparar
+    // depois, renegociando uma ligação que já estava boa.
+    if (d.state === 'connected' || d.state === 'disconnected') this.clearTimers()
+    this.setState(d.state)
+    this.runAction(d.action)
+  }
+
+  private runAction(action: ReturnType<typeof onPeerState>['action']) {
+    switch (action.kind) {
+      case 'none':
+        return
+      case 'observe':
+        if (this.graceTimer) return
+        this.graceTimer = setTimeout(() => {
+          this.graceTimer = null
+          const d = onGraceExpired(this.state, this.attempts, this.recovery)
+          this.attempts = d.attempts
+          this.setState(d.state)
+          this.runAction(d.action)
+        }, action.graceMs)
+        return
+      case 'restart':
+        if (this.restartTimer) return
+        this.restartTimer = setTimeout(() => {
+          this.restartTimer = null
+          this.restartIce()
+        }, action.delayMs)
+        return
+      case 'give-up':
+        // Não há mais nada a tentar daqui. Quem consome o `onState` decide o
+        // que oferecer (no Room.tsx, o recarregar que já era o comportamento).
+        this.clearTimers()
+        return
+    }
+  }
+
+  /**
+   * Reinicia o ICE: oferta nova com credenciais novas (`iceRestart`), o que
+   * faz o browser recolher candidatos de raiz pelo caminho de rede ACTUAL.
+   *
+   * Passa pela mesma fila que todo o resto da negociação. Não se usa
+   * `pc.restartIce()` (que dispararia `onnegotiationneeded`) porque nesta
+   * classe a negociação é toda explícita e serializada — misturar os dois daria
+   * ofertas a competir, que é a família de bugs da R13.
+   *
+   * Do lado do servidor não é preciso nada: o `webrtc-rs` detecta as
+   * credenciais novas no `set_remote_description` e reinicia o seu ICE
+   * (`peer_connection/mod.rs`, `have_remote_credentials_change`).
+   */
+  private restartIce() {
+    this.enqueue(async () => {
+      if (this.state === 'disconnected') return
+      // Uma negociação a meio (glare, ou renegociação do servidor em curso):
+      // ofertar agora falharia por estado. Volta a tentar em breve — a
+      // tentativa já foi contabilizada, por isso isto não fura o orçamento.
+      if (this.pc.signalingState !== 'stable') {
+        this.restartTimer = setTimeout(() => {
+          this.restartTimer = null
+          this.restartIce()
+        }, 500)
+        return
+      }
+      this.setState('recovering')
+      const offer = await this.pc.createOffer({ iceRestart: true })
+      await this.pc.setLocalDescription(offer)
+      this.send({ type: 'sfu-offer', sdp: offer.sdp! })
+    })
   }
 
   private async flushIce() {
@@ -580,51 +710,25 @@ export class SfuCall implements Call {
     })
   }
 
-  /** Deltas de bytes/pacotes entre chamadas ao qos() (por stat id). */
-  private lastQos = new Map<string, { bytes: number; ts: number; pkts: number; lost: number }>()
+  /** Contadores da amostra anterior (os do WebRTC são cumulativos). */
+  private cursors = new Map<string, QualityCursor>()
 
   async qos(): Promise<QosReport> {
-    const out: QosReport = { rtt: null, upKbps: 0, byPeer: {} }
     const report = await this.pc.getStats()
-    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/
-    report.forEach((s: Record<string, number | string | boolean>) => {
-      if (s.type === 'candidate-pair' && s.state === 'succeeded' && typeof s.currentRoundTripTime === 'number') {
-        out.rtt = Math.round((s.currentRoundTripTime as number) * 1000)
-      }
-      if (s.type === 'outbound-rtp') {
-        const prev = this.lastQos.get(String(s.id))
-        const bytes = (s.bytesSent as number) ?? 0
-        const ts = s.timestamp as number
-        if (prev && ts > prev.ts) out.upKbps += Math.max(0, Math.round(((bytes - prev.bytes) * 8) / (ts - prev.ts)))
-        this.lastQos.set(String(s.id), { bytes, ts, pkts: 0, lost: 0 })
-      }
-      if (s.type === 'inbound-rtp') {
-        // trackIdentifier = "<publisher-uuid>-<kind>-<rid>" (definido pelo SFU)
-        const tid = String(s.trackIdentifier ?? '')
-        if (!uuidRe.test(tid)) return
-        const peer = tid.slice(0, 36)
-        const prev = this.lastQos.get(String(s.id))
-        const bytes = (s.bytesReceived as number) ?? 0
-        const pkts = (s.packetsReceived as number) ?? 0
-        const lost = (s.packetsLost as number) ?? 0
-        const ts = s.timestamp as number
-        let kbps = 0
-        let lossPct = 0
-        if (prev && ts > prev.ts) {
-          kbps = Math.max(0, Math.round(((bytes - prev.bytes) * 8) / (ts - prev.ts)))
-          const dp = pkts - prev.pkts
-          const dl = lost - prev.lost
-          if (dp + dl > 0) lossPct = Math.round((100 * dl) / (dp + dl))
-        }
-        this.lastQos.set(String(s.id), { bytes, ts, pkts, lost })
-        const cur = out.byPeer[peer] ?? { kbps: 0, lossPct: 0 }
-        out.byPeer[peer] = { kbps: cur.kbps + kbps, lossPct: Math.max(cur.lossPct, lossPct) }
-      }
-    })
-    return out
+    // O `RTCStatsReport` é um Map-like; a extracção é pura e trabalha sobre um
+    // array simples, o que a torna testável sem browser (ver callQuality.test.ts).
+    const entries: StatEntry[] = []
+    report.forEach((v) => entries.push(v as unknown as StatEntry))
+    const sample = extractQuality(entries, this.cursors)
+    return { ...sample, score: callQualityScore(sample) }
   }
 
   hangup() {
+    // Terminal ANTES de fechar a PC: o `close()` dispara
+    // `onconnectionstatechange`, e sem o estado já em `disconnected` a máquina
+    // interpretaria a saída intencional como uma avaria e tentava recuperar.
+    this.setState('disconnected')
+    this.clearTimers()
     this.pc.close()
     this.crypto?.close()
     this.signal.close()

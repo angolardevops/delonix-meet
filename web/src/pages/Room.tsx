@@ -22,6 +22,8 @@ import { Btn, SelectCtl } from '../components/ui'
 import { BreakoutRoom, PeerInfo, PollView, QaView, Signaling, WbStroke } from '../signaling'
 import { ThemePicker } from '../components/Shell'
 import { Call, MeshCall, SCREEN_CONSTRAINTS, SfuCall } from '../webrtc'
+import type { CallState } from '../callRecovery'
+import { chooseLayers, type LocalConditions, type TileSignal } from '../layerPolicy'
 import { makeCallHolderStart } from '../sfuLifecycle'
 import {
   BlurIcon, CamIcon, CamOffIcon, ChatIcon, ChevronUpIcon, CloseIcon, DownloadIcon, EmojiIcon, HandIcon,
@@ -266,6 +268,10 @@ export default function Room({
   // Pode admitir convidados em espera: anfitrião OU participante promovido.
   const [canAdmit, setCanAdmit] = useState(false)
   const [status, setStatus] = useState('A ligar…')
+  /** Estado da ligação de media — alimenta o indicador de recuperação. */
+  const [callState, setCallState] = useState<CallState>('connecting')
+  /** Condições locais que alimentam a política de camada (ver layerPolicy.ts). */
+  const [conditions, setConditions] = useState<LocalConditions>({})
   const [topology, setTopology] = useState('')
   const [isTraining, setIsTraining] = useState(false)
   const [waitingRoomOn, setWaitingRoomOn] = useState(false)
@@ -505,15 +511,55 @@ export default function Room({
   // "Qualidade das chamadas" do admin. Best-effort — falhas são ignoradas.
   useEffect(() => {
     if (roomState !== 'in') return
+    // Amostra-se a cada 5 s e REPORTA-SE a cada sexta (≈30 s). A amostragem
+    // mais frequente serve a política de camada, que precisa de reagir a uma
+    // rede a degradar em segundos e não em meio minuto; o reporte mantém a
+    // mesma cadência de antes, para não multiplicar por seis a escrita na base
+    // de dados. Uma só recolha de `getStats()` alimenta as duas coisas.
+    //
+    // 5 s e não 1 s: o Chrome actualiza as estatísticas ~1×/s, e duas leituras
+    // dentro do mesmo intervalo trazem o mesmo carimbo temporal — o delta dá
+    // zero e a política reagiria a um falso «sem media» (ver R37).
+    let n = 0
     const report = async () => {
       const r = await callRef.current?.qos?.().catch(() => null)
       if (!r) return
-      const losses = Object.values(r.byPeer).map((p) => p.lossPct)
-      const loss = losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : 0
-      void postQos(code, { rtt_ms: r.rtt, loss_pct: Math.round(loss * 10) / 10, up_kbps: r.upKbps }).catch(() => {})
+      setConditions({
+        backgrounded: document.visibilityState === 'hidden',
+        cpuLimited: r.limitedBy === 'cpu',
+        lossPct: r.lossPct,
+        rttMs: r.rttMs ?? undefined,
+        // A banda ESTIMADA é do uplink; para o downlink não há estimativa
+        // portável. Sem número, a política não orçamenta — inventar um tecto
+        // seria pior do que não ter nenhum.
+        downlinkKbps: null,
+        dataSaver: Boolean((navigator as { connection?: { saveData?: boolean } }).connection?.saveData),
+      })
+      if (n++ % 6 !== 0) return
+      // Envia-se a amostra COMPLETA, não uma média de três números. A média
+      // entre publicadores era o que escondia o participante inaudível numa
+      // sala em que todos os outros estavam bem — o `extractQuality` agrega
+      // pelo PIOR exactamente por isso.
+      void postQos(code, {
+        rtt_ms: r.rttMs,
+        loss_pct: r.lossPct,
+        up_kbps: r.upKbps,
+        down_kbps: r.downKbps,
+        jitter_ms: r.jitterMs,
+        score: r.score,
+        freeze_ms: Math.round(r.freezeMs),
+        concealment_pct: Math.round(r.concealmentRatio * 1000) / 10,
+        frames_dropped: r.framesDropped,
+        nack: r.nack,
+        pli: r.pli,
+        fir: r.fir,
+        turn_relay: r.turnRelay,
+        candidate_pair: r.candidatePair,
+        limited_by: r.limitedBy,
+      }).catch(() => {})
     }
-    const first = setTimeout(() => void report(), 10_000)
-    const t = setInterval(() => void report(), 30_000)
+    const first = setTimeout(() => void report(), 5_000)
+    const t = setInterval(() => void report(), 5_000)
     return () => { clearTimeout(first); clearInterval(t) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomState, code])
@@ -1095,6 +1141,26 @@ export default function Room({
             levelsRef.current?.unwatch(peerId)
             setPresentation((p) => (p?.peerId === peerId ? null : p))
             setPeers((ps) => ps.map((p) => (p.peerId === peerId ? { ...p, stream: null } : p)))
+          },
+          // Estado da ligação de media (ver callRecovery.ts). O que interessa
+          // ao utilizador é saber que ALGUÉM está a tratar do assunto: antes
+          // disto, uma quebra de rede deixava o ecrã preto sem uma palavra até
+          // ele próprio recarregar a página.
+          onState: (st: CallState) => {
+            if (cancelled) return
+            setCallState(st)
+            if (st === 'degraded') setStatus('Ligação instável — a media pode falhar por instantes.')
+            else if (st === 'reconnecting' || st === 'recovering') setStatus('A restabelecer a ligação de media…')
+            else if (st === 'connected') setStatus('')
+            else if (st === 'failed') {
+              // Último recurso, e SÓ agora: o recarregar que dantes era a
+              // primeira (e única) resposta a qualquer quebra.
+              setStatus('Não foi possível restabelecer a media. A reentrar na sala…')
+              sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
+              setTimeout(() => {
+                if (!cancelled) location.reload()
+              }, 2000)
+            }
           },
         }
         // Preenche o holder — só arranca quando o handler 'joined' o invocar
@@ -1822,17 +1888,46 @@ export default function Room({
     return [...ids].sort()
   }, [visiblePeers, filteredPeers, stagePeer, pinnedPeer])
 
+  // QUE qualidade pedir de cada um. A decisão vive em `layerPolicy.ts` (pura e
+  // testada); aqui só se recolhem os sinais que só o cliente conhece — o
+  // tamanho a que cada tile está MESMO a ser desenhado, quem está em palco ou
+  // fixado, e quem está a partilhar ecrã.
+  //
+  // Antes disto o servidor adivinhava a camada pelo NÚMERO DE PARTICIPANTES:
+  // numa sala de doze, o orador em palco a ocupar 70% do ecrã recebia `q`.
+  const videoQuality = useMemo(() => {
+    const stageW = Math.round(window.innerWidth * 0.7)
+    const tiles: TileSignal[] = videoInterest.map((peerId) => {
+      const emPalco = effectiveViewMode === 'stage' && stagePeer?.peerId === peerId
+      return {
+        peerId,
+        // Em palco o tile ocupa a área toda; na grelha vale a largura medida
+        // pelo `useGridLayout`, que é a largura real em px de CSS.
+        widthPx: emPalco ? stageW : tileSize.w,
+        pinned: pinnedPeer?.peerId === peerId,
+        onStage: emPalco,
+        speaking: speaking.has(peerId),
+        presenting: presentation?.peerId === peerId,
+      }
+    })
+    return chooseLayers(tiles, conditions)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoInterest.join(','), tileSize.w, effectiveViewMode, stagePeer?.peerId, pinnedPeer?.peerId, presentation?.peerId, speaking, conditions])
+
   useEffect(() => {
     if (roomState !== 'in' || topology !== 'sfu') return
-    // Numa sala que NUNCA paginou não há nada a informar: o default do servidor
-    // (interesse desconhecido = todos) já é o correto. Assim que pagina uma vez,
-    // passamos a informar sempre — inclusive quando encolhe e deixa de paginar,
-    // senão o servidor ficava preso na última página (R23).
+    // R23 continua válido para o INTERESSE: assim que uma sala pagina uma vez,
+    // passa a informar sempre — inclusive quando encolhe e deixa de paginar,
+    // senão o servidor ficava preso na última página.
     if (filteredPeers.length > TILES_PER_PAGE) paginatedOnceRef.current = true
-    if (!paginatedOnceRef.current) return
-    signalRef.current?.send({ type: 'video-interest', peers: videoInterest })
+    // Mas a QUALIDADE informa-se desde o início, pagine-se ou não: numa sala de
+    // três pessoas o servidor servia `f` a toda a gente, miniaturas incluídas, e
+    // é precisamente aí que a sugestão poupa banda. A lista de `peers` quando
+    // não se pagina é «toda a gente», que é o default do servidor — por isso
+    // enviar sempre é um superconjunto seguro do comportamento antigo.
+    signalRef.current?.send({ type: 'video-interest', peers: videoInterest, quality: videoQuality })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoInterest.join(','), roomState, topology, filteredPeers.length])
+  }, [videoInterest.join(','), JSON.stringify(videoQuality), roomState, topology, filteredPeers.length])
 
   const talkOverNames = useMemo(() => {
     if (!talkOver) return ''
@@ -2546,8 +2641,10 @@ export default function Room({
                 <span className="person-name">
                   <span className="pn-name">eu{isHost ? ' · anfitrião' : ''}</span>
                   {qos && (
-                    <small className="qos-line mono">
-                      ↑ {qos.upKbps} kbps{qos.rtt != null ? ` · RTT ${qos.rtt} ms` : ''}
+                    <small className="qos-line mono" title={`Delonix Call Quality Score: ${qos.score}/100${qos.turnRelay ? ' · via TURN relay' : ''}${qos.limitedBy === 'cpu' ? ' · encoder travado por CPU' : ''}`}>
+                      {qos.score}/100 · ↑ {qos.upKbps} kbps
+                      {qos.rttMs != null ? ` · RTT ${qos.rttMs} ms` : ''}
+                      {qos.turnRelay ? ' · relay' : ''}
                     </small>
                   )}
                 </span>
@@ -2565,6 +2662,8 @@ export default function Room({
                     {qos?.byPeer[p.peerId] && (
                       <small className={qos.byPeer[p.peerId].lossPct > 5 ? 'qos-line mono qos-bad' : 'qos-line mono'}>
                         ↓ {qos.byPeer[p.peerId].kbps} kbps · perda {qos.byPeer[p.peerId].lossPct}%
+                        {qos.byPeer[p.peerId].jitterMs > 30 ? ` · jitter ${qos.byPeer[p.peerId].jitterMs} ms` : ''}
+                        {qos.byPeer[p.peerId].freezeMs > 0 ? ` · ${Math.round(qos.byPeer[p.peerId].freezeMs)} ms congelado` : ''}
                       </small>
                     )}
                   </span>
@@ -3475,6 +3574,20 @@ export default function Room({
               🖥 {presentation.peerId === 'me'
                 ? 'A apresentar'
                 : `${peers.find((p) => p.peerId === presentation.peerId)?.username ?? ''} • apresenta`}
+            </span>
+          )}
+          {/* Indicador de recuperação de media. Existe porque uma quebra de
+              rede dava ECRÃ PRETO SEM DIAGNÓSTICO: o utilizador não tinha como
+              distinguir «a plataforma está a tratar disto» de «isto avariou».
+              Só aparece quando há mesmo algo a assinalar. */}
+          {callState !== 'connected' && callState !== 'connecting' && callState !== 'disconnected' && (
+            <span
+              className="room-status"
+              role="status"
+              aria-live="polite"
+              title={`Ligação de media: ${callState}`}
+            >
+              {callState === 'degraded' ? '◐ ligação instável' : '◌ a restabelecer…'}
             </span>
           )}
           {status && <span className="room-status">{status}</span>}

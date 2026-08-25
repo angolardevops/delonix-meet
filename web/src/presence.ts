@@ -89,7 +89,11 @@ export class Presence {
     }
     ws.onclose = () => {
       if (this.closed) return
-      const delay = this.backoff
+      // Jitter. Sem ele, uma falha que atinge todos os clientes de uma
+      // organização (o proxy a reiniciar, o pod a ser drenado) põe-nos a todos
+      // a reconectar no MESMO instante — e a recuperação vira uma segunda
+      // avaria, agora causada por nós. O atraso real fica em [metade, inteiro].
+      const delay = Math.round(this.backoff * (0.5 + 0.5 * Math.random()))
       this.backoff = Math.min(this.backoff * 2, 30_000)
       // Renova o token antes de reconectar — o access token tem 15 min de TTL
       // e o WS não passa pelo fluxo automático de refresh do `request()`.

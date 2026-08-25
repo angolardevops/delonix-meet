@@ -473,11 +473,83 @@ pub async fn invite_to_room(
     })))
 }
 
+/// Amostra de qualidade reportada pelo CLIENTE.
+///
+/// Tudo aqui vem de fora e é tratado como tal: cada campo é limitado a um
+/// intervalo plausível antes de ser gravado (ver `clamp_opt`/`clamp_pct`). Um
+/// cliente alterado que mandasse `nack: 2_000_000_000` não pode envenenar as
+/// médias do painel do administrador nem rebentar um `INT`.
+///
+/// Todos os campos novos são `Option` com `#[serde(default)]`: um cliente com a
+/// app em cache antiga continua a reportar só os três originais, e a amostra
+/// dele continua a contar. Exigi-los perderia exactamente as amostras das
+/// sessões mais problemáticas.
 #[derive(Deserialize)]
 pub struct QosSample {
     pub rtt_ms: Option<i32>,
     pub loss_pct: f32,
     pub up_kbps: i32,
+    #[serde(default)]
+    pub down_kbps: Option<i32>,
+    #[serde(default)]
+    pub jitter_ms: Option<i32>,
+    /// Delonix Call Quality Score, 0–100 (ver `web/src/callQuality.ts`).
+    #[serde(default)]
+    pub score: Option<i32>,
+    #[serde(default)]
+    pub freeze_ms: Option<i32>,
+    #[serde(default)]
+    pub concealment_pct: Option<f32>,
+    #[serde(default)]
+    pub frames_dropped: Option<i32>,
+    #[serde(default)]
+    pub nack: Option<i32>,
+    #[serde(default)]
+    pub pli: Option<i32>,
+    #[serde(default)]
+    pub fir: Option<i32>,
+    #[serde(default)]
+    pub turn_relay: Option<bool>,
+    #[serde(default)]
+    pub candidate_pair: Option<String>,
+    #[serde(default)]
+    pub limited_by: Option<String>,
+}
+
+/// Limita um inteiro opcional a `[0, max]`. `None` continua `None`.
+fn clamp_opt(v: Option<i32>, max: i32) -> Option<i32> {
+    v.map(|n| n.clamp(0, max))
+}
+
+/// Limita uma percentagem, tratando `NaN`/`inf` como 0 — um `f32` de fora pode
+/// ser qualquer coisa, e `NaN` gravado numa coluna `REAL` contamina toda a
+/// média que a leia depois.
+fn clamp_pct(v: Option<f32>) -> Option<f32> {
+    v.map(|n| {
+        if n.is_finite() {
+            n.clamp(0.0, 100.0)
+        } else {
+            0.0
+        }
+    })
+}
+
+/// Aceita apenas os rótulos que o próprio browser produz. Uma string livre de
+/// um cliente iria direita para o painel do administrador.
+fn clamp_label(v: Option<String>, allowed: &[&str]) -> Option<String> {
+    v.filter(|x| allowed.contains(&x.as_str()))
+}
+
+/// O par de candidatos é `<tipo>/<tipo>`, e os tipos são um conjunto fechado.
+fn clamp_candidate_pair(v: Option<String>) -> Option<String> {
+    const TYPES: [&str; 5] = ["host", "srflx", "prflx", "relay", "?"];
+    v.filter(|p| {
+        let mut it = p.split('/');
+        match (it.next(), it.next(), it.next()) {
+            (Some(a), Some(b), None) => TYPES.contains(&a) && TYPES.contains(&b),
+            _ => false,
+        }
+    })
 }
 
 /// Recebe uma amostra de qualidade (QoS) do cliente durante a chamada (~1/30s).
@@ -509,17 +581,58 @@ pub async fn post_qos(
         0.0
     };
     let up = s.up_kbps.clamp(0, 100_000);
+    // Calculados ANTES do INSERT: os contadores do /metrics precisam dos mesmos
+    // valores, e o `bind` consome as `String`.
+    let score = clamp_opt(s.score, 100);
+    let limited_by = clamp_label(s.limited_by, &["cpu", "bandwidth", "other", "none"]);
+    let turn_relay = s.turn_relay;
     sqlx::query(
-        "INSERT INTO call_quality_samples (room_id, user_id, rtt_ms, loss_pct, up_kbps)
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO call_quality_samples
+           (room_id, user_id, rtt_ms, loss_pct, up_kbps,
+            down_kbps, jitter_ms, score, freeze_ms, concealment_pct,
+            frames_dropped, nack, pli, fir, turn_relay, candidate_pair, limited_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
     )
     .bind(room.id)
     .bind(auth.user_id)
     .bind(rtt)
     .bind(loss)
     .bind(up)
+    .bind(clamp_opt(s.down_kbps, 100_000))
+    .bind(clamp_opt(s.jitter_ms, 60_000))
+    .bind(score.map(|v| v as i16))
+    // Tecto de 1 minuto: o intervalo de amostragem é de 30 s, por isso mais do
+    // que isto só pode ser um cliente a inventar.
+    .bind(clamp_opt(s.freeze_ms, 60_000))
+    .bind(clamp_pct(s.concealment_pct))
+    .bind(clamp_opt(s.frames_dropped, 1_000_000))
+    .bind(clamp_opt(s.nack, 1_000_000))
+    .bind(clamp_opt(s.pli, 1_000_000))
+    .bind(clamp_opt(s.fir, 1_000_000))
+    .bind(turn_relay)
+    .bind(clamp_candidate_pair(s.candidate_pair))
+    .bind(limited_by.clone())
     .execute(&state.db)
     .await?;
+
+    // Contadores em processo para o `/metrics` — o painel de SRE não devia ter
+    // de esperar por uma consulta ao Postgres para saber que a qualidade caiu.
+    let m = &state.metrics;
+    crate::metrics::Metrics::bump(&m.qos_samples_total);
+    if let Some(sc) = score {
+        crate::metrics::Metrics::bump(&m.qos_scored_total);
+        m.qos_score_sum
+            .fetch_add(sc as u64, std::sync::atomic::Ordering::Relaxed);
+        if sc < 60 {
+            crate::metrics::Metrics::bump(&m.qos_poor_total);
+        }
+    }
+    if turn_relay == Some(true) {
+        crate::metrics::Metrics::bump(&m.qos_turn_relay_total);
+    }
+    if limited_by.as_deref() == Some("cpu") {
+        crate::metrics::Metrics::bump(&m.qos_cpu_limited_total);
+    }
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -527,6 +640,76 @@ pub async fn post_qos(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- Limitadores da amostra de QoS ----
+    //
+    // Isto é dado vindo de FORA. Um cliente alterado pode mandar o que quiser,
+    // e estes valores vão para as médias do painel do administrador. Cada um
+    // destes testes corresponde a uma forma concreta de envenenar esse painel.
+
+    #[test]
+    fn clamp_opt_prende_ao_intervalo_e_preserva_a_ausencia() {
+        assert_eq!(clamp_opt(Some(50), 100), Some(50));
+        assert_eq!(clamp_opt(Some(-7), 100), Some(0));
+        assert_eq!(clamp_opt(Some(i32::MAX), 100), Some(100));
+        // Ausente continua ausente: uma amostra de um cliente antigo não pode
+        // passar a dizer "0" — zero é uma medição, ausente não é.
+        assert_eq!(clamp_opt(None, 100), None);
+    }
+
+    #[test]
+    fn clamp_pct_trata_nan_e_infinito() {
+        assert_eq!(clamp_pct(Some(12.5)), Some(12.5));
+        assert_eq!(clamp_pct(Some(-1.0)), Some(0.0));
+        assert_eq!(clamp_pct(Some(1e9)), Some(100.0));
+        // NaN gravado numa coluna REAL contamina TODA a média que a leia
+        // depois — e a média fica NaN sem nada a apontar a origem.
+        assert_eq!(clamp_pct(Some(f32::NAN)), Some(0.0));
+        assert_eq!(clamp_pct(Some(f32::INFINITY)), Some(0.0));
+        assert_eq!(clamp_pct(None), None);
+    }
+
+    #[test]
+    fn clamp_label_so_aceita_o_que_o_browser_produz() {
+        let ok = ["cpu", "bandwidth", "other", "none"];
+        assert_eq!(clamp_label(Some("cpu".into()), &ok), Some("cpu".into()));
+        // Uma string livre do cliente iria direita para o painel do admin.
+        assert_eq!(
+            clamp_label(Some("<script>alert(1)</script>".into()), &ok),
+            None
+        );
+        assert_eq!(clamp_label(Some("".into()), &ok), None);
+        assert_eq!(clamp_label(None, &ok), None);
+    }
+
+    #[test]
+    fn clamp_candidate_pair_exige_a_forma_tipo_barra_tipo() {
+        assert_eq!(
+            clamp_candidate_pair(Some("relay/srflx".into())),
+            Some("relay/srflx".into())
+        );
+        assert_eq!(
+            clamp_candidate_pair(Some("host/host".into())),
+            Some("host/host".into())
+        );
+        // Tipo inventado, forma errada, ou texto arbitrário: fora.
+        assert_eq!(clamp_candidate_pair(Some("relay/quantum".into())), None);
+        assert_eq!(clamp_candidate_pair(Some("relay".into())), None);
+        assert_eq!(clamp_candidate_pair(Some("a/b/c".into())), None);
+        assert_eq!(
+            clamp_candidate_pair(Some("'; DROP TABLE rooms; --".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn a_pontuacao_cabe_num_smallint() {
+        // A coluna é SMALLINT; sem o clamp, um cliente a mandar 40000 fazia o
+        // INSERT falhar e perdia-se a amostra inteira, não só o campo.
+        let v = clamp_opt(Some(40_000), 100).map(|v| v as i16);
+        assert_eq!(v, Some(100));
+        assert_eq!(clamp_opt(Some(-5), 100).map(|v| v as i16), Some(0));
+    }
 
     #[test]
     fn room_code_shape() {

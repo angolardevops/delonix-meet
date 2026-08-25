@@ -262,7 +262,12 @@ async fn pump(client: Arc<TestClient>, mut rx: mpsc::Receiver<ServerMsg>) {
 fn new_sfu() -> (Arc<SfuState>, Arc<Metrics>) {
     let metrics = Arc::new(Metrics::default());
     (
-        Arc::new(SfuState::new(IceConfig::default(), metrics.clone(), 64)),
+        Arc::new(SfuState::new(
+            IceConfig::default(),
+            metrics.clone(),
+            64,
+            2048,
+        )),
         metrics,
     )
 }
