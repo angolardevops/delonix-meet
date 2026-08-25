@@ -82,6 +82,24 @@ pub struct Config {
     /// núcleos do nó e a composição de uma gravação degrada as chamadas VIVAS
     /// que estão a decorrer no mesmo pod.
     pub ffmpeg_threads: u32,
+    /// Segundos que o servidor espera, depois do SIGTERM, para as salas
+    /// esvaziarem antes de fechar (`DRAIN_GRACE_SECS`, default 40).
+    ///
+    /// Tem de ser MENOR que o `terminationGracePeriodSeconds` do K8s (45 s no
+    /// `deploy/k8s/02-server.yaml`), senão o SIGKILL chega primeiro e o drain
+    /// não serve para nada — que é exactamente o que acontecia antes.
+    pub drain_grace_secs: u64,
+    /// Segundos entre pôr a readiness em 503 e avisar os clientes
+    /// (`DRAIN_READINESS_SECS`, default 12).
+    ///
+    /// Existe porque a ordem importa: avisar primeiro e retirar o pod depois
+    /// faz os clientes reconectarem e o balanceador mandá-los de volta para
+    /// aqui. O default cobre um `periodSeconds: 10` de readiness com folga.
+    pub drain_readiness_secs: u64,
+    /// Atraso que se pede ao cliente antes de reconectar (`DRAIN_RECONNECT_MS`,
+    /// default 2000). O cliente acrescenta jitter por cima — sem isso, uma sala
+    /// inteira reconecta no mesmo milissegundo e o pod novo leva com tudo de uma vez.
+    pub drain_reconnect_ms: u64,
     /// Pedidos de autenticação aceites por IP e por minuto (`AUTH_RATE_PER_MIN`,
     /// default 20 — o valor que estava escrito no código).
     ///
@@ -157,6 +175,9 @@ impl Config {
             nego_queue_cap: bounded_env("NEGO_QUEUE_CAP", 64, 4, 4_096),
             rec_queue_cap: bounded_env("REC_QUEUE_CAP", 2_048, 64, 65_536),
             auth_rate_per_min: bounded_env("AUTH_RATE_PER_MIN", 20, 5, 10_000),
+            drain_grace_secs: bounded_env("DRAIN_GRACE_SECS", 40, 1, 3_600) as u64,
+            drain_readiness_secs: bounded_env("DRAIN_READINESS_SECS", 12, 0, 300) as u64,
+            drain_reconnect_ms: bounded_env("DRAIN_RECONNECT_MS", 2_000, 100, 60_000) as u64,
             ffmpeg_timeout_secs: bounded_env("FFMPEG_TIMEOUT_SECS", 3_600, 30, 86_400) as u64,
             ffmpeg_threads: bounded_env("FFMPEG_THREADS", 2, 1, 64) as u32,
         }

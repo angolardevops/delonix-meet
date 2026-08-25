@@ -352,6 +352,16 @@ pub enum ServerMsg {
     WbOpen {
         by: String,
     },
+    /// Este nó está a DRENAR (vai fechar). O cliente reconecta daqui a
+    /// `reconnect_in_ms` — e, como o pod já saiu dos endpoints do balanceador,
+    /// o hash por sala manda a sala INTEIRA para o mesmo pod novo. É isso que
+    /// permite migrar sem partir o SFU, que é in-memory por pod (ADR-0001).
+    ///
+    /// NÃO é um erro nem um `kicked`: a chamada continua a funcionar até o
+    /// cliente decidir migrar.
+    Draining {
+        reconnect_in_ms: u64,
+    },
 }
 
 /// Traço do quadro branco: pontos normalizados (0..1), cor CSS e espessura.
@@ -942,6 +952,33 @@ impl SignalingHub {
         }
     }
 
+    /// Avisa TODAS as salas deste nó de que ele vai fechar. Devolve quantas.
+    ///
+    /// Não passa pelo Redis de propósito: isto é sobre ESTE pod a fechar, e
+    /// difundir para os outros nós mandaria migrar quem não precisa.
+    pub fn broadcast_draining(&self, reconnect_in_ms: u64) -> usize {
+        let mut salas = 0;
+        for room in self.rooms.iter() {
+            salas += 1;
+            for peer in room.peers.values() {
+                peer.tx.send(ServerMsg::Draining { reconnect_in_ms });
+            }
+        }
+        salas
+    }
+
+    /// Esta sala já existe neste nó?
+    pub fn tem_sala(&self, room_id: Uuid) -> bool {
+        self.rooms
+            .get(&room_id)
+            .is_some_and(|r| !r.peers.is_empty())
+    }
+
+    /// Participantes ligados a este nó. É o que diz se o drain já pode fechar.
+    pub fn peers_ligados(&self) -> usize {
+        self.rooms.iter().map(|r| r.peers.len()).sum()
+    }
+
     pub fn broadcast_hosts(&self, room_id: Uuid, msg: ServerMsg) {
         if let Some(bus) = &self.bus {
             let bus = bus.clone();
@@ -1499,6 +1536,20 @@ pub async fn ws_handler(
     // Only short-lived, room-scoped tokens open a signaling socket.
     let claims = verify_jwt(&state.config.jwt_secret, &query.token, "room")?;
     let room_id = claims.room.ok_or(ApiError::Unauthorized)?;
+
+    // Nó a drenar: recusa ENTRADAS NOVAS, mas só as de salas que ainda não
+    // existem aqui. Quem já está numa sala deste pod tem de conseguir voltar a
+    // ligar-se (uma quebra de rede a meio do drain), senão o drain acabava por
+    // expulsar exactamente quem estava a tentar aguentar-se.
+    //
+    // O 503 é deliberado: o cliente sabe distinguir «este nó não serve agora»
+    // de «não tens autorização», e volta a pedir — o balanceador já o manda
+    // para outro pod.
+    if state.draining.load(std::sync::atomic::Ordering::Relaxed) && !state.hub.tem_sala(room_id) {
+        return Err(ApiError::ServiceUnavailable(
+            "Este nó está a encerrar. A tentar noutro…".into(),
+        ));
+    }
     let username = claims.name.unwrap_or_else(|| "anonymous".into());
     let sfu_mode = claims.topo.as_deref() == Some("sfu");
     let is_host = claims.owner;
