@@ -82,6 +82,20 @@ pub struct Config {
     /// núcleos do nó e a composição de uma gravação degrada as chamadas VIVAS
     /// que estão a decorrer no mesmo pod.
     pub ffmpeg_threads: u32,
+    /// Pedidos de autenticação aceites por IP e por minuto (`AUTH_RATE_PER_MIN`,
+    /// default 20 — o valor que estava escrito no código).
+    ///
+    /// Passa a ser configurável por uma razão concreta e não por causa dos
+    /// testes: o limite é **por IP**, e uma organização atrás de um único NAT
+    /// apresenta-se toda com o mesmo endereço. Cinquenta pessoas a entrar às
+    /// nove da manhã esgotam vinte pedidos por minuto e recebem 429 — e o
+    /// sintoma, do lado delas, é «a plataforma não deixa entrar».
+    ///
+    /// O default NÃO muda: quem não configurar nada mantém exactamente o
+    /// comportamento anterior. E o valor é preso a um intervalo — isto é um
+    /// controlo de segurança, e um `0` ou um número absurdo não podem entrar
+    /// por descuido.
+    pub auth_rate_per_min: usize,
     /// Capacidade da fila de escrita de CADA track em gravação
     /// (`REC_QUEUE_CAP`, default 2048 ≈ vários segundos de vídeo). A escrita
     /// corre numa thread dedicada; a fila é o que impede um disco lento de
@@ -142,6 +156,7 @@ impl Config {
             ws_queue_cap: bounded_env("WS_QUEUE_CAP", 512, 32, 65_536),
             nego_queue_cap: bounded_env("NEGO_QUEUE_CAP", 64, 4, 4_096),
             rec_queue_cap: bounded_env("REC_QUEUE_CAP", 2_048, 64, 65_536),
+            auth_rate_per_min: bounded_env("AUTH_RATE_PER_MIN", 20, 5, 10_000),
             ffmpeg_timeout_secs: bounded_env("FFMPEG_TIMEOUT_SECS", 3_600, 30, 86_400) as u64,
             ffmpeg_threads: bounded_env("FFMPEG_THREADS", 2, 1, 64) as u32,
         }

@@ -475,7 +475,7 @@ async fn main() {
             config.rec_queue_cap,
         )),
         presence: presence_hub,
-        auth_limiter: RateLimiter::new(20, Duration::from_secs(60)),
+        auth_limiter: RateLimiter::new(config.auth_rate_per_min as u32, Duration::from_secs(60)),
         login_limiter: RateLimiter::new(8, Duration::from_secs(300)),
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),

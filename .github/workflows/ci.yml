@@ -164,7 +164,11 @@ jobs:
 
       - name: Arrancar o servidor (migrações incluídas)
         run: |
-          DELONIX_ALLOW_INSECURE=1 COOKIE_INSECURE=1 \
+          # AUTH_RATE_PER_MIN elevado SÓ AQUI: os três testes ponta-a-ponta
+          # correm do mesmo IP (localhost) e esgotavam o limite de 20/min, com o
+          # sintoma a aparecer como «o login não completou» no terceiro. O
+          # default de produção não muda.
+          DELONIX_ALLOW_INSECURE=1 COOKIE_INSECURE=1 AUTH_RATE_PER_MIN=2000 \
             ./server/target/release/delonix-server > /tmp/servidor.log 2>&1 &
           for i in $(seq 1 60); do
             curl -sf http://localhost:8180/api/status >/dev/null && exit 0
