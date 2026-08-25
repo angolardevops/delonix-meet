@@ -21,7 +21,7 @@ const sala=(await j(`${API}/api/rooms`,{token:tok,method:'POST',body:JSON.string
 const jr=(await j(`${API}/api/rooms/${sala.code}/join`,{token:tok,method:'POST'})).j
 
 const b=await chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']})
-const p=await (await b.newContext()).newPage()
+const p=await (await b.newContext({ ignoreHTTPSErrors: true })).newPage()
 const avisos=[]
 await p.exposeFunction('__drenou', (ms)=>avisos.push(ms))
 await p.addInitScript(()=>{ window.__marcarDrain = true })
@@ -46,8 +46,17 @@ chk(await code(`${API}/health`)===200, 'mas /health continua 200 — um pod a dr
 const vivaDurante = await p.evaluate(async()=>{ const q=await window.__dlx.qos(); return q!==null })
 chk(vivaDurante, 'a chamada em curso CONTINUA durante o drain')
 
-await sleep(3000)
-const recebeu = await p.evaluate(()=>window.__avisos||[])
+// Espera-se PELO AVISO, não por um número de segundos: o servidor só o emite
+// depois de `DRAIN_READINESS_SECS` (o tempo que dá ao balanceador para o
+// retirar), e esse valor é definido no workflow do CI. Um `sleep` fixo aqui
+// acopla o teste a uma variável declarada noutro ficheiro — corrido em local
+// sem ela, o teste falhava com «não recebeu aviso», que aponta ao código.
+let recebeu = []
+for (let k = 0; k < 60; k++) {
+  recebeu = await p.evaluate(()=>window.__avisos||[])
+  if (recebeu.length > 0) break
+  await sleep(500)
+}
 chk(recebeu.length>0, `o participante recebe aviso para migrar (reconnect_in_ms=${recebeu[0]})`)
 
 // Uma entrada NOVA numa sala que este nó não tem é recusada com 503.

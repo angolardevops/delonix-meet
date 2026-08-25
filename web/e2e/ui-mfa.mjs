@@ -22,7 +22,7 @@ const marca=Math.random().toString(36).slice(2,7)
 const email=`ui${marca}@ui${marca}.local`
 await fetch(`${API}/api/auth/register`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({org_name:`UI ${marca}`,email,username:`ui${marca}`,password:PW})})
 const b=await chromium.launch()
-const p=await (await b.newContext()).newPage()
+const p=await (await b.newContext({ ignoreHTTPSErrors: true })).newPage()
 p.on('pageerror', (e) => console.log('ERRO DE PÁGINA:', e.message))
 p.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLA:', m.text().slice(0, 200)) })
 // Um login que falha sem dizer porquê custa uma ida ao CI por tentativa. As

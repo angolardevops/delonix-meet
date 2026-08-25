@@ -18,7 +18,7 @@ import {
   unshareRecording,
   User,
 } from '../api'
-import { CloseIcon, DownloadIcon, FilmIcon, NoteIcon, ShareLinkIcon, TrashIcon } from '../icons'
+import { AlertIcon, CheckIcon, CloseIcon, CopyIcon, DownloadIcon, FilmIcon, GridIcon, NoteIcon, PlayIcon, RowsIcon, ShareLinkIcon, TableIcon, TrashIcon } from '../icons'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
@@ -82,13 +82,13 @@ export default function Recordings() {
         actions={
           <div className="seg view-toggle">
             <button className={view === 'library' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('library')}>
-              ▤ {t('recordings.viewLibrary')}
+              <RowsIcon /> {t('recordings.viewLibrary')}
             </button>
             <button className={view === 'cards' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('cards')}>
-              ▦ {t('recordings.viewCards')}
+              <GridIcon /> {t('recordings.viewCards')}
             </button>
             <button className={view === 'table' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('table')}>
-              ☰ {t('recordings.viewTable')}
+              <TableIcon /> {t('recordings.viewTable')}
             </button>
           </div>
         }
@@ -136,7 +136,7 @@ export default function Recordings() {
                 onClick={() => setSelected(r)}
               >
                 <span className={r.status === 'failed' ? 'rec-item-thumb failed' : 'rec-item-thumb'} style={r.status === 'failed' ? undefined : { background: recColor(r.filename) }}>
-                  {r.status === 'failed' ? '⚠' : <FilmIcon />}
+                  {r.status === 'failed' ? <AlertIcon /> : <FilmIcon />}
                 </span>
                 <span className="rec-item-info">
                   <strong>{r.filename.replace(/\.webm$/, '')}</strong>
@@ -183,18 +183,28 @@ export default function Recordings() {
             {shown.map((r) => (
               <tr key={r.id}>
                 <td>
-                  <button className="link rec-name-link" onClick={() => setViewTarget(r)}>
-                    {r.filename.replace(/\.webm$/, '')}
-                  </button>
+                  {r.status === 'failed' ? (
+                    <span className="rec-name-failed">
+                      <span className="rec-name-failed-icon" aria-hidden="true"><AlertIcon /></span>{r.filename.replace(/\.webm$/, '')}
+                    </span>
+                  ) : (
+                    <button className="link rec-name-link" onClick={() => setViewTarget(r)}>
+                      {r.filename.replace(/\.webm$/, '')}
+                    </button>
+                  )}
                   {!r.owned && <span className="rec-badge shared inline">{t('recordings.shared')}</span>}
                 </td>
                 <td className="mono">{r.room_code}</td>
                 <td>{r.uploader_name}</td>
                 <td>{new Date(r.created_at).toLocaleString('pt-PT')}</td>
-                <td>{(r.size_bytes / 1_048_576).toFixed(1)} MB</td>
+                <td>{r.status === 'failed' ? <span className="rec-failure-cell">{r.failure_reason || t('recordings.failed', 'Gravação falhada')}</span> : `${(r.size_bytes / 1_048_576).toFixed(1)} MB`}</td>
                 <td className="rec-row-actions">
-                  <button className="icon-btn" title={t('recordings.open')} onClick={() => setViewTarget(r)}>▶</button>
-                  {r.can_download && (
+                  {/* Uma gravação falhada não oferece acção nenhuma — nem aqui,
+                      nem na vista de cartões. Ver R58. */}
+                  {r.status !== 'failed' && (
+                    <button className="icon-btn" title={t('recordings.open')} onClick={() => setViewTarget(r)}><PlayIcon /></button>
+                  )}
+                  {r.status !== 'failed' && r.can_download && (
                     <button
                       className="icon-btn"
                       title={t('recordings.download')}
@@ -203,7 +213,7 @@ export default function Recordings() {
                       <DownloadIcon />
                     </button>
                   )}
-                  {r.owned && (
+                  {r.status !== 'failed' && r.owned && (
                     <button className="icon-btn" title={t('recordings.share')} onClick={() => setShareTarget(r)}>
                       <ShareLinkIcon />
                     </button>
@@ -223,11 +233,11 @@ export default function Recordings() {
                 sobre algo que não existe é prometer duas vezes ao mesmo
                 utilizador — a primeira foi o indicador de gravação aceso. */}
             {r.status === 'failed' ? (
-              <div className="rec-thumb failed" role="img" aria-label={t('recordings.failed', 'Gravação falhada')}>⚠</div>
+              <div className="rec-thumb failed" role="img" aria-label={t('recordings.failed', 'Gravação falhada')}><AlertIcon /></div>
             ) : (
               <button className="rec-thumb" style={{ background: recColor(r.filename) }} onClick={() => setViewTarget(r)} title={t('recordings.play')}>
                 <FilmIcon />
-                <span className="rec-play">▶</span>
+                <span className="rec-play" aria-hidden="true"><PlayIcon /></span>
                 {!r.owned && <span className="rec-badge shared">{t('recordings.shared')}</span>}
               </button>
             )}
@@ -302,6 +312,13 @@ function ViewerBody({
 
   useEffect(() => {
     let url = ''
+    // Uma gravação falhada não tem ficheiro: ir buscá-lo devolve um erro
+    // genérico de carregamento e ESCONDE a causa que já está registada. Ver R58.
+    if (rec.status === 'failed') {
+      setVideoErr(rec.failure_reason || t('recordings.failed', 'Gravação falhada'))
+      void roomNotes(rec.room_code).then(setNotes).catch(() => setNotes({ title: '', minutes: '', transcript: '' }))
+      return
+    }
     void recordingObjectUrl(rec)
       .then((u) => { url = u; setVideoUrl(u) })
       .catch(() => setVideoErr(t('recordings.loadVideoFail')))
@@ -351,7 +368,7 @@ function ViewerBody({
                 a.download = rec.filename
                 a.click()
               }}
-            >⬇ {t('recordings.download')}</button>
+            ><DownloadIcon /> {t('recordings.download')}</button>
           </div>
         )}
         {!videoUrl && !videoErr && <p className="muted">{t('recordings.loadingVideo')}</p>}
@@ -614,7 +631,7 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
                   onClick={() => copyLink(link.token)}
                   title={t('recordings.copyLink')}
                 >
-                  {linkCopied ? '✓' : '⎘'}
+                  {linkCopied ? <CheckIcon /> : <CopyIcon />}
                 </button>
               </div>
               {link.expires_at && (
