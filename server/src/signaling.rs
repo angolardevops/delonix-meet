@@ -2172,9 +2172,8 @@ mod tests {
     #[test]
     fn video_interest_aceita_a_sugestao_de_qualidade() {
         let id = Uuid::new_v4();
-        let raw = format!(
-            r#"{{"type":"video-interest","peers":["{id}"],"quality":{{"{id}":"q"}}}}"#
-        );
+        let raw =
+            format!(r#"{{"type":"video-interest","peers":["{id}"],"quality":{{"{id}":"q"}}}}"#);
         let msg: ClientMsg = serde_json::from_str(&raw).expect("o cliente escreve isto");
         match msg {
             ClientMsg::VideoInterest { peers, quality } => {

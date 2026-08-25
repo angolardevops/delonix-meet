@@ -184,7 +184,11 @@ web-deps: ## Garante web/node_modules (npm ci) — sem isto o `make test` morria
 	fi
 
 .PHONY: fitness
-fitness: ## Fitness functions (Fowler): higiene, docs, afinidade por sala (R3), clippy, deps, RLS (ADR-0002)
+fitness: ## Fitness functions (Fowler): formatação, higiene, docs, afinidade (R3), clippy, deps, RLS
+	@# `fmt --check` AQUI e não só no CI: sem ele, uma alteração formatada a
+	@# meio passa o `make test` local e só falha no CI, depois de um push e de
+	@# vários minutos de espera. O portão local tem de ser o mesmo do remoto.
+	@cd server && cargo fmt --check && printf "$(G)  ✓ formatação Rust$(Z)\n"
 	@bash scripts/check-repo-hygiene.sh
 	@bash scripts/check-docs-drift.sh
 	@bash scripts/check-room-affinity.sh
