@@ -10,9 +10,9 @@ import { appNameParts, getAppName, getLoginBg, setAppName, setLoginBg } from '..
 import PasswordInput from './PasswordInput'
 import MfaPanel from './MfaPanel'
 import OnboardingTour from './OnboardingTour'
-import { CalendarIcon, ChevronDownIcon, ClockIcon, CloseIcon, FilmIcon, HomeIcon, MenuIcon, NoteIcon, PeopleIcon, SearchIcon, SettingsIcon, StageIcon, ThemeIcon } from '../icons'
+import { CalendarIcon, ChevronDownIcon, ClockIcon, CloseIcon, FilmIcon, HomeIcon, MenuIcon, NoteIcon, PeopleIcon, RecordIcon, SearchIcon, SettingsIcon, StageIcon, ThemeIcon } from '../icons'
 
-export type NavKey = 'home' | 'directory' | 'recordings' | 'calendar' | 'analytics' | 'roadmap' | 'whiteboards'
+export type NavKey = 'home' | 'directory' | 'recordings' | 'calendar' | 'analytics' | 'roadmap' | 'whiteboards' | 'studio'
 
 type NavItem = { key: NavKey; labelKey: string; icon: ReactNode }
 type NavSection = { titleKey: string; items: NavItem[] }
@@ -30,6 +30,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     titleKey: 'navSection.library',
     items: [
+      { key: 'studio', labelKey: 'nav.studio', icon: <RecordIcon /> },
       { key: 'recordings', labelKey: 'nav.recordings', icon: <FilmIcon /> },
       { key: 'whiteboards', labelKey: 'nav.whiteboards', icon: <NoteIcon /> },
     ],
