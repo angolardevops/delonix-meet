@@ -20,6 +20,18 @@ export default defineConfig(({ command }) => {
     server: {
       host: '0.0.0.0',
       port: Number(process.env.PORT) || 5173,
+      // COOP+COEP: tornam a página "cross-origin isolated" → ativam
+      // SharedArrayBuffer → o WASM multi-thread do ONNX Runtime (RVM) e do
+      // MediaPipe arranca. O nginx de produção já os põe
+      // (deploy/k8s/nginx.conf); o dev server NÃO punha, e o efeito era este:
+      // os fundos e efeitos da SALA e o recorte sem fundo do ESTÚDIO falhavam
+      // em silêncio só em desenvolvimento. Medido: `crossOriginIsolated`
+      // dava `false` no dev server e `true` em produção.
+      // A app é toda da mesma origem, por isso o COEP não bloqueia nada.
+      headers: {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+      },
       https: haveCerts
         ? { key: fs.readFileSync(KEY), cert: fs.readFileSync(CRT) }
         : wantHttps
