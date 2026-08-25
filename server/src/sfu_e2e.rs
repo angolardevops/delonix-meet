@@ -77,7 +77,9 @@ impl TestClient {
     /// mensagens servidor→cliente.
     async fn join(sfu: &Arc<SfuState>, room: Uuid) -> Arc<Self> {
         let id = Uuid::new_v4();
-        let (tx, rx) = mpsc::unbounded_channel();
+        // Mesma fila limitada que a produção usa (ver signaling::PeerTx).
+        let (tx, rx, _shutdown) =
+            crate::signaling::PeerTx::new(512, Arc::new(Metrics::default()));
         sfu.add_peer(room, id, tx).await.expect("add_peer");
 
         let api = client_api().await;
@@ -230,7 +232,7 @@ impl TestClient {
 }
 
 /// Bomba de mensagens servidor → cliente (o equivalente ao WebSocket).
-async fn pump(client: Arc<TestClient>, mut rx: mpsc::UnboundedReceiver<ServerMsg>) {
+async fn pump(client: Arc<TestClient>, mut rx: mpsc::Receiver<ServerMsg>) {
     while let Some(msg) = rx.recv().await {
         match msg {
             ServerMsg::SfuAnswer { sdp } => {
@@ -260,7 +262,7 @@ async fn pump(client: Arc<TestClient>, mut rx: mpsc::UnboundedReceiver<ServerMsg
 fn new_sfu() -> (Arc<SfuState>, Arc<Metrics>) {
     let metrics = Arc::new(Metrics::default());
     (
-        Arc::new(SfuState::new(IceConfig::default(), metrics.clone())),
+        Arc::new(SfuState::new(IceConfig::default(), metrics.clone(), 64)),
         metrics,
     )
 }

@@ -124,8 +124,64 @@ pub struct MissedCall {
 // ---------- Hub ----------
 
 struct Conn {
-    tx: mpsc::UnboundedSender<CallServerMsg>,
+    tx: ConnTx,
     username: String,
+}
+
+/// Fila de saída de UMA ligação `/rtc` — limitada, como a do `/ws`.
+///
+/// Diferença face à `signaling::PeerTx`: aqui **nada é descartável**. Toque,
+/// aceitar, recusar, presença e chamadas perdidas são todos estado; perder um
+/// deles deixa um telefone a tocar para sempre ou uma chamada por atender sem
+/// ninguém saber. Por isso a única política no transbordo é fechar a ligação —
+/// um dispositivo que deixou de acompanhar tem de reentrar, e o cliente já
+/// reconecta com backoff exponencial (ver `web/src/presence.ts`).
+#[derive(Clone)]
+struct ConnTx {
+    tx: mpsc::Sender<CallServerMsg>,
+    shutdown: Arc<tokio::sync::Notify>,
+    killed: Arc<std::sync::atomic::AtomicBool>,
+    metrics: Arc<crate::metrics::Metrics>,
+}
+
+impl ConnTx {
+    fn new(
+        cap: usize,
+        metrics: Arc<crate::metrics::Metrics>,
+    ) -> (Self, mpsc::Receiver<CallServerMsg>, Arc<tokio::sync::Notify>) {
+        let (tx, rx) = mpsc::channel(cap);
+        let shutdown = Arc::new(tokio::sync::Notify::new());
+        (
+            Self {
+                tx,
+                shutdown: shutdown.clone(),
+                killed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                metrics,
+            },
+            rx,
+            shutdown,
+        )
+    }
+
+    fn send(&self, msg: CallServerMsg) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        match self.tx.try_send(msg) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                if !self.killed.swap(true, Relaxed) {
+                    crate::metrics::Metrics::bump(&self.metrics.ws_slow_consumer_kills_total);
+                    tracing::warn!("presença: fila de saída cheia — a fechar a ligação");
+                    self.shutdown.notify_one();
+                }
+                false
+            }
+        }
+    }
+
+    fn same_channel(&self, other: &ConnTx) -> bool {
+        self.tx.same_channel(&other.tx)
+    }
 }
 
 pub struct ActiveCall {
@@ -153,7 +209,7 @@ impl Default for PresenceHub {
 }
 
 impl PresenceHub {
-    fn add(&self, user_id: Uuid, tx: mpsc::UnboundedSender<CallServerMsg>, username: String) {
+    fn add(&self, user_id: Uuid, tx: ConnTx, username: String) {
         let is_first = !self.is_online_local(user_id);
         self.conns
             .entry(user_id)
@@ -168,7 +224,7 @@ impl PresenceHub {
         }
     }
 
-    fn remove(&self, user_id: Uuid, tx: &mpsc::UnboundedSender<CallServerMsg>) {
+    fn remove(&self, user_id: Uuid, tx: &ConnTx) {
         if let Some(mut v) = self.conns.get_mut(&user_id) {
             v.retain(|c| !c.tx.same_channel(tx));
         }
@@ -216,7 +272,7 @@ impl PresenceHub {
         let mut delivered = false;
         if let Some(v) = self.conns.get(&user_id) {
             for c in v.iter() {
-                if c.tx.send(msg.clone()).is_ok() {
+                if c.tx.send(msg.clone()) {
                     delivered = true;
                 }
             }
@@ -294,7 +350,7 @@ pub async fn rtc_handler(
 struct PresenceGuard {
     state: Arc<AppState>,
     user_id: Uuid,
-    tx: tokio::sync::mpsc::UnboundedSender<CallServerMsg>,
+    tx: ConnTx,
     writer: tokio::task::JoinHandle<()>,
 }
 
@@ -320,7 +376,13 @@ impl Drop for PresenceGuard {
 
 async fn handle(state: Arc<AppState>, socket: WebSocket, user_id: Uuid, username: String) {
     let (mut sink, mut stream) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<CallServerMsg>();
+    // Fila LIMITADA, mesma razão que no `/ws` (ver signaling::PeerTx): um
+    // socket de presença estagnado não pode crescer até à memória do nó.
+    // Aqui não há classe descartável — toque, aceitar, recusar e presença são
+    // todos estado — por isso a fila cheia significa simplesmente que este
+    // dispositivo deixou de acompanhar, e a ligação cai (o cliente já tem
+    // reconexão com backoff, ver presence.ts).
+    let (tx, mut rx, shutdown) = ConnTx::new(state.config.ws_queue_cap, state.metrics.clone());
 
     state.presence.add(user_id, tx.clone(), username.clone());
     tracing::info!(%user_id, %username, "presence connected");
@@ -379,7 +441,17 @@ async fn handle(state: Arc<AppState>, socket: WebSocket, user_id: Uuid, username
     // Rate-limit por socket = TOKEN BUCKET (120 burst / 60 sustained; o /rtc é
     // menos bursty que o /ws). Mesma struct testada — ver R6 / rate_limit.rs.
     let mut rl = crate::rate_limit::TokenBucket::new(120.0, 60.0);
-    while let Some(Ok(msg)) = stream.next().await {
+    loop {
+        let msg = tokio::select! {
+            incoming = stream.next() => match incoming {
+                Some(Ok(m)) => m,
+                _ => break,
+            },
+            _ = shutdown.notified() => {
+                tracing::warn!(%user_id, "presença terminada: fila de saída em transbordo");
+                break;
+            }
+        };
         if !rl.allow() {
             tracing::warn!(%user_id, "flood de mensagens de presença (token bucket) — a desligar");
             break;
@@ -457,7 +529,7 @@ async fn handle_call_start(
     group_id: Option<Uuid>,
     kind: String,
     title: Option<String>,
-    tx: &mpsc::UnboundedSender<CallServerMsg>,
+    tx: &ConnTx,
 ) {
     if !matches!(kind.as_str(), "video" | "voice") {
         let _ = tx.send(CallServerMsg::Error {

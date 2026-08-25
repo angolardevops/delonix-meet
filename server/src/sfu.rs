@@ -237,13 +237,16 @@ struct SfuPeer {
     /// Este peer anunciou partilha de ecrã: a próxima track de vídeo SEM rid
     /// é o ecrã (a câmara publica sempre com rids de simulcast).
     sharing: AtomicBool,
-    out: mpsc::UnboundedSender<ServerMsg>,
+    out: crate::signaling::PeerTx,
     /// Canal ÚNICO de negociação: ofertas do cliente, respostas do cliente e
     /// pedidos de renegociação do servidor passam todos por aqui e são
     /// processados em série pela `negotiation_loop`. Ver `NegoMsg`.
-    nego_tx: mpsc::UnboundedSender<NegoMsg>,
+    nego_tx: mpsc::Sender<NegoMsg>,
     /// Já há um pedido de renegociação em fila? (colapsa rajadas de subscrição)
     renegotiate_queued: AtomicBool,
+    /// Contadores partilhados — as funções livres que falam com este peer
+    /// (`trigger_renegotiate`) precisam de contar descartes sem ter o `SfuState`.
+    metrics: Arc<crate::metrics::Metrics>,
     pending_ice: Mutex<Vec<RTCIceCandidateInit>>,
     /// Subscrições ativas deste peer: (publisher, kind) -> (rid, sender).
     /// Garante 1 camada por publicador/tipo e permite trocar de camada.
@@ -364,6 +367,10 @@ pub struct SfuState {
     ice: IceConfig,
     /// Contadores de observabilidade partilhados (ver metrics.rs).
     metrics: Arc<crate::metrics::Metrics>,
+    /// Capacidade da fila de renegociação por peer (`NEGO_QUEUE_CAP`).
+    /// 0 (o `Default`) significa «usa o default do código» — só o `SfuState`
+    /// construído pelo `main` traz o valor da configuração.
+    nego_cap: usize,
 }
 
 /// Config de ICE que o SFU usa para se tornar alcançável de fora do cluster.
@@ -381,11 +388,40 @@ pub struct IceConfig {
 
 impl SfuState {
     /// Constrói o SFU com a config de ICE (a partir de `Config`) e os contadores.
-    pub fn new(ice: IceConfig, metrics: Arc<crate::metrics::Metrics>) -> Self {
+    pub fn new(
+        ice: IceConfig,
+        metrics: Arc<crate::metrics::Metrics>,
+        nego_cap: usize,
+    ) -> Self {
         Self {
             ice,
             metrics,
+            nego_cap,
             ..Default::default()
+        }
+    }
+
+    /// Capacidade efectiva da fila de renegociação (default do código quando o
+    /// `SfuState` foi construído por `Default`, como nos testes).
+    fn nego_cap(&self) -> usize {
+        if self.nego_cap == 0 {
+            64
+        } else {
+            self.nego_cap
+        }
+    }
+
+    /// Põe uma mensagem de negociação na fila LIMITADA do peer.
+    ///
+    /// Cheia significa que a `negotiation_loop` deste peer está tão atrasada
+    /// que já tem dezenas de trocas SDP por processar — nesse ponto a sessão
+    /// não é recuperável por acumular mais uma. Descarta-se e conta-se; a
+    /// renegociação seguinte (ou o timeout, que já incrementa
+    /// `sfu_renegotiations_failed_total`) trata da recuperação.
+    fn enqueue_nego(&self, peer: &Arc<SfuPeer>, msg: NegoMsg) {
+        if peer.nego_tx.try_send(msg).is_err() {
+            crate::metrics::Metrics::bump(&self.metrics.nego_queue_dropped_total);
+            tracing::warn!("fila de renegociação cheia — pedido descartado");
         }
     }
 }
@@ -528,7 +564,7 @@ impl SfuState {
         self: &Arc<Self>,
         room_id: Uuid,
         peer_id: Uuid,
-        out: mpsc::UnboundedSender<ServerMsg>,
+        out: crate::signaling::PeerTx,
     ) -> Result<()> {
         crate::metrics::Metrics::bump(&self.metrics.sfu_peers_total);
         let room = self
@@ -559,13 +595,14 @@ impl SfuState {
         };
         let pc = Arc::new(api.new_peer_connection(pc_config).await?);
 
-        let (nego_tx, nego_rx) = mpsc::unbounded_channel();
+        let (nego_tx, nego_rx) = mpsc::channel(self.nego_cap());
         let peer = Arc::new(SfuPeer {
             pc: pc.clone(),
             sharing: AtomicBool::new(false),
             out: out.clone(),
             nego_tx,
             renegotiate_queued: AtomicBool::new(false),
+            metrics: self.metrics.clone(),
             pending_ice: Mutex::new(Vec::new()),
             subscribed: Mutex::new(HashMap::new()),
             quality: Quality::default(),
@@ -676,11 +713,11 @@ impl SfuState {
             // NÃO é aplicada aqui: vai para a `negotiation_loop`, que a aplica
             // quando não houver oferta nossa por responder (glare — ver NegoMsg).
             ClientMsg::SfuOffer { sdp } => {
-                let _ = peer.nego_tx.send(NegoMsg::ClientOffer(sdp));
+                self.enqueue_nego(&peer, NegoMsg::ClientOffer(sdp));
             }
             // Resposta do cliente a uma renegociação iniciada pelo servidor.
             ClientMsg::SfuAnswer { sdp } => {
-                let _ = peer.nego_tx.send(NegoMsg::ClientAnswer(sdp));
+                self.enqueue_nego(&peer, NegoMsg::ClientAnswer(sdp));
             }
             ClientMsg::SfuIce { candidate } => {
                 let init: RTCIceCandidateInit =
@@ -1408,9 +1445,36 @@ async fn request_keyframe(publication: &Arc<Publication>, metrics: &Arc<crate::m
 /// Pede uma renegociação ao peer, colapsando rajadas: várias subscrições
 /// adicionadas em sequência produzem UMA oferta, não uma por track.
 fn trigger_renegotiate(peer: &Arc<SfuPeer>) {
-    if !peer.renegotiate_queued.swap(true, Relaxed) {
-        let _ = peer.nego_tx.send(NegoMsg::Renegotiate);
+    let mut rejected = false;
+    coalesce_renegotiate(&peer.renegotiate_queued, || {
+        let ok = peer.nego_tx.try_send(NegoMsg::Renegotiate).is_ok();
+        rejected = !ok;
+        ok
+    });
+    if rejected {
+        crate::metrics::Metrics::bump(&peer.metrics.nego_queue_dropped_total);
+        tracing::warn!("fila de renegociação cheia — pedido de renegociação descartado");
     }
+}
+
+/// Coalescing do pedido de renegociação, com **reposição da bandeira em falha**.
+///
+/// A bandeira existe para colapsar rajadas: várias subscrições seguidas
+/// produzem UMA oferta. Com a fila agora limitada, o envio pode falhar — e se
+/// a bandeira ficasse a `true` com o pedido perdido, este peer **nunca mais**
+/// renegociaria e ficava permanentemente sem receber media nova. Repor é o que
+/// torna o limite seguro.
+///
+/// Devolve `true` só quando o pedido ficou mesmo em fila.
+fn coalesce_renegotiate(queued: &AtomicBool, send: impl FnOnce() -> bool) -> bool {
+    if queued.swap(true, Relaxed) {
+        return false; // já havia um pedido por processar
+    }
+    if send() {
+        return true;
+    }
+    queued.store(false, Relaxed);
+    false
 }
 
 /// Liga uma publicação (camada concreta) a um subscritor e renegoceia.
@@ -1601,7 +1665,7 @@ async fn negotiation_loop(
     room_id: Uuid,
     peer_id: Uuid,
     peer: Weak<SfuPeer>,
-    mut rx: mpsc::UnboundedReceiver<NegoMsg>,
+    mut rx: mpsc::Receiver<NegoMsg>,
 ) {
     let mut deferred: VecDeque<String> = VecDeque::new();
     while let Some(msg) = rx.recv().await {
@@ -1631,7 +1695,7 @@ async fn negotiation_loop(
 /// sem rollback). Ofertas do cliente que cheguem entretanto ficam em `deferred`.
 async fn run_renegotiation(
     peer: &Arc<SfuPeer>,
-    rx: &mut mpsc::UnboundedReceiver<NegoMsg>,
+    rx: &mut mpsc::Receiver<NegoMsg>,
     deferred: &mut VecDeque<String>,
     metrics: &Arc<crate::metrics::Metrics>,
 ) {
@@ -1831,6 +1895,32 @@ mod tests {
     /// `pick_layer` NÃO pode trocar de camada só porque a desejada ainda não
     /// chegou: no arranque de um publicador as camadas chegam `q`→`h`→`f` e
     /// isso provocaria uma renegociação por cada uma.
+    #[test]
+    fn renegotiate_flag_is_restored_when_the_queue_rejects() {
+        let flag = AtomicBool::new(false);
+
+        // Caminho normal: entra em fila, bandeira fica levantada.
+        assert!(coalesce_renegotiate(&flag, || true));
+        assert!(flag.load(Relaxed));
+
+        // Segundo pedido enquanto o primeiro não foi processado: coalescido.
+        assert!(!coalesce_renegotiate(&flag, || panic!("não devia tentar enviar")));
+
+        // Processado — bandeira baixa (é o que a negotiation_loop faz).
+        flag.store(false, Relaxed);
+
+        // Fila cheia: o pedido perde-se MAS a bandeira tem de voltar a baixo,
+        // senão o peer nunca mais renegoceia (fica sem media nova para sempre).
+        assert!(!coalesce_renegotiate(&flag, || false));
+        assert!(
+            !flag.load(Relaxed),
+            "bandeira presa a true após falha de envio = peer sem renegociação para sempre"
+        );
+
+        // E o pedido seguinte volta a poder ser enviado.
+        assert!(coalesce_renegotiate(&flag, || true));
+    }
+
     #[test]
     fn pick_layer_keeps_current_while_wanted_is_missing() {
         let layers = ["q", "h"];
