@@ -159,6 +159,19 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** migrações re-embebem só com `touch server/src/main.rs`; após migração nova sempre `cargo build --release` antes de restart. reqwest **0.12 rustls-tls** (não 0.13).
 - **Ficheiros:** `server/src/main.rs`, `server/Cargo.toml`.
 
+### R32 — Fila de saída ILIMITADA: um consumidor lento derrubava o nó
+- **Sintoma:** memória do pod a subir sem parar e OOM-kill, levando consigo TODAS as salas do pod. Sem erro, sem aviso, sem correlação óbvia com nada.
+- **Causa raiz:** as cinco filas de saída eram `unbounded_channel`. O `writer` de cada socket só drena ao ritmo a que o TCP do cliente aceita bytes; um cliente em rede degradada (o caso NORMAL do nosso mercado), com a aba suspensa ou parado num depurador, deixa de drenar — e a sala continua a difundir-lhe traços de quadro, legendas parciais e ICE. Com a afinidade por sala (ADR-0001) a concentrar salas no mesmo pod, UM participante derrubava todas as outras. Era um DoS ao alcance de qualquer participante.
+- **Regra:** **nenhuma fila de saída sem limite.** `WS_QUEUE_CAP` (default 512) e `NEGO_QUEUE_CAP` (default 64). Cheia: descarta-se só o EFÉMERO e auto-substituível (legenda parcial, traço de quadro, reacção — `ServerMsg::is_droppable`) e conta-se; com uma mensagem de PROTOCOLO ou ESTADO fecha-se o socket UMA vez e o cliente reentra. Entregar meio protocolo é pior do que desligar: deixa o cliente a acreditar num sistema que já não existe. Nunca `send().await` — os emissores correm dentro do lock do `DashMap` das salas (R16); é sempre `try_send`.
+- **O fecho tem de ser ORDENADO:** acordar o laço de LEITURA por `Notify`, para a saída do laço correr a limpeza normal do peer. Abortar só a task de escrita NÃO serve — com `split()` as duas metades partilham o socket, e o peer ficaria na sala com o caminho de saída morto, que é pior que o problema original.
+- **Ficheiros:** `server/src/signaling.rs` (`PeerTx`), `server/src/presence.rs` (`ConnTx`), `server/src/sfu.rs`, `server/src/config.rs`, `server/src/metrics.rs`.
+
+### R33 — Bandeira de coalescing presa: peer sem renegociar NUNCA MAIS
+- **Sintoma:** um participante deixa de receber media nova — quem entra depois dele fica invisível para ele, para sempre, sem erro nenhum.
+- **Causa raiz:** o `trigger_renegotiate` levanta `renegotiate_queued` ANTES de enviar, para colapsar rajadas de subscrição numa só oferta. Enquanto a fila era ilimitada o envio nunca falhava. Ao limitá-la passou a poder falhar — e a bandeira ficava a `true` com o pedido perdido, estado do qual não há saída: toda a renegociação futura é coalescida contra um pedido que não existe.
+- **Regra:** quem levanta a bandeira ANTES de enviar tem de a **repor em falha** (`coalesce_renegotiate`). Vale para qualquer coalescing futuro, não só este.
+- **Ficheiros:** `server/src/sfu.rs` (`coalesce_renegotiate`, `trigger_renegotiate`); teste `renegotiate_flag_is_restored_when_the_queue_rejects`.
+
 ### R30 — O Ansible voltava a confiar no `:latest`
 - **Sintoma:** o deploy kind injecta no cluster uma imagem velha, ou a tarefa falha por não encontrar a tag.
 - **Causa raiz:** `kind_host` usava `image_tag | default('latest')` com `image_tag` **indefinido em lado nenhum** — logo era sempre `:latest`. Só que o `make export-images` deixou de exportar `:latest` DE PROPÓSITO (é a regra «nunca confiar no `:latest`», ver R9 e o HARNESS.md). Um `default` silencioso para a tag errada é precisamente o que essa regra proíbe.
@@ -222,3 +235,18 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Causa raiz:** a dedup exigia `odoo_db` E `odoo_company_id`, mas o segundo é `#[serde(default)]` — um módulo Odoo antigo não o envia, o `match` não casa, e cria-se org nova em silêncio.
 - **Regra:** **fail-closed**. Não desdobrar para «dedup só por `odoo_db`»: uma BD Odoo hospeda VÁRIAS empresas e isso fundiria tenants distintos — pior que duplicar. Recusar com a acção concreta (actualizar o módulo).
 - **Ficheiros:** `server/src/apikeys.rs` (`provision`).
+
+## Higiene / pipeline
+
+### R34 — Chave privada e artefactos compilados seguidos no git
+- **Sintoma:** um clone do repositório traz consigo a chave privada TLS de `*.delonix.local` e um `.pyc`.
+- **Causa raiz:** um `git add` num directório que ainda não estava no `.gitignore`. Não houve má-fé nenhuma — é o modo normal como isto acontece.
+- **Regra:** **nenhum material de chave privada seguido, nem de dev.** Uma chave num repositório é uma chave comprometida: qualquer clone a tem. Os certificados de dev são GERADOS (`make certs`). O `check-repo-hygiene.sh` recusa por extensão E por cabeçalho PEM dentro de qualquer ficheiro seguido, mais artefactos compilados, dumps de base de dados e migrações com números repetidos ou buracos.
+- **Nota que não pode faltar:** `git rm --cached` tira do HEAD, **não purga o histórico**. Uma chave que esteve seguida continua alcançável em commits anteriores e tem de ser tratada como comprometida.
+- **Ficheiros:** `scripts/check-repo-hygiene.sh`, `.gitignore`, `Makefile` (`certs`).
+
+### R35 — Documentação a descrever um sistema que já não existe
+- **Sintoma:** um agente (ou um humano novo) escreve código contra a API errada, ou desenha um CI que espera uma base de dados no build.
+- **Causa raiz:** a doc dizia `axum 0.7`/`sqlx 0.7` com o código em 0.8, e anunciava `sqlx::query!` com verificação em compile time quando `server/src` tem 118 chamadas à API de runtime e ZERO macros.
+- **Regra:** o `check-docs-drift.sh` compara as versões das crates estruturais com o `Cargo.toml` e recusa qualquer doc que anuncie SQL verificado em compile time enquanto o código usar a API de runtime. **Um portão que nunca se viu ficar vermelho não prova nada** — os dois foram verificados a falhar com o drift reintroduzido de propósito.
+- **Ficheiros:** `scripts/check-docs-drift.sh`, `HARNESS.md`, `AGENTS.md`, `GEMINI.md`.

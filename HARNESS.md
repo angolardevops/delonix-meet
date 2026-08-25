@@ -52,7 +52,7 @@
 - `audit.rs` — registos de auditoria (escrita best-effort nos eventos-chave; leitura admin em `/api/orgs/{id}/audit`)
 - `rate_limit.rs` — rate limit por IP/conta (DashMap, lockout login 8/5min)
 - `error.rs` — `AppError` unificado → HTTP status + JSON body
-- `metrics.rs` — contadores atómicos de observabilidade (WS, SFU) expostos em `/metrics` (Prometheus)
+- `metrics.rs` — contadores atómicos de observabilidade (WS, SFU, saturação das filas) expostos em `/metrics` (Prometheus). Das filas: `delonix_ws_queue_high_water` (marca de água — a folga real face a `WS_QUEUE_CAP`), `delonix_ws_queue_dropped_total` (efémeros perdidos), `delonix_ws_slow_consumer_kills_total` (sockets fechados por transbordo) e `delonix_nego_queue_dropped_total`. Marca de água e não profundidade instantânea: um gauge somado entre sockets vaza quando uma task de escrita morre a meio
 - `users.rs` — perfis de utilizador (perfil público, `me`, update, pesquisa)
 - `actions.rs` — agenda de reunião (tópicos com execução) + Plano de Ação 5W2H
 - `mls.rs` — MLS key agreement para E2EE em grupo (key packages, welcome)
@@ -211,6 +211,8 @@ Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **
 8. **Validação no servidor:** autorização de host controls (lock/share-only/kick) validada em `signaling.rs`, não confiada no cliente.
 9. **reqwest 0.12 com rustls-tls** (não 0.13) para compatibilidade com a versão do rustls no workspace.
 10. **Uma conta tem UMA autoridade de autenticação, explícita:** `users.odoo_org_id` — a org que a gere, gravada quando a conta nasce de um Odoo e nunca reescrita por outra. NULL = conta local, autenticada localmente. **Nunca** resolver o provedor de autenticação por email nem por pertença a org (`LIMIT 1` sem ordem = escolher a autoridade por sorteio). E uma sincronização de directório **nunca reclama uma conta que já existe** — nem de outra org, nem local. As duas metades são precisas; fechar só uma deixa a porta entreaberta. Ver R25.
+
+11. **Nenhuma fila de saída sem limite.** `WS_QUEUE_CAP` (default 512, por socket `/ws` e `/rtc`) e `NEGO_QUEUE_CAP` (default 64, renegociação do SFU por peer). Uma fila ilimitada transformava um consumidor lento — que na nossa rede-alvo é o caso NORMAL, não a excepção — num OOM que levava consigo todas as salas do pod. Cheia, descarta-se só o efémero e auto-substituível (`ServerMsg::is_droppable`: legenda parcial, traço de quadro, reacção) e conta-se; com protocolo ou estado fecha-se o socket e o cliente reentra. Nunca `send().await` nestes caminhos (os emissores correm dentro do lock do `DashMap` — R16): é sempre `try_send`. Ver R32/R33.
 
 ---
 
