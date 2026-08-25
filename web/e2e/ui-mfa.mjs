@@ -23,7 +23,15 @@ const email=`ui${marca}@ui${marca}.local`
 await fetch(`${API}/api/auth/register`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({org_name:`UI ${marca}`,email,username:`ui${marca}`,password:PW})})
 const b=await chromium.launch()
 const p=await (await b.newContext()).newPage()
-p.on('pageerror',e=>console.log('ERRO DE PÁGINA:',e.message))
+p.on('pageerror', (e) => console.log('ERRO DE PÁGINA:', e.message))
+p.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLA:', m.text().slice(0, 200)) })
+// Um login que falha sem dizer porquê custa uma ida ao CI por tentativa. As
+// respostas da API ficam registadas para o diagnóstico sair do próprio log.
+p.on('response', async (r) => {
+  if (!r.url().includes('/api/')) return
+  if (r.status() < 400) return
+  console.log(`API ${r.status()} ${r.url().replace(/^https?:\/\/[^/]+/, '')} → ${(await r.text().catch(() => '')).slice(0, 200)}`)
+})
 let falhas=0
 const chk=(c,n)=>{console.log(`  ${c?'✓':'✗'} ${n}`); if(!c) falhas++}
 
@@ -48,11 +56,22 @@ await p.locator('form button.primary').first().click()
 // Espera pela CONSOLA, não por segundos: o login é uma ida ao servidor.
 await p.waitForSelector('.settings-drawer, nav, aside, [class*=sidebar]', { timeout: 60_000 }).catch(()=>{})
 await p.waitForFunction(() => !document.querySelector('input[type=email]'), null, { timeout: 60_000 })
+  .catch(async () => {
+    await p.screenshot({ path: '/tmp/mfa-login-falhou.png' })
+    const erro = await p.locator('.auth-error').textContent().catch(() => null)
+    console.log('  ! o login não completou. erro no ecrã:', erro ?? '(nenhum)')
+  })
 chk(await p.locator('input[type=email]').count()===0, 'entrou com password (sem MFA)')
 
 await p.evaluate(()=>{ const b=[...document.querySelectorAll('button')].find(x=>/definiç|settings/i.test((x.getAttribute('aria-label')||'')+(x.title||'')+(x.textContent||''))); b?.click() })
-await p.waitForSelector('.settings-drawer', { timeout: 30_000 })
-chk(true, 'gaveta de definições abre')
+const abriu = await p.waitForSelector('.settings-drawer', { timeout: 30_000 }).then(() => true).catch(() => false)
+chk(abriu, 'gaveta de definições abre')
+if (!abriu) {
+  await p.screenshot({ path: '/tmp/mfa-sem-gaveta.png' })
+  console.log(`\n=== ${falhas} FALHARAM (diagnóstico acima) ===`)
+  await b.close()
+  process.exit(1)
+}
 await p.locator('.settings-tab', { hasText: 'Segurança' }).click()
 await p.waitForSelector('.mfa-panel', { timeout: 30_000 })
 chk(await p.locator('.mfa-panel').count()>0, 'separador Segurança mostra o painel de MFA')

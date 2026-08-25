@@ -196,6 +196,10 @@ jobs:
             curl -sf http://localhost:5174/ >/dev/null && break
             sleep 2
           done
+          # Confirma que o PROXY do vite chega ao servidor: é por ele que o
+          # browser fala com a API, e se estiver mudo o sintoma é «o login não
+          # completou», que aponta para o sítio errado.
+          curl -sf http://localhost:5174/api/status || { echo "o proxy do vite NÃO alcança a API"; cat /tmp/vite.log; exit 1; }
           APP=http://localhost:5174 node web/e2e/ui-mfa.mjs
 
       # Sem isto, uma falha de interface no CI é um timeout sem contexto. Com a
