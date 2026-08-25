@@ -437,7 +437,7 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Porque é que a migração funciona:** o SFU é in-memory por pod, mas o hash por sala manda a sala INTEIRA para o mesmo pod novo assim que este sai dos endpoints. Reconectar em conjunto é migrar; reconectar em ordens diferentes seria split-brain — e é por isso que o servidor manda o atraso em vez de deixar cada cliente escolher.
 - **Ficheiros:** `server/src/main.rs` (`drenar`, `readiness`), `server/src/signaling.rs` (`ServerMsg::Draining`, `broadcast_draining`, `tem_sala`), `deploy/k8s/02-server.yaml`, teste `web/e2e/drain.mjs`.
 
-### R49 — Auditoria que se podia editar, apagar, e que desaparecia com a conta
+### R61 — Auditoria que se podia editar, apagar, e que desaparecia com a conta
 - **Sintoma:** nenhum — é esse o problema. Três buracos que só aparecem quando a trilha é precisa, e aí já não há como a reconstituir.
 - **Causa raiz, em três partes:**
   1. **Qualquer pessoa com escrita na base de dados podia fazer `UPDATE`/`DELETE`** numa linha para apagar o que fez. Um registo de auditoria que se pode editar não é um registo de auditoria — e o adversário que interessa aqui é precisamente alguém com privilégios.
@@ -450,9 +450,16 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Provado atacando a tabela por SQL**, não pela API — um teste que só usa a API prova que a API não deixa, não que os dados estão protegidos. Com os gatilhos DESACTIVADOS: alterar uma linha é detectado («o registo nº 1 foi ALTERADO depois de escrito») e apagar uma do meio também («falta o registo nº 2: a numeração salta para 3»).
 - **Ficheiros:** migração 0037, `server/src/audit.rs`, teste `web/e2e/auditoria.mjs`.
 
-### R50 — Portão de CI calibrado para o portátil de quem o escreveu
+### R62 — Portão de CI calibrado para o portátil de quem o escreveu
 - **Sintoma:** o CI falha ao acaso num teste que passa sempre em local. Aqui foi o `sfu_e2e::media_flows_both_ways`, com «timeout à espera de: B recebe áudio+vídeo de A».
 - **Causa raiz:** os testes de media montam `RTCPeerConnection`s a sério — ICE, DTLS e o primeiro RTP. Numa máquina de desenvolvimento resolvem-se em ~0,1 s; num runner de CI partilhado com 2 vCPU chegam a estourar os 30 s. Não é uma avaria do produto: é o mesmo trabalho numa máquina muito mais lenta.
 - **Regra:** prazos de teste ponta-a-ponta são **generosos e ajustáveis** (`E2E_TIMEOUT_FACTOR`, ×4 no CI), nunca calibrados para o ambiente de quem os escreveu. **Um portão que falha ao acaso perde a credibilidade toda** — à terceira vez, quem o vê vermelho assume flake e segue, e a partir daí ele não protege nada.
 - **E a mensagem de timeout tem de dizer o que falta para o distinguir:** o prazo, o número de tentativas e o tempo decorrido. Sem isso, um timeout não separa «o produto está partido» de «a máquina é lenta» — e foi exactamente essa dúvida que custou uma ida ao CI.
 - **Ficheiros:** `server/src/sfu_e2e.rs` (`prazo`, `eventually`), `.github/workflows/ci.yml`.
+
+### R63 — Duas branches acrescentam ao fim do mesmo ficheiro e o git funde em silêncio
+- **Sintoma:** o catálogo de regressões ficou com **dois R49** e **dois R50**, a falar de coisas diferentes, e o `Ver R49` do `HARNESS.md` passou a apontar para ambos. Zero conflitos de merge.
+- **Causa raiz:** cada ramo acrescentou a sua entrada no fim do ficheiro, em posições diferentes do texto. O git funde por linhas: nunca houve colisão. A colisão é de **significado** — um espaço de nomes partilhado (o número) sem ninguém a guardá-lo, exactamente como acontecia com os números das migrações.
+- **Regra:** o `check-repo-hygiene.sh` passou a recusar (a) números de regressão repetidos e (b) uma referência `R<n>` em qualquer ficheiro do repo sem entrada correspondente no catálogo — que é o que apanha uma renumeração feita a meio e esquecida algures. Provado a falhar nas duas faltas antes de se confiar nele verde.
+- **A generalização:** qualquer ficheiro append-only com um identificador sequencial partilhado entre ramos precisa de um portão. Já se sabia das migrações; o catálogo tinha o mesmo problema e ninguém o tinha visto porque um número duplicado não parte nada — só engana quem lê.
+- **Ficheiros:** `scripts/check-repo-hygiene.sh`, `docs/reference/regressions.md`.

@@ -78,5 +78,31 @@ for n in $nums; do
   prev=$cur
 done
 
-[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações contíguas"
+# 5. Catálogo de regressões: números ÚNICOS e referências que existem.
+#    Mesma razão das migrações, e a mesma causa: duas branches acrescentam ao
+#    fim do ficheiro e o git funde sem conflito, porque as linhas não colidem.
+#    O resultado são dois R49 a falar de coisas diferentes — e um `Ver R49` no
+#    HARNESS.md que passa a apontar para as duas. Aconteceu; ver R59.
+CAT=docs/reference/regressions.md
+if [ -f "$CAT" ]; then
+  rnums=$(grep -oE '^### R[0-9]+' "$CAT" | grep -oE '[0-9]+' | sort -n)
+  rdups=$(echo "$rnums" | uniq -d)
+  if [ -n "$rdups" ]; then
+    echo "✗ higiene: número de regressão REPETIDO no catálogo: $(echo "$rdups" | sed 's/^/R/' | tr '\n' ' ')"
+    fail=1
+  fi
+  # Uma referência `R<n>` fora do catálogo tem de ter entrada no catálogo.
+  refs=$(grep -rhoE '\bR[0-9]{1,3}\b' --include='*.rs' --include='*.tsx' --include='*.ts' \
+           --include='*.mjs' --include='*.md' --include='*.sql' --include='*.sh' \
+           --exclude-dir=node_modules --exclude-dir=target . 2>/dev/null \
+         | grep -oE '[0-9]+' | sort -n -u)
+  for r in $refs; do
+    echo "$rnums" | grep -qx "$r" || {
+      echo "✗ higiene: referência a R$r sem entrada no catálogo (renumeração perdida?)"
+      fail=1
+    }
+  done
+fi
+
+[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados"
 exit $fail
