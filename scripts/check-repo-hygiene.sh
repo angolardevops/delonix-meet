@@ -29,9 +29,17 @@ fi
 # 2) Cabeçalho PEM de chave privada dentro de QUALQUER ficheiro seguido —
 #    apanha a chave colada num .yaml, .env.example ou README, que a extensão
 #    do ponto 1 não vê.
-if git grep -lI -e '-----BEGIN .*PRIVATE KEY-----' -- . >/dev/null 2>&1; then
+#
+#    Duas precisões que a primeira versão não tinha e que a faziam acusar-se a
+#    si própria: o padrão é ancorado ao INÍCIO DA LINHA (é assim que um PEM a
+#    sério começa; uma menção em prosa não), e este ficheiro fica de fora da
+#    busca, porque contém o padrão por definição. Um portão que dispara sobre
+#    si mesmo não é rigor — é ruído, e ruído acaba desligado.
+pem_hits=$(git grep -lI -e '^-----BEGIN [A-Z ]*PRIVATE KEY-----' \
+             -- . ':(exclude)scripts/check-repo-hygiene.sh' 2>/dev/null || true)
+if [ -n "$pem_hits" ]; then
   echo "✗ higiene: cabeçalho de CHAVE PRIVADA dentro de ficheiros seguidos:"
-  git grep -lI -e '-----BEGIN .*PRIVATE KEY-----' -- . | sed 's/^/     /'
+  echo "$pem_hits" | sed 's/^/     /'
   fail=1
 fi
 
