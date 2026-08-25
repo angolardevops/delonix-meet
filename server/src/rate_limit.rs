@@ -109,6 +109,15 @@ pub fn client_ip(headers: &HeaderMap, peer: IpAddr) -> String {
 }
 
 /// Applied to /api/auth/* — brute-force protection on credentials endpoints.
+/// Limite de autenticação por IP.
+///
+/// **É por IP, e isso tem uma consequência que se paga em suporte:** uma
+/// organização atrás de um único NAT apresenta-se toda com o mesmo endereço.
+/// Com o default de 20/min, cinquenta pessoas a entrar às nove da manhã
+/// recebem 429 — e do lado delas o sintoma é «a plataforma não deixa entrar».
+/// Ajusta-se com `AUTH_RATE_PER_MIN` (ver config.rs). O travão por CONTA
+/// (`login_limiter`, 8 em 5 min) é o que trava a força bruta a sério, e esse
+/// não depende do IP.
 pub async fn auth_rate_limit(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,

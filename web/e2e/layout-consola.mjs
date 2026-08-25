@@ -31,7 +31,7 @@ const browser = await chromium.launch()
 // ---------------------------------------------------------------- 3.1.1
 console.log('\n3.1.1 · a gaveta em ecrã estreito (375×812)')
 {
-  const ctx = await browser.newContext({ viewport: { width: 375, height: 812 } })
+  const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 375, height: 812 } })
   const page = await ctx.newPage()
   await page.goto(BASE)
   await page.evaluate(() => {
@@ -82,7 +82,7 @@ console.log('\n4.3 · o anel nos controlos que ESTAVAM cegos')
 // substituto — não a um botão qualquer. Um botão que nunca perdeu o anel do
 // browser passa o teste sem provar nada.
 {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 800 } })
   const page = await ctx.newPage()
   await page.goto(BASE)
   await page.evaluate(() => {

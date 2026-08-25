@@ -385,3 +385,30 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** `user_mfa.last_step` guarda o passo temporal aceite, e a actualização é CONDICIONAL (`WHERE last_step IS NULL OR last_step < $2`) — é a barreira que também resolve duas tentativas em paralelo, porque só uma delas afecta a linha. O mesmo vale para os códigos de recuperação (`used_at`, com `UPDATE ... WHERE used_at IS NULL`).
 - **A consequência que não é óbvia e está testada:** o código usado para ACTIVAR o MFA não serve para o login seguinte, porque foi consumido. O primeiro login usa o código da janela a seguir. É correcto, é anti-replay entre operações diferentes, e sem estar escrito parece uma avaria.
 - **Ficheiros:** `server/src/mfa.rs` (`consome_codigo`), migração 0035, `web/e2e/mfa.mjs`.
+
+### R54 — Um portão que não compila o artefacto deixa passar o artefacto partido
+- **Sintoma:** `make test` inteiro verde — 94 testes Rust, 137 vitest, tsc limpo — e a aplicação a devolver **500 em todos os pedidos** quando um browser real a abre. A página de login nunca renderizava.
+- **Causa raiz:** a resolução de um conflito de merge deixou `src/styles.scss` com as chavetas desequilibradas. Nenhum dos portões toca em SCSS: o `tsc` só olha para tipos, o `vitest` importa módulos TS e nunca a folha de estilos, e o `cargo test` é do outro lado. O erro só aparece quando o Vite **compila** — isto é, no `build` ou no primeiro pedido do browser.
+- **Regra:** o portão local tem de **produzir o artefacto**, não só analisá-lo. `make test` passou a correr `npm run build`, provado a falhar com uma regra SCSS aberta de propósito e a voltar a passar depois de fechada. O CI já tinha o build no `job` de frontend; era o ciclo local que mentia — e é o local que decide o que se commita.
+- **O padrão por trás:** typecheck e testes unitários cobrem o que é *importado por testes*. Tudo o que só o empacotador vê — folhas de estilo, `assets`, imports dinâmicos de rotas sem teste — está fora do alcance deles por construção.
+- **Ficheiros:** `Makefile` (alvo `test`), `web/src/styles.scss`.
+
+### R55 — Um conflito de merge que abre dentro de um comentário parte as duas metades
+- **Sintoma:** os marcadores `<<<<<<<`/`>>>>>>>` foram removidos, cada lado parecia íntegro na revisão, e o ficheiro ficou sintacticamente inválido.
+- **Causa raiz:** os dois lados acrescentaram um bloco no fim do ficheiro começado pela MESMA linha decorativa (`/* ====…`). O git tratou essa linha como contexto partilhado e abriu o conflito **depois** dela — por isso nenhum dos lados contém o seu próprio abre-comentário. Pior: o `}` final também era contexto partilhado, e ficou a fechar só um dos blocos, deixando a última regra do outro lado aberta.
+- **Regra:** quando um conflito abre a meio de um comentário ou de um bloco, **não se resolve escolhendo linhas** — reconstrói-se cada lado inteiro, com o seu próprio cabeçalho e o seu próprio fecho, e valida-se com o compilador da linguagem (aqui `npx sass`), não com a leitura.
+- **Sinal de alarme:** conflito cujo primeiro `<<<<<<<` está imediatamente a seguir a uma linha que os dois lados também têm.
+- **Ficheiros:** `web/src/styles.scss`.
+
+### R56 — Ter corrido `make certs` mudava se os testes de browser corriam de todo
+- **Sintoma:** `net::ERR_CERT_AUTHORITY_INVALID` em toda a bateria de browser, numa árvore onde nada de aplicacional tinha mudado.
+- **Causa raiz:** o Vite arranca em HTTPS quando encontra os certificados locais e em HTTP quando não os encontra. Nenhum dos contextos do Playwright tolerava o certificado auto-assinado, por isso o resultado da bateria dependia de um efeito lateral de outro alvo do `Makefile`.
+- **Regra:** todos os `newContext` do harness passam `ignoreHTTPSErrors: true`. O harness tem de correr contra as duas formas em que a aplicação local pode estar servida — a alternativa é uma bateria que passa ou falha conforme comandos anteriores, que é o mesmo que não ter bateria.
+- **Ficheiros:** `web/e2e/ui-mfa.mjs`, `web/e2e/layout-consola.mjs`, `web/e2e/netem-matrix.mjs`.
+
+### R57 — O intervalo «fixo e conhecido» do SFU está dentro do intervalo efémero do SO
+- **O que está medido:** `SFU_UDP_MIN..SFU_UDP_MAX` = 50000–50200 cai **inteiro** dentro de `ip_local_port_range` (32768–60999, omissão do Linux). Qualquer processo do host — um browser aberto, os Chromium do Playwright — pode ficar com essas portas. Com as 201 ocupadas por um processo externo, o estabelecimento da ligação passou de **0,11 s para 1,12 s** (três corridas, valor idêntico). Não falha: o `webrtc-rs` recorre a outra porta. Fica dez vezes mais lento.
+- **Consequência:** em K8s cada pod tem o seu namespace de rede e o intervalo não colide entre réplicas — em produção o risco é baixo. No **host de desenvolvimento e no runner de CI** o intervalo é partilhado com tudo o resto, e um custo de 10× no estabelecimento entra directamente no orçamento de qualquer teste com prazo.
+- **Regra:** os testes usam um intervalo **abaixo de 32768** (20000+), que o SO nunca entrega como porta efémera, fatiado pelo PID. O intervalo do produto passou a ser configurável (`SFU_UDP_MIN`/`SFU_UDP_MAX`), o que também permite mover o produto para fora do intervalo efémero num nó onde isso importe.
+- **O que NÃO ficou provado, e é importante dizê-lo:** esta **não** é a causa do timeout de 30 s em `sfu_e2e::media_flows_both_ways`. A hipótese foi testada directamente — intervalo do produto esgotado *e* o SFU apontado a ele — e o teste passou nas três corridas. A causa desse timeout continua **por estabelecer**; o `E2E_TIMEOUT_FACTOR` (R47) é mitigação, não diagnóstico.
+- **Ficheiros:** `server/src/sfu.rs`, `server/src/config.rs`, `server/src/main.rs`, `server/src/sfu_e2e.rs`.

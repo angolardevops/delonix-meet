@@ -8,6 +8,7 @@ import LanguageToggle from './LanguageToggle'
 import { applyTheme, storedTheme, Theme } from '../theme'
 import { appNameParts, getAppName, getLoginBg, setAppName, setLoginBg } from '../branding'
 import PasswordInput from './PasswordInput'
+import MfaPanel from './MfaPanel'
 import OnboardingTour from './OnboardingTour'
 import { CalendarIcon, ChevronDownIcon, ClockIcon, CloseIcon, FilmIcon, HomeIcon, MenuIcon, NoteIcon, PeopleIcon, SearchIcon, SettingsIcon, StageIcon, ThemeIcon } from '../icons'
 
@@ -47,7 +48,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
 ]
 
-type SettingsTab = 'appearance' | 'account' | 'brand'
+type SettingsTab = 'appearance' | 'account' | 'security' | 'brand'
 
 /** Painel de definições em gaveta à direita, com abas por tipo (estilo consola). */
 export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose: () => void; onLogout: () => void }) {
@@ -105,6 +106,7 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
   const tabs: { key: SettingsTab; label: string }[] = [
     { key: 'appearance', label: t('settings.appearance') },
     { key: 'account', label: t('settings.account') },
+    { key: 'security', label: t('settings.security', 'Segurança') },
     { key: 'brand', label: 'Marca' },
   ]
 
@@ -171,6 +173,12 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
                 </div>
               </div>
               <button className="btn-ghost small" onClick={onLogout}>{t('nav.logout')}</button>
+            </section>
+          )}
+
+          {tab === 'security' && (
+            <section className="settings-group">
+              <MfaPanel />
             </section>
           )}
 

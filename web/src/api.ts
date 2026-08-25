@@ -150,13 +150,25 @@ export async function registerOrg(orgName: string, email: string, password: stri
   return t.user
 }
 
-export async function login(email: string, password: string): Promise<User> {
-  const t = await request<AuthOk>('/api/auth/login', {
+/** Resultado do login: sessão, ou desafio de segundo factor. */
+export type LoginResult =
+  | { kind: 'sessao'; user: User }
+  | { kind: 'mfa'; mfa_token: string }
+
+/**
+ * Com MFA activo, a password **não** produz sessão: o servidor devolve um
+ * desafio de 5 minutos e os tokens só saem no `loginMfa`. Quem chama tem de
+ * tratar os dois casos — é por isso que o tipo de retorno os distingue em vez
+ * de devolver `User | null`, que se ignora sem dar por isso.
+ */
+export async function login(email: string, password: string): Promise<LoginResult> {
+  const t = await request<AuthOk & { mfa_required?: boolean; mfa_token?: string }>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   })
+  if (t.mfa_required && t.mfa_token) return { kind: 'mfa', mfa_token: t.mfa_token }
   saveSession(t)
-  return t.user
+  return { kind: 'sessao', user: t.user }
 }
 
 /** Verifica se o domínio de email tem SSO configurado. */
@@ -317,6 +329,47 @@ export const searchUsers = (q: string) =>
   request<User[]>(`/api/users/search?q=${encodeURIComponent(q)}`)
 
 /** Atualiza os próprios dados (username, password e/ou locale) e sincroniza o cache local. */
+// ---------- MFA (segundo factor por TOTP) ----------
+
+export interface MfaEstado {
+  enabled: boolean
+  /** Inscrito mas por confirmar: o autenticador já tem o segredo, falta a prova. */
+  pending: boolean
+  backup_codes_left: number
+}
+
+export const mfaEstado = () => request<MfaEstado>('/api/users/me/mfa')
+
+/** Começa a inscrição. Devolve o segredo UMA vez — não há como o reler depois. */
+export const mfaInscrever = () =>
+  request<{ secret: string; otpauth_uri: string }>('/api/users/me/mfa/enrol', { method: 'POST' })
+
+/** Confirma com um código do autenticador. Devolve os códigos de recuperação,
+ *  também UMA vez: a partir daqui só existe o hash deles. */
+export const mfaActivar = (code: string) =>
+  request<{ backup_codes: string[] }>('/api/users/me/mfa/activate', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  })
+
+/** Desactiva. Exige um código válido — de outra forma, uma sessão roubada
+ *  bastava para desligar o segundo factor. */
+export const mfaDesactivar = (code: string) =>
+  request<{ ok: boolean }>('/api/users/me/mfa/disable', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  })
+
+/** Segunda metade do login: troca o desafio + código pelos tokens de sessão. */
+export async function loginMfa(mfa_token: string, code: string): Promise<User> {
+  const t = await request<AuthOk>('/api/auth/mfa', {
+    method: 'POST',
+    body: JSON.stringify({ mfa_token, code }),
+  })
+  saveSession(t)
+  return t.user
+}
+
 export async function updateMe(data: { username?: string; password?: string; locale?: string }): Promise<User> {
   const user = await request<User>('/api/users/me', { method: 'PATCH', body: JSON.stringify(data) })
   localStorage.setItem('dx_user', JSON.stringify(user))

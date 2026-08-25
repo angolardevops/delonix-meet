@@ -5,6 +5,28 @@
 > `ERR_MODULE_NOT_FOUND`, porque as dependências (`ws`, `@playwright/test`)
 > estão em `web/`. Este directório guarda o `Dockerfile.netem` e esta nota.
 
+## MFA (`web/e2e/mfa.mjs` e `web/e2e/ui-mfa.mjs`)
+
+Dois níveis, e os dois correm no CI:
+
+- **`mfa.mjs`** — o fluxo ao nível da API. O código TOTP é gerado em
+  JavaScript de propósito: é uma segunda implementação independente do
+  RFC 6238, e vê-la concordar com a de Rust vale muito mais do que ver a de
+  Rust concordar consigo própria. O gerador é ele próprio validado contra os
+  vectores do RFC **antes** de servir para o que quer que seja.
+- **`ui-mfa.mjs`** — o mesmo visto pelo utilizador, num Chromium a sério.
+  Existe porque o backend estar certo não faz um produto.
+
+**Duas armadilhas que este arnês já apanhou:**
+
+- **O tour de introdução bloqueia os cliques** para um utilizador novo: o
+  overlay `.tour-dim` intercepta os eventos de ponteiro. O teste marca-o como
+  visto (`dx_tour_v1`), que é o que um utilizador faria ao fechá-lo.
+- **Há ~30 s de espera real** a meio, e não há como a evitar: a activação
+  CONSOME o código daquela janela, por isso o primeiro login tem de usar o
+  seguinte. É anti-replay entre operações, está certo, e é a razão pela qual
+  este teste não é instantâneo.
+
 ## Isolamento entre inquilinos (`web/e2e/isolamento.mjs`)
 
 Duas organizações independentes contra um servidor a sério, e para cada recurso
