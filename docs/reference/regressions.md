@@ -359,3 +359,12 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** **quando se muda um elemento de sítio, apaga-se a regra que o escondia no sítio antigo.** Sobrepor uma regra de posicionamento resolve o caso que se está a testar e deixa o outro partido — é o achado 3.2.1 deste mesmo relatório a repetir-se em cima de si próprio.
 - **Como foi apanhado:** por uma fitness function escrita ANTES de a correcção estar dada por terminada, e confirmado no browser (`getComputedStyle` do campo dentro da gaveta dava `display: none`). O teste que verifica a correcção tem de olhar para o que ela promete, não para o que ela tocou.
 - **Ficheiros:** `web/src/styles.scss`, `web/src/lote2.invariantes.test.ts`.
+
+### R51 — Um teste que aponta ao sítio errado passa sem provar nada
+- **Sintoma:** um teste verde a dar por confirmada uma correcção que ele não tinha tocado.
+- **Causa raiz (duas, na mesma tarefa):**
+  1. O teste do anel de foco media um `.land-link` — um botão que **nunca teve `outline: none`** e por isso sempre teve o anel do próprio browser. Passava com a correcção e passaria sem ela. Os sujeitos certos eram os **seis controlos que estavam cegos**.
+  2. A tentativa de ver o portão da gaveta ficar vermelho usou um `sed` com `^\.shell\.nav-open` — e a regra está **indentada** dentro de uma media query. O `sed` não mudou nada, o build foi o mesmo, e o «vermelho» foi um verde disfarçado.
+- **Regra:** **o teste tem de apontar ao que a correcção mudou, e o vermelho tem de ser verificado, não presumido.** Depois de partir o invariante, confirma-se que o ficheiro mudou mesmo (`grep` ao alvo, ou `git diff`) antes de acreditar no resultado. Um `sed` que não casa é silencioso.
+- **Regra irmã, sobre o instrumento:** quando a propriedade em causa é de pintura (`transform`, `outline`), o `getComputedStyle` de um painel que não compõe frames **mente** — mediu-se que nem um `!important` inline a altera. A leitura fiável é geométrica (`boundingBox`) ou por **comparação de pixéis**.
+- **Ficheiros:** `web/e2e/layout-consola.mjs`.

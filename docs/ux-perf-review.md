@@ -40,9 +40,9 @@ Os quatro invariantes viraram testes (`web/src/lote1.invariantes.test.ts`, 17
 casos) e cada um foi visto a ficar **vermelho** com o invariante partido e verde
 com ele reposto. Lições em `reference/regressions.md` (R46, R47).
 
-**O que o lote 1 NÃO provou:** o anel de foco não foi confirmado numa janela
-real — o painel de browser usado não resolve estado de foco. Fica verificado por
-teste e por inspeção do CSS construído; falta a passagem de teclado. Ver R46.
+**A lacuna do lote 1 ficou fechada no lote 2** — ver o bloco do lote 2 abaixo:
+o anel de foco está confirmado num Chromium real, por comparação de pixéis, nos
+controlos que estavam cegos. Ver R46.
 
 ### Lote 2 — o que mudou, medido
 
@@ -80,12 +80,45 @@ teste (R48, R49 e R50 no catálogo):
   global. Estado de UI (gaveta, tema, colapso) fica separado e só o que é
   preferência persiste.
 
-**O que o lote 2 NÃO provou:** o painel de browser usado não resolve `transform`
-nem `outline` — um `!important` inline nessas propriedades também não altera o
-valor computado. Confirmou-se que a classe `nav-open` entra, que o backdrop
-monta, que o `aria-expanded` alterna e que o conteúdo deixa de ser empurrado;
-**não** se viu a gaveta a deslizar. Falta uma passagem num browser real, a par
-da do anel de foco do lote 1 (R46).
+**A lacuna dos lotes 1 e 2, fechada.** Ficou escrito nos dois PRs que o painel de
+browser do agente não resolve `transform` nem `outline`, e que faltava uma
+passagem num motor a sério. Foi feita: `web/e2e/layout-consola.mjs` corre um
+Chromium real contra o `dist` construído e verifica as duas coisas que estavam
+por confirmar.
+
+```
+3.1.1 · a gaveta em ecrã estreito (375×812)
+  ok  o rail está FORA do ecrã com a gaveta fechada        x=-268 largura=268
+  ok  o conteúdo ocupa a largura toda (antes perdia 224px) x=0 largura=375
+  ok  a gaveta desliza para dentro do ecrã                 x=0 largura=268
+  ok  o transform computado é `none` com a gaveta aberta
+  ok  o backdrop cobre o ecrã · aria-expanded acompanha
+  ok  entrar por código está alcançável na gaveta, e aceita escrita
+  ok  Escape fecha a gaveta · sem scroll horizontal
+
+4.3 · o anel nos controlos que ESTAVAM cegos
+  ok  o campo de código da barra mostra foco   (comparação de pixéis)
+  ok  o campo do Cmd-K mostra foco             (comparação de pixéis)
+  ok  o contentor casa :focus-within, e ganha o anel do sistema
+```
+
+Duas notas sobre o próprio teste, porque as duas custaram uma repetição:
+
+1. **O primeiro teste de foco apontava ao sítio errado.** Media um `.land-link`,
+   que nunca teve `outline: none` e por isso sempre teve o anel do browser — o
+   teste passava sem provar nada. Os sujeitos certos são os **seis controlos que
+   estavam cegos**, e a leitura é por **comparação de pixéis**, que não depende
+   de como o Chromium serializa o `outline` dele próprio.
+2. **A primeira tentativa de o ver falhar não falhou** — o `sed` que devia
+   partir a regra da gaveta tinha um `^` e a regra está indentada dentro da
+   media query, por isso não mudou nada e o «vermelho» foi um verde disfarçado.
+   Repetido a sério: regra da gaveta trocada → 2 falhas; anéis removidos →
+   2 falhas.
+
+O arnês **não está ligado ao CI**: o Playwright obrigaria o `npm ci` de todos os
+jobs a descarregá-lo mais o Chromium, e isso é custo de build para toda a gente —
+decisão de quem mantém o repo, não efeito lateral de uma correcção de layout. A
+nota de como o ligar está no fim do ficheiro.
 
 
 ---
