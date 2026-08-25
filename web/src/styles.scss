@@ -4601,3 +4601,59 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
    (que já desconta a barra de topo), não pela viewport — senão ficavam
    ~46px demasiado altas e apareciam com scroll parasita. */
 .shell-body > .cal-page { height: 100%; }
+
+/* ============================================================
+   FOCO VISÍVEL + ESPERA DE ROTA (lote 1 — docs/ux-perf-review.md)
+   Última camada do ficheiro, pela mesma razão da camada CONSOLA:
+   à mesma especificidade vence o `outline: none` histórico.
+   ============================================================ */
+
+/* ---- 4.3 · Anel de foco onde havia `outline: none` sem substituto ----
+   Os seis sítios são o mesmo padrão: um input SEM borda dentro de um
+   contentor COM borda. Anelar o input desenhava um retângulo a flutuar
+   dentro da peça; o anel certo é no contentor, via :focus-within — é a
+   peça inteira que está com o foco, e é ela que o utilizador vê.
+   O token --ring já existia (bloco "Design system"); só não chegava aqui. */
+.join-box:focus-within,
+.people-search:focus-within,
+.cmd-search:focus-within,
+.app-bar-join:focus-within,
+.room-page .dev-chip:focus-within {
+  box-shadow: var(--ring);
+  border-color: var(--accent);
+}
+/* O input interior continua sem anel próprio — quem o mostra é o contentor. */
+.join-box input:focus,
+.people-search input:focus,
+.cmd-search input:focus,
+.app-bar-join input:focus,
+.room-page .dev-chip select:focus {
+  outline: none;
+}
+
+/* Inputs de célula de tabela (plano de ação): não têm contentor próprio,
+   por isso o anel é neles — mas fino, para não empurrar a linha. */
+.action-plan-table td input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 45%, transparent);
+  border-radius: 3px;
+}
+
+/* Rede de segurança: qualquer elemento focável sem tratamento próprio.
+   Usa `outline`, NÃO `box-shadow`, por uma razão contada: este ficheiro tem
+   94 declarações de `box-shadow` (15 delas em regras de classe) contra 22 de
+   `outline`, das quais 11 são o `outline: none` já tratado acima. Com
+   `:where()` — especificidade ZERO — uma rede assente em box-shadow perde
+   para qualquer uma dessas regras de classe; assente em outline não disputa
+   com nada. O outline moderno segue o border-radius, por isso não se perde
+   nada no aspeto. */
+:where(button, [href], input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- 1.2 · Espera de rota ----
+   Reserva a altura para o conteúdo não saltar quando o chunk chega. Sem
+   spinner de propósito: na mesma origem o chunk chega em dezenas de ms e
+   um indicador que pisca lê-se como avaria. */
+.route-loading { min-height: 60vh; }
