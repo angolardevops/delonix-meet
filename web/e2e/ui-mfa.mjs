@@ -27,26 +27,34 @@ p.on('pageerror',e=>console.log('ERRO DE PÁGINA:',e.message))
 let falhas=0
 const chk=(c,n)=>{console.log(`  ${c?'✓':'✗'} ${n}`); if(!c) falhas++}
 
-await p.goto(`${APP}/#/login`, { waitUntil: 'domcontentloaded' })
+// A primeira navegação pode demorar: o vite em modo dev COMPILA a aplicação
+// no primeiro pedido, e num runner frio isso são dezenas de segundos. Espera-se
+// pelo formulário a existir, não por um número de segundos inventado — foi
+// exactamente isso que fez este teste passar em local e falhar no CI.
+await p.goto(`${APP}/#/login`, { waitUntil: 'domcontentloaded', timeout: 120_000 })
+await p.waitForSelector('input[type=email]', { timeout: 120_000 })
 // Dispensa o tour de introdução: aparece para um utilizador novo e o overlay
 // `.tour-dim` intercepta os cliques todos. Um utilizador fecha-o; o teste
 // marca-o como visto, que dá no mesmo e não depende do desenho do tour.
 await p.evaluate(() => localStorage.setItem('dx_tour_v1', 'done'))
-await p.waitForTimeout(3000)
 await p.fill('input[type=email]', email)
 await p.fill('input[type=password]', PW)
 // Espera a verificação de SSO assentar: ela dispara 500 ms depois do email e
 // re-renderiza o formulário, o que destaca o botão a meio do clique.
+// A verificação de SSO dispara 500 ms depois do email e re-renderiza o
+// formulário; esperar por ela assentar evita clicar num botão a ser substituído.
 await p.waitForTimeout(2000)
 await p.locator('form button.primary').first().click()
-await p.waitForTimeout(3000)
+// Espera pela CONSOLA, não por segundos: o login é uma ida ao servidor.
+await p.waitForSelector('.settings-drawer, nav, aside, [class*=sidebar]', { timeout: 60_000 }).catch(()=>{})
+await p.waitForFunction(() => !document.querySelector('input[type=email]'), null, { timeout: 60_000 })
 chk(await p.locator('input[type=email]').count()===0, 'entrou com password (sem MFA)')
 
 await p.evaluate(()=>{ const b=[...document.querySelectorAll('button')].find(x=>/definiç|settings/i.test((x.getAttribute('aria-label')||'')+(x.title||'')+(x.textContent||''))); b?.click() })
-await p.waitForTimeout(800)
-chk(await p.locator('.settings-drawer').count()>0, 'gaveta de definições abre')
+await p.waitForSelector('.settings-drawer', { timeout: 30_000 })
+chk(true, 'gaveta de definições abre')
 await p.locator('.settings-tab', { hasText: 'Segurança' }).click()
-await p.waitForTimeout(500)
+await p.waitForSelector('.mfa-panel', { timeout: 30_000 })
 chk(await p.locator('.mfa-panel').count()>0, 'separador Segurança mostra o painel de MFA')
 
 await p.locator('.mfa-panel button', { hasText: 'Activar' }).first().click()
@@ -86,7 +94,8 @@ console.log(`  · aguarda ${Math.round(espera/1000)}s pela janela TOTP seguinte`
 await p.waitForTimeout(espera)
 await p.fill('.mfa-code-input', totp(segredo))
 await p.locator('.auth-mfa button[type=submit]').first().click()
-await p.waitForTimeout(3000)
+await p.waitForFunction(() => !document.querySelector('.auth-mfa'), null, { timeout: 60_000 })
+  .catch(() => {})
 chk(await p.locator('.auth-mfa').count()===0, 'código correcto → entra')
 await p.screenshot({ path: '/tmp/mfa-final.png' })
 console.log(`\n=== ${falhas===0?'TODAS PASSARAM':falhas+' FALHARAM'} ===`)

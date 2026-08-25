@@ -198,6 +198,18 @@ jobs:
           done
           APP=http://localhost:5174 node web/e2e/ui-mfa.mjs
 
+      # Sem isto, uma falha de interface no CI é um timeout sem contexto. Com a
+      # imagem do momento da falha, diagnostica-se sem ter de reproduzir.
+      - name: Screenshots e log do vite (se falhar)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-mfa-diagnostico
+          path: |
+            /tmp/mfa-*.png
+            /tmp/vite.log
+          if-no-files-found: ignore
+
       - name: Log do servidor (se falhar)
         if: failure()
         run: cat /tmp/servidor.log
