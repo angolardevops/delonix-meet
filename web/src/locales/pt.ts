@@ -3,6 +3,11 @@
 // dinâmico em ../i18n.ts (achado 1.3 do docs/ux-perf-review.md).
 
 export default {
+  load: {
+    failedTitle: 'Não foi possível carregar',
+    failedHint: 'O serviço não respondeu. Isto não quer dizer que não tenhas nada aqui.',
+    retry: 'Tentar outra vez',
+  },
   common: {
     loading: 'A carregar…',
     save: 'Guardar',
@@ -492,6 +497,7 @@ export default {
     actionLoading: 'A carregar plano de ação…',
     actionMetaLabel: 'META',
     actionGoalPlaceholder: 'Objetivo do plano de ação…',
+    actionGoalEdit: 'Editar objetivo',
     actionEmpty: 'Sem ações. Adiciona abaixo.',
     actionWhat: 'O QUÊ', actionWhen: 'QUANDO', actionWhere: 'ONDE',
     actionWho: 'QUEM', actionWhy: 'PORQUÊ', actionHow: 'COMO', actionResources: 'QUANTO',
