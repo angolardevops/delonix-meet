@@ -64,10 +64,10 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | Filas limitadas + backpressure | 🔴 → ✅ **feito nesta sessão** | — | — | 7 testes novos (R32/R33) |
 | Nunca bloquear o executor Tokio | 🟡 **melhorado nesta sessão** | `BufWriter` de 64 KiB corta as syscalls de uma-por-pacote-RTP para uma-por-64-KiB, mas a escrita **continua síncrona no executor**. A correcção completa (thread dedicada + fila limitada por track) fica por fazer: mexe no caminho de fecho, onde errar dá gravação truncada em silêncio, e não há ffmpeg nem media real nesta máquina para a validar | Médio (era Alto) | gravar com o volume saturado e medir latência de RTP |
 | `ffmpeg` fora do executor + limites | 🟡 → ✅ **feito nesta sessão** | timeout (`FFMPEG_TIMEOUT_SECS`), `-threads` (`FFMPEG_THREADS`), `-nostdin`, `kill_on_drop`, e o processo é morto e colhido ao exceder. **Falta sandbox e limite de memória** (precisa de cgroups/setrlimit) | Baixo (era Alto) | 3 testes em `run_bounded` (acaba a tempo / estoura o tecto / falha) |
-| Máquina de estados de chamada | 🔴 | não existe. Não há `connecting/degraded/reconnecting/recovering/failed` | Alto | estado observável em cada transição |
-| **ICE restart** | 🔴 | **zero ocorrências de `restartIce()` no frontend** | **Crítico** — a recuperação de rede depende de reload da página (`Room.tsx:853`, `dx_reconnect_at`) | cortar a rede 10 s e a chamada volta sem reload |
-| Reconnect token / silent rejoin | 🔴 | não existe | Alto | refresh do browser não perde a sessão de media |
-| Backoff exponencial | 🟡 | existe só no `/rtc` (`presence.ts:93`, 2 s→30 s) e **sem jitter**; o `/ws` não tem | Médio | N clientes a reentrar não sincronizam |
+| Máquina de estados de chamada | 🔴 → ✅ **feita nesta sessão** | os 7 estados em `callRecovery.ts`, decisão pura e testada | — | 16 testes, incl. percurso completo de uma quebra |
+| **ICE restart** | 🔴 → 🟡 **feito, por validar** | implementado e testado contra uma `RTCPeerConnection` FALSA. **Nunca correu contra um SFU real nem contra uma rede a mudar de caminho** — e é isso que separa isto de ✅ | Médio (era Crítico) | cortar a rede 10 s e a chamada volta sem reload — **por fazer** |
+| Reconnect token / silent rejoin | 🔴 | não existe. O reload deixou de ser a primeira resposta (passou a última, ao fim de 6 tentativas), mas continua a ser o último recurso | Médio | refresh do browser não perde a sessão de media |
+| Backoff exponencial | 🟡 → ✅ **feito nesta sessão** | com **jitter** nos dois caminhos: ICE restart e `/rtc`. Sem jitter, uma falha da sala inteira punha todos a reiniciar no mesmo instante | — | `backoffDelay` testado no intervalo [metade, inteiro] |
 | HA do SFU (registry, drain, placement) | 🔴 | há afinidade por sala (ADR-0001) — que **não é HA**. Morrer o pod mata as salas | **Crítico** | `kubectl delete pod` e as salas recuperam noutro nó |
 | Testes de fiabilidade com browsers reais | 🔴 | 0 testes E2E; os `sfu_e2e` usam `RTCPeerConnection` de servidor, não browsers | Alto | matriz 1:1/5/10/25/50 |
 
@@ -167,9 +167,10 @@ commits anteriores e deve ser tratada como comprometida.
 
 ## 4. As três lacunas que mandam na ordem de execução
 
-1. **Não há recuperação de chamada.** Zero `restartIce()`. Numa rede que oscila
-   — o caso normal do mercado-alvo — a única recuperação é **recarregar a
-   página**. Isto anula, na prática, boa parte do valor do resto.
+1. ~~**Não há recuperação de chamada.**~~ **Endereçado** — `callRecovery.ts` +
+   ICE restart na `SfuCall`. Continua a faltar a prova contra rede real, e
+   faltam o *reconnect token* e o *silent rejoin*: um refresh do browser ainda
+   perde a sessão de media.
 2. **A afinidade por sala não é HA.** Concentrar as salas no mesmo pod resolve o
    *split-brain* e **agrava** o raio de dano: matar o pod mata as salas todas.
 3. **A adaptação de qualidade ignora tudo o que interessa.** Decidir a camada
@@ -206,7 +207,9 @@ Pela ordem do mandato, e pelo risco medido:
    tecto e travão de CPU nesta sessão; falta mover a escrita IVF/OGG para uma
    thread dedicada com fila limitada por track, **com teste contra uma gravação
    real** (não há ffmpeg nem media nesta máquina).
-2. **Máquina de estados de chamada + ICE restart + rejoin silencioso.**
+2. **Validar o ICE restart contra rede real** (a máquina de estados e o restart
+   já existem; o que falta é a prova), e implementar *reconnect token* +
+   *silent rejoin* — hoje um refresh do browser ainda perde a sessão de media.
 3. **Métricas de chamada completas** — sem elas não há Call Quality Score nem
    SLO com números.
 4. **Testes em rede degradada** com emulação, e só depois publicar metas.
