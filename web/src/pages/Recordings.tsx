@@ -18,7 +18,7 @@ import {
   unshareRecording,
   User,
 } from '../api'
-import { CloseIcon, DownloadIcon, FilmIcon, NoteIcon, ShareLinkIcon, TrashIcon } from '../icons'
+import { CheckIcon, CloseIcon, CopyIcon, DownloadIcon, FilmIcon, GridIcon, NoteIcon, PlayIcon, RowsIcon, ShareLinkIcon, TableIcon, TrashIcon } from '../icons'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
@@ -82,13 +82,13 @@ export default function Recordings() {
         actions={
           <div className="seg view-toggle">
             <button className={view === 'library' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('library')}>
-              ▤ {t('recordings.viewLibrary')}
+              <RowsIcon /> {t('recordings.viewLibrary')}
             </button>
             <button className={view === 'cards' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('cards')}>
-              ▦ {t('recordings.viewCards')}
+              <GridIcon /> {t('recordings.viewCards')}
             </button>
             <button className={view === 'table' ? 'seg-btn active' : 'seg-btn'} onClick={() => switchView('table')}>
-              ☰ {t('recordings.viewTable')}
+              <TableIcon /> {t('recordings.viewTable')}
             </button>
           </div>
         }
@@ -189,7 +189,7 @@ export default function Recordings() {
                 <td>{new Date(r.created_at).toLocaleString('pt-PT')}</td>
                 <td>{(r.size_bytes / 1_048_576).toFixed(1)} MB</td>
                 <td className="rec-row-actions">
-                  <button className="icon-btn" title={t('recordings.open')} onClick={() => setViewTarget(r)}>▶</button>
+                  <button className="icon-btn" title={t('recordings.open')} onClick={() => setViewTarget(r)}><PlayIcon /></button>
                   {r.can_download && (
                     <button
                       className="icon-btn"
@@ -217,7 +217,7 @@ export default function Recordings() {
           <div key={r.id} className="rec-card">
             <button className="rec-thumb" style={{ background: recColor(r.filename) }} onClick={() => setViewTarget(r)} title={t('recordings.play')}>
               <FilmIcon />
-              <span className="rec-play">▶</span>
+              <span className="rec-play" aria-hidden="true"><PlayIcon /></span>
               {!r.owned && <span className="rec-badge shared">{t('recordings.shared')}</span>}
             </button>
             <div className="rec-body">
@@ -334,7 +334,7 @@ function ViewerBody({
                 a.download = rec.filename
                 a.click()
               }}
-            >⬇ {t('recordings.download')}</button>
+            ><DownloadIcon /> {t('recordings.download')}</button>
           </div>
         )}
         {!videoUrl && !videoErr && <p className="muted">{t('recordings.loadingVideo')}</p>}
@@ -597,7 +597,7 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
                   onClick={() => copyLink(link.token)}
                   title={t('recordings.copyLink')}
                 >
-                  {linkCopied ? '✓' : '⎘'}
+                  {linkCopied ? <CheckIcon /> : <CopyIcon />}
                 </button>
               </div>
               {link.expires_at && (

@@ -20,7 +20,7 @@ h1, h2, h3, .logo, .brand-text, .cal-title, .clock {
   font-family: var(--font-mono);
 }
 
-#root { height: 100vh; }
+#root { height: 100vh; height: 100dvh; }
 
 .logo { font-size: 1.4rem; font-weight: 700; margin: 0; }
 .logo span { color: var(--wordmark); }
@@ -96,7 +96,7 @@ button.link:hover {
 }
 
 /* ---- Auth ---- */
-.auth-page { height: 100vh; display: flex; align-items: center; justify-content: center; }
+.auth-page { height: 100vh; height: 100dvh; display: flex; align-items: center; justify-content: center; }
 .auth-card {
   width: min(380px, 92vw);
   background: var(--surface);
@@ -107,7 +107,7 @@ button.link:hover {
 .tagline { color: var(--muted); margin: 0.3rem 0 1.4rem; }
 
 /* ---- Lobby ---- */
-.lobby-page { height: 100vh; display: flex; flex-direction: column; }
+.lobby-page { height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 0.9rem 1.4rem; background: var(--surface);
@@ -138,7 +138,7 @@ button.link:hover {
 
 /* ---- Room (estilo Meet) ---- */
 .room-page {
-  height: 100vh; display: flex; flex-direction: column; background: var(--bg); overflow: hidden;
+  height: 100vh; height: 100dvh; display: flex; flex-direction: column; background: var(--bg); overflow: hidden;
   /* Token local: cor do orador ativo. Azul-Google forte (#1a73e8) — o azul de
      marca do Google, usado no anel do tile, nas barras de voz e no halo do mic. */
   --speaking: #1a73e8;
@@ -454,7 +454,7 @@ button.link:hover {
 
 /* ---- Sala de espera ---- */
 .waiting-page {
-  height: 100vh; display: flex; flex-direction: column;
+  height: 100vh; height: 100dvh; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 1rem; text-align: center;
 }
 .waiting-overlay {
@@ -615,7 +615,7 @@ button.link:hover {
 /*  Shell (navegação) + páginas Home / Gravações / Calendário    */
 /* ============================================================ */
 
-.shell { height: 100vh; display: flex; background: var(--bg); }
+.shell { height: 100vh; height: 100dvh; display: flex; background: var(--bg); }
 .shell-nav {
   width: 244px; flex: none; background: var(--surface);
   display: flex; flex-direction: column; padding: 0.9rem 0.75rem 0.75rem;
@@ -1279,7 +1279,7 @@ button.link:hover {
 /* ============================================================ */
 /*  Calendário estilo Google Calendar                            */
 /* ============================================================ */
-.cal-page { width: 100%; display: flex; flex-direction: column; height: calc(100vh - 0px); }
+.cal-page { width: 100%; display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 .cal-toolbar {
   display: flex; align-items: center; justify-content: space-between;
   gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap;
@@ -1784,7 +1784,7 @@ button.link:hover {
 .sso-btn:hover { background: var(--ghost-2); }
 
 /* ---- F2.1: Landing pública ---- */
-.landing { min-height: 100vh; overflow-x: hidden; }
+.landing { min-height: 100vh; min-height: 100dvh; overflow-x: hidden; }
 .landing h1, .landing h2 { font-family: var(--font-display); letter-spacing: -0.02em; }
 .landing h2 { font-size: clamp(1.6rem, 3.2vw, 2.3rem); text-align: center; margin: 0 0 0.5rem; }
 .eyebrow {
@@ -1975,7 +1975,7 @@ button.link:hover {
 .foot-rights { text-align: center; color: var(--muted); font-size: 0.8rem; margin: 2.4rem 0 0; }
 
 /* ---- Sala de espera dedicada do anfitrião (#/lobby/CODE) ---- */
-.lobby-page { min-height: 100vh; background: var(--bg); color: var(--text); }
+.lobby-page { min-height: 100vh; min-height: 100dvh; background: var(--bg); color: var(--text); }
 .lobby-head {
   display: flex; align-items: center; justify-content: space-between;
   max-width: 1080px; margin: 0 auto; padding: 1.2rem 1.4rem;
@@ -2048,7 +2048,7 @@ button.link:hover {
 @media (max-width: 800px) { .lobby-toggles, .lobby-grid { grid-template-columns: 1fr; } }
 
 /* ---- Termos & Privacidade (#/legal, página pública) ---- */
-.legal-page { min-height: 100vh; background: var(--bg); color: var(--text); }
+.legal-page { min-height: 100vh; min-height: 100dvh; background: var(--bg); color: var(--text); }
 .legal-head {
   display: flex; align-items: center; justify-content: space-between;
   max-width: 760px; margin: 0 auto; padding: 1.2rem 1.4rem;
@@ -2169,25 +2169,20 @@ button.link:hover {
   .feat-grid { grid-template-columns: 1fr; }
 }
 
-/* ---- F2.2: Dashboard (saudação + próximas reuniões + gravações recentes) ---- */
+/* ---- F2.2: Dashboard (saudação + próximas reuniões + gravações recentes) ----
+   As seis regras que aqui estavam foram FUNDIDAS na camada CONSOLA, no fim do
+   ficheiro (achado 3.2.1). Estavam definidas duas vezes e resolviam-se pela
+   POSIÇÃO no ficheiro: `.dash-card` na linha 2181 e outra vez na 4392, e era a
+   segunda que ganhava por estar mais abaixo. O que sobrava aqui eram
+   declarações que nunca pintavam — e a armadilha de que já se caiu duas vezes
+   nesta série de correções. O que só esta declarava (fundo, borda, família,
+   gap) subiu para lá; o resto foi apagado. */
 .dash-greet h1 {
-  font-family: var(--font-display); font-size: clamp(1.7rem, 3vw, 2.4rem);
-  letter-spacing: -0.02em; margin: 0 0 0.3rem;
-}
-.dash-greet { margin-bottom: 1.6rem; }
-.dash-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 2.2rem;
-}
-.dash-card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-  padding: 1.1rem 1.2rem;
-}
-.dash-card-head {
-  display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.8rem;
+  font-family: var(--font-display); letter-spacing: -0.02em; margin: 0 0 0.3rem;
 }
 .dash-card-head h2 {
   display: flex; align-items: center; gap: 0.5rem;
-  font-family: var(--font-display); font-size: 1.02rem; margin: 0;
+  font-family: var(--font-display); margin: 0;
 }
 .dash-card-head h2 svg { color: var(--accent); }
 .dash-empty { color: var(--muted); font-size: 0.9rem; margin: 0.4rem 0; }
@@ -2567,10 +2562,10 @@ button.link:hover {
   animation: fw-burst 1.6s ease-out infinite;
 }
 .fw.p0 { background: #f26430; --fx: -180px; --fy: -220px; }
-.fw.p1 { background: #eda33b; --fx: 200px; --fy: -180px; }
+.fw.p1 { background: var(--accent-2); --fx: 200px; --fy: -180px; }
 .fw.p2 { background: #7ee2a8; --fx: -260px; --fy: 60px; }
 .fw.p3 { background: #5aa0dc; --fx: 240px; --fy: 120px; }
-.fw.p4 { background: #c8201d; --fx: -80px; --fy: -300px; }
+.fw.p4 { background: var(--brand); --fx: -80px; --fy: -300px; }
 .fw.p5 { background: #ffd166; --fx: 120px; --fy: -280px; }
 .fw.p6 { background: #b78bff; --fx: -300px; --fy: -120px; }
 @keyframes fw-burst {
@@ -2740,7 +2735,7 @@ button.link:hover {
 .sec-code strong { color: var(--accent-2); letter-spacing: 0.06em; }
 .e2ee-badge { cursor: pointer; }
 .stt-lang { width: 100%; font-size: 0.85rem; padding: 0.5rem 0.6rem; border-radius: 8px; }
-.status-page { min-height: 100vh; display: grid; place-items: center; padding: 2rem; }
+.status-page { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 2rem; }
 .status-card {
   width: min(560px, 94vw); background: var(--surface); border: 1px solid var(--border);
   border-radius: 10px; padding: 2rem; text-align: center; display: grid; gap: 0.7rem; justify-items: center;
@@ -3137,7 +3132,7 @@ button.link:hover {
 .apidoc-link { display: inline-flex; align-items: center; gap: 0.4rem; margin-top: 0.6rem; }
 
 /* ---- Página de documentação da API ---- */
-.apidoc-page { min-height: 100vh; padding: 2.5rem 1.4rem; }
+.apidoc-page { min-height: 100vh; min-height: 100dvh; padding: 2.5rem 1.4rem; }
 .apidoc-wrap { max-width: 820px; margin: 0 auto; }
 .apidoc-head { text-align: center; margin-bottom: 2rem; }
 .apidoc-head h1 { font-family: var(--font-display); font-size: 1.8rem; margin: 0.6rem 0 0.4rem; }
@@ -3281,7 +3276,7 @@ button.link:hover {
 
 /* ---- SharePage (link público) ---- */
 .share-page {
-  min-height: 100vh;
+  min-height: 100vh; min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3581,7 +3576,10 @@ button.link:hover {
   &:hover { filter: brightness(1.2); }
 }
 .status-badge.status-todo { color: #9BA3B2; border-color: #9BA3B2; }
-.status-badge.status-doing { color: #EDA33B; border-color: #EDA33B; background: rgba(237,163,59,0.12); }
+.status-badge.status-doing {
+  color: var(--warn); border-color: var(--warn);
+  background: color-mix(in oklab, var(--warn) 12%, transparent);
+}
 .status-badge.status-done { color: #7fe0a8; border-color: #7fe0a8; background: rgba(127,224,168,0.1); }
 
 /* ============================================================
@@ -4103,7 +4101,7 @@ button.link:hover {
 /* ============================================================
    Pre-join (green room) — pages/Room.tsx roomState 'prejoin'
    ============================================================ */
-.prejoin-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: var(--space-4); }
+.prejoin-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; min-height: 100dvh; padding: var(--space-4); }
 .prejoin-card {
   width: min(520px, 94vw); display: flex; flex-direction: column; gap: var(--space-3);
   background: var(--surface, #292a2d); border: 1px solid var(--border);
@@ -4375,9 +4373,10 @@ body { -webkit-font-smoothing: antialiased; }
 .app-bar-join button:hover:not(:disabled) { background: var(--accent-soft); }
 .app-bar-join button:disabled { color: var(--muted-2); cursor: default; }
 .app-bar-err { color: var(--danger); font-size: 0.78rem; }
-@media (max-width: 860px) {
-  .app-bar-date, .app-bar-join { display: none; }
-}
+/* A regra que aqui estava — `.app-bar-date, .app-bar-join { display: none }`
+   abaixo de 860px — foi REMOVIDA, não sobreposta: escondia o campo de código
+   em qualquer sítio, incluindo dentro da gaveta nova (achado 3.1.4). O que
+   esconde a versão da barra é agora `.qa-bar`, na camada do lote 2. */
 
 /* ---- 4. Páginas e cartões densos --------------------------- */
 .page, .home { padding: 22px 26px; }
@@ -4388,12 +4387,16 @@ body { -webkit-font-smoothing: antialiased; }
 /* A saudação já não repete a data: essa passou para a barra de topo. */
 .dash-greet .home-sub { font-size: 0.85rem; margin: 4px 0 0; }
 
-.dash-grid { gap: 12px; margin-top: 16px; grid-template-columns: 1.45fr 1fr; }
+.dash-grid {
+  display: grid; grid-template-columns: 1.45fr 1fr; gap: 12px; margin-top: 16px;
+}
 .dash-card {
+  background: var(--surface); border: 1px solid var(--border);
   padding: 0; overflow: hidden;
   border-radius: var(--radius-md); box-shadow: var(--shadow);
 }
 .dash-card-head {
+  display: flex; justify-content: space-between; align-items: center;
   margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border);
 }
 .dash-card-head h2 { font-size: 0.83rem; font-weight: 600; }
@@ -4603,6 +4606,173 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
 .shell-body > .cal-page { height: 100%; }
 
 /* ============================================================
+   FOCO VISÍVEL + ESPERA DE ROTA (lote 1 — docs/ux-perf-review.md)
+   Última camada do ficheiro, pela mesma razão da camada CONSOLA:
+   à mesma especificidade vence o `outline: none` histórico.
+   ============================================================ */
+
+/* ---- 4.3 · Anel de foco onde havia `outline: none` sem substituto ----
+   Os seis sítios são o mesmo padrão: um input SEM borda dentro de um
+   contentor COM borda. Anelar o input desenhava um retângulo a flutuar
+   dentro da peça; o anel certo é no contentor, via :focus-within — é a
+   peça inteira que está com o foco, e é ela que o utilizador vê.
+   O token --ring já existia (bloco "Design system"); só não chegava aqui. */
+.join-box:focus-within,
+.people-search:focus-within,
+.cmd-search:focus-within,
+.app-bar-join:focus-within,
+.room-page .dev-chip:focus-within {
+  box-shadow: var(--ring);
+  border-color: var(--accent);
+}
+/* O input interior continua sem anel próprio — quem o mostra é o contentor. */
+.join-box input:focus,
+.people-search input:focus,
+.cmd-search input:focus,
+.app-bar-join input:focus,
+.room-page .dev-chip select:focus {
+  outline: none;
+}
+
+/* Inputs de célula de tabela (plano de ação): não têm contentor próprio,
+   por isso o anel é neles — mas fino, para não empurrar a linha. */
+.action-plan-table td input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 45%, transparent);
+  border-radius: 3px;
+}
+
+/* Rede de segurança: qualquer elemento focável sem tratamento próprio.
+   Usa `outline`, NÃO `box-shadow`, por uma razão contada: este ficheiro tem
+   94 declarações de `box-shadow` (15 delas em regras de classe) contra 22 de
+   `outline`, das quais 11 são o `outline: none` já tratado acima. Com
+   `:where()` — especificidade ZERO — uma rede assente em box-shadow perde
+   para qualquer uma dessas regras de classe; assente em outline não disputa
+   com nada. O outline moderno segue o border-radius, por isso não se perde
+   nada no aspeto. */
+:where(button, [href], input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- 1.2 · Espera de rota ----
+   Reserva a altura para o conteúdo não saltar quando o chunk chega. Sem
+   spinner de propósito: na mesma origem o chunk chega em dezenas de ms e
+   um indicador que pisca lê-se como avaria. */
+.route-loading { min-height: 60vh; }
+
+/* ============================================================
+   LOTE 2 — LAYOUT (docs/ux-perf-review.md)
+   Última camada do ficheiro, pela convenção do design system.
+   ============================================================ */
+
+/* ---- 3.2.5 · Ícones de controlo -----------------------------
+   Os emoji dimensionavam-se pelo `font-size` do sítio onde estavam;
+   um SVG precisa de tamanho declarado. Herdam `currentColor`, que é
+   metade da razão para a troca. */
+.nav-search-icon svg,
+.cmd-search-icon svg { width: 15px; height: 15px; display: block; }
+.nav-user-caret svg  { width: 14px; height: 14px; display: block; }
+.cmd-item-enter svg  { width: 14px; height: 14px; display: block; opacity: 0.7; }
+.app-bar-icon svg    { width: 15px; height: 15px; }
+.seg-btn svg         { width: 14px; height: 14px; margin-right: 5px; vertical-align: -2px; }
+.dash-enter svg      { width: 14px; height: 14px; display: block; }
+.ev-recur svg        { width: 12px; height: 12px; vertical-align: -1px; }
+.agenda-check svg    { width: 15px; height: 15px; }
+.action-plan-edit-btn svg { width: 13px; height: 13px; }
+.rec-play svg        { width: 26px; height: 26px; }
+.rec-row-actions svg { width: 15px; height: 15px; }
+.share-link-copy-btn svg { width: 14px; height: 14px; }
+
+/* ---- 4.1 · Esqueletos ---------------------------------------
+   A app não tinha um único estado de carregamento. As linhas têm a
+   altura das linhas reais do cartão para o conteúdo não saltar. */
+.skel-list { display: flex; flex-direction: column; }
+.skel-row {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 9px 14px; border-top: 1px solid var(--border-soft);
+}
+.skel-row:first-child { border-top: none; }
+.skel-line {
+  display: block; height: 9px; border-radius: 3px;
+  background: linear-gradient(90deg, var(--ghost) 25%, var(--ghost-2) 37%, var(--ghost) 63%);
+  background-size: 400% 100%;
+  animation: skel-shimmer 1.4s ease infinite;
+}
+.skel-title { width: 58%; height: 11px; }
+.skel-meta  { width: 34%; }
+@keyframes skel-shimmer { from { background-position: 100% 50% } to { background-position: 0 50% } }
+/* Sem movimento: o esqueleto fica estático mas continua a ler-se como espera. */
+@media (prefers-reduced-motion: reduce) {
+  .skel-line { animation: none; background: var(--ghost-2); }
+}
+/* 4.2 · o estado de falha vive dentro do cartão, não a ocupar meio ecrã. */
+.dash-card .ds-empty { padding: 18px 14px; }
+
+/* ---- Ações rápidas nos dois sítios --------------------------- */
+.quick-actions { display: flex; align-items: center; gap: 8px; }
+.qa-bar { display: flex; }
+.qa-drawer {
+  display: none;                       /* só aparece dentro da gaveta */
+  flex-direction: column; align-items: stretch; gap: 8px;
+  padding: 4px 12px 10px; border-bottom: 1px solid var(--sb-line); margin-bottom: 6px;
+}
+.qa-drawer .app-bar-new { width: 100%; justify-content: center; padding: 9px 14px; }
+.qa-drawer .app-bar-join { width: 100%; }
+.qa-drawer .app-bar-join input { width: 100%; }
+.qa-drawer .app-bar-err { font-size: 0.76rem; }
+
+/* Botão de gaveta na barra de topo — escondido em desktop. */
+.app-bar-burger {
+  display: none; place-items: center; flex: none;
+  width: 30px; height: 30px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: transparent; color: var(--muted);
+  cursor: pointer;
+}
+.app-bar-burger:hover { border-color: var(--accent); color: var(--accent-text); }
+.app-bar-burger svg { width: 17px; height: 17px; }
+
+/* ---- 3.1.1 · A navegação em ecrã estreito -------------------
+   O rail tinha 224px fixos em QUALQUER viewport — 60% de um ecrã de
+   375px — e nenhuma media query lhe tocava. Abaixo de 900px passa a
+   gaveta sobreposta: sai do fluxo, não rouba largura ao conteúdo, e
+   fecha-se ao escolher um destino. */
+@media (max-width: 900px) {
+  .shell-nav {
+    position: fixed; inset: 0 auto 0 0; z-index: 220;
+    width: 268px; max-width: 84vw;
+    transform: translateX(-100%);
+    transition: transform 0.22s var(--ease);
+    box-shadow: var(--elev-3);
+  }
+  /* O rail colapsado é preferência de desktop; na gaveta não se aplica. */
+  .shell.collapsed .shell-nav { width: 268px; padding: 0 0 8px; }
+  .shell.collapsed .shell-nav .brand-text,
+  .shell.collapsed .shell-nav .nav-item span,
+  .shell.collapsed .shell-nav .nav-user-name,
+  .shell.collapsed .shell-nav .nav-section-label { display: revert; }
+  .shell.collapsed .shell-nav .nav-item { justify-content: flex-start; padding: 7px 10px; gap: 9px; }
+
+  .shell.nav-open .shell-nav { transform: none; }
+  .shell-nav-backdrop {
+    position: fixed; inset: 0; z-index: 210;
+    background: rgba(4, 6, 12, 0.55);
+  }
+  /* O burger do rail recolhe o desktop; dentro da gaveta não faz sentido. */
+  .shell-nav .nav-burger { display: none; }
+
+  .app-bar { padding: 9px 14px; gap: 8px; }
+  .app-bar-burger { display: grid; }
+  /* 3.1.4 · a data continua a sair (é o que menos importa numa barra
+     estreita), mas as AÇÕES deixam de desaparecer: mudam-se para a gaveta. */
+  .app-bar-date { display: none; }
+  .qa-bar { display: none; }
+  .qa-drawer { display: flex; }
+  .page, .home { padding: 16px 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-nav { transition: none; }
    MFA — verificação em dois passos (ver components/MfaPanel.tsx)
    Tokens em vez de cores fixas, como o resto da consola: estes ecrãs têm de
    funcionar nos quatro temas sem se tocar aqui outra vez.

@@ -1,4 +1,5 @@
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useCallback, useState } from 'react'
+import AsyncSection, { useLoad } from '../components/AsyncSection'
 import { useTranslation } from 'react-i18next'
 import {
   createRoom,
@@ -13,7 +14,7 @@ import {
   WhiteboardMeta,
 } from '../api'
 import { NavKey } from '../components/Shell'
-import { CalendarIcon, FilmIcon, NoteIcon, PeopleIcon } from '../icons'
+import { CalendarIcon, FilmIcon, NoteIcon, PeopleIcon, PlayIcon } from '../icons'
 
 export default function Home({
   user,
@@ -27,38 +28,30 @@ export default function Home({
   const { t, i18n } = useTranslation()
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
-  const [upcoming, setUpcoming] = useState<Meeting[]>([])
-  const [recent, setRecent] = useState<RecordingItem[]>([])
-  const [boards, setBoards] = useState<WhiteboardMeta[]>([])
+
+  // Cada secção carrega e falha por si (achados 4.1/4.2). Antes eram três
+  // `catch {}` a engolir o erro: com a API em baixo o dashboard aparecia
+  // completo e vazio, indistinguível de não haver nada.
+  const [upcoming, retryUpcoming] = useLoad<Meeting[]>(
+    useCallback(async (signal: AbortSignal) => {
+      const now = Date.now()
+      return (await listMeetings(signal))
+        .filter((m) => new Date(m.starts_at).getTime() + m.duration_min * 60_000 >= now)
+        .filter((m) => m.my_status !== 'declined')
+        .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+        .slice(0, 3)
+    }, []),
+  )
+  const [recent, retryRecent] = useLoad<RecordingItem[]>(
+    useCallback(async (signal: AbortSignal) => (await recordingsLibrary(signal)).slice(0, 3), []),
+  )
+  const [boards, retryBoards] = useLoad<WhiteboardMeta[]>(
+    useCallback(async (signal: AbortSignal) => (await listWhiteboards(signal)).slice(0, 3), []),
+  )
 
   const locale = i18n.language.startsWith('en') ? 'en-GB' : 'pt-PT'
   const hour = new Date().getHours()
   const greetKey = hour < 12 ? 'dash.greetMorning' : hour < 19 ? 'dash.greetAfternoon' : 'dash.greetEvening'
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const now = Date.now()
-        const meetings = (await listMeetings())
-          .filter((m) => new Date(m.starts_at).getTime() + m.duration_min * 60_000 >= now)
-          .filter((m) => m.my_status !== 'declined')
-          .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
-        setUpcoming(meetings.slice(0, 3))
-      } catch {
-        /* agenda indisponível não bloqueia o dashboard */
-      }
-      try {
-        setRecent((await recordingsLibrary()).slice(0, 3))
-      } catch {
-        /* idem para gravações */
-      }
-      try {
-        setBoards((await listWhiteboards()).slice(0, 3))
-      } catch {
-        /* idem para quadros */
-      }
-    })()
-  }, [])
 
   async function newMeeting(waitingRoom = false, e2ee = false, format: 'normal' | 'training' = 'normal') {
     setError('')
@@ -162,8 +155,12 @@ export default function Home({
               {t('dash.viewAll')}
             </button>
           </header>
-          {upcoming.length === 0 && <p className="dash-empty">{t('dash.noUpcoming')}</p>}
-          {upcoming.map((m) => (
+          <AsyncSection
+            load={upcoming}
+            retry={retryUpcoming}
+            empty={<p className="dash-empty">{t('dash.noUpcoming')}</p>}
+          >
+            {(ms) => ms.map((m) => (
             <div key={m.id} className="dash-row">
               <div className="dash-row-main">
                 <strong>{m.title}</strong>
@@ -178,13 +175,14 @@ export default function Home({
                 title="Adicionar ao calendário (Google/Outlook — .ics)"
                 onClick={() => void downloadMeetingIcs(m.id, m.title).catch(() => {})}
               >
-                📅
+                <CalendarIcon />
               </button>
               <button className="btn-ghost dash-enter" onClick={() => void enterMeeting(m)}>
                 {t('dash.enter')}
               </button>
             </div>
-          ))}
+            ))}
+          </AsyncSection>
         </section>
 
         <section className="dash-card">
@@ -196,8 +194,12 @@ export default function Home({
               {t('dash.viewAll')}
             </button>
           </header>
-          {recent.length === 0 && <p className="dash-empty">{t('dash.noRecs')}</p>}
-          {recent.map((r) => (
+          <AsyncSection
+            load={recent}
+            retry={retryRecent}
+            empty={<p className="dash-empty">{t('dash.noRecs')}</p>}
+          >
+            {(rs) => rs.map((r) => (
             <div key={r.id} className="dash-row">
               <div className="dash-row-main">
                 <strong>{r.filename.replace(/\.webm$/, '')}</strong>
@@ -205,14 +207,15 @@ export default function Home({
                   {fmtDate(r.created_at)} · {fmtSize(r.size_bytes)} · <span className="mono">{r.room_code}</span>
                 </span>
               </div>
-              <button className="btn-ghost dash-enter" onClick={() => onNavigate('recordings')}>
-                ▶
+              <button className="btn-ghost dash-enter" aria-label={t('dash.play', 'Reproduzir')} onClick={() => onNavigate('recordings')}>
+                <PlayIcon />
               </button>
             </div>
-          ))}
+            ))}
+          </AsyncSection>
         </section>
 
-        {boards.length > 0 && (
+        {!(boards.s === 'ready' && boards.d.length === 0) && (
           <section className="dash-card">
             <header className="dash-card-head">
               <h2>
@@ -222,7 +225,13 @@ export default function Home({
                 {t('dash.viewAll')}
               </button>
             </header>
-            {boards.map((w) => (
+            <AsyncSection
+              load={boards}
+              retry={retryBoards}
+              rows={2}
+              empty={<p className="dash-empty">{t('dash.noWb', 'Sem quadros ainda.')}</p>}
+            >
+              {(ws) => ws.map((w) => (
               <div key={w.id} className="dash-row">
                 <div className="dash-row-main">
                   <strong>{w.title}</strong>
@@ -235,7 +244,8 @@ export default function Home({
                   {t('dash.open')}
                 </button>
               </div>
-            ))}
+              ))}
+            </AsyncSection>
           </section>
         )}
       </div>
