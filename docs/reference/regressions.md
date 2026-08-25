@@ -308,3 +308,18 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Causa raiz:** o `ClientMsg` deriva `Debug` e a chave E2EE cedida pelo anfitrião viajava lá dentro como `String`. Nenhum log a imprimia — mas bastava um `tracing::debug!(?msg)` acrescentado por boas razões num dia mau.
 - **Regra:** material de chave nunca vive num tipo que derive `Debug` sem redacção. Usa-se `signaling::Secret`, cujo `Debug` imprime `[segredo redigido]` e cujo `Drop` sobrescreve os bytes. Vale para qualquer segredo novo — tokens, passwords, chaves de API em trânsito.
 - **Ficheiros:** `server/src/signaling.rs` (`Secret`), `server/src/recorder.rs` (limpeza dos bytes descodificados).
+
+### R44 — Rota registada sem autenticação, sem nada que o detecte
+- **Sintoma:** um endpoint aberto ao mundo, e nenhum sinal disso. Foi assim que o `/api/mls/*` esteve a responder `201`/`200`/`202` a qualquer pessoa (R41) — encontrado por acaso, numa auditoria manual.
+- **Causa raiz:** não há middleware de autenticação global. Cada handler declara a sua — por extractor (`AuthUser`, `ApiKey`, `OdooTokenAuth`) ou por guarda no corpo (`check_media_secret`). Um handler que se esqueça fica simplesmente aberto, e compila.
+- **Regra:** `check-route-auth.sh` percorre as **93 rotas** (incluindo as de routers ANINHADOS) e exige que cada uma tenha autenticação ou esteja em `scripts/rotas-publicas.txt` **com a razão escrita**. Acrescentar uma linha a esse ficheiro é uma decisão de segurança: se não se souber escrever a razão, a rota não devia ser pública.
+- **O portão também falha** quando uma rota está na lista mas já ganhou autenticação (lista velha), quando a lista refere rotas que já não existem, e quando não consegue LER um handler (closure inline, assinatura não encontrada) — porque uma rota que o portão não vê é uma rota sem portão.
+- **A primeira versão deste portão aprovou a reintrodução do `/api/mls` sem uma queixa**: não olhava para dentro de `.nest(...)`, que é exactamente onde o buraco estava. Um portão que não apanha o caso que o originou é decoração. Corrigido e reprovado nas quatro classes: router aninhado, rota nova sem auth, handler inline, e autenticação removida de um handler existente.
+- **Ficheiros:** `scripts/check-route-auth.sh`, `scripts/rotas-publicas.txt`.
+
+### R45 — Teste de isolamento com a expectativa errada
+- **Sintoma:** um teste de segurança a acusar vulnerabilidade onde há desenho — ou, pior no sentido inverso, a passar porque exige a coisa errada.
+- **Causa raiz:** exigiu-se que a org A levasse `403` ao ler uma sala da org B. Leva `200`, e está certo: o código da sala é uma **capability** à maneira do Meet. Quem o conhece vê os metadados e pode PEDIR para entrar; quem não é membro cai na sala de espera.
+- **Regra:** a invariante a testar não é «o pedido é recusado», é **«A nunca obtém acesso DIRECTO à media de outra organização»** — e isso verifica-se no WebSocket, não no código HTTP. Medido: o dono recebe `joined`, a outra org recebe `waiting`.
+- **A lição geral:** antes de chamar vulnerabilidade a um `200`, lê-se o desenho e verifica-se a segunda metade da promessa. O comentário no `join_room` dizia que os não-membros vão para a sala de espera; podia estar desactualizado, e por isso foi verificado no fio.
+- **Ficheiros:** `web/e2e/isolamento.mjs`.

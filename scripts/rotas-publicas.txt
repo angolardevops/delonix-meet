@@ -1,0 +1,23 @@
+# Rotas PÚBLICAS por desenho — cada uma com a razão. Tudo o que não estiver
+# aqui tem de ter extractor de autenticação (ver check-route-auth.sh).
+#
+# Acrescentar uma linha a este ficheiro é uma decisão de segurança. Se não
+# souberes escrever a razão, a rota não devia ser pública.
+
+/health                      Sonda de liveness. Devolve "ok" e mais nada.
+/api/status                  Estado público (api/db/uptime/versão) — sem dados de inquilino.
+/metrics                     Contadores Prometheus. NÃO é exposto no ingress k8s (deploy/k8s/02-server.yaml) nem pelo nginx (que só encaminha /api, /ws, /rtc): o scrape vai directo ao pod. Se algum dia for exposto, passa a precisar de autenticação.
+/api/auth/register                    Registo público — cria organização + administrador.
+/api/auth/login                       Autenticação. É o que produz o token.
+/api/auth/refresh                     Rotação do refresh token; autentica-se pelo cookie HttpOnly, não por header.
+/api/auth/logout                      Revoga a sessão; sem token não há nada a revogar.
+/api/auth/sso/check                   Descobre se um domínio tem SSO. Anterior a qualquer sessão.
+/api/auth/sso/login                   Início do fluxo OIDC. Anterior a qualquer sessão.
+/api/auth/sso/callback                Retorno do IdP. A prova é o código de autorização + PKCE, não um token nosso.
+/api/public/settings         Dois booleanos de aparência (esconder criação de org / botão SSO). Sem dados de inquilino.
+/api/share/{token}           Partilha de gravação por link. A credencial É o token no caminho, validado no handler.
+/ws                          WebSocket de sinalização. Autentica pelo ROOM TOKEN no query string (JWT separado, âmbito de uma sala, expira em minutos) — um extractor de header não serve num WebSocket.
+/rtc                         WebSocket de presença. Autentica pelo access token no query string, pela mesma razão.
+/admin/orgs                  Provisionamento de organizações. Autentica por PROVISIONING_SECRET em header; vazio => desactivado (fail-closed).
+/api/share/{token}/download  Descarrega a gravação partilhada. A credencial É o token no caminho, validado no handler — igual a /api/share/{token}.
+/api/whiteboards/shared/{token}  PNG de um quadro partilhado por link. A credencial É o token no caminho.

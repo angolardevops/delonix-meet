@@ -1,4 +1,34 @@
-# Testes ponta-a-ponta de media — arnês e rede degradada
+# Testes ponta-a-ponta — arnês de media, rede degradada, isolamento
+
+> **Os scripts vivem em `web/e2e/`, não aqui.** É onde o Node resolve
+> `node_modules` — correr `node e2e/isolamento.mjs` a partir da raiz falha com
+> `ERR_MODULE_NOT_FOUND`, porque as dependências (`ws`, `@playwright/test`)
+> estão em `web/`. Este directório guarda o `Dockerfile.netem` e esta nota.
+
+## Isolamento entre inquilinos (`web/e2e/isolamento.mjs`)
+
+Duas organizações independentes contra um servidor a sério, e para cada recurso
+verifica-se que a org A não alcança o que é da org B. Corre no CI, com um
+Postgres de serviço.
+
+```bash
+docker compose up -d postgres
+cargo build --release --manifest-path server/Cargo.toml
+DELONIX_ALLOW_INSECURE=1 ./server/target/release/delonix-server &
+node web/e2e/isolamento.mjs
+```
+
+**Uma expectativa que estava errada, e vale a pena saber porquê.** A primeira
+versão exigia que a org A levasse `403` ao ler uma sala da org B. Leva `200` — e
+está certo: o código da sala é uma **capability** à maneira do Meet, quem o
+conhece pode ver os metadados e PEDIR para entrar. A invariante que interessa não
+é «A é recusado», é **A nunca obtém acesso DIRECTO à media de outra
+organização**. Verificado no fio: o dono recebe `joined`, a org A recebe
+`waiting`. É essa a asserção que o teste faz hoje.
+
+---
+
+# Arnês de media e rede degradada
 
 O que aqui está corre contra **infraestrutura real**: Postgres, Redis, o SFU em
 Rust e dois Chromium a sério. Não há duplos de teste no caminho de media.
@@ -36,9 +66,9 @@ docker run -d --name dlx-srv --network dlx-netem --cap-add=NET_ADMIN -p 8180:818
 cd web && NO_HTTPS=1 npx vite --port 5173
 
 # 4. Matriz
-node e2e/netem-matrix.mjs
-node e2e/netem-matrix.mjs --only perda-10%
-SETTLE_MS=20000 node e2e/netem-matrix.mjs
+node web/e2e/netem-matrix.mjs
+node web/e2e/netem-matrix.mjs --only perda-10%
+SETTLE_MS=20000 node web/e2e/netem-matrix.mjs
 ```
 
 ## LIMITAÇÃO CONHECIDA deste arnês — ler antes de confiar em qualquer número
