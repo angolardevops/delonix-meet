@@ -1,0 +1,19 @@
+# Imagem SÓ para os testes de rede degradada.
+#
+# Difere da `Dockerfile.server` de produção em duas coisas, ambas deliberadas e
+# nenhuma delas aceitável em produção:
+#   1. corre como ROOT, porque o `tc` precisa de CAP_NET_ADMIN para moldar a
+#      interface a partir de dentro do contentor;
+#   2. traz o `iproute2`, que a imagem distroless de produção não tem.
+# Base ubuntu:24.04 e não debian:12: o binário é compilado no host contra a
+# glibc 2.39, e o debian:12 traz a 2.36 — o contentor arrancava e morria com
+# «GLIBC_2.39 not found». Copia o binário JÁ COMPILADO — não recompila nada, para o ciclo de medição
+# ser de segundos e não de minutos.
+FROM ubuntu:24.04
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+      iproute2 ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY delonix-server /app/delonix-server
+ENV BIND_ADDR=0.0.0.0:8180
+EXPOSE 8180
+ENTRYPOINT ["/app/delonix-server"]

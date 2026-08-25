@@ -144,6 +144,46 @@ describe('extractQuality — caminho de rede', () => {
     expect(s.turnRelay).toBe(false)
   })
 
+  it('segue o `selectedCandidatePairId` do transport — como o Chrome REALMENTE reporta', () => {
+    // Fixture medido contra Chromium real (2026-08-25): treze pares ficam em
+    // `in-progress`/`waiting` muito depois de a ligação estar feita, e nenhum
+    // aparece como `succeeded`. Só o `transport` diz qual é o escolhido.
+    //
+    // A primeira versão deste extractor procurava `state === 'succeeded'` e
+    // devolvia `null` em 16 de 16 amostras contra um browser a sério. Com o par
+    // nulo, `turnRelay` ficava sempre `false`: a métrica de uso de TURN teria
+    // respondido «nunca» para sempre. Os testes sintéticos não o apanharam
+    // porque o fixture tinha sido escrito por quem escreveu o código, com a
+    // mesma suposição errada dos dois lados.
+    const comoOChromeReporta: StatEntry[] = [
+      { id: 'T', type: 'transport', timestamp: 1000, selectedCandidatePairId: 'CP-vencedor', dtlsState: 'connected' },
+      { id: 'CP-perdedor-1', type: 'candidate-pair', timestamp: 1000, state: 'in-progress', nominated: false, localCandidateId: 'L2', remoteCandidateId: 'R2' },
+      { id: 'CP-perdedor-2', type: 'candidate-pair', timestamp: 1000, state: 'waiting', nominated: false, localCandidateId: 'L2', remoteCandidateId: 'R3' },
+      { id: 'CP-vencedor', type: 'candidate-pair', timestamp: 1000, state: 'in-progress', currentRoundTripTime: 0.042, availableOutgoingBitrate: 1_800_000, localCandidateId: 'L1', remoteCandidateId: 'R1' },
+      { id: 'L1', type: 'local-candidate', timestamp: 1000, candidateType: 'relay' },
+      { id: 'R1', type: 'remote-candidate', timestamp: 1000, candidateType: 'host' },
+      { id: 'L2', type: 'local-candidate', timestamp: 1000, candidateType: 'host' },
+      { id: 'R2', type: 'remote-candidate', timestamp: 1000, candidateType: 'host' },
+      { id: 'R3', type: 'remote-candidate', timestamp: 1000, candidateType: 'srflx' },
+    ]
+    const s = extractQuality(comoOChromeReporta, new Map())
+    expect(s.candidatePair).toBe('relay/host')
+    expect(s.turnRelay).toBe(true)
+    expect(s.rttMs).toBe(42)
+    expect(s.availableUpKbps).toBe(1800)
+  })
+
+  it('sem `transport` (browser que não o publica) recorre a succeeded/nominated', () => {
+    const semTransport: StatEntry[] = [
+      { id: 'CP', type: 'candidate-pair', timestamp: 1000, state: 'succeeded', currentRoundTripTime: 0.02, localCandidateId: 'L', remoteCandidateId: 'R' },
+      { id: 'L', type: 'local-candidate', timestamp: 1000, candidateType: 'srflx' },
+      { id: 'R', type: 'remote-candidate', timestamp: 1000, candidateType: 'srflx' },
+    ]
+    const s = extractQuality(semTransport, new Map())
+    expect(s.candidatePair).toBe('srflx/srflx')
+    expect(s.rttMs).toBe(20)
+  })
+
   it('lê RTT em ms e a banda estimada em kbps', () => {
     const s = extractQuality(pair('host', 'host'), new Map())
     expect(s.rttMs).toBe(84)

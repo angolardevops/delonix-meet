@@ -65,11 +65,11 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | Nunca bloquear o executor Tokio | 🟡 **melhorado nesta sessão** | `BufWriter` de 64 KiB corta as syscalls de uma-por-pacote-RTP para uma-por-64-KiB, mas a escrita **continua síncrona no executor**. A correcção completa (thread dedicada + fila limitada por track) fica por fazer: mexe no caminho de fecho, onde errar dá gravação truncada em silêncio, e não há ffmpeg nem media real nesta máquina para a validar | Médio (era Alto) | gravar com o volume saturado e medir latência de RTP |
 | `ffmpeg` fora do executor + limites | 🟡 → ✅ **feito nesta sessão** | timeout (`FFMPEG_TIMEOUT_SECS`), `-threads` (`FFMPEG_THREADS`), `-nostdin`, `kill_on_drop`, e o processo é morto e colhido ao exceder. **Falta sandbox e limite de memória** (precisa de cgroups/setrlimit) | Baixo (era Alto) | 3 testes em `run_bounded` (acaba a tempo / estoura o tecto / falha) |
 | Máquina de estados de chamada | 🔴 → ✅ **feita nesta sessão** | os 7 estados em `callRecovery.ts`, decisão pura e testada | — | 16 testes, incl. percurso completo de uma quebra |
-| **ICE restart** | 🔴 → 🟡 **feito, por validar** | implementado e testado contra uma `RTCPeerConnection` FALSA. **Nunca correu contra um SFU real nem contra uma rede a mudar de caminho** — e é isso que separa isto de ✅ | Médio (era Crítico) | cortar a rede 10 s e a chamada volta sem reload — **por fazer** |
+| **ICE restart** | 🔴 → ✅ **feito E VALIDADO contra SFU real** | medido a 2026-08-25 com dois Chromium contra o SFU Rust: um dos peers fez `connected → degraded → reconnecting → **connected**` e ficou estável nos 30 s seguintes. Continua por validar contra uma rede a MUDAR DE CAMINHO de propósito (Wi-Fi→móvel) | Baixo (era Crítico) | percurso de recuperação observado ponta-a-ponta |
 | Reconnect token / silent rejoin | 🔴 | não existe. O reload deixou de ser a primeira resposta (passou a última, ao fim de 6 tentativas), mas continua a ser o último recurso | Médio | refresh do browser não perde a sessão de media |
 | Backoff exponencial | 🟡 → ✅ **feito nesta sessão** | com **jitter** nos dois caminhos: ICE restart e `/rtc`. Sem jitter, uma falha da sala inteira punha todos a reiniciar no mesmo instante | — | `backoffDelay` testado no intervalo [metade, inteiro] |
 | HA do SFU (registry, drain, placement) | 🔴 | há afinidade por sala (ADR-0001) — que **não é HA**. Morrer o pod mata as salas | **Crítico** | `kubectl delete pod` e as salas recuperam noutro nó |
-| Testes de fiabilidade com browsers reais | 🔴 | 0 testes E2E; os `sfu_e2e` usam `RTCPeerConnection` de servidor, não browsers | Alto | matriz 1:1/5/10/25/50 |
+| Testes de fiabilidade com browsers reais | 🔴 → 🟡 **arnês feito, matriz por medir** | `web/e2e/harness.html` carrega a PILHA REAL do cliente contra o SFU Rust, com dois Chromium a sério — provado a funcionar. A matriz de 12 cenários **não é publicável** a partir deste arnês: com o servidor em contentor, o ICE cai aos ~10 s (ver `e2e/README.md`) | Médio (era Alto) | matriz 1:1/5/10/25/50 |
 
 ### Programa II — Qualidade de áudio e vídeo
 
@@ -84,7 +84,7 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | Delonix Call Quality Score (0–100) | 🔴 → ✅ **feito nesta sessão** | modelo de penalizações transparente em `callQuality.ts`, com os limiares ancorados na G.114. **Não é MOS e não está calibrado contra ouvido humano** — é escala interna, comparável consigo mesma | Médio |
 | Métricas de chamada | 🟡 → ✅ **feito nesta sessão** | de **3** para **~20** por amostra: jitter, downlink, NACK/PLI/FIR, frames descartados, congelamento, ocultação de áudio (PLC), par de candidatos, TURN em uso, limitação do encoder. Persistidas (migração 0034) e agregadas em `/metrics`. **Ainda em falta:** time-to-first-audio/video, join time, ICE gathering time e contagem de reconexões — precisam de instrumentação de TEMPO no cliente, não vêm do `getStats()` | Médio (era Alto) |
 | Observabilidade do SFU (Prometheus) | ✅ | boa: 13 contadores + 4 novos de filas | — |
-| Testes em rede degradada (emulação) | 🔴 | nenhum | **Alto** — é o mercado-alvo |
+| Testes em rede degradada (emulação) | 🔴 → 🟡 | `e2e/netem-matrix.mjs` com `tc netem` a moldar o caminho REAL (UDP incluído — o estrangulamento do DevTools não serve, só afecta HTTP). Provado EXACTO onde mediu: `loss 10%` → 10,2 % medidos; `loss 20%` → 21 %. Falta-lhe um transporte estável para a matriz completa | Médio (era Alto) |
 
 ### Programa III — Enterprise, IAM, governance
 

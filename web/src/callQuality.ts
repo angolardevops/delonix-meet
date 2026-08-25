@@ -118,10 +118,33 @@ export function extractQuality(
 
   const byId = new Map(entries.map((e) => [e.id, e]))
 
+  // Qual é o par de candidatos ESCOLHIDO.
+  //
+  // Medido contra Chromium a sério (não contra um fixture escrito por quem
+  // também escreveu o código): o Chrome mantém treze pares em `in-progress` /
+  // `waiting` MUITO depois de a ligação estar estabelecida, e o estado
+  // `succeeded` só aparece de forma transitória. Procurar `state ===
+  // 'succeeded'` devolvia `null` em 16 de 16 amostras — e, com o par nulo,
+  // `turnRelay` ficava sempre `false`. A métrica de uso de TURN teria dito
+  // «nunca» para sempre, que é o pior tipo de métrica: uma que responde com
+  // confiança e está errada.
+  //
+  // A forma correcta, e a que a especificação define, é seguir o
+  // `selectedCandidatePairId` do `transport`. O `succeeded`/`nominated` fica
+  // como recuo para browsers que não publiquem o `transport`.
+  const selectedPairId = entries.find(
+    (e) => e.type === 'transport' && typeof e.selectedCandidatePairId === 'string',
+  )?.selectedCandidatePairId as string | undefined
+
+  const isSelectedPair = (s: StatEntry): boolean =>
+    selectedPairId != null
+      ? s.id === selectedPairId
+      : s.state === 'succeeded' || s.selected === true || s.nominated === true
+
   for (const s of entries) {
     switch (s.type) {
       case 'candidate-pair': {
-        if (s.state !== 'succeeded' && s.selected !== true) break
+        if (!isSelectedPair(s)) break
         if (typeof s.currentRoundTripTime === 'number') {
           out.rttMs = Math.round(num(s.currentRoundTripTime) * 1000)
         }
