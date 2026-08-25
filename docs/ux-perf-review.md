@@ -18,7 +18,7 @@
 |---|---|---|
 | **1 · Config e cortes** | 1.1 · 1.2 · 1.3 · 4.3 (+1.6 de borla) | **FECHADO** — `ui/lote-1-carregamento`, medido abaixo |
 | **2 · Layout** | 3.1.1 · 3.1.3 · 3.1.4 · 4.1 · 4.2 · 3.2.5 | **FECHADO** — `ui/lote-2-layout`, medido abaixo |
-| 3 · Sala e higiene | perfil → 2.1–2.4 · 3.2.1 · 3.2.4 | por fazer |
+| **3 · Sala e higiene** | perfil → 2.1–2.3 · 3.2.1 · 3.2.4 | **FECHADO** — `ui/lote-3-sala`, medido abaixo |
 
 ### Lote 1 — o que mudou, medido
 
@@ -119,6 +119,60 @@ O arnês **não está ligado ao CI**: o Playwright obrigaria o `npm ci` de todos
 jobs a descarregá-lo mais o Chromium, e isso é custo de build para toda a gente —
 decisão de quem mantém o repo, não efeito lateral de uma correcção de layout. A
 nota de como o ligar está no fim do ficheiro.
+
+
+### Lote 3 — o perfil primeiro, depois a correcção
+
+O plano dizia que este lote **começa por tirar o perfil**, e começou. Não é
+possível conduzir a sala inteira sem SFU, media e pares reais, por isso o perfil
+mede o que a correcção muda: o custo de a raiz voltar a renderizar sem que os
+mosaicos tenham mudado — que é exactamente o que os três relógios de 1 Hz
+provocavam. Instrumento: o `<Profiler>` do React (`actualDuration`, tempo de
+commit real), sobre o mosaico **do produto**, em `web/e2e/bench/`.
+
+| pares | sem `memo` | com `memo` | fator |
+|---:|---:|---:|---:|
+| 4 | 1,058 ms/tique | 0,042 ms/tique | **25×** |
+| 12 | 2,352 ms/tique | 0,038 ms/tique | **62×** |
+| 25 | 2,670 ms/tique | 0,072 ms/tique | **37×** |
+
+A leitura que interessa não é o fator: é a **forma da curva**. Sem `memo` o custo
+cresce com o número de pessoas na sala; com `memo` é **plano** (~0,04–0,07 ms
+seja com 4 ou com 25). Uma sala grande era o pior caso e passa a não ser caso.
+
+**Aviso sobre o primeiro instrumento.** A primeira versão do banco contava
+renders num invólucro à volta do mosaico — e o invólucro renderiza sempre, com
+ou sem `memo`. Deu exactamente o mesmo número nas duas colunas e teria sido
+publicado como «o memo não faz diferença». Contar renders de um invólucro mede
+o invólucro; o que se quer é tempo de commit da subárvore.
+
+| Medida | Antes | Depois |
+|---|---|---|
+| `setState` de tempo na raiz da sala | 3 × 1 Hz + 1 × 30 s | **0** |
+| Reconciliações/dia da sala só por relógios | ~262 000 | **0** |
+| `memo(` em `Room.tsx` | 0 | mosaico extraído e memoizado |
+| Callbacks por render passados aos mosaicos | 3 × N (novos) | 3 (estáveis) |
+| `.dash-card` / `.dash-grid` / `.dash-card-head` no topo | 2 cada | **1 cada** |
+| Marca em hexadecimal solto | 4 | **0** |
+
+A fusão do 3.2.1 foi verificada por **diferença de estilo computado** num
+Chromium real, sobre oito selectores do dashboard, antes e depois: **zero
+diferenças**. Apagar a regra velha em vez de a sobrepor não mudou um pixel.
+
+**Correcção ao próprio relatório.** O achado 3.2.4 dizia «15× `#eda33b`, 9×
+`#c8201d`». Estava inflacionado: 22 dessas ocorrências são *fallbacks* de
+`var(--token, #hex)`, que são defensivos e não violam a regra dos tokens. Os
+hardcoded a sério eram **4**, e são esses que foram convertidos — incluindo um
+`status-badge` que usava o dourado da MARCA para dizer «em curso», onde o design
+system manda usar `--warn`.
+
+**O que o lote 3 NÃO fez:** os 74 `#fff` do SCSS. Quase todos são texto sobre
+superfície escura (o rail, botões de acção), onde o token certo depende do sítio
+— é uma passagem caso a caso com risco visual real, e não se faz de enfiada no
+fim de um lote. Fica como dívida com dono. E o `useGridLayout` (achado 2.4)
+também fica: a troca por `grid` + `aspect-ratio` mexe no layout de vídeo, que é
+o sítio onde uma regressão se paga mais caro, e merece o seu próprio lote com
+verificação visual.
 
 
 ---
@@ -243,7 +297,7 @@ Fecha o maior custo de carregamento e a lacuna de a11y mais grave sem tocar em p
 3.1.1 gaveta móvel · 3.1.3 `dvh` · 3.1.4 ações na gaveta · 4.1/4.2 skeleton e estado de falha ·
 3.2.5 troca dos emojis de controlo. É este lote que muda a leitura de «simples e moderno».
 
-**Lote 3 · sala e higiene**
+**Lote 3 · sala e higiene** — ✅ FECHADO
 Perfil real da `Room` primeiro (o que a §2 não tem), depois 2.1 → 2.4 pela ordem que
 o perfil indicar · 3.2.1 duplicados · 3.2.4 cores.
 

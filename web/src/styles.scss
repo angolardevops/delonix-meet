@@ -2169,25 +2169,20 @@ button.link:hover {
   .feat-grid { grid-template-columns: 1fr; }
 }
 
-/* ---- F2.2: Dashboard (saudação + próximas reuniões + gravações recentes) ---- */
+/* ---- F2.2: Dashboard (saudação + próximas reuniões + gravações recentes) ----
+   As seis regras que aqui estavam foram FUNDIDAS na camada CONSOLA, no fim do
+   ficheiro (achado 3.2.1). Estavam definidas duas vezes e resolviam-se pela
+   POSIÇÃO no ficheiro: `.dash-card` na linha 2181 e outra vez na 4392, e era a
+   segunda que ganhava por estar mais abaixo. O que sobrava aqui eram
+   declarações que nunca pintavam — e a armadilha de que já se caiu duas vezes
+   nesta série de correções. O que só esta declarava (fundo, borda, família,
+   gap) subiu para lá; o resto foi apagado. */
 .dash-greet h1 {
-  font-family: var(--font-display); font-size: clamp(1.7rem, 3vw, 2.4rem);
-  letter-spacing: -0.02em; margin: 0 0 0.3rem;
-}
-.dash-greet { margin-bottom: 1.6rem; }
-.dash-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 2.2rem;
-}
-.dash-card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-  padding: 1.1rem 1.2rem;
-}
-.dash-card-head {
-  display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.8rem;
+  font-family: var(--font-display); letter-spacing: -0.02em; margin: 0 0 0.3rem;
 }
 .dash-card-head h2 {
   display: flex; align-items: center; gap: 0.5rem;
-  font-family: var(--font-display); font-size: 1.02rem; margin: 0;
+  font-family: var(--font-display); margin: 0;
 }
 .dash-card-head h2 svg { color: var(--accent); }
 .dash-empty { color: var(--muted); font-size: 0.9rem; margin: 0.4rem 0; }
@@ -2567,10 +2562,10 @@ button.link:hover {
   animation: fw-burst 1.6s ease-out infinite;
 }
 .fw.p0 { background: #f26430; --fx: -180px; --fy: -220px; }
-.fw.p1 { background: #eda33b; --fx: 200px; --fy: -180px; }
+.fw.p1 { background: var(--accent-2); --fx: 200px; --fy: -180px; }
 .fw.p2 { background: #7ee2a8; --fx: -260px; --fy: 60px; }
 .fw.p3 { background: #5aa0dc; --fx: 240px; --fy: 120px; }
-.fw.p4 { background: #c8201d; --fx: -80px; --fy: -300px; }
+.fw.p4 { background: var(--brand); --fx: -80px; --fy: -300px; }
 .fw.p5 { background: #ffd166; --fx: 120px; --fy: -280px; }
 .fw.p6 { background: #b78bff; --fx: -300px; --fy: -120px; }
 @keyframes fw-burst {
@@ -3581,7 +3576,10 @@ button.link:hover {
   &:hover { filter: brightness(1.2); }
 }
 .status-badge.status-todo { color: #9BA3B2; border-color: #9BA3B2; }
-.status-badge.status-doing { color: #EDA33B; border-color: #EDA33B; background: rgba(237,163,59,0.12); }
+.status-badge.status-doing {
+  color: var(--warn); border-color: var(--warn);
+  background: color-mix(in oklab, var(--warn) 12%, transparent);
+}
 .status-badge.status-done { color: #7fe0a8; border-color: #7fe0a8; background: rgba(127,224,168,0.1); }
 
 /* ============================================================
@@ -4389,12 +4387,16 @@ body { -webkit-font-smoothing: antialiased; }
 /* A saudação já não repete a data: essa passou para a barra de topo. */
 .dash-greet .home-sub { font-size: 0.85rem; margin: 4px 0 0; }
 
-.dash-grid { gap: 12px; margin-top: 16px; grid-template-columns: 1.45fr 1fr; }
+.dash-grid {
+  display: grid; grid-template-columns: 1.45fr 1fr; gap: 12px; margin-top: 16px;
+}
 .dash-card {
+  background: var(--surface); border: 1px solid var(--border);
   padding: 0; overflow: hidden;
   border-radius: var(--radius-md); box-shadow: var(--shadow);
 }
 .dash-card-head {
+  display: flex; justify-content: space-between; align-items: center;
   margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border);
 }
 .dash-card-head h2 { font-size: 0.83rem; font-weight: 600; }
