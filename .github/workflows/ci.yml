@@ -169,6 +169,7 @@ jobs:
           # sintoma a aparecer como «o login não completou» no terceiro. O
           # default de produção não muda.
           DELONIX_ALLOW_INSECURE=1 COOKIE_INSECURE=1 AUTH_RATE_PER_MIN=2000 \
+            RECORDINGS_DIR=/tmp/gravacoes \
             ./server/target/release/delonix-server > /tmp/servidor.log 2>&1 &
           for i in $(seq 1 60); do
             curl -sf http://localhost:8180/api/status >/dev/null && exit 0
@@ -185,6 +186,7 @@ jobs:
       # de Rust concordar consigo própria.
       - name: MFA por TOTP (fluxo completo, ao nível da API)
         run: node web/e2e/mfa.mjs
+
 
       # E o mesmo visto pelo UTILIZADOR. O backend estar certo não faz um
       # produto: sem interface, o MFA existe para quem sabe fazer POSTs. É este
@@ -205,6 +207,12 @@ jobs:
           # completou», que aponta para o sítio errado.
           curl -sf http://localhost:5174/api/status || { echo "o proxy do vite NÃO alcança a API"; cat /tmp/vite.log; exit 1; }
           APP=http://localhost:5174 node web/e2e/ui-mfa.mjs
+          # Uma gravação que falha tem de ser VISTA. O CI não tem ffmpeg
+          # instalado, o que torna este teste realista de graça: é exactamente a
+          # falha de OPERAÇÃO que produzia o pior silêncio — o anfitrião via o
+          # indicador aceso a reunião inteira e ficava sem nada nem aviso.
+          # Precisa do vite (carrega o arnês de media), por isso corre aqui.
+          APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
 
       # Sem isto, uma falha de interface no CI é um timeout sem contexto. Com a
       # imagem do momento da falha, diagnostica-se sem ter de reproduzir.

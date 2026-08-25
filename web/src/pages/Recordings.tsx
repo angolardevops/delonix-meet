@@ -135,12 +135,16 @@ export default function Recordings() {
                 className={selected?.id === r.id ? 'rec-item active' : 'rec-item'}
                 onClick={() => setSelected(r)}
               >
-                <span className="rec-item-thumb" style={{ background: recColor(r.filename) }}><FilmIcon /></span>
+                <span className={r.status === 'failed' ? 'rec-item-thumb failed' : 'rec-item-thumb'} style={r.status === 'failed' ? undefined : { background: recColor(r.filename) }}>
+                  {r.status === 'failed' ? '⚠' : <FilmIcon />}
+                </span>
                 <span className="rec-item-info">
                   <strong>{r.filename.replace(/\.webm$/, '')}</strong>
                   <small>
                     {new Date(r.created_at).toLocaleDateString('pt-PT', { day: 'numeric', month: 'short', year: 'numeric' })}
-                    {' · '}{(r.size_bytes / 1_048_576).toFixed(1)} MB
+                    {/* Uma gravação falhada não tem tamanho — mostrar «0.0 MB»
+                        parecia um ficheiro vazio, que é outra coisa. */}
+                    {r.status === 'failed' ? <> · {t('recordings.failed', 'falhou')}</> : <> · {(r.size_bytes / 1_048_576).toFixed(1)} MB</>}
                     {!r.owned && <> · {t('recordings.shared')}</>}
                   </small>
                 </span>
@@ -215,28 +219,41 @@ export default function Recordings() {
       <div className="rec-cards">
         {shown.map((r) => (
           <div key={r.id} className="rec-card">
-            <button className="rec-thumb" style={{ background: recColor(r.filename) }} onClick={() => setViewTarget(r)} title={t('recordings.play')}>
-              <FilmIcon />
-              <span className="rec-play">▶</span>
-              {!r.owned && <span className="rec-badge shared">{t('recordings.shared')}</span>}
-            </button>
+            {/* Falhada: sem miniatura clicável nem ▶. Oferecer «reproduzir»
+                sobre algo que não existe é prometer duas vezes ao mesmo
+                utilizador — a primeira foi o indicador de gravação aceso. */}
+            {r.status === 'failed' ? (
+              <div className="rec-thumb failed" role="img" aria-label={t('recordings.failed', 'Gravação falhada')}>⚠</div>
+            ) : (
+              <button className="rec-thumb" style={{ background: recColor(r.filename) }} onClick={() => setViewTarget(r)} title={t('recordings.play')}>
+                <FilmIcon />
+                <span className="rec-play">▶</span>
+                {!r.owned && <span className="rec-badge shared">{t('recordings.shared')}</span>}
+              </button>
+            )}
             <div className="rec-body">
               <strong className="rec-title">{r.filename}</strong>
               <div className="rec-meta">
                 {t('recordings.room', { code: r.room_code })} · {r.uploader_name}
                 <br />
-                {new Date(r.created_at).toLocaleString('pt-PT')} · {(r.size_bytes / 1_048_576).toFixed(1)} MB
+                {new Date(r.created_at).toLocaleString('pt-PT')}
+                {r.status !== 'failed' && <> · {(r.size_bytes / 1_048_576).toFixed(1)} MB</>}
               </div>
+              {r.status === 'failed' && r.failure_reason && (
+                <p className="rec-failure" role="status">{r.failure_reason}</p>
+              )}
               <div className="rec-actions">
+                {r.status !== 'failed' && (
                 <button className="btn-sm" onClick={() => setViewTarget(r)}>
                   <NoteIcon /> {t('recordings.open')}
                 </button>
-                {r.can_download && (
+                )}
+                {r.status !== 'failed' && r.can_download && (
                   <button className="btn-sm ghost" onClick={() => void downloadRecording(r).catch((e) => setError((e as Error).message))}>
                     <DownloadIcon /> {t('recordings.download')}
                   </button>
                 )}
-                {r.owned && (
+                {r.status !== 'failed' && r.owned && (
                   <button className="btn-sm ghost" onClick={() => setShareTarget(r)}>
                     <ShareLinkIcon /> {t('recordings.share')}{r.share_count > 0 ? ` (${r.share_count})` : ''}
                   </button>
