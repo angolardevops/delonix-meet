@@ -1,6 +1,13 @@
 import { FrameCrypto } from './e2ee'
 import { ClientMsg, Signaling } from './signaling'
 import {
+  callQualityScore,
+  extractQuality,
+  type QualityCursor,
+  type QualitySample,
+  type StatEntry,
+} from './callQuality'
+import {
   DEFAULT_RECOVERY,
   onGraceExpired,
   onPeerState,
@@ -108,12 +115,18 @@ export interface Call {
   hangup(): void
 }
 
-export interface QosReport {
-  /** RTT até ao SFU em ms (transporte partilhado por todos os peers). */
-  rtt: number | null
-  /** Uplink próprio: kbps enviados (todas as tracks). */
-  upKbps: number
-  byPeer: Record<string, { kbps: number; lossPct: number }>
+/**
+ * Amostra completa de qualidade + a pontuação Delonix (0–100).
+ *
+ * Substituiu um relatório de TRÊS números (RTT, uplink, perda por peer). A
+ * auditoria de 2026-08-25 mediu que era o que havia das ~25 métricas que o §4.4
+ * pede — e com três números não há diagnóstico nem SLO defensável.
+ */
+export type QosReport = QualitySample & {
+  /** Delonix Call Quality Score, 0–100. Ver `callQuality.ts` para o modelo
+   *  e, sobretudo, para o que ele NÃO é (não é MOS, não está calibrado
+   *  contra julgamento humano). */
+  score: number
 }
 
 /**
@@ -697,48 +710,17 @@ export class SfuCall implements Call {
     })
   }
 
-  /** Deltas de bytes/pacotes entre chamadas ao qos() (por stat id). */
-  private lastQos = new Map<string, { bytes: number; ts: number; pkts: number; lost: number }>()
+  /** Contadores da amostra anterior (os do WebRTC são cumulativos). */
+  private cursors = new Map<string, QualityCursor>()
 
   async qos(): Promise<QosReport> {
-    const out: QosReport = { rtt: null, upKbps: 0, byPeer: {} }
     const report = await this.pc.getStats()
-    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/
-    report.forEach((s: Record<string, number | string | boolean>) => {
-      if (s.type === 'candidate-pair' && s.state === 'succeeded' && typeof s.currentRoundTripTime === 'number') {
-        out.rtt = Math.round((s.currentRoundTripTime as number) * 1000)
-      }
-      if (s.type === 'outbound-rtp') {
-        const prev = this.lastQos.get(String(s.id))
-        const bytes = (s.bytesSent as number) ?? 0
-        const ts = s.timestamp as number
-        if (prev && ts > prev.ts) out.upKbps += Math.max(0, Math.round(((bytes - prev.bytes) * 8) / (ts - prev.ts)))
-        this.lastQos.set(String(s.id), { bytes, ts, pkts: 0, lost: 0 })
-      }
-      if (s.type === 'inbound-rtp') {
-        // trackIdentifier = "<publisher-uuid>-<kind>-<rid>" (definido pelo SFU)
-        const tid = String(s.trackIdentifier ?? '')
-        if (!uuidRe.test(tid)) return
-        const peer = tid.slice(0, 36)
-        const prev = this.lastQos.get(String(s.id))
-        const bytes = (s.bytesReceived as number) ?? 0
-        const pkts = (s.packetsReceived as number) ?? 0
-        const lost = (s.packetsLost as number) ?? 0
-        const ts = s.timestamp as number
-        let kbps = 0
-        let lossPct = 0
-        if (prev && ts > prev.ts) {
-          kbps = Math.max(0, Math.round(((bytes - prev.bytes) * 8) / (ts - prev.ts)))
-          const dp = pkts - prev.pkts
-          const dl = lost - prev.lost
-          if (dp + dl > 0) lossPct = Math.round((100 * dl) / (dp + dl))
-        }
-        this.lastQos.set(String(s.id), { bytes, ts, pkts, lost })
-        const cur = out.byPeer[peer] ?? { kbps: 0, lossPct: 0 }
-        out.byPeer[peer] = { kbps: cur.kbps + kbps, lossPct: Math.max(cur.lossPct, lossPct) }
-      }
-    })
-    return out
+    // O `RTCStatsReport` é um Map-like; a extracção é pura e trabalha sobre um
+    // array simples, o que a torna testável sem browser (ver callQuality.test.ts).
+    const entries: StatEntry[] = []
+    report.forEach((v) => entries.push(v as unknown as StatEntry))
+    const sample = extractQuality(entries, this.cursors)
+    return { ...sample, score: callQualityScore(sample) }
   }
 
   hangup() {

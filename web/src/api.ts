@@ -504,13 +504,44 @@ export interface OrgStats {
   avg_loss_pct: number
   pct_good: number
   pct_poor: number
+  /** Delonix Call Quality Score médio (0–100). `null` enquanto nenhum cliente
+   *  com a versão que o reporta tiver enviado amostras — `null` diz «ainda não
+   *  sei», que é diferente de `0`. */
+  avg_score: number | null
+  pct_low_score: number | null
+  /** % de amostras cuja media passou por TURN relay (custo e latência). */
+  pct_turn_relay: number | null
+  /** % de amostras com o encoder travado por CPU do CLIENTE (não é a rede). */
+  pct_cpu_limited: number | null
   meetings_prev_30d: number
   meeting_minutes_prev_30d: number
   active_users_prev_30d: number
 }
 
 /** Amostra de qualidade de chamada (QoS) reportada durante a reunião. */
-export const postQos = (code: string, s: { rtt_ms: number | null; loss_pct: number; up_kbps: number }) =>
+/** Uma amostra de qualidade de chamada (ver `callQuality.ts` e a migração 0034).
+ *  Todos os campos além dos três originais são OPCIONAIS do lado do servidor:
+ *  um cliente antigo continua a reportar sem eles. */
+export interface QosSample {
+  rtt_ms: number | null
+  loss_pct: number
+  up_kbps: number
+  down_kbps?: number
+  jitter_ms?: number
+  /** Delonix Call Quality Score, 0–100. */
+  score?: number
+  freeze_ms?: number
+  concealment_pct?: number
+  frames_dropped?: number
+  nack?: number
+  pli?: number
+  fir?: number
+  turn_relay?: boolean
+  candidate_pair?: string | null
+  limited_by?: string | null
+}
+
+export const postQos = (code: string, s: QosSample) =>
   request(`/api/rooms/${code}/qos`, { method: 'POST', body: JSON.stringify(s) })
 
 /** Tradução de uma linha de legenda via LLM local (Ollama in-cluster). */

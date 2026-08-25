@@ -511,9 +511,27 @@ export default function Room({
     const report = async () => {
       const r = await callRef.current?.qos?.().catch(() => null)
       if (!r) return
-      const losses = Object.values(r.byPeer).map((p) => p.lossPct)
-      const loss = losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : 0
-      void postQos(code, { rtt_ms: r.rtt, loss_pct: Math.round(loss * 10) / 10, up_kbps: r.upKbps }).catch(() => {})
+      // Envia-se a amostra COMPLETA, não uma média de três números. A média
+      // entre publicadores era o que escondia o participante inaudível numa
+      // sala em que todos os outros estavam bem — o `extractQuality` agrega
+      // pelo PIOR exactamente por isso.
+      void postQos(code, {
+        rtt_ms: r.rttMs,
+        loss_pct: r.lossPct,
+        up_kbps: r.upKbps,
+        down_kbps: r.downKbps,
+        jitter_ms: r.jitterMs,
+        score: r.score,
+        freeze_ms: Math.round(r.freezeMs),
+        concealment_pct: Math.round(r.concealmentRatio * 1000) / 10,
+        frames_dropped: r.framesDropped,
+        nack: r.nack,
+        pli: r.pli,
+        fir: r.fir,
+        turn_relay: r.turnRelay,
+        candidate_pair: r.candidatePair,
+        limited_by: r.limitedBy,
+      }).catch(() => {})
     }
     const first = setTimeout(() => void report(), 10_000)
     const t = setInterval(() => void report(), 30_000)
@@ -2569,8 +2587,10 @@ export default function Room({
                 <span className="person-name">
                   <span className="pn-name">eu{isHost ? ' · anfitrião' : ''}</span>
                   {qos && (
-                    <small className="qos-line mono">
-                      ↑ {qos.upKbps} kbps{qos.rtt != null ? ` · RTT ${qos.rtt} ms` : ''}
+                    <small className="qos-line mono" title={`Delonix Call Quality Score: ${qos.score}/100${qos.turnRelay ? ' · via TURN relay' : ''}${qos.limitedBy === 'cpu' ? ' · encoder travado por CPU' : ''}`}>
+                      {qos.score}/100 · ↑ {qos.upKbps} kbps
+                      {qos.rttMs != null ? ` · RTT ${qos.rttMs} ms` : ''}
+                      {qos.turnRelay ? ' · relay' : ''}
                     </small>
                   )}
                 </span>
@@ -2588,6 +2608,8 @@ export default function Room({
                     {qos?.byPeer[p.peerId] && (
                       <small className={qos.byPeer[p.peerId].lossPct > 5 ? 'qos-line mono qos-bad' : 'qos-line mono'}>
                         ↓ {qos.byPeer[p.peerId].kbps} kbps · perda {qos.byPeer[p.peerId].lossPct}%
+                        {qos.byPeer[p.peerId].jitterMs > 30 ? ` · jitter ${qos.byPeer[p.peerId].jitterMs} ms` : ''}
+                        {qos.byPeer[p.peerId].freezeMs > 0 ? ` · ${Math.round(qos.byPeer[p.peerId].freezeMs)} ms congelado` : ''}
                       </small>
                     )}
                   </span>

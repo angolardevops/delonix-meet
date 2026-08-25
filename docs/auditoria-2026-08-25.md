@@ -29,7 +29,7 @@ Três avisos de leitura:
 |---|---|---|
 | Backend Rust | 17 606 linhas, 33 módulos | `wc -l server/src/*.rs` |
 | Frontend TS/React | 16 978 linhas, 46 ficheiros | `wc -l web/src/**` |
-| Migrações | 0001–0033, contíguas | `ls server/migrations` |
+| Migrações | 0001–0034, contíguas | `ls server/migrations` |
 | `cargo test --release` | **46 passados, 0 falhados, 4 ignorados** | medido antes de mexer |
 | `tsc --noEmit` | limpo | medido |
 | `vitest` | 14 passados (3 ficheiros) | medido |
@@ -81,8 +81,8 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | Suspender vídeo em background preservando áudio | 🔴 | não existe | Médio |
 | Perfis de qualidade nomeados | 🔴 | não há audio-only / data-saver / 180p…1080p / screen-texto vs movimento | Médio |
 | Pipeline de áudio com IA no browser | 🟡 | `@sapphi-red/web-noise-suppressor` está nas dependências; **não há** de-reverberação, voice isolation, VAD, normalização, limiter, nem perfis reunião/aula/podcast/música | Médio |
-| Delonix Call Quality Score (0–100) | 🔴 | não existe | Médio |
-| Métricas de chamada | 🟡 | recolhe-se **3** (`rtt_ms`, `loss_pct`, `up_kbps` — migração 0025). Das ~25 pedidas faltam NACK, PLI, FIR, frames descartados, freeze duration, audio concealment, time-to-first-audio/video, join time, par de candidatos, uso de TURN, reconexões | Alto — sem isto não há SLO defensável |
+| Delonix Call Quality Score (0–100) | 🔴 → ✅ **feito nesta sessão** | modelo de penalizações transparente em `callQuality.ts`, com os limiares ancorados na G.114. **Não é MOS e não está calibrado contra ouvido humano** — é escala interna, comparável consigo mesma | Médio |
+| Métricas de chamada | 🟡 → ✅ **feito nesta sessão** | de **3** para **~20** por amostra: jitter, downlink, NACK/PLI/FIR, frames descartados, congelamento, ocultação de áudio (PLC), par de candidatos, TURN em uso, limitação do encoder. Persistidas (migração 0034) e agregadas em `/metrics`. **Ainda em falta:** time-to-first-audio/video, join time, ICE gathering time e contagem de reconexões — precisam de instrumentação de TEMPO no cliente, não vêm do `getStats()` | Médio (era Alto) |
 | Observabilidade do SFU (Prometheus) | ✅ | boa: 13 contadores + 4 novos de filas | — |
 | Testes em rede degradada (emulação) | 🔴 | nenhum | **Alto** — é o mercado-alvo |
 
@@ -210,9 +210,15 @@ Pela ordem do mandato, e pelo risco medido:
 2. **Validar o ICE restart contra rede real** (a máquina de estados e o restart
    já existem; o que falta é a prova), e implementar *reconnect token* +
    *silent rejoin* — hoje um refresh do browser ainda perde a sessão de media.
-3. **Métricas de chamada completas** — sem elas não há Call Quality Score nem
-   SLO com números.
-4. **Testes em rede degradada** com emulação, e só depois publicar metas.
-5. **HA do SFU** (registry, health/capacity, placement, drain).
+3. ~~**Métricas de chamada completas.**~~ **Endereçado** — ~20 métricas por
+   amostra + o Delonix Call Quality Score. Falta a instrumentação de TEMPO
+   (time-to-first-audio/video, join time, ICE gathering), que não vem do
+   `getStats()`.
+4. **Testes em rede degradada** com emulação, e só depois publicar metas. É
+   agora o passo que desbloqueia tudo o resto: já há o que medir, falta medir.
+5. **Adaptação de simulcast** com os sinais que agora existem — o
+   `wanted_rid()` continua a decidir só por tamanho da sala, mas o cliente já
+   sabe reportar jitter, congelamento, CPU e banda estimada.
+6. **HA do SFU** (registry, health/capacity, placement, drain).
 
 Nada de features cosméticas antes destas.

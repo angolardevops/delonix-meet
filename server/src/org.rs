@@ -803,6 +803,20 @@ pub struct OrgStats {
     /// % de amostras boas (perda < 2%) e fracas (perda > 5%).
     pub pct_good: i64,
     pub pct_poor: i64,
+    /// Delonix Call Quality Score médio (0–100) das amostras que o trazem.
+    /// `None` enquanto não houver clientes com a versão que o reporta — e
+    /// `None` diz isso mesmo, ao contrário de um `0` que pareceria «péssimo».
+    pub avg_score: Option<i64>,
+    /// % de amostras com pontuação abaixo de 60 («fraca» ou pior).
+    pub pct_low_score: Option<i64>,
+    /// % de amostras em que a media passou por TURN relay. Sobe = custo de
+    /// banda no relay e latência acrescida; é a métrica de factura.
+    pub pct_turn_relay: Option<i64>,
+    /// % de amostras em que o encoder estava travado por CPU. É a única forma
+    /// portável de ver que o problema era a MÁQUINA do cliente, não a rede —
+    /// sem isto, um portátil velho conta como «rede má» e enviesa o
+    /// diagnóstico da plataforma inteira.
+    pub pct_cpu_limited: Option<i64>,
     /// Período homólogo anterior (30–60 dias atrás) para os deltas dos KPIs.
     pub meetings_prev_30d: i64,
     pub meeting_minutes_prev_30d: i64,
@@ -928,8 +942,30 @@ pub async fn org_stats(
 
     // Qualidade das chamadas: agregado das amostras QoS dos membros da org
     // (rooms não têm org_id — o scoping é pelo utilizador que reporta).
-    let (quality_samples_30d, avg_rtt_ms, avg_loss_pct, pct_good, pct_poor): (
+    // As percentagens novas dividem pelo número de amostras que TRAZEM o campo
+    // (`COUNT(q.score)`), não pelo total. Dividir pelo total misturaria clientes
+    // antigos — que não reportam — com clientes bons, e a percentagem de
+    // problemas apareceria artificialmente baixa à medida que a versão nova
+    // fosse sendo adoptada. `NULLIF(...,0)` devolve NULL enquanto não houver
+    // nenhuma amostra com o campo, e NULL lê-se «ainda não sei», que é a
+    // verdade — ao contrário de um zero.
+    #[allow(clippy::type_complexity)]
+    let (
+        quality_samples_30d,
+        avg_rtt_ms,
+        avg_loss_pct,
+        pct_good,
+        pct_poor,
+        avg_score,
+        pct_low_score,
+        pct_turn_relay,
+        pct_cpu_limited,
+    ): (
         i64,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
         Option<f64>,
         Option<f64>,
         Option<f64>,
@@ -939,7 +975,14 @@ pub async fn org_stats(
                 AVG(q.rtt_ms)::float8,
                 AVG(q.loss_pct)::float8,
                 (100.0 * COUNT(*) FILTER (WHERE q.loss_pct < 2.0) / NULLIF(COUNT(*), 0))::float8,
-                (100.0 * COUNT(*) FILTER (WHERE q.loss_pct > 5.0) / NULLIF(COUNT(*), 0))::float8
+                (100.0 * COUNT(*) FILTER (WHERE q.loss_pct > 5.0) / NULLIF(COUNT(*), 0))::float8,
+                AVG(q.score)::float8,
+                (100.0 * COUNT(*) FILTER (WHERE q.score < 60)
+                    / NULLIF(COUNT(q.score), 0))::float8,
+                (100.0 * COUNT(*) FILTER (WHERE q.turn_relay)
+                    / NULLIF(COUNT(q.turn_relay), 0))::float8,
+                (100.0 * COUNT(*) FILTER (WHERE q.limited_by = 'cpu')
+                    / NULLIF(COUNT(q.limited_by), 0))::float8
          FROM call_quality_samples q
          JOIN org_members om ON om.user_id = q.user_id AND om.org_id = $1
          WHERE q.created_at > now() - interval '30 days'",
@@ -965,6 +1008,10 @@ pub async fn org_stats(
         avg_loss_pct: (avg_loss_pct.unwrap_or(0.0) * 10.0).round() / 10.0,
         pct_good: pct_good.unwrap_or(0.0).round() as i64,
         pct_poor: pct_poor.unwrap_or(0.0).round() as i64,
+        avg_score: avg_score.map(|v| v.round() as i64),
+        pct_low_score: pct_low_score.map(|v| v.round() as i64),
+        pct_turn_relay: pct_turn_relay.map(|v| v.round() as i64),
+        pct_cpu_limited: pct_cpu_limited.map(|v| v.round() as i64),
         meetings_prev_30d,
         meeting_minutes_prev_30d,
         active_users_prev_30d,
