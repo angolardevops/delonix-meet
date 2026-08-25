@@ -1,6 +1,11 @@
 // Français — carregado sob demanda por ../i18n.ts, nunca no arranque.
 
 export default {
+  load: {
+    failedTitle: 'Chargement impossible',
+    failedHint: "Le service n'a pas répondu. Cela ne veut pas dire qu'il n'y a rien ici.",
+    retry: 'Réessayer',
+  },
   common: {
     loading: 'Chargement…',
     save: 'Enregistrer',
@@ -472,6 +477,7 @@ export default {
     actionLoading: "Chargement du plan d'action…",
     actionMetaLabel: 'OBJECTIF',
     actionGoalPlaceholder: "Objectif du plan d'action…",
+    actionGoalEdit: "Modifier l'objectif",
     actionEmpty: 'Aucune action. Ajoutez-en une ci-dessous.',
     actionWhat: 'QUOI', actionWhen: 'QUAND', actionWhere: 'OÙ',
     actionWho: 'QUI', actionWhy: 'POURQUOI', actionHow: 'COMMENT', actionResources: 'COMBIEN',

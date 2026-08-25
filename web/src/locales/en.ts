@@ -1,6 +1,11 @@
 // English — carregado sob demanda por ../i18n.ts, nunca no arranque.
 
 export default {
+  load: {
+    failedTitle: 'Could not load',
+    failedHint: 'The service did not respond. This does not mean there is nothing here.',
+    retry: 'Try again',
+  },
   common: {
     loading: 'Loading…',
     save: 'Save',
@@ -487,6 +492,7 @@ export default {
     actionLoading: 'Loading action plan…',
     actionMetaLabel: 'GOAL',
     actionGoalPlaceholder: 'Action plan objective…',
+    actionGoalEdit: 'Edit objective',
     actionEmpty: 'No actions yet. Add one below.',
     actionWhat: 'WHAT', actionWhen: 'WHEN', actionWhere: 'WHERE',
     actionWho: 'WHO', actionWhy: 'WHY', actionHow: 'HOW', actionResources: 'HOW MUCH',

@@ -338,3 +338,33 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** **o que é partilhado entre um ecrã leve e um ecrã pesado vive em módulo próprio.** Um named export não corta o grafo: o bundler segue o módulo inteiro. Antes de aplicar `lazy` a uma página, verifica-se quem mais importa o que ela importa.
 - **Medido** (2026-08-25, `vite build`): chunk de arranque **648,82 KB → 347,40 KB** cru, **194,55 → 110,84 KB** comprimido. Na landing pública, o browser vai buscar **dois** ficheiros JS — o de entrada e, só se o utilizador clicar EN, o dicionário inglês (10,5 KB). Nem `Room` (135,47 KB), nem `Calendar`, nem `Analytics`, nem o dicionário francês são pedidos.
 - **Ficheiros:** `web/src/theme.ts`, `web/src/components/{ThemePicker,LanguageToggle}.tsx`, `web/src/App.tsx`, `web/src/main.tsx`.
+
+### R48 — Sessão terminada por um erro que não é de sessão
+- **Sintoma:** o utilizador cai no ecrã de login a meio do trabalho, e voltar a autenticar-se não resolve — porque a sessão dele nunca esteve inválida.
+- **Causa raiz:** o `refreshSession` fazia `if (!res.ok) { logout() }`. Qualquer resposta não-OK do `/api/auth/refresh` — 500, 502, 503, um gateway a reiniciar — era lida como «a sessão não serve». O `request` também atirava um `Error` nu, sem estado HTTP, o que obrigava quem apanha a adivinhar pela mensagem.
+- **Regra:** **só 401 e 403 são sessão inválida.** Tudo o resto é o servidor com um problema seu: fica-se onde se está e oferece-se tentar de novo. A separação vive em `isAuthFailure(e)` e depende de o erro carregar o `status` — daí o `ApiError`.
+- **Vem do `delonix-portal`** (`src/api/client.ts`), que já tinha pago por isto. As duas consolas partilham as armadilhas; passam a partilhar as guardas.
+- **Ficheiros:** `web/src/api.ts`, `web/src/api.guardas.test.ts`.
+
+### R49 — `.catch()` sem `isAbort` transforma limpeza de efeito em erro
+- **Sintoma:** um estado de erro pintado em cada montagem, só em desenvolvimento.
+- **Causa raiz:** o duplo-efeito do StrictMode monta, desmonta e volta a montar. A limpeza chama `AbortController.abort()`, o `fetch` rejeita com `AbortError`, e um `.catch()` que não distinga isso pinta erro — ou, pior, desloga. No portal isto faltava em **onze** sítios e o sintoma era a consola a saltar sozinha para o login.
+- **Regra:** **todo o `.catch()` de um pedido que leva `AbortSignal` começa por `if (isAbort(e)) return`.** Abortar é a limpeza a funcionar, não a API a falhar.
+- **Regra irmã:** um `.catch(() => {})` não é tratamento de erro, é supressão. O `myOrgs()` do Shell engolia até a resposta que dizia que a pessoa É admin — o menu de administração desaparecia sem nada que o explicasse.
+- **Ficheiros:** `web/src/components/AsyncSection.tsx`, `web/src/components/Shell.tsx`.
+
+### R50 — Corrigir por sobreposição em vez de apagar a regra velha
+- **Sintoma:** o campo «entrar por código» invisível DENTRO da gaveta móvel que tinha acabado de ser criada para o alojar.
+- **Causa raiz:** a correcção acrescentou uma camada nova com `.qa-bar { display: none }` mas deixou de pé a regra antiga `@media (max-width: 860px) { .app-bar-date, .app-bar-join { display: none } }`. Essa apanha `.app-bar-join` em QUALQUER sítio — incluindo dentro da gaveta. A gaveta abria, e o campo que ela existia para mostrar não estava lá.
+- **Regra:** **quando se muda um elemento de sítio, apaga-se a regra que o escondia no sítio antigo.** Sobrepor uma regra de posicionamento resolve o caso que se está a testar e deixa o outro partido — é o achado 3.2.1 deste mesmo relatório a repetir-se em cima de si próprio.
+- **Como foi apanhado:** por uma fitness function escrita ANTES de a correcção estar dada por terminada, e confirmado no browser (`getComputedStyle` do campo dentro da gaveta dava `display: none`). O teste que verifica a correcção tem de olhar para o que ela promete, não para o que ela tocou.
+- **Ficheiros:** `web/src/styles.scss`, `web/src/lote2.invariantes.test.ts`.
+
+### R51 — Um teste que aponta ao sítio errado passa sem provar nada
+- **Sintoma:** um teste verde a dar por confirmada uma correcção que ele não tinha tocado.
+- **Causa raiz (duas, na mesma tarefa):**
+  1. O teste do anel de foco media um `.land-link` — um botão que **nunca teve `outline: none`** e por isso sempre teve o anel do próprio browser. Passava com a correcção e passaria sem ela. Os sujeitos certos eram os **seis controlos que estavam cegos**.
+  2. A tentativa de ver o portão da gaveta ficar vermelho usou um `sed` com `^\.shell\.nav-open` — e a regra está **indentada** dentro de uma media query. O `sed` não mudou nada, o build foi o mesmo, e o «vermelho» foi um verde disfarçado.
+- **Regra:** **o teste tem de apontar ao que a correcção mudou, e o vermelho tem de ser verificado, não presumido.** Depois de partir o invariante, confirma-se que o ficheiro mudou mesmo (`grep` ao alvo, ou `git diff`) antes de acreditar no resultado. Um `sed` que não casa é silencioso.
+- **Regra irmã, sobre o instrumento:** quando a propriedade em causa é de pintura (`transform`, `outline`), o `getComputedStyle` de um painel que não compõe frames **mente** — mediu-se que nem um `!important` inline a altera. A leitura fiável é geométrica (`boundingBox`) ou por **comparação de pixéis**.
+- **Ficheiros:** `web/e2e/layout-consola.mjs`.

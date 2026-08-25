@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { createRoom, getRoom, myOrgs, updateMe, User } from '../api'
+import { createRoom, getRoom, isAbort, myOrgs, updateMe, User } from '../api'
 import CommandPalette from './CommandPalette'
 import NotificationCenter from './NotificationCenter'
 import ThemePicker from './ThemePicker'
@@ -9,7 +9,7 @@ import { applyTheme, storedTheme, Theme } from '../theme'
 import { appNameParts, getAppName, getLoginBg, setAppName, setLoginBg } from '../branding'
 import PasswordInput from './PasswordInput'
 import OnboardingTour from './OnboardingTour'
-import { CalendarIcon, ClockIcon, CloseIcon, FilmIcon, HomeIcon, MenuIcon, NoteIcon, PeopleIcon, SettingsIcon, StageIcon } from '../icons'
+import { CalendarIcon, ChevronDownIcon, ClockIcon, CloseIcon, FilmIcon, HomeIcon, MenuIcon, NoteIcon, PeopleIcon, SearchIcon, SettingsIcon, StageIcon, ThemeIcon } from '../icons'
 
 export type NavKey = 'home' | 'directory' | 'recordings' | 'calendar' | 'analytics' | 'roadmap' | 'whiteboards'
 
@@ -226,31 +226,34 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
 }
 
 /**
- * Barra de aplicação (topo do conteúdo). Concentra o que antes só existia na
- * Home — criar reunião e entrar por código — para ficar acessível de qualquer
- * página, além da data e do interruptor de tema.
+ * Criar reunião e entrar por código. Vive em DOIS sítios — na barra de topo em
+ * desktop e dentro da gaveta em ecrã estreito — porque abaixo de 860px a barra
+ * escondia-as com `display: none` e entrar por código deixava simplesmente de
+ * existir no telemóvel (achado 3.1.4). São duas instâncias com estado próprio;
+ * só uma está visível de cada vez, por isso não há foco duplicado.
  */
-function AppBar({ onEnterRoom, username }: { onEnterRoom: (code: string, voice?: boolean) => void; username: string }) {
-  const { t, i18n } = useTranslation()
+function QuickActions({
+  onEnterRoom,
+  username,
+  onDone,
+  variant,
+}: {
+  onEnterRoom: (code: string, voice?: boolean) => void
+  username: string
+  onDone?: () => void
+  variant: 'bar' | 'drawer'
+}) {
+  const { t } = useTranslation()
   const [code, setCode] = useState('')
   const [creating, setCreating] = useState(false)
   const [err, setErr] = useState('')
-  const [theme, setTheme] = useState<Theme>(storedTheme)
-  const locale = i18n.language.startsWith('en') ? 'en-GB' : i18n.language.startsWith('fr') ? 'fr-FR' : 'pt-PT'
-  const now = new Date()
-  const dateLabel = `${now.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' })} · ${now.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`
-
-  function toggleTheme() {
-    const next = theme === 'default' ? 'delonix-light' : 'default'
-    setTheme(next)
-    applyTheme(next)
-  }
 
   async function newMeeting() {
     setErr('')
     setCreating(true)
     try {
       const room = await createRoom(`Reunião de ${username}`, 'sfu', false, false, 'normal')
+      onDone?.()
       onEnterRoom(room.code)
     } catch (e) {
       setErr((e as Error).message)
@@ -271,6 +274,7 @@ function AppBar({ onEnterRoom, username }: { onEnterRoom: (code: string, voice?:
     }
     try {
       const room = await getRoom(parsed)
+      onDone?.()
       onEnterRoom(room.code)
     } catch {
       setErr(t('dash.notFound'))
@@ -278,9 +282,63 @@ function AppBar({ onEnterRoom, username }: { onEnterRoom: (code: string, voice?:
   }
 
   return (
+    <div className={`quick-actions qa-${variant}`}>
+      <button className="app-bar-new" disabled={creating} onClick={() => void newMeeting()}>
+        {creating ? t('dash.creating') : t('dash.newMeeting')}
+      </button>
+      <form className="app-bar-join" onSubmit={join}>
+        <input
+          placeholder={t('dash.joinPh')}
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          aria-label={t('dash.joinPh')}
+        />
+        <button disabled={!code.trim()}>{t('dash.join')}</button>
+      </form>
+      {err && <span className="app-bar-err" role="alert">{err}</span>}
+    </div>
+  )
+}
+
+/**
+ * Barra de aplicação (topo do conteúdo): abre a gaveta em ecrã estreito, mostra
+ * a data, o interruptor de tema e — em desktop — as ações rápidas.
+ */
+function AppBar({
+  onEnterRoom,
+  username,
+  onOpenNav,
+  navOpen,
+}: {
+  onEnterRoom: (code: string, voice?: boolean) => void
+  username: string
+  onOpenNav: () => void
+  navOpen: boolean
+}) {
+  const { t, i18n } = useTranslation()
+  const [theme, setTheme] = useState<Theme>(storedTheme)
+  const locale = i18n.language.startsWith('en') ? 'en-GB' : i18n.language.startsWith('fr') ? 'fr-FR' : 'pt-PT'
+  const now = new Date()
+  const dateLabel = `${now.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' })} · ${now.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`
+
+  function toggleTheme() {
+    const next = theme === 'default' ? 'delonix-light' : 'default'
+    setTheme(next)
+    applyTheme(next)
+  }
+
+  return (
     <header className="app-bar">
+      <button
+        className="app-bar-burger"
+        onClick={onOpenNav}
+        aria-label={t('nav.toggle')}
+        aria-expanded={navOpen}
+        aria-controls="shell-nav"
+      >
+        <MenuIcon />
+      </button>
       <span className="app-bar-date">{dateLabel}</span>
-      {err && <span className="app-bar-err">{err}</span>}
       <div className="app-bar-right">
         <button
           className="app-bar-icon"
@@ -288,20 +346,9 @@ function AppBar({ onEnterRoom, username }: { onEnterRoom: (code: string, voice?:
           title={t('common.theme', 'Tema')}
           aria-label={t('common.theme', 'Tema')}
         >
-          {theme === 'default' ? '◐' : '◑'}
+          <ThemeIcon />
         </button>
-        <button className="app-bar-new" disabled={creating} onClick={() => void newMeeting()}>
-          {creating ? t('dash.creating') : t('dash.newMeeting')}
-        </button>
-        <form className="app-bar-join" onSubmit={join}>
-          <input
-            placeholder={t('dash.joinPh')}
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            aria-label={t('dash.joinPh')}
-          />
-          <button disabled={!code.trim()}>{t('dash.join')}</button>
-        </form>
+        <QuickActions variant="bar" onEnterRoom={onEnterRoom} username={username} />
       </div>
     </header>
   )
@@ -325,17 +372,46 @@ export default function Shell({
 }) {
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('dx_nav_collapsed') === '1')
+  // Gaveta em ecrã estreito (achado 3.1.1). O `collapsed` é preferência de
+  // DESKTOP e persiste; isto é estado efémero de navegação e nunca persiste.
+  const [navOpen, setNavOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [acctOpen, setAcctOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const acctRef = useRef<HTMLDivElement>(null)
   // Papel: admin de alguma org → mostra a secção Administração + Análises.
+  // Padrão do delonix-portal: um AbortController por efeito e `isAbort` no
+  // catch. O `catch(() => {})` que aqui estava engolia TUDO — incluindo a
+  // resposta que dizia que a pessoa É admin e falhou por rede.
   useEffect(() => {
-    let alive = true
-    myOrgs().then((orgs) => { if (alive) setIsAdmin(orgs.some((o) => o.role === 'admin')) }).catch(() => {})
-    return () => { alive = false }
+    const ctrl = new AbortController()
+    myOrgs(ctrl.signal)
+      .then((orgs) => {
+        if (!ctrl.signal.aborted) setIsAdmin(orgs.some((o) => o.role === 'admin'))
+      })
+      .catch((e: unknown) => {
+        if (isAbort(e)) return
+        // Não é fatal — a consola funciona sem a secção de administração —,
+        // mas deixa rasto: sem isto, um admin sem menu não tinha explicação.
+        console.warn('[shell] não foi possível determinar o papel na organização:', e)
+      })
+    return () => ctrl.abort()
   }, [])
+  // Esc fecha a gaveta. Sem isto, num telemóvel só um toque no backdrop a
+  // fechava — e com teclado (tablet com teclado, leitor de ecrã) não havia saída.
+  useEffect(() => {
+    if (!navOpen) return
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setNavOpen(false)
+        document.querySelector<HTMLButtonElement>('.app-bar-burger')?.focus()
+      }
+    }
+    document.addEventListener('keydown', onEsc)
+    return () => document.removeEventListener('keydown', onEsc)
+  }, [navOpen])
+
   // Atalho global do command palette (Cmd/Ctrl-K).
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
@@ -375,9 +451,19 @@ export default function Shell({
       return n
     })
   }
+  // Fecha a gaveta e navega. Numa gaveta sobreposta, escolher um destino e
+  // ficar a olhar para a gaveta é o erro clássico deste padrão.
+  function go(k: NavKey) {
+    setNavOpen(false)
+    onNavigate(k)
+  }
+
   return (
-    <div className={collapsed ? 'shell collapsed' : 'shell'}>
-      <aside className="shell-nav">
+    <div className={`shell${collapsed ? ' collapsed' : ''}${navOpen ? ' nav-open' : ''}`}>
+      {navOpen && (
+        <div className="shell-nav-backdrop" onClick={() => setNavOpen(false)} aria-hidden="true" />
+      )}
+      <aside className="shell-nav" id="shell-nav">
         <div className="shell-brand">
           <button className="nav-burger" onClick={toggleCollapse} aria-label={t('nav.toggle')} title={t('nav.toggle')}>
             <MenuIcon />
@@ -387,13 +473,19 @@ export default function Shell({
             {brand[0]} <span>{brand[1]}</span>
           </span>
         </div>
+        <QuickActions
+          variant="drawer"
+          onEnterRoom={onEnterRoom}
+          username={user.username}
+          onDone={() => setNavOpen(false)}
+        />
         <button
           className="nav-search"
-          onClick={() => setPaletteOpen(true)}
+          onClick={() => { setNavOpen(false); setPaletteOpen(true) }}
           title={collapsed ? t('cmd.title', 'Comandos') : undefined}
           aria-label={t('cmd.title', 'Comandos')}
         >
-          <span className="nav-search-icon" aria-hidden="true">⌕</span>
+          <span className="nav-search-icon" aria-hidden="true"><SearchIcon /></span>
           <span className="nav-search-label">{t('cmd.searchLabel', 'Procurar')}</span>
           <kbd className="nav-search-kbd">⌘K</kbd>
         </button>
@@ -407,7 +499,7 @@ export default function Shell({
                   data-tour={`nav-${n.key}`}
                   className={active === n.key ? 'nav-item active' : 'nav-item'}
                   aria-current={active === n.key ? 'page' : undefined}
-                  onClick={() => onNavigate(n.key)}
+                  onClick={() => go(n.key)}
                   title={collapsed ? t(n.labelKey) : undefined}
                 >
                   {n.icon}
@@ -434,7 +526,7 @@ export default function Shell({
             >
               <span className="avatar-circle small">{initials}</span>
               <span className="nav-user-name">{user.username}</span>
-              <span className="nav-user-caret" aria-hidden="true">▾</span>
+              <span className="nav-user-caret" aria-hidden="true"><ChevronDownIcon /></span>
             </button>
             {acctOpen && (
               <div className="nav-account-menu" role="menu">
@@ -460,7 +552,7 @@ export default function Shell({
         </div>
       </aside>
       <main className="shell-main">
-        <AppBar onEnterRoom={onEnterRoom} username={user.username} />
+        <AppBar onEnterRoom={onEnterRoom} username={user.username} onOpenNav={() => setNavOpen(true)} navOpen={navOpen} />
         <div className="shell-body">{children}</div>
       </main>
       {settingsOpen && <SettingsModal user={user} onClose={() => setSettingsOpen(false)} onLogout={onLogout} />}

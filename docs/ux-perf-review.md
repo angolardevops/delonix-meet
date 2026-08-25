@@ -17,7 +17,7 @@
 | Lote | Achados | Estado |
 |---|---|---|
 | **1 · Config e cortes** | 1.1 · 1.2 · 1.3 · 4.3 (+1.6 de borla) | **FECHADO** — `ui/lote-1-carregamento`, medido abaixo |
-| 2 · Layout | 3.1.1 · 3.1.3 · 3.1.4 · 4.1 · 4.2 · 3.2.5 | por fazer |
+| **2 · Layout** | 3.1.1 · 3.1.3 · 3.1.4 · 4.1 · 4.2 · 3.2.5 | **FECHADO** — `ui/lote-2-layout`, medido abaixo |
 | 3 · Sala e higiene | perfil → 2.1–2.4 · 3.2.1 · 3.2.4 | por fazer |
 
 ### Lote 1 — o que mudou, medido
@@ -40,9 +40,86 @@ Os quatro invariantes viraram testes (`web/src/lote1.invariantes.test.ts`, 17
 casos) e cada um foi visto a ficar **vermelho** com o invariante partido e verde
 com ele reposto. Lições em `reference/regressions.md` (R46, R47).
 
-**O que o lote 1 NÃO provou:** o anel de foco não foi confirmado numa janela
-real — o painel de browser usado não resolve estado de foco. Fica verificado por
-teste e por inspeção do CSS construído; falta a passagem de teclado. Ver R46.
+**A lacuna do lote 1 ficou fechada no lote 2** — ver o bloco do lote 2 abaixo:
+o anel de foco está confirmado num Chromium real, por comparação de pixéis, nos
+controlos que estavam cegos. Ver R46.
+
+### Lote 2 — o que mudou, medido
+
+Verificado a **375×812** contra o `dist` construído, servido por um servidor com
+a API simulada em quatro modos (ok · vazio · falha · lento).
+
+| Medida | Antes | Depois |
+|---|---|---|
+| Largura roubada ao conteúdo pelo rail, a 375px | **224 px** (60% do ecrã) | **0** — gaveta sobreposta |
+| Entrar por código no telemóvel | não existia (`display: none`) | **na gaveta**, campo focável de 29px |
+| Estados de carregamento na app | **0** | 3 listas de esqueleto, anunciadas `aria-live` |
+| Falha de API na Home | dashboard vazio, indistinguível de «não há» | **erro + mensagem do servidor + «Tentar outra vez»** |
+| Sessão perdida num 5xx | sim | **não** — só 401/403 terminam sessão |
+| Emoji como controlo na consola | 15 | **0** |
+| `100vh` sem `dvh` | 14 | **0** |
+
+Ciclo completo confirmado no browser: API a devolver **503** → três cartões em
+erro, **sem perder a sessão** → servidor recupera → «Tentar outra vez» → dados.
+
+### Práticas de estado, alinhadas com o `delonix-portal`
+
+O `delonix-portal` já tinha pago por três armadilhas; passam a valer aqui, com
+teste (R48, R49 e R50 no catálogo):
+
+- **`ApiError` carrega o `status`.** Sem ele, quem apanha o erro adivinha pela
+  mensagem — e é dessa adivinha que nasce o resto.
+- **`isAuthFailure`: só 401/403 terminam a sessão.** O `refreshSession` deslogava
+  em qualquer resposta não-OK; um gateway a reiniciar tirava a pessoa de onde
+  estava para resolver um problema que não era dela.
+- **`isAbort` em todo o `.catch()` de um pedido com sinal.** O duplo-efeito do
+  StrictMode aborta o primeiro pedido; sem a guarda, pinta-se um erro em cada
+  montagem. No portal faltava em onze sítios.
+- **Estado de servidor numa máquina de três estados** (`loading | ready | error`),
+  por secção, com `AbortController` por efeito — não num booleano nem num store
+  global. Estado de UI (gaveta, tema, colapso) fica separado e só o que é
+  preferência persiste.
+
+**A lacuna dos lotes 1 e 2, fechada.** Ficou escrito nos dois PRs que o painel de
+browser do agente não resolve `transform` nem `outline`, e que faltava uma
+passagem num motor a sério. Foi feita: `web/e2e/layout-consola.mjs` corre um
+Chromium real contra o `dist` construído e verifica as duas coisas que estavam
+por confirmar.
+
+```
+3.1.1 · a gaveta em ecrã estreito (375×812)
+  ok  o rail está FORA do ecrã com a gaveta fechada        x=-268 largura=268
+  ok  o conteúdo ocupa a largura toda (antes perdia 224px) x=0 largura=375
+  ok  a gaveta desliza para dentro do ecrã                 x=0 largura=268
+  ok  o transform computado é `none` com a gaveta aberta
+  ok  o backdrop cobre o ecrã · aria-expanded acompanha
+  ok  entrar por código está alcançável na gaveta, e aceita escrita
+  ok  Escape fecha a gaveta · sem scroll horizontal
+
+4.3 · o anel nos controlos que ESTAVAM cegos
+  ok  o campo de código da barra mostra foco   (comparação de pixéis)
+  ok  o campo do Cmd-K mostra foco             (comparação de pixéis)
+  ok  o contentor casa :focus-within, e ganha o anel do sistema
+```
+
+Duas notas sobre o próprio teste, porque as duas custaram uma repetição:
+
+1. **O primeiro teste de foco apontava ao sítio errado.** Media um `.land-link`,
+   que nunca teve `outline: none` e por isso sempre teve o anel do browser — o
+   teste passava sem provar nada. Os sujeitos certos são os **seis controlos que
+   estavam cegos**, e a leitura é por **comparação de pixéis**, que não depende
+   de como o Chromium serializa o `outline` dele próprio.
+2. **A primeira tentativa de o ver falhar não falhou** — o `sed` que devia
+   partir a regra da gaveta tinha um `^` e a regra está indentada dentro da
+   media query, por isso não mudou nada e o «vermelho» foi um verde disfarçado.
+   Repetido a sério: regra da gaveta trocada → 2 falhas; anéis removidos →
+   2 falhas.
+
+O arnês **não está ligado ao CI**: o Playwright obrigaria o `npm ci` de todos os
+jobs a descarregá-lo mais o Chromium, e isso é custo de build para toda a gente —
+decisão de quem mantém o repo, não efeito lateral de uma correcção de layout. A
+nota de como o ligar está no fim do ficheiro.
+
 
 ---
 
@@ -162,7 +239,7 @@ A base visual é sólida e a doutrina do design system está escrita
 1.1 gzip · 1.3 idiomas sob `import()` · 1.2 rotas em `React.lazy` · 4.3 anel de foco.
 Fecha o maior custo de carregamento e a lacuna de a11y mais grave sem tocar em pixels.
 
-**Lote 2 · layout (a parte visível)**
+**Lote 2 · layout (a parte visível)** — ✅ FECHADO
 3.1.1 gaveta móvel · 3.1.3 `dvh` · 3.1.4 ações na gaveta · 4.1/4.2 skeleton e estado de falha ·
 3.2.5 troca dos emojis de controlo. É este lote que muda a leitura de «simples e moderno».
 
