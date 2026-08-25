@@ -412,3 +412,19 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** os testes usam um intervalo **abaixo de 32768** (20000+), que o SO nunca entrega como porta efémera, fatiado pelo PID. O intervalo do produto passou a ser configurável (`SFU_UDP_MIN`/`SFU_UDP_MAX`), o que também permite mover o produto para fora do intervalo efémero num nó onde isso importe.
 - **O que NÃO ficou provado, e é importante dizê-lo:** esta **não** é a causa do timeout de 30 s em `sfu_e2e::media_flows_both_ways`. A hipótese foi testada directamente — intervalo do produto esgotado *e* o SFU apontado a ele — e o teste passou nas três corridas. A causa desse timeout continua **por estabelecer**; o `E2E_TIMEOUT_FACTOR` (R47) é mitigação, não diagnóstico.
 - **Ficheiros:** `server/src/sfu.rs`, `server/src/config.rs`, `server/src/main.rs`, `server/src/sfu_e2e.rs`.
+### R58 — O dev server sem COOP/COEP faz a segmentação falhar SÓ em desenvolvimento
+- **Sintoma:** os fundos e efeitos da sala, e o recorte sem fundo do Estúdio, sem nada a acontecer e sem erro na interface. Em produção funcionam.
+- **Causa raiz:** o WASM multi-thread do ONNX Runtime (RVM) e do MediaPipe precisa de `SharedArrayBuffer`, que só existe numa página **cross-origin isolated** — ou seja, com `Cross-Origin-Opener-Policy: same-origin` e `Cross-Origin-Embedder-Policy: require-corp`. O `deploy/k8s/nginx.conf` põe os dois; o dev server do Vite **não punha**. Medido: `globalThis.crossOriginIsolated` dava `false` no `vite` e `true` depois da correcção.
+- **Porque não deu erro:** o pipeline é fail-soft por desenho — o RVM cai no MediaPipe, e o MediaPipe cai em nada. Um caminho que degrada em silêncio é bom para o utilizador e péssimo para quem procura a causa.
+- **Regra:** **o dev server serve os mesmos cabeçalhos de isolamento que o nginx.** Uma capacidade que depende de um cabeçalho tem de ter esse cabeçalho nos DOIS sítios, senão testa-se sempre o caminho degradado.
+- **Nota sobre os assets:** o `public/ort-rvm/*` e o `public/models/*.tflite` são obtidos no build da imagem e **não estão no git**. Num worktree novo o RVM devolve `index.html` com estado 200 (fallback da SPA) e falha com `expected magic word 00 61 73 6d, found 3c 21 64 6f` — que é `<!do`. Não é corrupção: é HTML onde se esperava WASM.
+- **Ficheiros:** `web/vite.config.ts`.
+
+### R59 — Três testes seguidos a olhar para o sítio errado
+- **Sintoma:** portões verdes que não guardavam nada, e um a dizer «não arrancou» sobre uma funcionalidade a funcionar.
+- **As três, na mesma tarefa:**
+  1. `expect(c).toContain('silencio.connect(...)')` continuava a passar com a linha **comentada** — o `toContain` encontra a string dentro do comentário. Corrigido com um `readCodigo()` que remove comentários antes de comparar.
+  2. A detecção da segmentação fazia `querySelector('.studio-grupo small')` — **singular**. Ao acrescentar uma dica de arrasto, o primeiro `<small>` passou a ser outro, e o teste declarou «não arrancou» com o segmentador a correr em GPU.
+  3. A asserção da silhueta usava `brilho > 5` contra um fundo de brilho **18**: passava com o ecrã vazio. A câmara do Chromium de teste é um padrão de cores, não uma pessoa — o segmentador corre, não encontra ninguém, e não há silhueta para medir. Substituída por uma que verifica que o *pipeline* arrancou, mais uma nota escrita a dizer que o resto precisa de uma câmara real.
+- **Regra:** **antes de acreditar num verde, pergunta o que teria de estar partido para ele ficar vermelho.** Se a resposta for «nada», o teste é decoração. E quando o limiar é numérico, mede-se primeiro o valor de repouso — um limiar abaixo do fundo é um teste que passa sozinho.
+- **Ficheiros:** `web/src/studio.invariantes.test.ts`, `web/e2e/estudio.mjs`.
