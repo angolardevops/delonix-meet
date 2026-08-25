@@ -22,6 +22,7 @@ import { Btn, SelectCtl } from '../components/ui'
 import { BreakoutRoom, PeerInfo, PollView, QaView, Signaling, WbStroke } from '../signaling'
 import { ThemePicker } from '../components/Shell'
 import { Call, MeshCall, SCREEN_CONSTRAINTS, SfuCall } from '../webrtc'
+import type { CallState } from '../callRecovery'
 import { makeCallHolderStart } from '../sfuLifecycle'
 import {
   BlurIcon, CamIcon, CamOffIcon, ChatIcon, ChevronUpIcon, CloseIcon, DownloadIcon, EmojiIcon, HandIcon,
@@ -266,6 +267,8 @@ export default function Room({
   // Pode admitir convidados em espera: anfitrião OU participante promovido.
   const [canAdmit, setCanAdmit] = useState(false)
   const [status, setStatus] = useState('A ligar…')
+  /** Estado da ligação de media — alimenta o indicador de recuperação. */
+  const [callState, setCallState] = useState<CallState>('connecting')
   const [topology, setTopology] = useState('')
   const [isTraining, setIsTraining] = useState(false)
   const [waitingRoomOn, setWaitingRoomOn] = useState(false)
@@ -1095,6 +1098,26 @@ export default function Room({
             levelsRef.current?.unwatch(peerId)
             setPresentation((p) => (p?.peerId === peerId ? null : p))
             setPeers((ps) => ps.map((p) => (p.peerId === peerId ? { ...p, stream: null } : p)))
+          },
+          // Estado da ligação de media (ver callRecovery.ts). O que interessa
+          // ao utilizador é saber que ALGUÉM está a tratar do assunto: antes
+          // disto, uma quebra de rede deixava o ecrã preto sem uma palavra até
+          // ele próprio recarregar a página.
+          onState: (st: CallState) => {
+            if (cancelled) return
+            setCallState(st)
+            if (st === 'degraded') setStatus('Ligação instável — a media pode falhar por instantes.')
+            else if (st === 'reconnecting' || st === 'recovering') setStatus('A restabelecer a ligação de media…')
+            else if (st === 'connected') setStatus('')
+            else if (st === 'failed') {
+              // Último recurso, e SÓ agora: o recarregar que dantes era a
+              // primeira (e única) resposta a qualquer quebra.
+              setStatus('Não foi possível restabelecer a media. A reentrar na sala…')
+              sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
+              setTimeout(() => {
+                if (!cancelled) location.reload()
+              }, 2000)
+            }
           },
         }
         // Preenche o holder — só arranca quando o handler 'joined' o invocar
@@ -3475,6 +3498,20 @@ export default function Room({
               🖥 {presentation.peerId === 'me'
                 ? 'A apresentar'
                 : `${peers.find((p) => p.peerId === presentation.peerId)?.username ?? ''} • apresenta`}
+            </span>
+          )}
+          {/* Indicador de recuperação de media. Existe porque uma quebra de
+              rede dava ECRÃ PRETO SEM DIAGNÓSTICO: o utilizador não tinha como
+              distinguir «a plataforma está a tratar disto» de «isto avariou».
+              Só aparece quando há mesmo algo a assinalar. */}
+          {callState !== 'connected' && callState !== 'connecting' && callState !== 'disconnected' && (
+            <span
+              className="room-status"
+              role="status"
+              aria-live="polite"
+              title={`Ligação de media: ${callState}`}
+            >
+              {callState === 'degraded' ? '◐ ligação instável' : '◌ a restabelecer…'}
             </span>
           )}
           {status && <span className="room-status">{status}</span>}

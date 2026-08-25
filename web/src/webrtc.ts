@@ -1,5 +1,12 @@
 import { FrameCrypto } from './e2ee'
 import { ClientMsg, Signaling } from './signaling'
+import {
+  DEFAULT_RECOVERY,
+  onGraceExpired,
+  onPeerState,
+  type CallState,
+  type RecoveryConfig,
+} from './callRecovery'
 
 /**
  * Melhora o Opus no SDP *recebido*: o fmtp do lado remoto é o que o nosso
@@ -70,6 +77,11 @@ export interface CallCallbacks {
   onStream: (peerId: string, stream: MediaStream) => void
   /** A ligação de media com o participante caiu. */
   onPeerLeft: (peerId: string) => void
+  /**
+   * Estado da ligação de media mudou (ver `callRecovery.ts`). Opcional: quem
+   * não o fornecer mantém o comportamento anterior, sem recuperação visível.
+   */
+  onState?: (state: CallState) => void
 }
 
 export interface Call {
@@ -359,12 +371,19 @@ export class SfuCall implements Call {
   /** Serializa o processamento de SDP para não intercalar negociações. */
   private queue: Promise<void> = Promise.resolve()
 
+  // ---- Recuperação de chamada (ver callRecovery.ts) ----
+  private state: CallState = 'connecting'
+  private attempts = 0
+  private graceTimer: ReturnType<typeof setTimeout> | null = null
+  private restartTimer: ReturnType<typeof setTimeout> | null = null
+
   constructor(
     private signal: Signaling,
     localStream: MediaStream,
     rtcConfig: RTCConfiguration,
     private cb: CallCallbacks,
     private crypto?: FrameCrypto,
+    private recovery: RecoveryConfig = DEFAULT_RECOVERY,
   ) {
     this.pc = new RTCPeerConnection(pcConfig(rtcConfig, crypto))
 
@@ -392,6 +411,12 @@ export class SfuCall implements Call {
       const stream = e.streams[0]
       if (stream) this.cb.onStream(stream.id, stream)
     }
+
+    // Recuperação de media. Antes disto não existia handler nenhum: uma PC que
+    // caísse em `failed` — mudança de Wi-Fi para dados móveis, NAT a refazer o
+    // binding, portátil a acordar da suspensão — ficava morta até o utilizador
+    // recarregar a página.
+    this.pc.onconnectionstatechange = () => this.onPcState(this.pc.connectionState)
 
     signal.on('sfu-answer', (m) =>
       this.enqueue(async () => {
@@ -463,6 +488,98 @@ export class SfuCall implements Call {
 
   private enqueue(task: () => Promise<void>) {
     this.queue = this.queue.then(task).catch((e) => console.warn('[sfu]', e))
+  }
+
+  // ------------------------------------------------------------------
+  //  Recuperação de media. A DECISÃO vive em `callRecovery.ts` (pura e
+  //  testada); aqui só se executa o que ela mandar.
+  // ------------------------------------------------------------------
+
+  private setState(next: CallState) {
+    if (next === this.state) return
+    this.state = next
+    console.debug('[sfu] estado da chamada ->', next)
+    this.cb.onState?.(next)
+  }
+
+  private clearTimers() {
+    if (this.graceTimer) clearTimeout(this.graceTimer)
+    if (this.restartTimer) clearTimeout(this.restartTimer)
+    this.graceTimer = null
+    this.restartTimer = null
+  }
+
+  private onPcState(pcState: RTCPeerConnectionState) {
+    const d = onPeerState(pcState, this.state, this.attempts, this.recovery)
+    this.attempts = d.attempts
+    // Voltou a haver media: qualquer temporizador pendente é obsoleto. Sem
+    // isto, uma recuperação espontânea deixava um restart agendado a disparar
+    // depois, renegociando uma ligação que já estava boa.
+    if (d.state === 'connected' || d.state === 'disconnected') this.clearTimers()
+    this.setState(d.state)
+    this.runAction(d.action)
+  }
+
+  private runAction(action: ReturnType<typeof onPeerState>['action']) {
+    switch (action.kind) {
+      case 'none':
+        return
+      case 'observe':
+        if (this.graceTimer) return
+        this.graceTimer = setTimeout(() => {
+          this.graceTimer = null
+          const d = onGraceExpired(this.state, this.attempts, this.recovery)
+          this.attempts = d.attempts
+          this.setState(d.state)
+          this.runAction(d.action)
+        }, action.graceMs)
+        return
+      case 'restart':
+        if (this.restartTimer) return
+        this.restartTimer = setTimeout(() => {
+          this.restartTimer = null
+          this.restartIce()
+        }, action.delayMs)
+        return
+      case 'give-up':
+        // Não há mais nada a tentar daqui. Quem consome o `onState` decide o
+        // que oferecer (no Room.tsx, o recarregar que já era o comportamento).
+        this.clearTimers()
+        return
+    }
+  }
+
+  /**
+   * Reinicia o ICE: oferta nova com credenciais novas (`iceRestart`), o que
+   * faz o browser recolher candidatos de raiz pelo caminho de rede ACTUAL.
+   *
+   * Passa pela mesma fila que todo o resto da negociação. Não se usa
+   * `pc.restartIce()` (que dispararia `onnegotiationneeded`) porque nesta
+   * classe a negociação é toda explícita e serializada — misturar os dois daria
+   * ofertas a competir, que é a família de bugs da R13.
+   *
+   * Do lado do servidor não é preciso nada: o `webrtc-rs` detecta as
+   * credenciais novas no `set_remote_description` e reinicia o seu ICE
+   * (`peer_connection/mod.rs`, `have_remote_credentials_change`).
+   */
+  private restartIce() {
+    this.enqueue(async () => {
+      if (this.state === 'disconnected') return
+      // Uma negociação a meio (glare, ou renegociação do servidor em curso):
+      // ofertar agora falharia por estado. Volta a tentar em breve — a
+      // tentativa já foi contabilizada, por isso isto não fura o orçamento.
+      if (this.pc.signalingState !== 'stable') {
+        this.restartTimer = setTimeout(() => {
+          this.restartTimer = null
+          this.restartIce()
+        }, 500)
+        return
+      }
+      this.setState('recovering')
+      const offer = await this.pc.createOffer({ iceRestart: true })
+      await this.pc.setLocalDescription(offer)
+      this.send({ type: 'sfu-offer', sdp: offer.sdp! })
+    })
   }
 
   private async flushIce() {
@@ -625,6 +742,11 @@ export class SfuCall implements Call {
   }
 
   hangup() {
+    // Terminal ANTES de fechar a PC: o `close()` dispara
+    // `onconnectionstatechange`, e sem o estado já em `disconnected` a máquina
+    // interpretaria a saída intencional como uma avaria e tentava recuperar.
+    this.setState('disconnected')
+    this.clearTimers()
     this.pc.close()
     this.crypto?.close()
     this.signal.close()
