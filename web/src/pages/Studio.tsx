@@ -5,6 +5,7 @@ import { BackgroundEffect } from '../media'
 import PageHeader from '../components/PageHeader'
 import { Btn } from '../components/ui'
 import { CamIcon, CamOffIcon, FilmIcon, RecordIcon, StopIcon } from '../icons'
+import { cortar, cortesSuportados } from '../studio/editor'
 import {
   AVATAR_INICIAL,
   CantoDoAvatar,
@@ -14,6 +15,7 @@ import {
   ModoDoAvatar,
   Recorte,
   RECORTE_INTEIRO,
+  ResultadoDaGravacao,
 } from '../studio/compositor'
 
 /**
@@ -53,7 +55,12 @@ export default function Studio() {
   const [erro, setErro] = useState('')
   const efeitoRef = useRef<BackgroundEffect | null>(null)
   const [aPrepararRecorte, setAPrepararRecorte] = useState(false)
-  const [resultado, setResultado] = useState<{ blob: Blob; url: string } | null>(null)
+  const [resultado, setResultado] = useState<{ faixas: ResultadoDaGravacao; url: string; duracao: number } | null>(null)
+  // Corte: pontos de entrada e saída, em segundos do ficheiro gravado.
+  const [de, setDe] = useState(0)
+  const [ate, setAte] = useState(0)
+  const [aCortar, setACortar] = useState(0)   // 0 = parado; senão fracção
+  const previewRef = useRef<HTMLVideoElement>(null)
   const [titulo, setTitulo] = useState('')
   const [aGuardar, setAGuardar] = useState(false)
   const [guardado, setGuardado] = useState('')
@@ -184,15 +191,54 @@ export default function Studio() {
       setErro(t('studio.vazia', 'A gravação saiu vazia — nada foi guardado.'))
       return
     }
-    setResultado({ blob, url: URL.createObjectURL(blob) })
+    setResultado({ faixas: blob, url: URL.createObjectURL(blob.completo), duracao: 0 })
+    setDe(0)
+    setAte(0)
   }
 
-  function descarregar() {
+  function nomeBase() {
+    return (titulo.trim() || t('studio.semTitulo', 'aula')).replace(/[^\w.-]+/g, '-')
+  }
+
+  function descarregar(qual: 'completo' | 'video' | 'audio' = 'completo') {
     if (!resultado) return
+    const b = resultado.faixas[qual]
+    if (!b) return
+    const url = qual === 'completo' ? resultado.url : URL.createObjectURL(b)
     const a = document.createElement('a')
-    a.href = resultado.url
-    a.download = `${(titulo.trim() || t('studio.semTitulo', 'aula')).replace(/[^\w.-]+/g, '-')}.webm`
+    a.href = url
+    const sufixo = qual === 'completo' ? '' : `-${qual}`
+    a.download = `${nomeBase()}${sufixo}.${qual === 'audio' ? 'weba' : 'webm'}`
     a.click()
+    if (qual !== 'completo') setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
+
+  /** Aplica o corte e SUBSTITUI o resultado — o que se guarda é o cortado. */
+  async function aplicarCorte() {
+    if (!resultado) return
+    setErro('')
+    setACortar(0.001)
+    try {
+      const novo = await cortar(
+        resultado.faixas.completo,
+        { inicio: de, fim: ate },
+        (p) => setACortar(Math.max(0.001, p.fraccao ?? 0.001)),
+        4,
+        resultado.faixas.audio,
+      )
+      URL.revokeObjectURL(resultado.url)
+      setResultado({
+        faixas: { completo: novo, video: null, audio: resultado.faixas.audio },
+        url: URL.createObjectURL(novo),
+        duracao: ate - de,
+      })
+      setDe(0)
+      setAte(0)
+    } catch (e) {
+      setErro((e as Error).message || t('studio.erroCorte', 'Não foi possível cortar.'))
+    } finally {
+      setACortar(0)
+    }
   }
 
   /**
@@ -207,7 +253,7 @@ export default function Studio() {
     try {
       const nome = titulo.trim() || t('studio.semTitulo', 'Aula')
       const sala = await createRoom(nome, 'sfu', false, false, 'normal')
-      await uploadRecording(sala.code, resultado.blob, `${nome}.webm`)
+      await uploadRecording(sala.code, resultado.faixas.completo, `${nome}.webm`)
       setGuardado(t('studio.guardado', 'Guardada na biblioteca de Gravações.'))
     } catch (e) {
       setErro((e as Error).message || t('studio.erroGuardar', 'Não foi possível guardar.'))
@@ -431,7 +477,90 @@ export default function Studio() {
           {resultado && (
             <section className="studio-grupo studio-resultado">
               <h3>{t('studio.pronta', 'Aula gravada')}</h3>
-              <video className="studio-preview" src={resultado.url} controls />
+              <video
+                className="studio-preview"
+                src={resultado.url}
+                controls
+                ref={previewRef}
+                onLoadedMetadata={(e) => {
+                  const d = e.currentTarget.duration
+                  // Um WebM de MediaRecorder chega muitas vezes com duração
+                  // `Infinity` até se procurar até ao fim: sem isto o cursor
+                  // de corte nascia sem escala.
+                  if (Number.isFinite(d) && d > 0) {
+                    setResultado((r) => (r ? { ...r, duracao: d } : r))
+                    setAte((a) => (a > 0 ? a : d))
+                  } else {
+                    e.currentTarget.currentTime = 1e6
+                  }
+                }}
+                onDurationChange={(e) => {
+                  const d = e.currentTarget.duration
+                  if (Number.isFinite(d) && d > 0) {
+                    setResultado((r) => (r ? { ...r, duracao: d } : r))
+                    setAte((a) => (a > 0 ? a : d))
+                  }
+                }}
+              />
+
+              {resultado.duracao > 0 && cortesSuportados() && (
+                <div className="studio-corte">
+                  <label className="set-label">
+                    {t('studio.corteDe', 'Começar em')} <span className="mono">{mmss(Math.round(de))}</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.floor(resultado.duracao)}
+                      value={Math.min(de, ate)}
+                      onChange={(e) => {
+                        const v = Number(e.target.value)
+                        setDe(v)
+                        if (v >= ate) setAte(Math.min(resultado.duracao, v + 1))
+                        if (previewRef.current) previewRef.current.currentTime = v
+                      }}
+                    />
+                  </label>
+                  <label className="set-label">
+                    {t('studio.corteAte', 'Terminar em')} <span className="mono">{mmss(Math.round(ate))}</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.floor(resultado.duracao)}
+                      value={ate}
+                      onChange={(e) => {
+                        const v = Number(e.target.value)
+                        setAte(v)
+                        if (v <= de) setDe(Math.max(0, v - 1))
+                        if (previewRef.current) previewRef.current.currentTime = v
+                      }}
+                    />
+                  </label>
+                  <Btn
+                    variant="ghost"
+                    disabled={aCortar > 0 || ate - de < 1 || (de === 0 && Math.round(ate) >= Math.floor(resultado.duracao))}
+                    onClick={() => void aplicarCorte()}
+                  >
+                    {aCortar > 0
+                      ? `${t('studio.aCortar', 'A cortar')} ${Math.round(aCortar * 100)}%`
+                      : `${t('studio.cortar', 'Cortar')} · ${mmss(Math.round(ate - de))}`}
+                  </Btn>
+                </div>
+              )}
+
+              {resultado.faixas.audio && (
+                <div className="studio-faixas">
+                  <small className="muted">{t('studio.faixas', 'Faixas separadas')}</small>
+                  <div className="studio-seg">
+                    <button className="seg-btn" onClick={() => descarregar('video')} disabled={!resultado.faixas.video}>
+                      {t('studio.soVideo', 'Só vídeo')}
+                    </button>
+                    <button className="seg-btn" onClick={() => descarregar('audio')}>
+                      {t('studio.soAudio', 'Só áudio')}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <label className="set-label">
                 {t('studio.titulo2', 'Título')}
                 <input
@@ -445,7 +574,7 @@ export default function Studio() {
                 <Btn onClick={() => void guardarNaBiblioteca()} disabled={aGuardar}>
                   {aGuardar ? t('studio.aGuardar', 'A guardar…') : t('studio.guardar', 'Guardar na biblioteca')}
                 </Btn>
-                <Btn variant="ghost" onClick={descarregar}>
+                <Btn variant="ghost" onClick={() => descarregar('completo')}>
                   {t('studio.descarregar', 'Descarregar')}
                 </Btn>
               </div>

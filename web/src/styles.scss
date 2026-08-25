@@ -4931,3 +4931,9 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
 .studio-canvas-wrap.arrastavel { cursor: grab; touch-action: none; }
 .studio-canvas-wrap.arrastavel:active { cursor: grabbing; }
 .studio-grupo .seg-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Corte da aula gravada (studio/editor.ts) */
+.studio-corte { display: flex; flex-direction: column; gap: 6px; }
+.studio-corte .set-label { gap: 3px; font-size: 0.78rem; }
+.studio-corte .mono { color: var(--accent-text); }
+.studio-faixas { display: flex; flex-direction: column; gap: 5px; }
