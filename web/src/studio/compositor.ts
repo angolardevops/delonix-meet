@@ -73,6 +73,13 @@ export const ECRA_PARA_GRAVACAO: DisplayMediaStreamOptions = {
 
 const MARGEM = 0.03 // fracção da largura, entre a bolha e a borda
 
+/** O que sai de uma gravação: o ficheiro pronto e as duas faixas isoladas. */
+export interface ResultadoDaGravacao {
+  completo: Blob
+  video: Blob | null
+  audio: Blob | null
+}
+
 export interface OpcoesDoCompositor {
   largura?: number
   altura?: number
@@ -94,8 +101,20 @@ export class CompositorDeAula {
   private destino: MediaStreamAudioDestinationNode | null = null
   private fontesAudio: MediaStreamAudioSourceNode[] = []
 
+  /**
+   * DOIS gravadores, não um (pedido: «separar o áudio do vídeo e depois
+   * juntar»). Separar depois obrigava a desmultiplexar um WebM já fechado;
+   * gravar separado desde o início faz da separação uma propriedade do
+   * desenho, e o «juntar» é só voltar a dar as duas faixas ao mesmo elemento.
+   * O terceiro gravador continua a produzir o ficheiro combinado, que é o que
+   * a maioria das pessoas quer descarregar sem pensar em faixas.
+   */
   private gravador: MediaRecorder | null = null
+  private gravadorVideo: MediaRecorder | null = null
+  private gravadorAudio: MediaRecorder | null = null
   private pedacos: Blob[] = []
+  private pedacosVideo: Blob[] = []
+  private pedacosAudio: Blob[] = []
   private raf = 0
   private vivo = true
 
@@ -344,9 +363,29 @@ export class CompositorDeAula {
         ? 'video/webm;codecs=vp8,opus'
         : 'video/webm'
     this.pedacos = []
-    this.gravador = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: this.opcoes.bitrate ?? 6_000_000 })
+    this.pedacosVideo = []
+    this.pedacosAudio = []
+    const bitrate = this.opcoes.bitrate ?? 6_000_000
+    this.gravador = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate })
     this.gravador.ondataavailable = (e) => e.data.size && this.pedacos.push(e.data)
     this.gravador.start(1000)
+
+    // Faixas isoladas. Partilham as MESMAS tracks do combinado, por isso não
+    // há segunda captura de canvas nem segunda mistura de áudio — o custo
+    // extra é o do encoder, não o da composição.
+    const soVideo = new MediaStream(stream.getVideoTracks())
+    this.gravadorVideo = new MediaRecorder(soVideo, { mimeType: mime, videoBitsPerSecond: bitrate })
+    this.gravadorVideo.ondataavailable = (e) => e.data.size && this.pedacosVideo.push(e.data)
+    this.gravadorVideo.start(1000)
+
+    const faixasAudio = stream.getAudioTracks()
+    if (faixasAudio.length) {
+      const soAudio = new MediaStream(faixasAudio)
+      const mimeA = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
+      this.gravadorAudio = new MediaRecorder(soAudio, { mimeType: mimeA, audioBitsPerSecond: 128_000 })
+      this.gravadorAudio.ondataavailable = (e) => e.data.size && this.pedacosAudio.push(e.data)
+      this.gravadorAudio.start(1000)
+    }
     this.inicioMs = Date.now()
     this.iniciarPreVisualizacao()
   }
@@ -358,11 +397,14 @@ export class CompositorDeAula {
     this.fontesAudio.push(n)
   }
 
+  private get todos(): MediaRecorder[] {
+    return [this.gravador, this.gravadorVideo, this.gravadorAudio].filter(Boolean) as MediaRecorder[]
+  }
   pausar(): void {
-    if (this.gravador?.state === 'recording') this.gravador.pause()
+    for (const g of this.todos) if (g.state === 'recording') g.pause()
   }
   retomar(): void {
-    if (this.gravador?.state === 'paused') this.gravador.resume()
+    for (const g of this.todos) if (g.state === 'paused') g.resume()
   }
   get aGravar(): boolean {
     return this.gravador?.state === 'recording'
@@ -371,14 +413,21 @@ export class CompositorDeAula {
     return this.gravador?.state === 'paused'
   }
 
-  /** Termina e devolve o ficheiro. `null` se não havia nada a gravar. */
-  async terminarGravacao(): Promise<Blob | null> {
+  /** Termina e devolve as faixas. `null` se não havia nada a gravar. */
+  async terminarGravacao(): Promise<ResultadoDaGravacao | null> {
     const g = this.gravador
     if (!g) return null
-    const fim = new Promise<void>((r) => (g.onstop = () => r()))
-    g.stop()
-    await fim
+    const parar = (r: MediaRecorder | null) =>
+      r
+        ? new Promise<void>((res) => {
+            r.onstop = () => res()
+            r.stop()
+          })
+        : Promise.resolve()
+    await Promise.all([parar(this.gravador), parar(this.gravadorVideo), parar(this.gravadorAudio)])
     this.gravador = null
+    this.gravadorVideo = null
+    this.gravadorAudio = null
     this.inicioMs = 0
     for (const n of this.fontesAudio) n.disconnect()
     this.fontesAudio = []
@@ -386,7 +435,12 @@ export class CompositorDeAula {
     this.audioCtx = null
     this.destino = null
     if (!this.pedacos.length) return null
-    return new Blob(this.pedacos, { type: g.mimeType || 'video/webm' })
+    const tipo = g.mimeType || 'video/webm'
+    return {
+      completo: new Blob(this.pedacos, { type: tipo }),
+      video: this.pedacosVideo.length ? new Blob(this.pedacosVideo, { type: tipo }) : null,
+      audio: this.pedacosAudio.length ? new Blob(this.pedacosAudio, { type: 'audio/webm' }) : null,
+    }
   }
 
   // ---------------------------------------------------------------- limpeza
@@ -404,12 +458,16 @@ export class CompositorDeAula {
     this.vivo = false
     cancelAnimationFrame(this.raf)
     this.raf = 0
-    try {
-      this.gravador?.stop()
-    } catch {
-      /* já parado */
+    for (const g of this.todos) {
+      try {
+        g.stop()
+      } catch {
+        /* já parado */
+      }
     }
     this.gravador = null
+    this.gravadorVideo = null
+    this.gravadorAudio = null
     this.pararEcra()
     this.pararCamara()
     for (const n of this.fontesAudio) n.disconnect()

@@ -19,7 +19,8 @@
     "onnxruntime-web": "^1.19.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-i18next": "^17.0.8"
+    "react-i18next": "^17.0.8",
+    "webm-muxer": "^5.1.4"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
