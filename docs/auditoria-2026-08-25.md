@@ -29,7 +29,7 @@ Três avisos de leitura:
 |---|---|---|
 | Backend Rust | 17 606 linhas, 33 módulos | `wc -l server/src/*.rs` |
 | Frontend TS/React | 16 978 linhas, 46 ficheiros | `wc -l web/src/**` |
-| Migrações | 0001–0034, contíguas | `ls server/migrations` |
+| Migrações | 0001–0035, contíguas | `ls server/migrations` |
 | `cargo test --release` | **46 passados, 0 falhados, 4 ignorados** | medido antes de mexer |
 | `tsc --noEmit` | limpo | medido |
 | `vitest` | 14 passados (3 ficheiros) | medido |
@@ -94,7 +94,8 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | Login com conta Odoo | ✅ | `odoo_sso.rs`, org nasce da empresa, directório sincroniza | — |
 | SAML 2.0 | 🔴 | **zero código** (a palavra só aparece em `i18n.ts`) | Alto |
 | SCIM 2.0 | 📄 | **zero código**; existe *postura* no ecrã de Analytics | **Alto** — o ecrã sugere uma capacidade que não existe |
-| MFA / WebAuthn / passkeys / TOTP | 🔴 | **zero ocorrências** de qualquer um dos termos | **Crítico** para enterprise |
+| MFA — TOTP + códigos de recuperação | 🔴 → 🟡 **backend completo e validado, SEM interface** | RFC 6238 implementado contra os vectores oficiais; inscrição, activação, login em duas fases, anti-replay, códigos de recuperação de uso único. 19 asserções ponta-a-ponta contra servidor real, com um gerador TOTP independente em JS. **Não há um único ecrã** — e pela doutrina da casa, uma capacidade que só existe na API não conta como produto | Médio (era Crítico) |
+| WebAuthn / passkeys | 🔴 | zero | Alto |
 | RBAC | 🟡 | **2 papéis**: `admin` \| `member` (`org.rs:431`). O pedido são **15** (platform admin, security admin, compliance officer, co-host, presenter, recording editor, auditor read-only, …) | Alto |
 | Autorização validada no servidor | ✅ | host controls em `signaling.rs`, não confiados no cliente | — |
 | Isolamento multi-tenant | ✅ | `can_access_room`/`org::*`; RLS em `employee_groups` com fitness function | — |

@@ -375,3 +375,13 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** **um contador de renders num invólucro mede o invólucro.** Para medir o efeito de uma barreira de memoização mede-se **tempo de commit da subárvore** — `<Profiler>` do React, `actualDuration` — ou instrumenta-se por dentro do componente. Com o instrumento certo: 2,352 ms/tique sem `memo` contra 0,038 com, a 12 pares.
 - **A leitura que o número certo dá, e o errado escondia:** sem `memo` o custo **cresce com o número de pessoas na sala**; com `memo` é plano. O pior caso deixa de ser caso.
 - **Ficheiros:** `web/e2e/bench/tiles.tsx`.
+
+<!-- Numeração: os R46–R52 vieram do trabalho de UI/UX que fundiu primeiro.
+     As entradas desta cadeia continuam em R53 para não haver dois R46. -->
+
+### R53 — O código do segundo factor tem de ser CONSUMIDO, não só verificado
+- **Sintoma:** um código TOTP apanhado por cima do ombro (ou num proxy, ou num screenshot) serve outra vez durante os trinta segundos seguintes. O segundo factor deixa de ser posse do dispositivo e passa a ser posse de seis dígitos.
+- **Causa raiz:** verificar um TOTP é fácil; o que se esquece é que ele continua válido durante toda a janela. Sem estado, a verificação é repetível.
+- **Regra:** `user_mfa.last_step` guarda o passo temporal aceite, e a actualização é CONDICIONAL (`WHERE last_step IS NULL OR last_step < $2`) — é a barreira que também resolve duas tentativas em paralelo, porque só uma delas afecta a linha. O mesmo vale para os códigos de recuperação (`used_at`, com `UPDATE ... WHERE used_at IS NULL`).
+- **A consequência que não é óbvia e está testada:** o código usado para ACTIVAR o MFA não serve para o login seguinte, porque foi consumido. O primeiro login usa o código da janela a seguir. É correcto, é anti-replay entre operações diferentes, e sem estar escrito parece uma avaria.
+- **Ficheiros:** `server/src/mfa.rs` (`consome_codigo`), migração 0035, `web/e2e/mfa.mjs`.
