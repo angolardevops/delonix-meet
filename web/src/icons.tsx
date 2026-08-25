@@ -237,6 +237,13 @@ export const CheckIcon = () => (
   </svg>
 )
 
+/** Aviso. A consola não usa emoji como controlo — ver lote2.invariantes. */
+export const AlertIcon = () => (
+  <svg {...base}>
+    <path d="M12 2 1 21h22L12 2Zm0 4.53L19.53 19H4.47L12 6.53ZM11 10v5h2v-5h-2Zm0 6v2h2v-2h-2Z" />
+  </svg>
+)
+
 export const CopyIcon = () => (
   <svg {...base}>
     <path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z" />

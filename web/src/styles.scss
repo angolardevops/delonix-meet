@@ -4820,3 +4820,29 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
   font-size: 1.5rem; letter-spacing: 0.35em; text-align: center;
   font-family: var(--mono, monospace);
 }
+
+/* Gravação FALHADA na biblioteca. Existe para ser vista: antes, uma gravação
+   que não compunha desaparecia sem rasto e quem carregou em «gravar» ficava a
+   pensar que tinha um ficheiro algures. Ver migração 0036. */
+.rec-thumb.failed, .rec-item-thumb.failed {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-2); border: 1px dashed var(--border);
+  color: var(--danger, #c0392b); font-size: 1.6rem; cursor: default;
+}
+.rec-item-thumb.failed { font-size: 1rem; }
+.rec-failure {
+  margin: 0.4rem 0 0; padding: 0.5rem 0.65rem; border-radius: 5px;
+  background: var(--surface-2); border-left: 3px solid var(--danger, #c0392b);
+  font-size: 0.84rem; line-height: 1.4; color: var(--muted);
+}
+
+/* Gravação falhada na vista de TABELA (a de cartões e a de biblioteca já
+   tinham tratamento; a tabela veio depois, com a base de UI/UX). Ver R58. */
+.rec-name-failed { color: var(--text-muted, #8a8a8a); }
+.rec-failure-cell {
+  color: var(--danger, #c0392b); font-size: 0.85em;
+  display: inline-block; max-width: 22ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rec-name-failed-icon { display: inline-flex; vertical-align: -0.15em; margin-right: 0.35em; }
+.rec-name-failed-icon svg { width: 1em; height: 1em; }

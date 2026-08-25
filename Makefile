@@ -175,7 +175,7 @@ test: fitness web-deps ## Corre os testes (fitness functions + cargo test + type
 	@cd server && cargo test --release
 	@cd web && node_modules/.bin/tsc -p tsconfig.json --noEmit && printf "$(G)  ✓ tsc limpo$(Z)\n"
 	@cd web && node_modules/.bin/vitest run && printf "$(G)  ✓ vitest (R1/R2)$(Z)\n"
-	@cd web && npm run build >/dev/null && printf "$(G)  ✓ build do frontend (compila SCSS — R59)$(Z)\n"
+	@cd web && npm run build >/dev/null && printf "$(G)  ✓ build do frontend (compila SCSS — R54)$(Z)\n"
 
 .PHONY: web-deps
 web-deps: ## Garante web/node_modules (npm ci) — sem isto o `make test` morria com um 'Error 127' opaco

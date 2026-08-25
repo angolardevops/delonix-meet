@@ -29,7 +29,7 @@ Três avisos de leitura:
 |---|---|---|
 | Backend Rust | 17 606 linhas, 33 módulos | `wc -l server/src/*.rs` |
 | Frontend TS/React | 16 978 linhas, 46 ficheiros | `wc -l web/src/**` |
-| Migrações | 0001–0035, contíguas | `ls server/migrations` |
+| Migrações | 0001–0036, contíguas | `ls server/migrations` |
 | `cargo test --release` | **46 passados, 0 falhados, 4 ignorados** | medido antes de mexer |
 | `tsc --noEmit` | limpo | medido |
 | `vitest` | 14 passados (3 ficheiros) | medido |
