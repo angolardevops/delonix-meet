@@ -45,8 +45,7 @@ use webrtc::{
     },
     rtcp::{
         payload_feedbacks::{
-            full_intra_request::FullIntraRequest,
-            picture_loss_indication::PictureLossIndication,
+            full_intra_request::FullIntraRequest, picture_loss_indication::PictureLossIndication,
         },
         receiver_report::ReceiverReport,
     },
@@ -56,11 +55,11 @@ use webrtc::{
         rtp_receiver::RTCRtpReceiver,
         rtp_sender::RTCRtpSender,
     },
-    util::Unmarshal,
     track::{
         track_local::{track_local_static_rtp::TrackLocalStaticRTP, TrackLocal, TrackLocalWriter},
         track_remote::TrackRemote,
     },
+    util::Unmarshal,
 };
 
 use crate::signaling::{ClientMsg, ServerMsg};
@@ -388,11 +387,7 @@ pub struct IceConfig {
 
 impl SfuState {
     /// Constrói o SFU com a config de ICE (a partir de `Config`) e os contadores.
-    pub fn new(
-        ice: IceConfig,
-        metrics: Arc<crate::metrics::Metrics>,
-        nego_cap: usize,
-    ) -> Self {
+    pub fn new(ice: IceConfig, metrics: Arc<crate::metrics::Metrics>, nego_cap: usize) -> Self {
         Self {
             ice,
             metrics,
@@ -633,7 +628,9 @@ impl SfuState {
             pc.on_track(Box::new(move |remote, receiver, _transceiver| {
                 let state = state.clone();
                 Box::pin(async move {
-                    state.handle_publish(room_id, peer_id, remote, receiver).await;
+                    state
+                        .handle_publish(room_id, peer_id, remote, receiver)
+                        .await;
                 })
             }));
         }
@@ -989,78 +986,81 @@ impl SfuState {
         peer_id: Uuid,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
         Box::pin(async move {
-        let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
-            return;
-        };
-        let Some(peer) = self.peer(room_id, peer_id).await else {
-            return;
-        };
-        // Peer ainda sem SDP remoto (acabou de entrar, ainda não ofertou):
-        // subscrever agora produziria uma renegociação a apontar para o vazio.
-        // O `apply_client_offer` chama isto assim que a oferta dele chega.
-        if peer.pc.remote_description().await.is_none() {
-            return;
-        }
-        let room_size = room.peers.lock().await.len();
-        let shift = peer.quality.shift.load(Relaxed);
-        let publications = room.publications.lock().await.clone();
-
-        // Agrupar camadas por (publicador, tipo).
-        let mut groups: HashMap<(Uuid, String), Vec<Arc<Publication>>> = HashMap::new();
-        for p in publications {
-            if p.publisher == peer_id {
-                continue;
+            let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
+                return;
+            };
+            let Some(peer) = self.peer(room_id, peer_id).await else {
+                return;
+            };
+            // Peer ainda sem SDP remoto (acabou de entrar, ainda não ofertou):
+            // subscrever agora produziria uma renegociação a apontar para o vazio.
+            // O `apply_client_offer` chama isto assim que a oferta dele chega.
+            if peer.pc.remote_description().await.is_none() {
+                return;
             }
-            groups
-                .entry((p.publisher, p.kind.clone()))
-                .or_default()
-                .push(p);
-        }
-        let current = peer.subscribed.lock().await.clone();
-        let interest = peer.video_interest.lock().await.clone();
-        for (key, layers) in groups {
-            // Vídeo de câmara fora da página que o cliente está a ver: se
-            // estava ligado, DESLIGA (é aqui que a paginação poupa banda a
-            // sério). Áudio e ecrã partilhado passam sempre.
-            let wanted_by_client = key.1 != "video"
-                || interest.as_ref().is_none_or(|set| set.contains(&key.0));
-            if !wanted_by_client {
-                if let Some((_, sender)) = current.get(&key) {
-                    let _ = peer.pc.remove_track(sender).await;
-                    peer.subscribed.lock().await.remove(&key);
-                    for p in &layers {
-                        if p.subscribers.lock().await.remove(&peer_id).is_some() {
-                            p.touch_subs();
-                            crate::metrics::Metrics::dec(&self.metrics.sfu_subscriptions);
+            let room_size = room.peers.lock().await.len();
+            let shift = peer.quality.shift.load(Relaxed);
+            let publications = room.publications.lock().await.clone();
+
+            // Agrupar camadas por (publicador, tipo).
+            let mut groups: HashMap<(Uuid, String), Vec<Arc<Publication>>> = HashMap::new();
+            for p in publications {
+                if p.publisher == peer_id {
+                    continue;
+                }
+                groups
+                    .entry((p.publisher, p.kind.clone()))
+                    .or_default()
+                    .push(p);
+            }
+            let current = peer.subscribed.lock().await.clone();
+            let interest = peer.video_interest.lock().await.clone();
+            for (key, layers) in groups {
+                // Vídeo de câmara fora da página que o cliente está a ver: se
+                // estava ligado, DESLIGA (é aqui que a paginação poupa banda a
+                // sério). Áudio e ecrã partilhado passam sempre.
+                let wanted_by_client =
+                    key.1 != "video" || interest.as_ref().is_none_or(|set| set.contains(&key.0));
+                if !wanted_by_client {
+                    if let Some((_, sender)) = current.get(&key) {
+                        let _ = peer.pc.remove_track(sender).await;
+                        peer.subscribed.lock().await.remove(&key);
+                        for p in &layers {
+                            if p.subscribers.lock().await.remove(&peer_id).is_some() {
+                                p.touch_subs();
+                                crate::metrics::Metrics::dec(&self.metrics.sfu_subscriptions);
+                            }
+                        }
+                        trigger_renegotiate(&peer);
+                    }
+                    continue;
+                }
+                let wanted = wanted_rid(&key.1, room_size, shift);
+                let cur_rid = current.get(&key).map(|(rid, _)| rid.as_str());
+                let Some(chosen) = pick_layer(&layers, wanted, cur_rid) else {
+                    continue;
+                };
+                match current.get(&key) {
+                    None => {
+                        if let Err(e) =
+                            subscribe_layer(&self, room_id, chosen, peer_id, &peer).await
+                        {
+                            tracing::warn!(%room_id, %peer_id, error = %e, "sfu subscribe failed");
+                            continue;
                         }
                     }
-                    trigger_renegotiate(&peer);
-                }
-                continue;
-            }
-            let wanted = wanted_rid(&key.1, room_size, shift);
-            let cur_rid = current.get(&key).map(|(rid, _)| rid.as_str());
-            let Some(chosen) = pick_layer(&layers, wanted, cur_rid) else {
-                continue;
-            };
-            match current.get(&key) {
-                None => {
-                    if let Err(e) = subscribe_layer(&self, room_id, chosen, peer_id, &peer).await {
-                        tracing::warn!(%room_id, %peer_id, error = %e, "sfu subscribe failed");
-                        continue;
+                    Some((rid, old_sender)) if *rid != chosen.rid => {
+                        tracing::info!(%room_id, %peer_id, publisher = %key.0, from = %rid, to = %chosen.rid, shift, room_size, "sfu layer switch");
+                        crate::metrics::Metrics::bump(&self.metrics.sfu_layer_switches_total);
+                        switch_layer(&self, room_id, &room, chosen, peer_id, &peer, old_sender)
+                            .await;
                     }
+                    Some(_) => continue,
                 }
-                Some((rid, old_sender)) if *rid != chosen.rid => {
-                    tracing::info!(%room_id, %peer_id, publisher = %key.0, from = %rid, to = %chosen.rid, shift, room_size, "sfu layer switch");
-                    crate::metrics::Metrics::bump(&self.metrics.sfu_layer_switches_total);
-                    switch_layer(&self, room_id, &room, chosen, peer_id, &peer, old_sender).await;
-                }
-                Some(_) => continue,
+                // Keyframe imediato: sem ele o subscritor novo fica preto até ao
+                // próximo keyframe natural do publicador.
+                request_keyframe(chosen, &self.metrics).await;
             }
-            // Keyframe imediato: sem ele o subscritor novo fica preto até ao
-            // próximo keyframe natural do publicador.
-            request_keyframe(chosen, &self.metrics).await;
-        }
         })
     }
 
@@ -1309,7 +1309,12 @@ impl SfuState {
     /// deitado fora. Aqui o SFU **deixa mesmo de enviar** o que não está no
     /// ecrã. Só afeta `video`: o áudio de toda a gente e o ecrã partilhado
     /// continuam sempre subscritos.
-    pub async fn set_video_interest(self: &Arc<Self>, room_id: Uuid, peer_id: Uuid, peers: Vec<Uuid>) {
+    pub async fn set_video_interest(
+        self: &Arc<Self>,
+        room_id: Uuid,
+        peer_id: Uuid,
+        peers: Vec<Uuid>,
+    ) {
         let Some(peer) = self.peer(room_id, peer_id).await else {
             return;
         };
@@ -1333,7 +1338,6 @@ impl SfuState {
         }
     }
 }
-
 
 /// A gravação server-side só sabe escrever VP8 (IVF, com PTS reais do RTP) e
 /// Opus (OGG). Se o browser negociar VP9/H264/AV1, o depacketizer VP8 devolve
@@ -1859,7 +1863,10 @@ mod tests {
         for _ in 0..20 {
             quiet.decay();
         }
-        assert!(quiet.energy() < 5, "silêncio prolongado tem de libertar o top-N");
+        assert!(
+            quiet.energy() < 5,
+            "silêncio prolongado tem de libertar o top-N"
+        );
 
         // Com DTX não chegam pacotes: sem `decay()` a energia ficaria presa.
         let silent_with_dtx = AudioMeter::default();
@@ -1904,7 +1911,9 @@ mod tests {
         assert!(flag.load(Relaxed));
 
         // Segundo pedido enquanto o primeiro não foi processado: coalescido.
-        assert!(!coalesce_renegotiate(&flag, || panic!("não devia tentar enviar")));
+        assert!(!coalesce_renegotiate(&flag, || panic!(
+            "não devia tentar enviar"
+        )));
 
         // Processado — bandeira baixa (é o que a negotiation_loop faz).
         flag.store(false, Relaxed);

@@ -471,7 +471,9 @@ impl ServerMsg {
     fn is_droppable(&self) -> bool {
         matches!(
             self,
-            ServerMsg::TranscriptInterim { .. } | ServerMsg::WbStroke { .. } | ServerMsg::Reaction { .. }
+            ServerMsg::TranscriptInterim { .. }
+                | ServerMsg::WbStroke { .. }
+                | ServerMsg::Reaction { .. }
         )
     }
 }
@@ -716,10 +718,7 @@ impl SignalingHub {
                     is_bot,
                     is_pstn: false,
                     tx: tx.clone(),
-                    interim: crate::rate_limit::TokenBucket::new(
-                        INTERIM_BURST,
-                        INTERIM_PER_SEC,
-                    ),
+                    interim: crate::rate_limit::TokenBucket::new(INTERIM_BURST, INTERIM_PER_SEC),
                 },
             );
             (existing, announce, waiting_msgs)
@@ -772,7 +771,9 @@ impl SignalingHub {
     /// Decisão do anfitrião sobre um convidado em espera.
     fn decide_waiting(&self, room_id: Uuid, host: Uuid, target: Uuid, admit: bool) {
         let admitted_tx = {
-            let Some(mut room) = self.rooms.get_mut(&room_id) else { return };
+            let Some(mut room) = self.rooms.get_mut(&room_id) else {
+                return;
+            };
             if !room.peers.get(&host).map(|p| p.is_host).unwrap_or(false) {
                 return; // só o anfitrião decide
             }
@@ -1501,7 +1502,13 @@ async fn breakout_new_child(
 /// na sala principal — chamado após qualquer mudança.
 fn broadcast_breakout_state(state: &Arc<AppState>, parent_id: Uuid) {
     let Some(set) = state.breakouts.get(&parent_id) else {
-        state.hub.broadcast_all(parent_id, ServerMsg::BreakoutsCreated { rooms: vec![], ends_at: None });
+        state.hub.broadcast_all(
+            parent_id,
+            ServerMsg::BreakoutsCreated {
+                rooms: vec![],
+                ends_at: None,
+            },
+        );
         return;
     };
     let infos: Vec<BreakoutInfo> = set
@@ -1559,7 +1566,9 @@ async fn breakouts_create(
             .await
             .ok()
             .flatten();
-    let Some((parent_code, topology, e2ee, name, format)) = parent else { return };
+    let Some((parent_code, topology, e2ee, name, format)) = parent else {
+        return;
+    };
     // Salas de grupo só em reuniões de formato 'training' (defesa no servidor —
     // a UI já esconde, mas um cliente manipulado não deve conseguir criá-las).
     if format != "training" {
@@ -1657,7 +1666,9 @@ async fn breakout_add(state: &Arc<AppState>, room_id: Uuid, owner: Uuid) {
             .await
             .ok()
             .flatten();
-    let Some((_, topology, e2ee, name)) = parent else { return };
+    let Some((_, topology, e2ee, name)) = parent else {
+        return;
+    };
     let n = state
         .breakouts
         .get(&room_id)
@@ -1686,7 +1697,9 @@ async fn breakout_add(state: &Arc<AppState>, room_id: Uuid, owner: Uuid) {
 /// Move um participante (por username) para outro grupo ou de volta à
 /// principal. Procura-o na principal e em todas as filhas.
 fn breakout_move_user(state: &Arc<AppState>, room_id: Uuid, name: &str, target_code: &str) {
-    let Some(set) = state.breakouts.get(&room_id) else { return };
+    let Some(set) = state.breakouts.get(&room_id) else {
+        return;
+    };
     let back = target_code == set.parent_code;
     let label = if back {
         "Sala principal".to_string()
@@ -2124,7 +2137,8 @@ mod tests {
     const TEST_CAP: usize = 512;
 
     fn peer() -> (Uuid, PeerTx, mpsc::Receiver<ServerMsg>) {
-        let (tx, rx, _shutdown) = PeerTx::new(TEST_CAP, Arc::new(crate::metrics::Metrics::default()));
+        let (tx, rx, _shutdown) =
+            PeerTx::new(TEST_CAP, Arc::new(crate::metrics::Metrics::default()));
         (Uuid::new_v4(), tx, rx)
     }
 
@@ -2136,7 +2150,14 @@ mod tests {
     //  Filas de saída limitadas (Programa I §3.2 — backpressure)
     // ---------------------------------------------------------------
 
-    fn tiny_queue(cap: usize) -> (PeerTx, mpsc::Receiver<ServerMsg>, Arc<tokio::sync::Notify>, Arc<crate::metrics::Metrics>) {
+    fn tiny_queue(
+        cap: usize,
+    ) -> (
+        PeerTx,
+        mpsc::Receiver<ServerMsg>,
+        Arc<tokio::sync::Notify>,
+        Arc<crate::metrics::Metrics>,
+    ) {
         let m = Arc::new(crate::metrics::Metrics::default());
         let (tx, rx, sd) = PeerTx::new(cap, m.clone());
         (tx, rx, sd, m)

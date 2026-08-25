@@ -102,7 +102,10 @@ pub async fn login(
     let resp = tokio::time::timeout(
         RPC_TIMEOUT,
         client
-            .post(format!("{}/web/session/authenticate", odoo_url.trim_end_matches('/')))
+            .post(format!(
+                "{}/web/session/authenticate",
+                odoo_url.trim_end_matches('/')
+            ))
             .json(&body)
             .send(),
     )
@@ -130,7 +133,11 @@ pub async fn login(
     let Some(result) = json.get("result").filter(|r| !r.is_null()) else {
         return Ok(None);
     };
-    let Some(uid) = result.get("uid").and_then(|u| u.as_i64()).filter(|u| *u > 0) else {
+    let Some(uid) = result
+        .get("uid")
+        .and_then(|u| u.as_i64())
+        .filter(|u| *u > 0)
+    else {
         return Ok(None);
     };
     let company_id = result
@@ -187,8 +194,14 @@ pub async fn active_users(
     let json: serde_json::Value = tokio::time::timeout(
         SYNC_TIMEOUT,
         client
-            .post(format!("{}/web/dataset/call_kw", odoo_url.trim_end_matches('/')))
-            .header(reqwest::header::COOKIE, format!("session_id={}", session.session_id))
+            .post(format!(
+                "{}/web/dataset/call_kw",
+                odoo_url.trim_end_matches('/')
+            ))
+            .header(
+                reqwest::header::COOKIE,
+                format!("session_id={}", session.session_id),
+            )
             .json(&body)
             .send(),
     )
@@ -200,7 +213,9 @@ pub async fn active_users(
         anyhow::bail!("Odoo call_kw falhou: {}", err);
     }
     let users: Vec<OdooUser> = serde_json::from_value(
-        json.get("result").cloned().unwrap_or(serde_json::Value::Null),
+        json.get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
     )
     .unwrap_or_default();
     Ok(users)
@@ -288,7 +303,9 @@ pub async fn ensure_org(
             Err(e) => return Err(e.into()),
         }
     }
-    Err(ApiError::internal("não foi possível alocar slug para a org Odoo"))
+    Err(ApiError::internal(
+        "não foi possível alocar slug para a org Odoo",
+    ))
 }
 
 /// Cria (ou actualiza) um utilizador local e garante que é membro da org.

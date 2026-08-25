@@ -91,7 +91,9 @@ impl Vp8IvfWriter {
             return Ok(());
         }
         let mut depack = Vp8Packet::default();
-        let Ok(payload) = depack.depacketize(&pkt.payload) else { return Ok(()) };
+        let Ok(payload) = depack.depacketize(&pkt.payload) else {
+            return Ok(());
+        };
         if payload.is_empty() {
             return Ok(());
         }
@@ -176,7 +178,9 @@ impl RecWriter {
             RecWriter::Audio { w, key } => {
                 // Opus: 1 frame por pacote — desencripta o payload (offset 1).
                 if let Some(key) = key {
-                    let Some(clear) = decrypt_e2ee(key, &pkt.payload, 1) else { return };
+                    let Some(clear) = decrypt_e2ee(key, &pkt.payload, 1) else {
+                        return;
+                    };
                     let mut pkt2 = pkt.clone();
                     pkt2.payload = clear.into();
                     let _ = w.write_rtp(&pkt2);

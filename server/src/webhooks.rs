@@ -321,13 +321,17 @@ mod tests {
     async fn allowlist_exempts_only_named_hosts() {
         let allow = vec!["odoo.interno".to_string()];
         // O destino nomeado passa mesmo resolvendo (ou não) para rede privada.
-        assert!(super::validate_public_url("http://odoo.interno:8069/hook", &allow)
-            .await
-            .is_ok());
+        assert!(
+            super::validate_public_url("http://odoo.interno:8069/hook", &allow)
+                .await
+                .is_ok()
+        );
         // Maiúsculas/minúsculas não contornam nem impedem a isenção.
-        assert!(super::validate_public_url("http://ODOO.INTERNO/hook", &allow)
-            .await
-            .is_ok());
+        assert!(
+            super::validate_public_url("http://ODOO.INTERNO/hook", &allow)
+                .await
+                .is_ok()
+        );
         // Um host NÃO nomeado continua bloqueado — a isenção é por destino,
         // não por rede: o endpoint de metadata da cloud não passa.
         assert!(
@@ -335,13 +339,17 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert!(super::validate_public_url("http://127.0.0.1:8069/hook", &allow)
-            .await
-            .is_err());
+        assert!(
+            super::validate_public_url("http://127.0.0.1:8069/hook", &allow)
+                .await
+                .is_err()
+        );
         // Sem allowlist (omissão) nada interno passa.
-        assert!(super::validate_public_url("http://odoo.interno:8069/hook", &[])
-            .await
-            .is_err());
+        assert!(
+            super::validate_public_url("http://odoo.interno:8069/hook", &[])
+                .await
+                .is_err()
+        );
     }
 
     #[test]
@@ -350,7 +358,10 @@ mod tests {
         // ata AI ficou pronta — o evento existia e não chegava a ninguém.
         assert!(super::DEFAULT_EVENTS.contains("meeting.mom_ready"));
         for e in super::DEFAULT_EVENTS.split(',') {
-            assert!(super::KNOWN_EVENTS.contains(&e), "{e} não é um evento conhecido");
+            assert!(
+                super::KNOWN_EVENTS.contains(&e),
+                "{e} não é um evento conhecido"
+            );
         }
     }
 

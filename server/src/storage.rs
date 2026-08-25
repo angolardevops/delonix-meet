@@ -156,7 +156,9 @@ pub async fn test_storage(
     .await?;
 
     let Some((stype, wurl, wuser, wpwd, nfs_srv)) = row else {
-        return Ok(Json(serde_json::json!({ "ok": true, "type": "local", "message": "Armazenamento local activo (sem configuração remota)." })));
+        return Ok(Json(
+            serde_json::json!({ "ok": true, "type": "local", "message": "Armazenamento local activo (sem configuração remota)." }),
+        ));
     };
 
     match stype.as_str() {

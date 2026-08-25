@@ -507,7 +507,9 @@ pub async fn save_minutes_by_room(
         .await?;
     let Some((mid,)) = meeting else {
         // Sala sem reunião agendada associada — nada a guardar, mas não é erro.
-        return Ok(Json(serde_json::json!({ "ok": false, "reason": "no meeting for room" })));
+        return Ok(Json(
+            serde_json::json!({ "ok": false, "reason": "no meeting for room" }),
+        ));
     };
     save_minutes(State(state), auth, Path(mid), Json(req)).await
 }

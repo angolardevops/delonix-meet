@@ -148,7 +148,11 @@ impl ConnTx {
     fn new(
         cap: usize,
         metrics: Arc<crate::metrics::Metrics>,
-    ) -> (Self, mpsc::Receiver<CallServerMsg>, Arc<tokio::sync::Notify>) {
+    ) -> (
+        Self,
+        mpsc::Receiver<CallServerMsg>,
+        Arc<tokio::sync::Notify>,
+    ) {
         let (tx, rx) = mpsc::channel(cap);
         let shutdown = Arc::new(tokio::sync::Notify::new());
         (
@@ -421,7 +425,9 @@ async fn handle(state: Arc<AppState>, socket: WebSocket, user_id: Uuid, username
 
     let writer = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            let Ok(text) = serde_json::to_string(&msg) else { continue };
+            let Ok(text) = serde_json::to_string(&msg) else {
+                continue;
+            };
             if sink.send(Message::Text(text.into())).await.is_err() {
                 break;
             }
@@ -457,10 +463,14 @@ async fn handle(state: Arc<AppState>, socket: WebSocket, user_id: Uuid, username
             break;
         }
         let Message::Text(text) = msg else {
-            if matches!(msg, Message::Close(_)) { break }
+            if matches!(msg, Message::Close(_)) {
+                break;
+            }
             continue;
         };
-        let Ok(cmd) = serde_json::from_str::<CallClientMsg>(&text) else { continue };
+        let Ok(cmd) = serde_json::from_str::<CallClientMsg>(&text) else {
+            continue;
+        };
         match cmd {
             CallClientMsg::Ping => {}
             CallClientMsg::CallStart {
