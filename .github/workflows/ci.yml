@@ -179,8 +179,24 @@ jobs:
       # JavaScript de propósito: é uma segunda implementação independente do
       # RFC 6238, e vê-la concordar com a de Rust vale muito mais do que ver a
       # de Rust concordar consigo própria.
-      - name: MFA por TOTP (fluxo completo)
+      - name: MFA por TOTP (fluxo completo, ao nível da API)
         run: node web/e2e/mfa.mjs
+
+      # E o mesmo visto pelo UTILIZADOR. O backend estar certo não faz um
+      # produto: sem interface, o MFA existe para quem sabe fazer POSTs. É este
+      # teste que separa as duas coisas.
+      - name: Chromium para o teste de interface
+        run: npx playwright install chromium
+        working-directory: web
+
+      - name: Interface do MFA (Chromium real)
+        run: |
+          (cd web && NO_HTTPS=1 npx vite --port 5174 > /tmp/vite.log 2>&1 &)
+          for i in $(seq 1 40); do
+            curl -sf http://localhost:5174/ >/dev/null && break
+            sleep 2
+          done
+          APP=http://localhost:5174 node web/e2e/ui-mfa.mjs
 
       - name: Log do servidor (se falhar)
         if: failure()

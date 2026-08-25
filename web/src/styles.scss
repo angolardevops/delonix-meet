@@ -4601,3 +4601,49 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
    (que já desconta a barra de topo), não pela viewport — senão ficavam
    ~46px demasiado altas e apareciam com scroll parasita. */
 .shell-body > .cal-page { height: 100%; }
+
+/* ============================================================
+   MFA — verificação em dois passos (ver components/MfaPanel.tsx)
+   Tokens em vez de cores fixas, como o resto da consola: estes ecrãs têm de
+   funcionar nos quatro temas sem se tocar aqui outra vez.
+   ============================================================ */
+.mfa-panel { display: flex; flex-direction: column; gap: 0.85rem; }
+.mfa-panel h3 {
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); margin: 0;
+}
+.mfa-on { color: var(--ok, var(--accent)); font-weight: 600; margin: 0; }
+.mfa-warn {
+  margin: 0; padding: 0.7rem 0.85rem; border-radius: 6px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 0.9rem; line-height: 1.45;
+}
+/* O QR vem como SVG do gerador; o fundo é branco de propósito — um leitor de
+   código precisa de contraste real, e num tema escuro o SVG sozinho não o tem. */
+.mfa-qr {
+  align-self: flex-start; padding: 10px; border-radius: 8px;
+  background: #fff; line-height: 0;
+}
+.mfa-qr svg { display: block; width: 220px; height: 220px; }
+.mfa-secret {
+  display: block; padding: 0.55rem 0.7rem; border-radius: 5px;
+  background: var(--surface-2); border: 1px solid var(--ghost-2);
+  font-family: var(--mono, monospace); letter-spacing: 0.12em; user-select: all;
+}
+.mfa-codes {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.35rem 0.9rem;
+  list-style: none; margin: 0; padding: 0.8rem;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+}
+.mfa-codes code { font-family: var(--mono, monospace); letter-spacing: 0.06em; user-select: all; }
+.mfa-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.mfa-confirm { display: flex; gap: 0.5rem; align-items: center; font-size: 0.9rem; }
+.mfa-confirm input { width: auto; accent-color: var(--accent); }
+
+/* Entrada do código no login: dígitos grandes e espaçados, porque é copiado à
+   mão de outro ecrã e um erro de leitura custa uma tentativa inteira. */
+.auth-mfa { display: flex; flex-direction: column; gap: 0.75rem; }
+.mfa-code-input {
+  font-size: 1.5rem; letter-spacing: 0.35em; text-align: center;
+  font-family: var(--mono, monospace);
+}

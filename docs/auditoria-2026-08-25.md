@@ -94,7 +94,7 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | Login com conta Odoo | ✅ | `odoo_sso.rs`, org nasce da empresa, directório sincroniza | — |
 | SAML 2.0 | 🔴 | **zero código** (a palavra só aparece em `i18n.ts`) | Alto |
 | SCIM 2.0 | 📄 | **zero código**; existe *postura* no ecrã de Analytics | **Alto** — o ecrã sugere uma capacidade que não existe |
-| MFA — TOTP + códigos de recuperação | 🔴 → 🟡 **backend completo e validado, SEM interface** | RFC 6238 implementado contra os vectores oficiais; inscrição, activação, login em duas fases, anti-replay, códigos de recuperação de uso único. 19 asserções ponta-a-ponta contra servidor real, com um gerador TOTP independente em JS. **Não há um único ecrã** — e pela doutrina da casa, uma capacidade que só existe na API não conta como produto | Médio (era Crítico) |
+| MFA — TOTP + códigos de recuperação | 🔴 → ✅ **produto, não só API** | RFC 6238 contra os vectores oficiais; inscrição com QR, activação, login em duas fases, anti-replay, códigos de recuperação de uso único. **19 asserções ao nível da API + 13 num Chromium real** — QR a renderizar, códigos mostrados uma vez com confirmação obrigatória, e o login a pedir o código em vez de entrar | Baixo (era Crítico) |
 | WebAuthn / passkeys | 🔴 | zero | Alto |
 | RBAC | 🟡 | **2 papéis**: `admin` \| `member` (`org.rs:431`). O pedido são **15** (platform admin, security admin, compliance officer, co-host, presenter, recording editor, auditor read-only, …) | Alto |
 | Autorização validada no servidor | ✅ | host controls em `signaling.rs`, não confiados no cliente | — |

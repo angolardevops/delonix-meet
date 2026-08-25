@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { login, registerOrg, ssoCheck, ssoRedirect, getPlatformSettings, User } from '../api'
+import { login, loginMfa, registerOrg, ssoCheck, ssoRedirect, getPlatformSettings, User } from '../api'
 import { LanguageToggle } from '../components/Shell'
 import PasswordInput from '../components/PasswordInput'
 import { appNameParts, getLoginBg } from '../branding'
@@ -14,6 +14,9 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
+  /** Desafio de segundo factor devolvido pelo login (JWT `typ: "mfa"`, 5 min). */
+  const [mfaToken, setMfaToken] = useState<string | null>(null)
+  const [mfaCode, setMfaCode] = useState('')
 
   // Flags da plataforma (integração Odoo pode ocultar registo e SSO)
   const [hideOrgCreation, setHideOrgCreation] = useState(false)
@@ -67,11 +70,40 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
     setError('')
     setBusy(true)
     try {
-      const user =
-        mode === 'login' ? await login(email, password) : await registerOrg(orgName, email, password)
-      onLogin(user)
+      if (mode === 'login') {
+        const r = await login(email, password)
+        // Com MFA activo a password NÃO produz sessão: o servidor devolve um
+        // desafio de 5 minutos e o ecrã passa a pedir o código. É o ponto todo
+        // do segundo factor.
+        if (r.kind === 'mfa') {
+          setMfaToken(r.mfa_token)
+          setBusy(false)
+          return
+        }
+        onLogin(r.user)
+      } else {
+        onLogin(await registerOrg(orgName, email, password))
+      }
     } catch (err) {
       setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function submitMfa(e: FormEvent) {
+    e.preventDefault()
+    if (!mfaToken) return
+    setError('')
+    setBusy(true)
+    try {
+      onLogin(await loginMfa(mfaToken, mfaCode.trim()))
+    } catch {
+      // Mensagem deliberadamente igual para código errado e desafio expirado:
+      // distinguir os dois diria a quem tenta adivinhar se vale a pena insistir
+      // no mesmo desafio ou recomeçar.
+      setError(t('mfa.wrongCode', 'Código inválido ou expirado. Tenta o código seguinte do teu autenticador.'))
+      setMfaCode('')
     } finally {
       setBusy(false)
     }
@@ -106,6 +138,42 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
         </div>
         <p className="tagline">{t('login.tagline')}</p>
 
+        {/* Segundo factor: substitui o formulário inteiro. Não se mostra ao lado
+            do email/password porque a password JÁ foi aceite — deixá-los
+            visíveis sugeria que se podia recomeçar sem o código, que é o
+            oposto do que o segundo factor faz. */}
+        {mfaToken ? (
+          <form onSubmit={submitMfa} className="auth-mfa">
+            <p className="auth-hint">
+              {t('mfa.prompt', 'Introduz o código de 6 dígitos do teu autenticador.')}
+            </p>
+            <input
+              className="mfa-code-input"
+              value={mfaCode}
+              onChange={(e) => setMfaCode(e.target.value.replace(/[^0-9A-Za-z-]/g, '').slice(0, 11))}
+              placeholder="000000"
+              autoFocus
+              autoComplete="one-time-code"
+              inputMode="numeric"
+              aria-label={t('mfa.prompt', 'Código de verificação')}
+            />
+            <small className="muted">
+              {t('mfa.backupHint', 'Sem acesso ao autenticador? Usa um código de recuperação.')}
+            </small>
+            {error && <p className="auth-error" role="alert">{error}</p>}
+            <button className="btn-primary" type="submit" disabled={busy || mfaCode.trim().length < 6}>
+              {busy ? t('common.loading', 'A verificar…') : t('mfa.verify', 'Verificar')}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost small"
+              onClick={() => { setMfaToken(null); setMfaCode(''); setError('') }}
+            >
+              {t('common.cancel', 'Cancelar')}
+            </button>
+          </form>
+        ) : (
+        <>
         <div className="auth-tabs">
           <button
             className={mode === 'login' ? 'auth-tab active' : 'auth-tab'}
@@ -176,14 +244,21 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
             </>
           )}
         </form>
+        </>
+        )}
 
-        {mode === 'login' && !ssoEnforced && (
+        {/* Recuperar a password e o SSO são caminhos ALTERNATIVOS ao par
+            email+password. No passo do segundo factor a password JÁ foi
+            aceite: mostrá-los ali confundia (parecem uma saída que não é) e o
+            botão de SSO chegava a abandonar o fluxo a meio. Só aparecem antes
+            do desafio. */}
+        {!mfaToken && mode === 'login' && !ssoEnforced && (
           <button className="link small-link" onClick={() => setNotice(t('login.forgotSoon'))}>
             {t('login.forgot')}
           </button>
         )}
 
-        {!hideSsoButton && (
+        {!mfaToken && !hideSsoButton && (
           <>
             <div className="auth-divider">
               <span>{t('common.or')}</span>
