@@ -64,6 +64,28 @@ pub struct Config {
     pub ollama_model_translate: String,
     /// Modelo para o resumo da ata (qualidade; ex.: qwen2.5:7b em prod).
     pub ollama_model_summary: String,
+    /// Capacidade da fila de saída de CADA WebSocket (`WS_QUEUE_CAP`). As filas
+    /// são LIMITADAS por desenho: um cliente cujo socket TCP estagna (rede
+    /// degradada, aba suspensa, cliente parado no depurador) deixa de drenar a
+    /// fila, e uma fila ilimitada cresce até à memória do nó acabar — uma sala
+    /// com um único consumidor lento derrubava o pod inteiro. Cheia:
+    /// descarta-se o que é efémero (legenda parcial, traço, reacção) e
+    /// fecha-se o socket se a mensagem for de protocolo. Ver `PeerTx`.
+    pub ws_queue_cap: usize,
+    /// Tecto de tempo para a composição `ffmpeg` de uma gravação
+    /// (`FFMPEG_TIMEOUT_SECS`, default 3600). Sem tecto, um input malformado
+    /// pendura o processo para sempre: o directório temporário nunca é
+    /// limpo, a gravação nunca entra na biblioteca, e ninguém dá por isso.
+    pub ffmpeg_timeout_secs: u64,
+    /// Threads que o `ffmpeg` pode usar (`FFMPEG_THREADS`, default 2). É o
+    /// travão de CPU que temos sem cgroups: sem ele o `ffmpeg` toma todos os
+    /// núcleos do nó e a composição de uma gravação degrada as chamadas VIVAS
+    /// que estão a decorrer no mesmo pod.
+    pub ffmpeg_threads: u32,
+    /// Capacidade da fila de renegociação do SFU por peer (`NEGO_QUEUE_CAP`).
+    /// Coalescível: o estado de subscrição mais recente vence, por isso
+    /// transbordar descarta o pedido mais novo e conta a métrica.
+    pub nego_queue_cap: usize,
 }
 
 impl Config {
@@ -111,7 +133,30 @@ impl Config {
                 .unwrap_or_else(|_| "qwen2.5:1.5b".into()),
             ollama_model_summary: env::var("OLLAMA_MODEL_SUMMARY")
                 .unwrap_or_else(|_| "qwen2.5:1.5b".into()),
+            ws_queue_cap: bounded_env("WS_QUEUE_CAP", 512, 32, 65_536),
+            nego_queue_cap: bounded_env("NEGO_QUEUE_CAP", 64, 4, 4_096),
+            ffmpeg_timeout_secs: bounded_env("FFMPEG_TIMEOUT_SECS", 3_600, 30, 86_400) as u64,
+            ffmpeg_threads: bounded_env("FFMPEG_THREADS", 2, 1, 64) as u32,
         }
+    }
+}
+
+/// Lê um tamanho de fila do ambiente, preso a `[min, max]`. Um valor
+/// inválido ou fora do intervalo cai no default com um aviso em vez de fazer
+/// panic: uma fila mal configurada não deve impedir o servidor de arrancar,
+/// mas também não pode virar «ilimitada por engano» com um 0 ou um u32 inteiro.
+fn bounded_env(var: &str, default: usize, min: usize, max: usize) -> usize {
+    match env::var(var) {
+        Err(_) => default,
+        Ok(v) => match v.trim().parse::<usize>() {
+            Ok(n) if (min..=max).contains(&n) => n,
+            _ => {
+                tracing::warn!(
+                    "{var}='{v}' inválido (esperado inteiro em {min}..={max}) — a usar {default}"
+                );
+                default
+            }
+        },
     }
 }
 

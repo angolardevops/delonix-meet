@@ -679,7 +679,10 @@ pub async fn patch(
         // (re)adicioná-lo, e quem o chamador omitiu sai. Quem se manteve conserva
         // o `status` (aceite/recusado) — reescrever o conjunto todo perderia
         // respostas.
-        let requested: Vec<String> = list.iter().filter_map(|i| normalize_email(&i.email)).collect();
+        let requested: Vec<String> = list
+            .iter()
+            .filter_map(|i| normalize_email(&i.email))
+            .collect();
         sqlx::query(
             "DELETE FROM meeting_invitees mi
              USING users u
@@ -723,12 +726,11 @@ pub async fn ring(
         ));
     };
 
-    let owner_name: String =
-        sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
-            .bind(meeting.owner_id)
-            .fetch_optional(&state.db)
-            .await?
-            .unwrap_or_default();
+    let owner_name: String = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+        .bind(meeting.owner_id)
+        .fetch_optional(&state.db)
+        .await?
+        .unwrap_or_default();
 
     // Quem já está na sala não deve ser incomodado.
     let already_in: std::collections::HashSet<Uuid> =

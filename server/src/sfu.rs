@@ -45,8 +45,7 @@ use webrtc::{
     },
     rtcp::{
         payload_feedbacks::{
-            full_intra_request::FullIntraRequest,
-            picture_loss_indication::PictureLossIndication,
+            full_intra_request::FullIntraRequest, picture_loss_indication::PictureLossIndication,
         },
         receiver_report::ReceiverReport,
     },
@@ -56,11 +55,11 @@ use webrtc::{
         rtp_receiver::RTCRtpReceiver,
         rtp_sender::RTCRtpSender,
     },
-    util::Unmarshal,
     track::{
         track_local::{track_local_static_rtp::TrackLocalStaticRTP, TrackLocal, TrackLocalWriter},
         track_remote::TrackRemote,
     },
+    util::Unmarshal,
 };
 
 use crate::signaling::{ClientMsg, ServerMsg};
@@ -237,13 +236,16 @@ struct SfuPeer {
     /// Este peer anunciou partilha de ecrã: a próxima track de vídeo SEM rid
     /// é o ecrã (a câmara publica sempre com rids de simulcast).
     sharing: AtomicBool,
-    out: mpsc::UnboundedSender<ServerMsg>,
+    out: crate::signaling::PeerTx,
     /// Canal ÚNICO de negociação: ofertas do cliente, respostas do cliente e
     /// pedidos de renegociação do servidor passam todos por aqui e são
     /// processados em série pela `negotiation_loop`. Ver `NegoMsg`.
-    nego_tx: mpsc::UnboundedSender<NegoMsg>,
+    nego_tx: mpsc::Sender<NegoMsg>,
     /// Já há um pedido de renegociação em fila? (colapsa rajadas de subscrição)
     renegotiate_queued: AtomicBool,
+    /// Contadores partilhados — as funções livres que falam com este peer
+    /// (`trigger_renegotiate`) precisam de contar descartes sem ter o `SfuState`.
+    metrics: Arc<crate::metrics::Metrics>,
     pending_ice: Mutex<Vec<RTCIceCandidateInit>>,
     /// Subscrições ativas deste peer: (publisher, kind) -> (rid, sender).
     /// Garante 1 camada por publicador/tipo e permite trocar de camada.
@@ -364,6 +366,10 @@ pub struct SfuState {
     ice: IceConfig,
     /// Contadores de observabilidade partilhados (ver metrics.rs).
     metrics: Arc<crate::metrics::Metrics>,
+    /// Capacidade da fila de renegociação por peer (`NEGO_QUEUE_CAP`).
+    /// 0 (o `Default`) significa «usa o default do código» — só o `SfuState`
+    /// construído pelo `main` traz o valor da configuração.
+    nego_cap: usize,
 }
 
 /// Config de ICE que o SFU usa para se tornar alcançável de fora do cluster.
@@ -381,11 +387,36 @@ pub struct IceConfig {
 
 impl SfuState {
     /// Constrói o SFU com a config de ICE (a partir de `Config`) e os contadores.
-    pub fn new(ice: IceConfig, metrics: Arc<crate::metrics::Metrics>) -> Self {
+    pub fn new(ice: IceConfig, metrics: Arc<crate::metrics::Metrics>, nego_cap: usize) -> Self {
         Self {
             ice,
             metrics,
+            nego_cap,
             ..Default::default()
+        }
+    }
+
+    /// Capacidade efectiva da fila de renegociação (default do código quando o
+    /// `SfuState` foi construído por `Default`, como nos testes).
+    fn nego_cap(&self) -> usize {
+        if self.nego_cap == 0 {
+            64
+        } else {
+            self.nego_cap
+        }
+    }
+
+    /// Põe uma mensagem de negociação na fila LIMITADA do peer.
+    ///
+    /// Cheia significa que a `negotiation_loop` deste peer está tão atrasada
+    /// que já tem dezenas de trocas SDP por processar — nesse ponto a sessão
+    /// não é recuperável por acumular mais uma. Descarta-se e conta-se; a
+    /// renegociação seguinte (ou o timeout, que já incrementa
+    /// `sfu_renegotiations_failed_total`) trata da recuperação.
+    fn enqueue_nego(&self, peer: &Arc<SfuPeer>, msg: NegoMsg) {
+        if peer.nego_tx.try_send(msg).is_err() {
+            crate::metrics::Metrics::bump(&self.metrics.nego_queue_dropped_total);
+            tracing::warn!("fila de renegociação cheia — pedido descartado");
         }
     }
 }
@@ -528,7 +559,7 @@ impl SfuState {
         self: &Arc<Self>,
         room_id: Uuid,
         peer_id: Uuid,
-        out: mpsc::UnboundedSender<ServerMsg>,
+        out: crate::signaling::PeerTx,
     ) -> Result<()> {
         crate::metrics::Metrics::bump(&self.metrics.sfu_peers_total);
         let room = self
@@ -559,13 +590,14 @@ impl SfuState {
         };
         let pc = Arc::new(api.new_peer_connection(pc_config).await?);
 
-        let (nego_tx, nego_rx) = mpsc::unbounded_channel();
+        let (nego_tx, nego_rx) = mpsc::channel(self.nego_cap());
         let peer = Arc::new(SfuPeer {
             pc: pc.clone(),
             sharing: AtomicBool::new(false),
             out: out.clone(),
             nego_tx,
             renegotiate_queued: AtomicBool::new(false),
+            metrics: self.metrics.clone(),
             pending_ice: Mutex::new(Vec::new()),
             subscribed: Mutex::new(HashMap::new()),
             quality: Quality::default(),
@@ -596,7 +628,9 @@ impl SfuState {
             pc.on_track(Box::new(move |remote, receiver, _transceiver| {
                 let state = state.clone();
                 Box::pin(async move {
-                    state.handle_publish(room_id, peer_id, remote, receiver).await;
+                    state
+                        .handle_publish(room_id, peer_id, remote, receiver)
+                        .await;
                 })
             }));
         }
@@ -676,11 +710,11 @@ impl SfuState {
             // NÃO é aplicada aqui: vai para a `negotiation_loop`, que a aplica
             // quando não houver oferta nossa por responder (glare — ver NegoMsg).
             ClientMsg::SfuOffer { sdp } => {
-                let _ = peer.nego_tx.send(NegoMsg::ClientOffer(sdp));
+                self.enqueue_nego(&peer, NegoMsg::ClientOffer(sdp));
             }
             // Resposta do cliente a uma renegociação iniciada pelo servidor.
             ClientMsg::SfuAnswer { sdp } => {
-                let _ = peer.nego_tx.send(NegoMsg::ClientAnswer(sdp));
+                self.enqueue_nego(&peer, NegoMsg::ClientAnswer(sdp));
             }
             ClientMsg::SfuIce { candidate } => {
                 let init: RTCIceCandidateInit =
@@ -952,78 +986,81 @@ impl SfuState {
         peer_id: Uuid,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
         Box::pin(async move {
-        let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
-            return;
-        };
-        let Some(peer) = self.peer(room_id, peer_id).await else {
-            return;
-        };
-        // Peer ainda sem SDP remoto (acabou de entrar, ainda não ofertou):
-        // subscrever agora produziria uma renegociação a apontar para o vazio.
-        // O `apply_client_offer` chama isto assim que a oferta dele chega.
-        if peer.pc.remote_description().await.is_none() {
-            return;
-        }
-        let room_size = room.peers.lock().await.len();
-        let shift = peer.quality.shift.load(Relaxed);
-        let publications = room.publications.lock().await.clone();
-
-        // Agrupar camadas por (publicador, tipo).
-        let mut groups: HashMap<(Uuid, String), Vec<Arc<Publication>>> = HashMap::new();
-        for p in publications {
-            if p.publisher == peer_id {
-                continue;
+            let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
+                return;
+            };
+            let Some(peer) = self.peer(room_id, peer_id).await else {
+                return;
+            };
+            // Peer ainda sem SDP remoto (acabou de entrar, ainda não ofertou):
+            // subscrever agora produziria uma renegociação a apontar para o vazio.
+            // O `apply_client_offer` chama isto assim que a oferta dele chega.
+            if peer.pc.remote_description().await.is_none() {
+                return;
             }
-            groups
-                .entry((p.publisher, p.kind.clone()))
-                .or_default()
-                .push(p);
-        }
-        let current = peer.subscribed.lock().await.clone();
-        let interest = peer.video_interest.lock().await.clone();
-        for (key, layers) in groups {
-            // Vídeo de câmara fora da página que o cliente está a ver: se
-            // estava ligado, DESLIGA (é aqui que a paginação poupa banda a
-            // sério). Áudio e ecrã partilhado passam sempre.
-            let wanted_by_client = key.1 != "video"
-                || interest.as_ref().is_none_or(|set| set.contains(&key.0));
-            if !wanted_by_client {
-                if let Some((_, sender)) = current.get(&key) {
-                    let _ = peer.pc.remove_track(sender).await;
-                    peer.subscribed.lock().await.remove(&key);
-                    for p in &layers {
-                        if p.subscribers.lock().await.remove(&peer_id).is_some() {
-                            p.touch_subs();
-                            crate::metrics::Metrics::dec(&self.metrics.sfu_subscriptions);
+            let room_size = room.peers.lock().await.len();
+            let shift = peer.quality.shift.load(Relaxed);
+            let publications = room.publications.lock().await.clone();
+
+            // Agrupar camadas por (publicador, tipo).
+            let mut groups: HashMap<(Uuid, String), Vec<Arc<Publication>>> = HashMap::new();
+            for p in publications {
+                if p.publisher == peer_id {
+                    continue;
+                }
+                groups
+                    .entry((p.publisher, p.kind.clone()))
+                    .or_default()
+                    .push(p);
+            }
+            let current = peer.subscribed.lock().await.clone();
+            let interest = peer.video_interest.lock().await.clone();
+            for (key, layers) in groups {
+                // Vídeo de câmara fora da página que o cliente está a ver: se
+                // estava ligado, DESLIGA (é aqui que a paginação poupa banda a
+                // sério). Áudio e ecrã partilhado passam sempre.
+                let wanted_by_client =
+                    key.1 != "video" || interest.as_ref().is_none_or(|set| set.contains(&key.0));
+                if !wanted_by_client {
+                    if let Some((_, sender)) = current.get(&key) {
+                        let _ = peer.pc.remove_track(sender).await;
+                        peer.subscribed.lock().await.remove(&key);
+                        for p in &layers {
+                            if p.subscribers.lock().await.remove(&peer_id).is_some() {
+                                p.touch_subs();
+                                crate::metrics::Metrics::dec(&self.metrics.sfu_subscriptions);
+                            }
+                        }
+                        trigger_renegotiate(&peer);
+                    }
+                    continue;
+                }
+                let wanted = wanted_rid(&key.1, room_size, shift);
+                let cur_rid = current.get(&key).map(|(rid, _)| rid.as_str());
+                let Some(chosen) = pick_layer(&layers, wanted, cur_rid) else {
+                    continue;
+                };
+                match current.get(&key) {
+                    None => {
+                        if let Err(e) =
+                            subscribe_layer(&self, room_id, chosen, peer_id, &peer).await
+                        {
+                            tracing::warn!(%room_id, %peer_id, error = %e, "sfu subscribe failed");
+                            continue;
                         }
                     }
-                    trigger_renegotiate(&peer);
-                }
-                continue;
-            }
-            let wanted = wanted_rid(&key.1, room_size, shift);
-            let cur_rid = current.get(&key).map(|(rid, _)| rid.as_str());
-            let Some(chosen) = pick_layer(&layers, wanted, cur_rid) else {
-                continue;
-            };
-            match current.get(&key) {
-                None => {
-                    if let Err(e) = subscribe_layer(&self, room_id, chosen, peer_id, &peer).await {
-                        tracing::warn!(%room_id, %peer_id, error = %e, "sfu subscribe failed");
-                        continue;
+                    Some((rid, old_sender)) if *rid != chosen.rid => {
+                        tracing::info!(%room_id, %peer_id, publisher = %key.0, from = %rid, to = %chosen.rid, shift, room_size, "sfu layer switch");
+                        crate::metrics::Metrics::bump(&self.metrics.sfu_layer_switches_total);
+                        switch_layer(&self, room_id, &room, chosen, peer_id, &peer, old_sender)
+                            .await;
                     }
+                    Some(_) => continue,
                 }
-                Some((rid, old_sender)) if *rid != chosen.rid => {
-                    tracing::info!(%room_id, %peer_id, publisher = %key.0, from = %rid, to = %chosen.rid, shift, room_size, "sfu layer switch");
-                    crate::metrics::Metrics::bump(&self.metrics.sfu_layer_switches_total);
-                    switch_layer(&self, room_id, &room, chosen, peer_id, &peer, old_sender).await;
-                }
-                Some(_) => continue,
+                // Keyframe imediato: sem ele o subscritor novo fica preto até ao
+                // próximo keyframe natural do publicador.
+                request_keyframe(chosen, &self.metrics).await;
             }
-            // Keyframe imediato: sem ele o subscritor novo fica preto até ao
-            // próximo keyframe natural do publicador.
-            request_keyframe(chosen, &self.metrics).await;
-        }
         })
     }
 
@@ -1272,7 +1309,12 @@ impl SfuState {
     /// deitado fora. Aqui o SFU **deixa mesmo de enviar** o que não está no
     /// ecrã. Só afeta `video`: o áudio de toda a gente e o ecrã partilhado
     /// continuam sempre subscritos.
-    pub async fn set_video_interest(self: &Arc<Self>, room_id: Uuid, peer_id: Uuid, peers: Vec<Uuid>) {
+    pub async fn set_video_interest(
+        self: &Arc<Self>,
+        room_id: Uuid,
+        peer_id: Uuid,
+        peers: Vec<Uuid>,
+    ) {
         let Some(peer) = self.peer(room_id, peer_id).await else {
             return;
         };
@@ -1296,7 +1338,6 @@ impl SfuState {
         }
     }
 }
-
 
 /// A gravação server-side só sabe escrever VP8 (IVF, com PTS reais do RTP) e
 /// Opus (OGG). Se o browser negociar VP9/H264/AV1, o depacketizer VP8 devolve
@@ -1408,9 +1449,36 @@ async fn request_keyframe(publication: &Arc<Publication>, metrics: &Arc<crate::m
 /// Pede uma renegociação ao peer, colapsando rajadas: várias subscrições
 /// adicionadas em sequência produzem UMA oferta, não uma por track.
 fn trigger_renegotiate(peer: &Arc<SfuPeer>) {
-    if !peer.renegotiate_queued.swap(true, Relaxed) {
-        let _ = peer.nego_tx.send(NegoMsg::Renegotiate);
+    let mut rejected = false;
+    coalesce_renegotiate(&peer.renegotiate_queued, || {
+        let ok = peer.nego_tx.try_send(NegoMsg::Renegotiate).is_ok();
+        rejected = !ok;
+        ok
+    });
+    if rejected {
+        crate::metrics::Metrics::bump(&peer.metrics.nego_queue_dropped_total);
+        tracing::warn!("fila de renegociação cheia — pedido de renegociação descartado");
     }
+}
+
+/// Coalescing do pedido de renegociação, com **reposição da bandeira em falha**.
+///
+/// A bandeira existe para colapsar rajadas: várias subscrições seguidas
+/// produzem UMA oferta. Com a fila agora limitada, o envio pode falhar — e se
+/// a bandeira ficasse a `true` com o pedido perdido, este peer **nunca mais**
+/// renegociaria e ficava permanentemente sem receber media nova. Repor é o que
+/// torna o limite seguro.
+///
+/// Devolve `true` só quando o pedido ficou mesmo em fila.
+fn coalesce_renegotiate(queued: &AtomicBool, send: impl FnOnce() -> bool) -> bool {
+    if queued.swap(true, Relaxed) {
+        return false; // já havia um pedido por processar
+    }
+    if send() {
+        return true;
+    }
+    queued.store(false, Relaxed);
+    false
 }
 
 /// Liga uma publicação (camada concreta) a um subscritor e renegoceia.
@@ -1601,7 +1669,7 @@ async fn negotiation_loop(
     room_id: Uuid,
     peer_id: Uuid,
     peer: Weak<SfuPeer>,
-    mut rx: mpsc::UnboundedReceiver<NegoMsg>,
+    mut rx: mpsc::Receiver<NegoMsg>,
 ) {
     let mut deferred: VecDeque<String> = VecDeque::new();
     while let Some(msg) = rx.recv().await {
@@ -1631,7 +1699,7 @@ async fn negotiation_loop(
 /// sem rollback). Ofertas do cliente que cheguem entretanto ficam em `deferred`.
 async fn run_renegotiation(
     peer: &Arc<SfuPeer>,
-    rx: &mut mpsc::UnboundedReceiver<NegoMsg>,
+    rx: &mut mpsc::Receiver<NegoMsg>,
     deferred: &mut VecDeque<String>,
     metrics: &Arc<crate::metrics::Metrics>,
 ) {
@@ -1795,7 +1863,10 @@ mod tests {
         for _ in 0..20 {
             quiet.decay();
         }
-        assert!(quiet.energy() < 5, "silêncio prolongado tem de libertar o top-N");
+        assert!(
+            quiet.energy() < 5,
+            "silêncio prolongado tem de libertar o top-N"
+        );
 
         // Com DTX não chegam pacotes: sem `decay()` a energia ficaria presa.
         let silent_with_dtx = AudioMeter::default();
@@ -1831,6 +1902,34 @@ mod tests {
     /// `pick_layer` NÃO pode trocar de camada só porque a desejada ainda não
     /// chegou: no arranque de um publicador as camadas chegam `q`→`h`→`f` e
     /// isso provocaria uma renegociação por cada uma.
+    #[test]
+    fn renegotiate_flag_is_restored_when_the_queue_rejects() {
+        let flag = AtomicBool::new(false);
+
+        // Caminho normal: entra em fila, bandeira fica levantada.
+        assert!(coalesce_renegotiate(&flag, || true));
+        assert!(flag.load(Relaxed));
+
+        // Segundo pedido enquanto o primeiro não foi processado: coalescido.
+        assert!(!coalesce_renegotiate(&flag, || panic!(
+            "não devia tentar enviar"
+        )));
+
+        // Processado — bandeira baixa (é o que a negotiation_loop faz).
+        flag.store(false, Relaxed);
+
+        // Fila cheia: o pedido perde-se MAS a bandeira tem de voltar a baixo,
+        // senão o peer nunca mais renegoceia (fica sem media nova para sempre).
+        assert!(!coalesce_renegotiate(&flag, || false));
+        assert!(
+            !flag.load(Relaxed),
+            "bandeira presa a true após falha de envio = peer sem renegociação para sempre"
+        );
+
+        // E o pedido seguinte volta a poder ser enviado.
+        assert!(coalesce_renegotiate(&flag, || true));
+    }
+
     #[test]
     fn pick_layer_keeps_current_while_wanted_is_missing() {
         let layers = ["q", "h"];

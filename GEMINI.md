@@ -23,8 +23,8 @@
 | Component | Version | Why it matters |
 |---|---|---|
 | Rust | 1.80+ | Edition 2021, async closures, `impl Trait` in fn params |
-| axum | 0.7 | `Router::new()`, `Extension` extractors, `MethodRouter` |
-| sqlx | 0.7 | `query!` macros with compile-time checking (requires `DATABASE_URL` at build) |
+| axum | 0.8 | `Router::new()`, `Extension` extractors, `MethodRouter` |
+| sqlx | 0.8 | Runtime API (`query`, `query_as::<_, T>`) — **no** compile-time checking, and **no** `DATABASE_URL` needed at build |
 | reqwest | **0.12** (rustls-tls) | **Do NOT upgrade to 0.13** — rustls version conflict |
 | webrtc-rs | Latest compatible | SFU: DTLs, SRTP, RTP fan-out, simulcast |
 | React | 18 | Concurrent features, `useTransition`, `useDeferredValue` |
@@ -162,7 +162,7 @@ cargo build --release
 
 ### Rust
 - All handler errors via `AppError` — no `unwrap()` in production code
-- `sqlx::query!` macros with compile-time verification
+- `sqlx::query` / `sqlx::query_as::<_, T>` (runtime API — no compile-time verification; a wrong column name fails at runtime, not at build)
 - Handlers return `Result<impl IntoResponse, AppError>`
 - New modules: declare in `main.rs` (`mod new_module;`) + register routes in router
 - Migrations: `server/migrations/NNNN_name.sql` with sequential prefix

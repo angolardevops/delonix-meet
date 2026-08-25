@@ -10,6 +10,7 @@ use futures_util::{stream::SplitStream, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
+    sync::atomic::{AtomicBool, Ordering::Relaxed},
     sync::Arc,
 };
 use tokio::sync::{mpsc, oneshot};
@@ -457,6 +458,105 @@ const INTERIM_MAX_ROOM: usize = 12;
 const INTERIM_BURST: f64 = 8.0;
 const INTERIM_PER_SEC: f64 = 4.0;
 
+impl ServerMsg {
+    /// Esta mensagem pode perder-se sem quebrar o protocolo nem o estado?
+    ///
+    /// Só é `true` para o que é EFÉMERO e auto-substituível: a legenda parcial
+    /// é substituída pela final, o traço de quadro só existe enquanto se
+    /// desenha, e a reacção some ao fim de segundos. Tudo o resto — oferta,
+    /// resposta, ICE, entrada/saída, admissão, definições da sala, estado das
+    /// ferramentas — é PROTOCOLO ou ESTADO: perder uma mensagem dessas deixa o
+    /// cliente a acreditar num sistema que já não existe, que é pior do que o
+    /// desligar. Por isso o transbordo com uma destas fecha o socket.
+    fn is_droppable(&self) -> bool {
+        matches!(
+            self,
+            ServerMsg::TranscriptInterim { .. }
+                | ServerMsg::WbStroke { .. }
+                | ServerMsg::Reaction { .. }
+        )
+    }
+}
+
+/// Fila de saída de UM socket de sinalização — **limitada**.
+///
+/// Porquê limitada: o `writer` só drena a fila ao ritmo a que o TCP do cliente
+/// aceita bytes. Um cliente numa rede degradada (o caso normal do nosso
+/// mercado), com a aba suspensa, ou parado num depurador, deixa de drenar — e
+/// a sala continua a difundir-lhe traços de quadro, legendas e ICE. Com uma
+/// fila ilimitada isso cresce até à memória do nó acabar: UM consumidor lento
+/// derruba o pod e com ele TODAS as salas nesse pod (a afinidade por sala
+/// concentra-as, ver ADR-0001). O limite troca essa falha global por uma
+/// falha local e explícita.
+///
+/// Política no transbordo, por ordem:
+///  1. mensagem descartável → descarta e conta (`ws_queue_dropped_total`);
+///  2. mensagem de protocolo/estado → fecha o socket UMA vez
+///     (`ws_slow_consumer_kills_total`) e o cliente reentra.
+///
+/// Nunca `send().await`: os emissores estão dentro do lock do `DashMap` das
+/// salas (ver R16 — segurar o lock através de um `await` trava a sala inteira).
+/// É sempre `try_send`.
+#[derive(Clone)]
+pub struct PeerTx {
+    tx: mpsc::Sender<ServerMsg>,
+    cap: usize,
+    /// Acorda o laço de leitura do socket para ele terminar de forma ordenada.
+    shutdown: Arc<tokio::sync::Notify>,
+    /// Garante que um socket em transbordo só conta como UMA morte, por muitas
+    /// difusões que ainda lhe sejam dirigidas antes de o laço reagir.
+    killed: Arc<AtomicBool>,
+    metrics: Arc<crate::metrics::Metrics>,
+}
+
+impl PeerTx {
+    pub fn new(
+        cap: usize,
+        metrics: Arc<crate::metrics::Metrics>,
+    ) -> (Self, mpsc::Receiver<ServerMsg>, Arc<tokio::sync::Notify>) {
+        let (tx, rx) = mpsc::channel(cap);
+        let shutdown = Arc::new(tokio::sync::Notify::new());
+        (
+            Self {
+                tx,
+                cap,
+                shutdown: shutdown.clone(),
+                killed: Arc::new(AtomicBool::new(false)),
+                metrics,
+            },
+            rx,
+            shutdown,
+        )
+    }
+
+    /// Entrega best-effort. `true` = entrou na fila.
+    pub fn send(&self, msg: ServerMsg) -> bool {
+        let droppable = msg.is_droppable();
+        match self.tx.try_send(msg) {
+            Ok(()) => {
+                // Marca de água: quanto é que esta fila chegou a acumular.
+                let used = self.cap.saturating_sub(self.tx.capacity()) as i64;
+                self.metrics.ws_queue_high_water.fetch_max(used, Relaxed);
+                true
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                if droppable {
+                    crate::metrics::Metrics::bump(&self.metrics.ws_queue_dropped_total);
+                } else if !self.killed.swap(true, Relaxed) {
+                    crate::metrics::Metrics::bump(&self.metrics.ws_slow_consumer_kills_total);
+                    tracing::warn!(
+                        cap = self.cap,
+                        "consumidor lento: fila de saída cheia com mensagem de protocolo — a fechar o socket"
+                    );
+                    self.shutdown.notify_one();
+                }
+                false
+            }
+        }
+    }
+}
+
 struct Peer {
     username: String,
     user_id: Uuid,
@@ -467,7 +567,7 @@ struct Peer {
     mic_on: bool,
     is_bot: bool,
     is_pstn: bool,
-    tx: mpsc::UnboundedSender<ServerMsg>,
+    tx: PeerTx,
     /// Travão das legendas parciais deste peer (ver `allow_interim`).
     interim: crate::rate_limit::TokenBucket,
 }
@@ -552,7 +652,7 @@ impl SignalingHub {
         is_host: bool,
         can_admit: bool,
         is_bot: bool,
-        tx: mpsc::UnboundedSender<ServerMsg>,
+        tx: PeerTx,
     ) -> Vec<PeerInfo> {
         // Collect data and mutate under the DashMap write lock, then release
         // BEFORE broadcasting. Broadcasting calls broadcast_all_local which
@@ -618,10 +718,7 @@ impl SignalingHub {
                     is_bot,
                     is_pstn: false,
                     tx: tx.clone(),
-                    interim: crate::rate_limit::TokenBucket::new(
-                        INTERIM_BURST,
-                        INTERIM_PER_SEC,
-                    ),
+                    interim: crate::rate_limit::TokenBucket::new(INTERIM_BURST, INTERIM_PER_SEC),
                 },
             );
             (existing, announce, waiting_msgs)
@@ -674,7 +771,9 @@ impl SignalingHub {
     /// Decisão do anfitrião sobre um convidado em espera.
     fn decide_waiting(&self, room_id: Uuid, host: Uuid, target: Uuid, admit: bool) {
         let admitted_tx = {
-            let Some(mut room) = self.rooms.get_mut(&room_id) else { return };
+            let Some(mut room) = self.rooms.get_mut(&room_id) else {
+                return;
+            };
             if !room.peers.get(&host).map(|p| p.is_host).unwrap_or(false) {
                 return; // só o anfitrião decide
             }
@@ -735,7 +834,7 @@ impl SignalingHub {
     pub fn send_to_local(&self, room_id: Uuid, target: Uuid, msg: ServerMsg) -> bool {
         self.rooms
             .get(&room_id)
-            .and_then(|room| room.peers.get(&target).map(|p| p.tx.send(msg).is_ok()))
+            .and_then(|room| room.peers.get(&target).map(|p| p.tx.send(msg)))
             .unwrap_or(false)
     }
 
@@ -1403,7 +1502,13 @@ async fn breakout_new_child(
 /// na sala principal — chamado após qualquer mudança.
 fn broadcast_breakout_state(state: &Arc<AppState>, parent_id: Uuid) {
     let Some(set) = state.breakouts.get(&parent_id) else {
-        state.hub.broadcast_all(parent_id, ServerMsg::BreakoutsCreated { rooms: vec![], ends_at: None });
+        state.hub.broadcast_all(
+            parent_id,
+            ServerMsg::BreakoutsCreated {
+                rooms: vec![],
+                ends_at: None,
+            },
+        );
         return;
     };
     let infos: Vec<BreakoutInfo> = set
@@ -1461,7 +1566,9 @@ async fn breakouts_create(
             .await
             .ok()
             .flatten();
-    let Some((parent_code, topology, e2ee, name, format)) = parent else { return };
+    let Some((parent_code, topology, e2ee, name, format)) = parent else {
+        return;
+    };
     // Salas de grupo só em reuniões de formato 'training' (defesa no servidor —
     // a UI já esconde, mas um cliente manipulado não deve conseguir criá-las).
     if format != "training" {
@@ -1559,7 +1666,9 @@ async fn breakout_add(state: &Arc<AppState>, room_id: Uuid, owner: Uuid) {
             .await
             .ok()
             .flatten();
-    let Some((_, topology, e2ee, name)) = parent else { return };
+    let Some((_, topology, e2ee, name)) = parent else {
+        return;
+    };
     let n = state
         .breakouts
         .get(&room_id)
@@ -1588,7 +1697,9 @@ async fn breakout_add(state: &Arc<AppState>, room_id: Uuid, owner: Uuid) {
 /// Move um participante (por username) para outro grupo ou de volta à
 /// principal. Procura-o na principal e em todas as filhas.
 fn breakout_move_user(state: &Arc<AppState>, room_id: Uuid, name: &str, target_code: &str) {
-    let Some(set) = state.breakouts.get(&room_id) else { return };
+    let Some(set) = state.breakouts.get(&room_id) else {
+        return;
+    };
     let back = target_code == set.parent_code;
     let label = if back {
         "Sala principal".to_string()
@@ -1686,7 +1797,9 @@ async fn handle_socket(
     let _ws_guard = crate::metrics::WsGuard::signaling(state.metrics.clone());
     let peer_id = Uuid::new_v4();
     let (mut sink, mut stream) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<ServerMsg>();
+    // Fila de saída LIMITADA (ver `PeerTx`): um consumidor lento passa a
+    // custar o próprio socket em vez da memória do nó inteiro.
+    let (tx, mut rx, shutdown) = PeerTx::new(state.config.ws_queue_cap, state.metrics.clone());
 
     // Outbound: hub -> websocket. Um Ping periódico mantém a ligação viva
     // (proxies fecham WebSockets ociosos): sem tráfego, o socket cairia e —
@@ -1814,7 +1927,21 @@ async fn handle_socket(
     // Uma janela fixa apertada cortava o anfitrião na rajada de ICE. NÃO voltar
     // a janela fixa: o bucket absorve a rajada legítima.
     let mut rl = crate::rate_limit::TokenBucket::new(600.0, 300.0);
-    while let Some(Ok(msg)) = stream.next().await {
+    loop {
+        // O laço também acorda por `shutdown`: é assim que um transbordo da
+        // fila de saída (consumidor lento) termina a sessão de forma ordenada
+        // — com a saída do laço a correr a limpeza normal do peer, em vez de
+        // deixar um peer na sala com o caminho de saída morto.
+        let msg = tokio::select! {
+            incoming = stream.next() => match incoming {
+                Some(Ok(m)) => m,
+                _ => break,
+            },
+            _ = shutdown.notified() => {
+                tracing::warn!(%room_id, %peer_id, "sessão terminada: fila de saída em transbordo");
+                break;
+            }
+        };
         if !rl.allow() {
             tracing::warn!(%peer_id, "flood de mensagens WS (token bucket esgotado) — a desligar");
             break;
@@ -2005,17 +2132,157 @@ async fn handle_socket(
 mod tests {
     use super::*;
 
-    fn peer() -> (
-        Uuid,
-        mpsc::UnboundedSender<ServerMsg>,
-        mpsc::UnboundedReceiver<ServerMsg>,
-    ) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    /// Capacidade generosa nos testes: nenhum teste deste módulo exercita o
+    /// transbordo (esse tem os seus próprios, em `bounded_queue`).
+    const TEST_CAP: usize = 512;
+
+    fn peer() -> (Uuid, PeerTx, mpsc::Receiver<ServerMsg>) {
+        let (tx, rx, _shutdown) =
+            PeerTx::new(TEST_CAP, Arc::new(crate::metrics::Metrics::default()));
         (Uuid::new_v4(), tx, rx)
     }
 
-    fn drain(rx: &mut mpsc::UnboundedReceiver<ServerMsg>) {
+    fn drain(rx: &mut mpsc::Receiver<ServerMsg>) {
         while rx.try_recv().is_ok() {}
+    }
+
+    // ---------------------------------------------------------------
+    //  Filas de saída limitadas (Programa I §3.2 — backpressure)
+    // ---------------------------------------------------------------
+
+    fn tiny_queue(
+        cap: usize,
+    ) -> (
+        PeerTx,
+        mpsc::Receiver<ServerMsg>,
+        Arc<tokio::sync::Notify>,
+        Arc<crate::metrics::Metrics>,
+    ) {
+        let m = Arc::new(crate::metrics::Metrics::default());
+        let (tx, rx, sd) = PeerTx::new(cap, m.clone());
+        (tx, rx, sd, m)
+    }
+
+    fn ephemeral() -> ServerMsg {
+        ServerMsg::Reaction {
+            from: Uuid::new_v4(),
+            username: "a".into(),
+            emoji: "👍".into(),
+        }
+    }
+
+    fn protocol() -> ServerMsg {
+        ServerMsg::SfuOffer { sdp: "v=0".into() }
+    }
+
+    #[tokio::test]
+    async fn full_queue_drops_ephemeral_and_keeps_the_socket() {
+        let (tx, _rx, shutdown, m) = tiny_queue(4);
+        for _ in 0..4 {
+            assert!(tx.send(ephemeral()), "a fila ainda tinha espaço");
+        }
+        // Cheia: a reacção seguinte perde-se, mas o socket sobrevive — perder
+        // um emoji não justifica derrubar a sessão de ninguém.
+        assert!(!tx.send(ephemeral()));
+        assert_eq!(m.ws_queue_dropped_total.load(Relaxed), 1);
+        assert_eq!(m.ws_slow_consumer_kills_total.load(Relaxed), 0);
+
+        // E ninguém pediu para fechar o socket.
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), shutdown.notified())
+                .await
+                .is_err(),
+            "descartar uma mensagem efémera não pode fechar o socket"
+        );
+    }
+
+    #[tokio::test]
+    async fn full_queue_closes_the_socket_on_a_protocol_message() {
+        let (tx, _rx, shutdown, m) = tiny_queue(2);
+        assert!(tx.send(protocol()));
+        assert!(tx.send(protocol()));
+
+        // Cheia com sinalização por entregar: entregar meio protocolo deixaria
+        // o cliente a acreditar num estado que o servidor já não tem. Fecha-se.
+        assert!(!tx.send(protocol()));
+        assert_eq!(m.ws_slow_consumer_kills_total.load(Relaxed), 1);
+        assert_eq!(m.ws_queue_dropped_total.load(Relaxed), 0);
+
+        tokio::time::timeout(std::time::Duration::from_millis(200), shutdown.notified())
+            .await
+            .expect("o laço do socket tinha de ser acordado para terminar");
+    }
+
+    #[tokio::test]
+    async fn a_stalled_socket_is_only_killed_once() {
+        let (tx, _rx, _shutdown, m) = tiny_queue(1);
+        assert!(tx.send(protocol()));
+        // A sala continua a difundir para um peer que já está a ser fechado.
+        for _ in 0..20 {
+            assert!(!tx.send(protocol()));
+        }
+        assert_eq!(
+            m.ws_slow_consumer_kills_total.load(Relaxed),
+            1,
+            "um socket em transbordo é UMA morte, não uma por difusão"
+        );
+    }
+
+    #[tokio::test]
+    async fn draining_the_queue_lets_delivery_resume() {
+        let (tx, mut rx, _shutdown, _m) = tiny_queue(2);
+        assert!(tx.send(protocol()));
+        assert!(tx.send(protocol()));
+        assert!(!tx.send(protocol()));
+        // O cliente recupera (a rede voltou) e o writer drena.
+        drain(&mut rx);
+        assert!(tx.send(protocol()), "fila drenada volta a aceitar");
+    }
+
+    #[tokio::test]
+    async fn high_water_mark_tracks_the_worst_backlog() {
+        let (tx, mut rx, _shutdown, m) = tiny_queue(8);
+        for _ in 0..5 {
+            tx.send(protocol());
+        }
+        assert_eq!(m.ws_queue_high_water.load(Relaxed), 5);
+        // A marca de água é máxima histórica: drenar não a baixa.
+        drain(&mut rx);
+        tx.send(protocol());
+        assert_eq!(m.ws_queue_high_water.load(Relaxed), 5);
+    }
+
+    #[test]
+    fn only_ephemeral_messages_are_droppable() {
+        // O que se pode perder: substituído pela versão final, ou efémero.
+        assert!(ephemeral().is_droppable());
+        assert!(ServerMsg::TranscriptInterim {
+            from: Uuid::new_v4(),
+            username: "a".into(),
+            text: "par".into()
+        }
+        .is_droppable());
+
+        // O que NUNCA se pode perder: protocolo e estado autoritativo.
+        assert!(!protocol().is_droppable());
+        assert!(!ServerMsg::Kicked.is_droppable());
+        assert!(!ServerMsg::Denied.is_droppable());
+        assert!(!ServerMsg::RoomSettings {
+            locked: true,
+            host_share_only: false
+        }
+        .is_droppable());
+        assert!(!ServerMsg::PeerLeft {
+            peer_id: Uuid::new_v4()
+        }
+        .is_droppable());
+        // A legenda FINAL alimenta a ata — não é descartável, ao contrário da parcial.
+        assert!(!ServerMsg::Transcript {
+            from: Uuid::new_v4(),
+            username: "a".into(),
+            text: "final".into()
+        }
+        .is_droppable());
     }
 
     #[tokio::test]

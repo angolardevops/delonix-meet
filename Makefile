@@ -170,16 +170,26 @@ build: ## Compila backend (release) + frontend (produção)
 	@printf "$(G)  ✓ build concluído$(Z)\n"
 
 .PHONY: test
-test: fitness ## Corre os testes (fitness functions + cargo test + typecheck do frontend)
+test: fitness web-deps ## Corre os testes (fitness functions + cargo test + typecheck do frontend)
 	@printf "$(C)▶ testes$(Z)\n"
 	@cd server && cargo test --release
 	@cd web && node_modules/.bin/tsc -p tsconfig.json --noEmit && printf "$(G)  ✓ tsc limpo$(Z)\n"
 	@cd web && node_modules/.bin/vitest run && printf "$(G)  ✓ vitest (R1/R2)$(Z)\n"
 
+.PHONY: web-deps
+web-deps: ## Garante web/node_modules (npm ci) — sem isto o `make test` morria com um 'Error 127' opaco
+	@if [ ! -x web/node_modules/.bin/tsc ]; then \
+	  printf "$(C)▶ web/node_modules ausente — npm ci$(Z)\n"; \
+	  cd web && npm ci; \
+	fi
+
 .PHONY: fitness
-fitness: ## Fitness functions de arquitetura (Fowler): docs, afinidade por sala (R3), isolamento RLS (ADR-0002)
+fitness: ## Fitness functions (Fowler): higiene, docs, afinidade por sala (R3), clippy, deps, RLS (ADR-0002)
+	@bash scripts/check-repo-hygiene.sh
 	@bash scripts/check-docs-drift.sh
 	@bash scripts/check-room-affinity.sh
+	@bash scripts/check-clippy-ratchet.sh
+	@bash scripts/check-dep-audit.sh
 	@bash scripts/check-tenant-rls.sh
 
 .PHONY: migrate
@@ -357,6 +367,7 @@ stage: image-push ## Build + kind load + deploy k8s completo no cluster kind loc
 	@printf "$(C)▶ Pré-carregando imagens da infra no kind (evita ImagePullBackOff)...$(Z)\n"
 	@$(MAKE) --no-print-directory infra-pull
 	@printf "$(C)▶ Namespace + Secret TLS...$(Z)\n"
+	@$(MAKE) --no-print-directory certs
 	@kubectl apply -f deploy/k8s/00-namespace.yaml
 	@kubectl create secret tls delonix-tls-secret \
 	  --cert=deploy/certs/wildcard.delonix.local.crt \
@@ -521,6 +532,32 @@ deploy-kaeso: export-images ## Build + export + Ansible deploy no preprod kaeso 
 # ============================================================
 #  VOICE — camada de media do dial-in PSTN (opcional)
 # ============================================================
+.PHONY: certs
+certs: ## Gera o wildcard *.delonix.local de DEV (mkcert; openssl como alternativa)
+	@# O certificado e a CHAVE de dev NÃO são versionados: uma chave privada num
+	@# repositório é uma chave comprometida, mesmo sendo só de dev — qualquer
+	@# clone passa a poder personificar *.delonix.local em qualquer máquina que
+	@# confie na mesma CA mkcert. Gera-se localmente e cada máquina tem a sua.
+	@mkdir -p deploy/certs
+	@if [ -f deploy/certs/wildcard.delonix.local.crt ] && [ -f deploy/certs/wildcard.delonix.local.key ]; then \
+	  printf "$(G)  ✓ wildcard de dev já existe$(Z)\n"; \
+	elif command -v mkcert >/dev/null 2>&1; then \
+	  mkcert -cert-file deploy/certs/wildcard.delonix.local.crt \
+	         -key-file  deploy/certs/wildcard.delonix.local.key \
+	         "*.delonix.local" delonix.local >/dev/null 2>&1; \
+	  chmod 600 deploy/certs/wildcard.delonix.local.key; \
+	  printf "$(G)  ✓ wildcard de dev gerado com mkcert (confiado pelo SO)$(Z)\n"; \
+	else \
+	  openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
+	    -keyout deploy/certs/wildcard.delonix.local.key \
+	    -out    deploy/certs/wildcard.delonix.local.crt \
+	    -subj "/CN=*.delonix.local" \
+	    -addext "subjectAltName=DNS:*.delonix.local,DNS:delonix.local" 2>/dev/null; \
+	  chmod 600 deploy/certs/wildcard.delonix.local.key; \
+	  printf "$(Y)  ! mkcert ausente — wildcard self-signed (o browser vai avisar).$(Z)\n"; \
+	  printf "$(Y)    Instala o mkcert e corre 'make certs' outra vez para um cert confiado.$(Z)\n"; \
+	fi
+
 .PHONY: voice-certs voice-up voice-down
 voice-certs: ## Gera certificados self-signed de dev para a voz (SIP-TLS/SRTP)
 	@mkdir -p $(VOICE_TLS_DIR)

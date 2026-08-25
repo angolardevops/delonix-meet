@@ -67,6 +67,27 @@ pub struct Metrics {
     /// Microfones fora do top-N de oradores (áudio não reencaminhado). É a
     /// medida directa da poupança de downlink de voz.
     pub sfu_audio_suppressed: AtomicI64,
+
+    // ---- Filas de saída dos WebSockets (limitadas — ver signaling::PeerTx) ----
+    /// Ocupação MÁXIMA já observada numa fila de socket (marca de água alta,
+    /// nunca desce). É a medida de utilização: se ficar perto de `WS_QUEUE_CAP`
+    /// a capacidade está no limite; se ficar em dezenas, sobra folga. Escolheu-se
+    /// marca de água em vez de profundidade instantânea porque um gauge somado
+    /// entre sockets vaza quando uma task de escrita é abortada a meio.
+    pub ws_queue_high_water: AtomicI64,
+    /// Mensagens DESCARTADAS por fila cheia (só as descartáveis: legenda
+    /// parcial, traço de quadro, reacção). >0 sustentado = a sala está a
+    /// perder conteúdo efémero por causa de um consumidor lento.
+    pub ws_queue_dropped_total: AtomicU64,
+    /// Sockets fechados por transbordo com uma mensagem que NÃO se pode
+    /// descartar (sinalização/estado). Desligar é honesto; entregar meio
+    /// protocolo não é. Cada um destes é um cliente que vai reentrar.
+    pub ws_slow_consumer_kills_total: AtomicU64,
+    /// Pedidos de renegociação do SFU descartados por fila cheia. A
+    /// renegociação é coalescível (o estado mais recente vence), por isso
+    /// descartar é correcto — mas se isto sobe, o `negotiation_loop` não está
+    /// a acompanhar o ritmo de alterações de subscrição.
+    pub nego_queue_dropped_total: AtomicU64,
 }
 
 impl Metrics {
@@ -121,6 +142,18 @@ impl Metrics {
              # HELP delonix_sfu_audio_suppressed Microfones fora do top-N de oradores.\n\
              # TYPE delonix_sfu_audio_suppressed gauge\n\
              delonix_sfu_audio_suppressed {}\n\
+             # HELP delonix_ws_queue_high_water Ocupação máxima já vista numa fila de socket.\n\
+             # TYPE delonix_ws_queue_high_water gauge\n\
+             delonix_ws_queue_high_water {}\n\
+             # HELP delonix_ws_queue_dropped_total Mensagens descartáveis perdidas por fila cheia.\n\
+             # TYPE delonix_ws_queue_dropped_total counter\n\
+             delonix_ws_queue_dropped_total {}\n\
+             # HELP delonix_ws_slow_consumer_kills_total Sockets fechados por transbordo de fila.\n\
+             # TYPE delonix_ws_slow_consumer_kills_total counter\n\
+             delonix_ws_slow_consumer_kills_total {}\n\
+             # HELP delonix_nego_queue_dropped_total Renegociações do SFU coalescidas por fila cheia.\n\
+             # TYPE delonix_nego_queue_dropped_total counter\n\
+             delonix_nego_queue_dropped_total {}\n\
              # HELP delonix_uptime_seconds Uptime do processo em segundos.\n\
              # TYPE delonix_uptime_seconds gauge\n\
              delonix_uptime_seconds {}\n",
@@ -137,6 +170,10 @@ impl Metrics {
             self.sfu_offers_deferred_total.load(Relaxed),
             self.sfu_recordings_orphaned_total.load(Relaxed),
             g(self.sfu_audio_suppressed.load(Relaxed)),
+            g(self.ws_queue_high_water.load(Relaxed)),
+            self.ws_queue_dropped_total.load(Relaxed),
+            self.ws_slow_consumer_kills_total.load(Relaxed),
+            self.nego_queue_dropped_total.load(Relaxed),
             uptime_secs,
         )
     }

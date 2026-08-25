@@ -637,16 +637,17 @@ pub async fn v1_provision_org(
         ));
     }
 
-    let existing_org: Option<(Uuid, String)> = match (&req.odoo_db, req.odoo_company_id) {
-        (Some(db), Some(cid)) if !db.trim().is_empty() => sqlx::query_as(
-            "SELECT id, slug FROM organizations WHERE odoo_db = $1 AND odoo_company_id = $2",
-        )
-        .bind(db.trim())
-        .bind(cid)
-        .fetch_optional(&state.db)
-        .await?,
-        _ => None,
-    };
+    let existing_org: Option<(Uuid, String)> =
+        match (&req.odoo_db, req.odoo_company_id) {
+            (Some(db), Some(cid)) if !db.trim().is_empty() => sqlx::query_as(
+                "SELECT id, slug FROM organizations WHERE odoo_db = $1 AND odoo_company_id = $2",
+            )
+            .bind(db.trim())
+            .bind(cid)
+            .fetch_optional(&state.db)
+            .await?,
+            _ => None,
+        };
 
     // Org com slug único (sufixo em colisão). SEM a quota anti-abuso de
     // create_org: aqui a autorização é o segredo de plataforma, não um user.
@@ -668,7 +669,12 @@ pub async fn v1_provision_org(
         .bind(name)
         .bind(&slug)
         .bind(service_user_id)
-        .bind(req.odoo_db.as_deref().map(str::trim).filter(|d| !d.is_empty()))
+        .bind(
+            req.odoo_db
+                .as_deref()
+                .map(str::trim)
+                .filter(|d| !d.is_empty()),
+        )
         .bind(req.odoo_company_id)
         .fetch_one(&state.db)
         .await;

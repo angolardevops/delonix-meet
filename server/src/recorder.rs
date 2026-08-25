@@ -51,7 +51,14 @@ fn decrypt_e2ee(key: &Aes256Gcm, data: &[u8], offset: usize) -> Option<Vec<u8>> 
 /// o writer da lib usa um contador de frames, o que acelera/atrasa o vídeo
 /// quando o fps varia; este mantém o tempo real.
 pub struct Vp8IvfWriter {
-    w: std::fs::File,
+    /// `BufWriter` e não `File` directo: cada pacote RTP fazia uma `write(2)`
+    /// própria, e essa chamada é SÍNCRONA dentro da task async que reencaminha
+    /// RTP — com uma gravação a 30 fps por publicador são milhares de syscalls
+    /// por segundo a bloquear um worker do Tokio. Com buffer, é uma escrita a
+    /// cada 64 KiB. O `close()` faz `seek` para corrigir o cabeçalho, e o
+    /// `BufWriter` esvazia o buffer antes de qualquer `seek` — por isso o
+    /// cabeçalho continua a ser corrigido correctamente.
+    w: std::io::BufWriter<std::fs::File>,
     count: u32,
     first_ts: Option<u32>,
     frame: Vec<u8>,
@@ -63,7 +70,8 @@ pub struct Vp8IvfWriter {
 }
 
 impl Vp8IvfWriter {
-    pub fn new(mut w: std::fs::File) -> std::io::Result<Self> {
+    pub fn new(w: std::fs::File) -> std::io::Result<Self> {
+        let mut w = std::io::BufWriter::with_capacity(64 * 1024, w);
         // Cabeçalho IVF de 32 bytes; timebase 1/1000 => PTS em ms.
         w.write_all(b"DKIF")?;
         w.write_all(&0u16.to_le_bytes())?; // versão
@@ -91,7 +99,9 @@ impl Vp8IvfWriter {
             return Ok(());
         }
         let mut depack = Vp8Packet::default();
-        let Ok(payload) = depack.depacketize(&pkt.payload) else { return Ok(()) };
+        let Ok(payload) = depack.depacketize(&pkt.payload) else {
+            return Ok(());
+        };
         if payload.is_empty() {
             return Ok(());
         }
@@ -162,7 +172,7 @@ impl Vp8IvfWriter {
 pub enum RecWriter {
     Video(Vp8IvfWriter),
     Audio {
-        w: OggWriter<std::fs::File>,
+        w: OggWriter<std::io::BufWriter<std::fs::File>>,
         key: Option<Arc<Aes256Gcm>>,
     },
 }
@@ -176,7 +186,9 @@ impl RecWriter {
             RecWriter::Audio { w, key } => {
                 // Opus: 1 frame por pacote — desencripta o payload (offset 1).
                 if let Some(key) = key {
-                    let Some(clear) = decrypt_e2ee(key, &pkt.payload, 1) else { return };
+                    let Some(clear) = decrypt_e2ee(key, &pkt.payload, 1) else {
+                        return;
+                    };
                     let mut pkt2 = pkt.clone();
                     pkt2.payload = clear.into();
                     let _ = w.write_rtp(&pkt2);
@@ -261,7 +273,7 @@ impl RecordingSession {
             }
         };
         let writer = if is_audio {
-            match OggWriter::new(file, 48000, 2) {
+            match OggWriter::new(std::io::BufWriter::with_capacity(64 * 1024, file), 48000, 2) {
                 Ok(w) => RecWriter::Audio {
                     w,
                     key: self.e2ee_key.clone(),
@@ -302,6 +314,31 @@ pub fn finalize(state: Arc<AppState>, room_id: Uuid, session: RecordingSession) 
     });
 }
 
+/// Corre um processo externo com **tecto de tempo**, matando-o se o exceder.
+///
+/// Existe separado para ser testável sem um `ffmpeg` instalado: o
+/// comportamento que interessa — não ficar pendurado para sempre, e matar o
+/// processo em vez de o deixar órfão — é o mesmo seja qual for o binário.
+async fn run_bounded(
+    cmd: &mut tokio::process::Command,
+    limit: std::time::Duration,
+) -> anyhow::Result<std::process::ExitStatus> {
+    let mut child = cmd.spawn()?;
+    match tokio::time::timeout(limit, child.wait()).await {
+        Ok(res) => Ok(res?),
+        Err(_) => {
+            // `kill` e depois `wait`: sem colher o filho ficava zombie.
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            anyhow::bail!(
+                "processo excedeu {}s e foi terminado (sobe FFMPEG_TIMEOUT_SECS \
+                 se as gravações forem legitimamente mais longas)",
+                limit.as_secs()
+            )
+        }
+    }
+}
+
 async fn finalize_inner(
     state: &Arc<AppState>,
     room_id: Uuid,
@@ -331,6 +368,14 @@ async fn finalize_inner(
     let out = session.dir.join("out.webm");
     let mut cmd = tokio::process::Command::new("ffmpeg");
     cmd.arg("-y").arg("-loglevel").arg("error");
+    // `-nostdin`: sem isto o ffmpeg herda o stdin do servidor e pode ficar à
+    // espera de input que nunca chega. `-threads`: travão de CPU — a
+    // composição de uma gravação não pode degradar as chamadas VIVAS do mesmo
+    // pod. `kill_on_drop`: se este future for cancelado, o processo morre com
+    // ele em vez de ficar órfão a consumir o nó.
+    cmd.arg("-nostdin");
+    cmd.args(["-threads", &state.config.ffmpeg_threads.to_string()]);
+    cmd.kill_on_drop(true);
 
     if videos.len() == 1 && audios.len() <= 1 {
         // Caso simples: remux sem reencode — zero perda de qualidade.
@@ -426,7 +471,12 @@ async fn finalize_inner(
     cmd.arg(&out);
 
     tracing::info!(%room_id, tracks = session.tracks.len(), "server recording: a compor webm…");
-    let status = cmd.status().await?;
+    // Tecto de tempo. Um input malformado (ou um codec inesperado — ver R18)
+    // pendurava o ffmpeg indefinidamente: o directório `tmp-<uuid>` ficava no
+    // volume, a gravação nunca chegava à biblioteca, e não havia erro nenhum
+    // para ver. Falhar em tempo limitado é a única resposta honesta.
+    let limit = std::time::Duration::from_secs(state.config.ffmpeg_timeout_secs);
+    let status = run_bounded(&mut cmd, limit).await?;
     if !status.success() {
         anyhow::bail!("ffmpeg exited with {status}");
     }
@@ -528,4 +578,47 @@ pub async fn retention_sweep(state: &Arc<AppState>) -> usize {
         tracing::info!(deleted = n, "retention sweep");
     }
     n
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn run_bounded_returns_when_the_process_finishes_in_time() {
+        let mut cmd = tokio::process::Command::new("true");
+        let st = run_bounded(&mut cmd, Duration::from_secs(30))
+            .await
+            .expect("devia ter terminado dentro do tecto");
+        assert!(st.success());
+    }
+
+    #[tokio::test]
+    async fn run_bounded_kills_a_process_that_overruns() {
+        // O caso que já pendurou uma composição: o processo nunca termina.
+        let mut cmd = tokio::process::Command::new("sleep");
+        cmd.arg("60");
+        let started = std::time::Instant::now();
+        let err = run_bounded(&mut cmd, Duration::from_millis(150))
+            .await
+            .expect_err("tinha de falhar por exceder o tecto");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "voltou tarde demais — o tecto não está a ser imposto"
+        );
+        assert!(
+            err.to_string().contains("excedeu"),
+            "o erro tem de dizer o que aconteceu, e não um código opaco: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_bounded_reports_a_failing_process_instead_of_hanging() {
+        let mut cmd = tokio::process::Command::new("false");
+        let st = run_bounded(&mut cmd, Duration::from_secs(30))
+            .await
+            .unwrap();
+        assert!(!st.success(), "um ffmpeg que falha tem de ser visível");
+    }
 }

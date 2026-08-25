@@ -77,7 +77,8 @@ impl TestClient {
     /// mensagens servidor→cliente.
     async fn join(sfu: &Arc<SfuState>, room: Uuid) -> Arc<Self> {
         let id = Uuid::new_v4();
-        let (tx, rx) = mpsc::unbounded_channel();
+        // Mesma fila limitada que a produção usa (ver signaling::PeerTx).
+        let (tx, rx, _shutdown) = crate::signaling::PeerTx::new(512, Arc::new(Metrics::default()));
         sfu.add_peer(room, id, tx).await.expect("add_peer");
 
         let api = client_api().await;
@@ -212,11 +213,15 @@ impl TestClient {
         if self.pc.set_remote_description(offer).await.is_err() {
             return;
         }
-        let Ok(answer) = self.pc.create_answer(None).await else { return };
+        let Ok(answer) = self.pc.create_answer(None).await else {
+            return;
+        };
         if self.pc.set_local_description(answer).await.is_err() {
             return;
         }
-        let Some(local) = self.pc.local_description().await else { return };
+        let Some(local) = self.pc.local_description().await else {
+            return;
+        };
         let sdp = local.sdp;
         let _ = self
             .sfu
@@ -230,7 +235,7 @@ impl TestClient {
 }
 
 /// Bomba de mensagens servidor → cliente (o equivalente ao WebSocket).
-async fn pump(client: Arc<TestClient>, mut rx: mpsc::UnboundedReceiver<ServerMsg>) {
+async fn pump(client: Arc<TestClient>, mut rx: mpsc::Receiver<ServerMsg>) {
     while let Some(msg) = rx.recv().await {
         match msg {
             ServerMsg::SfuAnswer { sdp } => {
@@ -238,10 +243,7 @@ async fn pump(client: Arc<TestClient>, mut rx: mpsc::UnboundedReceiver<ServerMsg
                 let _ = client.pc.set_remote_description(answer).await;
             }
             ServerMsg::SfuOffer { sdp } => {
-                if client
-                    .hold_answer
-                    .load(std::sync::atomic::Ordering::SeqCst)
-                {
+                if client.hold_answer.load(std::sync::atomic::Ordering::SeqCst) {
                     client.held.lock().await.push(sdp);
                     continue;
                 }
@@ -260,7 +262,7 @@ async fn pump(client: Arc<TestClient>, mut rx: mpsc::UnboundedReceiver<ServerMsg
 fn new_sfu() -> (Arc<SfuState>, Arc<Metrics>) {
     let metrics = Arc::new(Metrics::default());
     (
-        Arc::new(SfuState::new(IceConfig::default(), metrics.clone())),
+        Arc::new(SfuState::new(IceConfig::default(), metrics.clone(), 64)),
         metrics,
     )
 }
@@ -301,47 +303,59 @@ async fn media_flows_both_ways() {
     b.publish(VP8, "b-video").await;
 
     // B tem de receber as duas tracks de A, identificadas pelo peer_id de A.
-    eventually("B recebe áudio+vídeo de A", Duration::from_secs(30), || {
-        let b = b.clone();
-        let a_id = a.id.to_string();
-        async move {
-            let seen = b.streams_seen().await;
-            seen.iter().filter(|(s, _)| *s == a_id).count() >= 2
-        }
-    })
+    eventually(
+        "B recebe áudio+vídeo de A",
+        Duration::from_secs(30),
+        || {
+            let b = b.clone();
+            let a_id = a.id.to_string();
+            async move {
+                let seen = b.streams_seen().await;
+                seen.iter().filter(|(s, _)| *s == a_id).count() >= 2
+            }
+        },
+    )
     .await;
 
     // …e o inverso: sem isto, "media num só sentido" passaria despercebido.
-    eventually("A recebe áudio+vídeo de B", Duration::from_secs(30), || {
-        let a = a.clone();
-        let b_id = b.id.to_string();
-        async move {
-            let seen = a.streams_seen().await;
-            seen.iter().filter(|(s, _)| *s == b_id).count() >= 2
-        }
-    })
+    eventually(
+        "A recebe áudio+vídeo de B",
+        Duration::from_secs(30),
+        || {
+            let a = a.clone();
+            let b_id = b.id.to_string();
+            async move {
+                let seen = a.streams_seen().await;
+                seen.iter().filter(|(s, _)| *s == b_id).count() >= 2
+            }
+        },
+    )
     .await;
 
     // Tracks negociadas não chegam: exige-se RTP mesmo a passar pelo fan-out.
     eventually("RTP real de A para B", Duration::from_secs(30), || {
         let b = b.clone();
         let a_id = a.id.to_string();
-        async move {
-            b.rtp_seen
-                .lock()
-                .await
-                .get(&a_id)
-                .copied()
-                .unwrap_or(0)
-                > 0
-        }
+        async move { b.rtp_seen.lock().await.get(&a_id).copied().unwrap_or(0) > 0 }
     })
     .await;
 
     // Asserções explícitas: um `eventually` que passasse por engano deixaria
     // isto a zero e o teste seria decorativo.
-    let a_to_b = b.rtp_seen.lock().await.get(&a.id.to_string()).copied().unwrap_or(0);
-    let b_to_a = a.rtp_seen.lock().await.get(&b.id.to_string()).copied().unwrap_or(0);
+    let a_to_b = b
+        .rtp_seen
+        .lock()
+        .await
+        .get(&a.id.to_string())
+        .copied()
+        .unwrap_or(0);
+    let b_to_a = a
+        .rtp_seen
+        .lock()
+        .await
+        .get(&b.id.to_string())
+        .copied()
+        .unwrap_or(0);
     eprintln!(
         "media_flows_both_ways: tracks B<-A={:?} A<-B={:?} | RTP A->B={a_to_b} B->A={b_to_a}",
         b.streams_seen().await,
@@ -349,7 +363,11 @@ async fn media_flows_both_ways() {
     );
     assert!(a_to_b > 0, "nenhum RTP de A chegou a B");
     assert_eq!(
-        b.streams_seen().await.iter().filter(|(s, _)| *s == a.id.to_string()).count(),
+        b.streams_seen()
+            .await
+            .iter()
+            .filter(|(s, _)| *s == a.id.to_string())
+            .count(),
         2,
         "B tem de ver exatamente as 2 tracks de A (áudio + vídeo)"
     );
@@ -383,11 +401,15 @@ async fn client_offer_during_server_offer_is_deferred_not_dropped() {
     let b = TestClient::join(&sfu, room).await;
     b.publish(OPUS, "b-audio").await;
 
-    eventually("ligação inicial estabelecida", Duration::from_secs(30), || {
-        let b = b.clone();
-        let a_id = a.id.to_string();
-        async move { b.streams_seen().await.iter().any(|(s, _)| *s == a_id) }
-    })
+    eventually(
+        "ligação inicial estabelecida",
+        Duration::from_secs(30),
+        || {
+            let b = b.clone();
+            let a_id = a.id.to_string();
+            async move { b.streams_seen().await.iter().any(|(s, _)| *s == a_id) }
+        },
+    )
     .await;
 
     // A partir daqui A NÃO responde às ofertas do servidor: o servidor fica em
@@ -413,15 +435,19 @@ async fn client_offer_during_server_offer_is_deferred_not_dropped() {
     // O VEREDICTO: a oferta de A foi ADIADA, não descartada. Com o bug o
     // contador ficaria a 0 — o `set_remote_description` falhava, saía um `warn`
     // e a track perdia-se sem deixar rasto em lado nenhum.
-    eventually("oferta de A adiada pelo servidor", Duration::from_secs(20), || {
-        let metrics = metrics.clone();
-        async move {
-            metrics
-                .sfu_offers_deferred_total
-                .load(std::sync::atomic::Ordering::Relaxed)
-                >= 1
-        }
-    })
+    eventually(
+        "oferta de A adiada pelo servidor",
+        Duration::from_secs(20),
+        || {
+            let metrics = metrics.clone();
+            async move {
+                metrics
+                    .sfu_offers_deferred_total
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    >= 1
+            }
+        },
+    )
     .await;
 
     // E o servidor não desistiu da renegociação nem entrou em erro.

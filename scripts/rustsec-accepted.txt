@@ -1,0 +1,20 @@
+# Avisos RustSec aceites conscientemente, com a razão e a data.
+# Formato: <ID>  # razão
+# REVER a cada release. Só entra aqui o que tem razão escrita.
+# Estado a 2026-08-25 (cargo-audit 0.22.2, 424 crates).
+
+RUSTSEC-2023-0071  # `rsa` 0.9.10 — Marvin Attack (5.9 médio). Entra por
+                   # `openidconnect` 4.0.1 e NÃO tem versão corrigida. O ataque
+                   # recupera uma chave PRIVADA por temporização de DECIFRAGEM;
+                   # o nosso uso do openidconnect é descoberta OIDC e fluxo de
+                   # código com PKCE (auth.rs), onde só se VERIFICAM tokens com
+                   # a chave PÚBLICA do IdP. Não guardamos nenhuma chave privada
+                   # RSA, por isso o caminho vulnerável não é exercido. Sai
+                   # daqui quando o `rsa` publicar correcção ou o
+                   # `openidconnect` trocar de backend.
+
+RUSTSEC-2026-0221  # `event-listener` 5.4.1 — unsound (`!Send` a atravessar
+                   # fronteiras de thread via `StackSlot`). Entra por
+                   # `sqlx-core` 0.8.6; não temos como o evitar sem sair do
+                   # sqlx. Unsoundness, não vulnerabilidade explorável a partir
+                   # de input do utilizador. Sai quando o sqlx subir a dep.

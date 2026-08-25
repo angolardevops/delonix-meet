@@ -15,10 +15,10 @@ mod odoo_sso;
 mod org;
 mod presence;
 mod pubsub;
-mod redis_state;
 mod rate_limit;
 mod recorder;
 mod recordings;
+mod redis_state;
 mod room_tools;
 mod rooms;
 mod sfu;
@@ -53,7 +53,10 @@ const WHITEBOARD_BODY_LIMIT: usize = 12 * 1024 * 1024; // PNG 8MB → base64 ~11
 async fn security_headers(req: axum::extract::Request, next: middleware::Next) -> Response {
     let mut res = next.run(req).await;
     let h = res.headers_mut();
-    h.insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
+    h.insert(
+        "X-Content-Type-Options",
+        HeaderValue::from_static("nosniff"),
+    );
     h.insert("X-Frame-Options", HeaderValue::from_static("DENY"));
     h.insert("Referrer-Policy", HeaderValue::from_static("no-referrer"));
     h.insert(
@@ -449,6 +452,7 @@ async fn main() {
                 force_relay: config.force_turn_relay,
             },
             metrics.clone(),
+            config.nego_queue_cap,
         )),
         presence: presence_hub,
         auth_limiter: RateLimiter::new(20, Duration::from_secs(60)),
