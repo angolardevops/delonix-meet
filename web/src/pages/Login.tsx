@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { login, registerOrg, ssoCheck, ssoRedirect, getPlatformSettings, User } from '../api'
-import { LanguageToggle } from '../components/Shell'
+import LanguageToggle from '../components/LanguageToggle'
 import PasswordInput from '../components/PasswordInput'
 import { appNameParts, getLoginBg } from '../branding'
 

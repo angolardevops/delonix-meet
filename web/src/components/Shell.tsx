@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { createRoom, getRoom, myOrgs, updateMe, User } from '../api'
 import CommandPalette from './CommandPalette'
 import NotificationCenter from './NotificationCenter'
-import { setLanguage } from '../i18n'
+import ThemePicker from './ThemePicker'
+import LanguageToggle from './LanguageToggle'
+import { applyTheme, storedTheme, Theme } from '../theme'
 import { appNameParts, getAppName, getLoginBg, setAppName, setLoginBg } from '../branding'
 import PasswordInput from './PasswordInput'
 import OnboardingTour from './OnboardingTour'
@@ -44,59 +46,6 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
 ]
-
-export function applyTheme(theme: 'default' | 'delonix-light') {
-  if (theme === 'default') delete document.documentElement.dataset.theme
-  else document.documentElement.dataset.theme = theme
-  localStorage.setItem('dx_theme', theme)
-}
-
-export function initTheme() {
-  const t = localStorage.getItem('dx_theme')
-  applyTheme(t === 'delonix-light' ? 'delonix-light' : 'default')
-}
-
-export function ThemePicker() {
-  const { t } = useTranslation()
-  const [theme, setTheme] = useState<'default' | 'delonix-light'>(
-    (localStorage.getItem('dx_theme') as 'default' | 'delonix-light') ?? 'default'
-  )
-  
-  function pick(t: 'default' | 'delonix-light') {
-    setTheme(t)
-    applyTheme(t)
-  }
-  
-  return (
-    <div className="theme-picker">
-      <label className="theme-label">{t('common.theme', 'Tema')}</label>
-      <select value={theme} onChange={(e) => pick(e.target.value as 'default' | 'delonix-light')}>
-        <option value="default">Delonix · Escuro (Padrão)</option>
-        <option value="delonix-light">Delonix · Claro</option>
-      </select>
-    </div>
-  )
-}
-
-/** Toggle global PT/EN/FR — persiste em localStorage E na BD (sincroniza entre dispositivos). */
-export function LanguageToggle() {
-  const { i18n } = useTranslation()
-  const lang = i18n.language.startsWith('en') ? 'en' : i18n.language.startsWith('fr') ? 'fr' : 'pt'
-
-  function pick(l: 'pt' | 'en' | 'fr') {
-    setLanguage(l)
-    // Persiste à BD em best-effort — falha silenciosa para não bloquear a UI.
-    import('../api').then(({ updateMe }) => updateMe({ locale: l })).catch(() => {})
-  }
-
-  return (
-    <div className="lang-toggle" role="group" aria-label="Idioma / Language">
-      <button className={lang === 'pt' ? 'lang-btn active' : 'lang-btn'} onClick={() => pick('pt')}>PT</button>
-      <button className={lang === 'en' ? 'lang-btn active' : 'lang-btn'} onClick={() => pick('en')}>EN</button>
-      <button className={lang === 'fr' ? 'lang-btn active' : 'lang-btn'} onClick={() => pick('fr')}>FR</button>
-    </div>
-  )
-}
 
 type SettingsTab = 'appearance' | 'account' | 'brand'
 
@@ -286,9 +235,7 @@ function AppBar({ onEnterRoom, username }: { onEnterRoom: (code: string, voice?:
   const [code, setCode] = useState('')
   const [creating, setCreating] = useState(false)
   const [err, setErr] = useState('')
-  const [theme, setTheme] = useState<'default' | 'delonix-light'>(
-    (localStorage.getItem('dx_theme') as 'default' | 'delonix-light') ?? 'default'
-  )
+  const [theme, setTheme] = useState<Theme>(storedTheme)
   const locale = i18n.language.startsWith('en') ? 'en-GB' : i18n.language.startsWith('fr') ? 'fr-FR' : 'pt-PT'
   const now = new Date()
   const dateLabel = `${now.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' })} · ${now.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`

@@ -20,7 +20,7 @@ import {
 import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
 import { Btn, SelectCtl } from '../components/ui'
 import { BreakoutRoom, PeerInfo, PollView, QaView, Signaling, WbStroke } from '../signaling'
-import { ThemePicker } from '../components/Shell'
+import ThemePicker from '../components/ThemePicker'
 import { Call, MeshCall, SCREEN_CONSTRAINTS, SfuCall } from '../webrtc'
 import type { CallState } from '../callRecovery'
 import { chooseLayers, type LocalConditions, type TileSignal } from '../layerPolicy'

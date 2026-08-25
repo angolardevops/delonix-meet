@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { LanguageToggle } from '../components/Shell'
+import LanguageToggle from '../components/LanguageToggle'
 
 type Feature = { t: string; d: string }
 type FaqItem = { q: string; a: string }
