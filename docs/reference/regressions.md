@@ -368,3 +368,10 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** **o teste tem de apontar ao que a correcção mudou, e o vermelho tem de ser verificado, não presumido.** Depois de partir o invariante, confirma-se que o ficheiro mudou mesmo (`grep` ao alvo, ou `git diff`) antes de acreditar no resultado. Um `sed` que não casa é silencioso.
 - **Regra irmã, sobre o instrumento:** quando a propriedade em causa é de pintura (`transform`, `outline`), o `getComputedStyle` de um painel que não compõe frames **mente** — mediu-se que nem um `!important` inline a altera. A leitura fiável é geométrica (`boundingBox`) ou por **comparação de pixéis**.
 - **Ficheiros:** `web/e2e/layout-consola.mjs`.
+
+### R52 — Um banco de ensaio que mede o invólucro em vez do componente
+- **Sintoma:** um benchmark a dar **exactamente o mesmo número** com e sem a optimização, e prestes a ser publicado como «não faz diferença».
+- **Causa raiz:** o contador de renders estava num componente `Contado` que envolvia o `<RemoteTile>` memoizado. O invólucro **não** é memoizado, por isso renderiza sempre — e era o invólucro que estava a ser contado. O `memo` estava a funcionar; o instrumento é que olhava para o sítio errado.
+- **Regra:** **um contador de renders num invólucro mede o invólucro.** Para medir o efeito de uma barreira de memoização mede-se **tempo de commit da subárvore** — `<Profiler>` do React, `actualDuration` — ou instrumenta-se por dentro do componente. Com o instrumento certo: 2,352 ms/tique sem `memo` contra 0,038 com, a 12 pares.
+- **A leitura que o número certo dá, e o errado escondia:** sem `memo` o custo **cresce com o número de pessoas na sala**; com `memo` é plano. O pior caso deixa de ser caso.
+- **Ficheiros:** `web/e2e/bench/tiles.tsx`.
