@@ -441,11 +441,81 @@ pub async fn login(
             created_at,
             locale: "pt".into(),
         };
+        // Segundo factor: com MFA activo, a password sozinha NÃO produz sessão.
+        // Devolve-se um desafio de curta duração, e os tokens só saem no
+        // `/api/auth/mfa`. É o ponto todo do segundo factor — se a password
+        // bastasse para obter o access token, o resto era teatro.
+        if crate::mfa::activo(&state.db, user.id).await? {
+            crate::audit::log(&state.db, None, user.id, "auth.mfa_challenge", &user.email).await;
+            return Ok(Json(serde_json::json!({
+                "mfa_required": true,
+                "mfa_token": mfa_challenge_token(&state, user.id)?,
+            }))
+            .into_response());
+        }
         crate::audit::log(&state.db, None, user.id, "auth.login", &user.email).await;
         Ok(auth_ok(&state, issue_tokens(&state, user).await?))
     } else {
         Err(ApiError::Unauthorized)
     }
+}
+
+/// Token de DESAFIO do segundo factor.
+///
+/// JWT separado, `typ: "mfa"`, válido 5 minutos. Não serve para mais nada: o
+/// `verify_jwt` do resto da API exige `typ: "access"`, por isso este token não
+/// abre um único endpoint. Prova só que a password foi aceite.
+fn mfa_challenge_token(state: &AppState, user_id: Uuid) -> Result<String, ApiError> {
+    let now = Utc::now().timestamp();
+    sign_jwt(
+        &state.config.jwt_secret,
+        &Claims {
+            sub: user_id,
+            typ: "mfa".into(),
+            iat: now,
+            exp: now + 5 * 60,
+            room: None,
+            name: None,
+            topo: None,
+            owner: false,
+            wait: false,
+            adm: false,
+            is_bot: false,
+        },
+    )
+}
+
+#[derive(Deserialize)]
+pub struct MfaReq {
+    pub mfa_token: String,
+    pub code: String,
+}
+
+/// Segunda metade do login: troca o desafio + código pelos tokens de sessão.
+pub async fn mfa_login(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MfaReq>,
+) -> Result<Response, ApiError> {
+    // O `verify_jwt` exige o `typ` esperado: um access token NÃO serve de
+    // desafio, nem o desafio serve de access token. É a mesma chave a assinar
+    // os dois, e sem esta verificação seriam intermutáveis.
+    let claims = verify_jwt(&state.config.jwt_secret, &req.mfa_token, "mfa")
+        .map_err(|_| ApiError::Unauthorized)?;
+    let user_id = claims.sub;
+
+    // Anti-força-bruta: seis dígitos são um milhão de hipóteses, e sem travão
+    // uma rede rápida percorre-as em minutos. O limitador é POR CONTA, não por
+    // IP — distribuir as tentativas por vários IPs não deve ajudar.
+    if !state.login_limiter.check(&format!("mfa:{user_id}")) {
+        return Err(ApiError::TooManyRequests);
+    }
+    if !crate::mfa::consome_codigo(&state, user_id, &req.code).await? {
+        crate::audit::log(&state.db, None, user_id, "auth.mfa_failed", "").await;
+        return Err(ApiError::Unauthorized);
+    }
+    let user = crate::users::fetch_public(&state.db, user_id).await?;
+    crate::audit::log(&state.db, None, user.id, "auth.login_mfa", &user.email).await;
+    Ok(auth_ok(&state, issue_tokens(&state, user).await?))
 }
 
 pub async fn refresh(

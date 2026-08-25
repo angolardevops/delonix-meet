@@ -9,6 +9,7 @@ mod error;
 mod meetings;
 mod meetings_v1;
 mod metrics;
+mod mfa;
 mod mls;
 mod odoo;
 mod odoo_sso;
@@ -123,6 +124,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/login", post(auth::login))
         .route("/refresh", post(auth::refresh))
         .route("/logout", post(auth::logout))
+        // Segunda metade do login quando o MFA está activo: troca o desafio
+        // de curta duração + o código pelos tokens de sessão.
+        .route("/mfa", post(auth::mfa_login))
         // SSO / OIDC
         .route("/sso/check", get(auth::sso_check))
         .route("/sso/login", get(auth::sso_login))
@@ -138,6 +142,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/metrics", get(metrics_handler))
         .nest("/api/auth", auth_routes)
         .route("/api/users/me", get(users::me).patch(users::update_me))
+        // MFA (TOTP, RFC 6238) — ver mfa.rs.
+        .route("/api/users/me/mfa", get(mfa::estado))
+        .route("/api/users/me/mfa/enrol", post(mfa::inscrever))
+        .route("/api/users/me/mfa/activate", post(mfa::activar))
+        .route("/api/users/me/mfa/disable", post(mfa::desactivar))
         // /api/mls NÃO está registado — de propósito. O `mls.rs` descreve a
         // interface MLS pretendida (RFC 9420) mas os handlers são stubs: não
         // guardam nada, não verificam nada, e devolviam 201/200/202 com

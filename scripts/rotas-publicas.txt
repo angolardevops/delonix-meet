@@ -21,3 +21,4 @@
 /admin/orgs                  Provisionamento de organizações. Autentica por PROVISIONING_SECRET em header; vazio => desactivado (fail-closed).
 /api/share/{token}/download  Descarrega a gravação partilhada. A credencial É o token no caminho, validado no handler — igual a /api/share/{token}.
 /api/whiteboards/shared/{token}  PNG de um quadro partilhado por link. A credencial É o token no caminho.
+/api/auth/mfa                Segunda metade do login. A credencial É o token de desafio no corpo (JWT `typ: "mfa"`, 5 min, que não abre mais nenhum endpoint) mais o código do segundo factor.
