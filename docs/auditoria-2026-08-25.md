@@ -62,8 +62,8 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | CI (Rust/TS/SQL/manifests) | 🔴 → ✅ **feito nesta sessão** | — | — | `make test` exit 0 num worktree limpo |
 | `cargo fmt` / clippy / audit / SBOM | 🔴 → ✅ **feito nesta sessão** | dívida herdada escrita e travada por catraca | — | catracas vistas a falhar |
 | Filas limitadas + backpressure | 🔴 → ✅ **feito nesta sessão** | — | — | 7 testes novos (R32/R33) |
-| Nunca bloquear o executor Tokio | 🟡 | `recorder.rs` escreve IVF/OGG com `std::fs::File` **síncrono**, chamado de dentro da task async de RTP (`sfu.rs:882`) | **Alto** — disco lento/cheio trava um worker do runtime | gravar com o volume saturado e medir latência de RTP |
-| `ffmpeg` fora do executor + limites | 🟡 | invocação é correcta (`tokio::process`, args separados, **sem shell**), mas **sem timeout, sem limites de CPU/memória, sem sandbox** (`recorder.rs:430`) | **Alto** — um input malformado pendura a composição para sempre | ficheiro corrompido → falha em tempo limitado |
+| Nunca bloquear o executor Tokio | 🟡 **melhorado nesta sessão** | `BufWriter` de 64 KiB corta as syscalls de uma-por-pacote-RTP para uma-por-64-KiB, mas a escrita **continua síncrona no executor**. A correcção completa (thread dedicada + fila limitada por track) fica por fazer: mexe no caminho de fecho, onde errar dá gravação truncada em silêncio, e não há ffmpeg nem media real nesta máquina para a validar | Médio (era Alto) | gravar com o volume saturado e medir latência de RTP |
+| `ffmpeg` fora do executor + limites | 🟡 → ✅ **feito nesta sessão** | timeout (`FFMPEG_TIMEOUT_SECS`), `-threads` (`FFMPEG_THREADS`), `-nostdin`, `kill_on_drop`, e o processo é morto e colhido ao exceder. **Falta sandbox e limite de memória** (precisa de cgroups/setrlimit) | Baixo (era Alto) | 3 testes em `run_bounded` (acaba a tempo / estoura o tecto / falha) |
 | Máquina de estados de chamada | 🔴 | não existe. Não há `connecting/degraded/reconnecting/recovering/failed` | Alto | estado observável em cada transição |
 | **ICE restart** | 🔴 | **zero ocorrências de `restartIce()` no frontend** | **Crítico** — a recuperação de rede depende de reload da página (`Room.tsx:853`, `dx_reconnect_at`) | cortar a rede 10 s e a chamada volta sem reload |
 | Reconnect token / silent rejoin | 🔴 | não existe | Alto | refresh do browser não perde a sessão de media |
@@ -202,9 +202,10 @@ Tem de ser dito por inteiro:
 
 Pela ordem do mandato, e pelo risco medido:
 
-1. **Escrita de ficheiro fora do executor Tokio** + **timeout e limites no
-   ffmpeg** — as duas são pequenas, fecham risco Alto, e são pré-requisito de
-   qualquer trabalho de gravação (logo, de todo o Studio).
+1. **Escrita de ficheiro fora do executor Tokio** — o `ffmpeg` já ficou com
+   tecto e travão de CPU nesta sessão; falta mover a escrita IVF/OGG para uma
+   thread dedicada com fila limitada por track, **com teste contra uma gravação
+   real** (não há ffmpeg nem media nesta máquina).
 2. **Máquina de estados de chamada + ICE restart + rejoin silencioso.**
 3. **Métricas de chamada completas** — sem elas não há Call Quality Score nem
    SLO com números.
