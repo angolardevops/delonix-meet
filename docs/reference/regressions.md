@@ -436,3 +436,11 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **A segunda regra, sobre os portões:** `tsc` e `vitest` **não compilam SCSS**. Um merge que toca em `styles.scss` só é dado por resolvido depois do `vite build` — que é o único dos três que olha para ele.
 - **Erro irmão, na mesma resolução:** o primeiro script usou um regex `<<<<<<< HEAD\n(.*?)\n=======\n(.*?)\n>>>>>>>` sobre o catálogo. Falhou porque a entrada de OUTRA sessão **cita** os marcadores a meio de uma frase. Marcadores reais só contam quando estão no **início da linha** — e o script chegou a commitar um ficheiro com marcadores lá dentro antes de isto ser apanhado.
 - **Ficheiros:** `web/src/styles.scss`, `docs/reference/regressions.md`.
+### R61 — `toContain` com o nome de uma função aceita a função errada
+- **Sintoma:** dois portões do editor a ficarem VERDES com o invariante deliberadamente partido.
+- **Causa raiz (duas, na mesma passagem):**
+  1. `expect(e).toContain('decodeAudioData')` continua a passar quando a chamada é trocada por `decodeAudioDataX` — a string está lá dentro. Um nome de função verifica-se com **fronteira de palavra** (`/\bdecodeAudioData\(/`), nunca com `toContain`.
+  2. `expect(c).toContain('for (const g of this.todos)')` passava com o `pausar()` partido, porque o `retomar()` tem o mesmo padrão. Quando o invariante é «TODOS os sítios fazem X», **conta-se** — `expect(ocorrências).toBeGreaterThanOrEqual(3)` — em vez de confirmar que existe um.
+- **Regra:** um portão baseado em texto tem de responder «o que teria de estar partido para isto ficar vermelho?». Se a resposta for «uma coisa que ninguém escreveria por engano», o portão não guarda o que diz guardar.
+- **É a quarta vez nesta série** (ver R59): comentário aceite como código, `querySelector` singular, limiar abaixo do fundo, e agora substring de nome de função. O padrão comum é o mesmo — a asserção é mais frouxa do que a frase que a descreve.
+- **Ficheiros:** `web/src/studio.invariantes.test.ts`.

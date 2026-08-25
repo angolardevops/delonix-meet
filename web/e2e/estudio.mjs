@@ -254,6 +254,54 @@ const video = await page.locator('.studio-preview').evaluate(
 ok('a gravação produz um ficheiro reproduzível', video.src === 'blob:', `src=${video.src}`)
 ok('com imagem 1920×1080', video.w === 1920 && video.h === 1080, `${video.w}×${video.h}`)
 
+// ---- corte
+console.log('\ncorte')
+{
+  const suporta = await page.evaluate(() => typeof VideoEncoder === 'function' && typeof MediaStreamTrackProcessor === 'function')
+  ok('o browser tem WebCodecs (o caminho de pouco recurso)', suporta)
+  if (suporta) {
+    // Espera que a duração seja conhecida — um WebM de MediaRecorder chega
+    // muitas vezes com `Infinity` até se procurar até ao fim.
+    const dur = await page
+      .waitForFunction(() => {
+        const v = document.querySelector('.studio-preview')
+        return v && Number.isFinite(v.duration) && v.duration > 0 ? v.duration : null
+      }, null, { timeout: 20000 })
+      .then((h) => h.jsonValue())
+      .catch(() => null)
+    ok('a duração do gravado é conhecida', dur !== null, dur ? `${dur.toFixed(1)}s` : 'Infinity')
+
+    if (dur) {
+      ok('os cursores de corte aparecem', (await page.locator('.studio-corte input[type=range]').count()) === 2)
+      const cursores = page.locator('.studio-corte input[type=range]')
+      await cursores.nth(0).fill('1')
+      await cursores.nth(1).fill('3')
+      await page.waitForTimeout(400)
+
+      const botao = page.locator('.studio-corte button')
+      ok('o botão anuncia a duração do troço', /0[01]:0[12]/.test((await botao.textContent()) ?? ''), await botao.textContent())
+      await botao.click()
+
+      // O corte substitui o resultado: espera pela nova duração.
+      const nova = await page
+        .waitForFunction(() => {
+          const v = document.querySelector('.studio-preview')
+          return v && Number.isFinite(v.duration) && v.duration > 0 && v.duration < 2.9 ? v.duration : null
+        }, null, { timeout: 90000 })
+        .then((h) => h.jsonValue())
+        .catch(() => null)
+      ok('o corte produz um ficheiro mais curto', nova !== null, nova ? `${nova.toFixed(2)}s (pedidos ~2s)` : 'não encurtou')
+      if (nova) ok('e com a duração pedida (±0,6s)', Math.abs(nova - 2) < 0.6, `${nova.toFixed(2)}s`)
+
+      const temAudio = await page.locator('.studio-preview').evaluate((v) => {
+        const el = v
+        return el.mozHasAudio || !!el.webkitAudioDecodedByteCount || !!(el.audioTracks && el.audioTracks.length)
+      })
+      console.log(`  --    faixa de áudio no cortado: ${temAudio ? 'sim' : 'não detectável por este browser'}`)
+    }
+  }
+}
+
 ok('sem erros de página', errosConsola.length === 0, errosConsola.slice(0, 2).join(' | ') || 'nenhum')
 await page.screenshot({ path: '/tmp/estudio.png' })
 

@@ -142,6 +142,72 @@ describe('a bolha arrasta-se', () => {
   })
 })
 
+describe('o corte é de pouco recurso', () => {
+  it('não traz ffmpeg.wasm', () => {
+    // ~30 MB de WASM a descarregar e a compilar, a correr em software num
+    // fio só. O pedido era «cortes profissionais com pouco recurso».
+    const pkg = read('web/package.json')
+    expect(pkg).not.toContain('ffmpeg')
+    expect(pkg).toContain('webm-muxer')
+  })
+
+  it('usa WebCodecs — decodificação por hardware', () => {
+    const e = readCodigo('web/src/studio/editor.ts')
+    expect(e).toContain('new VideoEncoder(')
+    expect(e).toContain('MediaStreamTrackProcessor')
+  })
+
+  it('degrada com aviso onde o WebCodecs não existe', () => {
+    expect(readCodigo('web/src/studio/editor.ts')).toContain('export function cortesSuportados()')
+    expect(readCodigo('web/src/pages/Studio.tsx')).toContain('cortesSuportados()')
+  })
+})
+
+describe('o áudio do corte não sai em falsete', () => {
+  it('não é capturado do <video> acelerado', () => {
+    // Acelerar a reprodução para cortar depressa comprime o áudio no tempo e
+    // sobe-lhe o tom. Um corte com a voz do professor em falsete não é um
+    // corte. O áudio vem da faixa ISOLADA e é fatiado por amostras.
+    // `toContain` não serve para nomes de função: `decodeAudioDataX` contém
+    // `decodeAudioData` e o portão passava com a chamada trocada. Fronteira
+    // de palavra, sempre.
+    const e = readCodigo('web/src/studio/editor.ts')
+    expect(e).toMatch(/\bdecodeAudioData\(/)
+    expect(e).toMatch(/\bcopyToChannel\(/)
+    expect(e).toMatch(/\bnew AudioEncoder\(/)
+  })
+
+  it('o corte de áudio é por índice de amostra, não por tempo aproximado', () => {
+    const e = readCodigo('web/src/studio/editor.ts')
+    expect(e).toContain('Math.floor(troco.inicio * sr)')
+    expect(e).toContain('Math.ceil(troco.fim * sr)')
+  })
+})
+
+describe('as faixas são separadas POR DESENHO', () => {
+  it('há um gravador por faixa, além do combinado', () => {
+    const c = readCodigo('web/src/studio/compositor.ts')
+    expect(c).toContain('private gravadorVideo: MediaRecorder | null')
+    expect(c).toContain('private gravadorAudio: MediaRecorder | null')
+  })
+
+  it('as faixas isoladas reusam as MESMAS tracks — sem segunda composição', () => {
+    const c = readCodigo('web/src/studio/compositor.ts')
+    expect(c).toContain('new MediaStream(stream.getVideoTracks())')
+    expect(c).toContain('new MediaStream(faixasAudio)')
+  })
+
+  it('pausar e retomar abrangem os três gravadores', () => {
+    // Um gravador esquecido na pausa desalinha as faixas e o «juntar» sai
+    // dessincronizado — que é o defeito que ninguém repara até ao fim.
+    // Conta-se: `pausar`, `retomar` e `destruir` têm de iterar os três. Um
+    // `toContain` simples passava com dois deles partidos.
+    const c = readCodigo('web/src/studio/compositor.ts')
+    const iteracoes = (c.match(/for \(const g of this\.todos\)/g) ?? []).length
+    expect(iteracoes).toBeGreaterThanOrEqual(3)
+  })
+})
+
 describe('as três línguas têm as chaves do estúdio', () => {
   for (const loc of ['pt', 'en', 'fr']) {
     it(loc, () => {
