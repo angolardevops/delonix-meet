@@ -1,5 +1,6 @@
 import { FrameCrypto } from './e2ee'
 import { ClientMsg, Signaling } from './signaling'
+import type { LinhaDoTempo } from './callTimings'
 import {
   callQualityScore,
   extractQuality,
@@ -397,6 +398,9 @@ export class SfuCall implements Call {
     private cb: CallCallbacks,
     private crypto?: FrameCrypto,
     private recovery: RecoveryConfig = DEFAULT_RECOVERY,
+    /** Linha do tempo da sessão. Vem de FORA porque começa antes desta classe
+     *  existir — o utilizador quis entrar muito antes de haver uma PC. */
+    private tempos?: LinhaDoTempo,
   ) {
     this.pc = new RTCPeerConnection(pcConfig(rtcConfig, crypto))
 
@@ -415,6 +419,8 @@ export class SfuCall implements Call {
 
     this.pc.onicecandidate = (e) => {
       if (e.candidate) this.send({ type: 'sfu-ice', candidate: e.candidate.toJSON() })
+      // `candidate` a null = a recolha terminou. É o fim do `ice_gathering_ms`.
+      else this.tempos?.marcar('ice_completo')
     }
     this.pc.ontrack = (e) => {
       // O SFU reencaminha frames encriptados sem os conseguir abrir;
@@ -423,13 +429,19 @@ export class SfuCall implements Call {
       // O SFU define stream_id = peer_id do publisher.
       const stream = e.streams[0]
       if (stream) this.cb.onStream(stream.id, stream)
+      // Primeira media de OUTRA pessoa. É o instante em que a reunião começa
+      // de facto — antes disto o utilizador está a olhar para um ecrã vazio.
+      this.tempos?.marcar(e.track.kind === 'audio' ? 'primeiro_audio' : 'primeiro_video')
     }
 
     // Recuperação de media. Antes disto não existia handler nenhum: uma PC que
     // caísse em `failed` — mudança de Wi-Fi para dados móveis, NAT a refazer o
     // binding, portátil a acordar da suspensão — ficava morta até o utilizador
     // recarregar a página.
-    this.pc.onconnectionstatechange = () => this.onPcState(this.pc.connectionState)
+    this.pc.onconnectionstatechange = () => {
+      if (this.pc.connectionState === 'connected') this.tempos?.marcar('ligado')
+      this.onPcState(this.pc.connectionState)
+    }
 
     signal.on('sfu-answer', (m) =>
       this.enqueue(async () => {
@@ -491,6 +503,7 @@ export class SfuCall implements Call {
     this.enqueue(async () => {
       const offer = await this.pc.createOffer()
       await this.pc.setLocalDescription(offer)
+      this.tempos?.marcar('oferta')
       this.send({ type: 'sfu-offer', sdp: offer.sdp! })
     })
   }
@@ -529,6 +542,10 @@ export class SfuCall implements Call {
     // isto, uma recuperação espontânea deixava um restart agendado a disparar
     // depois, renegociando uma ligação que já estava boa.
     if (d.state === 'connected' || d.state === 'disconnected') this.clearTimers()
+    // Recuperação COMPLETA: veio de um estado degradado e voltou a connected.
+    if (d.state === 'connected' && this.state !== 'connected' && this.state !== 'connecting') {
+      this.tempos?.contarRecuperacao()
+    }
     this.setState(d.state)
     this.runAction(d.action)
   }
@@ -589,6 +606,7 @@ export class SfuCall implements Call {
         return
       }
       this.setState('recovering')
+      this.tempos?.contarReinicioIce()
       const offer = await this.pc.createOffer({ iceRestart: true })
       await this.pc.setLocalDescription(offer)
       this.send({ type: 'sfu-offer', sdp: offer.sdp! })

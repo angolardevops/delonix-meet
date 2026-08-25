@@ -228,6 +228,10 @@ jobs:
           # indicador aceso a reunião inteira e ficava sem nada nem aviso.
           # Precisa do vite (carrega o arnês de media), por isso corre aqui.
           APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
+          # Tempos de entrada medidos numa entrada A SÉRIO. Um teste contra
+          # duplos provaria a aritmética; o que interessa provar é que os
+          # marcos disparam nos sítios certos de uma chamada verdadeira.
+          APP=http://localhost:5174 PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/tempos.mjs
           # O DRAIN vai por último: manda SIGTERM ao servidor e espera que ele
           # feche. Qualquer teste depois deste ficaria sem servidor.
           APP=http://localhost:5174 node web/e2e/drain.mjs

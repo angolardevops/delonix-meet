@@ -369,3 +369,14 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** prazos de teste ponta-a-ponta são **generosos e ajustáveis** (`E2E_TIMEOUT_FACTOR`, ×4 no CI), nunca calibrados para o ambiente de quem os escreveu. **Um portão que falha ao acaso perde a credibilidade toda** — à terceira vez, quem o vê vermelho assume flake e segue, e a partir daí ele não protege nada.
 - **E a mensagem de timeout tem de dizer o que falta para o distinguir:** o prazo, o número de tentativas e o tempo decorrido. Sem isso, um timeout não separa «o produto está partido» de «a máquina é lenta» — e foi exactamente essa dúvida que custou uma ida ao CI.
 - **Ficheiros:** `server/src/sfu_e2e.rs` (`prazo`, `eventually`), `.github/workflows/ci.yml`.
+
+### R51 — Medir o tempo a partir de quando o CÓDIGO está pronto
+- **Sintoma:** um «tempo de entrada» bonito que não corresponde ao que o utilizador espera.
+- **Causa raiz possível, e evitada de propósito:** começar a linha do tempo dentro da `SfuCall`. Quando essa classe existe, já passaram o pedido do room token, a resolução de ICE servers e a abertura do WebSocket — mede-se o código, não a experiência. A linha do tempo começa em `Room.tsx`, no instante em que o utilizador quis entrar.
+- **Regra:** o «tempo até entrar» conta da INTENÇÃO até haver MEDIA. Um WebSocket aberto com o ecrã preto não é ter entrado numa reunião, e por isso o marco final é `connected` da PC, não o `open` do socket.
+- **Cada marco é registado UMA vez.** O segundo `primeiro_audio` não é o primeiro: sem essa regra, uma renegociação a meio da chamada reescrevia o instante e o «tempo até ouvir» passava a medir a última renegociação — um número que parece bom e não quer dizer nada.
+- **Marcos em falta dão `null`, nunca zero.** Zero é uma medição («foi instantâneo») e enviesa as médias para baixo; `null` é a ausência dela.
+- **Não se reporta uma sessão que nunca ligou.** Enviesaria a média de «tempo até entrar» com sessões que não entraram — essas contam-se na taxa de sucesso, não aqui.
+- **A cauda tem contador próprio** (`delonix_join_slow_total`, > 5 s): uma média de 1,2 s esconde perfeitamente 5% de pessoas à espera doze segundos, e é essa gente que abre o ticket.
+- **Primeira medição real** (2026-08-25, dois Chromium contra o SFU): join 364 ms, `ws_ms` 345, ICE gathering 14 ms. **95% do tempo de entrada é token + WebSocket** — e é precisamente para isolar isso que o `ws_ms` existe em separado.
+- **Ficheiros:** `web/src/callTimings.ts`, `web/src/webrtc.ts`, `web/src/pages/Room.tsx`, migração 0038, `server/src/rooms.rs` (`post_timings`), teste `web/e2e/tempos.mjs`.

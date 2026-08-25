@@ -598,6 +598,10 @@ export interface QosSample {
   limited_by?: string | null
 }
 
+/** Tempos de estabelecimento de UMA sessão (ver `callTimings.ts`). */
+export const postTimings = (code: string, t: import('./callTimings').Tempos) =>
+  request(`/api/rooms/${code}/timings`, { method: 'POST', body: JSON.stringify(t) })
+
 export const postQos = (code: string, s: QosSample) =>
   request(`/api/rooms/${code}/qos`, { method: 'POST', body: JSON.stringify(s) })
 
