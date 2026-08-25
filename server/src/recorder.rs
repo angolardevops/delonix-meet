@@ -349,10 +349,22 @@ impl RecordingSession {
         let id = Uuid::new_v4();
         let dir = recordings_dir.join(format!("tmp-{id}"));
         tokio::fs::create_dir_all(&dir).await?;
-        let e2ee_key = e2ee_key
-            .as_deref()
-            .and_then(|raw| Aes256Gcm::new_from_slice(raw).ok())
-            .map(Arc::new);
+        // Os bytes crus da chave passam a `Aes256Gcm` (cuja tabela interna é
+        // limpa no Drop, via a feature `zeroize` do `cipher`) e o `Vec` de
+        // origem é sobrescrito à mão — sem isto ficaria a chave AES-256 em
+        // claro numa alocação libertada, à espera de quem leia a heap.
+        let e2ee_key = {
+            use zeroize::Zeroize;
+            let mut raw = e2ee_key;
+            let k = raw
+                .as_deref()
+                .and_then(|r| Aes256Gcm::new_from_slice(r).ok())
+                .map(Arc::new);
+            if let Some(v) = raw.as_mut() {
+                v.zeroize();
+            }
+            k
+        };
         Ok(Self {
             id,
             dir,
@@ -697,6 +709,129 @@ pub async fn retention_sweep(state: &Arc<AppState>) -> usize {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    // ------------------------------------------------------------------
+    //  Formato E2EE: o Rust tem de decifrar o que o browser cifra
+    // ------------------------------------------------------------------
+    //
+    // O cifrador vive em JavaScript (`web/src/e2ee.ts`, dentro de um worker) e
+    // o decifrador em Rust (`decrypt_e2ee`). São duas implementações do MESMO
+    // formato, em linguagens diferentes, sem nada que as obrigue a concordar.
+    // Se divergirem, as gravações de salas E2EE saem em RUÍDO — e ninguém dá
+    // por isso, porque o `Vp8IvfWriter` limita-se a descartar o que não
+    // autentica e o ficheiro sai vazio ou truncado, sem erro nenhum.
+    //
+    // Estes testes reconstroem em Rust, byte a byte, o que o worker produz:
+    //     [ header em claro | ciphertext+tag | IV(12) ]   AAD = header
+
+    /// Cifra como o worker do browser cifra. Se este helper e o `e2ee.ts`
+    /// divergirem, é sinal de que o formato mudou de um lado só.
+    fn cifra_como_o_browser(
+        key: &Aes256Gcm,
+        header: &[u8],
+        payload: &[u8],
+        iv: &[u8; 12],
+    ) -> Vec<u8> {
+        use aes_gcm::aead::Aead;
+        let nonce = aes_gcm::Nonce::try_from(&iv[..]).expect("nonce de 12 bytes");
+        let ct = key
+            .encrypt(
+                &nonce,
+                Payload {
+                    msg: payload,
+                    aad: header,
+                },
+            )
+            .expect("cifrar");
+        let mut out = Vec::with_capacity(header.len() + ct.len() + 12);
+        out.extend_from_slice(header);
+        out.extend_from_slice(&ct);
+        out.extend_from_slice(iv);
+        out
+    }
+
+    fn chave_de_teste(b: u8) -> Aes256Gcm {
+        use aes_gcm::KeyInit;
+        Aes256Gcm::new_from_slice(&[b; 32]).unwrap()
+    }
+
+    #[test]
+    fn decifra_o_que_o_browser_cifrou_em_video_e_audio() {
+        let key = chave_de_teste(7);
+        // Os três offsets que o `cryptoOffset` do worker produz:
+        // vídeo keyframe = 10, vídeo delta = 3, áudio = 1.
+        for offset in [10usize, 3, 1] {
+            let header: Vec<u8> = (0..offset as u8).collect();
+            let payload: Vec<u8> = (0..200u8).collect();
+            let frame = cifra_como_o_browser(&key, &header, &payload, &[9u8; 12]);
+
+            let claro = decrypt_e2ee(&key, &frame, offset).expect("tem de autenticar");
+            assert_eq!(&claro[..offset], &header[..], "o header sai intacto");
+            assert_eq!(
+                &claro[offset..],
+                &payload[..],
+                "o payload sai igual ao original"
+            );
+        }
+    }
+
+    #[test]
+    fn o_header_vai_autenticado_nao_so_em_claro() {
+        // O header fica legível de propósito (os packetizers precisam dele),
+        // mas entra como AAD. Adulterá-lo tem de fazer a autenticação falhar —
+        // senão um intermediário podia reescrever metadados de frame à vontade.
+        let key = chave_de_teste(7);
+        let header = vec![0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let payload: Vec<u8> = (0..64u8).collect();
+        let mut frame = cifra_como_o_browser(&key, &header, &payload, &[1u8; 12]);
+
+        frame[2] ^= 0xff; // um bit trocado no header
+        assert!(
+            decrypt_e2ee(&key, &frame, 10).is_none(),
+            "header adulterado TEM de falhar a autenticação"
+        );
+    }
+
+    #[test]
+    fn chave_errada_nao_decifra() {
+        let header = vec![0u8, 1, 2];
+        let payload: Vec<u8> = (0..64u8).collect();
+        let frame = cifra_como_o_browser(&chave_de_teste(7), &header, &payload, &[2u8; 12]);
+        assert!(decrypt_e2ee(&chave_de_teste(8), &frame, 3).is_none());
+    }
+
+    #[test]
+    fn ciphertext_adulterado_nao_decifra() {
+        let key = chave_de_teste(7);
+        let header = vec![0u8, 1, 2];
+        let payload: Vec<u8> = (0..64u8).collect();
+        let mut frame = cifra_como_o_browser(&key, &header, &payload, &[3u8; 12]);
+        let meio = frame.len() / 2;
+        frame[meio] ^= 0x01;
+        assert!(decrypt_e2ee(&key, &frame, 3).is_none());
+    }
+
+    #[test]
+    fn iv_trocado_nao_decifra() {
+        // O IV vai no FIM do frame, em claro. Trocá-lo tem de invalidar a tag.
+        let key = chave_de_teste(7);
+        let header = vec![0u8, 1, 2];
+        let payload: Vec<u8> = (0..64u8).collect();
+        let mut frame = cifra_como_o_browser(&key, &header, &payload, &[4u8; 12]);
+        let n = frame.len();
+        frame[n - 1] ^= 0xff;
+        assert!(decrypt_e2ee(&key, &frame, 3).is_none());
+    }
+
+    #[test]
+    fn frames_pequenos_demais_passam_intactos_dos_dois_lados() {
+        // Abaixo de header+IV+tag não pode haver payload cifrado. O worker
+        // também não os cifra — o importante é que as duas implementações
+        // concordem no MESMO limiar, senão uma cifra e a outra não decifra.
+        let key = chave_de_teste(7);
+        let curto = vec![1u8, 2, 3, 4, 5];
+        assert_eq!(decrypt_e2ee(&key, &curto, 3).unwrap(), curto);
+    }
 
     // ------------------------------------------------------------------
     //  Integridade da gravação: a fila de escrita e o fecho

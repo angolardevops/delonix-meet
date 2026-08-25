@@ -199,6 +199,20 @@ Tem de ser dito por inteiro:
 
 ---
 
+### Programa III — E2EE (consolidação de 2026-08-25)
+
+| Capacidade | Estado | Nota |
+|---|---|---|
+| Protocolo documentado e auditável | 🔴 → ✅ | `docs/reference/e2ee.md`: formato byte a byte, modelo de ameaça, e a lista do que **não** protege |
+| Interoperabilidade JS↔Rust do formato | 🔴 → ✅ | 6 testes que reconstroem em Rust o que o worker produz — sem eles, uma divergência daria gravações em ruído sem erro nenhum |
+| Fail-closed na cifra | 🔴 → ✅ | R42 |
+| Segredos fora do `Debug` | 🔴 → ✅ | R43 |
+| Rotas MLS abertas sem autenticação | 🔴 → ✅ | R41 — 201/200/202 → 404 |
+| Autenticação por remetente | 🔴 | chave partilhada: qualquer participante pode forjar frames de outro |
+| Forward secrecy / rotação de chave | 🔴 | a chave é função pura de (frase, sala) — quem a descobrir decifra todo o passado |
+| Chat e legendas em E2EE | 🔴 | passam pelo servidor em claro |
+| PBKDF2 ≥ 600 000 iterações | 🔴 | 250 000 hoje; subir sem negociação parte salas com versões mistas |
+
 ## 6. Próxima prioridade
 
 Pela ordem do mandato, e pelo risco medido:

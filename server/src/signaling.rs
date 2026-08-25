@@ -147,7 +147,7 @@ pub enum ClientMsg {
     ServerRecord {
         active: bool,
         #[serde(default)]
-        e2ee_key: Option<String>,
+        e2ee_key: Option<Secret>,
     },
     /// Anuncia partilha de ecrã: a próxima track de vídeo sem rid é o ecrã.
     ScreenShare {
@@ -468,6 +468,44 @@ const INTERIM_MAX_ROOM: usize = 12;
 /// 4/s; isto impede que um cliente alterado ou modificado inunde a sala).
 const INTERIM_BURST: f64 = 8.0;
 const INTERIM_PER_SEC: f64 = 4.0;
+
+/// Uma `String` que carrega SEGREDO: nunca aparece num `Debug`, e os bytes são
+/// limpos da memória quando é largada.
+///
+/// Existe por causa de uma armadilha concreta: o `ClientMsg` deriva `Debug`, e
+/// a chave E2EE cedida pelo anfitrião viaja lá dentro. Hoje nenhum log imprime
+/// a mensagem inteira — verificado —, mas basta um `tracing::debug!(?msg)`
+/// acrescentado por boas razões num dia mau para a chave AES-256 da sala ir
+/// parar ao ficheiro de log, em base64, pronta a ler. A garantia não pode
+/// depender de ninguém se lembrar disto.
+#[derive(Clone, Deserialize)]
+#[serde(transparent)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Nem o comprimento: num campo de tamanho fixo (32 bytes em base64) o
+        // comprimento não acrescenta nada e a ausência é mais fácil de auditar.
+        f.write_str("[segredo redigido]")
+    }
+}
+
+impl Drop for Secret {
+    fn drop(&mut self) {
+        // Sobrescreve antes de libertar. Não é uma garantia forte em Rust (a
+        // String pode ter sido realocada antes disto, e o optimizador podia
+        // eliminar a escrita se não fosse por volatile dentro do zeroize), mas
+        // reduz a janela em que a chave fica legível em memória libertada.
+        use zeroize::Zeroize;
+        self.0.zeroize();
+    }
+}
 
 impl ServerMsg {
     /// Esta mensagem pode perder-se sem quebrar o protocolo nem o estado?
@@ -2023,7 +2061,8 @@ async fn handle_socket(
                         // Chave E2EE (se cedida): 32 bytes AES-256 em base64.
                         use base64::Engine as _;
                         let key = e2ee_key
-                            .as_deref()
+                            .as_ref()
+                            .map(|s| s.expose())
                             .and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok())
                             .filter(|k| k.len() == 32);
                         if state
@@ -2168,6 +2207,51 @@ mod tests {
     // handler — não há erro, não há log, a funcionalidade simplesmente não
     // acontece. É a classe de falha mais cara que há neste ficheiro, e a
     // única defesa é testar o formato exacto que o cliente escreve.
+
+    #[test]
+    fn o_segredo_nunca_aparece_num_debug() {
+        // A armadilha concreta: o `ClientMsg` deriva `Debug` e a chave E2EE
+        // cedida pelo anfitrião viaja lá dentro. Um `tracing::debug!(?msg)`
+        // acrescentado por boas razões punha a chave AES-256 da sala no
+        // ficheiro de log, em base64, pronta a ler.
+        let chave = "c2VjcmV0by1xdWUtbmFvLXBvZGUtYXBhcmVjZXI=";
+        let msg = ClientMsg::ServerRecord {
+            active: true,
+            e2ee_key: Some(Secret(chave.to_string())),
+        };
+        let s = format!("{msg:?}");
+        assert!(!s.contains(chave), "a chave apareceu no Debug: {s}");
+        assert!(
+            s.contains("redigido"),
+            "e tem de ficar claro que foi redigido"
+        );
+    }
+
+    #[test]
+    fn o_segredo_continua_a_desserializar_do_json_do_cliente() {
+        // A redacção não pode partir o fio: o cliente manda a chave como uma
+        // string simples e tem de continuar a ser aceite.
+        let raw = r#"{"type":"server-record","active":true,"e2ee_key":"QUJD"}"#;
+        let msg: ClientMsg = serde_json::from_str(raw).expect("o cliente escreve isto");
+        match msg {
+            ClientMsg::ServerRecord { active, e2ee_key } => {
+                assert!(active);
+                assert_eq!(e2ee_key.as_ref().map(|s| s.expose()), Some("QUJD"));
+            }
+            _ => panic!("variante errada"),
+        }
+    }
+
+    #[test]
+    fn gravar_sem_ceder_chave_continua_a_funcionar() {
+        // Sala sem E2EE: o campo não vem, e isso não é um erro.
+        let raw = r#"{"type":"server-record","active":true}"#;
+        let msg: ClientMsg = serde_json::from_str(raw).unwrap();
+        match msg {
+            ClientMsg::ServerRecord { e2ee_key, .. } => assert!(e2ee_key.is_none()),
+            _ => panic!("variante errada"),
+        }
+    }
 
     #[test]
     fn video_interest_aceita_a_sugestao_de_qualidade() {

@@ -287,3 +287,24 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Validado com gravações REAIS** (2026-08-25, três execuções): 12 s gravados ⇒ artefactos de **12,000000 s** e **12,020000 s**, VP8 1280×720 + Opus 48 kHz estéreo, `recording_packets_dropped_total = 0`. Uma fila por esvaziar teria dado um ficheiro mais curto — é essa a prova.
 - **Por validar:** só o caminho de REMUX (`-c copy`, um publicador) foi exercitado. O de RECOMPOSIÇÃO (vários publicadores → reencode VP9+Opus) não: não se conseguiu pôr dois publicadores em simultâneo neste arnês. É o caminho com mais risco e continua sem prova.
 - **Ficheiros:** `server/src/recorder.rs` (`RecWriter`, `RecSink`), `server/src/sfu.rs` (os três fechos), `server/src/config.rs`.
+
+## Criptografia / E2EE
+
+### R41 — Endpoints MLS abertos, sem autenticação, a responder «feito»
+- **Sintoma:** nenhum. É esse o problema — `/api/mls/key-packages`, `/api/mls/rooms/{id}/key-packages` e `/api/mls/welcome` respondiam `201`/`200`/`202` com `"status": "delivered"` a **qualquer pessoa**, sem sessão, sem token, sem verificação de pertença à sala.
+- **Causa raiz:** o `mls.rs` foi escrito como desenho da camada MLS futura e o router ficou registado no `main.rs`. Os handlers não têm sequer extractor `AuthUser`.
+- **Regra:** **uma superfície que responde «feito» sem fazer nada é pior do que não existir.** Um integrador constrói contra ela e um auditor conta-a como capacidade. O módulo fica como documento de desenho; as rotas saem do router até haver MLS a sério — com `AuthUser` e `can_access_room`, que é o que lhes falta.
+- **Medido** (2026-08-25): antes, 201/200/202 sem autenticação nenhuma; depois, **404** nas três.
+- **Ficheiros:** `server/src/main.rs`, `server/src/mls.rs`.
+
+### R42 — Worker de cifra a deixar passar frames EM CLARO sem chave
+- **Sintoma:** media não cifrada a sair de uma sala marcada como E2EE, sem nada que o reporte.
+- **Causa raiz:** `encryptFrame` fazia `if (!key) { controller.enqueue(frame); return }` — fail-**open**. Hoje o `setKey` é esperado antes de existir um único sender, por isso não acontecia; mas a garantia de confidencialidade estava a depender da ordem de chamadas num ficheiro de 4000 linhas noutro módulo.
+- **Regra:** **fail-closed em cifra, sempre.** Sem chave, o frame é DESCARTADO. Sem media é um sintoma visível que alguém reporta; media em claro numa sala E2EE é uma quebra silenciosa que ninguém vê. Vale igual na decifra: entregar ciphertext ao descodificador é entregar-lhe ruído.
+- **Ficheiros:** `web/src/e2ee.ts`.
+
+### R43 — Segredo dentro de um tipo que deriva `Debug`
+- **Sintoma:** a chave AES-256 da sala num ficheiro de log, em base64, pronta a ler.
+- **Causa raiz:** o `ClientMsg` deriva `Debug` e a chave E2EE cedida pelo anfitrião viajava lá dentro como `String`. Nenhum log a imprimia — mas bastava um `tracing::debug!(?msg)` acrescentado por boas razões num dia mau.
+- **Regra:** material de chave nunca vive num tipo que derive `Debug` sem redacção. Usa-se `signaling::Secret`, cujo `Debug` imprime `[segredo redigido]` e cujo `Drop` sobrescreve os bytes. Vale para qualquer segredo novo — tokens, passwords, chaves de API em trânsito.
+- **Ficheiros:** `server/src/signaling.rs` (`Secret`), `server/src/recorder.rs` (limpeza dos bytes descodificados).

@@ -138,7 +138,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/metrics", get(metrics_handler))
         .nest("/api/auth", auth_routes)
         .route("/api/users/me", get(users::me).patch(users::update_me))
-        .nest("/api/mls", mls::router())
+        // /api/mls NÃO está registado — de propósito. O `mls.rs` descreve a
+        // interface MLS pretendida (RFC 9420) mas os handlers são stubs: não
+        // guardam nada, não verificam nada, e devolviam 201/200/202 com
+        // `"status": "delivered"` a QUALQUER pessoa, sem sessão e sem
+        // verificação de pertença à sala. Medido a 2026-08-25 contra o
+        // servidor a correr.
+        //
+        // Uma superfície que responde «feito» sem fazer nada é pior do que não
+        // existir: um integrador constrói contra ela, e um auditor conta-a como
+        // capacidade. Volta quando houver MLS a sério — com `AuthUser` e com
+        // verificação de acesso à sala, que é o que falta a estes handlers.
         .route("/api/users/search", get(users::search))
         .route("/api/rooms", post(rooms::create_room))
         .route("/api/rooms/{code}", get(rooms::get_room))
