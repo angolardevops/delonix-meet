@@ -12,7 +12,7 @@ Princípios: **self-hosted first** · **security by design** · **enterprise sem
 
 ## 2. Stack (estado real)
 
-**Backend** `server/` (Rust): axum 0.7 (HTTP), webrtc-rs (SFU: DTLS/SRTP, simulcast, RTP fan-out), sqlx 0.7 (Postgres, migrações auto), tokio, argon2, jsonwebtoken (JWT access 15 min + refresh 30 d rotativo), reqwest 0.12 **rustls-tls** (NÃO 0.13). Redis pub/sub para multi-nó (presença + sinalização).
+**Backend** `server/` (Rust): axum 0.8 (HTTP), webrtc-rs (SFU: DTLS/SRTP, simulcast, RTP fan-out), sqlx 0.8 (Postgres, migrações auto), tokio, argon2, jsonwebtoken (JWT access 15 min + refresh 30 d rotativo), reqwest 0.12 **rustls-tls** (NÃO 0.13). Redis pub/sub para multi-nó (presença + sinalização).
 
 **Frontend** `web/src/` (React + TS + Vite): `webrtc.ts` (SfuCall), `signaling.ts` (WS `/ws`), `presence.ts` (WS `/rtc`), `e2ee.ts` (Insertable Streams AES-256-GCM), `media.ts` (efeitos de fundo RVM ONNX, Transcriber, MeetingRecorder), `pages/Room.tsx` (sala Meet-style).
 
@@ -53,7 +53,7 @@ Portas dev: backend `8180`, frontend `5173`, Postgres `5435`, Redis `6379`, cotu
 
 ## 6. Padrões de código
 
-**Rust**: `AppError` para todos os erros de handler — nunca `unwrap()` em produção. `sqlx::query!`/`query_as!` (verificação compile-time). Migrações `server/migrations/NNNN_*.sql` sequenciais. Novo módulo → declarar em `main.rs` + registar rotas.
+**Rust**: `AppError` para todos os erros de handler — nunca `unwrap()` em produção. `sqlx::query`/`query_as::<_, T>` — API de runtime, **sem** verificação em compile time (118 chamadas, zero macros): um nome de coluna errado só falha em execução. Migrações `server/migrations/NNNN_*.sql` sequenciais. Novo módulo → declarar em `main.rs` + registar rotas.
 
 **TS/React**: componentes funcionais + hooks; estado global via Context; mensagens WS tipadas (discriminant union); tokens CSS via custom properties (nunca hardcode de cor); i18n `useTranslation()`. **Nunca `var()` para dimensões de tiles** (transições congelam em background) — dimensões inline por tile. **Controlos novos = kit `web/src/components/ui.tsx`** (`Btn`/`IconBtn`/`Card`/`Field`/`SelectCtl`/`Switch`); zero `border-radius`/`height` hardcoded (tokens 4/6/8px + `--ctl-h` 30px); temas = mapas em `styles/tokens.scss` sob `[data-theme=…]` — ver `docs/reference/design-system.md`. **Camada CONSOLA (27/07)** no fim de `styles.scss`: densidade via `html { font-size: 15px }`, rail de navegação escuro nos DOIS temas (tokens `--sb-*`), `.app-bar` no topo do conteúdo (a Home já não duplica «Nova reunião»/código), páginas de altura total usam `height: 100%` e não `100vh`.
 

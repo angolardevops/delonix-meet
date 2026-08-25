@@ -23,14 +23,14 @@
 ### Backend — `server/` (Rust)
 | Crate/módulo | Função |
 |---|---|
-| axum 0.7 | HTTP server + router |
+| axum 0.8 | HTTP server + router |
 | webrtc-rs | SFU: DTLs/SRTP, RTP fan-out, simulcast |
-| sqlx 0.7 | PostgreSQL async (migrações automáticas em main.rs) |
+| sqlx 0.8 | PostgreSQL async (migrações automáticas em main.rs) |
 | tokio | Runtime async |
 | argon2 | Hashing de passwords |
 | jsonwebtoken | JWT access (15 min) + refresh (30 dias, rotativo) |
 | reqwest 0.12 (rustls-tls) | Webhooks outbound (NÃO 0.13 — incompatível com rustls) |
-| tower-http | CORS, compressão, cabeçalhos de segurança |
+| tower-http | CORS + tracing (features `cors`, `trace`). Os cabeçalhos de segurança NÃO vêm daqui — são postos à mão em `main.rs` (`nosniff`, `DENY`, HSTS) e no nginx; e não há camada de compressão. |
 
 **Ficheiros principais:**
 - `main.rs` — bootstrap, router, estado global (`AppState`), cron jobs (retention sweep)
@@ -247,7 +247,13 @@ cargo build --release    # depois de migração nova, SEMPRE rebuild antes de re
 ### Rust
 - `AppError` para todos os erros de handler — nunca `unwrap()` em código de produção
 - Pool Postgres via `Extension<PgPool>` injetado pelo axum
-- `sqlx::query!` / `sqlx::query_as!` — macros com verificação em compile time
+- `sqlx::query` / `sqlx::query_as::<_, T>` — **API de runtime**, sem verificação
+  em compile time. É o estado real: 118 chamadas, zero macros `query!`. A
+  consequência tem de ser dita: um nome de coluna errado passa a compilação e
+  só falha em execução, por isso qualquer alteração de esquema exige o teste
+  que percorre o caminho. A alternativa (`query!` + `cargo sqlx prepare`)
+  obrigaria a manter `.sqlx/` em dia e uma base acessível no build — não foi
+  adoptada, e enquanto não for, não se escreve o contrário na documentação.
 - Handlers async retornam `Result<impl IntoResponse, AppError>`
 - Migrações em `server/migrations/` com prefixo numérico sequencial (`0001_`, `0002_`, …)
 - Novos módulos: declarar em `main.rs` (`mod novo_modulo;`) + registar rotas no router
