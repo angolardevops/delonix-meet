@@ -85,7 +85,7 @@ async function corre(cenario, access, browser) {
   const ctxs = []
   const pages = []
   for (let i = 0; i < 2; i++) {
-    const ctx = await browser.newContext()
+    const ctx = await browser.newContext({ ignoreHTTPSErrors: true })
     const p = await ctx.newPage()
     await p.goto(url)
     ctxs.push(ctx)

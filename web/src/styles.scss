@@ -4773,6 +4773,9 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
 
 @media (prefers-reduced-motion: reduce) {
   .shell-nav { transition: none; }
+}
+
+/* ============================================================
    MFA — verificação em dois passos (ver components/MfaPanel.tsx)
    Tokens em vez de cores fixas, como o resto da consola: estes ecrãs têm de
    funcionar nos quatro temas sem se tocar aqui outra vez.
