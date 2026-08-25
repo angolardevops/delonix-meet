@@ -23,7 +23,16 @@ baseline=$(cat "$BASELINE_FILE" 2>/dev/null || echo 0)
 # vinha a zero e a catraca aprovava tudo. Limpa-se SÓ a nossa crate — as
 # dependências ficam compiladas e o custo é de segundos, não de minutos.
 cargo clean -p delonix-server --manifest-path server/Cargo.toml 2>/dev/null || true
-count=$(cargo clippy --manifest-path server/Cargo.toml \
+
+# `CARGO_TERM_COLOR=never` é OBRIGATÓRIO aqui, não é arrumação. O workflow do CI
+# define `CARGO_TERM_COLOR: always` (para os logs saírem legíveis), e com cor
+# forçada a linha vem `src/x.rs:1:1: \e[1m\e[33mwarning\e[0m: ...` — o padrão
+# `: warning: ` deixa de casar e a contagem dá ZERO. Localmente nunca se via,
+# porque o cargo desliga a cor sozinho quando a saída não é um terminal.
+# Só foi apanhado porque esta catraca também falha quando o número DESCE; a
+# versão que só reclamasse de subidas teria passado a verde para sempre, a
+# medir nada.
+count=$(CARGO_TERM_COLOR=never cargo clippy --manifest-path server/Cargo.toml \
           --all-targets --all-features --message-format=short 2>&1 \
         | grep -cE ': warning: ' || true)
 
