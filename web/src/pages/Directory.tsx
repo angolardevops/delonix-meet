@@ -22,7 +22,7 @@ import {
   updateEmployee,
 } from '../api'
 import { usePresence } from '../components/PresenceProvider'
-import { CamIcon, CloseIcon, EditIcon, PeopleIcon, PlusIcon, TrashIcon, VoiceCallIcon } from '../icons'
+import { CamIcon, CloseIcon, DoorIcon, EditIcon, PeopleIcon, PlusIcon, TrashIcon, VoiceCallIcon } from '../icons'
 
 type Tab = 'directory' | 'branches' | 'groups' | 'rooms'
 
@@ -355,7 +355,7 @@ function RoomsTab({ org }: { org: OrgSummary }) {
       <div className="branch-grid">
         {rooms.map((r) => (
           <div key={r.id} className="branch-card">
-            <strong>🚪 {r.name}</strong>
+            <strong><DoorIcon /> {r.name}</strong>
             <small>{[r.location, r.capacity ? t('directory.roomSeats', { count: r.capacity }) : ''].filter(Boolean).join(' · ') || t('directory.noRoomDetails')}</small>
           </div>
         ))}

@@ -483,6 +483,7 @@ async fn main() {
         sfu: Arc::new(sfu::SfuState::new(
             sfu::IceConfig {
                 external_ip: config.sfu_external_ip.clone(),
+                udp_ports: Some((config.sfu_udp_min, config.sfu_udp_max)),
                 turn_host: config.turn_host.clone(),
                 turn_secret: config.turn_secret.clone(),
                 force_relay: config.force_turn_relay,

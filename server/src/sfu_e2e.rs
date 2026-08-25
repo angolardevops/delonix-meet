@@ -259,11 +259,30 @@ async fn pump(client: Arc<TestClient>, mut rx: mpsc::Receiver<ServerMsg>) {
     }
 }
 
+/// Portas UDP para os testes, **abaixo do intervalo efémero do SO**.
+///
+/// O intervalo do produto (50000–50200) está inteiro dentro de
+/// `ip_local_port_range` (32768–60999 por omissão no Linux): qualquer processo
+/// do host — um browser aberto, os Chromium do Playwright — pode ficar com
+/// essas portas, e então o SFU do teste não recolhe candidatos e falha por
+/// TIMEOUT, que se lê como lentidão do runner e não como colisão (R57).
+///
+/// 20000+ nunca é entregue pelo SO como porta efémera, por isso o único
+/// concorrente possível é outro processo de teste — e o PID separa-os.
+fn portas_de_teste() -> (u16, u16) {
+    // 60 portas chegam para os pares destes testes; 200 fatias distintas.
+    let base = 20_000u16 + ((std::process::id() % 200) as u16 * 60);
+    (base, base + 59)
+}
+
 fn new_sfu() -> (Arc<SfuState>, Arc<Metrics>) {
     let metrics = Arc::new(Metrics::default());
     (
         Arc::new(SfuState::new(
-            IceConfig::default(),
+            IceConfig {
+                udp_ports: Some(portas_de_teste()),
+                ..Default::default()
+            },
             metrics.clone(),
             64,
             2048,
