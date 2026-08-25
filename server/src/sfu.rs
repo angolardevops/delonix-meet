@@ -450,6 +450,10 @@ pub struct IceConfig {
     pub turn_secret: String,
     /// Força relay-only (a media do SFU passa sempre pelo TURN). Ver Config.
     pub force_relay: bool,
+    /// Intervalo de portas UDP para a media. `None` => o fixo (50000–50200),
+    /// que é o que o K8s expõe. Configurável porque no MESMO host duas
+    /// instâncias colidem — ver `SFU_UDP_MIN`/`SFU_UDP_MAX` e o R57.
+    pub udp_ports: Option<(u16, u16)>,
 }
 
 impl SfuState {
@@ -506,8 +510,12 @@ impl SfuState {
 
 /// Portos UDP efémeros do SFU (para a media). Um intervalo FIXO e conhecido
 /// permite expô-lo no K8s (Service LoadBalancer UDP). Ver deploy/k8s.
-const SFU_UDP_MIN: u16 = 50000;
-const SFU_UDP_MAX: u16 = 50200;
+///
+/// Em K8s cada pod tem o seu namespace de rede e o intervalo não colide entre
+/// réplicas. No MESMO host colide: um servidor a correr rouba as portas a
+/// qualquer outra instância — incluindo aos testes. Daí `IceConfig::udp_ports`.
+pub const SFU_UDP_MIN: u16 = 50000;
+pub const SFU_UDP_MAX: u16 = 50200;
 
 /// Servidores ICE que o próprio SFU usa para recolher candidatos srflx/relay
 /// (via STUN/TURN). Sem isto, só há host candidates (IP interno do pod). As
@@ -586,8 +594,9 @@ fn new_api(ice: &IceConfig) -> Result<webrtc::api::API> {
         settings.set_nat_1to1_ips(vec![ip.to_string()], RTCIceCandidateType::Host);
     }
     // Intervalo de portas UDP fixo e conhecido (para expor no K8s).
+    let (porta_min, porta_max) = ice.udp_ports.unwrap_or((SFU_UDP_MIN, SFU_UDP_MAX));
     settings.set_udp_network(webrtc::ice::udp_network::UDPNetwork::Ephemeral(
-        webrtc::ice::udp_network::EphemeralUDP::new(SFU_UDP_MIN, SFU_UDP_MAX)
+        webrtc::ice::udp_network::EphemeralUDP::new(porta_min, porta_max)
             .map_err(|e| webrtc::Error::new(e.to_string()))?,
     ));
 

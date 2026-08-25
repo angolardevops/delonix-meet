@@ -51,6 +51,10 @@ pub struct Config {
     /// (inalcançável) e a media não estabelece. Vazio => só host candidates
     /// (ok em local; em K8s a media depende do TURN relay). Ver sfu.rs.
     pub sfu_external_ip: Option<String>,
+    /// Intervalo de portas UDP da media. O fixo (50000–50200) é o que o K8s
+    /// expõe; muda-se quando duas instâncias partilham o mesmo host (R57).
+    pub sfu_udp_min: u16,
+    pub sfu_udp_max: u16,
     /// Força a media a passar SEMPRE pelo TURN relay (`iceTransportPolicy: relay`
     /// no cliente e no SFU). Em K8s os host candidates do SFU não transportam
     /// media; sem relay-only o ICE liga por um par que passa o check mas fica
@@ -147,6 +151,18 @@ impl Config {
                 .unwrap_or_else(|_| std::path::PathBuf::from("recordings")),
             redis_url: env::var("REDIS_URL").ok().filter(|s| !s.is_empty()),
             sfu_external_ip: env::var("SFU_EXTERNAL_IP").ok().filter(|s| !s.is_empty()),
+            sfu_udp_min: bounded_env(
+                "SFU_UDP_MIN",
+                crate::sfu::SFU_UDP_MIN as usize,
+                1_024,
+                65_534,
+            ) as u16,
+            sfu_udp_max: bounded_env(
+                "SFU_UDP_MAX",
+                crate::sfu::SFU_UDP_MAX as usize,
+                1_025,
+                65_535,
+            ) as u16,
             force_turn_relay: env::var("FORCE_TURN_RELAY").ok().as_deref() == Some("1"),
             ollama_url: env::var("OLLAMA_URL").ok().filter(|s| !s.is_empty()),
             ollama_model_translate: env::var("OLLAMA_MODEL_TRANSLATE")

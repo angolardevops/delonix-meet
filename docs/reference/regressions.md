@@ -324,14 +324,95 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **A lição geral:** antes de chamar vulnerabilidade a um `200`, lê-se o desenho e verifica-se a segunda metade da promessa. O comentário no `join_room` dizia que os não-membros vão para a sala de espera; podia estar desactualizado, e por isso foi verificado no fio.
 - **Ficheiros:** `web/e2e/isolamento.mjs`.
 
-### R46 — O código do segundo factor tem de ser CONSUMIDO, não só verificado
+### R46 — Anel de foco assente em `box-shadow` numa folha que disputa `box-shadow`
+- **Sintoma:** elementos focáveis por teclado sem indicação visível nenhuma. Eram 11 `outline: none` em `web/src/styles.scss`, vários sem substituto — incluindo o campo do Cmd-K, onde a navegação por teclado é a única forma de uso.
+- **Causa raiz da primeira tentativa falhada:** a rede de segurança nasceu como `:where(button, [href], input, …):focus-visible { box-shadow: var(--ring) }`. O `:where()` tem especificidade **ZERO** — de propósito, para os componentes poderem sobrepor-se — mas isso faz com que perca para **qualquer** regra de classe que toque em `box-shadow`. E este ficheiro tem **94 declarações de `box-shadow`**, 15 delas em regras de classe, contra 22 de `outline` (11 das quais são o próprio `outline: none`).
+- **Regra:** **um anel de foco global escolhe a propriedade que ninguém disputa.** `outline` é essa propriedade — e, no browser atual, segue o `border-radius`, por isso não se perde nada. `box-shadow` fica para os anéis de componente, que têm especificidade de classe para se defenderem.
+- **Segunda regra, sobre inputs sem borda:** os seis sítios eram o mesmo padrão — input sem borda dentro de um contentor com borda. O anel vai no **contentor**, via `:focus-within`; no input desenhava um retângulo a flutuar dentro da peça.
+- **O que NÃO ficou provado:** o anel não foi confirmado visualmente. O painel de browser usado não resolve estado de foco — uma regra `!important` *sem* pseudo-classe também não alterava o valor computado, o que mostra que o instrumento estava cego, não o CSS. Fica verificado por teste (a regra existe, tem a forma certa e usa outline) e por inspeção do CSS construído; **falta uma passagem de teclado numa janela real**.
+- **Ficheiros:** `web/src/styles.scss`, `web/src/lote1.invariantes.test.ts`.
+
+### R47 — Um widget partilhado a arrastar o módulo inteiro para o chunk de arranque
+- **Sintoma:** `React.lazy` aplicado às páginas e, ainda assim, a consola inteira no bundle inicial de quem só vê a landing pública.
+- **Causa raiz:** `LanguageToggle` e `ThemePicker` viviam dentro de `components/Shell.tsx`. O `Login`, a `Landing` e o `Room` importavam-nos **de lá** — e um `import { LanguageToggle } from '../components/Shell'` traz o grafo do Shell todo atrás: `CommandPalette`, `NotificationCenter`, `OnboardingTour`, `SettingsModal`, `PasswordInput`, `branding`, `api`. O mesmo se passava com o `initTheme`, importado pelo `main.tsx`.
+- **Regra:** **o que é partilhado entre um ecrã leve e um ecrã pesado vive em módulo próprio.** Um named export não corta o grafo: o bundler segue o módulo inteiro. Antes de aplicar `lazy` a uma página, verifica-se quem mais importa o que ela importa.
+- **Medido** (2026-08-25, `vite build`): chunk de arranque **648,82 KB → 347,40 KB** cru, **194,55 → 110,84 KB** comprimido. Na landing pública, o browser vai buscar **dois** ficheiros JS — o de entrada e, só se o utilizador clicar EN, o dicionário inglês (10,5 KB). Nem `Room` (135,47 KB), nem `Calendar`, nem `Analytics`, nem o dicionário francês são pedidos.
+- **Ficheiros:** `web/src/theme.ts`, `web/src/components/{ThemePicker,LanguageToggle}.tsx`, `web/src/App.tsx`, `web/src/main.tsx`.
+
+### R48 — Sessão terminada por um erro que não é de sessão
+- **Sintoma:** o utilizador cai no ecrã de login a meio do trabalho, e voltar a autenticar-se não resolve — porque a sessão dele nunca esteve inválida.
+- **Causa raiz:** o `refreshSession` fazia `if (!res.ok) { logout() }`. Qualquer resposta não-OK do `/api/auth/refresh` — 500, 502, 503, um gateway a reiniciar — era lida como «a sessão não serve». O `request` também atirava um `Error` nu, sem estado HTTP, o que obrigava quem apanha a adivinhar pela mensagem.
+- **Regra:** **só 401 e 403 são sessão inválida.** Tudo o resto é o servidor com um problema seu: fica-se onde se está e oferece-se tentar de novo. A separação vive em `isAuthFailure(e)` e depende de o erro carregar o `status` — daí o `ApiError`.
+- **Vem do `delonix-portal`** (`src/api/client.ts`), que já tinha pago por isto. As duas consolas partilham as armadilhas; passam a partilhar as guardas.
+- **Ficheiros:** `web/src/api.ts`, `web/src/api.guardas.test.ts`.
+
+### R49 — `.catch()` sem `isAbort` transforma limpeza de efeito em erro
+- **Sintoma:** um estado de erro pintado em cada montagem, só em desenvolvimento.
+- **Causa raiz:** o duplo-efeito do StrictMode monta, desmonta e volta a montar. A limpeza chama `AbortController.abort()`, o `fetch` rejeita com `AbortError`, e um `.catch()` que não distinga isso pinta erro — ou, pior, desloga. No portal isto faltava em **onze** sítios e o sintoma era a consola a saltar sozinha para o login.
+- **Regra:** **todo o `.catch()` de um pedido que leva `AbortSignal` começa por `if (isAbort(e)) return`.** Abortar é a limpeza a funcionar, não a API a falhar.
+- **Regra irmã:** um `.catch(() => {})` não é tratamento de erro, é supressão. O `myOrgs()` do Shell engolia até a resposta que dizia que a pessoa É admin — o menu de administração desaparecia sem nada que o explicasse.
+- **Ficheiros:** `web/src/components/AsyncSection.tsx`, `web/src/components/Shell.tsx`.
+
+### R50 — Corrigir por sobreposição em vez de apagar a regra velha
+- **Sintoma:** o campo «entrar por código» invisível DENTRO da gaveta móvel que tinha acabado de ser criada para o alojar.
+- **Causa raiz:** a correcção acrescentou uma camada nova com `.qa-bar { display: none }` mas deixou de pé a regra antiga `@media (max-width: 860px) { .app-bar-date, .app-bar-join { display: none } }`. Essa apanha `.app-bar-join` em QUALQUER sítio — incluindo dentro da gaveta. A gaveta abria, e o campo que ela existia para mostrar não estava lá.
+- **Regra:** **quando se muda um elemento de sítio, apaga-se a regra que o escondia no sítio antigo.** Sobrepor uma regra de posicionamento resolve o caso que se está a testar e deixa o outro partido — é o achado 3.2.1 deste mesmo relatório a repetir-se em cima de si próprio.
+- **Como foi apanhado:** por uma fitness function escrita ANTES de a correcção estar dada por terminada, e confirmado no browser (`getComputedStyle` do campo dentro da gaveta dava `display: none`). O teste que verifica a correcção tem de olhar para o que ela promete, não para o que ela tocou.
+- **Ficheiros:** `web/src/styles.scss`, `web/src/lote2.invariantes.test.ts`.
+
+### R51 — Um teste que aponta ao sítio errado passa sem provar nada
+- **Sintoma:** um teste verde a dar por confirmada uma correcção que ele não tinha tocado.
+- **Causa raiz (duas, na mesma tarefa):**
+  1. O teste do anel de foco media um `.land-link` — um botão que **nunca teve `outline: none`** e por isso sempre teve o anel do próprio browser. Passava com a correcção e passaria sem ela. Os sujeitos certos eram os **seis controlos que estavam cegos**.
+  2. A tentativa de ver o portão da gaveta ficar vermelho usou um `sed` com `^\.shell\.nav-open` — e a regra está **indentada** dentro de uma media query. O `sed` não mudou nada, o build foi o mesmo, e o «vermelho» foi um verde disfarçado.
+- **Regra:** **o teste tem de apontar ao que a correcção mudou, e o vermelho tem de ser verificado, não presumido.** Depois de partir o invariante, confirma-se que o ficheiro mudou mesmo (`grep` ao alvo, ou `git diff`) antes de acreditar no resultado. Um `sed` que não casa é silencioso.
+- **Regra irmã, sobre o instrumento:** quando a propriedade em causa é de pintura (`transform`, `outline`), o `getComputedStyle` de um painel que não compõe frames **mente** — mediu-se que nem um `!important` inline a altera. A leitura fiável é geométrica (`boundingBox`) ou por **comparação de pixéis**.
+- **Ficheiros:** `web/e2e/layout-consola.mjs`.
+
+### R52 — Um banco de ensaio que mede o invólucro em vez do componente
+- **Sintoma:** um benchmark a dar **exactamente o mesmo número** com e sem a optimização, e prestes a ser publicado como «não faz diferença».
+- **Causa raiz:** o contador de renders estava num componente `Contado` que envolvia o `<RemoteTile>` memoizado. O invólucro **não** é memoizado, por isso renderiza sempre — e era o invólucro que estava a ser contado. O `memo` estava a funcionar; o instrumento é que olhava para o sítio errado.
+- **Regra:** **um contador de renders num invólucro mede o invólucro.** Para medir o efeito de uma barreira de memoização mede-se **tempo de commit da subárvore** — `<Profiler>` do React, `actualDuration` — ou instrumenta-se por dentro do componente. Com o instrumento certo: 2,352 ms/tique sem `memo` contra 0,038 com, a 12 pares.
+- **A leitura que o número certo dá, e o errado escondia:** sem `memo` o custo **cresce com o número de pessoas na sala**; com `memo` é plano. O pior caso deixa de ser caso.
+- **Ficheiros:** `web/e2e/bench/tiles.tsx`.
+
+<!-- Numeração: os R46–R52 vieram do trabalho de UI/UX que fundiu primeiro.
+     As entradas desta cadeia continuam em R53 para não haver dois R46. -->
+
+### R53 — O código do segundo factor tem de ser CONSUMIDO, não só verificado
 - **Sintoma:** um código TOTP apanhado por cima do ombro (ou num proxy, ou num screenshot) serve outra vez durante os trinta segundos seguintes. O segundo factor deixa de ser posse do dispositivo e passa a ser posse de seis dígitos.
 - **Causa raiz:** verificar um TOTP é fácil; o que se esquece é que ele continua válido durante toda a janela. Sem estado, a verificação é repetível.
 - **Regra:** `user_mfa.last_step` guarda o passo temporal aceite, e a actualização é CONDICIONAL (`WHERE last_step IS NULL OR last_step < $2`) — é a barreira que também resolve duas tentativas em paralelo, porque só uma delas afecta a linha. O mesmo vale para os códigos de recuperação (`used_at`, com `UPDATE ... WHERE used_at IS NULL`).
 - **A consequência que não é óbvia e está testada:** o código usado para ACTIVAR o MFA não serve para o login seguinte, porque foi consumido. O primeiro login usa o código da janela a seguir. É correcto, é anti-replay entre operações diferentes, e sem estar escrito parece uma avaria.
 - **Ficheiros:** `server/src/mfa.rs` (`consome_codigo`), migração 0035, `web/e2e/mfa.mjs`.
 
-### R47 — Gravação que falha a compor desaparece em SILÊNCIO
+### R54 — Um portão que não compila o artefacto deixa passar o artefacto partido
+- **Sintoma:** `make test` inteiro verde — 94 testes Rust, 137 vitest, tsc limpo — e a aplicação a devolver **500 em todos os pedidos** quando um browser real a abre. A página de login nunca renderizava.
+- **Causa raiz:** a resolução de um conflito de merge deixou `src/styles.scss` com as chavetas desequilibradas. Nenhum dos portões toca em SCSS: o `tsc` só olha para tipos, o `vitest` importa módulos TS e nunca a folha de estilos, e o `cargo test` é do outro lado. O erro só aparece quando o Vite **compila** — isto é, no `build` ou no primeiro pedido do browser.
+- **Regra:** o portão local tem de **produzir o artefacto**, não só analisá-lo. `make test` passou a correr `npm run build`, provado a falhar com uma regra SCSS aberta de propósito e a voltar a passar depois de fechada. O CI já tinha o build no `job` de frontend; era o ciclo local que mentia — e é o local que decide o que se commita.
+- **O padrão por trás:** typecheck e testes unitários cobrem o que é *importado por testes*. Tudo o que só o empacotador vê — folhas de estilo, `assets`, imports dinâmicos de rotas sem teste — está fora do alcance deles por construção.
+- **Ficheiros:** `Makefile` (alvo `test`), `web/src/styles.scss`.
+
+### R55 — Um conflito de merge que abre dentro de um comentário parte as duas metades
+- **Sintoma:** os marcadores `<<<<<<<`/`>>>>>>>` foram removidos, cada lado parecia íntegro na revisão, e o ficheiro ficou sintacticamente inválido.
+- **Causa raiz:** os dois lados acrescentaram um bloco no fim do ficheiro começado pela MESMA linha decorativa (`/* ====…`). O git tratou essa linha como contexto partilhado e abriu o conflito **depois** dela — por isso nenhum dos lados contém o seu próprio abre-comentário. Pior: o `}` final também era contexto partilhado, e ficou a fechar só um dos blocos, deixando a última regra do outro lado aberta.
+- **Regra:** quando um conflito abre a meio de um comentário ou de um bloco, **não se resolve escolhendo linhas** — reconstrói-se cada lado inteiro, com o seu próprio cabeçalho e o seu próprio fecho, e valida-se com o compilador da linguagem (aqui `npx sass`), não com a leitura.
+- **Sinal de alarme:** conflito cujo primeiro `<<<<<<<` está imediatamente a seguir a uma linha que os dois lados também têm.
+- **Ficheiros:** `web/src/styles.scss`.
+
+### R56 — Ter corrido `make certs` mudava se os testes de browser corriam de todo
+- **Sintoma:** `net::ERR_CERT_AUTHORITY_INVALID` em toda a bateria de browser, numa árvore onde nada de aplicacional tinha mudado.
+- **Causa raiz:** o Vite arranca em HTTPS quando encontra os certificados locais e em HTTP quando não os encontra. Nenhum dos contextos do Playwright tolerava o certificado auto-assinado, por isso o resultado da bateria dependia de um efeito lateral de outro alvo do `Makefile`.
+- **Regra:** todos os `newContext` do harness passam `ignoreHTTPSErrors: true`. O harness tem de correr contra as duas formas em que a aplicação local pode estar servida — a alternativa é uma bateria que passa ou falha conforme comandos anteriores, que é o mesmo que não ter bateria.
+- **Ficheiros:** `web/e2e/ui-mfa.mjs`, `web/e2e/layout-consola.mjs`, `web/e2e/netem-matrix.mjs`.
+
+### R57 — O intervalo «fixo e conhecido» do SFU está dentro do intervalo efémero do SO
+- **O que está medido:** `SFU_UDP_MIN..SFU_UDP_MAX` = 50000–50200 cai **inteiro** dentro de `ip_local_port_range` (32768–60999, omissão do Linux). Qualquer processo do host — um browser aberto, os Chromium do Playwright — pode ficar com essas portas. Com as 201 ocupadas por um processo externo, o estabelecimento da ligação passou de **0,11 s para 1,12 s** (três corridas, valor idêntico). Não falha: o `webrtc-rs` recorre a outra porta. Fica dez vezes mais lento.
+- **Consequência:** em K8s cada pod tem o seu namespace de rede e o intervalo não colide entre réplicas — em produção o risco é baixo. No **host de desenvolvimento e no runner de CI** o intervalo é partilhado com tudo o resto, e um custo de 10× no estabelecimento entra directamente no orçamento de qualquer teste com prazo.
+- **Regra:** os testes usam um intervalo **abaixo de 32768** (20000+), que o SO nunca entrega como porta efémera, fatiado pelo PID. O intervalo do produto passou a ser configurável (`SFU_UDP_MIN`/`SFU_UDP_MAX`), o que também permite mover o produto para fora do intervalo efémero num nó onde isso importe.
+- **O que NÃO ficou provado, e é importante dizê-lo:** esta **não** é a causa do timeout de 30 s em `sfu_e2e::media_flows_both_ways`. A hipótese foi testada directamente — intervalo do produto esgotado *e* o SFU apontado a ele — e o teste passou nas três corridas. A causa desse timeout continua **por estabelecer**; o `E2E_TIMEOUT_FACTOR` é mitigação, não diagnóstico.
+- **Ficheiros:** `server/src/sfu.rs`, `server/src/config.rs`, `server/src/main.rs`, `server/src/sfu_e2e.rs`.
+### R58 — Gravação que falha a compor desaparece em SILÊNCIO
 - **Sintoma:** o anfitrião carrega em «gravar», vê o indicador aceso a reunião inteira, e no fim não há nada na biblioteca. Nem gravação, nem aviso, nem sinal de que houve tentativa. Do lado dele é indistinguível de nunca ter gravado — e o artefacto não se pode refazer depois de a reunião acabar.
 - **Causa raiz:** o `finalize` registava o erro no log do SERVIDOR e apagava o directório temporário. A biblioteca lê a tabela `recordings`, onde nunca chegou a entrar linha nenhuma.
 - **Regra:** uma tentativa de gravação que falha entra na biblioteca com `status = 'failed'` e uma **causa em linguagem de utilizador** (migração 0036). A entrada existe para ser vista: sem miniatura clicável, sem ▶, sem descarregar, sem partilhar — oferecer «reproduzir» sobre algo que não existe é prometer duas vezes à mesma pessoa.
@@ -339,3 +420,10 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **O contexto põe-se na ORIGEM, não por adivinhação de texto depois:** um ffmpeg em falta chegava como `No such file or directory (os error 2)`, indistinguível de um ficheiro de track em falta. O `spawn` passa a marcar o caso, e a causa passa a dizer «o servidor não tem o ffmpeg instalado» — que nomeia um problema de OPERAÇÃO e poupa a investigação a quem recebe a queixa.
 - **Descarregar uma falhada** devolve `400` com a explicação, em vez de descer até ao `File::open` e voltar um `500` opaco.
 - **Ficheiros:** migração 0036, `server/src/recorder.rs` (`registar_falha`, `causa_legivel`), `server/src/recordings.rs`, `web/src/pages/Recordings.tsx`, teste `web/e2e/gravacao-falhada.mjs`.
+
+### R59 — Uma funcionalidade correcta fica incompleta quando a UI ganha vistas por baixo dela
+- **Sintoma:** o R58 (gravação falhada sem acções) estava implementado e testado — e depois de fundir a base de UI/UX a MESMA gravação falhada voltava a oferecer ▶, descarregar e partilhar. Nenhum conflito de merge assinalou nada.
+- **Causa raiz:** a lógica de `status === 'failed'` foi escrita contra a ÚNICA vista que existia (cartões). A base acrescentou entretanto a vista de **tabela** e um visualizador de **biblioteca** — código novo, que o git juntou sem conflito porque não tocava nas mesmas linhas. O visualizador ainda pedia o ficheiro inexistente e mostrava «falha ao carregar o vídeo», um erro genérico que **esconde a causa já registada**.
+- **Regra:** uma regra de apresentação que depende de estado (`failed`, `expired`, `revoked`) pertence a **todas** as vistas do mesmo recurso, e a lista dessas vistas cresce. Quando se acrescenta uma vista, verificam-se os estados; quando se acrescenta um estado, verificam-se as vistas. As três — cartões, tabela, biblioteca — mais o visualizador estão agora cobertas.
+- **O que isto diz sobre merges:** «sem conflitos» é uma afirmação sobre LINHAS, não sobre comportamento. Duas mudanças correctas em ficheiros diferentes produzem um produto errado, e nenhum portão de texto apanha isso — só abrir o ecrã.
+- **Ficheiros:** `web/src/pages/Recordings.tsx` (vista de tabela e `ViewerBody`), `web/src/styles.scss`.
