@@ -26,11 +26,15 @@ void initLanguage(currentUser()?.locale).finally(() => {
   createRoot(document.getElementById('root')!).render(<App />)
 })
 
-// PWA: instalável em desktop/mobile; o SW só faz cache de assets estáticos.
-// Só em produção HTTPS: em localhost dev (cert self-signed do vite) o registo do
-// SW falha com erro de certificado — evita-se (e apanha-se qualquer rejeição).
-const isLocalhost = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)
-if ('serviceWorker' in navigator && location.protocol === 'https:' && !isLocalhost) {
+// PWA: instalável, e o Estúdio funciona sem rede depois do primeiro arranque.
+//
+// A condição era `https: && !localhost`, o que excluía DOIS casos legítimos:
+// um `http://localhost` (que é contexto seguro por definição e onde o SW
+// funciona) e qualquer instalação self-hosted servida em HTTP numa rede
+// interna e aberta por `localhost`. O que é preciso excluir não é o localhost
+// — é o servidor de DESENVOLVIMENTO, onde um SW a guardar módulos do Vite dá
+// uma app teimosa que serve código velho e ninguém percebe porquê.
+if ('serviceWorker' in navigator && window.isSecureContext && !import.meta.env.DEV) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {
       /* cert não confiável / offline — a app funciona na mesma sem PWA */
