@@ -4937,3 +4937,26 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
 .studio-corte .set-label { gap: 3px; font-size: 0.78rem; }
 .studio-corte .mono { color: var(--accent-text); }
 .studio-faixas { display: flex; flex-direction: column; gap: 5px; }
+
+/* ---- Estúdio · pausas mortas (analisadas por sinal, sem modelo) ---- */
+.studio-pausas {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 14px; border-bottom: 1px solid var(--border-soft);
+}
+.studio-pausas > small:first-child {
+  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--muted-2);
+}
+/* Mapa da aula: a barra é a gravação, os blocos são o que sai. */
+.studio-mapa {
+  position: relative; height: 14px; border-radius: 3px;
+  background: color-mix(in oklab, var(--ok) 45%, transparent);
+  overflow: hidden;
+}
+.studio-mapa-pausa {
+  position: absolute; top: 0; bottom: 0;
+  background: var(--danger);
+  /* Uma pausa curta ficaria invisível numa aula longa. */
+  min-width: 2px;
+}
+.studio-pausas .studio-seg .btn-sm { flex: 1; justify-content: center; }
