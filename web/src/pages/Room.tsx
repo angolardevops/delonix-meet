@@ -2,6 +2,7 @@ import { CSSProperties, ReactNode, RefObject, useCallback, useEffect, useMemo, u
 import {
   currentUser, downloadRecording, iceServers, inviteToRoom, joinRoom, listRecordings, postQos, postTimings, Recording,
   roomChatHistory, saveMinutesByRoom, saveWhiteboard, searchUsers, translateCaption, uploadRecording, User,
+  isAbort,
 } from '../api'
 import {
   audioConstraints,
@@ -25,6 +26,7 @@ import { Countdown, MeetingElapsed, WallClock } from '../room/Clocks'
 import { peerColor, RemotePeer, RemoteTile, SpeakingBars } from '../room/RemoteTile'
 import { Call, MeshCall, SCREEN_CONSTRAINTS, SfuCall } from '../webrtc'
 import type { CallState } from '../callRecovery'
+import { backoffDelay } from '../callRecovery'
 import { chooseLayers, type LocalConditions, type TileSignal } from '../layerPolicy'
 import { LinhaDoTempo } from '../callTimings'
 import { makeCallHolderStart } from '../sfuLifecycle'
@@ -1195,9 +1197,29 @@ export default function Room({
               : new MeshCall(signal, stream, rtcConfig, callbacks, crypto),
         })
       } catch (err) {
-        setStatus(`Erro: ${(err as Error).message}`)
+        // Uma falha a montar a sala NÃO é terminal. Antes disto, o `catch`
+        // pintava a mensagem técnica do erro e parava ali: um corte de seis
+        // segundos no servidor — medido — deixava toda a gente na reunião presa
+        // em «Erro: Internal Server Error», sem retorno, mesmo depois de o
+        // servidor voltar. E «Internal Server Error» não é uma frase que se
+        // mostre a alguém numa reunião.
+        if (cancelled || isAbort(err)) return
+        tentativas += 1
+        if (tentativas <= MAX_TENTATIVAS) {
+          const espera = backoffDelay(tentativas - 1)
+          setStatus(`Sem ligação ao servidor — a tentar de novo (${tentativas}/${MAX_TENTATIVAS})…`)
+          setTimeout(() => {
+            if (!cancelled) void start()
+          }, espera)
+          return
+        }
+        setStatus('Não foi possível ligar ao servidor da reunião. Verifica a ligação e recarrega a página.')
       }
     }
+    // As tentativas contam-se FORA do `start`, senão cada nova tentativa
+    // reinicia o contador e o recuo nunca cresce.
+    let tentativas = 0
+    const MAX_TENTATIVAS = 6
     start()
     return () => {
       cancelled = true
