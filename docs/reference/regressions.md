@@ -514,15 +514,15 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
   1. `expect(e).toContain('decodeAudioData')` continua a passar quando a chamada é trocada por `decodeAudioDataX` — a string está lá dentro. Um nome de função verifica-se com **fronteira de palavra** (`/\bdecodeAudioData\(/`), nunca com `toContain`.
   2. `expect(c).toContain('for (const g of this.todos)')` passava com o `pausar()` partido, porque o `retomar()` tem o mesmo padrão. Quando o invariante é «TODOS os sítios fazem X», **conta-se** — `expect(ocorrências).toBeGreaterThanOrEqual(3)` — em vez de confirmar que existe um.
 - **Regra:** um portão baseado em texto tem de responder «o que teria de estar partido para isto ficar vermelho?». Se a resposta for «uma coisa que ninguém escreveria por engano», o portão não guarda o que diz guardar.
-- **É a quarta vez nesta série** (ver R59): comentário aceite como código, `querySelector` singular, limiar abaixo do fundo, e agora substring de nome de função. O padrão comum é o mesmo — a asserção é mais frouxa do que a frase que a descreve.
+- **É a quarta vez nesta série** (ver R67): comentário aceite como código, `querySelector` singular, limiar abaixo do fundo, e agora substring de nome de função. O padrão comum é o mesmo — a asserção é mais frouxa do que a frase que a descreve.
 - **Ficheiros:** `web/src/studio.invariantes.test.ts`.
 
-### R61 — Cinco portões escritos com asserções que valiam nos dois estados
+### R69 — Cinco portões escritos com asserções que valiam nos dois estados
 - **Sintoma:** testes verdes que continuavam verdes com o invariante partido. Cinco vezes na mesma série de tarefas, sempre pelo mesmo motivo.
 - **O catálogo dos cinco:**
-  1. `toContain('silencio.connect(...)')` passava com a linha **comentada** (R59).
-  2. `querySelector` **singular** apanhava o primeiro `<small>` da secção e declarou «não arrancou» com o segmentador a correr (R59).
-  3. `brilho > 5` contra um fundo de brilho **18** — passava com o ecrã vazio (R59).
+  1. `toContain('silencio.connect(...)')` passava com a linha **comentada** (R67).
+  2. `querySelector` **singular** apanhava o primeiro `<small>` da secção e declarou «não arrancou» com o segmentador a correr (R67).
+  3. `brilho > 5` contra um fundo de brilho **18** — passava com o ecrã vazio (R67).
   4. `pausas.length === 1` num teste de limiar relativo: com um limiar FIXO a gravação baixa fica **toda** classificada como pausa, o que também dá comprimento 1.
   5. `pausas[0].inicio >= 2` para verificar uma margem de 0,12 s: verdade com margem (2,12) e sem ela (2,00).
 - **A causa comum:** a asserção foi escrita a partir do que o código *devia* fazer, e nunca comparada com o que produz **quando está partido**.
@@ -530,14 +530,14 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra irmã:** contar elementos não é verificar onde eles estão. Um detector que devolve «uma pausa» pode ter devolvido a gravação inteira.
 - **Ficheiros:** `web/src/studio/analise.test.ts`, `web/src/studio.invariantes.test.ts`, `web/e2e/estudio.mjs`.
 
-### R62 — Lista de precache escolhida por NOME em vez de derivada do grafo
+### R70 — Lista de precache escolhida por NOME em vez de derivada do grafo
 - **Sintoma:** com a rede cortada a app abria, mas o Estúdio — a única coisa que se prometia offline — deixava a raiz do React **vazia**, sem erro visível na interface.
 - **Causa raiz:** a lista de precache do service worker foi montada com padrões de nome de ficheiro (`assets/index-*`, `assets/Studio-*`). O `Studio` importa `media.ts`, que o Rollup separou num chunk `media-*.js` que nenhum padrão apanhava. Sem rede, o `import()` da rota rejeitava e a árvore não montava.
 - **Regra:** **uma lista de precache vem do grafo de dependências, não de padrões de nome.** O Rollup conhece as importações de cada chunk (`bundle[f].imports`); o fecho transitivo a partir do entry e das rotas que se querem offline é exacto. Adivinhar pelo nome falha exactamente no ficheiro em que ninguém pensou — e falha em silêncio, porque um chunk em falta não tem sintoma que aponte para a cache.
 - **Segunda regra, sobre o que NÃO entra:** precachear tudo seria pior. Os modelos de IA e o `whisperWorker` passam dos 30 MB e obrigariam toda a gente a descarregá-los na instalação. A linha é: o esqueleto e as rotas que se PROMETEM offline entram; o resto entra em cache no primeiro uso.
 - **Ficheiros:** `web/vite.config.ts`, `web/public/sw.js`.
 
-### R63 — Contar «×» na saída dá VERDE a um crash
+### R71 — Contar «×» na saída dá VERDE a um crash
 - **Sintoma:** dois portões dados como «não ficam vermelhos» quando na verdade ficavam.
 - **Causa raiz:** a verificação contava linhas com `×` na saída do vitest. Uma das sabotagens partia o `vite.config.ts`, o vitest nem chegava a correr, a saída não tinha `×` nenhum — e a contagem de zero foi lida como «o teste passou apesar do invariante partido».
 - **Regra:** **para saber se um portão fica vermelho, usa-se o CÓDIGO DE SAÍDA, não uma contagem de padrões na saída.** Um crash é vermelho. Contar sintomas de falha na saída dá falsos verdes precisamente nos casos mais graves, em que nem se chega a correr.
