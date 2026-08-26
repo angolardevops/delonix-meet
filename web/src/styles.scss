@@ -4960,3 +4960,20 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
   min-width: 2px;
 }
 .studio-pausas .studio-seg .btn-sm { flex: 1; justify-content: center; }
+
+/* ---- Estúdio · offline e fila de envio ---- */
+.studio-offline {
+  margin: 0 0 12px; padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in oklab, var(--warn) 40%, transparent);
+  background: color-mix(in oklab, var(--warn) 10%, transparent);
+  color: var(--text); font-size: 0.85rem;
+}
+.studio-fila {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface-2);
+  font-size: 0.84rem;
+}
+.studio-fila > span { flex: 1; min-width: 180px; color: var(--muted); }
