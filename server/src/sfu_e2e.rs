@@ -259,11 +259,30 @@ async fn pump(client: Arc<TestClient>, mut rx: mpsc::Receiver<ServerMsg>) {
     }
 }
 
+/// Portas UDP para os testes, **abaixo do intervalo efémero do SO**.
+///
+/// O intervalo do produto (50000–50200) está inteiro dentro de
+/// `ip_local_port_range` (32768–60999 por omissão no Linux): qualquer processo
+/// do host — um browser aberto, os Chromium do Playwright — pode ficar com
+/// essas portas, e então o SFU do teste não recolhe candidatos e falha por
+/// TIMEOUT, que se lê como lentidão do runner e não como colisão (R57).
+///
+/// 20000+ nunca é entregue pelo SO como porta efémera, por isso o único
+/// concorrente possível é outro processo de teste — e o PID separa-os.
+fn portas_de_teste() -> (u16, u16) {
+    // 60 portas chegam para os pares destes testes; 200 fatias distintas.
+    let base = 20_000u16 + ((std::process::id() % 200) as u16 * 60);
+    (base, base + 59)
+}
+
 fn new_sfu() -> (Arc<SfuState>, Arc<Metrics>) {
     let metrics = Arc::new(Metrics::default());
     (
         Arc::new(SfuState::new(
-            IceConfig::default(),
+            IceConfig {
+                udp_ports: Some(portas_de_teste()),
+                ..Default::default()
+            },
             metrics.clone(),
             64,
             2048,
@@ -293,10 +312,23 @@ fn prazo(base_secs: u64) -> Duration {
     Duration::from_secs(base_secs * fator)
 }
 
-async fn eventually<F, Fut>(label: &str, timeout: Duration, mut cond: F)
+async fn eventually<F, Fut>(label: &str, timeout: Duration, cond: F)
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = bool>,
+{
+    eventually_com_diagnostico(label, timeout, cond, String::new).await
+}
+
+/// Como `eventually`, mas o `diag` é chamado **só quando o prazo estoura** e
+/// junta-se à mensagem. Sem isto, «não chegou media» não distingue ICE que
+/// nunca ligou, de subscrição que não aconteceu, de RTP a não fluir — e cada
+/// uma delas manda investigar noutro sítio. Custa nada quando passa.
+async fn eventually_com_diagnostico<F, Fut, D>(label: &str, timeout: Duration, mut cond: F, diag: D)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+    D: Fn() -> String,
 {
     let inicio = tokio::time::Instant::now();
     let deadline = inicio + timeout;
@@ -310,14 +342,55 @@ where
             // O prazo e as tentativas entram na mensagem: sem eles, um timeout
             // não distingue «o produto está partido» de «a máquina é lenta», e
             // foi precisamente essa a dúvida que custou uma ida ao CI.
+            let d = diag();
             panic!(
-                "timeout à espera de: {label} (prazo {:?}, {tentativas} tentativas em {:?}). \
+                "timeout à espera de: {label} (prazo {:?}, {tentativas} tentativas em {:?}).{}\n\
                  Se for lentidão do ambiente e não uma avaria, sobe E2E_TIMEOUT_FACTOR.",
                 timeout,
-                inicio.elapsed()
+                inicio.elapsed(),
+                if d.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n  estado: {d}")
+                }
             );
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+impl TestClient {
+    /// Retrato SÍNCRONO do estado da ligação, para entrar numa mensagem de
+    /// timeout. Diz em que fase parou: ICE que nunca ligou aponta a rede;
+    /// ICE ligado sem tracks aponta a subscrição; tracks sem RTP aponta ao
+    /// fan-out. Sem isto, as três falhas dão a mesma mensagem.
+    fn retrato(&self) -> String {
+        let recebidas = self
+            .received
+            .try_lock()
+            .map(|v| {
+                v.iter()
+                    .map(|(s, k)| format!("{}:{k}", &s[..s.len().min(8)]))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_else(|_| "<bloqueado>".into());
+        let rtp = self
+            .rtp_seen
+            .try_lock()
+            .map(|m| {
+                m.iter()
+                    .map(|(s, n)| format!("{}={n}", &s[..s.len().min(8)]))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_else(|_| "<bloqueado>".into());
+        format!(
+            "sinalização={:?} ice={:?} ligação={:?} tracks=[{recebidas}] rtp=[{rtp}]",
+            self.pc.signaling_state(),
+            self.pc.ice_connection_state(),
+            self.pc.connection_state(),
+        )
     }
 }
 
@@ -339,25 +412,35 @@ async fn media_flows_both_ways() {
     b.publish(VP8, "b-video").await;
 
     // B tem de receber as duas tracks de A, identificadas pelo peer_id de A.
-    eventually("B recebe áudio+vídeo de A", prazo(30), || {
-        let b = b.clone();
-        let a_id = a.id.to_string();
-        async move {
-            let seen = b.streams_seen().await;
-            seen.iter().filter(|(s, _)| *s == a_id).count() >= 2
-        }
-    })
+    eventually_com_diagnostico(
+        "B recebe áudio+vídeo de A",
+        prazo(30),
+        || {
+            let b = b.clone();
+            let a_id = a.id.to_string();
+            async move {
+                let seen = b.streams_seen().await;
+                seen.iter().filter(|(s, _)| *s == a_id).count() >= 2
+            }
+        },
+        || format!("A[{}] · B[{}]", a.retrato(), b.retrato()),
+    )
     .await;
 
     // …e o inverso: sem isto, "media num só sentido" passaria despercebido.
-    eventually("A recebe áudio+vídeo de B", prazo(30), || {
-        let a = a.clone();
-        let b_id = b.id.to_string();
-        async move {
-            let seen = a.streams_seen().await;
-            seen.iter().filter(|(s, _)| *s == b_id).count() >= 2
-        }
-    })
+    eventually_com_diagnostico(
+        "A recebe áudio+vídeo de B",
+        prazo(30),
+        || {
+            let a = a.clone();
+            let b_id = b.id.to_string();
+            async move {
+                let seen = a.streams_seen().await;
+                seen.iter().filter(|(s, _)| *s == b_id).count() >= 2
+            }
+        },
+        || format!("A[{}] · B[{}]", a.retrato(), b.retrato()),
+    )
     .await;
 
     // Tracks negociadas não chegam: exige-se RTP mesmo a passar pelo fan-out.

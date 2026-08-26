@@ -20,7 +20,9 @@ import {
 import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
 import { Btn, SelectCtl } from '../components/ui'
 import { BreakoutRoom, PeerInfo, PollView, QaView, Signaling, WbStroke } from '../signaling'
-import { ThemePicker } from '../components/Shell'
+import ThemePicker from '../components/ThemePicker'
+import { Countdown, MeetingElapsed, WallClock } from '../room/Clocks'
+import { peerColor, RemotePeer, RemoteTile, SpeakingBars } from '../room/RemoteTile'
 import { Call, MeshCall, SCREEN_CONSTRAINTS, SfuCall } from '../webrtc'
 import type { CallState } from '../callRecovery'
 import { chooseLayers, type LocalConditions, type TileSignal } from '../layerPolicy'
@@ -31,19 +33,7 @@ import {
   HangupIcon, MicIcon, MicOffIcon, NoteIcon, PeopleIcon, RecordIcon, SettingsIcon, ShareIcon, StopIcon,
 } from '../icons'
 
-interface RemotePeer {
-  peerId: string
-  username: string
-  host: boolean
-  hand: boolean
-  camOn: boolean
-  micOn: boolean
-  /** Foi promovido a co-admitir entradas (o anfitrião tem-no sempre). */
-  canAdmit: boolean
-  stream: MediaStream | null
-  is_pstn?: boolean
-  is_bot?: boolean
-}
+// `RemotePeer` mudou-se para room/RemoteTile.tsx, com o componente que o usa.
 
 /**
  * Cor de fundo determinística por participante: djb2 hash → HSL escuro único.
@@ -70,13 +60,6 @@ function ChatText({ text }: { text: string }) {
   )
 }
 
-function peerColor(name: string): string {
-  let h = 5381
-  for (let i = 0; i < name.length; i++) h = ((h << 5) + h + name.charCodeAt(i)) | 0
-  // Duotone (estilo template): dois tons do mesmo matiz — mantém contraste com texto branco.
-  const hue = Math.abs(h) % 360
-  return `linear-gradient(135deg, hsl(${hue}, 45%, 27%), hsl(${(hue + 35) % 360}, 50%, 16%))`
-}
 
 /**
  * Grelha estilo Meet: para N mosaicos 16:9 num contentor W×H, escolhe o nº de
@@ -127,14 +110,6 @@ function useGridLayout(areaRef: RefObject<HTMLDivElement | null>, count: number,
   return size
 }
 
-/** mm:ss (ou h:mm:ss) para o countdown das salas de grupo. */
-function fmtCountdown(secs: number): string {
-  const s = Math.max(0, secs)
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const ss = String(s % 60).padStart(2, '0')
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
-}
 
 interface ChatMsg {
   username: string
@@ -278,7 +253,6 @@ export default function Room({
   const [topology, setTopology] = useState('')
   const [isTraining, setIsTraining] = useState(false)
   const [waitingRoomOn, setWaitingRoomOn] = useState(false)
-  const [clock, setClock] = useState(() => new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }))
 
   // Dispositivos & qualidade
   const [devices, setDevices] = useState<DeviceSets>({ mics: [], cams: [], speakers: [] })
@@ -319,7 +293,6 @@ export default function Room({
     return v ? Number(v) : null
   })
   const [breakoutMinutes, setBreakoutMinutes] = useState(0)
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
   const returnTo = sessionStorage.getItem(`dx_return_${code}`)
 
   // UX estilo Meet: cartão "reunião pronta" + painel Fundos e efeitos
@@ -371,7 +344,6 @@ export default function Room({
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const chatInputRef = useRef<HTMLInputElement>(null)
   // Teams: temporizador de duração da reunião ("00:37" estilo).
-  const [elapsed, setElapsed] = useState(0)
   const joinedAtRef = useRef<number>(0)
   // Ref do panel atual para acessar em closures estáticas (signal.on).
   const panelRef = useRef<Panel>('none')
@@ -396,21 +368,12 @@ export default function Room({
   const [pollDismissed, setPollDismissed] = useState<Record<string, boolean>>({})
   const [revealUntil, setRevealUntil] = useState<Record<string, number>>({})
   const [winnerFx, setWinnerFx] = useState(false)
-  const [pollNow, setPollNow] = useState(() => Date.now())
   const pollPrevOpenRef = useRef<Record<string, boolean>>({})
   const pollCloseSentRef = useRef<Record<string, boolean>>({})
   const [qaInput, setQaInput] = useState('')
 
   // Relógio de 1s para as contagens de quiz (só com sondagem aberta com prazo
   // ou janela de revelação ativa).
-  useEffect(() => {
-    const need =
-      polls.some((p) => p.open && p.ends_at) ||
-      Object.values(revealUntil).some((t) => t > Date.now())
-    if (!need) return
-    const t = setInterval(() => setPollNow(Date.now()), 1000)
-    return () => clearInterval(t)
-  }, [polls, revealUntil])
 
   // Persiste os meus votos por sala: um reload a meio do quiz não pode
   // apagar a memória de em quem votei (senão a festa nunca dispara).
@@ -447,15 +410,49 @@ export default function Room({
 
   // O anfitrião fecha o quiz quando o tempo acaba — o servidor valida (host),
   // revela a resposta certa a todos e persiste o resultado no meeting.
+  // Callbacks ESTÁVEIS para os mosaicos (achado 2.3). Antes era uma closure
+  // nova por peer e por render — o que anula qualquer `memo` a jusante. Agora
+  // há uma identidade só, e o mosaico devolve o `peerId` que recebeu.
+  const onTilePin = useCallback((peerId: string) => togglePin(peerId), [])
+  const onTileMute = useCallback(
+    (peerId: string) => signalRef.current?.send({ type: 'force-mute', to: peerId }),
+    [],
+  )
+  const onTileKick = useCallback(
+    (peerId: string) => signalRef.current?.send({ type: 'kick', to: peerId }),
+    [],
+  )
+
+  // Tique de revelação: existe SÓ enquanto houver uma janela aberta. Fora dela
+  // não há relógio na raiz — contra o `setPollNow` permanente de antes, que
+  // reconciliava a sala 86 400 vezes por dia para um contador de segundos.
+  const revelacaoAberta = Object.values(revealUntil).some((t) => t > Date.now())
+  const [revTick, setRevTick] = useState(0)
+  useEffect(() => {
+    if (!revelacaoAberta) return
+    const t = setInterval(() => setRevTick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [revelacaoAberta])
+  void revTick
+
+  // Não usa estado: o fecho automático precisa do TIQUE, não de um render. Era
+  // um `setPollNow` por segundo a reconciliar a sala inteira para actualizar um
+  // contador (achado 2.1). O intervalo lê o relógio do sistema e dispara.
+  const pollsRef = useRef(polls)
+  pollsRef.current = polls
   useEffect(() => {
     if (!isHost) return
-    for (const p of polls) {
-      if (p.open && p.ends_at && pollNow >= p.ends_at && !pollCloseSentRef.current[p.id]) {
-        pollCloseSentRef.current[p.id] = true
-        signalRef.current?.send({ type: 'poll-close', poll: p.id })
+    const t = setInterval(() => {
+      const agora = Math.floor(Date.now() / 1000)
+      for (const p of pollsRef.current) {
+        if (p.open && p.ends_at && agora >= p.ends_at && !pollCloseSentRef.current[p.id]) {
+          pollCloseSentRef.current[p.id] = true
+          signalRef.current?.send({ type: 'poll-close', poll: p.id })
+        }
       }
-    }
-  }, [polls, pollNow, isHost])
+    }, 1000)
+    return () => clearInterval(t)
+  }, [isHost])
 
   // Controlos de anfitrião (runtime) + legendas CC
   const [roomLocked, setRoomLocked] = useState(false)
@@ -479,11 +476,8 @@ export default function Room({
   const interimXlateRef = useRef<{ timer: number | null; busy: boolean }>({ timer: null, busy: false })
 
   // Relógio dos countdowns (grupos e temporizador) — só corre quando há deadline.
-  useEffect(() => {
-    if (!breakoutEndsAt && !meetTimerEndsAt) return
-    const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000)
-    return () => clearInterval(t)
-  }, [breakoutEndsAt, meetTimerEndsAt])
+  // Os countdowns passaram para <Countdown>: o tique fica na folha que
+  // mostra o número, não na raiz da sala (achado 2.1).
 
   // Pré-visualização do painel Fundos e efeitos = o mesmo stream que os
   // outros veem (com efeito aplicado, se houver).
@@ -614,12 +608,8 @@ export default function Room({
   panelRef.current = panel
 
   // Temporizador de duração da reunião (estilo Teams "00:37").
-  useEffect(() => {
-    if (roomState !== 'in') return
-    if (!joinedAtRef.current) joinedAtRef.current = Date.now()
-    const t = setInterval(() => setElapsed(Math.floor((Date.now() - joinedAtRef.current) / 1000)), 1000)
-    return () => clearInterval(t)
-  }, [roomState])
+  // O relógio da duração passou para <MeetingElapsed>: era um setState por
+  // segundo na raiz de um componente de 4 254 linhas (achado 2.1).
 
   // Atalhos de teclado: Ctrl+D = mic, Ctrl+E = câmara (estilo Google Meet).
   // Clica no botão DOM em vez de chamar toggleMic/toggleCam diretamente para
@@ -699,13 +689,7 @@ export default function Room({
     setTimeout(() => setReactions((rs) => rs.filter((r) => r.id !== id)), 3500)
   }
 
-  useEffect(() => {
-    const t = setInterval(
-      () => setClock(new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })),
-      30_000,
-    )
-    return () => clearInterval(t)
-  }, [])
+  // O relógio de parede passou para <WallClock> (achado 2.1).
 
   // ---- Pre-join (green room): SÓ media local para o preview. ----
   // NÃO cria Signaling nem SfuCall (alinhado com R2: nada de ofertas antes de
@@ -2120,7 +2104,7 @@ export default function Room({
       {/* Barra de topo estilo Meet: info à esquerda, alertas/participantes à direita. */}
       <header className="room-topbar">
         <div className="rt-left">
-          <span className="rt-clock">{clock}</span>
+          <WallClock />
           <span className="rt-sep">|</span>
           <span className="rt-code" title="Código da reunião">{code}</span>
           <button
@@ -2236,9 +2220,9 @@ export default function Room({
               speaking={speaking.has(p.peerId)}
               style={tileStyle}
               pinned={pinnedId === p.peerId}
-              onPin={() => togglePin(p.peerId)}
-              onMute={() => signalRef.current?.send({ type: 'force-mute', to: p.peerId })}
-              onKick={() => signalRef.current?.send({ type: 'kick', to: p.peerId })}
+              onPin={onTilePin}
+              onMute={onTileMute}
+              onKick={onTileKick}
             />
           )
 
@@ -2801,7 +2785,7 @@ export default function Room({
                   <>
                     {breakoutEndsAt && (
                       <p className="breakout-countdown">
-                        ⏱ Termina em <strong>{fmtCountdown(breakoutEndsAt - now)}</strong>
+                        ⏱ Termina em <Countdown endsAt={breakoutEndsAt} render={(txt) => <strong>{txt}</strong>} />
                       </p>
                     )}
                     {breakoutRooms.map((b) => (
@@ -2896,7 +2880,7 @@ export default function Room({
               <h4>⏳ Temporizador</h4>
               {meetTimerEndsAt ? (
                 <div className="timer-row">
-                  <strong className="mono timer-big">{fmtCountdown(meetTimerEndsAt - now)}</strong>
+                  <Countdown endsAt={meetTimerEndsAt} render={(txt) => <strong className="mono timer-big">{txt}</strong>} />
                   {isHost && (
                     <button className="btn-sm ghost" onClick={() => signalRef.current?.send({ type: 'timer-clear' })}>
                       Limpar
@@ -3002,7 +2986,7 @@ export default function Room({
                 const total = p.counts.reduce((a, b) => a + b, 0)
                 const revealed = !p.open && p.correct != null
                 const remaining =
-                  p.open && p.ends_at ? Math.max(0, Math.ceil((p.ends_at - pollNow) / 1000)) : null
+                  p.open && p.ends_at ? Math.max(0, Math.ceil((p.ends_at - Date.now()) / 1000)) : null
                 return (
                   <div key={p.id} className="poll-card">
                     <div className="poll-head">
@@ -3025,7 +3009,7 @@ export default function Room({
                         <button
                           key={i}
                           className={cls}
-                          disabled={!p.open || (p.ends_at != null && pollNow > p.ends_at)}
+                          disabled={!p.open || (p.ends_at != null && Date.now() > p.ends_at)}
                           onClick={() => {
                             signalRef.current?.send({ type: 'poll-vote', poll: p.id, option: i })
                             setMyVotes({ ...myVotes, [p.id]: i })
@@ -3472,12 +3456,12 @@ export default function Room({
         {(() => {
           const p = [...polls]
             .reverse()
-            .find((x) => !pollDismissed[x.id] && (x.open || (revealUntil[x.id] ?? 0) > pollNow))
+            .find((x) => !pollDismissed[x.id] && (x.open || (revealUntil[x.id] ?? 0) > Date.now()))
           if (!p) return null
           const total = p.counts.reduce((a, b) => a + b, 0)
           const revealed = !p.open && p.correct != null
           const remaining =
-            p.open && p.ends_at ? Math.max(0, Math.ceil((p.ends_at - pollNow) / 1000)) : null
+            p.open && p.ends_at ? Math.max(0, Math.ceil((p.ends_at - Date.now()) / 1000)) : null
           return (
             <div className="admit-card poll-popup" role="dialog" aria-label="Sondagem">
               <div className="admit-card-head">
@@ -3507,7 +3491,7 @@ export default function Room({
                   <button
                     key={i}
                     className={cls}
-                    disabled={!p.open || (p.ends_at != null && pollNow > p.ends_at)}
+                    disabled={!p.open || (p.ends_at != null && Date.now() > p.ends_at)}
                     onClick={() => {
                       signalRef.current?.send({ type: 'poll-vote', poll: p.id, option: i })
                       setMyVotes({ ...myVotes, [p.id]: i })
@@ -3571,9 +3555,7 @@ export default function Room({
         <div className="bar-left">
           {/* Hora/código/E2EE estão agora na barra de topo (estilo Meet). Aqui
               ficam só os indicadores dinâmicos da sessão. */}
-          {roomState === 'in' && elapsed > 0 && (
-            <span className="meeting-elapsed" title="Duração da reunião">⏱ {fmtCountdown(elapsed)}</span>
-          )}
+          {roomState === 'in' && <MeetingElapsed startedAt={joinedAtRef.current} />}
           {secOpen && secCode && (
             <span className="sec-code" onClick={() => setSecOpen(false)} title="Código de segurança da sala">
               🛡 <strong className="mono">{secCode}</strong> — igual em todos os participantes se ninguém estiver a intercetar
@@ -3592,18 +3574,23 @@ export default function Room({
               ← Sala principal
             </button>
           )}
-          {returnTo && breakoutEndsAt && breakoutEndsAt > now && (
+          {returnTo && breakoutEndsAt && (
             <span className="room-topo breakout-chip" title="Tempo restante neste grupo">
-              ⏱ {fmtCountdown(breakoutEndsAt - now)}
+              ⏱ <Countdown endsAt={breakoutEndsAt} render={(txt) => <>{txt}</>} />
             </span>
           )}
           {meetTimerEndsAt && (
-            <span
-              className={meetTimerEndsAt - now <= 60 ? 'room-topo breakout-chip timer-low' : 'room-topo breakout-chip'}
-              title="Temporizador da reunião"
-            >
-              ⏳ {fmtCountdown(meetTimerEndsAt - now)}
-            </span>
+            <Countdown
+              endsAt={meetTimerEndsAt}
+              render={(txt, restam) => (
+                <span
+                  className={restam <= 60 ? 'room-topo breakout-chip timer-low' : 'room-topo breakout-chip'}
+                  title="Temporizador da reunião"
+                >
+                  ⏳ {txt}
+                </span>
+              )}
+            />
           )}
           {presentation && (
             <span className="room-topo presenter-chip" title="Apresentação em curso">
@@ -4279,13 +4266,6 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
 const TILES_PER_PAGE = 24
 
 /** Barras animadas tipo Meet quando alguém está a falar. */
-function SpeakingBars() {
-  return (
-    <span className="speaking-bars" aria-hidden>
-      <i /><i /><i />
-    </span>
-  )
-}
 
 /**
  * Reprodução do ÁUDIO de todos os participantes, num sítio só, SEMPRE montado.
@@ -4325,79 +4305,3 @@ function PeerAudio({ stream, sinkId }: { stream: MediaStream | null; sinkId: str
   return <audio ref={ref} autoPlay />
 }
 
-function RemoteTile({
-  peer,
-  isHost,
-  speaking,
-  style,
-  pinned,
-  onPin,
-  onMute,
-  onKick,
-}: {
-  peer: RemotePeer
-  isHost: boolean
-  speaking: boolean
-  style?: CSSProperties
-  pinned?: boolean
-  onPin?: () => void
-  onMute: () => void
-  onKick: () => void
-}) {
-  const ref = useRef<HTMLVideoElement>(null)
-  useEffect(() => {
-    if (ref.current && ref.current.srcObject !== peer.stream) {
-      ref.current.srcObject = peer.stream
-      void ref.current.play().catch(() => {})
-    }
-  }, [peer.stream])
-  // Vídeo só quando há track E o peer diz que a câmara está ligada —
-  // track com enabled=false chega como frames pretos, não como ausência.
-  const hasVideo = !!peer.stream?.getVideoTracks().length && peer.camOn
-  const hasAudio = !!peer.stream?.getAudioTracks().length && peer.micOn
-  return (
-    <div
-      className={speaking ? 'tile speaking' : 'tile'}
-      style={style}
-      onDoubleClick={onPin}
-      title="Duplo-clique para fixar/desafixar no palco"
-    >
-      <video ref={ref} autoPlay playsInline muted style={{ display: hasVideo ? undefined : 'none' }} />
-      {!hasVideo && (
-        <div className="tile-avatar" style={{ background: peerColor(peer.username) }}>
-          <span className="avatar-circle" style={{ background: 'rgba(0,0,0,0.25)' }}>{peer.username.slice(0, 2).toUpperCase()}</span>
-        </div>
-      )}
-      <button
-        className={pinned ? 'tile-pin pinned' : 'tile-pin'}
-        onClick={onPin}
-        title={pinned ? 'Desafixar do palco' : 'Fixar no palco'}
-      >
-        📌
-      </button>
-      {peer.hand && <span className="hand-badge">✋</span>}
-      {/* Indicador de mic muted no canto superior direito (estilo Meet). */}
-      {!hasAudio && (
-        <span className="tile-mic-status" aria-label="microfone desativado">
-          <MicOffIcon />
-        </span>
-      )}
-      <span className="tile-name">
-        {hasAudio && speaking && <SpeakingBars />}
-        {peer.username}
-        {peer.host ? ' · anfitrião' : ''}
-        {peer.is_pstn ? ' · 📞 PSTN' : peer.is_bot ? ' · 🤖 AI Bot' : ''}
-      </span>
-      {isHost && !peer.host && (
-        <div className="host-actions">
-          <button title="Silenciar" onClick={onMute}>
-            <MicOffIcon />
-          </button>
-          <button title="Remover da reunião" onClick={onKick}>
-            <CloseIcon />
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}

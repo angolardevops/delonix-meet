@@ -49,13 +49,13 @@
 - `whiteboards.rs` — CRUD quadro branco persistente
 - `voice.rs` — PSTN (stub, aguarda operador)
 - `apikeys.rs` — API keys por org (hash + scopes)
-- `audit.rs` — auditoria IMUTÁVEL e verificável: cada linha inclui o hash da anterior, numa cadeia por organização (migração 0037). Editar ou apagar uma linha parte a cadeia e é detectável em `/api/orgs/{id}/audit/verify` — mesmo por quem não confia em quem administra a base de dados, que é o adversário que interessa. Gatilhos recusam UPDATE/DELETE; a cadeia é a defesa que sobrevive a quem os possa remover. Ver R49
+- `audit.rs` — auditoria IMUTÁVEL e verificável: cada linha inclui o hash da anterior, numa cadeia por organização (migração 0037). Editar ou apagar uma linha parte a cadeia e é detectável em `/api/orgs/{id}/audit/verify` — mesmo por quem não confia em quem administra a base de dados, que é o adversário que interessa. Gatilhos recusam UPDATE/DELETE; a cadeia é a defesa que sobrevive a quem os possa remover. Ver R61
 - `rate_limit.rs` — rate limit por IP/conta (DashMap, lockout login 8/5min)
 - `error.rs` — `AppError` unificado → HTTP status + JSON body
 - `metrics.rs` — contadores atómicos de observabilidade (WS, SFU, saturação das filas) expostos em `/metrics` (Prometheus). Das filas: `delonix_ws_queue_high_water` (marca de água — a folga real face a `WS_QUEUE_CAP`), `delonix_ws_queue_dropped_total` (efémeros perdidos), `delonix_ws_slow_consumer_kills_total` (sockets fechados por transbordo) e `delonix_nego_queue_dropped_total`. Marca de água e não profundidade instantânea: um gauge somado entre sockets vaza quando uma task de escrita morre a meio
 - `users.rs` — perfis de utilizador (perfil público, `me`, update, pesquisa)
 - `actions.rs` — agenda de reunião (tópicos com execução) + Plano de Ação 5W2H
-- `mfa.rs` — segundo factor por TOTP (RFC 6238) e códigos de recuperação. O algoritmo é implementado aqui em vez de por dependência nova: HMAC-SHA-1, base64 e argon2 já eram dependências, e o RFC traz **vectores de teste oficiais** — uma verificação independente melhor do que confiar numa crate. Um código válido é CONSUMIDO, não só verificado (`last_step`, e `used_at` nos de recuperação): sem isso um TOTP apanhado por cima do ombro servia outra vez durante 30 s. Ver R46
+- `mfa.rs` — segundo factor por TOTP (RFC 6238) e códigos de recuperação. O algoritmo é implementado aqui em vez de por dependência nova: HMAC-SHA-1, base64 e argon2 já eram dependências, e o RFC traz **vectores de teste oficiais** — uma verificação independente melhor do que confiar numa crate. Um código válido é CONSUMIDO, não só verificado (`last_step`, e `used_at` nos de recuperação): sem isso um TOTP apanhado por cima do ombro servia outra vez durante 30 s. Ver R53
 - `mls.rs` — MLS key agreement para E2EE em grupo (key packages, welcome)
 - `dlp.rs` — DLP (censura/redação de conteúdo sensível)
 - `pubsub.rs` — Redis pub/sub para entrega cross-nó (presença/sinalização)

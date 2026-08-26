@@ -44,6 +44,63 @@ export function logout() {
   void fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {})
 }
 
+/**
+ * Erro que CARREGA o estado HTTP. O `request` atirava um `Error` nu, o que
+ * obrigava quem apanha a adivinhar pela mensagem — e é dessa adivinha que
+ * nascem os bugs do `isAuthFailure` abaixo.
+ *
+ * Mesmo desenho do `delonix-portal` (src/api/client.ts), de propósito: as duas
+ * consolas partilham as armadilhas, e vale a pena partilharem as guardas.
+ */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly body: unknown,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
+/**
+ * `AbortController.abort()` — mudar de página, desmontar, ou o duplo-efeito do
+ * StrictMode em dev — rejeita a promessa do fetch. Isso NÃO é uma falha da API:
+ * não pode virar estado de erro na UI, e muito menos logout. Guardar sempre nos
+ * `.catch()` de pedidos que levam um `AbortSignal`.
+ *
+ * No portal isto faltava em ONZE sítios e o sintoma era a consola a saltar para
+ * o login sozinha em desenvolvimento.
+ */
+export function isAbort(e: unknown): boolean {
+  return (e as { name?: string } | null)?.name === 'AbortError'
+}
+
+/**
+ * `true` só quando o servidor RESPONDEU a dizer que a sessão não serve.
+ *
+ * Separa duas coisas que o `refreshSession` tratava como uma: «não estás
+ * autenticado» e «não consegui falar com o servidor». Um gateway a devolver 502,
+ * ou um `fetch` que rejeita por rede, não são sessão inválida — e mandar essa
+ * pessoa para o login é responder à pergunta errada: ela ESTÁ autenticada, perde
+ * o sítio onde estava, e voltar a autenticar-se não resolve nada porque o
+ * problema é o transporte.
+ */
+export function isAuthFailure(e: unknown): boolean {
+  return e instanceof ApiError && (e.status === 401 || e.status === 403)
+}
+
+/** Mensagem legível de um erro de API, com recurso ao texto dado. */
+export function apiErrorMessage(e: unknown, fallback: string): string {
+  if (e instanceof ApiError) {
+    const b = e.body as { error?: string; message?: string } | string | null
+    if (typeof b === 'string' && b) return b
+    if (b && typeof b === 'object') return b.error ?? b.message ?? fallback
+  }
+  if (e instanceof Error && e.message) return e.message
+  return fallback
+}
+
 async function request<T>(path: string, options: RequestInit = {}, retry = true): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -58,7 +115,7 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true)
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(body.error ?? 'request failed')
+    throw new ApiError(res.status, body, body?.error ?? res.statusText ?? 'request failed')
   }
   return res.json()
 }
@@ -66,6 +123,12 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true)
 async function refreshSession() {
   // Sem corpo: o refresh token vai no cookie HttpOnly (enviado automaticamente).
   const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'same-origin' })
+  // Só 401/403 são «a sessão não serve». Um 500/502/503 é o servidor com um
+  // problema SEU: terminar a sessão aí faz o utilizador perder o sítio onde
+  // estava para resolver um problema que não é dele (ver isAuthFailure).
+  if (!res.ok && res.status !== 401 && res.status !== 403) {
+    throw new ApiError(res.status, null, 'refresh indisponível')
+  }
   if (!res.ok) {
     logout()
     // Sessão expirada/inválida (ex.: sessão antiga sem cookie de refresh):
@@ -264,7 +327,7 @@ export interface QuarantineRow {
 
 export const listRecordings = (code: string) => request<Recording[]>(`/api/rooms/${code}/recordings`)
 
-export const recordingsLibrary = () => request<RecordingItem[]>('/api/recordings')
+export const recordingsLibrary = (signal?: AbortSignal) => request<RecordingItem[]>('/api/recordings', { signal })
 
 export const searchUsers = (q: string) =>
   request<User[]>(`/api/users/search?q=${encodeURIComponent(q)}`)
@@ -373,7 +436,7 @@ export const inviteToRoom = (code: string, targets: string[], kind: 'video' | 'v
     body: JSON.stringify({ targets, kind }),
   })
 
-export const listMeetings = () => request<Meeting[]>('/api/meetings')
+export const listMeetings = (signal?: AbortSignal) => request<Meeting[]>('/api/meetings', { signal })
 
 export const createMeeting = (m: {
   title: string
@@ -450,7 +513,7 @@ export interface WhiteboardMeta {
   created_at: string
 }
 
-export const listWhiteboards = () => request<WhiteboardMeta[]>('/api/whiteboards')
+export const listWhiteboards = (signal?: AbortSignal) => request<WhiteboardMeta[]>('/api/whiteboards', { signal })
 export const saveWhiteboard = (title: string, roomCode: string, pngBase64: string) =>
   request<WhiteboardMeta>('/api/whiteboards', {
     method: 'POST',
@@ -609,7 +672,7 @@ export const postQos = (code: string, s: QosSample) =>
 export const translateCaption = (text: string, target: string) =>
   request<{ text: string }>('/api/translate', { method: 'POST', body: JSON.stringify({ text, target }) })
 
-export const myOrgs = () => request<OrgSummary[]>('/api/orgs')
+export const myOrgs = (signal?: AbortSignal) => request<OrgSummary[]>('/api/orgs', { signal })
 export const orgStats = (orgId: string) => request<OrgStats>(`/api/orgs/${orgId}/stats`)
 
 export interface AuditEntry {

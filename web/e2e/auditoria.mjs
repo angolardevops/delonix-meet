@@ -8,7 +8,16 @@
 // dados estão protegidos.
 import { execFileSync } from 'node:child_process'
 const API=process.env.API??'http://127.0.0.1:8180', PW='UmaPasswordForte123!'
-const PG=process.env.PG??'wt-audit-postgres-1'
+// O contentor do Postgres chama-se pelo nome do DIRECTÓRIO do worktree, por
+// isso um nome fixo aqui só funciona no worktree onde este teste foi escrito.
+// Descobre-se; `PG=` continua a poder forçá-lo.
+const PG=process.env.PG ?? (() => {
+  const nomes=execFileSync('docker',['ps','--format','{{.Names}}'],{stdio:['ignore','pipe','pipe']})
+    .toString().split('\n').map(s=>s.trim()).filter(n=>/postgres/.test(n))
+  if(nomes.length===0) throw new Error('nenhum contentor de Postgres a correr — `make dev-up`?')
+  if(nomes.length>1) console.log(`  · vários Postgres a correr, escolhido: ${nomes[0]} (força com PG=)`)
+  return nomes[0]
+})()
 const j=(u,o={})=>fetch(u,{...o,headers:{...(o.token?{Authorization:`Bearer ${o.token}`}:{}),...(o.body?{'Content-Type':'application/json'}:{})}}).then(async r=>({s:r.status,j:await r.json().catch(()=>null)}))
 // Primeira linha só: o psql imprime também a etiqueta do comando ("INSERT 0 1")
 // a seguir ao valor de um RETURNING, e isso entrava no UUID.
