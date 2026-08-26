@@ -115,6 +115,11 @@ pub struct Metrics {
     /// porque a alternativa — bloquear o executor até o disco alcançar — é
     /// pior, e porque uma gravação corrompida em silêncio é a R18.
     pub recording_packets_dropped_total: AtomicU64,
+
+    /// Escritas de auditoria que FALHARAM. Qualquer valor acima de zero
+    /// significa uma trilha incompleta — que é uma falha de conformidade em
+    /// curso, e por isso é contador e não aviso perdido no log.
+    pub audit_write_failures_total: AtomicU64,
 }
 
 impl Metrics {
@@ -202,6 +207,9 @@ impl Metrics {
              # HELP delonix_recording_packets_dropped_total Pacotes perdidos por fila de gravação cheia.\n\
              # TYPE delonix_recording_packets_dropped_total counter\n\
              delonix_recording_packets_dropped_total {}\n\
+             # HELP delonix_audit_write_failures_total Escritas de auditoria falhadas (trilha incompleta).\n\
+             # TYPE delonix_audit_write_failures_total counter\n\
+             delonix_audit_write_failures_total {}\n\
              # HELP delonix_uptime_seconds Uptime do processo em segundos.\n\
              # TYPE delonix_uptime_seconds gauge\n\
              delonix_uptime_seconds {}\n",
@@ -229,6 +237,7 @@ impl Metrics {
             self.qos_turn_relay_total.load(Relaxed),
             self.qos_cpu_limited_total.load(Relaxed),
             self.recording_packets_dropped_total.load(Relaxed),
+            self.audit_write_failures_total.load(Relaxed),
             uptime_secs,
         )
     }
