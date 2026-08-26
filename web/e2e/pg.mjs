@@ -1,3 +1,4 @@
+// MÓDULO DE APOIO — não é um teste; é importado pela auditoria e pelos tempos.
 // Descoberta do contentor do Postgres para os testes que atacam a base de
 // dados directamente (a auditoria e os tempos).
 //
