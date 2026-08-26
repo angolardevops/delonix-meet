@@ -245,7 +245,10 @@ jobs:
           # em unidades. O teste captura o ecrã a sério, mede a variação de
           # pixéis para saber que o canvas não está preto, e verifica a DURAÇÃO
           # do ficheiro cortado, não a existência dele.
-          BASE=http://localhost:5174 node web/e2e/estudio.mjs
+          echo '::group::Estudio (Chromium real)'
+          BASE=http://localhost:5174 node web/e2e/estudio.mjs 2>&1
+          echo "estudio.mjs terminou com $?"
+          echo '::endgroup::'
           # O DRAIN vai por último: manda SIGTERM ao servidor e espera que ele
           # feche. Qualquer teste depois deste ficaria sem servidor.
           APP=http://localhost:5174 node web/e2e/drain.mjs
