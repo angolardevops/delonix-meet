@@ -569,3 +569,11 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **O defeito que a correcção introduziu, e que o mesmo teste apanhou:** ao pôr o encoder a descer para VP8, o multiplexador continuou fixo em `V_VP9`. Um ficheiro rotulado com o codec errado abre **sem duração e sem imagem**, e outra vez sem erro nenhum. O codec do multiplexador tem de ser DERIVADO do perfil escolhido, e há um portão que verifica a ordem (perfil antes do multiplexador) e a derivação.
 - **Como foi apanhado:** por o teste passar a correr no CI (R72). Localmente passava; a diferença de hardware entre a máquina de quem escreve e o runner é exactamente o que um portão existe para expor.
 - **Ficheiros:** `web/src/studio/editor.ts`, `web/src/studio.invariantes.test.ts`.
+
+### R75 — Código de fundação que ninguém chama é o mesmo problema que um teste que nunca corre
+- **Sintoma:** a catraca do clippy subiu de 32 para 41 avisos ao acrescentar um módulo novo. Todos eram `never constructed` / `never used`.
+- **A tentação:** silenciar com `#![allow(dead_code)]` e uma nota a dizer «vai ser ligado no PR seguinte». A regra do repo é explícita ao contrário — «código novo entra LIMPO».
+- **Porque é que a regra tem razão:** um módulo que nada chama não protege nada, não corre em lado nenhum, e não se sabe se funciona — é exactamente o R72 noutra forma. E o «PR seguinte» é onde este tipo de código costuma ficar a apodrecer.
+- **Regra:** **uma camada de fundação entrega-se ligada.** Nem que seja pela superfície mínima que a torne alcançável e testável de ponta a ponta. Se ainda não se sabe ligar, então ainda não se sabe o suficiente para a escrever.
+- **O que ligá-la destapou:** duas coisas que um módulo solto nunca teria mostrado — a rota nova falhava o portão de autorização (R44) por não usar um extractor `AuthUser`, e obrigou a escrever a razão pela qual autentica por token de query (um WebSocket não leva os nossos cabeçalhos); e o registo por sala teve de nascer, porque dois anfitriões a carregar em «ir para o ar» dariam dois ffmpeg contra a mesma chave.
+- **Ficheiros:** `server/src/broadcast.rs`, `server/src/main.rs`, `scripts/rotas-publicas.txt`.

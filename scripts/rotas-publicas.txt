@@ -18,6 +18,7 @@
 /api/share/{token}           Partilha de gravação por link. A credencial É o token no caminho, validado no handler.
 /ws                          WebSocket de sinalização. Autentica pelo ROOM TOKEN no query string (JWT separado, âmbito de uma sala, expira em minutos) — um extractor de header não serve num WebSocket.
 /rtc                         WebSocket de presença. Autentica pelo access token no query string, pela mesma razão.
+/api/rooms/{code}/broadcast  Emissão em directo (ADR-0003). Autentica pelo ROOM TOKEN no query string e CONFERE que o id da sala do token bate com o código do caminho — um extractor de header não serve num WebSocket, pela mesma razão do /ws. A chave RTMP viaja na query e NUNCA é registada: o `Secret` redige-a no Debug e o handler nunca imprime a query.
 /admin/orgs                  Provisionamento de organizações. Autentica por PROVISIONING_SECRET em header; vazio => desactivado (fail-closed).
 /api/share/{token}/download  Descarrega a gravação partilhada. A credencial É o token no caminho, validado no handler — igual a /api/share/{token}.
 /api/whiteboards/shared/{token}  PNG de um quadro partilhado por link. A credencial É o token no caminho.

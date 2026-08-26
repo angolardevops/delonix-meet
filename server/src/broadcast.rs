@@ -93,7 +93,10 @@ impl fmt::Display for Recusa {
 /// e a mesma razão: um codec que o caminho não sabe tratar é RECUSADO com erro
 /// escrito, nunca aceite para produzir lixo (ver `sfu.rs`).
 pub fn copiavel_para_flv(mime: &str) -> bool {
-    matches!(mime.to_ascii_lowercase().as_str(), "video/h264" | "video/avc")
+    matches!(
+        mime.to_ascii_lowercase().as_str(),
+        "video/h264" | "video/avc"
+    )
 }
 
 /// Decide se uma emissão pode arrancar. Sem efeitos — é a função que os testes
@@ -251,10 +254,12 @@ mod testes {
     /// restantes como NOMES DE FICHEIRO, não os encontra, e sai com erro.
     fn sorvedouro() -> std::path::PathBuf {
         use std::io::Write;
-        let caminho = std::env::temp_dir().join(format!("dlx-sorvedouro-{}.sh", std::process::id()));
+        let caminho =
+            std::env::temp_dir().join(format!("dlx-sorvedouro-{}.sh", std::process::id()));
         if !caminho.exists() {
             let mut f = std::fs::File::create(&caminho).expect("criar o sorvedouro");
-            f.write_all(b"#!/bin/sh\nexec cat > /dev/null\n").expect("escrever");
+            f.write_all(b"#!/bin/sh\nexec cat > /dev/null\n")
+                .expect("escrever");
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -387,7 +392,10 @@ mod testes {
     #[test]
     fn o_travao_de_cpu_vai_no_comando() {
         let a = montar_argumentos(&[destino("yt", "k")], 3);
-        let i = a.iter().position(|x| x == "-threads").expect("sem -threads");
+        let i = a
+            .iter()
+            .position(|x| x == "-threads")
+            .expect("sem -threads");
         assert_eq!(a[i + 1], "3");
     }
 
@@ -422,7 +430,8 @@ mod testes {
     #[tokio::test]
     async fn a_emissao_aceita_media_e_termina_ao_fechar_o_cano() {
         let prog = sorvedouro();
-        let e = Emissao::arrancar(&[destino("yt", "k")], 1, prog.to_str().unwrap()).expect("arrancou");
+        let e =
+            Emissao::arrancar(&[destino("yt", "k")], 1, prog.to_str().unwrap()).expect("arrancou");
         e.escrever(b"media").await.expect("devia aceitar");
         let st = e.parar().await.expect("devia terminar");
         assert!(st.success());
@@ -431,7 +440,8 @@ mod testes {
     #[tokio::test]
     async fn escrever_depois_de_parar_devolve_erro_em_vez_de_pendurar() {
         let prog = sorvedouro();
-        let e = Emissao::arrancar(&[destino("yt", "k")], 1, prog.to_str().unwrap()).expect("arrancou");
+        let e =
+            Emissao::arrancar(&[destino("yt", "k")], 1, prog.to_str().unwrap()).expect("arrancou");
         {
             let mut g = e.entrada.lock().await;
             g.take();
@@ -444,5 +454,178 @@ mod testes {
     async fn um_programa_que_nao_existe_falha_a_arrancar_em_vez_de_ficar_meio_vivo() {
         let r = Emissao::arrancar(&[destino("yt", "k")], 1, "delonix-ffmpeg-que-nao-existe");
         assert!(r.is_err(), "tinha de falhar a arrancar");
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Registo das emissões vivas do nó
+// ---------------------------------------------------------------------------
+
+use std::collections::HashMap;
+use uuid::Uuid;
+
+/// As emissões a decorrer neste pod, por sala.
+///
+/// Por sala e não por utilizador: uma sala emite uma vez. Dois anfitriões a
+/// carregar em «ir para o ar» ao mesmo tempo dariam dois ffmpeg a empurrar para
+/// a mesma chave, e a plataforma externa corta os dois.
+#[derive(Default)]
+pub struct Registo {
+    activas: Mutex<HashMap<Uuid, Emissao>>,
+}
+
+impl Registo {
+    pub async fn quantas(&self) -> usize {
+        self.activas.lock().await.len()
+    }
+
+    pub async fn tem(&self, sala: Uuid) -> bool {
+        self.activas.lock().await.contains_key(&sala)
+    }
+
+    /// Regista uma emissão. Devolve `false` se a sala já tinha uma — quem
+    /// chama trata isso como recusa, não como sucesso silencioso.
+    pub async fn inserir(&self, sala: Uuid, e: Emissao) -> bool {
+        let mut m = self.activas.lock().await;
+        if m.contains_key(&sala) {
+            return false;
+        }
+        m.insert(sala, e);
+        true
+    }
+
+    /// Empurra media para a emissão da sala. `Ok(false)` = não há emissão.
+    pub async fn escrever(&self, sala: Uuid, dados: &[u8]) -> std::io::Result<bool> {
+        let m = self.activas.lock().await;
+        match m.get(&sala) {
+            Some(e) => e.escrever(dados).await.map(|_| true),
+            None => Ok(false),
+        }
+    }
+
+    /// Tira a emissão do registo e fecha-a. Silencioso se não existir.
+    pub async fn parar(&self, sala: Uuid) -> Option<std::io::Result<std::process::ExitStatus>> {
+        let e = self.activas.lock().await.remove(&sala)?;
+        Some(e.parar().await)
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Rota: o browser empurra a emissão já composta por WebSocket
+// ---------------------------------------------------------------------------
+
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{Path, Query, State};
+use axum::response::Response;
+use serde::Deserialize;
+
+use crate::error::ApiError;
+use crate::AppState;
+
+#[derive(Deserialize)]
+pub struct DirectoQuery {
+    /// Token de sala, o mesmo que o `/ws` usa — curto e com âmbito.
+    pub token: String,
+    /// URL base do destino (sem a chave).
+    pub destino: String,
+    /// Chave de emissão. Vem na query porque um WebSocket não tem corpo; é
+    /// por isso que a rota EXIGE o token de sala e nunca regista a query.
+    pub chave: String,
+    #[serde(default)]
+    pub rotulo: Option<String>,
+    /// MIME do vídeo que o browser vai empurrar, para se poder recusar ANTES
+    /// de arrancar o ffmpeg.
+    pub codec: String,
+}
+
+/// `GET /api/rooms/{code}/broadcast` (upgrade para WebSocket).
+///
+/// O browser compõe, codifica em H.264 e empurra pedaços de WebM por aqui; o
+/// servidor remultiplexa para RTMP. Ver o ADR-0003.
+pub async fn ws_directo(
+    State(state): State<Arc<AppState>>,
+    Path(codigo): Path<String>,
+    Query(q): Query<DirectoQuery>,
+    ws: WebSocketUpgrade,
+) -> Result<Response, ApiError> {
+    let claims = crate::auth::verify_jwt(&state.config.jwt_secret, &q.token, "room")?;
+    let sala_id = claims.room.ok_or(ApiError::Unauthorized)?;
+
+    // Não há helper partilhado de leitura por código — cada handler consulta o
+    // que precisa, e aqui precisa-se só do id (para conferir com o token) e do
+    // `e2ee` (a primeira regra de recusa).
+    let (id_bd, e2ee): (Uuid, bool) = sqlx::query_as("SELECT id, e2ee FROM rooms WHERE code = $1")
+        .bind(codigo.to_lowercase())
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if id_bd != sala_id {
+        return Err(ApiError::Unauthorized);
+    }
+
+    let destinos = vec![Destino {
+        url: q.destino.clone(),
+        chave: Secret::new(q.chave.clone()),
+        rotulo: q.rotulo.clone().unwrap_or_else(|| "directo".into()),
+    }];
+
+    // As regras ANTES de gastar um processo. A razão vai para o cliente tal
+    // como está escrita — é ela que a interface mostra.
+    let activas = state.directos.quantas().await;
+    if let Err(recusa) = pode_emitir(
+        e2ee,
+        &q.codec,
+        &destinos,
+        activas,
+        state.config.max_directos,
+    ) {
+        tracing::warn!(sala = %codigo, motivo = ?recusa, "directo recusado");
+        return Err(ApiError::BadRequest(recusa.to_string()));
+    }
+    if state.directos.tem(sala_id).await {
+        return Err(ApiError::Conflict("esta sala já está em directo".into()));
+    }
+
+    let emissao = Emissao::arrancar(&destinos, state.config.directo_threads, "ffmpeg")
+        .map_err(|e| ApiError::Internal(format!("não foi possível arrancar a emissão: {e}")))?;
+    if !state.directos.inserir(sala_id, emissao).await {
+        return Err(ApiError::Conflict("esta sala já está em directo".into()));
+    }
+    tracing::info!(sala = %codigo, destinos = ?destinos, "directo a começar");
+
+    Ok(ws.on_upgrade(move |socket| bombear(socket, state, sala_id, codigo)))
+}
+
+/// Empurra o que chega do browser para o ffmpeg, até um dos lados fechar.
+async fn bombear(mut socket: WebSocket, state: Arc<AppState>, sala: Uuid, codigo: String) {
+    let mut bytes: u64 = 0;
+    while let Some(msg) = socket.recv().await {
+        match msg {
+            Ok(Message::Binary(dados)) => {
+                bytes += dados.len() as u64;
+                match state.directos.escrever(sala, &dados).await {
+                    Ok(true) => {}
+                    Ok(false) => break, // alguém parou a emissão pelo outro lado
+                    Err(e) => {
+                        // O ffmpeg morreu — o destino caiu, a chave é inválida,
+                        // o que for. Isto NÃO derruba a chamada: fecha-se a
+                        // emissão e a sala continua (ponto 5 do portão do ADR).
+                        tracing::warn!(sala = %codigo, erro = %e, "a emissão parou de aceitar media");
+                        break;
+                    }
+                }
+            }
+            Ok(Message::Close(_)) => break,
+            Ok(_) => {} // ping/pong/texto: não é media, ignora-se
+            Err(e) => {
+                tracing::warn!(sala = %codigo, erro = %e, "socket do directo caiu");
+                break;
+            }
+        }
+    }
+    match state.directos.parar(sala).await {
+        Some(Ok(st)) => tracing::info!(sala = %codigo, bytes, saida = ?st, "directo terminado"),
+        Some(Err(e)) => tracing::warn!(sala = %codigo, bytes, erro = %e, "directo terminou mal"),
+        None => tracing::info!(sala = %codigo, bytes, "directo já tinha sido parado"),
     }
 }
