@@ -7,6 +7,7 @@ import { Btn } from '../components/ui'
 import { CamIcon, CamOffIcon, FilmIcon, RecordIcon, StopIcon } from '../icons'
 import { cortar, cortarVarios, cortesSuportados } from '../studio/editor'
 import { analisarPausas, AnaliseDeAudio, resumo, trocosSemPausas } from '../studio/analise'
+import * as arquivo from '../studio/arquivo'
 import {
   AVATAR_INICIAL,
   CantoDoAvatar,
@@ -62,6 +63,8 @@ export default function Studio() {
   const [ate, setAte] = useState(0)
   const [analise, setAnalise] = useState<AnaliseDeAudio | null>(null)
   const [aAnalisar, setAAnalisar] = useState(false)
+  const [online, setOnline] = useState(() => navigator.onLine)
+  const [porEnviar, setPorEnviar] = useState<arquivo.AulaGuardada[]>([])
   const [aCortar, setACortar] = useState(0)   // 0 = parado; senão fracção
   const previewRef = useRef<HTMLVideoElement>(null)
   const [titulo, setTitulo] = useState('')
@@ -89,6 +92,33 @@ export default function Studio() {
       compRef.current = null
     }
   }, [t])
+
+  // Estado da rede. A app inteira muda de comportamento com isto, por isso
+  // vive aqui e não numa árvore de contexto para uma coisa só.
+  useEffect(() => {
+    const sobe = () => setOnline(true)
+    const desce = () => setOnline(false)
+    window.addEventListener('online', sobe)
+    window.addEventListener('offline', desce)
+    return () => {
+      window.removeEventListener('online', sobe)
+      window.removeEventListener('offline', desce)
+    }
+  }, [])
+
+  const recarregarFila = useCallback(() => {
+    arquivo.porEnviar().then(setPorEnviar).catch(() => setPorEnviar([]))
+  }, [])
+  useEffect(() => recarregarFila(), [recarregarFila])
+
+  // Volta a rede → tenta esvaziar a fila. Sem isto o utilizador teria de se
+  // lembrar de vir cá carregar num botão, e a promessa de «grava offline»
+  // ficava a meio.
+  useEffect(() => {
+    if (!online || !porEnviar.length) return
+    void enviarFila()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online, porEnviar.length])
 
   // Relógio da gravação — vive AQUI, no nó que o mostra, e não na página.
   useEffect(() => {
@@ -305,15 +335,70 @@ export default function Studio() {
    * dados, por isso a aula ganha uma — com o título que o utilizador deu. É
    * reutilizar o que existe em vez de abrir um segundo caminho de upload.
    */
+  /**
+   * Envia uma aula do arquivo local para a biblioteca do servidor.
+   * As gravações pertencem a uma sala no modelo de dados, por isso a aula ganha
+   * uma — reutilizar o que existe em vez de abrir um segundo caminho de upload.
+   */
+  async function enviarUma(aula: arquivo.AulaGuardada): Promise<void> {
+    if (!aula.completo) return
+    const sala = await createRoom(aula.titulo, 'sfu', false, false, 'normal')
+    await uploadRecording(sala.code, aula.completo, `${aula.titulo}.webm`)
+    await arquivo.marcarEnviada(aula.id)
+  }
+
+  async function enviarFila(): Promise<void> {
+    const fila = await arquivo.porEnviar()
+    for (const aula of fila) {
+      try {
+        await enviarUma(aula)
+      } catch (e) {
+        // Uma falha não pode parar a fila: a aula seguinte pode passar, e esta
+        // fica com a razão escrita para a interface a mostrar.
+        await arquivo.marcarErro(aula.id, (e as Error).message ?? 'falhou')
+      }
+    }
+    recarregarFila()
+  }
+
+  /**
+   * Guardar. GRAVA SEMPRE NO DISPOSITIVO PRIMEIRO e só depois tenta o servidor.
+   *
+   * A ordem não é um detalhe: fazer o upload primeiro e guardar localmente só
+   * em caso de falha perde a aula quando o upload rebenta a meio — que é
+   * precisamente quando ela é mais precisa.
+   */
   async function guardarNaBiblioteca() {
     if (!resultado) return
     setAGuardar(true)
     setErro('')
+    const nome = titulo.trim() || t('studio.semTitulo', 'Aula')
     try {
-      const nome = titulo.trim() || t('studio.semTitulo', 'Aula')
-      const sala = await createRoom(nome, 'sfu', false, false, 'normal')
-      await uploadRecording(sala.code, resultado.faixas.completo, `${nome}.webm`)
-      setGuardado(t('studio.guardado', 'Guardada na biblioteca de Gravações.'))
+      const id = await arquivo.guardar({
+        titulo: nome,
+        criadaEm: Date.now(),
+        duracao: resultado.duracao,
+        completo: resultado.faixas.completo,
+        audio: resultado.faixas.audio,
+        enviada: false,
+      })
+      if (!navigator.onLine) {
+        setGuardado(t('studio.guardadoLocal', 'Guardada no dispositivo — envia sozinha quando houver rede.'))
+        recarregarFila()
+        return
+      }
+      try {
+        const sala = await createRoom(nome, 'sfu', false, false, 'normal')
+        await uploadRecording(sala.code, resultado.faixas.completo, `${nome}.webm`)
+        await arquivo.marcarEnviada(id)
+        setGuardado(t('studio.guardado', 'Guardada na biblioteca de Gravações.'))
+      } catch (e) {
+        // O servidor falhou mas a aula ESTÁ salva. Isto não é um erro para o
+        // utilizador — é um adiamento, e a mensagem tem de o dizer assim.
+        await arquivo.marcarErro(id, (e as Error).message ?? 'falhou')
+        setGuardado(t('studio.guardadoLocal', 'Guardada no dispositivo — envia sozinha quando houver rede.'))
+      }
+      recarregarFila()
     } catch (e) {
       setErro((e as Error).message || t('studio.erroGuardar', 'Não foi possível guardar.'))
     } finally {
@@ -363,6 +448,24 @@ export default function Studio() {
           </div>
         }
       />
+
+      {!online && (
+        <p className="studio-offline" role="status">
+          {t('studio.offline', 'Sem rede. O Estúdio grava, corta e guarda na mesma — as aulas ficam no dispositivo e sobem sozinhas quando a ligação voltar.')}
+        </p>
+      )}
+
+      {porEnviar.length > 0 && (
+        <div className="studio-fila" role="status">
+          <span>
+            {t('studio.fila', '{{n}} aula(s) por enviar', { n: porEnviar.length })}
+            {porEnviar[0]?.erro ? ` · ${porEnviar[0].erro}` : ''}
+          </span>
+          <Btn variant="ghost" disabled={!online} onClick={() => void enviarFila()}>
+            {t('studio.enviarAgora', 'Enviar agora')}
+          </Btn>
+        </div>
+      )}
 
       {erro && (
         <p className="error" role="alert">
