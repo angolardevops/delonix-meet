@@ -6,10 +6,11 @@
 // contra duplos provaria a aritmética; o que interessa provar é que os marcos
 // são disparados nos sítios certos de uma chamada verdadeira.
 import { chromium } from '@playwright/test'
+import { contentorPostgres } from './pg.mjs'
 const API='http://127.0.0.1:8180', APP=process.env.APP||'http://localhost:5177', PW='UmaPasswordForte123!'
 const j=(u,o={})=>fetch(u,{...o,headers:{...(o.token?{Authorization:`Bearer ${o.token}`}:{}),...(o.body?{'Content-Type':'application/json'}:{})}}).then(async r=>({s:r.status,j:await r.json().catch(()=>null)}))
 const sleep=ms=>new Promise(r=>setTimeout(r,ms))
-const PG=process.env.PG??'wt-tempo-postgres-1'
+const PG=contentorPostgres()
 const { execFileSync }=await import('node:child_process')
 const sql=(q)=>execFileSync('docker',['exec',PG,'psql','-U','delonix','-d','delonix_meet','-tAc',q],{stdio:['ignore','pipe','pipe']}).toString().trim().split('\n')[0].trim()
 let falhas=0; const chk=(c,n)=>{console.log(`  ${c?'✓':'✗'} ${n}`); if(!c) falhas++}
