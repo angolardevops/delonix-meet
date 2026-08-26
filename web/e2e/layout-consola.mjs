@@ -16,9 +16,12 @@
 //   (cd web && npm run build)
 //   <servir web/dist em BASE>
 //   BASE=http://127.0.0.1:4180 node e2e/layout-consola.mjs
-import { chromium } from 'playwright'
+import { chromium } from '@playwright/test'
+import { criarConta, entrar } from './sessao.mjs'
 
-const BASE = process.env.BASE ?? 'http://127.0.0.1:4180'
+const BASE = process.env.BASE ?? process.env.APP ?? 'http://127.0.0.1:4180'
+const API = process.env.API ?? BASE
+const conta = await criarConta(API, 'lay')
 let falhas = 0
 
 function ok(nome, condicao, detalhe = '') {
@@ -33,13 +36,13 @@ console.log('\n3.1.1 · a gaveta em ecrã estreito (375×812)')
 {
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 375, height: 812 } })
   const page = await ctx.newPage()
-  await page.goto(BASE)
-  await page.evaluate(() => {
-    localStorage.setItem('dx_user', JSON.stringify({ id: 1, username: 'walter', email: 'w@delonix.local', locale: 'pt' }))
-    localStorage.setItem('dx_access', 'tok')
-  })
-  await page.goto(BASE)
-  await page.waitForSelector('.shell', { timeout: 10_000 })
+  // Entra a sério. Injectar um token falso funcionava contra um mock e falha
+  // contra o servidor real: leva 401, o cliente renova, falha, faz logout, e o
+  // teste morre no ecrã de login (ver e2e/sessao.mjs).
+  await entrar(page, BASE, conta)
+  await page.setViewportSize({ width: 375, height: 812 })
+  await page.reload()
+  await page.waitForSelector('.shell', { timeout: 30_000 })
 
   const nav = page.locator('.shell-nav')
   const caixaFechada = await nav.boundingBox()
@@ -84,13 +87,7 @@ console.log('\n4.3 · o anel nos controlos que ESTAVAM cegos')
 {
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 800 } })
   const page = await ctx.newPage()
-  await page.goto(BASE)
-  await page.evaluate(() => {
-    localStorage.setItem('dx_user', JSON.stringify({ id: 1, username: 'walter', email: 'w@delonix.local', locale: 'pt' }))
-    localStorage.setItem('dx_access', 'tok')
-  })
-  await page.goto(BASE)
-  await page.waitForSelector('.shell', { timeout: 10_000 })
+  await entrar(page, BASE, conta)
 
   // Mede o anel POR PIXÉIS: é a única leitura que não depende de como o
   // Chromium serializa o `outline` do próprio browser.

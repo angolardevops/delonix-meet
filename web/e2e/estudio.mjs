@@ -7,11 +7,12 @@
 // Tudo por PIXÉIS do canvas, que é a única leitura que não se deixa enganar.
 //
 // Uso:  BASE=http://127.0.0.1:5174 node e2e/estudio.mjs
-import { chromium } from 'playwright'
+import { chromium } from '@playwright/test'
+import { criarConta, entrar } from './sessao.mjs'
 
-const BASE = process.env.BASE ?? 'http://127.0.0.1:5174'
-const EMAIL = process.env.EMAIL ?? 'demo@delonix.local'
-const PASS = process.env.PASS ?? 'delonix2026'
+const BASE = process.env.BASE ?? process.env.APP ?? 'http://127.0.0.1:5174'
+const API = process.env.API ?? BASE
+const conta = await criarConta(API, 'est')
 let falhas = 0
 const ok = (nome, cond, det = '') => {
   console.log(`${cond ? '  ok  ' : ' FALHA'}  ${nome}${det ? `  — ${det}` : ''}`)
@@ -39,22 +40,8 @@ page.on('console', (m) => {
   if (/\[background\]|\[matte\]/.test(t)) logsSegmentacao.push(t.slice(0, 160))
 })
 
-// ---- entrar
-await page.goto(`${BASE}/#/login`)
-await page.waitForSelector('.auth-card input', { timeout: 20000 })
-await page.locator('.auth-card input').nth(0).fill(EMAIL)
-await page.locator('input[type=password]').first().fill(PASS)
-// O cartão tem DOIS «Entrar»: o separador e o botão de submeter. O primeiro
-// troca de aba e não envia nada — apanhá-lo é falhar sem erro visível.
-await page.locator('.auth-card button.primary, .auth-card button[type=submit]').first().click()
-await page.waitForSelector('.shell', { timeout: 20000 })
-
-// O tour de introdução aparece na 1.ª sessão e o `.tour-dim` intercepta todos
-// os cliques — marca-se como visto em vez de o clicar, que é mais estável do
-// que perseguir um botão que se move entre passos.
-await page.evaluate(() => localStorage.setItem('dx_tour_v1', 'done'))
-await page.reload()
-await page.waitForSelector('.shell', { timeout: 20000 })
+// ---- entrar (conta nova, sessão real — ver e2e/sessao.mjs)
+await entrar(page, BASE, conta)
 
 // ---- a entrada existe na navegação
 console.log('\nnavegação')
