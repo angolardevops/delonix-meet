@@ -457,3 +457,17 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** **mede o valor nos dois estados antes de escolher o limiar.** Correr o código sabotado e ler o número leva um minuto; foi o que separou `>= 2` (inútil) de `> 2.05` (que apanha). Um limiar escolhido de cabeça tem tanta hipótese de cair do lado errado como do certo.
 - **Regra irmã:** contar elementos não é verificar onde eles estão. Um detector que devolve «uma pausa» pode ter devolvido a gravação inteira.
 - **Ficheiros:** `web/src/studio/analise.test.ts`, `web/src/studio.invariantes.test.ts`, `web/e2e/estudio.mjs`.
+
+### R62 — Lista de precache escolhida por NOME em vez de derivada do grafo
+- **Sintoma:** com a rede cortada a app abria, mas o Estúdio — a única coisa que se prometia offline — deixava a raiz do React **vazia**, sem erro visível na interface.
+- **Causa raiz:** a lista de precache do service worker foi montada com padrões de nome de ficheiro (`assets/index-*`, `assets/Studio-*`). O `Studio` importa `media.ts`, que o Rollup separou num chunk `media-*.js` que nenhum padrão apanhava. Sem rede, o `import()` da rota rejeitava e a árvore não montava.
+- **Regra:** **uma lista de precache vem do grafo de dependências, não de padrões de nome.** O Rollup conhece as importações de cada chunk (`bundle[f].imports`); o fecho transitivo a partir do entry e das rotas que se querem offline é exacto. Adivinhar pelo nome falha exactamente no ficheiro em que ninguém pensou — e falha em silêncio, porque um chunk em falta não tem sintoma que aponte para a cache.
+- **Segunda regra, sobre o que NÃO entra:** precachear tudo seria pior. Os modelos de IA e o `whisperWorker` passam dos 30 MB e obrigariam toda a gente a descarregá-los na instalação. A linha é: o esqueleto e as rotas que se PROMETEM offline entram; o resto entra em cache no primeiro uso.
+- **Ficheiros:** `web/vite.config.ts`, `web/public/sw.js`.
+
+### R63 — Contar «×» na saída dá VERDE a um crash
+- **Sintoma:** dois portões dados como «não ficam vermelhos» quando na verdade ficavam.
+- **Causa raiz:** a verificação contava linhas com `×` na saída do vitest. Uma das sabotagens partia o `vite.config.ts`, o vitest nem chegava a correr, a saída não tinha `×` nenhum — e a contagem de zero foi lida como «o teste passou apesar do invariante partido».
+- **Regra:** **para saber se um portão fica vermelho, usa-se o CÓDIGO DE SAÍDA, não uma contagem de padrões na saída.** Um crash é vermelho. Contar sintomas de falha na saída dá falsos verdes precisamente nos casos mais graves, em que nem se chega a correr.
+- **Erro irmão, na mesma sessão:** a asserção de ordem («o arquivo é escrito antes do upload») procurava `uploadRecording(` no ficheiro INTEIRO. Havia outra chamada numa função acima, encontrada primeiro, e a ordem invertida passava. Uma asserção de ordem tem de ser feita dentro do âmbito onde a ordem importa.
+- **Ficheiros:** `web/src/studio/offline.invariantes.test.ts`.
