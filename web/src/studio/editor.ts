@@ -123,9 +123,16 @@ export async function cortarVarios(
   // saber já do que ao fim de um corte inteiro.
   const audio = audioOriginal ? await fatiarAudio(audioOriginal, uteis) : null
 
+  // O perfil escolhe-se ANTES do multiplexador: é ele que decide o codec, e um
+  // ficheiro rotulado com o codec errado abre sem duração e sem imagem. Foi
+  // exactamente o que aconteceu ao pôr o encoder a descer para VP8 com o
+  // multiplexador ainda fixo em V_VP9.
+  const perfil = await escolherPerfil(largura, altura)
+  const codecMatroska = perfil.codec.startsWith('vp09') ? 'V_VP9' : 'V_VP8'
+
   const muxer = new Muxer({
     target: alvo,
-    video: { codec: 'V_VP9', width: largura, height: altura },
+    video: { codec: codecMatroska, width: largura, height: altura },
     ...(audio ? { audio: { codec: 'A_OPUS', sampleRate: audio.sampleRate, numberOfChannels: audio.canais } } : {}),
     firstTimestampBehavior: 'offset',
   })
@@ -134,13 +141,7 @@ export async function cortarVarios(
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
     error: (e) => console.error('[editor] encoder', e),
   })
-  encoder.configure({
-    codec: 'vp09.00.10.08',
-    width: largura,
-    height: altura,
-    bitrate: 6_000_000,
-    framerate: 30,
-  })
+  encoder.configure(perfil)
 
   // `captureStream` do elemento dá-nos os frames já decodificados pelo
   // hardware do dispositivo — sem escrever um desmultiplexador de WebM.
@@ -210,6 +211,46 @@ export async function cortarVarios(
   URL.revokeObjectURL(video.src)
   if (!frames) throw new Error('os troços escolhidos não têm imagem')
   return new Blob([alvo.buffer], { type: 'video/webm' })
+}
+
+/**
+ * Escolhe o perfil de codificação, PERGUNTANDO ao browser em vez de assumir.
+ *
+ * O corte foi escrito com «pouco recurso» como requisito, e a razão de usar
+ * WebCodecs é o encoder de HARDWARE do dispositivo. Só que o `configure()` não
+ * falha quando não há hardware: cai para software, sem aviso, e um VP9 de
+ * 1080p em software leva MINUTOS onde levava segundos. O sintoma que isso dá é
+ * «a barra de progresso não anda» — e ninguém liga isso à falta de GPU.
+ *
+ * Medido: no runner do CI (sem GPU) o corte de dois segundos não acabava em 90
+ * segundos. Não é um caso de laboratório — é o que acontece a quem edita num
+ * portátil sem aceleração, ou numa máquina virtual.
+ *
+ * Por isso: pede-se hardware primeiro; se não houver, desce-se para VP8 com
+ * metade do débito, que o software aguenta. Pior qualidade é melhor do que uma
+ * espera que parece uma avaria.
+ */
+async function escolherPerfil(largura: number, altura: number): Promise<VideoEncoderConfig> {
+  const base = { width: largura, height: altura, framerate: 30 } as const
+  const candidatos: VideoEncoderConfig[] = [
+    { ...base, codec: 'vp09.00.10.08', bitrate: 6_000_000, hardwareAcceleration: 'prefer-hardware' },
+    { ...base, codec: 'vp8', bitrate: 3_000_000, hardwareAcceleration: 'prefer-hardware' },
+    // Último recurso: software assumido, e com um débito que ele aguenta.
+    { ...base, codec: 'vp8', bitrate: 2_000_000 },
+  ]
+  for (const c of candidatos) {
+    try {
+      const r = await VideoEncoder.isConfigSupported(c)
+      if (r.supported) {
+        console.info(`[editor] a codificar em ${c.codec} (${c.hardwareAcceleration ?? 'sem preferência'})`)
+        return r.config ?? c
+      }
+    } catch {
+      // `isConfigSupported` atira em configurações que não sabe descrever —
+      // isso é «não», não é uma falha do corte.
+    }
+  }
+  return { ...base, codec: 'vp8', bitrate: 2_000_000 }
 }
 
 // ---------------------------------------------------------------------------
