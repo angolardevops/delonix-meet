@@ -587,7 +587,22 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Como foi apanhado:** por gerar um ficheiro REAL com o `MediaRecorder` num Chromium e correr o comando REAL do servidor sobre ele, num contentor de ffmpeg. Medido: entra `h264`+`opus`, sai `h264`+`aac` — o vídeo copiado e o áudio transcodificado, que é a decisão inteira do ADR-0003 provada de ponta a ponta.
 - **Ficheiros:** `server/src/broadcast.rs`.
 
-### R77 — Parar a gravação emudecia um directo a decorrer
+### R77 — Quatro testes marcados `#[ignore]` porque o produto mudou, e ninguém voltou
+- **Sintoma:** todas as corridas diziam `4 ignored` e ninguém contava. Um deles era **`rooms_are_isolated`** — um invariante de isolamento sem cobertura ao nível da unidade desde que a semântica do hub mudou.
+- **Causa raiz, medida ao corrê-los:** os quatro falhavam pela MESMA razão, e nenhuma era um defeito. O `join` passou a difundir o anúncio de entrada para **toda a sala, incluindo quem entra** (`broadcast_all_local` percorre `room.peers`, e quem entra já lá está). A primeira mensagem que cada participante recebe é o anúncio de si próprio, e os testes esperavam a de outra pessoa. O `rooms_are_isolated` chegava a acusar uma fuga entre salas que **não existe**: o que ele apanhava era o anúncio do próprio `b`.
+- **A regra que a nota `#[ignore]` violava:** «reescrever mais tarde» não é um estado. Marcar um teste como ignorado por mudança de semântica esconde a pergunta que interessa — *o comportamento novo está certo?* Aqui estava, mas foram precisos oito minutos para o saber, e esteve anos por responder.
+- **O que ficou no lugar:** os quatro voltam à bateria (`0 ignored`), e a semântica que os partiu passou a ter teste PRÓPRIO — `joiner_also_receives_its_own_announcement`. Sem ele, a próxima pessoa a ler estes testes conclui que o hub está partido; com ele, quem mudar o comportamento é obrigado a mudar aqui também.
+- **Uma armadilha na correcção:** o `join` entrega ao anfitrião o anúncio E, a seguir, a fila de espera acumulada. Um `recv()` único apanha o anúncio; um `drain()` seguido de `recv()` consome os dois e **fica pendurado**. Recolhe-se o que há e afirma-se sobre o conjunto.
+- **E o que se confirmou no browser:** não há retrato fantasma. O cliente acrescenta o próprio `peer-joined` à lista, mas quem está sozinho vê **um** retrato, o local, marcado «eu». O `web/e2e/reuniao.mjs` cobre isso e o resto do caminho.
+- **Ficheiros:** `server/src/signaling.rs`, `web/e2e/reuniao.mjs`.
+
+### R78 — `ExecutableFileBusy` num teste: a corrida não é pelo ficheiro, é entre `fork` e `exec`
+- **Sintoma:** os testes de emissão falhavam com `Os { code: 26, ExecutableFileBusy }` em cerca de **3 corridas em 20**, e o teste afectado mudava de cada vez — a assinatura de uma corrida, não de um defeito lógico.
+- **A hipótese errada, e porque parecia certa:** o ajudante escrevia `dlx-sorvedouro-<pid>.sh` em `/tmp`, partilhado pelos quatro testes, guardado por `if !caminho.exists()`. Parece óbvio: dois testes, um ficheiro. Dar um ficheiro **único a cada chamada**, escrito e fechado antes do `chmod` e publicado por `rename` atómico — **não resolveu**. Continuou a falhar.
+- **Causa real:** o Linux recusa executar um ficheiro que QUALQUER processo tenha aberto para escrita. Os testes correm em paralelo no mesmo processo: enquanto um thread tem o ficheiro aberto, outro faz `fork` para lançar o seu próprio filho, e esse filho **herda o descritor de escrita** na janela entre o `fork` e o `exec`. O ficheiro ser único não ajuda — o descritor herdado é do ficheiro do outro.
+- **Regra:** um teste não escreve um executável enquanto há lançamentos a decorrer. O ajudante passou a criá-lo **uma vez por processo**, atrás de um `OnceLock`: quem chega depois espera pela escrita terminada em vez de correr contra ela, e a partir daí ninguém volta a abrir o ficheiro para escrever. **25 corridas, zero falhas.**
+- **O atalho que não serve, e está aqui para não se repetir:** usar o `cat` do sistema em vez do script parece eliminar o problema pela raiz. Não serve — sem a redirecção que o script faz, o processo sai com estado diferente de zero e o teste do ciclo de vida deixa de valer. Falhou 25 em 25.
+### R79 — Parar a gravação emudecia um directo a decorrer
 - **Sintoma:** o directo continuava no ar, mas sem som, a partir do instante em que se parasse a gravação local. Nenhum erro, nem no browser nem no servidor.
 - **Causa raiz:** a gravação e o directo consomem o MESMO fluxo composto (canvas + áudio misturado). O `terminarGravacao` fechava o `AudioContext` — porque, quando só existia a gravação, fechá-lo era exactamente o que devia fazer.
 - **Regra:** **um recurso partilhado só se desmonta quando o ÚLTIMO consumidor o larga.** O `montarFluxo` conta quem entra e o `largarFluxo` conta quem sai; a desmontagem vive num sítio só.
@@ -595,7 +610,7 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Como foi apanhado:** a ler o `terminarGravacao` antes de ligar o directo ao mesmo fluxo, não em execução. Um acoplamento entre duas funcionalidades que nunca correram juntas não tem sintoma até correrem.
 - **Ficheiros:** `web/src/studio/compositor.ts`, `web/src/studio/directo.test.ts`.
 
-### R78 — O proxy do vite não encaminha WebSockets debaixo de `/api`
+### R80 — O proxy do vite não encaminha WebSockets debaixo de `/api`
 - **Sintoma:** o directo aparecia recusado na interface, e o log do servidor **não tinha nada** — nem a recusa, nem o arranque. O pedido nunca chegou ao handler.
 - **Causa raiz:** o `server.proxy` do `vite.config.ts` declarava `ws: true` no `/ws` e no `/rtc`, mas não no `/api`. A rota do directo (`/api/rooms/{code}/broadcast`) é um WebSocket **debaixo do prefixo `/api`**, e sem essa flag o vite responde ao upgrade com HTTP em vez de o encaminhar.
 - **Porque é que engana:** não há erro em lado nenhum. No browser o socket fecha com o código 1006 e sem razão; no servidor não há sequer registo de tentativa. Procura-se a causa nos dois lados do túnel e ela está no meio.
@@ -603,7 +618,7 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Como foi apanhado:** por o log do servidor estar vazio. Um handler que devia registar recusa OU arranque e não regista nenhum dos dois não foi chamado — e isso aponta para fora do processo.
 - **Ficheiros:** `web/vite.config.ts`.
 
-### R79 — Uma recusa devolvida ANTES do upgrade de WebSocket não chega ao browser
+### R81 — Uma recusa devolvida ANTES do upgrade de WebSocket não chega ao browser
 - **Sintoma:** a recusa de E2EE — a mais importante do ADR-0003, e a que explica ao utilizador porque é que a sala dele não pode emitir — chegava à interface como «não foi possível ligar ao servidor de emissão». A frase inteira, escrita com cuidado no servidor, era deitada fora pelo caminho.
 - **Causa raiz:** o handler devolvia `ApiError::BadRequest(razão)` antes de aceitar o upgrade. A API de WebSocket do browser **não expõe o estado nem o corpo** de um handshake que falhou: o `onclose` traz `reason` vazio e o código 1006, e o `onerror` não traz nada. Um `Response` HTTP bem construído é invisível a quem o pede por WebSocket.
 - **Regra:** **num WebSocket, a recusa entrega-se DEPOIS do upgrade.** Aceita-se, manda-se a razão numa trama de TEXTO, e fecha-se. O `reason` do frame de `Close` não serve para isto: está limitado a 123 bytes e é truncado sem aviso — e estas mensagens são frases inteiras de propósito, porque explicam o porquê E o que fazer.
@@ -611,7 +626,7 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Como foi apanhado:** por correr o teste ponta a ponta contra um servidor SEM ffmpeg — o mesmo ambiente do CI. Com ffmpeg presente, o caminho de recusa nunca corria.
 - **Ficheiros:** `server/src/broadcast.rs`, `web/src/studio/directo.ts`.
 
-### R80 — Uma substituição de texto que não casa falha em SILÊNCIO
+### R82 — Uma substituição de texto que não casa falha em SILÊNCIO
 - **Sintoma:** um `map_err` que devia distinguir «ffmpeg em falta» de qualquer outra falha continuava a devolver o erro genérico, depois de o script que o alterava ter dito que correu bem.
 - **Causa raiz:** o script fazia três substituições e só assertava a existência de UMA delas. O `cargo fmt` tinha reformatado o bloco entretanto — quebrando os argumentos em linhas — e o texto procurado deixou de existir. O `str.replace` não encontra, não substitui, e **não se queixa**.
 - **Regra:** **cada substituição tem o seu `assert`.** Um script que altera N sítios e verifica um só reporta sucesso com N-1 por fazer. E depois de formatar, qualquer alvo escrito antes da formatação é suspeito.

@@ -2479,7 +2479,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "legado: semântica do hub evoluiu (co-admissão, user_id != peer_id) — reescrever p/ o SignalingHub atual; ver Arq #2 follow-up"]
     async fn join_announces_and_returns_roster() {
         let hub = SignalingHub::default();
         let room = Uuid::new_v4();
@@ -2488,6 +2487,13 @@ mod tests {
 
         let roster_a = hub.join(room, a, a, "alice".into(), true, true, false, tx_a);
         assert!(roster_a.is_empty());
+
+        // O anúncio de entrada vai para TODA a sala, incluindo quem entra — ver
+        // `joiner_also_receives_its_own_announcement`. A primeira mensagem da
+        // Alice é a dela própria, e é preciso descartá-la antes de esperar pela
+        // do Bob. Foi esta mudança de semântica que deixou este teste (e mais
+        // três) marcados como `#[ignore]`, a não proteger nada.
+        drain(&mut rx_a);
 
         let roster_b = hub.join(room, b, b, "bob".into(), false, false, false, tx_b);
         assert_eq!(roster_b.len(), 1);
@@ -2501,6 +2507,28 @@ mod tests {
                 assert!(!peer.host);
             }
             other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    /// O anúncio de entrada vai para TODA a sala — incluindo quem entra.
+    ///
+    /// Não é uma opinião sobre o desenho: é o que `broadcast_all_local` faz, e
+    /// os quatro testes que estiveram anos marcados como `#[ignore]` assumiam o
+    /// contrário. Ficar escrito impede que a próxima pessoa a lê-los conclua
+    /// que o hub está partido — e obriga quem mudar isto a mudar aqui também.
+    #[tokio::test]
+    async fn joiner_also_receives_its_own_announcement() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, mut rx_a) = peer();
+        hub.join(room, a, a, "alice".into(), false, false, false, tx_a);
+
+        match rx_a.recv().await.unwrap() {
+            ServerMsg::PeerJoined { peer } => assert_eq!(
+                peer.peer_id, a,
+                "a primeira mensagem de quem entra é o anúncio DELE PRÓPRIO"
+            ),
+            other => panic!("esperava o próprio anúncio, veio: {other:?}"),
         }
     }
 
@@ -2541,7 +2569,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "legado: semântica do hub evoluiu (co-admissão, user_id != peer_id) — reescrever p/ o SignalingHub atual; ver Arq #2 follow-up"]
     async fn chat_broadcasts_to_everyone_else() {
         let hub = SignalingHub::default();
         let room = Uuid::new_v4();
@@ -2572,6 +2599,10 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
+        // `rx_b` ainda tem o anúncio de entrada do próprio b — descarta-se antes
+        // de afirmar que o chat não volta ao remetente, senão o que se apanha é
+        // o `PeerJoined` e não um eco.
+        drain(&mut rx_b);
         assert!(
             rx_b.try_recv().is_err(),
             "sender must not echo its own chat"
@@ -2604,7 +2635,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "legado: semântica do hub evoluiu (co-admissão, user_id != peer_id) — reescrever p/ o SignalingHub atual; ver Arq #2 follow-up"]
     async fn rooms_are_isolated() {
         let hub = SignalingHub::default();
         let room1 = Uuid::new_v4();
@@ -2619,6 +2649,18 @@ mod tests {
             a,
             ClientMsg::Chat {
                 text: "room1 only".into(),
+            },
+            None,
+        );
+        // Sem descartar o anúncio de entrada do próprio b, o que este teste
+        // apanhava era essa mensagem — e acusava uma fuga entre salas que não
+        // existe. O invariante a provar é que o chat da sala 1 não chega à 2.
+        drain(&mut rx_b);
+        hub.handle(
+            room1,
+            a,
+            ClientMsg::Chat {
+                text: "outra vez só na sala 1".into(),
             },
             None,
         );
@@ -2681,7 +2723,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "legado: semântica do hub evoluiu (co-admissão, user_id != peer_id) — reescrever p/ o SignalingHub atual; ver Arq #2 follow-up"]
     async fn host_joining_later_sees_waiting_queue() {
         let hub = SignalingHub::default();
         let room = Uuid::new_v4();
@@ -2691,10 +2732,23 @@ mod tests {
 
         let (host, tx_h, mut rx_h) = peer();
         hub.join(room, host, host, "host".into(), true, true, false, tx_h);
-        match rx_h.recv().await.unwrap() {
-            ServerMsg::WaitingJoin { peer } => assert_eq!(peer.peer_id, guest),
-            other => panic!("unexpected: {other:?}"),
+        // O `join` entrega DUAS mensagens ao anfitrião: o anúncio de entrada
+        // (que chega também a quem entra) e, a seguir, a fila de espera já
+        // acumulada. Um `recv()` único apanha o anúncio e conclui, erradamente,
+        // que o anfitrião não vê quem estava à espera; um `drain` seguido de
+        // `recv()` consome as duas e fica pendurado. Recolhe-se o que há e
+        // afirma-se sobre o conjunto.
+        let mut vistas = Vec::new();
+        while let Ok(m) = rx_h.try_recv() {
+            vistas.push(m);
         }
+        assert!(
+            vistas.iter().any(|m| matches!(
+                m,
+                ServerMsg::WaitingJoin { peer } if peer.peer_id == guest
+            )),
+            "o anfitrião que entra DEPOIS tem de ver quem já esperava; recebeu: {vistas:?}"
+        );
     }
 
     #[tokio::test]
