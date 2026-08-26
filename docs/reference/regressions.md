@@ -398,6 +398,7 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Causa raiz:** os dois lados acrescentaram um bloco no fim do ficheiro começado pela MESMA linha decorativa (`/* ====…`). O git tratou essa linha como contexto partilhado e abriu o conflito **depois** dela — por isso nenhum dos lados contém o seu próprio abre-comentário. Pior: o `}` final também era contexto partilhado, e ficou a fechar só um dos blocos, deixando a última regra do outro lado aberta.
 - **Regra:** quando um conflito abre a meio de um comentário ou de um bloco, **não se resolve escolhendo linhas** — reconstrói-se cada lado inteiro, com o seu próprio cabeçalho e o seu próprio fecho, e valida-se com o compilador da linguagem (aqui `npx sass`), não com a leitura.
 - **Sinal de alarme:** conflito cujo primeiro `<<<<<<<` está imediatamente a seguir a uma linha que os dois lados também têm.
+- **E uma armadilha no script que resolve o conflito, encontrada em paralelo noutro ramo:** um regex `<<<<<<< HEAD\n(.*?)\n=======` sobre o catálogo de regressões falha, porque há entradas que **citam** os marcadores a meio de uma frase. Marcadores a sério só contam **no início da linha** — o padrão tem de ser ancorado, ou o script resolve o sítio errado.
 - **Ficheiros:** `web/src/styles.scss`.
 
 ### R56 — Ter corrido `make certs` mudava se os testes de browser corriam de todo
@@ -490,3 +491,28 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **E a causa que o número acabou por entregar:** `ice_gathering_ms=39969`. Quarenta segundos a recolher candidatos, contra 377 ms antes do merge — com o servidor byte-a-byte igual e o código de media do cliente também. O que cresceu foi a APLICAÇÃO: o Vite em modo dev transforma os módulos ao primeiro pedido, duas páginas a carregar de raiz saturam um runner de 2 vCPU durante dezenas de segundos, e o agente de ICE do browser fica esfomeado. O teste passou a fazer uma passagem de aquecimento antes de medir.
 - **A lição por trás dessa:** o número que estava a falhar (`join_ms`) não dizia nada; o que estava ao lado dele (`ice_gathering_ms`) dizia tudo. **Uma medição que só reporta o agregado não se diagnostica** — foi preciso ter as parcelas para saber que o problema não era do produto.
 - **Ficheiros:** `web/e2e/tempos.mjs`, `web/e2e/pg.mjs`, `.github/workflows/ci.yml`.
+### R66 — O dev server sem COOP/COEP faz a segmentação falhar SÓ em desenvolvimento
+- **Sintoma:** os fundos e efeitos da sala, e o recorte sem fundo do Estúdio, sem nada a acontecer e sem erro na interface. Em produção funcionam.
+- **Causa raiz:** o WASM multi-thread do ONNX Runtime (RVM) e do MediaPipe precisa de `SharedArrayBuffer`, que só existe numa página **cross-origin isolated** — ou seja, com `Cross-Origin-Opener-Policy: same-origin` e `Cross-Origin-Embedder-Policy: require-corp`. O `deploy/k8s/nginx.conf` põe os dois; o dev server do Vite **não punha**. Medido: `globalThis.crossOriginIsolated` dava `false` no `vite` e `true` depois da correcção.
+- **Porque não deu erro:** o pipeline é fail-soft por desenho — o RVM cai no MediaPipe, e o MediaPipe cai em nada. Um caminho que degrada em silêncio é bom para o utilizador e péssimo para quem procura a causa.
+- **Regra:** **o dev server serve os mesmos cabeçalhos de isolamento que o nginx.** Uma capacidade que depende de um cabeçalho tem de ter esse cabeçalho nos DOIS sítios, senão testa-se sempre o caminho degradado.
+- **Nota sobre os assets:** o `public/ort-rvm/*` e o `public/models/*.tflite` são obtidos no build da imagem e **não estão no git**. Num worktree novo o RVM devolve `index.html` com estado 200 (fallback da SPA) e falha com `expected magic word 00 61 73 6d, found 3c 21 64 6f` — que é `<!do`. Não é corrupção: é HTML onde se esperava WASM.
+- **Ficheiros:** `web/vite.config.ts`.
+
+### R67 — Três testes seguidos a olhar para o sítio errado
+- **Sintoma:** portões verdes que não guardavam nada, e um a dizer «não arrancou» sobre uma funcionalidade a funcionar.
+- **As três, na mesma tarefa:**
+  1. `expect(c).toContain('silencio.connect(...)')` continuava a passar com a linha **comentada** — o `toContain` encontra a string dentro do comentário. Corrigido com um `readCodigo()` que remove comentários antes de comparar.
+  2. A detecção da segmentação fazia `querySelector('.studio-grupo small')` — **singular**. Ao acrescentar uma dica de arrasto, o primeiro `<small>` passou a ser outro, e o teste declarou «não arrancou» com o segmentador a correr em GPU.
+  3. A asserção da silhueta usava `brilho > 5` contra um fundo de brilho **18**: passava com o ecrã vazio. A câmara do Chromium de teste é um padrão de cores, não uma pessoa — o segmentador corre, não encontra ninguém, e não há silhueta para medir. Substituída por uma que verifica que o *pipeline* arrancou, mais uma nota escrita a dizer que o resto precisa de uma câmara real.
+- **Regra:** **antes de acreditar num verde, pergunta o que teria de estar partido para ele ficar vermelho.** Se a resposta for «nada», o teste é decoração. E quando o limiar é numérico, mede-se primeiro o valor de repouso — um limiar abaixo do fundo é um teste que passa sozinho.
+- **Ficheiros:** `web/src/studio.invariantes.test.ts`, `web/e2e/estudio.mjs`.
+
+### R68 — `toContain` com o nome de uma função aceita a função errada
+- **Sintoma:** dois portões do editor a ficarem VERDES com o invariante deliberadamente partido.
+- **Causa raiz (duas, na mesma passagem):**
+  1. `expect(e).toContain('decodeAudioData')` continua a passar quando a chamada é trocada por `decodeAudioDataX` — a string está lá dentro. Um nome de função verifica-se com **fronteira de palavra** (`/\bdecodeAudioData\(/`), nunca com `toContain`.
+  2. `expect(c).toContain('for (const g of this.todos)')` passava com o `pausar()` partido, porque o `retomar()` tem o mesmo padrão. Quando o invariante é «TODOS os sítios fazem X», **conta-se** — `expect(ocorrências).toBeGreaterThanOrEqual(3)` — em vez de confirmar que existe um.
+- **Regra:** um portão baseado em texto tem de responder «o que teria de estar partido para isto ficar vermelho?». Se a resposta for «uma coisa que ninguém escreveria por engano», o portão não guarda o que diz guardar.
+- **É a quarta vez nesta série** (ver R59): comentário aceite como código, `querySelector` singular, limiar abaixo do fundo, e agora substring de nome de função. O padrão comum é o mesmo — a asserção é mais frouxa do que a frase que a descreve.
+- **Ficheiros:** `web/src/studio.invariantes.test.ts`.

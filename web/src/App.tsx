@@ -26,6 +26,7 @@ const Analytics = lazy(() => import('./pages/Analytics'))
 const Recordings = lazy(() => import('./pages/Recordings'))
 const Directory = lazy(() => import('./pages/Directory'))
 const Whiteboards = lazy(() => import('./pages/Whiteboards'))
+const Studio = lazy(() => import('./pages/Studio'))
 const Roadmap = lazy(() => import('./pages/Roadmap'))
 const Status = lazy(() => import('./pages/Status'))
 const ApiDocs = lazy(() => import('./pages/ApiDocs'))
@@ -46,6 +47,7 @@ type Route =
   | { kind: 'directory' }
   | { kind: 'recordings' }
   | { kind: 'whiteboards' }
+  | { kind: 'studio' }
   | { kind: 'calendar' }
   | { kind: 'analytics' }
   | { kind: 'roadmap' }
@@ -66,6 +68,7 @@ function parseHash(): Route {
   if (h.startsWith('#/directory')) return { kind: 'directory' }
   if (h.startsWith('#/recordings')) return { kind: 'recordings' }
   if (h.startsWith('#/whiteboards')) return { kind: 'whiteboards' }
+  if (h.startsWith('#/studio')) return { kind: 'studio' }
   if (h.startsWith('#/calendar')) return { kind: 'calendar' }
   if (h.startsWith('#/analytics')) return { kind: 'analytics' }
   if (h.startsWith('#/roadmap')) return { kind: 'roadmap' }
@@ -136,6 +139,8 @@ export default function App() {
         ? 'recordings'
         : route.kind === 'whiteboards'
           ? 'whiteboards'
+          : route.kind === 'studio'
+            ? 'studio'
           : route.kind === 'calendar'
             ? 'calendar'
           : route.kind === 'analytics'
@@ -181,6 +186,7 @@ export default function App() {
             {route.kind === 'directory' && <Directory />}
             {route.kind === 'recordings' && <Recordings />}
             {route.kind === 'whiteboards' && <Whiteboards />}
+            {route.kind === 'studio' && <Studio />}
             {route.kind === 'calendar' && <Calendar onEnterRoom={enterRoom} />}
             {route.kind === 'analytics' && <Analytics />}
             {route.kind === 'roadmap' && <Roadmap />}
