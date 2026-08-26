@@ -251,6 +251,10 @@ jobs:
           # A GAVETA a 375px e o anel de foco vivem em `transform` e `outline`,
           # que só um motor de browser resolve.
           BASE=http://localhost:5174 node web/e2e/layout-consola.mjs
+          # O DIRECTO: o painel, o WebSocket aceite pelo servidor, e a chave a
+          # sair REDIGIDA do log. Não prova que a media chega ao YouTube — isso
+          # é a linha 2 do portão do ADR-0003 e precisa de um destino a sério.
+          BASE=http://localhost:5174 node web/e2e/directo.mjs
           APP=http://localhost:5174 node web/e2e/drain.mjs
 
       # Sem isto, uma falha de interface no CI é um timeout sem contexto. Com a
