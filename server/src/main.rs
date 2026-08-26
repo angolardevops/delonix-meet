@@ -18,6 +18,7 @@ mod presence;
 mod pubsub;
 mod rate_limit;
 mod recorder;
+mod broadcast;
 mod recordings;
 mod redis_state;
 mod room_tools;
