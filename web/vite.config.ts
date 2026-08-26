@@ -107,6 +107,7 @@ export default defineConfig(({ command }) => {
   // certos — senão o build falha onde os certos de dev não existem (ex.: imagem
   // Docker). Se estivermos a servir mas sem os certos mkcert, cai no basic-ssl.
   const wantHttps = command === 'serve' && !process.env.NO_HTTPS
+  const apiPort = Number(process.env.API_PORT) || 8180
   const haveCerts = wantHttps && fs.existsSync(KEY) && fs.existsSync(CRT)
   return {
     plugins: [react(), precachePwa(), ...(wantHttps && !haveCerts ? [basicSsl()] : [])],
@@ -130,10 +131,15 @@ export default defineConfig(({ command }) => {
         : wantHttps
           ? undefined // o plugin basic-ssl injeta um cert self-signed
           : false,
+      // Alvo da API configurável: o porto fixo obrigava todas as árvores de
+      // trabalho a disputar o 8180, e duas sessões em paralelo neste repo
+      // acabavam a matar o servidor uma da outra. `API_PORT=8181 npm run dev`
+      // com `BIND_ADDR=0.0.0.0:8181` no servidor resolve, e sem nada mudar o
+      // comportamento é o de sempre.
       proxy: {
-        '/api': { target: 'http://127.0.0.1:8180', changeOrigin: true },
-        '/ws': { target: 'ws://127.0.0.1:8180', ws: true, changeOrigin: true },
-        '/rtc': { target: 'ws://127.0.0.1:8180', ws: true, changeOrigin: true },
+        '/api': { target: `http://127.0.0.1:${apiPort}`, changeOrigin: true },
+        '/ws': { target: `ws://127.0.0.1:${apiPort}`, ws: true, changeOrigin: true },
+        '/rtc': { target: `ws://127.0.0.1:${apiPort}`, ws: true, changeOrigin: true },
       },
     },
   }

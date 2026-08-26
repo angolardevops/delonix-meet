@@ -247,6 +247,11 @@ jobs:
           # unidades: o teste captura o ecrã a sério, mede a variação de pixéis
           # para saber que o canvas não está preto, e verifica a DURAÇÃO do
           # ficheiro cortado — não a existência dele.
+          # Duas pessoas encontram-se MESMO, pela interface real: criar →
+          # pré-entrada → entrar → convidado por código → sala de espera →
+          # admitir → retrato remoto. É a promessa central do produto e não
+          # havia teste nenhum a cobri-la ponta a ponta.
+          APP=http://localhost:5174 node web/e2e/reuniao.mjs
           BASE=http://localhost:5174 node web/e2e/estudio.mjs
           # A GAVETA a 375px e o anel de foco vivem em `transform` e `outline`,
           # que só um motor de browser resolve.
