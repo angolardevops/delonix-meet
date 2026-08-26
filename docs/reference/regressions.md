@@ -444,3 +444,16 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** um portão baseado em texto tem de responder «o que teria de estar partido para isto ficar vermelho?». Se a resposta for «uma coisa que ninguém escreveria por engano», o portão não guarda o que diz guardar.
 - **É a quarta vez nesta série** (ver R59): comentário aceite como código, `querySelector` singular, limiar abaixo do fundo, e agora substring de nome de função. O padrão comum é o mesmo — a asserção é mais frouxa do que a frase que a descreve.
 - **Ficheiros:** `web/src/studio.invariantes.test.ts`.
+
+### R61 — Cinco portões escritos com asserções que valiam nos dois estados
+- **Sintoma:** testes verdes que continuavam verdes com o invariante partido. Cinco vezes na mesma série de tarefas, sempre pelo mesmo motivo.
+- **O catálogo dos cinco:**
+  1. `toContain('silencio.connect(...)')` passava com a linha **comentada** (R59).
+  2. `querySelector` **singular** apanhava o primeiro `<small>` da secção e declarou «não arrancou» com o segmentador a correr (R59).
+  3. `brilho > 5` contra um fundo de brilho **18** — passava com o ecrã vazio (R59).
+  4. `pausas.length === 1` num teste de limiar relativo: com um limiar FIXO a gravação baixa fica **toda** classificada como pausa, o que também dá comprimento 1.
+  5. `pausas[0].inicio >= 2` para verificar uma margem de 0,12 s: verdade com margem (2,12) e sem ela (2,00).
+- **A causa comum:** a asserção foi escrita a partir do que o código *devia* fazer, e nunca comparada com o que produz **quando está partido**.
+- **Regra:** **mede o valor nos dois estados antes de escolher o limiar.** Correr o código sabotado e ler o número leva um minuto; foi o que separou `>= 2` (inútil) de `> 2.05` (que apanha). Um limiar escolhido de cabeça tem tanta hipótese de cair do lado errado como do certo.
+- **Regra irmã:** contar elementos não é verificar onde eles estão. Um detector que devolve «uma pausa» pode ter devolvido a gravação inteira.
+- **Ficheiros:** `web/src/studio/analise.test.ts`, `web/src/studio.invariantes.test.ts`, `web/e2e/estudio.mjs`.
