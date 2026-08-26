@@ -577,3 +577,11 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** **uma camada de fundação entrega-se ligada.** Nem que seja pela superfície mínima que a torne alcançável e testável de ponta a ponta. Se ainda não se sabe ligar, então ainda não se sabe o suficiente para a escrever.
 - **O que ligá-la destapou:** duas coisas que um módulo solto nunca teria mostrado — a rota nova falhava o portão de autorização (R44) por não usar um extractor `AuthUser`, e obrigou a escrever a razão pela qual autentica por token de query (um WebSocket não leva os nossos cabeçalhos); e o registo por sala teve de nascer, porque dois anfitriões a carregar em «ir para o ar» dariam dois ffmpeg contra a mesma chave.
 - **Ficheiros:** `server/src/broadcast.rs`, `server/src/main.rs`, `scripts/rotas-publicas.txt`.
+
+### R76 — `-f webm` a ler H.264 funciona por sorte, não por contrato
+- **Sintoma:** nenhum, e é esse o problema. O caminho do directo declarava `-f webm` ao ffmpeg e funcionava.
+- **O que está medido:** o `MediaRecorder` do Chromium aceita `video/webm;codecs=h264,opus` e produz um ficheiro que o `ffprobe` descreve como `format_name=matroska,webm` com `codec_name=h264`. O WebM **oficialmente só admite VP8/VP9/AV1** — o que sai é Matroska com H.264 lá dentro, com a extensão errada.
+- **Porque é que passava:** o desmultiplexador de WebM do ffmpeg **É** o de Matroska. Declarar `-f webm` e dar-lhe H.264 acerta por o código ser o mesmo, não por a declaração estar certa.
+- **Regra:** **declara-se o que a coisa É, não o que a extensão sugere.** Uma build mais estrita, ou uma versão futura que separe os dois desmultiplexadores, recusaria — e o sintoma seria um directo que deixa de arrancar depois de uma actualização de imagem, sem nada no nosso código ter mudado.
+- **Como foi apanhado:** por gerar um ficheiro REAL com o `MediaRecorder` num Chromium e correr o comando REAL do servidor sobre ele, num contentor de ffmpeg. Medido: entra `h264`+`opus`, sai `h264`+`aac` — o vídeo copiado e o áudio transcodificado, que é a decisão inteira do ADR-0003 provada de ponta a ponta.
+- **Ficheiros:** `server/src/broadcast.rs`.

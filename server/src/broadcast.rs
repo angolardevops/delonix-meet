@@ -151,8 +151,16 @@ pub fn montar_argumentos(destinos: &[Destino], threads: u32) -> Vec<String> {
         threads.to_string(),
         // A media chega por um cano; o formato vai declarado porque o ffmpeg
         // não consegue procurar para trás num cano para o adivinhar.
+        //
+        // `matroska` e não `webm`, e é uma distinção medida: o browser produz
+        // `video/webm;codecs=h264,opus`, mas o WebM oficialmente só admite
+        // VP8/VP9/AV1 — o que sai é Matroska com H.264 lá dentro. O `ffprobe`
+        // sobre um ficheiro real do MediaRecorder diz `format_name=matroska,webm`.
+        // Com `-f webm` também funciona HOJE, porque o desmultiplexador de WebM
+        // do ffmpeg É o de Matroska; mas é sorte, não contrato — uma build mais
+        // estrita ou uma versão futura pode recusar H.264 declarado como WebM.
         "-f".into(),
-        "webm".into(),
+        "matroska".into(),
         "-i".into(),
         "pipe:0".into(),
         // O VÍDEO É COPIADO. É a decisão inteira do ADR: sem isto o pod
@@ -381,12 +389,19 @@ mod testes {
 
     #[test]
     fn o_formato_de_entrada_vai_declarado() {
-        // Um cano não se pode procurar para trás: sem `-f webm` o ffmpeg não
+        // Um cano não se pode procurar para trás: sem `-f` o ffmpeg não
         // adivinha o formato e falha a arrancar.
+        //
+        // E tem de ser `matroska`, não `webm`: o que o browser produz é
+        // Matroska com H.264 (medido com ffprobe: `format_name=matroska,webm`).
+        // `-f webm` funciona hoje por o desmultiplexador ser o mesmo, mas isso
+        // é sorte e não contrato.
         let a = montar_argumentos(&[destino("yt", "k")], 2);
         let i = a.iter().position(|x| x == "-i").expect("sem -i");
         assert_eq!(a[i + 1], "pipe:0");
-        assert!(a[..i].windows(2).any(|w| w[0] == "-f" && w[1] == "webm"));
+        assert!(a[..i]
+            .windows(2)
+            .any(|w| w[0] == "-f" && w[1] == "matroska"));
     }
 
     #[test]
