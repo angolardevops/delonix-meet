@@ -29,7 +29,7 @@ Três avisos de leitura:
 |---|---|---|
 | Backend Rust | 17 606 linhas, 33 módulos | `wc -l server/src/*.rs` |
 | Frontend TS/React | 16 978 linhas, 46 ficheiros | `wc -l web/src/**` |
-| Migrações | 0001–0035, contíguas | `ls server/migrations` |
+| Migrações | 0001–0038, contíguas | `ls server/migrations` |
 | `cargo test --release` | **46 passados, 0 falhados, 4 ignorados** | medido antes de mexer |
 | `tsc --noEmit` | limpo | medido |
 | `vitest` | 14 passados (3 ficheiros) | medido |
@@ -68,7 +68,8 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | **ICE restart** | 🔴 → ✅ **feito E VALIDADO contra SFU real** | medido a 2026-08-25 com dois Chromium contra o SFU Rust: um dos peers fez `connected → degraded → reconnecting → **connected**` e ficou estável nos 30 s seguintes. Continua por validar contra uma rede a MUDAR DE CAMINHO de propósito (Wi-Fi→móvel) | Baixo (era Crítico) | percurso de recuperação observado ponta-a-ponta |
 | Reconnect token / silent rejoin | 🔴 | não existe. O reload deixou de ser a primeira resposta (passou a última, ao fim de 6 tentativas), mas continua a ser o último recurso | Médio | refresh do browser não perde a sessão de media |
 | Backoff exponencial | 🟡 → ✅ **feito nesta sessão** | com **jitter** nos dois caminhos: ICE restart e `/rtc`. Sem jitter, uma falha da sala inteira punha todos a reiniciar no mesmo instante | — | `backoffDelay` testado no intervalo [metade, inteiro] |
-| HA do SFU (registry, drain, placement) | 🔴 | há afinidade por sala (ADR-0001) — que **não é HA**. Morrer o pod mata as salas | **Crítico** | `kubectl delete pod` e as salas recuperam noutro nó |
+| HA do SFU — **drain** | 🔴 → ✅ **feito e validado com SIGTERM real** | readiness separada da liveness, aviso de migração aos participantes, entradas novas recusadas com 503, e o processo fecha sozinho quando as salas esvaziam. 9 asserções contra um servidor a sério | Médio (era Crítico) | SIGTERM com chamada a decorrer |
+| HA do SFU — registry, health/capacity, placement | 🔴 | continua por fazer: um pod que morre de FORMA ABRUPTA (OOM, nó a cair) ainda mata as salas dele — o drain só cobre o encerramento ORDENADO | Alto | `kubectl delete pod --force` |
 | Testes de fiabilidade com browsers reais | 🔴 → 🟡 **arnês feito, matriz por medir** | `web/e2e/harness.html` carrega a PILHA REAL do cliente contra o SFU Rust, com dois Chromium a sério — provado a funcionar. A matriz de 12 cenários **não é publicável** a partir deste arnês: com o servidor em contentor, o ICE cai aos ~10 s (ver `e2e/README.md`) | Médio (era Alto) | matriz 1:1/5/10/25/50 |
 
 ### Programa II — Qualidade de áudio e vídeo
@@ -82,7 +83,7 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | Perfis de qualidade nomeados | 🔴 | não há audio-only / data-saver / 180p…1080p / screen-texto vs movimento | Médio |
 | Pipeline de áudio com IA no browser | 🟡 | `@sapphi-red/web-noise-suppressor` está nas dependências; **não há** de-reverberação, voice isolation, VAD, normalização, limiter, nem perfis reunião/aula/podcast/música | Médio |
 | Delonix Call Quality Score (0–100) | 🔴 → ✅ **feito nesta sessão** | modelo de penalizações transparente em `callQuality.ts`, com os limiares ancorados na G.114. **Não é MOS e não está calibrado contra ouvido humano** — é escala interna, comparável consigo mesma | Médio |
-| Métricas de chamada | 🟡 → ✅ **feito nesta sessão** | de **3** para **~20** por amostra: jitter, downlink, NACK/PLI/FIR, frames descartados, congelamento, ocultação de áudio (PLC), par de candidatos, TURN em uso, limitação do encoder. Persistidas (migração 0034) e agregadas em `/metrics`. **Ainda em falta:** time-to-first-audio/video, join time, ICE gathering time e contagem de reconexões — precisam de instrumentação de TEMPO no cliente, não vêm do `getStats()` | Médio (era Alto) |
+| Métricas de chamada | 🟡 → ✅ **feito nesta sessão** | de **3** para **~20** por amostra: jitter, downlink, NACK/PLI/FIR, frames descartados, congelamento, ocultação de áudio (PLC), par de candidatos, TURN em uso, limitação do encoder. Persistidas (migração 0034) e agregadas em `/metrics`. **Feito** (2026-08-25): time-to-first-audio/video, join time, ICE gathering e contagem de reinícios/recuperações, por marcos no cliente (`callTimings.ts`) — não vêm do `getStats()` | Médio (era Alto) |
 | Observabilidade do SFU (Prometheus) | ✅ | boa: 13 contadores + 4 novos de filas | — |
 | Testes em rede degradada (emulação) | 🔴 → 🟡 | `e2e/netem-matrix.mjs` com `tc netem` a moldar o caminho REAL (UDP incluído — o estrangulamento do DevTools não serve, só afecta HTTP). Provado EXACTO onde mediu: `loss 10%` → 10,2 % medidos; `loss 20%` → 21 %. Falta-lhe um transporte estável para a matriz completa | Médio (era Alto) |
 
@@ -99,7 +100,7 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | RBAC | 🟡 | **2 papéis**: `admin` \| `member` (`org.rs:431`). O pedido são **15** (platform admin, security admin, compliance officer, co-host, presenter, recording editor, auditor read-only, …) | Alto |
 | Autorização validada no servidor | ✅ | host controls em `signaling.rs`, não confiados no cliente | — |
 | Isolamento multi-tenant | ✅ | `can_access_room`/`org::*`; RLS em `employee_groups` com fitness function | — |
-| Auditoria | 🟡 | `audit.rs` escreve *best-effort* nos eventos-chave; **não é imutável** | Médio |
+| Auditoria imutável | 🟡 → ✅ **feito e atacado por SQL** | cadeia de hash por org com verificação em `/audit/verify`; gatilhos recusam UPDATE/DELETE; a trilha sobrevive à conta apagada; escritas falhadas são ERRO com métrica. Detecção provada com os gatilhos desactivados | Baixo (era Médio) |
 | Retenção | ✅ | *sweep* de retenção em `main.rs` | — |
 | DLP | ✅ | `dlp.rs` (NIF, cartão, chaves de API, profanidade) com testes | — |
 | Legal hold / eDiscovery / exportação de evidências | 🔴 | **zero** | Alto |
@@ -225,10 +226,11 @@ Pela ordem do mandato, e pelo risco medido:
 2. **Validar o ICE restart contra rede real** (a máquina de estados e o restart
    já existem; o que falta é a prova), e implementar *reconnect token* +
    *silent rejoin* — hoje um refresh do browser ainda perde a sessão de media.
-3. ~~**Métricas de chamada completas.**~~ **Endereçado** — ~20 métricas por
-   amostra + o Delonix Call Quality Score. Falta a instrumentação de TEMPO
-   (time-to-first-audio/video, join time, ICE gathering), que não vem do
-   `getStats()`.
+3. ~~**Métricas de chamada completas.**~~ **Endereçado por inteiro** — ~20
+   métricas por amostra, o Delonix Call Quality Score, e os TEMPOS de
+   estabelecimento. Primeira medição real: join 364 ms, dos quais **345 são
+   token + WebSocket** — a negociação de media leva ~19 ms. O estrangulamento
+   está na API e na sinalização, não no WebRTC.
 4. **Testes em rede degradada** com emulação, e só depois publicar metas. É
    agora o passo que desbloqueia tudo o resto: já há o que medir, falta medir.
 5. ~~**Adaptação de simulcast.**~~ **Endereçado e medido.** Falta o sinal de

@@ -46,7 +46,14 @@ jobs:
       - name: Catraca do clippy (o número de avisos não sobe)
         run: bash scripts/check-clippy-ratchet.sh
 
+      # E2E_TIMEOUT_FACTOR: os testes de media montam RTCPeerConnections a
+      # sério (ICE, DTLS, primeiro RTP). Numa máquina de desenvolvimento
+      # resolvem-se em ~0,1 s; num runner partilhado com 2 vCPU chegaram a
+      # estourar os 30 s e a falhar sem nada estar partido. Um portão que falha
+      # ao acaso perde a credibilidade toda.
       - name: Testes
+        env:
+          E2E_TIMEOUT_FACTOR: 4
         run: cargo test --manifest-path server/Cargo.toml --release
 
       - name: Build de release
@@ -131,7 +138,7 @@ jobs:
   # negativas» — e um teste de isolamento contra um duplo prova o duplo, não o
   # produto.
   isolamento:
-    name: Isolamento entre inquilinos e MFA
+    name: Isolamento, MFA, gravação e drain
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -169,6 +176,8 @@ jobs:
           # sintoma a aparecer como «o login não completou» no terceiro. O
           # default de produção não muda.
           DELONIX_ALLOW_INSECURE=1 COOKIE_INSECURE=1 AUTH_RATE_PER_MIN=2000 \
+            RECORDINGS_DIR=/tmp/gravacoes \
+            DRAIN_READINESS_SECS=2 DRAIN_GRACE_SECS=25 DRAIN_RECONNECT_MS=1000 \
             ./server/target/release/delonix-server > /tmp/servidor.log 2>&1 &
           for i in $(seq 1 60); do
             curl -sf http://localhost:8180/api/status >/dev/null && exit 0
@@ -179,12 +188,20 @@ jobs:
       - name: Isolamento e permissões negativas
         run: node web/e2e/isolamento.mjs
 
+      # A auditoria é atacada DIRECTAMENTE por SQL, não pela API: um teste que
+      # só usa a API prova que a API não deixa, não que os dados estão
+      # protegidos. E o adversário que interessa numa auditoria é quem TEM
+      # privilégios.
+      - name: Auditoria imutável (ataque directo à base de dados)
+        run: PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/auditoria.mjs
+
       # O MFA precisa do mesmo servidor a correr. O teste implementa o TOTP em
       # JavaScript de propósito: é uma segunda implementação independente do
       # RFC 6238, e vê-la concordar com a de Rust vale muito mais do que ver a
       # de Rust concordar consigo própria.
       - name: MFA por TOTP (fluxo completo, ao nível da API)
         run: node web/e2e/mfa.mjs
+
 
       # E o mesmo visto pelo UTILIZADOR. O backend estar certo não faz um
       # produto: sem interface, o MFA existe para quem sabe fazer POSTs. É este
@@ -205,6 +222,28 @@ jobs:
           # completou», que aponta para o sítio errado.
           curl -sf http://localhost:5174/api/status || { echo "o proxy do vite NÃO alcança a API"; cat /tmp/vite.log; exit 1; }
           APP=http://localhost:5174 node web/e2e/ui-mfa.mjs
+          # Uma gravação que falha tem de ser VISTA. O CI não tem ffmpeg
+          # instalado, o que torna este teste realista de graça: é exactamente a
+          # falha de OPERAÇÃO que produzia o pior silêncio — o anfitrião via o
+          # indicador aceso a reunião inteira e ficava sem nada nem aviso.
+          # Precisa do vite (carrega o arnês de media), por isso corre aqui.
+          # Tempos de entrada medidos numa entrada A SÉRIO. Um teste contra
+          # duplos provaria a aritmética; o que interessa provar é que os
+          # marcos disparam nos sítios certos de uma chamada verdadeira.
+          #
+          # Corre ANTES da gravação de propósito: é o único teste desta bateria
+          # que MEDE em vez de verificar, e o estabelecimento de ICE degrada-se
+          # com a carga da máquina — medido em local, `join_ms` passa de ~250 ms
+          # a nunca ligar quando há browsers e servidores a mais (R65). Depois
+          # de a gravação abrir um segundo Chromium com login e três vistas, o
+          # runner deixou de conseguir. Mede-se com a máquina quieta.
+          APP=http://localhost:5174 PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/tempos.mjs
+          # Uma gravação que falha tem de ser VISTA — e as três vistas da
+          # biblioteca não podem oferecer acções sobre ela (R59).
+          APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
+          # O DRAIN vai por último: manda SIGTERM ao servidor e espera que ele
+          # feche. Qualquer teste depois deste ficaria sem servidor.
+          APP=http://localhost:5174 node web/e2e/drain.mjs
 
       # Sem isto, uma falha de interface no CI é um timeout sem contexto. Com a
       # imagem do momento da falha, diagnostica-se sem ter de reproduzir.

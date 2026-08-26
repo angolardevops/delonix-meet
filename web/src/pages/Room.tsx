@@ -1,6 +1,6 @@
 import { CSSProperties, ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  currentUser, downloadRecording, iceServers, inviteToRoom, joinRoom, listRecordings, postQos, Recording,
+  currentUser, downloadRecording, iceServers, inviteToRoom, joinRoom, listRecordings, postQos, postTimings, Recording,
   roomChatHistory, saveMinutesByRoom, saveWhiteboard, searchUsers, translateCaption, uploadRecording, User,
 } from '../api'
 import {
@@ -26,6 +26,7 @@ import { peerColor, RemotePeer, RemoteTile, SpeakingBars } from '../room/RemoteT
 import { Call, MeshCall, SCREEN_CONSTRAINTS, SfuCall } from '../webrtc'
 import type { CallState } from '../callRecovery'
 import { chooseLayers, type LocalConditions, type TileSignal } from '../layerPolicy'
+import { LinhaDoTempo } from '../callTimings'
 import { makeCallHolderStart } from '../sfuLifecycle'
 import {
   BlurIcon, CamIcon, CamOffIcon, ChatIcon, ChevronUpIcon, CloseIcon, DownloadIcon, EmojiIcon, HandIcon,
@@ -245,6 +246,8 @@ export default function Room({
   const [status, setStatus] = useState('A ligar…')
   /** Estado da ligação de media — alimenta o indicador de recuperação. */
   const [callState, setCallState] = useState<CallState>('connecting')
+  /** Os tempos de estabelecimento só se reportam UMA vez por sessão. */
+  const temposEnviados = useRef(false)
   /** Condições locais que alimentam a política de camada (ver layerPolicy.ts). */
   const [conditions, setConditions] = useState<LocalConditions>({})
   const [topology, setTopology] = useState('')
@@ -830,7 +833,14 @@ export default function Room({
         deviceChangeRef.current = onDeviceChange
         navigator.mediaDevices.addEventListener?.('devicechange', onDeviceChange)
 
+        // A linha do tempo começa AQUI e não dentro da SfuCall: o utilizador
+        // quis entrar muito antes de existir uma RTCPeerConnection, e é o
+        // tempo DELE que interessa medir. Uma medição que começa quando o
+        // código está pronto mede o código, não a experiência.
+        const tempos = new LinhaDoTempo()
+        tempos.marcar('intencao')
         const [{ room, room_token, scheduled }, rtcConfig] = await Promise.all([joinRoom(code), iceServers()])
+        tempos.marcar('token')
         setTopology(room.topology)
         setIsTraining(room.format === 'training')
         setIsInstant(scheduled === false) // só marca instantânea se o servidor o confirmar (degrada em falso)
@@ -863,6 +873,7 @@ export default function Room({
 
         const signal = new Signaling(room_token, code)
         signalRef.current = signal
+        signal.on('joined', () => tempos.marcar('ws'))
         // A chamada SFU/mesh só arranca DEPOIS de sermos admitidos ('joined').
         // Se negociarmos enquanto estamos na sala de espera, o servidor descarta
         // a oferta e, ao ser admitido, a colisão de renegociação entra em loop e
@@ -874,6 +885,23 @@ export default function Room({
           if (panelRef.current !== 'chat') setUnreadChat((n) => n + 1)
         })
         signal.on('error', (m) => setStatus(m.message))
+        // Este nó vai fechar. Não é um erro nem uma expulsão: a chamada
+        // continua a funcionar, e migra-se quando o servidor disser.
+        //
+        // O JITTER não é enfeite. Um pod a drenar avisa a sala INTEIRA no mesmo
+        // instante; sem jitter, vinte pessoas reconectam no mesmo milissegundo
+        // e o pod novo leva com a sala toda de uma vez — trocava-se um
+        // encerramento ordenado por uma avalanche.
+        signal.on('draining', ({ reconnect_in_ms }) => {
+          if (cancelled) return
+          setStatus('O servidor vai reiniciar — a mudar de nó, sem sair da reunião.')
+          const jitter = Math.round(reconnect_in_ms * Math.random())
+          sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
+          setTimeout(() => {
+            if (!cancelled) location.reload()
+          }, reconnect_in_ms + jitter)
+        })
+
         signal.onclose = () => {
           if (cancelled) return // saída intencional da sala
           // O WS caiu (rede/proxy). Sem sinalização não há renegociação → media
@@ -1133,6 +1161,14 @@ export default function Room({
           onState: (st: CallState) => {
             if (cancelled) return
             setCallState(st)
+            // Reporta os tempos UMA vez, quando a media aparece. Esperar pelo
+            // fim da chamada perderia os números de quem fecha o separador — e
+            // quem fecha o separador a meio é precisamente quem teve má
+            // experiência, que é a cauda que interessa medir.
+            if (st === 'connected' && !temposEnviados.current && tempos.vale_reportar()) {
+              temposEnviados.current = true
+              void postTimings(code, tempos.resumo()).catch(() => {})
+            }
             if (st === 'degraded') setStatus('Ligação instável — a media pode falhar por instantes.')
             else if (st === 'reconnecting' || st === 'recovering') setStatus('A restabelecer a ligação de media…')
             else if (st === 'connected') setStatus('')
@@ -1155,7 +1191,7 @@ export default function Room({
           isCancelled: () => cancelled,
           create: () =>
             room.topology === 'sfu'
-              ? new SfuCall(signal, stream, rtcConfig, callbacks, crypto)
+              ? new SfuCall(signal, stream, rtcConfig, callbacks, crypto, undefined, tempos)
               : new MeshCall(signal, stream, rtcConfig, callbacks, crypto),
         })
       } catch (err) {

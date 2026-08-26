@@ -258,6 +258,10 @@ export interface RecordingItem extends Recording {
   share_count: number
   /** RBAC: só dono + admins da org podem descarregar (os restantes só reproduzem). */
   can_download: boolean
+  /** `ready` = há ficheiro. `failed` = houve tentativa e não há nada. */
+  status: 'ready' | 'failed' | string
+  /** Causa em linguagem de utilizador, quando falhou. */
+  failure_reason: string | null
 }
 
 export type RecurrenceFreq = 'daily' | 'weekly' | 'monthly' | 'yearly'
@@ -656,6 +660,10 @@ export interface QosSample {
   candidate_pair?: string | null
   limited_by?: string | null
 }
+
+/** Tempos de estabelecimento de UMA sessão (ver `callTimings.ts`). */
+export const postTimings = (code: string, t: import('./callTimings').Tempos) =>
+  request(`/api/rooms/${code}/timings`, { method: 'POST', body: JSON.stringify(t) })
 
 export const postQos = (code: string, s: QosSample) =>
   request(`/api/rooms/${code}/qos`, { method: 'POST', body: JSON.stringify(s) })

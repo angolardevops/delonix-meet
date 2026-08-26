@@ -18,7 +18,7 @@ import {
   unshareRecording,
   User,
 } from '../api'
-import { CheckIcon, CloseIcon, CopyIcon, DownloadIcon, FilmIcon, GridIcon, NoteIcon, PlayIcon, RowsIcon, ShareLinkIcon, TableIcon, TrashIcon } from '../icons'
+import { AlertIcon, CheckIcon, CloseIcon, CopyIcon, DownloadIcon, FilmIcon, GridIcon, NoteIcon, PlayIcon, RowsIcon, ShareLinkIcon, TableIcon, TrashIcon } from '../icons'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
@@ -135,12 +135,16 @@ export default function Recordings() {
                 className={selected?.id === r.id ? 'rec-item active' : 'rec-item'}
                 onClick={() => setSelected(r)}
               >
-                <span className="rec-item-thumb" style={{ background: recColor(r.filename) }}><FilmIcon /></span>
+                <span className={r.status === 'failed' ? 'rec-item-thumb failed' : 'rec-item-thumb'} style={r.status === 'failed' ? undefined : { background: recColor(r.filename) }}>
+                  {r.status === 'failed' ? <AlertIcon /> : <FilmIcon />}
+                </span>
                 <span className="rec-item-info">
                   <strong>{r.filename.replace(/\.webm$/, '')}</strong>
                   <small>
                     {new Date(r.created_at).toLocaleDateString('pt-PT', { day: 'numeric', month: 'short', year: 'numeric' })}
-                    {' · '}{(r.size_bytes / 1_048_576).toFixed(1)} MB
+                    {/* Uma gravação falhada não tem tamanho — mostrar «0.0 MB»
+                        parecia um ficheiro vazio, que é outra coisa. */}
+                    {r.status === 'failed' ? <> · {t('recordings.failed', 'falhou')}</> : <> · {(r.size_bytes / 1_048_576).toFixed(1)} MB</>}
                     {!r.owned && <> · {t('recordings.shared')}</>}
                   </small>
                 </span>
@@ -179,18 +183,28 @@ export default function Recordings() {
             {shown.map((r) => (
               <tr key={r.id}>
                 <td>
-                  <button className="link rec-name-link" onClick={() => setViewTarget(r)}>
-                    {r.filename.replace(/\.webm$/, '')}
-                  </button>
+                  {r.status === 'failed' ? (
+                    <span className="rec-name-failed">
+                      <span className="rec-name-failed-icon" aria-hidden="true"><AlertIcon /></span>{r.filename.replace(/\.webm$/, '')}
+                    </span>
+                  ) : (
+                    <button className="link rec-name-link" onClick={() => setViewTarget(r)}>
+                      {r.filename.replace(/\.webm$/, '')}
+                    </button>
+                  )}
                   {!r.owned && <span className="rec-badge shared inline">{t('recordings.shared')}</span>}
                 </td>
                 <td className="mono">{r.room_code}</td>
                 <td>{r.uploader_name}</td>
                 <td>{new Date(r.created_at).toLocaleString('pt-PT')}</td>
-                <td>{(r.size_bytes / 1_048_576).toFixed(1)} MB</td>
+                <td>{r.status === 'failed' ? <span className="rec-failure-cell">{r.failure_reason || t('recordings.failed', 'Gravação falhada')}</span> : `${(r.size_bytes / 1_048_576).toFixed(1)} MB`}</td>
                 <td className="rec-row-actions">
-                  <button className="icon-btn" title={t('recordings.open')} onClick={() => setViewTarget(r)}><PlayIcon /></button>
-                  {r.can_download && (
+                  {/* Uma gravação falhada não oferece acção nenhuma — nem aqui,
+                      nem na vista de cartões. Ver R58. */}
+                  {r.status !== 'failed' && (
+                    <button className="icon-btn" title={t('recordings.open')} onClick={() => setViewTarget(r)}><PlayIcon /></button>
+                  )}
+                  {r.status !== 'failed' && r.can_download && (
                     <button
                       className="icon-btn"
                       title={t('recordings.download')}
@@ -199,7 +213,7 @@ export default function Recordings() {
                       <DownloadIcon />
                     </button>
                   )}
-                  {r.owned && (
+                  {r.status !== 'failed' && r.owned && (
                     <button className="icon-btn" title={t('recordings.share')} onClick={() => setShareTarget(r)}>
                       <ShareLinkIcon />
                     </button>
@@ -215,28 +229,41 @@ export default function Recordings() {
       <div className="rec-cards">
         {shown.map((r) => (
           <div key={r.id} className="rec-card">
-            <button className="rec-thumb" style={{ background: recColor(r.filename) }} onClick={() => setViewTarget(r)} title={t('recordings.play')}>
-              <FilmIcon />
-              <span className="rec-play" aria-hidden="true"><PlayIcon /></span>
-              {!r.owned && <span className="rec-badge shared">{t('recordings.shared')}</span>}
-            </button>
+            {/* Falhada: sem miniatura clicável nem ▶. Oferecer «reproduzir»
+                sobre algo que não existe é prometer duas vezes ao mesmo
+                utilizador — a primeira foi o indicador de gravação aceso. */}
+            {r.status === 'failed' ? (
+              <div className="rec-thumb failed" role="img" aria-label={t('recordings.failed', 'Gravação falhada')}><AlertIcon /></div>
+            ) : (
+              <button className="rec-thumb" style={{ background: recColor(r.filename) }} onClick={() => setViewTarget(r)} title={t('recordings.play')}>
+                <FilmIcon />
+                <span className="rec-play" aria-hidden="true"><PlayIcon /></span>
+                {!r.owned && <span className="rec-badge shared">{t('recordings.shared')}</span>}
+              </button>
+            )}
             <div className="rec-body">
               <strong className="rec-title">{r.filename}</strong>
               <div className="rec-meta">
                 {t('recordings.room', { code: r.room_code })} · {r.uploader_name}
                 <br />
-                {new Date(r.created_at).toLocaleString('pt-PT')} · {(r.size_bytes / 1_048_576).toFixed(1)} MB
+                {new Date(r.created_at).toLocaleString('pt-PT')}
+                {r.status !== 'failed' && <> · {(r.size_bytes / 1_048_576).toFixed(1)} MB</>}
               </div>
+              {r.status === 'failed' && r.failure_reason && (
+                <p className="rec-failure" role="status">{r.failure_reason}</p>
+              )}
               <div className="rec-actions">
+                {r.status !== 'failed' && (
                 <button className="btn-sm" onClick={() => setViewTarget(r)}>
                   <NoteIcon /> {t('recordings.open')}
                 </button>
-                {r.can_download && (
+                )}
+                {r.status !== 'failed' && r.can_download && (
                   <button className="btn-sm ghost" onClick={() => void downloadRecording(r).catch((e) => setError((e as Error).message))}>
                     <DownloadIcon /> {t('recordings.download')}
                   </button>
                 )}
-                {r.owned && (
+                {r.status !== 'failed' && r.owned && (
                   <button className="btn-sm ghost" onClick={() => setShareTarget(r)}>
                     <ShareLinkIcon /> {t('recordings.share')}{r.share_count > 0 ? ` (${r.share_count})` : ''}
                   </button>
@@ -285,6 +312,13 @@ function ViewerBody({
 
   useEffect(() => {
     let url = ''
+    // Uma gravação falhada não tem ficheiro: ir buscá-lo devolve um erro
+    // genérico de carregamento e ESCONDE a causa que já está registada. Ver R58.
+    if (rec.status === 'failed') {
+      setVideoErr(rec.failure_reason || t('recordings.failed', 'Gravação falhada'))
+      void roomNotes(rec.room_code).then(setNotes).catch(() => setNotes({ title: '', minutes: '', transcript: '' }))
+      return
+    }
     void recordingObjectUrl(rec)
       .then((u) => { url = u; setVideoUrl(u) })
       .catch(() => setVideoErr(t('recordings.loadVideoFail')))

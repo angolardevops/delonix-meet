@@ -434,9 +434,67 @@ pub fn finalize(state: Arc<AppState>, room_id: Uuid, session: RecordingSession) 
     tokio::spawn(async move {
         if let Err(e) = finalize_inner(&state, room_id, &session).await {
             tracing::error!(%room_id, error = %e, "server recording finalize failed");
+            // A falha passa a ser VISÍVEL. Antes ficava só aqui, o directório
+            // temporário era apagado, e a biblioteca não mostrava nada — do
+            // lado de quem carregou em «gravar» e viu o indicador aceso a
+            // reunião inteira, isso é indistinguível de nunca ter gravado.
+            registar_falha(&state, room_id, &session, &e).await;
         }
         let _ = tokio::fs::remove_dir_all(&session.dir).await;
     });
+}
+
+/// Traduz um erro técnico para uma causa que se possa mostrar a uma pessoa.
+///
+/// O texto do erro NÃO é usado directamente: o stderr do ffmpeg traz caminhos
+/// do servidor e nomes de ficheiros temporários, que não têm nada que fazer no
+/// ecrã de um utilizador. O detalhe fica no log, onde é útil a quem opera.
+fn causa_legivel(e: &anyhow::Error) -> &'static str {
+    let t = e.to_string();
+    if t.contains("ffmpeg-ausente") {
+        // Causa de OPERAÇÃO, não do utilizador. Dizê-lo pelo nome poupa a quem
+        // recebe a queixa uma investigação inteira — e a correcção é instalar
+        // o ffmpeg, não voltar a gravar.
+        "O servidor não tem o ffmpeg instalado, e sem ele não consegue compor gravações. É uma configuração em falta no servidor — comunica-o a quem o administra."
+    } else if t.contains("nothing recorded") {
+        "Não chegou media suficiente para gravar. A gravação pode ter sido parada demasiado cedo, ou ninguém tinha câmara nem microfone ligados."
+    } else if t.contains("excedeu") {
+        "A composição do vídeo excedeu o tempo máximo e foi interrompida."
+    } else if t.contains("ffmpeg") {
+        "O servidor não conseguiu compor o vídeo final. A equipa de operação tem o detalhe no registo."
+    } else if t.contains("No space") || t.contains("space left") {
+        "Não havia espaço em disco para guardar a gravação."
+    } else {
+        "A gravação não pôde ser finalizada. A equipa de operação tem o detalhe no registo."
+    }
+}
+
+async fn registar_falha(
+    state: &Arc<AppState>,
+    room_id: Uuid,
+    session: &RecordingSession,
+    erro: &anyhow::Error,
+) {
+    let nome = format!(
+        "Gravação falhada · {}",
+        chrono::Utc::now().format("%d/%m/%Y %H:%M")
+    );
+    // `size_bytes = 0` e `status = failed`: a linha existe para ser VISTA, não
+    // para ser descarregada. O `download` recusa-a explicitamente.
+    let r = sqlx::query(
+        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, status, failure_reason)
+         VALUES ($1, $2, $3, 0, 'failed', $4)",
+    )
+    .bind(room_id)
+    .bind(session.by_user)
+    .bind(&nome)
+    .bind(causa_legivel(erro))
+    .execute(&state.db)
+    .await;
+    if let Err(e) = r {
+        // Falhar a registar a falha é o fim da linha: não há mais onde a pôr.
+        tracing::error!(%room_id, error = %e, "não foi possível registar a gravação falhada");
+    }
 }
 
 /// Corre um processo externo com **tecto de tempo**, matando-o se o exceder.
@@ -448,7 +506,17 @@ async fn run_bounded(
     cmd: &mut tokio::process::Command,
     limit: std::time::Duration,
 ) -> anyhow::Result<std::process::ExitStatus> {
-    let mut child = cmd.spawn()?;
+    // Contexto na ORIGEM. Sem isto, um ffmpeg em falta chega ao utilizador como
+    // «No such file or directory (os error 2)» — indistinguível de um ficheiro
+    // de track em falta, e a causa real (uma instalação incompleta do servidor)
+    // fica escondida atrás de uma mensagem genérica.
+    let mut child = cmd.spawn().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            anyhow::anyhow!("ffmpeg-ausente: não foi encontrado no PATH do servidor")
+        } else {
+            anyhow::Error::from(e)
+        }
+    })?;
     match tokio::time::timeout(limit, child.wait()).await {
         Ok(res) => Ok(res?),
         Err(_) => {
@@ -709,6 +777,63 @@ pub async fn retention_sweep(state: &Arc<AppState>) -> usize {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    // ------------------------------------------------------------------
+    //  Falha de gravação: causa legível, nunca o erro cru
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn a_causa_e_traduzida_e_nao_o_erro_cru() {
+        // O stderr do ffmpeg traz caminhos do servidor e nomes de ficheiros
+        // temporários — nada disso tem que fazer no ecrã de um utilizador.
+        let e = anyhow::anyhow!(
+            "ffmpeg exited with exit status: 183 (/tmp/dlx-recordings/tmp-9f2a/01-video.ivf)"
+        );
+        let causa = causa_legivel(&e);
+        assert!(
+            !causa.contains("/tmp"),
+            "vazou um caminho do servidor: {causa}"
+        );
+        assert!(!causa.contains("183"), "vazou um código interno: {causa}");
+        assert!(
+            causa.contains("compor o vídeo"),
+            "e tem de dizer o que se passou: {causa}"
+        );
+    }
+
+    #[test]
+    fn cada_falha_conhecida_tem_a_sua_explicacao() {
+        // Um «falhou» genérico não ajuda ninguém a decidir o que fazer a
+        // seguir. Cada causa que sabemos distinguir diz o que fazer.
+        let casos = [
+            (
+                "ffmpeg-ausente: não foi encontrado no PATH do servidor",
+                "não tem o ffmpeg instalado",
+            ),
+            ("nothing recorded", "parada demasiado cedo"),
+            ("processo excedeu 3600s e foi terminado", "tempo máximo"),
+            ("No space left on device", "espaço em disco"),
+        ];
+        for (erro, esperado) in casos {
+            let c = causa_legivel(&anyhow::anyhow!(erro.to_string()));
+            assert!(
+                c.contains(esperado),
+                "para {erro:?} esperava mencionar {esperado:?}, deu {c:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn um_erro_desconhecido_nao_fica_sem_causa() {
+        // Fail-safe: um erro que não sabemos classificar tem de dar na mesma
+        // uma linha visível, não uma string vazia nem um panic.
+        let c = causa_legivel(&anyhow::anyhow!("algo que nunca vimos"));
+        assert!(!c.is_empty());
+        assert!(
+            c.contains("registo"),
+            "e tem de dizer onde está o detalhe: {c}"
+        );
+    }
 
     // ------------------------------------------------------------------
     //  Formato E2EE: o Rust tem de decifrar o que o browser cifra

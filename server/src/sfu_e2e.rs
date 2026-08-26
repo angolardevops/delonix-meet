@@ -292,20 +292,105 @@ fn new_sfu() -> (Arc<SfuState>, Arc<Metrics>) {
 }
 
 /// Espera até `cond` ou falha com `label` — evita `sleep` fixos frágeis.
-async fn eventually<F, Fut>(label: &str, timeout: Duration, mut cond: F)
+/// Orçamento base destas esperas, multiplicável pelo ambiente.
+///
+/// Estes testes montam `RTCPeerConnection`s a sério: ICE, DTLS e o primeiro
+/// RTP. Nesta máquina de desenvolvimento resolvem-se em ~0,1 s; num runner de
+/// CI partilhado com 2 vCPU chegaram a estourar 30 s e a falhar. Não é um bug
+/// do produto — é o mesmo trabalho a correr numa máquina muito mais lenta.
+///
+/// Um portão que falha ao acaso perde a credibilidade toda: à terceira vez,
+/// quem o vê vermelho assume flake e segue. Por isso o prazo passa a ser
+/// generoso E ajustável (`E2E_TIMEOUT_FACTOR`), em vez de calibrado para o
+/// portátil de quem o escreveu.
+fn prazo(base_secs: u64) -> Duration {
+    let fator: u64 = std::env::var("E2E_TIMEOUT_FACTOR")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|f| (1..=20).contains(f))
+        .unwrap_or(1);
+    Duration::from_secs(base_secs * fator)
+}
+
+async fn eventually<F, Fut>(label: &str, timeout: Duration, cond: F)
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = bool>,
 {
-    let deadline = tokio::time::Instant::now() + timeout;
+    eventually_com_diagnostico(label, timeout, cond, String::new).await
+}
+
+/// Como `eventually`, mas o `diag` é chamado **só quando o prazo estoura** e
+/// junta-se à mensagem. Sem isto, «não chegou media» não distingue ICE que
+/// nunca ligou, de subscrição que não aconteceu, de RTP a não fluir — e cada
+/// uma delas manda investigar noutro sítio. Custa nada quando passa.
+async fn eventually_com_diagnostico<F, Fut, D>(label: &str, timeout: Duration, mut cond: F, diag: D)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+    D: Fn() -> String,
+{
+    let inicio = tokio::time::Instant::now();
+    let deadline = inicio + timeout;
+    let mut tentativas = 0u32;
     loop {
+        tentativas += 1;
         if cond().await {
             return;
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!("timeout à espera de: {label}");
+            // O prazo e as tentativas entram na mensagem: sem eles, um timeout
+            // não distingue «o produto está partido» de «a máquina é lenta», e
+            // foi precisamente essa a dúvida que custou uma ida ao CI.
+            let d = diag();
+            panic!(
+                "timeout à espera de: {label} (prazo {:?}, {tentativas} tentativas em {:?}).{}\n\
+                 Se for lentidão do ambiente e não uma avaria, sobe E2E_TIMEOUT_FACTOR.",
+                timeout,
+                inicio.elapsed(),
+                if d.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n  estado: {d}")
+                }
+            );
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+impl TestClient {
+    /// Retrato SÍNCRONO do estado da ligação, para entrar numa mensagem de
+    /// timeout. Diz em que fase parou: ICE que nunca ligou aponta a rede;
+    /// ICE ligado sem tracks aponta a subscrição; tracks sem RTP aponta ao
+    /// fan-out. Sem isto, as três falhas dão a mesma mensagem.
+    fn retrato(&self) -> String {
+        let recebidas = self
+            .received
+            .try_lock()
+            .map(|v| {
+                v.iter()
+                    .map(|(s, k)| format!("{}:{k}", &s[..s.len().min(8)]))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_else(|_| "<bloqueado>".into());
+        let rtp = self
+            .rtp_seen
+            .try_lock()
+            .map(|m| {
+                m.iter()
+                    .map(|(s, n)| format!("{}={n}", &s[..s.len().min(8)]))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_else(|_| "<bloqueado>".into());
+        format!(
+            "sinalização={:?} ice={:?} ligação={:?} tracks=[{recebidas}] rtp=[{rtp}]",
+            self.pc.signaling_state(),
+            self.pc.ice_connection_state(),
+            self.pc.connection_state(),
+        )
     }
 }
 
@@ -327,9 +412,9 @@ async fn media_flows_both_ways() {
     b.publish(VP8, "b-video").await;
 
     // B tem de receber as duas tracks de A, identificadas pelo peer_id de A.
-    eventually(
+    eventually_com_diagnostico(
         "B recebe áudio+vídeo de A",
-        Duration::from_secs(30),
+        prazo(30),
         || {
             let b = b.clone();
             let a_id = a.id.to_string();
@@ -338,13 +423,14 @@ async fn media_flows_both_ways() {
                 seen.iter().filter(|(s, _)| *s == a_id).count() >= 2
             }
         },
+        || format!("A[{}] · B[{}]", a.retrato(), b.retrato()),
     )
     .await;
 
     // …e o inverso: sem isto, "media num só sentido" passaria despercebido.
-    eventually(
+    eventually_com_diagnostico(
         "A recebe áudio+vídeo de B",
-        Duration::from_secs(30),
+        prazo(30),
         || {
             let a = a.clone();
             let b_id = b.id.to_string();
@@ -353,11 +439,12 @@ async fn media_flows_both_ways() {
                 seen.iter().filter(|(s, _)| *s == b_id).count() >= 2
             }
         },
+        || format!("A[{}] · B[{}]", a.retrato(), b.retrato()),
     )
     .await;
 
     // Tracks negociadas não chegam: exige-se RTP mesmo a passar pelo fan-out.
-    eventually("RTP real de A para B", Duration::from_secs(30), || {
+    eventually("RTP real de A para B", prazo(30), || {
         let b = b.clone();
         let a_id = a.id.to_string();
         async move { b.rtp_seen.lock().await.get(&a_id).copied().unwrap_or(0) > 0 }
@@ -425,15 +512,11 @@ async fn client_offer_during_server_offer_is_deferred_not_dropped() {
     let b = TestClient::join(&sfu, room).await;
     b.publish(OPUS, "b-audio").await;
 
-    eventually(
-        "ligação inicial estabelecida",
-        Duration::from_secs(30),
-        || {
-            let b = b.clone();
-            let a_id = a.id.to_string();
-            async move { b.streams_seen().await.iter().any(|(s, _)| *s == a_id) }
-        },
-    )
+    eventually("ligação inicial estabelecida", prazo(30), || {
+        let b = b.clone();
+        let a_id = a.id.to_string();
+        async move { b.streams_seen().await.iter().any(|(s, _)| *s == a_id) }
+    })
     .await;
 
     // A partir daqui A NÃO responde às ofertas do servidor: o servidor fica em
@@ -443,14 +526,10 @@ async fn client_offer_during_server_offer_is_deferred_not_dropped() {
 
     // B publica vídeo → o servidor tem de renegociar com A para lho entregar.
     b.publish(VP8, "b-video").await;
-    eventually(
-        "servidor com oferta pendente para A",
-        Duration::from_secs(30),
-        || {
-            let a = a.clone();
-            async move { !a.held.lock().await.is_empty() }
-        },
-    )
+    eventually("servidor com oferta pendente para A", prazo(30), || {
+        let a = a.clone();
+        async move { !a.held.lock().await.is_empty() }
+    })
     .await;
 
     // …e é NESTE instante que A publica o ecrã (oferta do cliente em glare).
@@ -459,19 +538,15 @@ async fn client_offer_during_server_offer_is_deferred_not_dropped() {
     // O VEREDICTO: a oferta de A foi ADIADA, não descartada. Com o bug o
     // contador ficaria a 0 — o `set_remote_description` falhava, saía um `warn`
     // e a track perdia-se sem deixar rasto em lado nenhum.
-    eventually(
-        "oferta de A adiada pelo servidor",
-        Duration::from_secs(20),
-        || {
-            let metrics = metrics.clone();
-            async move {
-                metrics
-                    .sfu_offers_deferred_total
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                    >= 1
-            }
-        },
-    )
+    eventually("oferta de A adiada pelo servidor", prazo(20), || {
+        let metrics = metrics.clone();
+        async move {
+            metrics
+                .sfu_offers_deferred_total
+                .load(std::sync::atomic::Ordering::Relaxed)
+                >= 1
+        }
+    })
     .await;
 
     // E o servidor não desistiu da renegociação nem entrou em erro.

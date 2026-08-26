@@ -12,6 +12,7 @@ import { SfuCall } from '../src/webrtc'
 import { Signaling } from '../src/signaling'
 import type { QosReport } from '../src/webrtc'
 import type { CallState } from '../src/callRecovery'
+import { LinhaDoTempo } from '../src/callTimings'
 
 declare global {
   interface Window {
@@ -31,6 +32,10 @@ declare global {
       publicadores: () => string[]
       /** Liga/desliga a gravação no SERVIDOR (só o anfitrião pode). */
       gravar: (on: boolean) => void
+      /** Chamado quando o nó avisa que vai fechar (ver ServerMsg::Draining). */
+      aoDrenar: ((reconnectInMs: number) => void) | null
+      /** Linha do tempo desta sessão (ver callTimings.ts). */
+      tempos: LinhaDoTempo | null
     }
   }
 }
@@ -55,11 +60,17 @@ window.__dlx = {
   pedirQualidade: () => {},
   publicadores: () => [],
   gravar: () => {},
+  aoDrenar: null,
+  tempos: null,
 }
 
 async function main() {
   // Media falsa do Chromium (`--use-fake-device-for-media-stream`): sinal
   // sintético determinista, que é o que permite comparar duas execuções.
+  // A linha do tempo começa antes de haver PC — é o tempo do UTILIZADOR.
+  const tempos = new LinhaDoTempo()
+  tempos.marcar('intencao')
+  window.__dlx.tempos = tempos
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
   const rtcConfig: RTCConfiguration = await fetch('/api/ice', {
     headers: { Authorization: `Bearer ${params.get('access') ?? ''}` },
@@ -67,7 +78,9 @@ async function main() {
     .then((r) => (r.ok ? r.json() : { iceServers: [] }))
     .catch(() => ({ iceServers: [] }))
 
+  tempos.marcar('token')
   const signal = new Signaling(roomToken, code)
+  signal.on('joined', () => tempos.marcar('ws'))
   const call = new SfuCall(signal, stream, rtcConfig, {
     onStream: (peerId) => {
       if (!window.__dlx.streams.includes(peerId)) {
@@ -84,13 +97,17 @@ async function main() {
       window.__dlx.states.push(s)
       log(`estado: ${s}`)
     },
-  })
+  }, undefined, undefined, tempos)
 
   window.__dlx.qos = () => call.qos()
   window.__dlx.pedirQualidade = (quality) => {
     signal.send({ type: 'video-interest', peers: Object.keys(quality), quality })
     log(`pedida qualidade: ${JSON.stringify(quality)}`)
   }
+  signal.on('draining', ({ reconnect_in_ms }) => {
+    log(`nó a drenar — migrar em ${reconnect_in_ms} ms`)
+    window.__dlx.aoDrenar?.(reconnect_in_ms)
+  })
   window.__dlx.gravar = (on) => {
     signal.send({ type: 'server-record', active: on })
     log(`gravação no servidor: ${on ? 'ligada' : 'desligada'}`)
