@@ -227,11 +227,20 @@ jobs:
           # falha de OPERAÇÃO que produzia o pior silêncio — o anfitrião via o
           # indicador aceso a reunião inteira e ficava sem nada nem aviso.
           # Precisa do vite (carrega o arnês de media), por isso corre aqui.
-          APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
           # Tempos de entrada medidos numa entrada A SÉRIO. Um teste contra
           # duplos provaria a aritmética; o que interessa provar é que os
           # marcos disparam nos sítios certos de uma chamada verdadeira.
+          #
+          # Corre ANTES da gravação de propósito: é o único teste desta bateria
+          # que MEDE em vez de verificar, e o estabelecimento de ICE degrada-se
+          # com a carga da máquina — medido em local, `join_ms` passa de ~250 ms
+          # a nunca ligar quando há browsers e servidores a mais (R65). Depois
+          # de a gravação abrir um segundo Chromium com login e três vistas, o
+          # runner deixou de conseguir. Mede-se com a máquina quieta.
           APP=http://localhost:5174 PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/tempos.mjs
+          # Uma gravação que falha tem de ser VISTA — e as três vistas da
+          # biblioteca não podem oferecer acções sobre ela (R59).
+          APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
           # O DRAIN vai por último: manda SIGTERM ao servidor e espera que ele
           # feche. Qualquer teste depois deste ficaria sem servidor.
           APP=http://localhost:5174 node web/e2e/drain.mjs
