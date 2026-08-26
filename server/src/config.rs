@@ -86,6 +86,18 @@ pub struct Config {
     /// núcleos do nó e a composição de uma gravação degrada as chamadas VIVAS
     /// que estão a decorrer no mesmo pod.
     pub ffmpeg_threads: u32,
+    /// Emissões em directo simultâneas por nó (`MAX_DIRECTOS`, default 2).
+    ///
+    /// O tecto existe porque o pod tem `limits.cpu: 1000m` e a sala em directo
+    /// vive no MESMO pod que a serve (ADR-0001). Cada emissão copia o vídeo e
+    /// só transcodifica o áudio — barato —, mas «barato» vezes N deixa de ser.
+    /// Sem tecto, uma organização entusiasmada derruba as chamadas do nó.
+    pub max_directos: usize,
+    /// Threads do ffmpeg de cada emissão (`DIRECTO_THREADS`, default 1).
+    ///
+    /// Um por emissão, não dois: a composição de uma gravação é diferível e
+    /// pode gastar mais; um directo corre AO LADO de chamadas vivas.
+    pub directo_threads: u32,
     /// Segundos que o servidor espera, depois do SIGTERM, para as salas
     /// esvaziarem antes de fechar (`DRAIN_GRACE_SECS`, default 40).
     ///
@@ -196,6 +208,8 @@ impl Config {
             drain_reconnect_ms: bounded_env("DRAIN_RECONNECT_MS", 2_000, 100, 60_000) as u64,
             ffmpeg_timeout_secs: bounded_env("FFMPEG_TIMEOUT_SECS", 3_600, 30, 86_400) as u64,
             ffmpeg_threads: bounded_env("FFMPEG_THREADS", 2, 1, 64) as u32,
+            max_directos: bounded_env("MAX_DIRECTOS", 2, 0, 32),
+            directo_threads: bounded_env("DIRECTO_THREADS", 1, 1, 16) as u32,
         }
     }
 }

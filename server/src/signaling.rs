@@ -493,6 +493,13 @@ const INTERIM_PER_SEC: f64 = 4.0;
 pub struct Secret(String);
 
 impl Secret {
+    /// Embrulha um segredo. O campo é privado de propósito: obriga a passar
+    /// por aqui, e por aqui vê-se que o valor entra num tipo com `Debug`
+    /// redigido e `Drop` que sobrescreve (R43).
+    pub fn new(valor: String) -> Self {
+        Self(valor)
+    }
+
     pub fn expose(&self) -> &str {
         &self.0
     }

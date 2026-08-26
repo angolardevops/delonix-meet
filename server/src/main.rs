@@ -3,6 +3,7 @@ mod ai;
 mod apikeys;
 mod audit;
 mod auth;
+mod broadcast;
 mod config;
 mod dlp;
 mod error;
@@ -86,6 +87,8 @@ pub struct AppState {
     pub db: sqlx::PgPool,
     pub hub: SignalingHub,
     pub sfu: Arc<sfu::SfuState>,
+    /// Emissões em directo a decorrer neste pod (ADR-0003).
+    pub directos: Arc<broadcast::Registo>,
     pub presence: presence::PresenceHub,
     pub auth_limiter: RateLimiter,
     /// Anti-brute-force por conta (email) no login.
@@ -358,6 +361,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             )),
         )
         .route("/ws", get(signaling::ws_handler))
+        // Directo: o browser empurra a emissão já composta e codificada, e o
+        // servidor remultiplexa para RTMP (ADR-0003). Autenticada pelo token de
+        // sala na query, como o /ws — um WebSocket não leva cabeçalhos nossos.
+        .route(
+            "/api/rooms/{code}/broadcast",
+            get(broadcast::ws_directo),
+        )
         .route("/rtc", get(presence::rtc_handler))
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
         .layer(middleware::from_fn(security_headers))
@@ -484,6 +494,7 @@ async fn main() {
         db,
         hub,
         breakouts: dashmap::DashMap::new(),
+        directos: Arc::new(broadcast::Registo::default()),
         sfu: Arc::new(sfu::SfuState::new(
             sfu::IceConfig {
                 external_ip: config.sfu_external_ip.clone(),
