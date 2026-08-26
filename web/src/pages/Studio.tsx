@@ -4,10 +4,13 @@ import { createRoom, uploadRecording } from '../api'
 import { BackgroundEffect } from '../media'
 import PageHeader from '../components/PageHeader'
 import { Btn } from '../components/ui'
+import PasswordInput from '../components/PasswordInput'
 import { CamIcon, CamOffIcon, FilmIcon, RecordIcon, StopIcon } from '../icons'
 import { cortar, cortarVarios, cortesSuportados } from '../studio/editor'
 import { analisarPausas, AnaliseDeAudio, resumo, trocosSemPausas } from '../studio/analise'
 import * as arquivo from '../studio/arquivo'
+import { Directo, directoSuportado, EstadoDoDirecto } from '../studio/directo'
+import { createRoom as criarSala, joinRoom } from '../api'
 import {
   AVATAR_INICIAL,
   CantoDoAvatar,
@@ -65,6 +68,12 @@ export default function Studio() {
   const [aAnalisar, setAAnalisar] = useState(false)
   const [online, setOnline] = useState(() => navigator.onLine)
   const [porEnviar, setPorEnviar] = useState<arquivo.AulaGuardada[]>([])
+  // Directo (ADR-0003). O objecto é imperativo e vive num ref: pô-lo em estado
+  // faria a página re-renderizar a cada pedaço enviado.
+  const directoRef = useRef<Directo | null>(null)
+  const [directo, setDirecto] = useState<EstadoDoDirecto>({ fase: 'parado' })
+  const [rtmpUrl, setRtmpUrl] = useState('rtmp://a.rtmp.youtube.com/live2')
+  const [rtmpChave, setRtmpChave] = useState('')
   const [aCortar, setACortar] = useState(0)   // 0 = parado; senão fracção
   const previewRef = useRef<HTMLVideoElement>(null)
   const [titulo, setTitulo] = useState('')
@@ -300,6 +309,47 @@ export default function Studio() {
     } finally {
       setACortar(0)
     }
+  }
+
+  /**
+   * Vai para o ar.
+   *
+   * A emissão precisa de uma SALA, porque é a sala que o servidor autentica e
+   * é nela que o registo por sala vive. Cria-se uma para a sessão de directo —
+   * o mesmo padrão que guardar na biblioteca já usa.
+   */
+  async function irParaOAr() {
+    const c = compRef.current
+    if (!c) return
+    setErro('')
+    try {
+      const fluxo = await c.montarFluxo()
+      const sala = await criarSala(titulo.trim() || t('studio.semTitulo', 'Directo'), 'sfu', false, false, 'normal')
+      const { room_token } = await joinRoom(sala.code)
+      const d = new Directo()
+      d.aoMudar = setDirecto
+      directoRef.current = d
+      await d.comecar(fluxo, sala.code, room_token, { url: rtmpUrl, chave: rtmpChave, rotulo: 'directo' })
+    } catch (e) {
+      // A razão vem do servidor — «esta sala tem cifra ponta-a-ponta…» chega
+      // aqui tal como foi escrita, e é essa que se mostra.
+      // O erro vive no PAINEL, ao pé do botão que o causou — não no topo da
+      // página. Uma razão longe da acção que a provocou não se lê.
+      setDirecto({
+        fase: 'erro',
+        motivo: (e as Error).message || t('studio.erroDirecto', 'Não foi possível iniciar o directo.'),
+      })
+      directoRef.current = null
+      await c.largarFluxo()
+    }
+  }
+
+  async function sairDoAr() {
+    const d = directoRef.current
+    directoRef.current = null
+    await d?.parar()
+    await compRef.current?.largarFluxo()
+    setDirecto({ fase: 'parado' })
   }
 
   /** Aplica o corte e SUBSTITUI o resultado — o que se guarda é o cortado. */
@@ -556,6 +606,66 @@ export default function Studio() {
               </>
             )}
           </section>
+
+          {directoSuportado() && (
+            <section className="studio-grupo studio-directo">
+              <h3>
+                {t('studio.directo', 'Directo')}
+                {directo.fase === 'no-ar' && <span className="studio-no-ar">● {t('studio.noAr', 'NO AR')}</span>}
+              </h3>
+
+              {directo.fase !== 'no-ar' ? (
+                <>
+                  <label className="set-label">
+                    {t('studio.rtmpUrl', 'Servidor RTMP')}
+                    <input
+                      value={rtmpUrl}
+                      onChange={(e) => setRtmpUrl(e.target.value)}
+                      placeholder="rtmp://a.rtmp.youtube.com/live2"
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label className="set-label">
+                    {t('studio.rtmpChave', 'Chave de emissão')}
+                    {/* `type=password`: a chave é uma credencial, e uma partilha
+                        de ecrã a configurar o directo mostrava-a a toda a gente. */}
+                    <PasswordInput
+                      value={rtmpChave}
+                      onChange={setRtmpChave}
+                      placeholder={t('studio.rtmpChavePh', 'colada da plataforma')}
+                      autoComplete="off"
+                    />
+                  </label>
+                  <small className="muted">
+                    {t('studio.directoNota', 'A imagem vai como está na pré-visualização. Salas com cifra ponta-a-ponta não podem emitir.')}
+                  </small>
+                  <Btn
+                    disabled={directo.fase === 'a-ligar' || !rtmpChave.trim() || (!temEcra && !temCamara)}
+                    onClick={() => void irParaOAr()}
+                  >
+                    {directo.fase === 'a-ligar'
+                      ? t('studio.aLigar', 'A ligar…')
+                      : t('studio.irParaOAr', 'Ir para o ar')}
+                  </Btn>
+                  {directo.fase === 'erro' && (
+                    <small className="error" role="alert">
+                      {directo.motivo}
+                    </small>
+                  )}
+                </>
+              ) : (
+                <>
+                  <small className="muted mono">
+                    {mmss(Math.floor((Date.now() - directo.desde) / 1000))} ·{' '}
+                    {(directo.bytes / 1_048_576).toFixed(1)} MB
+                  </small>
+                  <Btn variant="danger" onClick={() => void sairDoAr()}>
+                    {t('studio.sairDoAr', 'Terminar directo')}
+                  </Btn>
+                </>
+              )}
+            </section>
+          )}
 
           <section className="studio-grupo">
             <h3>{t('studio.avatar', 'A tua imagem')}</h3>

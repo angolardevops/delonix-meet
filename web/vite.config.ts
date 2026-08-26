@@ -131,7 +131,13 @@ export default defineConfig(({ command }) => {
           ? undefined // o plugin basic-ssl injeta um cert self-signed
           : false,
       proxy: {
-        '/api': { target: 'http://127.0.0.1:8180', changeOrigin: true },
+        // `ws: true` no /api: a rota do DIRECTO
+        // (`/api/rooms/{code}/broadcast`) é um WebSocket debaixo do prefixo
+        // /api. Sem isto o vite responde ao upgrade com HTTP e o pedido nunca
+        // chega ao servidor — sem erro em lado nenhum, nem no browser nem no
+        // log do backend. Foi assim que o directo pareceu recusado quando na
+        // verdade nunca foi tentado.
+        '/api': { target: 'http://127.0.0.1:8180', changeOrigin: true, ws: true },
         '/ws': { target: 'ws://127.0.0.1:8180', ws: true, changeOrigin: true },
         '/rtc': { target: 'ws://127.0.0.1:8180', ws: true, changeOrigin: true },
       },

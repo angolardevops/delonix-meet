@@ -594,3 +594,11 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **A regra irmã, que evitou o problema seguinte:** o fluxo é montado num sítio só. Duplicar a montagem para o directo teria dado duas versões que divergiriam à primeira correcção feita numa delas — e o áudio é onde isso doeria, porque a fonte silenciosa que evita gravações vazias é uma armadilha fácil de esquecer no segundo sítio.
 - **Como foi apanhado:** a ler o `terminarGravacao` antes de ligar o directo ao mesmo fluxo, não em execução. Um acoplamento entre duas funcionalidades que nunca correram juntas não tem sintoma até correrem.
 - **Ficheiros:** `web/src/studio/compositor.ts`, `web/src/studio/directo.test.ts`.
+
+### R78 — O proxy do vite não encaminha WebSockets debaixo de `/api`
+- **Sintoma:** o directo aparecia recusado na interface, e o log do servidor **não tinha nada** — nem a recusa, nem o arranque. O pedido nunca chegou ao handler.
+- **Causa raiz:** o `server.proxy` do `vite.config.ts` declarava `ws: true` no `/ws` e no `/rtc`, mas não no `/api`. A rota do directo (`/api/rooms/{code}/broadcast`) é um WebSocket **debaixo do prefixo `/api`**, e sem essa flag o vite responde ao upgrade com HTTP em vez de o encaminhar.
+- **Porque é que engana:** não há erro em lado nenhum. No browser o socket fecha com o código 1006 e sem razão; no servidor não há sequer registo de tentativa. Procura-se a causa nos dois lados do túnel e ela está no meio.
+- **Regra:** **um WebSocket novo verifica-se no PROXY, não só nas duas pontas.** A pergunta a fazer é «que prefixo o serve, e esse prefixo encaminha upgrades?».
+- **Como foi apanhado:** por o log do servidor estar vazio. Um handler que devia registar recusa OU arranque e não regista nenhum dos dois não foi chamado — e isso aponta para fora do processo.
+- **Ficheiros:** `web/vite.config.ts`.

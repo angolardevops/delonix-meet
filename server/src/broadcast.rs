@@ -601,7 +601,7 @@ pub async fn ws_directo(
         return Err(ApiError::Conflict("esta sala já está em directo".into()));
     }
 
-    let emissao = Emissao::arrancar(&destinos, state.config.directo_threads, "ffmpeg")
+    let emissao = Emissao::arrancar(&destinos, state.config.directo_threads, &state.config.ffmpeg_bin)
         .map_err(|e| ApiError::Internal(format!("não foi possível arrancar a emissão: {e}")))?;
     if !state.directos.inserir(sala_id, emissao).await {
         return Err(ApiError::Conflict("esta sala já está em directo".into()));
