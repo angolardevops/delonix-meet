@@ -34,6 +34,11 @@ function useSegundo(): void {
 /** Duração da reunião. Era `elapsed` na raiz — um `setState` por segundo. */
 export function MeetingElapsed({ startedAt }: { startedAt: number }) {
   useSegundo()
+  // Sem hora de início não se mostra número NENHUM. Sem esta guarda, um
+  // `startedAt` a 0 dá a distância à época Unix — o contador mostrava
+  // `496594:12:29` e lia-se como um relógio a funcionar. Um ecrã sem contador
+  // é uma avaria visível; um contador com 56 anos passa despercebido.
+  if (!startedAt) return null
   const secs = Math.floor((Date.now() - startedAt) / 1000)
   if (secs <= 0) return null
   return (
