@@ -221,6 +221,50 @@ describe('as faixas são separadas POR DESENHO', () => {
   })
 })
 
+describe('o codec do multiplexador segue o do encoder', () => {
+  const e = () => readCodigo('web/src/studio/editor.ts')
+
+  it('o perfil é escolhido ANTES do multiplexador', () => {
+    // Se o multiplexador for construído primeiro, alguém acaba por fixar o
+    // codec nele — e um ficheiro rotulado com o codec errado abre sem duração
+    // e sem imagem, sem erro em lado nenhum.
+    const s = e()
+    expect(s.indexOf('const perfil = await escolherPerfil(')).toBeLessThan(s.indexOf('new Muxer({'))
+  })
+
+  it('o codec Matroska é DERIVADO do perfil, não escrito à mão', () => {
+    expect(e()).toContain("perfil.codec.startsWith('vp09') ? 'V_VP9' : 'V_VP8'")
+    expect(e()).not.toMatch(/video: \{ codec: 'V_VP[89]'/)
+  })
+
+  it('e o encoder recebe o MESMO perfil', () => {
+    expect(e()).toContain('encoder.configure(perfil)')
+  })
+})
+
+describe('o corte degrada em vez de arrastar', () => {
+  const e = () => readCodigo('web/src/studio/editor.ts')
+
+  it('pergunta ao browser em vez de assumir hardware', () => {
+    // `configure()` NÃO falha sem hardware: cai para software em silêncio, e um
+    // VP9 de 1080p em software leva minutos onde levava segundos. O sintoma é
+    // «a barra não anda», que ninguém liga à falta de GPU.
+    expect(e()).toContain('VideoEncoder.isConfigSupported(')
+    expect(e()).toContain("hardwareAcceleration: 'prefer-hardware'")
+  })
+
+  it('tem um último recurso que o software aguenta', () => {
+    // Sem este degrau, uma máquina sem aceleração fica sem corte nenhum.
+    //
+    // Conta DUAS ocorrências, e é de propósito: o perfil aparece na lista de
+    // candidatos E como `return` final. Uma asserção de presença casava com o
+    // `return` e dava verde com o candidato apagado — foi o que a primeira
+    // versão deste teste fazia (medido: 2 ocorrências com, 1 sem).
+    const n = e().match(/codec: 'vp8', bitrate: 2_000_000/g)?.length ?? 0
+    expect(n).toBe(2)
+  })
+})
+
 describe('as três línguas têm as chaves do estúdio', () => {
   for (const loc of ['pt', 'en', 'fr']) {
     it(loc, () => {

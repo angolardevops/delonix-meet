@@ -9,6 +9,12 @@
 // do arnês em `web/e2e/harness.html`: o mesmo `SfuCall` e o mesmo `Signaling`
 // que a aplicação usa.
 //
+// NÃO CORRE NO CI, e é deliberado: precisa de `CAP_NET_ADMIN` no contentor do
+// servidor para aplicar `tc netem`, que o runner partilhado não concede. Corre-se
+// à mão antes de mexer no caminho de media. Esta nota existe para a ausência ser
+// DECLARADA — um teste fora do CI sem razão escrita é indistinguível de um
+// esquecido, e foi assim que cinco destes estiveram meses sem proteger nada (R72).
+//
 // Porque não `--use-fake-network` nem estrangulamento do DevTools: nenhum dos
 // dois afecta UDP, e é UDP que transporta a media. Estrangular só o HTTP daria
 // um número bonito e sem relação com a chamada.

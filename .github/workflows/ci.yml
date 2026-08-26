@@ -243,10 +243,32 @@ jobs:
           APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
           # O DRAIN vai por último: manda SIGTERM ao servidor e espera que ele
           # feche. Qualquer teste depois deste ficaria sem servidor.
+          # O ESTÚDIO grava ecrã, recorta região e corta. Nada disso se prova em
+          # unidades: o teste captura o ecrã a sério, mede a variação de pixéis
+          # para saber que o canvas não está preto, e verifica a DURAÇÃO do
+          # ficheiro cortado — não a existência dele.
+          BASE=http://localhost:5174 node web/e2e/estudio.mjs
+          # A GAVETA a 375px e o anel de foco vivem em `transform` e `outline`,
+          # que só um motor de browser resolve.
+          BASE=http://localhost:5174 node web/e2e/layout-consola.mjs
           APP=http://localhost:5174 node web/e2e/drain.mjs
 
       # Sem isto, uma falha de interface no CI é um timeout sem contexto. Com a
       # imagem do momento da falha, diagnostica-se sem ter de reproduzir.
+      - name: PWA offline (build servido, rede cortada a sério)
+        run: |
+          # O SW NÃO se regista no servidor de desenvolvimento — de propósito,
+          # senão a app serve módulos do Vite em cache e fica teimosa. Por isso
+          # este é o único e2e que corre contra o `dist` construído.
+          (cd web && npm run build > /tmp/build-pwa.log 2>&1)
+          (cd web && NO_HTTPS=1 npx vite preview --port 5175 > /tmp/preview.log 2>&1 &)
+          for i in $(seq 1 40); do
+            curl -sf http://localhost:5175/ >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:5175/sw.js >/dev/null || { echo "o sw.js não é servido"; cat /tmp/preview.log; exit 1; }
+          BASE=http://localhost:5175 node web/e2e/offline.mjs
+
       - name: Screenshots e log do vite (se falhar)
         if: failure()
         uses: actions/upload-artifact@v4

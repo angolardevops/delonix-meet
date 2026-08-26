@@ -77,14 +77,14 @@ self.addEventListener('fetch', (e) => {
           }
           return res
         })
-        .catch(() => caches.match('/index.html').then((m) => m ?? Response.error())),
+        .catch(() => caches.match('/index.html', { ignoreVary: true }).then((m) => m ?? Response.error())),
     )
     return
   }
 
   if (imutavel(url)) {
     e.respondWith(
-      caches.match(e.request).then(
+      caches.match(e.request, { ignoreVary: true }).then(
         (m) =>
           m ??
           fetch(e.request).then((res) => {
@@ -101,7 +101,7 @@ self.addEventListener('fetch', (e) => {
 
   if (pesado(url)) {
     e.respondWith(
-      caches.match(e.request).then(
+      caches.match(e.request, { ignoreVary: true }).then(
         (m) =>
           m ??
           fetch(e.request).then((res) => {
@@ -127,6 +127,6 @@ self.addEventListener('fetch', (e) => {
         }
         return res
       })
-      .catch(() => caches.match(e.request).then((m) => m ?? Response.error())),
+      .catch(() => caches.match(e.request, { ignoreVary: true }).then((m) => m ?? Response.error())),
   )
 })

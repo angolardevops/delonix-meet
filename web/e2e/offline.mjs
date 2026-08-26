@@ -3,7 +3,7 @@
 // verdade (`context.setOffline`), não simulada por um esboço de `fetch`.
 //
 // Uso:  BASE=http://127.0.0.1:4200 node e2e/offline.mjs
-import { chromium } from 'playwright'
+import { chromium } from '@playwright/test'
 
 const BASE = process.env.BASE ?? 'http://127.0.0.1:4200'
 let falhas = 0

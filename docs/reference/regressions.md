@@ -543,3 +543,29 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** **para saber se um portão fica vermelho, usa-se o CÓDIGO DE SAÍDA, não uma contagem de padrões na saída.** Um crash é vermelho. Contar sintomas de falha na saída dá falsos verdes precisamente nos casos mais graves, em que nem se chega a correr.
 - **Erro irmão, na mesma sessão:** a asserção de ordem («o arquivo é escrito antes do upload») procurava `uploadRecording(` no ficheiro INTEIRO. Havia outra chamada numa função acima, encontrada primeiro, e a ordem invertida passava. Uma asserção de ordem tem de ser feita dentro do âmbito onde a ordem importa.
 - **Ficheiros:** `web/src/studio/offline.invariantes.test.ts`.
+
+### R72 — Um teste que existe e nunca corre não é portão nenhum
+- **Sintoma:** cinco ficheiros em `web/e2e/` — escritos, comprometidos, com dezenas de asserções contra Chromium real — **não apareciam em lado nenhum do workflow**. Uma regressão em qualquer deles passava os seis jobs verdes.
+- **Medido** (2026-08-26, contra `origin/feat/console-ui-template`): existiam 12 `.mjs`, o CI corria 7. Fora ficavam `estudio.mjs`, `layout-consola.mjs`, `offline.mjs`, `netem-matrix.mjs` e `pg.mjs`.
+- **Causa raiz:** cada um nasceu com a sua funcionalidade, num ramo, e o passo do CI ficou por acrescentar. Nada avisa — o ficheiro existe, o `git status` está limpo, e um CI verde não distingue «passou» de «não correu».
+- **Regra:** **um teste ponta-a-ponta só conta depois de se ver o nome dele na saída de uma corrida do CI.** Até lá é documentação executável: útil, mas não protege nada.
+- **Como se apanha, em dois comandos:** `ls web/e2e/*.mjs` contra `grep -o 'node web/e2e/[a-z-]*\.mjs' .github/workflows/ci.yml`. A diferença é a lista dos que não guardam nada.
+- **Nem todos devem correr, mas a ausência tem de ser DECLARADA:** o `pg.mjs` é um ajudante, não um teste; o `netem-matrix.mjs` precisa de `CAP_NET_ADMIN` que o runner não concede — e passou a dizê-lo no cabeçalho. Um teste fora do CI sem razão escrita é indistinguível de um esquecido.
+- **Dois defeitos reais que estes testes escondiam, e que só apareceram ao ligá-los:** o `layout-consola.mjs` injectava uma sessão FALSA no `localStorage`, o que funciona contra um mock e falha contra o servidor a sério (401 → renovação → logout → o teste morre no ecrã de login). Passou a registar uma conta e a entrar pela interface, como os outros já faziam. E o R73 abaixo.
+- **Ficheiros:** `.github/workflows/ci.yml`, `web/e2e/sessao.mjs`, `web/e2e/netem-matrix.mjs`.
+
+### R73 — O `Vary` da resposta faz o `caches.match` não casar, e o precache fica inútil
+- **Sintoma:** com a rede cortada a app abria e ficava com a raiz do React **vazia**. O service worker estava registado, a cache tinha as 10 entradas certas, e o bundle de arranque estava lá dentro — e mesmo assim o pedido dava `net::ERR_FAILED`.
+- **Causa raiz:** a Cache API **honra o cabeçalho `Vary`** da resposta guardada. Se ela trouxer `Vary: Origin` (o `vite preview`) ou `Vary: Accept-Encoding` (qualquer nginx com gzip), o `caches.match(request)` compara os cabeçalhos do pedido com os da resposta e **não casa** — devolve `undefined` sobre uma cache que tem o ficheiro.
+- **A ironia que a torna importante:** o `Vary: Accept-Encoding` do nginx foi acrescentado por nós, com o gzip (R-gzip). Ou seja, a optimização de carregamento partia o modo offline, e as duas coisas nunca tinham sido testadas juntas.
+- **Regra:** **no service worker, `caches.match(pedido, { ignoreVary: true })`.** Estes recursos são identificados pelo URL e mais nada; não há variantes a distinguir, e honrar o `Vary` só cria um modo de falha silencioso. Vale para as QUATRO chamadas, não só para a do precache.
+- **Como foi apanhado:** por correr o teste offline contra um servidor DIFERENTE do que se usou a escrevê-lo. Contra o servidor de simulação (sem `Vary`) passava; contra o `vite preview` falhou. Um teste que só corre contra um servidor prova o servidor tanto como o código.
+- **Ficheiros:** `web/public/sw.js`.
+
+### R74 — `configure()` do WebCodecs não falha sem hardware: cai para software em silêncio
+- **Sintoma:** o corte de dois segundos de uma aula não acabava em **90 segundos** no runner do CI. Localmente, na mesma versão do código, acabava em poucos. Nenhum erro, nenhum aviso — só uma barra de progresso que não anda.
+- **Causa raiz:** o corte usa WebCodecs precisamente porque o `VideoEncoder` usa o encoder de HARDWARE do dispositivo. Mas o `configure()` **não falha** quando não há hardware: cai para software sem dizer nada, e um VP9 de 1080p a 6 Mbps em software leva minutos onde levava segundos. O runner do CI não tem GPU — e nem é um caso de laboratório: é o que acontece a quem edita num portátil sem aceleração ou numa máquina virtual.
+- **Regra:** **pergunta-se ao browser antes de assumir.** `VideoEncoder.isConfigSupported()` com `hardwareAcceleration: 'prefer-hardware'`, e uma escada de perfis que desce até um que o software aguenta. Pior qualidade é melhor do que uma espera que parece uma avaria. Medido em Chromium sem GPU: `vp9 prefer-hardware` → `false`, `vp8 prefer-hardware` → `false`, `vp8 sem preferência` → `true`.
+- **O defeito que a correcção introduziu, e que o mesmo teste apanhou:** ao pôr o encoder a descer para VP8, o multiplexador continuou fixo em `V_VP9`. Um ficheiro rotulado com o codec errado abre **sem duração e sem imagem**, e outra vez sem erro nenhum. O codec do multiplexador tem de ser DERIVADO do perfil escolhido, e há um portão que verifica a ordem (perfil antes do multiplexador) e a derivação.
+- **Como foi apanhado:** por o teste passar a correr no CI (R72). Localmente passava; a diferença de hardware entre a máquina de quem escreve e o runner é exactamente o que um portão existe para expor.
+- **Ficheiros:** `web/src/studio/editor.ts`, `web/src/studio.invariantes.test.ts`.
