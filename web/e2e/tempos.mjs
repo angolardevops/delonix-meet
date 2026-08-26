@@ -23,6 +23,20 @@ const jr=(await j(`${API}/api/rooms/${sala.code}/join`,{token:tok,method:'POST'}
 
 const b=await chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']})
 const url=`${APP}/e2e/harness.html?token=${encodeURIComponent(jr.room_token)}&code=${sala.code}&access=${encodeURIComponent(tok)}`
+// Aquecimento: o Vite em modo dev TRANSFORMA os módulos ao primeiro pedido, e
+// a aplicação cresceu muito com a base de UI/UX. Duas páginas a carregar de
+// raiz saturam um runner de 2 vCPU durante dezenas de segundos e esfomeiam o
+// agente de ICE do browser — mediu-se `ice_gathering_ms=39969` contra 377 ms
+// antes. Uma passagem prévia enche o cache de transformação do Vite; o que se
+// mede a seguir é o produto, não o empacotador (R65).
+{
+  const c=await b.newContext({ ignoreHTTPSErrors: true })
+  const p=await c.newPage()
+  await p.goto(url,{waitUntil:'domcontentloaded',timeout:120000})
+  for(let k=0;k<30;k++){ await sleep(1000); if(await p.evaluate(()=>window.__dlx?.ready===true).catch(()=>false)) break }
+  await c.close()
+}
+
 const ps=[]
 for(let i=0;i<2;i++){const c=await b.newContext();const p=await c.newPage();await p.goto(url,{waitUntil:'domcontentloaded',timeout:120000});ps.push(p)}
 for(let k=0;k<30;k++){ await sleep(1500); const v=await Promise.all(ps.map(p=>p.evaluate(()=>window.__dlx.tempos?.resumo?.()??null))); if(v.every(x=>x&&x.join_ms!==null)) break }
