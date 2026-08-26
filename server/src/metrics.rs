@@ -120,6 +120,19 @@ pub struct Metrics {
     /// significa uma trilha incompleta — que é uma falha de conformidade em
     /// curso, e por isso é contador e não aviso perdido no log.
     pub audit_write_failures_total: AtomicU64,
+
+    // ---- Tempo até entrar numa reunião ----
+    //
+    // Soma e contagem em vez de média: é a forma idiomática em Prometheus e
+    // permite `rate()` por janela. Uma média desde o arranque deixa de reagir
+    // ao fim de um dia — e o que interessa é «está pior HOJE?».
+    /// Sessões que reportaram tempo de entrada.
+    pub join_total: AtomicU64,
+    /// Soma dos tempos de entrada, ms (média = sum/total).
+    pub join_ms_sum: AtomicU64,
+    /// Entradas acima de 5 s. É a CAUDA, e é ela que se sente — uma média de
+    /// 1,2 s esconde perfeitamente 5% de pessoas à espera doze segundos.
+    pub join_slow_total: AtomicU64,
 }
 
 impl Metrics {
@@ -210,6 +223,15 @@ impl Metrics {
              # HELP delonix_audit_write_failures_total Escritas de auditoria falhadas (trilha incompleta).\n\
              # TYPE delonix_audit_write_failures_total counter\n\
              delonix_audit_write_failures_total {}\n\
+             # HELP delonix_join_total Sessões que reportaram tempo de entrada.\n\
+             # TYPE delonix_join_total counter\n\
+             delonix_join_total {}\n\
+             # HELP delonix_join_ms_sum Soma dos tempos de entrada em ms (média = sum/total).\n\
+             # TYPE delonix_join_ms_sum counter\n\
+             delonix_join_ms_sum {}\n\
+             # HELP delonix_join_slow_total Entradas acima de 5 s (a cauda que se sente).\n\
+             # TYPE delonix_join_slow_total counter\n\
+             delonix_join_slow_total {}\n\
              # HELP delonix_uptime_seconds Uptime do processo em segundos.\n\
              # TYPE delonix_uptime_seconds gauge\n\
              delonix_uptime_seconds {}\n",
@@ -238,6 +260,9 @@ impl Metrics {
             self.qos_cpu_limited_total.load(Relaxed),
             self.recording_packets_dropped_total.load(Relaxed),
             self.audit_write_failures_total.load(Relaxed),
+            self.join_total.load(Relaxed),
+            self.join_ms_sum.load(Relaxed),
+            self.join_slow_total.load(Relaxed),
             uptime_secs,
         )
     }

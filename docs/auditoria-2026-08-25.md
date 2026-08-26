@@ -29,7 +29,7 @@ Três avisos de leitura:
 |---|---|---|
 | Backend Rust | 17 606 linhas, 33 módulos | `wc -l server/src/*.rs` |
 | Frontend TS/React | 16 978 linhas, 46 ficheiros | `wc -l web/src/**` |
-| Migrações | 0001–0037, contíguas | `ls server/migrations` |
+| Migrações | 0001–0038, contíguas | `ls server/migrations` |
 | `cargo test --release` | **46 passados, 0 falhados, 4 ignorados** | medido antes de mexer |
 | `tsc --noEmit` | limpo | medido |
 | `vitest` | 14 passados (3 ficheiros) | medido |
@@ -83,7 +83,7 @@ Legenda do estado: **✅ real** (implementado, integrado, autorizado, testado) �
 | Perfis de qualidade nomeados | 🔴 | não há audio-only / data-saver / 180p…1080p / screen-texto vs movimento | Médio |
 | Pipeline de áudio com IA no browser | 🟡 | `@sapphi-red/web-noise-suppressor` está nas dependências; **não há** de-reverberação, voice isolation, VAD, normalização, limiter, nem perfis reunião/aula/podcast/música | Médio |
 | Delonix Call Quality Score (0–100) | 🔴 → ✅ **feito nesta sessão** | modelo de penalizações transparente em `callQuality.ts`, com os limiares ancorados na G.114. **Não é MOS e não está calibrado contra ouvido humano** — é escala interna, comparável consigo mesma | Médio |
-| Métricas de chamada | 🟡 → ✅ **feito nesta sessão** | de **3** para **~20** por amostra: jitter, downlink, NACK/PLI/FIR, frames descartados, congelamento, ocultação de áudio (PLC), par de candidatos, TURN em uso, limitação do encoder. Persistidas (migração 0034) e agregadas em `/metrics`. **Ainda em falta:** time-to-first-audio/video, join time, ICE gathering time e contagem de reconexões — precisam de instrumentação de TEMPO no cliente, não vêm do `getStats()` | Médio (era Alto) |
+| Métricas de chamada | 🟡 → ✅ **feito nesta sessão** | de **3** para **~20** por amostra: jitter, downlink, NACK/PLI/FIR, frames descartados, congelamento, ocultação de áudio (PLC), par de candidatos, TURN em uso, limitação do encoder. Persistidas (migração 0034) e agregadas em `/metrics`. **Feito** (2026-08-25): time-to-first-audio/video, join time, ICE gathering e contagem de reinícios/recuperações, por marcos no cliente (`callTimings.ts`) — não vêm do `getStats()` | Médio (era Alto) |
 | Observabilidade do SFU (Prometheus) | ✅ | boa: 13 contadores + 4 novos de filas | — |
 | Testes em rede degradada (emulação) | 🔴 → 🟡 | `e2e/netem-matrix.mjs` com `tc netem` a moldar o caminho REAL (UDP incluído — o estrangulamento do DevTools não serve, só afecta HTTP). Provado EXACTO onde mediu: `loss 10%` → 10,2 % medidos; `loss 20%` → 21 %. Falta-lhe um transporte estável para a matriz completa | Médio (era Alto) |
 
@@ -226,10 +226,11 @@ Pela ordem do mandato, e pelo risco medido:
 2. **Validar o ICE restart contra rede real** (a máquina de estados e o restart
    já existem; o que falta é a prova), e implementar *reconnect token* +
    *silent rejoin* — hoje um refresh do browser ainda perde a sessão de media.
-3. ~~**Métricas de chamada completas.**~~ **Endereçado** — ~20 métricas por
-   amostra + o Delonix Call Quality Score. Falta a instrumentação de TEMPO
-   (time-to-first-audio/video, join time, ICE gathering), que não vem do
-   `getStats()`.
+3. ~~**Métricas de chamada completas.**~~ **Endereçado por inteiro** — ~20
+   métricas por amostra, o Delonix Call Quality Score, e os TEMPOS de
+   estabelecimento. Primeira medição real: join 364 ms, dos quais **345 são
+   token + WebSocket** — a negociação de media leva ~19 ms. O estrangulamento
+   está na API e na sinalização, não no WebRTC.
 4. **Testes em rede degradada** com emulação, e só depois publicar metas. É
    agora o passo que desbloqueia tudo o resto: já há o que medir, falta medir.
 5. ~~**Adaptação de simulcast.**~~ **Endereçado e medido.** Falta o sinal de

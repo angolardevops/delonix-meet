@@ -552,6 +552,85 @@ fn clamp_candidate_pair(v: Option<String>) -> Option<String> {
     })
 }
 
+/// Tempos de estabelecimento de UMA sessão, reportados quando a media aparece.
+///
+/// Todos os campos são `Option` e vêm do cliente: um marco que não aconteceu é
+/// `null`, e `null` significa «não sei», que é diferente de zero. Zero seria
+/// uma medição («foi instantâneo») e enviesava as médias para baixo.
+#[derive(Deserialize)]
+pub struct TimingsReq {
+    #[serde(default)]
+    pub join_ms: Option<i32>,
+    #[serde(default)]
+    pub ws_ms: Option<i32>,
+    #[serde(default)]
+    pub ice_gathering_ms: Option<i32>,
+    #[serde(default)]
+    pub first_audio_ms: Option<i32>,
+    #[serde(default)]
+    pub first_video_ms: Option<i32>,
+    #[serde(default)]
+    pub ice_restarts: Option<i32>,
+    #[serde(default)]
+    pub reconnects: Option<i32>,
+}
+
+/// `POST /api/rooms/{code}/timings` — uma vez por sessão.
+pub async fn post_timings(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(code): Path<String>,
+    Json(t): Json<TimingsReq>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let room: Room = sqlx::query_as(
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
+         FROM rooms WHERE code = $1",
+    )
+    .bind(&code)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    if !can_access_room(&state, auth.user_id, &room).await? {
+        return Err(ApiError::Unauthorized);
+    }
+
+    // Tecto de 10 minutos: acima disto não é um tempo de entrada, é um cliente
+    // a inventar — e um valor absurdo destrói a média que isto existe para dar.
+    const MAX_MS: i32 = 600_000;
+    let join = clamp_opt(t.join_ms, MAX_MS);
+    sqlx::query(
+        "INSERT INTO call_timings
+           (room_id, user_id, join_ms, ws_ms, ice_gathering_ms,
+            first_audio_ms, first_video_ms, ice_restarts, reconnects)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+    )
+    .bind(room.id)
+    .bind(auth.user_id)
+    .bind(join)
+    .bind(clamp_opt(t.ws_ms, MAX_MS))
+    .bind(clamp_opt(t.ice_gathering_ms, MAX_MS))
+    .bind(clamp_opt(t.first_audio_ms, MAX_MS))
+    .bind(clamp_opt(t.first_video_ms, MAX_MS))
+    .bind(clamp_opt(t.ice_restarts, 1_000).unwrap_or(0))
+    .bind(clamp_opt(t.reconnects, 1_000).unwrap_or(0))
+    .execute(&state.db)
+    .await?;
+
+    // Soma e contagem em vez de média: é a forma idiomática em Prometheus e
+    // permite `rate()` por janela, em vez de uma média desde o arranque que
+    // deixa de reagir ao fim de um dia.
+    let m = &state.metrics;
+    if let Some(j) = join {
+        crate::metrics::Metrics::bump(&m.join_total);
+        m.join_ms_sum
+            .fetch_add(j as u64, std::sync::atomic::Ordering::Relaxed);
+        if j > 5_000 {
+            crate::metrics::Metrics::bump(&m.join_slow_total);
+        }
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 /// Recebe uma amostra de qualidade (QoS) do cliente durante a chamada (~1/30s).
 /// Alimenta o cartão "Qualidade das chamadas" do admin (org_stats). Valores
 /// clampados; autorização igual à do resto da sala (can_access_room).

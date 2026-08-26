@@ -180,6 +180,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/rooms/{code}/join", post(rooms::join_room))
         .route("/api/rooms/{code}/chat", get(rooms::room_chat))
         .route("/api/rooms/{code}/qos", post(rooms::post_qos))
+        // Tempos de estabelecimento (um por sessão) — ver callTimings.ts.
+        .route("/api/rooms/{code}/timings", post(rooms::post_timings))
         // Tradução de legendas em tempo real via LLM local (ai.rs / Ollama).
         .route("/api/translate", post(ai::translate_caption))
         .route("/api/rooms/{code}/invite", post(rooms::invite_to_room))
