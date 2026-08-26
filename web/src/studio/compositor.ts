@@ -99,6 +99,16 @@ export class CompositorDeAula {
 
   private audioCtx: AudioContext | null = null
   private destino: MediaStreamAudioDestinationNode | null = null
+  /** O fluxo composto, partilhado entre a gravação e o directo. */
+  private fluxoComposto: MediaStream | null = null
+  /**
+   * Quantos consumidores estão agarrados ao fluxo (gravação, directo).
+   *
+   * Existe porque parar a gravação FECHAVA o `AudioContext` — e um directo a
+   * decorrer sobre o mesmo fluxo emudecia nesse instante, sem erro nenhum. Um
+   * recurso partilhado só se desmonta quando o último o larga.
+   */
+  private consumidores = 0
   private fontesAudio: MediaStreamAudioSourceNode[] = []
 
   /**
@@ -328,8 +338,17 @@ export class CompositorDeAula {
    * Começa a gravar. `micDeviceId` opcional; o áudio do ecrã entra sozinho se
    * o utilizador o tiver autorizado no seletor.
    */
-  async iniciarGravacao(micDeviceId?: string): Promise<void> {
-    if (this.gravador) return
+  /**
+   * Monta o fluxo composto: a imagem do canvas mais o áudio misturado.
+   *
+   * Existe separado porque a GRAVAÇÃO e o DIRECTO precisam exactamente do
+   * mesmo fluxo. Duplicá-lo daria duas montagens que divergiriam à primeira
+   * correcção feita só numa — e o áudio é o sítio onde isso doeria: a fonte
+   * silenciosa abaixo é uma armadilha que já custou uma gravação vazia.
+   */
+  async montarFluxo(micDeviceId?: string): Promise<MediaStream> {
+    this.consumidores++
+    if (this.fluxoComposto) return this.fluxoComposto
     const fps = this.opcoes.fps ?? 30
     const stream = this.canvas.captureStream(fps)
 
@@ -356,6 +375,14 @@ export class CompositorDeAula {
       this.ligarAudio(new MediaStream(this.ecraStream.getAudioTracks()))
     }
     for (const t of this.destino.stream.getAudioTracks()) stream.addTrack(t)
+    this.fluxoComposto = stream
+    this.iniciarPreVisualizacao()
+    return stream
+  }
+
+  async iniciarGravacao(micDeviceId?: string): Promise<void> {
+    if (this.gravador) return
+    const stream = await this.montarFluxo(micDeviceId)
 
     const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
       ? 'video/webm;codecs=vp9,opus'
@@ -429,11 +456,7 @@ export class CompositorDeAula {
     this.gravadorVideo = null
     this.gravadorAudio = null
     this.inicioMs = 0
-    for (const n of this.fontesAudio) n.disconnect()
-    this.fontesAudio = []
-    await this.audioCtx?.close().catch(() => {})
-    this.audioCtx = null
-    this.destino = null
+    await this.largarFluxo()
     if (!this.pedacos.length) return null
     const tipo = g.mimeType || 'video/webm'
     return {
@@ -441,6 +464,21 @@ export class CompositorDeAula {
       video: this.pedacosVideo.length ? new Blob(this.pedacosVideo, { type: tipo }) : null,
       audio: this.pedacosAudio.length ? new Blob(this.pedacosAudio, { type: 'audio/webm' }) : null,
     }
+  }
+
+  /**
+   * Um consumidor larga o fluxo. O áudio só se desmonta quando sai o ÚLTIMO —
+   * senão parar a gravação emudecia um directo a decorrer.
+   */
+  async largarFluxo(): Promise<void> {
+    this.consumidores = Math.max(0, this.consumidores - 1)
+    if (this.consumidores > 0) return
+    for (const n of this.fontesAudio) n.disconnect()
+    this.fontesAudio = []
+    await this.audioCtx?.close().catch(() => {})
+    this.audioCtx = null
+    this.destino = null
+    this.fluxoComposto = null
   }
 
   // ---------------------------------------------------------------- limpeza

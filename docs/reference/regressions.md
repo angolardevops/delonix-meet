@@ -586,3 +586,11 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** **declara-se o que a coisa É, não o que a extensão sugere.** Uma build mais estrita, ou uma versão futura que separe os dois desmultiplexadores, recusaria — e o sintoma seria um directo que deixa de arrancar depois de uma actualização de imagem, sem nada no nosso código ter mudado.
 - **Como foi apanhado:** por gerar um ficheiro REAL com o `MediaRecorder` num Chromium e correr o comando REAL do servidor sobre ele, num contentor de ffmpeg. Medido: entra `h264`+`opus`, sai `h264`+`aac` — o vídeo copiado e o áudio transcodificado, que é a decisão inteira do ADR-0003 provada de ponta a ponta.
 - **Ficheiros:** `server/src/broadcast.rs`.
+
+### R77 — Parar a gravação emudecia um directo a decorrer
+- **Sintoma:** o directo continuava no ar, mas sem som, a partir do instante em que se parasse a gravação local. Nenhum erro, nem no browser nem no servidor.
+- **Causa raiz:** a gravação e o directo consomem o MESMO fluxo composto (canvas + áudio misturado). O `terminarGravacao` fechava o `AudioContext` — porque, quando só existia a gravação, fechá-lo era exactamente o que devia fazer.
+- **Regra:** **um recurso partilhado só se desmonta quando o ÚLTIMO consumidor o larga.** O `montarFluxo` conta quem entra e o `largarFluxo` conta quem sai; a desmontagem vive num sítio só.
+- **A regra irmã, que evitou o problema seguinte:** o fluxo é montado num sítio só. Duplicar a montagem para o directo teria dado duas versões que divergiriam à primeira correcção feita numa delas — e o áudio é onde isso doeria, porque a fonte silenciosa que evita gravações vazias é uma armadilha fácil de esquecer no segundo sítio.
+- **Como foi apanhado:** a ler o `terminarGravacao` antes de ligar o directo ao mesmo fluxo, não em execução. Um acoplamento entre duas funcionalidades que nunca correram juntas não tem sintoma até correrem.
+- **Ficheiros:** `web/src/studio/compositor.ts`, `web/src/studio/directo.test.ts`.
