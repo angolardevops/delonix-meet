@@ -602,3 +602,18 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** **um WebSocket novo verifica-se no PROXY, não só nas duas pontas.** A pergunta a fazer é «que prefixo o serve, e esse prefixo encaminha upgrades?».
 - **Como foi apanhado:** por o log do servidor estar vazio. Um handler que devia registar recusa OU arranque e não regista nenhum dos dois não foi chamado — e isso aponta para fora do processo.
 - **Ficheiros:** `web/vite.config.ts`.
+
+### R79 — Uma recusa devolvida ANTES do upgrade de WebSocket não chega ao browser
+- **Sintoma:** a recusa de E2EE — a mais importante do ADR-0003, e a que explica ao utilizador porque é que a sala dele não pode emitir — chegava à interface como «não foi possível ligar ao servidor de emissão». A frase inteira, escrita com cuidado no servidor, era deitada fora pelo caminho.
+- **Causa raiz:** o handler devolvia `ApiError::BadRequest(razão)` antes de aceitar o upgrade. A API de WebSocket do browser **não expõe o estado nem o corpo** de um handshake que falhou: o `onclose` traz `reason` vazio e o código 1006, e o `onerror` não traz nada. Um `Response` HTTP bem construído é invisível a quem o pede por WebSocket.
+- **Regra:** **num WebSocket, a recusa entrega-se DEPOIS do upgrade.** Aceita-se, manda-se a razão numa trama de TEXTO, e fecha-se. O `reason` do frame de `Close` não serve para isto: está limitado a 123 bytes e é truncado sem aviso — e estas mensagens são frases inteiras de propósito, porque explicam o porquê E o que fazer.
+- **Detalhe que custou uma compilação:** o `WebSocket` do axum não tem `close()`; fecha-se enviando `Message::Close(None)`. Largar o socket sem a enviar deixa o browser outra vez com um 1006 sem razão.
+- **Como foi apanhado:** por correr o teste ponta a ponta contra um servidor SEM ffmpeg — o mesmo ambiente do CI. Com ffmpeg presente, o caminho de recusa nunca corria.
+- **Ficheiros:** `server/src/broadcast.rs`, `web/src/studio/directo.ts`.
+
+### R80 — Uma substituição de texto que não casa falha em SILÊNCIO
+- **Sintoma:** um `map_err` que devia distinguir «ffmpeg em falta» de qualquer outra falha continuava a devolver o erro genérico, depois de o script que o alterava ter dito que correu bem.
+- **Causa raiz:** o script fazia três substituições e só assertava a existência de UMA delas. O `cargo fmt` tinha reformatado o bloco entretanto — quebrando os argumentos em linhas — e o texto procurado deixou de existir. O `str.replace` não encontra, não substitui, e **não se queixa**.
+- **Regra:** **cada substituição tem o seu `assert`.** Um script que altera N sítios e verifica um só reporta sucesso com N-1 por fazer. E depois de formatar, qualquer alvo escrito antes da formatação é suspeito.
+- **Como foi apanhado:** por o log do servidor mostrar a mensagem antiga depois de o teste do módulo passar. Os testes de unidade cobriam o `Display` da recusa nova — que existia — mas não o handler, que nunca a usou.
+- **Ficheiros:** `server/src/broadcast.rs`.

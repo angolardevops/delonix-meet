@@ -57,7 +57,23 @@ await painel.locator('input').first().fill('rtmp://127.0.0.1:1/live')
 await botao.click()
 const foiAoAr = await page.waitForSelector('.studio-no-ar', { timeout: 25000 }).then(() => true).catch(() => false)
 const motivo = foiAoAr ? '' : ((await painel.locator('.error').textContent().catch(() => '')) ?? '')
-ok('o servidor aceita a emissão e a interface mostra NO AR', foiAoAr, motivo || '')
+
+// DOIS AMBIENTES, e a asserção tem de ser honesta nos dois.
+//
+// O runner do CI NÃO tem ffmpeg — o repo já conta com isso noutro teste
+// (`gravacao-falhada.mjs` verifica precisamente o caminho de falha). Exigir
+// «NO AR» aqui daria vermelho por uma razão que não é do código.
+//
+// O que se exige em ambos: ou a emissão arranca, ou é recusada com uma razão
+// NOMEADA. O que nunca é aceitável é falhar sem dizer porquê — foi essa a
+// diferença entre o erro opaco que este teste apanhou e a mensagem de agora.
+if (foiAoAr) {
+  ok('o servidor aceita a emissão e a interface mostra NO AR', true)
+} else {
+  const nomeada = /ffmpeg/i.test(motivo) || /ponta-a-ponta|H\.264|destino|emissões/i.test(motivo)
+  ok('sem ffmpeg, o servidor recusa com uma razão NOMEADA', nomeada, motivo || '(sem razão nenhuma)')
+  ok('e a razão diz o que fazer', /administra|Desliga|chave|máximo/i.test(motivo), motivo || '')
+}
 
 if (foiAoAr) {
   await page.waitForTimeout(2500)

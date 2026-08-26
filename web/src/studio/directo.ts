@@ -110,15 +110,33 @@ export class Directo {
     socket.binaryType = 'arraybuffer'
     this.socket = socket
 
+    // O servidor ACEITA sempre o upgrade e recusa depois, com uma trama de
+    // texto `{"erro": "..."}`. É a única forma de uma frase inteira chegar
+    // aqui: um erro HTTP antes do upgrade não expõe estado nem corpo à API de
+    // WebSocket, e o `reason` do close está limitado a 123 bytes.
+    //
+    // Medido antes desta mudança: a recusa de E2EE — a mais importante do
+    // ADR-0003 — chegava como «não foi possível ligar».
     await new Promise<void>((resolve, reject) => {
-      socket.onopen = () => resolve()
-      // Um `close` ANTES do `open` é o servidor a recusar. O código 1006 não
-      // traz razão nenhuma — o handler recusa com HTTP antes do upgrade, por
-      // isso a razão fica no `reason` quando há, e num texto genérico quando
-      // não há.
-      socket.onclose = (e) => reject(new Error(e.reason || 'o servidor recusou a emissão'))
-      socket.onerror = () => reject(new Error('não foi possível ligar ao servidor de emissão'))
+      let recusa: string | null = null
+      socket.onmessage = (e) => {
+        if (typeof e.data !== 'string') return
+        try {
+          const m = JSON.parse(e.data) as { erro?: string }
+          if (m.erro) recusa = m.erro
+        } catch {
+          /* não era a recusa — ignora-se */
+        }
+      }
+      socket.onopen = () => {
+        // Não resolve já: o servidor pode estar prestes a recusar. Uma volta
+        // do event loop chega para a trama de texto chegar, se vier.
+        setTimeout(() => (recusa ? reject(new Error(recusa)) : resolve()), 250)
+      }
+      socket.onclose = () => reject(new Error(recusa ?? 'o servidor recusou a emissão'))
+      socket.onerror = () => reject(new Error(recusa ?? 'não foi possível ligar ao servidor de emissão'))
     })
+    socket.onmessage = null
 
     // A partir daqui o socket está aceite: os handlers passam a ser os de
     // regime, e um fecho deixa de ser uma recusa para passar a ser um fim.
