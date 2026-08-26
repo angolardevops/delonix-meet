@@ -1,6 +1,6 @@
 # ADR-0003 — Emissão em directo para plataformas externas (RTMP)
 
-**Estado:** Proposto · **Data:** 2026-08-26 · **Contexto:** pedido de produto — «o Estúdio deve fazer directo para as principais ferramentas do mercado, com convidados, e o anfitrião a controlar a sala do evento»
+**Estado:** Aceite (2026-08-26) · **Data:** 2026-08-26 · **Contexto:** pedido de produto — «o Estúdio deve fazer directo para as principais ferramentas do mercado, com convidados, e o anfitrião a controlar a sala do evento»
 
 ## Contexto
 
@@ -176,6 +176,16 @@ alimenta o encoder.
 Cada um é um ADR próprio ou uma decisão de implementação com portão medido.
 
 ## Portão de aceitação
+
+Estado a 2026-08-26, com a primeira camada (servidor) feita:
+
+| # | Linha | Estado |
+|---|---|---|
+| 1 | Codec não suportado recusado com erro escrito | **feito** — `pode_emitir`, 2 testes |
+| 2 | Sessão de 30 min a 1080p não passa de `limits.cpu: 1000m` | **por medir** — precisa de emissão real |
+| 3 | A chave RTMP não aparece em nenhum log | **feito** — `Debug` explícito, 2 testes |
+| 4 | Sala com E2EE recusa emitir, com razão | **feito** — `Recusa::E2ee`, 2 testes |
+| 5 | Perder o destino não derruba a chamada | **parcial** — `escrever` devolve erro em vez de pendurar; falta o caminho de cima |
 
 Nenhuma destas linhas se dá por cumprida sem medida:
 
