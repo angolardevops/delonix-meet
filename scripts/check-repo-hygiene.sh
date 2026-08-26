@@ -104,5 +104,23 @@ if [ -f "$CAT" ]; then
   done
 fi
 
+# 6. Todo o teste ponta-a-ponta ou corre no CI, ou tem razão escrita.
+#    Um teste que existe e nunca corre não é portão nenhum — o `estudio.mjs`
+#    esteve comprometido sem correr uma única vez e os seis jobs davam verde
+#    na mesma (R69). Compara-se o inventário do que EXISTE com o do que CORRE.
+WF=.github/workflows/ci.yml
+EXC=scripts/e2e-fora-do-ci.txt
+if [ -f "$WF" ] && [ -d web/e2e ]; then
+  for f in web/e2e/*.mjs; do
+    n=$(basename "$f")
+    # Módulos de apoio, não testes.
+    case "$n" in pg.mjs|harness*.mjs) continue;; esac
+    grep -q "web/e2e/$n" "$WF" && continue
+    grep -qE "^$n . .+" "$EXC" 2>/dev/null && continue
+    echo "✗ higiene: $n não corre no CI nem tem razão em $EXC"
+    fail=1
+  done
+fi
+
 [ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados"
 exit $fail

@@ -516,3 +516,12 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** um portão baseado em texto tem de responder «o que teria de estar partido para isto ficar vermelho?». Se a resposta for «uma coisa que ninguém escreveria por engano», o portão não guarda o que diz guardar.
 - **É a quarta vez nesta série** (ver R59): comentário aceite como código, `querySelector` singular, limiar abaixo do fundo, e agora substring de nome de função. O padrão comum é o mesmo — a asserção é mais frouxa do que a frase que a descreve.
 - **Ficheiros:** `web/src/studio.invariantes.test.ts`.
+
+### R69 — Um teste que existe e nunca corre não é portão nenhum
+- **Sintoma:** `web/e2e/estudio.mjs` — dezoito asserções contra Chromium real, a capturar ecrã, a medir variação de pixéis e a verificar a duração do ficheiro cortado — estava escrito, comprometido, e **não aparecia em lado nenhum do workflow**. Uma regressão no Estúdio passaria os seis jobs verdes.
+- **Causa raiz:** o teste nasceu com a funcionalidade, num ramo, e o passo do CI ficou por acrescentar. Nada avisa: o ficheiro existe, o `git status` está limpo, e o CI verde não distingue «passou» de «não correu».
+- **Regra:** um teste ponta-a-ponta só conta depois de se ver o seu nome na saída de uma corrida do CI. Enquanto isso não acontece, é documentação executável — útil, mas não protege nada.
+- **Como se apanha:** o inventário do que corre tem de ser comparado com o inventário do que existe. `ls web/e2e/*.mjs` contra `grep 'node web/e2e/' .github/workflows/ci.yml` — dois comandos, e a diferença é a lista dos que não protegem nada.
+- **O portão que impede a repetição:** o `check-repo-hygiene.sh` compara `web/e2e/*.mjs` com o que o workflow invoca, e recusa qualquer teste que não corra nem tenha razão escrita em `scripts/e2e-fora-do-ci.txt` — o mesmo padrão do `rotas-publicas.txt`, porque uma excepção sem razão é indistinguível de um esquecimento. Provado a recusar tanto uma razão apagada como um teste novo não ligado.
+- **O que a comparação revelou além do Estúdio:** o `netem-matrix.mjs` (precisa de `CAP_NET_ADMIN` e dezenas de minutos — corre-se antes de uma release) e o `layout-consola.mjs` (precisa da aplicação construída e servida, com sessão forjada; o job corre contra o servidor de desenvolvimento e faz login a sério). Ambos ficaram com a razão escrita, que é diferente de ficarem esquecidos.
+- **Ficheiros:** `.github/workflows/ci.yml`, `web/e2e/estudio.mjs`, `scripts/check-repo-hygiene.sh`, `scripts/e2e-fora-do-ci.txt`.

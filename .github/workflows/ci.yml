@@ -241,6 +241,11 @@ jobs:
           # Uma gravação que falha tem de ser VISTA — e as três vistas da
           # biblioteca não podem oferecer acções sobre ela (R59).
           APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
+          # O ESTÚDIO grava ecrã, recorta região e corta — nada disso se prova
+          # em unidades. O teste captura o ecrã a sério, mede a variação de
+          # pixéis para saber que o canvas não está preto, e verifica a DURAÇÃO
+          # do ficheiro cortado, não a existência dele.
+          BASE=http://localhost:5174 node web/e2e/estudio.mjs
           # O DRAIN vai por último: manda SIGTERM ao servidor e espera que ele
           # feche. Qualquer teste depois deste ficaria sem servidor.
           APP=http://localhost:5174 node web/e2e/drain.mjs
