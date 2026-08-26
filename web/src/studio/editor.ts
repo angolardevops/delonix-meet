@@ -62,26 +62,47 @@ export function cortesSuportados(): boolean {
 }
 
 /**
- * Corta `origem` ao troço pedido.
- *
- * Estratégia: reproduz o ficheiro num `<video>` mudo, extrai os frames com um
- * `MediaStreamTrackProcessor` (é o que dá acesso a `VideoFrame` sem escrever um
- * desmultiplexador de WebM à mão) e reencodifica-os. Corre à velocidade de
- * reprodução do elemento — que se acelera com `playbackRate`.
- *
- * NÃO é o caminho mais rápido possível (esse desmultiplexava o WebM e
- * reencodificava só os GOPs das pontas), mas não traz nenhum desmultiplexador
- * novo para o bundle e chega para aulas de dezenas de minutos.
+ * Corta `origem` a UM troço. É o caso comum (aparar as pontas) e um atalho
+ * para `cortarVarios` com um só troço.
  */
 export async function cortar(
   origem: Blob,
   troco: Troco,
   aoProgredir?: (p: ProgressoDoCorte) => void,
   velocidade = 4,
+  audioOriginal?: Blob | null,
+): Promise<Blob> {
+  return cortarVarios(origem, [troco], aoProgredir, velocidade, audioOriginal)
+}
+
+/**
+ * Corta `origem` a VÁRIOS troços e junta-os num só ficheiro.
+ *
+ * É isto que permite remover as pausas do meio de uma aula: os troços com fala
+ * ficam, o que está entre eles desaparece, e o resultado é UM ficheiro contínuo
+ * — não uma lista de pedaços para o utilizador juntar depois.
+ *
+ * Como se juntam: um único multiplexador para todos, e os tempos de cada troço
+ * são deslocados pela duração acumulada dos anteriores. Sem esse deslocamento
+ * o segundo troço começaria no mesmo instante que o primeiro e o leitor
+ * mostraria só um deles.
+ *
+ * Estratégia por troço: reproduz o ficheiro num `<video>` mudo, extrai os
+ * frames com um `MediaStreamTrackProcessor` (é o que dá acesso a `VideoFrame`
+ * sem escrever um desmultiplexador de WebM à mão) e reencodifica-os, à
+ * velocidade de reprodução acelerada por `playbackRate`.
+ */
+export async function cortarVarios(
+  origem: Blob,
+  trocos: Troco[],
+  aoProgredir?: (p: ProgressoDoCorte) => void,
+  velocidade = 4,
   /** Faixa de áudio isolada da mesma gravação. Sem ela o corte sai mudo. */
   audioOriginal?: Blob | null,
 ): Promise<Blob> {
   if (!cortesSuportados()) throw new Error('WebCodecs indisponível neste browser')
+  const uteis = trocos.filter((t) => t.fim - t.inicio > 0.05).sort((a, b) => a.inicio - b.inicio)
+  if (!uteis.length) throw new Error('nenhum troço a manter')
   aoProgredir?.({ fase: 'a-ler', fraccao: null })
 
   const video = document.createElement('video')
@@ -100,7 +121,7 @@ export async function cortar(
   const alvo = new ArrayBufferTarget()
   // O áudio é decodificado ANTES da imagem: se a faixa não servir, é melhor
   // saber já do que ao fim de um corte inteiro.
-  const audio = audioOriginal ? await fatiarAudio(audioOriginal, troco) : null
+  const audio = audioOriginal ? await fatiarAudio(audioOriginal, uteis) : null
 
   const muxer = new Muxer({
     target: alvo,
@@ -127,37 +148,53 @@ export async function cortar(
   const faixa = fluxo.getVideoTracks()[0]
   const leitor = new MediaStreamTrackProcessor({ track: faixa }).readable.getReader()
 
-  const duracao = Math.max(0.001, troco.fim - troco.inicio)
-  video.currentTime = troco.inicio
-  await new Promise<void>((r) => (video.onseeked = () => r()))
-  video.playbackRate = velocidade
-  await video.play()
+  const total = uteis.reduce((a, t) => a + (t.fim - t.inicio), 0)
+  let jaFeito = 0
+  let frames = 0
+  /** Microssegundos já ocupados no ficheiro de saída. */
+  let deslocamentoUs = 0
 
   aoProgredir?.({ fase: 'a-cortar', fraccao: 0 })
-  let base: number | null = null
-  let frames = 0
   try {
-    for (;;) {
-      const { value, done } = await leitor.read()
-      if (done || !value) break
-      const t = video.currentTime
-      if (t >= troco.fim) {
+    for (const troco of uteis) {
+      video.playbackRate = 1
+      video.pause()
+      video.currentTime = troco.inicio
+      await new Promise<void>((r) => (video.onseeked = () => r()))
+      video.playbackRate = velocidade
+      await video.play()
+
+      let base: number | null = null
+      let ultimoUs = 0
+      for (;;) {
+        const { value, done } = await leitor.read()
+        if (done || !value) break
+        const t = video.currentTime
+        if (t >= troco.fim) {
+          value.close()
+          break
+        }
+        // Reescreve o tempo: cada troço começa onde o anterior acabou. Sem
+        // isto o ficheiro sai com os troços empilhados no mesmo instante.
+        if (base === null) base = value.timestamp
+        const relativo = value.timestamp - base
+        const frame = new VideoFrame(value, { timestamp: deslocamentoUs + relativo })
         value.close()
-        break
+        // Cada troço ABRE com frame-chave: é onde a imagem descontinua, e um
+        // corte sem frame-chave arrasta o bloco anterior por cima do novo.
+        encoder.encode(frame, { keyFrame: relativo === 0 || frames % 60 === 0 })
+        frame.close()
+        ultimoUs = relativo
+        frames++
+        if (frames % 15 === 0) {
+          const feito = jaFeito + Math.max(0, t - troco.inicio)
+          aoProgredir?.({ fase: 'a-cortar', fraccao: Math.min(1, feito / total) })
+        }
       }
-      // Reescreve o tempo para o troço começar em zero — senão o ficheiro
-      // sai com minutos de nada no início.
-      if (base === null) base = value.timestamp
-      const inicio: number = base
-      const frame = new VideoFrame(value, { timestamp: value.timestamp - inicio })
-      value.close()
-      // Frame-chave a cada 2 s: sem isto o ficheiro não se pode procurar.
-      encoder.encode(frame, { keyFrame: frames % 60 === 0 })
-      frame.close()
-      frames++
-      if (frames % 15 === 0) {
-        aoProgredir?.({ fase: 'a-cortar', fraccao: Math.min(1, (t - troco.inicio) / duracao) })
-      }
+      video.pause()
+      // +1 frame a 30 fps, para o último frame do troço ter duração.
+      deslocamentoUs += ultimoUs + 33_333
+      jaFeito += troco.fim - troco.inicio
     }
   } finally {
     leitor.cancel().catch(() => {})
@@ -171,7 +208,7 @@ export async function cortar(
   encoder.close()
   muxer.finalize()
   URL.revokeObjectURL(video.src)
-  if (!frames) throw new Error('o troço escolhido não tem imagem')
+  if (!frames) throw new Error('os troços escolhidos não têm imagem')
   return new Blob([alvo.buffer], { type: 'video/webm' })
 }
 
@@ -189,18 +226,30 @@ interface FatiaDeAudio {
  * Decodifica a faixa isolada e fica só com o troço. O corte é por ÍNDICE DE
  * AMOSTRA, por isso é exacto — não há arredondamento a limites de pacote.
  */
-async function fatiarAudio(blob: Blob, troco: Troco): Promise<FatiaDeAudio | null> {
+async function fatiarAudio(blob: Blob, trocos: Troco[]): Promise<FatiaDeAudio | null> {
   const ctx = new AudioContext()
   try {
     const inteiro = await ctx.decodeAudioData(await blob.arrayBuffer())
     const sr = inteiro.sampleRate
-    const de = Math.max(0, Math.floor(troco.inicio * sr))
-    const ate = Math.min(inteiro.length, Math.ceil(troco.fim * sr))
-    if (ate <= de) return null
     const canais = inteiro.numberOfChannels
-    const fatia = new AudioBuffer({ length: ate - de, numberOfChannels: canais, sampleRate: sr })
+    const janelas = trocos
+      .map((t) => ({
+        de: Math.max(0, Math.floor(t.inicio * sr)),
+        ate: Math.min(inteiro.length, Math.ceil(t.fim * sr)),
+      }))
+      .filter((j) => j.ate > j.de)
+    if (!janelas.length) return null
+    const comprimento = janelas.reduce((a, j) => a + (j.ate - j.de), 0)
+    const fatia = new AudioBuffer({ length: comprimento, numberOfChannels: canais, sampleRate: sr })
+    // As janelas são copiadas SEGUIDAS: é isto que faz o áudio acompanhar a
+    // imagem quando se removem pausas do meio.
     for (let c = 0; c < canais; c++) {
-      fatia.copyToChannel(inteiro.getChannelData(c).subarray(de, ate), c)
+      const origem = inteiro.getChannelData(c)
+      let escrito = 0
+      for (const j of janelas) {
+        fatia.copyToChannel(origem.subarray(j.de, j.ate), c, escrito)
+        escrito += j.ate - j.de
+      }
     }
     return { buffer: fatia, sampleRate: sr, canais }
   } catch {

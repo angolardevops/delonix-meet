@@ -5,7 +5,8 @@ import { BackgroundEffect } from '../media'
 import PageHeader from '../components/PageHeader'
 import { Btn } from '../components/ui'
 import { CamIcon, CamOffIcon, FilmIcon, RecordIcon, StopIcon } from '../icons'
-import { cortar, cortesSuportados } from '../studio/editor'
+import { cortar, cortarVarios, cortesSuportados } from '../studio/editor'
+import { analisarPausas, AnaliseDeAudio, resumo, trocosSemPausas } from '../studio/analise'
 import {
   AVATAR_INICIAL,
   CantoDoAvatar,
@@ -59,6 +60,8 @@ export default function Studio() {
   // Corte: pontos de entrada e saída, em segundos do ficheiro gravado.
   const [de, setDe] = useState(0)
   const [ate, setAte] = useState(0)
+  const [analise, setAnalise] = useState<AnaliseDeAudio | null>(null)
+  const [aAnalisar, setAAnalisar] = useState(false)
   const [aCortar, setACortar] = useState(0)   // 0 = parado; senão fracção
   const previewRef = useRef<HTMLVideoElement>(null)
   const [titulo, setTitulo] = useState('')
@@ -192,6 +195,7 @@ export default function Studio() {
       return
     }
     setResultado({ faixas: blob, url: URL.createObjectURL(blob.completo), duracao: 0 })
+    setAnalise(null)
     setDe(0)
     setAte(0)
   }
@@ -211,6 +215,61 @@ export default function Studio() {
     a.download = `${nomeBase()}${sufixo}.${qual === 'audio' ? 'weba' : 'webm'}`
     a.click()
     if (qual !== 'completo') setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
+
+  /**
+   * Procura as pausas mortas da aula. É análise de SINAL, não um modelo: corre
+   * em milissegundos e funciona no primeiro arranque, offline.
+   */
+  async function procurarPausas() {
+    const faixa = resultado?.faixas.audio
+    if (!faixa) {
+      setErro(t('studio.semAudio', 'Esta gravação não tem faixa de áudio isolada.'))
+      return
+    }
+    setErro('')
+    setAAnalisar(true)
+    try {
+      setAnalise(await analisarPausas(faixa))
+    } catch {
+      setErro(t('studio.erroAnalise', 'Não foi possível analisar o áudio.'))
+    } finally {
+      setAAnalisar(false)
+    }
+  }
+
+  /** Remove as pausas encontradas, juntando o que fica num só ficheiro. */
+  async function apertarPausas() {
+    if (!resultado || !analise) return
+    const trocos = trocosSemPausas(analise)
+    if (!trocos.length) {
+      setErro(t('studio.tudoPausa', 'Não sobra nada depois de remover as pausas.'))
+      return
+    }
+    setErro('')
+    setACortar(0.001)
+    try {
+      const novo = await cortarVarios(
+        resultado.faixas.completo,
+        trocos,
+        (pr) => setACortar(Math.max(0.001, pr.fraccao ?? 0.001)),
+        4,
+        resultado.faixas.audio,
+      )
+      URL.revokeObjectURL(resultado.url)
+      setResultado({
+        faixas: { completo: novo, video: null, audio: resultado.faixas.audio },
+        url: URL.createObjectURL(novo),
+        duracao: trocos.reduce((a, tr) => a + (tr.fim - tr.inicio), 0),
+      })
+      setAnalise(null)
+      setDe(0)
+      setAte(0)
+    } catch (e) {
+      setErro((e as Error).message || t('studio.erroCorte', 'Não foi possível cortar.'))
+    } finally {
+      setACortar(0)
+    }
   }
 
   /** Aplica o corte e SUBSTITUI o resultado — o que se guarda é o cortado. */
@@ -544,6 +603,59 @@ export default function Studio() {
                       ? `${t('studio.aCortar', 'A cortar')} ${Math.round(aCortar * 100)}%`
                       : `${t('studio.cortar', 'Cortar')} · ${mmss(Math.round(ate - de))}`}
                   </Btn>
+                </div>
+              )}
+
+              {resultado.faixas.audio && cortesSuportados() && (
+                <div className="studio-pausas">
+                  <small className="muted">{t('studio.pausasTit', 'Pausas mortas')}</small>
+                  {!analise ? (
+                    <Btn variant="ghost" disabled={aAnalisar || aCortar > 0} onClick={() => void procurarPausas()}>
+                      {aAnalisar ? t('studio.aAnalisar', 'A analisar…') : t('studio.procurarPausas', 'Procurar pausas')}
+                    </Btn>
+                  ) : resumo(analise).pausas === 0 ? (
+                    <small className="studio-ok">{t('studio.semPausas', 'Sem pausas para apertar — a aula está corrida.')}</small>
+                  ) : (
+                    <>
+                      {/* Mapa da aula: o que fica e o que sai, de relance. */}
+                      <div
+                        className="studio-mapa"
+                        role="img"
+                        aria-label={t('studio.pausasEncontradas', '{{n}} pausas · {{s}} s a poupar', {
+                          n: resumo(analise).pausas,
+                          s: resumo(analise).poupanca,
+                        })}
+                      >
+                        {analise.pausas.map((pa, i) => (
+                          <span
+                            key={i}
+                            className="studio-mapa-pausa"
+                            style={{
+                              left: `${(pa.inicio / analise.duracao) * 100}%`,
+                              width: `${((pa.fim - pa.inicio) / analise.duracao) * 100}%`,
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <small className="muted">
+                        {t('studio.pausasEncontradas', '{{n}} pausas · {{s}} s a poupar', {
+                          n: resumo(analise).pausas,
+                          s: resumo(analise).poupanca,
+                        })}{' '}
+                        ({resumo(analise).pct}%)
+                      </small>
+                      <div className="studio-seg">
+                        <Btn variant="ghost" disabled={aCortar > 0} onClick={() => void apertarPausas()}>
+                          {aCortar > 0
+                            ? `${t('studio.aCortar', 'A cortar')} ${Math.round(aCortar * 100)}%`
+                            : t('studio.apertar', 'Apertar pausas')}
+                        </Btn>
+                        <Btn variant="ghost" disabled={aCortar > 0} onClick={() => setAnalise(null)}>
+                          {t('common.cancel', 'Cancelar')}
+                        </Btn>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 

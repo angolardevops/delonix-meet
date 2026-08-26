@@ -178,9 +178,22 @@ describe('o áudio do corte não sai em falsete', () => {
   })
 
   it('o corte de áudio é por índice de amostra, não por tempo aproximado', () => {
+    // O `fatiarAudio` passou a receber VÁRIOS troços (remoção de pausas), por
+    // isso a variável mudou de `troco` para `t` — mas o invariante é o mesmo:
+    // as fronteiras são índices de amostra, exactos, não tempos arredondados
+    // a limites de pacote.
     const e = readCodigo('web/src/studio/editor.ts')
-    expect(e).toContain('Math.floor(troco.inicio * sr)')
-    expect(e).toContain('Math.ceil(troco.fim * sr)')
+    expect(e).toContain('Math.floor(t.inicio * sr)')
+    expect(e).toContain('Math.ceil(t.fim * sr)')
+  })
+
+  it('os troços de áudio são copiados SEGUIDOS, para acompanhar a imagem', () => {
+    // Ao remover pausas do meio, o áudio tem de fechar os buracos na mesma
+    // ordem que a imagem. Copiar cada janela para o seu tempo ORIGINAL deixaria
+    // o som a arrastar-se atrás da imagem, cada vez mais desfasado.
+    const e = readCodigo('web/src/studio/editor.ts')
+    expect(e).toContain('fatia.copyToChannel(origem.subarray(j.de, j.ate), c, escrito)')
+    expect(e).toContain('escrito += j.ate - j.de')
   })
 })
 
