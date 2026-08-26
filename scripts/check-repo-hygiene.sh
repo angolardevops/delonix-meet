@@ -104,5 +104,28 @@ if [ -f "$CAT" ]; then
   done
 fi
 
+# 5. Todo o ficheiro de `web/e2e/` ou CORRE no CI, ou declara-se no cabeçalho.
+#    O `estudio.mjs`, o `layout-consola.mjs` e o `offline.mjs` estiveram
+#    comprometidos sem correr uma única vez, e os seis jobs davam verde na
+#    mesma. Ligá-los destapou dois defeitos a sério — logo o que estava a
+#    falhar não era arrumação, era cobertura. Isto impede a repetição.
+#
+#    Duas declarações válidas, ambas no cabeçalho do próprio ficheiro, que é
+#    onde quem o abre as lê:
+#      «NÃO CORRE NO CI» + razão   — deliberado (ex.: precisa de CAP_NET_ADMIN)
+#      «MÓDULO DE APOIO»           — não é um teste
+WF=.github/workflows/ci.yml
+if [ -f "$WF" ] && [ -d web/e2e ]; then
+  for f in web/e2e/*.mjs; do
+    n=$(basename "$f")
+    grep -q "web/e2e/$n" "$WF" && continue
+    head -20 "$f" | grep -q "MÓDULO DE APOIO" && continue
+    head -20 "$f" | grep -q "NÃO CORRE NO CI" && continue
+    echo "✗ higiene: $n não corre no CI e não diz porquê no cabeçalho"
+    echo "   («NÃO CORRE NO CI: <razão>» ou «MÓDULO DE APOIO»)"
+    fail=1
+  done
+fi
+
 [ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados"
 exit $fail

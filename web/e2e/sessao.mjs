@@ -1,3 +1,4 @@
+// MÓDULO DE APOIO — não é um teste; é importado pelos testes de interface.
 /**
  * Sessão para os testes de interface — registar uma conta NOVA e entrar por ela.
  *
