@@ -260,22 +260,47 @@ mod testes {
     /// Programa de teste que ignora os argumentos e drena o stdin — que é o que
     /// o ffmpeg faz com a media. O `cat` não serve: recebe `-hide_banner` e os
     /// restantes como NOMES DE FICHEIRO, não os encontra, e sai com erro.
+    /// Um executável que consome o stdin, como o ffmpeg faz.
+    ///
+    /// Escrito UMA vez por processo, atrás de um `OnceLock`, e nunca enquanto
+    /// há lançamentos a decorrer. A versão anterior escrevia-o à chamada e
+    /// falhava com `ExecutableFileBusy` em ~3 corridas em 20, com o teste
+    /// afectado a mudar de cada vez.
+    ///
+    /// A causa não é o ficheiro ser partilhado — dar um ficheiro único a cada
+    /// chamada NÃO resolveu. É a corrida entre `fork` e `exec`: um filho a
+    /// nascer para outro teste herda, na janela entre os dois, o descritor de
+    /// escrita que este thread tem aberto, e o Linux recusa executar um
+    /// ficheiro que alguém tenha aberto para escrita.
+    ///
+    /// O `OnceLock` fecha essa janela: quem chegar depois espera pela escrita
+    /// terminada em vez de correr contra ela, e a partir daí ninguém volta a
+    /// abrir o ficheiro para escrever. (Usar o `cat` do sistema em vez do
+    /// script parece mais simples e não serve: sem a redirecção que o script
+    /// faz, o processo sai com estado diferente de zero e o teste do ciclo de
+    /// vida deixa de valer.)
     fn sorvedouro() -> std::path::PathBuf {
         use std::io::Write;
-        let caminho =
-            std::env::temp_dir().join(format!("dlx-sorvedouro-{}.sh", std::process::id()));
-        if !caminho.exists() {
-            let mut f = std::fs::File::create(&caminho).expect("criar o sorvedouro");
-            f.write_all(b"#!/bin/sh\nexec cat > /dev/null\n")
-                .expect("escrever");
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&caminho, std::fs::Permissions::from_mode(0o755))
-                    .expect("tornar executável");
-            }
-        }
-        caminho
+        static CAMINHO: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        CAMINHO
+            .get_or_init(|| {
+                let caminho =
+                    std::env::temp_dir().join(format!("dlx-sorvedouro-{}.sh", std::process::id()));
+                {
+                    let mut f = std::fs::File::create(&caminho).expect("criar o sorvedouro");
+                    f.write_all(b"#!/bin/sh\nexec cat > /dev/null\n")
+                        .expect("escrever");
+                    f.flush().expect("descarregar");
+                } // FECHA aqui — antes do bit de execução e de qualquer lançamento
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&caminho, std::fs::Permissions::from_mode(0o755))
+                        .expect("tornar executável");
+                }
+                caminho
+            })
+            .clone()
     }
 
     fn destino(rotulo: &str, chave: &str) -> Destino {
