@@ -602,4 +602,33 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Causa real:** o Linux recusa executar um ficheiro que QUALQUER processo tenha aberto para escrita. Os testes correm em paralelo no mesmo processo: enquanto um thread tem o ficheiro aberto, outro faz `fork` para lançar o seu próprio filho, e esse filho **herda o descritor de escrita** na janela entre o `fork` e o `exec`. O ficheiro ser único não ajuda — o descritor herdado é do ficheiro do outro.
 - **Regra:** um teste não escreve um executável enquanto há lançamentos a decorrer. O ajudante passou a criá-lo **uma vez por processo**, atrás de um `OnceLock`: quem chega depois espera pela escrita terminada em vez de correr contra ela, e a partir daí ninguém volta a abrir o ficheiro para escrever. **25 corridas, zero falhas.**
 - **O atalho que não serve, e está aqui para não se repetir:** usar o `cat` do sistema em vez do script parece eliminar o problema pela raiz. Não serve — sem a redirecção que o script faz, o processo sai com estado diferente de zero e o teste do ciclo de vida deixa de valer. Falhou 25 em 25.
+### R79 — Parar a gravação emudecia um directo a decorrer
+- **Sintoma:** o directo continuava no ar, mas sem som, a partir do instante em que se parasse a gravação local. Nenhum erro, nem no browser nem no servidor.
+- **Causa raiz:** a gravação e o directo consomem o MESMO fluxo composto (canvas + áudio misturado). O `terminarGravacao` fechava o `AudioContext` — porque, quando só existia a gravação, fechá-lo era exactamente o que devia fazer.
+- **Regra:** **um recurso partilhado só se desmonta quando o ÚLTIMO consumidor o larga.** O `montarFluxo` conta quem entra e o `largarFluxo` conta quem sai; a desmontagem vive num sítio só.
+- **A regra irmã, que evitou o problema seguinte:** o fluxo é montado num sítio só. Duplicar a montagem para o directo teria dado duas versões que divergiriam à primeira correcção feita numa delas — e o áudio é onde isso doeria, porque a fonte silenciosa que evita gravações vazias é uma armadilha fácil de esquecer no segundo sítio.
+- **Como foi apanhado:** a ler o `terminarGravacao` antes de ligar o directo ao mesmo fluxo, não em execução. Um acoplamento entre duas funcionalidades que nunca correram juntas não tem sintoma até correrem.
+- **Ficheiros:** `web/src/studio/compositor.ts`, `web/src/studio/directo.test.ts`.
+
+### R80 — O proxy do vite não encaminha WebSockets debaixo de `/api`
+- **Sintoma:** o directo aparecia recusado na interface, e o log do servidor **não tinha nada** — nem a recusa, nem o arranque. O pedido nunca chegou ao handler.
+- **Causa raiz:** o `server.proxy` do `vite.config.ts` declarava `ws: true` no `/ws` e no `/rtc`, mas não no `/api`. A rota do directo (`/api/rooms/{code}/broadcast`) é um WebSocket **debaixo do prefixo `/api`**, e sem essa flag o vite responde ao upgrade com HTTP em vez de o encaminhar.
+- **Porque é que engana:** não há erro em lado nenhum. No browser o socket fecha com o código 1006 e sem razão; no servidor não há sequer registo de tentativa. Procura-se a causa nos dois lados do túnel e ela está no meio.
+- **Regra:** **um WebSocket novo verifica-se no PROXY, não só nas duas pontas.** A pergunta a fazer é «que prefixo o serve, e esse prefixo encaminha upgrades?».
+- **Como foi apanhado:** por o log do servidor estar vazio. Um handler que devia registar recusa OU arranque e não regista nenhum dos dois não foi chamado — e isso aponta para fora do processo.
+- **Ficheiros:** `web/vite.config.ts`.
+
+### R81 — Uma recusa devolvida ANTES do upgrade de WebSocket não chega ao browser
+- **Sintoma:** a recusa de E2EE — a mais importante do ADR-0003, e a que explica ao utilizador porque é que a sala dele não pode emitir — chegava à interface como «não foi possível ligar ao servidor de emissão». A frase inteira, escrita com cuidado no servidor, era deitada fora pelo caminho.
+- **Causa raiz:** o handler devolvia `ApiError::BadRequest(razão)` antes de aceitar o upgrade. A API de WebSocket do browser **não expõe o estado nem o corpo** de um handshake que falhou: o `onclose` traz `reason` vazio e o código 1006, e o `onerror` não traz nada. Um `Response` HTTP bem construído é invisível a quem o pede por WebSocket.
+- **Regra:** **num WebSocket, a recusa entrega-se DEPOIS do upgrade.** Aceita-se, manda-se a razão numa trama de TEXTO, e fecha-se. O `reason` do frame de `Close` não serve para isto: está limitado a 123 bytes e é truncado sem aviso — e estas mensagens são frases inteiras de propósito, porque explicam o porquê E o que fazer.
+- **Detalhe que custou uma compilação:** o `WebSocket` do axum não tem `close()`; fecha-se enviando `Message::Close(None)`. Largar o socket sem a enviar deixa o browser outra vez com um 1006 sem razão.
+- **Como foi apanhado:** por correr o teste ponta a ponta contra um servidor SEM ffmpeg — o mesmo ambiente do CI. Com ffmpeg presente, o caminho de recusa nunca corria.
+- **Ficheiros:** `server/src/broadcast.rs`, `web/src/studio/directo.ts`.
+
+### R82 — Uma substituição de texto que não casa falha em SILÊNCIO
+- **Sintoma:** um `map_err` que devia distinguir «ffmpeg em falta» de qualquer outra falha continuava a devolver o erro genérico, depois de o script que o alterava ter dito que correu bem.
+- **Causa raiz:** o script fazia três substituições e só assertava a existência de UMA delas. O `cargo fmt` tinha reformatado o bloco entretanto — quebrando os argumentos em linhas — e o texto procurado deixou de existir. O `str.replace` não encontra, não substitui, e **não se queixa**.
+- **Regra:** **cada substituição tem o seu `assert`.** Um script que altera N sítios e verifica um só reporta sucesso com N-1 por fazer. E depois de formatar, qualquer alvo escrito antes da formatação é suspeito.
+- **Como foi apanhado:** por o log do servidor mostrar a mensagem antiga depois de o teste do módulo passar. Os testes de unidade cobriam o `Display` da recusa nova — que existia — mas não o handler, que nunca a usou.
 - **Ficheiros:** `server/src/broadcast.rs`.

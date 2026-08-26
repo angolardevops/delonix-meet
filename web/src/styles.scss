@@ -5003,3 +5003,17 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
   font-size: 0.84rem;
 }
 .studio-fila > span { flex: 1; min-width: 180px; color: var(--muted); }
+
+/* ---- Estúdio · directo (ADR-0003) ---- */
+.studio-directo h3 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* O «NO AR» é o único sítio da consola onde o vermelho é estado e não marca —
+   é a convenção universal do directo, e não vale a pena lutar contra ela. */
+.studio-no-ar {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em;
+  color: #fff; background: var(--danger);
+  padding: 2px 7px; border-radius: 3px;
+}
+.studio-no-ar::first-letter { animation: studio-pulsa 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .studio-no-ar::first-letter { animation: none; } }
+.studio-directo .error { color: var(--danger); font-size: 0.8rem; }

@@ -93,6 +93,12 @@ pub struct Config {
     /// só transcodifica o áudio — barato —, mas «barato» vezes N deixa de ser.
     /// Sem tecto, uma organização entusiasmada derruba as chamadas do nó.
     pub max_directos: usize,
+    /// Binário do ffmpeg (`FFMPEG_BIN`, default `ffmpeg`).
+    ///
+    /// Configurável porque nem toda a instalação tem o ffmpeg no PATH — e
+    /// porque permite apontá-lo a um invólucro em desenvolvimento sem o
+    /// instalar no host.
+    pub ffmpeg_bin: String,
     /// Threads do ffmpeg de cada emissão (`DIRECTO_THREADS`, default 1).
     ///
     /// Um por emissão, não dois: a composição de uma gravação é diferível e
@@ -210,6 +216,7 @@ impl Config {
             ffmpeg_threads: bounded_env("FFMPEG_THREADS", 2, 1, 64) as u32,
             max_directos: bounded_env("MAX_DIRECTOS", 2, 0, 32),
             directo_threads: bounded_env("DIRECTO_THREADS", 1, 1, 16) as u32,
+            ffmpeg_bin: env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into()),
         }
     }
 }

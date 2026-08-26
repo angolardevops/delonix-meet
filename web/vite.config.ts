@@ -137,7 +137,13 @@ export default defineConfig(({ command }) => {
       // com `BIND_ADDR=0.0.0.0:8181` no servidor resolve, e sem nada mudar o
       // comportamento é o de sempre.
       proxy: {
-        '/api': { target: `http://127.0.0.1:${apiPort}`, changeOrigin: true },
+        // `ws: true` no /api: a rota do DIRECTO
+        // (`/api/rooms/{code}/broadcast`) é um WebSocket debaixo do prefixo
+        // /api. Sem isto o vite responde ao upgrade com HTTP e o pedido nunca
+        // chega ao servidor — sem erro em lado nenhum, nem no browser nem no
+        // log do backend. Foi assim que o directo pareceu recusado quando na
+        // verdade nunca foi tentado (R78).
+        '/api': { target: `http://127.0.0.1:${apiPort}`, changeOrigin: true, ws: true },
         '/ws': { target: `ws://127.0.0.1:${apiPort}`, ws: true, changeOrigin: true },
         '/rtc': { target: `ws://127.0.0.1:${apiPort}`, ws: true, changeOrigin: true },
       },

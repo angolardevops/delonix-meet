@@ -60,6 +60,10 @@ pub enum Recusa {
     Tecto { activas: usize, maximo: usize },
     /// Nenhum destino, ou um destino sem chave.
     SemDestino,
+    /// O servidor não tem ffmpeg. É configuração em falta, não erro do
+    /// utilizador — e dizê-lo pelo nome poupa uma investigação inteira a quem
+    /// recebe a queixa. Mesma forma que o `causa_legivel` do recorder.
+    SemFfmpeg,
 }
 
 impl fmt::Display for Recusa {
@@ -83,6 +87,11 @@ impl fmt::Display for Recusa {
                 "este nó já tem {activas} emissões em directo (máximo {maximo})"
             ),
             Recusa::SemDestino => f.write_str("não foi indicado nenhum destino com chave"),
+            Recusa::SemFfmpeg => f.write_str(
+                "O servidor não tem o ffmpeg instalado, e sem ele não consegue emitir em \
+                 directo. É uma configuração em falta no servidor — comunica-o a quem o \
+                 administra.",
+            ),
         }
     }
 }
@@ -367,6 +376,15 @@ mod testes {
     }
 
     #[test]
+    fn a_falta_de_ffmpeg_diz_o_nome_da_causa() {
+        // Quem recebe a queixa tem de saber que a correcção é INSTALAR o
+        // ffmpeg, não voltar a tentar. Mesma forma que o recorder.
+        let texto = Recusa::SemFfmpeg.to_string();
+        assert!(texto.contains("ffmpeg"), "{texto}");
+        assert!(texto.contains("administra"), "{texto}");
+    }
+
+    #[test]
     fn o_tecto_de_emissoes_e_imposto() {
         let d = [destino("yt", "abc")];
         assert!(pode_emitir(false, "video/h264", &d, 1, 2).is_ok());
@@ -609,31 +627,77 @@ pub async fn ws_directo(
         rotulo: q.rotulo.clone().unwrap_or_else(|| "directo".into()),
     }];
 
-    // As regras ANTES de gastar um processo. A razão vai para o cliente tal
-    // como está escrita — é ela que a interface mostra.
+    // As regras correm ANTES de gastar um processo — mas a recusa é ENTREGUE
+    // depois do upgrade, e é uma distinção que se descobre a testar.
+    //
+    // Um erro HTTP devolvido antes do upgrade NÃO chega ao browser: a API de
+    // WebSocket não expõe o estado nem o corpo de um handshake falhado, e o
+    // `onclose` traz `reason` vazio. Medido: a razão «esta sala tem cifra
+    // ponta-a-ponta…» chegava ao cliente como «não foi possível ligar» — ou
+    // seja, a recusa mais importante do ADR-0003 era invisível a quem a devia
+    // ler. Por isso aceita-se o upgrade e manda-se a razão numa trama de texto.
     let activas = state.directos.quantas().await;
-    if let Err(recusa) = pode_emitir(
+    let mut motivo: Option<String> = match pode_emitir(
         e2ee,
         &q.codec,
         &destinos,
         activas,
         state.config.max_directos,
     ) {
-        tracing::warn!(sala = %codigo, motivo = ?recusa, "directo recusado");
-        return Err(ApiError::BadRequest(recusa.to_string()));
+        Err(r) => {
+            tracing::warn!(sala = %codigo, motivo = ?r, "directo recusado");
+            Some(r.to_string())
+        }
+        Ok(()) => None,
+    };
+    if motivo.is_none() && state.directos.tem(sala_id).await {
+        motivo = Some("esta sala já está em directo".into());
     }
-    if state.directos.tem(sala_id).await {
-        return Err(ApiError::Conflict("esta sala já está em directo".into()));
+    if let Some(m) = motivo {
+        return Ok(ws.on_upgrade(move |socket| recusar(socket, m)));
     }
 
-    let emissao = Emissao::arrancar(&destinos, state.config.directo_threads, "ffmpeg")
-        .map_err(|e| ApiError::Internal(format!("não foi possível arrancar a emissão: {e}")))?;
+    let emissao = match Emissao::arrancar(
+        &destinos,
+        state.config.directo_threads,
+        &state.config.ffmpeg_bin,
+    ) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Um ffmpeg em falta é CONFIGURAÇÃO, não avaria: merece a mesma
+            // mensagem nomeada que o recorder dá, em vez de um erro opaco que
+            // manda quem recebe a queixa investigar do zero.
+            tracing::error!(sala = %codigo, binario = %state.config.ffmpeg_bin, "ffmpeg-ausente");
+            let m = Recusa::SemFfmpeg.to_string();
+            return Ok(ws.on_upgrade(move |socket| recusar(socket, m)));
+        }
+        Err(e) => {
+            tracing::error!(sala = %codigo, erro = %e, "a emissão não arrancou");
+            let m = format!("não foi possível arrancar a emissão: {e}");
+            return Ok(ws.on_upgrade(move |socket| recusar(socket, m)));
+        }
+    };
     if !state.directos.inserir(sala_id, emissao).await {
-        return Err(ApiError::Conflict("esta sala já está em directo".into()));
+        let m = "esta sala já está em directo".to_string();
+        return Ok(ws.on_upgrade(move |socket| recusar(socket, m)));
     }
     tracing::info!(sala = %codigo, destinos = ?destinos, "directo a começar");
 
     Ok(ws.on_upgrade(move |socket| bombear(socket, state, sala_id, codigo)))
+}
+
+/// Entrega a razão da recusa e fecha.
+///
+/// A trama de TEXTO é o único caminho pelo qual uma frase inteira chega ao
+/// browser: o `reason` do `close` está limitado a 123 bytes e é truncado sem
+/// aviso, e estas mensagens são frases de propósito — a do E2EE explica o
+/// porquê E o que fazer.
+async fn recusar(mut socket: WebSocket, motivo: String) {
+    let corpo = serde_json::json!({ "erro": motivo }).to_string();
+    let _ = socket.send(Message::Text(corpo.into())).await;
+    // Fechar é enviar a trama de Close: o `WebSocket` do axum não tem `close()`,
+    // e largar o socket sem a enviar deixa o browser com um 1006 sem razão.
+    let _ = socket.send(Message::Close(None)).await;
 }
 
 /// Empurra o que chega do browser para o ffmpeg, até um dos lados fechar.
