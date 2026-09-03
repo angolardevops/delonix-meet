@@ -633,7 +633,7 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Como foi apanhado:** por o log do servidor mostrar a mensagem antiga depois de o teste do módulo passar. Os testes de unidade cobriam o `Display` da recusa nova — que existia — mas não o handler, que nunca a usou.
 - **Ficheiros:** `server/src/broadcast.rs`.
 
-### R79 — Um corte de seis segundos no servidor deixava a reunião inteira presa numa mensagem técnica
+### R83 — Um corte de seis segundos no servidor deixava a reunião inteira presa numa mensagem técnica
 - **Medido:** com uma chamada estabelecida, `SIGKILL` ao servidor e ressurreição seis segundos depois. O participante ficava com **«Erro: Internal Server Error»** no ecrã da reunião — e assim permanecia, com o servidor já de volta. Reproduzido em todas as corridas.
 - **Causa raiz:** o `catch` que envolve o arranque da sala em `Room.tsx` fazia `setStatus(\`Erro: ${err.message}\`)` e parava ali. Sem nova tentativa, uma falha transitória no arranque é indistinguível de uma permanente — e o texto que sobrava era a mensagem do protocolo HTTP, que não é uma frase que se mostre a alguém numa reunião.
 - **Regra:** montar a sala passa a ter **nova tentativa com recuo** (seis, reutilizando o `backoffDelay` que já existia), com um estado legível a dizer a tentativa em curso; só depois de as esgotar aparece uma frase terminal que diz o que fazer. O contador vive FORA da função, senão cada tentativa reinicia-o e o recuo nunca cresce.
