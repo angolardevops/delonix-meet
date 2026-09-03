@@ -609,7 +609,17 @@ export default function Room({
 
   // Temporizador de duração da reunião (estilo Teams "00:37").
   // O relógio da duração passou para <MeetingElapsed>: era um setState por
-  // segundo na raiz de um componente de 4 254 linhas (achado 2.1).
+  // segundo na raiz de um componente de 4 254 linhas (achado 2.1). Aqui ficou
+  // só a HORA DE INÍCIO, que a folha recebe como prop.
+  //
+  // Marca-se no RENDER e não num `useEffect` — mesmo idioma do `panelRef` acima.
+  // Um efeito só corre DEPOIS deste render, e o <MeetingElapsed> já teria
+  // recebido `startedAt` a 0; como escrever numa ref não provoca render, ficava
+  // preso nesse zero até a sala renderizar por outro motivo qualquer.
+  //
+  // O `if` faz a duração contar desde a PRIMEIRA entrada: uma quebra de ligação
+  // e o reentrar não repõem o contador a zero.
+  if (roomState === 'in' && !joinedAtRef.current) joinedAtRef.current = Date.now()
 
   // Atalhos de teclado: Ctrl+D = mic, Ctrl+E = câmara (estilo Google Meet).
   // Clica no botão DOM em vez de chamar toggleMic/toggleCam diretamente para
