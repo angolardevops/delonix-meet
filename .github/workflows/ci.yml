@@ -81,6 +81,12 @@ jobs:
       - name: Testes (vitest — guarda as regressões R1/R2/R13)
         run: node_modules/.bin/vitest run
 
+      # Corre da RAIZ, como os outros e2e: o Node resolve `@playwright/test` a
+      # partir da pasta do script (web/e2e → web/node_modules), não do cwd.
+      - name: Barra da sala em ecrã estreito (R86 — desligar tem de caber)
+        working-directory: .
+        run: node web/e2e/bar-responsivo.mjs
+
       - name: Build de produção
         run: npm run build
 

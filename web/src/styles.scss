@@ -4495,14 +4495,26 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
 .room-page .tile { background: linear-gradient(150deg, #242a3d, #161a26); border-radius: var(--radius-md); }
 .room-page .tile-name { border-radius: 3px; font-family: var(--font-mono); }
 
-/* Barra de controlos: fundo próprio + grupos agrupados. */
+/* Barra de controlos: fundo próprio + grupos agrupados.
+   O TAMANHO do controlo vive em duas variáveis e em mais lado nenhum. Antes
+   estava aqui com `!important`, e esse `!important` era a razão pela qual
+   nenhuma camada posterior lhe podia tocar: a media query do ecrã estreito
+   teria de escalar para `!important` também, e a seguir a próxima, e assim por
+   diante. Uma variável dá o mesmo resultado — esta camada vence as três
+   anteriores por ordem de origem, que já basta — e deixa a porta aberta a quem
+   vier depois. É por isto que a regra de 44px ao toque, mais abaixo, não
+   precisa de um único `!important`. */
+.room-page {
+  --ctrl-size: 38px;
+  --ctrl-hangup-w: 52px;
+}
 .room-page .controls-bar {
   background: #12141a; border-top: 1px solid #20242e; padding: 8px 16px;
 }
 .room-page .bar-center { gap: 8px; }
 .room-page .ctrl {
-  width: 38px !important; height: 38px !important;
-  border-radius: var(--radius-sm) !important;
+  width: var(--ctrl-size); height: var(--ctrl-size);
+  border-radius: var(--radius-sm);
   background: transparent; color: #aeb4c6;
 }
 .room-page .ctrl:hover { background: var(--ctrl-hover); color: var(--text); }
@@ -4514,8 +4526,8 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
 .room-page .ctrl.pulse { background: var(--accent) !important; color: #fff; }
 .room-page .ctrl.pulse::after { border-radius: var(--radius-sm); }
 .room-page .ctrl.hangup {
-  width: 52px !important; height: 38px !important;
-  border-radius: var(--radius-sm) !important; background: var(--danger) !important;
+  width: var(--ctrl-hangup-w); height: var(--ctrl-size);
+  border-radius: var(--radius-sm); background: var(--danger) !important;
 }
 .room-page .ctrl .badge { border-radius: 3px !important; background: var(--surface-3); border-color: var(--border); }
 .room-page .device-ctrl .chevron {
@@ -5017,3 +5029,95 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
 .studio-no-ar::first-letter { animation: studio-pulsa 1.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .studio-no-ar::first-letter { animation: none; } }
 .studio-directo .error { color: var(--danger); font-size: 0.8rem; }
+
+/* ============================================================
+   Barra de controlos em ecrã estreito — R86.
+   ============================================================
+   O QUE ESTAVA MAL: a `.controls-bar` é um `grid: 1fr auto 1fr` e a única
+   regra abaixo dos 900px escondia o código da sala. Nada envolvia, nada
+   deslizava, nada colapsava. Medido a 375px: 318px de transbordo, com o botão
+   de DESLIGAR inteiramente fora do ecrã — e com ele o grupo da direita
+   (pessoas, chat, notas, ferramentas). Sair de uma reunião no telemóvel só era
+   possível fechando o separador, que é o gesto que a máquina de recuperação lê
+   como quebra de rede e tenta reverter.
+
+   A REGRA: há três acções sem as quais não se opera uma reunião — microfone,
+   câmara e desligar. Essas NÃO deslizam, NÃO encolhem e NÃO entram em menu
+   nenhum. Tudo o resto partilha tiras que deslizam, por isso nada se perde.
+
+   PORQUE DUAS LINHAS e não um menu «mais»: um menu esconderia pessoas e chat
+   atrás de mais um toque, e são os dois painéis mais usados numa reunião. Duas
+   linhas cabem — medido a 320px, a largura mais estreita que ainda se vende.
+
+   PORQUE NÃO `overflow-x` na barra inteira: pôr a barra toda a deslizar deixa
+   o botão de sair escondido na mesma, só que atrás de um gesto que ninguém
+   adivinha. Esconder por transbordo é esconder.
+   ============================================================ */
+@media (max-width: 767px) {
+  .room-page {
+    /* 44px é o mínimo de alvo ao toque (WCAG 2.5.5). Aqui não é preciso
+       `!important` nenhum: o tamanho é uma variável desde a camada da consola. */
+    --ctrl-size: 44px;
+    --ctrl-hangup-w: 56px;
+  }
+
+  .room-page .controls-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Linha de cima: a duração da reunião e os painéis, lado a lado. A duração
+     NÃO se esconde — é a única indicação de há quanto tempo a reunião dura, e
+     o topo do ecrã só mostra a hora do relógio. */
+  .room-page .bar-left {
+    order: 0;
+    flex: 0 0 auto;
+    font-size: 0.8rem;
+  }
+  .room-page .bar-right {
+    order: 1;
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: flex-end;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .room-page .bar-right::-webkit-scrollbar { display: none; }
+  .room-page .bar-right > * { flex: 0 0 auto; }
+
+  /* Linha de baixo: microfone e câmara à esquerda, desligar à direita, e o
+     que sobra a deslizar no meio. */
+  .room-page .bar-center {
+    order: 2;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .room-page .ctrl-group-devices { flex: 0 0 auto; }
+  .room-page .ctrl.hangup { flex: 0 0 auto; margin-left: 0; }
+  .room-page .ctrl-group-session {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    justify-content: flex-start;
+  }
+  .room-page .ctrl-group-session::-webkit-scrollbar { display: none; }
+  .room-page .ctrl-group-session > * { flex: 0 0 auto; }
+
+  /* Um botão cortado a meio pela borda lê-se como avaria. A desvanecer, lê-se
+     como «há mais para o lado» — que é o que é. */
+  .room-page .ctrl-group-session,
+  .room-page .bar-right {
+    mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 20px), transparent 100%);
+  }
+}

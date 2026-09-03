@@ -657,3 +657,20 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **O SLA precisou de regra própria, e a primeira versão estava errada:** guardar a palavra «SLA» recusava também «SLA negociado em contrato», que é um termo comercial e não diz nada sobre o software. O que exige prova é o **número**: uma percentagem é uma promessa que a plataforma tem de conseguir cumprir e demonstrar. O portão passou a guardar o número, não a palavra — e foi ele que encontrou o 99,99 %, que a revisão humana tinha deixado passar duas vezes.
 - **Limite honesto:** isto prova que uma capacidade não é vendida com **zero** código por trás. Não prova que o código está completo, alcançável ou autorizado — um stub com o nome certo satisfazia-o. Apanha a falha que aconteceu de facto.
 - **Ficheiros:** `scripts/check-capability-claims.sh`, `web/src/locales/{pt,en,fr}.ts`, `web/src/pages/Analytics.tsx`.
+
+### R86 — No telemóvel não se conseguia desligar a chamada
+- **Medido** (2026-09-03, arnês com o CSS compilado a sério): a 375 px a `.controls-bar` transbordava **318 px**, a 320 px transbordava **373 px**. O botão de **desligar** ficava inteiramente fora do ecrã, e com ele o grupo da direita — pessoas, chat, notas, ferramentas. Sair de uma reunião no telemóvel só era possível fechando o separador, que é o gesto que a máquina de recuperação lê como quebra de rede e tenta reverter.
+- **Causa raiz:** a barra é `grid: 1fr auto 1fr` e a única regra abaixo dos 900 px escondia o código da sala. Nada envolvia, nada deslizava, nada colapsava. Nove controlos não cabem em 375 px e ninguém tinha dito ao CSS o que fazer nesse caso.
+- **Causa a montante, e é a que interessa:** o tamanho do controlo estava fixado com `width: 38px !important` na camada da consola. Qualquer camada posterior teria de escalar para `!important` também — e a seguir a próxima. O `!important` não era o remédio da cascata, era o que a tornava intratável. Passou a **variável** (`--ctrl-size`), e a regra dos 44 px ao toque não precisa de um único `!important`.
+- **Regra:** há três acções sem as quais não se opera uma reunião — microfone, câmara e desligar. Em ecrã estreito ficam **fixas**: não deslizam, não encolhem, não entram em menu. Tudo o resto partilha tiras que deslizam, com máscara de desvanecimento — nada se perde e um botão cortado a meio deixa de parecer avaria.
+- **O atalho que NÃO serve:** pôr a barra inteira em `overflow-x`. O botão de sair continua escondido, só que atrás de um gesto que ninguém adivinha. **Esconder por transbordo é esconder.**
+- **Duas linhas e não um menu «mais»:** um menu poria pessoas e chat atrás de mais um toque, e são os dois painéis mais usados. Duas linhas cabem — medido a 320 px, a largura mais estreita que ainda se vende.
+- **Sobre a medição, que quase saiu errada:** a emulação de viewport do navegador **não** mexia no `innerWidth` da página — dava 693 px com o ecrã a 375. Se tivesse acreditado nela, teria concluído que estava tudo bem. O portão fixa a viewport com Playwright, que é a única que se verificou fiável.
+- **Portão:** `web/e2e/bar-responsivo.mjs`, no CI. Compila a folha a sério e mede a 320/375/414/768/1440. Visto a falhar (3 larguras) com a camada responsiva desligada e a recuperar com ela.
+- **Ficheiros:** `web/src/styles.scss`, `web/e2e/bar-responsivo.{mjs,html}`, `.github/workflows/ci.yml`.
+
+### R87 — O cartão de convite tapava o vídeo a reunião inteira
+- **Sintoma:** «A tua reunião está pronta» aparecia em **todas** as capturas da sala, inclusive com painéis abertos, a tapar o canto inferior esquerdo do vídeo. No telemóvel ocupava metade do ecrã.
+- **Causa:** só fechava por clique explícito no X ou em «Adicionar participantes». Não fechava ao fim de tempo nenhum, não fechava quando entrava a segunda pessoa — que é precisamente o instante em que deixa de fazer sentido —, e não fechava ao abrir um painel.
+- **Regra:** um cartão que interrompe fecha-se sozinho no momento em que perde a razão de ser. Três saídas: alguém entrou, abriu-se um painel, ou passaram 20 s. O `sessionStorage` continua a impedir que volte na mesma sessão.
+- **Ficheiros:** `web/src/pages/Room.tsx`.

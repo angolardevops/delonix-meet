@@ -301,6 +301,36 @@ export default function Room({
   const [readyOpen, setReadyOpen] = useState(
     () => !sessionStorage.getItem(`dx_ready_${code}`),
   )
+  // O cartão fecha-se SOZINHO (R87). Antes só saía por clique explícito, e por
+  // isso tapava o canto inferior esquerdo do vídeo durante a reunião inteira —
+  // aparecia em todas as capturas, com painéis abertos e tudo. No telemóvel
+  // ocupava metade do ecrã.
+  //
+  // Três saídas, e cada uma é um momento em que o cartão deixou de ter razão:
+  //   · alguém entrou   — já não é preciso convidar ninguém;
+  //   · abriu-se um painel — a pessoa está a fazer outra coisa;
+  //   · passaram 20 s   — teve tempo de copiar o link.
+  // O `dx_ready_` continua a impedir que volte nesta sessão, tal como antes.
+  const dispensarReady = useCallback(() => {
+    sessionStorage.setItem(`dx_ready_${code}`, '1')
+    setReadyOpen(false)
+  }, [code])
+
+  // 20 s a partir do momento em que o cartão aparece. O temporizador é limpo
+  // se ele fechar antes por outra razão — senão ficava a escrever no
+  // sessionStorage de uma sala que já não está aberta.
+  useEffect(() => {
+    if (!readyOpen) return
+    const t = setTimeout(dispensarReady, 20_000)
+    return () => clearTimeout(t)
+  }, [readyOpen, dispensarReady])
+
+  // Alguém entrou, ou abriu-se um painel. Nos dois casos o cartão perdeu a
+  // razão de ser: já não é preciso convidar, ou a pessoa está noutra coisa.
+  useEffect(() => {
+    if (!readyOpen) return
+    if (peers.length > 0 || panel !== 'none') dispensarReady()
+  }, [readyOpen, peers.length, panel, dispensarReady])
   const [fxOpen, setFxOpen] = useState(false)
   const fxPreview = useRef<HTMLVideoElement>(null)
   const [blurLevel, setBlurLevel] = useState<'light' | 'strong'>('strong')
@@ -2486,10 +2516,7 @@ export default function Room({
               <h3>A tua reunião está pronta.</h3>
               <button
                 className="panel-close"
-                onClick={() => {
-                  sessionStorage.setItem(`dx_ready_${code}`, '1')
-                  setReadyOpen(false)
-                }}
+                onClick={dispensarReady}
               >
                 <CloseIcon />
               </button>
@@ -2498,8 +2525,7 @@ export default function Room({
               className="ready-add-btn"
               onClick={() => {
                 setPanel('people')
-                sessionStorage.setItem(`dx_ready_${code}`, '1')
-                setReadyOpen(false)
+                dispensarReady()
               }}
             >
               <PeopleIcon /> Adicionar participantes
