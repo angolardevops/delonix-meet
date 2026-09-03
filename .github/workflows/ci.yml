@@ -93,6 +93,9 @@ jobs:
       - name: Higiene do repo (chaves, artefactos, dumps, migrações)
         run: bash scripts/check-repo-hygiene.sh
 
+      - name: Capacidades vendidas (nada se vende sem código por trás)
+        run: bash scripts/check-capability-claims.sh
+
       - name: Drift documental (módulos, migrações, versões, SQL)
         run: bash scripts/check-docs-drift.sh
 

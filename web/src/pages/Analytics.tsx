@@ -779,7 +779,15 @@ export default function Analytics() {
       ]
     : []
 
-  // Postura de segurança: o que é real está "Ativo"; SSO/SCIM/auditoria são o stub do protótipo.
+  // Postura de segurança. O comentário que aqui estava — «SSO/SCIM/auditoria
+  // são o stub do protótipo» — deixou de ser verdade e ficou a mentir ao
+  // contrário: o SSO lê o estado REAL da org (`ssoActive`) e a auditoria é a
+  // cadeia de hash verificável do `audit.rs`. Só o SCIM continua sem uma linha
+  // de código, e é o único que aparece como «em breve».
+  //
+  // A regra desta lista, e a razão de não ser cosmética: uma capacidade só pode
+  // dizer «Ativo» se houver caminho de código por trás. Um cliente lê isto como
+  // uma garantia de conformidade.
   const posture: { l: string; v: string; on: boolean }[] = [
     { l: t('admin.secItems.tls'), v: t('admin.active'), on: true },
     { l: t('admin.secItems.e2ee'), v: t('admin.available'), on: true },
