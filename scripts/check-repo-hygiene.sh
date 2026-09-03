@@ -7,8 +7,15 @@
 #  distraído num directório que ainda não estava no `.gitignore`. Um portão
 #  automático apanha isso no minuto seguinte, em vez de meses depois.
 #
-#  Verifica só o que está SEGUIDO no índice (o que sai num clone). Ficheiros
-#  locais não seguidos são problema de ninguém.
+#  Os pontos 1–5 verificam o que está SEGUIDO no índice (o que sai num clone
+#  hoje). Ficheiros locais não seguidos são problema de ninguém.
+#
+#  O ponto 6 verifica o HISTÓRICO, e existe porque os pontos 1–5 não bastam:
+#  `git rm --cached` tira do índice e NÃO tira do histórico. A chave que já lá
+#  está continua alcançável em todos os commits que a levaram — e este
+#  repositório é público. Sem esta verificação, uma fuga desaparece do portão
+#  no instante em que alguém a «resolve» com um `git rm`, que é exactamente o
+#  que aconteceu em 3b80b8a.
 #
 #  Uso:  bash scripts/check-repo-hygiene.sh
 # ============================================================
@@ -130,5 +137,39 @@ if [ -f "$WF" ] && [ -d web/e2e ]; then
   done
 fi
 
-[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados"
+# 6. Material de chave privada no HISTÓRICO, não só no índice.
+#
+#    O ponto 1 vê o que sai num clone HOJE. Este vê o que sai num `git log`, que
+#    é o que um atacante lê. As duas chaves de dev que já cá estiveram saíram do
+#    índice em 3b80b8a e continuam alcançáveis em quatro commits — o ponto 1
+#    ficou verde no minuto seguinte e a exposição não mudou nada.
+#
+#    Cada caminho encontrado tem de estar em scripts/leaked-keys-accepted.txt,
+#    com a razão e a data escritas. É o mesmo padrão do rustsec-accepted.txt: o
+#    portão não impede a decisão, impede a decisão SILENCIOSA.
+#
+#    Limite honesto desta verificação: procura por CAMINHO, não por conteúdo.
+#    Uma chave colada dentro de um `notas.txt` do histórico não é apanhada aqui
+#    — para o índice, é o ponto 2 que a apanha; para o histórico, seria preciso
+#    ler todos os blobs, e isso não cabe num portão de CI. Preferimos dizê-lo a
+#    dar uma garantia que não temos.
+LEDGER=scripts/leaked-keys-accepted.txt
+hist_keys=$(git rev-list --objects --all 2>/dev/null \
+            | sed 's/^[0-9a-f]\{40,\} //' \
+            | grep -iE '(^|/)(id_rsa|id_ed25519|id_ecdsa)[^/]*$|\.(key|pem|p12|pfx|jks)$' \
+            | sort -u || true)
+for p in $hist_keys; do
+  # `-F -x` porque o ledger guarda caminhos literais, um por linha; sem isto um
+  # `.` do caminho passava a curinga e um caminho novo podia casar com a linha
+  # de outro.
+  if ! grep -v '^#' "$LEDGER" 2>/dev/null | grep -qFx "$p"; then
+    echo "✗ higiene: CHAVE PRIVADA no histórico do git, sem decisão escrita: $p"
+    echo '     Um "git rm" NÃO a remove do histórico. Trata-a como comprometida:'
+    echo "     roda-a, e depois ou reescreves o histórico (force-push, parte todos"
+    echo "     os clones) ou acrescentas uma linha a $LEDGER com a razão."
+    fail=1
+  fi
+done
+
+[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; fugas de chave no histórico todas com decisão escrita"
 exit $fail

@@ -1,0 +1,53 @@
+# Private key material reachable in git history — the burned-key ledger.
+#
+# WHY THIS FILE EXISTS
+#
+# `git rm --cached` untracks a file; it does NOT remove it from history. A key
+# that was ever committed stays reachable at every commit that carried it, and
+# in every clone ever taken. Removing it from the working tree changes nothing
+# for anyone who already has the repository, or who fetches it now.
+#
+# This repository is public. Both entries below are therefore to be treated as
+# COMPROMISED, regardless of how narrow their intended use was.
+#
+# The hygiene gate (scripts/check-repo-hygiene.sh) refuses ANY key path in
+# history that is not listed here. A new leak fails the build. A listed one is
+# a decision that somebody wrote down, with the reason and the date.
+#
+# FORMAT
+#   <path>    # reason, decision, date
+#
+# Adding a line here is a security decision. If you cannot write the reason,
+# the key does not belong in this file — it belongs in a history rewrite.
+
+deploy/certs/wildcard.delonix.local.key
+# mkcert-issued private key for *.delonix.local, PKCS#8, 1704 bytes.
+# Added 2026-07-13 (c9d9548, a833c5b), untracked 2026-08-25 (3b80b8a).
+# BURNED. Reachable to anyone who clones. Not rotated by that removal.
+#
+# Blast radius: .local is not a routable domain and this certificate is never
+# served in production — deployments use Let's Encrypt via cert-manager, or a
+# real certificate supplied by the operator. Holding this key lets an attacker
+# impersonate *.delonix.local ONLY against a machine that has installed the
+# matching mkcert root CA, i.e. a developer workstation, and only if the
+# attacker is already positioned on that machine's network path.
+#
+# Decision (2026-09-03): accepted as a known burn, NOT rewritten out of
+# history. A rewrite is a force-push to a public repository that invalidates
+# every existing clone and every open pull request; the cost is real and the
+# exposure is a dev-only CA on a non-routable domain. Revisit if the repository
+# ever ships a certificate that is trusted by anything but a developer machine.
+#
+# Required of every developer: `make certs` regenerates a LOCAL CA and wildcard.
+# Nobody should be trusting the CA that signed this one. If you installed a
+# mkcert root CA from this repository rather than generating your own, remove
+# it: `mkcert -uninstall`, then `make certs`.
+
+deploy/certs/meet.delonix.local.key
+# mkcert-issued private key for meet.delonix.local, PKCS#8, 1704 bytes.
+# Added 2026-07-10 (98f5b28, d5e8a2b), removed from the tree by 2026-08-25.
+# Same class, same decision, same date as the wildcard above.
+#
+# Recorded separately because the 2026-08-25 audit found only the wildcard and
+# reported ONE key. There were two. That is the reason this gate scans history
+# instead of trusting a previous reading of it.
