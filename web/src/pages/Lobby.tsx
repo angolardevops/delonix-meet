@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { CloseIcon, LockIcon, MicOffIcon, ShareIcon } from '../icons'
 import { useTranslation } from 'react-i18next'
 import { currentUser, joinRoom } from '../api'
 import { ClientMsg, PeerInfo, Signaling } from '../signaling'
@@ -86,7 +87,7 @@ export default function Lobby({ code }: { code: string }) {
 
         <div className="lobby-toggles">
           <label className="lobby-toggle">
-            <span className="lobby-toggle-ic lock">🔒</span>
+            <span className="lobby-toggle-ic lock"><LockIcon /></span>
             <span>
               <strong>{t('lobby.lock')}</strong>
               <small>{t('lobby.lockDesc')}</small>
@@ -104,7 +105,7 @@ export default function Lobby({ code }: { code: string }) {
             </span>
           </label>
           <label className="lobby-toggle">
-            <span className="lobby-toggle-ic screen">🖥️</span>
+            <span className="lobby-toggle-ic screen"><ShareIcon /></span>
             <span>
               <strong>{t('lobby.hostShare')}</strong>
               <small>{t('lobby.hostShareDesc')}</small>
@@ -151,7 +152,7 @@ export default function Lobby({ code }: { code: string }) {
                   title={t('lobby.deny')}
                   onClick={() => send({ type: 'deny', to: w.peer_id })}
                 >
-                  ✕
+                  <CloseIcon />
                 </button>
                 <button className="lobby-admit" onClick={() => send({ type: 'admit', to: w.peer_id })}>
                   {t('lobby.admit')}
@@ -189,14 +190,14 @@ export default function Lobby({ code }: { code: string }) {
                   disabled={!p.mic}
                   onClick={() => send({ type: 'force-mute', to: p.peer_id })}
                 >
-                  🎙
+                  <MicOffIcon />
                 </button>
                 <button
                   className="lobby-deny"
                   title={t('lobby.remove')}
                   onClick={() => send({ type: 'kick', to: p.peer_id })}
                 >
-                  ✕
+                  <CloseIcon />
                 </button>
               </div>
             ))}

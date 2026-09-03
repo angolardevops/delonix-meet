@@ -1,5 +1,5 @@
 import { CSSProperties, memo, useEffect, useRef } from 'react'
-import { CloseIcon, MicOffIcon } from '../icons'
+import { CloseIcon, HandIcon, MicOffIcon, PinIcon } from '../icons'
 
 /**
  * O mosaico de um participante — extraído de `Room.tsx` e MEMOIZADO
@@ -96,9 +96,9 @@ export function RemoteTileBase({
         onClick={() => onPin?.(peer.peerId)}
         title={pinned ? 'Desafixar do palco' : 'Fixar no palco'}
       >
-        📌
+        <PinIcon />
       </button>
-      {peer.hand && <span className="hand-badge">✋</span>}
+      {peer.hand && <span className="hand-badge"><HandIcon /></span>}
       {/* Indicador de mic muted no canto superior direito (estilo Meet). */}
       {!hasAudio && (
         <span className="tile-mic-status" aria-label="microfone desativado">

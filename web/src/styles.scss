@@ -3612,13 +3612,17 @@ button.link:hover {
 }
 .room-page .ctrl svg { width: 22px; height: 22px; }
 .room-page .ctrl:hover { background: #4a4e51; }
-.room-page .ctrl.off { background: #ea4335; }        /* vermelho Meet exato */
-.room-page .ctrl.off:hover { background: #f04a3d; filter: none; }
+/* Era `#ea4335` com o comentário «vermelho Meet exato» — a cor de marca da
+   Google, copiada. Contraria o §37 do mandato (não copiar identidade alheia) e
+   não trazia nada: o `--danger` da casa já existia três camadas abaixo e é o
+   que efectivamente vence aqui. Passou a ser usado por escrito. */
+.room-page .ctrl.off { background: var(--danger); }
+.room-page .ctrl.off:hover { background: var(--danger); filter: brightness(1.12); }
 .room-page .ctrl.active { background: var(--accent); box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent); }
 .room-page .ctrl.plain.active { background: rgba(255,255,255,0.10); color: var(--accent-2); }
 /* Terminar chamada: pílula vermelha Meet, um pouco mais larga e com hover claro. */
-.room-page .ctrl.hangup { width: 68px; height: 50px; background: #ea4335; margin-left: 0.35rem; }
-.room-page .ctrl.hangup:hover { background: #f04a3d; filter: none; box-shadow: 0 2px 12px rgba(234,67,53,0.4); }
+.room-page .ctrl.hangup { width: 68px; height: 50px; background: var(--danger); margin-left: 0.35rem; }
+.room-page .ctrl.hangup:hover { background: var(--danger); filter: brightness(1.12); box-shadow: 0 2px 12px color-mix(in oklab, var(--danger) 40%, transparent); }
 .room-page .ctrl.hangup svg { width: 24px; height: 24px; }
 
 /* Badge de contagem (participantes/chat): estilo Meet, canto superior direito. */
@@ -3626,7 +3630,7 @@ button.link:hover {
   top: -2px; right: -2px; background: var(--accent); color: #fff;
   border: 2px solid var(--bg); font-weight: 600; min-width: 18px; text-align: center;
 }
-.room-page .ctrl .badge.live { background: transparent; border: none; color: #ea4335; font-size: 0.8rem; }
+.room-page .ctrl .badge.live { background: transparent; border: none; color: var(--danger); font-size: 0.8rem; }
 
 /* ---- Barra esquerda: informação minimalista (código clicável estilo Meet) ---- */
 .room-page .bar-left { gap: 0.5rem; color: var(--muted); font-size: 0.9rem; }
@@ -5120,4 +5124,15 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
   .room-page .bar-right {
     mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 20px), transparent 100%);
   }
+}
+
+/* O indicador de gravação/transcrição era o caractere `●` dentro do badge.
+   Passou a ponto desenhado (R88): um caractere herda a fonte do sistema e
+   muda de tamanho entre plataformas; um ponto de CSS não. A animação
+   `recblink` que já existia continua a ser a mesma. */
+.badge.live.dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: currentColor;
 }

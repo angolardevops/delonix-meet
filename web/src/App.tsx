@@ -1,4 +1,5 @@
 import { lazy, ReactNode, Suspense, useEffect, useState } from 'react'
+import { AlertIcon } from './icons'
 import { completeSsoLogin, currentUser, logout, User } from './api'
 import Shell, { NavKey } from './components/Shell'
 import PresenceProvider from './components/PresenceProvider'
@@ -158,7 +159,7 @@ export default function App() {
     <>
     {insecure && (
       <div className="insecure-banner">
-        ⚠️ Ligação <strong>insegura (HTTP)</strong> — câmara, microfone e chamadas NÃO funcionam.
+        <AlertIcon /> Ligação <strong>insegura (HTTP)</strong> — câmara, microfone e chamadas NÃO funcionam.
         Abre em <strong>https://{location.hostname}</strong> (aceita o aviso do certificado).
       </div>
     )}
