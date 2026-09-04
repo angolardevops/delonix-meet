@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { CheckIcon } from '../icons'
 import { mfaActivar, mfaDesactivar, mfaEstado, mfaInscrever, MfaEstado } from '../api'
 
 /**
@@ -153,7 +154,7 @@ export default function MfaPanel() {
       <h3>Verificação em dois passos</h3>
       {estado.enabled ? (
         <>
-          <p className="mfa-on">✓ Activa. O teu autenticador é pedido em cada início de sessão.</p>
+          <p className="mfa-on"><CheckIcon /> Activa. O teu autenticador é pedido em cada início de sessão.</p>
           <p className="muted">
             Restam <strong>{estado.backup_codes_left}</strong> códigos de recuperação.
             {estado.backup_codes_left <= 2 && ' Desactiva e volta a activar para gerar códigos novos.'}

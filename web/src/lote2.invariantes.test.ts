@@ -76,21 +76,67 @@ describe('3.2.5 · nada de emoji como controlo na consola', () => {
   // `⌘` e `⌥` são NOMES DE TECLAS dentro de <kbd> — conteúdo, não controlo.
   const TECLAS = /[\u2318\u2325\u21E7\u23CE]/u
   const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2190}-\u{21FF}\u{2300}-\u{27BF}\u{2B00}-\u{2BFF}]/u
+  // A SALA entrou nesta lista em 2026-09-03 (R88). Eram 40 glifos usados como
+  // ícone — ⏳ para o temporizador, 📊 para as sondagens, ❓ para o Q&A, 🛡 para
+  // o código de segurança — a par do conjunto SVG que já existia ao lado, na
+  // MESMA barra. A regra não era nova; faltava-lhe cobertura.
+  //
+  // O que NÃO entra nesta lista, e é deliberado: `Landing.tsx`, `Analytics.tsx`
+  // e `Studio.tsx` ainda têm glifos em ARRAYS DE DADOS (listas de
+  // funcionalidades, rótulos de canto `↖↗↙↘`). Convertê-los é outro trabalho —
+  // mexe na forma dos dados, não na marcação — e está escrito em
+  // `docs/reference/regressions.md` (R88) para não passar por esquecimento.
   const CHROME = [
     'web/src/components/Shell.tsx',
     'web/src/components/CommandPalette.tsx',
     'web/src/pages/Home.tsx',
     'web/src/pages/Recordings.tsx',
     'web/src/pages/Directory.tsx',
+    'web/src/pages/Room.tsx',
+    'web/src/room/RemoteTile.tsx',
+    'web/src/pages/Lobby.tsx',
+    'web/src/components/MfaPanel.tsx',
+    'web/src/components/OnboardingTour.tsx',
+    'web/src/App.tsx',
   ]
   for (const f of CHROME) {
     it(`${f.split('/').pop()} não tem glifos dentro de elementos`, () => {
-      const dentroDeElemento = [...read(f).matchAll(/>\s*([^<>{}\n]{1,4})\s*</g)]
+      // O `{1,4}` que aqui estava deixava passar o caso MAIS comum: um glifo
+      // seguido do rótulo. `>📊 Sondagens<` tem mais de 4 caracteres e escapava
+      // — o portão dava verde com o defeito à frente. Apanhado a 2026-09-03 ao
+      // tentar vê-lo falhar de propósito, que é a única forma de saber que um
+      // portão guarda alguma coisa (R71).
+      const dentroDeElemento = [...read(f).matchAll(/>\s*([^<>{}\n]{1,120})\s*</g)]
         .map((m) => m[1])
         .filter((txt) => EMOJI.test(txt) && !TECLAS.test(txt))
       expect(dentroDeElemento).toEqual([])
     })
   }
+})
+
+describe('3.2.6 · a identidade é nossa, não emprestada', () => {
+  // A folha trazia `#ea4335` com o comentário «vermelho Meet exato» — a cor de
+  // marca da Google, copiada e usada no botão de desligar, no microfone
+  // silenciado e no ponto de gravação. Contraria o §37 do mandato e não trazia
+  // nada: o `--danger` da casa já existia e é o que vencia na cascata.
+  //
+  // Guarda-se a PALETA DE MARCA dos concorrentes, não «cores literais» em
+  // geral — a folha tem centenas delas e proibi-las todas de uma vez seria um
+  // portão que ninguém consegue pôr verde.
+  const ALHEIAS: Record<string, string> = {
+    '#ea4335': 'vermelho Google', '#4285f4': 'azul Google',
+    '#34a853': 'verde Google', '#fbbc05': 'amarelo Google',
+    '#6264a7': 'roxo Teams', '#2d8cff': 'azul Zoom',
+  }
+  it('a folha de estilos não usa cores de marca alheias', () => {
+    const css = read('web/src/styles.scss')
+      .split('\n')
+      .filter((l) => !l.trimStart().startsWith('/*') && !l.trimStart().startsWith('*'))
+      .join('\n')
+      .toLowerCase()
+    const achadas = Object.keys(ALHEIAS).filter((c) => css.includes(c))
+    expect(achadas.map((c) => `${c} (${ALHEIAS[c]})`)).toEqual([])
+  })
 })
 
 describe('práticas de estado do delonix-portal', () => {

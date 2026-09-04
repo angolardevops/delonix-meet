@@ -65,3 +65,6 @@ deploy/ansible/vault/
 # Configuração local de ferramentas de agente (fica na máquina, não no repo).
 .claude/
 CLAUDE.md
+
+# CSS compilado pelo portão da barra (web/e2e/bar-responsivo.mjs)
+web/e2e/room.css
