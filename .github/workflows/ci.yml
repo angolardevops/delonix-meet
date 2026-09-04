@@ -81,6 +81,13 @@ jobs:
       - name: Testes (vitest — guarda as regressões R1/R2/R13)
         run: node_modules/.bin/vitest run
 
+      # O `npm ci` traz a BIBLIOTECA do Playwright, não os browsers. Sem este
+      # passo o portão abaixo morre com «Executable doesn't exist» — passou-me
+      # ao princípio porque na máquina de desenvolvimento já lá estavam. O job
+      # `isolamento` faz o mesmo, pela mesma razão.
+      - name: Browser para o portão de layout
+        run: npx playwright install chromium
+
       # Corre da RAIZ, como os outros e2e: o Node resolve `@playwright/test` a
       # partir da pasta do script (web/e2e → web/node_modules), não do cwd.
       - name: Barra da sala em ecrã estreito (R86 — desligar tem de caber)
