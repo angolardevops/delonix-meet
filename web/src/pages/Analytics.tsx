@@ -749,7 +749,14 @@ export default function Analytics() {
   // Qualidade média 0–5 ponderada pela distribuição real das amostras QoS
   // (boa=5, média=3.5, fraca=1.5). '—' sem amostras.
   const qMidPct = stats ? Math.max(0, 100 - stats.pct_good - stats.pct_poor) : 0
-  const qScore = stats && stats.quality_samples_30d > 0
+  // Preferir SEMPRE a pontuação MEDIDA (Delonix Call Quality Score, 0–100). O
+  // 0–5 abaixo é um proxy DERIVADO da distribuição de perdas — foi o que havia
+  // enquanto não se media mais nada, e continua a servir de recuo para
+  // organizações cujos clientes ainda não reportam. Os dois são mostrados com
+  // escalas diferentes de propósito: confundir um número medido com um número
+  // inferido é como se perde a confiança num painel.
+  const qMeasured = stats?.avg_score ?? null
+  const qProxy = stats && stats.quality_samples_30d > 0
     ? ((stats.pct_good * 5 + qMidPct * 3.5 + stats.pct_poor * 1.5) / 100).toLocaleString(locale, { maximumFractionDigits: 1 })
     : null
 
@@ -760,14 +767,27 @@ export default function Analytics() {
         { v: stats.meeting_minutes_30d.toLocaleString(locale), l: t('admin.kMinutes'), d: delta(stats.meeting_minutes_30d, stats.meeting_minutes_prev_30d) },
         { v: `${stats.active_users_30d} / ${stats.members_total}`, l: t('admin.kActive'), d: delta(stats.active_users_30d, stats.active_users_prev_30d) },
         {
-          v: qScore != null ? `${qScore} / 5` : '—',
+          v: qMeasured != null ? `${qMeasured} / 100` : qProxy != null ? `${qProxy} / 5` : '—',
           l: t('admin.kQuality'),
-          tag: qScore != null ? (stats.avg_loss_pct < 5 ? t('admin.qStable') : t('admin.qUnstable')) : undefined,
+          tag:
+            qMeasured != null || qProxy != null
+              ? stats.avg_loss_pct < 5
+                ? t('admin.qStable')
+                : t('admin.qUnstable')
+              : undefined,
         },
       ]
     : []
 
-  // Postura de segurança: o que é real está "Ativo"; SSO/SCIM/auditoria são o stub do protótipo.
+  // Postura de segurança. O comentário que aqui estava — «SSO/SCIM/auditoria
+  // são o stub do protótipo» — deixou de ser verdade e ficou a mentir ao
+  // contrário: o SSO lê o estado REAL da org (`ssoActive`) e a auditoria é a
+  // cadeia de hash verificável do `audit.rs`. Só o SCIM continua sem uma linha
+  // de código, e é o único que aparece como «em breve».
+  //
+  // A regra desta lista, e a razão de não ser cosmética: uma capacidade só pode
+  // dizer «Ativo» se houver caminho de código por trás. Um cliente lê isto como
+  // uma garantia de conformidade.
   const posture: { l: string; v: string; on: boolean }[] = [
     { l: t('admin.secItems.tls'), v: t('admin.active'), on: true },
     { l: t('admin.secItems.e2ee'), v: t('admin.available'), on: true },
@@ -871,6 +891,28 @@ export default function Analytics() {
                       <strong>{stats.pct_poor}%</strong>
                       <small>{t('admin.qualityPoor')}</small>
                     </div>
+                    {/* Só aparecem quando há mesmo amostras que os trazem: um
+                        "0%" sem medição por trás é pior do que a ausência do
+                        indicador — parece uma boa notícia e não é notícia
+                        nenhuma. */}
+                    {stats.avg_score != null && (
+                      <div className="quality-stat">
+                        <strong>{stats.avg_score} / 100</strong>
+                        <small>Delonix Call Quality Score</small>
+                      </div>
+                    )}
+                    {stats.pct_turn_relay != null && (
+                      <div className="quality-stat">
+                        <strong>{stats.pct_turn_relay}%</strong>
+                        <small>media via TURN relay</small>
+                      </div>
+                    )}
+                    {stats.pct_cpu_limited != null && (
+                      <div className="quality-stat">
+                        <strong>{stats.pct_cpu_limited}%</strong>
+                        <small>limitado por CPU do cliente</small>
+                      </div>
+                    )}
                   </div>
                   <p className="muted small quality-note">
                     {t('admin.qualitySamples', { count: stats.quality_samples_30d })}

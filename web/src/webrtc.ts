@@ -1,5 +1,20 @@
 import { FrameCrypto } from './e2ee'
 import { ClientMsg, Signaling } from './signaling'
+import type { LinhaDoTempo } from './callTimings'
+import {
+  callQualityScore,
+  extractQuality,
+  type QualityCursor,
+  type QualitySample,
+  type StatEntry,
+} from './callQuality'
+import {
+  DEFAULT_RECOVERY,
+  onGraceExpired,
+  onPeerState,
+  type CallState,
+  type RecoveryConfig,
+} from './callRecovery'
 
 /**
  * Melhora o Opus no SDP *recebido*: o fmtp do lado remoto é o que o nosso
@@ -11,16 +26,27 @@ export function enhanceOpus(sdp: string): string {
   const OPUS = /a=rtpmap:(\d+) opus\/48000(?:\/\d+)?/i.exec(sdp)
   if (!OPUS) return sdp
   const pt = OPUS[1]
-  const fmtpRe = new RegExp(`a=fmtp:${pt} ([^\r\n]*)`)
-  const extra = 'maxaveragebitrate=128000;stereo=1;sprop-stereo=1;useinbandfec=1'
-  const m = fmtpRe.exec(sdp)
-  if (!m) return sdp.replace(OPUS[0], `${OPUS[0]}\r\na=fmtp:${pt} ${extra}`)
-  let params = m[1]
-  for (const kv of extra.split(';')) {
-    const key = kv.split('=')[0]
-    params = params.includes(`${key}=`) ? params.replace(new RegExp(`${key}=\\d+`), kv) : `${params};${kv}`
+  // `usedtx=1`: em silêncio o encoder deixa de enviar (≈0 kbps em vez de 128).
+  // Numa sala de N pessoas, N-1 estão caladas a cada instante — é a diferença
+  // entre (N-1)×128 kbps de downlink e praticamente nada.
+  const extra = 'maxaveragebitrate=128000;stereo=1;sprop-stereo=1;useinbandfec=1;usedtx=1'
+  // GLOBAL: cada m-line de áudio (microfone E áudio do ecrã partilhado) tem o
+  // seu `a=fmtp`. Com `replace` não-global só a PRIMEIRA era tratada, e o áudio
+  // da partilha de ecrã ficava com os defaults do browser.
+  const fmtpReG = new RegExp(`a=fmtp:${pt} ([^\r\n]*)`, 'g')
+  if (!fmtpReG.test(sdp)) {
+    fmtpReG.lastIndex = 0
+    return sdp.replace(new RegExp(`(a=rtpmap:${pt} opus/48000(?:/\\d+)?)`, 'g'), `$1\r\na=fmtp:${pt} ${extra}`)
   }
-  return sdp.replace(fmtpRe, `a=fmtp:${pt} ${params}`)
+  fmtpReG.lastIndex = 0
+  return sdp.replace(fmtpReG, (_full, params: string) => {
+    let out = params
+    for (const kv of extra.split(';')) {
+      const key = kv.split('=')[0]
+      out = out.includes(`${key}=`) ? out.replace(new RegExp(`${key}=\\d+`), kv) : `${out};${kv}`
+    }
+    return `a=fmtp:${pt} ${out}`
+  })
 }
 
 /** Config extra para E2EE: o Chrome exige a flag na criação do PC. */
@@ -59,6 +85,11 @@ export interface CallCallbacks {
   onStream: (peerId: string, stream: MediaStream) => void
   /** A ligação de media com o participante caiu. */
   onPeerLeft: (peerId: string) => void
+  /**
+   * Estado da ligação de media mudou (ver `callRecovery.ts`). Opcional: quem
+   * não o fornecer mantém o comportamento anterior, sem recuperação visível.
+   */
+  onState?: (state: CallState) => void
 }
 
 export interface Call {
@@ -66,6 +97,14 @@ export interface Call {
   replaceAudioTrack(track: MediaStreamTrack): Promise<void>
   /** Adiciona/substitui a track de vídeo publicada, renegociando se preciso. */
   enableVideo(track: MediaStreamTrack, stream: MediaStream): Promise<void>
+  /**
+   * Para de publicar vídeo SEM desmontar o transceiver (`replaceTrack(null)`).
+   * Permite que o `Room` liberte mesmo a câmara (LED apaga, encoder pára) e
+   * volte a ligá-la depois com `enableVideo` — sem renegociar e, no SFU, sem
+   * perder as `sendEncodings` de simulcast, que só podem ser definidas na
+   * criação do transceiver.
+   */
+  disableVideo(): Promise<void>
   /**
    * Publica o ecrã como track ADICIONAL (a câmara continua a fluir).
    * No mesh (sem SFU) cai para o comportamento antigo: substitui a câmara.
@@ -77,12 +116,18 @@ export interface Call {
   hangup(): void
 }
 
-export interface QosReport {
-  /** RTT até ao SFU em ms (transporte partilhado por todos os peers). */
-  rtt: number | null
-  /** Uplink próprio: kbps enviados (todas as tracks). */
-  upKbps: number
-  byPeer: Record<string, { kbps: number; lossPct: number }>
+/**
+ * Amostra completa de qualidade + a pontuação Delonix (0–100).
+ *
+ * Substituiu um relatório de TRÊS números (RTT, uplink, perda por peer). A
+ * auditoria de 2026-08-25 mediu que era o que havia das ~25 métricas que o §4.4
+ * pede — e com três números não há diagnóstico nem SLO defensável.
+ */
+export type QosReport = QualitySample & {
+  /** Delonix Call Quality Score, 0–100. Ver `callQuality.ts` para o modelo
+   *  e, sobretudo, para o que ele NÃO é (não é MOS, não está calibrado
+   *  contra julgamento humano). */
+  score: number
 }
 
 /**
@@ -90,16 +135,40 @@ export interface QosReport {
  * sobe até aqui quando a largura de banda de upload permite e desce sozinho
  * quando não — é isto que dá a adaptação automática à rede.
  */
-async function tuneVideoSender(sender: RTCRtpSender) {
+async function tuneVideoSender(sender: RTCRtpSender, maxBitrate = 6_000_000, degradation: RTCDegradationPreference = 'balanced') {
   try {
     const params = sender.getParameters()
-    params.degradationPreference = 'balanced'
+    params.degradationPreference = degradation
     if (!params.encodings?.length) params.encodings = [{}]
-    params.encodings[0].maxBitrate = 6_000_000
+    params.encodings[0].maxBitrate = maxBitrate
     await sender.setParameters(params)
   } catch {
     /* parâmetros não suportados — segue com defaults */
   }
+}
+
+/**
+ * Teto do ecrã partilhado. É MUITO mais baixo que o da câmara (6 Mbps) por uma
+ * razão estrutural: o ecrã não tem simulcast, logo TODOS os subscritores
+ * recebem exatamente este fluxo — não há camada leve para quem tem rede fraca.
+ * 2,5 Mbps a 1080p com `degradationPreference: 'maintain-resolution'` mantém o
+ * texto legível (o que interessa numa apresentação) e baixa o framerate quando
+ * a banda aperta, em vez de desfocar.
+ */
+const SCREEN_MAX_BITRATE = 2_500_000
+
+/**
+ * Constraints do ecrã partilhado. Sem limite explícito, um monitor 4K era
+ * capturado a 4K/60 e enviado tal-qual a toda a gente.
+ */
+export const SCREEN_CONSTRAINTS: DisplayMediaStreamOptions = {
+  video: {
+    width: { max: 1920 },
+    height: { max: 1080 },
+    frameRate: { ideal: 5, max: 15 },
+  },
+  // Áudio do sistema/separador (Chrome/Edge; o utilizador escolhe no picker)
+  audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
 }
 
 async function replaceTrackOfKind(pcs: Iterable<RTCPeerConnection>, kind: string, track: MediaStreamTrack) {
@@ -107,6 +176,26 @@ async function replaceTrackOfKind(pcs: Iterable<RTCPeerConnection>, kind: string
     const sender = pc.getSenders().find((s) => s.track?.kind === kind)
     if (sender) await sender.replaceTrack(track)
   }
+}
+
+/**
+ * Sender que já ESTÁ a enviar `kind`, ou um transceiver `recvonly`/inativo do
+ * mesmo tipo que possa ser convertido em emissor.
+ *
+ * Sem isto, quem entrava sem microfone (permissão negada, modo espectador, ou
+ * só com câmara) nunca conseguia falar: `getSenders().find(s => s.track?.kind)`
+ * não encontrava nada — o sender de um transceiver `recvonly` tem `track` a
+ * `null` — e o `replaceAudioTrack` era um no-op silencioso. O botão do mic
+ * acendia, o medidor de nível mexia, e não saía um único pacote.
+ */
+function reusableTransceiver(pc: RTCPeerConnection, kind: 'audio' | 'video'): RTCRtpTransceiver | null {
+  return (
+    pc.getTransceivers().find((t) => {
+      if (t.direction === 'stopped' || t.currentDirection === 'stopped') return false
+      const tk = t.receiver.track?.kind ?? t.sender.track?.kind
+      return tk === kind && !t.sender.track
+    }) ?? null
+  )
 }
 
 /**
@@ -213,8 +302,29 @@ export class MeshCall implements Call {
     await replaceTrackOfKind(this.pcs.values(), 'video', track)
   }
 
+  /** Mesh: mesma lógica do SFU — publicar o mic mesmo sem sender ativo. */
   async replaceAudioTrack(track: MediaStreamTrack) {
-    await replaceTrackOfKind(this.pcs.values(), 'audio', track)
+    const stream = new MediaStream([track])
+    for (const [peerId, pc] of this.pcs) {
+      const active = pc.getSenders().find((s) => s.track?.kind === 'audio')
+      if (active) {
+        await active.replaceTrack(track)
+        continue
+      }
+      const reusable = reusableTransceiver(pc, 'audio')
+      let sender: RTCRtpSender
+      if (reusable) {
+        await reusable.sender.replaceTrack(track)
+        reusable.direction = 'sendrecv'
+        sender = reusable.sender
+      } else {
+        sender = pc.addTrack(track, stream)
+      }
+      this.crypto?.protectSender(sender)
+      const offer = await pc.createOffer()
+      await pc.setLocalDescription(offer)
+      this.signal.send({ type: 'offer', to: peerId, sdp: offer.sdp! })
+    }
   }
 
   /** Mesh: sem track extra — o ecrã substitui a câmara (comportamento antigo). */
@@ -243,6 +353,13 @@ export class MeshCall implements Call {
     }
   }
 
+  async disableVideo() {
+    for (const pc of this.pcs.values()) {
+      const sender = pc.getSenders().find((s) => s.track?.kind === 'video')
+      if (sender) await sender.replaceTrack(null)
+    }
+  }
+
   hangup() {
     for (const [id] of this.pcs) this.dropPeer(id)
     this.crypto?.close()
@@ -259,10 +376,20 @@ export class MeshCall implements Call {
 export class SfuCall implements Call {
   private pc: RTCPeerConnection
   private pendingIce: RTCIceCandidateInit[] = []
+  /** Sender da CÂMARA (não do ecrã). Guardado para o poder reutilizar em
+   *  `enableVideo` depois de um `disableVideo` — sem isto, cada ciclo
+   *  desligar/ligar acrescentava uma m-line nova de vídeo à sessão. */
+  private videoSender: RTCRtpSender | null = null
   private screenSender: RTCRtpSender | null = null
   private screenAudioSender: RTCRtpSender | null = null
   /** Serializa o processamento de SDP para não intercalar negociações. */
   private queue: Promise<void> = Promise.resolve()
+
+  // ---- Recuperação de chamada (ver callRecovery.ts) ----
+  private state: CallState = 'connecting'
+  private attempts = 0
+  private graceTimer: ReturnType<typeof setTimeout> | null = null
+  private restartTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     private signal: Signaling,
@@ -270,6 +397,10 @@ export class SfuCall implements Call {
     rtcConfig: RTCConfiguration,
     private cb: CallCallbacks,
     private crypto?: FrameCrypto,
+    private recovery: RecoveryConfig = DEFAULT_RECOVERY,
+    /** Linha do tempo da sessão. Vem de FORA porque começa antes desta classe
+     *  existir — o utilizador quis entrar muito antes de haver uma PC. */
+    private tempos?: LinhaDoTempo,
   ) {
     this.pc = new RTCPeerConnection(pcConfig(rtcConfig, crypto))
 
@@ -278,6 +409,7 @@ export class SfuCall implements Call {
         track.kind === 'video'
           ? addSimulcastVideo(this.pc, track, localStream)
           : this.pc.addTrack(track, localStream)
+      if (track.kind === 'video') this.videoSender = sender
       this.crypto?.protectSender(sender)
     }
     if (localStream.getTracks().length === 0) {
@@ -287,6 +419,8 @@ export class SfuCall implements Call {
 
     this.pc.onicecandidate = (e) => {
       if (e.candidate) this.send({ type: 'sfu-ice', candidate: e.candidate.toJSON() })
+      // `candidate` a null = a recolha terminou. É o fim do `ice_gathering_ms`.
+      else this.tempos?.marcar('ice_completo')
     }
     this.pc.ontrack = (e) => {
       // O SFU reencaminha frames encriptados sem os conseguir abrir;
@@ -295,6 +429,18 @@ export class SfuCall implements Call {
       // O SFU define stream_id = peer_id do publisher.
       const stream = e.streams[0]
       if (stream) this.cb.onStream(stream.id, stream)
+      // Primeira media de OUTRA pessoa. É o instante em que a reunião começa
+      // de facto — antes disto o utilizador está a olhar para um ecrã vazio.
+      this.tempos?.marcar(e.track.kind === 'audio' ? 'primeiro_audio' : 'primeiro_video')
+    }
+
+    // Recuperação de media. Antes disto não existia handler nenhum: uma PC que
+    // caísse em `failed` — mudança de Wi-Fi para dados móveis, NAT a refazer o
+    // binding, portátil a acordar da suspensão — ficava morta até o utilizador
+    // recarregar a página.
+    this.pc.onconnectionstatechange = () => {
+      if (this.pc.connectionState === 'connected') this.tempos?.marcar('ligado')
+      this.onPcState(this.pc.connectionState)
     }
 
     signal.on('sfu-answer', (m) =>
@@ -313,7 +459,8 @@ export class SfuCall implements Call {
         // aceitar a do servidor. Sem isto o setRemoteDescription(offer) falhava e
         // o subscritor (ex.: o anfitrião a receber um novo convidado) nunca
         // adicionava a track → media num sentido só.
-        if (this.pc.signalingState !== 'stable') {
+        const rolledBack = this.pc.signalingState !== 'stable'
+        if (rolledBack) {
           await this.pc.setLocalDescription({ type: 'rollback' }).catch(() => {})
         }
         await this.pc.setRemoteDescription({ type: 'offer', sdp: enhanceOpus(m.sdp) })
@@ -321,6 +468,21 @@ export class SfuCall implements Call {
         const answer = await this.pc.createAnswer()
         await this.pc.setLocalDescription(answer)
         this.send({ type: 'sfu-answer', sdp: answer.sdp! })
+        // O rollback DESCARTOU a nossa oferta — e com ela a negociação das
+        // tracks que ela publicava (ecrã, câmara). A resposta que o servidor
+        // acabar por mandar a essa oferta já não nos serve: estamos `stable` e
+        // o handler de `sfu-answer` descarta-a. Nada mais voltaria a propor
+        // aquelas tracks e a partilha de ecrã desaparecia em silêncio — o
+        // mesmo sintoma da R13, agora do lado do cliente. Por isso RE-OFERTAMOS.
+        //
+        // Não usamos `onnegotiationneeded` (que faria isto sozinho no browser)
+        // porque toda a negociação desta classe é explícita e serializada pela
+        // fila; misturar os dois daria ofertas a competir.
+        if (rolledBack) {
+          const reoffer = await this.pc.createOffer()
+          await this.pc.setLocalDescription(reoffer)
+          this.send({ type: 'sfu-offer', sdp: reoffer.sdp! })
+        }
       }),
     )
     signal.on('sfu-ice', (m) =>
@@ -341,6 +503,7 @@ export class SfuCall implements Call {
     this.enqueue(async () => {
       const offer = await this.pc.createOffer()
       await this.pc.setLocalDescription(offer)
+      this.tempos?.marcar('oferta')
       this.send({ type: 'sfu-offer', sdp: offer.sdp! })
     })
   }
@@ -353,6 +516,103 @@ export class SfuCall implements Call {
     this.queue = this.queue.then(task).catch((e) => console.warn('[sfu]', e))
   }
 
+  // ------------------------------------------------------------------
+  //  Recuperação de media. A DECISÃO vive em `callRecovery.ts` (pura e
+  //  testada); aqui só se executa o que ela mandar.
+  // ------------------------------------------------------------------
+
+  private setState(next: CallState) {
+    if (next === this.state) return
+    this.state = next
+    console.debug('[sfu] estado da chamada ->', next)
+    this.cb.onState?.(next)
+  }
+
+  private clearTimers() {
+    if (this.graceTimer) clearTimeout(this.graceTimer)
+    if (this.restartTimer) clearTimeout(this.restartTimer)
+    this.graceTimer = null
+    this.restartTimer = null
+  }
+
+  private onPcState(pcState: RTCPeerConnectionState) {
+    const d = onPeerState(pcState, this.state, this.attempts, this.recovery)
+    this.attempts = d.attempts
+    // Voltou a haver media: qualquer temporizador pendente é obsoleto. Sem
+    // isto, uma recuperação espontânea deixava um restart agendado a disparar
+    // depois, renegociando uma ligação que já estava boa.
+    if (d.state === 'connected' || d.state === 'disconnected') this.clearTimers()
+    // Recuperação COMPLETA: veio de um estado degradado e voltou a connected.
+    if (d.state === 'connected' && this.state !== 'connected' && this.state !== 'connecting') {
+      this.tempos?.contarRecuperacao()
+    }
+    this.setState(d.state)
+    this.runAction(d.action)
+  }
+
+  private runAction(action: ReturnType<typeof onPeerState>['action']) {
+    switch (action.kind) {
+      case 'none':
+        return
+      case 'observe':
+        if (this.graceTimer) return
+        this.graceTimer = setTimeout(() => {
+          this.graceTimer = null
+          const d = onGraceExpired(this.state, this.attempts, this.recovery)
+          this.attempts = d.attempts
+          this.setState(d.state)
+          this.runAction(d.action)
+        }, action.graceMs)
+        return
+      case 'restart':
+        if (this.restartTimer) return
+        this.restartTimer = setTimeout(() => {
+          this.restartTimer = null
+          this.restartIce()
+        }, action.delayMs)
+        return
+      case 'give-up':
+        // Não há mais nada a tentar daqui. Quem consome o `onState` decide o
+        // que oferecer (no Room.tsx, o recarregar que já era o comportamento).
+        this.clearTimers()
+        return
+    }
+  }
+
+  /**
+   * Reinicia o ICE: oferta nova com credenciais novas (`iceRestart`), o que
+   * faz o browser recolher candidatos de raiz pelo caminho de rede ACTUAL.
+   *
+   * Passa pela mesma fila que todo o resto da negociação. Não se usa
+   * `pc.restartIce()` (que dispararia `onnegotiationneeded`) porque nesta
+   * classe a negociação é toda explícita e serializada — misturar os dois daria
+   * ofertas a competir, que é a família de bugs da R13.
+   *
+   * Do lado do servidor não é preciso nada: o `webrtc-rs` detecta as
+   * credenciais novas no `set_remote_description` e reinicia o seu ICE
+   * (`peer_connection/mod.rs`, `have_remote_credentials_change`).
+   */
+  private restartIce() {
+    this.enqueue(async () => {
+      if (this.state === 'disconnected') return
+      // Uma negociação a meio (glare, ou renegociação do servidor em curso):
+      // ofertar agora falharia por estado. Volta a tentar em breve — a
+      // tentativa já foi contabilizada, por isso isto não fura o orçamento.
+      if (this.pc.signalingState !== 'stable') {
+        this.restartTimer = setTimeout(() => {
+          this.restartTimer = null
+          this.restartIce()
+        }, 500)
+        return
+      }
+      this.setState('recovering')
+      this.tempos?.contarReinicioIce()
+      const offer = await this.pc.createOffer({ iceRestart: true })
+      await this.pc.setLocalDescription(offer)
+      this.send({ type: 'sfu-offer', sdp: offer.sdp! })
+    })
+  }
+
   private async flushIce() {
     for (const c of this.pendingIce) await this.pc.addIceCandidate(c).catch(() => {})
     this.pendingIce = []
@@ -362,8 +622,33 @@ export class SfuCall implements Call {
     await replaceTrackOfKind([this.pc], 'video', track)
   }
 
+  /**
+   * SFU: publica o microfone. Se já há sender de áudio ativo, troca a track;
+   * senão reaproveita o transceiver `recvonly` (ou cria um) e RENEGOCEIA — sem
+   * isto, quem entrasse sem mic ficava mudo para o resto da sessão.
+   */
   async replaceAudioTrack(track: MediaStreamTrack) {
-    await replaceTrackOfKind([this.pc], 'audio', track)
+    const active = this.pc.getSenders().find((s) => s.track?.kind === 'audio')
+    if (active) {
+      await active.replaceTrack(track)
+      return
+    }
+    const stream = new MediaStream([track])
+    const reusable = reusableTransceiver(this.pc, 'audio')
+    let sender: RTCRtpSender
+    if (reusable) {
+      await reusable.sender.replaceTrack(track)
+      reusable.direction = 'sendrecv'
+      sender = reusable.sender
+    } else {
+      sender = this.pc.addTrack(track, stream)
+    }
+    this.crypto?.protectSender(sender)
+    this.enqueue(async () => {
+      const offer = await this.pc.createOffer()
+      await this.pc.setLocalDescription(offer)
+      this.send({ type: 'sfu-offer', sdp: offer.sdp! })
+    })
   }
 
   /**
@@ -372,18 +657,30 @@ export class SfuCall implements Call {
    * intercalar com renegociações do servidor.
    */
   async enableVideo(track: MediaStreamTrack, stream: MediaStream) {
-    const sender = this.pc.getSenders().find((s) => s.track?.kind === 'video')
+    // Reutiliza o sender da câmara mesmo que esteja com `track === null`
+    // (câmara desligada): mantém o simulcast e dispensa renegociação.
+    const sender = this.videoSender ?? this.pc.getSenders().find((s) => s.track?.kind === 'video')
     if (sender) {
+      this.videoSender = sender
       await sender.replaceTrack(track)
       return
     }
     const s = addSimulcastVideo(this.pc, track, stream)
+    this.videoSender = s
     this.crypto?.protectSender(s)
     this.enqueue(async () => {
       const offer = await this.pc.createOffer()
       await this.pc.setLocalDescription(offer)
       this.send({ type: 'sfu-offer', sdp: offer.sdp! })
     })
+  }
+
+  async disableVideo() {
+    const sender = this.videoSender ?? this.pc.getSenders().find((s) => s.track?.kind === 'video')
+    if (sender) {
+      this.videoSender = sender
+      await sender.replaceTrack(null)
+    }
   }
 
   /**
@@ -397,7 +694,7 @@ export class SfuCall implements Call {
     this.send({ type: 'screen-share', on: true })
     const sender = this.pc.addTrack(track, stream)
     this.crypto?.protectSender(sender)
-    void tuneVideoSender(sender)
+    void tuneVideoSender(sender, SCREEN_MAX_BITRATE, 'maintain-resolution')
     this.screenSender = sender
     // Áudio do sistema (partilha de separador/ecrã com som): 2º áudio do
     // mesmo peer — o SFU classifica-o como "screen-audio".
@@ -431,51 +728,25 @@ export class SfuCall implements Call {
     })
   }
 
-  /** Deltas de bytes/pacotes entre chamadas ao qos() (por stat id). */
-  private lastQos = new Map<string, { bytes: number; ts: number; pkts: number; lost: number }>()
+  /** Contadores da amostra anterior (os do WebRTC são cumulativos). */
+  private cursors = new Map<string, QualityCursor>()
 
   async qos(): Promise<QosReport> {
-    const out: QosReport = { rtt: null, upKbps: 0, byPeer: {} }
     const report = await this.pc.getStats()
-    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/
-    report.forEach((s: Record<string, number | string | boolean>) => {
-      if (s.type === 'candidate-pair' && s.state === 'succeeded' && typeof s.currentRoundTripTime === 'number') {
-        out.rtt = Math.round((s.currentRoundTripTime as number) * 1000)
-      }
-      if (s.type === 'outbound-rtp') {
-        const prev = this.lastQos.get(String(s.id))
-        const bytes = (s.bytesSent as number) ?? 0
-        const ts = s.timestamp as number
-        if (prev && ts > prev.ts) out.upKbps += Math.max(0, Math.round(((bytes - prev.bytes) * 8) / (ts - prev.ts)))
-        this.lastQos.set(String(s.id), { bytes, ts, pkts: 0, lost: 0 })
-      }
-      if (s.type === 'inbound-rtp') {
-        // trackIdentifier = "<publisher-uuid>-<kind>-<rid>" (definido pelo SFU)
-        const tid = String(s.trackIdentifier ?? '')
-        if (!uuidRe.test(tid)) return
-        const peer = tid.slice(0, 36)
-        const prev = this.lastQos.get(String(s.id))
-        const bytes = (s.bytesReceived as number) ?? 0
-        const pkts = (s.packetsReceived as number) ?? 0
-        const lost = (s.packetsLost as number) ?? 0
-        const ts = s.timestamp as number
-        let kbps = 0
-        let lossPct = 0
-        if (prev && ts > prev.ts) {
-          kbps = Math.max(0, Math.round(((bytes - prev.bytes) * 8) / (ts - prev.ts)))
-          const dp = pkts - prev.pkts
-          const dl = lost - prev.lost
-          if (dp + dl > 0) lossPct = Math.round((100 * dl) / (dp + dl))
-        }
-        this.lastQos.set(String(s.id), { bytes, ts, pkts, lost })
-        const cur = out.byPeer[peer] ?? { kbps: 0, lossPct: 0 }
-        out.byPeer[peer] = { kbps: cur.kbps + kbps, lossPct: Math.max(cur.lossPct, lossPct) }
-      }
-    })
-    return out
+    // O `RTCStatsReport` é um Map-like; a extracção é pura e trabalha sobre um
+    // array simples, o que a torna testável sem browser (ver callQuality.test.ts).
+    const entries: StatEntry[] = []
+    report.forEach((v) => entries.push(v as unknown as StatEntry))
+    const sample = extractQuality(entries, this.cursors)
+    return { ...sample, score: callQualityScore(sample) }
   }
 
   hangup() {
+    // Terminal ANTES de fechar a PC: o `close()` dispara
+    // `onconnectionstatechange`, e sem o estado já em `disconnected` a máquina
+    // interpretaria a saída intencional como uma avaria e tentava recuperar.
+    this.setState('disconnected')
+    this.clearTimers()
     this.pc.close()
     this.crypto?.close()
     this.signal.close()

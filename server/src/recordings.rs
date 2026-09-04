@@ -60,6 +60,14 @@ pub struct RecordingItem {
     /// RBAC de download: só o dono da gravação e admins da org do dono podem
     /// descarregar o ficheiro; os restantes só reproduzem.
     pub can_download: bool,
+    /// `ready` = há ficheiro. `failed` = houve tentativa e não há nada.
+    ///
+    /// A entrada falhada existe para ser VISTA: antes, uma gravação que não
+    /// compunha desaparecia sem deixar rasto, e quem carregou em «gravar»
+    /// ficava a pensar que tinha um ficheiro algures. Ver migração 0036.
+    pub status: String,
+    /// Causa em linguagem de utilizador. `None` quando `status = ready`.
+    pub failure_reason: Option<String>,
 }
 
 async fn room_by_code(state: &AppState, code: &str) -> Result<Room, ApiError> {
@@ -184,6 +192,7 @@ pub async fn library(
         SELECT r.id, r.room_id, rm.code AS room_code,
                r.uploader_id, u.username AS uploader_name,
                r.filename, r.size_bytes, r.created_at,
+               r.status, r.failure_reason,
                (p.user_id IS NOT NULL) AS owned,
                COALESCE(sc.n, 0) AS share_count,
                (r.uploader_id = $1 OR EXISTS(
@@ -249,6 +258,20 @@ pub async fn download(
     .bind(id)
     .fetch_one(&state.db)
     .await?;
+    // Uma gravação falhada não tem ficheiro. Sem esta guarda, o pedido descia
+    // até ao `File::open` e voltava um 500 opaco — quando a resposta honesta é
+    // dizer que não há nada para descarregar, e porquê.
+    let (status, motivo): (String, Option<String>) =
+        sqlx::query_as("SELECT status, failure_reason FROM recordings WHERE id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?;
+    if status != "ready" {
+        return Err(ApiError::BadRequest(motivo.unwrap_or_else(|| {
+            "Esta gravação falhou e não tem ficheiro.".into()
+        })));
+    }
+
     let as_download = q.dl.unwrap_or(0) == 1;
     if as_download {
         // Ficheiro para guardar: exige a permissão de download (RBAC).

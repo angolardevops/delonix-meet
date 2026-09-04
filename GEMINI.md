@@ -23,8 +23,8 @@
 | Component | Version | Why it matters |
 |---|---|---|
 | Rust | 1.80+ | Edition 2021, async closures, `impl Trait` in fn params |
-| axum | 0.7 | `Router::new()`, `Extension` extractors, `MethodRouter` |
-| sqlx | 0.7 | `query!` macros with compile-time checking (requires `DATABASE_URL` at build) |
+| axum | 0.8 | `Router::new()`, `Extension` extractors, `MethodRouter` |
+| sqlx | 0.8 | Runtime API (`query`, `query_as::<_, T>`) — **no** compile-time checking, and **no** `DATABASE_URL` needed at build |
 | reqwest | **0.12** (rustls-tls) | **Do NOT upgrade to 0.13** — rustls version conflict |
 | webrtc-rs | Latest compatible | SFU: DTLs, SRTP, RTP fan-out, simulcast |
 | React | 18 | Concurrent features, `useTransition`, `useDeferredValue` |
@@ -85,6 +85,7 @@ The workspace pins `reqwest = { version = "0.12", features = ["rustls-tls"] }`. 
 5. **Rate limiting:** Login lockout 8 attempts/5min; `/api/v1` rate-limited by IP; WS rate-limited per socket.
 6. **Cookie security:** `dlx_refresh` always `Secure` except with `COOKIE_INSECURE=1`.
 7. **Server-side authorization:** Host controls (lock/kick/share-only) validated in `signaling.rs`, never trusted from client.
+8. **One account, one explicit authentication authority:** `users.odoo_org_id` — the org that MANAGES the account, written when it is born from an Odoo and never rewritten by another. NULL = local account, authenticated locally. Never resolve the auth provider by email or by org membership (`LIMIT 1` with no `ORDER BY` = picking the authority by lottery), and a directory sync never claims an account that already exists — neither another org's nor a local one. Both halves are required. See R25.
 
 ---
 
@@ -92,21 +93,33 @@ The workspace pins `reqwest = { version = "0.12", features = ["rustls-tls"] }`. 
 
 CSS custom properties in `web/src/styles/`. Never hardcode colors.
 
-| Token | Value | Use |
-|---|---|---|
-| `--accent` | `#C8201D` | Delonix red — primary CTAs |
-| `--accent-hi` | `#F26430` | Hover / gradient |
-| `--accent-2` | `#EDA33B` | Gold — text accents, "Meet" wordmark |
-| `--bg` | `#07090D` | Main dark background |
-| `--surface` | `#0B0E13` | Cards/modals |
-| `--room-bg` | `#202124` | Meet-gray — room is always dark |
-| `--ctrl-bg` | `#3c4043` | Room control buttons |
+**ACTION vs BRAND:** indigo is the **action** color (primary buttons, focus, links, active nav); red + gold are the **brand** (logo, "Meet" wordmark, landing, sidebar square). Never use red for navigation, nor indigo for the logo.
 
-**Room always dark:** `.room-page` reaffirms dark tokens with `!important` at end of `styles.css` — room ignores light themes.
+| Token | Dark | Light | Use |
+| --- | --- | --- | --- |
+| `--accent` | `#5c6cf2` | `#3947c9` | Primary action, focus |
+| `--accent-text` | `#9aa5ff` | `#3947c9` | Indigo readable as text/link |
+| `--accent-soft` | `#242b4e` | `#e6e9fb` | Active-state / chip fill |
+| `--bg` | `#14161d` | `#f4f5f7` | Page background |
+| `--surface` | `#1c1f28` | `#ffffff` | Cards/modals |
+| `--border` / `--border-soft` | `#262a34` / `#20242e` | `#e2e5eb` / `#eef0f4` | Surface outline / in-card dividers |
+| `--sb-bg` / `--sb-text` | `#12141a` / `#aeb4c6` | `#1e2a45` / `#c6cfe4` | **Nav rail — dark in BOTH themes** |
+| `--hdr-bg` | `#14161d` | `#ffffff` | App bar (top) |
+| `--brand` | `#D8352E` | `#C8201D` | Delonix red (logo, landing) |
+
+**Room always dark:** `.room-page` reaffirms dark tokens with `!important` at end of `styles.scss` — room ignores light themes. Room chrome: `#0d0f14` background, `#12141a` bars, stage `linear-gradient(160deg,#1b2030,#12141c)`, 320px flush side panel.
 
 **Unified control system (2026-07-14):** full reference in `docs/reference/design-system.md`. Tokens `--radius-sm/md/lg` = 4/6/8px, `--ctl-h` = 30px; uniformization layer at the END of `styles.scss` (3 tiers). New controls MUST use the kit `web/src/components/ui.tsx` (`Btn`/`IconBtn`/`Card`/`Field`/`SelectCtl`/`Switch`) — no ad-hoc buttons, no hardcoded radius/height. Themes = token maps in `styles/tokens.scss` under `[data-theme=…]`, never scattered overrides.
 
-**Fonts:** Space Grotesk (headings), Instrument Sans (body), IBM Plex Mono (mono) — self-hosted via @fontsource.
+**CONSOLE layer (2026-07-27):** at the end of `styles.scss`, AFTER the control layer (same specificity — last one wins).
+
+- Density: `html { font-size: 15px }`. The app sizes almost everything in `rem`, so the root is the single density knob — don't tighten sizes page by page.
+- `.app-bar` (top of content, in `Shell.tsx`): date, theme, "New meeting" and join-code field. These actions **moved out of Home** — do not duplicate them there.
+- Shell structure: `.shell-main` (flex column, overflow hidden) → `.app-bar` + `.shell-body` (the scroller). Full-height pages inside the Shell use `height: 100%`, never `100vh` (the bar already takes ~46px).
+- Surfaces separate by **1px border + luminance**, not shadow: `--shadow` is 1px, `--border-soft` for in-card dividers.
+- Room: 38px square controls grouped in `.ctrl-group` (devices | session), hangup standalone. The 50px Meet pill is gone; the device chevron is a 15px corner caret.
+
+**Fonts:** IBM Plex Sans (headings + body) + IBM Plex Mono (code, clocks, room codes) — self-hosted via @fontsource. Single family on purpose: that's what gives the console metric.
 
 ---
 
@@ -149,7 +162,7 @@ cargo build --release
 
 ### Rust
 - All handler errors via `AppError` — no `unwrap()` in production code
-- `sqlx::query!` macros with compile-time verification
+- `sqlx::query` / `sqlx::query_as::<_, T>` (runtime API — no compile-time verification; a wrong column name fails at runtime, not at build)
 - Handlers return `Result<impl IntoResponse, AppError>`
 - New modules: declare in `main.rs` (`mod new_module;`) + register routes in router
 - Migrations: `server/migrations/NNNN_name.sql` with sequential prefix
@@ -163,6 +176,16 @@ cargo build --release
 ---
 
 ## Known gotchas
+
+- **Glare has TWO halves:** deferring the client offer server-side is NOT enough — the client's `rollback` discards its own offer, so the client must **re-offer** after answering. Guarded by `sfu_e2e.rs` + `glare.test.ts` (R13).
+- **SFU negotiation goes through ONE per-peer channel** (`NegoMsg` → `negotiation_loop`): client offers (screen share, camera on), client answers and server renegotiations are all serialized. webrtc-rs has no rollback — a client offer arriving while ours is pending is **deferred**, never applied out of state (R13).
+- **No periodic PLI** — keyframes on demand only: new subscription, layer switch, or subscriber PLI/FIR forwarded to the publisher (1 s rate limit) (R14).
+- **Simulcast layer is re-evaluated** from room size AND the subscriber's RTCP-reported loss, on every join/leave and loss-level change (R15).
+- **Call `touch_subs()` after ANY subscriber change** — the RTP pump uses a snapshot invalidated by `subs_version` (R16).
+- **Remote audio lives in `AudioSink`, never inside a tile** — hiding a tile must never mute anyone (R19).
+- **Active-speaker selection (top-N):** the SFU forwards only the 3 loudest mics. Three traps that silence people: always renumber forwarded audio (suppression would otherwise look like packet loss and downgrade their video), decay energy on a TIMER not per packet (with DTX a silent speaker sends nothing and would stay pinned in the top-N), and never suppress mics whose RFC 6464 level extension was not negotiated. Recording, PSTN and screen audio always get everything (R22).
+- **`video-interest` is sent on every change** — the visible page while paginating, ALL peers when not. Going silent does not mean "all" (R23).
+- **Publishing media needs a negotiation fallback** — `replaceAudioTrack` reuses the `recvonly` transceiver and renegotiates (R20).
 
 - Vite proxy: `/ws` and `/rtc` need `ws: true`. Changes require Vite restart.
 - Web Speech API: Chrome/Edge only. Firefox falls back to Whisper WASM.
@@ -198,4 +221,4 @@ cargo build --release
 - **K8s media is relay-only** (`FORCE_TURN_RELAY=1` → `iceTransportPolicy:relay` on `/api/ice` and SFU `RTCConfiguration`) with a reachable coturn (stage: on the HOST via `deploy/run-host-coturn.sh`). Without it ICE connects but the tile stays black. Do NOT enable on local (systemd, same host). Open issue: unstable TURN allocation (`438 Stale nonce`).
 - **`.dockerignore` must NOT exclude `web/dist`** (`Dockerfile.web.stage` copies it); `vite.config.ts` reads dev certs only in `serve`.
 - **Server is authoritative** for shared room actions: `wb-close`, `Presenting`/clear-presentation on stop-share are broadcast/validated in `signaling.rs`; the client does not decide alone.
-- **Reference:** stable knowledge base in `docs/reference/architecture.md`; **regressions never to reintroduce in `docs/reference/regressions.md` (R1–R12)**; autonomous reviewer subagents in `agents/`.
+- **Reference:** stable knowledge base in `docs/reference/architecture.md`; **regressions never to reintroduce in `docs/reference/regressions.md` (R1–R24)**; autonomous reviewer subagents in `agents/`.

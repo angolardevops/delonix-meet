@@ -380,6 +380,19 @@ export class BackgroundEffect {
     this.ctx.restore()
   }
 
+  /**
+   * A PESSOA RECORTADA, com canal alfa e a borda já suavizada — o resultado
+   * intermédio do `composite()`, antes de lhe ser posto um fundo por trás.
+   *
+   * Exposto para o Estúdio (pages/Studio.tsx) poder sobrepor a pessoa aos
+   * slides de uma aula. A track que o `start()` devolve não serve para isso:
+   * uma track de vídeo é opaca por definição, e o que aqui é preciso é o alfa.
+   * `null` enquanto a segmentação não tiver produzido o primeiro frame.
+   */
+  get pessoaComAlfa(): HTMLCanvasElement | null {
+    return this.running && this.person.width > 0 ? this.person : null
+  }
+
   /** Para o processamento e devolve a track original da câmara. */
   stop(): MediaStreamTrack | null {
     this.running = false

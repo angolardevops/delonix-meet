@@ -109,7 +109,7 @@ C4Container
   Rel(spa, server, "REST /api/*", "HTTPS")
   Rel(spa, server, "Sinalização /ws, presença /rtc", "WSS")
   Rel(spa, server, "Media SRTP/DTLS (SFU)", "UDP")
-  Rel(server, pg, "SQL (query!/query_as!)", "TCP")
+  Rel(server, pg, "SQL (query/query_as)", "TCP")
   Rel(server, redis, "pub/sub + estado", "TCP")
   Rel(server, coturn, "Relay quando NAT/relay-only", "UDP")
   Rel(spa, coturn, "Relay de media", "UDP")

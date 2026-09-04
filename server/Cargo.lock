@@ -780,6 +780,7 @@ dependencies = [
  "url",
  "uuid",
  "webrtc",
+ "zeroize",
 ]
 
 [[package]]

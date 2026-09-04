@@ -44,6 +44,95 @@ pub struct Metrics {
     pub sfu_publications_total: AtomicU64,
     /// Peers admitidos ao SFU (cumulativo).
     pub sfu_peers_total: AtomicU64,
+    /// Subscrições ativas (publicação → subscritor). É isto que dimensiona o
+    /// downlink real do nó — `peers × publicações` não serve, porque cada peer
+    /// recebe UMA camada por publicador.
+    pub sfu_subscriptions: AtomicI64,
+    /// Trocas de camada simulcast (cumulativo): sobe quando a sala cresce/encolhe
+    /// ou quando a rede de um subscritor degrada.
+    pub sfu_layer_switches_total: AtomicU64,
+    /// Subscritores atualmente a receber uma camada ABAIXO do normal por perda
+    /// de pacotes. >0 sustentado = rede dos clientes (ou do relay) em apuros.
+    pub sfu_degraded_subscribers: AtomicI64,
+    /// Keyframes (PLI) pedidos aos publicadores (cumulativo). Um valor alto e
+    /// constante indica perda a forçar recuperação repetida.
+    pub sfu_keyframes_requested_total: AtomicU64,
+    /// Renegociações que falharam depois de todas as tentativas — cada uma é um
+    /// peer que ficou sem receber media nova (era invisível antes).
+    pub sfu_renegotiations_failed_total: AtomicU64,
+    /// Ofertas do cliente adiadas por glare (diagnóstico da correção do glare).
+    pub sfu_offers_deferred_total: AtomicU64,
+    /// Gravações recuperadas de salas que esvaziaram por falha de ligação.
+    pub sfu_recordings_orphaned_total: AtomicU64,
+    /// Microfones fora do top-N de oradores (áudio não reencaminhado). É a
+    /// medida directa da poupança de downlink de voz.
+    pub sfu_audio_suppressed: AtomicI64,
+
+    // ---- Filas de saída dos WebSockets (limitadas — ver signaling::PeerTx) ----
+    /// Ocupação MÁXIMA já observada numa fila de socket (marca de água alta,
+    /// nunca desce). É a medida de utilização: se ficar perto de `WS_QUEUE_CAP`
+    /// a capacidade está no limite; se ficar em dezenas, sobra folga. Escolheu-se
+    /// marca de água em vez de profundidade instantânea porque um gauge somado
+    /// entre sockets vaza quando uma task de escrita é abortada a meio.
+    pub ws_queue_high_water: AtomicI64,
+    /// Mensagens DESCARTADAS por fila cheia (só as descartáveis: legenda
+    /// parcial, traço de quadro, reacção). >0 sustentado = a sala está a
+    /// perder conteúdo efémero por causa de um consumidor lento.
+    pub ws_queue_dropped_total: AtomicU64,
+    /// Sockets fechados por transbordo com uma mensagem que NÃO se pode
+    /// descartar (sinalização/estado). Desligar é honesto; entregar meio
+    /// protocolo não é. Cada um destes é um cliente que vai reentrar.
+    pub ws_slow_consumer_kills_total: AtomicU64,
+    /// Pedidos de renegociação do SFU descartados por fila cheia. A
+    /// renegociação é coalescível (o estado mais recente vence), por isso
+    /// descartar é correcto — mas se isto sobe, o `negotiation_loop` não está
+    /// a acompanhar o ritmo de alterações de subscrição.
+    pub nego_queue_dropped_total: AtomicU64,
+
+    // ---- Qualidade de chamada (amostras reportadas pelos clientes) ----
+    //
+    // Contadores em processo, e não uma consulta à base de dados no `/metrics`:
+    // um scrape não pode arrastar o Postgres consigo. A média lê-se em
+    // Prometheus como `score_sum / samples_total`, que é a forma idiomática e
+    // permite `rate()` por janela em vez de uma média desde o arranque.
+    /// Amostras de qualidade recebidas (cumulativo).
+    pub qos_samples_total: AtomicU64,
+    /// Soma das pontuações Delonix recebidas. Só conta amostras que a TRAZEM.
+    pub qos_score_sum: AtomicU64,
+    /// Amostras COM pontuação (denominador da média — clientes antigos não a
+    /// enviam, e misturá-los baixava a média sem que nada tivesse piorado).
+    pub qos_scored_total: AtomicU64,
+    /// Amostras com pontuação < 60 («fraca» ou pior).
+    pub qos_poor_total: AtomicU64,
+    /// Amostras em que a media passou por TURN relay (custo e latência).
+    pub qos_turn_relay_total: AtomicU64,
+    /// Amostras em que o encoder estava travado por CPU do cliente — o
+    /// problema é a máquina, não a rede, e sem isto conta como «rede má».
+    pub qos_cpu_limited_total: AtomicU64,
+
+    /// Pacotes RTP perdidos por a fila de escrita da gravação estar cheia.
+    /// `> 0` significa gravação DEGRADADA: o disco não acompanhou. Existe
+    /// porque a alternativa — bloquear o executor até o disco alcançar — é
+    /// pior, e porque uma gravação corrompida em silêncio é a R18.
+    pub recording_packets_dropped_total: AtomicU64,
+
+    /// Escritas de auditoria que FALHARAM. Qualquer valor acima de zero
+    /// significa uma trilha incompleta — que é uma falha de conformidade em
+    /// curso, e por isso é contador e não aviso perdido no log.
+    pub audit_write_failures_total: AtomicU64,
+
+    // ---- Tempo até entrar numa reunião ----
+    //
+    // Soma e contagem em vez de média: é a forma idiomática em Prometheus e
+    // permite `rate()` por janela. Uma média desde o arranque deixa de reagir
+    // ao fim de um dia — e o que interessa é «está pior HOJE?».
+    /// Sessões que reportaram tempo de entrada.
+    pub join_total: AtomicU64,
+    /// Soma dos tempos de entrada, ms (média = sum/total).
+    pub join_ms_sum: AtomicU64,
+    /// Entradas acima de 5 s. É a CAUDA, e é ela que se sente — uma média de
+    /// 1,2 s esconde perfeitamente 5% de pessoas à espera doze segundos.
+    pub join_slow_total: AtomicU64,
 }
 
 impl Metrics {
@@ -74,6 +163,75 @@ impl Metrics {
              # HELP delonix_sfu_peers_total Peers admitidos ao SFU (cumulativo).\n\
              # TYPE delonix_sfu_peers_total counter\n\
              delonix_sfu_peers_total {}\n\
+             # HELP delonix_sfu_subscriptions Subscrições ativas (publicação→subscritor).\n\
+             # TYPE delonix_sfu_subscriptions gauge\n\
+             delonix_sfu_subscriptions {}\n\
+             # HELP delonix_sfu_layer_switches_total Trocas de camada simulcast.\n\
+             # TYPE delonix_sfu_layer_switches_total counter\n\
+             delonix_sfu_layer_switches_total {}\n\
+             # HELP delonix_sfu_degraded_subscribers Subscritores a receber camada reduzida por perda.\n\
+             # TYPE delonix_sfu_degraded_subscribers gauge\n\
+             delonix_sfu_degraded_subscribers {}\n\
+             # HELP delonix_sfu_keyframes_requested_total PLIs enviados aos publicadores.\n\
+             # TYPE delonix_sfu_keyframes_requested_total counter\n\
+             delonix_sfu_keyframes_requested_total {}\n\
+             # HELP delonix_sfu_renegotiations_failed_total Renegociações falhadas (peer sem media nova).\n\
+             # TYPE delonix_sfu_renegotiations_failed_total counter\n\
+             delonix_sfu_renegotiations_failed_total {}\n\
+             # HELP delonix_sfu_offers_deferred_total Ofertas do cliente adiadas por glare.\n\
+             # TYPE delonix_sfu_offers_deferred_total counter\n\
+             delonix_sfu_offers_deferred_total {}\n\
+             # HELP delonix_sfu_recordings_orphaned_total Gravações recuperadas de salas caídas.\n\
+             # TYPE delonix_sfu_recordings_orphaned_total counter\n\
+             delonix_sfu_recordings_orphaned_total {}\n\
+             # HELP delonix_sfu_audio_suppressed Microfones fora do top-N de oradores.\n\
+             # TYPE delonix_sfu_audio_suppressed gauge\n\
+             delonix_sfu_audio_suppressed {}\n\
+             # HELP delonix_ws_queue_high_water Ocupação máxima já vista numa fila de socket.\n\
+             # TYPE delonix_ws_queue_high_water gauge\n\
+             delonix_ws_queue_high_water {}\n\
+             # HELP delonix_ws_queue_dropped_total Mensagens descartáveis perdidas por fila cheia.\n\
+             # TYPE delonix_ws_queue_dropped_total counter\n\
+             delonix_ws_queue_dropped_total {}\n\
+             # HELP delonix_ws_slow_consumer_kills_total Sockets fechados por transbordo de fila.\n\
+             # TYPE delonix_ws_slow_consumer_kills_total counter\n\
+             delonix_ws_slow_consumer_kills_total {}\n\
+             # HELP delonix_nego_queue_dropped_total Renegociações do SFU coalescidas por fila cheia.\n\
+             # TYPE delonix_nego_queue_dropped_total counter\n\
+             delonix_nego_queue_dropped_total {}\n\
+             # HELP delonix_qos_samples_total Amostras de qualidade recebidas dos clientes.\n\
+             # TYPE delonix_qos_samples_total counter\n\
+             delonix_qos_samples_total {}\n\
+             # HELP delonix_qos_scored_total Amostras que trazem pontuação (denominador da média).\n\
+             # TYPE delonix_qos_scored_total counter\n\
+             delonix_qos_scored_total {}\n\
+             # HELP delonix_qos_score_sum Soma das pontuações Delonix (média = sum/scored).\n\
+             # TYPE delonix_qos_score_sum counter\n\
+             delonix_qos_score_sum {}\n\
+             # HELP delonix_qos_poor_total Amostras com pontuação abaixo de 60.\n\
+             # TYPE delonix_qos_poor_total counter\n\
+             delonix_qos_poor_total {}\n\
+             # HELP delonix_qos_turn_relay_total Amostras com media a passar por TURN relay.\n\
+             # TYPE delonix_qos_turn_relay_total counter\n\
+             delonix_qos_turn_relay_total {}\n\
+             # HELP delonix_qos_cpu_limited_total Amostras com o encoder travado por CPU do cliente.\n\
+             # TYPE delonix_qos_cpu_limited_total counter\n\
+             delonix_qos_cpu_limited_total {}\n\
+             # HELP delonix_recording_packets_dropped_total Pacotes perdidos por fila de gravação cheia.\n\
+             # TYPE delonix_recording_packets_dropped_total counter\n\
+             delonix_recording_packets_dropped_total {}\n\
+             # HELP delonix_audit_write_failures_total Escritas de auditoria falhadas (trilha incompleta).\n\
+             # TYPE delonix_audit_write_failures_total counter\n\
+             delonix_audit_write_failures_total {}\n\
+             # HELP delonix_join_total Sessões que reportaram tempo de entrada.\n\
+             # TYPE delonix_join_total counter\n\
+             delonix_join_total {}\n\
+             # HELP delonix_join_ms_sum Soma dos tempos de entrada em ms (média = sum/total).\n\
+             # TYPE delonix_join_ms_sum counter\n\
+             delonix_join_ms_sum {}\n\
+             # HELP delonix_join_slow_total Entradas acima de 5 s (a cauda que se sente).\n\
+             # TYPE delonix_join_slow_total counter\n\
+             delonix_join_slow_total {}\n\
              # HELP delonix_uptime_seconds Uptime do processo em segundos.\n\
              # TYPE delonix_uptime_seconds gauge\n\
              delonix_uptime_seconds {}\n",
@@ -82,6 +240,29 @@ impl Metrics {
             g(self.sfu_pc_connected.load(Relaxed)),
             self.sfu_publications_total.load(Relaxed),
             self.sfu_peers_total.load(Relaxed),
+            g(self.sfu_subscriptions.load(Relaxed)),
+            self.sfu_layer_switches_total.load(Relaxed),
+            g(self.sfu_degraded_subscribers.load(Relaxed)),
+            self.sfu_keyframes_requested_total.load(Relaxed),
+            self.sfu_renegotiations_failed_total.load(Relaxed),
+            self.sfu_offers_deferred_total.load(Relaxed),
+            self.sfu_recordings_orphaned_total.load(Relaxed),
+            g(self.sfu_audio_suppressed.load(Relaxed)),
+            g(self.ws_queue_high_water.load(Relaxed)),
+            self.ws_queue_dropped_total.load(Relaxed),
+            self.ws_slow_consumer_kills_total.load(Relaxed),
+            self.nego_queue_dropped_total.load(Relaxed),
+            self.qos_samples_total.load(Relaxed),
+            self.qos_scored_total.load(Relaxed),
+            self.qos_score_sum.load(Relaxed),
+            self.qos_poor_total.load(Relaxed),
+            self.qos_turn_relay_total.load(Relaxed),
+            self.qos_cpu_limited_total.load(Relaxed),
+            self.recording_packets_dropped_total.load(Relaxed),
+            self.audit_write_failures_total.load(Relaxed),
+            self.join_total.load(Relaxed),
+            self.join_ms_sum.load(Relaxed),
+            self.join_slow_total.load(Relaxed),
             uptime_secs,
         )
     }

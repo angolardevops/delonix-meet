@@ -49,6 +49,9 @@ export interface PeerInfo {
 
 export type ServerMsg =
   | { type: 'joined'; peer_id: string; peers: PeerInfo[] }
+  /** Este nó vai fechar. Reconectar daqui a `reconnect_in_ms` (mais jitter)
+   *  migra a sala para outro pod — ver `callRecovery`/Room.tsx. */
+  | { type: 'draining'; reconnect_in_ms: number }
   | { type: 'peer-joined'; peer: PeerInfo }
   | { type: 'peer-left'; peer_id: string }
   | { type: 'offer'; from: string; sdp: string }
@@ -126,6 +129,17 @@ export type ClientMsg =
   | { type: 'wb-clear' }
   | { type: 'wb-close' }
   | { type: 'screen-share'; on: boolean }
+  /** De quem queremos VÍDEO (página visível da grelha). O SFU deixa de enviar
+   *  o resto — o áudio de todos e o ecrã partilhado nunca dependem disto. */
+  | {
+      type: 'video-interest'
+      peers: string[]
+      /** Camada desejada por publicador. Decidida no cliente porque é lá que
+       *  se sabe o tamanho do tile, a aba em segundo plano, a CPU, a bateria e
+       *  a poupança de dados — ver `layerPolicy.ts`. É uma SUGESTÃO: a perda
+       *  medida por RTCP corta por cima dela no servidor. */
+      quality?: Record<string, 'q' | 'h' | 'f'>
+    }
   | { type: 'breakouts-create'; count: number; minutes: number | null }
   | { type: 'breakout-rename'; code: string; label: string }
   | { type: 'breakout-add' }

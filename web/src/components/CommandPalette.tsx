@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createRoom } from '../api'
 import type { NavKey } from './Shell'
-import { CalendarIcon, ClockIcon, FilmIcon, HomeIcon, NoteIcon, PeopleIcon, StageIcon } from '../icons'
+import { CalendarIcon, ClockIcon, EnterIcon, FilmIcon, HomeIcon, NoteIcon, PeopleIcon, SearchIcon, StageIcon } from '../icons'
 
 // Command palette (Cmd/Ctrl-K) — navegação + ações rápidas, estilo Teams/Slack.
 // Aberto por atalho global ou pelo botão de pesquisa da sidebar (ver Shell).
@@ -109,7 +109,7 @@ export default function CommandPalette({ open, onClose, onNavigate, onEnterRoom,
     <div className="cmd-backdrop" onMouseDown={onClose} role="dialog" aria-modal="true" aria-label={t('cmd.title', 'Comandos')}>
       <div className="cmd-palette" onMouseDown={(e) => e.stopPropagation()}>
         <div className="cmd-search">
-          <span className="cmd-search-icon" aria-hidden="true">⌕</span>
+          <span className="cmd-search-icon" aria-hidden="true"><SearchIcon /></span>
           <input
             ref={inputRef}
             value={query}
@@ -139,7 +139,7 @@ export default function CommandPalette({ open, onClose, onNavigate, onEnterRoom,
                     >
                       <span className="cmd-item-icon">{c.icon ?? <span className="cmd-dot" />}</span>
                       <span className="cmd-item-label">{c.label}</span>
-                      {i === sel && <span className="cmd-item-enter" aria-hidden="true">↵</span>}
+                      {i === sel && <span className="cmd-item-enter" aria-hidden="true"><EnterIcon /></span>}
                     </button>
                   )
                 })}

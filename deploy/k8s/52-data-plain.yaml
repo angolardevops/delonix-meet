@@ -1,0 +1,106 @@
+# Postgres + Redis SEM Helm — para o cluster local `delonix cluster` (kind-mode).
+#
+# Porquê existir a par do `50-data.yaml`/`make stage`: aquele caminho instala os
+# charts Bitnami e o `helm` não existe nesta máquina (o runtime é o
+# delonix-runtime, daemonless/rootless, e a plataforma não traz o stack docker
+# clássico). O próprio Makefile já nota que o chart HA perdeu as imagens do
+# Docker Hub em 2024 — para stage local, dois manifests simples são menos
+# peças móveis e não dependem de um repositório de charts.
+#
+# Os NOMES DE SERVIÇO são deliberadamente iguais aos que os charts gerariam,
+# porque o `01-config.yaml` codifica-os no DATABASE_URL/REDIS_URL:
+#   delonix-postgres-postgresql.delonix-meet.svc.cluster.local:5432
+#   delonix-redis-master.delonix-meet.svc.cluster.local:6379
+# Mudar um nome aqui obriga a mudar a config — mantê-los evita esse acoplamento.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-postgres-postgresql
+  namespace: delonix-meet
+  labels: { app: delonix-postgres }
+spec:
+  selector: { app: delonix-postgres }
+  ports:
+    - { name: postgres, port: 5432, targetPort: 5432 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: delonix-postgres
+  namespace: delonix-meet
+spec:
+  serviceName: delonix-postgres-postgresql
+  replicas: 1
+  selector:
+    matchLabels: { app: delonix-postgres }
+  template:
+    metadata:
+      labels: { app: delonix-postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          envFrom:
+            - configMapRef: { name: delonix-config }
+          env:
+            # O `postgres` oficial escreve em /var/lib/postgresql/data; com um
+            # volume montado nesse caminho o initdb falha por causa do
+            # `lost+found`. PGDATA num subdiretório é o padrão recomendado.
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports:
+            - { containerPort: 5432, name: postgres }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "delonix", "-d", "delonix_meet"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "2", memory: 1Gi }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-redis-master
+  namespace: delonix-meet
+  labels: { app: delonix-redis }
+spec:
+  selector: { app: delonix-redis }
+  ports:
+    - { name: redis, port: 6379, targetPort: 6379 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-redis
+  namespace: delonix-meet
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: delonix-redis }
+  template:
+    metadata:
+      labels: { app: delonix-redis }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          # Sem password: o REDIS_URL da config não a leva, e o Redis só é
+          # alcançável dentro do cluster (Service ClusterIP, sem ingress).
+          args: ["--save", "60", "1", "--appendonly", "no"]
+          ports:
+            - { containerPort: 6379, name: redis }
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: "1", memory: 512Mi }

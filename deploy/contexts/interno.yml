@@ -1,0 +1,83 @@
+# ════════════════════════════════════════════════════════════════════
+#  CONTEXTO 2 — Servidor interno (sem domínio público)
+#
+#  Para: reuniões só entre pessoas da empresa, na rede local ou por VPN.
+#  Nada é exposto à Internet. Certificado self-signed sobre o IP.
+#
+#  O QUE ISTO CUSTA, e é preciso decidir antes:
+#  Sem uma autoridade certificadora pública, cada browser mostra um
+#  ecrã de aviso vermelho na primeira visita. E como a câmara e o
+#  microfone EXIGEM contexto seguro, não há a opção de servir em HTTP.
+#  Duas saídas:
+#    a) instalar o CA gerado em cada máquina (via GPO/MDM) — a correcta
+#       para uso continuado;
+#    b) cada pessoa aceitar o aviso uma vez — tolerável internamente,
+#       mau à frente de um convidado.
+#  Se alguém de fora precisa de entrar, usa `publico.yml`.
+#
+#  Antes de correr, tens de ter:
+#    ⚑ IP FIXO do servidor (uma reserva DHCP não chega: o certificado
+#      é emitido para esse endereço)
+#    ⚑ portas 443/TCP, 3478 (UDP+TCP) e 49152–59152/UDP abertas na rede
+#      interna
+#    ⚑ acesso SSH com sudo
+#
+#  Usar:  cp deploy/contexts/interno.yml deploy/config.yml
+#         $EDITOR deploy/config.yml     # preencher os ⚑
+#         make deploy
+# ════════════════════════════════════════════════════════════════════
+
+deploy_mode: single-host
+
+# Vazio ⇒ serve por IP, com o certificado emitido para esse IP.
+#
+# Se tiveres DNS interno, podes pôr aqui o nome (ex.: meet.empresa.local)
+# e o certificado passa a cobri-lo — mais bonito nos convites, e o nome
+# sobrevive a uma mudança de IP. Requer que o nome resolva em TODAS as
+# máquinas que vão entrar.
+domain: ""
+
+# ⚑ Preencher com o IP FIXO. `auto` deteta o IP de saída, que numa rede
+#   interna pode ser o da interface errada — e um certificado emitido
+#   para o endereço errado não serve para nada.
+public_ip: ""                    # ex.: 192.168.1.50
+
+tls:
+  # Explícito, não `auto`: sem domínio público o ACME nunca conseguiria
+  # validar, e `selfsigned` deixa claro a quem lê que o aviso do browser
+  # é esperado, não uma avaria.
+  mode: selfsigned
+  acme_email: ""
+  acme_staging: false
+
+dns:
+  # `hosts` escreve /etc/hosts NO SERVIDOR — resolve o nome para ele
+  # próprio, não para os clientes. Só útil com `domain` preenchido e
+  # ainda assim cada cliente precisa do seu próprio DNS/hosts.
+  provider: none
+
+turn:
+  # ⚑ Sem domínio, o realm fica "delonix.local". Se puseres um nome
+  #   interno em `domain`, isto herda-o.
+  realm: ""
+  min_port: 49152
+  max_port: 59152
+
+secrets:
+  auto_generate: true
+
+paths:
+  env_file: /etc/delonix/delonix.env
+  web_root: /var/www/delonix
+  # ⚑ Em rede interna a gravação é usada mais (não há receio de dados a
+  #   sair). Dimensiona em conformidade e inclui nos backups.
+  recordings_dir: /var/lib/delonix/recordings
+  tls_dir: /etc/ssl/delonix
+
+# ---- Depois do deploy ----------------------------------------------
+#  O CA gerado fica em <tls_dir>. Para tirar o aviso dos browsers,
+#  distribui-o pelas máquinas (Windows: GPO "Trusted Root"; macOS:
+#  Keychain; Linux: /usr/local/share/ca-certificates + update-ca-certificates).
+#
+#  Testar de OUTRA máquina da rede, não do servidor: é aí que se vê se o
+#  firewall interno deixa passar o UDP do relay.

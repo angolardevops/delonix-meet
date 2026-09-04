@@ -1,0 +1,56 @@
+---
+# Correr um `docker-compose.yml` com o motor escolhido — a metade "serviços" da
+# abstracção (a outra é build/save/load, ver `facts.yml`).
+#
+# Uso:
+#     - include_role:
+#         name: container_engine
+#         tasks_from: compose
+#       vars:
+#         compose_file: /opt/app/docker-compose.yml
+#         compose_project: app          # opcional; default = nome do directório
+#         compose_state: up             # up (default) | down
+#
+# Os três motores leem o MESMO ficheiro: o delonix tem parser nativo do Compose
+# Spec (v0.29.0+), o docker usa o plugin v2 e o podman delega no podman-compose.
+# Diferenças conhecidas do delonix estão documentadas no HARNESS.md dele
+# (`profiles`, `extends`, volumes anónimos, `deploy.replicas != 1`) — se o teu
+# compose usar alguma, fixa `container_engine: docker` para esse host.
+
+- name: "Comandos do motor (se este ficheiro for incluído sozinho)"
+  ansible.builtin.import_tasks: facts.yml
+  when: engine_compose is not defined
+
+- name: "Ficheiro compose existe"
+  ansible.builtin.stat:
+    path: "{{ compose_file }}"
+  register: _compose_stat
+
+- name: "Falhar cedo se o compose não existir"
+  ansible.builtin.fail:
+    msg: "compose_file='{{ compose_file }}' não existe no host — copia-o antes de incluir este ficheiro."
+  when: not _compose_stat.stat.exists
+
+- name: "compose {{ compose_state | default('up') }} ({{ container_engine }})"
+  ansible.builtin.command:
+    cmd: >-
+      {{ engine_compose }}
+      -f {{ compose_file }}
+      -p {{ compose_project | default(compose_file | dirname | basename) }}
+      {{ 'up -d' if (compose_state | default('up')) == 'up' else 'down' }}
+    chdir: "{{ compose_file | dirname }}"
+  become: "{{ not engine_rootless }}"
+  register: _compose_run
+  changed_when: _compose_run.rc == 0
+
+# Quadlet (systemd) é a alternativa do podman a um supervisor de compose. Fica
+# como caminho SEPARADO e explícito em vez de "às vezes compose, às vezes
+# quadlet": o estado que cada um mantém é diferente, e escolher por nós tornaria
+# impossível saber o que reinicia o quê depois de um reboot.
+- name: "Nota sobre persistência ao reboot"
+  ansible.builtin.debug:
+    msg: >-
+      Serviços levantados por compose não voltam sozinhos depois de um reboot com
+      {{ container_engine }} — usa `tasks_from: quadlet` (podman) ou uma unit
+      systemd que chame `{{ engine_compose }} up -d` no boot.
+  when: (compose_state | default('up')) == 'up'

@@ -1,0 +1,29 @@
+# {{ ansible_managed }}
+# Equivalente ao quadlet do podman para {{ container_engine }}: uma unit systemd
+# normal que invoca o CLI do motor. `--rm` no ExecStart + `ExecStopPost` de
+# limpeza para um restart não bater em "name already in use" (o container antigo
+# ainda registado é o modo de falha clássico destas units).
+[Unit]
+Description=({{ quadlet_name }}) container gerido por {{ container_engine }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Restart=always
+RestartSec=5
+ExecStartPre=-{{ engine_cli }} container rm -f {{ quadlet_name }}
+ExecStart={{ engine_run }} --name {{ quadlet_name }} \
+{% for p in quadlet_ports | default([]) %}
+  -p {{ p }} \
+{% endfor %}
+{% for v in quadlet_volumes | default([]) %}
+  -v {{ v }} \
+{% endfor %}
+{% for k, v in (quadlet_env | default({})).items() %}
+  -e {{ k }}={{ v }} \
+{% endfor %}
+  {{ quadlet_image }}
+ExecStopPost=-{{ engine_cli }} container rm -f {{ quadlet_name }}
+
+[Install]
+WantedBy={{ 'default.target' if engine_rootless else 'multi-user.target' }}

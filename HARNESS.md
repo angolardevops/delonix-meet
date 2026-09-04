@@ -23,14 +23,14 @@
 ### Backend — `server/` (Rust)
 | Crate/módulo | Função |
 |---|---|
-| axum 0.7 | HTTP server + router |
+| axum 0.8 | HTTP server + router |
 | webrtc-rs | SFU: DTLs/SRTP, RTP fan-out, simulcast |
-| sqlx 0.7 | PostgreSQL async (migrações automáticas em main.rs) |
+| sqlx 0.8 | PostgreSQL async (migrações automáticas em main.rs) |
 | tokio | Runtime async |
 | argon2 | Hashing de passwords |
 | jsonwebtoken | JWT access (15 min) + refresh (30 dias, rotativo) |
 | reqwest 0.12 (rustls-tls) | Webhooks outbound (NÃO 0.13 — incompatível com rustls) |
-| tower-http | CORS, compressão, cabeçalhos de segurança |
+| tower-http | CORS + tracing (features `cors`, `trace`). Os cabeçalhos de segurança NÃO vêm daqui — são postos à mão em `main.rs` (`nosniff`, `DENY`, HSTS) e no nginx; e não há camada de compressão. |
 
 **Ficheiros principais:**
 - `main.rs` — bootstrap, router, estado global (`AppState`), cron jobs (retention sweep)
@@ -45,20 +45,28 @@
 - `meetings.rs` — calendário, conflitos, quarentena, MoM, transcrição, webhooks de meeting
 - `recordings.rs` — biblioteca de gravações, partilha read-only, sweep de retenção
 - `recorder.rs` — gravação server-side: RTP→IVF(VP8)+OGG(Opus), ffmpeg post-stop (VP9+Opus webm), E2EE via decrypt_e2ee()
+- `broadcast.rs` — emissão em directo para RTMP (ADR-0003): o browser compõe e codifica em H.264, o servidor REMULTIPLEXA (`-c:v copy`, `-c:a aac`). Recusa E2EE, codec não copiável, chave vazia e acima do tecto (`MAX_DIRECTOS`). Rota WS `/api/rooms/{code}/broadcast`; registo por sala
 - `webhooks.rs` — CRUD webhooks org, fire() best-effort (Slack/Teams/Mattermost/generic+HMAC), SSRF guard
 - `whiteboards.rs` — CRUD quadro branco persistente
 - `voice.rs` — PSTN (stub, aguarda operador)
 - `apikeys.rs` — API keys por org (hash + scopes)
-- `audit.rs` — registos de auditoria (escrita best-effort nos eventos-chave; leitura admin em `/api/orgs/{id}/audit`)
+- `audit.rs` — auditoria IMUTÁVEL e verificável: cada linha inclui o hash da anterior, numa cadeia por organização (migração 0037). Editar ou apagar uma linha parte a cadeia e é detectável em `/api/orgs/{id}/audit/verify` — mesmo por quem não confia em quem administra a base de dados, que é o adversário que interessa. Gatilhos recusam UPDATE/DELETE; a cadeia é a defesa que sobrevive a quem os possa remover. Ver R61
 - `rate_limit.rs` — rate limit por IP/conta (DashMap, lockout login 8/5min)
 - `error.rs` — `AppError` unificado → HTTP status + JSON body
-- `metrics.rs` — contadores atómicos de observabilidade (WS, SFU) expostos em `/metrics` (Prometheus)
+- `metrics.rs` — contadores atómicos de observabilidade (WS, SFU, saturação das filas) expostos em `/metrics` (Prometheus). Das filas: `delonix_ws_queue_high_water` (marca de água — a folga real face a `WS_QUEUE_CAP`), `delonix_ws_queue_dropped_total` (efémeros perdidos), `delonix_ws_slow_consumer_kills_total` (sockets fechados por transbordo) e `delonix_nego_queue_dropped_total`. Marca de água e não profundidade instantânea: um gauge somado entre sockets vaza quando uma task de escrita morre a meio
 - `users.rs` — perfis de utilizador (perfil público, `me`, update, pesquisa)
 - `actions.rs` — agenda de reunião (tópicos com execução) + Plano de Ação 5W2H
+- `mfa.rs` — segundo factor por TOTP (RFC 6238) e códigos de recuperação. O algoritmo é implementado aqui em vez de por dependência nova: HMAC-SHA-1, base64 e argon2 já eram dependências, e o RFC traz **vectores de teste oficiais** — uma verificação independente melhor do que confiar numa crate. Um código válido é CONSUMIDO, não só verificado (`last_step`, e `used_at` nos de recuperação): sem isso um TOTP apanhado por cima do ombro servia outra vez durante 30 s. Ver R53
 - `mls.rs` — MLS key agreement para E2EE em grupo (key packages, welcome)
 - `dlp.rs` — DLP (censura/redação de conteúdo sensível)
 - `pubsub.rs` — Redis pub/sub para entrega cross-nó (presença/sinalização)
 - `redis_state.rs` — estado in-room em Redis (whiteboard, timer, sondagens, settings) partilhado entre pods
+- `ai.rs` — IA local via Ollama in-cluster: tradução de legendas em tempo real e resumo da ata. Fail-open sem `OLLAMA_URL` (o MoM cai para as regras do cliente); o texto das reuniões nunca sai para uma cloud externa
+- `odoo.rs` — integração Odoo (módulo `nk_delonix_meet`): token `dlxo_<hex>`, provisionamento de utilizadores via `/api/v1/integration/odoo/provision`, descoberta da config Odoo de um utilizador (`org_odoo_config`)
+- `odoo_sso.rs` — **login com conta Odoo**: autentica em `/web/session/authenticate`, cria a organização a partir da EMPRESA do utilizador (chave `(odoo_db, company_id)`) e sincroniza em segundo plano todos os utilizadores internos activos. Fail-closed sem `PLATFORM_ODOO_URL`/`PLATFORM_ODOO_DB`
+- `meetings_v1.rs` — recurso `meetings` da API pública v1 (POST/PATCH/DELETE): cria REUNIÃO + sala com anfitrião humano (`host_email`) e convidados por email, idempotente por `external_ref`. É o que a integração de calendário usa — `/api/v1/rooms` cria salas sem anfitrião nem convidados, e ninguém consegue ser admitido nelas
+- `sfu_e2e.rs` — testes ponta-a-ponta do SFU com `RTCPeerConnection`s reais no papel de browser (media a fluir nos dois sentidos + R13/glare). Só compila em `#[cfg(test)]`
+- `storage.rs` — armazenamento remoto da plataforma (TrueNAS NFS / Nextcloud WebDAV); registo único em `platform_storage`, gerido pelo admin global
 
 ### Frontend — `web/src/` (React + TypeScript + Vite)
 | Ficheiro/pasta | Função |
@@ -84,7 +92,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0026) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0038) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 
@@ -150,27 +158,44 @@ O refresh token vive em `dlx_refresh` (`HttpOnly; SameSite=Strict; Path=/api/aut
 
 Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **primitivos → semânticos → componentes**.
 
-| Token | Valor | Uso |
-|---|---|---|
-| `--accent` | `#C8201D` | Vermelho Delonix — CTAs primários |
-| `--accent-hi` | `#F26430` | Hover/gradient start |
-| `--accent-2` | `#EDA33B` | Dourado — acentos de texto, "Meet" no wordmark |
-| `--bg` | `#07090D` | Fundo principal dark |
-| `--surface` | `#0B0E13` | Cards/modais |
-| `--surface-2` | `#12151C` | Hover/nested surfaces |
-| `--text` | `#F4F6FA` | Texto primário |
-| `--text-2` | `#9BA3B2` | Texto secundário |
-| Sala: `--room-bg` | `#202124` | Cinza Meet — sala ignora temas claros |
-| Sala: `--ctrl-bg` | `#3c4043` | Botões de controlo na sala |
+**Separação AÇÃO / MARCA:** o índigo é a cor de **ação** (botões primários, foco, links, nav ativo); o vermelho + dourado são a **marca** (logo, wordmark «Meet», landing, quadrado da sidebar). Nunca usar o vermelho para navegação nem o índigo para o logo.
 
-**Regra da sala:** `.room-page` e `.waiting-page` reafirmam tokens dark **com `!important`** no fim de `styles.css`. A sala é sempre escura independentemente do tema da app.
+| Token | Escuro | Claro | Uso |
+| --- | --- | --- | --- |
+| `--accent` | `#5c6cf2` | `#3947c9` | Ação primária, foco |
+| `--accent-hi` | `#7c88f5` | `#4b5ad9` | Hover da ação |
+| `--accent-text` | `#9aa5ff` | `#3947c9` | Índigo legível como texto/link |
+| `--accent-soft` | `#242b4e` | `#e6e9fb` | Preenchimento de estado ativo/chip |
+| `--bg` | `#14161d` | `#f4f5f7` | Fundo da página |
+| `--surface` | `#1c1f28` | `#ffffff` | Cartões/modais |
+| `--surface-2` | `#1a1d26` | `#f8f9fb` | Hover de linha, superfície aninhada |
+| `--input-bg` | `#171a22` | `#ffffff` | Campos de formulário |
+| `--border` | `#262a34` | `#e2e5eb` | Contorno de superfície |
+| `--border-soft` | `#20242e` | `#eef0f4` | Separadores DENTRO do cartão |
+| `--text` / `--text-2` | `#e8eaf0` / `#8b92a8` | `#1c2333` / `#5f6a82` | Texto primário/secundário |
+| `--sb-bg` / `--sb-text` | `#12141a` / `#aeb4c6` | `#1e2a45` / `#c6cfe4` | **Rail de navegação — escuro nos DOIS temas** |
+| `--hdr-bg` | `#14161d` | `#ffffff` | Barra de aplicação (topo) |
+| `--accent-2` | `#EDA33B` | índigo escuro | Dourado de marca (wordmark) |
+| `--brand` | `#D8352E` | `#C8201D` | Vermelho Delonix (logo, landing) |
+
+**Regra da sala:** `.room-page` e `.waiting-page` reafirmam tokens dark **com `!important`** no fim de `styles.scss`. A sala é sempre escura independentemente do tema da app. Chrome da sala: fundo `#0d0f14`, barras `#12141a`, palco `linear-gradient(160deg,#1b2030,#12141c)`, painel lateral 320px encostado.
+
+**Rail sempre escuro:** a barra lateral usa os tokens `--sb-*`, que são deliberadamente escuros também no tema claro (navy `#1e2a45`). Não a fazer seguir o tema — é âncora de identidade e evita que a navegação compita com o conteúdo.
 
 **Sistema de controlo único (14/07/2026)** — referência completa em `docs/reference/design-system.md`:
 - Tokens: `--radius-sm: 4px` (controlos) · `--radius-md: 6px` (superfícies) · `--radius-lg: 8px` · `--ctl-h: 30px` (altura única dos controlos). Camada de uniformização no FIM de `styles.scss` (3 tiers: ação / botão-ícone / superfícies) vence os valores históricos hardcoded.
 - **Componentes novos usam o kit `web/src/components/ui.tsx`** (`Btn`/`IconBtn`/`Card`/`Field`/`TextInput`/`SelectCtl`/`Switch`) — nunca `<button className=…>` ad-hoc, nunca `border-radius`/`height` hardcoded na página. Variante nova = classe no CSS + entrada no kit. Migração do código existente é oportunista (referência: painel Ferramentas em `Room.tsx`).
 - **Temas** = mapas de tokens em `styles/tokens.scss` emitidos sob `[data-theme=…]` — nunca overrides espalhados; testar os 4 temas + sala sempre escura (regressão #67).
 
-**Fontes:** Space Grotesk (títulos), Instrument Sans (corpo), IBM Plex Mono (mono) — self-hosted via @fontsource.
+**Camada CONSOLA (27/07/2026)** — no fim de `styles.scss`, DEPOIS do bloco de controlo único (à mesma especificidade, a última vence):
+
+- Densidade: `html { font-size: 15px }`. A app dimensiona quase toda em `rem`, por isso a raiz é o botão único de densidade — não apertar tamanhos página a página.
+- `.app-bar` (topo do conteúdo, em `Shell.tsx`): data, tema, «Nova reunião» e campo de código. Estas ações **saíram da Home** — não as duplicar lá.
+- Estrutura do Shell: `.shell-main` (flex column, overflow hidden) → `.app-bar` + `.shell-body` (o que faz scroll). Páginas de altura total dentro do Shell usam `height: 100%`, nunca `100vh` (a barra já ocupa ~46px).
+- Superfícies separam-se por **borda de 1px + luminância**, não por sombra: `--shadow` é 1px, `--border-soft` para separadores internos.
+- Sala: controlos quadrados de 38px agrupados em `.ctrl-group` (dispositivos | sessão) + terminar solto. A pill Meet de 50px foi substituída; o chevron de dispositivo é um caret de 15px no canto.
+
+**Fontes:** IBM Plex Sans (títulos e corpo) + IBM Plex Mono (código, horas, códigos de sala) — self-hosted via @fontsource. Família única de propósito: é o que dá a métrica de consola.
 
 **Logo:** Globo vermelho com grelha dourada, anéis segmentados, 5 pinos. SVG em `web/public/logo.svg`. Usar `.brand-logo` para renderizar.
 
@@ -187,6 +212,9 @@ Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **
 7. **E2EE real:** chave AES-256 gerada no cliente, nunca vai ao servidor exceto para gravação (key delegation explícita com confirm() do utilizador).
 8. **Validação no servidor:** autorização de host controls (lock/share-only/kick) validada em `signaling.rs`, não confiada no cliente.
 9. **reqwest 0.12 com rustls-tls** (não 0.13) para compatibilidade com a versão do rustls no workspace.
+10. **Uma conta tem UMA autoridade de autenticação, explícita:** `users.odoo_org_id` — a org que a gere, gravada quando a conta nasce de um Odoo e nunca reescrita por outra. NULL = conta local, autenticada localmente. **Nunca** resolver o provedor de autenticação por email nem por pertença a org (`LIMIT 1` sem ordem = escolher a autoridade por sorteio). E uma sincronização de directório **nunca reclama uma conta que já existe** — nem de outra org, nem local. As duas metades são precisas; fechar só uma deixa a porta entreaberta. Ver R25.
+
+11. **Nenhuma fila de saída sem limite.** `WS_QUEUE_CAP` (default 512, por socket `/ws` e `/rtc`) e `NEGO_QUEUE_CAP` (default 64, renegociação do SFU por peer). Uma fila ilimitada transformava um consumidor lento — que na nossa rede-alvo é o caso NORMAL, não a excepção — num OOM que levava consigo todas as salas do pod. Cheia, descarta-se só o efémero e auto-substituível (`ServerMsg::is_droppable`: legenda parcial, traço de quadro, reacção) e conta-se; com protocolo ou estado fecha-se o socket e o cliente reentra. Nunca `send().await` nestes caminhos (os emissores correm dentro do lock do `DashMap` — R16): é sempre `try_send`. Ver R32/R33.
 
 ---
 
@@ -223,7 +251,13 @@ cargo build --release    # depois de migração nova, SEMPRE rebuild antes de re
 ### Rust
 - `AppError` para todos os erros de handler — nunca `unwrap()` em código de produção
 - Pool Postgres via `Extension<PgPool>` injetado pelo axum
-- `sqlx::query!` / `sqlx::query_as!` — macros com verificação em compile time
+- `sqlx::query` / `sqlx::query_as::<_, T>` — **API de runtime**, sem verificação
+  em compile time. É o estado real: 118 chamadas, zero macros `query!`. A
+  consequência tem de ser dita: um nome de coluna errado passa a compilação e
+  só falha em execução, por isso qualquer alteração de esquema exige o teste
+  que percorre o caminho. A alternativa (`query!` + `cargo sqlx prepare`)
+  obrigaria a manter `.sqlx/` em dia e uma base acessível no build — não foi
+  adoptada, e enquanto não for, não se escreve o contrário na documentação.
 - Handlers async retornam `Result<impl IntoResponse, AppError>`
 - Migrações em `server/migrations/` com prefixo numérico sequencial (`0001_`, `0002_`, …)
 - Novos módulos: declarar em `main.rs` (`mod novo_modulo;`) + registar rotas no router
@@ -309,4 +343,16 @@ Personas adicionais (invocar em prompt, perfis em `docs/ai-reviewers.md`): **Lar
 - **`.dockerignore` NÃO pode excluir `web/dist`:** o `Dockerfile.web.stage` faz `COPY web/dist` (usa o build local); excluir `web/dist` parte o `make stage`. Excluir sim: `server/target`, `web/node_modules`, `web/public/{ort,ort-rvm,models/*}`, `deploy/*.env`, `agents/worktrees` (contexto Docker de 4.5GB→<1MB; sem isto o cache serve imagem stale e o Rust não recompila).
 - **Media K8s = relay-only via coturn (`FORCE_TURN_RELAY=1`):** em K8s o IP do pod (10.244.x) é inalcançável de fora e os host candidates do SFU não transportam media → sem relay-only o ICE "liga" mas fica preto. `FORCE_TURN_RELAY=1` põe `iceTransportPolicy:relay` no `/api/ice` E no `RTCConfiguration` do SFU; exige coturn alcançável (em stage: no HOST via `deploy/run-host-coturn.sh`, `TURN_HOST=172.30.0.1:3478`). Em local (systemd, mesmo host) NÃO ligar — host candidates chegam. **Aberto:** alocação TURN instável (`438 Stale nonce`/`allocation timeout`) → ver [[k8s-media-turn]] / `docs/reference/regressions.md`. Não é `/rtc` (presença = Redis, sem afinidade nem relay).
 - **Servidor é autoritativo em ações de sala partilhadas:** `wb-open`/`wb-close` (quadro branco abre/fecha em TODOS; abrir só apresentador/anfitrião), `Presenting`/limpar apresentação ao parar screen-share, e abrir o painel de transcrição são difundidos/validados pelo servidor (`signaling.rs`) — o cliente NÃO decide sozinho. O painel de transcrição é host-only (não abre para todos ao ligar). **Partilha de ecrã de não-anfitrião exige `share-grant` do anfitrião** (grants por sala no hub; `ScreenShare` sem grant → Error — não confiar no cliente); fluxo: `share-request` → cartão Permitir/Negar no anfitrião → grant → partilha arranca no requerente. Controlo remoto: `remote-control request` só é entregue a quem está a apresentar (`presenter` por sala no hub).
+- **Glare são DUAS metades:** adiar a oferta no servidor (`NegoMsg`) NÃO chega — o `rollback` do cliente descarta a oferta dele, por isso o cliente tem de **RE-OFERTAR** depois de responder. Guardado por `sfu_e2e.rs` + `glare.test.ts`. Ver R13.
+- **Negociação SFU = canal único por peer (`NegoMsg`):** ofertas do cliente (ecrã, câmara), respostas e renegociações do servidor passam TODAS pela `negotiation_loop`. O webrtc-rs **não tem rollback** (nem implícito nem explícito a partir de `have-local-offer`), por isso uma oferta do cliente que chegue com a nossa pendente é **adiada**, nunca aplicada fora de estado — era aí que a partilha de ecrã se perdia em silêncio. Ver R13.
+- **Sem PLI periódico:** keyframes só a pedido (subscrição nova, troca de camada, PLI/FIR reencaminhado do subscritor, rate-limit 1 s). O antigo ticker de 3 s por camada queimava bitrate para sempre. Ver R14.
+- **Camada simulcast é reavaliada:** `reevaluate_peer` decide a partir do tamanho da sala **e** da perda reportada por RTCP (`Quality`). Chamada em cada entrada/saída e em cada mudança de nível de perda. Ver R15.
+- **`touch_subs()` a seguir a QUALQUER alteração de subscritores:** a bomba de RTP usa um snapshot invalidado por `subs_version` (escritas fora do lock). Esquecer isto = media a ir para quem saiu. Ver R16.
+- **Áudio remoto vive no `AudioSink`, nunca dentro de um tile:** esconder um tile não pode silenciar ninguém. Ver R19.
+- **Publicar media exige fallback de negociação:** `replaceAudioTrack` reaproveita o transceiver `recvonly` e renegoceia — sem isso quem entra sem mic fica mudo para sempre. Ver R20.
+- **Gravação só grava VP8/Opus** (`recordable_codec`); outro codec → track excluída + `error!`. Gravar VP9/H264 com o depacketizer VP8 produzia ficheiro corrompido sem erro. Ver R18.
+- **Estado alimentado por timer tem de comparar antes de `setState`** (`sameSet` no `LevelWatcher`): sem isso a sala re-renderizava 5,5×/s em silêncio. Ver R21.
+- **Seleção de oradores (top-N):** o SFU só reencaminha os 3 microfones mais ativos. Três armadilhas que silenciam gente: renumerar SEMPRE o áudio (`AudioMeter::next_seq` — sem isso a supressão parece perda e baixa o vídeo), decair a energia por TEMPO e não por pacote (com DTX quem se cala não envia nada e ficaria preso no top-N), e NUNCA suprimir microfones sem a extensão RFC 6464 negociada. Gravação, PSTN e áudio de ecrã recebem sempre tudo. Ver R22.
+- **`video-interest` é enviado SEMPRE que o conjunto muda** — a página visível quando pagina, TODOS os peers quando não pagina. "Deixar de enviar" não significa "todos": o servidor ficaria com a última página. Ver R23.
+- **Desligar a câmara liberta-a mesmo** (`disableVideo` → `replaceTrack(null)` + `track.stop()`), reutilizando o `videoSender` guardado — criar transceiver novo por religação faz crescer a SDP e perde o simulcast. Ver R24.
 - **Harness:** manter `HARNESS.md`, `AGENTS.md`, `GEMINI.md` coerentes; a referência estável está em `docs/reference/architecture.md` (+ `docs/reference/regressions.md` = regressões a não reintroduzir); revisores autónomos em `agents/`.

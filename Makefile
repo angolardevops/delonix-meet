@@ -170,16 +170,33 @@ build: ## Compila backend (release) + frontend (produção)
 	@printf "$(G)  ✓ build concluído$(Z)\n"
 
 .PHONY: test
-test: fitness ## Corre os testes (fitness functions + cargo test + typecheck do frontend)
+test: fitness web-deps ## Corre os testes (fitness functions + cargo test + typecheck do frontend)
 	@printf "$(C)▶ testes$(Z)\n"
 	@cd server && cargo test --release
 	@cd web && node_modules/.bin/tsc -p tsconfig.json --noEmit && printf "$(G)  ✓ tsc limpo$(Z)\n"
 	@cd web && node_modules/.bin/vitest run && printf "$(G)  ✓ vitest (R1/R2)$(Z)\n"
+	@cd web && npm run build >/dev/null && printf "$(G)  ✓ build do frontend (compila SCSS — R54)$(Z)\n"
+
+.PHONY: web-deps
+web-deps: ## Garante web/node_modules (npm ci) — sem isto o `make test` morria com um 'Error 127' opaco
+	@if [ ! -x web/node_modules/.bin/tsc ]; then \
+	  printf "$(C)▶ web/node_modules ausente — npm ci$(Z)\n"; \
+	  cd web && npm ci; \
+	fi
 
 .PHONY: fitness
-fitness: ## Fitness functions de arquitetura (Fowler): docs, afinidade por sala (R3), isolamento RLS (ADR-0002)
+fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, autorização de rotas, docs, afinidade (R3), clippy, deps, RLS
+	@# `fmt --check` AQUI e não só no CI: sem ele, uma alteração formatada a
+	@# meio passa o `make test` local e só falha no CI, depois de um push e de
+	@# vários minutos de espera. O portão local tem de ser o mesmo do remoto.
+	@cd server && cargo fmt --check && printf "$(G)  ✓ formatação Rust$(Z)\n"
+	@bash scripts/check-repo-hygiene.sh
+	@bash scripts/check-capability-claims.sh
+	@bash scripts/check-route-auth.sh
 	@bash scripts/check-docs-drift.sh
 	@bash scripts/check-room-affinity.sh
+	@bash scripts/check-clippy-ratchet.sh
+	@bash scripts/check-dep-audit.sh
 	@bash scripts/check-tenant-rls.sh
 
 .PHONY: migrate
@@ -192,14 +209,55 @@ migrate: ## Corre as migrações pendentes (sqlx migrate run)
 #  IMAGENS DOCKER — build local + carregamento no kind
 # ============================================================
 
+# MOTOR DE BUILD — delonix, com docker como alternativa.
+#   Esta plataforma NÃO tem docker por princípio: o delonix-runtime é
+#   daemonless e rootless, e a regra do workspace é nunca depender de um socket
+#   docker global (ver HARNESS.md da raiz do ngolacloud). O `delonix build`
+#   aceita os mesmos flags (-f/-t/--build-arg/--no-cache), por isso a troca é
+#   directa; quem tiver um ambiente clássico com docker continua a funcionar.
+BUILDER ?= $(shell command -v delonix >/dev/null 2>&1 && echo delonix || echo docker)
+ifeq ($(BUILDER),delonix)
+  IMG_BUILD := delonix build
+  IMG_TAG_CMD := delonix image tag
+  IMG_LS    := delonix image ls
+  IMG_PULL  := delonix image pull
+  # Carregar imagem no cluster SEM registo: `delonix cluster load` empacota a
+  # imagem do store local e importa-a no containerd de cada nó — o equivalente
+  # exacto do `kind load docker-image`, mas sem o binário `kind` (que é um
+  # cliente docker e exigiria um provider Docker/Podman que esta máquina não
+  # tem por princípio). Requer delonix >= v0.35.0.
+  IMG_LOAD  := delonix cluster load
+  # `delonix image save` exige `-o` (docker/podman escrevem em stdout por
+  # omissão) — daí a forma `<cmd> <imagem> -o <ficheiro>` no export-images.
+  IMG_SAVE  := delonix image save
+  # Um nó kind precisa de delegação de cgroup2 — sem o scope o kubelet arranca
+  # em loop e o cluster nunca fica Ready (a mensagem do próprio `cluster create`
+  # avisa disso).
+  CLUSTER_CREATE := systemd-run --user --scope -q -p Delegate=yes delonix cluster create
+  # O kubeconfig do cluster kind-mode: usado só se existir, para o kubectl deste
+  # Makefile apontar ao cluster certo sem depender do ~/.kube/config ambiente.
+  DLX_KUBECONFIG := $(HOME)/.local/share/delonix/clusters/$(KIND_CLUSTER)-kubeconfig.yaml
+  ifneq ($(wildcard $(DLX_KUBECONFIG)),)
+    export KUBECONFIG := $(DLX_KUBECONFIG)
+  endif
+else
+  IMG_BUILD := docker build
+  IMG_TAG_CMD := docker tag
+  IMG_LS    := docker images
+  IMG_PULL  := docker pull
+  IMG_LOAD  := kind load docker-image
+  IMG_SAVE  := docker save
+  CLUSTER_CREATE := kind create cluster
+endif
+
 # make image   → constrói delonix-server:latest e delonix-web:latest
-# make push    → kind load docker-image (carrega no cluster kind)
+# make push    → carrega as imagens no cluster ($(IMG_LOAD))
 # make image-push → build + load (o que é preciso antes de make stage)
 #
-# Porquê kind load em vez de registry?
-#   O cluster kind corre em containers docker sem acesso ao Docker Hub
-#   (offline / rate-limit). kind load docker-image injeta a imagem
-#   diretamente no containerd do nó, sem precisar de registry externo.
+# Porquê carregar em vez de registry?
+#   O cluster corre sem acesso ao Docker Hub (offline / rate-limit). Carregar
+#   injeta a imagem diretamente no containerd do nó, sem registry externo.
+#   Com delonix: `cluster load` (v0.35.0+); com docker: `kind load docker-image`.
 
 .PHONY: image
 image: ## Constrói delonix-server e delonix-web com a tag versionada ($(IMAGE_TAG))
@@ -208,21 +266,20 @@ image: ## Constrói delonix-server e delonix-web com a tag versionada ($(IMAGE_T
 	@# (um dist stale foi a causa de "estilos perdidos" em stage — nunca reusar).
 	@export PATH="$(NODE_BIN):$$PATH"; \
 	  cd web && { [ -d node_modules ] || npm ci; } && npm run build
-	@docker build -f Dockerfile.server -t $(IMAGE_SERVER) .
+	@$(IMG_BUILD) -f Dockerfile.server -t $(IMAGE_SERVER) .
 	@printf "$(C)▶ build $(IMAGE_WEB) (dist local → nginx, rápido)$(Z)\n"
-	@docker build -f Dockerfile.web.stage -t $(IMAGE_WEB) .
+	@$(IMG_BUILD) -f Dockerfile.web.stage -t $(IMAGE_WEB) .
 	@# :latest acompanha a última build (bootstrap dos manifests em cluster novo).
-	@docker tag $(IMAGE_SERVER) $(IMAGE_SERVER_REPO):latest
-	@docker tag $(IMAGE_WEB) $(IMAGE_WEB_REPO):latest
+	@$(IMG_TAG_CMD) $(IMAGE_SERVER) $(IMAGE_SERVER_REPO):latest
+	@$(IMG_TAG_CMD) $(IMAGE_WEB) $(IMAGE_WEB_REPO):latest
 	@printf "$(G)  ✓ imagens prontas: tag $(Y)$(IMAGE_TAG)$(Z)$(G) (+latest)$(Z)\n"
-	@docker images --format "  {{.Repository}}:{{.Tag}}  ({{.Size}})" \
-	  | grep -E "^  delonix-(server|web):($(IMAGE_TAG)|latest)" || true
+	@$(IMG_LS) 2>/dev/null | grep -E "delonix-(server|web)" || true
 
 .PHONY: push
-push: ## kind load + PIN da tag versionada nos Deployments (rollout determinista)
-	@printf "$(C)▶ kind load $(IMAGE_SERVER) + $(IMAGE_WEB) → $(KIND_CLUSTER)$(Z)\n"
-	@kind load docker-image $(IMAGE_SERVER) --name $(KIND_CLUSTER)
-	@kind load docker-image $(IMAGE_WEB) --name $(KIND_CLUSTER)
+push: ## load das imagens no cluster + PIN da tag versionada nos Deployments
+	@printf "$(C)▶ load $(IMAGE_SERVER) + $(IMAGE_WEB) → $(KIND_CLUSTER)$(Z)\n"
+	@$(IMG_LOAD) $(IMAGE_SERVER) --name $(KIND_CLUSTER)
+	@$(IMG_LOAD) $(IMAGE_WEB) --name $(KIND_CLUSTER)
 	@$(MAKE) --no-print-directory pin
 
 .PHONY: pin
@@ -235,7 +292,7 @@ pin: ## Fixa a tag $(IMAGE_TAG) nos Deployments e espera o rollout
 	@printf "$(G)  ✓ cluster a correr $(IMAGE_SERVER) / $(IMAGE_WEB)$(Z)\n"
 
 .PHONY: image-push
-image-push: image push ## Build versionado + kind load + pin (pipeline completo p/ stage k8s)
+image-push: image push ## Build versionado + load no cluster + pin (pipeline completo p/ stage k8s)
 
 # Pré-puxa imagens da infra (Bitnami Postgres/Redis) do Docker Hub e
 # injeta-as no kind. Resolve o ImagePullBackOff quando o cluster não
@@ -245,7 +302,7 @@ image-push: image push ## Build versionado + kind load + pin (pipeline completo 
 # para stage/kind porque o chart postgresql-HA (pgpool + postgresql-repmgr)
 # removeu as suas imagens do Docker Hub em 2024 para o OCI registry privado.
 .PHONY: infra-pull
-infra-pull: ## Pré-carrega imagens Bitnami (Postgres single/Redis standalone) no kind
+infra-pull: ## Pré-carrega imagens Bitnami (Postgres single/Redis standalone) no cluster
 	@printf "$(C)▶ a extrair imagens da infra (charts de stage)...$(Z)\n"
 	@IMGS=$$(helm template delonix-postgres bitnami/postgresql \
 	    -f deploy/k8s/helm-values/postgres-stage-values.yaml -n delonix-meet 2>/dev/null \
@@ -256,9 +313,9 @@ infra-pull: ## Pré-carrega imagens Bitnami (Postgres single/Redis standalone) n
 	 for img in $$IMGS; do \
 	   [ -z "$$img" ] && continue; \
 	   printf "  ▷ $$img\n"; \
-	   docker pull "$$img" -q 2>/dev/null \
+	   $(IMG_PULL) "$$img" 2>/dev/null \
 	     || printf "  $(Y)  ! pull falhou — sem acesso ao registo para $$img$(Z)\n"; \
-	   kind load docker-image "$$img" --name $(KIND_CLUSTER) 2>/dev/null || true; \
+	   $(IMG_LOAD) "$$img" --name $(KIND_CLUSTER) 2>/dev/null || true; \
 	 done
 	@printf "$(G)  ✓ imagens da infra carregadas no kind$(Z)\n"
 
@@ -301,8 +358,8 @@ metallb-kind: ## Instala MetalLB no kind e cria pool com IPs da rede docker kind
 # ============================================================
 .PHONY: stage
 stage: image-push ## Build + kind load + deploy k8s completo no cluster kind local
-	@printf "$(C)▶ Criando cluster kind '$(KIND_CLUSTER)' (idempotente)...$(Z)\n"
-	@kind create cluster --name $(KIND_CLUSTER) 2>/dev/null || true
+	@printf "$(C)▶ Criando cluster '$(KIND_CLUSTER)' (idempotente)...$(Z)\n"
+	@$(CLUSTER_CREATE) --name $(KIND_CLUSTER) 2>/dev/null || true
 	@printf "$(C)▶ Instalando NGINX Ingress Controller...$(Z)\n"
 	@kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
 	@kubectl wait --namespace ingress-nginx \
@@ -317,6 +374,7 @@ stage: image-push ## Build + kind load + deploy k8s completo no cluster kind loc
 	@printf "$(C)▶ Pré-carregando imagens da infra no kind (evita ImagePullBackOff)...$(Z)\n"
 	@$(MAKE) --no-print-directory infra-pull
 	@printf "$(C)▶ Namespace + Secret TLS...$(Z)\n"
+	@$(MAKE) --no-print-directory certs
 	@kubectl apply -f deploy/k8s/00-namespace.yaml
 	@kubectl create secret tls delonix-tls-secret \
 	  --cert=deploy/certs/wildcard.delonix.local.crt \
@@ -451,8 +509,13 @@ deploy-config: ## Cria deploy/config.yml a partir do exemplo (se não existir)
 export-images: image ## Exporta imagens Docker para /tmp/dlx-images/ (transfer. para kind remoto)
 	@printf "$(C)▶ a exportar imagens para /tmp/dlx-images/$(Z)\n"
 	@mkdir -p /tmp/dlx-images
-	@docker save $(IMAGE_SERVER) $(IMAGE_SERVER_REPO):latest | gzip > /tmp/dlx-images/delonix-server.tar.gz
-	@docker save $(IMAGE_WEB)    $(IMAGE_WEB_REPO):latest    | gzip > /tmp/dlx-images/delonix-web.tar.gz
+	@# Uma imagem por arquivo: o `delonix image save` guarda UMA referência por
+	@# arquivo (o docker aceita várias). A tag versionada é a que o deploy usa;
+	@# `:latest` deixou de ser exportada de propósito — era ela que dava o
+	@# "imagem stale" documentado no HARNESS.md.
+	@$(IMG_SAVE) $(IMAGE_SERVER) -o /tmp/dlx-images/delonix-server.tar
+	@$(IMG_SAVE) $(IMAGE_WEB)    -o /tmp/dlx-images/delonix-web.tar
+	@gzip -f /tmp/dlx-images/delonix-server.tar /tmp/dlx-images/delonix-web.tar
 	@printf "$(G)  ✓ imagens exportadas:$(Z)\n"
 	@ls -lh /tmp/dlx-images/*.tar.gz
 
@@ -467,6 +530,7 @@ deploy-kaeso: export-images ## Build + export + Ansible deploy no preprod kaeso 
 	  cd deploy/ansible && ansible-playbook site.yml \
 	    -i inventory.ini \
 	    --limit kaeso01 \
+	    -e image_tag=$(IMAGE_TAG) \
 	    --become-password-file "$$_PASS_FILE" \
 	    $(ANSIBLE_ARGS); \
 	  _RC=$$?; rm -f "$$_PASS_FILE"; exit $$_RC
@@ -475,6 +539,32 @@ deploy-kaeso: export-images ## Build + export + Ansible deploy no preprod kaeso 
 # ============================================================
 #  VOICE — camada de media do dial-in PSTN (opcional)
 # ============================================================
+.PHONY: certs
+certs: ## Gera o wildcard *.delonix.local de DEV (mkcert; openssl como alternativa)
+	@# O certificado e a CHAVE de dev NÃO são versionados: uma chave privada num
+	@# repositório é uma chave comprometida, mesmo sendo só de dev — qualquer
+	@# clone passa a poder personificar *.delonix.local em qualquer máquina que
+	@# confie na mesma CA mkcert. Gera-se localmente e cada máquina tem a sua.
+	@mkdir -p deploy/certs
+	@if [ -f deploy/certs/wildcard.delonix.local.crt ] && [ -f deploy/certs/wildcard.delonix.local.key ]; then \
+	  printf "$(G)  ✓ wildcard de dev já existe$(Z)\n"; \
+	elif command -v mkcert >/dev/null 2>&1; then \
+	  mkcert -cert-file deploy/certs/wildcard.delonix.local.crt \
+	         -key-file  deploy/certs/wildcard.delonix.local.key \
+	         "*.delonix.local" delonix.local >/dev/null 2>&1; \
+	  chmod 600 deploy/certs/wildcard.delonix.local.key; \
+	  printf "$(G)  ✓ wildcard de dev gerado com mkcert (confiado pelo SO)$(Z)\n"; \
+	else \
+	  openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
+	    -keyout deploy/certs/wildcard.delonix.local.key \
+	    -out    deploy/certs/wildcard.delonix.local.crt \
+	    -subj "/CN=*.delonix.local" \
+	    -addext "subjectAltName=DNS:*.delonix.local,DNS:delonix.local" 2>/dev/null; \
+	  chmod 600 deploy/certs/wildcard.delonix.local.key; \
+	  printf "$(Y)  ! mkcert ausente — wildcard self-signed (o browser vai avisar).$(Z)\n"; \
+	  printf "$(Y)    Instala o mkcert e corre 'make certs' outra vez para um cert confiado.$(Z)\n"; \
+	fi
+
 .PHONY: voice-certs voice-up voice-down
 voice-certs: ## Gera certificados self-signed de dev para a voz (SIP-TLS/SRTP)
 	@mkdir -p $(VOICE_TLS_DIR)

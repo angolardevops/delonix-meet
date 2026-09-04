@@ -362,6 +362,15 @@ pub async fn login(
     const DUMMY: &str = "$argon2id$v=19$m=19456,t=2,p=1$YWFhYWFhYWFhYWFhYWFhYQ$m6vRnxkbG10eB0QdjqfLd8Y6M3holKAAvfeFXTiXBdU";
 
     let Some((id, user_email, username, password_hash, created_at)) = row else {
+        // Sem conta local: antes de recusar, tenta o Odoo da plataforma. É o
+        // que faz o PRIMEIRO login criar a organização e trazer os colegas —
+        // sem isto, alguém teria de provisionar antes de alguém poder entrar.
+        // Devolve `None` quando o login por Odoo está desligado ou as
+        // credenciais não servem, e aí o 401 mantém-se.
+        if let Some(user) = crate::odoo_sso::try_first_login(&state, &email, &req.password).await {
+            crate::audit::log(&state.db, None, user.id, "auth.login_odoo", &user.email).await;
+            return Ok(auth_ok(&state, issue_tokens(&state, user).await?));
+        }
         let _ = verify_password(&req.password, DUMMY);
         return Err(ApiError::Unauthorized);
     };
@@ -370,8 +379,12 @@ pub async fn login(
     // contra o Odoo primeiro. Em modo offline (Odoo inacessível), usa o hash
     // Argon2 guardado na última autenticação online bem-sucedida.
     let odoo_cfg = crate::odoo::org_odoo_config(&state.db, &email).await;
-    let authenticated = if let Some((_, odoo_url, odoo_db)) = odoo_cfg {
-        match crate::odoo::odoo_authenticate(
+    let authenticated = if let Some((org_id, odoo_url, odoo_db)) = odoo_cfg {
+        // Usa o mesmo cliente do primeiro login (odoo_sso): além do uid, dá a
+        // SESSÃO, e é ela que permite reler o directório. Sem isso, os
+        // colegas admitidos no Odoo depois do primeiro login nunca chegavam
+        // aqui — a sincronização era um evento único, não um estado.
+        match crate::odoo_sso::login(
             &state.webhook_client,
             &odoo_url,
             &odoo_db,
@@ -380,28 +393,40 @@ pub async fn login(
         )
         .await
         {
-            crate::odoo::OdooAuthResult::Ok(odoo_uid) => {
-                // Online: sincroniza hash para uso offline posterior
+            Ok(Some(session)) => {
+                // Online: guarda o hash para o modo offline seguinte.
                 if let Ok(h) = hash_password(&req.password) {
                     let _ = sqlx::query(
                         "UPDATE users SET password_hash = $1, odoo_uid = $2 WHERE id = $3",
                     )
                     .bind(&h)
-                    .bind(odoo_uid)
+                    .bind(session.uid)
                     .bind(id)
                     .execute(&state.db)
                     .await;
                 }
+                // Re-sincroniza o directório se estiver velho (>1h). Corre em
+                // segundo plano: o login não paga a leitura.
+                crate::odoo_sso::spawn_directory_sync(
+                    state.clone(),
+                    org_id,
+                    odoo_url.clone(),
+                    session,
+                    false,
+                );
                 true
             }
-            crate::odoo::OdooAuthResult::Offline => {
-                // Offline: hash local válido apenas se a senha não mudou no Odoo
-                !password_hash.is_empty() && verify_password(&req.password, &password_hash)
-            }
-            crate::odoo::OdooAuthResult::InvalidCredentials => {
-                // Senha alterada no Odoo — rejeitar mesmo que o hash local coincida
+            Ok(None) => {
+                // Senha alterada/revogada no Odoo — rejeitar mesmo que o hash
+                // local ainda coincida. O Odoo é a fonte de verdade.
                 let _ = verify_password(&req.password, DUMMY);
                 false
+            }
+            Err(_) => {
+                // Odoo inacessível: vale o hash Argon2 da última autenticação
+                // online. É o que mantém as reuniões a funcionar quando é o
+                // ERP que está em baixo.
+                !password_hash.is_empty() && verify_password(&req.password, &password_hash)
             }
         }
     } else {
@@ -416,11 +441,81 @@ pub async fn login(
             created_at,
             locale: "pt".into(),
         };
+        // Segundo factor: com MFA activo, a password sozinha NÃO produz sessão.
+        // Devolve-se um desafio de curta duração, e os tokens só saem no
+        // `/api/auth/mfa`. É o ponto todo do segundo factor — se a password
+        // bastasse para obter o access token, o resto era teatro.
+        if crate::mfa::activo(&state.db, user.id).await? {
+            crate::audit::log(&state.db, None, user.id, "auth.mfa_challenge", &user.email).await;
+            return Ok(Json(serde_json::json!({
+                "mfa_required": true,
+                "mfa_token": mfa_challenge_token(&state, user.id)?,
+            }))
+            .into_response());
+        }
         crate::audit::log(&state.db, None, user.id, "auth.login", &user.email).await;
         Ok(auth_ok(&state, issue_tokens(&state, user).await?))
     } else {
         Err(ApiError::Unauthorized)
     }
+}
+
+/// Token de DESAFIO do segundo factor.
+///
+/// JWT separado, `typ: "mfa"`, válido 5 minutos. Não serve para mais nada: o
+/// `verify_jwt` do resto da API exige `typ: "access"`, por isso este token não
+/// abre um único endpoint. Prova só que a password foi aceite.
+fn mfa_challenge_token(state: &AppState, user_id: Uuid) -> Result<String, ApiError> {
+    let now = Utc::now().timestamp();
+    sign_jwt(
+        &state.config.jwt_secret,
+        &Claims {
+            sub: user_id,
+            typ: "mfa".into(),
+            iat: now,
+            exp: now + 5 * 60,
+            room: None,
+            name: None,
+            topo: None,
+            owner: false,
+            wait: false,
+            adm: false,
+            is_bot: false,
+        },
+    )
+}
+
+#[derive(Deserialize)]
+pub struct MfaReq {
+    pub mfa_token: String,
+    pub code: String,
+}
+
+/// Segunda metade do login: troca o desafio + código pelos tokens de sessão.
+pub async fn mfa_login(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MfaReq>,
+) -> Result<Response, ApiError> {
+    // O `verify_jwt` exige o `typ` esperado: um access token NÃO serve de
+    // desafio, nem o desafio serve de access token. É a mesma chave a assinar
+    // os dois, e sem esta verificação seriam intermutáveis.
+    let claims = verify_jwt(&state.config.jwt_secret, &req.mfa_token, "mfa")
+        .map_err(|_| ApiError::Unauthorized)?;
+    let user_id = claims.sub;
+
+    // Anti-força-bruta: seis dígitos são um milhão de hipóteses, e sem travão
+    // uma rede rápida percorre-as em minutos. O limitador é POR CONTA, não por
+    // IP — distribuir as tentativas por vários IPs não deve ajudar.
+    if !state.login_limiter.check(&format!("mfa:{user_id}")) {
+        return Err(ApiError::TooManyRequests);
+    }
+    if !crate::mfa::consome_codigo(&state, user_id, &req.code).await? {
+        crate::audit::log(&state.db, None, user_id, "auth.mfa_failed", "").await;
+        return Err(ApiError::Unauthorized);
+    }
+    let user = crate::users::fetch_public(&state.db, user_id).await?;
+    crate::audit::log(&state.db, None, user.id, "auth.login_mfa", &user.email).await;
+    Ok(auth_ok(&state, issue_tokens(&state, user).await?))
 }
 
 pub async fn refresh(

@@ -1,0 +1,122 @@
+#!/usr/bin/env node
+// MFA visto pelo UTILIZADOR — inscrição, QR, códigos de recuperação e login em
+// duas fases, conduzidos num Chromium a sério contra o servidor a sério.
+//
+// Existe porque o backend estar certo não faz um produto. A doutrina da casa é
+// explícita: uma capacidade que só existe na API não conta. Este teste é o que
+// separa as duas coisas.
+//
+// O código TOTP é gerado aqui em JavaScript — a mesma segunda implementação
+// independente do RFC 6238 que o `mfa.mjs` usa.
+//
+// Uso (com o servidor em :8180 e o vite em :5174):
+//   APP=http://localhost:5174 node web/e2e/ui-mfa.mjs
+
+import { chromium } from '@playwright/test'
+import crypto from 'node:crypto'
+const API='http://127.0.0.1:8180', APP=process.env.APP||'http://localhost:5174', PW='UmaPasswordForte123!'
+const ALF='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+const b32=(s)=>{let b=0,n=0;const o=[];for(const c of s.replace(/[=\s]/g,'').toUpperCase()){const v=ALF.indexOf(c);b=(b<<5)|v;n+=5;if(n>=8){n-=8;o.push((b>>n)&0xff)}}return Buffer.from(o)}
+const totp=(s,t=Math.floor(Date.now()/1000))=>{const c=Buffer.alloc(8);c.writeBigUInt64BE(BigInt(Math.floor(t/30)));const m=crypto.createHmac('sha1',b32(s)).update(c).digest();const f=m[19]&15;return String((((m[f]&127)<<24)|(m[f+1]<<16)|(m[f+2]<<8)|m[f+3])%1e6).padStart(6,'0')}
+const marca=Math.random().toString(36).slice(2,7)
+const email=`ui${marca}@ui${marca}.local`
+await fetch(`${API}/api/auth/register`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({org_name:`UI ${marca}`,email,username:`ui${marca}`,password:PW})})
+const b=await chromium.launch()
+const p=await (await b.newContext({ ignoreHTTPSErrors: true })).newPage()
+p.on('pageerror', (e) => console.log('ERRO DE PÁGINA:', e.message))
+p.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLA:', m.text().slice(0, 200)) })
+// Um login que falha sem dizer porquê custa uma ida ao CI por tentativa. As
+// respostas da API ficam registadas para o diagnóstico sair do próprio log.
+p.on('response', async (r) => {
+  if (!r.url().includes('/api/')) return
+  if (r.status() < 400) return
+  console.log(`API ${r.status()} ${r.url().replace(/^https?:\/\/[^/]+/, '')} → ${(await r.text().catch(() => '')).slice(0, 200)}`)
+})
+let falhas=0
+const chk=(c,n)=>{console.log(`  ${c?'✓':'✗'} ${n}`); if(!c) falhas++}
+
+// A primeira navegação pode demorar: o vite em modo dev COMPILA a aplicação
+// no primeiro pedido, e num runner frio isso são dezenas de segundos. Espera-se
+// pelo formulário a existir, não por um número de segundos inventado — foi
+// exactamente isso que fez este teste passar em local e falhar no CI.
+await p.goto(`${APP}/#/login`, { waitUntil: 'domcontentloaded', timeout: 120_000 })
+await p.waitForSelector('input[type=email]', { timeout: 120_000 })
+// Dispensa o tour de introdução: aparece para um utilizador novo e o overlay
+// `.tour-dim` intercepta os cliques todos. Um utilizador fecha-o; o teste
+// marca-o como visto, que dá no mesmo e não depende do desenho do tour.
+await p.evaluate(() => localStorage.setItem('dx_tour_v1', 'done'))
+await p.fill('input[type=email]', email)
+await p.fill('input[type=password]', PW)
+// Espera a verificação de SSO assentar: ela dispara 500 ms depois do email e
+// re-renderiza o formulário, o que destaca o botão a meio do clique.
+// A verificação de SSO dispara 500 ms depois do email e re-renderiza o
+// formulário; esperar por ela assentar evita clicar num botão a ser substituído.
+await p.waitForTimeout(2000)
+await p.locator('form button.primary').first().click()
+// Espera pela CONSOLA, não por segundos: o login é uma ida ao servidor.
+await p.waitForSelector('.settings-drawer, nav, aside, [class*=sidebar]', { timeout: 60_000 }).catch(()=>{})
+await p.waitForFunction(() => !document.querySelector('input[type=email]'), null, { timeout: 60_000 })
+  .catch(async () => {
+    await p.screenshot({ path: '/tmp/mfa-login-falhou.png' })
+    const erro = await p.locator('.auth-error').textContent().catch(() => null)
+    console.log('  ! o login não completou. erro no ecrã:', erro ?? '(nenhum)')
+  })
+chk(await p.locator('input[type=email]').count()===0, 'entrou com password (sem MFA)')
+
+await p.evaluate(()=>{ const b=[...document.querySelectorAll('button')].find(x=>/definiç|settings/i.test((x.getAttribute('aria-label')||'')+(x.title||'')+(x.textContent||''))); b?.click() })
+const abriu = await p.waitForSelector('.settings-drawer', { timeout: 30_000 }).then(() => true).catch(() => false)
+chk(abriu, 'gaveta de definições abre')
+if (!abriu) {
+  await p.screenshot({ path: '/tmp/mfa-sem-gaveta.png' })
+  console.log(`\n=== ${falhas} FALHARAM (diagnóstico acima) ===`)
+  await b.close()
+  process.exit(1)
+}
+await p.locator('.settings-tab', { hasText: 'Segurança' }).click()
+await p.waitForSelector('.mfa-panel', { timeout: 30_000 })
+chk(await p.locator('.mfa-panel').count()>0, 'separador Segurança mostra o painel de MFA')
+
+await p.locator('.mfa-panel button', { hasText: 'Activar' }).first().click()
+await p.waitForSelector('.mfa-qr svg', { timeout: 25000 })
+chk(true, 'código QR renderiza (SVG)')
+const segredo=(await p.locator('.mfa-secret').textContent()).replace(/\s/g,'')
+await p.screenshot({ path: '/tmp/mfa-qr.png' })
+chk(segredo.length>=32, `chave legível para introdução manual (${segredo.length} chars)`)
+
+await p.fill('.mfa-panel input[inputmode=numeric]', totp(segredo))
+await p.locator('.mfa-panel button', { hasText: 'Activar' }).click()
+await p.waitForSelector('.mfa-codes', { timeout: 25000 })
+await p.screenshot({ path: '/tmp/mfa-codes.png' })
+chk(await p.locator('.mfa-codes li').count()===10, 'mostra 10 códigos de recuperação')
+chk(await p.locator('.mfa-panel button:has-text("Concluir")').isDisabled(), 'Concluir BLOQUEADO até confirmar que os guardou')
+await p.locator('.mfa-confirm input').check()
+chk(!await p.locator('.mfa-panel button:has-text("Concluir")').isDisabled(), 'confirmar desbloqueia Concluir')
+await p.locator('.mfa-panel button', { hasText: 'Concluir' }).click()
+await p.waitForTimeout(800)
+chk(await p.locator('.mfa-on').count()>0, 'painel passa a mostrar MFA activa')
+
+await p.evaluate(()=>{ localStorage.clear(); localStorage.setItem('dx_tour_v1','done') })
+await p.goto(`${APP}/#/login`, { waitUntil: 'domcontentloaded' }); await p.reload(); await p.waitForTimeout(1500)
+await p.fill('input[type=email]', email)
+await p.fill('input[type=password]', PW)
+// Espera a verificação de SSO assentar: ela dispara 500 ms depois do email e
+// re-renderiza o formulário, o que destaca o botão a meio do clique.
+await p.waitForTimeout(2000)
+await p.locator('form button.primary').first().click()
+await p.waitForSelector('.auth-mfa', { timeout: 25000 })
+chk(true, 'login pede o CÓDIGO em vez de entrar')
+chk(await p.locator('input[type=email]').count()===0, 'o formulário de password desaparece (já foi aceite)')
+await p.screenshot({ path: '/tmp/mfa-login.png' })
+
+const espera=(30-(Math.floor(Date.now()/1000)%30))*1000+1500
+console.log(`  · aguarda ${Math.round(espera/1000)}s pela janela TOTP seguinte`)
+await p.waitForTimeout(espera)
+await p.fill('.mfa-code-input', totp(segredo))
+await p.locator('.auth-mfa button[type=submit]').first().click()
+await p.waitForFunction(() => !document.querySelector('.auth-mfa'), null, { timeout: 60_000 })
+  .catch(() => {})
+chk(await p.locator('.auth-mfa').count()===0, 'código correcto → entra')
+await p.screenshot({ path: '/tmp/mfa-final.png' })
+console.log(`\n=== ${falhas===0?'TODAS PASSARAM':falhas+' FALHARAM'} ===`)
+await b.close()
+process.exit(falhas?1:0)

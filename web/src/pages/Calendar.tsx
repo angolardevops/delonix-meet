@@ -31,9 +31,7 @@ import {
   downloadMeetingIcs,
   User,
 } from '../api'
-import {
-  ChevronLeftIcon, ChevronRightIcon, ClockIcon, CloseIcon, PlusIcon, TrashIcon, VideoIcon, VoiceCallIcon,
-} from '../icons'
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, ClockIcon, CloseIcon, EditIcon, PlusIcon, RepeatIcon, TrashIcon, VideoIcon, VoiceCallIcon } from '../icons'
 
 /** Carrega as salas presenciais de todas as organizações do utilizador. */
 async function loadAllRooms(): Promise<MeetingRoom[]> {
@@ -240,6 +238,7 @@ function MonthGrid({
   onHover: (h: HoverState) => void
 }) {
   const { t: tRaw } = useTranslation()
+  const t = (k: string, opts?: Record<string, unknown>) => tRaw(`cal.${k}`, opts ?? {})
   const WEEKDAYS = Array.isArray(tRaw('cal.weekdays', { returnObjects: true })) ? tRaw('cal.weekdays', { returnObjects: true }) as string[] : WEEKDAYS_FALLBACK
   const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1)
   const gridStart = mondayOf(first)
@@ -275,7 +274,7 @@ function MonthGrid({
                     <span className="ev-dot" />
                     <span className="ev-time">{hm(m.starts_at)}</span>
                     <span className="ev-title">{m.title}</span>
-                    {m.recurrence_freq && <span className="ev-recur">↻</span>}
+                    {m.recurrence_freq && <span className="ev-recur" title={t('recur')}><RepeatIcon /></span>}
                   </button>
                 ))}
                 {events.length > 3 && <div className="ev-more">+{events.length - 3}</div>}
@@ -299,6 +298,7 @@ function TimelineView({
   onHover: (h: HoverState) => void
 }) {
   const { t: tRaw } = useTranslation()
+  const t = (k: string, opts?: Record<string, unknown>) => tRaw(`cal.${k}`, opts ?? {})
   const WEEKDAYS = Array.isArray(tRaw('cal.weekdays', { returnObjects: true })) ? tRaw('cal.weekdays', { returnObjects: true }) as string[] : WEEKDAYS_FALLBACK
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -382,7 +382,7 @@ function TimelineView({
                       onMouseEnter={(e) => onHover({ meeting: m, x: e.clientX, y: e.clientY })}
                       onMouseLeave={() => onHover(null)}
                     >
-                      <strong className="tl-ev-title">{m.title}{m.recurrence_freq ? ' ↻' : ''}</strong>
+                      <strong className="tl-ev-title">{m.title}{m.recurrence_freq && <span className="ev-recur" title={t('recur')}><RepeatIcon /></span>}</strong>
                       {heightPx > 38 && <span className="tl-ev-time">{hm(m.starts_at)}</span>}
                     </button>
                   )
@@ -481,7 +481,7 @@ function MeetingPopover({
       <div className={`meet-popover-accent ${m.kind}`} />
       <div className="meet-popover-body">
         <strong className="meet-popover-title">{m.title}</strong>
-        {m.recurrence_freq && <span className="meet-popover-recur">↻ {t('recur')}</span>}
+        {m.recurrence_freq && <span className="meet-popover-recur"><RepeatIcon /> {t('recur')}</span>}
         <div className="meet-popover-when">
           {start.toLocaleDateString(i18n.language, { weekday: 'short', day: 'numeric', month: 'short' })}
           {' · '}
@@ -540,7 +540,7 @@ function AgendaView({
                 <span className={`agenda-kind ${m.kind}`}>{m.kind === 'voice' ? <VoiceCallIcon /> : <VideoIcon />}</span>
                 <span className="agenda-time">{hm(m.starts_at)}</span>
                 <span className="agenda-info">
-                  <strong>{m.title}{m.recurrence_freq && <span className="ev-recur" title="Reunião recorrente">↻</span>}</strong>
+                  <strong>{m.title}{m.recurrence_freq && <span className="ev-recur" title={t('recur')}><RepeatIcon /></span>}</strong>
                   <small>{m.duration_min} min · {m.is_owner ? t('organized') : t('organizedBy', { name: m.owner_name })}{m.description ? ` · ${m.description}` : ''}</small>
                 </span>
                 <button className="btn-sm" onClick={() => onStart(m)}>
@@ -606,7 +606,7 @@ function AgendaPanel({ meetingId, isOwner }: { meetingId: string; isOwner: boole
               title={item.done ? t('agendaMarkPending') : t('agendaMarkDone')}
               onClick={() => void toggleDone(item)}
             >
-              {item.done ? '↑' : '↓'}
+              {item.done ? <ChevronUpIcon /> : <ChevronDownIcon />}
             </button>
             <span className="agenda-topic-text">
               <strong>{item.topic}</strong>
@@ -735,7 +735,7 @@ function ActionPlanPanel({ meetingId, isOwner }: { meetingId: string; isOwner: b
         ) : (
           <span className="action-plan-meta-value" onClick={() => isOwner && setEditingGoal(true)}>
             {plan?.goal || <em className="muted">{t('actionGoalPlaceholder')}</em>}
-            {isOwner && <button className="action-plan-edit-btn" onClick={() => setEditingGoal(true)}>✎</button>}
+            {isOwner && <button className="action-plan-edit-btn" aria-label={t('actionGoalEdit')} onClick={() => setEditingGoal(true)}><EditIcon /></button>}
           </span>
         )}
       </div>

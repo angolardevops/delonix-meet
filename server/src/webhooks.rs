@@ -1,6 +1,7 @@
 //! Webhooks de saída por organização (Slack / Teams / Mattermost / genérico).
 //!
-//! Eventos disparados: `meeting.created`, `meeting.started`, `recording.ready`.
+//! Eventos disparados: ver `KNOWN_EVENTS` (`meeting.created`,
+//! `meeting.started`, `meeting.mom_ready`, `recording.ready`).
 //! Os alvos Slack/Mattermost recebem `{ "text": "..." }`; Teams recebe um
 //! MessageCard; o alvo `generic` recebe o JSON estruturado com a assinatura
 //! `X-Delonix-Signature: sha256=<hmac>` (chave = `secret`) para verificação.
@@ -49,9 +50,30 @@ fn ip_is_blocked(ip: IpAddr) -> bool {
     }
 }
 
+/// Eventos que um webhook pode subscrever. Um nome fora desta lista é um typo
+/// que silenciaria o hook sem erro nenhum — recusa-se na criação.
+pub const KNOWN_EVENTS: &[&str] = &[
+    "meeting.created",
+    "meeting.started",
+    "meeting.mom_ready",
+    "recording.ready",
+];
+
+/// Subscrição por omissão. `meeting.mom_ready` TEM de estar aqui: é o evento
+/// que diz a um ERP integrado (Odoo) que a ata AI ficou pronta, e um webhook
+/// criado sem `events` explícitos nunca o receberia.
+pub const DEFAULT_EVENTS: &str =
+    "meeting.created,meeting.started,meeting.mom_ready,recording.ready";
+
 /// Valida que um URL de webhook é público e seguro. Chamado na criação E na
 /// entrega (esta última defende contra DNS-rebinding entre check e envio).
-async fn validate_public_url(raw: &str) -> Result<(), ApiError> {
+///
+/// `allow_hosts` é a allowlist de `WEBHOOK_ALLOW_HOSTS`: hosts que o operador
+/// declarou explicitamente como destinos internos legítimos (o caso real é um
+/// Odoo on-prem em `10.x`/`localhost`, que a guarda anti-SSRF bloquearia e
+/// deixaria a integração sem o webhook de aceleração). Só nomes exactos — sem
+/// wildcards, sem CIDR: a isenção é por destino nomeado, não por rede.
+async fn validate_public_url(raw: &str, allow_hosts: &[String]) -> Result<(), ApiError> {
     let url = reqwest::Url::parse(raw).map_err(|_| ApiError::BadRequest("URL inválido".into()))?;
     if !matches!(url.scheme(), "http" | "https") {
         return Err(ApiError::BadRequest("esquema de URL inválido".into()));
@@ -64,6 +86,12 @@ async fn validate_public_url(raw: &str) -> Result<(), ApiError> {
     let host = url
         .host_str()
         .ok_or_else(|| ApiError::BadRequest("URL sem host".into()))?;
+    // A isenção é pelo HOST do URL, não pelo IP resolvido: assim um rebind de
+    // DNS para 169.254.169.254 continua a ser bloqueado em todos os destinos
+    // que o operador não nomeou.
+    if allow_hosts.iter().any(|h| h.eq_ignore_ascii_case(host)) {
+        return Ok(());
+    }
     let port = url.port_or_known_default().unwrap_or(443);
     let mut any = false;
     for sa in tokio::net::lookup_host((host, port))
@@ -126,7 +154,8 @@ pub fn fire(state: Arc<AppState>, org_id: Uuid, event: Event) {
                 continue;
             }
             // Revalida o destino no momento do envio (defende contra DNS-rebinding).
-            if let Err(e) = validate_public_url(&hook.url).await {
+            if let Err(e) = validate_public_url(&hook.url, &state.config.webhook_allow_hosts).await
+            {
                 tracing::warn!(hook = %hook.id, error = %e, "webhook destino bloqueado (SSRF)");
                 continue;
             }
@@ -220,10 +249,21 @@ pub async fn create(
             "tipo de webhook inválido".into(),
         ));
     }
-    validate_public_url(&req.url).await?;
-    let events = req
-        .events
-        .unwrap_or_else(|| "meeting.created,meeting.started,recording.ready".into());
+    validate_public_url(&req.url, &state.config.webhook_allow_hosts).await?;
+    let events = req.events.unwrap_or_else(|| DEFAULT_EVENTS.into());
+    // Um nome desconhecido nunca dispara — recusa-se aqui em vez de deixar o
+    // admin com um webhook silenciosamente morto.
+    if let Some(bad) = events
+        .split(',')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .find(|e| !KNOWN_EVENTS.contains(e))
+    {
+        return Err(crate::error::ApiError::BadRequest(format!(
+            "evento desconhecido «{bad}» — válidos: {}",
+            KNOWN_EVENTS.join(", ")
+        )));
+    }
     let hook: Webhook = sqlx::query_as(
         "INSERT INTO org_webhooks (org_id, kind, url, secret, events, created_by)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -274,6 +314,54 @@ mod tests {
             "::ffff:10.0.0.1",  // v4-mapped privado
         ] {
             assert!(ip_is_blocked(ip(s)), "devia bloquear {s}");
+        }
+    }
+
+    #[tokio::test]
+    async fn allowlist_exempts_only_named_hosts() {
+        let allow = vec!["odoo.interno".to_string()];
+        // O destino nomeado passa mesmo resolvendo (ou não) para rede privada.
+        assert!(
+            super::validate_public_url("http://odoo.interno:8069/hook", &allow)
+                .await
+                .is_ok()
+        );
+        // Maiúsculas/minúsculas não contornam nem impedem a isenção.
+        assert!(
+            super::validate_public_url("http://ODOO.INTERNO/hook", &allow)
+                .await
+                .is_ok()
+        );
+        // Um host NÃO nomeado continua bloqueado — a isenção é por destino,
+        // não por rede: o endpoint de metadata da cloud não passa.
+        assert!(
+            super::validate_public_url("http://169.254.169.254/latest/meta-data", &allow)
+                .await
+                .is_err()
+        );
+        assert!(
+            super::validate_public_url("http://127.0.0.1:8069/hook", &allow)
+                .await
+                .is_err()
+        );
+        // Sem allowlist (omissão) nada interno passa.
+        assert!(
+            super::validate_public_url("http://odoo.interno:8069/hook", &[])
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn mom_ready_is_subscribed_by_default() {
+        // Sem isto, um Odoo que crie o webhook sem `events` nunca soube que a
+        // ata AI ficou pronta — o evento existia e não chegava a ninguém.
+        assert!(super::DEFAULT_EVENTS.contains("meeting.mom_ready"));
+        for e in super::DEFAULT_EVENTS.split(',') {
+            assert!(
+                super::KNOWN_EVENTS.contains(&e),
+                "{e} não é um evento conhecido"
+            );
         }
     }
 

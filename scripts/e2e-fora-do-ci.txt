@@ -1,0 +1,11 @@
+# Testes ponta-a-ponta que NÃO correm no CI, cada um com a razão.
+#
+# Existe pela mesma razão que o `rotas-publicas.txt`: uma excepção sem razão
+# escrita é indistinguível de um esquecimento. O `estudio.mjs` esteve
+# comprometido sem correr uma única vez, e o CI verde não dava por isso (R69).
+#
+# Formato: <ficheiro> · <razão>
+
+netem-matrix.mjs · Precisa de `tc netem` num contentor com CAP_NET_ADMIN (ver e2e/Dockerfile.netem e e2e/README.md). É uma MATRIZ de perfis de rede degradada, de dezenas de minutos — corre-se a pedido antes de uma release, não a cada push.
+layout-consola.mjs · Precisa da aplicação CONSTRUÍDA e servida (`web/dist`) com uma sessão forjada em localStorage; o job actual corre contra o servidor de desenvolvimento e faz login a sério. Ligar exige um passo de build+serve no workflow.
+morte-abrupta.mjs · A recuperação que mede é INCONSTANTE — quatro corridas locais contra o mesmo commit deram falha, êxito e duas sem terminar no prazo. Pô-lo a bloquear merges seria um portão que falha ao acaso, e um desses perde a credibilidade toda (R62). Corre-se à mão enquanto a causa não estiver estabelecida; o comando está no cabeçalho do ficheiro. Ver R83.

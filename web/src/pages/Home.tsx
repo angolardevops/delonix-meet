@@ -1,9 +1,9 @@
-import { FormEvent, ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useCallback, useState } from 'react'
+import AsyncSection, { useLoad } from '../components/AsyncSection'
 import { useTranslation } from 'react-i18next'
 import {
   createRoom,
   downloadMeetingIcs,
-  getRoom,
   listMeetings,
   listWhiteboards,
   Meeting,
@@ -14,16 +14,7 @@ import {
   WhiteboardMeta,
 } from '../api'
 import { NavKey } from '../components/Shell'
-import { CalendarIcon, FilmIcon, NoteIcon, PeopleIcon } from '../icons'
-
-// Ícone de vídeo local (evita conflito de nomes com CamIcon).
-function VideoBadge() {
-  return (
-    <svg width={26} height={26} viewBox="0 0 24 24" fill="currentColor">
-      <path d="M4 6h11a1 1 0 0 1 1 1v3.5l4-3.5v10l-4-3.5V17a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z" />
-    </svg>
-  )
-}
+import { CalendarIcon, FilmIcon, NoteIcon, PeopleIcon, PlayIcon } from '../icons'
 
 export default function Home({
   user,
@@ -35,41 +26,32 @@ export default function Home({
   onNavigate: (k: NavKey) => void
 }) {
   const { t, i18n } = useTranslation()
-  const [joinCode, setJoinCode] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
-  const [upcoming, setUpcoming] = useState<Meeting[]>([])
-  const [recent, setRecent] = useState<RecordingItem[]>([])
-  const [boards, setBoards] = useState<WhiteboardMeta[]>([])
+
+  // Cada secção carrega e falha por si (achados 4.1/4.2). Antes eram três
+  // `catch {}` a engolir o erro: com a API em baixo o dashboard aparecia
+  // completo e vazio, indistinguível de não haver nada.
+  const [upcoming, retryUpcoming] = useLoad<Meeting[]>(
+    useCallback(async (signal: AbortSignal) => {
+      const now = Date.now()
+      return (await listMeetings(signal))
+        .filter((m) => new Date(m.starts_at).getTime() + m.duration_min * 60_000 >= now)
+        .filter((m) => m.my_status !== 'declined')
+        .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+        .slice(0, 3)
+    }, []),
+  )
+  const [recent, retryRecent] = useLoad<RecordingItem[]>(
+    useCallback(async (signal: AbortSignal) => (await recordingsLibrary(signal)).slice(0, 3), []),
+  )
+  const [boards, retryBoards] = useLoad<WhiteboardMeta[]>(
+    useCallback(async (signal: AbortSignal) => (await listWhiteboards(signal)).slice(0, 3), []),
+  )
 
   const locale = i18n.language.startsWith('en') ? 'en-GB' : 'pt-PT'
   const hour = new Date().getHours()
   const greetKey = hour < 12 ? 'dash.greetMorning' : hour < 19 ? 'dash.greetAfternoon' : 'dash.greetEvening'
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const now = Date.now()
-        const meetings = (await listMeetings())
-          .filter((m) => new Date(m.starts_at).getTime() + m.duration_min * 60_000 >= now)
-          .filter((m) => m.my_status !== 'declined')
-          .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
-        setUpcoming(meetings.slice(0, 3))
-      } catch {
-        /* agenda indisponível não bloqueia o dashboard */
-      }
-      try {
-        setRecent((await recordingsLibrary()).slice(0, 3))
-      } catch {
-        /* idem para gravações */
-      }
-      try {
-        setBoards((await listWhiteboards()).slice(0, 3))
-      } catch {
-        /* idem para quadros */
-      }
-    })()
-  }, [])
 
   async function newMeeting(waitingRoom = false, e2ee = false, format: 'normal' | 'training' = 'normal') {
     setError('')
@@ -81,25 +63,6 @@ export default function Home({
     } catch (err) {
       setError((err as Error).message)
       setCreating(false)
-    }
-  }
-
-  async function join(e: FormEvent) {
-    e.preventDefault()
-    setError('')
-    // Aceita link completo, código com sufixo (?voice) ou código puro:
-    // extrai o padrão do código (xxx-xxxx-xxx) de qualquer texto colado.
-    const raw = joinCode.trim().toLowerCase()
-    const code = (raw.match(/[a-z]+-[a-z]+-[a-z]+/) ?? [raw.replace(/^.*\/r\//, '')])[0]
-    if (!code) {
-      setError(t('dash.notFound'))
-      return
-    }
-    try {
-      const room = await getRoom(code)
-      onEnterRoom(room.code)
-    } catch {
-      setError(t('dash.notFound'))
     }
   }
 
@@ -127,48 +90,39 @@ export default function Home({
 
   return (
     <div className="home">
+      {/* A data e as ações primárias (nova reunião / entrar por código) vivem
+          agora na barra de topo do Shell — aqui ficam só as variantes. */}
       <header className="dash-greet">
         <h1>{t(greetKey, { name: user.username })}</h1>
-        <p className="home-sub">
-          <span className="home-date">
-            {new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' })}
-          </span>
-          {' — '}{t('dash.greetSub')}
-        </p>
+        <p className="home-sub">{t('dash.greetSub')}</p>
       </header>
 
-      <div className="home-actions">
-        <button className="btn-new" disabled={creating} onClick={() => void newMeeting(false)}>
-          <VideoBadge />
-          {creating ? t('dash.creating') : t('dash.newMeeting')}
-        </button>
-
-        <form className="join-box" onSubmit={join}>
-          <span className="join-icon">⌨</span>
-          <input
-            placeholder={t('dash.joinPh')}
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value)}
-          />
-          <button className="join-btn" disabled={!joinCode.trim()}>
-            {t('dash.join')}
-          </button>
-        </form>
-      </div>
-
+      {/* Chips outline, etiqueta curta: a explicação vive no tooltip. Eram
+          frases inteiras que ocupavam meia linha do dashboard. */}
       <div className="home-extra">
-        <button className="link" onClick={() => void newMeeting(true)}>
+        <button
+          className="chip-outline"
+          disabled={creating}
+          title={t('dash.waitingRoomHint')}
+          onClick={() => void newMeeting(true)}
+        >
           {t('dash.waitingRoom')}
         </button>
-        <button className="link" onClick={() => void newMeeting(false, true)}>
+        <button
+          className="chip-outline"
+          disabled={creating}
+          title={t('dash.e2eeHint')}
+          onClick={() => void newMeeting(false, true)}
+        >
           {t('dash.e2ee')}
         </button>
         <button
-          className="link"
-          title="Reunião de treino: ativa as salas de grupo (breakouts)"
+          className="chip-outline"
+          disabled={creating}
+          title={t('dash.trainingHint', 'Ativa as salas de grupo (breakouts)')}
           onClick={() => void newMeeting(false, false, 'training')}
         >
-          🎓 {t('dash.training', 'Reunião de treino')}
+          {t('dash.training', 'Reunião de treino')}
         </button>
       </div>
       {error && <div className="error">{error}</div>}
@@ -201,8 +155,12 @@ export default function Home({
               {t('dash.viewAll')}
             </button>
           </header>
-          {upcoming.length === 0 && <p className="dash-empty">{t('dash.noUpcoming')}</p>}
-          {upcoming.map((m) => (
+          <AsyncSection
+            load={upcoming}
+            retry={retryUpcoming}
+            empty={<p className="dash-empty">{t('dash.noUpcoming')}</p>}
+          >
+            {(ms) => ms.map((m) => (
             <div key={m.id} className="dash-row">
               <div className="dash-row-main">
                 <strong>{m.title}</strong>
@@ -217,13 +175,14 @@ export default function Home({
                 title="Adicionar ao calendário (Google/Outlook — .ics)"
                 onClick={() => void downloadMeetingIcs(m.id, m.title).catch(() => {})}
               >
-                📅
+                <CalendarIcon />
               </button>
               <button className="btn-ghost dash-enter" onClick={() => void enterMeeting(m)}>
                 {t('dash.enter')}
               </button>
             </div>
-          ))}
+            ))}
+          </AsyncSection>
         </section>
 
         <section className="dash-card">
@@ -235,8 +194,12 @@ export default function Home({
               {t('dash.viewAll')}
             </button>
           </header>
-          {recent.length === 0 && <p className="dash-empty">{t('dash.noRecs')}</p>}
-          {recent.map((r) => (
+          <AsyncSection
+            load={recent}
+            retry={retryRecent}
+            empty={<p className="dash-empty">{t('dash.noRecs')}</p>}
+          >
+            {(rs) => rs.map((r) => (
             <div key={r.id} className="dash-row">
               <div className="dash-row-main">
                 <strong>{r.filename.replace(/\.webm$/, '')}</strong>
@@ -244,14 +207,15 @@ export default function Home({
                   {fmtDate(r.created_at)} · {fmtSize(r.size_bytes)} · <span className="mono">{r.room_code}</span>
                 </span>
               </div>
-              <button className="btn-ghost dash-enter" onClick={() => onNavigate('recordings')}>
-                ▶
+              <button className="btn-ghost dash-enter" aria-label={t('dash.play', 'Reproduzir')} onClick={() => onNavigate('recordings')}>
+                <PlayIcon />
               </button>
             </div>
-          ))}
+            ))}
+          </AsyncSection>
         </section>
 
-        {boards.length > 0 && (
+        {!(boards.s === 'ready' && boards.d.length === 0) && (
           <section className="dash-card">
             <header className="dash-card-head">
               <h2>
@@ -261,7 +225,13 @@ export default function Home({
                 {t('dash.viewAll')}
               </button>
             </header>
-            {boards.map((w) => (
+            <AsyncSection
+              load={boards}
+              retry={retryBoards}
+              rows={2}
+              empty={<p className="dash-empty">{t('dash.noWb', 'Sem quadros ainda.')}</p>}
+            >
+              {(ws) => ws.map((w) => (
               <div key={w.id} className="dash-row">
                 <div className="dash-row-main">
                   <strong>{w.title}</strong>
@@ -274,7 +244,8 @@ export default function Home({
                   {t('dash.open')}
                 </button>
               </div>
-            ))}
+              ))}
+            </AsyncSection>
           </section>
         )}
       </div>

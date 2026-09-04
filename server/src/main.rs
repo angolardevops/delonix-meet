@@ -3,23 +3,29 @@ mod ai;
 mod apikeys;
 mod audit;
 mod auth;
+mod broadcast;
 mod config;
 mod dlp;
 mod error;
 mod meetings;
+mod meetings_v1;
 mod metrics;
+mod mfa;
 mod mls;
 mod odoo;
+mod odoo_sso;
 mod org;
 mod presence;
 mod pubsub;
-mod redis_state;
 mod rate_limit;
 mod recorder;
 mod recordings;
+mod redis_state;
 mod room_tools;
 mod rooms;
 mod sfu;
+#[cfg(test)]
+mod sfu_e2e;
 mod signaling;
 mod storage;
 mod users;
@@ -49,7 +55,10 @@ const WHITEBOARD_BODY_LIMIT: usize = 12 * 1024 * 1024; // PNG 8MB → base64 ~11
 async fn security_headers(req: axum::extract::Request, next: middleware::Next) -> Response {
     let mut res = next.run(req).await;
     let h = res.headers_mut();
-    h.insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
+    h.insert(
+        "X-Content-Type-Options",
+        HeaderValue::from_static("nosniff"),
+    );
     h.insert("X-Frame-Options", HeaderValue::from_static("DENY"));
     h.insert("Referrer-Policy", HeaderValue::from_static("no-referrer"));
     h.insert(
@@ -65,11 +74,21 @@ use signaling::SignalingHub;
 
 pub struct AppState {
     pub config: Config,
+    /// O pod está a DRENAR (recebeu SIGTERM e vai fechar).
+    ///
+    /// Enquanto está a true: o `/ready` devolve 503 (o K8s tira o pod dos
+    /// endpoints do Service, e as entradas NOVAS deixam de chegar aqui), as
+    /// salas em curso continuam, e os participantes são avisados para
+    /// migrarem. É a diferença entre uma actualização que ninguém nota e uma
+    /// que derruba todas as reuniões do pod — que era o comportamento antes.
+    pub draining: std::sync::atomic::AtomicBool,
     /// Instante de arranque (para o uptime da status page).
     pub started: std::time::Instant,
     pub db: sqlx::PgPool,
     pub hub: SignalingHub,
     pub sfu: Arc<sfu::SfuState>,
+    /// Emissões em directo a decorrer neste pod (ADR-0003).
+    pub directos: Arc<broadcast::Registo>,
     pub presence: presence::PresenceHub,
     pub auth_limiter: RateLimiter,
     /// Anti-brute-force por conta (email) no login.
@@ -116,6 +135,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/login", post(auth::login))
         .route("/refresh", post(auth::refresh))
         .route("/logout", post(auth::logout))
+        // Segunda metade do login quando o MFA está activo: troca o desafio
+        // de curta duração + o código pelos tokens de sessão.
+        .route("/mfa", post(auth::mfa_login))
         // SSO / OIDC
         .route("/sso/check", get(auth::sso_check))
         .route("/sso/login", get(auth::sso_login))
@@ -126,18 +148,43 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         ));
 
     Router::new()
+        // LIVENESS: o processo está vivo? Responde `ok` mesmo a drenar — um
+        // pod a drenar não deve ser REINICIADO, deve ser deixado terminar.
         .route("/health", get(|| async { "ok" }))
+        // READINESS: pode receber tráfego NOVO? Enquanto drena, NÃO.
+        //
+        // Antes, a readiness apontava para o `/health`, que devolve sempre
+        // `ok` — o K8s mantinha o pod nos endpoints durante o encerramento e
+        // continuava a mandar-lhe entradas novas, que morriam com ele.
+        .route("/ready", get(readiness))
         .route("/api/status", get(status))
         .route("/metrics", get(metrics_handler))
         .nest("/api/auth", auth_routes)
         .route("/api/users/me", get(users::me).patch(users::update_me))
-        .nest("/api/mls", mls::router())
+        // MFA (TOTP, RFC 6238) — ver mfa.rs.
+        .route("/api/users/me/mfa", get(mfa::estado))
+        .route("/api/users/me/mfa/enrol", post(mfa::inscrever))
+        .route("/api/users/me/mfa/activate", post(mfa::activar))
+        .route("/api/users/me/mfa/disable", post(mfa::desactivar))
+        // /api/mls NÃO está registado — de propósito. O `mls.rs` descreve a
+        // interface MLS pretendida (RFC 9420) mas os handlers são stubs: não
+        // guardam nada, não verificam nada, e devolviam 201/200/202 com
+        // `"status": "delivered"` a QUALQUER pessoa, sem sessão e sem
+        // verificação de pertença à sala. Medido a 2026-08-25 contra o
+        // servidor a correr.
+        //
+        // Uma superfície que responde «feito» sem fazer nada é pior do que não
+        // existir: um integrador constrói contra ela, e um auditor conta-a como
+        // capacidade. Volta quando houver MLS a sério — com `AuthUser` e com
+        // verificação de acesso à sala, que é o que falta a estes handlers.
         .route("/api/users/search", get(users::search))
         .route("/api/rooms", post(rooms::create_room))
         .route("/api/rooms/{code}", get(rooms::get_room))
         .route("/api/rooms/{code}/join", post(rooms::join_room))
         .route("/api/rooms/{code}/chat", get(rooms::room_chat))
         .route("/api/rooms/{code}/qos", post(rooms::post_qos))
+        // Tempos de estabelecimento (um por sessão) — ver callTimings.ts.
+        .route("/api/rooms/{code}/timings", post(rooms::post_timings))
         // Tradução de legendas em tempo real via LLM local (ai.rs / Ollama).
         .route("/api/translate", post(ai::translate_caption))
         .route("/api/rooms/{code}/invite", post(rooms::invite_to_room))
@@ -217,6 +264,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/orgs/{org_id}/meeting-rooms", get(org::list_meeting_rooms).post(org::create_meeting_room))
         .route("/api/orgs/{org_id}/stats", get(org::org_stats))
         .route("/api/orgs/{org_id}/audit", get(audit::list))
+        // Verificação da cadeia de hash: diz se alguém mexeu na trilha.
+        .route("/api/orgs/{org_id}/audit/verify", get(audit::verify))
         .route("/api/orgs/{org_id}/settings", post(org::update_settings))
         .route(
             "/api/orgs/{org_id}/sso",
@@ -274,7 +323,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .route("/recordings", get(apikeys::v1_recordings))
                 // Sync de calendário + MoM (integração Odoo nk_delonix_meet —
                 // ver docs/nk-delonix-meet-integration.md).
-                .route("/meetings", get(apikeys::v1_meetings))
+                //
+                // O POST/PATCH/DELETE vive em `meetings_v1.rs`: cria a REUNIÃO
+                // (com anfitrião humano e convidados), não só uma sala solta —
+                // ver o cabeçalho desse módulo para o porquê.
+                .route(
+                    "/meetings",
+                    get(apikeys::v1_meetings).post(meetings_v1::create),
+                )
+                .route(
+                    "/meetings/{id}",
+                    axum::routing::patch(meetings_v1::patch).delete(meetings_v1::delete),
+                )
+                // "Começar agora": faz tocar nos dispositivos dos convidados.
+                .route("/meetings/{id}/ring", post(meetings_v1::ring))
                 .route("/meetings/{id}/notes", get(apikeys::v1_meeting_notes))
                 // Integração Odoo: provisioning e listagem de utilizadores
                 .route("/integration/odoo/provision", post(odoo::provision))
@@ -299,6 +361,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             )),
         )
         .route("/ws", get(signaling::ws_handler))
+        // Directo: o browser empurra a emissão já composta e codificada, e o
+        // servidor remultiplexa para RTMP (ADR-0003). Autenticada pelo token de
+        // sala na query, como o /ws — um WebSocket não leva cabeçalhos nossos.
+        .route(
+            "/api/rooms/{code}/broadcast",
+            get(broadcast::ws_directo),
+        )
         .route("/rtc", get(presence::rtc_handler))
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
         .layer(middleware::from_fn(security_headers))
@@ -420,21 +489,26 @@ async fn main() {
 
     let metrics = Arc::new(metrics::Metrics::default());
     let state = Arc::new(AppState {
+        draining: std::sync::atomic::AtomicBool::new(false),
         started: std::time::Instant::now(),
         db,
         hub,
         breakouts: dashmap::DashMap::new(),
+        directos: Arc::new(broadcast::Registo::default()),
         sfu: Arc::new(sfu::SfuState::new(
             sfu::IceConfig {
                 external_ip: config.sfu_external_ip.clone(),
+                udp_ports: Some((config.sfu_udp_min, config.sfu_udp_max)),
                 turn_host: config.turn_host.clone(),
                 turn_secret: config.turn_secret.clone(),
                 force_relay: config.force_turn_relay,
             },
             metrics.clone(),
+            config.nego_queue_cap,
+            config.rec_queue_cap,
         )),
         presence: presence_hub,
-        auth_limiter: RateLimiter::new(20, Duration::from_secs(60)),
+        auth_limiter: RateLimiter::new(config.auth_rate_per_min as u32, Duration::from_secs(60)),
         login_limiter: RateLimiter::new(8, Duration::from_secs(300)),
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
@@ -539,7 +613,7 @@ async fn main() {
         });
     }
 
-    let app = build_router(state);
+    let app = build_router(state.clone());
     let listener = tokio::net::TcpListener::bind(&config.bind_addr)
         .await
         .expect("failed to bind");
@@ -548,7 +622,13 @@ async fn main() {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown({
+        let state = state.clone();
+        async move {
+            shutdown_signal().await;
+            drenar(state).await;
+        }
+    })
     .await
     .unwrap();
 }
@@ -562,6 +642,17 @@ async fn main() {
 /// clientes fecharem já, em vez de esperar a graça) fica deferido de propósito —
 /// mexeria no loop de inbound do signaling (território das regressões R1/R2) e
 /// exige teste dedicado de 2 browsers.
+/// Readiness: 200 enquanto aceita tráfego novo, 503 enquanto drena.
+async fn readiness(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+) -> impl axum::response::IntoResponse {
+    if state.draining.load(std::sync::atomic::Ordering::Relaxed) {
+        (axum::http::StatusCode::SERVICE_UNAVAILABLE, "draining")
+    } else {
+        (axum::http::StatusCode::OK, "ready")
+    }
+}
+
 async fn shutdown_signal() {
     use tokio::signal;
     let ctrl_c = async {
@@ -582,5 +673,60 @@ async fn shutdown_signal() {
         _ = ctrl_c => {}
         _ = terminate => {}
     }
-    tracing::info!("sinal de shutdown recebido — a drenar (graceful, sem aceitar novas ligações)");
+    tracing::info!("sinal de shutdown recebido — a drenar");
+}
+
+/// Drena o pod: pára de aceitar tráfego novo, avisa quem está em chamada, e
+/// espera que as salas esvaziem antes de deixar o servidor fechar.
+///
+/// Antes desta função, o SIGTERM só fazia o axum parar de ACEITAR ligações. As
+/// WebSockets em curso não fecham sozinhas, por isso o processo ficava a
+/// aguardá-las até o K8s mandar SIGKILL ao fim do `terminationGracePeriod` — e
+/// aí todas as reuniões daquele pod caíam de uma vez. Com a afinidade por sala
+/// (ADR-0001) a concentrar salas no mesmo pod, isso é muita gente ao mesmo
+/// tempo.
+async fn drenar(state: Arc<AppState>) {
+    use std::sync::atomic::Ordering::Relaxed;
+    state.draining.store(true, Relaxed);
+
+    // A readiness passa a falhar; o K8s tira o pod dos endpoints. Só depois
+    // disso é que avisar os clientes serve de alguma coisa: se avisássemos
+    // primeiro, eles reconectavam e o balanceador mandava-os de volta para
+    // aqui.
+    let espera_readiness = std::time::Duration::from_secs(state.config.drain_readiness_secs);
+    tracing::info!(
+        segundos = espera_readiness.as_secs(),
+        "drain: readiness em 503 — a aguardar que o balanceador retire este pod"
+    );
+    tokio::time::sleep(espera_readiness).await;
+
+    // Avisa TODA a gente em chamada. O cliente reconecta depois do atraso que
+    // vai na mensagem, e como este pod já não está nos endpoints, o hash por
+    // sala manda a sala INTEIRA para o mesmo pod novo — que é o que permite a
+    // migração sem partir o SFU, que é in-memory por pod.
+    let salas = state
+        .hub
+        .broadcast_draining(state.config.drain_reconnect_ms);
+    tracing::info!(salas, "drain: participantes avisados para migrar");
+
+    // Espera que esvaziem. Sai mal a última saia — não se gasta o orçamento
+    // todo por hábito.
+    let limite = std::time::Duration::from_secs(state.config.drain_grace_secs);
+    let inicio = std::time::Instant::now();
+    while inicio.elapsed() < limite {
+        let restantes = state.hub.peers_ligados();
+        if restantes == 0 {
+            tracing::info!(
+                segundos = inicio.elapsed().as_secs(),
+                "drain: todas as salas esvaziaram"
+            );
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    tracing::warn!(
+        restantes = state.hub.peers_ligados(),
+        segundos = limite.as_secs(),
+        "drain: prazo esgotado — a fechar com participantes ainda ligados"
+    );
 }

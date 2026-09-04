@@ -12,7 +12,7 @@ Princípios: **self-hosted first** · **security by design** · **enterprise sem
 
 ## 2. Stack (estado real)
 
-**Backend** `server/` (Rust): axum 0.7 (HTTP), webrtc-rs (SFU: DTLS/SRTP, simulcast, RTP fan-out), sqlx 0.7 (Postgres, migrações auto), tokio, argon2, jsonwebtoken (JWT access 15 min + refresh 30 d rotativo), reqwest 0.12 **rustls-tls** (NÃO 0.13). Redis pub/sub para multi-nó (presença + sinalização).
+**Backend** `server/` (Rust): axum 0.8 (HTTP), webrtc-rs (SFU: DTLS/SRTP, simulcast, RTP fan-out), sqlx 0.8 (Postgres, migrações auto), tokio, argon2, jsonwebtoken (JWT access 15 min + refresh 30 d rotativo), reqwest 0.12 **rustls-tls** (NÃO 0.13). Redis pub/sub para multi-nó (presença + sinalização).
 
 **Frontend** `web/src/` (React + TS + Vite): `webrtc.ts` (SfuCall), `signaling.ts` (WS `/ws`), `presence.ts` (WS `/rtc`), `e2ee.ts` (Insertable Streams AES-256-GCM), `media.ts` (efeitos de fundo RVM ONNX, Transcriber, MeetingRecorder), `pages/Room.tsx` (sala Meet-style).
 
@@ -28,6 +28,7 @@ Princípios: **self-hosted first** · **security by design** · **enterprise sem
 6. **Cookie `dlx_refresh`** sempre `HttpOnly; SameSite=Strict; Secure` (exceto `COOKIE_INSECURE=1` em dev HTTP).
 7. **E2EE real**: chave AES-256 gerada no cliente, nunca vai ao servidor exceto para gravação (key delegation explícita com confirm()).
 8. **Validação no servidor**: host controls (lock/share-only/kick/promote-admit) validados em `signaling.rs`, nunca confiados no cliente.
+9. **Uma conta tem UMA autoridade de autenticação, explícita**: `users.odoo_org_id` — a org que a gere, gravada quando a conta nasce de um Odoo e nunca reescrita por outra. NULL = conta local. Nunca resolver o provedor de autenticação por email nem por pertença a org (`LIMIT 1` sem ordem = autoridade por sorteio), e uma sincronização de directório nunca reclama uma conta que já existe — nem de outra org, nem local. Ver R25.
 
 ## 4. Arquitetura — decisões não óbvias
 
@@ -52,9 +53,9 @@ Portas dev: backend `8180`, frontend `5173`, Postgres `5435`, Redis `6379`, cotu
 
 ## 6. Padrões de código
 
-**Rust**: `AppError` para todos os erros de handler — nunca `unwrap()` em produção. `sqlx::query!`/`query_as!` (verificação compile-time). Migrações `server/migrations/NNNN_*.sql` sequenciais. Novo módulo → declarar em `main.rs` + registar rotas.
+**Rust**: `AppError` para todos os erros de handler — nunca `unwrap()` em produção. `sqlx::query`/`query_as::<_, T>` — API de runtime, **sem** verificação em compile time (118 chamadas, zero macros): um nome de coluna errado só falha em execução. Migrações `server/migrations/NNNN_*.sql` sequenciais. Novo módulo → declarar em `main.rs` + registar rotas.
 
-**TS/React**: componentes funcionais + hooks; estado global via Context; mensagens WS tipadas (discriminant union); tokens CSS via custom properties (nunca hardcode de cor); i18n `useTranslation()`. **Nunca `var()` para dimensões de tiles** (transições congelam em background) — dimensões inline por tile. **Controlos novos = kit `web/src/components/ui.tsx`** (`Btn`/`IconBtn`/`Card`/`Field`/`SelectCtl`/`Switch`); zero `border-radius`/`height` hardcoded (tokens 4/6/8px + `--ctl-h` 30px); temas = mapas em `styles/tokens.scss` sob `[data-theme=…]` — ver `docs/reference/design-system.md`.
+**TS/React**: componentes funcionais + hooks; estado global via Context; mensagens WS tipadas (discriminant union); tokens CSS via custom properties (nunca hardcode de cor); i18n `useTranslation()`. **Nunca `var()` para dimensões de tiles** (transições congelam em background) — dimensões inline por tile. **Controlos novos = kit `web/src/components/ui.tsx`** (`Btn`/`IconBtn`/`Card`/`Field`/`SelectCtl`/`Switch`); zero `border-radius`/`height` hardcoded (tokens 4/6/8px + `--ctl-h` 30px); temas = mapas em `styles/tokens.scss` sob `[data-theme=…]` — ver `docs/reference/design-system.md`. **Camada CONSOLA (27/07)** no fim de `styles.scss`: densidade via `html { font-size: 15px }`, rail de navegação escuro nos DOIS temas (tokens `--sb-*`), `.app-bar` no topo do conteúdo (a Home já não duplica «Nova reunião»/código), páginas de altura total usam `height: 100%` e não `100vh`.
 
 ## 7. Painel de revisores
 
@@ -81,7 +82,12 @@ Personas adicionais (invocar em prompt quando útil): **Lars Bak** (WASM/Worker 
 - **Media K8s = relay-only** (`FORCE_TURN_RELAY=1` + coturn alcançável), senão o ICE liga mas fica preto. Em local não ligar.
 - **`.dockerignore` nunca exclui `web/dist`** (o `Dockerfile.web.stage` copia-o).
 - **mkcert em Firefox**: o Firefox não confia na store do SO — `security.enterprise_roots.enabled=true` ou importar a rootCA.
-- **Regressões completas (não reintroduzir):** [`docs/reference/regressions.md`](docs/reference/regressions.md) — R1–R12 com sintoma/causa/regra/ficheiros.
+- **Glare = duas metades:** servidor adia a oferta E cliente re-oferta após rollback (senão o ecrã desaparece na mesma). Ver R13.
+- **Negociação SFU:** ofertas do cliente E do servidor passam pelo canal único `NegoMsg`/`negotiation_loop` — o webrtc-rs não tem rollback, uma oferta do cliente em glare é ADIADA, nunca aplicada fora de estado (R13).
+- **Sem PLI periódico** — keyframes só a pedido/reencaminhados do subscritor (R14). **`touch_subs()`** a seguir a qualquer alteração de subscritores (R16).
+- **Áudio remoto no `AudioSink`, nunca dentro de um tile** — esconder um tile não pode silenciar ninguém (R19).
+- **Top-N de oradores:** renumerar o áudio, decair por tempo (DTX!), nunca suprimir sem extensão RFC 6464; gravação/PSTN recebem tudo (R22). **`video-interest`** enviado sempre, com "todos" quando não pagina (R23).
+- **Regressões completas (não reintroduzir):** [`docs/reference/regressions.md`](docs/reference/regressions.md) — R1–R24 com sintoma/causa/regra/ficheiros.
 
 ## 9. Próximas prioridades
 

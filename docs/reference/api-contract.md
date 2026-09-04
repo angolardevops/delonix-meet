@@ -22,7 +22,16 @@
   (`rate_limit::v1_rate_limit`, por IP).
 - **Endpoints atuais:** `GET /api/v1/org`, `POST /api/v1/rooms`,
   `GET /api/v1/rooms/{code}`, `POST /api/v1/rooms/{code}/join-bot`,
-  `GET /api/v1/recordings`.
+  `GET /api/v1/recordings`, e o recurso **`meetings`** (`server/src/meetings_v1.rs`):
+  `GET/POST /api/v1/meetings`, `PATCH/DELETE /api/v1/meetings/{id}`,
+  `GET /api/v1/meetings/{id}/notes`.
+- **Salas vs reuniões (não confundir):** `POST /api/v1/rooms` cria uma sala
+  solta — sem horário, sem convidados, e cujo dono é quem emitiu a chave (no
+  provisionamento, um utilizador de serviço que nunca faz login). Um link assim
+  põe toda a gente na sala de espera **sem anfitrião que possa admitir**. Uma
+  integração de calendário usa `POST /api/v1/meetings`, que cria reunião + sala
+  com `host_email` humano e convidados por email. `/rooms` fica para bots e
+  chamadas ad-hoc.
 - **Marcador no código:** a fronteira está anotada em `server/src/main.rs` (bloco
   "FRONTEIRA DE CONTRATO DE API"), imediatamente antes do `.nest("/api/v1", ...)`.
 

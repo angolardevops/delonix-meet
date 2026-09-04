@@ -33,56 +33,30 @@
     update_cache: true
 
 # ============================================================
-# 2. DOCKER CE
+# 2. MOTOR DE CONTAINERS ({{ container_engine }})
 # ============================================================
+# Era Docker CE fixo (repo + GPG + grupo). Passou a sair do role
+# `container_engine` — `container_engine: delonix|docker|podman` no group_vars
+# decide, e o `docker` continua a ser uma das opções (instalado por esse role).
 
-- name: Chave GPG Docker
-  ansible.builtin.apt_key:
-    url: https://download.docker.com/linux/ubuntu/gpg
-    keyring: /etc/apt/keyrings/docker.gpg
-    state: present
-
-- name: Repositório Docker CE
-  ansible.builtin.apt_repository:
-    repo: >-
-      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg]
-      https://download.docker.com/linux/ubuntu
-      {{ ansible_distribution_release }} stable
-    filename: docker-ce
-    state: present
-
-- name: Instalar Docker CE
-  ansible.builtin.apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-buildx-plugin
-      - docker-compose-plugin
-    state: present
-    update_cache: true
-
-- name: Serviço Docker activo
-  ansible.builtin.systemd:
-    name: docker
-    state: started
-    enabled: true
-
-- name: sysadmin no grupo docker
-  ansible.builtin.user:
-    name: "{{ ansible_user }}"
-    groups: docker
-    append: true
+- name: "Motor de containers ({{ container_engine }})"
+  ansible.builtin.include_role:
+    name: container_engine
 
 # ============================================================
 # 3. KIND + KUBECTL + HELM
 # ============================================================
 
-- name: kind binary
+# O binário `kind` é um CLIENTE DOCKER — só faz sentido quando o motor é
+# docker/podman. Com `container_engine: delonix` o cluster é criado pelo próprio
+# motor (`delonix cluster create`, modo kind nativo), e instalar o kind aqui só
+# poria no host uma ferramenta que não teria provider nenhum para falar.
+- name: kind binary (motores docker/podman)
   ansible.builtin.get_url:
     url: https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
     dest: /usr/local/bin/kind
     mode: "0755"
+  when: container_engine != 'delonix' 
 
 - name: kubectl binary
   ansible.builtin.get_url:
@@ -166,19 +140,29 @@
 # 6. KIND CLUSTER
 # ============================================================
 
-- name: Verificar se cluster kind já existe
-  ansible.builtin.command: kind get clusters
+- name: Verificar se o cluster já existe
+  ansible.builtin.command: >-
+    {{ 'delonix cluster ls' if container_engine == 'delonix' else 'kind get clusters' }}
   register: _kind_clusters
   changed_when: false
 
-- name: Render kind-cluster.yaml
+- name: Render kind-cluster.yaml (só o kind lê este ficheiro)
   ansible.builtin.template:
     src: kind-cluster.yaml.j2
     dest: /tmp/kind-cluster.yaml
     mode: "0644"
+  when: container_engine != 'delonix'
 
-- name: Criar cluster kind (idempotente)
-  ansible.builtin.command: kind create cluster --name {{ kind_cluster_name }} --config /tmp/kind-cluster.yaml
+# Com delonix: modo kind NATIVO (sem binário kind, sem docker). O
+# `systemd-run --user --scope -p Delegate=yes` NÃO é decoração — sem delegação de
+# cgroup2 o kubelet do nó entra em crash-loop no `create-kubelet-cgroup-v2.sh`
+# (EBUSY a escrever `cgroup.subtree_control` numa raiz com processos) e o cluster
+# nunca fica Ready. Custou uma sessão a diagnosticar; não tirar.
+- name: "Criar cluster (idempotente, {{ container_engine }})"
+  ansible.builtin.command: >-
+    {{ 'systemd-run --user --scope -q -p Delegate=yes delonix cluster create --name ' ~ kind_cluster_name
+       if container_engine == 'delonix'
+       else 'kind create cluster --name ' ~ kind_cluster_name ~ ' --config /tmp/kind-cluster.yaml' }}
   when: kind_cluster_name not in _kind_clusters.stdout
   environment:
     KUBECONFIG: "{{ kind_kubeconfig }}"
@@ -190,10 +174,19 @@
     mode: "0755"
     owner: "{{ ansible_user }}"
 
+# `delonix cluster create` já escreve o kubeconfig em
+# `<root>/clusters/<nome>-kubeconfig.yaml` — copia-se de lá em vez de pedir um
+# `export` que só o binário kind tem.
 - name: Copiar kubeconfig para o utilizador
   ansible.builtin.shell: |
-    kind export kubeconfig --name {{ kind_cluster_name }} \
-      --kubeconfig /home/{{ ansible_user }}/.kube/config
+    set -e
+    if [ "{{ container_engine }}" = "delonix" ]; then
+      cp "$HOME/.local/share/delonix/clusters/{{ kind_cluster_name }}-kubeconfig.yaml" \
+        /home/{{ ansible_user }}/.kube/config
+    else
+      kind export kubeconfig --name {{ kind_cluster_name }} \
+        --kubeconfig /home/{{ ansible_user }}/.kube/config
+    fi
     chown {{ ansible_user }}:{{ ansible_user }} /home/{{ ansible_user }}/.kube/config
   changed_when: false
 
@@ -238,13 +231,13 @@
     KUBECONFIG: "{{ kind_kubeconfig }}"
   changed_when: false
 
-- name: Detectar subnet da rede kind (IPv4)
+# A rede do cluster: `dlx-<nome>` no modo kind nativo do delonix (o
+# `network ls` mostra a subnet), `kind` na rede docker homónima.
+- name: Detectar subnet da rede do cluster (IPv4)
   ansible.builtin.shell: >-
-    docker network inspect kind 2>/dev/null
-    | grep '"Subnet"'
-    | awk -F'"' '{print $4}'
-    | grep -v ':'
-    | head -1
+    {{ "delonix network ls | awk '$1 == \"dlx-" ~ kind_cluster_name ~ "\" {print $4}' | head -1"
+       if container_engine == 'delonix'
+       else "docker network inspect kind 2>/dev/null | grep '\"Subnet\"' | awk -F'\"' '{print $4}' | grep -v ':' | head -1" }}
   register: _kind_subnet
   changed_when: false
 
@@ -303,25 +296,44 @@
     dest: /tmp/dlx-images/delonix-web.tar.gz
     mode: "0644"
 
-- name: Carregar imagens no Docker do servidor
-  ansible.builtin.shell: |
-    docker load < /tmp/dlx-images/delonix-server.tar.gz
-    docker load < /tmp/dlx-images/delonix-web.tar.gz
-  register: _docker_load
+# Os `.tar.gz` chegam do lado local (`make export-images`, que usa o MESMO motor).
+# O `delonix image load`/`docker load`/`podman load` leem todos o mesmo arquivo:
+# desde delonix v0.35.1 o `image save` escreve OCI layout + `manifest.json` legado.
+- name: "Descomprimir os tarballs (o load lê `.tar`)"
+  ansible.builtin.command: "gunzip -kf /tmp/dlx-images/{{ item }}.tar.gz"
+  loop: [delonix-server, delonix-web]
   changed_when: true
 
-- name: Obter tags carregadas
-  ansible.builtin.shell: |
-    docker load < /tmp/dlx-images/delonix-server.tar.gz 2>&1 | grep 'Loaded image' | awk '{print $NF}' | head -1
-  register: _server_img
-  changed_when: false
+- name: "Carregar as imagens no motor do servidor ({{ container_engine }})"
+  ansible.builtin.command: "{{ engine_load }} /tmp/dlx-images/{{ item }}.tar"
+  loop: [delonix-server, delonix-web]
+  become: "{{ not engine_rootless }}"
+  changed_when: true
 
-- name: Injectar imagens no cluster kind
-  ansible.builtin.shell: |
-    kind load docker-image delonix-server --name {{ kind_cluster_name }}
-    kind load docker-image delonix-web    --name {{ kind_cluster_name }}
-    kind load docker-image delonix-server:latest --name {{ kind_cluster_name }} 2>/dev/null || true
-    kind load docker-image delonix-web:latest    --name {{ kind_cluster_name }} 2>/dev/null || true
+# A tag é OBRIGATÓRIA e vem do `make` (`-e image_tag=$(IMAGE_TAG)`, o mesmo
+# `git describe` com que as imagens foram construídas e exportadas).
+#
+# BUG CORRIGIDO AQUI: isto usava `image_tag | default('latest')` e `image_tag`
+# não estava definido em lado nenhum — logo carregava sempre `:latest`. Só que o
+# `make export-images` deste mesmo PR deixou de exportar `:latest` DE PROPÓSITO
+# (é o "imagem stale" documentado no HARNESS.md): ou a tarefa falha, ou injecta
+# uma imagem velha que por acaso ainda esteja no nó. Um default silencioso para
+# a tag errada é precisamente o que a regra "nunca confiar no :latest" proíbe.
+- name: "A tag das imagens tem de ser explícita"
+  ansible.builtin.assert:
+    that: image_tag is defined and image_tag | length > 0
+    fail_msg: >-
+      `image_tag` não definido. O deploy injecta a tag versionada com que as
+      imagens foram construídas — corre `make deploy-kaeso` (que a passa), ou
+      `ansible-playbook site.yml -e image_tag=$(git describe --tags --always)`.
+
+- name: "Injectar as imagens no cluster ({{ container_engine }})"
+  ansible.builtin.command: >-
+    {{ 'delonix cluster load ' ~ item ~ ':' ~ image_tag ~ ' --name ' ~ kind_cluster_name
+       if container_engine == 'delonix'
+       else 'kind load docker-image ' ~ item ~ ':' ~ image_tag ~ ' --name ' ~ kind_cluster_name }}
+  loop: [delonix-server, delonix-web]
+  become: "{{ not engine_rootless }}"
   changed_when: true
 
 # ============================================================

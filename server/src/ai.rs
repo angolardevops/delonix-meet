@@ -119,7 +119,9 @@ pub fn spawn_mom_summary(state: Arc<AppState>, meeting_id: Uuid) {
                 .await
                 .ok()
                 .flatten();
-        let Some((title, transcript)) = row else { return };
+        let Some((title, transcript)) = row else {
+            return;
+        };
         if transcript.trim().len() < 80 {
             return; // transcrição a menos para valer um resumo
         }

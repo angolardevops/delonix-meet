@@ -1,0 +1,58 @@
+---
+# delonix — motor daemonless e rootless-first (o motor por omissão da plataforma).
+#
+# Instalado pelo `install.sh` oficial e não por pacote: é ele que trata das 3
+# coisas que um `curl do binário` não faz e sem as quais o motor arranca e falha
+# no primeiro `run` — as dependências rootless (slirp4netns/uidmap/nftables/
+# iproute2/conntrack), o intervalo subuid/subgid da conta, e o perfil AppArmor
+# `unconfined+userns` que o Ubuntu 23.10+ exige para `unshare(CLONE_NEWUSER)`.
+# Verifica o binário contra o SHA256SUMS da própria release.
+
+- name: "delonix já instalado nesta versão?"
+  ansible.builtin.command: "delonix --version"
+  register: _dlx_have
+  changed_when: false
+  failed_when: false
+
+- name: "Instalador oficial do delonix"
+  when: >-
+    _dlx_have.rc != 0
+    or (delonix_version != 'latest'
+        and delonix_version | regex_replace('^v', '') not in (_dlx_have.stdout | default('')))
+  block:
+    - name: "Descarregar o install.sh"
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/angolardevops/delonix-runtime/main/scripts/install.sh
+        dest: /tmp/delonix-install.sh
+        mode: "0755"
+
+    - name: "Correr o instalador ({{ delonix_version }})"
+      # `--version latest` não é aceite pelo script (o default já é latest) —
+      # por isso a flag só entra quando a versão está fixada.
+      ansible.builtin.command:
+        cmd: >-
+          /tmp/delonix-install.sh
+          {{ '--version ' ~ delonix_version if delonix_version != 'latest' else '' }}
+          {{ '--with-cri' if delonix_install_cri | default(false) | bool else '' }}
+      become: true
+      register: _dlx_install
+      changed_when: _dlx_install.rc == 0
+
+  always:
+    - name: "Limpar o instalador"
+      ansible.builtin.file:
+        path: /tmp/delonix-install.sh
+        state: absent
+
+# O `install.sh` já configura subuid/subgid do utilizador que o invoca; quando o
+# deploy corre com `become` para uma conta DIFERENTE, o intervalo tem de existir
+# para essa conta ou o userns rootless só mapeia 1 uid (containers com utilizador
+# não-root dentro falham com EPERM em ficheiros que lhes pertencem).
+- name: "Intervalo subuid/subgid de {{ container_engine_user }}"
+  become: true
+  ansible.builtin.command: "usermod --add-subuids 100000-165535 --add-subgids 100000-165535 {{ container_engine_user }}"
+  register: _subid
+  changed_when: _subid.rc == 0
+  # `usermod` devolve 4 quando o intervalo já existe — idempotência, não erro.
+  failed_when: _subid.rc not in [0, 4]
+  when: container_engine_rootless | bool

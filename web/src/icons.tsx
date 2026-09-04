@@ -208,3 +208,97 @@ export const BlurIcon = () => (
     <circle cx="6" cy="3" r="1" /><circle cx="18" cy="3" r="1" />
   </svg>
 )
+
+// ---------------------------------------------------------------------------
+//  Ícones de CONTROLO (achado 3.2.5 do docs/ux-perf-review.md)
+//
+//  Estes lugares eram emoji — ⌕ ▶ ⬇ ✓ ⎘ ✎ ▤ ▦ ☰ ▾ ↵ ↻ 🚪 ◐ — a par deste
+//  conjunto SVG. Um emoji num botão renderiza diferente por sistema operativo,
+//  NÃO herda `currentColor` (fica colorido sobre um botão que muda de cor) e
+//  não escala com --ctl-h. O emoji fica onde é CONTEÚDO — as reações da sala —,
+//  nunca onde é controlo.
+// ---------------------------------------------------------------------------
+
+export const SearchIcon = () => (
+  <svg {...base}>
+    <path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5Zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14Z" />
+  </svg>
+)
+
+export const PlayIcon = () => (
+  <svg {...base}>
+    <path d="M8 5v14l11-7L8 5Z" />
+  </svg>
+)
+
+export const CheckIcon = () => (
+  <svg {...base}>
+    <path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17Z" />
+  </svg>
+)
+
+/** Aviso. A consola não usa emoji como controlo — ver lote2.invariantes. */
+export const AlertIcon = () => (
+  <svg {...base}>
+    <path d="M12 2 1 21h22L12 2Zm0 4.53L19.53 19H4.47L12 6.53ZM11 10v5h2v-5h-2Zm0 6v2h2v-2h-2Z" />
+  </svg>
+)
+
+export const CopyIcon = () => (
+  <svg {...base}>
+    <path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z" />
+  </svg>
+)
+
+export const ChevronDownIcon = () => (
+  <svg {...base}>
+    <path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4Z" />
+  </svg>
+)
+
+export const EnterIcon = () => (
+  <svg {...base}>
+    <path d="M19 7v4H7.83l3.58-3.59L10 6l-6 6 6 6 1.41-1.41L7.83 13H21V7h-2Z" />
+  </svg>
+)
+
+export const RepeatIcon = () => (
+  <svg {...base}>
+    <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7Zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4Z" />
+  </svg>
+)
+
+/** Vista de biblioteca — linhas densas. */
+export const RowsIcon = () => (
+  <svg {...base}>
+    <path d="M3 5h18v3H3V5Zm0 5.5h18v3H3v-3ZM3 16h18v3H3v-3Z" />
+  </svg>
+)
+
+/** Vista de cartões — grelha. */
+export const GridIcon = () => (
+  <svg {...base}>
+    <path d="M3 3h8v8H3V3Zm10 0h8v8h-8V3ZM3 13h8v8H3v-8Zm10 0h8v8h-8v-8Z" />
+  </svg>
+)
+
+/** Vista de tabela — cabeçalho mais linhas. */
+export const TableIcon = () => (
+  <svg {...base}>
+    <path d="M3 4h18v4H3V4Zm0 6h5v10H3V10Zm7 0h5v10h-5V10Zm7 0h4v10h-4V10Z" />
+  </svg>
+)
+
+export const DoorIcon = () => (
+  <svg {...base}>
+    <path d="M5 3h9a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H5V3Zm3 8.2v1.6h2v-1.6H8ZM16 5h3v14h-3v-2h1V7h-1V5Z" />
+  </svg>
+)
+
+/** Interruptor de tema — meia-lua, o mesmo registo do ◐ que substitui. */
+export const ThemeIcon = () => (
+  <svg {...base}>
+    <path d="M12 2a10 10 0 1 0 0 20V2Zm0 18a8 8 0 0 1 0-16v16Z" />
+    <path d="M12 2a10 10 0 0 1 0 20 10 10 0 0 0 0-20Z" opacity=".35" />
+  </svg>
+)

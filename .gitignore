@@ -12,6 +12,11 @@ mobile/.dart_tool/
 # Env / secrets
 .env
 *.local
+# Certificados de DEV — gerados por `make certs`, NUNCA versionados. Uma chave
+# privada num repositório é uma chave comprometida mesmo sendo só de dev:
+# qualquer clone passa a poder personificar *.delonix.local em qualquer máquina
+# que confie na mesma CA mkcert.
+deploy/certs/
 deploy/delonix.env
 # Deploy 12-factor: config real e artefactos gerados sem intervenção humana
 # (segredos idempotentes, certificados, kubeconfig). NUNCA versionar.
@@ -32,6 +37,10 @@ web/public/models/Xenova/
 
 # Worktrees transitórios de agentes
 agents/worktrees/
+
+# Artefactos compilados de Python (ai-worker / whisper-server)
+__pycache__/
+*.pyc
 
 # OS
 .DS_Store

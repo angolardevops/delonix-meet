@@ -1,28 +1,53 @@
-import { useEffect, useState } from 'react'
+import { lazy, ReactNode, Suspense, useEffect, useState } from 'react'
 import { completeSsoLogin, currentUser, logout, User } from './api'
-import Login from './pages/Login'
-import Landing from './pages/Landing'
-import Home from './pages/Home'
-import Recordings from './pages/Recordings'
-import Whiteboards from './pages/Whiteboards'
-import Calendar from './pages/Calendar'
-import Directory from './pages/Directory'
-import Analytics from './pages/Analytics'
-import Roadmap from './pages/Roadmap'
-import Status from './pages/Status'
-import ApiDocs from './pages/ApiDocs'
-import Legal from './pages/Legal'
-import Room from './pages/Room'
-import Lobby from './pages/Lobby'
-import SharePage from './pages/SharePage'
 import Shell, { NavKey } from './components/Shell'
 import PresenceProvider from './components/PresenceProvider'
+
+// ---------------------------------------------------------------------------
+//  Corte por rota (achado 1.2 do docs/ux-perf-review.md)
+//
+//  As 15 páginas eram importadas estaticamente aqui, o que punha a `Room`
+//  (185 KB de fonte, mais webrtc/media/e2ee/signaling), o `Calendar` e o
+//  `Analytics` no MESMO chunk que o dashboard. Ninguém vê a sala e a landing
+//  ao mesmo tempo.
+//
+//  EAGER ficam só os três ecrãs de entrada — Landing, Login e Home. São
+//  pequenos (~30 KB somados) e são o primeiro pixel: pô-los em `lazy` trocava
+//  bytes por um spinner à frente de toda a gente, o que não é uma troca boa.
+// ---------------------------------------------------------------------------
+import Landing from './pages/Landing'
+import Login from './pages/Login'
+import Home from './pages/Home'
+
+const Room = lazy(() => import('./pages/Room'))
+const Lobby = lazy(() => import('./pages/Lobby'))
+const Calendar = lazy(() => import('./pages/Calendar'))
+const Analytics = lazy(() => import('./pages/Analytics'))
+const Recordings = lazy(() => import('./pages/Recordings'))
+const Directory = lazy(() => import('./pages/Directory'))
+const Whiteboards = lazy(() => import('./pages/Whiteboards'))
+const Studio = lazy(() => import('./pages/Studio'))
+const Roadmap = lazy(() => import('./pages/Roadmap'))
+const Status = lazy(() => import('./pages/Status'))
+const ApiDocs = lazy(() => import('./pages/ApiDocs'))
+const Legal = lazy(() => import('./pages/Legal'))
+const SharePage = lazy(() => import('./pages/SharePage'))
+
+/**
+ * Espera de rota. Deliberadamente MUDO: o chunk de uma página chega em dezenas
+ * de milissegundos na mesma origem, e um spinner que pisca nesse intervalo lê-se
+ * como avaria. Só ocupa o espaço para o conteúdo não saltar quando chegar.
+ */
+function RouteFallback({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<div className="route-loading" aria-hidden="true" />}>{children}</Suspense>
+}
 
 type Route =
   | { kind: 'home' }
   | { kind: 'directory' }
   | { kind: 'recordings' }
   | { kind: 'whiteboards' }
+  | { kind: 'studio' }
   | { kind: 'calendar' }
   | { kind: 'analytics' }
   | { kind: 'roadmap' }
@@ -43,6 +68,7 @@ function parseHash(): Route {
   if (h.startsWith('#/directory')) return { kind: 'directory' }
   if (h.startsWith('#/recordings')) return { kind: 'recordings' }
   if (h.startsWith('#/whiteboards')) return { kind: 'whiteboards' }
+  if (h.startsWith('#/studio')) return { kind: 'studio' }
   if (h.startsWith('#/calendar')) return { kind: 'calendar' }
   if (h.startsWith('#/analytics')) return { kind: 'analytics' }
   if (h.startsWith('#/roadmap')) return { kind: 'roadmap' }
@@ -93,11 +119,11 @@ export default function App() {
     // Mostrar estado de carregamento enquanto completa o SSO.
     return <div className="auth-page"><div className="auth-card"><p>A completar o login SSO…</p></div></div>
   }
-  if (location.hash.startsWith('#/status')) return <Status />
-  if (location.hash.startsWith('#/api-docs')) return <ApiDocs />
-  if (location.hash.startsWith('#/legal')) return <Legal />
+  if (location.hash.startsWith('#/status')) return <RouteFallback><Status /></RouteFallback>
+  if (location.hash.startsWith('#/api-docs')) return <RouteFallback><ApiDocs /></RouteFallback>
+  if (location.hash.startsWith('#/legal')) return <RouteFallback><Legal /></RouteFallback>
   // Link público de gravação — sem autenticação necessária.
-  if (route.kind === 'share') return <SharePage token={route.token} />
+  if (route.kind === 'share') return <RouteFallback><SharePage token={route.token} /></RouteFallback>
   if (!user) {
     // Convidados com link de sala vão direto ao login; a raiz mostra a landing.
     if (route.kind === 'room' || location.hash.startsWith('#/login')) {
@@ -113,6 +139,8 @@ export default function App() {
         ? 'recordings'
         : route.kind === 'whiteboards'
           ? 'whiteboards'
+          : route.kind === 'studio'
+            ? 'studio'
           : route.kind === 'calendar'
             ? 'calendar'
           : route.kind === 'analytics'
@@ -136,9 +164,11 @@ export default function App() {
     )}
     <PresenceProvider onEnterRoom={enterRoom}>
       {route.kind === 'lobby' ? (
-        <Lobby code={route.code} />
+        <RouteFallback><Lobby code={route.code} /></RouteFallback>
       ) : route.kind === 'room' ? (
-        <Room code={route.code} voiceOnly={route.voice} onLeave={leaveRoom} onSwitch={(c) => enterRoom(c)} />
+        <RouteFallback>
+          <Room code={route.code} voiceOnly={route.voice} onLeave={leaveRoom} onSwitch={(c) => enterRoom(c)} />
+        </RouteFallback>
       ) : (
         <Shell
           user={user}
@@ -151,13 +181,16 @@ export default function App() {
             location.hash = '/'
           }}
         >
-          {route.kind === 'home' && <Home user={user} onEnterRoom={enterRoom} onNavigate={navigate} />}
-          {route.kind === 'directory' && <Directory />}
-          {route.kind === 'recordings' && <Recordings />}
-          {route.kind === 'whiteboards' && <Whiteboards />}
-          {route.kind === 'calendar' && <Calendar onEnterRoom={enterRoom} />}
-          {route.kind === 'analytics' && <Analytics />}
-          {route.kind === 'roadmap' && <Roadmap />}
+          <RouteFallback>
+            {route.kind === 'home' && <Home user={user} onEnterRoom={enterRoom} onNavigate={navigate} />}
+            {route.kind === 'directory' && <Directory />}
+            {route.kind === 'recordings' && <Recordings />}
+            {route.kind === 'whiteboards' && <Whiteboards />}
+            {route.kind === 'studio' && <Studio />}
+            {route.kind === 'calendar' && <Calendar onEnterRoom={enterRoom} />}
+            {route.kind === 'analytics' && <Analytics />}
+            {route.kind === 'roadmap' && <Roadmap />}
+          </RouteFallback>
         </Shell>
       )}
     </PresenceProvider>

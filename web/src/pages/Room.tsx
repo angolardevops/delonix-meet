@@ -1,7 +1,8 @@
 import { CSSProperties, ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  currentUser, downloadRecording, iceServers, inviteToRoom, joinRoom, listRecordings, postQos, Recording,
+  currentUser, downloadRecording, iceServers, inviteToRoom, joinRoom, listRecordings, postQos, postTimings, Recording,
   roomChatHistory, saveMinutesByRoom, saveWhiteboard, searchUsers, translateCaption, uploadRecording, User,
+  isAbort,
 } from '../api'
 import {
   audioConstraints,
@@ -20,27 +21,21 @@ import {
 import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
 import { Btn, SelectCtl } from '../components/ui'
 import { BreakoutRoom, PeerInfo, PollView, QaView, Signaling, WbStroke } from '../signaling'
-import { ThemePicker } from '../components/Shell'
-import { Call, MeshCall, SfuCall } from '../webrtc'
+import ThemePicker from '../components/ThemePicker'
+import { Countdown, MeetingElapsed, WallClock } from '../room/Clocks'
+import { peerColor, RemotePeer, RemoteTile, SpeakingBars } from '../room/RemoteTile'
+import { Call, MeshCall, SCREEN_CONSTRAINTS, SfuCall } from '../webrtc'
+import type { CallState } from '../callRecovery'
+import { backoffDelay } from '../callRecovery'
+import { chooseLayers, type LocalConditions, type TileSignal } from '../layerPolicy'
+import { LinhaDoTempo } from '../callTimings'
 import { makeCallHolderStart } from '../sfuLifecycle'
 import {
   BlurIcon, CamIcon, CamOffIcon, ChatIcon, ChevronUpIcon, CloseIcon, DownloadIcon, EmojiIcon, HandIcon,
   HangupIcon, MicIcon, MicOffIcon, NoteIcon, PeopleIcon, RecordIcon, SettingsIcon, ShareIcon, StopIcon,
 } from '../icons'
 
-interface RemotePeer {
-  peerId: string
-  username: string
-  host: boolean
-  hand: boolean
-  camOn: boolean
-  micOn: boolean
-  /** Foi promovido a co-admitir entradas (o anfitrião tem-no sempre). */
-  canAdmit: boolean
-  stream: MediaStream | null
-  is_pstn?: boolean
-  is_bot?: boolean
-}
+// `RemotePeer` mudou-se para room/RemoteTile.tsx, com o componente que o usa.
 
 /**
  * Cor de fundo determinística por participante: djb2 hash → HSL escuro único.
@@ -67,13 +62,6 @@ function ChatText({ text }: { text: string }) {
   )
 }
 
-function peerColor(name: string): string {
-  let h = 5381
-  for (let i = 0; i < name.length; i++) h = ((h << 5) + h + name.charCodeAt(i)) | 0
-  // Duotone (estilo template): dois tons do mesmo matiz — mantém contraste com texto branco.
-  const hue = Math.abs(h) % 360
-  return `linear-gradient(135deg, hsl(${hue}, 45%, 27%), hsl(${(hue + 35) % 360}, 50%, 16%))`
-}
 
 /**
  * Grelha estilo Meet: para N mosaicos 16:9 num contentor W×H, escolhe o nº de
@@ -124,14 +112,6 @@ function useGridLayout(areaRef: RefObject<HTMLDivElement | null>, count: number,
   return size
 }
 
-/** mm:ss (ou h:mm:ss) para o countdown das salas de grupo. */
-function fmtCountdown(secs: number): string {
-  const s = Math.max(0, secs)
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const ss = String(s % 60).padStart(2, '0')
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
-}
 
 interface ChatMsg {
   username: string
@@ -266,10 +246,15 @@ export default function Room({
   // Pode admitir convidados em espera: anfitrião OU participante promovido.
   const [canAdmit, setCanAdmit] = useState(false)
   const [status, setStatus] = useState('A ligar…')
+  /** Estado da ligação de media — alimenta o indicador de recuperação. */
+  const [callState, setCallState] = useState<CallState>('connecting')
+  /** Os tempos de estabelecimento só se reportam UMA vez por sessão. */
+  const temposEnviados = useRef(false)
+  /** Condições locais que alimentam a política de camada (ver layerPolicy.ts). */
+  const [conditions, setConditions] = useState<LocalConditions>({})
   const [topology, setTopology] = useState('')
   const [isTraining, setIsTraining] = useState(false)
   const [waitingRoomOn, setWaitingRoomOn] = useState(false)
-  const [clock, setClock] = useState(() => new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }))
 
   // Dispositivos & qualidade
   const [devices, setDevices] = useState<DeviceSets>({ mics: [], cams: [], speakers: [] })
@@ -310,7 +295,6 @@ export default function Room({
     return v ? Number(v) : null
   })
   const [breakoutMinutes, setBreakoutMinutes] = useState(0)
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
   const returnTo = sessionStorage.getItem(`dx_return_${code}`)
 
   // UX estilo Meet: cartão "reunião pronta" + painel Fundos e efeitos
@@ -324,6 +308,9 @@ export default function Room({
   const [moreOpen, setMoreOpen] = useState(false)
   const [hideSelf, setHideSelf] = useState(false)
   const [hideNoVideo, setHideNoVideo] = useState(false)
+  const [gridPage, setGridPage] = useState(0)
+  /** Esta sala já chegou a paginar? (ver o efeito de `video-interest`) */
+  const paginatedOnceRef = useRef(false)
   const [fullscreen, setFullscreen] = useState(false)
 
   useEffect(() => {
@@ -359,7 +346,6 @@ export default function Room({
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const chatInputRef = useRef<HTMLInputElement>(null)
   // Teams: temporizador de duração da reunião ("00:37" estilo).
-  const [elapsed, setElapsed] = useState(0)
   const joinedAtRef = useRef<number>(0)
   // Ref do panel atual para acessar em closures estáticas (signal.on).
   const panelRef = useRef<Panel>('none')
@@ -384,21 +370,12 @@ export default function Room({
   const [pollDismissed, setPollDismissed] = useState<Record<string, boolean>>({})
   const [revealUntil, setRevealUntil] = useState<Record<string, number>>({})
   const [winnerFx, setWinnerFx] = useState(false)
-  const [pollNow, setPollNow] = useState(() => Date.now())
   const pollPrevOpenRef = useRef<Record<string, boolean>>({})
   const pollCloseSentRef = useRef<Record<string, boolean>>({})
   const [qaInput, setQaInput] = useState('')
 
   // Relógio de 1s para as contagens de quiz (só com sondagem aberta com prazo
   // ou janela de revelação ativa).
-  useEffect(() => {
-    const need =
-      polls.some((p) => p.open && p.ends_at) ||
-      Object.values(revealUntil).some((t) => t > Date.now())
-    if (!need) return
-    const t = setInterval(() => setPollNow(Date.now()), 1000)
-    return () => clearInterval(t)
-  }, [polls, revealUntil])
 
   // Persiste os meus votos por sala: um reload a meio do quiz não pode
   // apagar a memória de em quem votei (senão a festa nunca dispara).
@@ -435,15 +412,49 @@ export default function Room({
 
   // O anfitrião fecha o quiz quando o tempo acaba — o servidor valida (host),
   // revela a resposta certa a todos e persiste o resultado no meeting.
+  // Callbacks ESTÁVEIS para os mosaicos (achado 2.3). Antes era uma closure
+  // nova por peer e por render — o que anula qualquer `memo` a jusante. Agora
+  // há uma identidade só, e o mosaico devolve o `peerId` que recebeu.
+  const onTilePin = useCallback((peerId: string) => togglePin(peerId), [])
+  const onTileMute = useCallback(
+    (peerId: string) => signalRef.current?.send({ type: 'force-mute', to: peerId }),
+    [],
+  )
+  const onTileKick = useCallback(
+    (peerId: string) => signalRef.current?.send({ type: 'kick', to: peerId }),
+    [],
+  )
+
+  // Tique de revelação: existe SÓ enquanto houver uma janela aberta. Fora dela
+  // não há relógio na raiz — contra o `setPollNow` permanente de antes, que
+  // reconciliava a sala 86 400 vezes por dia para um contador de segundos.
+  const revelacaoAberta = Object.values(revealUntil).some((t) => t > Date.now())
+  const [revTick, setRevTick] = useState(0)
+  useEffect(() => {
+    if (!revelacaoAberta) return
+    const t = setInterval(() => setRevTick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [revelacaoAberta])
+  void revTick
+
+  // Não usa estado: o fecho automático precisa do TIQUE, não de um render. Era
+  // um `setPollNow` por segundo a reconciliar a sala inteira para actualizar um
+  // contador (achado 2.1). O intervalo lê o relógio do sistema e dispara.
+  const pollsRef = useRef(polls)
+  pollsRef.current = polls
   useEffect(() => {
     if (!isHost) return
-    for (const p of polls) {
-      if (p.open && p.ends_at && pollNow >= p.ends_at && !pollCloseSentRef.current[p.id]) {
-        pollCloseSentRef.current[p.id] = true
-        signalRef.current?.send({ type: 'poll-close', poll: p.id })
+    const t = setInterval(() => {
+      const agora = Math.floor(Date.now() / 1000)
+      for (const p of pollsRef.current) {
+        if (p.open && p.ends_at && agora >= p.ends_at && !pollCloseSentRef.current[p.id]) {
+          pollCloseSentRef.current[p.id] = true
+          signalRef.current?.send({ type: 'poll-close', poll: p.id })
+        }
       }
-    }
-  }, [polls, pollNow, isHost])
+    }, 1000)
+    return () => clearInterval(t)
+  }, [isHost])
 
   // Controlos de anfitrião (runtime) + legendas CC
   const [roomLocked, setRoomLocked] = useState(false)
@@ -467,11 +478,8 @@ export default function Room({
   const interimXlateRef = useRef<{ timer: number | null; busy: boolean }>({ timer: null, busy: false })
 
   // Relógio dos countdowns (grupos e temporizador) — só corre quando há deadline.
-  useEffect(() => {
-    if (!breakoutEndsAt && !meetTimerEndsAt) return
-    const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000)
-    return () => clearInterval(t)
-  }, [breakoutEndsAt, meetTimerEndsAt])
+  // Os countdowns passaram para <Countdown>: o tique fica na folha que
+  // mostra o número, não na raiz da sala (achado 2.1).
 
   // Pré-visualização do painel Fundos e efeitos = o mesmo stream que os
   // outros veem (com efeito aplicado, se houver).
@@ -502,15 +510,55 @@ export default function Room({
   // "Qualidade das chamadas" do admin. Best-effort — falhas são ignoradas.
   useEffect(() => {
     if (roomState !== 'in') return
+    // Amostra-se a cada 5 s e REPORTA-SE a cada sexta (≈30 s). A amostragem
+    // mais frequente serve a política de camada, que precisa de reagir a uma
+    // rede a degradar em segundos e não em meio minuto; o reporte mantém a
+    // mesma cadência de antes, para não multiplicar por seis a escrita na base
+    // de dados. Uma só recolha de `getStats()` alimenta as duas coisas.
+    //
+    // 5 s e não 1 s: o Chrome actualiza as estatísticas ~1×/s, e duas leituras
+    // dentro do mesmo intervalo trazem o mesmo carimbo temporal — o delta dá
+    // zero e a política reagiria a um falso «sem media» (ver R37).
+    let n = 0
     const report = async () => {
       const r = await callRef.current?.qos?.().catch(() => null)
       if (!r) return
-      const losses = Object.values(r.byPeer).map((p) => p.lossPct)
-      const loss = losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : 0
-      void postQos(code, { rtt_ms: r.rtt, loss_pct: Math.round(loss * 10) / 10, up_kbps: r.upKbps }).catch(() => {})
+      setConditions({
+        backgrounded: document.visibilityState === 'hidden',
+        cpuLimited: r.limitedBy === 'cpu',
+        lossPct: r.lossPct,
+        rttMs: r.rttMs ?? undefined,
+        // A banda ESTIMADA é do uplink; para o downlink não há estimativa
+        // portável. Sem número, a política não orçamenta — inventar um tecto
+        // seria pior do que não ter nenhum.
+        downlinkKbps: null,
+        dataSaver: Boolean((navigator as { connection?: { saveData?: boolean } }).connection?.saveData),
+      })
+      if (n++ % 6 !== 0) return
+      // Envia-se a amostra COMPLETA, não uma média de três números. A média
+      // entre publicadores era o que escondia o participante inaudível numa
+      // sala em que todos os outros estavam bem — o `extractQuality` agrega
+      // pelo PIOR exactamente por isso.
+      void postQos(code, {
+        rtt_ms: r.rttMs,
+        loss_pct: r.lossPct,
+        up_kbps: r.upKbps,
+        down_kbps: r.downKbps,
+        jitter_ms: r.jitterMs,
+        score: r.score,
+        freeze_ms: Math.round(r.freezeMs),
+        concealment_pct: Math.round(r.concealmentRatio * 1000) / 10,
+        frames_dropped: r.framesDropped,
+        nack: r.nack,
+        pli: r.pli,
+        fir: r.fir,
+        turn_relay: r.turnRelay,
+        candidate_pair: r.candidatePair,
+        limited_by: r.limitedBy,
+      }).catch(() => {})
     }
-    const first = setTimeout(() => void report(), 10_000)
-    const t = setInterval(() => void report(), 30_000)
+    const first = setTimeout(() => void report(), 5_000)
+    const t = setInterval(() => void report(), 5_000)
     return () => { clearTimeout(first); clearInterval(t) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomState, code])
@@ -562,12 +610,18 @@ export default function Room({
   panelRef.current = panel
 
   // Temporizador de duração da reunião (estilo Teams "00:37").
-  useEffect(() => {
-    if (roomState !== 'in') return
-    if (!joinedAtRef.current) joinedAtRef.current = Date.now()
-    const t = setInterval(() => setElapsed(Math.floor((Date.now() - joinedAtRef.current) / 1000)), 1000)
-    return () => clearInterval(t)
-  }, [roomState])
+  // O relógio da duração passou para <MeetingElapsed>: era um setState por
+  // segundo na raiz de um componente de 4 254 linhas (achado 2.1). Aqui ficou
+  // só a HORA DE INÍCIO, que a folha recebe como prop.
+  //
+  // Marca-se no RENDER e não num `useEffect` — mesmo idioma do `panelRef` acima.
+  // Um efeito só corre DEPOIS deste render, e o <MeetingElapsed> já teria
+  // recebido `startedAt` a 0; como escrever numa ref não provoca render, ficava
+  // preso nesse zero até a sala renderizar por outro motivo qualquer.
+  //
+  // O `if` faz a duração contar desde a PRIMEIRA entrada: uma quebra de ligação
+  // e o reentrar não repõem o contador a zero.
+  if (roomState === 'in' && !joinedAtRef.current) joinedAtRef.current = Date.now()
 
   // Atalhos de teclado: Ctrl+D = mic, Ctrl+E = câmara (estilo Google Meet).
   // Clica no botão DOM em vez de chamar toggleMic/toggleCam diretamente para
@@ -628,6 +682,7 @@ export default function Room({
   const ccOnRef = useRef(false)
   const bgModeRef = useRef<'none' | 'blur' | 'image'>('none')
   const levelsRef = useRef<LevelWatcher | null>(null)
+  const deviceChangeRef = useRef<(() => void) | null>(null)
   const recorderRef = useRef<MeetingRecorder | null>(null)
   const talkOverSince = useRef(0)
   const peersRef = useRef<RemotePeer[]>([])
@@ -646,13 +701,7 @@ export default function Room({
     setTimeout(() => setReactions((rs) => rs.filter((r) => r.id !== id)), 3500)
   }
 
-  useEffect(() => {
-    const t = setInterval(
-      () => setClock(new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })),
-      30_000,
-    )
-    return () => clearInterval(t)
-  }, [])
+  // O relógio de parede passou para <WallClock> (achado 2.1).
 
   // ---- Pre-join (green room): SÓ media local para o preview. ----
   // NÃO cria Signaling nem SfuCall (alinhado com R2: nada de ofertas antes de
@@ -660,7 +709,7 @@ export default function Room({
   useEffect(() => {
     if (roomState !== 'prejoin') return
     let cancelled = false
-    const levels = new LevelWatcher((s) => setSpeaking(new Set(s)))
+    const levels = new LevelWatcher((s) => setSpeaking((prev) => (sameSet(prev, s) ? prev : new Set(s))))
     ;(async () => {
       let permErr = ''
       const getMedia = (c: MediaStreamConstraints) =>
@@ -781,7 +830,7 @@ export default function Room({
         if (localVideo.current) localVideo.current.srcObject = stream
 
         // Deteção de voz local + lista de dispositivos (labels só após permissão).
-        const levels = new LevelWatcher((s) => setSpeaking(new Set(s)))
+        const levels = new LevelWatcher((s) => setSpeaking((prev) => (sameSet(prev, s) ? prev : new Set(s))))
         levelsRef.current = levels
         levels.watch('me', stream)
         void listDevices().then((d) => {
@@ -790,9 +839,20 @@ export default function Room({
           setMicId(initMicId || stream.getAudioTracks()[0]?.getSettings().deviceId || '')
           setCamId(stream.getVideoTracks()[0]?.getSettings().deviceId ?? '')
         })
-        navigator.mediaDevices.addEventListener?.('devicechange', () => void listDevices().then(setDevices))
+        // Guardado em ref para poder ser removido no cleanup: sem isso,
+        // cada re-entrada na sala acumulava mais um listener vivo.
+        const onDeviceChange = () => void listDevices().then(setDevices).catch(() => {})
+        deviceChangeRef.current = onDeviceChange
+        navigator.mediaDevices.addEventListener?.('devicechange', onDeviceChange)
 
+        // A linha do tempo começa AQUI e não dentro da SfuCall: o utilizador
+        // quis entrar muito antes de existir uma RTCPeerConnection, e é o
+        // tempo DELE que interessa medir. Uma medição que começa quando o
+        // código está pronto mede o código, não a experiência.
+        const tempos = new LinhaDoTempo()
+        tempos.marcar('intencao')
         const [{ room, room_token, scheduled }, rtcConfig] = await Promise.all([joinRoom(code), iceServers()])
+        tempos.marcar('token')
         setTopology(room.topology)
         setIsTraining(room.format === 'training')
         setIsInstant(scheduled === false) // só marca instantânea se o servidor o confirmar (degrada em falso)
@@ -825,6 +885,7 @@ export default function Room({
 
         const signal = new Signaling(room_token, code)
         signalRef.current = signal
+        signal.on('joined', () => tempos.marcar('ws'))
         // A chamada SFU/mesh só arranca DEPOIS de sermos admitidos ('joined').
         // Se negociarmos enquanto estamos na sala de espera, o servidor descarta
         // a oferta e, ao ser admitido, a colisão de renegociação entra em loop e
@@ -836,6 +897,23 @@ export default function Room({
           if (panelRef.current !== 'chat') setUnreadChat((n) => n + 1)
         })
         signal.on('error', (m) => setStatus(m.message))
+        // Este nó vai fechar. Não é um erro nem uma expulsão: a chamada
+        // continua a funcionar, e migra-se quando o servidor disser.
+        //
+        // O JITTER não é enfeite. Um pod a drenar avisa a sala INTEIRA no mesmo
+        // instante; sem jitter, vinte pessoas reconectam no mesmo milissegundo
+        // e o pod novo leva com a sala toda de uma vez — trocava-se um
+        // encerramento ordenado por uma avalanche.
+        signal.on('draining', ({ reconnect_in_ms }) => {
+          if (cancelled) return
+          setStatus('O servidor vai reiniciar — a mudar de nó, sem sair da reunião.')
+          const jitter = Math.round(reconnect_in_ms * Math.random())
+          sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
+          setTimeout(() => {
+            if (!cancelled) location.reload()
+          }, reconnect_in_ms + jitter)
+        })
+
         signal.onclose = () => {
           if (cancelled) return // saída intencional da sala
           // O WS caiu (rede/proxy). Sem sinalização não há renegociação → media
@@ -1088,6 +1166,34 @@ export default function Room({
             setPresentation((p) => (p?.peerId === peerId ? null : p))
             setPeers((ps) => ps.map((p) => (p.peerId === peerId ? { ...p, stream: null } : p)))
           },
+          // Estado da ligação de media (ver callRecovery.ts). O que interessa
+          // ao utilizador é saber que ALGUÉM está a tratar do assunto: antes
+          // disto, uma quebra de rede deixava o ecrã preto sem uma palavra até
+          // ele próprio recarregar a página.
+          onState: (st: CallState) => {
+            if (cancelled) return
+            setCallState(st)
+            // Reporta os tempos UMA vez, quando a media aparece. Esperar pelo
+            // fim da chamada perderia os números de quem fecha o separador — e
+            // quem fecha o separador a meio é precisamente quem teve má
+            // experiência, que é a cauda que interessa medir.
+            if (st === 'connected' && !temposEnviados.current && tempos.vale_reportar()) {
+              temposEnviados.current = true
+              void postTimings(code, tempos.resumo()).catch(() => {})
+            }
+            if (st === 'degraded') setStatus('Ligação instável — a media pode falhar por instantes.')
+            else if (st === 'reconnecting' || st === 'recovering') setStatus('A restabelecer a ligação de media…')
+            else if (st === 'connected') setStatus('')
+            else if (st === 'failed') {
+              // Último recurso, e SÓ agora: o recarregar que dantes era a
+              // primeira (e única) resposta a qualquer quebra.
+              setStatus('Não foi possível restabelecer a media. A reentrar na sala…')
+              sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
+              setTimeout(() => {
+                if (!cancelled) location.reload()
+              }, 2000)
+            }
+          },
         }
         // Preenche o holder — só arranca quando o handler 'joined' o invocar
         // (após admissão). A guarda (idempotência + não-montar-em-espera = R1/R2)
@@ -1097,16 +1203,40 @@ export default function Room({
           isCancelled: () => cancelled,
           create: () =>
             room.topology === 'sfu'
-              ? new SfuCall(signal, stream, rtcConfig, callbacks, crypto)
+              ? new SfuCall(signal, stream, rtcConfig, callbacks, crypto, undefined, tempos)
               : new MeshCall(signal, stream, rtcConfig, callbacks, crypto),
         })
       } catch (err) {
-        setStatus(`Erro: ${(err as Error).message}`)
+        // Uma falha a montar a sala NÃO é terminal. Antes disto, o `catch`
+        // pintava a mensagem técnica do erro e parava ali: um corte de seis
+        // segundos no servidor — medido — deixava toda a gente na reunião presa
+        // em «Erro: Internal Server Error», sem retorno, mesmo depois de o
+        // servidor voltar. E «Internal Server Error» não é uma frase que se
+        // mostre a alguém numa reunião.
+        if (cancelled || isAbort(err)) return
+        tentativas += 1
+        if (tentativas <= MAX_TENTATIVAS) {
+          const espera = backoffDelay(tentativas - 1)
+          setStatus(`Sem ligação ao servidor — a tentar de novo (${tentativas}/${MAX_TENTATIVAS})…`)
+          setTimeout(() => {
+            if (!cancelled) void start()
+          }, espera)
+          return
+        }
+        setStatus('Não foi possível ligar ao servidor da reunião. Verifica a ligação e recarrega a página.')
       }
     }
+    // As tentativas contam-se FORA do `start`, senão cada nova tentativa
+    // reinicia o contador e o recuo nunca cresce.
+    let tentativas = 0
+    const MAX_TENTATIVAS = 6
     start()
     return () => {
       cancelled = true
+      if (deviceChangeRef.current) {
+        navigator.mediaDevices.removeEventListener?.('devicechange', deviceChangeRef.current)
+        deviceChangeRef.current = null
+      }
       levelsRef.current?.close()
       effectRef.current?.stop()
       headRef.current?.stop()
@@ -1197,9 +1327,27 @@ export default function Room({
 
   async function toggleCam() {
     const existing = localStreamRef.current?.getVideoTracks()[0]
-    if (existing) {
-      existing.enabled = !existing.enabled
-      setCamOn(existing.enabled)
+    if (existing && camOn) {
+      // DESLIGAR: liberta mesmo a câmara — o LED apaga e o encoder pára.
+      // `enabled = false` (o que se fazia antes) mantinha a captura e a
+      // codificação a correr e o indicador do sistema aceso, o que num
+      // produto que se vende por soberania de dados não é aceitável.
+      // O transceiver fica de pé (`replaceTrack(null)`), por isso voltar a
+      // ligar não renegoceia nem perde o simulcast.
+      setCamOn(false)
+      setHasLocalVideo(false)
+      await callRef.current?.disableVideo()
+      if (parallax) {
+        headRef.current?.stop()
+        headRef.current = null
+        setParallax(false)
+        setTilt({ x: 0, y: 0 })
+      }
+      effectRef.current?.stop()
+      localStreamRef.current?.removeTrack(existing)
+      existing.stop()
+      cameraTrackRef.current = null
+      if (localVideo.current) localVideo.current.srcObject = localStreamRef.current
       return
     }
     // Voz -> vídeo: adquirir câmara e publicar (renegoceia no SFU).
@@ -1613,11 +1761,7 @@ export default function Room({
       return
     }
     try {
-      const display = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        // Áudio do sistema/separador (Chrome/Edge; o utilizador escolhe no picker)
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      })
+      const display = await navigator.mediaDevices.getDisplayMedia(SCREEN_CONSTRAINTS)
       const screenTrack = display.getVideoTracks()[0]
       screenTrack.contentHint = 'detail' // privilegiar nitidez de texto sobre framerate
       if (isSfu) {
@@ -1734,9 +1878,18 @@ export default function Room({
   }
 
   // Preferências de vista: esconder o meu tile e/ou participantes sem vídeo.
-  const visiblePeers = hideNoVideo
+  const filteredPeers = hideNoVideo
     ? peers.filter((p) => !!p.stream?.getVideoTracks().length && p.camOn)
     : peers
+  // Paginação: acima de TILES_PER_PAGE ninguém consegue ver (nem o browser
+  // descodificar) mais tiles com proveito. O áudio NÃO é paginado — vive no
+  // AudioSink e ouve-se toda a gente esteja em que página estiver.
+  const pageCount = Math.max(1, Math.ceil(filteredPeers.length / TILES_PER_PAGE))
+  const page = Math.min(gridPage, pageCount - 1)
+  const visiblePeers =
+    filteredPeers.length > TILES_PER_PAGE
+      ? filteredPeers.slice(page * TILES_PER_PAGE, page * TILES_PER_PAGE + TILES_PER_PAGE)
+      : filteredPeers
   const showSelf = !hideSelf
   const total = visiblePeers.length + (showSelf ? 1 : 0)
   const tileSize = useGridLayout(videoAreaRef, total, roomState === 'in')
@@ -1770,6 +1923,63 @@ export default function Room({
         willChange: 'transform',
       }
     : {}
+
+  // De quem precisamos MESMO de vídeo agora. Vai ao SFU (`video-interest`),
+  // que deixa de enviar o resto — é aqui que a paginação poupa banda a sério,
+  // e não apenas ciclos de decoder. Inclui sempre quem está no palco e quem
+  // está fixado, mesmo que caiam fora da página atual.
+  const videoInterest = useMemo(() => {
+    // Sem paginação ativa o interesse é TODA a gente. Isto é essencial: se a
+    // sala encolher abaixo do limiar e deixássemos simplesmente de enviar, o
+    // servidor ficaria com a última página em memória e quem estivesse fora
+    // dela nunca mais receberia vídeo.
+    const source = filteredPeers.length > TILES_PER_PAGE ? visiblePeers : filteredPeers
+    const ids = new Set(source.map((p) => p.peerId))
+    if (stagePeer) ids.add(stagePeer.peerId)
+    if (pinnedPeer) ids.add(pinnedPeer.peerId)
+    return [...ids].sort()
+  }, [visiblePeers, filteredPeers, stagePeer, pinnedPeer])
+
+  // QUE qualidade pedir de cada um. A decisão vive em `layerPolicy.ts` (pura e
+  // testada); aqui só se recolhem os sinais que só o cliente conhece — o
+  // tamanho a que cada tile está MESMO a ser desenhado, quem está em palco ou
+  // fixado, e quem está a partilhar ecrã.
+  //
+  // Antes disto o servidor adivinhava a camada pelo NÚMERO DE PARTICIPANTES:
+  // numa sala de doze, o orador em palco a ocupar 70% do ecrã recebia `q`.
+  const videoQuality = useMemo(() => {
+    const stageW = Math.round(window.innerWidth * 0.7)
+    const tiles: TileSignal[] = videoInterest.map((peerId) => {
+      const emPalco = effectiveViewMode === 'stage' && stagePeer?.peerId === peerId
+      return {
+        peerId,
+        // Em palco o tile ocupa a área toda; na grelha vale a largura medida
+        // pelo `useGridLayout`, que é a largura real em px de CSS.
+        widthPx: emPalco ? stageW : tileSize.w,
+        pinned: pinnedPeer?.peerId === peerId,
+        onStage: emPalco,
+        speaking: speaking.has(peerId),
+        presenting: presentation?.peerId === peerId,
+      }
+    })
+    return chooseLayers(tiles, conditions)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoInterest.join(','), tileSize.w, effectiveViewMode, stagePeer?.peerId, pinnedPeer?.peerId, presentation?.peerId, speaking, conditions])
+
+  useEffect(() => {
+    if (roomState !== 'in' || topology !== 'sfu') return
+    // R23 continua válido para o INTERESSE: assim que uma sala pagina uma vez,
+    // passa a informar sempre — inclusive quando encolhe e deixa de paginar,
+    // senão o servidor ficava preso na última página.
+    if (filteredPeers.length > TILES_PER_PAGE) paginatedOnceRef.current = true
+    // Mas a QUALIDADE informa-se desde o início, pagine-se ou não: numa sala de
+    // três pessoas o servidor servia `f` a toda a gente, miniaturas incluídas, e
+    // é precisamente aí que a sugestão poupa banda. A lista de `peers` quando
+    // não se pagina é «toda a gente», que é o default do servidor — por isso
+    // enviar sempre é um superconjunto seguro do comportamento antigo.
+    signalRef.current?.send({ type: 'video-interest', peers: videoInterest, quality: videoQuality })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoInterest.join(','), JSON.stringify(videoQuality), roomState, topology, filteredPeers.length])
 
   const talkOverNames = useMemo(() => {
     if (!talkOver) return ''
@@ -1926,7 +2136,7 @@ export default function Room({
       {/* Barra de topo estilo Meet: info à esquerda, alertas/participantes à direita. */}
       <header className="room-topbar">
         <div className="rt-left">
-          <span className="rt-clock">{clock}</span>
+          <WallClock />
           <span className="rt-sep">|</span>
           <span className="rt-code" title="Código da reunião">{code}</span>
           <button
@@ -1977,6 +2187,10 @@ export default function Room({
             <p className="muted">Podes preparar a câmara e o microfone entretanto.</p>
           </div>
         )}
+
+        {/* Áudio de TODOS os participantes, independente do que a grelha
+            mostra (ver AudioSink). Fora do `video-area` de propósito. */}
+        <AudioSink peers={peers} sinkId={speakerId} />
 
         <div className="video-area" ref={videoAreaRef}>
         {(() => {
@@ -2035,13 +2249,12 @@ export default function Room({
               key={p.peerId}
               peer={p}
               isHost={isHost}
-              sinkId={speakerId}
               speaking={speaking.has(p.peerId)}
               style={tileStyle}
               pinned={pinnedId === p.peerId}
-              onPin={() => togglePin(p.peerId)}
-              onMute={() => signalRef.current?.send({ type: 'force-mute', to: p.peerId })}
-              onKick={() => signalRef.current?.send({ type: 'kick', to: p.peerId })}
+              onPin={onTilePin}
+              onMute={onTileMute}
+              onKick={onTileKick}
             />
           )
 
@@ -2102,17 +2315,45 @@ export default function Room({
             )
           }
           return (
-            <div
-              className={isSolo ? 'video-grid video-grid--solo' : 'video-grid'}
-              style={isSolo ? parallaxStyle : {
-                ['--tw' as string]: `${tileSize.w}px`,
-                ['--th' as string]: `${tileSize.h}px`,
-                ...parallaxStyle,
-              }}
-            >
-              {showSelf && selfTile}
-              {visiblePeers.map(remoteTile)}
-            </div>
+            <>
+              <div
+                className={isSolo ? 'video-grid video-grid--solo' : 'video-grid'}
+                style={isSolo ? parallaxStyle : {
+                  ['--tw' as string]: `${tileSize.w}px`,
+                  ['--th' as string]: `${tileSize.h}px`,
+                  ...parallaxStyle,
+                }}
+              >
+                {showSelf && selfTile}
+                {visiblePeers.map(remoteTile)}
+              </div>
+              {pageCount > 1 && (
+                <div className="grid-pager" role="navigation" aria-label="Páginas de participantes">
+                  <button
+                    onClick={() => setGridPage((p) => Math.max(0, p - 1))}
+                    disabled={page === 0}
+                    title="Página anterior"
+                    aria-label="Página anterior"
+                  >
+                    ‹
+                  </button>
+                  <span className="mono">
+                    {page + 1} / {pageCount}
+                  </span>
+                  <button
+                    onClick={() => setGridPage((p) => Math.min(pageCount - 1, p + 1))}
+                    disabled={page >= pageCount - 1}
+                    title="Página seguinte"
+                    aria-label="Página seguinte"
+                  >
+                    ›
+                  </button>
+                  <small className="muted">
+                    {filteredPeers.length} participantes · ouves todos
+                  </small>
+                </div>
+              )}
+            </>
           )
         })()}
         </div>
@@ -2452,8 +2693,10 @@ export default function Room({
                 <span className="person-name">
                   <span className="pn-name">eu{isHost ? ' · anfitrião' : ''}</span>
                   {qos && (
-                    <small className="qos-line mono">
-                      ↑ {qos.upKbps} kbps{qos.rtt != null ? ` · RTT ${qos.rtt} ms` : ''}
+                    <small className="qos-line mono" title={`Delonix Call Quality Score: ${qos.score}/100${qos.turnRelay ? ' · via TURN relay' : ''}${qos.limitedBy === 'cpu' ? ' · encoder travado por CPU' : ''}`}>
+                      {qos.score}/100 · ↑ {qos.upKbps} kbps
+                      {qos.rttMs != null ? ` · RTT ${qos.rttMs} ms` : ''}
+                      {qos.turnRelay ? ' · relay' : ''}
                     </small>
                   )}
                 </span>
@@ -2471,6 +2714,8 @@ export default function Room({
                     {qos?.byPeer[p.peerId] && (
                       <small className={qos.byPeer[p.peerId].lossPct > 5 ? 'qos-line mono qos-bad' : 'qos-line mono'}>
                         ↓ {qos.byPeer[p.peerId].kbps} kbps · perda {qos.byPeer[p.peerId].lossPct}%
+                        {qos.byPeer[p.peerId].jitterMs > 30 ? ` · jitter ${qos.byPeer[p.peerId].jitterMs} ms` : ''}
+                        {qos.byPeer[p.peerId].freezeMs > 0 ? ` · ${Math.round(qos.byPeer[p.peerId].freezeMs)} ms congelado` : ''}
                       </small>
                     )}
                   </span>
@@ -2572,7 +2817,7 @@ export default function Room({
                   <>
                     {breakoutEndsAt && (
                       <p className="breakout-countdown">
-                        ⏱ Termina em <strong>{fmtCountdown(breakoutEndsAt - now)}</strong>
+                        ⏱ Termina em <Countdown endsAt={breakoutEndsAt} render={(txt) => <strong>{txt}</strong>} />
                       </p>
                     )}
                     {breakoutRooms.map((b) => (
@@ -2667,7 +2912,7 @@ export default function Room({
               <h4>⏳ Temporizador</h4>
               {meetTimerEndsAt ? (
                 <div className="timer-row">
-                  <strong className="mono timer-big">{fmtCountdown(meetTimerEndsAt - now)}</strong>
+                  <Countdown endsAt={meetTimerEndsAt} render={(txt) => <strong className="mono timer-big">{txt}</strong>} />
                   {isHost && (
                     <button className="btn-sm ghost" onClick={() => signalRef.current?.send({ type: 'timer-clear' })}>
                       Limpar
@@ -2773,7 +3018,7 @@ export default function Room({
                 const total = p.counts.reduce((a, b) => a + b, 0)
                 const revealed = !p.open && p.correct != null
                 const remaining =
-                  p.open && p.ends_at ? Math.max(0, Math.ceil((p.ends_at - pollNow) / 1000)) : null
+                  p.open && p.ends_at ? Math.max(0, Math.ceil((p.ends_at - Date.now()) / 1000)) : null
                 return (
                   <div key={p.id} className="poll-card">
                     <div className="poll-head">
@@ -2796,7 +3041,7 @@ export default function Room({
                         <button
                           key={i}
                           className={cls}
-                          disabled={!p.open || (p.ends_at != null && pollNow > p.ends_at)}
+                          disabled={!p.open || (p.ends_at != null && Date.now() > p.ends_at)}
                           onClick={() => {
                             signalRef.current?.send({ type: 'poll-vote', poll: p.id, option: i })
                             setMyVotes({ ...myVotes, [p.id]: i })
@@ -3243,12 +3488,12 @@ export default function Room({
         {(() => {
           const p = [...polls]
             .reverse()
-            .find((x) => !pollDismissed[x.id] && (x.open || (revealUntil[x.id] ?? 0) > pollNow))
+            .find((x) => !pollDismissed[x.id] && (x.open || (revealUntil[x.id] ?? 0) > Date.now()))
           if (!p) return null
           const total = p.counts.reduce((a, b) => a + b, 0)
           const revealed = !p.open && p.correct != null
           const remaining =
-            p.open && p.ends_at ? Math.max(0, Math.ceil((p.ends_at - pollNow) / 1000)) : null
+            p.open && p.ends_at ? Math.max(0, Math.ceil((p.ends_at - Date.now()) / 1000)) : null
           return (
             <div className="admit-card poll-popup" role="dialog" aria-label="Sondagem">
               <div className="admit-card-head">
@@ -3278,7 +3523,7 @@ export default function Room({
                   <button
                     key={i}
                     className={cls}
-                    disabled={!p.open || (p.ends_at != null && pollNow > p.ends_at)}
+                    disabled={!p.open || (p.ends_at != null && Date.now() > p.ends_at)}
                     onClick={() => {
                       signalRef.current?.send({ type: 'poll-vote', poll: p.id, option: i })
                       setMyVotes({ ...myVotes, [p.id]: i })
@@ -3342,9 +3587,7 @@ export default function Room({
         <div className="bar-left">
           {/* Hora/código/E2EE estão agora na barra de topo (estilo Meet). Aqui
               ficam só os indicadores dinâmicos da sessão. */}
-          {roomState === 'in' && elapsed > 0 && (
-            <span className="meeting-elapsed" title="Duração da reunião">⏱ {fmtCountdown(elapsed)}</span>
-          )}
+          {roomState === 'in' && <MeetingElapsed startedAt={joinedAtRef.current} />}
           {secOpen && secCode && (
             <span className="sec-code" onClick={() => setSecOpen(false)} title="Código de segurança da sala">
               🛡 <strong className="mono">{secCode}</strong> — igual em todos os participantes se ninguém estiver a intercetar
@@ -3363,18 +3606,23 @@ export default function Room({
               ← Sala principal
             </button>
           )}
-          {returnTo && breakoutEndsAt && breakoutEndsAt > now && (
+          {returnTo && breakoutEndsAt && (
             <span className="room-topo breakout-chip" title="Tempo restante neste grupo">
-              ⏱ {fmtCountdown(breakoutEndsAt - now)}
+              ⏱ <Countdown endsAt={breakoutEndsAt} render={(txt) => <>{txt}</>} />
             </span>
           )}
           {meetTimerEndsAt && (
-            <span
-              className={meetTimerEndsAt - now <= 60 ? 'room-topo breakout-chip timer-low' : 'room-topo breakout-chip'}
-              title="Temporizador da reunião"
-            >
-              ⏳ {fmtCountdown(meetTimerEndsAt - now)}
-            </span>
+            <Countdown
+              endsAt={meetTimerEndsAt}
+              render={(txt, restam) => (
+                <span
+                  className={restam <= 60 ? 'room-topo breakout-chip timer-low' : 'room-topo breakout-chip'}
+                  title="Temporizador da reunião"
+                >
+                  ⏳ {txt}
+                </span>
+              )}
+            />
           )}
           {presentation && (
             <span className="room-topo presenter-chip" title="Apresentação em curso">
@@ -3383,10 +3631,28 @@ export default function Room({
                 : `${peers.find((p) => p.peerId === presentation.peerId)?.username ?? ''} • apresenta`}
             </span>
           )}
+          {/* Indicador de recuperação de media. Existe porque uma quebra de
+              rede dava ECRÃ PRETO SEM DIAGNÓSTICO: o utilizador não tinha como
+              distinguir «a plataforma está a tratar disto» de «isto avariou».
+              Só aparece quando há mesmo algo a assinalar. */}
+          {callState !== 'connected' && callState !== 'connecting' && callState !== 'disconnected' && (
+            <span
+              className="room-status"
+              role="status"
+              aria-live="polite"
+              title={`Ligação de media: ${callState}`}
+            >
+              {callState === 'degraded' ? '◐ ligação instável' : '◌ a restabelecer…'}
+            </span>
+          )}
           {status && <span className="room-status">{status}</span>}
         </div>
 
         <div className="bar-center">
+          {/* Dois grupos visuais: DISPOSITIVOS (o que os outros recebem de mim)
+              e SESSÃO (o que faço na reunião). Só agrupamento — nenhuma lógica
+              de media depende desta estrutura. */}
+          <div className="ctrl-group ctrl-group-devices">
           <DeviceControl
             label={micOn ? 'Desativar microfone (Ctrl+D)' : 'Ativar microfone (Ctrl+D)'}
             off={!micOn}
@@ -3414,6 +3680,8 @@ export default function Room({
           >
             {camOn ? <CamIcon /> : <CamOffIcon />}
           </DeviceControl>
+          </div>
+          <div className="ctrl-group ctrl-group-session">
           <Ctrl
             label={ccOn ? 'Desativar legendas automáticas' : 'Legendas automáticas (CC) — transcreve a voz em tempo real'}
             active={ccOn}
@@ -3581,6 +3849,7 @@ export default function Room({
             <Ctrl label="Mais opções" active={moreOpen} onClick={() => setMoreOpen(!moreOpen)}>
               <span className="more-dots">⋮</span>
             </Ctrl>
+          </div>
           </div>
           <button className="ctrl hangup" onClick={() => void leaveRoom()} title="Sair da chamada">
             <HangupIcon />
@@ -4007,104 +4276,64 @@ function PresentationTile({ stream, label, own, onRequestControl }: { stream: Me
   )
 }
 
-/** Barras animadas tipo Meet quando alguém está a falar. */
-function SpeakingBars() {
-  return (
-    <span className="speaking-bars" aria-hidden>
-      <i /><i /><i />
-    </span>
-  )
+/**
+ * Atualizador de "quem está a falar" que só troca o estado quando o CONJUNTO
+ * muda. O `LevelWatcher` dispara a cada 180 ms; `setSpeaking(new Set(s))`
+ * criava sempre uma identidade nova, pelo que a sala inteira (componente de
+ * milhares de linhas, N tiles de vídeo) re-renderizava ~5,5×/s do princípio ao
+ * fim da reunião, mesmo em silêncio absoluto — CPU roubado aos decoders.
+ */
+function sameSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false
+  for (const v of a) if (!b.has(v)) return false
+  return true
 }
 
-function RemoteTile({
-  peer,
-  isHost,
-  sinkId,
-  speaking,
-  style,
-  pinned,
-  onPin,
-  onMute,
-  onKick,
-}: {
-  peer: RemotePeer
-  isHost: boolean
-  sinkId: string
-  speaking: boolean
-  style?: CSSProperties
-  pinned?: boolean
-  onPin?: () => void
-  onMute: () => void
-  onKick: () => void
-}) {
-  const ref = useRef<HTMLVideoElement>(null)
-  const audioRef = useRef<HTMLAudioElement>(null)
-  // O ÁUDIO remoto é reproduzido por um <audio> DEDICADO (o <video> fica mudo):
-  // um <video style=display:none> (câmara desligada) podia não tocar o áudio, e
-  // o autoplay de vídeo não-mudo podia ser bloqueado. O <audio> toca sempre.
-  useEffect(() => {
-    if (ref.current && ref.current.srcObject !== peer.stream) {
-      ref.current.srcObject = peer.stream
-      void ref.current.play().catch(() => {})
-    }
-    if (audioRef.current && audioRef.current.srcObject !== peer.stream) {
-      audioRef.current.srcObject = peer.stream
-      void audioRef.current.play().catch(() => {})
-    }
-  }, [peer.stream])
-  // Saída de áudio (altifalantes) escolhida nas definições — no <audio>.
-  useEffect(() => {
-    const el = audioRef.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null
-    if (el?.setSinkId) void el.setSinkId(sinkId || '').catch(() => {})
-  }, [sinkId, peer.stream])
-  // Vídeo só quando há track E o peer diz que a câmara está ligada —
-  // track com enabled=false chega como frames pretos, não como ausência.
-  const hasVideo = !!peer.stream?.getVideoTracks().length && peer.camOn
-  const hasAudio = !!peer.stream?.getAudioTracks().length && peer.micOn
+/**
+ * Tiles de vídeo por página. Acima disto o browser descodifica fluxos que
+ * ninguém consegue ver: numa sala de 40 eram 39 decoders a correr para desenhar
+ * retângulos de 100 px. Com a paginação o cliente só pede (`video-interest`) o
+ * vídeo da página visível e o SFU deixa mesmo de o enviar.
+ */
+const TILES_PER_PAGE = 24
+
+/** Barras animadas tipo Meet quando alguém está a falar. */
+
+/**
+ * Reprodução do ÁUDIO de todos os participantes, num sítio só, SEMPRE montado.
+ *
+ * Antes, cada `<audio>` vivia dentro do `RemoteTile`. Como a grelha esconde
+ * tiles (opção «Ocultar participantes sem vídeo», palco, futura paginação),
+ * esconder um tile DESMONTAVA o `<audio>` e a pessoa deixava de se ouvir — com
+ * a câmara desligada a ser o caso mais comum, ativar essa opção deixava o
+ * utilizador praticamente surdo, sem qualquer pista da causa.
+ *
+ * Regra: o que está no ecrã é decisão de layout; o que se ouve não pode
+ * depender do layout.
+ */
+function AudioSink({ peers, sinkId }: { peers: RemotePeer[]; sinkId: string }) {
   return (
-    <div
-      className={speaking ? 'tile speaking' : 'tile'}
-      style={style}
-      onDoubleClick={onPin}
-      title="Duplo-clique para fixar/desafixar no palco"
-    >
-      <video ref={ref} autoPlay playsInline muted style={{ display: hasVideo ? undefined : 'none' }} />
-      <audio ref={audioRef} autoPlay />
-      {!hasVideo && (
-        <div className="tile-avatar" style={{ background: peerColor(peer.username) }}>
-          <span className="avatar-circle" style={{ background: 'rgba(0,0,0,0.25)' }}>{peer.username.slice(0, 2).toUpperCase()}</span>
-        </div>
-      )}
-      <button
-        className={pinned ? 'tile-pin pinned' : 'tile-pin'}
-        onClick={onPin}
-        title={pinned ? 'Desafixar do palco' : 'Fixar no palco'}
-      >
-        📌
-      </button>
-      {peer.hand && <span className="hand-badge">✋</span>}
-      {/* Indicador de mic muted no canto superior direito (estilo Meet). */}
-      {!hasAudio && (
-        <span className="tile-mic-status" aria-label="microfone desativado">
-          <MicOffIcon />
-        </span>
-      )}
-      <span className="tile-name">
-        {hasAudio && speaking && <SpeakingBars />}
-        {peer.username}
-        {peer.host ? ' · anfitrião' : ''}
-        {peer.is_pstn ? ' · 📞 PSTN' : peer.is_bot ? ' · 🤖 AI Bot' : ''}
-      </span>
-      {isHost && !peer.host && (
-        <div className="host-actions">
-          <button title="Silenciar" onClick={onMute}>
-            <MicOffIcon />
-          </button>
-          <button title="Remover da reunião" onClick={onKick}>
-            <CloseIcon />
-          </button>
-        </div>
-      )}
+    <div className="audio-sink" aria-hidden style={{ display: 'none' }}>
+      {peers.map((p) => (
+        <PeerAudio key={p.peerId} stream={p.stream} sinkId={sinkId} />
+      ))}
     </div>
   )
 }
+
+function PeerAudio({ stream, sinkId }: { stream: MediaStream | null; sinkId: string }) {
+  const ref = useRef<HTMLAudioElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || el.srcObject === stream) return
+    el.srcObject = stream
+    void el.play().catch(() => {})
+  }, [stream])
+  // Saída de áudio (altifalantes) escolhida nas definições.
+  useEffect(() => {
+    const el = ref.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null
+    if (el?.setSinkId) void el.setSinkId(sinkId || '').catch(() => {})
+  }, [sinkId, stream])
+  return <audio ref={ref} autoPlay />
+}
+

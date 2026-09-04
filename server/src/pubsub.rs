@@ -194,9 +194,13 @@ pub fn start_signaling_subscriber(
                         if parts.len() != 3 {
                             continue;
                         }
-                        let Ok(room_id) = Uuid::parse_str(parts[1]) else { continue; };
+                        let Ok(room_id) = Uuid::parse_str(parts[1]) else {
+                            continue;
+                        };
 
-                        let Ok(raw) = msg.get_payload::<String>() else { continue; };
+                        let Ok(raw) = msg.get_payload::<String>() else {
+                            continue;
+                        };
                         let Ok(payload) = serde_json::from_str::<RedisRoomEvent>(&raw) else {
                             tracing::warn!("pubsub: sinalização inválida ignorada");
                             continue;

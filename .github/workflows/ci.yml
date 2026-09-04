@@ -1,0 +1,338 @@
+# ============================================================
+#  CI do Delonix Meet.
+#
+#  Nota que poupa meia hora a quem vier a seguir: **nenhum job precisa de
+#  Postgres**. O backend usa a API de RUNTIME do sqlx (`query`, `query_as`),
+#  não as macros `query!`, por isso não há verificação de SQL em compile time
+#  e não é preciso `DATABASE_URL` nem `.sqlx/` no build. Isso é uma limitação
+#  real — um nome de coluna errado só falha em execução — e está escrita como
+#  tal no HARNESS.md; aqui é o que torna o CI simples e rápido.
+# ============================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Nada de `RUSTFLAGS: -D warnings`: a árvore herda avisos (`dead_code` em
+  # `redis_state.rs`, `rooms.rs`, …) e isso deixaria o CI vermelho no primeiro
+  # dia sem nada de novo ter partido. Quem trata dos avisos é a catraca do
+  # clippy — que já os conta, porque o clippy corre também os lints do rustc.
+
+jobs:
+  backend:
+    name: Backend (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+
+      - name: Formatação (cargo fmt --check)
+        run: cargo fmt --manifest-path server/Cargo.toml --check
+
+      - name: Catraca do clippy (o número de avisos não sobe)
+        run: bash scripts/check-clippy-ratchet.sh
+
+      # E2E_TIMEOUT_FACTOR: os testes de media montam RTCPeerConnections a
+      # sério (ICE, DTLS, primeiro RTP). Numa máquina de desenvolvimento
+      # resolvem-se em ~0,1 s; num runner partilhado com 2 vCPU chegaram a
+      # estourar os 30 s e a falhar sem nada estar partido. Um portão que falha
+      # ao acaso perde a credibilidade toda.
+      - name: Testes
+        env:
+          E2E_TIMEOUT_FACTOR: 4
+        run: cargo test --manifest-path server/Cargo.toml --release
+
+      - name: Build de release
+        run: cargo build --manifest-path server/Cargo.toml --release
+
+  frontend:
+    name: Frontend (TypeScript/React)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Tipos (tsc --noEmit)
+        run: node_modules/.bin/tsc -p tsconfig.json --noEmit
+
+      - name: Testes (vitest — guarda as regressões R1/R2/R13)
+        run: node_modules/.bin/vitest run
+
+      - name: Build de produção
+        run: npm run build
+
+  fitness:
+    name: Fitness functions (arquitectura + higiene)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Higiene do repo (chaves, artefactos, dumps, migrações)
+        run: bash scripts/check-repo-hygiene.sh
+
+      - name: Capacidades vendidas (nada se vende sem código por trás)
+        run: bash scripts/check-capability-claims.sh
+
+      - name: Drift documental (módulos, migrações, versões, SQL)
+        run: bash scripts/check-docs-drift.sh
+
+      - name: Autorização de rotas (nenhuma rota aberta por esquecimento)
+        run: bash scripts/check-route-auth.sh
+
+      - name: Afinidade por sala (ADR-0001 / regressão R3)
+        run: bash scripts/check-room-affinity.sh
+
+      # O check-tenant-rls.sh exige um cluster vivo e faz skip sem ele. Não é
+      # executado aqui de propósito: um teste que faz skip em silêncio no CI
+      # dá luz verde sem ter provado nada. Corre onde há cluster (`make prod`).
+
+  seguranca:
+    name: Segurança das dependências
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      - name: cargo-audit (RustSec)
+        run: cargo install cargo-audit --locked
+
+      # Catraca, não portão absoluto: a árvore entra com 7 avisos altos/críticos
+      # por transitividade das bibliotecas de IA no browser, cada um com a razão
+      # escrita em scripts/dep-audit-accepted.txt. Um portão absoluto ficaria
+      # vermelho no primeiro dia e seria desligado na semana seguinte — e depois
+      # ninguém repararia no aviso NOVO, que é o que este passo existe para ver.
+      - name: Catraca do audit (npm + cargo)
+        run: bash scripts/check-dep-audit.sh
+
+  # Isolamento entre inquilinos, contra um servidor A SÉRIO com Postgres a
+  # sério. É o critério de saída do §5.4 do mandato — «nenhum endpoint
+  # cross-tenant; testes automáticos de isolamento; testes de permissões
+  # negativas» — e um teste de isolamento contra um duplo prova o duplo, não o
+  # produto.
+  isolamento:
+    name: Isolamento, MFA, gravação e drain
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: delonix
+          POSTGRES_PASSWORD: delonix_dev
+          POSTGRES_DB: delonix_meet
+        ports: ['5435:5432']
+        options: >-
+          --health-cmd "pg_isready -U delonix -d delonix_meet"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      - name: Build do servidor
+        run: cargo build --manifest-path server/Cargo.toml --release
+
+      - name: Arrancar o servidor (migrações incluídas)
+        run: |
+          # AUTH_RATE_PER_MIN elevado SÓ AQUI: os três testes ponta-a-ponta
+          # correm do mesmo IP (localhost) e esgotavam o limite de 20/min, com o
+          # sintoma a aparecer como «o login não completou» no terceiro. O
+          # default de produção não muda.
+          DELONIX_ALLOW_INSECURE=1 COOKIE_INSECURE=1 AUTH_RATE_PER_MIN=2000 \
+            RECORDINGS_DIR=/tmp/gravacoes \
+            DRAIN_READINESS_SECS=2 DRAIN_GRACE_SECS=25 DRAIN_RECONNECT_MS=1000 \
+            ./server/target/release/delonix-server > /tmp/servidor.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8180/api/status >/dev/null && exit 0
+            sleep 2
+          done
+          echo "o servidor não arrancou:"; cat /tmp/servidor.log; exit 1
+
+      - name: Isolamento e permissões negativas
+        run: node web/e2e/isolamento.mjs
+
+      # A auditoria é atacada DIRECTAMENTE por SQL, não pela API: um teste que
+      # só usa a API prova que a API não deixa, não que os dados estão
+      # protegidos. E o adversário que interessa numa auditoria é quem TEM
+      # privilégios.
+      - name: Auditoria imutável (ataque directo à base de dados)
+        run: PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/auditoria.mjs
+
+      # O MFA precisa do mesmo servidor a correr. O teste implementa o TOTP em
+      # JavaScript de propósito: é uma segunda implementação independente do
+      # RFC 6238, e vê-la concordar com a de Rust vale muito mais do que ver a
+      # de Rust concordar consigo própria.
+      - name: MFA por TOTP (fluxo completo, ao nível da API)
+        run: node web/e2e/mfa.mjs
+
+
+      # E o mesmo visto pelo UTILIZADOR. O backend estar certo não faz um
+      # produto: sem interface, o MFA existe para quem sabe fazer POSTs. É este
+      # teste que separa as duas coisas.
+      - name: Chromium para o teste de interface
+        run: npx playwright install chromium
+        working-directory: web
+
+      - name: Interface do MFA (Chromium real)
+        run: |
+          (cd web && NO_HTTPS=1 npx vite --port 5174 > /tmp/vite.log 2>&1 &)
+          for i in $(seq 1 40); do
+            curl -sf http://localhost:5174/ >/dev/null && break
+            sleep 2
+          done
+          # Confirma que o PROXY do vite chega ao servidor: é por ele que o
+          # browser fala com a API, e se estiver mudo o sintoma é «o login não
+          # completou», que aponta para o sítio errado.
+          curl -sf http://localhost:5174/api/status || { echo "o proxy do vite NÃO alcança a API"; cat /tmp/vite.log; exit 1; }
+          APP=http://localhost:5174 node web/e2e/ui-mfa.mjs
+          # Uma gravação que falha tem de ser VISTA. O CI não tem ffmpeg
+          # instalado, o que torna este teste realista de graça: é exactamente a
+          # falha de OPERAÇÃO que produzia o pior silêncio — o anfitrião via o
+          # indicador aceso a reunião inteira e ficava sem nada nem aviso.
+          # Precisa do vite (carrega o arnês de media), por isso corre aqui.
+          # Tempos de entrada medidos numa entrada A SÉRIO. Um teste contra
+          # duplos provaria a aritmética; o que interessa provar é que os
+          # marcos disparam nos sítios certos de uma chamada verdadeira.
+          #
+          # Corre ANTES da gravação de propósito: é o único teste desta bateria
+          # que MEDE em vez de verificar, e o estabelecimento de ICE degrada-se
+          # com a carga da máquina — medido em local, `join_ms` passa de ~250 ms
+          # a nunca ligar quando há browsers e servidores a mais (R65). Depois
+          # de a gravação abrir um segundo Chromium com login e três vistas, o
+          # runner deixou de conseguir. Mede-se com a máquina quieta.
+          APP=http://localhost:5174 PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/tempos.mjs
+          # Uma gravação que falha tem de ser VISTA — e as três vistas da
+          # biblioteca não podem oferecer acções sobre ela (R59).
+          APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
+          # O ESTÚDIO grava ecrã, recorta região e corta — nada disso se prova
+          # em unidades. O teste captura o ecrã a sério, mede a variação de
+          # pixéis para saber que o canvas não está preto, e verifica a DURAÇÃO
+          # do ficheiro cortado, não a existência dele.
+          echo '::group::Estudio (Chromium real)'
+          BASE=http://localhost:5174 node web/e2e/estudio.mjs 2>&1
+          echo "estudio.mjs terminou com $?"
+          echo '::endgroup::'
+          # O DRAIN vai por último: manda SIGTERM ao servidor e espera que ele
+          # feche. Qualquer teste depois deste ficaria sem servidor.
+          # O ESTÚDIO grava ecrã, recorta região e corta. Nada disso se prova em
+          # unidades: o teste captura o ecrã a sério, mede a variação de pixéis
+          # para saber que o canvas não está preto, e verifica a DURAÇÃO do
+          # ficheiro cortado — não a existência dele.
+          # Duas pessoas encontram-se MESMO, pela interface real: criar →
+          # pré-entrada → entrar → convidado por código → sala de espera →
+          # admitir → retrato remoto. É a promessa central do produto e não
+          # havia teste nenhum a cobri-la ponta a ponta.
+          APP=http://localhost:5174 node web/e2e/reuniao.mjs
+          BASE=http://localhost:5174 node web/e2e/estudio.mjs
+          # A GAVETA a 375px e o anel de foco vivem em `transform` e `outline`,
+          # que só um motor de browser resolve.
+          BASE=http://localhost:5174 node web/e2e/layout-consola.mjs
+          # O DIRECTO: o painel, o WebSocket aceite pelo servidor, e a chave a
+          # sair REDIGIDA do log. Não prova que a media chega ao YouTube — isso
+          # é a linha 2 do portão do ADR-0003 e precisa de um destino a sério.
+          BASE=http://localhost:5174 node web/e2e/directo.mjs
+          APP=http://localhost:5174 node web/e2e/drain.mjs
+
+      # Sem isto, uma falha de interface no CI é um timeout sem contexto. Com a
+      # imagem do momento da falha, diagnostica-se sem ter de reproduzir.
+      - name: PWA offline (build servido, rede cortada a sério)
+        run: |
+          # O SW NÃO se regista no servidor de desenvolvimento — de propósito,
+          # senão a app serve módulos do Vite em cache e fica teimosa. Por isso
+          # este é o único e2e que corre contra o `dist` construído.
+          (cd web && npm run build > /tmp/build-pwa.log 2>&1)
+          (cd web && NO_HTTPS=1 npx vite preview --port 5175 > /tmp/preview.log 2>&1 &)
+          for i in $(seq 1 40); do
+            curl -sf http://localhost:5175/ >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:5175/sw.js >/dev/null || { echo "o sw.js não é servido"; cat /tmp/preview.log; exit 1; }
+          BASE=http://localhost:5175 node web/e2e/offline.mjs
+
+      - name: Screenshots e log do vite (se falhar)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-mfa-diagnostico
+          path: |
+            /tmp/mfa-*.png
+            /tmp/vite.log
+          if-no-files-found: ignore
+
+      - name: Log do servidor (se falhar)
+        if: failure()
+        run: cat /tmp/servidor.log
+
+  # SBOM: artefacto por build, para inventário e resposta a CVE. Não é um
+  # portão — é prova do que foi enviado.
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: SBOM do backend (CycloneDX)
+        run: |
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --manifest-path server/Cargo.toml --format json
+
+      - name: SBOM do frontend (CycloneDX)
+        working-directory: web
+        run: |
+          npm ci
+          npx --yes @cyclonedx/cyclonedx-npm --output-file ../delonix-web.cdx.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            server/*.cdx.json
+            server/**/*.cdx.json
+            delonix-web.cdx.json
+          if-no-files-found: warn
