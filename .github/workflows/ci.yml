@@ -156,6 +156,13 @@ jobs:
   isolamento:
     name: Isolamento, MFA, gravação e drain
     runs-on: ubuntu-latest
+    # O mesmo factor que o job do backend já usa: os testes de media e de
+    # WebCodecs correm num runner partilhado de 2 vCPU, onde o que na máquina de
+    # desenvolvimento leva segundos pode levar minutos. Um portão que falha por
+    # o runner estar lento não distingue produto partido de máquina ocupada —
+    # e treina toda a gente a carregar em «repetir» (R90).
+    env:
+      E2E_TIMEOUT_FACTOR: 4
     services:
       postgres:
         image: postgres:17-alpine

@@ -81,6 +81,14 @@ export function RemoteTileBase({
   return (
     <div
       className={speaking ? 'tile speaking' : 'tile'}
+      // Identidade estável do retrato, para quem o lê de fora: testes de
+      // interface e leitores de ecrã. Antes um teste distinguia o retrato local
+      // do remoto por o TEXTO conter «eu» — e isso partiu-se quando os glifos
+      // decorativos passaram a SVG (R88), porque um `<svg>` não tem
+      // `textContent`. Uma asserção sobre texto decorativo quebra-se sempre que
+      // a decoração muda; um atributo não.
+      data-peer="remoto"
+      data-peer-id={peer.peerId}
       style={style}
       onDoubleClick={() => onPin?.(peer.peerId)}
       title="Duplo-clique para fixar/desafixar no palco"

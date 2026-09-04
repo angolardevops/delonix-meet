@@ -689,3 +689,20 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Porque é defeito e não detalhe:** o §37 do mandato diz para não copiar identidade alheia, e a `--danger` da casa (`#e05252`) já existia três camadas abaixo — era ela que efectivamente vencia na cascata em quase todos os sítios. A cor da Google estava lá a fazer de conta, e a **vencer mesmo** no ponto de gravação.
 - **Regra:** portão 3.2.6 — a folha não pode conter a paleta de marca do Meet, do Teams nem do Zoom. Guarda-se a paleta **alheia**, não «cores literais» em geral: a folha tem centenas delas e proibi-las todas seria um portão que ninguém põe verde.
 - **Ficheiros:** `web/src/styles.scss`, `web/src/lote2.invariantes.test.ts`.
+
+### R90 — Um portão que falha num teste DIFERENTE de cada vez não guarda nada
+- **Sintoma:** três corridas do job `isolamento` sobre o mesmo código, **três falhas diferentes**, nenhuma a repetir: o corte do Estúdio («não encurtou»), a sala («dois retratos» → 1) e os tempos de chamada (`join_ms: null`). O reteste da segunda passou. O histórico mostra o mesmo job vermelho a 2026-08-26, antes deste trabalho.
+- **Porque é grave e não é ruído:** pela regra da casa (R62), um portão que falha ao acaso perde a credibilidade toda. Um que falha num sítio diferente de cada vez é pior: treina toda a gente a carregar em «repetir» e a partir daí o vermelho deixa de ser informação. Todos os outros portões dependem deste job para significar alguma coisa.
+- **Não eram três problemas — eram três causas, e só uma era tempo.**
+
+  **(1) `reuniao.mjs` — esperar por uma condição e afirmar outra.** Esperava-se por «1 retrato sem “eu”» e afirmava-se «2 retratos no total», com **duas leituras separadas** do DOM. Entre elas o DOM muda. O CI apanhou-a a dar `juntaram = true` com **um único retrato** na lista — uma contradição impossível de depurar a partir do relatório. Pior: quando o retrato local perdia o texto por um instante (um `<svg>` não tem `textContent` — R88), a espera casava com o retrato ERRADO e devolvia cedo.
+
+  **Regra:** espera-se pela condição que se vai afirmar, e a fotografia tira-se **dentro** da espera, para ser a mesma que a satisfez. Nunca duas idas ao DOM.
+
+  **(2) A identidade do retrato passou a ser um atributo.** Distinguir local de remoto por o texto conter «eu» é uma asserção sobre **decoração**, e quebra-se — em silêncio, dando verde — sempre que a decoração muda. Os retratos ganharam `data-peer="local|remoto"` e `data-peer-id`. Provado: com o atributo sabotado no produto, o teste passa a recusar (`remotos:0` com `total:2`); a versão anterior dava **verde** ao mesmo produto partido.
+
+  **(3) `tempos.mjs` — a espera esgotava em silêncio.** Ao fim de 45 s o ciclo saía sem dizer nada e a asserção seguinte reportava `join_ms medido: null`, uma frase que faz parecer que o produto mediu mal quando o teste é que leu cedo demais. «Ainda não chegou» e «veio errado» são diagnósticos diferentes e não podem partilhar a mesma mensagem. A espera passou a declarar-se, e o tempo que esperou aparece no relatório.
+
+  **(4) O Estúdio era mesmo tempo.** A asserção está bem construída; o corte por WebCodecs cai para software quando o runner não tem aceleração, e 90 s não chegam. Passou a escalar com `E2E_TIMEOUT_FACTOR`, que o job do backend já usava e este não — mesmo idioma do `sfu_e2e.rs`: limite generoso E ajustável, em vez de calibrado para a máquina de quem o escreveu.
+- **O que isto não resolve, dito por inteiro:** três correcções de lógica e uma de tempo não provam que o job ficou estável. Provam que estas quatro causas estão fechadas. A estabilidade mede-se em corridas repetidas ao longo do tempo, e essa medição ainda não existe.
+- **Ficheiros:** `web/e2e/reuniao.mjs`, `web/e2e/tempos.mjs`, `web/e2e/estudio.mjs`, `web/src/room/RemoteTile.tsx`, `web/src/pages/Room.tsx`, `.github/workflows/ci.yml`.

@@ -8,6 +8,17 @@
 //
 // Uso:  BASE=http://127.0.0.1:5174 node e2e/estudio.mjs
 import { chromium } from '@playwright/test'
+
+// O corte por WebCodecs cai para SOFTWARE quando o runner não tem aceleração,
+// e aí um vídeo de 5 s pode levar bem mais do que os 90 s deste limite. Foi uma
+// das três falhas que puseram o job `isolamento` a falhar num teste diferente
+// de cada vez (R90) — e a única que não era um defeito de asserção, era mesmo
+// tempo a mais num runner partilhado.
+//
+// Mesmo idioma do `sfu_e2e.rs`: um limite generoso E ajustável, em vez de
+// calibrado para a máquina de quem o escreveu. O CI põe o factor a 4.
+const FATOR = Number(process.env.E2E_TIMEOUT_FACTOR) || 1
+const LIMITE_CORTE = 90000 * FATOR
 import { criarConta, entrar } from './sessao.mjs'
 
 const BASE = process.env.BASE ?? process.env.APP ?? 'http://127.0.0.1:5174'
@@ -274,7 +285,7 @@ console.log('\ncorte')
         .waitForFunction(() => {
           const v = document.querySelector('.studio-preview')
           return v && Number.isFinite(v.duration) && v.duration > 0 && v.duration < 2.9 ? v.duration : null
-        }, null, { timeout: 90000 })
+        }, null, { timeout: LIMITE_CORTE })
         .then((h) => h.jsonValue())
         .catch(() => null)
       ok('o corte produz um ficheiro mais curto', nova !== null, nova ? `${nova.toFixed(2)}s (pedidos ~2s)` : 'não encurtou')
