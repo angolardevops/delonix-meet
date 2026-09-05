@@ -214,9 +214,6 @@ jobs:
       - name: Isolamento e permissões negativas
         run: node web/e2e/isolamento.mjs
 
-      - name: Reentrada após quebra (R91 — o F5 não devolve à sala de espera)
-        run: |
-          APP=http://localhost:5174 API=http://localhost:8180 node web/e2e/reentrada.mjs
 
       # A auditoria é atacada DIRECTAMENTE por SQL, não pela API: um teste que
       # só usa a API prova que a API não deixa, não que os dados estão
@@ -238,6 +235,14 @@ jobs:
       # teste que separa as duas coisas.
       - name: Chromium para o teste de interface
         run: npx playwright install chromium
+
+      # DEPOIS do `playwright install` acima, não antes. A primeira versão ficou
+      # 21 linhas mais acima e morria com «Executable doesn't exist» — o mesmo
+      # erro que o portão da barra já tinha dado no job do frontend, e pela
+      # mesma razão: o `npm ci` traz a biblioteca, não os browsers.
+      - name: Reentrada após quebra (R91 — o F5 não devolve à sala de espera)
+        run: |
+          APP=http://localhost:5174 API=http://localhost:8180 node web/e2e/reentrada.mjs
         working-directory: web
 
       - name: Interface do MFA (Chromium real)
