@@ -3605,4 +3605,152 @@ mod tests {
         assert!(!cfg.chat_on, "o chat continua fechado para quem chegar");
         assert!(!cfg.allow_unmute, "e o bloqueio de voltar a ligar também");
     }
+
+    // ---------- As oito autorizações que ninguém provava (R94) ----------
+    //
+    // O `scripts/mutantes-rust.mjs` desligou as treze guardas de anfitrião uma a
+    // uma e correu a bateria. OITO podiam ser removidas por inteiro sem um único
+    // teste dar por isso — incluindo duas escritas no R92, dois dias antes.
+    //
+    // O padrão de todas: o teste que existia verificava o ANFITRIÃO a usar o
+    // controlo, nunca um participante a tentar. «Funciona para quem pode» e «é
+    // recusado a quem não pode» são duas afirmações, e só a segunda é a
+    // autorização.
+
+    /// Ajudante: uma sala com anfitriã (a) e participante (b), já com o roster
+    /// drenado. Devolve os dois ids e o receptor da anfitriã, que é por onde se
+    /// observa o que foi difundido.
+    fn sala_com_participante() -> (
+        SignalingHub,
+        Uuid,
+        Uuid,
+        Uuid,
+        tokio::sync::mpsc::Receiver<ServerMsg>,
+    ) {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, mut rx_a) = peer();
+        let (b, tx_b, _rx_b) = peer();
+        hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+        drain(&mut rx_a);
+        (hub, room, a, b, rx_a)
+    }
+
+    #[tokio::test]
+    async fn participante_nao_tranca_nem_destranca_a_sala() {
+        let (hub, room, _a, b, _rx) = sala_com_participante();
+        hub.handle(room, b, ClientMsg::RoomLock { locked: true }, None);
+        assert!(
+            !hub.settings_of(room).locked,
+            "só o anfitrião tranca a sala"
+        );
+    }
+
+    #[tokio::test]
+    async fn participante_nao_restringe_a_partilha_de_ecra() {
+        let (hub, room, _a, b, _rx) = sala_com_participante();
+        hub.handle(room, b, ClientMsg::HostShareOnly { on: true }, None);
+        assert!(
+            !hub.settings_of(room).host_share_only,
+            "só o anfitrião decide quem partilha ecrã"
+        );
+    }
+
+    #[tokio::test]
+    async fn participante_nao_fecha_o_chat() {
+        // O teste do R92 verificava a ANFITRIÃ a fechar o chat e a recusa do envio.
+        // Faltava-lhe a outra metade: um participante a fechá-lo. Com a guarda
+        // removida, qualquer pessoa silenciava a sala inteira.
+        let (hub, room, _a, b, _rx) = sala_com_participante();
+        hub.handle(room, b, ClientMsg::ChatToggle { on: false }, None);
+        assert!(hub.settings_of(room).chat_on, "só o anfitrião fecha o chat");
+    }
+
+    #[tokio::test]
+    async fn participante_nao_desliga_a_camara_de_ninguem() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx_a) = peer();
+        let (b, tx_b, _rx_b) = peer();
+        let (c, tx_c, mut rx_c) = peer();
+        hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+        hub.join(room, c, c, "c".into(), false, false, false, tx_c);
+        drain(&mut rx_c);
+
+        hub.handle(room, b, ClientMsg::ForceCam { to: c }, None);
+        while let Ok(m) = rx_c.try_recv() {
+            assert!(
+                !matches!(m, ServerMsg::ForceCamOff),
+                "um participante não desliga a câmara de outro"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn participante_nao_liga_a_transcricao_da_sala() {
+        let (hub, room, _a, b, mut rx_a) = sala_com_participante();
+        hub.handle(room, b, ClientMsg::TranscriptionToggle { on: true }, None);
+        while let Ok(m) = rx_a.try_recv() {
+            assert!(
+                !matches!(m, ServerMsg::Transcription { .. }),
+                "só o anfitrião liga a transcrição partilhada"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn participante_nao_se_autoriza_a_partilhar_ecra() {
+        // A guarda mais perigosa das oito: sem ela, um participante concede a si
+        // próprio a permissão de partilha que o anfitrião lhe negou.
+        let (hub, room, _a, b, _rx) = sala_com_participante();
+        hub.handle(
+            room,
+            b,
+            ClientMsg::ShareGrant {
+                to: b,
+                allowed: true,
+            },
+            None,
+        );
+        assert!(
+            !hub.share_allowed(room, b),
+            "ninguém se auto-concede partilha de ecrã"
+        );
+    }
+
+    #[tokio::test]
+    async fn participante_que_nao_apresenta_nao_abre_o_quadro_a_todos() {
+        let (hub, room, _a, b, mut rx_a) = sala_com_participante();
+        hub.handle(room, b, ClientMsg::WbOpen, None);
+        while let Ok(m) = rx_a.try_recv() {
+            assert!(
+                !matches!(m, ServerMsg::WbOpen { .. }),
+                "só o apresentador ou o anfitrião abrem o quadro a toda a sala"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn participante_nao_fecha_a_sondagem_de_outro() {
+        let (hub, room, a, b, _rx) = sala_com_participante();
+        hub.handle(
+            room,
+            a,
+            ClientMsg::PollCreate {
+                question: "café ou chá?".into(),
+                options: vec!["café".into(), "chá".into()],
+                correct_option: None,
+                duration_secs: None,
+            },
+            None,
+        );
+        let (polls, _, _) = hub.tools_snapshot(room);
+        let poll_id = polls.first().expect("a sondagem tem de existir").id;
+        assert!(
+            hub.close_poll(room, b, poll_id).is_none(),
+            "só o anfitrião fecha uma sondagem"
+        );
+    }
 }
