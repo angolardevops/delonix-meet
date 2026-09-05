@@ -776,3 +776,14 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **As recusas devolvem `404` e não `403`**, deliberadamente: um `403` confirmaria que a organização existe.
 - **Portão:** `scripts/check-isolamento-cobertura.sh`, no CI. Visto a recusar uma rota de organização acrescentada sem cobertura.
 - **Ficheiros:** `web/e2e/isolamento.mjs`, `scripts/check-isolamento-cobertura.sh`, `.github/workflows/ci.yml`.
+
+### R96 — Vinte e uma rotas de recurso por ID nunca tinham sido pedidas com o token errado
+- **Como se soube:** a mesma comparação de inventários do R95, agora aplicada aos recursos POR ID. Existiam **32 rotas não-públicas** de sala, reunião, gravação e quadro; o teste de isolamento tocava em **8**.
+- **A regra que decide o que é grave:** uma **sala é uma capability** — quem sabe o código vê os metadados e pede para entrar, e isso está no topo do `isolamento.mjs` desde sempre. Um **recurso por ID não é**: a acta de uma reunião, o ficheiro de uma gravação e o PNG de um quadro não têm código para partilhar, e o `id` é opaco. Confundir os dois faz parecer aceitável o que não é.
+- **O que a extensão do teste encontrou, e é um defeito a sério:** `POST /api/rooms/{code}/minutes` corria a consulta da reunião **antes de qualquer autorização** e devolvia `200 {"ok":false","reason":"no meeting for room"}` a quem apenas soubesse o código, de outra organização. Nada era escrito — o delegado `save_minutes` autoriza —, mas a resposta já dizia **se a sala tinha reunião agendada**, e um `200` num pedido não autorizado é o padrão que o `/v2/apply` já tinha ensinado a não repetir. Corrigido: a autorização entra na própria consulta e as duas hipóteses («não há reunião» e «não é tua») passam a dar o mesmo `404`.
+- **Duas armadilhas apanhadas pelo CONTROLO POSITIVO, e é ele que salva o teste:**
+  1. `/api/meetings/{id}` só tem `DELETE` e `/minutes` só tem `POST`. Um `GET` devolve **405**, que o helper contava como recusa — duas asserções verdes a medir o router, não a autorização. Só se deu por isso porque o controlo positivo («B lê a sua própria reunião») **também** devolveu 405.
+  2. Dois `POST` devolviam **422** por corpo mal formado (`response` em vez de `status`, `shared` em vez de `public`). Recusados por validação, não por autorização.
+- **Um `404` num id inventado não prova nada** — só que o recurso não existe. Onde o recurso se pode fabricar (reunião, quadro), o teste cria-o com a org B, tenta destruí-lo com a A, e afirma que **continua lá**. Onde não se pode (gravações, que precisam de uma chamada a sério), está escrito que a prova é mais fraca.
+- **Portão:** o `check-isolamento-cobertura.sh` passou a cobrir também os recursos por ID — 53 rotas ao todo. Foi ele que encontrou mais sete que eu tinha deixado de fora depois de julgar a lista completa.
+- **Ficheiros:** `web/e2e/isolamento.mjs`, `scripts/check-isolamento-cobertura.sh`, `server/src/meetings.rs`.
