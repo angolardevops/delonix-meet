@@ -11,7 +11,10 @@
 #   3. o `playwright install` corre na RAIZ, onde não há `node_modules`: o npx
 #      descarrega a versão mais recente e instala os browsers DESSA, enquanto
 #      os testes usam a do projecto. Foi esta a causa verdadeira, escondida
-#      atrás das outras duas durante três correcções.
+#      atrás das outras duas durante três correcções;
+#   4. o teste aponta a um servidor de front-end (`APP=…:5174`) que ainda não
+#      foi arrancado. Dá `ERR_CONNECTION_REFUSED`, que se lê como «o vite não
+#      subiu» quando o que aconteceu foi correr cedo demais.
 #
 # O ficheiro é lido com um parser de YAML e não com `grep`. A primeira versão
 # cortava os jobs com uma expressão regular e atribuía passos ao job errado —
@@ -21,7 +24,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 python3 - <<'PY'
-import sys, pathlib, yaml
+import re, sys, pathlib, yaml
 
 wf = yaml.safe_load(pathlib.Path('.github/workflows/ci.yml').read_text(encoding='utf-8'))
 e2e = pathlib.Path('web/e2e')
@@ -31,6 +34,7 @@ falhou = False
 for nome, job in (wf.get('jobs') or {}).items():
     job_em_web = (((job.get('defaults') or {}).get('run') or {}).get('working-directory')) == 'web'
     instalou = False
+    vite_em = set()
     for passo in job.get('steps') or []:
         run = passo.get('run') or ''
         wd = passo.get('working-directory')
@@ -43,9 +47,23 @@ for nome, job in (wf.get('jobs') or {}).items():
                 falhou = True
             instalou = True
 
+        # O vite é arrancado DENTRO de um `run:`, não por um passo próprio —
+        # por isso a marca é o comando e não o nome do passo.
+        # `vite --port N` (dev) e `vite preview --port N` (o `dist` construído,
+        # que é como o teste de PWA corre — o service worker não se regista no
+        # servidor de desenvolvimento). As duas servem, e ignorar a segunda
+        # dava um falso positivo no `offline.mjs`.
+        vite_em.update(re.findall(r'vite (?:preview )?--port (\d+)', run))
+
         usados = [f for f in precisam if f'web/e2e/{f}' in run]
         if not usados:
             continue
+
+        for porta in sorted(set(re.findall(r'(?:APP|BASE)=http://localhost:(\d+)', run))):
+            if porta not in vite_em:
+                print(f'✗ browser: job "{nome}", passo "{passo.get("name", "?")}": aponta a '
+                      f'localhost:{porta} e ninguém arrancou o vite nessa porta antes.')
+                falhou = True
         if wd == 'web':
             print(f'✗ browser: job "{nome}", passo "{passo.get("name", "?")}": comando diz '
                   f'`web/e2e/…` E tem `working-directory: web` — o caminho fica `web/web/e2e/`.')
