@@ -288,7 +288,23 @@ console.log('\ncorte')
         }, null, { timeout: LIMITE_CORTE })
         .then((h) => h.jsonValue())
         .catch(() => null)
-      ok('o corte produz um ficheiro mais curto', nova !== null, nova ? `${nova.toFixed(2)}s (pedidos ~2s)` : 'não encurtou')
+      // «não encurtou» não distingue as três coisas que podem ter acontecido, e
+      // cada uma manda investigar noutro sítio (R90):
+      //   · duração ILEGÍVEL (Infinity/NaN) — o WebM saiu sem cabeçalho de
+      //     duração, que é um defeito do que se PRODUZ, não do corte;
+      //   · duração igual à original — o corte não correu;
+      //   · duração diferente mas ≥ 2,9 s — cortou o troço errado.
+      // Subir o prazo não resolve nenhuma das três, e foi o que a primeira
+      // tentativa de correcção assumiu, sem prova.
+      const diag = nova !== null ? null : await page.evaluate(() => {
+        const v = document.querySelector('.studio-preview')
+        if (!v) return 'sem elemento .studio-preview'
+        const d = v.duration
+        if (!Number.isFinite(d)) return `duração ILEGÍVEL (${d}) — WebM sem cabeçalho de duração`
+        return `duração ${d.toFixed(2)}s — não desceu abaixo de 2,9s`
+      })
+      ok('o corte produz um ficheiro mais curto', nova !== null,
+         nova ? `${nova.toFixed(2)}s (pedidos ~2s)` : diag)
       if (nova) ok('e com a duração pedida (±0,6s)', Math.abs(nova - 2) < 0.6, `${nova.toFixed(2)}s`)
 
       const temAudio = await page.locator('.studio-preview').evaluate((v) => {
