@@ -75,7 +75,7 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
       if (password) patch.password = password
       await updateMe(patch)
       setPassword('')
-      setMsg('✓ Guardado')
+      setMsg(t('room.sala.guardado'))
       setTimeout(() => setMsg(''), 3000)
     } catch (e) {
       setMsg((e as Error).message || 'Falha ao guardar')
@@ -198,7 +198,7 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
                     className="btn-sm primary"
                     onClick={() => {
                       setAppName(appName)
-                      setMsg('✓ Nome atualizado')
+                      setMsg(t('room.sala.nomeAtualizado'))
                       setTimeout(() => setMsg(''), 2500)
                     }}
                   >

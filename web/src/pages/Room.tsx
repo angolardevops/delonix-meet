@@ -246,6 +246,36 @@ export default function Room({
   /// anfitrião nos diz respeito — sem ele, `host-changed` não se consegue
   /// interpretar do lado de quem recebe.
   const meuPeerIdRef = useRef<string>('')
+
+  /**
+   * Esc fecha o painel aberto, e o foco volta a quem o abriu (R104).
+   *
+   * Os quatro painéis da sala — chat, pessoas, ferramentas, definições —
+   * fechavam-se SÓ no ×. Quem navega por teclado tinha de percorrer o painel
+   * inteiro para chegar ao botão de fechar, e o Esc, que toda a gente tenta
+   * primeiro, não fazia nada. O resto da consola já o fazia (gaveta, menu de
+   * conta, notificações, paleta): a sala era a excepção.
+   *
+   * A SEGUNDA METADE importa tanto como a primeira. Fechar um painel sem
+   * devolver o foco deixa-o no nada — o leitor de ecrã fica no `<body>` e o
+   * utilizador perde o sítio onde estava. Guarda-se quem tinha o foco ao abrir.
+   *
+   * NÃO se prende o foco dentro do painel: um `<aside>` não é um modal, e
+   * prender lá dentro impediria de chegar aos controlos da chamada — que é
+   * precisamente o que não se pode tirar a ninguém.
+   */
+  const focoAntesDoPainel = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (panel === 'none') return
+    focoAntesDoPainel.current = document.activeElement as HTMLElement | null
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      setPanel('none')
+      focoAntesDoPainel.current?.focus?.()
+    }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [panel])
   const [allowUnmute, setAllowUnmute] = useState(true)
   const [camOn, setCamOn] = useState(true)
   const [sharing, setSharing] = useState(false)
@@ -791,9 +821,9 @@ export default function Room({
       if (stream.getAudioTracks().length === 0) setMicOn(false)
       if (permErr === 'denied' && stream.getTracks().length === 0)
         setStatus('Câmara/microfone BLOQUEADOS neste site — clica no cadeado 🔒 na barra de endereço, permite Câmara e Microfone, e recarrega a página.')
-      else if (permErr === 'missing') setStatus('Não foi detetada câmara nem microfone neste dispositivo.')
-      else if (stream.getTracks().length === 0) setStatus('Sem câmara/microfone — vais entrar em modo espectador')
-      else if (!hasVideo) setStatus('Câmara indisponível — vais entrar só com áudio.')
+      else if (permErr === 'missing') setStatus(t('room.sala.naoFoiDetetadaCamara'))
+      else if (stream.getTracks().length === 0) setStatus(t('room.sala.semCamaraMicrofoneVais'))
+      else if (!hasVideo) setStatus(t('room.sala.camaraIndisponivelVaisEntrar'))
       if (prejoinVideoRef.current) prejoinVideoRef.current.srcObject = stream
       levels.watch('me', stream) // indicador "o mic está a captar-te"
       void listDevices().then((d) => {
@@ -856,14 +886,14 @@ export default function Room({
         if (permErr === 'denied' && spectator)
           setStatus('Câmara/microfone BLOQUEADOS neste site — clica no cadeado 🔒 na barra de endereço, permite Câmara e Microfone, e recarrega a página.')
         else if (permErr === 'denied' && !hasVideo)
-          setStatus('Câmara bloqueada — clica no cadeado 🔒 na barra de endereço, permite a Câmara, e recarrega.')
+          setStatus(t('room.sala.camaraBloqueadaClicaNo'))
         else if (permErr === 'missing')
-          setStatus('Não foi detetada câmara nem microfone neste dispositivo.')
-        else if (spectator) setStatus('Sem câmara/microfone — modo espectador')
+          setStatus(t('room.sala.naoFoiDetetadaCamara'))
+        else if (spectator) setStatus(t('room.sala.semCamaraMicrofoneModo'))
         // Pediu câmara mas só veio áudio: quase sempre a câmara está ocupada
         // por outra app/separador (ex.: testar em duas abas no mesmo PC).
         else if (!voiceOnly && !hasVideo)
-          setStatus('Câmara indisponível (em uso por outra app ou separador) — entraste só com áudio. Clica na câmara para tentar ligar.')
+          setStatus(t('room.sala.camaraIndisponivelEmUso'))
         // O indicador de mic reflete a realidade: sem track de áudio (mic negado
         // ou espectador) mostra-se desligado — clicar no mic readquire-o.
         if (stream.getAudioTracks().length === 0) setMicOn(false)
@@ -923,7 +953,7 @@ export default function Room({
         let crypto: FrameCrypto | undefined
         if (room.e2ee) {
           if (!e2eeSupported()) {
-            setStatus('Este browser não suporta E2EE (Insertable Streams)')
+            setStatus(t('room.sala.esteBrowserNaoSuporta'))
             return
           }
           const pass = sessionStorage.getItem(`dx_e2ee_${code}`)
@@ -963,7 +993,7 @@ export default function Room({
         // encerramento ordenado por uma avalanche.
         signal.on('draining', ({ reconnect_in_ms }) => {
           if (cancelled) return
-          setStatus('O servidor vai reiniciar — a mudar de nó, sem sair da reunião.')
+          setStatus(t('room.sala.oServidorVaiReiniciar'))
           const jitter = Math.round(reconnect_in_ms * Math.random())
           sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
           setTimeout(() => {
@@ -983,12 +1013,12 @@ export default function Room({
             // Renova o rejoin AGORA (o carimbo do join pode ter > 60s): o reload
             // de reconexão tem de saltar o prejoin e voltar direto à chamada.
             sessionStorage.setItem(`dx_rejoin_${code}`, String(now))
-            setStatus('Ligação perdida — a reconectar…')
+            setStatus(t('room.sala.ligacaoPerdidaAReconectar'))
             setTimeout(() => {
               if (!cancelled) location.reload()
             }, 1500)
           } else {
-            setStatus('Ligação instável. Verifica a rede / o proxy do WebSocket e recarrega a página.')
+            setStatus(t('room.sala.ligacaoInstavelVerificaA'))
           }
         }
 
@@ -1004,7 +1034,7 @@ export default function Room({
           const track = localStreamRef.current?.getAudioTracks()[0]
           if (track) track.enabled = false
           setMicOn(false)
-          setStatus('O anfitrião silenciou o teu microfone')
+          setStatus(t('room.sala.oAnfitriaoSilenciouO'))
         })
         signal.on('waiting-join', (m) =>
           setWaitingQueue((q) => [...q.filter((p) => p.peer_id !== m.peer.peer_id), m.peer]),
@@ -1130,7 +1160,7 @@ export default function Room({
           const track = localStreamRef.current?.getVideoTracks()[0]
           if (track) track.enabled = false
           setCamOn(false)
-          setStatus('O anfitrião desligou a tua câmara')
+          setStatus(t('room.sala.oAnfitriaoDesligouA'))
         })
         signal.on('muted-all', (m) => {
           const track = localStreamRef.current?.getAudioTracks()[0]
@@ -1157,12 +1187,12 @@ export default function Room({
           pendingShareRef.current = false
           if (m.allowed && wasPending) {
             // O grant chegou em resposta ao pedido: arranca a partilha já.
-            setStatus('O anfitrião autorizou — a iniciar partilha de ecrã…')
+            setStatus(t('room.sala.oAnfitriaoAutorizouA'))
             toggleShareRef.current()
             return
           }
           if (!m.allowed && wasPending) {
-            setStatus('O anfitrião recusou o pedido de partilha de ecrã')
+            setStatus(t('room.sala.oAnfitriaoRecusouO'))
             return
           }
           setStatus(m.allowed ? 'O anfitrião permitiu-te partilhar o ecrã' : 'A permissão de partilha foi revogada')
@@ -1177,7 +1207,7 @@ export default function Room({
           } else if (isHostRef.current && linesRef.current.length > 0 && !momSavedRef.current) {
             // Gravação parou → guardar ata automaticamente sem bloquear o UI
             saveMinutesByRoom(code, buildMoM(linesRef.current), linesRef.current.join('\n'))
-              .then(() => { setMomSaved(true); setStatus('Ata guardada automaticamente ao parar a gravação') })
+              .then(() => { setMomSaved(true); setStatus(t('room.sala.ataGuardadaAutomaticamenteAo')) })
               .catch(() => {})
           }
         })
@@ -1228,9 +1258,9 @@ export default function Room({
             const who = peersRef.current.find((p) => p.peerId === m.from)?.username ?? 'Alguém'
             setCtrlAsk({ from: m.from, username: who })
           } else if (m.action === 'accept') {
-            setStatus('🎮 Pedido aceite — controlo remoto da tela partilhada ativo')
+            setStatus(t('room.sala.pedidoAceiteControloRemoto'))
           } else if (m.action === 'deny') {
-            setStatus('O pedido de controlo remoto foi recusado')
+            setStatus(t('room.sala.oPedidoDeControlo'))
           }
         })
         // Pedido de partilha de um não-anfitrião → diálogo Permitir/Negar.
@@ -1282,13 +1312,13 @@ export default function Room({
               temposEnviados.current = true
               void postTimings(code, tempos.resumo()).catch(() => {})
             }
-            if (st === 'degraded') setStatus('Ligação instável — a media pode falhar por instantes.')
-            else if (st === 'reconnecting' || st === 'recovering') setStatus('A restabelecer a ligação de media…')
+            if (st === 'degraded') setStatus(t('room.sala.ligacaoInstavelAMedia'))
+            else if (st === 'reconnecting' || st === 'recovering') setStatus(t('room.sala.aRestabelecerALigacao'))
             else if (st === 'connected') setStatus('')
             else if (st === 'failed') {
               // Último recurso, e SÓ agora: o recarregar que dantes era a
               // primeira (e única) resposta a qualquer quebra.
-              setStatus('Não foi possível restabelecer a media. A reentrar na sala…')
+              setStatus(t('room.sala.naoFoiPossivelRestabelecer'))
               sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
               setTimeout(() => {
                 if (!cancelled) location.reload()
@@ -1324,7 +1354,7 @@ export default function Room({
           }, espera)
           return
         }
-        setStatus('Não foi possível ligar ao servidor da reunião. Verifica a ligação e recarrega a página.')
+        setStatus(t('room.sala.naoFoiPossivelLigar'))
       }
     }
     // As tentativas contam-se FORA do `start`, senão cada nova tentativa
@@ -1408,7 +1438,7 @@ export default function Room({
     // servidor não reencaminhar áudio de quem está silenciado — esta só evita
     // que a pessoa julgue que está a falar quando não está.
     if (!allowUnmute && !micOn && !isHost) {
-      setStatus('O anfitrião não permite voltar a ligar o microfone')
+      setStatus(t('room.sala.oAnfitriaoNaoPermite'))
       return
     }
     levelsRef.current?.resume()
@@ -1430,7 +1460,7 @@ export default function Room({
       setMicId(newTrack.getSettings().deviceId ?? '')
       setMicOn(true)
     } catch {
-      setStatus('Não foi possível aceder ao microfone — verifica a permissão do browser')
+      setStatus(t('room.sala.naoFoiPossivelAceder'))
     }
   }
 
@@ -1476,7 +1506,7 @@ export default function Room({
       }
       setStatus('')
     } catch {
-      setStatus('Não foi possível ligar a câmara')
+      setStatus(t('room.sala.naoFoiPossivelLigar2'))
     }
   }
 
@@ -1490,7 +1520,7 @@ export default function Room({
       return
     }
     if (!cameraTrackRef.current) {
-      setStatus('O efeito 3D precisa da câmara ligada')
+      setStatus(t('room.sala.oEfeitoDPrecisa'))
       return
     }
     try {
@@ -1499,9 +1529,9 @@ export default function Room({
       await h.start(new MediaStream([cameraTrackRef.current]))
       headRef.current = h
       setParallax(true)
-      setStatus('Efeito 3D ligado — move a cabeça e sente a profundidade da sala')
+      setStatus(t('room.sala.efeitoDLigadoMove'))
     } catch {
-      setStatus('Efeito 3D indisponível neste dispositivo')
+      setStatus(t('room.sala.efeitoDIndisponivelNeste'))
     }
   }
 
@@ -1650,10 +1680,10 @@ export default function Room({
     try {
       await saveMinutesByRoom(code, mom, transcript)
       setMomSaved(true)
-      setStatus('Ata (MoM) guardada na reunião')
+      setStatus(t('room.sala.ataMomGuardadaNa'))
       setTimeout(() => setMomSaved(false), 3000)
     } catch {
-      setStatus('Não foi possível guardar a ata')
+      setStatus(t('room.sala.naoFoiPossivelGuardar'))
     }
   }
 
@@ -1666,7 +1696,7 @@ export default function Room({
     Signaling.esquecerSegredo(code)
     sessionStorage.removeItem(`dx_rejoin_${code}`) // saída intencional → próximo acesso volta ao prejoin
     if (isHost && lines.length > 0 && !momSaved) {
-      setStatus('A guardar a ata antes de sair…')
+      setStatus(t('room.sala.aGuardarAAta'))
       try {
         await saveMinutesByRoom(code, buildMoM(lines), lines.join('\n'))
       } catch {
@@ -1714,7 +1744,7 @@ export default function Room({
       // Track trocada → re-liga o <video> do preview.
       if (prejoinVideoRef.current) prejoinVideoRef.current.srcObject = s
     } catch {
-      setStatus('Não foi possível trocar de dispositivo')
+      setStatus(t('room.sala.naoFoiPossivelTrocar'))
     }
   }
 
@@ -1760,7 +1790,7 @@ export default function Room({
       if (localStreamRef.current) levelsRef.current?.watch('me', localStreamRef.current)
       setMicId(devId)
     } catch {
-      setStatus('Não foi possível mudar de microfone')
+      setStatus(t('room.sala.naoFoiPossivelMudar'))
     }
   }
 
@@ -1792,7 +1822,7 @@ export default function Room({
       }
       setCamId(newTrack.getSettings().deviceId ?? deviceId)
     } catch {
-      setStatus('Não foi possível mudar de câmara')
+      setStatus(t('room.sala.naoFoiPossivelMudar2'))
     }
   }
 
@@ -1842,7 +1872,7 @@ export default function Room({
       setBgImageUrl(mode === 'image' ? imageUrl ?? '' : '')
     } catch (e) {
       console.warn('[background]', e)
-      setStatus('Efeito de fundo indisponível neste dispositivo')
+      setStatus(t('room.sala.efeitoDeFundoIndisponivel'))
     } finally {
       setBgBusy(false)
     }
@@ -1913,7 +1943,7 @@ export default function Room({
       recorderRef.current = null
       setRecording(false)
       signalRef.current?.send({ type: 'recording', active: false })
-      setStatus('A carregar gravação…')
+      setStatus(t('room.sala.aCarregarGravacao'))
       const now = new Date()
       const stamp = `${now.toLocaleDateString('pt-PT')} ${now.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}`
       await uploadRecording(code, blob, `Reunião ${code} — ${stamp}.webm`)
@@ -1922,7 +1952,7 @@ export default function Room({
       setRecordings(recs)
       setPanel('people')
     } catch {
-      setStatus('Falha ao guardar a gravação')
+      setStatus(t('room.sala.falhaAoGuardarA'))
     } finally {
       setRecBusy(false)
     }
@@ -1983,7 +2013,7 @@ export default function Room({
     // em silêncio e o eco local abaixo faria a pessoa acreditar que tinha
     // enviado. Recusar aqui é sobre DIZER-LHE, não sobre segurança.
     if (!chatOn && !isHost) {
-      setStatus('O anfitrião fechou o chat')
+      setStatus(t('room.sala.oAnfitriaoFechouO'))
       return
     }
     signalRef.current?.send({ type: 'chat', text })
@@ -2511,9 +2541,9 @@ export default function Room({
             onSave={async (pngBase64) => {
               try {
                 await saveWhiteboard(`Quadro · ${code}`, code, pngBase64)
-                setStatus('Quadro guardado na biblioteca')
+                setStatus(t('room.sala.quadroGuardadoNaBiblioteca'))
               } catch {
-                setStatus('Não foi possível guardar o quadro')
+                setStatus(t('room.sala.naoFoiPossivelGuardar2'))
               }
             }}
             onClose={() => { setWbOpen(false); signalRef.current?.send({ type: 'wb-close' }) }}
@@ -3034,7 +3064,7 @@ export default function Room({
               <h4>{t('room.pessoas.gravacoesDestaSala')}</h4>
               {recordings.length === 0 && <p className="muted small">{t('room.pessoas.aindaNaoHaGravacoes')}</p>}
               {recordings.map((r) => (
-                <button key={r.id} className="rec-row" onClick={() => void downloadRecording(r).catch(() => setStatus('Falha ao descarregar'))}>
+                <button key={r.id} className="rec-row" onClick={() => void downloadRecording(r).catch(() => setStatus(t('room.sala.falhaAoDescarregar')))}>
                   <DownloadIcon />
                   <span className="rec-file">
                     {r.filename}
@@ -3522,7 +3552,12 @@ export default function Room({
 
       {/* Avisos da reunião — faixa própria por baixo do vídeo (NUNCA sobre o
           vídeo): o vídeo encolhe para os acomodar. Cartões estilo Meet. */}
-      <div className="room-notices">
+      {/* REGIÃO VIVA (R104). Estes cartões pedem uma DECISÃO — alguém à porta,
+          um pedido de controlo remoto, uma sondagem — e apareciam em silêncio:
+          quem usa leitor de ecrã não sabia que tinha alguém à espera.
+          `assertive` porque interrompem de propósito; um convidado à porta não
+          espera pela próxima pausa na leitura. */}
+      <div className="room-notices" role="region" aria-live="assertive" aria-label={t('room.sala.avisos')}>
         {canAdmit && waitingQueue.length > 0 && (
           <div className="admit-card" role="dialog" aria-label={t('room.preEntrada.salaDeEspera')}>
             <div className="admit-card-head">
@@ -3760,7 +3795,14 @@ export default function Room({
               {callState === 'degraded' ? '◐ ligação instável' : '◌ a restabelecer…'}
             </span>
           )}
-          {status && <span className="room-status">{status}</span>}
+          {/* «O anfitrião silenciou o teu microfone» era escrito no ecrã e mais
+              nada. Quem não vê, ficava silenciado sem saber porquê (R104).
+              `polite` porque não interrompe: é informação, não um pedido. */}
+          {status && (
+            <span className="room-status" role="status" aria-live="polite">
+              {status}
+            </span>
+          )}
         </div>
 
         <div className="bar-center">
@@ -3830,12 +3872,12 @@ export default function Room({
               // partilha arranca sozinha quando o grant chegar.
               if (!sharing && !isHost && !shareAllowed) {
                 if (hostShareOnly) {
-                  setStatus('Só o anfitrião pode partilhar o ecrã nesta reunião')
+                  setStatus(t('room.sala.soOAnfitriaoPode'))
                   return
                 }
                 pendingShareRef.current = true
                 signalRef.current?.send({ type: 'share-request' })
-                setStatus('Pedido de partilha enviado ao anfitrião — aguarda autorização')
+                setStatus(t('room.sala.pedidoDePartilhaEnviado'))
                 return
               }
               void toggleShare()

@@ -585,7 +585,7 @@ function PlatformStoragePanel() {
         webdav_password: wdPwd || undefined,
         webdav_path: wdPath || undefined,
       })
-      setMsg('✓ Configuração guardada'); setWdPwd('')
+      setMsg(t('room.sala.configuracaoGuardada')); setWdPwd('')
       setCfg((c) => c ? { ...c, storage_type: type, webdav_password_set: !!(c.webdav_password_set || wdPwd) } : c)
     } catch (e) { setMsg(`Erro: ${(e as Error).message}`) } finally { setBusy(false) }
   }

@@ -23,7 +23,7 @@ export default function SharePage({ token }: { token: string }) {
       if (status === 401) {
         setNeedsPassword(true)
       } else if (status === 404) {
-        setError('Link inválido ou expirado.')
+        setError(t('room.sala.linkInvalidoOuExpirado'))
       } else {
         setError((e as Error).message ?? 'Erro ao carregar gravação.')
       }
