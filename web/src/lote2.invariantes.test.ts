@@ -291,6 +291,45 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     expect(soltos).toEqual([])
   })
 
+  it('nenhum ficheiro tem frases visíveis dentro de expressões', () => {
+    // O portão de cima olha para NÓS DE TEXTO (`>frase<`) e três atributos. Uma
+    // frase dentro de uma expressão — `{cond ? 'Ligar câmara' : 'Desligar'}`,
+    // `title={x ? 'A' : 'B'}`, `setStatus('Foste removido da reunião')` — nunca
+    // passou por ele. Medido quando se descobriu: 64 frases só no `Room.tsx` e
+    // mais 21 no resto da árvore, entre elas avisos de leitor de ecrã, títulos
+    // de todos os botões da barra e mensagens de erro. O «zero texto fora do
+    // t()» do R102 era verdade só para nós de texto.
+    //
+    // A regra distingue FRASE de identificador pelo que uma pessoa lê: começa
+    // por maiúscula, tem pelo menos um espaço, e tem uma palavra de três letras
+    // minúsculas. Isso deixa de fora `'grid'`, `'room-topo'`, `'POST'` e os
+    // nomes de eventos, sem precisar de saber onde cada literal é usado.
+    //
+    // NOMES PRÓPRIOS ficam de fora com razão escrita, um a um — nunca por a
+    // regra ser afrouxada. Um nome de produto não se traduz; uma frase sim.
+    const NOMES = [
+      'Microsoft Teams',   // marca, na matriz competitiva
+      'Google Meet',       // idem
+      'API / Signaling',   // nomes dos serviços na página de estado
+    ]
+    const soltos: string[] = []
+    for (const f of listarTsx('web/src')) {
+      const src = read(f)
+        // as próprias chamadas ao t() contêm literais — e são a solução, não o
+        // problema; saem antes de procurar.
+        .replace(/\bt\(\s*'[^']*'(\s*,\s*'[^']*')?\s*\)/g, 'T()')
+        .replace(/\/\/[^\n]*/g, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+      for (const m of src.matchAll(/'([A-ZÀ-Ú][^'\\\n]{3,300})'/g)) {
+        const v = m[1]
+        if (!/\s/.test(v) || !/[a-zà-ú]{3}/.test(v)) continue
+        if (NOMES.includes(v)) continue
+        soltos.push(`${f}: ${v}`)
+      }
+    }
+    expect(soltos).toEqual([])
+  })
+
   // A sala foi a primeira, mas o resto do produto tinha os mesmos 47 (R102).
   // O portão passou a cobrir `web/src` INTEIRO — a alternativa era voltar a
   // acrescentar ficheiros à lista um a um, e é assim que uma lista fica
