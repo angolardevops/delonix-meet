@@ -242,7 +242,20 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
  * existir no telemóvel (achado 3.1.4). São duas instâncias com estado próprio;
  * só uma está visível de cada vez, por isso não há foco duplicado.
  */
-function QuickActions({
+/**
+ * As acções rápidas, num componente só (3.1.4). Usadas em três sítios:
+ *
+ *   `bar`    — a barra do topo, em ecrã largo
+ *   `drawer` — a gaveta, quando a barra encolhe (a decisão de 3.1.4: as acções
+ *              MUDAM-SE, não desaparecem)
+ *   `home`   — o corpo da Home (R103)
+ *
+ * O terceiro existe porque a escolha original foi entre barra e gaveta, e o
+ * CORPO da página nunca esteve em cima da mesa. No telemóvel isso deixava a
+ * acção principal do produto — começar ou entrar numa reunião — atrás de um
+ * toque no menu, num ecrã que tinha metade da altura vazia.
+ */
+export function QuickActions({
   onEnterRoom,
   username,
   onDone,
@@ -251,7 +264,7 @@ function QuickActions({
   onEnterRoom: (code: string, voice?: boolean) => void
   username: string
   onDone?: () => void
-  variant: 'bar' | 'drawer'
+  variant: 'bar' | 'drawer' | 'home'
 }) {
   const { t } = useTranslation()
   const [code, setCode] = useState('')
