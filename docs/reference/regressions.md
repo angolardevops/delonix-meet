@@ -1067,3 +1067,57 @@ uma passagem à mão num browser real, e está dito assim no PR.
 `web/src/pip.invariantes.test.ts`, `web/src/pages/Room.tsx`,
 `web/src/icons.tsx` (`PipIcon`), `web/src/locales/{pt,en,fr}.ts`,
 `scripts/mutantes.mjs`.
+
+### R109 — O controlo remoto dizia-se «ativo» e não encaminhava um único clique
+
+**Sintoma.** Quem partilhava o ecrã via um botão «Solicitar Controlo Remoto». Ao
+carregar, o dono do ecrã recebia um diálogo a pedir consentimento. Ao aceitar, o
+outro lado recebia:
+
+> **Pedido aceite — controlo remoto da tela partilhada ativo**
+
+Não estava. Não há uma linha em todo o repositório que encaminhe um clique, uma
+tecla ou uma coordenada para a máquina do outro. O handshake acaba na mensagem.
+
+**A parte que interessa não é o botão.** É o **consentimento que não quer dizer
+nada**. A pessoa foi informada de que estava a entregar o controlo da sua
+máquina, disse que sim, e passou a comportar-se em conformidade — parou de
+mexer, esperou que o outro agisse, ou (pior) ficou a achar que alguém tem acesso
+ao seu teclado. Uma funcionalidade que não existe é uma lacuna; um consentimento
+que não faz nada é um dano.
+
+**Causa.** A sinalização foi construída primeiro — e bem — e a mensagem de
+sucesso foi escrita a descrever o que a sinalização *iria* permitir, não o que
+permitia. Ninguém voltou a ler.
+
+**Porque é que não se «corrige a implementar».** Um browser **não consegue**
+injectar rato ou teclado no sistema operativo de outra máquina. Não é uma API em
+falta na nossa implementação: é a fronteira da sandbox, e é ela que faz do
+browser um sítio seguro para abrir uma reunião. O Zoom e o Teams fazem-no porque
+instalam uma aplicação **nativa** com permissões de injecção de input. Controlo
+remoto a sério = um agente nativo, com a superfície de segurança que isso traz —
+uma porta para o teclado da vítima é exactamente o que um atacante quer. Isso é
+um projecto com ADR próprio, não uma tarefa.
+
+**Regra.** Uma capacidade pode ser PROMETIDA (roadmap sem `done`) e não pode ser
+ANUNCIADA COMO ACTIVA sem código por trás. A promessa fica; a promessa cumprida
+sai. `web/src/capabilities.ts` passa a ser o único sítio onde isto se liga:
+enquanto `AGENTE_CONTROLO_REMOTO` for `false`, o botão não aparece e um pedido
+que chegue de um cliente antigo é **recusado automaticamente** — antes de abrir
+qualquer diálogo. A sinalização fica intacta: é a base correcta, já testada.
+
+**Portão.** `web/src/capabilities.invariantes.test.ts`. Três testes, e o terceiro
+é o que interessa a prazo: **se alguém ligar a bandeira sem construir o agente, o
+portão passa a exigir que exista encaminhamento de input** — e falha. Provado
+vermelho nas duas direcções: ligar a bandeira põe-no a vermelho; devolver o
+diálogo ao pedido põe-no a vermelho.
+
+**Limite honesto.** Isto prova que ESTA capacidade não se anuncia sem código.
+Não varre o produto à procura de outras mensagens de sucesso que mintam — o
+`check-capability-claims.sh` cobre as afirmações de marketing (roadmap com `done`
+e listas de preço), e este cobre a de runtime que já falhou. Uma varredura geral
+por mensagens de sucesso continua por fazer.
+
+**Ficheiros.** `web/src/capabilities.ts`,
+`web/src/capabilities.invariantes.test.ts`, `web/src/pages/Room.tsx`,
+`docs/competitive-positioning.md`.

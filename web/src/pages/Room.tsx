@@ -1,6 +1,7 @@
 import { CSSProperties, ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { deveTrocarFonte, escolherFontePip, type EstadoPip } from '../pipPolicy'
+import { AGENTE_CONTROLO_REMOTO } from '../capabilities'
 import {
   currentUser, downloadRecording, iceServers, inviteToRoom, joinRoom, listRecordings, postQos, postTimings, Recording,
   roomChatHistory, saveMinutesByRoom, saveWhiteboard, searchUsers, translateCaption, uploadRecording, User,
@@ -1342,6 +1343,14 @@ export default function Room({
 
         signal.on('remote-control', (m) => {
           if (m.action === 'request') {
+            // Sem agente nativo, um pedido é recusado JÁ — ver `capabilities.ts`.
+            // Abrir o diálogo aqui pediria um consentimento sem efeito, e é isso
+            // que o R109 foi corrigir: a pessoa dizia que sim e nada acontecia,
+            // mas passava a comportar-se como se o outro pudesse agir.
+            if (!AGENTE_CONTROLO_REMOTO) {
+              signalRef.current?.send({ type: 'remote-control', to: m.from, action: 'deny', payload: null })
+              return
+            }
             const who = peersRef.current.find((p) => p.peerId === m.from)?.username ?? 'Alguém'
             setCtrlAsk({ from: m.from, username: who })
           } else if (m.action === 'accept') {
@@ -2553,7 +2562,14 @@ export default function Room({
                     stream={presentation.stream}
                     label={presenter}
                     own={presentation.peerId === 'me'}
-                    onRequestControl={() => signalRef.current?.send({ type: 'remote-control', to: presentation.peerId, action: 'request', payload: null })}
+                    onRequestControl={
+                      // `undefined` esconde o botão — o `PresentationTile` já o
+                      // faz. Um botão cujo único desfecho possível é uma recusa
+                      // não é uma funcionalidade, é ruído.
+                      AGENTE_CONTROLO_REMOTO
+                        ? () => signalRef.current?.send({ type: 'remote-control', to: presentation.peerId, action: 'request', payload: null })
+                        : undefined
+                    }
                   />
                   <button
                     className="pres-layout-btn"
