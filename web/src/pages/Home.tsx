@@ -14,7 +14,7 @@ import {
   WhiteboardMeta,
 } from '../api'
 import { NavKey } from '../components/Shell'
-import { CalendarIcon, FilmIcon, NoteIcon, PeopleIcon, PlayIcon } from '../icons'
+import { CalendarIcon, FilmIcon, LockIcon, MicIcon, NoteIcon, PeopleIcon, PlayIcon } from '../icons'
 import { QuickActions } from '../components/Shell'
 
 export default function Home({
@@ -176,7 +176,7 @@ export default function Home({
                 <span className="dash-meta">
                   {fmtDay(m.starts_at) && <span>{fmtDay(m.starts_at)} · </span>}
                   <span className="mono">{fmtTime(m.starts_at)}</span> · {m.duration_min} min
-                  {m.kind === 'voice' ? ' · 🎙' : ''}
+                  {m.kind === 'voice' ? <> · <MicIcon /></> : null}
                 </span>
               </div>
               <button
@@ -259,7 +259,7 @@ export default function Home({
         )}
       </div>
 
-      <p className="dash-secure">🔒 {t('dash.secure')}</p>
+      <p className="dash-secure"><LockIcon /> {t('dash.secure')}</p>
     </div>
   )
 }

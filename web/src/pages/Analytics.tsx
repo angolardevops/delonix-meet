@@ -34,7 +34,7 @@ import {
   testPlatformStorage,
   StorageConfig,
 } from '../api'
-import { ClockIcon } from '../icons'
+import { ClockIcon, KeyIcon, LockIcon, SaveIcon, SettingsIcon, ShareLinkIcon } from '../icons'
 
 /** Definições da organização (admin): domínio de produção + retenção. */
 function OrgSettings({ org, onSaved }: { org: OrgSummary; onSaved: () => void }) {
@@ -74,7 +74,7 @@ function OrgSettings({ org, onSaved }: { org: OrgSummary; onSaved: () => void })
   return (
     <div className="integ-panel">
       <header className="dash-card-head">
-        <h2>⚙️ {t('admin.settingsTitle')}</h2>
+        <h2><SettingsIcon /> {t('admin.settingsTitle')}</h2>
       </header>
       <label className="org-set-row">
         <span>
@@ -136,7 +136,7 @@ function OrgApiKeys({ orgId }: { orgId: string }) {
   return (
     <div className="integ-panel">
       <header className="dash-card-head">
-        <h2>🔑 {t('admin.apiKeysTitle')}</h2>
+        <h2><KeyIcon /> {t('admin.apiKeysTitle')}</h2>
         <a className="link small-link" href="#/api-docs" target="_blank" rel="noreferrer">{t('admin.apiDocsLink')}</a>
       </header>
       <p className="muted small">{t('admin.apiKeysSub')}</p>
@@ -233,7 +233,7 @@ function OrgSso({ orgId }: { orgId: string }) {
   return (
     <div className="integ-panel">
       <header className="dash-card-head">
-        <h2>🔐 {t('admin.ssoTitle')}</h2>
+        <h2><LockIcon /> {t('admin.ssoTitle')}</h2>
         <span className="muted small">{t('admin.ssoSub')}</span>
       </header>
 
@@ -293,7 +293,7 @@ function OrgSso({ orgId }: { orgId: string }) {
                   disabled={busy || !issuer.trim() || !clientId.trim()}
                   onClick={() => void save()}
                 >
-                  {busy ? '…' : t('common.save')}
+                  {busy ? '…' : <><SaveIcon /> {t('common.save')}</>}
                 </button>
                 {editing && (
                   <button className="btn-sm" onClick={() => { setEditing(false); setErr('') }}>
@@ -341,7 +341,7 @@ function OrgWebhooks({ orgId }: { orgId: string }) {
   return (
     <div className="integ-panel">
       <header className="dash-card-head">
-        <h2>🔗 {t('admin.webhooksTitle')}</h2>
+        <h2><ShareLinkIcon /> {t('admin.webhooksTitle')}</h2>
         <span className="muted small">{t('admin.webhooksSub')}</span>
       </header>
       {hooks.length === 0 && <p className="dash-empty">{t('admin.webhooksEmpty')}</p>}
@@ -615,9 +615,9 @@ function PlatformStoragePanel() {
       <div className="field-row">
         <label className="field-label">{t('admin.tipoDeArmazenamento')}</label>
         <select value={type} onChange={(e) => setType(e.target.value as typeof type)} className="select-ctl">
-          <option value="local">💽 Local (padrão)</option>
-          <option value="nfs">🗄 TrueNAS / NFS</option>
-          <option value="webdav">☁ Nextcloud / WebDAV</option>
+          <option value="local">{t('admin.armazenamentoLocal')}</option>
+          <option value="nfs">TrueNAS / NFS</option>
+          <option value="webdav">Nextcloud / WebDAV</option>
         </select>
       </div>
 
@@ -662,7 +662,7 @@ function PlatformStoragePanel() {
 
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <button className="primary odoo-save" onClick={save} disabled={busy}>
-          {busy ? '…' : '💾 Guardar'}
+          {busy ? '…' : <><SaveIcon /> {t('common.save')}</>}
         </button>
         <button className="secondary" onClick={test} disabled={busy} type="button">
           🔌 Testar ligação
@@ -1023,13 +1023,13 @@ export default function Analytics() {
           {isAdmin && currentOrg && (
             <section className="dash-card integrations-card">
               <header className="dash-card-head">
-                <h2>⚙️ {t('admin.integTitle', 'Integrações & Definições')}</h2>
+                <h2><SettingsIcon /> {t('admin.integTitle', 'Integrações & Definições')}</h2>
               </header>
               <nav className="integ-tabs">
                 {([
                   { key: 'settings', label: t('admin.settingsTitle', 'Definições') },
-                  { key: 'odoo', label: '🔗 Odoo' },
-                  { key: 'storage', label: '💾 Armazenamento' },
+                  { key: 'odoo', label: 'Odoo' },
+                  { key: 'storage', label: t('admin.tipoDeArmazenamento') },
                   { key: 'sso', label: t('admin.ssoTitle', 'SSO / OIDC') },
                   { key: 'webhooks', label: t('admin.webhooksTitle', 'Webhooks') },
                   { key: 'apikeys', label: t('admin.apiKeysTitle', 'API Keys') },

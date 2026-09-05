@@ -22,6 +22,7 @@ export default {
     codigosDeEstado: 'Codes d\'état',
   },
   mfa: {
+    leOCodigoCom: 'Scannez le code avec Google Authenticator, Aegis, 1Password ou une autre app — ou saisissez la clé à la main.',
     titulo: 'Vérification en deux étapes',
     guardaOsCodigos: 'Enregistrez vos codes de récupération',
     soOsVes: 'Vous ne les voyez',
@@ -99,6 +100,7 @@ export default {
       entrarAgora: 'Rejoindre',
     },
     espera: {
+      ouPartilheEsteLink: 'Ou partagez ce lien de réunion avec les personnes à inviter.',
       reuniaoEncriptadaDePonta: 'Réunion chiffrée de bout en bout',
       fraseChaveDaReuniao: 'Phrase secrète de la réunion',
       entrarNaReuniao: 'Rejoindre la réunion',
@@ -190,6 +192,7 @@ export default {
       votarNestaPergunta: 'Voter pour cette question',
     },
     definicoes: {
+      rnnoiseRemoveTeclado: 'RNNoise supprime le clavier, le ventilateur et le bruit de fond — bien au-delà de la suppression du navigateur.',
       tema: 'Thème',
       escolheOAspetoDa: 'Choisissez l\'apparence de l\'application.',
       altifalantes: 'Haut-parleurs',
@@ -536,6 +539,7 @@ export default {
     secure: 'Connexion sécurisée · un code à partager',
   },
   admin: {
+    armazenamentoLocal: 'Local (par défaut)',
     tipoDeArmazenamento: 'Type de stockage',
     pathDeExportacao: 'Chemin d\'export',
     pathRemoto: 'Chemin distant',

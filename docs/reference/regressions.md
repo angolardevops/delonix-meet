@@ -870,3 +870,39 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **O PONTO CEGO dos dois portões anteriores:** o de emoji (R88) e o de i18n (R99/R102) olham para **JSX** — texto entre tags e atributos. Não olhavam para strings passadas a **funções**. Havia **46 mensagens de estado em português fixo**, duas delas com emoji, invisíveis para ambos. Isso passou a importar mais desde que a linha de estado é anunciada: **anunciar português a quem escolheu inglês é pior do que não anunciar**.
 - **Portão:** `lote2` — nenhuma chamada a `setStatus`/`setErr`/`setError`/`setMsg` leva um literal em português. Visto a falhar, e apanhou logo uma que a minha própria conversão tinha deixado para trás (a que tinha o 🎮: a chave ficou sem o emoji e o texto não casou).
 - **Ficheiros:** `web/src/pages/Room.tsx`, `web/src/components/Shell.tsx`, `web/src/pages/{Analytics,SharePage}.tsx`, `web/src/locales/{pt,en,fr}.ts`, `web/src/lote2.invariantes.test.ts`.
+
+### R105 — O portão dos emoji só via metade da consola, e a régua do i18n cortava aos 80 caracteres
+
+**Sintoma.** O portão 3.2.5 dava verde com 20 pictogramas colados a texto ainda
+espalhados por cinco ficheiros da consola (`Analytics`, `Home`, `Landing`,
+`Room`, `RemoteTile`), e o portão 3.2.7 dava verde com três frases longas
+literais por traduzir.
+
+**Causa.** Duas réguas escolhidas de cabeça em vez de derivadas do porquê. O
+padrão de emoji cobria um intervalo que deixava de fora `U+FE0F` — o selector de
+variação que faz de `⚙` um `⚙️` — e o de i18n só olhava para literais entre 3 e
+80 caracteres, por eu ter presumido que texto de interface é curto. As três
+frases que escaparam tinham 96, 118 e 141 caracteres.
+
+**Regra.** A régua vem do PORQUÊ, não de um intervalo confortável. O emoji é
+recusado como iconografia porque **rende conforme o sistema operativo do
+visitante e não herda `currentColor`** — logo o padrão é «pictograma», incluindo
+o selector de variação, e não «bloco Unicode X a Y». O texto de interface é
+recusado fora do `t()` porque **um utilizador francês não o lê** — e uma frase
+longa é lida por ele tanto como uma curta; o tecto sobe para 300.
+
+**Portão.** `web/src/lote2.invariantes.test.ts`, testes 3.2.5 (`EMOJI =
+/[\u{1F300}-\u{1FAFF}\u{FE0F}]/u` sobre 16 ficheiros de consola, saltando os
+blocos `REACTION_EMOJIS`/`CHAT_EMOJIS` e os comentários) e 3.2.7 (literais de
+3 a 300 caracteres). Provado vermelho antes de verde: as duas primeiras corridas
+listaram 20 e 2 sítios reais.
+
+**Onde `<option>` está em causa:** um `<option>` não aceita um `<svg>` dentro. Aí
+o pictograma **sai** e fica só o texto — não se troca por um ícone que o browser
+descarta em silêncio.
+
+**Ficheiros.** `web/src/icons.tsx` (`KeyIcon`, `GlobeIcon`, `BotIcon`,
+`ThumbIcon`), `web/src/pages/{Analytics,Home,Landing,Room}.tsx`,
+`web/src/room/RemoteTile.tsx`, `web/src/locales/{pt,en,fr}.ts`,
+`web/src/lote2.invariantes.test.ts`.
+

@@ -105,17 +105,32 @@ describe('3.1.4 · as ações não desaparecem no telemóvel', () => {
 describe('3.2.5 · nada de emoji como controlo na consola', () => {
   // `⌘` e `⌥` são NOMES DE TECLAS dentro de <kbd> — conteúdo, não controlo.
   const TECLAS = /[\u2318\u2325\u21E7\u23CE]/u
-  const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2190}-\u{21FF}\u{2300}-\u{27BF}\u{2B00}-\u{2BFF}]/u
-  // A SALA entrou nesta lista em 2026-09-03 (R88). Eram 40 glifos usados como
-  // ícone — ⏳ para o temporizador, 📊 para as sondagens, ❓ para o Q&A, 🛡 para
-  // o código de segurança — a par do conjunto SVG que já existia ao lado, na
-  // MESMA barra. A regra não era nova; faltava-lhe cobertura.
+  // A REGRA VEM DO PORQUÊ, não de um intervalo escolhido de cabeça. O que o
+  // `icons.tsx` diz desde sempre: um emoji renderiza DIFERENTE por sistema
+  // operativo, é COLORIDO, e NÃO herda `currentColor` — fica com a sua cor
+  // sobre um botão que muda de cor.
   //
-  // O que NÃO entra nesta lista, e é deliberado: `Landing.tsx`, `Analytics.tsx`
-  // e `Studio.tsx` ainda têm glifos em ARRAYS DE DADOS (listas de
-  // funcionalidades, rótulos de canto `↖↗↙↘`). Convertê-los é outro trabalho —
-  // mexe na forma dos dados, não na marcação — e está escrito em
-  // `docs/reference/regressions.md` (R88) para não passar por esquecimento.
+  // Isso é verdade dos PICTOGRAMAS (🔒 📞 🤖 💾 🏆). Não é verdade das setas
+  // (← → ↑ ↓ ↖), do ✓, do ● nem do ⧉: são tipografia, herdam a cor, e
+  // renderizam igual em todo o lado. A segunda versão deste portão metia-os no
+  // mesmo saco e acusava 56 sítios, dos quais a maioria eram setas em prosa e
+  // indicadores de banda — um portão que grita por tudo é ignorado tal como um
+  // portão cego.
+  const EMOJI = /[\u{1F300}-\u{1FAFF}\u{FE0F}]/u
+
+  // TERCEIRA versão deste portão, e as duas anteriores davam falsa segurança.
+  //
+  //   1ª: `>\s*(.{1,4})\s*<` — só apanhava glifos SOZINHOS entre tags. O caso
+  //       comum é o glifo SEGUIDO do rótulo, e escapava (R88).
+  //   2ª: `{1,120}` — melhor, mas a classe `[^<>{}\n]` exclui `{`, por isso
+  //       `⧉ {t('…')}` — emoji ao lado de uma EXPRESSÃO — continuava invisível.
+  //       Vinte e um escaparam assim.
+  //
+  // A lição: um portão construído sobre «que forma tem o defeito que EU vi» erra
+  // na forma seguinte. Este procura o glifo em QUALQUER linha de marcação, e
+  // deixa de fora o que é conteúdo por razão escrita — não por acidente de
+  // sintaxe.
+  const CONTEUDO = /REACTION_EMOJIS|CHAT_EMOJIS/
   const CHROME = [
     'web/src/components/Shell.tsx',
     'web/src/components/CommandPalette.tsx',
@@ -128,18 +143,32 @@ describe('3.2.5 · nada de emoji como controlo na consola', () => {
     'web/src/components/MfaPanel.tsx',
     'web/src/components/OnboardingTour.tsx',
     'web/src/App.tsx',
+    'web/src/pages/Landing.tsx',
+    'web/src/pages/Analytics.tsx',
+    'web/src/pages/Roadmap.tsx',
+    'web/src/pages/ApiDocs.tsx',
+    'web/src/pages/Studio.tsx',
   ]
   for (const f of CHROME) {
-    it(`${f.split('/').pop()} não tem glifos dentro de elementos`, () => {
-      // O `{1,4}` que aqui estava deixava passar o caso MAIS comum: um glifo
-      // seguido do rótulo. `>📊 Sondagens<` tem mais de 4 caracteres e escapava
-      // — o portão dava verde com o defeito à frente. Apanhado a 2026-09-03 ao
-      // tentar vê-lo falhar de propósito, que é a única forma de saber que um
-      // portão guarda alguma coisa (R71).
-      const dentroDeElemento = [...read(f).matchAll(/>\s*([^<>{}\n]{1,120})\s*</g)]
-        .map((m) => m[1])
-        .filter((txt) => EMOJI.test(txt) && !TECLAS.test(txt))
-      expect(dentroDeElemento).toEqual([])
+    it(`${f.split('/').pop()} não usa emoji como iconografia`, () => {
+      const soltos: string[] = []
+      let emConteudo = false
+      for (const l of read(f).split('\n')) {
+        if (CONTEUDO.test(l)) emConteudo = true
+        const t = l.trim()
+        if (emConteudo) {
+          if (l.includes(']')) emConteudo = false
+          continue
+        }
+        if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) continue
+        // comentário JSX (`{/* … */}`) e comentário no fim de uma linha de
+        // código não são interface.
+        if (t.includes('{/*') || /\S\s+\/\/ /.test(l)) continue
+        // só linhas de MARCAÇÃO: com tag ou com chaveta de expressão
+        if (!/[<>]/.test(l) && !/\{/.test(l)) continue
+        if (EMOJI.test(l) && !TECLAS.test(l)) soltos.push(t.slice(0, 70))
+      }
+      expect(soltos).toEqual([])
     })
   }
 })
@@ -214,7 +243,7 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
   it('o Room.tsx não tem literais visíveis fora do t()', () => {
     const src = read('web/src/pages/Room.tsx')
     const soltos: string[] = []
-    for (const m of src.matchAll(/>\s*([A-ZÀ-Ú][^<>{}\n]{3,80})\s*</g)) {
+    for (const m of src.matchAll(/>\s*([A-ZÀ-Ú][^<>{}\n]{3,300})\s*</g)) {
       const v = m[1].trim()
       // `Promise` e afins aparecem em tipos e comentários de código, não na
       // interface: exige-se uma palavra com letras minúsculas acentuadas ou
@@ -241,7 +270,12 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     for (const f of listarTsx('web/src')) {
       if (f.includes('/locales/')) continue
       const src = read(f)
-      for (const m of src.matchAll(/>\s*([A-ZÀ-Ú][^<>{}\n]{3,80})\s*</g)) {
+      // O tecto era 80 caracteres e deixava passar as frases MAIS LONGAS — que
+      // são as explicativas, precisamente as que um utilizador não-lusófono
+      // mais precisa. Três escaparam assim. Mesmo tipo de buraco que o `{1,4}`
+      // do portão de emoji (R88): um limite escolhido de cabeça, sem medir o
+      // que fica de fora.
+      for (const m of src.matchAll(/>\s*([A-ZÀ-Ú][^<>{}\n]{3,300})\s*</g)) {
         const v = m[1].trim()
         if (/[a-zà-ú]{3}/.test(v) && /\s/.test(v) && !MARCA_OU_CODIGO.test(v)) {
           soltos.push(`${f}: ${v}`)

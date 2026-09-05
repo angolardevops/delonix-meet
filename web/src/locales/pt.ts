@@ -24,6 +24,7 @@ export default {
     codigosDeEstado: 'Códigos de estado',
   },
   mfa: {
+    leOCodigoCom: 'Lê o código com o Google Authenticator, Aegis, 1Password ou outro — ou introduz a chave à mão.',
     titulo: 'Verificação em dois passos',
     guardaOsCodigos: 'Guarda os códigos de recuperação',
     soOsVes: 'Só os vês',
@@ -101,6 +102,7 @@ export default {
       entrarAgora: 'Entrar agora',
     },
     espera: {
+      ouPartilheEsteLink: 'Ou partilhe este link da reunião com as outras pessoas que quer incluir na reunião.',
       reuniaoEncriptadaDePonta: 'Reunião encriptada de ponta a ponta',
       fraseChaveDaReuniao: 'Frase-chave da reunião',
       entrarNaReuniao: 'Entrar na reunião',
@@ -192,6 +194,7 @@ export default {
       votarNestaPergunta: 'Votar nesta pergunta',
     },
     definicoes: {
+      rnnoiseRemoveTeclado: 'RNNoise remove teclado, ventoinha e ruído de fundo — muito além da supressão do browser.',
       tema: 'Tema',
       escolheOAspetoDa: 'Escolhe o aspeto da aplicação.',
       altifalantes: 'Altifalantes',
@@ -540,6 +543,7 @@ export default {
     secure: 'Ligação segura · código único para partilhar',
   },
   admin: {
+    armazenamentoLocal: 'Local (padrão)',
     tipoDeArmazenamento: 'Tipo de armazenamento',
     pathDeExportacao: 'Path de exportação',
     pathRemoto: 'Path remoto',
