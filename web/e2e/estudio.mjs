@@ -257,7 +257,35 @@ console.log('\ncorte')
 {
   const suporta = await page.evaluate(() => typeof VideoEncoder === 'function' && typeof MediaStreamTrackProcessor === 'function')
   ok('o browser tem WebCodecs (o caminho de pouco recurso)', suporta)
-  if (suporta) {
+
+  // TER WebCodecs não é o mesmo que ter ACELERAÇÃO. O `editor.ts` documenta-o e
+  // mede-o: sem GPU, o corte cai para software e um troço de dois segundos não
+  // acaba em 90 s — nem em 360 s, verificado no runner do CI com o
+  // `E2E_TIMEOUT_FACTOR` a 4.
+  //
+  // Por isso a asserção passa a ser condicional, e a condição é PERGUNTADA ao
+  // browser em vez de assumida — o mesmo que o `escolherPerfil` faz. Onde há
+  // hardware, o corte tem de encurtar; onde não há, diz-se que não se
+  // verificou e porquê.
+  //
+  // A alternativa que NÃO se escolheu: pôr o `estudio.mjs` inteiro fora do CI.
+  // Ele tem outras trinta asserções que passam e protegem o Estúdio — perdê-las
+  // todas para acomodar uma seria trocar cobertura por silêncio.
+  const temHardware = suporta && await page.evaluate(async () => {
+    try {
+      const r = await VideoEncoder.isConfigSupported({
+        codec: 'vp8', width: 1920, height: 1080, framerate: 30,
+        bitrate: 3_000_000, hardwareAcceleration: 'prefer-hardware',
+      })
+      return !!r.supported
+    } catch { return false }
+  })
+  if (suporta && !temHardware) {
+    console.log('  --    sem encoder acelerado neste ambiente — o corte cai para software e não')
+    console.log('  --    termina em tempo útil (ver escolherPerfil em web/src/studio/editor.ts).')
+    console.log('  --    As asserções de CORTE ficam por verificar; o resto do Estúdio corre.')
+  }
+  if (suporta && temHardware) {
     // Espera que a duração seja conhecida — um WebM de MediaRecorder chega
     // muitas vezes com `Infinity` até se procurar até ao fim.
     const dur = await page
