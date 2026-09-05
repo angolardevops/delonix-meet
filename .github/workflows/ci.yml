@@ -251,12 +251,6 @@ jobs:
         run: npx playwright install chromium
         working-directory: web
 
-      # DEPOIS do `playwright install` acima, e SEM `working-directory`: neste
-      # job os e2e correm da raiz e o caminho já diz `web/e2e/`. As duas coisas
-      # falharam, uma de cada vez, e dão o mesmo sintoma — ver R97.
-      - name: Reentrada após quebra (R91 — o F5 não devolve à sala de espera)
-        run: |
-          APP=http://localhost:5174 API=http://localhost:8180 node web/e2e/reentrada.mjs
 
       - name: Interface do MFA (Chromium real)
         run: |
@@ -289,6 +283,16 @@ jobs:
           # Uma gravação que falha tem de ser VISTA — e as três vistas da
           # biblioteca não podem oferecer acções sobre ela (R59).
           APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
+          # A REENTRADA precisa do vite (é uma reunião a sério, com dois
+          # browsers) e por isso vive aqui dentro, e não num passo à parte: o
+          # vite é arrancado NESTE bloco e não sobrevive a fronteiras de passo
+          # de forma óbvia a quem lê. Foi o quinto problema seguido com este
+          # teste — os quatro anteriores foram browsers em falta ou caminho
+          # errado, este foi o servidor de front-end não existir ainda (R97).
+          #
+          # Depois do `tempos.mjs`, que precisa da máquina quieta: este abre
+          # DOIS Chromium e mediria mal se corresse antes.
+          APP=http://localhost:5174 API=http://localhost:8180 node web/e2e/reentrada.mjs
           # O ESTÚDIO grava ecrã, recorta região e corta — nada disso se prova
           # em unidades. O teste captura o ecrã a sério, mede a variação de
           # pixéis para saber que o canvas não está preto, e verifica a DURAÇÃO
