@@ -947,3 +947,71 @@ devolveu-o.
 
 **Ficheiros.** `scripts/mutantes.mjs`, `scripts/mutantes-rust.mjs`,
 `scripts/check-repo-hygiene.sh`, `.gitignore`.
+
+### R107 — O «zero texto fora do `t()`» era verdade só para nós de texto
+
+**Sintoma.** O R102 fechou o lote do i18n com «zero texto de interface fora do
+`t()` em todo o `web/src`», e o portão dava verde. Medido de outra maneira: **112
+frases visíveis** ainda em português duro — 64 no `Room.tsx` e 21 no resto da
+árvore. Entre elas o título de *todos* os botões da barra de controlo
+(«Desativar microfone (Ctrl+D)», «Partilhar ecrã», «Levantar a mão»), os avisos
+que o leitor de ecrã anuncia («Foste removido da reunião», «O anfitrião silenciou
+toda a gente»), e mensagens de erro («Erro ao convidar. Tenta novamente.»).
+
+**Causa.** O portão procurava `>frase<` — nós de texto JSX — mais três
+atributos. Uma frase dentro de uma **expressão** nunca lhe passou à frente:
+
+```tsx
+title={micOn ? 'Desativar microfone (Ctrl+D)' : 'Ativar microfone (Ctrl+D)'}
+setStatus('O anfitrião recusou a tua entrada')
+```
+
+Não é um caso raro — é como se escreve metade da interface de uma sala, onde
+quase tudo tem dois estados.
+
+**Regra.** O portão procura a FRASE, não o sítio onde ela está. Uma frase
+distingue-se de um identificador pelo que uma pessoa lê: começa por maiúscula,
+tem pelo menos um espaço, e tem uma palavra de três letras minúsculas. Isso deixa
+de fora `'grid'`, `'room-topo'`, `'POST'` e os nomes de eventos sem ter de saber
+onde cada literal é usado. As chamadas ao `t()` são retiradas antes de procurar —
+são a solução, não o problema.
+
+**Nomes próprios** ficam de fora **um a um, com razão escrita** dentro do portão
+(`Microsoft Teams`, `Google Meet`, `API / Signaling`) — nunca por a regra ser
+afrouxada. Um nome de produto não se traduz; uma frase sim.
+
+**Portão.** `web/src/lote2.invariantes.test.ts`, teste «nenhum ficheiro tem
+frases visíveis dentro de expressões» — árvore inteira, não só o `Room.tsx`.
+Provado vermelho antes de verde (85 frases listadas) e provado outra vez depois:
+devolver `'Base de dados'` ao `Status.tsx` põe-no a vermelho.
+
+**E ainda não era tudo — mais duas famílias na mesma passagem.**
+
+*Nós de texto MISTURADOS com expressões.* A regra dos nós de texto usava a classe
+`[^<>{}\n]`, que **exclui `{`**. Um nó como `Notas AI {transcribing && <span/>}`
+ou `A IA segmenta-te localmente… {bgBusy ? t(…) : ''}` era invisível para ela.
+Dezasseis assim. A regra passou a **retirar as expressões** — respeitando o
+encaixe das chavetas — e a julgar o que sobra como prosa.
+
+*Atributos inventados.* A regra verificava três atributos **por nome**: `title`,
+`placeholder`, `aria-label`. Mas quem escreve um componente inventa os seus —
+`label=`, `desc=`, `data-tip=` — e todos acabam no ecrã ou no leitor de ecrã.
+Onze escaparam assim, incluindo o rótulo de leitor de ecrã de **cinco botões da
+barra de controlo**. A regra deixou de nomear atributos.
+
+**O que fica de fora, e é honesto dizê-lo.** Uma frase que comece por minúscula
+(`'nova password'` num `placeholder`) continua a passar. A maiúscula inicial é o
+que distingue uma frase de um `className` como `'brand-square big'` — sem ela, o
+portão acusa 162 literais dos quais a esmagadora maioria são nomes de classe, e
+um portão que grita por tudo é ignorado tal como um portão cego. Fica registado
+como limite conhecido, não como problema resolvido.
+
+**Lição, e é a mesma pela quinta vez.** Um portão construído sobre a FORMA que o
+defeito tinha da última vez erra na forma seguinte — R88, R99, R102, R105 e agora
+esta. O que dura é a regra escrita a partir do PORQUÊ: aqui, «um utilizador
+francês não lê isto», que não faz distinção entre um nó de texto e um ternário.
+
+**Ficheiros.** `web/src/pages/{Room,SharePage,Status}.tsx`,
+`web/src/components/{MfaPanel,PasswordInput,PresenceProvider,Shell}.tsx`,
+`web/src/room/RemoteTile.tsx`, `web/src/locales/{pt,en,fr}.ts`,
+`web/src/lote2.invariantes.test.ts`.

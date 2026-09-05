@@ -291,6 +291,98 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     expect(soltos).toEqual([])
   })
 
+  // Nomes próprios: não se traduzem, e ficam de fora UM A UM com razão escrita.
+  // Nunca por a regra ser afrouxada — uma regra afrouxada deixa passar a frase
+  // seguinte, que já não é um nome.
+  const NOMES = [
+    'Microsoft Teams',                 // marca, na matriz competitiva
+    'Google Meet',                     // idem
+    'API / Signaling',                 // nomes dos serviços na página de estado
+    'Delonix Meet',                    // o nome do produto
+    'TrueNAS / NFS',                   // nomes de tecnologia, na escolha de armazenamento
+    'Nextcloud / WebDAV',              // idem
+    'Delonix Call Quality Score',      // nome da métrica, como o «MOS» de que descende
+    'X-Delonix-Signature: sha256=…',   // um header HTTP não tem tradução
+  ]
+  /** Tira as expressões `{…}` de um nó de texto, respeitando o encaixe. */
+  function semExpressoes(txt: string): string {
+    let out = ''
+    let nivel = 0
+    for (const c of txt) {
+      if (c === '{') nivel++
+      else if (c === '}') { if (nivel > 0) nivel-- }
+      else if (nivel === 0) out += c
+    }
+    return out
+  }
+  /** Uma FRASE lê-se; um identificador não. É isto que distingue as duas. */
+  const eFrase = (v: string) => /\s/.test(v) && /[a-zà-ú]{3}/.test(v) && !NOMES.includes(v)
+
+  it('nenhum nó de texto MISTURADO com expressões escapa ao t()', () => {
+    // O portão dos nós de texto usava `[^<>{}\n]` — a classe exclui `{`, por
+    // isso um nó como `Notas AI {transcribing && <span/>}` ou
+    // `A IA segmenta-te localmente… {bgBusy ? T() : ''}` era invisível. São
+    // dezasseis, e é a MESMA falha de sempre: a regra desenhada para a forma
+    // que o defeito tinha da última vez. Aqui a expressão é retirada e o que
+    // sobra é julgado como prosa.
+    const soltos: string[] = []
+    for (const f of listarTsx('web/src')) {
+      for (const m of read(f).matchAll(/>([A-ZÀ-Ú][^<>]{3,400})</g)) {
+        const prosa = semExpressoes(m[1]).replace(/\s+/g, ' ').trim()
+        if (prosa.length >= 8 && eFrase(prosa)) soltos.push(`${f}: ${prosa}`)
+      }
+    }
+    expect(soltos).toEqual([])
+  })
+
+  it('nenhum ATRIBUTO leva uma frase escrita à mão', () => {
+    // A versão anterior verificava três atributos por nome: `title`,
+    // `placeholder`, `aria-label`. Mas quem escreve um componente inventa os
+    // seus: `label=`, `desc=`, `data-tip=` — e todos acabam no ecrã ou no
+    // leitor. Onze escaparam assim, incluindo o rótulo de leitor de ecrã de
+    // cinco botões da barra. A regra deixou de nomear atributos.
+    const soltos: string[] = []
+    for (const f of listarTsx('web/src')) {
+      for (const m of read(f).matchAll(/\b([a-zA-Z-]+)="([A-ZÀ-Ú][^"]{3,300})"/g)) {
+        if (eFrase(m[2])) soltos.push(`${f}: ${m[1]}="${m[2]}"`)
+      }
+    }
+    expect(soltos).toEqual([])
+  })
+
+  it('nenhum ficheiro tem frases visíveis dentro de expressões', () => {
+    // O portão de cima olha para NÓS DE TEXTO (`>frase<`) e três atributos. Uma
+    // frase dentro de uma expressão — `{cond ? 'Ligar câmara' : 'Desligar'}`,
+    // `title={x ? 'A' : 'B'}`, `setStatus('Foste removido da reunião')` — nunca
+    // passou por ele. Medido quando se descobriu: 64 frases só no `Room.tsx` e
+    // mais 21 no resto da árvore, entre elas avisos de leitor de ecrã, títulos
+    // de todos os botões da barra e mensagens de erro. O «zero texto fora do
+    // t()» do R102 era verdade só para nós de texto.
+    //
+    // A regra distingue FRASE de identificador pelo que uma pessoa lê: começa
+    // por maiúscula, tem pelo menos um espaço, e tem uma palavra de três letras
+    // minúsculas. Isso deixa de fora `'grid'`, `'room-topo'`, `'POST'` e os
+    // nomes de eventos, sem precisar de saber onde cada literal é usado.
+    //
+    // NOMES PRÓPRIOS ficam de fora com razão escrita, um a um — nunca por a
+    // regra ser afrouxada. Um nome de produto não se traduz; uma frase sim.
+    const soltos: string[] = []
+    for (const f of listarTsx('web/src')) {
+      const src = read(f)
+        // as próprias chamadas ao t() contêm literais — e são a solução, não o
+        // problema; saem antes de procurar.
+        .replace(/\bt\(\s*'[^']*'(\s*,\s*'[^']*')?\s*\)/g, 'T()')
+        .replace(/\/\/[^\n]*/g, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+      for (const m of src.matchAll(/'([A-ZÀ-Ú][^'\\\n]{3,300})'/g)) {
+        const v = m[1]
+        if (!eFrase(v)) continue
+        soltos.push(`${f}: ${v}`)
+      }
+    }
+    expect(soltos).toEqual([])
+  })
+
   // A sala foi a primeira, mas o resto do produto tinha os mesmos 47 (R102).
   // O portão passou a cobrir `web/src` INTEIRO — a alternativa era voltar a
   // acrescentar ficheiros à lista um a um, e é assim que uma lista fica

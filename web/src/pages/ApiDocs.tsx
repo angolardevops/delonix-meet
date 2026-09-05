@@ -22,7 +22,7 @@ export default function ApiDocs() {
 
         <Section title={t('api.autenticacao')}>
           <p>{t('api.todasAsChamadas')}<code>/api/v1</code> exigem uma <strong>chave de API</strong> da organização
-            (gera-a em <em>Análises → Chaves de API</em>, como administrador). Envia-a num destes headers:
+            (gera-a em <em>{t('api.caminhoChaves')}</em>, como administrador). Envia-a num destes headers:
           </p>
           <Code>{`Authorization: Bearer dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 # ou
@@ -40,7 +40,7 @@ X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
         <Endpoint
           method="POST"
           path="/api/v1/rooms"
-          desc="Cria uma sala de reunião e devolve o código + link de entrada."
+          desc={t('api.criaSala')}
           body={`{
   "name": "Sync semanal",   // opcional
   "e2ee": false,             // opcional — encriptação ponta-a-ponta
@@ -62,7 +62,7 @@ X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
         <Endpoint
           method="GET"
           path="/api/v1/rooms/{code}"
-          desc="Metadados de uma sala existente."
+          desc={t('api.metadadosSala')}
           resp={`{ "code": "abc-defg-hij", "name": "...", "e2ee": false, "waiting_room": false, "join_url": "..." }`}
           curl={`curl ${base}/api/v1/rooms/abc-defg-hij -H "Authorization: Bearer dlx_..."`}
         />
@@ -70,7 +70,7 @@ X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
         <Endpoint
           method="GET"
           path="/api/v1/recordings"
-          desc="Lista as gravações da organização (até 200, mais recentes primeiro)."
+          desc={t('api.listaGravacoes')}
           resp={`{
   "recordings": [
     { "id": "…", "filename": "…", "size_bytes": 12345678,
@@ -84,14 +84,14 @@ X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
         <Endpoint
           method="GET"
           path="/api/v1/org"
-          desc="Informação da organização a que a chave pertence."
+          desc={t('api.infoOrg')}
           resp={`{ "id": "…", "name": "Acme", "email_domain": "acme.com", "domain": "meet.acme.com", "members": 42 }`}
           curl={`curl ${base}/api/v1/org -H "Authorization: Bearer dlx_..."`}
         />
 
         <Section title={t('api.webhooks')}>
           <p>{t('api.alemDaApi')}<strong>webhooks</strong> em Slack, Teams, Mattermost ou
-            num endpoint genérico (configura em <em>Análises → Webhooks</em>). Eventos:
+            num endpoint genérico (configura em <em>{t('api.caminhoWebhooks')}</em>). Eventos:
           </p>
           <ul className="apidoc-list">
             <li><code>meeting.created</code> — reunião agendada</li>
@@ -149,6 +149,7 @@ function Endpoint({
 }: {
   method: string; path: string; desc: string; body?: string; resp: string; curl: string
 }) {
+  const { t } = useTranslation()
   return (
     <section className="apidoc-section apidoc-endpoint">
       <div className="apidoc-ep-head">
@@ -156,10 +157,10 @@ function Endpoint({
         <code className="apidoc-path">{path}</code>
       </div>
       <p>{desc}</p>
-      {body && (<><h4>Corpo</h4><Code>{body}</Code></>)}
-      <h4>Resposta</h4>
+      {body && (<><h4>{t('api.corpo')}</h4><Code>{body}</Code></>)}
+      <h4>{t('api.resposta')}</h4>
       <Code>{resp}</Code>
-      <h4>Exemplo (curl)</h4>
+      <h4>{t('api.exemploCurl')}</h4>
       <Code>{curl}</Code>
     </section>
   )

@@ -42,8 +42,8 @@ export default function Status() {
   const ok = !err && info?.status === 'ok'
   const rows = [
     { name: 'API / Signaling', up: !err && !!info?.api },
-    { name: 'Base de dados', up: !err && !!info?.db },
-    { name: 'Frontend (este site)', up: true },
+    { name: t('status.baseDeDados'), up: !err && !!info?.db },
+    { name: t('status.frontendEsteSite'), up: true },
   ]
 
   return (

@@ -114,7 +114,7 @@ export function RemoteTileBase({
       <button
         className={pinned ? 'tile-pin pinned' : 'tile-pin'}
         onClick={() => onPin?.(peer.peerId)}
-        title={pinned ? 'Desafixar do palco' : 'Fixar no palco'}
+        title={pinned ? t('room.desafixarDoPalcoTile') : t('room.fixarNoPalcoTile')}
       >
         <PinIcon />
       </button>

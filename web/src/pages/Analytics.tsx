@@ -624,9 +624,9 @@ function PlatformStoragePanel() {
       {type === 'nfs' && (
         <>
           <hr className="odoo-sep" />
-          <p className="odoo-hint">O K8s cria um PersistentVolume com este servidor NFS. Descarrega o manifesto abaixo e aplica com <code>kubectl apply</code>.</p>
+          <p className="odoo-hint">{t('admin.nfsManifesto')} <code>kubectl apply</code>.</p>
           <div className="field-row">
-            <label className="field-label">Servidor NFS</label>
+            <label className="field-label">{t('admin.servidorNfs')}</label>
             <input value={nfsServer} onChange={(e) => setNfsServer(e.target.value)} placeholder="192.168.1.10" />
           </div>
           <div className="field-row">
@@ -640,9 +640,9 @@ function PlatformStoragePanel() {
       {type === 'webdav' && (
         <>
           <hr className="odoo-sep" />
-          <p className="odoo-hint">Gravações enviadas por WebDAV após processamento. Compatível com Nextcloud, ownCloud e SharePoint.</p>
+          <p className="odoo-hint">{t('admin.webdavExplicacao')}</p>
           <div className="field-row">
-            <label className="field-label">URL base WebDAV</label>
+            <label className="field-label">{t('admin.urlBaseWebdav')}</label>
             <input value={wdUrl} onChange={(e) => setWdUrl(e.target.value)} placeholder="https://cloud.empresa.com" />
           </div>
           <div className="field-row">

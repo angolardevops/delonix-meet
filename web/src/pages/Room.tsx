@@ -284,7 +284,7 @@ export default function Room({
   const [isHost, setIsHost] = useState(false)
   // Pode admitir convidados em espera: anfitrião OU participante promovido.
   const [canAdmit, setCanAdmit] = useState(false)
-  const [status, setStatus] = useState('A ligar…')
+  const [status, setStatus] = useState(t('room.txt.aLigar'))
   /** Estado da ligação de media — alimenta o indicador de recuperação. */
   const [callState, setCallState] = useState<CallState>('connecting')
   /** Os tempos de estabelecimento só se reportam UMA vez por sessão. */
@@ -502,7 +502,7 @@ export default function Room({
   const onTransferHost = useCallback((peerId: string) => {
     // Passar o bastão é irreversível pelo próprio: só o novo anfitrião o pode
     // devolver. Por isso confirma-se, ao contrário de silenciar.
-    if (!window.confirm('Passar o papel de anfitrião a esta pessoa? Só ela to poderá devolver.')) return
+    if (!window.confirm(t('room.txt.passarAnfitriao'))) return
     signalRef.current?.send({ type: 'transfer-host', to: peerId })
   }, [])
   const onMuteAll = useCallback((allowUnmute: boolean) => {
@@ -820,7 +820,7 @@ export default function Room({
       setHasLocalVideo(hasVideo)
       if (stream.getAudioTracks().length === 0) setMicOn(false)
       if (permErr === 'denied' && stream.getTracks().length === 0)
-        setStatus('Câmara/microfone BLOQUEADOS neste site — clica no cadeado 🔒 na barra de endereço, permite Câmara e Microfone, e recarrega a página.')
+        setStatus(t('room.txt.camaraBloqueada'))
       else if (permErr === 'missing') setStatus(t('room.sala.naoFoiDetetadaCamara'))
       else if (stream.getTracks().length === 0) setStatus(t('room.sala.semCamaraMicrofoneVais'))
       else if (!hasVideo) setStatus(t('room.sala.camaraIndisponivelVaisEntrar'))
@@ -884,7 +884,7 @@ export default function Room({
         const spectator = stream.getTracks().length === 0
         const hasVideo = stream.getVideoTracks().length > 0
         if (permErr === 'denied' && spectator)
-          setStatus('Câmara/microfone BLOQUEADOS neste site — clica no cadeado 🔒 na barra de endereço, permite Câmara e Microfone, e recarrega a página.')
+          setStatus(t('room.txt.camaraBloqueada'))
         else if (permErr === 'denied' && !hasVideo)
           setStatus(t('room.sala.camaraBloqueadaClicaNo'))
         else if (permErr === 'missing')
@@ -1043,7 +1043,7 @@ export default function Room({
         // O anfitrião promoveu-me (ou revogou) o poder de admitir entradas.
         signal.on('admit-role', (m) => {
           setCanAdmit(m.allowed || amHost)
-          setStatus(m.allowed ? 'Podes agora admitir convidados da sala de espera' : '')
+          setStatus(m.allowed ? t('room.txt.podesAdmitir') : '')
           if (!m.allowed) setWaitingQueue([])
         })
         // Crachá de co-anfitrião de admissões nos participantes.
@@ -1081,7 +1081,7 @@ export default function Room({
           // saltam o prejoin dentro desta janela (ver init do joinIntent).
           sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
           callHolder.start() // arranca a chamada SÓ agora (após admissão/entrada direta)
-          setStatus(spectator ? 'Sem câmara/microfone — modo espectador' : '')
+          setStatus(spectator ? t('room.txt.modoEspectador') : '')
           // Carrega histórico de chat (best-effort, não bloqueia a sala).
           void roomChatHistory(code).then((history) => {
             if (cancelled) return
@@ -1169,8 +1169,8 @@ export default function Room({
           setAllowUnmute(m.allow_unmute)
           setStatus(
             m.allow_unmute
-              ? 'O anfitrião silenciou toda a gente'
-              : 'O anfitrião silenciou toda a gente — não te podes voltar a ligar',
+              ? t('room.txt.anfitriaoSilenciou')
+              : t('room.txt.anfitriaoSilenciouSemVolta'),
           )
         })
         signal.on('host-changed', (m) => {
@@ -1195,7 +1195,7 @@ export default function Room({
             setStatus(t('room.sala.oAnfitriaoRecusouO'))
             return
           }
-          setStatus(m.allowed ? 'O anfitrião permitiu-te partilhar o ecrã' : 'A permissão de partilha foi revogada')
+          setStatus(m.allowed ? t('room.txt.permissaoPartilhaDada') : t('room.txt.permissaoPartilhaRetirada'))
         })
         signal.on('polls', (m) => setPolls(m.polls))
         signal.on('qa', (m) => setQuestions(m.questions))
@@ -1933,7 +1933,7 @@ export default function Room({
         ...peersRef.current.map((p) => ({ id: p.peerId, label: p.username, stream: p.stream })),
       ])
       setRecording(true)
-      setRecNotice('Começaste a gravar a reunião')
+      setRecNotice(t('room.txt.comecasteAGravar'))
       signalRef.current?.send({ type: 'recording', active: true })
       return
     }
@@ -1991,7 +1991,7 @@ export default function Room({
       setInviteQuery('')
       setTimeout(() => { setInviteOpen(false); setInviteStatus('') }, 2500)
     } catch {
-      setInviteStatus('Erro ao convidar. Tenta novamente.')
+      setInviteStatus(t('room.txt.erroAoConvidar'))
     } finally {
       setInviteBusy(false)
     }
@@ -2164,7 +2164,7 @@ export default function Room({
                 <span className="tile-avatar" style={{ background: peerColor(me) }}>
                   {me.slice(0, 1).toUpperCase()}
                 </span>
-                <small>{hasLocalVideo ? 'Câmara desligada' : 'Sem câmara'}</small>
+                <small>{hasLocalVideo ? t('room.txt.camaraDesligada') : t('room.txt.semCamara')}</small>
               </div>
             )}
             {micOn && speaking.has('me') && <span className="prejoin-mic-live" title={t('room.preEntrada.oMicrofoneEstaA')}><MicIcon /></span>}
@@ -2172,7 +2172,7 @@ export default function Room({
               <button
                 className={micOn ? 'ctrl' : 'ctrl off'}
                 onClick={() => prejoinToggle('mic')}
-                title={micOn ? 'Desligar microfone' : 'Ligar microfone'}
+                title={micOn ? t('room.txt.desligarMicrofone') : t('room.txt.ligarMicrofone')}
                 aria-pressed={!micOn}
               >
                 {micOn ? <MicIcon /> : <MicOffIcon />}
@@ -2180,7 +2180,7 @@ export default function Room({
               <button
                 className={camOn && hasLocalVideo ? 'ctrl' : 'ctrl off'}
                 onClick={() => prejoinToggle('cam')}
-                title={camOn ? 'Desligar câmara' : 'Ligar câmara'}
+                title={camOn ? t('room.txt.desligarCamara') : t('room.txt.ligarCamara')}
                 aria-pressed={!camOn}
               >
                 {camOn && hasLocalVideo ? <CamIcon /> : <CamOffIcon />}
@@ -2266,7 +2266,7 @@ export default function Room({
   if (roomState === 'denied' || roomState === 'kicked') {
     return (
       <div className="waiting-page">
-        <h2>{roomState === 'denied' ? 'O anfitrião recusou a tua entrada' : 'Foste removido da reunião'}</h2>
+        <h2>{roomState === 'denied' ? t('room.txt.entradaRecusada') : t('room.txt.fosteRemovido')}</h2>
         <button className="primary" style={{ width: 'auto', padding: '0.7rem 2rem' }} onClick={onLeave}>{t('room.espera.voltarAoInicio')}</button>
       </div>
     )
@@ -2367,7 +2367,7 @@ export default function Room({
               <button
                 className={pinnedId === 'me' ? 'tile-pin pinned' : 'tile-pin'}
                 onClick={() => togglePin('me')}
-                title={pinnedId === 'me' ? 'Desafixar do palco' : 'Fixar no palco'}
+                title={pinnedId === 'me' ? t('room.txt.desafixarDoPalco') : t('room.txt.fixarNoPalco')}
               >
                 <PinIcon />
               </button>
@@ -2403,7 +2403,7 @@ export default function Room({
           // ecrã em grande e a plateia (câmaras) numa fila por baixo.
           if (presentation) {
             const presenter =
-              presentation.peerId === 'me' ? 'Estás a apresentar' :
+              presentation.peerId === 'me' ? t('room.txt.estasAApresentar') :
               `${peers.find((p) => p.peerId === presentation.peerId)?.username ?? '?'} está a apresentar`
             // Não me mostro a mim na plateia quando SOU eu a apresentar (o meu
             // ecrã já é o conteúdo principal — a minha câmara seria redundante).
@@ -2420,7 +2420,7 @@ export default function Room({
                   <button
                     className="pres-layout-btn"
                     onClick={() => setPresLayout((l) => (l === 'bottom' ? 'side' : 'bottom'))}
-                    title={presLayout === 'bottom' ? 'Participantes na lateral' : 'Participantes em baixo'}
+                    title={presLayout === 'bottom' ? t('room.txt.participantesNaLateral') : t('room.txt.participantesEmBaixo')}
                   >
                     {presLayout === 'bottom' ? '⧉ Lateral' : '⧉ Em baixo'}
                   </button>
@@ -2656,8 +2656,8 @@ export default function Room({
             </div>
             <p className="muted small ready-note">
               <ShieldIcon /> {waitingRoomOn
-                ? 'As pessoas que utilizarem este link terão de pedir autorização para participar.'
-                : 'Quem tiver o link e sessão iniciada entra diretamente.'}
+                ? t('room.txt.linkPedeAutorizacao')
+                : t('room.txt.linkEntraDirecto')}
             </p>
             <p className="muted small">{t('room.espera.aParticiparComo')}<strong>{currentUser()?.username ?? 'eu'}</strong></p>
           </div>
@@ -2807,7 +2807,7 @@ export default function Room({
                   disabled={inviteSelected.length === 0 || inviteBusy}
                   onClick={() => void sendInvites()}
                 >
-                  {inviteBusy ? 'A chamar…' : `Chamar ${inviteSelected.length > 0 ? `(${inviteSelected.length})` : ''}`}
+                  {inviteBusy ? t('room.txt.aChamar') : `Chamar ${inviteSelected.length > 0 ? `(${inviteSelected.length})` : ''}`}
                 </button>
               </div>
             )}
@@ -2831,10 +2831,10 @@ export default function Room({
                 </button>
                 <button
                   className="ghost-btn"
-                  title={chatOn ? 'Fechar o chat a quem não é anfitrião' : 'Reabrir o chat a toda a gente'}
+                  title={chatOn ? t('room.txt.fecharChatANaoAnfitrioes') : t('room.txt.reabrirChatATodos')}
                   onClick={() => onChatToggle(!chatOn)}
                 >
-                  <ChatIcon /> {chatOn ? 'Fechar o chat' : 'Reabrir o chat'}
+                  <ChatIcon /> {chatOn ? t('room.txt.fecharChat') : t('room.txt.reabrirChat')}
                 </button>
               </div>
             )}
@@ -2902,7 +2902,7 @@ export default function Room({
                   {isHost && !p.host && (
                     <button
                       className="share-grant-btn"
-                      title={p.canAdmit ? 'Revogar poder de admitir entradas' : 'Permitir que admita convidados da sala de espera'}
+                      title={p.canAdmit ? t('room.txt.revogarAdmissao') : t('room.txt.permitirAdmissao')}
                       onClick={() =>
                         signalRef.current?.send({ type: 'promote-admit', to: p.peerId, allowed: !p.canAdmit })
                       }
@@ -2913,7 +2913,7 @@ export default function Room({
                   {isHost && !p.host && (
                     <button
                       className="share-grant-btn"
-                      title={sharePerms.has(p.peerId) ? 'Revogar permissão de partilha' : 'Permitir que partilhe ecrã'}
+                      title={sharePerms.has(p.peerId) ? t('room.txt.revogarPartilha') : t('room.txt.permitirPartilha')}
                       onClick={() => {
                         const next = !sharePerms.has(p.peerId)
                         setSharePerms((s) => {
@@ -3181,7 +3181,7 @@ export default function Room({
                         setPollDur(0)
                       }}
                     >
-                      {pollCorrect != null ? 'Lançar quiz' : 'Lançar sondagem'}
+                      {pollCorrect != null ? t('room.txt.lancarQuiz') : t('room.txt.lancarSondagem')}
                     </button>
                   </div>
                 </div>
@@ -3283,7 +3283,7 @@ export default function Room({
                     {isHost && (
                       <button
                         className="qa-vote"
-                        title={q.answered ? 'Reabrir' : 'Marcar como respondida'}
+                        title={q.answered ? 'Reabrir' : t('room.txt.marcarRespondida')}
                         onClick={() => signalRef.current?.send({ type: 'qa-answered', id: q.id })}
                       >
                         {q.answered ? <RepeatIcon /> : <CheckIcon />}
@@ -3426,7 +3426,7 @@ export default function Room({
               <video ref={fxPreview} autoPlay muted playsInline className={bgMode === 'none' ? 'mirror' : undefined} />
             </div>
             <p className="muted small">
-              A IA segmenta-te localmente — o teu fundo real nunca é transmitido. {bgBusy ? 'A aplicar…' : ''}
+              A IA segmenta-te localmente — o teu fundo real nunca é transmitido. {bgBusy ? t('room.txt.aAplicar') : ''}
             </p>
             {!hasLocalVideo && (
               <p className="hint-warn small">{t('room.fundos.ligaACamaraPara')}</p>
@@ -3491,7 +3491,7 @@ export default function Room({
         {notesOpen && (
           <aside className="side-panel notes-panel">
             <div className="panel-head">
-              <h3>Notas AI {transcribing && <span className="rec-dot" />}</h3>
+              <h3>{t('room.notasAi')} {transcribing && <span className="rec-dot" />}</h3>
               <button className="panel-close" onClick={() => setNotesOpen(false)}><CloseIcon /></button>
             </div>
             <p className="muted small">{t('room.fundos.transcricaoPartilhadaO')}<strong>anfitrião</strong> inicia a Nota AI e <strong>todos</strong> os
@@ -3531,15 +3531,15 @@ export default function Room({
                   className={transcribing ? 'stt-toggle rec' : 'stt-toggle'}
                   onClick={toggleTranscription}
                   disabled={!isHost}
-                  title={isHost ? 'Iniciar/parar a transcrição partilhada' : 'Só o anfitrião controla a transcrição'}
+                  title={isHost ? t('room.txt.alternarTranscricao') : t('room.txt.soAnfitriaoTranscricao')}
                 >
                   {transcribing ? <span className="rec-dot" aria-hidden /> : <MicIcon />}
-                  {transcribing ? 'Parar transcrição' : 'Iniciar transcrição'}
+                  {transcribing ? t('room.txt.pararTranscricao') : t('room.txt.iniciarTranscricao')}
                 </button>
                 <button
                   className="stt-save"
                   disabled={lines.length === 0}
-                  title={lines.length === 0 ? 'Sem transcrição para guardar' : 'Gerar e guardar a ata (MoM)'}
+                  title={lines.length === 0 ? t('room.txt.semTranscricao') : t('room.txt.gerarAta')}
                   onClick={() => void saveMinutes()}
                 >
                   {momSaved ? '✓ Guardada' : <><NoteIcon />{t('room.fundos.guardarAta')}</>}
@@ -3717,7 +3717,7 @@ export default function Room({
           <div className="toast rec-toast">
             <span className="rec-dot" />
             <span>
-              {recording ? 'Estás a gravar esta reunião' : `${remoteRecorder} está a gravar esta reunião`} — todos os
+              {recording ? t('room.txt.estasAGravar') : `${remoteRecorder} está a gravar esta reunião`} — todos os
               participantes têm acesso à gravação no painel «Participantes».
             </span>
           </div>
@@ -3727,7 +3727,7 @@ export default function Room({
           <div className="toast talk-toast">
             <span aria-hidden><MicIcon /></span>
             <span>
-              {talkOverNames ? `${talkOverNames} estão a falar ao mesmo tempo` : 'Duas pessoas estão a falar ao mesmo tempo'} —
+              {talkOverNames ? `${talkOverNames} estão a falar ao mesmo tempo` : t('room.txt.duasPessoasAFalar')} —
               dá espaço para cada um terminar.
             </span>
           </div>
@@ -3777,7 +3777,7 @@ export default function Room({
           {presentation && (
             <span className="room-topo presenter-chip" title={t('room.barra.apresentacaoEmCurso')}>
               <ShareIcon /> {presentation.peerId === 'me'
-                ? 'A apresentar'
+                ? t('room.txt.aApresentar')
                 : `${peers.find((p) => p.peerId === presentation.peerId)?.username ?? ''} • apresenta`}
             </span>
           )}
@@ -3811,7 +3811,7 @@ export default function Room({
               de media depende desta estrutura. */}
           <div className="ctrl-group ctrl-group-devices">
           <DeviceControl
-            label={micOn ? 'Desativar microfone (Ctrl+D)' : 'Ativar microfone (Ctrl+D)'}
+            label={micOn ? t('room.txt.desativarMicAtalho') : t('room.txt.ativarMicAtalho')}
             off={!micOn}
             pulse={meSpeaking}
             onToggle={toggleMic}
@@ -3825,7 +3825,7 @@ export default function Room({
             {micOn ? <MicIcon /> : <MicOffIcon />}
           </DeviceControl>
           <DeviceControl
-            label={camOn ? 'Desativar câmara (Ctrl+E)' : 'Ativar câmara (Ctrl+E)'}
+            label={camOn ? t('room.txt.desativarCamAtalho') : t('room.txt.ativarCamAtalho')}
             off={!camOn}
             onToggle={toggleCam}
             open={deviceMenu === 'cam'}
@@ -3840,7 +3840,7 @@ export default function Room({
           </div>
           <div className="ctrl-group ctrl-group-session">
           <Ctrl
-            label={ccOn ? 'Desativar legendas automáticas' : 'Legendas automáticas (CC) — transcreve a voz em tempo real'}
+            label={ccOn ? t('room.txt.desativarLegendas') : t('room.txt.ativarLegendas')}
             active={ccOn}
             onClick={() => setCcOn((v) => !v)}
           >
@@ -3863,8 +3863,8 @@ export default function Room({
           <Ctrl
             label={
               !isHost && !shareAllowed && !sharing
-                ? 'Partilhar ecrã (requer autorização do anfitrião)'
-                : 'Partilhar ecrã'
+                ? t('room.txt.partilharEcraPedeAutorizacao')
+                : t('room.txt.partilharEcra')
             }
             active={sharing}
             onClick={() => {
@@ -3885,11 +3885,11 @@ export default function Room({
           >
             <ShareIcon />
           </Ctrl>
-          <Ctrl label={handRaised ? 'Baixar a mão' : 'Levantar a mão'} active={handRaised} onClick={toggleHand}>
+          <Ctrl label={handRaised ? t('room.txt.baixarAMao') : t('room.txt.levantarAMao')} active={handRaised} onClick={toggleHand}>
             <HandIcon />
           </Ctrl>
           <Ctrl
-            label={recording ? 'Parar gravação' : 'Gravar reunião'}
+            label={recording ? t('room.txt.pararGravacao') : t('room.txt.gravarReuniao')}
             active={recording}
             danger={recording}
             onClick={() => void toggleRecording()}
@@ -3937,7 +3937,7 @@ export default function Room({
                     setMoreOpen(false)
                   }}
                 >
-                  <FullscreenIcon /> {fullscreen ? 'Sair de ecrã inteiro' : 'Ecrã inteiro'}
+                  <FullscreenIcon /> {fullscreen ? t('room.txt.sairEcraInteiro') : t('room.txt.ecraInteiro')}
                 </button>
                 <button
                   className="device-item"
@@ -3962,9 +3962,8 @@ export default function Room({
                         // com consentimento explícito do anfitrião.
                         const ok = window.confirm(
                           'Esta reunião é encriptada de ponta a ponta.\n\n' +
-                            'Para gravar no servidor, a chave desta sala é entregue ao servidor ' +
-                            'APENAS durante a gravação, e o ficheiro fica legível na biblioteca.\n\n' +
-                            'Autorizar e começar a gravar?',
+                            t('room.txt.gravarNoServidorAviso') + '\n\n' +
+                            t('room.txt.autorizarEGravar'),
                         )
                         if (!ok || !e2eeKeyRef.current) return
                         key = e2eeKeyRef.current
@@ -3996,7 +3995,7 @@ export default function Room({
                   <SettingsIcon />{t('room.espera.definicoes')}</button>
               </div>
             )}
-            <Ctrl label="Mais opções" active={moreOpen} onClick={() => setMoreOpen(!moreOpen)}>
+            <Ctrl label={t('room.maisOpcoes')} active={moreOpen} onClick={() => setMoreOpen(!moreOpen)}>
               <span className="more-dots">⋮</span>
             </Ctrl>
           </div>
@@ -4009,7 +4008,7 @@ export default function Room({
         <div className="bar-right">
           <Ctrl
             plain
-            label="Quadro branco colaborativo"
+            label={t('room.quadroBrancoColab')}
             active={wbOpen}
             onClick={() => {
               const next = !wbOpen
@@ -4022,17 +4021,17 @@ export default function Room({
           </Ctrl>
           <Ctrl
             plain
-            label="Ferramentas de reunião (sondagens, Q&A, temporizador)"
+            label={t('room.ferramentasReuniao')}
             active={panel === 'tools'}
             onClick={() => setPanel(panel === 'tools' ? 'none' : 'tools')}
           >
             <span className="tools-badge"><SettingsIcon /></span>
           </Ctrl>
-          <Ctrl plain label="Notas AI / Ata (MoM)" active={notesOpen} onClick={() => setNotesOpen(!notesOpen)}>
+          <Ctrl plain label={t('room.notasAiAta')} active={notesOpen} onClick={() => setNotesOpen(!notesOpen)}>
             <NoteIcon />
             {transcribing && <span className="badge live dot" aria-label="a transcrever" />}
           </Ctrl>
-          <Ctrl plain label="Participantes e gravações" active={panel === 'people'} onClick={() => setPanel(panel === 'people' ? 'none' : 'people')}>
+          <Ctrl plain label={t('room.participantesEGravacoes')} active={panel === 'people'} onClick={() => setPanel(panel === 'people' ? 'none' : 'people')}>
             <PeopleIcon />
             <span className="badge">{total}</span>
           </Ctrl>
@@ -4128,7 +4127,7 @@ function DeviceControl({
       >
         {children}
       </button>
-      <button className={open ? 'chevron open' : 'chevron'} onClick={onChevron} data-tip="Escolher dispositivo" aria-label={t('room.chat.escolherDispositivo')}>
+      <button className={open ? 'chevron open' : 'chevron'} onClick={onChevron} data-tip={t('room.escolherDispositivoTip')} aria-label={t('room.chat.escolherDispositivo')}>
         <ChevronUpIcon />
       </button>
     </div>

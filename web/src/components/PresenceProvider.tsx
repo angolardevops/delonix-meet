@@ -56,7 +56,7 @@ export default function PresenceProvider({
     try {
       callNotif.current?.close()
       const n = new Notification(`📞 ${caller} está a ligar`, {
-        body: title || (kind === 'voice' ? 'Chamada de voz' : 'Videochamada'),
+        body: title || (kind === 'voice' ? t('status.chamadaDeVoz') : 'Videochamada'),
         tag: 'delonix-call',
         requireInteraction: true,
         icon: '/icon-192.png',
@@ -202,7 +202,7 @@ export default function PresenceProvider({
         <div className="missed-layer">
           <div className="missed-card">
             <div className="missed-head">
-              <strong>{missed.length === 1 ? 'Chamada perdida' : `${missed.length} chamadas perdidas`}</strong>
+              <strong>{missed.length === 1 ? t('status.chamadaPerdida') : `${missed.length} chamadas perdidas`}</strong>
               <button className="panel-close" onClick={dismissMissed}><CloseIcon /></button>
             </div>
             <div className="missed-list">

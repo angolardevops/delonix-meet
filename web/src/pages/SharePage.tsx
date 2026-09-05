@@ -25,7 +25,7 @@ export default function SharePage({ token }: { token: string }) {
       } else if (status === 404) {
         setError(t('room.sala.linkInvalidoOuExpirado'))
       } else {
-        setError((e as Error).message ?? 'Erro ao carregar gravação.')
+        setError((e as Error).message ?? t('share.erroAoCarregar'))
       }
     } finally {
       setLoading(false)
