@@ -20,6 +20,15 @@ export default {
     poweredBy: 'Powered by',
   },
   api: {
+    caminhoChaves: "Análises → Chaves de API",
+    caminhoWebhooks: "Análises → Webhooks",
+    corpo: "Corpo",
+    resposta: "Resposta",
+    exemploCurl: "Exemplo (curl)",
+    criaSala: "Cria uma sala de reunião e devolve o código + link de entrada.",
+    metadadosSala: "Metadados de uma sala existente.",
+    infoOrg: "Informação da organização a que a chave pertence.",
+    listaGravacoes: "Lista as gravações da organização (até 200, mais recentes primeiro).",
     todasAsChamadas: 'Todas as chamadas',
     alemDaApi: 'Além da API, a organização pode receber',
     noDestino: 'No destino',
@@ -50,6 +59,13 @@ export default {
   // A SALA (R99). O ecrã principal do produto estava inteiramente fora
   // do i18n — zero chamadas a `t()` em 4 300 linhas. Ver o R99.
   room: {
+    notasAi: "Notas AI",
+    maisOpcoes: "Mais opções",
+    quadroBrancoColab: "Quadro branco colaborativo",
+    ferramentasReuniao: "Ferramentas de reunião (sondagens, Q&A, temporizador)",
+    notasAiAta: "Notas AI / Ata (MoM)",
+    participantesEGravacoes: "Participantes e gravações",
+    escolherDispositivoTip: "Escolher dispositivo",
     desafixarDoPalcoTile: "Desafixar do palco",
     fixarNoPalcoTile: "Fixar no palco",
     sala: {
@@ -480,6 +496,9 @@ export default {
     now: 'agora',
   },
   settings: {
+    temaEscuro: "Delonix · Escuro (Padrão)",
+    temaClaro: "Delonix · Claro",
+    substituiNome: "Substitui «Delonix Meet» no cabeçalho e no login.",
     novaPassword: 'Nova password',
     nomeDaApp: 'Nome da aplicação',
     fundoDoLogin: 'Fundo do login',
@@ -630,6 +649,10 @@ export default {
     secure: 'Ligação segura · código único para partilhar',
   },
   admin: {
+    nfsManifesto: "O K8s cria um PersistentVolume com este servidor NFS. Descarrega o manifesto abaixo e aplica com",
+    servidorNfs: "Servidor NFS",
+    webdavExplicacao: "Gravações enviadas por WebDAV após processamento. Compatível com Nextcloud, ownCloud e SharePoint.",
+    urlBaseWebdav: "URL base WebDAV",
     armazenamentoLocal: 'Local (padrão)',
     tipoDeArmazenamento: 'Tipo de armazenamento',
     pathDeExportacao: 'Path de exportação',

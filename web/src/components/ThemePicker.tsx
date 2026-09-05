@@ -16,8 +16,8 @@ export default function ThemePicker() {
     <div className="theme-picker">
       <label className="theme-label">{t('common.theme', 'Tema')}</label>
       <select value={theme} onChange={(e) => pick(e.target.value as Theme)}>
-        <option value="default">Delonix · Escuro (Padrão)</option>
-        <option value="delonix-light">Delonix · Claro</option>
+        <option value="default">{t('settings.temaEscuro')}</option>
+        <option value="delonix-light">{t('settings.temaClaro')}</option>
       </select>
     </div>
   )

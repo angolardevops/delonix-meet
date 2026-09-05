@@ -18,6 +18,15 @@ export default {
     poweredBy: 'Powered by',
   },
   api: {
+    caminhoChaves: "Analytics → API keys",
+    caminhoWebhooks: "Analytics → Webhooks",
+    corpo: "Body",
+    resposta: "Response",
+    exemploCurl: "Example (curl)",
+    criaSala: "Creates a meeting room and returns the code + join link.",
+    metadadosSala: "Metadata for an existing room.",
+    infoOrg: "Information about the organisation the key belongs to.",
+    listaGravacoes: "Lists the organisation’s recordings (up to 200, most recent first).",
     todasAsChamadas: 'All calls',
     alemDaApi: 'Beyond the API, the organisation can receive',
     noDestino: 'At the destination',
@@ -48,6 +57,13 @@ export default {
   // A SALA (R99). O ecrã principal do produto estava inteiramente fora
   // do i18n — zero chamadas a `t()` em 4 300 linhas. Ver o R99.
   room: {
+    notasAi: "AI notes",
+    maisOpcoes: "More options",
+    quadroBrancoColab: "Collaborative whiteboard",
+    ferramentasReuniao: "Meeting tools (polls, Q&A, timer)",
+    notasAiAta: "AI notes / Minutes (MoM)",
+    participantesEGravacoes: "Participants and recordings",
+    escolherDispositivoTip: "Choose device",
     desafixarDoPalcoTile: "Unpin from stage",
     fixarNoPalcoTile: "Pin to stage",
     sala: {
@@ -478,6 +494,9 @@ export default {
     now: 'now',
   },
   settings: {
+    temaEscuro: "Delonix · Dark (default)",
+    temaClaro: "Delonix · Light",
+    substituiNome: "Replaces “Delonix Meet” in the header and on the sign-in page.",
     novaPassword: 'New password',
     nomeDaApp: 'Application name',
     fundoDoLogin: 'Sign-in background',
@@ -628,6 +647,10 @@ export default {
     secure: 'Secure connection · one code to share',
   },
   admin: {
+    nfsManifesto: "Kubernetes creates a PersistentVolume with this NFS server. Download the manifest below and apply it with",
+    servidorNfs: "NFS server",
+    webdavExplicacao: "Recordings uploaded over WebDAV after processing. Works with Nextcloud, ownCloud and SharePoint.",
+    urlBaseWebdav: "WebDAV base URL",
     armazenamentoLocal: 'Local (default)',
     tipoDeArmazenamento: 'Storage type',
     pathDeExportacao: 'Export path',

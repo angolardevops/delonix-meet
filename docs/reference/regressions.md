@@ -951,7 +951,7 @@ devolveu-o.
 ### R107 — O «zero texto fora do `t()`» era verdade só para nós de texto
 
 **Sintoma.** O R102 fechou o lote do i18n com «zero texto de interface fora do
-`t()` em todo o `web/src`», e o portão dava verde. Medido de outra maneira: **85
+`t()` em todo o `web/src`», e o portão dava verde. Medido de outra maneira: **112
 frases visíveis** ainda em português duro — 64 no `Room.tsx` e 21 no resto da
 árvore. Entre elas o título de *todos* os botões da barra de controlo
 («Desativar microfone (Ctrl+D)», «Partilhar ecrã», «Levantar a mão»), os avisos
@@ -984,6 +984,27 @@ afrouxada. Um nome de produto não se traduz; uma frase sim.
 frases visíveis dentro de expressões» — árvore inteira, não só o `Room.tsx`.
 Provado vermelho antes de verde (85 frases listadas) e provado outra vez depois:
 devolver `'Base de dados'` ao `Status.tsx` põe-no a vermelho.
+
+**E ainda não era tudo — mais duas famílias na mesma passagem.**
+
+*Nós de texto MISTURADOS com expressões.* A regra dos nós de texto usava a classe
+`[^<>{}\n]`, que **exclui `{`**. Um nó como `Notas AI {transcribing && <span/>}`
+ou `A IA segmenta-te localmente… {bgBusy ? t(…) : ''}` era invisível para ela.
+Dezasseis assim. A regra passou a **retirar as expressões** — respeitando o
+encaixe das chavetas — e a julgar o que sobra como prosa.
+
+*Atributos inventados.* A regra verificava três atributos **por nome**: `title`,
+`placeholder`, `aria-label`. Mas quem escreve um componente inventa os seus —
+`label=`, `desc=`, `data-tip=` — e todos acabam no ecrã ou no leitor de ecrã.
+Onze escaparam assim, incluindo o rótulo de leitor de ecrã de **cinco botões da
+barra de controlo**. A regra deixou de nomear atributos.
+
+**O que fica de fora, e é honesto dizê-lo.** Uma frase que comece por minúscula
+(`'nova password'` num `placeholder`) continua a passar. A maiúscula inicial é o
+que distingue uma frase de um `className` como `'brand-square big'` — sem ela, o
+portão acusa 162 literais dos quais a esmagadora maioria são nomes de classe, e
+um portão que grita por tudo é ignorado tal como um portão cego. Fica registado
+como limite conhecido, não como problema resolvido.
 
 **Lição, e é a mesma pela quinta vez.** Um portão construído sobre a FORMA que o
 defeito tinha da última vez erra na forma seguinte — R88, R99, R102, R105 e agora

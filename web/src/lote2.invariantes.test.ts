@@ -291,6 +291,65 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     expect(soltos).toEqual([])
   })
 
+  // Nomes próprios: não se traduzem, e ficam de fora UM A UM com razão escrita.
+  // Nunca por a regra ser afrouxada — uma regra afrouxada deixa passar a frase
+  // seguinte, que já não é um nome.
+  const NOMES = [
+    'Microsoft Teams',                 // marca, na matriz competitiva
+    'Google Meet',                     // idem
+    'API / Signaling',                 // nomes dos serviços na página de estado
+    'Delonix Meet',                    // o nome do produto
+    'TrueNAS / NFS',                   // nomes de tecnologia, na escolha de armazenamento
+    'Nextcloud / WebDAV',              // idem
+    'Delonix Call Quality Score',      // nome da métrica, como o «MOS» de que descende
+    'X-Delonix-Signature: sha256=…',   // um header HTTP não tem tradução
+  ]
+  /** Tira as expressões `{…}` de um nó de texto, respeitando o encaixe. */
+  function semExpressoes(txt: string): string {
+    let out = ''
+    let nivel = 0
+    for (const c of txt) {
+      if (c === '{') nivel++
+      else if (c === '}') { if (nivel > 0) nivel-- }
+      else if (nivel === 0) out += c
+    }
+    return out
+  }
+  /** Uma FRASE lê-se; um identificador não. É isto que distingue as duas. */
+  const eFrase = (v: string) => /\s/.test(v) && /[a-zà-ú]{3}/.test(v) && !NOMES.includes(v)
+
+  it('nenhum nó de texto MISTURADO com expressões escapa ao t()', () => {
+    // O portão dos nós de texto usava `[^<>{}\n]` — a classe exclui `{`, por
+    // isso um nó como `Notas AI {transcribing && <span/>}` ou
+    // `A IA segmenta-te localmente… {bgBusy ? T() : ''}` era invisível. São
+    // dezasseis, e é a MESMA falha de sempre: a regra desenhada para a forma
+    // que o defeito tinha da última vez. Aqui a expressão é retirada e o que
+    // sobra é julgado como prosa.
+    const soltos: string[] = []
+    for (const f of listarTsx('web/src')) {
+      for (const m of read(f).matchAll(/>([A-ZÀ-Ú][^<>]{3,400})</g)) {
+        const prosa = semExpressoes(m[1]).replace(/\s+/g, ' ').trim()
+        if (prosa.length >= 8 && eFrase(prosa)) soltos.push(`${f}: ${prosa}`)
+      }
+    }
+    expect(soltos).toEqual([])
+  })
+
+  it('nenhum ATRIBUTO leva uma frase escrita à mão', () => {
+    // A versão anterior verificava três atributos por nome: `title`,
+    // `placeholder`, `aria-label`. Mas quem escreve um componente inventa os
+    // seus: `label=`, `desc=`, `data-tip=` — e todos acabam no ecrã ou no
+    // leitor. Onze escaparam assim, incluindo o rótulo de leitor de ecrã de
+    // cinco botões da barra. A regra deixou de nomear atributos.
+    const soltos: string[] = []
+    for (const f of listarTsx('web/src')) {
+      for (const m of read(f).matchAll(/\b([a-zA-Z-]+)="([A-ZÀ-Ú][^"]{3,300})"/g)) {
+        if (eFrase(m[2])) soltos.push(`${f}: ${m[1]}="${m[2]}"`)
+      }
+    }
+    expect(soltos).toEqual([])
+  })
+
   it('nenhum ficheiro tem frases visíveis dentro de expressões', () => {
     // O portão de cima olha para NÓS DE TEXTO (`>frase<`) e três atributos. Uma
     // frase dentro de uma expressão — `{cond ? 'Ligar câmara' : 'Desligar'}`,
@@ -307,11 +366,6 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     //
     // NOMES PRÓPRIOS ficam de fora com razão escrita, um a um — nunca por a
     // regra ser afrouxada. Um nome de produto não se traduz; uma frase sim.
-    const NOMES = [
-      'Microsoft Teams',   // marca, na matriz competitiva
-      'Google Meet',       // idem
-      'API / Signaling',   // nomes dos serviços na página de estado
-    ]
     const soltos: string[] = []
     for (const f of listarTsx('web/src')) {
       const src = read(f)
@@ -322,8 +376,7 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
         .replace(/\/\*[\s\S]*?\*\//g, '')
       for (const m of src.matchAll(/'([A-ZÀ-Ú][^'\\\n]{3,300})'/g)) {
         const v = m[1]
-        if (!/\s/.test(v) || !/[a-zà-ú]{3}/.test(v)) continue
-        if (NOMES.includes(v)) continue
+        if (!eFrase(v)) continue
         soltos.push(`${f}: ${v}`)
       }
     }

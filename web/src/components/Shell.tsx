@@ -185,7 +185,7 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
             <>
               <section className="settings-group">
                 <h3>{t('settings.nomeDaApp')}</h3>
-                <small className="muted">Substitui «Delonix Meet» no cabeçalho e no login.</small>
+                <small className="muted">{t('settings.substituiNome')}</small>
                 <div className="brand-row">
                   <input
                     className="brand-name-input"

@@ -18,6 +18,15 @@ export default {
     poweredBy: 'Propulsé par',
   },
   api: {
+    caminhoChaves: "Analyses → Clés d’API",
+    caminhoWebhooks: "Analyses → Webhooks",
+    corpo: "Corps",
+    resposta: "Réponse",
+    exemploCurl: "Exemple (curl)",
+    criaSala: "Crée une salle de réunion et renvoie le code et le lien d’entrée.",
+    metadadosSala: "Métadonnées d’une salle existante.",
+    infoOrg: "Informations sur l’organisation à laquelle appartient la clé.",
+    listaGravacoes: "Liste les enregistrements de l’organisation (200 maximum, les plus récents d’abord).",
     todasAsChamadas: 'Tous les appels',
     alemDaApi: 'Au-delà de l\'API, l\'organisation peut recevoir',
     noDestino: 'À destination',
@@ -48,6 +57,13 @@ export default {
   // A SALA (R99). O ecrã principal do produto estava inteiramente fora
   // do i18n — zero chamadas a `t()` em 4 300 linhas. Ver o R99.
   room: {
+    notasAi: "Notes IA",
+    maisOpcoes: "Plus d’options",
+    quadroBrancoColab: "Tableau blanc collaboratif",
+    ferramentasReuniao: "Outils de réunion (sondages, Q&R, minuteur)",
+    notasAiAta: "Notes IA / Compte rendu",
+    participantesEGravacoes: "Participants et enregistrements",
+    escolherDispositivoTip: "Choisir l’appareil",
     desafixarDoPalcoTile: "Détacher de la scène",
     fixarNoPalcoTile: "Épingler à la scène",
     sala: {
@@ -501,6 +517,9 @@ export default {
     done: { t: 'Tout est prêt ! 🎉', b: "Vous connaissez l'essentiel. Lancez votre première réunion depuis l'Accueil !" },
   },
   settings: {
+    temaEscuro: "Delonix · Sombre (par défaut)",
+    temaClaro: "Delonix · Clair",
+    substituiNome: "Remplace « Delonix Meet » dans l’en-tête et sur la page de connexion.",
     novaPassword: 'Nouveau mot de passe',
     nomeDaApp: 'Nom de l\'application',
     fundoDoLogin: 'Arrière-plan de connexion',
@@ -626,6 +645,10 @@ export default {
     secure: 'Connexion sécurisée · un code à partager',
   },
   admin: {
+    nfsManifesto: "Kubernetes crée un PersistentVolume avec ce serveur NFS. Téléchargez le manifeste ci-dessous et appliquez-le avec",
+    servidorNfs: "Serveur NFS",
+    webdavExplicacao: "Enregistrements envoyés par WebDAV après traitement. Compatible avec Nextcloud, ownCloud et SharePoint.",
+    urlBaseWebdav: "URL de base WebDAV",
     armazenamentoLocal: 'Local (par défaut)',
     tipoDeArmazenamento: 'Type de stockage',
     pathDeExportacao: 'Chemin d\'export',

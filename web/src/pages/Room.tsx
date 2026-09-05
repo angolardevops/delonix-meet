@@ -3491,7 +3491,7 @@ export default function Room({
         {notesOpen && (
           <aside className="side-panel notes-panel">
             <div className="panel-head">
-              <h3>Notas AI {transcribing && <span className="rec-dot" />}</h3>
+              <h3>{t('room.notasAi')} {transcribing && <span className="rec-dot" />}</h3>
               <button className="panel-close" onClick={() => setNotesOpen(false)}><CloseIcon /></button>
             </div>
             <p className="muted small">{t('room.fundos.transcricaoPartilhadaO')}<strong>anfitrião</strong> inicia a Nota AI e <strong>todos</strong> os
@@ -3995,7 +3995,7 @@ export default function Room({
                   <SettingsIcon />{t('room.espera.definicoes')}</button>
               </div>
             )}
-            <Ctrl label="Mais opções" active={moreOpen} onClick={() => setMoreOpen(!moreOpen)}>
+            <Ctrl label={t('room.maisOpcoes')} active={moreOpen} onClick={() => setMoreOpen(!moreOpen)}>
               <span className="more-dots">⋮</span>
             </Ctrl>
           </div>
@@ -4008,7 +4008,7 @@ export default function Room({
         <div className="bar-right">
           <Ctrl
             plain
-            label="Quadro branco colaborativo"
+            label={t('room.quadroBrancoColab')}
             active={wbOpen}
             onClick={() => {
               const next = !wbOpen
@@ -4021,17 +4021,17 @@ export default function Room({
           </Ctrl>
           <Ctrl
             plain
-            label="Ferramentas de reunião (sondagens, Q&A, temporizador)"
+            label={t('room.ferramentasReuniao')}
             active={panel === 'tools'}
             onClick={() => setPanel(panel === 'tools' ? 'none' : 'tools')}
           >
             <span className="tools-badge"><SettingsIcon /></span>
           </Ctrl>
-          <Ctrl plain label="Notas AI / Ata (MoM)" active={notesOpen} onClick={() => setNotesOpen(!notesOpen)}>
+          <Ctrl plain label={t('room.notasAiAta')} active={notesOpen} onClick={() => setNotesOpen(!notesOpen)}>
             <NoteIcon />
             {transcribing && <span className="badge live dot" aria-label="a transcrever" />}
           </Ctrl>
-          <Ctrl plain label="Participantes e gravações" active={panel === 'people'} onClick={() => setPanel(panel === 'people' ? 'none' : 'people')}>
+          <Ctrl plain label={t('room.participantesEGravacoes')} active={panel === 'people'} onClick={() => setPanel(panel === 'people' ? 'none' : 'people')}>
             <PeopleIcon />
             <span className="badge">{total}</span>
           </Ctrl>
@@ -4127,7 +4127,7 @@ function DeviceControl({
       >
         {children}
       </button>
-      <button className={open ? 'chevron open' : 'chevron'} onClick={onChevron} data-tip="Escolher dispositivo" aria-label={t('room.chat.escolherDispositivo')}>
+      <button className={open ? 'chevron open' : 'chevron'} onClick={onChevron} data-tip={t('room.escolherDispositivoTip')} aria-label={t('room.chat.escolherDispositivo')}>
         <ChevronUpIcon />
       </button>
     </div>
