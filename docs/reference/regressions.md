@@ -897,6 +897,15 @@ blocos `REACTION_EMOJIS`/`CHAT_EMOJIS` e os comentários) e 3.2.7 (literais de
 3 a 300 caracteres). Provado vermelho antes de verde: as duas primeiras corridas
 listaram 20 e 2 sítios reais.
 
+**A quarta versão, e o pior dos quatro defeitos.** Depois de convertidos os 20,
+o portão continuava a dar verde por cima de **223 linhas**. A regra era «a partir
+de uma linha que mencione `REACTION_EMOJIS`, ignora até um `]`» — e a linha
+`{REACTION_EMOJIS.map((e) => (` está a meio do JSX da barra de controlo; o `]`
+que a fechava só aparecia 223 linhas abaixo. Toda a barra ficava fora do portão,
+com dois emoji e duas frases por traduzir lá dentro. A isenção passou a valer
+para a **linha** que nomeia a constante — uma linha, nunca um intervalo — e para
+o corpo das declarações, delimitado por contagem de parênteses rectos.
+
 **Onde `<option>` está em causa:** um `<option>` não aceita um `<svg>` dentro. Aí
 o pictograma **sai** e fica só o texto — não se troca por um ícone que o browser
 descarta em silêncio.

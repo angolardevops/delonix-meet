@@ -3976,10 +3976,10 @@ export default function Room({
                   </button>
                 )}
                 <button className="device-item" onClick={() => setHideSelf((v) => !v)}>
-                  {hideSelf ? '👁 Mostrar o meu vídeo' : '🙈 Ocultar o meu vídeo'}
+                  <span style={{ opacity: !hideSelf ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><CamIcon />{t('room.barra.mostrarOMeuVideo')}
                 </button>
                 <button className="device-item" onClick={() => setHideNoVideo((v) => !v)}>
-                  {hideNoVideo ? '👥 Mostrar participantes sem vídeo' : '🫥 Ocultar participantes sem vídeo'}
+                  <span style={{ opacity: !hideNoVideo ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><PeopleIcon />{t('room.barra.mostrarQuemNaoTemVideo')}
                 </button>
                 <button
                   className="device-item"

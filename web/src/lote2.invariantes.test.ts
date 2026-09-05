@@ -130,7 +130,41 @@ describe('3.2.5 · nada de emoji como controlo na consola', () => {
   // na forma seguinte. Este procura o glifo em QUALQUER linha de marcação, e
   // deixa de fora o que é conteúdo por razão escrita — não por acidente de
   // sintaxe.
+  // Os emoji do PAINEL DE REACÇÕES e do teclado de chat são conteúdo: é a
+  // pessoa que os escolhe e envia. Ficam de fora — mas SÓ eles.
+  //
+  // QUARTA versão, e a terceira tinha o pior tipo de defeito: um portão que
+  // dava verde por cima de 223 linhas. A regra era «a partir de uma linha que
+  // mencione REACTION_EMOJIS, ignora até um `]`», e a linha
+  // `{REACTION_EMOJIS.map((e) => (` está a meio do JSX da barra — o `]` que a
+  // fechava só aparecia 223 linhas abaixo. Toda a barra de controlo ficava
+  // fora do portão, com dois emoji lá dentro.
+  //
+  // A lição repete-se pela quarta vez: uma regra construída sobre a FORMA que
+  // o defeito tinha da última vez erra na forma seguinte. Esta não adivinha
+  // onde o conteúdo acaba — a isenção vale para a linha que nomeia a constante
+  // (uma linha, nunca um intervalo) e para o corpo das DECLARAÇÕES, delimitado
+  // por contagem de parênteses rectos a partir do `const X = [`.
   const CONTEUDO = /REACTION_EMOJIS|CHAT_EMOJIS/
+  const DECLARACAO = /const (REACTION_EMOJIS|CHAT_EMOJIS)\s*=/
+  function linhasDeConteudo(texto: string): Set<number> {
+    const fora = new Set<number>()
+    const linhas = texto.split('\n')
+    for (let i = 0; i < linhas.length; i++) {
+      if (CONTEUDO.test(linhas[i])) fora.add(i)
+      if (!DECLARACAO.test(linhas[i])) continue
+      let nivel = 0
+      for (let j = i; j < linhas.length; j++) {
+        fora.add(j)
+        for (const ch of linhas[j]) {
+          if (ch === '[') nivel++
+          else if (ch === ']') nivel--
+        }
+        if (nivel <= 0 && j > i - 1 && linhas[j].includes(']')) break
+      }
+    }
+    return fora
+  }
   const CHROME = [
     'web/src/components/Shell.tsx',
     'web/src/components/CommandPalette.tsx',
@@ -152,14 +186,13 @@ describe('3.2.5 · nada de emoji como controlo na consola', () => {
   for (const f of CHROME) {
     it(`${f.split('/').pop()} não usa emoji como iconografia`, () => {
       const soltos: string[] = []
-      let emConteudo = false
-      for (const l of read(f).split('\n')) {
-        if (CONTEUDO.test(l)) emConteudo = true
+      const texto = read(f)
+      const conteudo = linhasDeConteudo(texto)
+      const linhas = texto.split('\n')
+      for (let n = 0; n < linhas.length; n++) {
+        const l = linhas[n]
+        if (conteudo.has(n)) continue
         const t = l.trim()
-        if (emConteudo) {
-          if (l.includes(']')) emConteudo = false
-          continue
-        }
         if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) continue
         // comentário JSX (`{/* … */}`) e comentário no fim de uma linha de
         // código não são interface.
