@@ -11,8 +11,13 @@
 # parte. E é caro porque o sintoma não aponta para a causa — parece um problema
 # de ambiente, não uma linha fora de ordem.
 #
-# O que se verifica: em cada JOB, a primeira invocação de um teste que importe
-# `@playwright/test` vem depois de um `playwright install` nesse mesmo job.
+# O que se verifica, e são DUAS coisas porque o mesmo passo errou nas duas:
+#   1. em cada JOB, um teste que importe `@playwright/test` corre depois de um
+#      `playwright install` nesse mesmo job;
+#   2. um passo cujo comando diz `web/e2e/…` NÃO tem `working-directory: web` —
+#      senão o Node procura `web/web/e2e/` e morre com MODULE_NOT_FOUND. Foi o
+#      terceiro erro seguido na mesma linha, apanhado do passo vizinho ao mover
+#      o passo de sítio.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 WF=.github/workflows/ci.yml
@@ -36,9 +41,22 @@ for bloco in jobs:
     nome = (re.match(r'\s*([a-z][a-z0-9_-]*):', bloco) or [None, '?'])[1]
     linhas = bloco.split('\n')
     instalou_em = None
+    # Passos com `web/e2e/` no comando, para depois se ver o working-directory:
+    # o `working-directory` vem DEPOIS do `run:` no ficheiro, por isso guarda-se
+    # a linha e verifica-se no fim do passo.
+    passo_com_caminho = None
     for i, l in enumerate(linhas):
         if 'playwright install' in l and instalou_em is None:
             instalou_em = i
+        if re.match(r'\s*- name:', l):
+            passo_com_caminho = None
+        if 'web/e2e/' in l and re.search(r'\bnode\s+web/e2e/', l):
+            passo_com_caminho = l.strip()
+        if passo_com_caminho and 'working-directory: web' in l:
+            print(f'✗ browser: no job "{nome}", um passo corre `node web/e2e/…` COM '
+                  f'`working-directory: web` — o caminho fica web/web/e2e/')
+            falhou = True
+            passo_com_caminho = None
         for m in re.finditer(r'web/e2e/([a-z0-9-]+\.mjs)', l):
             f = m.group(1)
             if f not in precisam:
