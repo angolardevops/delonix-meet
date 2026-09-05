@@ -256,6 +256,27 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     expect(soltos).toEqual([])
   })
 
+  // O PONTO CEGO DOS DOIS PORTÕES ANTERIORES (R104): olhavam para JSX — texto
+  // entre tags e atributos — e não para strings passadas a FUNÇÕES. Havia 46
+  // mensagens de estado em português fixo (`setStatus('O anfitrião silenciou o
+  // teu microfone')`), duas delas com emoji, invisíveis para os dois.
+  //
+  // Isto importa mais desde que a linha de estado passou a ser anunciada por
+  // leitor de ecrã: anunciar português a quem escolheu inglês é pior do que não
+  // anunciar.
+  it('as mensagens de estado não são literais em português', () => {
+    const MARCA_OU_URL = /Delonix|sha256|http|\/api\//
+    const soltos: string[] = []
+    for (const f of listarTsx('web/src')) {
+      if (f.includes('/locales/')) continue
+      for (const m of read(f).matchAll(/\b(setStatus|setErr|setError|setMsg)\(\s*'([^']{6,120})'/g)) {
+        const v = m[2]
+        if (/[a-zà-ú]{3}/.test(v) && /\s/.test(v) && !MARCA_OU_URL.test(v)) soltos.push(`${f}: ${v}`)
+      }
+    }
+    expect(soltos).toEqual([])
+  })
+
   it('pt, en e fr têm exactamente as mesmas chaves em `room`', () => {
     const chaves = (f: string) => {
       const s = read(`web/src/locales/${f}.ts`)
