@@ -73,8 +73,11 @@ export type ServerMsg =
   | { type: 'peer-role'; peer_id: string; can_admit: boolean }
   | { type: 'denied' }
   | { type: 'force-muted' }
+  | { type: 'force-cam-off' }
+  | { type: 'muted-all'; by: string; allow_unmute: boolean }
+  | { type: 'host-changed'; from: string; to: string }
   | { type: 'kicked' }
-  | { type: 'room-settings'; locked: boolean; host_share_only: boolean }
+  | { type: 'room-settings'; locked: boolean; host_share_only: boolean; chat_on?: boolean; allow_unmute?: boolean }
   | { type: 'share-granted'; allowed: boolean }
   | { type: 'share-request'; from: string; username: string }
   | { type: 'wb-open'; by: string }
@@ -111,6 +114,10 @@ export type ClientMsg =
   | { type: 'deny'; to: string }
   | { type: 'promote-admit'; to: string; allowed: boolean }
   | { type: 'force-mute'; to: string }
+  | { type: 'force-cam'; to: string }
+  | { type: 'mute-all'; allow_unmute: boolean }
+  | { type: 'chat-toggle'; on: boolean }
+  | { type: 'transfer-host'; to: string }
   | { type: 'kick'; to: string }
   | { type: 'room-lock'; locked: boolean }
   | { type: 'host-share-only'; on: boolean }
