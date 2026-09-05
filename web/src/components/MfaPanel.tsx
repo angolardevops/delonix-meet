@@ -117,7 +117,7 @@ export default function MfaPanel() {
       <div className="mfa-panel">
         <h3>{t('mfa.ligaOAutenticador')}</h3>
         <p className="muted">
-          Lê o código com o Google Authenticator, Aegis, 1Password ou outro — ou introduz a chave à mão.
+          {t('mfa.leOCodigoCom')}
         </p>
         {qr && <div className="mfa-qr" aria-label={t('mfa.codigoQr')} dangerouslySetInnerHTML={{ __html: qr }} />}
         <label className="set-label">{t('mfa.chaveSeNaoLeres')}<code className="mfa-secret">{segredo.match(/.{1,4}/g)?.join(' ')}</code>

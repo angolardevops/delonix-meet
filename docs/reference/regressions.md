@@ -870,3 +870,80 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **O PONTO CEGO dos dois portões anteriores:** o de emoji (R88) e o de i18n (R99/R102) olham para **JSX** — texto entre tags e atributos. Não olhavam para strings passadas a **funções**. Havia **46 mensagens de estado em português fixo**, duas delas com emoji, invisíveis para ambos. Isso passou a importar mais desde que a linha de estado é anunciada: **anunciar português a quem escolheu inglês é pior do que não anunciar**.
 - **Portão:** `lote2` — nenhuma chamada a `setStatus`/`setErr`/`setError`/`setMsg` leva um literal em português. Visto a falhar, e apanhou logo uma que a minha própria conversão tinha deixado para trás (a que tinha o 🎮: a chave ficou sem o emoji e o texto não casou).
 - **Ficheiros:** `web/src/pages/Room.tsx`, `web/src/components/Shell.tsx`, `web/src/pages/{Analytics,SharePage}.tsx`, `web/src/locales/{pt,en,fr}.ts`, `web/src/lote2.invariantes.test.ts`.
+
+### R105 — O portão dos emoji só via metade da consola, e a régua do i18n cortava aos 80 caracteres
+
+**Sintoma.** O portão 3.2.5 dava verde com 20 pictogramas colados a texto ainda
+espalhados por cinco ficheiros da consola (`Analytics`, `Home`, `Landing`,
+`Room`, `RemoteTile`), e o portão 3.2.7 dava verde com três frases longas
+literais por traduzir.
+
+**Causa.** Duas réguas escolhidas de cabeça em vez de derivadas do porquê. O
+padrão de emoji cobria um intervalo que deixava de fora `U+FE0F` — o selector de
+variação que faz de `⚙` um `⚙️` — e o de i18n só olhava para literais entre 3 e
+80 caracteres, por eu ter presumido que texto de interface é curto. As três
+frases que escaparam tinham 96, 118 e 141 caracteres.
+
+**Regra.** A régua vem do PORQUÊ, não de um intervalo confortável. O emoji é
+recusado como iconografia porque **rende conforme o sistema operativo do
+visitante e não herda `currentColor`** — logo o padrão é «pictograma», incluindo
+o selector de variação, e não «bloco Unicode X a Y». O texto de interface é
+recusado fora do `t()` porque **um utilizador francês não o lê** — e uma frase
+longa é lida por ele tanto como uma curta; o tecto sobe para 300.
+
+**Portão.** `web/src/lote2.invariantes.test.ts`, testes 3.2.5 (`EMOJI =
+/[\u{1F300}-\u{1FAFF}\u{FE0F}]/u` sobre 16 ficheiros de consola, saltando os
+blocos `REACTION_EMOJIS`/`CHAT_EMOJIS` e os comentários) e 3.2.7 (literais de
+3 a 300 caracteres). Provado vermelho antes de verde: as duas primeiras corridas
+listaram 20 e 2 sítios reais.
+
+**A quarta versão, e o pior dos quatro defeitos.** Depois de convertidos os 20,
+o portão continuava a dar verde por cima de **223 linhas**. A regra era «a partir
+de uma linha que mencione `REACTION_EMOJIS`, ignora até um `]`» — e a linha
+`{REACTION_EMOJIS.map((e) => (` está a meio do JSX da barra de controlo; o `]`
+que a fechava só aparecia 223 linhas abaixo. Toda a barra ficava fora do portão,
+com dois emoji e duas frases por traduzir lá dentro. A isenção passou a valer
+para a **linha** que nomeia a constante — uma linha, nunca um intervalo — e para
+o corpo das declarações, delimitado por contagem de parênteses rectos.
+
+**Onde `<option>` está em causa:** um `<option>` não aceita um `<svg>` dentro. Aí
+o pictograma **sai** e fica só o texto — não se troca por um ícone que o browser
+descarta em silêncio.
+
+**Ficheiros.** `web/src/icons.tsx` (`KeyIcon`, `GlobeIcon`, `BotIcon`,
+`ThumbIcon`), `web/src/pages/{Analytics,Home,Landing,Room}.tsx`,
+`web/src/room/RemoteTile.tsx`, `web/src/locales/{pt,en,fr}.ts`,
+`web/src/lote2.invariantes.test.ts`.
+
+### R106 — Um arnês de mutação morto a meio deixava o produto sabotado na árvore
+
+**Sintoma.** Depois de o `scripts/mutantes.mjs` ser interrompido por um timeout,
+o `web/src/layerPolicy.ts` ficou na árvore de trabalho com um `&&` trocado por
+`||` — a sabotagem que o arnês injecta de propósito. Foi encontrada por acaso, ao
+ler um `git status` antes de um commit. Um `git add -A` tê-la-ia empurrado.
+
+**Causa.** O restauro do ficheiro estava só no caminho normal, entre a escrita do
+mutante e a corrida seguinte. Qualquer morte no meio — Ctrl-C, `kill`, timeout do
+CI, a máquina a desligar-se — saltava-o.
+
+**A tentativa que não chegou.** Um `process.on('SIGTERM', restaurar)` parece a
+correcção óbvia e não é: o arnês passa a vida dentro de um `execSync` (a bateria
+de testes), e o Node só corre o handler quando essa chamada síncrona regressa —
+minutos depois, ou nunca. Medido: um SIGTERM ao arnês do Rust deixou-o vivo mais
+de dois minutos com o `signaling.rs` mutado. E um SIGKILL não corre handler
+nenhum.
+
+**Regra.** A rede não pode viver na memória do processo que morre. O original vai
+para um **marcador em disco ANTES** de o mutante ir para o ficheiro, e cada
+corrida começa por devolver o que encontrar lá. Sobrevive a SIGKILL, a queda de
+máquina e a bateria descarregada.
+
+**Portão.** `scripts/check-repo-hygiene.sh` recusa um commit com
+`scripts/.mutante-em-voo.json` presente e nomeia o ficheiro em risco. Provado
+vermelho: com o marcador escrito à mão, o portão aponta o ficheiro; sem ele,
+verde. E a recuperação foi provada a sério — ficheiro sabotado + marcador, o
+arnês a arrancar escreveu `corrida anterior morreu a meio — … restaurado` e
+devolveu-o.
+
+**Ficheiros.** `scripts/mutantes.mjs`, `scripts/mutantes-rust.mjs`,
+`scripts/check-repo-hygiene.sh`, `.gitignore`.

@@ -1,6 +1,6 @@
 import { CSSProperties, memo, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CloseIcon, HandIcon, MicOffIcon, PinIcon } from '../icons'
+import { BotIcon, CloseIcon, HandIcon, MicOffIcon, PinIcon, VoiceCallIcon } from '../icons'
 
 /**
  * O mosaico de um participante — extraído de `Room.tsx` e MEMOIZADO
@@ -130,7 +130,7 @@ export function RemoteTileBase({
         {hasAudio && speaking && <SpeakingBars />}
         {peer.username}
         {peer.host ? ' · anfitrião' : ''}
-        {peer.is_pstn ? ' · 📞 PSTN' : peer.is_bot ? ' · 🤖 AI Bot' : ''}
+        {peer.is_pstn ? <> · <VoiceCallIcon /> PSTN</> : peer.is_bot ? <> · <BotIcon /> AI Bot</> : null}
       </span>
       {isHost && !peer.host && (
         <div className="host-actions">

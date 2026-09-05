@@ -22,6 +22,7 @@ export default {
     codigosDeEstado: 'Status codes',
   },
   mfa: {
+    leOCodigoCom: 'Scan the code with Google Authenticator, Aegis, 1Password or another app — or enter the key by hand.',
     titulo: 'Two-step verification',
     guardaOsCodigos: 'Save your recovery codes',
     soOsVes: 'You only see them',
@@ -99,6 +100,7 @@ export default {
       entrarAgora: 'Join now',
     },
     espera: {
+      ouPartilheEsteLink: 'Or share this meeting link with the people you want to include.',
       reuniaoEncriptadaDePonta: 'End-to-end encrypted meeting',
       fraseChaveDaReuniao: 'Meeting passphrase',
       entrarNaReuniao: 'Join the meeting',
@@ -190,6 +192,7 @@ export default {
       votarNestaPergunta: 'Upvote this question',
     },
     definicoes: {
+      rnnoiseRemoveTeclado: 'RNNoise removes keyboard, fan and background noise — well beyond the browser’s own suppression.',
       tema: 'Theme',
       escolheOAspetoDa: 'Choose how the app looks.',
       altifalantes: 'Speakers',
@@ -230,7 +233,9 @@ export default {
       temporizadorDaReuniao: 'Meeting timer',
       apresentacaoEmCurso: 'Presentation in progress',
       grelha: 'Grid',
-      oradorEmPalco: 'Speaker on stage',
+      mostrarOMeuVideo: 'Show my video',
+    mostrarQuemNaoTemVideo: 'Show people without video',
+    oradorEmPalco: 'Speaker on stage',
       apresentacaoPlateiaEmBaixo: 'Presentation — audience below',
       apresentacaoLadoALado: 'Presentation — side by side',
       efeitoDeSalaD: '3D room effect',
@@ -538,6 +543,7 @@ export default {
     secure: 'Secure connection · one code to share',
   },
   admin: {
+    armazenamentoLocal: 'Local (default)',
     tipoDeArmazenamento: 'Storage type',
     pathDeExportacao: 'Export path',
     pathRemoto: 'Remote path',

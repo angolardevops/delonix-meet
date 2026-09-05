@@ -171,5 +171,17 @@ for p in $hist_keys; do
   fi
 done
 
-[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; fugas de chave no histórico todas com decisão escrita"
+# R106 — um arnês de mutação morto a meio deixa o produto SABOTADO na árvore, e
+# o marcador é a única prova que sobrevive a um SIGKILL. Se ele está aqui, ou a
+# corrida ainda vai a meio (e ninguém devia estar a fazer commit), ou morreu e o
+# ficheiro que ele nomeia está mutado.
+if [ -f scripts/.mutante-em-voo.json ]; then
+  alvo=$(sed -n 's/.*"caminho":"\([^"]*\)".*/\1/p' scripts/.mutante-em-voo.json)
+  echo "✗ higiene: ha um mutante em voo — $alvo pode estar SABOTADO"
+  echo "     Corre \`node scripts/mutantes.mjs\` (restaura sozinho ao arrancar)"
+  echo "     ou devolve o ficheiro com \`git checkout $alvo\` e apaga o marcador."
+  fail=1
+fi
+
+[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; fugas de chave no histórico todas com decisão escrita"
 exit $fail

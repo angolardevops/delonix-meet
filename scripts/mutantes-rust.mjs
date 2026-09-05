@@ -18,9 +18,38 @@
 //
 //   node scripts/mutantes-rust.mjs
 import { execFileSync } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+// R106 — um arnês de mutação interrompido deixava o produto SABOTADO na árvore.
+// O restauro estava só no caminho normal; um Ctrl-C, um `kill` ou um timeout do
+// CI matava o processo entre a escrita do mutante e a escrita do original, e o
+// ficheiro sabotado ficava lá — pronto a entrar num `git add -A`.
+//
+// Um handler de sinal NÃO chega: o arnês passa a vida dentro de um `execSync`
+// (a bateria de testes), e o Node só corre o handler quando essa chamada
+// síncrona regressa. Um SIGKILL nunca o corre de todo. Por isso a rede é um
+// MARCADOR EM DISCO: o original é gravado ANTES de o mutante ir para o ficheiro,
+// e a corrida seguinte começa por devolver o que encontrar lá.
+const MARCADOR = new URL('.mutante-em-voo.json', import.meta.url).pathname
+function recuperarDeCorridaAnterior() {
+  if (!existsSync(MARCADOR)) return
+  const { caminho, original } = JSON.parse(readFileSync(MARCADOR, 'utf8'))
+  writeFileSync(caminho, original)
+  rmSync(MARCADOR)
+  process.stderr.write(`\n[mutantes] corrida anterior morreu a meio — ${caminho} restaurado\n`)
+}
+function mutar(caminho, original, mutado) {
+  writeFileSync(MARCADOR, JSON.stringify({ caminho, original }))
+  writeFileSync(caminho, mutado)
+}
+function restaurar(caminho, original) {
+  writeFileSync(caminho, original)
+  if (existsSync(MARCADOR)) rmSync(MARCADOR)
+}
+recuperarDeCorridaAnterior()
+
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..')
 const ALVO = join(RAIZ, 'server/src/signaling.rs')
@@ -85,14 +114,14 @@ try {
 const sobreviventes = []
 for (const s of finais) {
   const mutado = original.slice(0, s.i) + s.para + original.slice(s.i + s.de.length)
-  writeFileSync(ALVO, mutado)
+  mutar(ALVO, original, mutado)
   let morto = false
   try {
     bateria()
   } catch {
     morto = true
   }
-  writeFileSync(ALVO, original)
+  restaurar(ALVO, original)
   const ctx = linhas[s.ln - 1].trim().slice(0, 76)
   console.log(`  ${morto ? '✓ guardada ' : '✗ SEM TESTE'}  linha ${String(s.ln).padStart(4)}  ${ctx}`)
   if (!morto) sobreviventes.push({ ln: s.ln, ctx })

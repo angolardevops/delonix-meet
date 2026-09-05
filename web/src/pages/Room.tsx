@@ -31,7 +31,7 @@ import { backoffDelay } from '../callRecovery'
 import { chooseLayers, type LocalConditions, type TileSignal } from '../layerPolicy'
 import { LinhaDoTempo } from '../callTimings'
 import { makeCallHolderStart } from '../sfuLifecycle'
-import { BlurIcon, CamIcon, CamOffIcon, ChartIcon, ChatIcon, CheckIcon, ChevronLeftIcon, ChevronUpIcon, ClockIcon, CloseIcon, CubeIcon, DownloadIcon, EditIcon, EmojiIcon, FullscreenIcon, GridIcon, HandIcon, HangupIcon, HelpIcon, InfoIcon, LockIcon, MicIcon, MicOffIcon, NoteIcon, PeopleIcon, PinIcon, PlusIcon, RecordIcon, RepeatIcon, RowsIcon, SaveIcon, SearchIcon, SendIcon, SettingsIcon, ShareIcon, ShieldIcon, SpeakerIcon, StageIcon, StopIcon, StrokeThickIcon, StrokeThinIcon, TableIcon, TrashIcon, TrophyIcon } from '../icons'
+import { BlurIcon, BotIcon, CamIcon, CamOffIcon, ChartIcon, ChatIcon, CheckIcon, ChevronLeftIcon, ChevronUpIcon, ClockIcon, CloseIcon, CubeIcon, DownloadIcon, EditIcon, EmojiIcon, FullscreenIcon, GridIcon, HandIcon, HangupIcon, HelpIcon, InfoIcon, LockIcon, MicIcon, MicOffIcon, NoteIcon, PeopleIcon, PinIcon, PlusIcon, RecordIcon, RepeatIcon, RowsIcon, SaveIcon, SearchIcon, SendIcon, SettingsIcon, ShareIcon, ShieldIcon, SpeakerIcon, StageIcon, StopIcon, StrokeThickIcon, StrokeThinIcon, TableIcon, TrashIcon, TrophyIcon, ThumbIcon, VoiceCallIcon } from '../icons'
 
 // `RemotePeer` mudou-se para room/RemoteTile.tsx, com o componente que o usa.
 
@@ -2638,7 +2638,7 @@ export default function Room({
               }}
             >
               <PeopleIcon />{t('room.espera.adicionarParticipantes')}</button>
-            <p className="muted small ready-or">Ou partilhe este link da reunião com as outras pessoas que quer incluir na reunião.</p>
+            <p className="muted small ready-or">{t('room.espera.ouPartilheEsteLink')}</p>
             <div className="ready-link">
               <span className="mono">{`${location.host}/#/r/${code}`}</span>
               <button
@@ -2655,7 +2655,7 @@ export default function Room({
               </button>
             </div>
             <p className="muted small ready-note">
-              🛡 {waitingRoomOn
+              <ShieldIcon /> {waitingRoomOn
                 ? 'As pessoas que utilizarem este link terão de pedir autorização para participar.'
                 : 'Quem tiver o link e sessão iniciada entra diretamente.'}
             </p>
@@ -2870,7 +2870,7 @@ export default function Room({
                     <span className="pn-name">
                       {p.username}
                       {p.host ? ' · anfitrião' : p.canAdmit ? ' · admite entradas' : ''}
-                      {p.is_pstn ? ' · 📞 PSTN' : p.is_bot ? ' · 🤖 AI Bot' : ''}
+                      {p.is_pstn ? <> · <VoiceCallIcon /> PSTN</> : p.is_bot ? <> · <BotIcon /> AI Bot</> : null}
                     </span>
                     {qos?.byPeer[p.peerId] && (
                       <small className={qos.byPeer[p.peerId].lossPct > 5 ? 'qos-line mono qos-bad' : 'qos-line mono'}>
@@ -3278,7 +3278,7 @@ export default function Room({
                         setMyUpvotes({ ...myUpvotes, [q.id]: !myUpvotes[q.id] })
                       }}
                     >
-                      👍 {q.upvotes}
+                      <ThumbIcon /> {q.upvotes}
                     </button>
                     {isHost && (
                       <button
@@ -3345,7 +3345,7 @@ export default function Room({
 
               <label className="set-toggle">
                 <input type="checkbox" checked={noiseSuppression} onChange={() => void toggleNoiseSuppression()} />
-                <span>{t('room.definicoes.supressaoDeRuidoIa')}<small>RNNoise remove teclado, ventoinha e ruído de fundo — muito além da supressão do browser.</small>
+                <span>{t('room.definicoes.supressaoDeRuidoIa')}<small>{t('room.definicoes.rnnoiseRemoveTeclado')}</small>
                 </span>
               </label>
 
@@ -3649,7 +3649,7 @@ export default function Room({
             <div className="admit-card poll-popup" role="dialog" aria-label={t('room.espera.sondagem')}>
               <div className="admit-card-head">
                 <span className="admit-card-title">
-                  {p.correct != null || revealed ? '🏅 Quiz' : '📊 Sondagem'} · {p.by}
+                  {p.correct != null || revealed ? <><TrophyIcon /> Quiz</> : <><ChartIcon /> Sondagem</>} · {p.by}
                   {remaining != null && <span className="poll-countdown mono"> · <ClockIcon /> {remaining}s</span>}
                 </span>
                 <button
@@ -3776,7 +3776,7 @@ export default function Room({
           )}
           {presentation && (
             <span className="room-topo presenter-chip" title={t('room.barra.apresentacaoEmCurso')}>
-              🖥 {presentation.peerId === 'me'
+              <ShareIcon /> {presentation.peerId === 'me'
                 ? 'A apresentar'
                 : `${peers.find((p) => p.peerId === presentation.peerId)?.username ?? ''} • apresenta`}
             </span>
@@ -3976,10 +3976,10 @@ export default function Room({
                   </button>
                 )}
                 <button className="device-item" onClick={() => setHideSelf((v) => !v)}>
-                  {hideSelf ? '👁 Mostrar o meu vídeo' : '🙈 Ocultar o meu vídeo'}
+                  <span style={{ opacity: !hideSelf ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><CamIcon />{t('room.barra.mostrarOMeuVideo')}
                 </button>
                 <button className="device-item" onClick={() => setHideNoVideo((v) => !v)}>
-                  {hideNoVideo ? '👥 Mostrar participantes sem vídeo' : '🫥 Ocultar participantes sem vídeo'}
+                  <span style={{ opacity: !hideNoVideo ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><PeopleIcon />{t('room.barra.mostrarQuemNaoTemVideo')}
                 </button>
                 <button
                   className="device-item"

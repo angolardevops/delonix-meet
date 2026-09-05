@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import LanguageToggle from '../components/LanguageToggle'
 import { BrandLockup } from '../components/BrandMark'
+import { GlobeIcon, LockIcon, ShieldIcon, TrophyIcon } from '../icons'
 
 type Feature = { t: string; d: string }
 type FaqItem = { q: string; a: string }
@@ -137,9 +138,9 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
               ))}
             </div>
             <span className="chip float a">✓ {t('land.hero.chipA')}</span>
-            <span className="chip float b">🌍 {t('land.hero.chipB')}</span>
-            <span className="chip float c">🔒 {t('land.hero.chipC')}</span>
-            <span className="chip float d">🏆 {t('land.hero.chipD')}</span>
+            <span className="chip float b"><GlobeIcon /> {t('land.hero.chipB')}</span>
+            <span className="chip float c"><LockIcon /> {t('land.hero.chipC')}</span>
+            <span className="chip float d"><TrophyIcon /> {t('land.hero.chipD')}</span>
           </div>
         </div>
       </section>
@@ -151,7 +152,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
             <p className="eyebrow">{t('land.ai.eyebrow')}</p>
             <h2>{t('land.ai.title')}</h2>
             <p className="land-section-sub left">{t('land.ai.sub')}</p>
-            <span className="ai-sov-badge">🛡 {t('land.ai.badge')}</span>
+            <span className="ai-sov-badge"><ShieldIcon /> {t('land.ai.badge')}</span>
           </div>
           <div className="ai-points">
             {aiPoints.map((p, i) => (
