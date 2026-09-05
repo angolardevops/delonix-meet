@@ -906,3 +906,35 @@ descarta em silêncio.
 `web/src/room/RemoteTile.tsx`, `web/src/locales/{pt,en,fr}.ts`,
 `web/src/lote2.invariantes.test.ts`.
 
+### R106 — Um arnês de mutação morto a meio deixava o produto sabotado na árvore
+
+**Sintoma.** Depois de o `scripts/mutantes.mjs` ser interrompido por um timeout,
+o `web/src/layerPolicy.ts` ficou na árvore de trabalho com um `&&` trocado por
+`||` — a sabotagem que o arnês injecta de propósito. Foi encontrada por acaso, ao
+ler um `git status` antes de um commit. Um `git add -A` tê-la-ia empurrado.
+
+**Causa.** O restauro do ficheiro estava só no caminho normal, entre a escrita do
+mutante e a corrida seguinte. Qualquer morte no meio — Ctrl-C, `kill`, timeout do
+CI, a máquina a desligar-se — saltava-o.
+
+**A tentativa que não chegou.** Um `process.on('SIGTERM', restaurar)` parece a
+correcção óbvia e não é: o arnês passa a vida dentro de um `execSync` (a bateria
+de testes), e o Node só corre o handler quando essa chamada síncrona regressa —
+minutos depois, ou nunca. Medido: um SIGTERM ao arnês do Rust deixou-o vivo mais
+de dois minutos com o `signaling.rs` mutado. E um SIGKILL não corre handler
+nenhum.
+
+**Regra.** A rede não pode viver na memória do processo que morre. O original vai
+para um **marcador em disco ANTES** de o mutante ir para o ficheiro, e cada
+corrida começa por devolver o que encontrar lá. Sobrevive a SIGKILL, a queda de
+máquina e a bateria descarregada.
+
+**Portão.** `scripts/check-repo-hygiene.sh` recusa um commit com
+`scripts/.mutante-em-voo.json` presente e nomeia o ficheiro em risco. Provado
+vermelho: com o marcador escrito à mão, o portão aponta o ficheiro; sem ele,
+verde. E a recuperação foi provada a sério — ficheiro sabotado + marcador, o
+arnês a arrancar escreveu `corrida anterior morreu a meio — … restaurado` e
+devolveu-o.
+
+**Ficheiros.** `scripts/mutantes.mjs`, `scripts/mutantes-rust.mjs`,
+`scripts/check-repo-hygiene.sh`, `.gitignore`.
