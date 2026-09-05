@@ -118,6 +118,9 @@ jobs:
       - name: Afinidade por sala (ADR-0001 / regressão R3)
         run: bash scripts/check-room-affinity.sh
 
+      - name: Cobertura do isolamento (R95 — toda a rota de org é exercitada)
+        run: bash scripts/check-isolamento-cobertura.sh
+
       # O check-tenant-rls.sh exige um cluster vivo e faz skip sem ele. Não é
       # executado aqui de propósito: um teste que faz skip em silêncio no CI
       # dá luz verde sem ter provado nada. Corre onde há cluster (`make prod`).

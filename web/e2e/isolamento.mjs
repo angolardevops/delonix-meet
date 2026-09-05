@@ -132,6 +132,58 @@ await recusado('A remove um empregado da org B', `/api/orgs/${B.orgId}/employees
   token: A.token, method: 'DELETE',
 })
 
+// As seis rotas com escopo de organização que este teste NÃO cobria (R95).
+// Encontradas a comparar o inventário do que EXISTE (`grep` às rotas do
+// `main.rs`) com o inventário do que se TESTA — o mesmo método que apanhou os
+// testes ponta-a-ponta que nunca corriam (R72).
+console.log('\n--- as seis que faltavam ---')
+await recusado('A lê a trilha de auditoria da org B', `/api/orgs/${B.orgId}/audit`, { token: A.token })
+await recusado('A verifica a cadeia de auditoria da org B', `/api/orgs/${B.orgId}/audit/verify`, {
+  token: A.token,
+})
+await recusado('A lê a configuração de SSO da org B', `/api/orgs/${B.orgId}/sso`, { token: A.token })
+await recusado('A lê a facturação de voz da org B', `/api/orgs/${B.orgId}/voice/billing`, {
+  token: A.token,
+})
+
+// Os dois DELETE precisam de um recurso REAL. Com um UUID ao acaso, um `404`
+// contaria como recusa e não provaria autorização nenhuma — só que o recurso
+// não existe. B cria, A tenta apagar, e a asserção que interessa é a última: o
+// recurso de B tem de CONTINUAR LÁ.
+console.log('\n--- destruição cross-tenant: o recurso tem de sobreviver ---')
+const chaveB = await req(`/api/orgs/${B.orgId}/api-keys`, {
+  token: B.token, method: 'POST', body: { name: 'chave-de-teste' },
+})
+if (chaveB.status >= 200 && chaveB.status < 300 && chaveB.json?.id) {
+  await recusado('A apaga uma chave de API da org B', `/api/orgs/${B.orgId}/api-keys/${chaveB.json.id}`, {
+    token: A.token, method: 'DELETE',
+  })
+  const depois = await req(`/api/orgs/${B.orgId}/api-keys`, { token: B.token })
+  const sobreviveu = Array.isArray(depois.json) && depois.json.some((k) => k.id === chaveB.json.id)
+  if (sobreviveu) ok('e a chave da B CONTINUA LÁ')
+  else nok('e a chave da B CONTINUA LÁ', 'desapareceu — a recusa foi só no código de estado')
+} else {
+  nok('B cria uma chave de API para o teste', `devolveu ${chaveB.status}`)
+}
+
+const hookB = await req(`/api/orgs/${B.orgId}/webhooks`, {
+  token: B.token, method: 'POST',
+  body: { kind: 'generic', url: 'https://example.com/hook', secret: 's3cr3t-de-teste' },
+})
+if (hookB.status >= 200 && hookB.status < 300 && hookB.json?.id) {
+  await recusado('A apaga um webhook da org B', `/api/orgs/${B.orgId}/webhooks/${hookB.json.id}`, {
+    token: A.token, method: 'DELETE',
+  })
+  const depois = await req(`/api/orgs/${B.orgId}/webhooks`, { token: B.token })
+  const sobreviveu = Array.isArray(depois.json) && depois.json.some((h) => h.id === hookB.json.id)
+  if (sobreviveu) ok('e o webhook da B CONTINUA LÁ')
+  else nok('e o webhook da B CONTINUA LÁ', 'desapareceu — a recusa foi só no código de estado')
+} else {
+  // O guarda de SSRF pode recusar o URL; se assim for, diz-se, em vez de o
+  // teste passar em silêncio por não ter criado nada.
+  nok('B cria um webhook para o teste', `devolveu ${hookB.status}: ${JSON.stringify(hookB.json).slice(0, 120)}`)
+}
+
 console.log('\n--- salas da org B: o código é uma CAPABILITY, não um passe ---')
 //
 // Aqui a expectativa ingénua ("A tem de levar 403") está ERRADA, e é preciso
