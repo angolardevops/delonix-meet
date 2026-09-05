@@ -766,3 +766,13 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Porque o arnês do Rust muta guardas e não operadores:** em Rust cada mutação custa uma recompilação. Mutar operadores seria horas para um relatório cheio de equivalentes; mutar as treze guardas dá treze perguntas, todas com significado de segurança, em minutos.
 - **Depois:** 13 de 13 defendidas.
 - **Ficheiros:** `scripts/mutantes-rust.mjs`, `server/src/signaling.rs`.
+
+### R95 — Seis rotas de organização nunca tinham sido testadas contra outro inquilino
+- **Como se soube:** comparando o inventário do que EXISTE (`grep` às rotas `/api/orgs/{org_id}/*` do `main.rs` — 19) com o inventário do que se TESTA (o `isolamento.mjs` — 13). Mesmo método que apanhou os testes ponta-a-ponta que nunca corriam (R72): dois `grep` e a diferença é a lista.
+- **As seis:** ler a trilha de auditoria de outra empresa, verificar-lhe a cadeia de hash, ler a configuração de SSO, ler a facturação de voz, **apagar-lhe uma chave de API** e **apagar-lhe um webhook**.
+- **Nenhuma estava vulnerável. Nenhuma estava provada.** A diferença importa: o `check-route-auth.sh` garante que cada rota tem extractor de **autenticação** — sabe QUEM é. Não diz nada sobre **autorização** — se o handler confere que esse quem pertence à organização do caminho. São duas metades, e só havia portão para a primeira.
+- **O que a sabotagem mostrou, e é a medida do raio de dano:** com o `require_admin` a devolver sempre `Ok`, a org A lê a trilha de auditoria da B **com nomes de actores e acções**, verifica-lhe a cadeia, lê o SSO, e apaga-lhe a chave de API e o webhook. Doze asserções ficam vermelhas.
+- **Um `404` sozinho não prova autorização.** Nos dois `DELETE`, testar com um UUID ao acaso daria `404` — que o helper conta como recusa — sem provar coisa nenhuma: só que o recurso não existe. A versão que vale é B **criar** o recurso, A tentar apagá-lo, e a asserção final ser **«o recurso da B continua lá»**. Foi essa que apanhou a destruição quando a guarda caiu; a do código de estado teria passado na mesma se o handler apagasse e devolvesse 404.
+- **As recusas devolvem `404` e não `403`**, deliberadamente: um `403` confirmaria que a organização existe.
+- **Portão:** `scripts/check-isolamento-cobertura.sh`, no CI. Visto a recusar uma rota de organização acrescentada sem cobertura.
+- **Ficheiros:** `web/e2e/isolamento.mjs`, `scripts/check-isolamento-cobertura.sh`, `.github/workflows/ci.yml`.
