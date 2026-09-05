@@ -11,6 +11,7 @@ import PasswordInput from './PasswordInput'
 import MfaPanel from './MfaPanel'
 import OnboardingTour from './OnboardingTour'
 import { CalendarIcon, ChevronDownIcon, ClockIcon, CloseIcon, FilmIcon, HomeIcon, MenuIcon, NoteIcon, PeopleIcon, RecordIcon, SearchIcon, SettingsIcon, StageIcon, ThemeIcon } from '../icons'
+import { BrandMark } from './BrandMark'
 
 export type NavKey = 'home' | 'directory' | 'recordings' | 'calendar' | 'analytics' | 'roadmap' | 'whiteboards' | 'studio'
 
@@ -477,7 +478,7 @@ export default function Shell({
           <button className="nav-burger" onClick={toggleCollapse} aria-label={t('nav.toggle')} title={t('nav.toggle')}>
             <MenuIcon />
           </button>
-          <span className="brand-square" aria-hidden="true">{(brand[0] || 'D').trim().charAt(0).toUpperCase()}</span>
+          <BrandMark />
           <span className="brand-text">
             {brand[0]} <span>{brand[1]}</span>
           </span>

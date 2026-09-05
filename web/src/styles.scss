@@ -5173,3 +5173,13 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
 }
 .people-host-actions .ghost-btn:hover { background: var(--ctrl-hover); color: var(--text); }
 .people-host-actions .ghost-btn svg { width: 15px; height: 15px; }
+
+/* A marca em grande — a variante que o `.brand-logo.big` já tinha e o quadrado
+   não (R100). Sem ela, uma instalação renomeada mostrava no ecrã de estado e
+   nos docs um quadrado de 26px onde devia estar uma marca de 84. */
+.brand-square.big {
+  width: 84px;
+  height: 84px;
+  border-radius: var(--radius-lg, 14px);
+  font-size: 2.4rem;
+}

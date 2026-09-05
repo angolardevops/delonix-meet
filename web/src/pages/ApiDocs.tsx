@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { BrandMark } from '../components/BrandMark'
 
 /** Documentação pública da API REST do Delonix Meet (#/api-docs). */
 export default function ApiDocs() {
@@ -7,7 +8,7 @@ export default function ApiDocs() {
     <div className="apidoc-page">
       <div className="apidoc-wrap">
         <header className="apidoc-head">
-          <img src="/logo.svg" alt="" className="brand-logo big" />
+          <BrandMark big />
           <h1>
             Delonix <span>Meet</span> · API REST
           </h1>
