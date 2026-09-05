@@ -121,6 +121,9 @@ jobs:
       - name: Cobertura do isolamento (R95 — toda a rota de org é exercitada)
         run: bash scripts/check-isolamento-cobertura.sh
 
+      - name: Browsers antes dos e2e (R97 — o mesmo erro, duas vezes)
+        run: bash scripts/check-browser-antes-do-e2e.sh
+
       # O check-tenant-rls.sh exige um cluster vivo e faz skip sem ele. Não é
       # executado aqui de propósito: um teste que faz skip em silêncio no CI
       # dá luz verde sem ter provado nada. Corre onde há cluster (`make prod`).
@@ -250,8 +253,6 @@ jobs:
       - name: Chromium para o teste de interface
         run: npx playwright install chromium
         working-directory: web
-
-
       - name: Interface do MFA (Chromium real)
         run: |
           (cd web && NO_HTTPS=1 npx vite --port 5174 > /tmp/vite.log 2>&1 &)
