@@ -1,4 +1,5 @@
 import { CSSProperties, ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   currentUser, downloadRecording, iceServers, inviteToRoom, joinRoom, listRecordings, postQos, postTimings, Recording,
   roomChatHistory, saveMinutesByRoom, saveWhiteboard, searchUsers, translateCaption, uploadRecording, User,
@@ -202,6 +203,8 @@ export default function Room({
   onLeave: () => void
   onSwitch?: (code: string) => void
 }) {
+  // A sala estava INTEIRAMENTE fora do i18n — 4 300 linhas, zero `t()` (R99).
+  const { t } = useTranslation()
   // Pre-join (green room): por omissão entra-se pelo ecrã de preparação.
   // SALTA-SE quando: (a) chamada de voz atendida (o outro lado está à espera do
   // ring) ou (b) rejoin recente (< 60s) — o auto-reconnect por reload (onclose)
@@ -2110,8 +2113,8 @@ export default function Room({
     return (
       <div className="room-page prejoin-page">
         <div className="prejoin-card">
-          <h2 className="prejoin-title">Pronto para entrar?</h2>
-          <p className="prejoin-code">Sala <code>{code}</code></p>
+          <h2 className="prejoin-title">{t('room.preEntrada.prontoParaEntrar')}</h2>
+          <p className="prejoin-code">{t('room.preEntrada.sala')}<code>{code}</code></p>
           <div className="prejoin-preview">
             {hasLocalVideo && camOn ? (
               <video
@@ -2134,7 +2137,7 @@ export default function Room({
                 <small>{hasLocalVideo ? 'Câmara desligada' : 'Sem câmara'}</small>
               </div>
             )}
-            {micOn && speaking.has('me') && <span className="prejoin-mic-live" title="O microfone está a captar-te"><MicIcon /></span>}
+            {micOn && speaking.has('me') && <span className="prejoin-mic-live" title={t('room.preEntrada.oMicrofoneEstaA')}><MicIcon /></span>}
             <div className="prejoin-toggles">
               <button
                 className={micOn ? 'ctrl' : 'ctrl off'}
@@ -2159,7 +2162,7 @@ export default function Room({
             <label className="dev-chip">
               <MicIcon />
               <select value={micId} onChange={(e) => void prejoinSwitch('mic', e.target.value)}>
-                {devices.mics.length === 0 && <option value="">Microfone</option>}
+                {devices.mics.length === 0 && <option value="">{t('room.preEntrada.microfone')}</option>}
                 {devices.mics.map((d) => (
                   <option key={d.deviceId} value={d.deviceId}>{d.label || 'Microfone'}</option>
                 ))}
@@ -2168,29 +2171,24 @@ export default function Room({
             <label className="dev-chip">
               <CamIcon />
               <select value={camId} onChange={(e) => void prejoinSwitch('cam', e.target.value)}>
-                {devices.cams.length === 0 && <option value="">Câmara</option>}
+                {devices.cams.length === 0 && <option value="">{t('room.preEntrada.camara')}</option>}
                 {devices.cams.map((d) => (
                   <option key={d.deviceId} value={d.deviceId}>{d.label || 'Câmara'}</option>
                 ))}
               </select>
             </label>
-            <button className="dev-chip icon" title="Testar os altifalantes" onClick={() => void playTestTone(speakerId)}>
-              <SpeakerIcon /> Testar som
-            </button>
+            <button className="dev-chip icon" title={t('room.preEntrada.testarOsAltifalantes')} onClick={() => void playTestTone(speakerId)}>
+              <SpeakerIcon />{t('room.preEntrada.testarSom')}</button>
           </div>
 
           {status && <p className="prejoin-status">{status}</p>}
 
           <div className="prejoin-actions">
-            <button className="btn-ghost small" onClick={() => onLeave()}>Cancelar</button>
+            <button className="btn-ghost small" onClick={() => onLeave()}>{t('room.preEntrada.cancelar')}</button>
             <div className="prejoin-actions-right">
               {/* Vista de gestão do anfitrião; convidados são reencaminhados de volta. */}
-              <button className="btn-ghost small" onClick={() => (location.hash = `/lobby/${code}`)}>
-                Sala de espera
-              </button>
-              <button className="prejoin-join" onClick={prejoinJoin}>
-                Entrar agora
-              </button>
+              <button className="btn-ghost small" onClick={() => (location.hash = `/lobby/${code}`)}>{t('room.preEntrada.salaDeEspera')}</button>
+              <button className="prejoin-join" onClick={prejoinJoin}>{t('room.preEntrada.entrarAgora')}</button>
             </div>
           </div>
         </div>
@@ -2201,7 +2199,7 @@ export default function Room({
   if (roomState === 'e2ee-pass') {
     return (
       <div className="waiting-page">
-        <h2><LockIcon /> Reunião encriptada de ponta a ponta</h2>
+        <h2><LockIcon />{t('room.espera.reuniaoEncriptadaDePonta')}</h2>
         <p className="muted" style={{ maxWidth: 460 }}>
           Introduz a frase-chave combinada entre os participantes (fora da plataforma). A chave é
           derivada localmente e <strong>nunca é enviada ao servidor</strong>.
@@ -2219,20 +2217,18 @@ export default function Room({
         >
           <input
             type="password"
-            placeholder="Frase-chave da reunião"
+            placeholder={t('room.espera.fraseChaveDaReuniao')}
             value={passInput}
             onChange={(e) => setPassInput(e.target.value)}
             autoFocus
           />
-          <button className="primary">Entrar na reunião</button>
+          <button className="primary">{t('room.espera.entrarNaReuniao')}</button>
         </form>
         <p className="muted" style={{ fontSize: '0.82rem', maxWidth: 460 }}>
           Com a frase errada não vês nem ouves os outros — os frames que não autenticam são
           descartados, nunca reproduzidos.
         </p>
-        <button className="link" onClick={onLeave}>
-          Cancelar
-        </button>
+        <button className="link" onClick={onLeave}>{t('room.preEntrada.cancelar')}</button>
       </div>
     )
   }
@@ -2241,9 +2237,7 @@ export default function Room({
     return (
       <div className="waiting-page">
         <h2>{roomState === 'denied' ? 'O anfitrião recusou a tua entrada' : 'Foste removido da reunião'}</h2>
-        <button className="primary" style={{ width: 'auto', padding: '0.7rem 2rem' }} onClick={onLeave}>
-          Voltar ao início
-        </button>
+        <button className="primary" style={{ width: 'auto', padding: '0.7rem 2rem' }} onClick={onLeave}>{t('room.espera.voltarAoInicio')}</button>
       </div>
     )
   }
@@ -2255,21 +2249,20 @@ export default function Room({
         <div className="rt-left">
           <WallClock />
           <span className="rt-sep">|</span>
-          <span className="rt-code" title="Código da reunião">{code}</span>
+          <span className="rt-code" title={t('room.espera.codigoDaReuniao')}>{code}</span>
           <button
             className="rt-info"
-            title="Detalhes da reunião"
-            aria-label="Detalhes da reunião"
+            title={t('room.espera.detalhesDaReuniao')}
+            aria-label={t('room.espera.detalhesDaReuniao')}
             onClick={() => setPanel(panel === 'people' ? 'none' : 'people')}
           ><InfoIcon /></button>
           {isInstant && (
-            <span className="rt-chip instant" title="Chamada instantânea — sala virtual; só a gravação é guardada">
-              <ClockIcon /> Instantânea
-            </span>
+            <span className="rt-chip instant" title={t('room.pessoas.chamadaInstantaneaSalaVirtual')}>
+              <ClockIcon />{t('room.pessoas.instantanea')}</span>
           )}
-          {isTraining && <span className="rt-chip">Formação</span>}
+          {isTraining && <span className="rt-chip">{t('room.pessoas.formacao')}</span>}
           {e2eeOn && (
-            <button className="rt-chip e2ee" title="Encriptação de ponta a ponta ativa" onClick={() => setSecOpen((v) => !v)}>
+            <button className="rt-chip e2ee" title={t('room.pessoas.encriptacaoDePontaA')} onClick={() => setSecOpen((v) => !v)}>
               <LockIcon /> E2EE
             </button>
           )}
@@ -2279,7 +2272,7 @@ export default function Room({
             <button
               className="waiting-pill"
               onClick={() => setPanel(panel === 'people' ? 'none' : 'people')}
-              title="Convidados à espera de admissão"
+              title={t('room.pessoas.convidadosAEsperaDe')}
             >
               <PeopleIcon />
               {waitingQueue.length} {waitingQueue.length === 1 ? 'convidado a aguardar' : 'convidados a aguardar'}
@@ -2288,7 +2281,7 @@ export default function Room({
           <button
             className="rt-count"
             onClick={() => setPanel(panel === 'people' ? 'none' : 'people')}
-            title="Participantes"
+            title={t('room.pessoas.participantes')}
             aria-label={`${total} participantes`}
           >
             <span className="rt-avatar" aria-hidden>{(currentUser()?.username ?? '?').slice(0, 1).toUpperCase()}</span>
@@ -2300,8 +2293,8 @@ export default function Room({
         {roomState === 'waiting' && (
           <div className="waiting-overlay">
             <div className="spinner" />
-            <h2>À espera que o anfitrião te deixe entrar…</h2>
-            <p className="muted">Podes preparar a câmara e o microfone entretanto.</p>
+            <h2>{t('room.espera.aEsperaQueO')}</h2>
+            <p className="muted">{t('room.espera.podesPrepararACamara')}</p>
           </div>
         )}
 
@@ -2326,7 +2319,7 @@ export default function Room({
               data-peer="local"
               style={tileStyle}
               onDoubleClick={() => togglePin('me')}
-              title="Duplo-clique para fixar/desafixar no palco"
+              title={t('room.espera.duploCliqueParaFixar')}
             >
               <video
                 ref={attachLocalVideo}
@@ -2446,12 +2439,12 @@ export default function Room({
                 {visiblePeers.map(remoteTile)}
               </div>
               {pageCount > 1 && (
-                <div className="grid-pager" role="navigation" aria-label="Páginas de participantes">
+                <div className="grid-pager" role="navigation" aria-label={t('room.espera.paginasDeParticipantes')}>
                   <button
                     onClick={() => setGridPage((p) => Math.max(0, p - 1))}
                     disabled={page === 0}
-                    title="Página anterior"
-                    aria-label="Página anterior"
+                    title={t('room.espera.paginaAnterior')}
+                    aria-label={t('room.espera.paginaAnterior')}
                   >
                     ‹
                   </button>
@@ -2461,8 +2454,8 @@ export default function Room({
                   <button
                     onClick={() => setGridPage((p) => Math.min(pageCount - 1, p + 1))}
                     disabled={page >= pageCount - 1}
-                    title="Página seguinte"
-                    aria-label="Página seguinte"
+                    title={t('room.espera.paginaSeguinte')}
+                    aria-label={t('room.espera.paginaSeguinte')}
                   >
                     ›
                   </button>
@@ -2499,7 +2492,7 @@ export default function Room({
             ))}
             <div className="winner-card">
               <span className="winner-trophy"><TrophyIcon /></span>
-              <strong>Acertaste!</strong>
+              <strong>{t('room.espera.acertaste')}</strong>
             </div>
           </div>
         )}
@@ -2536,7 +2529,7 @@ export default function Room({
                 <label className="dev-chip">
                   <MicIcon />
                   <select value={micId} onChange={(e) => void switchMic(e.target.value)}>
-                    {devices.mics.length === 0 && <option>Microfone</option>}
+                    {devices.mics.length === 0 && <option>{t('room.preEntrada.microfone')}</option>}
                     {devices.mics.map((d) => (
                       <option key={d.deviceId} value={d.deviceId}>{d.label || 'Microfone'}</option>
                     ))}
@@ -2545,18 +2538,18 @@ export default function Room({
                 <label className="dev-chip">
                   <span className="dev-chip-emoji"><SpeakerIcon /></span>
                   <select value={speakerId} onChange={(e) => setSpeakerId(e.target.value)}>
-                    <option value="">Predefinido do sistema</option>
+                    <option value="">{t('room.espera.predefinidoDoSistema')}</option>
                     {devices.speakers.map((d) => (
                       <option key={d.deviceId} value={d.deviceId}>{d.label || 'Altifalante'}</option>
                     ))}
                   </select>
                 </label>
-                <button className="dev-chip icon" title="Testar os altifalantes" onClick={() => void playTestTone(speakerId)}>
+                <button className="dev-chip icon" title={t('room.preEntrada.testarOsAltifalantes')} onClick={() => void playTestTone(speakerId)}>
                   <SpeakerIcon />
                 </button>
                 <button
                   className="dev-chip icon"
-                  title="Definições"
+                  title={t('room.espera.definicoes')}
                   onClick={() => { setPanel('settings'); setDeviceMenu('none') }}
                 >
                   <SettingsIcon />
@@ -2567,7 +2560,7 @@ export default function Room({
                 <label className="dev-chip">
                   <CamIcon />
                   <select value={camId} onChange={(e) => void switchCam(e.target.value)}>
-                    {devices.cams.length === 0 && <option>Câmara</option>}
+                    {devices.cams.length === 0 && <option>{t('room.preEntrada.camara')}</option>}
                     {devices.cams.map((d) => (
                       <option key={d.deviceId} value={d.deviceId}>{d.label || 'Câmara'}</option>
                     ))}
@@ -2580,12 +2573,10 @@ export default function Room({
                 >
                   {bgMode === 'blur' ? '✓ ' : ''}Esbater fundo
                 </button>
-                <button className="dev-chip" onClick={() => { setFxOpen(true); setDeviceMenu('none') }}>
-                  Fundos e efeitos
-                </button>
+                <button className="dev-chip" onClick={() => { setFxOpen(true); setDeviceMenu('none') }}>{t('room.espera.fundosEEfeitos')}</button>
                 <button
                   className="dev-chip icon"
-                  title="Definições"
+                  title={t('room.espera.definicoes')}
                   onClick={() => { setPanel('settings'); setDeviceMenu('none') }}
                 >
                   <SettingsIcon />
@@ -2601,7 +2592,7 @@ export default function Room({
         {readyOpen && isHost && roomState === 'in' && (
           <div className="ready-card">
             <div className="ready-head">
-              <h3>A tua reunião está pronta.</h3>
+              <h3>{t('room.espera.aTuaReuniaoEsta')}</h3>
               <button
                 className="panel-close"
                 onClick={dispensarReady}
@@ -2616,14 +2607,13 @@ export default function Room({
                 dispensarReady()
               }}
             >
-              <PeopleIcon /> Adicionar participantes
-            </button>
+              <PeopleIcon />{t('room.espera.adicionarParticipantes')}</button>
             <p className="muted small ready-or">Ou partilhe este link da reunião com as outras pessoas que quer incluir na reunião.</p>
             <div className="ready-link">
               <span className="mono">{`${location.host}/#/r/${code}`}</span>
               <button
                 className="icon-btn"
-                title="Copiar link"
+                title={t('room.espera.copiarLink')}
                 onClick={(e) => {
                   void navigator.clipboard.writeText(`${location.origin}/#/r/${code}`)
                   const el = e.currentTarget
@@ -2639,7 +2629,7 @@ export default function Room({
                 ? 'As pessoas que utilizarem este link terão de pedir autorização para participar.'
                 : 'Quem tiver o link e sessão iniciada entra diretamente.'}
             </p>
-            <p className="muted small">A participar como <strong>{currentUser()?.username ?? 'eu'}</strong></p>
+            <p className="muted small">{t('room.espera.aParticiparComo')}<strong>{currentUser()?.username ?? 'eu'}</strong></p>
           </div>
         )}
 
@@ -2649,12 +2639,12 @@ export default function Room({
               <PanelTabs active={panel} onSelect={(p) => { setPanel(p); if (p === 'chat') setUnreadChat(0) }} unreadChat={unreadChat} total={total} />
               <button className="panel-close" onClick={() => setPanel('none')}><CloseIcon /></button>
             </div>
-            <p className="chat-notice-bar"><ChatIcon /> Mensagens guardadas durante a reunião. Usa @ para mencionar alguém.</p>
+            <p className="chat-notice-bar"><ChatIcon />{t('room.chat.mensagensGuardadasDuranteA')}</p>
             <div className="chat-messages">
               {chat.length === 0 && (
                 <div className="chat-empty-notice">
-                  <strong>Ainda sem mensagens</strong>
-                  <p>As mensagens ficam visíveis durante a reunião. Quem entrar depois não as vê.</p>
+                  <strong>{t('room.chat.aindaSemMensagens')}</strong>
+                  <p>{t('room.chat.asMensagensFicamVisiveis')}</p>
                 </div>
               )}
               {chat.map((m, i) => (
@@ -2693,7 +2683,7 @@ export default function Room({
               <div className="chat-input">
                 <button
                   className={chatEmojiOpen ? 'chat-emoji-btn active' : 'chat-emoji-btn'}
-                  title="Emojis"
+                  title={t('room.chat.emojis')}
                   onClick={() => setChatEmojiOpen((v) => !v)}
                 >
                   <EmojiIcon />
@@ -2720,9 +2710,9 @@ export default function Room({
                       completeMention(mentionSuggestions[0])
                     }
                   }}
-                  placeholder="Escreve uma mensagem…"
+                  placeholder={t('room.chat.escreveUmaMensagem')}
                 />
-                <button className="chat-send-btn" onClick={() => { sendChat(); setChatEmojiOpen(false) }} title="Enviar (Enter)"><SendIcon /></button>
+                <button className="chat-send-btn" onClick={() => { sendChat(); setChatEmojiOpen(false) }} title={t('room.chat.enviarEnter')}><SendIcon /></button>
               </div>
             </div>
           </aside>
@@ -2743,12 +2733,12 @@ export default function Room({
             {inviteOpen && (
               <div className="invite-modal">
                 <div className="invite-modal-head">
-                  <span>Convidar para a reunião</span>
+                  <span>{t('room.pessoas.convidarParaAReuniao')}</span>
                   <button className="panel-close" onClick={() => setInviteOpen(false)}><CloseIcon /></button>
                 </div>
                 <input
                   autoFocus
-                  placeholder="Pesquisar por nome ou email…"
+                  placeholder={t('room.pessoas.pesquisarPorNomeOu')}
                   value={inviteQuery}
                   onChange={(e) => setInviteQuery(e.target.value)}
                 />
@@ -2798,14 +2788,13 @@ export default function Room({
               <div className="people-host-actions">
                 <button
                   className="ghost-btn"
-                  title="Silenciar toda a gente. Cada pessoa pode voltar a ligar-se."
+                  title={t('room.pessoas.silenciarTodaAGente')}
                   onClick={() => onMuteAll(true)}
                 >
-                  <MicOffIcon /> Silenciar todos
-                </button>
+                  <MicOffIcon />{t('room.pessoas.silenciarTodos')}</button>
                 <button
                   className="ghost-btn"
-                  title="Silenciar toda a gente e impedir que se voltem a ligar sozinhos."
+                  title={t('room.pessoas.silenciarTodaAGente2')}
                   onClick={() => onMuteAll(false)}
                 >
                   <MicOffIcon /> …e não deixar voltar a ligar
@@ -2823,7 +2812,7 @@ export default function Room({
               <span className="people-search-icon"><SearchIcon /></span>
               <input
                 type="text"
-                placeholder="Pesquisar participantes…"
+                placeholder={t('room.pessoas.pesquisarParticipantes')}
                 value={peopleSearch}
                 onChange={(e) => setPeopleSearch(e.target.value)}
                 autoComplete="off"
@@ -2865,7 +2854,7 @@ export default function Room({
                   {isHost && !p.host && (
                     <button
                       className="share-grant-btn"
-                      title="Desligar a câmara desta pessoa"
+                      title={t('room.pessoas.desligarACamaraDesta')}
                       onClick={() => onTileCam(p.peerId)}
                     >
                       <CamOffIcon />
@@ -2874,7 +2863,7 @@ export default function Room({
                   {isHost && !p.host && (
                     <button
                       className="share-grant-btn"
-                      title="Passar o papel de anfitrião a esta pessoa"
+                      title={t('room.pessoas.passarOPapelDe')}
                       onClick={() => onTransferHost(p.peerId)}
                     >
                       <TrophyIcon />
@@ -2914,7 +2903,7 @@ export default function Room({
             </div>
             {isHost && (
               <div className="host-controls-box">
-                <h4>Controlos do anfitrião</h4>
+                <h4>{t('room.pessoas.controlosDoAnfitriao')}</h4>
                 <label className="host-toggle">
                   <input
                     type="checkbox"
@@ -2922,8 +2911,8 @@ export default function Room({
                     onChange={(e) => signalRef.current?.send({ type: 'room-lock', locked: e.target.checked })}
                   />
                   <span>
-                    <strong>Bloquear reunião</strong>
-                    <small>Ninguém entra sem ser admitido, mesmo com o link</small>
+                    <strong>{t('room.pessoas.bloquearReuniao')}</strong>
+                    <small>{t('room.pessoas.ninguemEntraSemSer')}</small>
                   </span>
                 </label>
                 <label className="host-toggle">
@@ -2933,19 +2922,19 @@ export default function Room({
                     onChange={(e) => signalRef.current?.send({ type: 'host-share-only', on: e.target.checked })}
                   />
                   <span>
-                    <strong>Só o anfitrião partilha ecrã</strong>
-                    <small>Restringe a partilha de ecrã ao anfitrião</small>
+                    <strong>{t('room.pessoas.soOAnfitriaoPartilha')}</strong>
+                    <small>{t('room.pessoas.restringeAPartilhaDe')}</small>
                   </span>
                 </label>
               </div>
             )}
             {isHost && isTraining && (
               <div className="breakout-box">
-                <h4>Salas de grupo</h4>
+                <h4>{t('room.pessoas.salasDeGrupo')}</h4>
                 {breakoutRooms.length === 0 ? (
                   <>
                     <div className="breakout-create">
-                      <span className="muted small">Dividir participantes em</span>
+                      <span className="muted small">{t('room.pessoas.dividirParticipantesEm')}</span>
                       {[2, 3, 4].map((n) => (
                         <button
                           key={n}
@@ -2963,7 +2952,7 @@ export default function Room({
                       <span className="muted small">grupos</span>
                     </div>
                     <label className="breakout-timer-row">
-                      <span className="muted small">Duração:</span>
+                      <span className="muted small">{t('room.pessoas.duracao')}</span>
                       <select value={breakoutMinutes} onChange={(e) => setBreakoutMinutes(Number(e.target.value))}>
                         <option value={0}>sem limite</option>
                         {[5, 10, 15, 20, 30, 45, 60].map((m) => (
@@ -2977,7 +2966,7 @@ export default function Room({
                   <>
                     {breakoutEndsAt && (
                       <p className="breakout-countdown">
-                        <ClockIcon /> Termina em <Countdown endsAt={breakoutEndsAt} render={(txt) => <strong>{txt}</strong>} />
+                        <ClockIcon />{t('room.pessoas.terminaEm')}<Countdown endsAt={breakoutEndsAt} render={(txt) => <strong>{txt}</strong>} />
                       </p>
                     )}
                     {breakoutRooms.map((b) => (
@@ -2987,7 +2976,7 @@ export default function Room({
                             className="breakout-name"
                             defaultValue={b.label}
                             maxLength={60}
-                            title="Renomear grupo (Enter para guardar)"
+                            title={t('room.pessoas.renomearGrupoEnterPara')}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                             }}
@@ -2999,16 +2988,14 @@ export default function Room({
                           />
                           <button
                             className="btn-sm ghost"
-                            title="Visitar este grupo"
+                            title={t('room.pessoas.visitarEsteGrupo')}
                             onClick={() => {
                               sessionStorage.setItem(`dx_return_${b.code}`, code)
                               onSwitch?.(b.code)
                             }}
-                          >
-                            Visitar
-                          </button>
+                          >{t('room.pessoas.visitar')}</button>
                         </div>
-                        {b.people.length === 0 && <p className="muted small">Vazio</p>}
+                        {b.people.length === 0 && <p className="muted small">{t('room.pessoas.vazio')}</p>}
                         {b.people.map((name) => (
                           <div key={name} className="breakout-person">
                             <span className="avatar-circle small">{name.slice(0, 2).toUpperCase()}</span>
@@ -3016,7 +3003,7 @@ export default function Room({
                             <select
                               className="breakout-move"
                               value={b.code}
-                              title="Mover para…"
+                              title={t('room.pessoas.moverPara')}
                               onChange={(e) =>
                                 signalRef.current?.send({ type: 'breakout-move-user', name, code: e.target.value })
                               }
@@ -3037,17 +3024,15 @@ export default function Room({
                       <button
                         className="admit-no breakout-close"
                         onClick={() => signalRef.current?.send({ type: 'breakouts-close' })}
-                      >
-                        Retornar todos à principal
-                      </button>
+                      >{t('room.pessoas.retornarTodosAPrincipal')}</button>
                     </div>
                   </>
                 )}
               </div>
             )}
             <div className="rec-list">
-              <h4>Gravações desta sala</h4>
-              {recordings.length === 0 && <p className="muted small">Ainda não há gravações.</p>}
+              <h4>{t('room.pessoas.gravacoesDestaSala')}</h4>
+              {recordings.length === 0 && <p className="muted small">{t('room.pessoas.aindaNaoHaGravacoes')}</p>}
               {recordings.map((r) => (
                 <button key={r.id} className="rec-row" onClick={() => void downloadRecording(r).catch(() => setStatus('Falha ao descarregar'))}>
                   <DownloadIcon />
@@ -3069,14 +3054,12 @@ export default function Room({
             </div>
 
             <section className="tool-section">
-              <h4><ClockIcon /> Temporizador</h4>
+              <h4><ClockIcon />{t('room.ferramentas.temporizador')}</h4>
               {meetTimerEndsAt ? (
                 <div className="timer-row">
                   <Countdown endsAt={meetTimerEndsAt} render={(txt) => <strong className="mono timer-big">{txt}</strong>} />
                   {isHost && (
-                    <button className="btn-sm ghost" onClick={() => signalRef.current?.send({ type: 'timer-clear' })}>
-                      Limpar
-                    </button>
+                    <button className="btn-sm ghost" onClick={() => signalRef.current?.send({ type: 'timer-clear' })}>{t('room.ferramentas.limpar')}</button>
                   )}
                 </div>
               ) : isHost ? (
@@ -3088,16 +3071,16 @@ export default function Room({
                   ))}
                 </div>
               ) : (
-                <p className="muted small">O anfitrião pode definir um temporizador visível para todos.</p>
+                <p className="muted small">{t('room.ferramentas.oAnfitriaoPodeDefinir')}</p>
               )}
             </section>
 
             <section className="tool-section">
-              <h4><ChartIcon /> Sondagens</h4>
+              <h4><ChartIcon />{t('room.ferramentas.sondagens')}</h4>
               {isHost && (
                 <div className="poll-create">
                   <input
-                    placeholder="Pergunta…"
+                    placeholder={t('room.ferramentas.pergunta')}
                     maxLength={200}
                     value={pollQ}
                     onChange={(e) => setPollQ(e.target.value)}
@@ -3112,7 +3095,7 @@ export default function Room({
                       />
                       <label
                         className={pollCorrect === i ? 'poll-correct-pick on' : 'poll-correct-pick'}
-                        title="Marcar como resposta certa (modo quiz)"
+                        title={t('room.ferramentas.marcarComoRespostaCerta')}
                       >
                         <input
                           type="radio"
@@ -3132,18 +3115,18 @@ export default function Room({
                     )}
                     <SelectCtl
                       className="poll-dur"
-                      title="Duração da votação (quiz com tempo)"
+                      title={t('room.ferramentas.duracaoDaVotacaoQuiz')}
                       value={pollDur}
                       onChange={(e) => setPollDur(Number(e.target.value))}
                     >
-                      <option value={0}>Sem tempo</option>
+                      <option value={0}>{t('room.ferramentas.semTempo')}</option>
                       <option value={30}>30 s</option>
                       <option value={60}>1 min</option>
                       <option value={120}>2 min</option>
                       <option value={300}>5 min</option>
                     </SelectCtl>
                     {pollCorrect != null && (
-                      <Btn variant="ghost" title="Sondagem normal (sem resposta certa)" onClick={() => setPollCorrect(null)}>
+                      <Btn variant="ghost" title={t('room.ferramentas.sondagemNormalSemResposta')} onClick={() => setPollCorrect(null)}>
                         limpar certa
                       </Btn>
                     )}
@@ -3173,7 +3156,7 @@ export default function Room({
                   </div>
                 </div>
               )}
-              {polls.length === 0 && <p className="muted small">Ainda sem sondagens.</p>}
+              {polls.length === 0 && <p className="muted small">{t('room.ferramentas.aindaSemSondagens')}</p>}
               {[...polls].reverse().map((p) => {
                 const total = p.counts.reduce((a, b) => a + b, 0)
                 const revealed = !p.open && p.correct != null
@@ -3223,9 +3206,7 @@ export default function Room({
                       </p>
                     )}
                     {isHost && p.open && (
-                      <button className="link small-link" onClick={() => signalRef.current?.send({ type: 'poll-close', poll: p.id })}>
-                        Encerrar sondagem
-                      </button>
+                      <button className="link small-link" onClick={() => signalRef.current?.send({ type: 'poll-close', poll: p.id })}>{t('room.ferramentas.encerrarSondagem')}</button>
                     )}
                   </div>
                 )
@@ -3233,7 +3214,7 @@ export default function Room({
             </section>
 
             <section className="tool-section">
-              <h4><HelpIcon /> Perguntas e respostas</h4>
+              <h4><HelpIcon />{t('room.ferramentas.perguntasERespostas')}</h4>
               <form
                 className="qa-form"
                 onSubmit={(e) => {
@@ -3244,14 +3225,14 @@ export default function Room({
                 }}
               >
                 <input
-                  placeholder="Faz uma pergunta…"
+                  placeholder={t('room.ferramentas.fazUmaPergunta')}
                   maxLength={300}
                   value={qaInput}
                   onChange={(e) => setQaInput(e.target.value)}
                 />
-                <Btn disabled={!qaInput.trim()}>Enviar</Btn>
+                <Btn disabled={!qaInput.trim()}>{t('room.ferramentas.enviar')}</Btn>
               </form>
-              {questions.length === 0 && <p className="muted small">Ainda sem perguntas.</p>}
+              {questions.length === 0 && <p className="muted small">{t('room.ferramentas.aindaSemPerguntas')}</p>}
               {questions.map((q) => (
                 <div key={q.id} className={q.answered ? 'qa-card answered' : 'qa-card'}>
                   <div className="qa-main">
@@ -3261,7 +3242,7 @@ export default function Room({
                   <div className="qa-actions">
                     <button
                       className={myUpvotes[q.id] ? 'qa-vote mine' : 'qa-vote'}
-                      title="Votar nesta pergunta"
+                      title={t('room.ferramentas.votarNestaPergunta')}
                       onClick={() => {
                         signalRef.current?.send({ type: 'qa-upvote', id: q.id })
                         setMyUpvotes({ ...myUpvotes, [q.id]: !myUpvotes[q.id] })
@@ -3288,51 +3269,43 @@ export default function Room({
         {panel === 'settings' && (
           <aside className="side-panel">
             <div className="panel-head">
-              <h3>Definições</h3>
+              <h3>{t('room.espera.definicoes')}</h3>
               <button className="panel-close" onClick={() => setPanel('none')}><CloseIcon /></button>
             </div>
             <div className="settings-body">
               {/* Ordem do template: Tema primeiro, depois dispositivos, ruído e fundo. */}
               <div className="bg-section">
-                <span className="set-label">Tema</span>
-                <small className="muted">Escolhe o aspeto da aplicação.</small>
+                <span className="set-label">{t('room.definicoes.tema')}</span>
+                <small className="muted">{t('room.definicoes.escolheOAspetoDa')}</small>
                 <ThemePicker />
               </div>
-              <label className="set-label">
-                Microfone
-                <select value={micId} onChange={(e) => void switchMic(e.target.value)}>
+              <label className="set-label">{t('room.preEntrada.microfone')}<select value={micId} onChange={(e) => void switchMic(e.target.value)}>
                   {devices.mics.map((d) => (
                     <option key={d.deviceId} value={d.deviceId}>{d.label || 'Microfone'}</option>
                   ))}
                 </select>
               </label>
-              <label className="set-label">
-                Câmara
-                <select value={camId} onChange={(e) => void switchCam(e.target.value)}>
+              <label className="set-label">{t('room.preEntrada.camara')}<select value={camId} onChange={(e) => void switchCam(e.target.value)}>
                   {devices.cams.map((d) => (
                     <option key={d.deviceId} value={d.deviceId}>{d.label || 'Câmara'}</option>
                   ))}
                 </select>
               </label>
-              <label className="set-label">
-                Altifalantes
-                <select value={speakerId} onChange={(e) => setSpeakerId(e.target.value)}>
-                  <option value="">Predefinido do sistema</option>
+              <label className="set-label">{t('room.definicoes.altifalantes')}<select value={speakerId} onChange={(e) => setSpeakerId(e.target.value)}>
+                  <option value="">{t('room.espera.predefinidoDoSistema')}</option>
                   {devices.speakers.map((d) => (
                     <option key={d.deviceId} value={d.deviceId}>{d.label || 'Altifalante'}</option>
                   ))}
                 </select>
               </label>
 
-              <label className="set-label">
-                Traduzir legendas (IA local)
-                <select value={ccLang} onChange={(e) => setCcLang(e.target.value)}>
-                  <option value="">Sem tradução — idioma original</option>
-                  <option value="pt">Português</option>
-                  <option value="en">English</option>
-                  <option value="fr">Français</option>
-                  <option value="es">Español</option>
-                  <option value="de">Deutsch</option>
+              <label className="set-label">{t('room.definicoes.traduzirLegendasIaLocal')}<select value={ccLang} onChange={(e) => setCcLang(e.target.value)}>
+                  <option value="">{t('room.definicoes.semTraducaoIdiomaOriginal')}</option>
+                  <option value="pt">{t('room.definicoes.portugues')}</option>
+                  <option value="en">{t('room.definicoes.english')}</option>
+                  <option value="fr">{t('room.definicoes.francais')}</option>
+                  <option value="es">{t('room.definicoes.espanol')}</option>
+                  <option value="de">{t('room.definicoes.deutsch')}</option>
                 </select>
                 <small className="muted">
                   As legendas (CC) chegam no idioma original e são substituídas
@@ -3342,9 +3315,7 @@ export default function Room({
 
               <label className="set-toggle">
                 <input type="checkbox" checked={noiseSuppression} onChange={() => void toggleNoiseSuppression()} />
-                <span>
-                  Supressão de ruído (IA)
-                  <small>RNNoise remove teclado, ventoinha e ruído de fundo — muito além da supressão do browser.</small>
+                <span>{t('room.definicoes.supressaoDeRuidoIa')}<small>RNNoise remove teclado, ventoinha e ruído de fundo — muito além da supressão do browser.</small>
                 </span>
               </label>
 
@@ -3357,9 +3328,7 @@ export default function Room({
                     localStorage.setItem('dx_asr_server', e.target.checked ? '1' : '0')
                   }}
                 />
-                <span>
-                  Transcrição no servidor (mais precisa)
-                  <small>
+                <span>{t('room.definicoes.transcricaoNoServidorMais')}<small>
                     Whisper no teu servidor em vez do reconhecimento do browser — muito mais
                     preciso e soberano (o áudio não sai do datacenter). Aplica-se ao ligar as
                     legendas/notas a seguir.
@@ -3368,13 +3337,9 @@ export default function Room({
               </label>
               <div className="bg-section">
                 <span className="set-label">Fundo {bgBusy ? '· a aplicar…' : ''}</span>
-                <small className="muted">
-                  IA local segmenta a pessoa; o fundo real nunca fica visível para os outros.
-                </small>
+                <small className="muted">{t('room.definicoes.iaLocalSegmentaA')}</small>
                 {!hasLocalVideo && (
-                  <small className="hint-warn">
-                    Liga a câmara para escolher um fundo — os efeitos precisam de vídeo.
-                  </small>
+                  <small className="hint-warn">{t('room.definicoes.ligaACamaraPara')}</small>
                 )}
                 <div className="bg-grid">
                   <button
@@ -3383,7 +3348,7 @@ export default function Room({
                     onClick={() => void applyBackground('none')}
                   >
                     <span className="bg-none">Ø</span>
-                    <small>Nenhum</small>
+                    <small>{t('room.definicoes.nenhum')}</small>
                   </button>
                   <button
                     className={bgMode === 'blur' ? 'bg-opt selected' : 'bg-opt'}
@@ -3391,7 +3356,7 @@ export default function Room({
                     onClick={() => void applyBackground('blur')}
                   >
                     <span className="bg-blur-preview"><BlurIcon /></span>
-                    <small>Vidro</small>
+                    <small>{t('room.definicoes.vidro')}</small>
                   </button>
                   {presets.map((p) => (
                     <button
@@ -3406,7 +3371,7 @@ export default function Room({
                   ))}
                   <button className="bg-opt" disabled={bgBusy || !hasLocalVideo} onClick={() => uploadRef.current?.click()}>
                     <span className="bg-none">＋</span>
-                    <small>Imagem…</small>
+                    <small>{t('room.definicoes.imagem')}</small>
                   </button>
                 </div>
                 <input
@@ -3424,7 +3389,7 @@ export default function Room({
         {fxOpen && (
           <aside className="side-panel fx-panel">
             <div className="panel-head">
-              <h3>Fundos e efeitos</h3>
+              <h3>{t('room.espera.fundosEEfeitos')}</h3>
               <button className="panel-close" onClick={() => setFxOpen(false)}><CloseIcon /></button>
             </div>
             <div className="fx-preview-wrap">
@@ -3434,16 +3399,16 @@ export default function Room({
               A IA segmenta-te localmente — o teu fundo real nunca é transmitido. {bgBusy ? 'A aplicar…' : ''}
             </p>
             {!hasLocalVideo && (
-              <p className="hint-warn small">Liga a câmara para usar efeitos de fundo.</p>
+              <p className="hint-warn small">{t('room.fundos.ligaACamaraPara')}</p>
             )}
 
-            <span className="set-label">Efeito esbatido</span>
+            <span className="set-label">{t('room.fundos.efeitoEsbatido')}</span>
             <div className="fx-row">
               <button
                 className={bgMode === 'none' ? 'fx-opt selected' : 'fx-opt'}
                 disabled={bgBusy || !hasLocalVideo}
                 onClick={() => void applyBackground('none')}
-                title="Sem efeito"
+                title={t('room.fundos.semEfeito')}
               >
                 Ø
               </button>
@@ -3451,7 +3416,7 @@ export default function Room({
                 className={bgMode === 'blur' && blurLevel === 'light' ? 'fx-opt selected' : 'fx-opt'}
                 disabled={bgBusy || !hasLocalVideo}
                 onClick={() => void applyBackground('blur', undefined, 'light')}
-                title="Desfoque leve"
+                title={t('room.fundos.desfoqueLeve')}
               >
                 <BlurIcon />
                 <small>leve</small>
@@ -3460,7 +3425,7 @@ export default function Room({
                 className={bgMode === 'blur' && blurLevel === 'strong' ? 'fx-opt selected' : 'fx-opt'}
                 disabled={bgBusy || !hasLocalVideo}
                 onClick={() => void applyBackground('blur', undefined, 'strong')}
-                title="Desfoque forte"
+                title={t('room.fundos.desfoqueForte')}
               >
                 <BlurIcon />
                 <small>forte</small>
@@ -3469,14 +3434,14 @@ export default function Room({
                 className="fx-opt"
                 disabled={bgBusy || !hasLocalVideo}
                 onClick={() => uploadRef.current?.click()}
-                title="Carregar imagem de fundo"
+                title={t('room.fundos.carregarImagemDeFundo')}
               >
                 ＋
                 <small>imagem</small>
               </button>
             </div>
 
-            <span className="set-label">Fundos</span>
+            <span className="set-label">{t('room.fundos.fundos')}</span>
             <div className="fx-gallery">
               {presets.map((p) => (
                 <button
@@ -3499,8 +3464,7 @@ export default function Room({
               <h3>Notas AI {transcribing && <span className="rec-dot" />}</h3>
               <button className="panel-close" onClick={() => setNotesOpen(false)}><CloseIcon /></button>
             </div>
-            <p className="muted small">
-              Transcrição partilhada: o <strong>anfitrião</strong> inicia a Nota AI e <strong>todos</strong> os
+            <p className="muted small">{t('room.fundos.transcricaoPartilhadaO')}<strong>anfitrião</strong> inicia a Nota AI e <strong>todos</strong> os
               participantes passam a transcrever o próprio microfone — as frases aparecem aqui legendadas por
               orador (capta toda a gente, não só quem iniciou). Ao terminar, a ata (MoM) é gerada e guardada.
             </p>
@@ -3508,7 +3472,7 @@ export default function Room({
               <p className="muted small"><MicIcon /> Transcrição ativa (iniciada por {scribeBy}). A tua fala está a ser captada.</p>
             )}
             <div className="notes-body">
-              {lines.length === 0 && !interim && <p className="muted small">Ativa a transcrição para começar…</p>}
+              {lines.length === 0 && !interim && <p className="muted small">{t('room.fundos.ativaATranscricaoPara')}</p>}
               {lines.map((l, i) => (
                 <div key={i} className="note-line">{l}</div>
               ))}
@@ -3519,7 +3483,7 @@ export default function Room({
                 className="stt-lang"
                 value={sttLang}
                 disabled={transcribing}
-                title="Idioma da transcrição"
+                title={t('room.fundos.idiomaDaTranscricao')}
                 onChange={(e) => {
                   setSttLang(e.target.value)
                   localStorage.setItem('dx_stt_lang', e.target.value)
@@ -3548,7 +3512,7 @@ export default function Room({
                   title={lines.length === 0 ? 'Sem transcrição para guardar' : 'Gerar e guardar a ata (MoM)'}
                   onClick={() => void saveMinutes()}
                 >
-                  {momSaved ? '✓ Guardada' : <><NoteIcon /> Guardar ata</>}
+                  {momSaved ? '✓ Guardada' : <><NoteIcon />{t('room.fundos.guardarAta')}</>}
                 </button>
               </div>
             </div>
@@ -3560,9 +3524,9 @@ export default function Room({
           vídeo): o vídeo encolhe para os acomodar. Cartões estilo Meet. */}
       <div className="room-notices">
         {canAdmit && waitingQueue.length > 0 && (
-          <div className="admit-card" role="dialog" aria-label="Sala de espera">
+          <div className="admit-card" role="dialog" aria-label={t('room.preEntrada.salaDeEspera')}>
             <div className="admit-card-head">
-              <span className="admit-card-title">Sala de espera</span>
+              <span className="admit-card-title">{t('room.preEntrada.salaDeEspera')}</span>
               {waitingQueue.length > 1 && (
                 <button className="admit-all-link" onClick={() => waitingQueue.forEach((p) => admit(p.peer_id, true))}>
                   Admitir todos ({waitingQueue.length})
@@ -3576,15 +3540,15 @@ export default function Room({
                   <strong>{p.username}</strong>
                   <small>quer entrar</small>
                 </span>
-                <button className="admit-deny" onClick={() => admit(p.peer_id, false)}>Recusar</button>
-                <button className="admit-accept" onClick={() => admit(p.peer_id, true)}>Admitir</button>
+                <button className="admit-deny" onClick={() => admit(p.peer_id, false)}>{t('room.espera.recusar')}</button>
+                <button className="admit-accept" onClick={() => admit(p.peer_id, true)}>{t('room.espera.admitir')}</button>
               </div>
             ))}
           </div>
         )}
 
         {ctrlAsk && (
-          <div className="admit-card" role="dialog" aria-label="Pedido de controlo remoto">
+          <div className="admit-card" role="dialog" aria-label={t('room.espera.pedidoDeControloRemoto')}>
             <div className="admit-row">
               <span className="admit-avatar" aria-hidden><CubeIcon /></span>
               <span className="admit-name">
@@ -3597,24 +3561,20 @@ export default function Room({
                   signalRef.current?.send({ type: 'remote-control', to: ctrlAsk.from, action: 'deny', payload: null })
                   setCtrlAsk(null)
                 }}
-              >
-                Recusar
-              </button>
+              >{t('room.espera.recusar')}</button>
               <button
                 className="admit-accept"
                 onClick={() => {
                   signalRef.current?.send({ type: 'remote-control', to: ctrlAsk.from, action: 'accept', payload: null })
                   setCtrlAsk(null)
                 }}
-              >
-                Aceitar
-              </button>
+              >{t('room.espera.aceitar')}</button>
             </div>
           </div>
         )}
 
         {shareAsk && isHost && (
-          <div className="admit-card" role="dialog" aria-label="Pedido de partilha de ecrã">
+          <div className="admit-card" role="dialog" aria-label={t('room.espera.pedidoDePartilhaDe')}>
             <div className="admit-row">
               <span className="admit-avatar" aria-hidden><ShareIcon /></span>
               <span className="admit-name">
@@ -3627,18 +3587,14 @@ export default function Room({
                   signalRef.current?.send({ type: 'share-grant', to: shareAsk.from, allowed: false })
                   setShareAsk(null)
                 }}
-              >
-                Negar
-              </button>
+              >{t('room.espera.negar')}</button>
               <button
                 className="admit-accept"
                 onClick={() => {
                   signalRef.current?.send({ type: 'share-grant', to: shareAsk.from, allowed: true })
                   setShareAsk(null)
                 }}
-              >
-                Permitir
-              </button>
+              >{t('room.espera.permitir')}</button>
             </div>
           </div>
         )}
@@ -3655,7 +3611,7 @@ export default function Room({
           const remaining =
             p.open && p.ends_at ? Math.max(0, Math.ceil((p.ends_at - Date.now()) / 1000)) : null
           return (
-            <div className="admit-card poll-popup" role="dialog" aria-label="Sondagem">
+            <div className="admit-card poll-popup" role="dialog" aria-label={t('room.espera.sondagem')}>
               <div className="admit-card-head">
                 <span className="admit-card-title">
                   {p.correct != null || revealed ? '🏅 Quiz' : '📊 Sondagem'} · {p.by}
@@ -3663,7 +3619,7 @@ export default function Room({
                 </span>
                 <button
                   className="panel-close"
-                  aria-label="Dispensar"
+                  aria-label={t('room.espera.dispensar')}
                   onClick={() => setPollDismissed((m) => ({ ...m, [p.id]: true }))}
                 >
                   <CloseIcon />
@@ -3749,25 +3705,24 @@ export default function Room({
               ficam só os indicadores dinâmicos da sessão. */}
           {roomState === 'in' && <MeetingElapsed startedAt={joinedAtRef.current} />}
           {secOpen && secCode && (
-            <span className="sec-code" onClick={() => setSecOpen(false)} title="Código de segurança da sala">
+            <span className="sec-code" onClick={() => setSecOpen(false)} title={t('room.barra.codigoDeSegurancaDa')}>
               <ShieldIcon /> <strong className="mono">{secCode}</strong> — igual em todos os participantes se ninguém estiver a intercetar
             </span>
           )}
           {returnTo && (
             <button
               className="return-main"
-              title="Regressar à sala principal"
+              title={t('room.barra.regressarASalaPrincipal')}
               onClick={() => {
                 sessionStorage.removeItem(`dx_return_${code}`)
                 sessionStorage.removeItem(`dx_bo_ends_${code}`)
                 onSwitch?.(returnTo)
               }}
             >
-              <ChevronLeftIcon /> Sala principal
-            </button>
+              <ChevronLeftIcon />{t('room.barra.salaPrincipal')}</button>
           )}
           {returnTo && breakoutEndsAt && (
-            <span className="room-topo breakout-chip" title="Tempo restante neste grupo">
+            <span className="room-topo breakout-chip" title={t('room.barra.tempoRestanteNesteGrupo')}>
               <ClockIcon /> <Countdown endsAt={breakoutEndsAt} render={(txt) => <>{txt}</>} />
             </span>
           )}
@@ -3777,7 +3732,7 @@ export default function Room({
               render={(txt, restam) => (
                 <span
                   className={restam <= 60 ? 'room-topo breakout-chip timer-low' : 'room-topo breakout-chip'}
-                  title="Temporizador da reunião"
+                  title={t('room.barra.temporizadorDaReuniao')}
                 >
                   ⏳ {txt}
                 </span>
@@ -3785,7 +3740,7 @@ export default function Room({
             />
           )}
           {presentation && (
-            <span className="room-topo presenter-chip" title="Apresentação em curso">
+            <span className="room-topo presenter-chip" title={t('room.barra.apresentacaoEmCurso')}>
               🖥 {presentation.peerId === 'me'
                 ? 'A apresentar'
                 : `${peers.find((p) => p.peerId === presentation.peerId)?.username ?? ''} • apresenta`}
@@ -3910,8 +3865,7 @@ export default function Room({
                     setMoreOpen(false)
                   }}
                 >
-                  <span style={{ opacity: effectiveViewMode === 'grid' && !presentation ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><GridIcon /> Grelha
-                </button>
+                  <span style={{ opacity: effectiveViewMode === 'grid' && !presentation ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><GridIcon />{t('room.barra.grelha')}</button>
                 <button
                   className="device-item"
                   onClick={() => {
@@ -3919,21 +3873,18 @@ export default function Room({
                     setMoreOpen(false)
                   }}
                 >
-                  <span style={{ opacity: effectiveViewMode === 'stage' && !presentation ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><StageIcon /> Orador em palco
-                </button>
+                  <span style={{ opacity: effectiveViewMode === 'stage' && !presentation ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><StageIcon />{t('room.barra.oradorEmPalco')}</button>
                 {presentation && <>
                   <button
                     className="device-item"
                     onClick={() => { setPresLayout('bottom'); setMoreOpen(false) }}
                   >
-                    <span style={{ opacity: presLayout === 'bottom' ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><RowsIcon /> Apresentação — plateia em baixo
-                  </button>
+                    <span style={{ opacity: presLayout === 'bottom' ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><RowsIcon />{t('room.barra.apresentacaoPlateiaEmBaixo')}</button>
                   <button
                     className="device-item"
                     onClick={() => { setPresLayout('side'); setMoreOpen(false) }}
                   >
-                    <span style={{ opacity: presLayout === 'side' ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><TableIcon /> Apresentação — lado a lado
-                  </button>
+                    <span style={{ opacity: presLayout === 'side' ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><TableIcon />{t('room.barra.apresentacaoLadoALado')}</button>
                 </>}
                 <div className="device-sep" />
                 <button
@@ -3953,8 +3904,7 @@ export default function Room({
                     setMoreOpen(false)
                   }}
                 >
-                  <BlurIcon /> Fundos e efeitos
-                </button>
+                  <BlurIcon />{t('room.espera.fundosEEfeitos')}</button>
                 {isHost && topology === 'sfu' && (
                   <button
                     className="device-item"
@@ -3993,8 +3943,7 @@ export default function Room({
                   className="device-item"
                   onClick={() => void toggleParallax()}
                 >
-                  <span style={{ opacity: parallax ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><CubeIcon /> Efeito de sala 3D
-                </button>
+                  <span style={{ opacity: parallax ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span><CubeIcon />{t('room.barra.efeitoDeSalaD')}</button>
                 <button
                   className="device-item device-action"
                   onClick={() => {
@@ -4002,8 +3951,7 @@ export default function Room({
                     setMoreOpen(false)
                   }}
                 >
-                  <SettingsIcon /> Definições
-                </button>
+                  <SettingsIcon />{t('room.espera.definicoes')}</button>
               </div>
             )}
             <Ctrl label="Mais opções" active={moreOpen} onClick={() => setMoreOpen(!moreOpen)}>
@@ -4011,7 +3959,7 @@ export default function Room({
             </Ctrl>
           </div>
           </div>
-          <button className="ctrl hangup" onClick={() => void leaveRoom()} title="Sair da chamada">
+          <button className="ctrl hangup" onClick={() => void leaveRoom()} title={t('room.barra.sairDaChamada')}>
             <HangupIcon />
           </button>
         </div>
@@ -4120,6 +4068,7 @@ function DeviceControl({
   emptyLabel: string
   extra?: ReactNode
 }) {
+  const { t } = useTranslation()
   // Selagem: o menu de dispositivos abre agora como barra horizontal
   // flutuante ao fundo do vídeo (estilo Google Meet) — ver DeviceChipsBar.
   void devices
@@ -4137,7 +4086,7 @@ function DeviceControl({
       >
         {children}
       </button>
-      <button className={open ? 'chevron open' : 'chevron'} onClick={onChevron} data-tip="Escolher dispositivo" aria-label="Escolher dispositivo">
+      <button className={open ? 'chevron open' : 'chevron'} onClick={onChevron} data-tip="Escolher dispositivo" aria-label={t('room.chat.escolherDispositivo')}>
         <ChevronUpIcon />
       </button>
     </div>
@@ -4164,6 +4113,7 @@ function Whiteboard({
   onSave: (pngBase64: string) => void | Promise<void>
   onClose: () => void
 }) {
+  const { t } = useTranslation()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const drawing = useRef<WbStroke | null>(null)
@@ -4264,11 +4214,11 @@ function Whiteboard({
             title="Cor"
           />
         ))}
-        <button className={width === 3 ? 'wb-tool sel' : 'wb-tool'} onClick={() => setWidth(3)} title="Traço fino"><StrokeThinIcon /></button>
-        <button className={width === 8 ? 'wb-tool sel' : 'wb-tool'} onClick={() => setWidth(8)} title="Traço grosso"><StrokeThickIcon /></button>
-        <button className="wb-tool" onClick={() => void save()} title="Guardar na biblioteca de quadros"><SaveIcon /></button>
-        <button className="wb-tool" onClick={onClear} title="Limpar o quadro para todos"><TrashIcon /></button>
-        <button className="wb-tool" onClick={() => void closeAndSave()} title="Fechar (guarda automaticamente)"><CloseIcon /></button>
+        <button className={width === 3 ? 'wb-tool sel' : 'wb-tool'} onClick={() => setWidth(3)} title={t('room.quadro.tracoFino')}><StrokeThinIcon /></button>
+        <button className={width === 8 ? 'wb-tool sel' : 'wb-tool'} onClick={() => setWidth(8)} title={t('room.quadro.tracoGrosso')}><StrokeThickIcon /></button>
+        <button className="wb-tool" onClick={() => void save()} title={t('room.quadro.guardarNaBibliotecaDe')}><SaveIcon /></button>
+        <button className="wb-tool" onClick={onClear} title={t('room.quadro.limparOQuadroPara')}><TrashIcon /></button>
+        <button className="wb-tool" onClick={() => void closeAndSave()} title={t('room.quadro.fecharGuardaAutomaticamente')}><CloseIcon /></button>
       </div>
     </div>
   )
@@ -4276,6 +4226,7 @@ function Whiteboard({
 
 /** Ecrã partilhado em palco (track separada da câmara). */
 function PresentationTile({ stream, label, own, onRequestControl }: { stream: MediaStream; label: string; own?: boolean; onRequestControl?: () => void }) {
+  const { t } = useTranslation()
   // Callback-ref: liga o stream sempre que o <video> (re)monta e força o play —
   // o autoplay de vídeo NÃO-mudo (a apresentação remota) é bloqueado por alguns
   // browsers e ficava preto. Silencia-se sempre (o áudio do ecrã vem noutra
@@ -4405,15 +4356,15 @@ function PresentationTile({ stream, label, own, onRequestControl }: { stream: Me
       </div>
       {!own && <audio ref={attachAudio} autoPlay />}
       <span className="tile-name"><ShareIcon /> {label}</span>
-      <div className="pres-zoom-ctrls" role="group" aria-label="Zoom da apresentação">
-        <button title="Reduzir" onClick={() => applyZoom(zoomRef.current / 1.25)}>−</button>
+      <div className="pres-zoom-ctrls" role="group" aria-label={t('room.quadro.zoomDaApresentacao')}>
+        <button title={t('room.quadro.reduzir')} onClick={() => applyZoom(zoomRef.current / 1.25)}>−</button>
         <span className="mono">{Math.round(zoom * 100)}%</span>
-        <button title="Ampliar" onClick={() => applyZoom(zoomRef.current * 1.25)}>+</button>
-        {zoom > 1 && <button title="Repor (100%)" onClick={() => applyZoom(1)}>⟲</button>}
+        <button title={t('room.quadro.ampliar')} onClick={() => applyZoom(zoomRef.current * 1.25)}>+</button>
+        {zoom > 1 && <button title={t('room.quadro.repor')} onClick={() => applyZoom(1)}>⟲</button>}
       </div>
       <button
         className="pres-fs-btn"
-        title="Ecrã inteiro"
+        title={t('room.quadro.ecraInteiro')}
         onClick={() => {
           const el = document.documentElement
           if (document.fullscreenElement) void document.exitFullscreen()
@@ -4425,12 +4376,11 @@ function PresentationTile({ stream, label, own, onRequestControl }: { stream: Me
       {!own && onRequestControl && (
         <button
           className="remote-ctrl-btn"
-          title="Solicitar Controlo Remoto"
+          title={t('room.quadro.solicitarControloRemoto')}
           onClick={onRequestControl}
           style={{ position: 'absolute', bottom: '10px', left: '10px', zIndex: 10, background: 'var(--accent)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}
         >
-          <CubeIcon /> Solicitar Controlo
-        </button>
+          <CubeIcon />{t('room.quadro.solicitarControlo')}</button>
       )}
     </div>
   )

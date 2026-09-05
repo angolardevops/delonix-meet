@@ -170,6 +170,50 @@ describe('práticas de estado do delonix-portal', () => {
   })
 })
 
+describe('3.2.7 · a sala fala os três idiomas', () => {
+  // O `Room.tsx` — 4 300 linhas, o ecrã principal do produto — estava
+  // INTEIRAMENTE fora do i18n: zero chamadas a `t()`. Não era uma tradução
+  // incompleta; era uma sala que só existia em português (R99).
+  //
+  // Este portão guarda duas coisas, e as duas já falharam:
+  //   · não voltam a entrar literais visíveis sem passar pelo `t()`;
+  //   · os três locales têm as MESMAS chaves — uma chave só em `pt` mostra-se
+  //     ao utilizador inglês como o identificador cru, que é pior do que a
+  //     frase em português.
+
+  it('o Room.tsx não tem literais visíveis fora do t()', () => {
+    const src = read('web/src/pages/Room.tsx')
+    const soltos: string[] = []
+    for (const m of src.matchAll(/>\s*([A-ZÀ-Ú][^<>{}\n]{3,80})\s*</g)) {
+      const v = m[1].trim()
+      // `Promise` e afins aparecem em tipos e comentários de código, não na
+      // interface: exige-se uma palavra com letras minúsculas acentuadas ou
+      // um espaço, que é o que distingue uma frase de um identificador.
+      if (/[a-zà-ú]{3}/.test(v) && /\s/.test(v)) soltos.push(v)
+    }
+    for (const attr of ['title', 'placeholder', 'aria-label']) {
+      for (const m of src.matchAll(new RegExp(`${attr}="([A-ZÀ-Ú][^"]{3,90})"`, 'g'))) {
+        soltos.push(`${attr}="${m[1]}"`)
+      }
+    }
+    expect(soltos).toEqual([])
+  })
+
+  it('pt, en e fr têm exactamente as mesmas chaves em `room`', () => {
+    const chaves = (f: string) => {
+      const s = read(`web/src/locales/${f}.ts`)
+      const i = s.indexOf('  room: {')
+      expect(i, `${f}.ts não tem bloco room`).toBeGreaterThan(-1)
+      const bloco = s.slice(i, s.indexOf('\n  },', i))
+      return [...bloco.matchAll(/^\s{6}(\w+):/gm)].map((m) => m[1]).sort()
+    }
+    const pt = chaves('pt')
+    expect(pt.length).toBeGreaterThan(100)
+    expect(chaves('en')).toEqual(pt)
+    expect(chaves('fr')).toEqual(pt)
+  })
+})
+
 describe('3.2.8 · uma marca só, e que respeita quem renomeia', () => {
   // Havia duas marcas: o globo de `/logo.svg` em cinco ecrãs, e um quadrado
   // com a inicial no rail da consola. Com o nome de origem isso é incoerência.
