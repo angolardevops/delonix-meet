@@ -78,6 +78,22 @@ describe('3.1.4 · as ações não desaparecem no telemóvel', () => {
     expect(s).toContain('.qa-drawer { display: flex; }')
   })
 
+  // A escolha original foi entre BARRA e GAVETA — o corpo da página nunca
+  // esteve em cima da mesa. No telemóvel isso deixava a acção principal do
+  // produto atrás de um toque no menu, num ecrã com metade da altura vazia
+  // (R103). O mesmo componente passou a viver também na Home.
+  it('a Home mostra as ações onde a barra não as tem', () => {
+    const s = css()
+    // Em ecrã largo a barra já as tem: mostrá-las na Home seria a duplicação
+    // que a decisão original evitou.
+    expect(s).toContain('.qa-home { display: none; }')
+    // E abaixo dos 900px — o MESMO limiar em que a barra as passa à gaveta —
+    // aparecem no corpo. Sem esta metade, ficariam escondidas nas duas larguras.
+    const mobile = s.slice(s.indexOf('@media (max-width: 900px)'))
+    expect(mobile).toMatch(/\.qa-home \{\s*display: flex;/)
+    expect(read('web/src/pages/Home.tsx')).toContain('<QuickActions variant="home"')
+  })
+
   it('as ações rápidas são um componente só, usado nos dois sítios', () => {
     const s = read('web/src/components/Shell.tsx')
     expect(s).toContain('function QuickActions(')
