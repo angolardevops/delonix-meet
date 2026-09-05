@@ -343,9 +343,23 @@ where
             // não distingue «o produto está partido» de «a máquina é lenta», e
             // foi precisamente essa a dúvida que custou uma ida ao CI.
             let d = diag();
+            // A DICA tem de depender do que se observou. Ela era incondicional
+            // — «sobe o E2E_TIMEOUT_FACTOR» — e mandou investigar tempo numa
+            // falha em que o ICE estava `Failed` nos DOIS pares, que é um
+            // estado TERMINAL: mais prazo não liga um ICE que já desistiu.
+            // Uma mensagem que aponta o remédio errado custa mais do que uma
+            // mensagem que não aponta nenhum (R90).
+            let desistiu = d.contains("Failed") || d.contains("Closed");
+            let dica = if desistiu {
+                "O ICE está em estado TERMINAL (Failed/Closed), não a meio: subir \
+                 E2E_TIMEOUT_FACTOR não muda nada. Procura na REDE do ambiente — \
+                 UDP bloqueado, sem interface com candidatos de host, ou o par a \
+                 fechar antes de negociar."
+            } else {
+                "Se for lentidão do ambiente e não uma avaria, sobe E2E_TIMEOUT_FACTOR."
+            };
             panic!(
-                "timeout à espera de: {label} (prazo {:?}, {tentativas} tentativas em {:?}).{}\n\
-                 Se for lentidão do ambiente e não uma avaria, sobe E2E_TIMEOUT_FACTOR.",
+                "timeout à espera de: {label} (prazo {:?}, {tentativas} tentativas em {:?}).{}\n{dica}",
                 timeout,
                 inicio.elapsed(),
                 if d.is_empty() {
@@ -561,4 +575,55 @@ async fn client_offer_during_server_offer_is_deferred_not_dropped() {
     a.release_held_answers().await;
     sfu.remove_peer(room, a.id).await;
     sfu.remove_peer(room, b.id).await;
+}
+
+/// Prova que a DICA de um timeout depende do estado observado (R90).
+///
+/// Sem este teste, a distinção entre «ainda a tentar» e «desistiu» é uma
+/// afirmação num comentário. A mensagem que manda subir o prazo num ICE
+/// `Failed` custou uma investigação inteira na direcção errada.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_dica_do_timeout_segue_o_estado_observado() {
+    for (estado, esperado, proibido) in [
+        (
+            "A[ice=Failed] · B[ice=Failed]",
+            "estado TERMINAL",
+            "sobe E2E_TIMEOUT_FACTOR",
+        ),
+        (
+            "A[ice=Checking] · B[ice=New]",
+            "sobe E2E_TIMEOUT_FACTOR",
+            "estado TERMINAL",
+        ),
+    ] {
+        let e = estado.to_string();
+        let r = tokio::spawn(async move {
+            eventually_com_diagnostico(
+                "condição que nunca acontece",
+                Duration::from_millis(30),
+                || async { false },
+                move || e.clone(),
+            )
+            .await
+        })
+        .await;
+        let msg = match r {
+            Err(j) if j.is_panic() => {
+                let p = j.into_panic();
+                p.downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_default()
+            }
+            _ => panic!("esperava-se que o prazo estourasse"),
+        };
+        assert!(
+            msg.contains(esperado),
+            "para o estado {estado:?} a dica devia conter {esperado:?}; veio: {msg}"
+        );
+        assert!(
+            !msg.contains(proibido),
+            "para o estado {estado:?} a dica NÃO devia conter {proibido:?}; veio: {msg}"
+        );
+    }
 }

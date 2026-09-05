@@ -2233,6 +2233,7 @@ export default function Room({
           const selfTile = (
             <div
               className={meSpeaking ? 'tile speaking' : 'tile'}
+              data-peer="local"
               style={tileStyle}
               onDoubleClick={() => togglePin('me')}
               title="Duplo-clique para fixar/desafixar no palco"

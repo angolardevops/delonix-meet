@@ -156,6 +156,13 @@ jobs:
   isolamento:
     name: Isolamento, MFA, gravação e drain
     runs-on: ubuntu-latest
+    # O mesmo factor que o job do backend já usa: os testes de media e de
+    # WebCodecs correm num runner partilhado de 2 vCPU, onde o que na máquina de
+    # desenvolvimento leva segundos pode levar minutos. Um portão que falha por
+    # o runner estar lento não distingue produto partido de máquina ocupada —
+    # e treina toda a gente a carregar em «repetir» (R90).
+    env:
+      E2E_TIMEOUT_FACTOR: 4
     services:
       postgres:
         image: postgres:17-alpine
@@ -222,8 +229,24 @@ jobs:
       # E o mesmo visto pelo UTILIZADOR. O backend estar certo não faz um
       # produto: sem interface, o MFA existe para quem sabe fazer POSTs. É este
       # teste que separa as duas coisas.
+      # `working-directory: web` NÃO é decoração. Sem ele o `npx` corre na raiz,
+      # onde não há `node_modules`, DESCARREGA o Playwright mais recente e
+      # instala os browsers DESSA versão — enquanto os testes usam o
+      # `web/node_modules`, que espera outra. O aviso está no log e passou
+      # despercebido durante meses:
+      #
+      #   npm warn exec The following package was not found and will be
+      #   installed: playwright@1.63.0
+      #   WARNING: It looks like you are running 'npx playwright install'
+      #   without first installing your project's dependencies.
+      #
+      # O sintoma é «Executable doesn't exist», que se lê como «faltou
+      # instalar» quando o que faltou foi instalar NO SÍTIO CERTO. O job
+      # `frontend` nunca teve o problema porque tem
+      # `defaults.run.working-directory: web`.
       - name: Chromium para o teste de interface
         run: npx playwright install chromium
+        working-directory: web
         working-directory: web
 
       - name: Interface do MFA (Chromium real)

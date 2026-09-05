@@ -39,9 +39,24 @@ const url=`${APP}/e2e/harness.html?token=${encodeURIComponent(jr.room_token)}&co
 
 const ps=[]
 for(let i=0;i<2;i++){const c=await b.newContext();const p=await c.newPage();await p.goto(url,{waitUntil:'domcontentloaded',timeout:120000});ps.push(p)}
-for(let k=0;k<30;k++){ await sleep(1500); const v=await Promise.all(ps.map(p=>p.evaluate(()=>window.__dlx.tempos?.resumo?.()??null))); if(v.every(x=>x&&x.join_ms!==null)) break }
+// A espera tem de dizer se ESGOTOU (R90). A versão anterior saía do ciclo em
+// silêncio ao fim de 45 s e caía na asserção seguinte, que reportava
+// `join_ms medido: null` — uma frase que faz parecer que o produto mediu mal,
+// quando o que aconteceu foi o teste ter lido cedo demais num runner lento.
+// «Ainda não chegou» e «veio errado» são diagnósticos diferentes e não podem
+// partilhar a mesma mensagem.
+const ESPERA_MAX_MS = 90000, PASSO_MS = 1500
+let pronto = false, esperou = 0
+for (let k = 0; k < ESPERA_MAX_MS / PASSO_MS; k++) {
+  await sleep(PASSO_MS); esperou += PASSO_MS
+  const v = await Promise.all(ps.map(p => p.evaluate(() => window.__dlx.tempos?.resumo?.() ?? null)))
+  if (v.every(x => x && x.join_ms !== null)) { pronto = true; break }
+}
 const t = await ps[0].evaluate(()=>window.__dlx.tempos.resumo())
-console.log('  tempos medidos:', JSON.stringify(t))
+console.log('  tempos medidos:', JSON.stringify(t), `(esperou ${esperou} ms)`)
+if (!pronto) {
+  console.log(`  ✗ os tempos NÃO ficaram prontos em ${ESPERA_MAX_MS} ms — o que segue mede uma leitura incompleta, não o produto`)
+}
 await b.close()
 
 chk(typeof t.join_ms==='number' && t.join_ms>0, `join_ms medido: ${t.join_ms} ms`)
