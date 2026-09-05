@@ -111,6 +111,14 @@ pub struct Config {
     /// `deploy/k8s/02-server.yaml`), senão o SIGKILL chega primeiro e o drain
     /// não serve para nada — que é exactamente o que acontecia antes.
     pub drain_grace_secs: u64,
+    /// Quanto tempo um lugar fica reservado depois de o socket cair (R91),
+    /// em segundos (`RECONNECT_GRACE_SECS`, por omissão 45).
+    ///
+    /// O tecto é curto de propósito. Enquanto o lugar está reservado o
+    /// participante CONTA para a sala: ocupa quota, aparece no roster, e a
+    /// gravação não finaliza. Uma janela generosa transforma um browser
+    /// fechado numa sala que nunca esvazia.
+    pub reconnect_grace_secs: u64,
     /// Segundos entre pôr a readiness em 503 e avisar os clientes
     /// (`DRAIN_READINESS_SECS`, default 12).
     ///
@@ -210,6 +218,7 @@ impl Config {
             rec_queue_cap: bounded_env("REC_QUEUE_CAP", 2_048, 64, 65_536),
             auth_rate_per_min: bounded_env("AUTH_RATE_PER_MIN", 20, 5, 10_000),
             drain_grace_secs: bounded_env("DRAIN_GRACE_SECS", 40, 1, 3_600) as u64,
+            reconnect_grace_secs: bounded_env("RECONNECT_GRACE_SECS", 45, 5, 300) as u64,
             drain_readiness_secs: bounded_env("DRAIN_READINESS_SECS", 12, 0, 300) as u64,
             drain_reconnect_ms: bounded_env("DRAIN_RECONNECT_MS", 2_000, 100, 60_000) as u64,
             ffmpeg_timeout_secs: bounded_env("FFMPEG_TIMEOUT_SECS", 3_600, 30, 86_400) as u64,
@@ -277,5 +286,14 @@ fn secret(var: &str, dev_default: &str, insecure: bool, min_len: usize) -> Strin
                 panic!("{var} tem de estar definido em produção (ou define DELONIX_ALLOW_INSECURE=1 em dev)")
             }
         }
+    }
+}
+
+impl Config {
+    /// A janela de graça como `Duration`. Existe para os chamadores não terem
+    /// de se lembrar da unidade — um `45` lido como milissegundos daria uma
+    /// janela de 45 ms e a reclamação nunca aconteceria.
+    pub fn reconnect_grace(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.reconnect_grace_secs)
     }
 }

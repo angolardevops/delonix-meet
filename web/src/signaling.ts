@@ -48,7 +48,8 @@ export interface PeerInfo {
 }
 
 export type ServerMsg =
-  | { type: 'joined'; peer_id: string; peers: PeerInfo[] }
+  | { type: 'joined'; peer_id: string; peers: PeerInfo[]; reconnect?: string }
+  | { type: 'peer-reconnecting'; peer_id: string }
   /** Este nó vai fechar. Reconectar daqui a `reconnect_in_ms` (mais jitter)
    *  migra a sala para outro pod — ver `callRecovery`/Room.tsx. */
   | { type: 'draining'; reconnect_in_ms: number }
@@ -157,6 +158,36 @@ export class Signaling {
   private handlers = new Map<string, ((msg: never) => void)[]>()
   onclose: (() => void) | null = null
 
+  /** Guarda o segredo de reclamação desta sala (R91). */
+  static guardarSegredo(roomCode: string, segredo: string) {
+    // `sessionStorage` e não `localStorage`: o segredo vale para ESTA aba e
+    // para esta sessão. Num `localStorage` sobreviveria ao fecho do browser e
+    // duas abas na mesma sala disputariam o mesmo lugar.
+    try {
+      sessionStorage.setItem(`dx_seat_${roomCode}`, segredo)
+    } catch {
+      /* modo privado: sem reclamação, entra-se de novo — degrada, não parte */
+    }
+  }
+
+  /** Esquece o lugar. Chamado ao SAIR de propósito — sair não é cair. */
+  static esquecerSegredo(roomCode: string) {
+    try {
+      sessionStorage.removeItem(`dx_seat_${roomCode}`)
+    } catch {
+      /* idem */
+    }
+  }
+
+  private static lerSegredo(roomCode?: string): string {
+    if (!roomCode) return ''
+    try {
+      return sessionStorage.getItem(`dx_seat_${roomCode}`) ?? ''
+    } catch {
+      return ''
+    }
+  }
+
   constructor(roomToken: string, roomCode?: string) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     // `room` (código público, não sensível) permite ao load balancer fazer
@@ -165,7 +196,13 @@ export class Signaling {
     // podem cair em pods diferentes e não trocar media (admissão/partilha/vídeo
     // falham). Ver deploy/k8s/40-ingress.yaml (upstream-hash-by: $arg_room).
     const room = roomCode ? `&room=${encodeURIComponent(roomCode)}` : ''
-    this.ws = new WebSocket(`${proto}://${location.host}/ws?token=${roomToken}${room}`)
+    // Se houver um lugar reservado desta sala, reclama-se (R91). Sem segredo,
+    // entra-se de novo — que é exactamente o que acontecia antes.
+    const seg = Signaling.lerSegredo(roomCode)
+    const reclamar = seg ? `&reconnect=${encodeURIComponent(seg)}` : ''
+    this.ws = new WebSocket(
+      `${proto}://${location.host}/ws?token=${roomToken}${room}${reclamar}`,
+    )
     this.ws.onmessage = (e) => {
       const msg = JSON.parse(e.data) as ServerMsg
       console.debug('[signal] <-', msg.type, this.handlers.has(msg.type) ? '' : '(no handler!)')

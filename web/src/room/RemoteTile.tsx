@@ -29,6 +29,10 @@ export interface RemotePeer {
   stream: MediaStream | null
   is_pstn?: boolean
   is_bot?: boolean
+  /** O socket caiu e o lugar está reservado (R91). O retrato fica no sítio,
+   *  esbatido, em vez de desaparecer — uma quebra de rede deixa de parecer
+   *  que a pessoa saiu e voltou a entrar. */
+  reconnecting?: boolean
 }
 
 export function peerColor(name: string): string {
@@ -80,7 +84,13 @@ export function RemoteTileBase({
   const hasAudio = !!peer.stream?.getAudioTracks().length && peer.micOn
   return (
     <div
-      className={speaking ? 'tile speaking' : 'tile'}
+      className={[
+        'tile',
+        speaking ? 'speaking' : '',
+        peer.reconnecting ? 'reconnecting' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       // Identidade estável do retrato, para quem o lê de fora: testes de
       // interface e leitores de ecrã. Antes um teste distinguia o retrato local
       // do remoto por o TEXTO conter «eu» — e isso partiu-se quando os glifos
@@ -113,6 +123,7 @@ export function RemoteTileBase({
           <MicOffIcon />
         </span>
       )}
+      {peer.reconnecting && <span className="tile-reconnecting">a voltar…</span>}
       <span className="tile-name">
         {hasAudio && speaking && <SpeakingBars />}
         {peer.username}

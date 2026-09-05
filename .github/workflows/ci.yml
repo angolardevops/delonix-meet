@@ -247,7 +247,7 @@ jobs:
       - name: Chromium para o teste de interface
         run: npx playwright install chromium
         working-directory: web
-        working-directory: web
+
 
       - name: Interface do MFA (Chromium real)
         run: |

@@ -1012,6 +1012,10 @@ export default function Room({
         // A grelha é orientada ao roster: tile ao entrar, stream quando chegar.
         signal.on('joined', (m) => {
           setRoomState('in')
+          // Guarda o lugar (R91). A partir daqui, uma quebra do socket — F5,
+          // Wi-Fi que cai, aba que dorme — devolve o mesmo lugar, com o papel
+          // de anfitrião e sem voltar à sala de espera.
+          if (m.reconnect) Signaling.guardarSegredo(code, m.reconnect)
           // Marca o rejoin recente: o reload de reconexão (onclose) e os breakouts
           // saltam o prejoin dentro desta janela (ver init do joinIntent).
           sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
@@ -1041,6 +1045,9 @@ export default function Room({
           )
           void listRecordings(code).then(setRecordings).catch(() => {})
         })
+        // Quem reclama o lugar volta com o MESMO peer_id, por isso o
+        // `peer-joined` que se segue actualiza a entrada existente em vez de
+        // criar outra — e limpa a marca de «a voltar».
         signal.on('peer-joined', (m) =>
           setPeers((ps) => [
             ...ps.filter((p) => p.peerId !== m.peer.peer_id),
@@ -1060,6 +1067,15 @@ export default function Room({
           levelsRef.current?.unwatch(m.peer_id)
           setPeers((ps) => ps.filter((p) => p.peerId !== m.peer_id))
         })
+        // O socket do outro caiu, mas o lugar dele está reservado (R91). O
+        // retrato FICA — marcado como a voltar — em vez de desaparecer e
+        // reaparecer segundos depois, que é o salto que fazia uma quebra de
+        // rede parecer que a pessoa tinha saído e voltado a entrar.
+        signal.on('peer-reconnecting', (m) =>
+          setPeers((ps) =>
+            ps.map((p) => (p.peerId === m.peer_id ? { ...p, reconnecting: true } : p)),
+          ),
+        )
         signal.on('hand', (m) =>
           setPeers((ps) => ps.map((p) => (p.peerId === m.from ? { ...p, hand: m.raised } : p))),
         )
@@ -1578,6 +1594,10 @@ export default function Room({
   /** Sair da sala. Se houver transcrição por guardar, grava a ata AUTOMATICAMENTE
    *  antes de sair (#7) — o anfitrião não perde as notas ao encerrar. */
   async function leaveRoom() {
+    // SAIR não é CAIR: quem sai de propósito larga o lugar, para não ficar a
+    // ocupar sítio na sala durante a janela de graça. É a única diferença
+    // entre os dois casos, e é o cliente que a sabe.
+    Signaling.esquecerSegredo(code)
     sessionStorage.removeItem(`dx_rejoin_${code}`) // saída intencional → próximo acesso volta ao prejoin
     if (isHost && lines.length > 0 && !momSaved) {
       setStatus('A guardar a ata antes de sair…')

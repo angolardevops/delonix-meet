@@ -197,17 +197,51 @@ pub enum ClientMsg {
     WbOpen,
 }
 
+/// Serializa um `Secret` **de propósito**. Existe uma única chamada — o campo
+/// `reconnect` do `Joined` — e é para ela que este nome é assim tão explícito:
+/// quem acrescentar a segunda tem de escrever o nome outra vez e reparar no que
+/// está a fazer.
+fn serializa_segredo_deliberadamente<S>(v: &Option<Secret>, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match v {
+        Some(sec) => s.serialize_str(sec.expose()),
+        None => s.serialize_none(),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ServerMsg {
     Joined {
         peer_id: Uuid,
         peers: Vec<PeerInfo>,
+        /// Segredo para reclamar este lugar se o socket cair (R91). Vai
+        /// SÓ para quem entrou, na sua própria mensagem de entrada — nunca
+        /// num `PeerJoined`, que toda a sala recebe.
+        ///
+        /// O `Secret` NÃO implementa `Serialize` de propósito: é o que impede
+        /// um segredo de escorregar para uma mensagem por acidente. Aqui a
+        /// saída é deliberada e está isolada num serializador só deste campo,
+        /// para o `Debug` redigido (R43) continuar a valer em todo o resto.
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            serialize_with = "serializa_segredo_deliberadamente"
+        )]
+        reconnect: Option<Secret>,
     },
     PeerJoined {
         peer: PeerInfo,
     },
     PeerLeft {
+        peer_id: Uuid,
+    },
+    /// O socket deste participante caiu, mas o lugar dele está reservado
+    /// (R91). É deliberadamente DIFERENTE de `PeerLeft`: o cliente mantém o
+    /// retrato no sítio em vez de o remover e voltar a criar, e o anfitrião não
+    /// vê uma saída seguida de um pedido novo de admissão.
+    PeerReconnecting {
         peer_id: Uuid,
     },
     Offer {
@@ -636,6 +670,40 @@ struct Peer {
     tx: PeerTx,
     /// Travão das legendas parciais deste peer (ver `allow_interim`).
     interim: crate::rate_limit::TokenBucket,
+    /// Segredo que permite a este participante RECLAMAR o seu lugar depois de
+    /// o socket cair (R91). Opaco, aleatório, e nunca sai deste processo a não
+    /// ser para o próprio dono, no `joined`.
+    ///
+    /// Porque não se reutiliza o token de sala: esse é uma capability sobre a
+    /// SALA — quem o tiver entra como quem quiser. Este é sobre o LUGAR: prova
+    /// que quem volta é quem estava, e é o que autoriza herdar o papel de
+    /// anfitrião. Confundir os dois dá promoção a anfitrião por conhecer um
+    /// link.
+    reconnect_secret: Secret,
+    /// `Some` desde que o socket caiu. Enquanto estiver dentro da janela de
+    /// graça o lugar continua ocupado: o participante conta para a sala, o
+    /// papel não se perde, e os outros veem-no «a voltar» em vez de sair.
+    disconnected_at: Option<std::time::Instant>,
+}
+
+/// O que se herda ao reclamar um lugar. Só o papel e a identidade — nada de
+/// estado de media, que se renegoceia do zero com o socket novo.
+pub struct ReclaimedSeat {
+    pub peer_id: Uuid,
+    pub username: String,
+    pub user_id: Uuid,
+    pub is_host: bool,
+    pub can_admit: bool,
+}
+
+/// 32 bytes de `OsRng` em hexadecimal. Não é um JWT de propósito: não precisa
+/// de ser lido por ninguém, não transporta afirmações, e um valor opaco não
+/// tenta ninguém a decidir coisas a partir do que lá está dentro.
+fn novo_segredo_de_reclamacao() -> String {
+    use rand::RngCore;
+    let mut b = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut b);
+    hex::encode(b)
 }
 
 struct WaitingPeer {
@@ -719,7 +787,10 @@ impl SignalingHub {
         can_admit: bool,
         is_bot: bool,
         tx: PeerTx,
-    ) -> Vec<PeerInfo> {
+    ) -> (Vec<PeerInfo>, String) {
+        // O segredo de reclamação nasce aqui e é a ÚNICA coisa que sai deste
+        // método além do roster: quem entra leva-o, ninguém mais o vê.
+        let segredo = novo_segredo_de_reclamacao();
         // Collect data and mutate under the DashMap write lock, then release
         // BEFORE broadcasting. Broadcasting calls broadcast_all_local which
         // calls self.rooms.get() — acquiring a read lock on the same shard
@@ -785,6 +856,8 @@ impl SignalingHub {
                     is_pstn: false,
                     tx: tx.clone(),
                     interim: crate::rate_limit::TokenBucket::new(INTERIM_BURST, INTERIM_PER_SEC),
+                    reconnect_secret: Secret::new(segredo.clone()),
+                    disconnected_at: None,
                 },
             );
             (existing, announce, waiting_msgs)
@@ -793,7 +866,99 @@ impl SignalingHub {
         for msg in waiting_msgs {
             let _ = tx.send(msg);
         }
-        existing
+        (existing, segredo)
+    }
+
+    /// O socket caiu, mas o lugar NÃO se perde já (R91).
+    ///
+    /// Antes desta janela, um `F5` a meio de uma reunião era indistinguível de
+    /// sair: o `peer_id` nasce por socket, o papel de anfitrião ia com ele, as
+    /// autorizações de partilha desapareciam, e um convidado voltava a cair na
+    /// sala de espera à espera de ser admitido outra vez.
+    ///
+    /// Devolve `true` se o lugar ficou reservado; `false` se não havia lugar
+    /// nenhum (chamada repetida, ou já expirado).
+    pub fn disconnect(&self, room_id: Uuid, peer_id: Uuid) -> bool {
+        let marcado = self
+            .rooms
+            .get_mut(&room_id)
+            .and_then(|mut r| {
+                r.peers.get_mut(&peer_id).map(|p| {
+                    p.disconnected_at = Some(std::time::Instant::now());
+                })
+            })
+            .is_some();
+        if marcado {
+            // «A voltar», não «saiu». A diferença é visível: o retrato fica no
+            // sítio em vez de desaparecer e reaparecer, e ninguém tem de ser
+            // readmitido.
+            self.broadcast_all(room_id, ServerMsg::PeerReconnecting { peer_id });
+        }
+        marcado
+    }
+
+    /// Tenta reclamar um lugar reservado. Devolve o `peer_id` original e o
+    /// papel a herdar, ou `None` se o segredo não bate, se o lugar já expirou,
+    /// ou se o dono do lugar está VIVO — que é o caso de um segredo roubado a
+    /// tentar entrar por cima de quem está lá.
+    pub fn reclaim(
+        &self,
+        room_id: Uuid,
+        segredo: &str,
+        janela: std::time::Duration,
+    ) -> Option<ReclaimedSeat> {
+        // Um segredo vazio nunca reclama nada. Sem isto, um cliente que envie
+        // `?reconnect=` (vazio) entraria no lugar do primeiro peer da sala.
+        if segredo.is_empty() {
+            return None;
+        }
+        let mut room = self.rooms.get_mut(&room_id)?;
+        let agora = std::time::Instant::now();
+        let (peer_id, papel) = room.peers.iter().find_map(|(id, p)| {
+            let caiu = p.disconnected_at?;
+            if agora.duration_since(caiu) > janela {
+                return None;
+            }
+            // Comparação em tempo constante: o segredo é uma credencial.
+            if !crate::apikeys::ct_eq(p.reconnect_secret.expose().as_bytes(), segredo.as_bytes()) {
+                return None;
+            }
+            Some((
+                *id,
+                ReclaimedSeat {
+                    peer_id: *id,
+                    username: p.username.clone(),
+                    user_id: p.user_id,
+                    is_host: p.is_host,
+                    can_admit: p.can_admit,
+                },
+            ))
+        })?;
+        // O lugar é consumido: remove-se a entrada antiga para o `join` que se
+        // segue a recriar com o socket novo. Sem isto ficavam dois peers com o
+        // mesmo id e o roster duplicava.
+        room.peers.remove(&peer_id);
+        Some(papel)
+    }
+
+    /// Varre os lugares reservados que passaram da janela e transforma-os em
+    /// saídas a sério. Chamado periodicamente; devolve quantos expiraram.
+    pub fn expire_disconnected(&self, janela: std::time::Duration) -> usize {
+        let agora = std::time::Instant::now();
+        let mut expirados: Vec<(Uuid, Uuid)> = Vec::new();
+        for room in self.rooms.iter() {
+            for (peer_id, p) in room.peers.iter() {
+                if let Some(caiu) = p.disconnected_at {
+                    if agora.duration_since(caiu) > janela {
+                        expirados.push((*room.key(), *peer_id));
+                    }
+                }
+            }
+        }
+        for (room_id, peer_id) in &expirados {
+            self.leave(*room_id, *peer_id);
+        }
+        expirados.len()
     }
 
     /// Regista um convidado na fila de espera e avisa os anfitriões presentes.
@@ -1533,6 +1698,14 @@ impl SignalingHub {
 #[derive(Deserialize)]
 pub struct WsQuery {
     token: String,
+    /// Segredo para reclamar um lugar reservado (R91). Opcional: sem ele,
+    /// entra-se de novo, como sempre se entrou.
+    ///
+    /// Viaja na query e NÃO num cabeçalho pela mesma razão do `token`: num
+    /// WebSocket do browser não há como pôr cabeçalhos. É por isso que ele
+    /// nunca é registado — a query desta rota não entra em log nenhum, tal
+    /// como a chave RTMP do `/broadcast`.
+    reconnect: Option<String>,
 }
 
 pub async fn ws_handler(
@@ -1565,10 +1738,11 @@ pub async fn ws_handler(
     let is_bot = claims.is_bot;
     // can_admit depends on role. Let's say host can admit by default.
     let can_admit = is_host;
+    let reconnect = query.reconnect.clone();
     Ok(ws.on_upgrade(move |socket| {
         handle_socket(
             state, socket, room_id, user_id, username, sfu_mode, is_host, must_wait, can_admit,
-            is_bot,
+            is_bot, reconnect,
         )
     }))
 }
@@ -1899,10 +2073,42 @@ async fn handle_socket(
     must_wait: bool,
     can_admit: bool,
     is_bot: bool,
+    reconnect: Option<String>,
 ) {
     // Gauge de ligações /ws ativas (dec automático no fim do handler).
     let _ws_guard = crate::metrics::WsGuard::signaling(state.metrics.clone());
-    let peer_id = Uuid::new_v4();
+
+    // RECLAMAÇÃO DE LUGAR (R91). Se vier um segredo e ele bater com um lugar
+    // reservado dentro da janela, herda-se o `peer_id` e o PAPEL — e o
+    // convidado não volta a cair na sala de espera.
+    //
+    // O que NÃO se herda: nada de media. O socket é novo, a `RTCPeerConnection`
+    // é nova, e a negociação faz-se do zero. Tentar reaproveitar o estado de
+    // media seria reabrir o glare que o R13 fechou.
+    let reclamado = reconnect.as_deref().and_then(|seg| {
+        state
+            .hub
+            .reclaim(room_id, seg, state.config.reconnect_grace())
+    });
+    let (peer_id, is_host, can_admit, must_wait, username) = match reclamado {
+        Some(lugar) => {
+            tracing::info!(%room_id, peer_id = %lugar.peer_id, "seat reclaimed");
+            state
+                .metrics
+                .seats_reclaimed_total
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // `must_wait` cai para `false`: já tinha sido admitido antes de
+            // cair. Voltar a pô-lo na fila é o defeito que isto corrige.
+            (
+                lugar.peer_id,
+                lugar.is_host,
+                lugar.can_admit,
+                false,
+                lugar.username,
+            )
+        }
+        None => (Uuid::new_v4(), is_host, can_admit, must_wait, username),
+    };
     let (mut sink, mut stream) = socket.split();
     // Fila de saída LIMITADA (ver `PeerTx`): um consumidor lento passa a
     // custar o próprio socket em vez da memória do nó inteiro.
@@ -1979,7 +2185,7 @@ async fn handle_socket(
             .apply_redis_state(room_id, polls, qa, wb, timer, locked, host_share);
     }
 
-    let peers = state.hub.join(
+    let (peers, reconnect_secret) = state.hub.join(
         room_id,
         peer_id,
         user_id,
@@ -1989,7 +2195,11 @@ async fn handle_socket(
         is_bot,
         tx.clone(),
     );
-    let _ = tx.send(ServerMsg::Joined { peer_id, peers });
+    let _ = tx.send(ServerMsg::Joined {
+        peer_id,
+        peers,
+        reconnect: Some(Secret::new(reconnect_secret)),
+    });
     let (locked, host_share_only) = state.hub.settings_of(room_id);
     if locked || host_share_only {
         let _ = tx.send(ServerMsg::RoomSettings {
@@ -2231,12 +2441,23 @@ async fn handle_socket(
             crate::recorder::finalize(state.clone(), room_id, session);
         }
     }
-    state.hub.leave(room_id, peer_id);
+    // O lugar fica RESERVADO durante a janela de graça (R91) em vez de se
+    // perder já. Quem sair de propósito não passa por aqui com reserva: o
+    // cliente apaga o segredo antes de fechar, por isso a reserva expira sem
+    // ninguém a reclamar e transforma-se numa saída normal.
+    //
+    // A varredura que a transforma em saída corre em `main.rs`; aqui só se
+    // marca. Fazer o `leave` com um `sleep` neste ponto prenderia a tarefa do
+    // socket durante a janela inteira, e uma sala com muita rotação acumularia
+    // tarefas adormecidas sem tecto.
+    if !state.hub.disconnect(room_id, peer_id) {
+        state.hub.leave(room_id, peer_id);
+    }
     if let Some(parent) = breakout_parent_of(&state, room_id) {
         broadcast_breakout_state(&state, parent);
     }
     writer.abort();
-    tracing::info!(%room_id, %peer_id, "peer left");
+    tracing::info!(%room_id, %peer_id, "peer socket closed — seat reserved");
 }
 
 #[cfg(test)]
@@ -2485,7 +2706,7 @@ mod tests {
         let (a, tx_a, mut rx_a) = peer();
         let (b, tx_b, _rx_b) = peer();
 
-        let roster_a = hub.join(room, a, a, "alice".into(), true, true, false, tx_a);
+        let (roster_a, _) = hub.join(room, a, a, "alice".into(), true, true, false, tx_a);
         assert!(roster_a.is_empty());
 
         // O anúncio de entrada vai para TODA a sala, incluindo quem entra — ver
@@ -2495,7 +2716,7 @@ mod tests {
         // três) marcados como `#[ignore]`, a não proteger nada.
         drain(&mut rx_a);
 
-        let roster_b = hub.join(room, b, b, "bob".into(), false, false, false, tx_b);
+        let (roster_b, _) = hub.join(room, b, b, "bob".into(), false, false, false, tx_b);
         assert_eq!(roster_b.len(), 1);
         assert_eq!(roster_b[0].peer_id, a);
         assert_eq!(roster_b[0].username, "alice");
@@ -2789,7 +3010,7 @@ mod tests {
         }
         // Estado da mão fica no roster para quem entrar depois.
         let (c, tx_c, _rx_c) = peer();
-        let roster = hub.join(room, c, c, "carol".into(), false, false, false, tx_c);
+        let (roster, _) = hub.join(room, c, c, "carol".into(), false, false, false, tx_c);
         let bob = roster.iter().find(|p| p.peer_id == b).unwrap();
         assert!(bob.hand);
     }
@@ -2832,5 +3053,149 @@ mod tests {
             None,
         );
         assert!(rx_a.try_recv().is_err());
+    }
+
+    // ---------- Reclamação de lugar (R91) ----------
+
+    /// O caso que motivou tudo: um `F5` a meio da reunião.
+    ///
+    /// Antes, o socket caía, o `peer_id` morria com ele, e o anfitrião voltava a
+    /// entrar como participante comum — ou, se fosse convidado, ia outra vez para a
+    /// sala de espera. Estas quatro asserções são o produto, não a biblioteca.
+    #[tokio::test]
+    async fn um_lugar_reservado_devolve_o_papel_a_quem_volta() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx_a) = peer();
+        let (b, tx_b, mut rx_b) = peer();
+        let (_, segredo) = hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+        drain(&mut rx_b);
+
+        assert!(hub.disconnect(room, a), "o lugar tem de ficar reservado");
+        match rx_b.recv().await.unwrap() {
+            ServerMsg::PeerReconnecting { peer_id } => assert_eq!(peer_id, a),
+            other => panic!("os outros têm de ver «a voltar», não uma saída: {other:?}"),
+        }
+
+        let lugar = hub
+            .reclaim(room, &segredo, std::time::Duration::from_secs(45))
+            .expect("o segredo certo dentro da janela tem de reclamar");
+        assert_eq!(lugar.peer_id, a, "o mesmo lugar, não um novo");
+        assert!(
+            lugar.is_host,
+            "o papel de anfitriã não se perde numa quebra"
+        );
+        assert!(lugar.can_admit, "nem a autorização de admitir");
+        assert_eq!(lugar.username, "anfitriã");
+    }
+
+    /// Um segredo errado não entra no lugar de ninguém. Sem esta recusa, quem
+    /// conhecesse o link da sala herdava o papel de anfitrião do primeiro que
+    /// caísse — que é exactamente a promoção por conhecer um link que o segredo
+    /// existe para impedir.
+    #[tokio::test]
+    async fn segredo_errado_ou_vazio_nao_reclama_nada() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx) = peer();
+        let (_, segredo) = hub.join(room, a, a, "a".into(), true, true, false, tx_a);
+        hub.disconnect(room, a);
+
+        assert!(
+            hub.reclaim(room, "", std::time::Duration::from_secs(45))
+                .is_none(),
+            "vazio"
+        );
+        assert!(
+            hub.reclaim(room, "nao-e-o-segredo", std::time::Duration::from_secs(45))
+                .is_none(),
+            "errado"
+        );
+        // E o certo continua a servir depois das tentativas falhadas: uma recusa
+        // não pode consumir o lugar.
+        assert!(hub
+            .reclaim(room, &segredo, std::time::Duration::from_secs(45))
+            .is_some());
+    }
+
+    /// O segredo é de UMA sala. Sem isto, o mesmo segredo abriria um lugar noutra
+    /// reunião — que é atravessar a fronteira de sala, a invariante nº 1.
+    #[tokio::test]
+    async fn um_segredo_nao_serve_noutra_sala() {
+        let hub = SignalingHub::default();
+        let (r1, r2) = (Uuid::new_v4(), Uuid::new_v4());
+        let (a, tx_a, _rx_a) = peer();
+        let (b, tx_b, _rx_b) = peer();
+        let (_, seg1) = hub.join(r1, a, a, "a".into(), true, true, false, tx_a);
+        hub.join(r2, b, b, "b".into(), false, false, false, tx_b);
+        hub.disconnect(r1, a);
+        hub.disconnect(r2, b);
+
+        assert!(
+            hub.reclaim(r2, &seg1, std::time::Duration::from_secs(45))
+                .is_none(),
+            "o segredo da sala 1 não pode reclamar um lugar na sala 2"
+        );
+        assert!(hub
+            .reclaim(r1, &seg1, std::time::Duration::from_secs(45))
+            .is_some());
+    }
+
+    /// Quem está VIVO não é substituível. Um segredo copiado não pode expulsar o
+    /// dono do lugar enquanto ele está ligado — só reclama quem caiu.
+    #[tokio::test]
+    async fn nao_se_reclama_o_lugar_de_quem_esta_ligado() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx) = peer();
+        let (_, segredo) = hub.join(room, a, a, "a".into(), true, true, false, tx_a);
+        assert!(
+            hub.reclaim(room, &segredo, std::time::Duration::from_secs(45))
+                .is_none(),
+            "sem `disconnect` não há lugar reservado para reclamar"
+        );
+    }
+
+    /// Passada a janela, o lugar deixa de ser reclamável E sai da sala. As duas
+    /// metades importam: se só deixasse de ser reclamável, o participante ficava no
+    /// roster para sempre e a sala nunca esvaziava.
+    #[tokio::test]
+    async fn fora_da_janela_o_lugar_expira_e_sai() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx_a) = peer();
+        let (b, tx_b, mut rx_b) = peer();
+        let (_, segredo) = hub.join(room, a, a, "a".into(), true, true, false, tx_a);
+        hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+        hub.disconnect(room, a);
+        drain(&mut rx_b);
+
+        // Janela de zero: tudo o que caiu já passou dela.
+        let nula = std::time::Duration::from_secs(0);
+        assert!(
+            hub.reclaim(room, &segredo, nula).is_none(),
+            "fora da janela não se reclama"
+        );
+        assert_eq!(hub.expire_disconnected(nula), 1, "um lugar tem de expirar");
+        match rx_b.recv().await.unwrap() {
+            ServerMsg::PeerLeft { peer_id } => assert_eq!(peer_id, a),
+            other => panic!("ao expirar, os outros veem uma SAÍDA: {other:?}"),
+        }
+        assert_eq!(
+            hub.expire_disconnected(nula),
+            0,
+            "expirar duas vezes o mesmo lugar seria uma saída a dobrar"
+        );
+    }
+
+    /// O segredo nunca aparece num `Debug`, que é onde os segredos costumam
+    /// escapar (R43). Vale a pena a asserção: o campo é novo e o tipo é fácil de
+    /// trocar por `String` num refactor distraído.
+    #[test]
+    fn o_segredo_de_reclamacao_nao_aparece_em_debug() {
+        let s = Secret::new("segredo-muito-secreto".into());
+        let texto = format!("{s:?}");
+        assert!(!texto.contains("segredo-muito-secreto"), "veio: {texto}");
     }
 }
