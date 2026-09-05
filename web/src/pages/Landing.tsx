@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import LanguageToggle from '../components/LanguageToggle'
+import { BrandMark } from '../components/BrandMark'
 
 type Feature = { t: string; d: string }
 type FaqItem = { q: string; a: string }
@@ -91,7 +92,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
       <header className="land-top">
         <div className="land-top-inner">
           <span className="brand-text land-brand">
-            <img src="/logo.svg" alt="" className="brand-logo" /> Delonix <span>Meet</span>
+            <BrandMark /> Delonix <span>Meet</span>
           </span>
           <nav className="land-nav">
             <button className="land-link" onClick={() => goto('ai')}>{t('land.nav.ai')}</button>
@@ -306,7 +307,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
         <div className="foot-grid">
           <div className="foot-brand">
             <span className="brand-text">
-              <img src="/logo.svg" alt="" className="brand-logo" /> Delonix <span>Meet</span>
+              <BrandMark /> Delonix <span>Meet</span>
             </span>
             <p>{t('land.footer.tag')}</p>
             <a className="link small-link" href="#/status">{t('land.statusLink')}</a>

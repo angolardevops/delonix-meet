@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { BrandMark } from '../components/BrandMark'
 
 interface StatusInfo {
   status: string
@@ -46,7 +47,7 @@ export default function Status() {
   return (
     <div className="status-page">
       <div className="status-card">
-        <img src="/logo.svg" alt="" className="brand-logo big" />
+        <BrandMark big />
         <h1>
           Delonix <span>Meet</span> — Estado do serviço
         </h1>

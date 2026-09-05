@@ -169,3 +169,33 @@ describe('práticas de estado do delonix-portal', () => {
     expect(s).toMatch(/\{ s: 'error'; msg: string \}/)
   })
 })
+
+describe('3.2.8 · uma marca só, e que respeita quem renomeia', () => {
+  // Havia duas marcas: o globo de `/logo.svg` em cinco ecrãs, e um quadrado
+  // com a inicial no rail da consola. Com o nome de origem isso é incoerência.
+  //
+  // O defeito a SÉRIO aparece ao renomear a aplicação: o quadrado adapta-se, os
+  // cinco ecrãs continuavam a mostrar o globo Delonix. A marca-branca estava
+  // feita a meio, e quem a usasse via o logótipo de OUTRA empresa em metade do
+  // produto (R100).
+  it('ninguém desenha /logo.svg à mão — passa tudo pelo BrandMark', () => {
+    const fixos: string[] = []
+    for (const f of [
+      'web/src/pages/Status.tsx', 'web/src/pages/Legal.tsx', 'web/src/pages/Lobby.tsx',
+      'web/src/pages/Landing.tsx', 'web/src/pages/ApiDocs.tsx', 'web/src/components/Shell.tsx',
+    ]) {
+      if (read(f).includes('/logo.svg')) fixos.push(f)
+    }
+    expect(fixos).toEqual([])
+  })
+
+  it('o BrandMark decide pelo NOME, não por uma constante', () => {
+    const src = read('web/src/components/BrandMark.tsx')
+    // Sem esta ligação, o componente seria só um invólucro do logótipo e o
+    // defeito da marca-branca continuaria de pé, agora escondido atrás de um
+    // nome tranquilizador.
+    expect(src).toContain('isMarcaDeOrigem')
+    expect(src).toContain('/logo.svg')
+    expect(src).toContain('brand-square')
+  })
+})
