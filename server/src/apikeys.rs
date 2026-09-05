@@ -528,7 +528,7 @@ pub struct ProvisionedOrg {
 
 /// Comparação em tempo constante para não abrir um oráculo de temporização
 /// sobre o segredo de provisão.
-fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

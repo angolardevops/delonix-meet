@@ -556,6 +556,34 @@ async fn main() {
         });
     }
 
+    // Cron: lugares reservados que passaram da janela viram saídas a sério
+    // (R91). O intervalo é uma fracção da janela para o atraso máximo ser
+    // pequeno face a ela — com 45 s de janela e 5 s de passo, um lugar sai no
+    // máximo 5 s depois de expirar.
+    //
+    // Porque é um varredor e não um `sleep` na tarefa do socket: um `sleep`
+    // prenderia a tarefa durante a janela inteira, e uma sala com muita
+    // rotação acumularia tarefas adormecidas sem tecto nenhum.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let janela = state.config.reconnect_grace();
+            let mut ticker = tokio::time::interval(Duration::from_secs(5));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                ticker.tick().await;
+                let n = state.hub.expire_disconnected(janela);
+                if n > 0 {
+                    state
+                        .metrics
+                        .seats_expired_total
+                        .fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+                    tracing::info!(expirados = n, "reserved seats expired");
+                }
+            }
+        });
+    }
+
     // Cron: sweep de quarentena a cada 5 min (marca não-respondentes de
     // reuniões já começadas). Idempotente; as leituras fazem sweep na mesma.
     {

@@ -5136,3 +5136,15 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
   border-radius: 50%;
   background: currentColor;
 }
+
+/* Retrato de quem caiu e tem o lugar reservado (R91). Esbatido e com um
+   rótulo, em vez de desaparecer: uma quebra de rede deixa de parecer uma saída
+   seguida de uma entrada. O `filter` não mexe no layout — o retrato fica
+   exactamente onde estava, que é o ponto todo. */
+.tile.reconnecting { filter: grayscale(0.7) brightness(0.7); }
+.tile-reconnecting {
+  position: absolute; top: 8px; left: 8px; z-index: 2;
+  font-size: 0.72rem; letter-spacing: 0.02em;
+  padding: 2px 7px; border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.55); color: #fff;
+}

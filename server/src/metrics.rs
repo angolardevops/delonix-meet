@@ -64,6 +64,13 @@ pub struct Metrics {
     pub sfu_offers_deferred_total: AtomicU64,
     /// Gravações recuperadas de salas que esvaziaram por falha de ligação.
     pub sfu_recordings_orphaned_total: AtomicU64,
+    /// Lugares reclamados depois de o socket cair (R91). É a medida directa de
+    /// quantas quebras deixaram de custar uma reentrada pela sala de espera.
+    pub seats_reclaimed_total: AtomicU64,
+    /// Lugares reservados que EXPIRARAM sem ninguém os reclamar. A razão entre
+    /// os dois diz se a janela está bem dimensionada: muitos a expirar e ou a
+    /// janela é curta, ou as pessoas estão mesmo a sair.
+    pub seats_expired_total: AtomicU64,
     /// Microfones fora do top-N de oradores (áudio não reencaminhado). É a
     /// medida directa da poupança de downlink de voz.
     pub sfu_audio_suppressed: AtomicI64,
@@ -184,6 +191,12 @@ impl Metrics {
              # HELP delonix_sfu_recordings_orphaned_total Gravações recuperadas de salas caídas.\n\
              # TYPE delonix_sfu_recordings_orphaned_total counter\n\
              delonix_sfu_recordings_orphaned_total {}\n\
+             # HELP delonix_seats_reclaimed_total Lugares reclamados após quebra do socket.\n\
+             # TYPE delonix_seats_reclaimed_total counter\n\
+             delonix_seats_reclaimed_total {}\n\
+             # HELP delonix_seats_expired_total Lugares reservados que expiraram sem reclamação.\n\
+             # TYPE delonix_seats_expired_total counter\n\
+             delonix_seats_expired_total {}\n\
              # HELP delonix_sfu_audio_suppressed Microfones fora do top-N de oradores.\n\
              # TYPE delonix_sfu_audio_suppressed gauge\n\
              delonix_sfu_audio_suppressed {}\n\
@@ -247,6 +260,8 @@ impl Metrics {
             self.sfu_renegotiations_failed_total.load(Relaxed),
             self.sfu_offers_deferred_total.load(Relaxed),
             self.sfu_recordings_orphaned_total.load(Relaxed),
+            self.seats_reclaimed_total.load(Relaxed),
+            self.seats_expired_total.load(Relaxed),
             g(self.sfu_audio_suppressed.load(Relaxed)),
             g(self.ws_queue_high_water.load(Relaxed)),
             self.ws_queue_dropped_total.load(Relaxed),
