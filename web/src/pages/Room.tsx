@@ -1338,7 +1338,7 @@ export default function Room({
           // NÃO abrir o painel de notas nos outros participantes — só quem
           // inicia (o anfitrião, via toggleTranscription) o abre. Aos restantes
           // basta um aviso de que a sua fala está a ser captada (#5).
-          if (m.on) setStatus(`Transcrição iniciada por ${m.by} — a tua fala é captada`)
+          if (m.on) setStatus(t('room.txt.transcricaoIniciadaPor', { nome: m.by }))
         })
 
         signal.on('remote-control', (m) => {
@@ -1364,7 +1364,7 @@ export default function Room({
         // O apresentador abriu o quadro branco → abre em todos.
         signal.on('wb-open', (m) => {
           setWbOpen(true)
-          setStatus(`Quadro branco partilhado por ${m.by}`)
+          setStatus(t('room.txt.quadroPartilhadoPor', { nome: m.by }))
         })
 
         const callbacks = {
@@ -1444,7 +1444,7 @@ export default function Room({
         tentativas += 1
         if (tentativas <= MAX_TENTATIVAS) {
           const espera = backoffDelay(tentativas - 1)
-          setStatus(`Sem ligação ao servidor — a tentar de novo (${tentativas}/${MAX_TENTATIVAS})…`)
+          setStatus(t('room.txt.semLigacaoATentar', { n: tentativas, total: MAX_TENTATIVAS }))
           setTimeout(() => {
             if (!cancelled) void start()
           }, espera)
@@ -2042,7 +2042,7 @@ export default function Room({
       setStatus(t('room.sala.aCarregarGravacao'))
       const now = new Date()
       const stamp = `${now.toLocaleDateString('pt-PT')} ${now.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}`
-      await uploadRecording(code, blob, `Reunião ${code} — ${stamp}.webm`)
+      await uploadRecording(code, blob, t('room.txt.nomeFicheiroGravacao', { code, stamp }))
       setStatus('')
       const recs = await listRecordings(code)
       setRecordings(recs)
@@ -2082,7 +2082,10 @@ export default function Room({
     setInviteBusy(true)
     try {
       const { ringing, offline } = await inviteToRoom(code, inviteSelected.map((u) => u.id))
-      setInviteStatus(`A chamar ${ringing.length} pessoa(s)…${offline.length > 0 ? ` (${offline.length} offline)` : ''}`)
+      setInviteStatus(
+        t('room.txt.aChamarPessoas', { n: ringing.length }) +
+        (offline.length > 0 ? ` ${t('room.txt.nOffline', { n: offline.length })}` : ''),
+      )
       setInviteSelected([])
       setInviteQuery('')
       setTimeout(() => { setInviteOpen(false); setInviteStatus('') }, 2500)
@@ -2694,7 +2697,7 @@ export default function Room({
             }}
             onSave={async (pngBase64) => {
               try {
-                await saveWhiteboard(`Quadro · ${code}`, code, pngBase64)
+                await saveWhiteboard(t('room.txt.nomeQuadro', { code }), code, pngBase64)
                 setStatus(t('room.sala.quadroGuardadoNaBiblioteca'))
               } catch {
                 setStatus(t('room.sala.naoFoiPossivelGuardar2'))
@@ -2961,7 +2964,7 @@ export default function Room({
                   disabled={inviteSelected.length === 0 || inviteBusy}
                   onClick={() => void sendInvites()}
                 >
-                  {inviteBusy ? t('room.txt.aChamar') : `Chamar ${inviteSelected.length > 0 ? `(${inviteSelected.length})` : ''}`}
+                  {inviteBusy ? t('room.txt.aChamar') : `${t('room.txt.chamar')}${inviteSelected.length > 0 ? ` (${inviteSelected.length})` : ''}`}
                 </button>
               </div>
             )}
@@ -3008,7 +3011,11 @@ export default function Room({
                 <span className="person-name">
                   <span className="pn-name">eu{isHost ? ' · anfitrião' : ''}</span>
                   {qos && (
-                    <small className="qos-line mono" title={`Delonix Call Quality Score: ${qos.score}/100${qos.turnRelay ? ' · via TURN relay' : ''}${qos.limitedBy === 'cpu' ? ' · encoder travado por CPU' : ''}`}>
+                    <small className="qos-line mono" title={
+                        `Delonix Call Quality Score: ${qos.score}/100` +
+                        (qos.turnRelay ? ` · ${t('room.txt.viaTurnRelay')}` : '') +
+                        (qos.limitedBy === 'cpu' ? ` · ${t('room.txt.encoderTravadoCpu')}` : '')
+                      }>
                       {qos.score}/100 · ↑ {qos.upKbps} kbps
                       {qos.rttMs != null ? ` · RTT ${qos.rttMs} ms` : ''}
                       {qos.turnRelay ? ' · relay' : ''}
@@ -3944,7 +3951,7 @@ export default function Room({
               className="room-status"
               role="status"
               aria-live="polite"
-              title={`Ligação de media: ${callState}`}
+              title={t('room.txt.ligacaoDeMedia', { estado: callState })}
             >
               {callState === 'degraded' ? '◐ ligação instável' : '◌ a restabelecer…'}
             </span>

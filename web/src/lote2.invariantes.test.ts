@@ -302,6 +302,7 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     'TrueNAS / NFS',                   // nomes de tecnologia, na escolha de armazenamento
     'Nextcloud / WebDAV',              // idem
     'Delonix Call Quality Score',      // nome da métrica, como o «MOS» de que descende
+    'Delonix Call Quality Score: /100',  // o mesmo nome, com o valor interpolado
     'X-Delonix-Signature: sha256=…',   // um header HTTP não tem tradução
   ]
   /** Tira as expressões `{…}` de um nó de texto, respeitando o encaixe. */
@@ -330,6 +331,28 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
       for (const m of read(f).matchAll(/>([A-ZÀ-Ú][^<>]{3,400})</g)) {
         const prosa = semExpressoes(m[1]).replace(/\s+/g, ' ').trim()
         if (prosa.length >= 8 && eFrase(prosa)) soltos.push(`${f}: ${prosa}`)
+      }
+    }
+    expect(soltos).toEqual([])
+  })
+
+  it('nenhum TEMPLATE LITERAL leva uma frase escrita à mão', () => {
+    // A busca por literais olhava para `'…'`. Uma frase com um valor lá dentro
+    // escreve-se com crases — `` `Quadro branco partilhado por ${m.by}` `` — e
+    // essas nunca foram vistas. Doze assim, incluindo o aviso de reconexão que
+    // uma pessoa lê justamente quando a rede está má.
+    //
+    // A interpolação é retirada antes de julgar: o que interessa é a prosa à
+    // volta dela, e é ela que um utilizador francês não lê.
+    const soltos: string[] = []
+    for (const f of listarTsx('web/src')) {
+      for (const l of read(f).split('\n')) {
+        const semComentario = l.replace(/\/\/.*$/, '')
+        for (const m of semComentario.matchAll(/`([^`]{4,300})`/g)) {
+          const prosa = m[1].replace(/\$\{[^{}]*\}/g, '').replace(/\s+/g, ' ').trim()
+          if (!/^[A-ZÀ-Ú]/.test(prosa)) continue
+          if (eFrase(prosa)) soltos.push(`${f}: ${prosa}`)
+        }
       }
     }
     expect(soltos).toEqual([])

@@ -272,7 +272,7 @@ export function QuickActions({
     setErr('')
     setCreating(true)
     try {
-      const room = await createRoom(`Reunião de ${username}`, 'sfu', false, false, 'normal')
+      const room = await createRoom(t('common.reuniaoDe', { nome: username }), 'sfu', false, false, 'normal')
       onDone?.()
       onEnterRoom(room.code)
     } catch (e) {

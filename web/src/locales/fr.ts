@@ -2,6 +2,7 @@
 
 export default {
   status: {
+    chamadaCom: "Appel avec {{nome}}",
     chamadaDeVoz: "Appel vocal",
     chamadaPerdida: "Appel manqué",
     baseDeDados: "Base de données",
@@ -253,6 +254,17 @@ export default {
       guardarAta: 'Enregistrer le compte rendu',
     },
     txt: {
+      transcricaoIniciadaPor: "Transcription démarrée par {{nome}} — votre voix est captée",
+      quadroPartilhadoPor: "Tableau blanc partagé par {{nome}}",
+      semLigacaoATentar: "Pas de connexion au serveur — nouvelle tentative ({{n}}/{{total}})…",
+      nomeFicheiroGravacao: "Réunion {{code}} — {{stamp}}.webm",
+      nomeQuadro: "Tableau · {{code}}",
+      ligacaoDeMedia: "Connexion média : {{estado}}",
+      aChamarPessoas: "Appel de {{n}} personne(s)…",
+      nOffline: "({{n}} hors ligne)",
+      chamar: "Appeler",
+      viaTurnRelay: "via relais TURN",
+      encoderTravadoCpu: "encodeur bridé par le CPU",
       aLigar: "Connexion…",
       passarAnfitriao: "Transférer le rôle d’hôte à cette personne ? Elle seule pourra vous le rendre.",
       camaraBloqueada: "Caméra/micro BLOQUÉS sur ce site — cliquez sur le cadenas dans la barre d’adresse, autorisez la caméra et le micro, puis rechargez la page.",
@@ -435,6 +447,7 @@ export default {
     retry: 'Réessayer',
   },
   common: {
+    reuniaoDe: "Réunion de {{nome}}",
     ocultarPassword: "Masquer le mot de passe",
     mostrarPassword: "Afficher le mot de passe",
     falhaAoGuardar: "Échec de l’enregistrement",

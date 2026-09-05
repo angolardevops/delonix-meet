@@ -1121,3 +1121,38 @@ por mensagens de sucesso continua por fazer.
 **Ficheiros.** `web/src/capabilities.ts`,
 `web/src/capabilities.invariantes.test.ts`, `web/src/pages/Room.tsx`,
 `docs/competitive-positioning.md`.
+
+### R110 — A busca por texto por traduzir nunca olhou para crases
+
+**Sintoma.** Doze frases visíveis continuavam em português duro depois do R107,
+entre elas o aviso que uma pessoa lê justamente quando a rede está má:
+
+```tsx
+`Sem ligação ao servidor — a tentar de novo (${tentativas}/${MAX_TENTATIVAS})…`
+`Quadro branco partilhado por ${m.by}`
+`Transcrição iniciada por ${m.by} — a tua fala é captada`
+```
+
+**Causa.** Todas as versões do portão procuraram literais entre plicas. Uma
+frase com um valor lá dentro escreve-se com **crases** — e é precisamente a
+frase que tem um valor lá dentro que costuma ser a mais importante: o nome de
+quem partilhou, o número da tentativa, o estado da ligação.
+
+**Regra.** A interpolação é retirada antes de julgar. O que interessa é a prosa
+à volta dela — é ela que um utilizador francês não lê. As chaves passam a levar
+parâmetros (`{{nome}}`, `{{n}}/{{total}}`), que é como o i18next já sabe fazer.
+
+**Portão.** `web/src/lote2.invariantes.test.ts`, teste «nenhum TEMPLATE LITERAL
+leva uma frase escrita à mão». Provado vermelho: devolver o template ao
+`Quadro branco partilhado por` põe-no a vermelho.
+
+**Sexta vez.** R88, R99, R102, R105, R107 e agora esta. A causa nunca é a mesma
+forma — é sempre a mesma decisão: escrever o portão a partir da forma que o
+defeito tinha da última vez. Aqui a regra que teria evitado as seis está escrita
+desde o R107 e não foi aplicada até ao fim: **procurar a FRASE, em qualquer
+forma que o TypeScript tenha de a escrever** — plica, crase, nó de texto,
+atributo.
+
+**Ficheiros.** `web/src/pages/Room.tsx`,
+`web/src/components/{PresenceProvider,Shell}.tsx`,
+`web/src/locales/{pt,en,fr}.ts`, `web/src/lote2.invariantes.test.ts`.
