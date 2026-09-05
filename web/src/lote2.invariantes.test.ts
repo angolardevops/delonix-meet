@@ -233,6 +233,24 @@ describe('3.2.8 · uma marca só, e que respeita quem renomeia', () => {
     expect(fixos).toEqual([])
   })
 
+  // O símbolo era METADE do problema. O nome continuava escrito à mão ao lado
+  // dele — `<BrandMark /> Delonix <span>Meet</span>` — em cinco páginas.
+  // Renomear a aplicação trocava o símbolo e deixava o nome antigo colado a
+  // ele, que é PIOR do que não ter mudado nada (R101).
+  it('o nome da aplicação também não se escreve à mão', () => {
+    const fixos: string[] = []
+    for (const f of [
+      'web/src/pages/Status.tsx', 'web/src/pages/Legal.tsx', 'web/src/pages/Lobby.tsx',
+      'web/src/pages/Landing.tsx', 'web/src/pages/ApiDocs.tsx', 'web/src/components/Shell.tsx',
+      'web/src/pages/SharePage.tsx',
+    ]) {
+      // O que se proíbe é o LOCKUP escrito à mão. O nome dentro de uma frase
+      // traduzida é outro problema (i18n), e resolve-se por interpolação.
+      if (/Delonix\s*<span>/.test(read(f))) fixos.push(f)
+    }
+    expect(fixos).toEqual([])
+  })
+
   it('o BrandMark decide pelo NOME, não por uma constante', () => {
     const src = read('web/src/components/BrandMark.tsx')
     // Sem esta ligação, o componente seria só um invólucro do logótipo e o

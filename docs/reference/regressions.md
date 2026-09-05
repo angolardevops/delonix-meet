@@ -831,3 +831,12 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Feito:** um componente `BrandMark` único nos seis sítios. Desenha o logótipo enquanto o nome for o de origem, e o quadrado com a inicial a partir do momento em que deixar de ser. Reage ao evento `dx-branding`, como o resto do sistema de marca. A variante `big` — que o `.brand-logo` tinha e o quadrado não — passou a existir para os dois.
 - **Portão:** `lote2`, 3.2.8, com duas metades: nenhum dos seis ecrãs desenha `/logo.svg` à mão, e o `BrandMark` **decide pelo nome** e não por uma constante. A segunda impede o caso mais fácil de errar — um invólucro que devolve sempre o logótipo teria passado a primeira e deixado o defeito de pé, agora escondido atrás de um nome tranquilizador.
 - **Ficheiros:** `web/src/components/BrandMark.tsx`, `web/src/branding.ts`, `web/src/components/Shell.tsx`, `web/src/pages/{Status,Legal,Lobby,Landing,ApiDocs}.tsx`, `web/src/styles.scss`.
+
+### R101 — Corrigi o símbolo da marca e deixei o nome escrito à mão ao lado
+- **Continuação directa do R100, e é uma correcção minha incompleta.** O `BrandMark` fez o símbolo seguir o nome configurado. Mas o NOME continuava escrito à mão mesmo ao lado dele — `<BrandMark /> Delonix <span>Meet</span>` — na landing (×2), no lobby, no legal, no estado e nos docs.
+- **O resultado era pior do que antes da correcção:** uma instalação renomeada passava a mostrar o símbolo novo colado ao nome antigo. Antes havia uma incoerência; depois havia uma contradição.
+- **Como apareceu:** ao inventariar os literais que faltavam traduzir. As ocorrências de `Delonix` apareceram na lista como «texto por traduzir» — e não são: o nome de uma marca não se traduz, **configura-se**. Foi a lista errada que revelou o problema certo.
+- **E escapou-me uma à primeira:** converti quatro páginas e deixei o `Legal.tsx`, que tem exactamente o mesmo padrão. Só apareceu ao correr um `grep` pelo padrão em vez de confiar na lista que eu próprio tinha feito.
+- **Feito:** `BrandLockup` — símbolo e nome da mesma fonte, com um `suffix` opcional para os cabeçalhos que acrescentam algo («— Estado do serviço», «· API REST»).
+- **Portão:** `lote2`, 3.2.8, terceira asserção — nenhuma das sete páginas escreve `Delonix <span>`. Deliberadamente estreito: proíbe o LOCKUP escrito à mão, não o nome dentro de uma frase, que é problema de i18n e resolve-se por interpolação.
+- **Ficheiros:** `web/src/components/BrandMark.tsx`, `web/src/pages/{Landing,Lobby,Legal,Status,ApiDocs}.tsx`, `web/src/lote2.invariantes.test.ts`.

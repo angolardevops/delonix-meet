@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { BrandMark } from '../components/BrandMark'
+import { BrandLockup, BrandMark } from '../components/BrandMark'
 
 /** Documentação pública da API REST do Delonix Meet (#/api-docs). */
 export default function ApiDocs() {
@@ -10,7 +10,7 @@ export default function ApiDocs() {
         <header className="apidoc-head">
           <BrandMark big />
           <h1>
-            Delonix <span>Meet</span> · API REST
+            <BrandLockup suffix="· API REST" />
           </h1>
           <p className="muted">
             Integra o Delonix Meet noutras plataformas: cria salas, obtém links de reunião e lista

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BrandMark } from '../components/BrandMark'
+import { BrandLockup, BrandMark } from '../components/BrandMark'
 
 interface StatusInfo {
   status: string
@@ -49,7 +49,7 @@ export default function Status() {
       <div className="status-card">
         <BrandMark big />
         <h1>
-          Delonix <span>Meet</span> — Estado do serviço
+          <BrandLockup suffix="— Estado do serviço" />
         </h1>
         <div className={ok ? 'status-banner ok' : 'status-banner down'}>
           {err ? '● Serviço indisponível' : ok ? '● Todos os sistemas operacionais' : '● Serviço degradado'}
