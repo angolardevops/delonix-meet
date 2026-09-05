@@ -217,7 +217,6 @@ jobs:
       - name: Isolamento e permissões negativas
         run: node web/e2e/isolamento.mjs
 
-
       # A auditoria é atacada DIRECTAMENTE por SQL, não pela API: um teste que
       # só usa a API prova que a API não deixa, não que os dados estão
       # protegidos. E o adversário que interessa numa auditoria é quem TEM
@@ -254,15 +253,9 @@ jobs:
       - name: Chromium para o teste de interface
         run: npx playwright install chromium
         working-directory: web
-      # DEPOIS do `playwright install` acima, não antes. A primeira versão ficou
-      # 21 linhas mais acima e morria com «Executable doesn't exist» — o mesmo
-      # erro que o portão da barra já tinha dado no job do frontend, e pela
-      # mesma razão: o `npm ci` traz a biblioteca, não os browsers.
-      # Sem `working-directory`: neste job os e2e correm da RAIZ, e o caminho
-      # já diz `web/e2e/`. Com `working-directory: web` o Node procura
-      # `web/web/e2e/` e morre com MODULE_NOT_FOUND — o `working-directory`
-      # apanhado do passo vizinho ao mover isto de sítio foi o TERCEIRO erro
-      # seguido nesta mesma linha. Ver R97.
+      # DEPOIS do `playwright install` acima, e SEM `working-directory`: neste
+      # job os e2e correm da raiz e o caminho já diz `web/e2e/`. As duas coisas
+      # falharam, uma de cada vez, e dão o mesmo sintoma — ver R97.
       - name: Reentrada após quebra (R91 — o F5 não devolve à sala de espera)
         run: |
           APP=http://localhost:5174 API=http://localhost:8180 node web/e2e/reentrada.mjs
