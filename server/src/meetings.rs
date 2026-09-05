@@ -501,15 +501,30 @@ pub async fn save_minutes_by_room(
     Path(code): Path<String>,
     Json(req): Json<MinutesReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let meeting: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM meetings WHERE room_code = $1")
-        .bind(&code)
-        .fetch_optional(&state.db)
-        .await?;
+    // A AUTORIZAÇÃO VEM PRIMEIRO (R96). Antes, a consulta corria para toda a
+    // gente e a resposta dizia se a sala tinha reunião agendada — a quem
+    // apenas soubesse o código, e de outra organização. O código da sala é uma
+    // capability para VER metadados e PEDIR entrada; não é um passe para saber
+    // o que está agendado lá dentro.
+    //
+    // Encontrado pelo teste de isolamento: `POST` de outro inquilino devolvia
+    // `200 {"ok":false,"reason":"no meeting for room"}`. Nada era escrito — o
+    // delegado `save_minutes` autoriza —, mas o 200 e a razão já eram resposta
+    // a mais.
+    let meeting: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT m.id FROM meetings m
+         LEFT JOIN meeting_invitees i ON i.meeting_id = m.id AND i.user_id = $2
+         WHERE m.room_code = $1 AND (m.owner_id = $2 OR i.user_id IS NOT NULL)",
+    )
+    .bind(&code)
+    .bind(auth.user_id)
+    .fetch_optional(&state.db)
+    .await?;
     let Some((mid,)) = meeting else {
-        // Sala sem reunião agendada associada — nada a guardar, mas não é erro.
-        return Ok(Json(
-            serde_json::json!({ "ok": false, "reason": "no meeting for room" }),
-        ));
+        // Uma resposta só para os dois casos: «não há reunião» e «não é tua».
+        // Distingui-los é o que fazia a fuga — e um `404` é o que as outras
+        // rotas de recurso já devolvem (ver R95).
+        return Err(ApiError::NotFound);
     };
     save_minutes(State(state), auth, Path(mid), Json(req)).await
 }

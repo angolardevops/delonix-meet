@@ -234,6 +234,136 @@ await recusado('A reporta QoS na sala da B', `/api/rooms/${salaB.code}/qos`, {
 })
 await recusado('anónimo vê metadados da sala da B', `/api/rooms/${salaB.code}`, {})
 
+// REUNIÕES, GRAVAÇÕES E QUADROS da org B (R96).
+//
+// O mesmo inventário-contra-inventário que deu as seis rotas de organização
+// (R95), agora aplicado aos recursos POR ID. Existiam 32 rotas não-públicas de
+// sala/reunião/gravação/quadro e o teste tocava em 8. As restantes nunca
+// tinham sido pedidas com o token do inquilino errado.
+//
+// A regra que decide o que é grave: uma sala é uma CAPABILITY (quem sabe o
+// código vê os metadados e pede para entrar — está no topo deste ficheiro). Um
+// recurso por ID não é: a acta de uma reunião, o ficheiro de uma gravação e o
+// PNG de um quadro não têm código para partilhar. O `id` é opaco e não
+// autoriza nada.
+// Um id que a org A inventa. Serve onde o recurso não se pode FABRICAR sem uma
+// chamada a sério (gravações) — e onde é usado está dito que um 404 não
+// distingue «não é tua» de «não existe».
+const inventado = '00000000-0000-4000-8000-000000000000'
+
+console.log('\n--- reuniões, gravações e quadros da org B ---')
+
+const reuniaoB = await req('/api/meetings', {
+  token: B.token, method: 'POST',
+  body: {
+    title: 'reunião privada da B',
+    kind: 'video',
+    starts_at: new Date(Date.now() + 3600_000).toISOString(),
+  },
+})
+if (reuniaoB.status >= 200 && reuniaoB.status < 300 && reuniaoB.json?.id) {
+  const m = reuniaoB.json.id
+  // `/api/meetings/{id}` só tem DELETE e `/minutes` só tem POST — um GET
+  // devolve 405, que o helper contava como recusa sem provar nada. Foi o
+  // CONTROLO POSITIVO abaixo que deu por isso: «B lê a sua própria reunião»
+  // devolvia 405 também. Sem ele, duas asserções verdes mediam o router, não a
+  // autorização.
+  await recusado('A APAGA a reunião da org B', `/api/meetings/${m}`, {
+    token: A.token, method: 'DELETE',
+  })
+  await recusado('A escreve a ACTA da reunião da B', `/api/meetings/${m}/minutes`, {
+    token: A.token, method: 'POST', body: { markdown: 'acta forjada' },
+  })
+  await recusado('A lê a agenda da reunião da B', `/api/meetings/${m}/agenda`, { token: A.token })
+  await recusado('A lê os convidados da reunião da B', `/api/meetings/${m}/invitees`, { token: A.token })
+  await recusado('A lê o plano de acção da reunião da B', `/api/meetings/${m}/action-plan`, { token: A.token })
+  await recusado('A descarrega o ICS da reunião da B', `/api/meetings/${m}/ics`, { token: A.token })
+  await recusado('A responde ao convite da reunião da B', `/api/meetings/${m}/respond`, {
+    token: A.token, method: 'POST', body: { status: 'accepted' },
+  })
+  await recusado('A ARRANCA a reunião da B', `/api/meetings/${m}/start`, {
+    token: A.token, method: 'POST', body: {},
+  })
+  // Controlo positivo: sem ele, um `404` em tudo podia ser a reunião não
+  // existir, e as oito asserções acima passavam a medir nada.
+  await permitido('B lista as suas reuniões e a dela lá está (controlo positivo)', '/api/meetings', {
+    token: B.token,
+  })
+  // E o controlo que fecha o buraco de cima: a reunião TEM de continuar a
+  // existir depois de a org A tentar apagá-la.
+  const listaB = await req('/api/meetings', { token: B.token })
+  const viva = Array.isArray(listaB.json?.meetings ?? listaB.json)
+    && (listaB.json.meetings ?? listaB.json).some((x) => x.id === m)
+  if (viva) ok('e a reunião da B CONTINUA LÁ depois de A tentar apagá-la')
+  else nok('e a reunião da B CONTINUA LÁ', 'desapareceu — a recusa foi só no código de estado')
+
+  // Fecha o ciclo do plano de acção: criar um item no plano de outra empresa.
+  await recusado('A cria um item no plano de acção da B', `/api/meetings/${m}/action-plan/items`, {
+    token: A.token, method: 'POST', body: { text: 'tarefa forjada' },
+  })
+} else {
+  nok('B cria uma reunião para o teste', `devolveu ${reuniaoB.status}: ${JSON.stringify(reuniaoB.json).slice(0, 140)}`)
+}
+
+// PNG mínimo de 1×1 — o handler descodifica e valida, por isso tem de ser real.
+const PNG_1x1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+const quadroB = await req('/api/whiteboards', {
+  token: B.token, method: 'POST', body: { title: 'quadro da B', png_base64: PNG_1x1 },
+})
+if (quadroB.status >= 200 && quadroB.status < 300 && quadroB.json?.id) {
+  const q = quadroB.json.id
+  await recusado('A descarrega o PNG do quadro da B', `/api/whiteboards/${q}/png`, { token: A.token })
+  await recusado('A PARTILHA o quadro da B por link', `/api/whiteboards/${q}/share`, {
+    token: A.token, method: 'POST', body: { public: true },
+  })
+  await recusado('A apaga o quadro da B', `/api/whiteboards/${q}`, {
+    token: A.token, method: 'DELETE',
+  })
+  const listaB = await req('/api/whiteboards', { token: B.token })
+  const vive = Array.isArray(listaB.json) && listaB.json.some((w) => w.id === q)
+  if (vive) ok('e o quadro da B CONTINUA LÁ')
+  else nok('e o quadro da B CONTINUA LÁ', 'desapareceu — a recusa foi só no código de estado')
+} else {
+  nok('B cria um quadro para o teste', `devolveu ${quadroB.status}: ${JSON.stringify(quadroB.json).slice(0, 140)}`)
+}
+
+
+// Recursos ligados à SALA da org B, com o código real dela. O código é uma
+// capability para VER metadados e PEDIR entrada — não para escrever.
+console.log('\n--- o que o código da sala NÃO autoriza a escrever ---')
+await recusado('A convida gente para a sala da B', `/api/rooms/${salaB.code}/invite`, {
+  token: A.token, method: 'POST', body: { user_ids: [] },
+})
+await recusado('A lê a acta da sala da B', `/api/rooms/${salaB.code}/minutes`, { token: A.token })
+await recusado('A escreve a acta da sala da B', `/api/rooms/${salaB.code}/minutes`, {
+  token: A.token, method: 'POST', body: { markdown: 'acta forjada' },
+})
+await recusado('A reporta tempos de chamada na sala da B', `/api/rooms/${salaB.code}/timings`, {
+  token: A.token, method: 'POST', body: { join_ms: 1 },
+})
+await recusado('A partilha uma gravação alheia com alguém', `/api/recordings/${inventado}/share`, {
+  token: A.token, method: 'POST', body: { user_id: inventado },
+})
+await recusado('A revoga a partilha de uma gravação alheia', `/api/recordings/${inventado}/share/${inventado}`, {
+  token: A.token, method: 'DELETE',
+})
+
+// As gravações não se podem FABRICAR sem uma chamada a sério, por isso o que
+// aqui se prova é a forma da recusa com um id que a org A inventa. É menos do
+// que o resto deste ficheiro e está dito: um `404` aqui não distingue «não é
+// tua» de «não existe». O caminho por id fica coberto pela sala
+// (`/api/rooms/{code}/recordings`, acima), que usa um id REAL da org B.
+await recusado('A descarrega uma gravação por id inventado', `/api/recordings/${inventado}`, {
+  token: A.token,
+})
+await recusado('A cria link de partilha de uma gravação alheia', `/api/recordings/${inventado}/link`, {
+  token: A.token, method: 'POST', body: {},
+})
+await recusado('A mexe num item de acção por id inventado', `/api/action-items/${inventado}`, {
+  token: A.token, method: 'PATCH', body: { done: true },
+})
+
 console.log('\n--- sem autenticação nenhuma ---')
 await recusado('anónimo lê stats da org B', `/api/orgs/${B.orgId}/stats`, {})
 await recusado('anónimo lista as suas orgs', '/api/orgs', {})
