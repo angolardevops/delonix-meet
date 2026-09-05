@@ -211,7 +211,6 @@ jobs:
       - name: Isolamento e permissões negativas
         run: node web/e2e/isolamento.mjs
 
-
       # A auditoria é atacada DIRECTAMENTE por SQL, não pela API: um teste que
       # só usa a API prova que a API não deixa, não que os dados estão
       # protegidos. E o adversário que interessa numa auditoria é quem TEM
@@ -230,21 +229,25 @@ jobs:
       # E o mesmo visto pelo UTILIZADOR. O backend estar certo não faz um
       # produto: sem interface, o MFA existe para quem sabe fazer POSTs. É este
       # teste que separa as duas coisas.
+      # `working-directory: web` NÃO é decoração. Sem ele o `npx` corre na raiz,
+      # onde não há `node_modules`, DESCARREGA o Playwright mais recente e
+      # instala os browsers DESSA versão — enquanto os testes usam o
+      # `web/node_modules`, que espera outra. O aviso está no log e passou
+      # despercebido durante meses:
+      #
+      #   npm warn exec The following package was not found and will be
+      #   installed: playwright@1.63.0
+      #   WARNING: It looks like you are running 'npx playwright install'
+      #   without first installing your project's dependencies.
+      #
+      # O sintoma é «Executable doesn't exist», que se lê como «faltou
+      # instalar» quando o que faltou foi instalar NO SÍTIO CERTO. O job
+      # `frontend` nunca teve o problema porque tem
+      # `defaults.run.working-directory: web`.
       - name: Chromium para o teste de interface
         run: npx playwright install chromium
-
-      # DEPOIS do `playwright install` acima, não antes. A primeira versão ficou
-      # 21 linhas mais acima e morria com «Executable doesn't exist» — o mesmo
-      # erro que o portão da barra já tinha dado no job do frontend, e pela
-      # mesma razão: o `npm ci` traz a biblioteca, não os browsers.
-      # Sem `working-directory`: neste job os e2e correm da RAIZ, e o caminho
-      # já diz `web/e2e/`. Com `working-directory: web` o Node procura
-      # `web/web/e2e/` e morre com MODULE_NOT_FOUND — o `working-directory`
-      # apanhado do passo vizinho ao mover isto de sítio foi o TERCEIRO erro
-      # seguido nesta mesma linha. Ver R97.
-      - name: Reentrada após quebra (R91 — o F5 não devolve à sala de espera)
-        run: |
-          APP=http://localhost:5174 API=http://localhost:8180 node web/e2e/reentrada.mjs
+        working-directory: web
+        working-directory: web
 
       - name: Interface do MFA (Chromium real)
         run: |
