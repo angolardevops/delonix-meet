@@ -785,3 +785,12 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Um `404` num id inventado não prova nada** — só que o recurso não existe. Onde o recurso se pode fabricar (reunião, quadro), o teste cria-o com a org B, tenta destruí-lo com a A, e afirma que **continua lá**. Onde não se pode (gravações, que precisam de uma chamada a sério), está escrito que a prova é mais fraca.
 - **Portão:** o `check-isolamento-cobertura.sh` passou a cobrir também os recursos por ID — 53 rotas ao todo. Foi ele que encontrou mais sete que eu tinha deixado de fora depois de julgar a lista completa.
 - **Ficheiros:** `web/e2e/isolamento.mjs`, `scripts/check-isolamento-cobertura.sh`, `server/src/meetings.rs`.
+
+### R97 — O mesmo erro duas vezes, e cinco camadas construídas por cima dele
+- **O erro:** um teste que usa Playwright colocado ANTES do `npx playwright install` do próprio job. Morre com `Executable doesn't exist at .../chrome-headless-shell`.
+- **Duas vezes em dois dias:** o portão da barra responsiva no job `frontend` (R86), e o teste de reentrada no job `isolamento` (R91). Nos dois casos a causa é a mesma e a correcção foi a mesma.
+- **Porque é fácil de repetir:** o `npm ci` dá a sensação de ter instalado tudo. Traz a **biblioteca** do Playwright; os browsers vêm de um comando à parte. E o sintoma não aponta para a causa — parece um problema de ambiente, não uma linha fora de ordem. A segunda vez foi ainda mais fácil porque o job `isolamento` **já tinha** um `playwright install`: bastou pôr o passo novo vinte linhas acima dele.
+- **O que custou de verdade, e é a parte que interessa:** empurrei o R91 e **não verifiquei o CI dele**. Depois construí **cinco PRs por cima**. Os seis estiveram vermelhos no mesmo sítio durante quatro iterações, e só apareceu ao ir fundir a pilha. Corrigir o mesmo erro duas vezes é distração; construir cinco camadas sobre ele sem olhar é **processo**.
+- **Regra:** um PR empurrado sem se ver o CI dele é trabalho por verificar, não trabalho feito — e uma pilha faz herdar o vermelho para cima em silêncio.
+- **Portão:** `scripts/check-browser-antes-do-e2e.sh`. Para cada JOB, verifica que todo o teste de `web/e2e/` que importa `@playwright/test` corre depois de um `playwright install` **nesse mesmo job** — um noutro job não vale, que foi a suposição que falhou da primeira vez. Visto a recusar as duas versões do erro.
+- **Ficheiros:** `scripts/check-browser-antes-do-e2e.sh`, `.github/workflows/ci.yml`.
