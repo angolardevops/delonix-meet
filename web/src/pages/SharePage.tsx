@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { getPublicShare, PublicShareInfo } from '../api'
 import { FilmIcon } from '../icons'
 
 export default function SharePage({ token }: { token: string }) {
+  const { t } = useTranslation()
   const [info, setInfo] = useState<PublicShareInfo | null>(null)
   const [needsPassword, setNeedsPassword] = useState(false)
   const [password, setPassword] = useState('')
@@ -38,7 +40,7 @@ export default function SharePage({ token }: { token: string }) {
   if (loading) {
     return (
       <div className="share-page">
-        <p className="muted">A verificar link…</p>
+        <p className="muted">{t('share.aVerificarLink')}</p>
       </div>
     )
   }
@@ -48,9 +50,9 @@ export default function SharePage({ token }: { token: string }) {
       <div className="share-page">
         <div className="share-page-card">
           <FilmIcon />
-          <h2>Gravação indisponível</h2>
+          <h2>{t('share.indisponivel')}</h2>
           <p className="muted">{error}</p>
-          <a href="#/" className="btn-sm">Ir para o início</a>
+          <a href="#/" className="btn-sm">{t('share.irParaOInicio')}</a>
         </div>
       </div>
     )
@@ -61,8 +63,8 @@ export default function SharePage({ token }: { token: string }) {
       <div className="share-page">
         <div className="share-page-card">
           <FilmIcon />
-          <h2>Gravação protegida</h2>
-          <p className="muted">Este link requer uma password para aceder.</p>
+          <h2>{t('share.protegida')}</h2>
+          <p className="muted">{t('share.requerPassword')}</p>
           <form
             onSubmit={(e) => { e.preventDefault(); void load(password) }}
             className="share-password-form"
@@ -70,7 +72,7 @@ export default function SharePage({ token }: { token: string }) {
             <input
               type="password"
               autoFocus
-              placeholder="Password"
+              placeholder={t('common.password')}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
@@ -97,8 +99,7 @@ export default function SharePage({ token }: { token: string }) {
         <a className="btn-sm" href={downloadUrl} download={info.filename}>
           ⬇ Descarregar
         </a>
-        <p className="muted small share-link-password-hint">
-          Powered by <strong>Delonix Meet</strong>
+        <p className="muted small share-link-password-hint">{t('share.poweredBy')}<strong>Delonix Meet</strong>
         </p>
       </div>
     </div>

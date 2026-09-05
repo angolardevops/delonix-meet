@@ -3,7 +3,7 @@ import { CloseIcon, LockIcon, MicOffIcon, ShareIcon } from '../icons'
 import { useTranslation } from 'react-i18next'
 import { currentUser, joinRoom } from '../api'
 import { ClientMsg, PeerInfo, Signaling } from '../signaling'
-import { BrandMark } from '../components/BrandMark'
+import { BrandLockup } from '../components/BrandMark'
 
 /** Sala de espera dedicada do anfitrião (vista do template): gerir a fila,
  *  quem está na reunião e as definições da sala — antes de entrar com media.
@@ -67,7 +67,7 @@ export default function Lobby({ code }: { code: string }) {
     <div className="lobby-page">
       <header className="lobby-head">
         <a href="#/" className="brand-text">
-          <BrandMark /> Delonix <span>Meet</span>
+          <BrandLockup />
         </a>
         <span className="mono lobby-code">{code}</span>
       </header>

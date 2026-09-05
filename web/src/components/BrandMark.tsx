@@ -37,3 +37,29 @@ export function BrandMark({ big = false }: { big?: boolean }) {
     </span>
   )
 }
+
+/**
+ * O SÍMBOLO mais o NOME — o conjunto que aparece nos cabeçalhos (R101).
+ *
+ * O `BrandMark` acima resolveu metade do problema da marca-branca: o símbolo
+ * passou a seguir o nome. Mas o NOME continuava escrito à mão ao lado dele —
+ * `<BrandMark /> Delonix <span>Meet</span>` — em cinco páginas. Renomear a
+ * aplicação trocava o símbolo e deixava o nome antigo colado a ele, que é um
+ * resultado pior do que não ter mudado nada.
+ *
+ * Este componente desenha os dois a partir da mesma fonte.
+ */
+export function BrandLockup({ big = false, suffix }: { big?: boolean; suffix?: string }) {
+  const [partes, setPartes] = useState(appNameParts())
+  useEffect(() => {
+    const on = () => setPartes(appNameParts())
+    window.addEventListener('dx-branding', on)
+    return () => window.removeEventListener('dx-branding', on)
+  }, [])
+  return (
+    <>
+      <BrandMark big={big} /> {partes[0]} <span>{partes[1]}</span>
+      {suffix ? ` ${suffix}` : null}
+    </>
+  )
+}

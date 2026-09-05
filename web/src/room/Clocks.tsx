@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 /**
  * Relógios da sala, como FOLHAS (achado 2.1 do docs/ux-perf-review.md).
@@ -33,6 +34,7 @@ function useSegundo(): void {
 
 /** Duração da reunião. Era `elapsed` na raiz — um `setState` por segundo. */
 export function MeetingElapsed({ startedAt }: { startedAt: number }) {
+  const { t } = useTranslation()
   useSegundo()
   // Sem hora de início não se mostra número NENHUM. Sem esta guarda, um
   // `startedAt` a 0 dá a distância à época Unix — o contador mostrava
@@ -42,7 +44,7 @@ export function MeetingElapsed({ startedAt }: { startedAt: number }) {
   const secs = Math.floor((Date.now() - startedAt) / 1000)
   if (secs <= 0) return null
   return (
-    <span className="meeting-elapsed" title="Duração da reunião">
+    <span className="meeting-elapsed" title={t('room.barra.duracaoDaReuniao')}>
       {fmt(secs)}
     </span>
   )

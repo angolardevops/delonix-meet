@@ -546,7 +546,7 @@ function AgendaView({
                 <button className="btn-sm" onClick={() => onStart(m)}>
                   {m.kind === 'voice' ? <VoiceCallIcon /> : <VideoIcon />}{m.is_owner ? t('start') : t('join')}
                 </button>
-                {m.is_owner && <button className="icon-btn" title="Cancelar" onClick={() => onRemove(m)}><TrashIcon /></button>}
+                {m.is_owner && <button className="icon-btn" title={t('room.preEntrada.cancelar')} onClick={() => onRemove(m)}><TrashIcon /></button>}
               </div>
             ))}
           </div>

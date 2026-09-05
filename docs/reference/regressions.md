@@ -831,3 +831,22 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Feito:** um componente `BrandMark` único nos seis sítios. Desenha o logótipo enquanto o nome for o de origem, e o quadrado com a inicial a partir do momento em que deixar de ser. Reage ao evento `dx-branding`, como o resto do sistema de marca. A variante `big` — que o `.brand-logo` tinha e o quadrado não — passou a existir para os dois.
 - **Portão:** `lote2`, 3.2.8, com duas metades: nenhum dos seis ecrãs desenha `/logo.svg` à mão, e o `BrandMark` **decide pelo nome** e não por uma constante. A segunda impede o caso mais fácil de errar — um invólucro que devolve sempre o logótipo teria passado a primeira e deixado o defeito de pé, agora escondido atrás de um nome tranquilizador.
 - **Ficheiros:** `web/src/components/BrandMark.tsx`, `web/src/branding.ts`, `web/src/components/Shell.tsx`, `web/src/pages/{Status,Legal,Lobby,Landing,ApiDocs}.tsx`, `web/src/styles.scss`.
+
+### R101 — Corrigi o símbolo da marca e deixei o nome escrito à mão ao lado
+- **Continuação directa do R100, e é uma correcção minha incompleta.** O `BrandMark` fez o símbolo seguir o nome configurado. Mas o NOME continuava escrito à mão mesmo ao lado dele — `<BrandMark /> Delonix <span>Meet</span>` — na landing (×2), no lobby, no legal, no estado e nos docs.
+- **O resultado era pior do que antes da correcção:** uma instalação renomeada passava a mostrar o símbolo novo colado ao nome antigo. Antes havia uma incoerência; depois havia uma contradição.
+- **Como apareceu:** ao inventariar os literais que faltavam traduzir. As ocorrências de `Delonix` apareceram na lista como «texto por traduzir» — e não são: o nome de uma marca não se traduz, **configura-se**. Foi a lista errada que revelou o problema certo.
+- **E escapou-me uma à primeira:** converti quatro páginas e deixei o `Legal.tsx`, que tem exactamente o mesmo padrão. Só apareceu ao correr um `grep` pelo padrão em vez de confiar na lista que eu próprio tinha feito.
+- **Feito:** `BrandLockup` — símbolo e nome da mesma fonte, com um `suffix` opcional para os cabeçalhos que acrescentam algo («— Estado do serviço», «· API REST»).
+- **Portão:** `lote2`, 3.2.8, terceira asserção — nenhuma das sete páginas escreve `Delonix <span>`. Deliberadamente estreito: proíbe o LOCKUP escrito à mão, não o nome dentro de uma frase, que é problema de i18n e resolve-se por interpolação.
+- **Ficheiros:** `web/src/components/BrandMark.tsx`, `web/src/pages/{Landing,Lobby,Legal,Status,ApiDocs}.tsx`, `web/src/lote2.invariantes.test.ts`.
+
+### R102 — W2.5 fechado: zero texto de interface fora do `t()` em todo o `web/src`
+- **Depois da sala (R99) sobravam 47** strings de interface em 14 ficheiros — MFA, docs da API, partilha de gravação, definições, notificações, estado.
+- **A contagem que eu tinha era 86 e estava alta:** o regex do relatório apanhava strings de uma palavra só. O portão exige um ESPAÇO — o que distingue uma frase de um identificador — e com esse critério eram 67, dos quais 20 eram marca ou código (`Delonix`, `X-Delonix-Signature`, `sha256`, `NFS`). Texto a sério: **47**.
+- **Oito já tinham chave.** O `pt.ts` tem 634 entradas, e «A carregar…», «Cancelar», «Email», «Silenciar» e outras já lá estavam. Criar chaves novas para elas teria duplicado o dicionário — a diferença entre inventariar e traduzir.
+- **Quatro espaços de nomes novos** (`api`, `mfa`, `share`, `status`) e 39 chaves em pt/en/fr.
+- **O hook não vai onde o ficheiro começa, vai onde o `t` é usado.** Vários ficheiros definem mais do que um componente, e a primeira tentativa pôs o `useTranslation()` no primeiro de cada um — o compilador respondeu com «`t` is declared but never read» num sítio e «cannot find name `t`» noutro. A colocação passou a ser guiada pelas linhas que o `tsc` aponta, em ciclo, até parar.
+- **O portão passou a cobrir `web/src` INTEIRO**, com a lista de ficheiros DERIVADA da árvore. A alternativa — acrescentar ficheiros a uma lista à mão — fica desactualizada no dia em que alguém cria um ficheiro novo, e o portão passa a proteger menos do que diz. Provado com um literal posto num ficheiro que nunca esteve em lista nenhuma.
+- **O que fica de fora, e é deliberado:** marca (`Delonix`, que se **configura** — R100/R101) e identificadores técnicos (`X-Delonix-Signature`, `sha256`, `NFS`, `WebDAV`). Nenhum deles se traduz.
+- **Ficheiros:** 14 `.tsx`, `web/src/locales/{pt,en,fr}.ts`, `web/src/lote2.invariantes.test.ts`.
