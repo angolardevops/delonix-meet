@@ -320,6 +320,11 @@ export default {
       gravarNoServidorAviso: 'Para gravar no servidor, a chave desta sala é entregue ao servidor APENAS durante a gravação, e o ficheiro fica legível na biblioteca.',
       autorizarEGravar: "Autorizar e começar a gravar?",
     },
+    pip: {
+      janelaFlutuante: "Janela flutuante",
+      nadaParaMostrar: "Sem vídeo de ninguém para mostrar na janela.",
+      recusada: "O browser recusou a janela flutuante. Fecha a que tens noutro separador e tenta outra vez.",
+    },
     barra: {
       duracaoDaReuniao: 'Duração da reunião',
       codigoDeSegurancaDa: 'Código de segurança da sala',

@@ -318,6 +318,11 @@ export default {
       gravarNoServidorAviso: 'To record on the server, this room’s key is handed to the server ONLY while recording, and the file becomes readable in the library.',
       autorizarEGravar: "Authorise and start recording?",
     },
+    pip: {
+      janelaFlutuante: "Floating window",
+      nadaParaMostrar: "No one’s video to show in the window.",
+      recusada: "The browser refused the floating window. Close the one in another tab and try again.",
+    },
     barra: {
       duracaoDaReuniao: 'Meeting duration',
       codigoDeSegurancaDa: 'Room security code',

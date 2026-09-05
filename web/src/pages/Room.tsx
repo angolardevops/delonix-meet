@@ -1,5 +1,6 @@
 import { CSSProperties, ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { deveTrocarFonte, escolherFontePip, type EstadoPip } from '../pipPolicy'
 import {
   currentUser, downloadRecording, iceServers, inviteToRoom, joinRoom, listRecordings, postQos, postTimings, Recording,
   roomChatHistory, saveMinutesByRoom, saveWhiteboard, searchUsers, translateCaption, uploadRecording, User,
@@ -31,7 +32,7 @@ import { backoffDelay } from '../callRecovery'
 import { chooseLayers, type LocalConditions, type TileSignal } from '../layerPolicy'
 import { LinhaDoTempo } from '../callTimings'
 import { makeCallHolderStart } from '../sfuLifecycle'
-import { BlurIcon, BotIcon, CamIcon, CamOffIcon, ChartIcon, ChatIcon, CheckIcon, ChevronLeftIcon, ChevronUpIcon, ClockIcon, CloseIcon, CubeIcon, DownloadIcon, EditIcon, EmojiIcon, FullscreenIcon, GridIcon, HandIcon, HangupIcon, HelpIcon, InfoIcon, LockIcon, MicIcon, MicOffIcon, NoteIcon, PeopleIcon, PinIcon, PlusIcon, RecordIcon, RepeatIcon, RowsIcon, SaveIcon, SearchIcon, SendIcon, SettingsIcon, ShareIcon, ShieldIcon, SpeakerIcon, StageIcon, StopIcon, StrokeThickIcon, StrokeThinIcon, TableIcon, TrashIcon, TrophyIcon, ThumbIcon, VoiceCallIcon } from '../icons'
+import { BlurIcon, BotIcon, CamIcon, CamOffIcon, ChartIcon, ChatIcon, CheckIcon, ChevronLeftIcon, ChevronUpIcon, ClockIcon, CloseIcon, CubeIcon, DownloadIcon, EditIcon, EmojiIcon, FullscreenIcon, GridIcon, HandIcon, HangupIcon, HelpIcon, InfoIcon, LockIcon, MicIcon, MicOffIcon, NoteIcon, PeopleIcon, PinIcon, PipIcon, PlusIcon, RecordIcon, RepeatIcon, RowsIcon, SaveIcon, SearchIcon, SendIcon, SettingsIcon, ShareIcon, ShieldIcon, SpeakerIcon, StageIcon, StopIcon, StrokeThickIcon, StrokeThinIcon, TableIcon, TrashIcon, TrophyIcon, ThumbIcon, VoiceCallIcon } from '../icons'
 
 // `RemotePeer` mudou-se para room/RemoteTile.tsx, com o componente que o usa.
 
@@ -382,10 +383,96 @@ export default function Room({
   const paginatedOnceRef = useRef(false)
   const [fullscreen, setFullscreen] = useState(false)
 
+  // ── Janela flutuante (Picture-in-Picture) ────────────────────────────────
+  //
+  // PORQUÊ: numa reunião de trabalho ninguém fica no separador da reunião. Vai
+  // ao documento, ao terminal, ao email — e perde a cara de quem fala. O Meet e
+  // o Teams resolvem-no com uma janela pequena que fica por cima de tudo; era a
+  // lacuna W3.5.
+  //
+  // A janela mostra UM vídeo, e quem lá está decide-se no `pipPolicy.ts` — puro
+  // e testado à parte. Aqui trata-se só do que precisa mesmo do browser.
+  const [pipOn, setPipOn] = useState(false)
+  const [pipErro, setPipErro] = useState<string | null>(null)
+  const pipVideo = useRef<HTMLVideoElement>(null)
+  const pipFonte = useRef<string | null>(null)
+  /** Quem falou por último, mesmo que já esteja calado — ver `pipPolicy.ts`. */
+  const ultimoAFalar = useRef<string | null>(null)
+  // O browser SÓ deixa abrir a janela a partir de um gesto da pessoa. Não há
+  // «abre sozinha quando eu mudo de separador»: essa permissão está reservada a
+  // PWAs instaladas, e fingir que existe daria um botão que falha em silêncio.
+  const pipDisponivel =
+    typeof document !== 'undefined' && document.pictureInPictureEnabled === true
+
+  /**
+   * Abre ou fecha a janela. O `requestPictureInPicture` EXIGE um gesto e exige
+   * que o elemento já tenha imagem — por isso a fonte é escolhida e ligada aqui,
+   * antes de pedir, e não no efeito que só corre depois de `pipOn` mudar.
+   */
+  const alternarPip = async () => {
+    setPipErro(null)
+    const v = pipVideo.current
+    if (!v) return
+    if (document.pictureInPictureElement) {
+      await document.exitPictureInPicture().catch(() => {})
+      setPipOn(false)
+      pipFonte.current = null
+      return
+    }
+    const candidatos = peersRef.current
+      .filter((p) => p.peerId !== 'me')
+      .map((p) => ({
+        peerId: p.peerId,
+        temVideo: !!p.stream && p.stream.getVideoTracks().some((tr) => tr.enabled),
+        aFalar: false,
+      }))
+    const estado: EstadoPip = {
+      apresentacao: presentation ? presentation.peerId : null,
+      afixado: pinnedId && pinnedId !== 'me' ? pinnedId : null,
+      ultimoAFalar: ultimoAFalar.current,
+      candidatos,
+    }
+    const escolhido = escolherFontePip(estado)
+    if (!escolhido) {
+      // `null` quer dizer «não há nada que valha a pena»: uma sala só de áudio.
+      // Uma janela preta a flutuar por cima do trabalho de alguém é pior do que
+      // janela nenhuma — diz-se porquê, em vez de abrir vazia.
+      setPipErro(t('room.pip.nadaParaMostrar'))
+      return
+    }
+    const stream =
+      presentation && escolhido === presentation.peerId
+        ? presentation.stream
+        : peersRef.current.find((p) => p.peerId === escolhido)?.stream ?? null
+    if (!stream) { setPipErro(t('room.pip.nadaParaMostrar')); return }
+    v.srcObject = stream
+    try {
+      await v.play()
+      await v.requestPictureInPicture()
+      pipFonte.current = escolhido
+      setPipOn(true)
+    } catch {
+      // O browser pode recusar (política, ou já há outra janela aberta noutro
+      // separador). Recusa silenciosa é um botão partido.
+      setPipErro(t('room.pip.recusada'))
+    }
+  }
+
   useEffect(() => {
     const onFs = () => setFullscreen(!!document.fullscreenElement)
     document.addEventListener('fullscreenchange', onFs)
     return () => document.removeEventListener('fullscreenchange', onFs)
+  }, [])
+
+  // A janela fecha-se por três caminhos: o nosso botão, o botão do browser, e o
+  // fim da chamada. Este trata dos outros dois — sem ele, o botão ficava aceso
+  // com a janela já fechada.
+  useEffect(() => {
+    const v = pipVideo.current
+    if (!v) return
+    const onSai = () => { setPipOn(false); pipFonte.current = null }
+    v.addEventListener('leavepictureinpicture', onSai)
+    return () => v.removeEventListener('leavepictureinpicture', onSai)
   }, [])
 
   // Ferramentas de reunião: sondagens, Q&A, temporizador
@@ -2056,6 +2143,47 @@ export default function Room({
   const stagePeer = pinnedPeer ?? remoteSpeaker ?? peers[0] ?? null
   // Palco em mim: fixei-me, ou sou o orador ativo, ou não há mais ninguém.
   const stageOnSelf = pinnedSelf || (!pinnedPeer && !remoteSpeaker && (speaking.has('me') || peers.length === 0))
+
+  // Quem fala AGORA passa a ser «o último que falou» assim que se cala. Sem esta
+  // memória, a janela ficava em branco em cada silêncio — e o silêncio é a maior
+  // parte de uma reunião.
+  useEffect(() => {
+    const aFalar = peers.find((p) => speaking.has(p.peerId))
+    if (aFalar) ultimoAFalar.current = aFalar.peerId
+  }, [speaking, peers])
+
+  // Segue a fonte enquanto a janela está aberta. O `deveTrocarFonte` é que evita
+  // que ela pisque de cara em cara a cada frase.
+  useEffect(() => {
+    if (!pipOn) return
+    const v = pipVideo.current
+    if (!v) return
+    const estado: EstadoPip = {
+      apresentacao: presentation ? presentation.peerId : null,
+      afixado: pinnedId && pinnedId !== 'me' ? pinnedId : null,
+      ultimoAFalar: ultimoAFalar.current,
+      candidatos: peers
+        // O próprio nunca é candidato: a nossa cara numa janela flutuante
+        // enquanto estamos noutro separador não serve para nada.
+        .filter((p) => p.peerId !== 'me')
+        .map((p) => ({
+          peerId: p.peerId,
+          temVideo: !!p.stream && p.stream.getVideoTracks().some((tr) => tr.enabled),
+          aFalar: speaking.has(p.peerId),
+        })),
+    }
+    if (!deveTrocarFonte(pipFonte.current, estado)) return
+    const escolhido = escolherFontePip(estado)
+    if (!escolhido) return
+    const stream =
+      presentation && escolhido === presentation.peerId
+        ? presentation.stream
+        : peers.find((p) => p.peerId === escolhido)?.stream ?? null
+    if (!stream) return
+    pipFonte.current = escolhido
+    v.srcObject = stream
+    void v.play().catch(() => {})
+  }, [pipOn, peers, speaking, presentation, pinnedId])
   // Com pin ativo, força o modo palco (é o efeito de "não trocar toda a hora").
   const effectiveViewMode: 'grid' | 'stage' = pinnedId ? 'stage' : viewMode
   // Transformação 3D (parallax) aplicada à área de vídeo. O scale(1.14) é
@@ -2274,6 +2402,16 @@ export default function Room({
 
   return (
     <div className="room-page">
+      <video
+        ref={pipVideo}
+        muted
+        autoPlay
+        playsInline
+        aria-hidden
+        // Não é `display:none` de propósito: um vídeo escondido assim não tem
+        // imagem, e o browser recusa a janela.
+        style={{ position: 'fixed', width: 1, height: 1, opacity: 0, pointerEvents: 'none', bottom: 0, left: 0 }}
+      />
       {/* Barra de topo estilo Meet: info à esquerda, alertas/participantes à direita. */}
       <header className="room-topbar">
         <div className="rt-left">
@@ -3939,6 +4077,18 @@ export default function Room({
                 >
                   <FullscreenIcon /> {fullscreen ? t('room.txt.sairEcraInteiro') : t('room.txt.ecraInteiro')}
                 </button>
+                {pipDisponivel && (
+                  <button
+                    className="device-item"
+                    onClick={() => { setMoreOpen(false); void alternarPip() }}
+                  >
+                    <span style={{ opacity: pipOn ? 1 : 0.4, marginRight: 4 }}><CheckIcon /></span>
+                    <PipIcon />{t('room.pip.janelaFlutuante')}
+                  </button>
+                )}
+                {pipErro && (
+                  <p className="device-item muted small" role="status">{pipErro}</p>
+                )}
                 <button
                   className="device-item"
                   onClick={() => {
