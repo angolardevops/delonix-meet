@@ -1,6 +1,39 @@
 // Français — carregado sob demanda por ../i18n.ts, nunca no arranque.
 
 export default {
+  status: {
+    uptime: 'Disponibilité du serveur :',
+  },
+  share: {
+    aVerificarLink: 'Vérification du lien…',
+    indisponivel: 'Enregistrement indisponible',
+    irParaOInicio: 'Aller à l\'accueil',
+    protegida: 'Enregistrement protégé',
+    requerPassword: 'Ce lien nécessite un mot de passe.',
+    poweredBy: 'Propulsé par',
+  },
+  api: {
+    todasAsChamadas: 'Tous les appels',
+    alemDaApi: 'Au-delà de l\'API, l\'organisation peut recevoir',
+    noDestino: 'À destination',
+    autenticacao: 'Authentification',
+    baseUrl: 'URL de base',
+    webhooks: 'Webhooks (événements)',
+    codigosDeEstado: 'Codes d\'état',
+  },
+  mfa: {
+    titulo: 'Vérification en deux étapes',
+    guardaOsCodigos: 'Enregistrez vos codes de récupération',
+    soOsVes: 'Vous ne les voyez',
+    guardeiOsCodigos: 'J\'ai enregistré les codes en lieu sûr.',
+    ligaOAutenticador: 'Connectez votre authentificateur',
+    chaveSeNaoLeres: 'Clé (si vous ne pouvez pas scanner le code)',
+    codigoDe6Digitos: 'Code à 6 chiffres de votre authentificateur',
+    activa: 'Actif. Votre authentificateur est demandé à chaque connexion.',
+    paraDesactivar: 'Pour désactiver, saisissez un code actuel',
+    inscricaoPorConcluir: 'Une inscription est inachevée — recommencez pour générer une nouvelle clé.',
+    codigoQr: 'QR code d\'inscription',
+  },
   // A SALA (R99). O ecrã principal do produto estava inteiramente fora
   // do i18n — zero chamadas a `t()` em 4 300 linhas. Ver o R99.
   room: {
@@ -140,6 +173,7 @@ export default {
       guardarAta: 'Enregistrer le compte rendu',
     },
     barra: {
+      duracaoDaReuniao: 'Durée de la réunion',
       codigoDeSegurancaDa: 'Code de sécurité de la salle',
       regressarASalaPrincipal: 'Revenir à la salle principale',
       salaPrincipal: 'Salle principale',
@@ -248,6 +282,9 @@ export default {
     retry: 'Réessayer',
   },
   common: {
+    aCompletarSso: 'Connexion SSO en cours…',
+    idioma: 'Langue / Idioma',
+    password: 'Mot de passe',
     loading: 'Chargement…',
     save: 'Enregistrer',
     edit: 'Modifier',
@@ -288,6 +325,8 @@ export default {
     empty: 'Aucun résultat',
   },
   notif: {
+    ligarDeVolta: 'Rappeler',
+    atender: 'Répondre',
     title: 'Notifications',
     markRead: 'Marquer comme lues',
     missedCall: 'appel manqué',
@@ -323,6 +362,10 @@ export default {
     done: { t: 'Tout est prêt ! 🎉', b: "Vous connaissez l'essentiel. Lancez votre première réunion depuis l'Accueil !" },
   },
   settings: {
+    novaPassword: 'Nouveau mot de passe',
+    nomeDaApp: 'Nom de l\'application',
+    fundoDoLogin: 'Arrière-plan de connexion',
+    fundoDoLoginNota: 'Image d\'arrière-plan de l\'écran de connexion (affichée floue).',
     title: 'Paramètres',
     appearance: 'Apparence',
     language: 'Langue',
@@ -444,6 +487,9 @@ export default {
     secure: 'Connexion sécurisée · un code à partager',
   },
   admin: {
+    tipoDeArmazenamento: 'Type de stockage',
+    pathDeExportacao: 'Chemin d\'export',
+    pathRemoto: 'Chemin distant',
     badge: 'ADMIN',
     title: "Console d'administration",
     sub: "Vue d'ensemble de l'organisation, qualité et sécurité.",
@@ -682,6 +728,7 @@ export default {
     },
   },
   cal: {
+    adicionarAoCalendario: 'Ajouter au calendrier (Google/Outlook — .ics)',
     title: 'Calendrier',
     today: "Aujourd'hui",
     day: 'Jour', week: 'Semaine', month: 'Mois', year: 'Année', agenda: 'Agenda',

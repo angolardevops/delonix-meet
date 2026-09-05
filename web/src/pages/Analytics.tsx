@@ -546,6 +546,7 @@ function OrgOdooIntegration({ orgId }: { orgId: string }) {
 // ---------- Armazenamento remoto (TrueNAS NFS / Nextcloud WebDAV) ----------
 
 function PlatformStoragePanel() {
+  const { t } = useTranslation()
   const [cfg, setCfg] = useState<StorageConfig | null>(null)
   const [type, setType] = useState<'local' | 'nfs' | 'webdav'>('local')
   const [nfsServer, setNfsServer] = useState('')
@@ -612,7 +613,7 @@ function PlatformStoragePanel() {
       </p>
 
       <div className="field-row">
-        <label className="field-label">Tipo de armazenamento</label>
+        <label className="field-label">{t('admin.tipoDeArmazenamento')}</label>
         <select value={type} onChange={(e) => setType(e.target.value as typeof type)} className="select-ctl">
           <option value="local">💽 Local (padrão)</option>
           <option value="nfs">🗄 TrueNAS / NFS</option>
@@ -629,7 +630,7 @@ function PlatformStoragePanel() {
             <input value={nfsServer} onChange={(e) => setNfsServer(e.target.value)} placeholder="192.168.1.10" />
           </div>
           <div className="field-row">
-            <label className="field-label">Path de exportação</label>
+            <label className="field-label">{t('admin.pathDeExportacao')}</label>
             <input value={nfsPath} onChange={(e) => setNfsPath(e.target.value)} placeholder="/mnt/pool/delonix" />
           </div>
           <button className="secondary" onClick={downloadPvc} type="button">⬇ Descarregar manifesto K8s PVC</button>
@@ -653,7 +654,7 @@ function PlatformStoragePanel() {
             <input type="password" value={wdPwd} onChange={(e) => setWdPwd(e.target.value)} placeholder={cfg?.webdav_password_set ? '••••••••' : 'nova password'} />
           </div>
           <div className="field-row">
-            <label className="field-label">Path remoto</label>
+            <label className="field-label">{t('admin.pathRemoto')}</label>
             <input value={wdPath} onChange={(e) => setWdPath(e.target.value)} placeholder="/remote.php/dav/files/{user}/Delonix" />
           </div>
         </>

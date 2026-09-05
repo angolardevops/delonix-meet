@@ -440,7 +440,7 @@ function AddEmployeeModal({
       <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="modal-head"><h3>{t('directory.addEmployee')}</h3><button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button></div>
         <p className="muted small">{t('directory.addEmployeeHint')}</p>
-        <input autoFocus type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <input autoFocus type="email" placeholder={t('login.email')} value={email} onChange={(e) => setEmail(e.target.value)} />
         <div className="field-row">
           <label>{t('directory.name')}<input placeholder={t('directory.usernamePh')} value={username} onChange={(e) => setUsername(e.target.value)} /></label>
           <label>{t('directory.initialPassword')}<PasswordInput placeholder={t('directory.initialPasswordPh')} value={password} onChange={setPassword} autoComplete="new-password" /></label>

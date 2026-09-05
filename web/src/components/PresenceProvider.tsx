@@ -1,4 +1,5 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ackMissedCalls } from '../api'
 import { MissedCall, Presence, PresenceEvent } from '../presence'
 import { CamIcon, CloseIcon, HangupIcon, MicIcon, VoiceCallIcon } from '../icons'
@@ -32,6 +33,7 @@ export default function PresenceProvider({
   onEnterRoom: (code: string, voice: boolean) => void
   children: ReactNode
 }) {
+  const { t } = useTranslation()
   const presenceRef = useRef<Presence | null>(null)
   const [online, setOnline] = useState<Set<string>>(new Set())
   const [incoming, setIncoming] = useState<Ringing[]>([])
@@ -211,7 +213,7 @@ export default function PresenceProvider({
                     <strong>{mc.caller_name}</strong>
                     <small>{new Date(mc.created_at).toLocaleString('pt-PT')}</small>
                   </span>
-                  <button className="missed-back" onClick={() => callBack(mc)}>Ligar de volta</button>
+                  <button className="missed-back" onClick={() => callBack(mc)}>{t('notif.ligarDeVolta')}</button>
                 </div>
               ))}
             </div>
@@ -241,10 +243,10 @@ export default function PresenceProvider({
                 <small>{c.title}</small>
               </div>
               <div className="ring-actions">
-                <button className="ring-btn decline" title="Recusar" onClick={() => decline(c)}>
+                <button className="ring-btn decline" title={t('room.espera.recusar')} onClick={() => decline(c)}>
                   <HangupIcon />
                 </button>
-                <button className="ring-btn accept" title="Atender" onClick={() => accept(c)}>
+                <button className="ring-btn accept" title={t('notif.atender')} onClick={() => accept(c)}>
                   {c.kind === 'voice' ? <MicIcon /> : <CamIcon />}
                 </button>
               </div>

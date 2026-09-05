@@ -181,7 +181,7 @@ export default function Home({
               </div>
               <button
                 className="icon-btn"
-                title="Adicionar ao calendário (Google/Outlook — .ics)"
+                title={t('cal.adicionarAoCalendario')}
                 onClick={() => void downloadMeetingIcs(m.id, m.title).catch(() => {})}
               >
                 <CalendarIcon />

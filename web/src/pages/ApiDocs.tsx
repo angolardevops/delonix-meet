@@ -1,8 +1,10 @@
 import { useState } from 'react'
-import { BrandMark } from '../components/BrandMark'
+import { useTranslation } from 'react-i18next'
+import { BrandLockup, BrandMark } from '../components/BrandMark'
 
 /** Documentação pública da API REST do Delonix Meet (#/api-docs). */
 export default function ApiDocs() {
+  const { t } = useTranslation()
   const base = `${location.origin}`
   return (
     <div className="apidoc-page">
@@ -10,7 +12,7 @@ export default function ApiDocs() {
         <header className="apidoc-head">
           <BrandMark big />
           <h1>
-            Delonix <span>Meet</span> · API REST
+            <BrandLockup suffix="· API REST" />
           </h1>
           <p className="muted">
             Integra o Delonix Meet noutras plataformas: cria salas, obtém links de reunião e lista
@@ -18,9 +20,8 @@ export default function ApiDocs() {
           </p>
         </header>
 
-        <Section title="Autenticação">
-          <p>
-            Todas as chamadas <code>/api/v1</code> exigem uma <strong>chave de API</strong> da organização
+        <Section title={t('api.autenticacao')}>
+          <p>{t('api.todasAsChamadas')}<code>/api/v1</code> exigem uma <strong>chave de API</strong> da organização
             (gera-a em <em>Análises → Chaves de API</em>, como administrador). Envia-a num destes headers:
           </p>
           <Code>{`Authorization: Bearer dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -32,7 +33,7 @@ X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
           </p>
         </Section>
 
-        <Section title="Base URL">
+        <Section title={t('api.baseUrl')}>
           <Code>{`${base}/api/v1`}</Code>
         </Section>
 
@@ -88,9 +89,8 @@ X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
           curl={`curl ${base}/api/v1/org -H "Authorization: Bearer dlx_..."`}
         />
 
-        <Section title="Webhooks (eventos)">
-          <p>
-            Além da API, a organização pode receber <strong>webhooks</strong> em Slack, Teams, Mattermost ou
+        <Section title={t('api.webhooks')}>
+          <p>{t('api.alemDaApi')}<strong>webhooks</strong> em Slack, Teams, Mattermost ou
             num endpoint genérico (configura em <em>Análises → Webhooks</em>). Eventos:
           </p>
           <ul className="apidoc-list">
@@ -98,8 +98,7 @@ X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
             <li><code>meeting.started</code> — reunião iniciada (com <code>join_url</code>)</li>
             <li><code>recording.ready</code> — gravação disponível</li>
           </ul>
-          <p>
-            No destino <strong>genérico</strong>, o payload JSON vem assinado com HMAC-SHA256 (chave = o
+          <p>{t('api.noDestino')}<strong>genérico</strong>, o payload JSON vem assinado com HMAC-SHA256 (chave = o
             segredo do webhook) no header <code>X-Delonix-Signature: sha256=…</code> — valida-o para
             garantir a autenticidade.
           </p>
@@ -111,7 +110,7 @@ X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
 }`}</Code>
         </Section>
 
-        <Section title="Códigos de estado">
+        <Section title={t('api.codigosDeEstado')}>
           <ul className="apidoc-list">
             <li><code>200</code> — sucesso</li>
             <li><code>401</code> — chave de API em falta ou inválida</li>

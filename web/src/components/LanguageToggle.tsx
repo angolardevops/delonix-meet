@@ -7,6 +7,7 @@ import { Lang, setLanguage } from '../i18n'
  * consola inteira para o chunk de arranque (achado 1.2).
  */
 export default function LanguageToggle() {
+  const { t } = useTranslation()
   const { i18n } = useTranslation()
   const lang: Lang = i18n.language.startsWith('en') ? 'en' : i18n.language.startsWith('fr') ? 'fr' : 'pt'
 
@@ -17,7 +18,7 @@ export default function LanguageToggle() {
   }
 
   return (
-    <div className="lang-toggle" role="group" aria-label="Idioma / Language">
+    <div className="lang-toggle" role="group" aria-label={t('common.idioma')}>
       {(['pt', 'en', 'fr'] as const).map((l) => (
         <button
           key={l}
