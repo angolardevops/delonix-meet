@@ -78,7 +78,7 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
       setMsg(t('room.sala.guardado'))
       setTimeout(() => setMsg(''), 3000)
     } catch (e) {
-      setMsg((e as Error).message || 'Falha ao guardar')
+      setMsg((e as Error).message || t('common.falhaAoGuardar'))
     } finally {
       setSaving(false)
     }
@@ -166,7 +166,7 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
                 </label>
                 <div className="account-actions">
                   <button className="btn-sm primary" disabled={!dirty || saving} onClick={() => void saveAccount()}>
-                    {saving ? 'A guardar…' : 'Guardar alterações'}
+                    {saving ? t('common.aGuardar') : t('common.guardarAlteracoes')}
                   </button>
                   {msg && <span className="account-msg">{msg}</span>}
                 </div>
@@ -214,7 +214,7 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
                 )}
                 <div className="brand-row">
                   <label className="btn-sm">
-                    {bg ? 'Trocar imagem' : 'Escolher imagem'}
+                    {bg ? t('common.trocarImagem') : t('common.escolherImagem')}
                     <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => onPickBg(e.target.files?.[0] ?? null)} />
                   </label>
                   {bg && (

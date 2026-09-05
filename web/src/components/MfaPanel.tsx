@@ -53,7 +53,7 @@ export default function MfaPanel() {
       setPasso('codigos')
       await recarregar()
     } catch {
-      setErro('Código inválido. Confirma a hora do telemóvel e tenta o código seguinte.')
+      setErro(t('mfa.codigoInvalidoHora'))
     } finally { setOcupado(false) }
   }
 
@@ -64,7 +64,7 @@ export default function MfaPanel() {
       setCodigo('')
       await recarregar()
     } catch {
-      setErro('Código inválido. Usa o código do autenticador ou um de recuperação.')
+      setErro(t('mfa.codigoInvalidoRecuperacao'))
     } finally { setOcupado(false) }
   }
 
@@ -133,7 +133,7 @@ export default function MfaPanel() {
         {erro && <p className="auth-error" role="alert">{erro}</p>}
         <div className="mfa-actions">
           <button className="btn-sm primary" disabled={ocupado || codigo.length !== 6} onClick={() => void activar()}>
-            {ocupado ? 'A verificar…' : 'Activar'}
+            {ocupado ? t('mfa.aVerificar') : 'Activar'}
           </button>
           <button className="btn-ghost small" onClick={() => { setPasso('estado'); setCodigo(''); setErro('') }}>
             Cancelar
@@ -181,7 +181,7 @@ export default function MfaPanel() {
           )}
           {erro && <p className="auth-error" role="alert">{erro}</p>}
           <button className="btn-sm primary" disabled={ocupado} onClick={() => void inscrever()}>
-            {ocupado ? 'A preparar…' : estado.pending ? 'Recomeçar inscrição' : 'Activar'}
+            {ocupado ? t('mfa.aPreparar') : estado.pending ? t('mfa.recomecarInscricao') : 'Activar'}
           </button>
         </>
       )}
