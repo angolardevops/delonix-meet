@@ -235,6 +235,15 @@ export default function Room({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [deviceMenu, setDeviceMenu] = useState<'none' | 'mic' | 'cam'>('none')
   const [micOn, setMicOn] = useState(true)
+  // Regras de sala impostas pelo anfitrião (R92). Vêm SEMPRE do servidor —
+  // nunca se decidem aqui, porque esconder um botão não impede ninguém de
+  // enviar a mensagem pelo socket.
+  const [chatOn, setChatOn] = useState(true)
+  /// O nosso `peer_id` nesta sala. É preciso para saber se uma troca de
+  /// anfitrião nos diz respeito — sem ele, `host-changed` não se consegue
+  /// interpretar do lado de quem recebe.
+  const meuPeerIdRef = useRef<string>('')
+  const [allowUnmute, setAllowUnmute] = useState(true)
   const [camOn, setCamOn] = useState(true)
   const [sharing, setSharing] = useState(false)
   const [handRaised, setHandRaised] = useState(false)
@@ -451,6 +460,24 @@ export default function Room({
     (peerId: string) => signalRef.current?.send({ type: 'kick', to: peerId }),
     [],
   )
+  // Controlos de anfitrião acrescentados em R92. Todos passam pelo servidor,
+  // que revalida — o botão é a conveniência, não a autorização.
+  const onTileCam = useCallback(
+    (peerId: string) => signalRef.current?.send({ type: 'force-cam', to: peerId }),
+    [],
+  )
+  const onTransferHost = useCallback((peerId: string) => {
+    // Passar o bastão é irreversível pelo próprio: só o novo anfitrião o pode
+    // devolver. Por isso confirma-se, ao contrário de silenciar.
+    if (!window.confirm('Passar o papel de anfitrião a esta pessoa? Só ela to poderá devolver.')) return
+    signalRef.current?.send({ type: 'transfer-host', to: peerId })
+  }, [])
+  const onMuteAll = useCallback((allowUnmute: boolean) => {
+    signalRef.current?.send({ type: 'mute-all', allow_unmute: allowUnmute })
+  }, [])
+  const onChatToggle = useCallback((on: boolean) => {
+    signalRef.current?.send({ type: 'chat-toggle', on })
+  }, [])
 
   // Tique de revelação: existe SÓ enquanto houver uma janela aberta. Fora dela
   // não há relógio na raiz — contra o `setPollNow` permanente de antes, que
@@ -1016,6 +1043,7 @@ export default function Room({
           // Wi-Fi que cai, aba que dorme — devolve o mesmo lugar, com o papel
           // de anfitrião e sem voltar à sala de espera.
           if (m.reconnect) Signaling.guardarSegredo(code, m.reconnect)
+          meuPeerIdRef.current = m.peer_id
           // Marca o rejoin recente: o reload de reconexão (onclose) e os breakouts
           // saltam o prejoin dentro desta janela (ver init do joinIntent).
           sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
@@ -1092,6 +1120,33 @@ export default function Room({
         signal.on('room-settings', (m) => {
           setRoomLocked(m.locked)
           setHostShareOnly(m.host_share_only)
+          setChatOn(m.chat_on ?? true)
+          setAllowUnmute(m.allow_unmute ?? true)
+        })
+        signal.on('force-cam-off', () => {
+          const track = localStreamRef.current?.getVideoTracks()[0]
+          if (track) track.enabled = false
+          setCamOn(false)
+          setStatus('O anfitrião desligou a tua câmara')
+        })
+        signal.on('muted-all', (m) => {
+          const track = localStreamRef.current?.getAudioTracks()[0]
+          if (track) track.enabled = false
+          setMicOn(false)
+          setAllowUnmute(m.allow_unmute)
+          setStatus(
+            m.allow_unmute
+              ? 'O anfitrião silenciou toda a gente'
+              : 'O anfitrião silenciou toda a gente — não te podes voltar a ligar',
+          )
+        })
+        signal.on('host-changed', (m) => {
+          setPeers((ps) =>
+            ps.map((p) => ({ ...p, host: p.peerId === m.to ? true : p.peerId === m.from ? false : p.host })),
+          )
+          setIsHost((h) =>
+            meuPeerIdRef.current === m.to ? true : meuPeerIdRef.current === m.from ? false : h,
+          )
         })
         signal.on('share-granted', (m) => {
           setShareAllowed(m.allowed)
@@ -1345,6 +1400,14 @@ export default function Room({
   }, [camOn, micOn, hasLocalVideo, sharing, roomState, topology])
 
   async function toggleMic() {
+    // Com «silenciar todos sem voltar a ligar» activo, o botão não liga o
+    // microfone. É uma guarda de INTERFACE, e a de servidor é o próprio
+    // servidor não reencaminhar áudio de quem está silenciado — esta só evita
+    // que a pessoa julgue que está a falar quando não está.
+    if (!allowUnmute && !micOn && !isHost) {
+      setStatus('O anfitrião não permite voltar a ligar o microfone')
+      return
+    }
     levelsRef.current?.resume()
     const track = localStreamRef.current?.getAudioTracks()[0]
     if (track) {
@@ -1913,6 +1976,13 @@ export default function Room({
   function sendChat() {
     const text = chatInput.trim()
     if (!text) return
+    // Com o chat fechado, o servidor recusa (R92) — a mensagem seria engolida
+    // em silêncio e o eco local abaixo faria a pessoa acreditar que tinha
+    // enviado. Recusar aqui é sobre DIZER-LHE, não sobre segurança.
+    if (!chatOn && !isHost) {
+      setStatus('O anfitrião fechou o chat')
+      return
+    }
     signalRef.current?.send({ type: 'chat', text })
     setChat((c) => [...c, { username: 'eu', text, own: true }])
     setChatInput('')
@@ -2721,6 +2791,34 @@ export default function Room({
                 </button>
               </div>
             )}
+            {isHost && (
+              // Acções sobre a SALA INTEIRA (R92). Ficam por cima da lista
+              // porque se aplicam a toda a gente e não a uma linha — pô-las
+              // dentro da lista faria parecer que agem sobre a pessoa ao lado.
+              <div className="people-host-actions">
+                <button
+                  className="ghost-btn"
+                  title="Silenciar toda a gente. Cada pessoa pode voltar a ligar-se."
+                  onClick={() => onMuteAll(true)}
+                >
+                  <MicOffIcon /> Silenciar todos
+                </button>
+                <button
+                  className="ghost-btn"
+                  title="Silenciar toda a gente e impedir que se voltem a ligar sozinhos."
+                  onClick={() => onMuteAll(false)}
+                >
+                  <MicOffIcon /> …e não deixar voltar a ligar
+                </button>
+                <button
+                  className="ghost-btn"
+                  title={chatOn ? 'Fechar o chat a quem não é anfitrião' : 'Reabrir o chat a toda a gente'}
+                  onClick={() => onChatToggle(!chatOn)}
+                >
+                  <ChatIcon /> {chatOn ? 'Fechar o chat' : 'Reabrir o chat'}
+                </button>
+              </div>
+            )}
             <div className="people-search">
               <span className="people-search-icon"><SearchIcon /></span>
               <input
@@ -2764,6 +2862,24 @@ export default function Room({
                     )}
                   </span>
                   {speaking.has(p.peerId) && <SpeakingBars />}
+                  {isHost && !p.host && (
+                    <button
+                      className="share-grant-btn"
+                      title="Desligar a câmara desta pessoa"
+                      onClick={() => onTileCam(p.peerId)}
+                    >
+                      <CamOffIcon />
+                    </button>
+                  )}
+                  {isHost && !p.host && (
+                    <button
+                      className="share-grant-btn"
+                      title="Passar o papel de anfitrião a esta pessoa"
+                      onClick={() => onTransferHost(p.peerId)}
+                    >
+                      <TrophyIcon />
+                    </button>
+                  )}
                   {isHost && !p.host && (
                     <button
                       className="share-grant-btn"

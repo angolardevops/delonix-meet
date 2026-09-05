@@ -91,6 +91,30 @@ pub enum ClientMsg {
     Deny {
         to: Uuid,
     },
+    /// Silencia TODA a gente menos quem manda (R92). É o controlo mais usado
+    /// numa reunião com mais de meia dúzia de pessoas, e o único que o
+    /// `ForceMute` um-a-um não substitui: numa sala de trinta, silenciar à mão
+    /// é trinta cliques enquanto alguém deixa a obra a tocar em fundo.
+    MuteAll {
+        /// Se `false`, quem é silenciado NÃO se pode voltar a ligar sozinho —
+        /// o par do «mute all and don't allow unmute». Sem isto, silenciar
+        /// todos numa aula dura até a primeira pessoa carregar no botão.
+        allow_unmute: bool,
+    },
+    /// Desliga a câmara de alguém. Par do `ForceMute` para vídeo.
+    ForceCam {
+        to: Uuid,
+    },
+    /// Liga/desliga o chat para quem não é anfitrião.
+    ChatToggle {
+        on: bool,
+    },
+    /// Passa o papel de anfitrião a outra pessoa. Existe porque um anfitrião
+    /// que precise de sair deixava a reunião sem ninguém a poder admitir,
+    /// silenciar ou fechar.
+    TransferHost {
+        to: Uuid,
+    },
     ForceMute {
         to: Uuid,
     },
@@ -309,11 +333,32 @@ pub enum ServerMsg {
     Denied,  // para o convidado: entrada recusada
     // Controlo do anfitrião:
     ForceMuted, // para o alvo: foste silenciado
-    Kicked,     // para o alvo: foste removido
+    /// Para o alvo: a câmara foi desligada por quem manda.
+    ForceCamOff,
+    /// Para TODOS: silenciar geral. Cada cliente silencia-se a si próprio —
+    /// o servidor não tem microfones. `allow_unmute` diz se o botão de voltar
+    /// a ligar continua a funcionar.
+    MutedAll {
+        by: Uuid,
+        allow_unmute: bool,
+    },
+    /// Mudança do papel de anfitrião, difundida a toda a sala: quem perde e
+    /// quem ganha têm ambos de refazer a interface.
+    HostChanged {
+        from: Uuid,
+        to: Uuid,
+    },
+    Kicked, // para o alvo: foste removido
     /// Definições runtime da sala (lock, só-anfitrião-partilha).
     RoomSettings {
         locked: bool,
         host_share_only: bool,
+        /// Chat aberto a quem não é anfitrião.
+        #[serde(default = "verdadeiro")]
+        chat_on: bool,
+        /// Quem foi silenciado pode voltar a ligar-se sozinho.
+        #[serde(default = "verdadeiro")]
+        allow_unmute: bool,
     },
     // Ferramentas: estado completo difundido a cada mudança.
     Polls {
@@ -711,6 +756,34 @@ struct WaitingPeer {
     admit_tx: oneshot::Sender<bool>,
 }
 
+/// As definições de sala vistas de fora. Os campos estão no sentido POSITIVO —
+/// é assim que o cliente e a interface falam deles — mesmo que por dentro
+/// sejam guardados invertidos (ver `Room::chat_blocked`).
+pub struct RoomSettingsView {
+    pub locked: bool,
+    pub host_share_only: bool,
+    pub chat_on: bool,
+    pub allow_unmute: bool,
+}
+
+impl Default for RoomSettingsView {
+    fn default() -> Self {
+        Self {
+            locked: false,
+            host_share_only: false,
+            chat_on: true,
+            allow_unmute: true,
+        }
+    }
+}
+
+/// `serde(default)` para campos booleanos que valem `true` quando ausentes —
+/// um cliente antigo que não conheça o campo tem de continuar a ver o chat
+/// aberto, não fechado.
+fn verdadeiro() -> bool {
+    true
+}
+
 #[derive(Default)]
 pub(crate) struct Room {
     peers: HashMap<Uuid, Peer>,
@@ -719,6 +792,17 @@ pub(crate) struct Room {
     locked: bool,
     /// Só o anfitrião pode partilhar ecrã.
     host_share_only: bool,
+    /// Chat FECHADO a quem não é anfitrião (R92).
+    ///
+    /// Guardado invertido de propósito: o `Room` deriva `Default`, e um `bool`
+    /// nasce `false`. Com `chat_on` o valor por omissão seria «chat fechado»,
+    /// que é o oposto do que se quer, e a correcção seria um `impl Default`
+    /// manual — que fica desactualizado assim que alguém acrescentar um campo
+    /// e não reparar. Invertido, o valor por omissão está certo por
+    /// construção. O mesmo para o `unmute_blocked`.
+    chat_blocked: bool,
+    /// Quem foi silenciado NÃO se pode voltar a ligar sozinho.
+    unmute_blocked: bool,
     /// Autorizações de partilha de ecrã dadas pelo anfitrião (por peer).
     share_grants: HashSet<Uuid>,
     /// Quem está a apresentar agora — gateia controlo remoto e wb-open.
@@ -1231,6 +1315,8 @@ impl SignalingHub {
             let msg = ServerMsg::RoomSettings {
                 locked: room.locked,
                 host_share_only: room.host_share_only,
+                chat_on: !room.chat_blocked,
+                allow_unmute: !room.unmute_blocked,
             };
             for peer in room.peers.values() {
                 let _ = peer.tx.send(msg.clone());
@@ -1346,11 +1432,21 @@ impl SignalingHub {
     }
 
     /// Definições atuais (para enviar a quem acabou de entrar).
-    pub fn settings_of(&self, room_id: Uuid) -> (bool, bool) {
+    ///
+    /// Devolve a struct e não um tuplo: já eram dois campos, passaram a quatro,
+    /// e um tuplo de quatro booleanos é uma troca de posição à espera de
+    /// acontecer — `(locked, host_share_only, chat_on, allow_unmute)` lido ao
+    /// contrário compila na mesma e fecha o chat quando queria bloquear a sala.
+    pub fn settings_of(&self, room_id: Uuid) -> RoomSettingsView {
         self.rooms
             .get(&room_id)
-            .map(|r| (r.locked, r.host_share_only))
-            .unwrap_or((false, false))
+            .map(|r| RoomSettingsView {
+                locked: r.locked,
+                host_share_only: r.host_share_only,
+                chat_on: !r.chat_blocked,
+                allow_unmute: !r.unmute_blocked,
+            })
+            .unwrap_or_default()
     }
 
     /// O peer tem autorização do anfitrião para partilhar o ecrã?
@@ -1489,6 +1585,21 @@ impl SignalingHub {
             }
             ClientMsg::Chat { text } => {
                 if text.is_empty() || text.len() > 4000 {
+                    return true;
+                }
+                // O chat fechado é imposto AQUI, não no cliente (R92). Esconder
+                // a caixa de texto não impede ninguém de enviar a mensagem pelo
+                // socket — é a mesma razão pela qual os controlos de anfitrião
+                // se validam no servidor desde sempre (invariante 8 do
+                // AGENTS.md). O anfitrião continua a poder falar: fechar o chat
+                // é para os outros, e um moderador sem voz não modera nada.
+                if self
+                    .rooms
+                    .get(&room_id)
+                    .map(|r| r.chat_blocked)
+                    .unwrap_or(false)
+                    && !self.is_host(room_id, peer_id)
+                {
                     return true;
                 }
                 let text = crate::dlp::censor(&text);
@@ -1668,6 +1779,70 @@ impl SignalingHub {
             ClientMsg::ForceMute { to } => {
                 if self.is_host(room_id, peer_id) {
                     self.send_to(room_id, to, ServerMsg::ForceMuted);
+                }
+            }
+            ClientMsg::ForceCam { to } => {
+                if self.is_host(room_id, peer_id) {
+                    self.send_to(room_id, to, ServerMsg::ForceCamOff);
+                }
+            }
+            ClientMsg::MuteAll { allow_unmute } => {
+                if self.is_host(room_id, peer_id) {
+                    // O estado fica na SALA e não só na mensagem: quem entrar
+                    // depois de um «silenciar todos sem voltar a ligar» tem de
+                    // apanhar a regra, senão entra com microfone aberto numa
+                    // sala que o anfitrião julgava fechada.
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        room.unmute_blocked = !allow_unmute;
+                    }
+                    self.broadcast_all(
+                        room_id,
+                        ServerMsg::MutedAll {
+                            by: peer_id,
+                            allow_unmute,
+                        },
+                    );
+                    self.broadcast_settings(room_id);
+                }
+            }
+            ClientMsg::ChatToggle { on } => {
+                if self.is_host(room_id, peer_id) {
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        room.chat_blocked = !on;
+                    }
+                    self.broadcast_settings(room_id);
+                }
+            }
+            ClientMsg::TransferHost { to } => {
+                // Só quem É anfitrião pode passar o papel, e não a si próprio.
+                // A troca é ATÓMICA sob o mesmo lock: sem isso havia um
+                // instante com dois anfitriões, ou com nenhum — e «nenhum» numa
+                // sala com sala de espera activa tranca lá toda a gente.
+                if !self.is_host(room_id, peer_id) || to == peer_id {
+                    return true;
+                }
+                let trocou = self
+                    .rooms
+                    .get_mut(&room_id)
+                    .map(|mut r| {
+                        if !r.peers.contains_key(&to) {
+                            return false;
+                        }
+                        if let Some(novo) = r.peers.get_mut(&to) {
+                            novo.is_host = true;
+                            novo.can_admit = true;
+                        }
+                        if let Some(velho) = r.peers.get_mut(&peer_id) {
+                            velho.is_host = false;
+                            // `can_admit` NÃO se retira: quem foi anfitrião
+                            // continua a poder admitir, que é o que se espera
+                            // de quem passou o bastão e ficou na sala.
+                        }
+                        true
+                    })
+                    .unwrap_or(false);
+                if trocou {
+                    self.broadcast_all(room_id, ServerMsg::HostChanged { from: peer_id, to });
                 }
             }
             ClientMsg::Kick { to } => {
@@ -2200,11 +2375,16 @@ async fn handle_socket(
         peers,
         reconnect: Some(Secret::new(reconnect_secret)),
     });
-    let (locked, host_share_only) = state.hub.settings_of(room_id);
-    if locked || host_share_only {
+    // Quem entra a meio recebe o estado ATUAL da sala. A condição é «alguma
+    // coisa está diferente do normal», e por isso inclui os dois campos novos:
+    // sem eles, quem entrasse depois de o chat ser fechado via-o aberto.
+    let cfg = state.hub.settings_of(room_id);
+    if cfg.locked || cfg.host_share_only || !cfg.chat_on || !cfg.allow_unmute {
         let _ = tx.send(ServerMsg::RoomSettings {
-            locked,
-            host_share_only,
+            locked: cfg.locked,
+            host_share_only: cfg.host_share_only,
+            chat_on: cfg.chat_on,
+            allow_unmute: cfg.allow_unmute,
         });
     }
     // Ferramentas: quem entra a meio recebe sondagens/Q&A/temporizador atuais.
@@ -2683,9 +2863,26 @@ mod tests {
         assert!(!ServerMsg::Denied.is_droppable());
         assert!(!ServerMsg::RoomSettings {
             locked: true,
-            host_share_only: false
+            host_share_only: false,
+            chat_on: true,
+            allow_unmute: true
         }
         .is_droppable());
+        // Os controlos de anfitrião são ESTADO AUTORITATIVO (R92): se uma fila
+        // cheia pudesse descartar um «silenciar todos», alguém ficava com o
+        // microfone aberto numa sala que o anfitrião julgava fechada — e a
+        // troca de anfitrião perdida deixava a sala com dois, ou com nenhum.
+        assert!(!ServerMsg::MutedAll {
+            by: Uuid::new_v4(),
+            allow_unmute: false
+        }
+        .is_droppable());
+        assert!(!ServerMsg::HostChanged {
+            from: Uuid::new_v4(),
+            to: Uuid::new_v4()
+        }
+        .is_droppable());
+        assert!(!ServerMsg::ForceCamOff.is_droppable());
         assert!(!ServerMsg::PeerLeft {
             peer_id: Uuid::new_v4()
         }
@@ -3197,5 +3394,215 @@ mod tests {
         let s = Secret::new("segredo-muito-secreto".into());
         let texto = format!("{s:?}");
         assert!(!texto.contains("segredo-muito-secreto"), "veio: {texto}");
+    }
+
+    // ---------- Controlos do anfitrião que faltavam (R92) ----------
+
+    /// Silenciar todos. O que interessa não é a mensagem chegar — é chegar a TODA
+    /// a gente, incluindo a quem manda, porque a interface de quem silencia tem de
+    /// mostrar o estado novo.
+    #[tokio::test]
+    async fn silenciar_todos_chega_a_toda_a_sala() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, mut rx_a) = peer();
+        let (b, tx_b, mut rx_b) = peer();
+        hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+        drain(&mut rx_a);
+        drain(&mut rx_b);
+
+        hub.handle(
+            room,
+            a,
+            ClientMsg::MuteAll {
+                allow_unmute: false,
+            },
+            None,
+        );
+        for (quem, rx) in [("anfitriã", &mut rx_a), ("participante", &mut rx_b)] {
+            let mut viu = false;
+            while let Ok(m) = rx.try_recv() {
+                if let ServerMsg::MutedAll { by, allow_unmute } = m {
+                    assert_eq!(by, a);
+                    assert!(!allow_unmute, "o «sem voltar a ligar» tem de viajar");
+                    viu = true;
+                }
+            }
+            assert!(viu, "{quem} não recebeu o silenciar geral");
+        }
+    }
+
+    /// E quem NÃO é anfitrião não silencia ninguém. Sem esta recusa, o controlo
+    /// seria decorativo: qualquer participante enviava a mensagem pelo socket.
+    #[tokio::test]
+    async fn participante_nao_silencia_a_sala() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, mut rx_a) = peer();
+        let (b, tx_b, _rx_b) = peer();
+        hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+        drain(&mut rx_a);
+
+        hub.handle(room, b, ClientMsg::MuteAll { allow_unmute: true }, None);
+        while let Ok(m) = rx_a.try_recv() {
+            assert!(
+                !matches!(m, ServerMsg::MutedAll { .. }),
+                "um participante não pode silenciar a sala"
+            );
+        }
+    }
+
+    /// O chat fechado é imposto no SERVIDOR. Esconder a caixa de texto não impede
+    /// ninguém de enviar a mensagem pelo socket — e é essa a única versão do
+    /// controlo que vale alguma coisa.
+    #[tokio::test]
+    async fn chat_fechado_recusa_no_servidor_e_deixa_o_anfitriao_falar() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx_a) = peer();
+        let (b, tx_b, _rx_b) = peer();
+        let (c, tx_c, mut rx_c) = peer();
+        hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+        hub.join(room, c, c, "c".into(), false, false, false, tx_c);
+
+        hub.handle(room, a, ClientMsg::ChatToggle { on: false }, None);
+        drain(&mut rx_c);
+
+        // O participante tenta na mesma, direto ao socket.
+        hub.handle(
+            room,
+            b,
+            ClientMsg::Chat {
+                text: "passo à frente".into(),
+            },
+            None,
+        );
+        while let Ok(m) = rx_c.try_recv() {
+            if let ServerMsg::Chat { text, .. } = m {
+                panic!("com o chat fechado, a mensagem não podia sair: {text}");
+            }
+        }
+
+        // A anfitriã continua a poder falar — um moderador sem voz não modera.
+        hub.handle(
+            room,
+            a,
+            ClientMsg::Chat {
+                text: "só eu falo".into(),
+            },
+            None,
+        );
+        let mut ouviu = false;
+        while let Ok(m) = rx_c.try_recv() {
+            if let ServerMsg::Chat { text, .. } = m {
+                assert_eq!(text, "só eu falo");
+                ouviu = true;
+            }
+        }
+        assert!(ouviu, "o anfitrião tem de continuar a poder escrever");
+
+        // E reabrir devolve a palavra a toda a gente.
+        hub.handle(room, a, ClientMsg::ChatToggle { on: true }, None);
+        drain(&mut rx_c);
+        hub.handle(
+            room,
+            b,
+            ClientMsg::Chat {
+                text: "voltei".into(),
+            },
+            None,
+        );
+        let mut voltou = false;
+        while let Ok(m) = rx_c.try_recv() {
+            if let ServerMsg::Chat { text, .. } = m {
+                if text == "voltei" {
+                    voltou = true;
+                }
+            }
+        }
+        assert!(voltou, "reabrir o chat tem de devolver a palavra");
+    }
+
+    /// Passar o bastão. A troca é atómica: em nenhum instante há dois anfitriões
+    /// nem zero — e zero, numa sala com sala de espera, tranca lá toda a gente.
+    #[tokio::test]
+    async fn transferir_anfitriao_troca_os_dois_de_uma_vez() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, mut rx_a) = peer();
+        let (b, tx_b, _rx_b) = peer();
+        hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+        drain(&mut rx_a);
+
+        assert!(hub.is_host(room, a) && !hub.is_host(room, b));
+        hub.handle(room, a, ClientMsg::TransferHost { to: b }, None);
+        assert!(hub.is_host(room, b), "quem recebe passa a anfitrião");
+        assert!(!hub.is_host(room, a), "e quem dá deixa de o ser");
+
+        // Quem já não é anfitrião não pode voltar a passar o bastão a si próprio.
+        hub.handle(room, a, ClientMsg::TransferHost { to: a }, None);
+        assert!(
+            hub.is_host(room, b),
+            "o papel não volta por pedido de quem o deu"
+        );
+        assert!(!hub.is_host(room, a));
+    }
+
+    /// Um participante não promove ninguém a anfitrião.
+    ///
+    /// A PRIMEIRA versão deste teste pedia `b → b` e passava mesmo com a
+    /// guarda REMOVIDA — verificado com a guarda substituída por `if false`.
+    /// A razão é o próprio código: transferir para si próprio põe `is_host` a
+    /// `true` e a seguir, na mesma passagem, a `false`. O resultado líquido é
+    /// o mesmo com e sem guarda, e a asserção não distinguia nada.
+    ///
+    /// Com um TERCEIRO participante deixa de haver coincidência: `b` promove
+    /// `c`, e sem a guarda `c` fica mesmo anfitrião.
+    #[tokio::test]
+    async fn participante_nao_promove_ninguem_a_anfitriao() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx_a) = peer();
+        let (b, tx_b, _rx_b) = peer();
+        let (c, tx_c, _rx_c) = peer();
+        hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+        hub.join(room, c, c, "c".into(), false, false, false, tx_c);
+
+        hub.handle(room, b, ClientMsg::TransferHost { to: c }, None);
+        assert!(!hub.is_host(room, c), "um participante não promove ninguém");
+        assert!(
+            !hub.is_host(room, b),
+            "nem se promove a si próprio pelo caminho"
+        );
+        assert!(hub.is_host(room, a), "e o anfitrião a sério não o perde");
+    }
+
+    /// Quem entra a MEIO apanha as regras em vigor. Sem isto, alguém que chegasse
+    /// depois de «silenciar todos sem voltar a ligar» entrava com o microfone
+    /// aberto numa sala que o anfitrião julgava fechada.
+    #[tokio::test]
+    async fn quem_entra_a_meio_apanha_as_regras_em_vigor() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx_a) = peer();
+        hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        hub.handle(room, a, ClientMsg::ChatToggle { on: false }, None);
+        hub.handle(
+            room,
+            a,
+            ClientMsg::MuteAll {
+                allow_unmute: false,
+            },
+            None,
+        );
+
+        let cfg = hub.settings_of(room);
+        assert!(!cfg.chat_on, "o chat continua fechado para quem chegar");
+        assert!(!cfg.allow_unmute, "e o bloqueio de voltar a ligar também");
     }
 }

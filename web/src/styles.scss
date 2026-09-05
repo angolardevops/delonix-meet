@@ -5148,3 +5148,28 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
   padding: 2px 7px; border-radius: var(--radius-sm);
   background: rgba(0, 0, 0, 0.55); color: #fff;
 }
+
+/* Acções do anfitrião sobre a sala inteira, no topo do painel de pessoas
+   (R92). Envolvem em ecrã estreito — são três e não cabem em 320px. */
+.people-host-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+.people-host-actions .ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.people-host-actions .ghost-btn:hover { background: var(--ctrl-hover); color: var(--text); }
+.people-host-actions .ghost-btn svg { width: 15px; height: 15px; }
