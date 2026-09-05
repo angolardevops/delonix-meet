@@ -120,7 +120,40 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true)
   return res.json()
 }
 
-async function refreshSession() {
+/**
+ * Renovação em curso, se houver (R98).
+ *
+ * O servidor **rota** o refresh token: usá-lo revoga-o e emite um par novo.
+ * Duas renovações concorrentes mandam o MESMO cookie — a primeira roda-o, a
+ * segunda encontra-o revogado, leva 401, e o `refreshSession` faz `logout()`.
+ * O utilizador é posto na página de entrada por ter feito duas coisas ao mesmo
+ * tempo.
+ *
+ * E acontece a sério: depois de um F5, várias chamadas partem em paralelo com
+ * o token de acesso já expirado e levam 401 quase ao mesmo instante. Numa
+ * máquina rápida a primeira renovação acaba antes de a segunda chamada falhar
+ * e o defeito não aparece; numa lenta — ou numa rede lenta, que é o caso
+ * normal do nosso mercado — sobrepõem-se.
+ *
+ * Foi assim que apareceu: um teste de reentrada passava aqui e falhava sempre
+ * no runner do CI, e o sintoma era o convidado a cair na página de entrada
+ * depois de recarregar. Durante seis rondas tratei-o como um problema do
+ * ambiente do teste. Era o produto a dizer a verdade.
+ *
+ * A guarda é uma promessa partilhada: quem chegar enquanto uma renovação
+ * decorre espera pela mesma, em vez de começar outra.
+ */
+let renovacaoEmCurso: Promise<void> | null = null
+
+async function refreshSession(): Promise<void> {
+  if (renovacaoEmCurso) return renovacaoEmCurso
+  renovacaoEmCurso = renovarUmaVez().finally(() => {
+    renovacaoEmCurso = null
+  })
+  return renovacaoEmCurso
+}
+
+async function renovarUmaVez() {
   // Sem corpo: o refresh token vai no cookie HttpOnly (enviado automaticamente).
   const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'same-origin' })
   // Só 401/403 são «a sessão não serve». Um 500/502/503 é o servidor com um
