@@ -1,4 +1,5 @@
 import { CSSProperties, memo, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { CloseIcon, HandIcon, MicOffIcon, PinIcon } from '../icons'
 
 /**
@@ -71,6 +72,7 @@ export function RemoteTileBase({
   onMute: (peerId: string) => void
   onKick: (peerId: string) => void
 }) {
+  const { t } = useTranslation()
   const ref = useRef<HTMLVideoElement>(null)
   useEffect(() => {
     if (ref.current && ref.current.srcObject !== peer.stream) {
@@ -101,7 +103,7 @@ export function RemoteTileBase({
       data-peer-id={peer.peerId}
       style={style}
       onDoubleClick={() => onPin?.(peer.peerId)}
-      title="Duplo-clique para fixar/desafixar no palco"
+      title={t('room.espera.duploCliqueParaFixar')}
     >
       <video ref={ref} autoPlay playsInline muted style={{ display: hasVideo ? undefined : 'none' }} />
       {!hasVideo && (
@@ -132,10 +134,10 @@ export function RemoteTileBase({
       </span>
       {isHost && !peer.host && (
         <div className="host-actions">
-          <button title="Silenciar" onClick={() => onMute(peer.peerId)}>
+          <button title={t('lobby.mute')} onClick={() => onMute(peer.peerId)}>
             <MicOffIcon />
           </button>
-          <button title="Remover da reunião" onClick={() => onKick(peer.peerId)}>
+          <button title={t('lobby.remove')} onClick={() => onKick(peer.peerId)}>
             <CloseIcon />
           </button>
         </div>

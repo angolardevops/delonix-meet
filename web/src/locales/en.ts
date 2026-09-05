@@ -1,6 +1,39 @@
 // English — carregado sob demanda por ../i18n.ts, nunca no arranque.
 
 export default {
+  status: {
+    uptime: 'Server uptime:',
+  },
+  share: {
+    aVerificarLink: 'Checking link…',
+    indisponivel: 'Recording unavailable',
+    irParaOInicio: 'Go to the start',
+    protegida: 'Protected recording',
+    requerPassword: 'This link requires a password to open.',
+    poweredBy: 'Powered by',
+  },
+  api: {
+    todasAsChamadas: 'All calls',
+    alemDaApi: 'Beyond the API, the organisation can receive',
+    noDestino: 'At the destination',
+    autenticacao: 'Authentication',
+    baseUrl: 'Base URL',
+    webhooks: 'Webhooks (events)',
+    codigosDeEstado: 'Status codes',
+  },
+  mfa: {
+    titulo: 'Two-step verification',
+    guardaOsCodigos: 'Save your recovery codes',
+    soOsVes: 'You only see them',
+    guardeiOsCodigos: 'I have saved the codes somewhere safe.',
+    ligaOAutenticador: 'Connect your authenticator',
+    chaveSeNaoLeres: 'Key (if you can\'t scan the code)',
+    codigoDe6Digitos: '6-digit code from your authenticator',
+    activa: 'Active. Your authenticator is required at every sign-in.',
+    paraDesactivar: 'To turn it off, enter a current code',
+    inscricaoPorConcluir: 'An enrolment is unfinished — start again to generate a new key.',
+    codigoQr: 'Enrolment QR code',
+  },
   // A SALA (R99). O ecrã principal do produto estava inteiramente fora
   // do i18n — zero chamadas a `t()` em 4 300 linhas. Ver o R99.
   room: {
@@ -140,6 +173,7 @@ export default {
       guardarAta: 'Save minutes',
     },
     barra: {
+      duracaoDaReuniao: 'Meeting duration',
       codigoDeSegurancaDa: 'Room security code',
       regressarASalaPrincipal: 'Return to the main room',
       salaPrincipal: 'Main room',
@@ -248,6 +282,9 @@ export default {
     retry: 'Try again',
   },
   common: {
+    aCompletarSso: 'Completing SSO sign-in…',
+    idioma: 'Language / Idioma',
+    password: 'Password',
     loading: 'Loading…',
     save: 'Save',
     edit: 'Edit',
@@ -288,6 +325,8 @@ export default {
     empty: 'No results',
   },
   notif: {
+    ligarDeVolta: 'Call back',
+    atender: 'Answer',
     title: 'Notifications',
     markRead: 'Mark as read',
     missedCall: 'missed call',
@@ -300,6 +339,10 @@ export default {
     now: 'now',
   },
   settings: {
+    novaPassword: 'New password',
+    nomeDaApp: 'Application name',
+    fundoDoLogin: 'Sign-in background',
+    fundoDoLoginNota: 'Background image for the sign-in screen (shown blurred).',
     title: 'Settings',
     appearance: 'Appearance',
     language: 'Language',
@@ -446,6 +489,9 @@ export default {
     secure: 'Secure connection · one code to share',
   },
   admin: {
+    tipoDeArmazenamento: 'Storage type',
+    pathDeExportacao: 'Export path',
+    pathRemoto: 'Remote path',
     badge: 'ADMIN',
     title: 'Admin console',
     sub: 'Organization overview, quality and security.',
@@ -697,6 +743,7 @@ export default {
     },
   },
   cal: {
+    adicionarAoCalendario: 'Add to calendar (Google/Outlook — .ics)',
     title: 'Calendar',
     today: 'Today',
     day: 'Day', week: 'Week', month: 'Month', year: 'Year', agenda: 'Agenda',

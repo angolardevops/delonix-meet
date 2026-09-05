@@ -1,4 +1,5 @@
 import { lazy, ReactNode, Suspense, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AlertIcon } from './icons'
 import { completeSsoLogin, currentUser, logout, User } from './api'
 import Shell, { NavKey } from './components/Shell'
@@ -77,6 +78,7 @@ function parseHash(): Route {
 }
 
 export default function App() {
+  const { t } = useTranslation()
   const [user, setUser] = useState<User | null>(currentUser())
   const [route, setRoute] = useState<Route>(parseHash())
 
@@ -118,7 +120,7 @@ export default function App() {
 
   if (location.hash.startsWith('#/sso-complete')) {
     // Mostrar estado de carregamento enquanto completa o SSO.
-    return <div className="auth-page"><div className="auth-card"><p>A completar o login SSO…</p></div></div>
+    return <div className="auth-page"><div className="auth-card"><p>{t('common.aCompletarSso')}</p></div></div>
   }
   if (location.hash.startsWith('#/status')) return <RouteFallback><Status /></RouteFallback>
   if (location.hash.startsWith('#/api-docs')) return <RouteFallback><ApiDocs /></RouteFallback>

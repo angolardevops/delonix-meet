@@ -159,12 +159,9 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
           {tab === 'account' && (
             <section className="settings-group">
               <div className="account-edit">
-                <label className="set-label">
-                  Nome de utilizador
-                  <input value={username} onChange={(e) => setUsername(e.target.value)} maxLength={40} />
+                <label className="set-label">{t('login.username')}<input value={username} onChange={(e) => setUsername(e.target.value)} maxLength={40} />
                 </label>
-                <label className="set-label">
-                  Nova password <small className="muted">(deixa vazio para manter)</small>
+                <label className="set-label">{t('settings.novaPassword')}<small className="muted">(deixa vazio para manter)</small>
                   <PasswordInput value={password} onChange={setPassword} placeholder="mín. 8 caracteres" autoComplete="new-password" minLength={8} />
                 </label>
                 <div className="account-actions">
@@ -187,7 +184,7 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
           {tab === 'brand' && (
             <>
               <section className="settings-group">
-                <h3>Nome da aplicação</h3>
+                <h3>{t('settings.nomeDaApp')}</h3>
                 <small className="muted">Substitui «Delonix Meet» no cabeçalho e no login.</small>
                 <div className="brand-row">
                   <input
@@ -210,8 +207,8 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
                 </div>
               </section>
               <section className="settings-group">
-                <h3>Fundo do login</h3>
-                <small className="muted">Imagem de fundo do ecrã de entrada (mostrada desfocada).</small>
+                <h3>{t('settings.fundoDoLogin')}</h3>
+                <small className="muted">{t('settings.fundoDoLoginNota')}</small>
                 {bg && (
                   <div className="brand-bg-preview" style={{ backgroundImage: `url(${bg})` }} />
                 )}

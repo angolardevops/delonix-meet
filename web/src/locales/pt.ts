@@ -3,6 +3,39 @@
 // dinâmico em ../i18n.ts (achado 1.3 do docs/ux-perf-review.md).
 
 export default {
+  status: {
+    uptime: 'Uptime do servidor:',
+  },
+  share: {
+    aVerificarLink: 'A verificar link…',
+    indisponivel: 'Gravação indisponível',
+    irParaOInicio: 'Ir para o início',
+    protegida: 'Gravação protegida',
+    requerPassword: 'Este link requer uma password para aceder.',
+    poweredBy: 'Powered by',
+  },
+  api: {
+    todasAsChamadas: 'Todas as chamadas',
+    alemDaApi: 'Além da API, a organização pode receber',
+    noDestino: 'No destino',
+    autenticacao: 'Autenticação',
+    baseUrl: 'Base URL',
+    webhooks: 'Webhooks (eventos)',
+    codigosDeEstado: 'Códigos de estado',
+  },
+  mfa: {
+    titulo: 'Verificação em dois passos',
+    guardaOsCodigos: 'Guarda os códigos de recuperação',
+    soOsVes: 'Só os vês',
+    guardeiOsCodigos: 'Guardei os códigos num sítio seguro.',
+    ligaOAutenticador: 'Liga o teu autenticador',
+    chaveSeNaoLeres: 'Chave (se não conseguires ler o código)',
+    codigoDe6Digitos: 'Código de 6 dígitos do autenticador',
+    activa: 'Activa. O teu autenticador é pedido em cada início de sessão.',
+    paraDesactivar: 'Para desactivar, introduz um código actual',
+    inscricaoPorConcluir: 'Há uma inscrição por concluir — recomeça para gerar uma chave nova.',
+    codigoQr: 'Código QR de inscrição',
+  },
   // A SALA (R99). O ecrã principal do produto estava inteiramente fora
   // do i18n — zero chamadas a `t()` em 4 300 linhas. Ver o R99.
   room: {
@@ -142,6 +175,7 @@ export default {
       guardarAta: 'Guardar ata',
     },
     barra: {
+      duracaoDaReuniao: 'Duração da reunião',
       codigoDeSegurancaDa: 'Código de segurança da sala',
       regressarASalaPrincipal: 'Regressar à sala principal',
       salaPrincipal: 'Sala principal',
@@ -250,6 +284,9 @@ export default {
     retry: 'Tentar outra vez',
   },
   common: {
+    aCompletarSso: 'A completar o login SSO…',
+    idioma: 'Idioma / Language',
+    password: 'Password',
     loading: 'A carregar…',
     save: 'Guardar',
     edit: 'Editar',
@@ -290,6 +327,8 @@ export default {
     empty: 'Sem resultados',
   },
   notif: {
+    ligarDeVolta: 'Ligar de volta',
+    atender: 'Atender',
     title: 'Notificações',
     markRead: 'Marcar como lidas',
     missedCall: 'chamada perdida',
@@ -302,6 +341,10 @@ export default {
     now: 'agora',
   },
   settings: {
+    novaPassword: 'Nova password',
+    nomeDaApp: 'Nome da aplicação',
+    fundoDoLogin: 'Fundo do login',
+    fundoDoLoginNota: 'Imagem de fundo do ecrã de entrada (mostrada desfocada).',
     title: 'Definições',
     appearance: 'Aparência',
     language: 'Idioma',
@@ -448,6 +491,9 @@ export default {
     secure: 'Ligação segura · código único para partilhar',
   },
   admin: {
+    tipoDeArmazenamento: 'Tipo de armazenamento',
+    pathDeExportacao: 'Path de exportação',
+    pathRemoto: 'Path remoto',
     badge: 'ADMIN',
     title: 'Consola de administração',
     sub: 'Visão geral da organização, qualidade e segurança.',
@@ -698,6 +744,7 @@ export default {
     },
   },
   cal: {
+    adicionarAoCalendario: 'Adicionar ao calendário (Google/Outlook — .ics)',
     title: 'Calendário',
     today: 'Hoje',
     day: 'Dia', week: 'Semana', month: 'Mês', year: 'Ano', agenda: 'Agenda',

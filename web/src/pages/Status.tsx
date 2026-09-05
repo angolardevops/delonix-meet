@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { BrandLockup, BrandMark } from '../components/BrandMark'
 
 interface StatusInfo {
@@ -18,6 +19,7 @@ function fmtUptime(s: number): string {
 
 /** Status page pública (roadmap) — saúde dos componentes, sem autenticação. */
 export default function Status() {
+  const { t } = useTranslation()
   const [info, setInfo] = useState<StatusInfo | null>(null)
   const [err, setErr] = useState(false)
   const [checkedAt, setCheckedAt] = useState<Date>(new Date())
@@ -61,8 +63,7 @@ export default function Status() {
           </div>
         ))}
         {info && (
-          <p className="muted small status-meta">
-            Uptime do servidor: <strong className="mono">{fmtUptime(info.uptime_secs)}</strong> · versão{' '}
+          <p className="muted small status-meta">{t('status.uptime')}<strong className="mono">{fmtUptime(info.uptime_secs)}</strong> · versão{' '}
             <span className="mono">{info.version}</span> · verificado às{' '}
             {checkedAt.toLocaleTimeString('pt-PT')} (atualiza a cada 15 s)
           </p>

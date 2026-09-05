@@ -2,13 +2,27 @@
  * Fitness functions do lote 2 (docs/ux-perf-review.md) e das práticas de estado
  * trazidas do `delonix-portal`.
  */
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const root = join(__dirname, '..', '..')
 const read = (p: string) => readFileSync(join(root, p), 'utf8')
 const css = () => read('web/src/styles.scss')
+
+/** Todos os `.tsx` sob um directório, recursivamente. A lista é DERIVADA da
+ *  árvore e não escrita à mão: uma lista à mão fica desactualizada no dia em
+ *  que alguém acrescenta um ficheiro, e o portão passa a proteger menos do que
+ *  diz. */
+function listarTsx(dir: string): string[] {
+  const out: string[] = []
+  for (const e of readdirSync(join(root, dir), { withFileTypes: true })) {
+    const p = `${dir}/${e.name}`
+    if (e.isDirectory()) out.push(...listarTsx(p))
+    else if (e.name.endsWith('.tsx')) out.push(p)
+  }
+  return out
+}
 
 describe('3.1.1 · a navegação tem comportamento em ecrã estreito', () => {
   it('o rail sai do fluxo abaixo de 900px', () => {
@@ -194,6 +208,33 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     for (const attr of ['title', 'placeholder', 'aria-label']) {
       for (const m of src.matchAll(new RegExp(`${attr}="([A-ZÀ-Ú][^"]{3,90})"`, 'g'))) {
         soltos.push(`${attr}="${m[1]}"`)
+      }
+    }
+    expect(soltos).toEqual([])
+  })
+
+  // A sala foi a primeira, mas o resto do produto tinha os mesmos 47 (R102).
+  // O portão passou a cobrir `web/src` INTEIRO — a alternativa era voltar a
+  // acrescentar ficheiros à lista um a um, e é assim que uma lista fica
+  // desactualizada sem ninguém dar por ela.
+  it('nenhum ficheiro tem texto de interface fora do t()', () => {
+    // Marca e identificadores técnicos NÃO são texto traduzível: o nome de uma
+    // marca configura-se (R100/R101) e um cabeçalho HTTP é o que é.
+    const MARCA_OU_CODIGO = /Delonix|X-Delonix|sha256|curl|NFS|WebDAV|Análises →/
+    const soltos: string[] = []
+    for (const f of listarTsx('web/src')) {
+      if (f.includes('/locales/')) continue
+      const src = read(f)
+      for (const m of src.matchAll(/>\s*([A-ZÀ-Ú][^<>{}\n]{3,80})\s*</g)) {
+        const v = m[1].trim()
+        if (/[a-zà-ú]{3}/.test(v) && /\s/.test(v) && !MARCA_OU_CODIGO.test(v)) {
+          soltos.push(`${f}: ${v}`)
+        }
+      }
+      for (const attr of ['title', 'placeholder', 'aria-label']) {
+        for (const m of src.matchAll(new RegExp(`${attr}="([A-ZÀ-Ú][^"]{3,90})"`, 'g'))) {
+          if (!MARCA_OU_CODIGO.test(m[1])) soltos.push(`${f} [${attr}]: ${m[1]}`)
+        }
       }
     }
     expect(soltos).toEqual([])
