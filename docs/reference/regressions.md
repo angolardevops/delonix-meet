@@ -1015,3 +1015,55 @@ francês não lê isto», que não faz distinção entre um nó de texto e um te
 `web/src/components/{MfaPanel,PasswordInput,PresenceProvider,Shell}.tsx`,
 `web/src/room/RemoteTile.tsx`, `web/src/locales/{pt,en,fr}.ts`,
 `web/src/lote2.invariantes.test.ts`.
+
+### R108 — W3.5: quem sai do separador da reunião perdia a reunião
+
+**Lacuna, não regressão.** Numa reunião de trabalho ninguém fica no separador da
+reunião: vai ao documento, ao terminal, ao email. O Meet e o Teams põem uma
+janela pequena por cima de tudo; a sala não tinha nada — o PiP existia só no
+visualizador de gravações.
+
+**Como está feito.** A decisão de **quem** aparece na janela saiu do componente
+para `web/src/pipPolicy.ts`, puro e testado à parte, pela mesma razão do
+`layerPolicy.ts`: corre dezenas de vezes por reunião e não precisa de DOM. A
+ordem vem do que a pessoa foi lá fazer — apresentação, depois afixado, depois
+quem fala, depois o último que falou, depois qualquer um com câmara. O próprio
+nunca é candidato.
+
+**A guarda que não é óbvia:** `deveTrocarFonte`. Numa conversa a três,
+`escolherFontePip` alterna de cara a cada frase, e a janela ficaria a piscar de
+segundo a segundo — o browser faz um corte visível em cada troca. Por isso só se
+troca quando a fonte actual **deixou de servir**: desligou a câmara, saiu, ou
+alguém começou a apresentar.
+
+**As três armadilhas que fazem o PiP falhar em silêncio**, todas com portão:
+
+1. **`display: none` no vídeo escondido.** É a forma óbvia de o esconder e é a
+   única que o browser trata como «não tem imagem» — o pedido é recusado sem
+   erro visível. Esconde-se com 1×1 e `opacity: 0`.
+2. **Botão onde o browser não suporta.** Firefox e o Safari de iOS não têm
+   `pictureInPictureEnabled`. Um botão que não faz nada é pior do que botão
+   nenhum: a pessoa carrega, não acontece nada, e conclui que o produto está
+   partido.
+3. **Recusa engolida.** O `requestPictureInPicture` rejeita se já houver uma
+   janela noutro separador. Um `catch {}` vazio aqui era o R104 outra vez — o
+   produto sabe que falhou e a pessoa não.
+
+**Gestos.** Não há «abre sozinha quando mudo de separador»: essa permissão está
+reservada a PWAs instaladas. O pedido exige um gesto E que o elemento já tenha
+imagem — por isso a fonte é escolhida e ligada no clique, não no efeito que só
+corre depois de o estado mudar.
+
+**Portões.** `web/src/pipPolicy.test.ts` (18 testes; **9 mutações, 9 mortas**) e
+`web/src/pip.invariantes.test.ts` (6 portões de forma). As três armadilhas foram
+sabotadas uma a uma e as três puseram testes a vermelho.
+
+**O que NÃO está provado.** Nenhum destes testes abre uma janela: o
+`requestPictureInPicture` não corre em jsdom. Prova-se que a decisão está certa e
+que as armadilhas não voltam a entrar — não que a janela abre no Chrome. Falta
+uma passagem à mão num browser real, e está dito assim no PR.
+
+**Ficheiros.** `web/src/pipPolicy.ts`, `web/src/pipPolicy.test.ts`,
+`web/src/pip.invariantes.test.ts`, `web/src/pages/Room.tsx`,
+`web/src/icons.tsx` (`PipIcon`), `web/src/locales/{pt,en,fr}.ts`,
+`scripts/mutantes.mjs`.

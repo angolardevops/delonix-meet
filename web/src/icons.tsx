@@ -410,3 +410,10 @@ export const ThumbIcon = () => (
     <path d="M2 10h4v11H2V10Zm6 11V10l5-8 1.2.6a2 2 0 0 1 1 2.3L14.4 9H20a2 2 0 0 1 2 2.3l-1.3 7A2 2 0 0 1 18.7 21H8Z" />
   </svg>
 )
+
+/** Janela flutuante (Picture-in-Picture): o ecrã com a janelinha ao canto. */
+export const PipIcon = () => (
+  <svg {...base}>
+    <path d="M19 11h-8v6h8v-6Zm4 8V5a2 2 0 0 0-2-2H3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2Zm-2 .02H3V4.98h18v14.04Z" />
+  </svg>
+)

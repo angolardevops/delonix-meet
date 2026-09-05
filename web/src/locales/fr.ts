@@ -318,6 +318,11 @@ export default {
       gravarNoServidorAviso: 'Pour enregistrer sur le serveur, la clé de cette salle lui est remise UNIQUEMENT pendant l’enregistrement, et le fichier devient lisible dans la bibliothèque.',
       autorizarEGravar: "Autoriser et démarrer l’enregistrement ?",
     },
+    pip: {
+      janelaFlutuante: "Fenêtre flottante",
+      nadaParaMostrar: "Aucune vidéo à afficher dans la fenêtre.",
+      recusada: "Le navigateur a refusé la fenêtre flottante. Fermez celle d’un autre onglet et réessayez.",
+    },
     barra: {
       duracaoDaReuniao: 'Durée de la réunion',
       codigoDeSegurancaDa: 'Code de sécurité de la salle',
