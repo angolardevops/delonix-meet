@@ -1437,6 +1437,25 @@ que importam — ignorar o `disconnected_at`, nunca detectar, não calar o
 microfone, não calar o altifalante, não passar a bandeira ao `AudioSink` — e
 vermelho em todos.
 
+**O e2e foi provado a vermelho, no CI, contra a stack a sério.** Com o cliente a
+ignorar a bandeira do servidor (`if (false && m.companion)`), a corrida deu:
+
+```
+· telemóvel: {"aviso":false,"audios":1,"todosMudos":false}
+✗ o telemóvel É AVISADO de que a conta já está na reunião
+=== 2 FALHARAM ===
+```
+
+E com o código certo:
+
+```
+· telemóvel: {"aviso":true,"audios":1,"todosMudos":true}
+✓ o telemóvel É AVISADO de que a conta já está na reunião
+```
+
+O `audios: 1` nos dois é o que impede o verde em vazio: sem roster não haveria
+`<audio>` nenhum, e um `every` sobre lista vazia devolve `true`.
+
 **Não provado.** Nada disto abre dois browsers com microfones reais. Prova-se a
 decisão e o silenciamento; não se prova a ausência de eco numa sala com duas
 máquinas — isso é uma verificação à mão e continua por fazer.

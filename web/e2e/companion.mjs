@@ -76,8 +76,6 @@ const estado = await telemovel.evaluate(() => {
     aviso: /noutro dispositivo/i.test(document.body.innerText || ''),
     audios: audios.length,
     todosMudos: audios.length > 0 && audios.every((a) => a.muted),
-    // O botão do microfone anuncia o estado no seu rótulo acessível.
-    micOff: !!document.querySelector('button[title*="tivar microfone"], button[aria-label*="icrofone"]'),
     texto: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 200),
   }
 })
