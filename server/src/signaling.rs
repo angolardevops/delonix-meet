@@ -3253,7 +3253,9 @@ mod tests {
         }
         // Estado da mão fica no roster para quem entrar depois.
         let (c, tx_c, _rx_c) = peer();
-        let roster = hub.join(room, c, c, "carol".into(), false, false, false, tx_c).roster;
+        let roster = hub
+            .join(room, c, c, "carol".into(), false, false, false, tx_c)
+            .roster;
         let bob = roster.iter().find(|p| p.peer_id == b).unwrap();
         assert!(bob.hand);
     }
@@ -3311,7 +3313,9 @@ mod tests {
         let room = Uuid::new_v4();
         let (a, tx_a, _rx_a) = peer();
         let (b, tx_b, mut rx_b) = peer();
-        let segredo = hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a).reconnect_secret;
+        let segredo = hub
+            .join(room, a, a, "anfitriã".into(), true, true, false, tx_a)
+            .reconnect_secret;
         hub.join(room, b, b, "b".into(), false, false, false, tx_b);
         drain(&mut rx_b);
 
@@ -3342,7 +3346,9 @@ mod tests {
         let hub = SignalingHub::default();
         let room = Uuid::new_v4();
         let (a, tx_a, _rx) = peer();
-        let segredo = hub.join(room, a, a, "a".into(), true, true, false, tx_a).reconnect_secret;
+        let segredo = hub
+            .join(room, a, a, "a".into(), true, true, false, tx_a)
+            .reconnect_secret;
         hub.disconnect(room, a);
 
         assert!(
@@ -3380,7 +3386,16 @@ mod tests {
         let primeira = hub.join(room, p1, conta, "eu".into(), true, true, false, tx1);
         assert!(!primeira.companion, "a primeira sessão nunca é companion");
 
-        let outra_conta = hub.join(room, p2, Uuid::new_v4(), "outro".into(), false, false, false, tx2);
+        let outra_conta = hub.join(
+            room,
+            p2,
+            Uuid::new_v4(),
+            "outro".into(),
+            false,
+            false,
+            false,
+            tx2,
+        );
         assert!(
             !outra_conta.companion,
             "outra PESSOA na sala não faz de ninguém companion"
@@ -3422,7 +3437,9 @@ mod tests {
         let (r1, r2) = (Uuid::new_v4(), Uuid::new_v4());
         let (a, tx_a, _rx_a) = peer();
         let (b, tx_b, _rx_b) = peer();
-        let seg1 = hub.join(r1, a, a, "a".into(), true, true, false, tx_a).reconnect_secret;
+        let seg1 = hub
+            .join(r1, a, a, "a".into(), true, true, false, tx_a)
+            .reconnect_secret;
         hub.join(r2, b, b, "b".into(), false, false, false, tx_b);
         hub.disconnect(r1, a);
         hub.disconnect(r2, b);
@@ -3444,7 +3461,9 @@ mod tests {
         let hub = SignalingHub::default();
         let room = Uuid::new_v4();
         let (a, tx_a, _rx) = peer();
-        let segredo = hub.join(room, a, a, "a".into(), true, true, false, tx_a).reconnect_secret;
+        let segredo = hub
+            .join(room, a, a, "a".into(), true, true, false, tx_a)
+            .reconnect_secret;
         assert!(
             hub.reclaim(room, &segredo, std::time::Duration::from_secs(45))
                 .is_none(),
@@ -3461,7 +3480,9 @@ mod tests {
         let room = Uuid::new_v4();
         let (a, tx_a, _rx_a) = peer();
         let (b, tx_b, mut rx_b) = peer();
-        let segredo = hub.join(room, a, a, "a".into(), true, true, false, tx_a).reconnect_secret;
+        let segredo = hub
+            .join(room, a, a, "a".into(), true, true, false, tx_a)
+            .reconnect_secret;
         hub.join(room, b, b, "b".into(), false, false, false, tx_b);
         hub.disconnect(room, a);
         drain(&mut rx_b);
