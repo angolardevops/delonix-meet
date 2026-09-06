@@ -66,6 +66,7 @@ const ALVOS = [
   'src/sfuLifecycle.ts',
   'src/studio/analise.ts',
   'src/pipPolicy.ts',
+  'src/studio/directo.ts',
 ]
 
 // Operadores escolhidos por serem os erros que se cometem A SÉRIO: fronteiras

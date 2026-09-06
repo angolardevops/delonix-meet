@@ -1506,3 +1506,42 @@ Provado nos três casos: absoluto → vermelho, a subir → vermelho, relativo i
 
 **Ficheiros.** `.gitignore`, `scripts/check-repo-hygiene.sh`, e a remoção de
 `web/node_modules` do índice.
+### R116 — O directo tinha testes de contrato e nenhum de ciclo de vida
+
+**Como apareceu.** A pôr o `src/studio/directo.ts` no arnês de mutação: **7 das 8
+mutações sobreviviam**. A bateria ficava verde com o browser dado como capaz sem
+saber H.264, com pedaços vazios a ir para a rede, com envios num socket fechado,
+e com as três decisões de fase invertidas.
+
+**Causa.** O `directo.test.ts` cobria o **contrato** — o codec (que é a decisão
+inteira do ADR-0003) e a construção do URL. São os testes certos para o que
+guardam, e não tocam no ciclo de vida. E é no ciclo de vida que este módulo falha
+**em silêncio**: enviar num socket fechado atira dentro de um `then` sem `catch`,
+e enviar um pedaço vazio é largura de banda a troco de nada.
+
+**O que passou a estar defendido**, cada um com o seu porquê:
+
+- **`MediaRecorder` sem H.264** (Firefox) tem de recusar. Deixá-lo arrancar dava
+  um directo que o servidor teria de reencodificar — a decisão que o ADR-0003
+  recusou.
+- **Pedaço vazio** não vai para a rede, e não conta bytes.
+- **Socket já fechado**: nem envio nem contagem.
+- **Socket que fecha ENTRE o pedaço e o `arrayBuffer()`** — o `arrayBuffer` é
+  assíncrono, e é por isso que a guarda é dupla. Sem a segunda, o `send` atira.
+- **`parar()` fecha com 1000** e volta a «parado».
+- **O socket a cair leva a «erro», não a «parado»** — a distinção é o que a
+  interface mostra: «parado» foi decisão da pessoa, «erro» é uma emissão que caiu
+  e que ela tem de saber que caiu.
+- **Um fecho tardio depois de `parar()` não põe «erro» no ecrã** — o `parar()`
+  fecha o socket e o `onclose` chega a seguir.
+- **`parar()` sem nunca ter começado não atira** — foi o último sobrevivente: sem
+  o `g &&`, lê `.state` de `null` dentro de um `onClick`, onde um erro não
+  tratado passa despercebido até alguém abrir a consola.
+
+Nada disto precisa de rede nem de câmara: o `MediaRecorder` e o `WebSocket` são
+substituídos por duplos com a mesma forma. O que se prova são as decisões.
+
+**Portão.** `src/studio/directo.ts` entrou nos alvos do `scripts/mutantes.mjs`.
+**8 mutações, 8 mortas.**
+
+**Ficheiros.** `web/src/studio/directo.test.ts`, `scripts/mutantes.mjs`.
