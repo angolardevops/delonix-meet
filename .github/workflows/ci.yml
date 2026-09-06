@@ -309,6 +309,11 @@ jobs:
           # admitir → retrato remoto. É a promessa central do produto e não
           # havia teste nenhum a cobri-la ponta a ponta.
           APP=http://localhost:5174 node web/e2e/reuniao.mjs
+          # A MESMA pessoa entra duas vezes — portátil e telemóvel. A segunda
+          # sessão tem de entrar SEM áudio: dois microfones e dois altifalantes
+          # da mesma pessoa no mesmo espaço físico realimentam-se, e o ruído é
+          # de toda a gente na reunião, não só de quem o causa (R114).
+          APP=http://localhost:5174 node web/e2e/companion.mjs
           BASE=http://localhost:5174 node web/e2e/estudio.mjs
           # A GAVETA a 375px e o anel de foco vivem em `transform` e `outline`,
           # que só um motor de browser resolve.
