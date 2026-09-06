@@ -34,7 +34,7 @@ import {
   testPlatformStorage,
   StorageConfig,
 } from '../api'
-import { ClockIcon, KeyIcon, LockIcon, SaveIcon, SettingsIcon, ShareLinkIcon } from '../icons'
+import { ClockIcon, PlugIcon, KeyIcon, LockIcon, SaveIcon, SettingsIcon, ShareLinkIcon } from '../icons'
 
 /** Definições da organização (admin): domínio de produção + retenção. */
 function OrgSettings({ org, onSaved }: { org: OrgSummary; onSaved: () => void }) {
@@ -608,8 +608,8 @@ function PlatformStoragePanel() {
   return (
     <div className="odoo-panel">
       <p className="odoo-desc">
-        Armazenamento para gravações e anexos. Por omissão as gravações ficam no volume local do pod.
-        Configura aqui TrueNAS (NFS) ou Nextcloud/SharePoint (WebDAV) para persistência partilhada em multi-réplica.
+        
+        {t('admin.armazenamentoParaGravacoesE')}
       </p>
 
       <div className="field-row">
@@ -633,7 +633,7 @@ function PlatformStoragePanel() {
             <label className="field-label">{t('admin.pathDeExportacao')}</label>
             <input value={nfsPath} onChange={(e) => setNfsPath(e.target.value)} placeholder="/mnt/pool/delonix" />
           </div>
-          <button className="secondary" onClick={downloadPvc} type="button">⬇ Descarregar manifesto K8s PVC</button>
+          <button className="secondary" onClick={downloadPvc} type="button">{t('admin.descarregarManifestoK8sPvc')}</button>
         </>
       )}
 
@@ -650,7 +650,7 @@ function PlatformStoragePanel() {
             <input value={wdUser} onChange={(e) => setWdUser(e.target.value)} placeholder="delonix-service" />
           </div>
           <div className="field-row">
-            <label className="field-label">Password {cfg?.webdav_password_set && <span className="odoo-hint">(definida — deixa em branco para manter)</span>}</label>
+            <label className="field-label">Password {cfg?.webdav_password_set && <span className="odoo-hint">{t('admin.definidaDeixaEmBranco')}</span>}</label>
             <input type="password" value={wdPwd} onChange={(e) => setWdPwd(e.target.value)} placeholder={cfg?.webdav_password_set ? '••••••••' : 'nova password'} />
           </div>
           <div className="field-row">
@@ -665,7 +665,7 @@ function PlatformStoragePanel() {
           {busy ? '…' : <><SaveIcon /> {t('common.save')}</>}
         </button>
         <button className="secondary" onClick={test} disabled={busy} type="button">
-          🔌 Testar ligação
+          <PlugIcon /> {t('admin.testarLigacao')}
         </button>
       </div>
       {msg && <p className={msg.startsWith('✓') ? 'odoo-sync-at' : 'error'} style={{ marginTop: 8 }}>{msg}</p>}
@@ -905,13 +905,13 @@ export default function Analytics() {
                     {stats.pct_turn_relay != null && (
                       <div className="quality-stat">
                         <strong>{stats.pct_turn_relay}%</strong>
-                        <small>media via TURN relay</small>
+                        <small>{t('admin.mediaViaTurnRelay')}</small>
                       </div>
                     )}
                     {stats.pct_cpu_limited != null && (
                       <div className="quality-stat">
                         <strong>{stats.pct_cpu_limited}%</strong>
-                        <small>limitado por CPU do cliente</small>
+                        <small>{t('admin.limitadoPorCpuDo')}</small>
                       </div>
                     )}
                   </div>

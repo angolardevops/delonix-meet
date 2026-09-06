@@ -655,7 +655,7 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
 
         {/* ---- Partilha com utilizadores ---- */}
         <p className="muted small">
-          <Trans i18nKey="recordings.directShareHint"><strong>ver e descarregar</strong></Trans>
+          <Trans i18nKey="recordings.directShareHint"><strong>{t('recordings.verEDescarregar')}</strong></Trans>
         </p>
         <input
           placeholder={t('recordings.searchUsers')}

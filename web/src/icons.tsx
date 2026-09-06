@@ -417,3 +417,10 @@ export const PipIcon = () => (
     <path d="M19 11h-8v6h8v-6Zm4 8V5a2 2 0 0 0-2-2H3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2Zm-2 .02H3V4.98h18v14.04Z" />
   </svg>
 )
+
+/** Ficha eléctrica — «testar ligação» a um serviço externo. */
+export const PlugIcon = () => (
+  <svg {...base}>
+    <path d="M16 7V3h-2v4h-4V3H8v4H7v6a5 5 0 0 0 4 4.9V22h2v-4.1A5 5 0 0 0 17 13V7h-1Z" />
+  </svg>
+)

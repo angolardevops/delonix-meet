@@ -161,8 +161,8 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
               <div className="account-edit">
                 <label className="set-label">{t('login.username')}<input value={username} onChange={(e) => setUsername(e.target.value)} maxLength={40} />
                 </label>
-                <label className="set-label">{t('settings.novaPassword')}<small className="muted">(deixa vazio para manter)</small>
-                  <PasswordInput value={password} onChange={setPassword} placeholder="mín. 8 caracteres" autoComplete="new-password" minLength={8} />
+                <label className="set-label">{t('settings.novaPassword')}<small className="muted">{t('settings.deixaVazioParaManter')}</small>
+                  <PasswordInput value={password} onChange={setPassword} placeholder={t('settings.min8Caracteres')} autoComplete="new-password" minLength={8} />
                 </label>
                 <div className="account-actions">
                   <button className="btn-sm primary" disabled={!dirty || saving} onClick={() => void saveAccount()}>

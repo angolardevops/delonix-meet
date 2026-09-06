@@ -75,8 +75,7 @@ export default function MfaPanel() {
     return (
       <div className="mfa-panel">
         <h3>{t('mfa.guardaOsCodigos')}</h3>
-        <p className="mfa-warn" role="alert">{t('mfa.soOsVes')}<strong>agora</strong>. Cada um serve <strong>uma vez</strong> e é a única
-          forma de entrar se perderes o telemóvel.
+        <p className="mfa-warn" role="alert">{t('mfa.soOsVes')}<strong>agora</strong>{t('mfa.cadaUmServe')} <strong>{t('mfa.umaVez')}</strong>  {t('mfa.eEAUnica')}
         </p>
         <ul className="mfa-codes">
           {recuperacao.map((c) => <li key={c}><code>{c}</code></li>)}
@@ -151,7 +150,7 @@ export default function MfaPanel() {
         <>
           <p className="mfa-on"><CheckIcon />{t('mfa.activa')}</p>
           <p className="muted">
-            Restam <strong>{estado.backup_codes_left}</strong> códigos de recuperação.
+            Restam <strong>{estado.backup_codes_left}</strong>  {t('mfa.codigosDeRecuperacao')}
             {estado.backup_codes_left <= 2 && ' Desactiva e volta a activar para gerar códigos novos.'}
           </p>
           <label className="set-label">{t('mfa.paraDesactivar')}<input
@@ -173,8 +172,8 @@ export default function MfaPanel() {
       ) : (
         <>
           <p className="muted">
-            Acrescenta um código do telemóvel ao teu início de sessão. Uma password roubada deixa
-            de chegar para entrar na tua conta.
+            
+            {t('mfa.acrescentaUmCodigoDo')}
           </p>
           {estado.pending && (
             <p className="muted">{t('mfa.inscricaoPorConcluir')}</p>

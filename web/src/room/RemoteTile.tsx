@@ -121,11 +121,11 @@ export function RemoteTileBase({
       {peer.hand && <span className="hand-badge"><HandIcon /></span>}
       {/* Indicador de mic muted no canto superior direito (estilo Meet). */}
       {!hasAudio && (
-        <span className="tile-mic-status" aria-label="microfone desativado">
+        <span className="tile-mic-status" aria-label={t('room.microfoneDesativado')}>
           <MicOffIcon />
         </span>
       )}
-      {peer.reconnecting && <span className="tile-reconnecting">a voltar…</span>}
+      {peer.reconnecting && <span className="tile-reconnecting">{t('room.aVoltar')}</span>}
       <span className="tile-name">
         {hasAudio && speaking && <SpeakingBars />}
         {peer.username}

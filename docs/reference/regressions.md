@@ -1199,3 +1199,55 @@ Isso é uma verificação à mão, e continua por fazer.
 
 **Ficheiros.** `web/src/pages/Room.tsx`,
 `web/src/partilhaEcra.invariantes.test.ts`, `web/src/locales/{pt,en,fr}.ts`.
+
+### R112 — Sete versões depois, o portão do i18n deixou de ser uma expressão regular
+
+**O que ainda escapava.** Depois de seis gerações do portão, **76 frases**
+visíveis continuavam sem passar pelo `t()` — e não eram cantos: a página inteira
+de documentação da API, a explicação da E2EE («Com a frase errada não vês nem
+ouves os outros…»), a do MFA, a das legendas com LLM local, e o aviso de ligação
+insegura do `App.tsx` («câmara, microfone e chamadas NÃO funcionam»).
+
+**A causa, e é a mesma das seis vezes anteriores.** Uma expressão regular **não
+sabe o que é JSX**. Sabe o que é `>` e `<` — e por isso confunde um genérico
+`useState<Foo>` com uma tag, não distingue `className` de `aria-label`, e não vê
+que um nó de texto continua depois de uma expressão. A exigência de **maiúscula
+inicial** existia só para calar esse ruído: medido, sem ela a regex acusava
+**400 sítios, quase todos código**. E era essa exigência que deixava passar
+`, como administrador). Envia-a num destes headers:` — meia frase, mas frase.
+
+**A regra.** O portão passou a usar o **parser do TypeScript**. Um `JsxText` é
+texto que aparece no ecrã, por definição. Um `JsxAttribute` tem um nome que se
+pode ler. Não há heurística sobre a forma da linha, e por isso não há forma
+seguinte por onde fugir.
+
+E a lista de atributos passou a fazer o **contrário** do que fazia: nomeia os que
+**chegam** a uma pessoa (`title`, `alt`, `label`, `desc`, `data-tip`, `aria-*`,
+…) em vez dos que não chegam. Um atributo novo entrava em silêncio na versão
+antiga; nesta, entra no portão.
+
+**O que fica de fora, e porquê.** O parser cobre JSX. Strings passadas a funções
+(`setStatus('…')`) e template literals continuam a ser cobertos pelos dois
+portões de expressão que já existiam — esses não são JSX e o parser não os
+distingue de código. São três portões complementares, não um a substituir outro.
+
+**Ledger.** Dezasseis nomes e fragmentos técnicos ficam de fora **um a um, com a
+razão ao lado** — `kubectl apply`, `X-Delonix-Signature: sha256=…`, `TrueNAS /
+NFS`, e os nomes dos idiomas, que se escrevem **no** idioma. Nunca por a regra
+ser afrouxada.
+
+**Efeito colateral apanhado a tempo.** Ao mover as frases para os locales, um
+`🔌` foi com elas — e o portão dos emoji só olha para `.tsx`. Passar um problema
+para onde o portão não olha não é resolvê-lo: virou `PlugIcon`.
+
+**Portão.** `web/src/lote2.invariantes.test.ts`, teste «nenhum JSX tem texto de
+interface fora do t() (parser, não regex)». Provado vermelho nas duas formas que
+as seis versões anteriores deixaram passar em alturas diferentes: devolver um nó
+de texto (`Esbater fundo`) e devolver um `aria-label`.
+
+**Ficheiros.** `web/src/lote2.invariantes.test.ts` (três portões de regex
+substituídos por um de parser), `web/src/App.tsx`,
+`web/src/components/{MfaPanel,PresenceProvider,Shell}.tsx`,
+`web/src/pages/{Analytics,ApiDocs,Recordings,Room,SharePage,Status}.tsx`,
+`web/src/room/RemoteTile.tsx`, `web/src/icons.tsx` (`PlugIcon`),
+`web/src/locales/{pt,en,fr}.ts`.

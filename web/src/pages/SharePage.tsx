@@ -97,7 +97,8 @@ export default function SharePage({ token }: { token: string }) {
         <h2>{info.filename.replace(/\.webm$/, '')}</h2>
         <p className="muted">{date} · {sizeMb} MB</p>
         <a className="btn-sm" href={downloadUrl} download={info.filename}>
-          ⬇ Descarregar
+          
+          {t('share.descarregar')}
         </a>
         <p className="muted small share-link-password-hint">{t('share.poweredBy')}<strong>Delonix Meet</strong>
         </p>
