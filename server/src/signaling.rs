@@ -270,6 +270,13 @@ pub enum ServerMsg {
     PeerJoined {
         peer: PeerInfo,
     },
+    /// A OUTRA sessão desta conta saiu da sala (R114).
+    ///
+    /// Vai só para quem tinha entrado como `companion`: sem isto, quem fechasse
+    /// o portátil ficava com o telemóvel mudo e um aviso a falar de um
+    /// dispositivo que já não está lá. Uma funcionalidade que se liga sozinha e
+    /// não se desliga sozinha é meia funcionalidade.
+    CompanionEnded,
     PeerLeft {
         peer_id: Uuid,
     },
@@ -1146,6 +1153,14 @@ impl SignalingHub {
     }
 
     pub fn leave(&self, room_id: Uuid, peer_id: Uuid) {
+        // Quem fica sozinho com a sua própria conta deixa de ser companion
+        // (R114). Sem isto, fechar o portátil deixava o telemóvel mudo e com um
+        // aviso a falar de um dispositivo que já não está lá — e ninguém liga o
+        // áudio a um botão cuja explicação deixou de fazer sentido.
+        //
+        // Colhe-se DENTRO do mesmo lock que remove: perguntar depois olharia
+        // para uma sala já sem o peer e não saberia de quem ele era.
+        let mut orfaos: Vec<Uuid> = Vec::new();
         let removed = self
             .rooms
             .get_mut(&room_id)
@@ -1154,9 +1169,27 @@ impl SignalingHub {
                 if r.presenter == Some(peer_id) {
                     r.presenter = None;
                 }
-                r.peers.remove(&peer_id).is_some()
+                let saiu = r.peers.remove(&peer_id);
+                if let Some(p) = &saiu {
+                    let conta = p.user_id;
+                    let restantes: Vec<Uuid> = r
+                        .peers
+                        .iter()
+                        .filter(|(_, o)| o.user_id == conta && o.disconnected_at.is_none())
+                        .map(|(id, _)| *id)
+                        .collect();
+                    // Exactamente UMA sessão de pé: ela deixa de ter com quem
+                    // fazer eco. Com duas ou mais, o aviso continua certo.
+                    if restantes.len() == 1 {
+                        orfaos = restantes;
+                    }
+                }
+                saiu.is_some()
             })
             .unwrap_or(false);
+        for id in orfaos {
+            self.send_to(room_id, id, ServerMsg::CompanionEnded);
+        }
         let empty = self
             .rooms
             .get(&room_id)
@@ -2700,6 +2733,16 @@ mod tests {
         (Uuid::new_v4(), tx, rx)
     }
 
+    /// Como o `drain`, mas DEVOLVE o que tirou: um teste que precisa de provar
+    /// que uma mensagem chegou não pode usar o que a deita fora.
+    fn recolher(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<ServerMsg> {
+        let mut v = Vec::new();
+        while let Ok(m) = rx.try_recv() {
+            v.push(m);
+        }
+        v
+    }
+
     fn drain(rx: &mut mpsc::Receiver<ServerMsg>) {
         while rx.try_recv().is_ok() {}
     }
@@ -3406,6 +3449,82 @@ mod tests {
             segunda.companion,
             "a segunda sessão da MESMA conta entra sem áudio"
         );
+    }
+
+    /// Uma funcionalidade que se liga sozinha tem de se desligar sozinha. Quem
+    /// fecha o portátil não pode ficar com o telemóvel mudo e um aviso a falar
+    /// de um dispositivo que já não está lá.
+    #[tokio::test]
+    async fn quando_a_outra_sessao_sai_o_companion_termina() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let conta = Uuid::new_v4();
+        let (p1, tx1, _r1) = peer();
+        let (p2, tx2, mut rx2) = peer();
+        let (p3, tx3, _r3) = peer();
+
+        hub.join(room, p1, conta, "eu".into(), true, true, false, tx1);
+        // Alguém de outra conta na sala: sair NÃO pode disparar o aviso.
+        hub.join(
+            room,
+            p3,
+            Uuid::new_v4(),
+            "outro".into(),
+            false,
+            false,
+            false,
+            tx3,
+        );
+        let segunda = hub.join(room, p2, conta, "eu".into(), false, false, false, tx2);
+        assert!(segunda.companion);
+        drain(&mut rx2);
+
+        hub.leave(room, p3);
+        let apos_outro = recolher(&mut rx2);
+        assert!(
+            !apos_outro
+                .iter()
+                .any(|m| matches!(m, ServerMsg::CompanionEnded)),
+            "sair uma pessoa DE OUTRA conta não termina o modo companion"
+        );
+
+        hub.leave(room, p1);
+        let apos_minha = recolher(&mut rx2);
+        assert!(
+            apos_minha
+                .iter()
+                .any(|m| matches!(m, ServerMsg::CompanionEnded)),
+            "com a outra sessão fora, o telemóvel deixa de ter com quem fazer eco"
+        );
+    }
+
+    /// Com TRÊS sessões da mesma conta, sair uma deixa duas — e duas ainda
+    /// fazem eco. Este caso é o que distingue «resta UMA» de «resta ALGUMA», e
+    /// sem ele a condição podia ser `>= 1` sem nenhum teste dar por isso.
+    #[tokio::test]
+    async fn com_tres_sessoes_sair_uma_nao_desliga_o_companion() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let conta = Uuid::new_v4();
+        let (p1, tx1, _r1) = peer();
+        let (p2, tx2, mut rx2) = peer();
+        let (p3, tx3, mut rx3) = peer();
+
+        hub.join(room, p1, conta, "eu".into(), true, true, false, tx1);
+        hub.join(room, p2, conta, "eu".into(), false, false, false, tx2);
+        hub.join(room, p3, conta, "eu".into(), false, false, false, tx3);
+        drain(&mut rx2);
+        drain(&mut rx3);
+
+        hub.leave(room, p1);
+        for (nome, rx) in [("p2", &mut rx2), ("p3", &mut rx3)] {
+            assert!(
+                !recolher(rx)
+                    .iter()
+                    .any(|m| matches!(m, ServerMsg::CompanionEnded)),
+                "{nome}: ainda restam DUAS sessões — o eco continua possível"
+            );
+        }
     }
 
     /// Um `F5` a meio da reunião não é um segundo dispositivo. O lugar fica

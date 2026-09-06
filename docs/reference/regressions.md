@@ -1419,9 +1419,20 @@ fica no ecrã **até a pessoa decidir** (não é uma notificação que passa: é
 estado), e o botão «usar o áudio aqui» devolve-lhe a decisão, dizendo o que fazer
 ao outro dispositivo.
 
+**E desliga-se sozinho.** Uma funcionalidade que se liga sozinha e não se
+desliga sozinha é meia funcionalidade: quem fechasse o portátil ficava com o
+telemóvel mudo e um aviso a falar de um aparelho que já não está lá. Quando a
+outra sessão sai, o servidor manda `CompanionEnded` — e **só quando resta uma**:
+com três sessões, sair uma deixa duas, e duas ainda fazem eco. Essa distinção
+entre «resta UMA» e «resta ALGUMA» foi encontrada a sabotar: com `>= 1` os testes
+continuavam verdes, porque nenhum tinha três sessões. Tem-no agora.
+
 **Portões.** Rust: `segunda_sessao_da_mesma_conta_entra_como_companion` e
-`reentrar_depois_de_uma_queda_nao_e_companion` (142 testes). Frontend:
-`web/src/companion.invariantes.test.ts`, cinco portões. Sabotado nos cinco sítios
+`reentrar_depois_de_uma_queda_nao_e_companion`,
+`quando_a_outra_sessao_sai_o_companion_termina` e
+`com_tres_sessoes_sair_uma_nao_desliga_o_companion` (144 testes). Frontend:
+`web/src/companion.invariantes.test.ts`, seis portões, e o `web/e2e/companion.mjs`
+que entra duas vezes com a mesma conta pela interface real. Sabotado nos cinco sítios
 que importam — ignorar o `disconnected_at`, nunca detectar, não calar o
 microfone, não calar o altifalante, não passar a bandeira ao `AudioSink` — e
 vermelho em todos.

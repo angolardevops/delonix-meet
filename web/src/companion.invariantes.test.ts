@@ -44,6 +44,18 @@ describe('R114 · a segunda sessão da mesma conta entra sem áudio', () => {
     expect(room).toMatch(/t\('room\.companion\.silenciaOOutro'\)/)
   })
 
+  it('e desliga-se sozinho quando o outro dispositivo sai', () => {
+    // Uma funcionalidade que se liga sozinha e não se desliga sozinha é meia
+    // funcionalidade: quem fechasse o portátil ficava com o telemóvel mudo e um
+    // aviso a falar de um aparelho que já não está lá.
+    expect(room).toMatch(/signal\.on\('companion_ended'/)
+    expect(rust).toMatch(/ServerMsg::CompanionEnded/)
+    // E só quando resta UMA sessão: com três, sair uma deixa duas, e duas ainda
+    // fazem eco.
+    expect(rust).toMatch(/if restantes\.len\(\) == 1 \{/)
+    expect(rust).toMatch(/com_tres_sessoes_sair_uma_nao_desliga_o_companion/)
+  })
+
   it('voltar de um F5 não é um segundo dispositivo', () => {
     // O lugar reservado do R91 tem `disconnected_at`; trancar-lhe o áudio seria
     // castigar uma quebra de rede — o oposto do que o R91 foi resolver.

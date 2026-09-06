@@ -401,6 +401,7 @@ export default {
       recusada: "The browser refused the floating window. Close the one in another tab and try again.",
     },
     companion: {
+      oOutroSaiu: "The other device left — sound is back here.",
       tituloSemAudio: "You are already in this meeting on another device",
       explicacao: "This one joined with no microphone and no sound, so the two do not echo.",
       usarAudioAqui: "Use audio here",

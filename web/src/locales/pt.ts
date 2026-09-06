@@ -403,6 +403,7 @@ export default {
       recusada: "O browser recusou a janela flutuante. Fecha a que tens noutro separador e tenta outra vez.",
     },
     companion: {
+      oOutroSaiu: "O outro dispositivo saiu — o som voltou aqui.",
       tituloSemAudio: "Já estás nesta reunião noutro dispositivo",
       explicacao: "Este entrou sem microfone e sem som, para não haver eco entre os dois.",
       usarAudioAqui: "Usar o áudio aqui",

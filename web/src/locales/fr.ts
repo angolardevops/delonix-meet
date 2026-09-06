@@ -401,6 +401,7 @@ export default {
       recusada: "Le navigateur a refusé la fenêtre flottante. Fermez celle d’un autre onglet et réessayez.",
     },
     companion: {
+      oOutroSaiu: "L’autre appareil est parti — le son est revenu ici.",
       tituloSemAudio: "Vous êtes déjà dans cette réunion sur un autre appareil",
       explicacao: "Celui-ci est entré sans micro ni son, pour éviter l’écho entre les deux.",
       usarAudioAqui: "Utiliser l’audio ici",

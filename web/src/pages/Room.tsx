@@ -1090,6 +1090,13 @@ export default function Room({
           setChat((c) => [...c, { username: m.username, text: m.text, own: false }])
           if (panelRef.current !== 'chat') setUnreadChat((n) => n + 1)
         })
+        // A outra sessão desta conta saiu — já não há com quem fazer eco, e o
+        // aviso deixaria de fazer sentido. Uma funcionalidade que se liga
+        // sozinha tem de se desligar sozinha (R114).
+        signal.on('companion_ended', () => {
+          setCompanion(false)
+          setStatus(t('room.companion.oOutroSaiu'))
+        })
         signal.on('error', (m) => setStatus(m.message))
         // Este nó vai fechar. Não é um erro nem uma expulsão: a chamada
         // continua a funcionar, e migra-se quando o servidor disser.

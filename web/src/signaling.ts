@@ -52,6 +52,8 @@ export type ServerMsg =
   // entra em segundo lugar entra sem áudio — dois microfones da mesma pessoa
   // no mesmo espaço físico fazem um ciclo de eco.
   | { type: 'joined'; peer_id: string; peers: PeerInfo[]; reconnect?: string; companion?: boolean }
+  // A outra sessão desta conta saiu: já não há com quem fazer eco (R114).
+  | { type: 'companion_ended' }
   | { type: 'peer-reconnecting'; peer_id: string }
   /** Este nó vai fechar. Reconectar daqui a `reconnect_in_ms` (mais jitter)
    *  migra a sala para outro pod — ver `callRecovery`/Room.tsx. */
