@@ -1331,3 +1331,57 @@ decisões — que é onde os defeitos desta família vivem —, não a ligação
 `RTCRtpSender`.
 
 **Ficheiros.** `web/src/e2ee.test.ts`.
+### R117 — Um código TOTP continuava a servir na janela seguinte à sua
+
+**Sintoma.** O `web/e2e/mfa.mjs` falhou no CI com:
+
+```
+✗ replay entre operações
+    HTTP 200 — o código da activação foi reaceite
+```
+
+O código usado para **activar** o MFA foi aceite outra vez, minutos depois, para
+**iniciar sessão**. Não era uma falha intermitente do teste: era o produto a
+dizer a verdade, e o teste a apanhá-la só quando o relógio ajudava.
+
+**Causa.** O anti-replay guarda o último passo temporal usado (`last_step`) e
+exige que o seguinte **avance**:
+
+```sql
+UPDATE user_mfa SET last_step = $2 WHERE user_id = $1
+  AND (last_step IS NULL OR last_step < $2)
+```
+
+A barreira está certa. O que estava errado era **de onde vinha o `$2`**: do
+relógio (`agora() / STEP_SECS`), e não do código.
+
+O `SKEW_STEPS` aceita, de propósito, um código do passo N apresentado durante o
+passo N±1 — é o que tolera relógios dessincronizados. Só que, apresentado durante
+N+1, esse código registava `last_step = N+1`, e a comparação passava a ser
+`N < N+1` → **verdadeiro**. O mesmo código servia duas vezes, com até trinta
+segundos de folga sobre a sua própria janela.
+
+Ou seja: o anti-replay funcionava **excepto** no caso que existe para impedir —
+um código apanhado por cima do ombro e usado logo a seguir.
+
+**Porque é que parecia intermitente.** O teste só falha quando as duas chamadas
+caem em passos diferentes. Se caírem no mesmo, `N < N` é falso e a rejeição
+acontece pela razão certa. É uma corrida contra a fronteira dos 30 segundos, e
+por isso passou muitas vezes.
+
+**Regra.** O passo vem do **código**, nunca do relógio. O `verifica` foi
+**apagado**: a função devolvia um `bool`, e um `bool` obriga quem chama a
+descobrir o passo por outro meio — que é exactamente como o defeito nasceu.
+Ficou só o `passo_do_codigo`, que devolve `Option<i64>`. Apagar a forma que
+causou o erro vale mais do que documentá-la.
+
+**Tempo constante mantido.** Continuam a percorrer-se todos os passos e todos os
+bytes; o passo encontrado acumula-se com uma **máscara** (`-(bate as i64)`) e não
+com um `if`, para o tempo de resposta não revelar qual acertou. O `+1` interno
+distingue «passo 0» — um instante real, 1970 — de «nenhum».
+
+**Portão.** `o_passo_vem_do_codigo_e_nao_do_relogio`: o mesmo código apresentado
+em N-1, N e N+1 tem de devolver **sempre N**. Provado vermelho a repor o passo do
+relógio.
+
+**Ficheiros.** `server/src/mfa.rs`.
