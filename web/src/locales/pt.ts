@@ -402,6 +402,12 @@ export default {
       nadaParaMostrar: "Sem vídeo de ninguém para mostrar na janela.",
       recusada: "O browser recusou a janela flutuante. Fecha a que tens noutro separador e tenta outra vez.",
     },
+    companion: {
+      tituloSemAudio: "Já estás nesta reunião noutro dispositivo",
+      explicacao: "Este entrou sem microfone e sem som, para não haver eco entre os dois.",
+      usarAudioAqui: "Usar o áudio aqui",
+      silenciaOOutro: "Áudio ligado aqui — silencia o outro dispositivo para não haver eco.",
+    },
     barra: {
       duracaoDaReuniao: 'Duração da reunião',
       codigoDeSegurancaDa: 'Código de segurança da sala',

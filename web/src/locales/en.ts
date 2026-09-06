@@ -400,6 +400,12 @@ export default {
       nadaParaMostrar: "No one’s video to show in the window.",
       recusada: "The browser refused the floating window. Close the one in another tab and try again.",
     },
+    companion: {
+      tituloSemAudio: "You are already in this meeting on another device",
+      explicacao: "This one joined with no microphone and no sound, so the two do not echo.",
+      usarAudioAqui: "Use audio here",
+      silenciaOOutro: "Audio on here — mute the other device so it does not echo.",
+    },
     barra: {
       duracaoDaReuniao: 'Meeting duration',
       codigoDeSegurancaDa: 'Room security code',

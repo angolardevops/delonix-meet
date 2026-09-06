@@ -240,6 +240,17 @@ export default function Room({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [deviceMenu, setDeviceMenu] = useState<'none' | 'mic' | 'cam'>('none')
   const [micOn, setMicOn] = useState(true)
+  /**
+   * Esta conta já está na reunião noutro dispositivo (R114) — o «companion
+   * mode» do Meet: portátil e telemóvel ao mesmo tempo. Útil, e um ciclo de eco
+   * garantido se os dois microfones e os dois altifalantes estiverem ligados no
+   * mesmo espaço físico.
+   *
+   * Quem entra em segundo lugar entra MUDO nos dois sentidos, e é avisado de
+   * porquê. Fica em `false` assim que a pessoa disser que é aqui que quer o
+   * áudio — a decisão é dela, o eco é que não pode ser uma surpresa.
+   */
+  const [companion, setCompanion] = useState(false)
   // Regras de sala impostas pelo anfitrião (R92). Vêm SEMPRE do servidor —
   // nunca se decidem aqui, porque esconder um botão não impede ninguém de
   // enviar a mensagem pelo socket.
@@ -1172,6 +1183,15 @@ export default function Room({
           // Wi-Fi que cai, aba que dorme — devolve o mesmo lugar, com o papel
           // de anfitrião e sem voltar à sala de espera.
           if (m.reconnect) Signaling.guardarSegredo(code, m.reconnect)
+          // O servidor é que sabe que a outra sessão é minha — o cliente não
+          // tem como saber. Entrar mudo é a decisão segura por omissão: um eco
+          // estraga a reunião para TODA a gente, não só para quem o causou.
+          if (m.companion) {
+            setCompanion(true)
+            const mic = localStreamRef.current?.getAudioTracks()[0]
+            if (mic) mic.enabled = false
+            setMicOn(false)
+          }
           meuPeerIdRef.current = m.peer_id
           // Marca o rejoin recente: o reload de reconexão (onclose) e os breakouts
           // saltam o prejoin dentro desta janela (ver init do joinIntent).
@@ -2506,7 +2526,7 @@ export default function Room({
 
         {/* Áudio de TODOS os participantes, independente do que a grelha
             mostra (ver AudioSink). Fora do `video-area` de propósito. */}
-        <AudioSink peers={peers} sinkId={speakerId} />
+        <AudioSink peers={peers} sinkId={speakerId} mudo={companion} />
 
         <div className="video-area" ref={videoAreaRef}>
         {(() => {
@@ -3889,6 +3909,27 @@ export default function Room({
           )
         })()}
 
+        {companion && (
+          <div className="toast companion-toast" role="status">
+            <SpeakerIcon />
+            <span>
+              <strong>{t('room.companion.tituloSemAudio')}</strong>. {t('room.companion.explicacao')}
+            </span>
+            <button
+              className="btn-sm primary"
+              onClick={() => {
+                // A decisão é da pessoa: pode estar noutra divisão, ou com
+                // auscultadores. O que não pode é o eco ser uma surpresa — por
+                // isso o aviso diz o que fazer ao outro dispositivo.
+                setCompanion(false)
+                setStatus(t('room.companion.silenciaOOutro'))
+              }}
+            >
+              {t('room.companion.usarAudioAqui')}
+            </button>
+          </div>
+        )}
+
         {recNotice && (
           <div className="toast rec-start-toast" role="status">
             <span className="rec-dot big" />
@@ -4662,17 +4703,17 @@ const TILES_PER_PAGE = 24
  * Regra: o que está no ecrã é decisão de layout; o que se ouve não pode
  * depender do layout.
  */
-function AudioSink({ peers, sinkId }: { peers: RemotePeer[]; sinkId: string }) {
+function AudioSink({ peers, sinkId, mudo }: { peers: RemotePeer[]; sinkId: string; mudo: boolean }) {
   return (
     <div className="audio-sink" aria-hidden style={{ display: 'none' }}>
       {peers.map((p) => (
-        <PeerAudio key={p.peerId} stream={p.stream} sinkId={sinkId} />
+        <PeerAudio key={p.peerId} stream={p.stream} sinkId={sinkId} mudo={mudo} />
       ))}
     </div>
   )
 }
 
-function PeerAudio({ stream, sinkId }: { stream: MediaStream | null; sinkId: string }) {
+function PeerAudio({ stream, sinkId, mudo }: { stream: MediaStream | null; sinkId: string; mudo: boolean }) {
   const ref = useRef<HTMLAudioElement>(null)
   useEffect(() => {
     const el = ref.current
@@ -4685,6 +4726,9 @@ function PeerAudio({ stream, sinkId }: { stream: MediaStream | null; sinkId: str
     const el = ref.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null
     if (el?.setSinkId) void el.setSinkId(sinkId || '').catch(() => {})
   }, [sinkId, stream])
-  return <audio ref={ref} autoPlay />
+  // `muted` e não «não montar»: o elemento tem de continuar ligado ao stream
+  // para que ligar o áudio seja instantâneo — e pela mesma razão do próprio
+  // `AudioSink`, o que se ouve não pode depender do que está montado.
+  return <audio ref={ref} autoPlay muted={mudo} />
 }
 

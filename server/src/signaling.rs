@@ -254,6 +254,18 @@ pub enum ServerMsg {
             serialize_with = "serializa_segredo_deliberadamente"
         )]
         reconnect: Option<Secret>,
+        /// Esta mesma CONTA já estava na sala noutro dispositivo (R114).
+        ///
+        /// É o «companion mode» do Meet: entrar pelo portátil e pelo telemóvel
+        /// ao mesmo tempo é útil — o telemóvel serve de comando e de câmara —
+        /// mas os dois microfones no mesmo espaço físico fazem um ciclo de eco
+        /// que estraga a reunião para toda a gente. Quem entra em segundo lugar
+        /// entra SEM áudio, e é avisado de porquê.
+        ///
+        /// A decisão é do servidor porque só ele sabe quem já lá está: o
+        /// cliente não tem como saber que a outra sessão é dele.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        companion: bool,
     },
     PeerJoined {
         peer: PeerInfo,
@@ -545,6 +557,23 @@ pub struct PeerInfo {
     pub is_bot: bool,
     #[serde(default)]
     pub is_pstn: bool,
+}
+
+/// O que o `Hub::join` devolve.
+///
+/// Era um par `(roster, segredo)`. Passou a struct quando entrou a terceira
+/// coisa: um tuplo de três valores sem relação entre si obriga quem lê a contar
+/// posições, e o `companion` — o único que muda o comportamento de quem entra —
+/// seria o mais fácil de trocar com o resto sem o compilador dizer nada.
+pub struct Entrada {
+    /// Quem já estava na sala.
+    pub roster: Vec<PeerInfo>,
+    /// Segredo para reclamar este lugar se o socket cair (R91).
+    pub reconnect_secret: String,
+    /// Esta CONTA já estava na sala noutro dispositivo (R114). Quem entra em
+    /// segundo lugar entra sem áudio: dois microfones da mesma pessoa no mesmo
+    /// espaço físico fazem um ciclo de eco.
+    pub companion: bool,
 }
 
 // ---------- Hub (room registry, WS-agnostic and unit-testable) ----------
@@ -871,7 +900,7 @@ impl SignalingHub {
         can_admit: bool,
         is_bot: bool,
         tx: PeerTx,
-    ) -> (Vec<PeerInfo>, String) {
+    ) -> Entrada {
         // O segredo de reclamação nasce aqui e é a ÚNICA coisa que sai deste
         // método além do roster: quem entra leva-o, ninguém mais o vê.
         let segredo = novo_segredo_de_reclamacao();
@@ -879,8 +908,20 @@ impl SignalingHub {
         // BEFORE broadcasting. Broadcasting calls broadcast_all_local which
         // calls self.rooms.get() — acquiring a read lock on the same shard
         // while a write lock is held causes a deadlock that hangs tokio threads.
-        let (existing, announce, waiting_msgs) = {
+        let (existing, announce, waiting_msgs, companion) = {
             let mut room = self.rooms.entry(room_id).or_default();
+            // A MESMA conta já cá está? Decide-se DENTRO do lock de escrita: se
+            // fosse uma pergunta separada antes do `join`, duas entradas
+            // simultâneas do mesmo utilizador podiam ambas ler «não está» e
+            // entrar as duas com microfone.
+            //
+            // Um lugar reservado por queda de socket (`disconnected_at`) NÃO
+            // conta: é a mesma sessão a voltar por um `F5`, e trancar-lhe o
+            // áudio seria castigar uma quebra de rede.
+            let companion = room
+                .peers
+                .values()
+                .any(|p| p.user_id == user_id && p.disconnected_at.is_none());
             let existing: Vec<PeerInfo> = room
                 .peers
                 .iter()
@@ -944,13 +985,17 @@ impl SignalingHub {
                     disconnected_at: None,
                 },
             );
-            (existing, announce, waiting_msgs)
+            (existing, announce, waiting_msgs, companion)
         }; // ← DashMap write lock released here
         self.broadcast_all(room_id, announce);
         for msg in waiting_msgs {
             let _ = tx.send(msg);
         }
-        (existing, segredo)
+        Entrada {
+            roster: existing,
+            reconnect_secret: segredo,
+            companion,
+        }
     }
 
     /// O socket caiu, mas o lugar NÃO se perde já (R91).
@@ -2360,7 +2405,7 @@ async fn handle_socket(
             .apply_redis_state(room_id, polls, qa, wb, timer, locked, host_share);
     }
 
-    let (peers, reconnect_secret) = state.hub.join(
+    let entrada = state.hub.join(
         room_id,
         peer_id,
         user_id,
@@ -2372,8 +2417,9 @@ async fn handle_socket(
     );
     let _ = tx.send(ServerMsg::Joined {
         peer_id,
-        peers,
-        reconnect: Some(Secret::new(reconnect_secret)),
+        peers: entrada.roster,
+        reconnect: Some(Secret::new(entrada.reconnect_secret)),
+        companion: entrada.companion,
     });
     // Quem entra a meio recebe o estado ATUAL da sala. A condição é «alguma
     // coisa está diferente do normal», e por isso inclui os dois campos novos:
@@ -2903,8 +2949,8 @@ mod tests {
         let (a, tx_a, mut rx_a) = peer();
         let (b, tx_b, _rx_b) = peer();
 
-        let (roster_a, _) = hub.join(room, a, a, "alice".into(), true, true, false, tx_a);
-        assert!(roster_a.is_empty());
+        let roster_a = hub.join(room, a, a, "alice".into(), true, true, false, tx_a);
+        assert!(roster_a.roster.is_empty());
 
         // O anúncio de entrada vai para TODA a sala, incluindo quem entra — ver
         // `joiner_also_receives_its_own_announcement`. A primeira mensagem da
@@ -2913,11 +2959,11 @@ mod tests {
         // três) marcados como `#[ignore]`, a não proteger nada.
         drain(&mut rx_a);
 
-        let (roster_b, _) = hub.join(room, b, b, "bob".into(), false, false, false, tx_b);
-        assert_eq!(roster_b.len(), 1);
-        assert_eq!(roster_b[0].peer_id, a);
-        assert_eq!(roster_b[0].username, "alice");
-        assert!(roster_b[0].host, "alice é anfitriã");
+        let roster_b = hub.join(room, b, b, "bob".into(), false, false, false, tx_b);
+        assert_eq!(roster_b.roster.len(), 1);
+        assert_eq!(roster_b.roster[0].peer_id, a);
+        assert_eq!(roster_b.roster[0].username, "alice");
+        assert!(roster_b.roster[0].host, "alice é anfitriã");
 
         match rx_a.recv().await.unwrap() {
             ServerMsg::PeerJoined { peer } => {
@@ -3207,7 +3253,7 @@ mod tests {
         }
         // Estado da mão fica no roster para quem entrar depois.
         let (c, tx_c, _rx_c) = peer();
-        let (roster, _) = hub.join(room, c, c, "carol".into(), false, false, false, tx_c);
+        let roster = hub.join(room, c, c, "carol".into(), false, false, false, tx_c).roster;
         let bob = roster.iter().find(|p| p.peer_id == b).unwrap();
         assert!(bob.hand);
     }
@@ -3265,7 +3311,7 @@ mod tests {
         let room = Uuid::new_v4();
         let (a, tx_a, _rx_a) = peer();
         let (b, tx_b, mut rx_b) = peer();
-        let (_, segredo) = hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        let segredo = hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a).reconnect_secret;
         hub.join(room, b, b, "b".into(), false, false, false, tx_b);
         drain(&mut rx_b);
 
@@ -3296,7 +3342,7 @@ mod tests {
         let hub = SignalingHub::default();
         let room = Uuid::new_v4();
         let (a, tx_a, _rx) = peer();
-        let (_, segredo) = hub.join(room, a, a, "a".into(), true, true, false, tx_a);
+        let segredo = hub.join(room, a, a, "a".into(), true, true, false, tx_a).reconnect_secret;
         hub.disconnect(room, a);
 
         assert!(
@@ -3316,6 +3362,58 @@ mod tests {
             .is_some());
     }
 
+    /// A MESMA conta a entrar duas vezes é o «companion mode»: portátil e
+    /// telemóvel na mesma reunião. Útil — e um ciclo de eco garantido se os dois
+    /// microfones estiverem ligados no mesmo espaço físico.
+    ///
+    /// A decisão tem de ser do SERVIDOR: o cliente não tem como saber que a
+    /// outra sessão é dele.
+    #[tokio::test]
+    async fn segunda_sessao_da_mesma_conta_entra_como_companion() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let conta = Uuid::new_v4();
+        let (p1, tx1, _r1) = peer();
+        let (p2, tx2, _r2) = peer();
+        let (p3, tx3, _r3) = peer();
+
+        let primeira = hub.join(room, p1, conta, "eu".into(), true, true, false, tx1);
+        assert!(!primeira.companion, "a primeira sessão nunca é companion");
+
+        let outra_conta = hub.join(room, p2, Uuid::new_v4(), "outro".into(), false, false, false, tx2);
+        assert!(
+            !outra_conta.companion,
+            "outra PESSOA na sala não faz de ninguém companion"
+        );
+
+        let segunda = hub.join(room, p3, conta, "eu".into(), false, false, false, tx3);
+        assert!(
+            segunda.companion,
+            "a segunda sessão da MESMA conta entra sem áudio"
+        );
+    }
+
+    /// Um `F5` a meio da reunião não é um segundo dispositivo. O lugar fica
+    /// reservado (R91) e, ao voltar, trancar-lhe o áudio seria castigar uma
+    /// quebra de rede — que é exactamente o oposto do que o R91 foi resolver.
+    #[tokio::test]
+    async fn reentrar_depois_de_uma_queda_nao_e_companion() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let conta = Uuid::new_v4();
+        let (p1, tx1, _r1) = peer();
+        let (p2, tx2, _r2) = peer();
+
+        hub.join(room, p1, conta, "eu".into(), true, true, false, tx1);
+        assert!(hub.disconnect(room, p1), "o lugar tem de ficar reservado");
+
+        let volta = hub.join(room, p2, conta, "eu".into(), true, true, false, tx2);
+        assert!(
+            !volta.companion,
+            "voltar de um F5 não é um segundo dispositivo"
+        );
+    }
+
     /// O segredo é de UMA sala. Sem isto, o mesmo segredo abriria um lugar noutra
     /// reunião — que é atravessar a fronteira de sala, a invariante nº 1.
     #[tokio::test]
@@ -3324,7 +3422,7 @@ mod tests {
         let (r1, r2) = (Uuid::new_v4(), Uuid::new_v4());
         let (a, tx_a, _rx_a) = peer();
         let (b, tx_b, _rx_b) = peer();
-        let (_, seg1) = hub.join(r1, a, a, "a".into(), true, true, false, tx_a);
+        let seg1 = hub.join(r1, a, a, "a".into(), true, true, false, tx_a).reconnect_secret;
         hub.join(r2, b, b, "b".into(), false, false, false, tx_b);
         hub.disconnect(r1, a);
         hub.disconnect(r2, b);
@@ -3346,7 +3444,7 @@ mod tests {
         let hub = SignalingHub::default();
         let room = Uuid::new_v4();
         let (a, tx_a, _rx) = peer();
-        let (_, segredo) = hub.join(room, a, a, "a".into(), true, true, false, tx_a);
+        let segredo = hub.join(room, a, a, "a".into(), true, true, false, tx_a).reconnect_secret;
         assert!(
             hub.reclaim(room, &segredo, std::time::Duration::from_secs(45))
                 .is_none(),
@@ -3363,7 +3461,7 @@ mod tests {
         let room = Uuid::new_v4();
         let (a, tx_a, _rx_a) = peer();
         let (b, tx_b, mut rx_b) = peer();
-        let (_, segredo) = hub.join(room, a, a, "a".into(), true, true, false, tx_a);
+        let segredo = hub.join(room, a, a, "a".into(), true, true, false, tx_a).reconnect_secret;
         hub.join(room, b, b, "b".into(), false, false, false, tx_b);
         hub.disconnect(room, a);
         drain(&mut rx_b);

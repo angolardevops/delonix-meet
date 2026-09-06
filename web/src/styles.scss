@@ -3713,6 +3713,21 @@ button.link:hover {
   animation: rec-toast-in 0.25s ease;
 }
 .room-page .rec-dot.big { width: 11px; height: 11px; }
+
+/* Aviso de segunda sessão da mesma conta (companion mode, R114).
+   Fica ATÉ a pessoa decidir: não é uma notificação que passa, é um estado —
+   quem não perceber porque não se ouve nada tem de ter a resposta no ecrã. */
+.room-page .companion-toast {
+  border: 1px solid rgba(255,255,255,0.18);
+  gap: 12px;
+  max-width: min(560px, calc(100vw - 32px));
+  text-align: left;
+  animation: rec-toast-in 0.25s ease;
+}
+.room-page .companion-toast .btn-sm { flex: 0 0 auto; white-space: nowrap; }
+@media (max-width: 640px) {
+  .room-page .companion-toast { flex-wrap: wrap; justify-content: center; text-align: center; }
+}
 @keyframes rec-toast-in {
   from { opacity: 0; transform: translate(-50%, -8px); }
   to { opacity: 1; transform: translate(-50%, 0); }

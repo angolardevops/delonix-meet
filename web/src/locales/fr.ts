@@ -400,6 +400,12 @@ export default {
       nadaParaMostrar: "Aucune vidéo à afficher dans la fenêtre.",
       recusada: "Le navigateur a refusé la fenêtre flottante. Fermez celle d’un autre onglet et réessayez.",
     },
+    companion: {
+      tituloSemAudio: "Vous êtes déjà dans cette réunion sur un autre appareil",
+      explicacao: "Celui-ci est entré sans micro ni son, pour éviter l’écho entre les deux.",
+      usarAudioAqui: "Utiliser l’audio ici",
+      silenciaOOutro: "Audio activé ici — coupez l’autre appareil pour éviter l’écho.",
+    },
     barra: {
       duracaoDaReuniao: 'Durée de la réunion',
       codigoDeSegurancaDa: 'Code de sécurité de la salle',
