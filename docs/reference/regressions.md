@@ -1251,3 +1251,44 @@ substituídos por um de parser), `web/src/App.tsx`,
 `web/src/pages/{Analytics,ApiDocs,Recordings,Room,SharePage,Status}.tsx`,
 `web/src/room/RemoteTile.tsx`, `web/src/icons.tsx` (`PlugIcon`),
 `web/src/locales/{pt,en,fr}.ts`.
+
+### R113 — O francês tinha vinte chaves a menos, e ninguém falhava
+
+**Sintoma.** Um utilizador francês via `admin.ssoTitle`, `recordings.searchPh` e
+mais dezoito **identificadores crus** no ecrã — o painel de SSO inteiro e metade
+das gravações. Uma chave em falta no i18next não falha nem avisa: mostra o nome
+da chave.
+
+**Causa.** O portão de paridade olhava **só para o bloco `room`** — foi escrito
+quando o problema era a sala (R99) e nunca cresceu com o ficheiro. Fora desse
+bloco, os três locales podiam divergir à vontade. E divergiam: além das 20 em
+falta, o francês tinha quatro chaves órfãs num bloco `rec` que nada lê.
+
+**Segundo defeito, encontrado a MEDIR e não a olhar.** O francês tinha, no mesmo
+botão onde o português diz «Reunião E2EE» (14 caracteres), a frase «🔒 Créer une
+réunion E2EE (chiffrée de bout en bout, avec phrase secrète)» — 62. E o mesmo em
+«Sala de espera». Um rótulo que quadruplica não cabe onde cabia, e **ninguém dá
+por isso sem abrir a aplicação em francês** — que é precisamente o que eu tinha
+escrito duas vezes como «não validado».
+
+**Regra.** Paridade em **todas** as chaves, não num bloco. E uma tradução mais de
+2,2× mais longa (+12 caracteres) do que o original é tratada como defeito: o
+limiar deixa passar a expansão normal do francês e do inglês, que é real e ronda
+os 20 %, e apanha quem escreveu uma explicação onde devia estar um rótulo.
+
+**Terceiro.** O portão dos emoji passou a olhar também para os locales — o R112
+mostrou que uma frase com emoji mudada para lá deixa de ser vista. A fronteira é
+entre **iconografia** e **prosa**, e é o porquê que a traça: um emoji no início
+de um rótulo está no lugar de um ícone (`🚪 Sala presencial`, `📅 .ics` →
+`DoorIcon`, `CalendarIcon`); um emoji dentro de uma frase é tom («Tudo pronto!
+🎉») ou aponta para um glifo que o próprio browser desenha («clica no cadeado 🔒
+na barra de endereço») — e aí trocá-lo por um ícone nosso tornaria a frase menos
+útil. Não há regra de posição a adivinhar: há uma lista curta, com a razão ao
+lado.
+
+**Portão.** `web/src/lote2.invariantes.test.ts` — paridade total (>900 chaves),
+divergência de comprimento, e emoji nos locales. Os três sabotados, os três a
+vermelho.
+
+**Ficheiros.** `web/src/locales/{pt,en,fr}.ts`, `web/src/pages/Calendar.tsx`,
+`web/src/lote2.invariantes.test.ts`.

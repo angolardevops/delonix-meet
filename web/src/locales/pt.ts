@@ -1019,7 +1019,7 @@ export default {
     // EventModal tabs
     tabDetails: 'Detalhes', tabAgenda: 'Agenda', tabActions: 'Plano de Ação',
     // EventModal detail
-    physRoom: '🚪 Sala presencial: ',
+    physRoom: 'Sala presencial: ',
     inviteConfirm: 'Confirmas a tua presença?',
     accept: 'Aceitar', decline: 'Recusar', back: 'Voltar',
     accepted: '✓ Aceitaste esta reunião',
@@ -1031,7 +1031,7 @@ export default {
     declineMotif: 'Motivo: {{reason}}',
     mom: 'Ata (MoM)',
     enterRoom: 'Entrar', startRoom: 'Iniciar reunião',
-    ics: '📅 .ics',
+    ics: '.ics',
     cancelMeeting: 'Cancelar',
     voiceCall: 'Chamada de voz', videoCall: 'Videochamada',
     // Agenda panel
