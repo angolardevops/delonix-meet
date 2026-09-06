@@ -104,107 +104,103 @@ describe('3.1.4 · as ações não desaparecem no telemóvel', () => {
 })
 
 describe('3.2.5 · nada de emoji como controlo na consola', () => {
+  // A REGRA VEM DO PORQUÊ. Um emoji renderiza DIFERENTE por sistema operativo,
+  // é colorido, e NÃO herda `currentColor` — fica com a sua cor sobre um botão
+  // que muda de cor. Isso é verdade dos PICTOGRAMAS (🔒 📞 🤖 💾 🏆). Não é
+  // verdade das setas (← → ↑ ↓), do ✓, do ● nem do ⧉: são tipografia, herdam a
+  // cor, e renderizam igual em todo o lado. Uma versão anterior metia-os no
+  // mesmo saco e acusava 56 sítios, a maioria setas em prosa — um portão que
+  // grita por tudo é ignorado tal como um portão cego.
+  const EMOJI = /[\u{1F300}-\u{1FAFF}\u{FE0F}]/u
   // `⌘` e `⌥` são NOMES DE TECLAS dentro de <kbd> — conteúdo, não controlo.
   const TECLAS = /[\u2318\u2325\u21E7\u23CE]/u
-  // A REGRA VEM DO PORQUÊ, não de um intervalo escolhido de cabeça. O que o
-  // `icons.tsx` diz desde sempre: um emoji renderiza DIFERENTE por sistema
-  // operativo, é COLORIDO, e NÃO herda `currentColor` — fica com a sua cor
-  // sobre um botão que muda de cor.
-  //
-  // Isso é verdade dos PICTOGRAMAS (🔒 📞 🤖 💾 🏆). Não é verdade das setas
-  // (← → ↑ ↓ ↖), do ✓, do ● nem do ⧉: são tipografia, herdam a cor, e
-  // renderizam igual em todo o lado. A segunda versão deste portão metia-os no
-  // mesmo saco e acusava 56 sítios, dos quais a maioria eram setas em prosa e
-  // indicadores de banda — um portão que grita por tudo é ignorado tal como um
-  // portão cego.
-  const EMOJI = /[\u{1F300}-\u{1FAFF}\u{FE0F}]/u
 
-  // TERCEIRA versão deste portão, e as duas anteriores davam falsa segurança.
+  // ── QUINTA versão, e a primeira com parser (R113) ────────────────────────
   //
-  //   1ª: `>\s*(.{1,4})\s*<` — só apanhava glifos SOZINHOS entre tags. O caso
-  //       comum é o glifo SEGUIDO do rótulo, e escapava (R88).
-  //   2ª: `{1,120}` — melhor, mas a classe `[^<>{}\n]` exclui `{`, por isso
-  //       `⧉ {t('…')}` — emoji ao lado de uma EXPRESSÃO — continuava invisível.
-  //       Vinte e um escaparam assim.
+  // As quatro anteriores foram linha-a-linha, e cada uma comprou um problema:
   //
-  // A lição: um portão construído sobre «que forma tem o defeito que EU vi» erra
-  // na forma seguinte. Este procura o glifo em QUALQUER linha de marcação, e
-  // deixa de fora o que é conteúdo por razão escrita — não por acidente de
-  // sintaxe.
-  // Os emoji do PAINEL DE REACÇÕES e do teclado de chat são conteúdo: é a
-  // pessoa que os escolhe e envia. Ficam de fora — mas SÓ eles.
+  //   1ª: `>\s*(.{1,4})\s*<` — só via glifos SOZINHOS entre tags (R88).
+  //   2ª: `{1,120}` com `[^<>{}\n]` — a classe exclui `{`, e `⧉ {t('…')}`
+  //       ficava invisível. Vinte e um escaparam assim.
+  //   3ª/4ª: a isenção dos emoji de reacção começava numa linha que os
+  //       mencionasse e acabava no `]` seguinte. Só que
+  //       `{REACTION_EMOJIS.map((e) => (` também a activa, e o `]` que a fechava
+  //       aparecia 223 linhas abaixo: a barra de controlo inteira ficou fora do
+  //       portão, com dois emoji lá dentro (R105).
   //
-  // QUARTA versão, e a terceira tinha o pior tipo de defeito: um portão que
-  // dava verde por cima de 223 linhas. A regra era «a partir de uma linha que
-  // mencione REACTION_EMOJIS, ignora até um `]`», e a linha
-  // `{REACTION_EMOJIS.map((e) => (` está a meio do JSX da barra — o `]` que a
-  // fechava só aparecia 223 linhas abaixo. Toda a barra de controlo ficava
-  // fora do portão, com dois emoji lá dentro.
+  // Havia ainda uma lista de 16 ficheiros escrita à mão — uma página nova
+  // nascia sem portão nenhum — e uma exigência de a linha ter `<`, `>` ou `{`,
+  // que deixava passar um nó de texto sozinho na sua linha.
   //
-  // A lição repete-se pela quarta vez: uma regra construída sobre a FORMA que
-  // o defeito tinha da última vez erra na forma seguinte. Esta não adivinha
-  // onde o conteúdo acaba — a isenção vale para a linha que nomeia a constante
-  // (uma linha, nunca um intervalo) e para o corpo das DECLARAÇÕES, delimitado
-  // por contagem de parênteses rectos a partir do `const X = [`.
-  const CONTEUDO = /REACTION_EMOJIS|CHAT_EMOJIS/
-  const DECLARACAO = /const (REACTION_EMOJIS|CHAT_EMOJIS)\s*=/
-  function linhasDeConteudo(texto: string): Set<number> {
-    const fora = new Set<number>()
-    const linhas = texto.split('\n')
-    for (let i = 0; i < linhas.length; i++) {
-      if (CONTEUDO.test(linhas[i])) fora.add(i)
-      if (!DECLARACAO.test(linhas[i])) continue
-      let nivel = 0
-      for (let j = i; j < linhas.length; j++) {
-        fora.add(j)
-        for (const ch of linhas[j]) {
-          if (ch === '[') nivel++
-          else if (ch === ']') nivel--
+  // Com o parser nada disto é preciso. Um `JsxText` é texto que aparece no
+  // ecrã; um emoji ESCOLHIDO por quem usa a app chega como `JsxExpression`
+  // (`{e}` dentro do `.map`) e nunca como `JsxText` — a isenção deixa de ser
+  // uma heurística e passa a ser uma consequência da forma do programa.
+  const VISIVEIS =
+    /^(title|placeholder|alt|label|desc|caption|subtitle|summary|tooltip|hint|message|data-tip|aria-.*)$/
+  it('nenhum JSX usa emoji como iconografia', () => {
+    const soltos: string[] = []
+    for (const f of listarTsx('web/src')) {
+      if (f.includes('/locales/')) continue
+      const sf = ts.createSourceFile(f, read(f), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+      const visitar = (n: ts.Node) => {
+        if (ts.isJsxText(n)) {
+          const v = n.text.replace(/\s+/g, ' ').trim()
+          if (EMOJI.test(v) && !TECLAS.test(v)) soltos.push(`${f} [texto]: ${v.slice(0, 60)}`)
         }
-        if (nivel <= 0 && j > i - 1 && linhas[j].includes(']')) break
+        if (ts.isJsxAttribute(n) && n.initializer && VISIVEIS.test(n.name.getText())) {
+          const ini = n.initializer
+          const lit = ts.isStringLiteral(ini)
+            ? ini
+            : ts.isJsxExpression(ini) && ini.expression && ts.isStringLiteral(ini.expression)
+              ? ini.expression
+              : null
+          if (lit && EMOJI.test(lit.text) && !TECLAS.test(lit.text)) {
+            soltos.push(`${f} [${n.name.getText()}]: ${lit.text.slice(0, 60)}`)
+          }
+        }
+        ts.forEachChild(n, visitar)
+      }
+      visitar(sf)
+    }
+    expect(soltos).toEqual([])
+  })
+
+  it('e os locales também não — um emoji não se resolve mudando-o de ficheiro', () => {
+    // Aconteceu no R112: ao mover frases para os locales, um `🔌` foi com elas,
+    // e o portão só olhava para `.tsx`. Passar um problema para onde o portão
+    // não olha não é resolvê-lo.
+    //
+    // A FRONTEIRA aqui é entre ICONOGRAFIA e PROSA, e é o porquê que a traça:
+    // o problema do emoji é ficar no LUGAR DE UM ÍCONE — no início de um
+    // rótulo, num botão, com a sua cor própria sobre um fundo que muda. Um
+    // emoji DENTRO de uma frase é outra coisa: ou é tom («Tudo pronto! 🎉»), ou
+    // aponta para um glifo que o próprio browser desenha e que a pessoa tem de
+    // encontrar («clica no cadeado 🔒 na barra de endereço») — e aí trocá-lo por
+    // um ícone nosso tornaria a frase MENOS útil, não mais.
+    //
+    // Por isso não há regra de posição a adivinhar: há uma lista, com a razão
+    // ao lado, e ela é curta de propósito. Se crescer, é sinal de que voltou a
+    // entrar iconografia por aqui.
+    const PROSA = [
+      'cadeado 🔒',       // aponta para o cadeado que o BROWSER desenha
+      'Meet 👋',          // tom, na primeira frase do tour
+      'pronto! 🎉',       // tom, no fim do tour
+      'período. 🎉',      // tom, num estado vazio que é boa notícia
+      "all set! 🎉", 'padlock 🔒', 'period. 🎉',
+      'cadenas 🔒', 'prêt ! 🎉', 'période. 🎉',
+    ]
+    const soltos: string[] = []
+    for (const loc of ['pt', 'en', 'fr']) {
+      for (const l of read(`web/src/locales/${loc}.ts`).split('\n')) {
+        if (l.trim().startsWith('//')) continue
+        if (!EMOJI.test(l)) continue
+        if (PROSA.some((p) => l.includes(p))) continue
+        soltos.push(`${loc}: ${l.trim().slice(0, 70)}`)
       }
     }
-    return fora
-  }
-  const CHROME = [
-    'web/src/components/Shell.tsx',
-    'web/src/components/CommandPalette.tsx',
-    'web/src/pages/Home.tsx',
-    'web/src/pages/Recordings.tsx',
-    'web/src/pages/Directory.tsx',
-    'web/src/pages/Room.tsx',
-    'web/src/room/RemoteTile.tsx',
-    'web/src/pages/Lobby.tsx',
-    'web/src/components/MfaPanel.tsx',
-    'web/src/components/OnboardingTour.tsx',
-    'web/src/App.tsx',
-    'web/src/pages/Landing.tsx',
-    'web/src/pages/Analytics.tsx',
-    'web/src/pages/Roadmap.tsx',
-    'web/src/pages/ApiDocs.tsx',
-    'web/src/pages/Studio.tsx',
-  ]
-  for (const f of CHROME) {
-    it(`${f.split('/').pop()} não usa emoji como iconografia`, () => {
-      const soltos: string[] = []
-      const texto = read(f)
-      const conteudo = linhasDeConteudo(texto)
-      const linhas = texto.split('\n')
-      for (let n = 0; n < linhas.length; n++) {
-        const l = linhas[n]
-        if (conteudo.has(n)) continue
-        const t = l.trim()
-        if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) continue
-        // comentário JSX (`{/* … */}`) e comentário no fim de uma linha de
-        // código não são interface.
-        if (t.includes('{/*') || /\S\s+\/\/ /.test(l)) continue
-        // só linhas de MARCAÇÃO: com tag ou com chaveta de expressão
-        if (!/[<>]/.test(l) && !/\{/.test(l)) continue
-        if (EMOJI.test(l) && !TECLAS.test(l)) soltos.push(t.slice(0, 70))
-      }
-      expect(soltos).toEqual([])
-    })
-  }
+    expect(soltos).toEqual([])
+  })
 })
 
 describe('3.2.6 · a identidade é nossa, não emprestada', () => {
@@ -434,18 +430,56 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     expect(soltos).toEqual([])
   })
 
-  it('pt, en e fr têm exactamente as mesmas chaves em `room`', () => {
-    const chaves = (f: string) => {
-      const s = read(`web/src/locales/${f}.ts`)
-      const i = s.indexOf('  room: {')
-      expect(i, `${f}.ts não tem bloco room`).toBeGreaterThan(-1)
-      const bloco = s.slice(i, s.indexOf('\n  },', i))
-      return [...bloco.matchAll(/^\s{6}(\w+):/gm)].map((m) => m[1]).sort()
+  /**
+   * Lê um ficheiro de locale para um mapa `caminho.da.chave -> texto`.
+   *
+   * O portão anterior olhava SÓ para o bloco `room`, e por isso não viu que o
+   * francês tinha **20 chaves a menos** — o painel de SSO inteiro e metade das
+   * gravações. Uma chave em falta não falha nem avisa: o i18next mostra o
+   * identificador cru, e o utilizador francês lê `admin.ssoTitle` no ecrã.
+   */
+  function mapaDeLocale(loc: string): Record<string, string> {
+    const out: Record<string, string> = {}
+    const pilha: string[] = []
+    for (const linha of read(`web/src/locales/${loc}.ts`).split('\n')) {
+      const t = linha.trim()
+      const abre = t.match(/^([A-Za-z0-9_]+):\s*\{$/)
+      if (abre) { pilha.push(abre[1]); continue }
+      if (t.startsWith('}')) { pilha.pop(); continue }
+      const par = t.match(/^([A-Za-z0-9_]+):\s*(['"])((?:\\.|(?!\2).)*)\2\s*,?$/)
+      if (par) out[[...pilha, par[1]].join('.')] = par[3]
     }
-    const pt = chaves('pt')
-    expect(pt.length).toBeGreaterThan(100)
-    expect(chaves('en')).toEqual(pt)
-    expect(chaves('fr')).toEqual(pt)
+    return out
+  }
+
+  it('pt, en e fr têm exactamente as mesmas chaves — em TODOS os blocos', () => {
+    const pt = Object.keys(mapaDeLocale('pt')).sort()
+    expect(pt.length).toBeGreaterThan(900)
+    expect(Object.keys(mapaDeLocale('en')).sort()).toEqual(pt)
+    expect(Object.keys(mapaDeLocale('fr')).sort()).toEqual(pt)
+  })
+
+  it('nenhuma tradução é uma FRASE onde o português é um rótulo', () => {
+    // Encontrado a medir, não a olhar: o francês tinha «🔒 Créer une réunion
+    // E2EE (chiffrée de bout en bout, avec phrase secrète)» onde o português
+    // tem «Reunião E2EE» — os dois no MESMO botão. Um rótulo que quadruplica de
+    // comprimento não cabe onde cabia, e ninguém dá por isso sem abrir a app em
+    // francês.
+    //
+    // O limiar não é uma opinião sobre estilo: 2,2× MAIS 12 caracteres deixa
+    // passar a expansão normal do francês e do inglês (que é real e ronda os
+    // 20 %) e apanha quem escreveu uma explicação onde devia estar um rótulo.
+    const pt = mapaDeLocale('pt')
+    const maus: string[] = []
+    for (const loc of ['en', 'fr']) {
+      const o = mapaDeLocale(loc)
+      for (const [k, v] of Object.entries(pt)) {
+        const w = o[k]
+        if (!w || v.length < 6) continue
+        if (w.length > v.length * 2.2 + 12) maus.push(`${k} [${loc}] ${v.length} → ${w.length}: ${w.slice(0, 50)}`)
+      }
+    }
+    expect(maus).toEqual([])
   })
 })
 

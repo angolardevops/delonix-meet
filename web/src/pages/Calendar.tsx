@@ -31,7 +31,7 @@ import {
   downloadMeetingIcs,
   User,
 } from '../api'
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, ClockIcon, CloseIcon, EditIcon, PlusIcon, RepeatIcon, TrashIcon, VideoIcon, VoiceCallIcon } from '../icons'
+import { CalendarIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, ClockIcon, CloseIcon, DoorIcon, EditIcon, PlusIcon, RepeatIcon, TrashIcon, VideoIcon, VoiceCallIcon } from '../icons'
 
 /** Carrega as salas presenciais de todas as organizações do utilizador. */
 async function loadAllRooms(): Promise<MeetingRoom[]> {
@@ -883,7 +883,7 @@ function EventModal({
             </div>
           </div>
         </div>
-        {meeting.room_name && <p className="event-room">{tr('physRoom')}<strong>{meeting.room_name}</strong></p>}
+        {meeting.room_name && <p className="event-room"><DoorIcon /> {tr('physRoom')}<strong>{meeting.room_name}</strong></p>}
 
         {/* Tabs */}
         <div className="event-tabs">
@@ -969,7 +969,7 @@ function EventModal({
             className="btn-sm ghost"
             onClick={() => void downloadMeetingIcs(meeting.id, meeting.title).catch(() => {})}
           >
-            {tr('ics')}
+            <CalendarIcon /> {tr('ics')}
           </button>
           {meeting.is_owner && (
             <button className="btn-sm ghost" onClick={() => onRemove(meeting)}><TrashIcon /> {tr('cancel')}</button>
