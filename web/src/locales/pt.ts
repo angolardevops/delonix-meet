@@ -4,6 +4,7 @@
 
 export default {
   status: {
+    chamadaCom: "Chamada com {{nome}}",
     chamadaDeVoz: "Chamada de voz",
     chamadaPerdida: "Chamada perdida",
     baseDeDados: "Base de dados",
@@ -255,6 +256,17 @@ export default {
       guardarAta: 'Guardar ata',
     },
     txt: {
+      transcricaoIniciadaPor: "Transcrição iniciada por {{nome}} — a tua fala é captada",
+      quadroPartilhadoPor: "Quadro branco partilhado por {{nome}}",
+      semLigacaoATentar: "Sem ligação ao servidor — a tentar de novo ({{n}}/{{total}})…",
+      nomeFicheiroGravacao: "Reunião {{code}} — {{stamp}}.webm",
+      nomeQuadro: "Quadro · {{code}}",
+      ligacaoDeMedia: "Ligação de media: {{estado}}",
+      aChamarPessoas: "A chamar {{n}} pessoa(s)…",
+      nOffline: "({{n}} offline)",
+      chamar: "Chamar",
+      viaTurnRelay: "via retransmissão TURN",
+      encoderTravadoCpu: "codificador travado por CPU",
       aLigar: "A ligar…",
       passarAnfitriao: "Passar o papel de anfitrião a esta pessoa? Só ela to poderá devolver.",
       camaraBloqueada: "Câmara/microfone BLOQUEADOS neste site — clica no cadeado 🔒 na barra de endereço, permite Câmara e Microfone, e recarrega a página.",
@@ -437,6 +449,7 @@ export default {
     retry: 'Tentar outra vez',
   },
   common: {
+    reuniaoDe: "Reunião de {{nome}}",
     ocultarPassword: "Ocultar password",
     mostrarPassword: "Mostrar password",
     falhaAoGuardar: "Falha ao guardar",

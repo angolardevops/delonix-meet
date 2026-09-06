@@ -2,6 +2,7 @@
 
 export default {
   status: {
+    chamadaCom: "Call with {{nome}}",
     chamadaDeVoz: "Voice call",
     chamadaPerdida: "Missed call",
     baseDeDados: "Database",
@@ -253,6 +254,17 @@ export default {
       guardarAta: 'Save minutes',
     },
     txt: {
+      transcricaoIniciadaPor: "Transcript started by {{nome}} — your speech is being captured",
+      quadroPartilhadoPor: "Whiteboard shared by {{nome}}",
+      semLigacaoATentar: "No connection to the server — retrying ({{n}}/{{total}})…",
+      nomeFicheiroGravacao: "Meeting {{code}} — {{stamp}}.webm",
+      nomeQuadro: "Board · {{code}}",
+      ligacaoDeMedia: "Media connection: {{estado}}",
+      aChamarPessoas: "Calling {{n}} people…",
+      nOffline: "({{n}} offline)",
+      chamar: "Call",
+      viaTurnRelay: "via TURN relay",
+      encoderTravadoCpu: "encoder throttled by CPU",
       aLigar: "Connecting…",
       passarAnfitriao: "Hand the host role to this person? Only they will be able to give it back.",
       camaraBloqueada: "Camera/microphone BLOCKED on this site — click the padlock in the address bar, allow Camera and Microphone, then reload the page.",
@@ -435,6 +447,7 @@ export default {
     retry: 'Try again',
   },
   common: {
+    reuniaoDe: "{{nome}}’s meeting",
     ocultarPassword: "Hide password",
     mostrarPassword: "Show password",
     falhaAoGuardar: "Could not save",

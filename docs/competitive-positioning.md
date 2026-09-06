@@ -116,7 +116,7 @@ Exportar dados do Zoom/Teams/Meet para outro sistema é difícil por design.
 | Hardware rooms | ✅ | ✅ | ✅ | Não planeado |
 | Live captions (API) | ✅ | ✅ | ✅ | Whisper local (feito) |
 | MLS key agreement | ✅ (Zoom) | ⚠️ | ❌ | Roadmap |
-| Remote desktop control | ✅ | ✅ | ❌ | Roadmap |
+| Remote desktop control | ✅ | ✅ | ❌ | **Recusado até haver agente nativo** — o handshake de sinalização existe e está testado; o encaminhamento de input não existe e NÃO PODE existir só no browser (ver `web/src/capabilities.ts` e R109) |
 | DLP / information protection | ❌ (⚠️Teams) | ✅ | ❌ | Roadmap |
 
 ---

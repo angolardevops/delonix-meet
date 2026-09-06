@@ -191,7 +191,7 @@ export default function PresenceProvider({
     void ackMissedCalls().catch(() => {})
   }
   function callBack(mc: MissedCall) {
-    presenceRef.current?.startCall({ targets: [mc.caller_id], kind: mc.kind, title: `Chamada com ${mc.caller_name}` })
+    presenceRef.current?.startCall({ targets: [mc.caller_id], kind: mc.kind, title: t('status.chamadaCom', { nome: mc.caller_name }) })
     dismissMissed()
   }
 
