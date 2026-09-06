@@ -1385,3 +1385,82 @@ em N-1, N e N+1 tem de devolver **sempre N**. Provado vermelho a repor o passo d
 relógio.
 
 **Ficheiros.** `server/src/mfa.rs`.
+### R114 — Entrar pelo telemóvel e pelo portátil dava um ciclo de eco
+
+**Lacuna, e uma afirmação a corrigir.** A matriz competitiva dava o *companion
+mode* como feito, «via QoS + múltiplos joins». Era outra maneira de dizer «entrar
+duas vezes funciona» — e funcionava: as duas sessões entravam, ambas com
+microfone e ambas com altifalante. No mesmo espaço físico isso é um ciclo de
+realimentação, e o ruído não é problema de quem o causa: é de **toda a gente na
+reunião**, que é o pior tipo de defeito de UX.
+
+O companion mode existe porque é útil — o telemóvel serve de comando, de segunda
+câmara, de vista da apresentação. O que não pode é o áudio duplicar.
+
+**Quem decide.** O **servidor**. O cliente não tem como saber que a outra sessão
+é dele: uma heurística no cliente («já vi este nome no roster») falharia com dois
+homónimos e falharia sempre que alguém mudasse o nome. O `Hub::join` compara o
+`user_id` **dentro do lock de escrita** — se fosse uma pergunta separada antes do
+join, duas entradas simultâneas do mesmo utilizador podiam ambas ler «não está» e
+entrar as duas com microfone.
+
+**O `F5` não é um segundo dispositivo.** Um lugar reservado por queda de socket
+(R91) tem `disconnected_at` e **não** conta: trancar o áudio a quem volta de uma
+quebra de rede seria o oposto exacto do que o R91 foi resolver.
+
+**Mudo nos dois sentidos.** Só calar o microfone não chega — o altifalante deste
+dispositivo a tocar a reunião ao pé do microfone do outro fecha o ciclo na mesma.
+O `<audio>` é **silenciado, não desmontado**: pela mesma razão do `AudioSink`, o
+elemento fica ligado ao stream para que ligar o som seja instantâneo.
+
+**E a pessoa fica a saber.** Um dispositivo mudo sem explicação é indistinguível
+de um produto partido — e é essa a queixa que se recebe, nunca a causa. O aviso
+fica no ecrã **até a pessoa decidir** (não é uma notificação que passa: é um
+estado), e o botão «usar o áudio aqui» devolve-lhe a decisão, dizendo o que fazer
+ao outro dispositivo.
+
+**E desliga-se sozinho.** Uma funcionalidade que se liga sozinha e não se
+desliga sozinha é meia funcionalidade: quem fechasse o portátil ficava com o
+telemóvel mudo e um aviso a falar de um aparelho que já não está lá. Quando a
+outra sessão sai, o servidor manda `CompanionEnded` — e **só quando resta uma**:
+com três sessões, sair uma deixa duas, e duas ainda fazem eco. Essa distinção
+entre «resta UMA» e «resta ALGUMA» foi encontrada a sabotar: com `>= 1` os testes
+continuavam verdes, porque nenhum tinha três sessões. Tem-no agora.
+
+**Portões.** Rust: `segunda_sessao_da_mesma_conta_entra_como_companion` e
+`reentrar_depois_de_uma_queda_nao_e_companion`,
+`quando_a_outra_sessao_sai_o_companion_termina` e
+`com_tres_sessoes_sair_uma_nao_desliga_o_companion` (144 testes). Frontend:
+`web/src/companion.invariantes.test.ts`, seis portões, e o `web/e2e/companion.mjs`
+que entra duas vezes com a mesma conta pela interface real. Sabotado nos cinco sítios
+que importam — ignorar o `disconnected_at`, nunca detectar, não calar o
+microfone, não calar o altifalante, não passar a bandeira ao `AudioSink` — e
+vermelho em todos.
+
+**O e2e foi provado a vermelho, no CI, contra a stack a sério.** Com o cliente a
+ignorar a bandeira do servidor (`if (false && m.companion)`), a corrida deu:
+
+```
+· telemóvel: {"aviso":false,"audios":1,"todosMudos":false}
+✗ o telemóvel É AVISADO de que a conta já está na reunião
+=== 2 FALHARAM ===
+```
+
+E com o código certo:
+
+```
+· telemóvel: {"aviso":true,"audios":1,"todosMudos":true}
+✓ o telemóvel É AVISADO de que a conta já está na reunião
+```
+
+O `audios: 1` nos dois é o que impede o verde em vazio: sem roster não haveria
+`<audio>` nenhum, e um `every` sobre lista vazia devolve `true`.
+
+**Não provado.** Nada disto abre dois browsers com microfones reais. Prova-se a
+decisão e o silenciamento; não se prova a ausência de eco numa sala com duas
+máquinas — isso é uma verificação à mão e continua por fazer.
+
+**Ficheiros.** `server/src/signaling.rs` (`Entrada`, `companion` no `Joined`),
+`web/src/signaling.ts`, `web/src/pages/Room.tsx`, `web/src/styles.scss`,
+`web/src/companion.invariantes.test.ts`, `web/src/locales/{pt,en,fr}.ts`,
+`docs/competitive-positioning.md`.
