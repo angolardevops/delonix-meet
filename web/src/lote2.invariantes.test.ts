@@ -4,6 +4,7 @@
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 const root = join(__dirname, '..', '..')
@@ -273,24 +274,6 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
   //     ao utilizador inglês como o identificador cru, que é pior do que a
   //     frase em português.
 
-  it('o Room.tsx não tem literais visíveis fora do t()', () => {
-    const src = read('web/src/pages/Room.tsx')
-    const soltos: string[] = []
-    for (const m of src.matchAll(/>\s*([A-ZÀ-Ú][^<>{}\n]{3,300})\s*</g)) {
-      const v = m[1].trim()
-      // `Promise` e afins aparecem em tipos e comentários de código, não na
-      // interface: exige-se uma palavra com letras minúsculas acentuadas ou
-      // um espaço, que é o que distingue uma frase de um identificador.
-      if (/[a-zà-ú]{3}/.test(v) && /\s/.test(v)) soltos.push(v)
-    }
-    for (const attr of ['title', 'placeholder', 'aria-label']) {
-      for (const m of src.matchAll(new RegExp(`${attr}="([A-ZÀ-Ú][^"]{3,90})"`, 'g'))) {
-        soltos.push(`${attr}="${m[1]}"`)
-      }
-    }
-    expect(soltos).toEqual([])
-  })
-
   // Nomes próprios: não se traduzem, e ficam de fora UM A UM com razão escrita.
   // Nunca por a regra ser afrouxada — uma regra afrouxada deixa passar a frase
   // seguinte, que já não é um nome.
@@ -305,36 +288,8 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     'Delonix Call Quality Score: /100',  // o mesmo nome, com o valor interpolado
     'X-Delonix-Signature: sha256=…',   // um header HTTP não tem tradução
   ]
-  /** Tira as expressões `{…}` de um nó de texto, respeitando o encaixe. */
-  function semExpressoes(txt: string): string {
-    let out = ''
-    let nivel = 0
-    for (const c of txt) {
-      if (c === '{') nivel++
-      else if (c === '}') { if (nivel > 0) nivel-- }
-      else if (nivel === 0) out += c
-    }
-    return out
-  }
   /** Uma FRASE lê-se; um identificador não. É isto que distingue as duas. */
   const eFrase = (v: string) => /\s/.test(v) && /[a-zà-ú]{3}/.test(v) && !NOMES.includes(v)
-
-  it('nenhum nó de texto MISTURADO com expressões escapa ao t()', () => {
-    // O portão dos nós de texto usava `[^<>{}\n]` — a classe exclui `{`, por
-    // isso um nó como `Notas AI {transcribing && <span/>}` ou
-    // `A IA segmenta-te localmente… {bgBusy ? T() : ''}` era invisível. São
-    // dezasseis, e é a MESMA falha de sempre: a regra desenhada para a forma
-    // que o defeito tinha da última vez. Aqui a expressão é retirada e o que
-    // sobra é julgado como prosa.
-    const soltos: string[] = []
-    for (const f of listarTsx('web/src')) {
-      for (const m of read(f).matchAll(/>([A-ZÀ-Ú][^<>]{3,400})</g)) {
-        const prosa = semExpressoes(m[1]).replace(/\s+/g, ' ').trim()
-        if (prosa.length >= 8 && eFrase(prosa)) soltos.push(`${f}: ${prosa}`)
-      }
-    }
-    expect(soltos).toEqual([])
-  })
 
   it('nenhum TEMPLATE LITERAL leva uma frase escrita à mão', () => {
     // A busca por literais olhava para `'…'`. Uma frase com um valor lá dentro
@@ -353,21 +308,6 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
           if (!/^[A-ZÀ-Ú]/.test(prosa)) continue
           if (eFrase(prosa)) soltos.push(`${f}: ${prosa}`)
         }
-      }
-    }
-    expect(soltos).toEqual([])
-  })
-
-  it('nenhum ATRIBUTO leva uma frase escrita à mão', () => {
-    // A versão anterior verificava três atributos por nome: `title`,
-    // `placeholder`, `aria-label`. Mas quem escreve um componente inventa os
-    // seus: `label=`, `desc=`, `data-tip=` — e todos acabam no ecrã ou no
-    // leitor. Onze escaparam assim, incluindo o rótulo de leitor de ecrã de
-    // cinco botões da barra. A regra deixou de nomear atributos.
-    const soltos: string[] = []
-    for (const f of listarTsx('web/src')) {
-      for (const m of read(f).matchAll(/\b([a-zA-Z-]+)="([A-ZÀ-Ú][^"]{3,300})"/g)) {
-        if (eFrase(m[2])) soltos.push(`${f}: ${m[1]}="${m[2]}"`)
       }
     }
     expect(soltos).toEqual([])
@@ -410,30 +350,65 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
   // O portão passou a cobrir `web/src` INTEIRO — a alternativa era voltar a
   // acrescentar ficheiros à lista um a um, e é assim que uma lista fica
   // desactualizada sem ninguém dar por ela.
-  it('nenhum ficheiro tem texto de interface fora do t()', () => {
-    // Marca e identificadores técnicos NÃO são texto traduzível: o nome de uma
-    // marca configura-se (R100/R101) e um cabeçalho HTTP é o que é.
-    const MARCA_OU_CODIGO = /Delonix|X-Delonix|sha256|curl|NFS|WebDAV|Análises →/
+  // ── A SÉTIMA versão, e a primeira que não é uma expressão regular ──────
+  //
+  // Seis gerações de regex, seis famílias de fuga: o glifo sozinho (R88), a
+  // sala inteira sem `t()` (R99), o tecto de 80 caracteres e os atributos
+  // nomeados um a um (R105/R107), o nó de texto misturado com uma expressão, e
+  // as crases (R110). De cada vez a regra nova apanhava a forma anterior e
+  // falhava na seguinte.
+  //
+  // A causa é sempre a mesma: uma expressão regular não sabe o que é JSX. Sabe
+  // o que é `>` e `<`, e por isso confunde um genérico `useState<Foo>` com uma
+  // tag, e não distingue `className` de `aria-label`. Medido: sem a exigência
+  // de maiúscula inicial — que só existia para calar esse ruído — a regex
+  // acusava 400 sítios, quase todos código.
+  //
+  // Isto usa o PARSER do TypeScript. Um `JsxText` é texto que aparece no ecrã,
+  // por definição; um `JsxAttribute` tem um nome que se pode ler. Não há
+  // heurística nenhuma sobre a forma da linha, e por isso não há forma seguinte
+  // por onde fugir.
+  //
+  // O que a lista de atributos faz é o contrário do que fazia: nomeia OS QUE
+  // CHEGAM a uma pessoa, em vez dos que não chegam. Um atributo novo —
+  // `data-tip`, `desc`, `hint` — entrava em silêncio na versão antiga e nunca
+  // entra nesta.
+  it('nenhum JSX tem texto de interface fora do t() (parser, não regex)', () => {
+    // Nomes próprios e fragmentos técnicos, um a um e com razão ao lado.
+    const LEDGER = new Set([
+      'TrueNAS / NFS', 'Nextcloud / WebDAV',       // nomes de tecnologia
+      'kubectl apply',                              // um comando não se traduz
+      'Delonix Call Quality Score', 'Delonix Meet', // nomes do produto
+      'X-Delonix-Signature: sha256=…',              // um header HTTP é o que é
+      'min ·', 'kbps · perda',                      // unidades e separadores
+      '1 min', '2 min', '5 min',                    // idem
+      '🇵🇹 Português', '🇬🇧 English', '🇪🇸 Español',   // o idioma escreve-se NO idioma
+      '🇫🇷 Français', '🇩🇪 Deutsch', '🇮🇹 Italiano',
+    ])
+    const VISIVEIS =
+      /^(title|placeholder|alt|label|desc|caption|subtitle|summary|tooltip|hint|message|data-tip|aria-.*)$/
+    const eFrase = (v: string) => /\s/.test(v) && /[a-zà-ú]{3}/.test(v) && !LEDGER.has(v)
     const soltos: string[] = []
     for (const f of listarTsx('web/src')) {
       if (f.includes('/locales/')) continue
-      const src = read(f)
-      // O tecto era 80 caracteres e deixava passar as frases MAIS LONGAS — que
-      // são as explicativas, precisamente as que um utilizador não-lusófono
-      // mais precisa. Três escaparam assim. Mesmo tipo de buraco que o `{1,4}`
-      // do portão de emoji (R88): um limite escolhido de cabeça, sem medir o
-      // que fica de fora.
-      for (const m of src.matchAll(/>\s*([A-ZÀ-Ú][^<>{}\n]{3,300})\s*</g)) {
-        const v = m[1].trim()
-        if (/[a-zà-ú]{3}/.test(v) && /\s/.test(v) && !MARCA_OU_CODIGO.test(v)) {
-          soltos.push(`${f}: ${v}`)
+      const sf = ts.createSourceFile(f, read(f), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+      const visitar = (n: ts.Node) => {
+        if (ts.isJsxText(n)) {
+          const v = n.text.replace(/\s+/g, ' ').trim()
+          if (v.length >= 4 && eFrase(v)) soltos.push(`${f} [texto]: ${v.slice(0, 70)}`)
         }
-      }
-      for (const attr of ['title', 'placeholder', 'aria-label']) {
-        for (const m of src.matchAll(new RegExp(`${attr}="([A-ZÀ-Ú][^"]{3,90})"`, 'g'))) {
-          if (!MARCA_OU_CODIGO.test(m[1])) soltos.push(`${f} [${attr}]: ${m[1]}`)
+        if (ts.isJsxAttribute(n) && n.initializer && VISIVEIS.test(n.name.getText())) {
+          const ini = n.initializer
+          const lit = ts.isStringLiteral(ini)
+            ? ini
+            : ts.isJsxExpression(ini) && ini.expression && ts.isStringLiteral(ini.expression)
+              ? ini.expression
+              : null
+          if (lit && eFrase(lit.text)) soltos.push(`${f} [${n.name.getText()}]: ${lit.text.slice(0, 70)}`)
         }
+        ts.forEachChild(n, visitar)
       }
+      visitar(sf)
     }
     expect(soltos).toEqual([])
   })

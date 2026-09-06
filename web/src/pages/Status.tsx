@@ -63,13 +63,14 @@ export default function Status() {
           </div>
         ))}
         {info && (
-          <p className="muted small status-meta">{t('status.uptime')}<strong className="mono">{fmtUptime(info.uptime_secs)}</strong> · versão{' '}
-            <span className="mono">{info.version}</span> · verificado às{' '}
-            {checkedAt.toLocaleTimeString('pt-PT')} (atualiza a cada 15 s)
+          <p className="muted small status-meta">{t('status.uptime')}<strong className="mono">{fmtUptime(info.uptime_secs)}</strong>  {t('status.versao')}{' '}
+            <span className="mono">{info.version}</span>  {t('status.verificadoAs')}{' '}
+            {checkedAt.toLocaleTimeString('pt-PT')}  {t('status.atualizaACada15')}
           </p>
         )}
         <a className="link" href="#/">
-          ← Voltar ao Delonix Meet
+          
+          {t('status.voltarAoDelonixMeet')}
         </a>
       </div>
     </div>

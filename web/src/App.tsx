@@ -161,8 +161,7 @@ export default function App() {
     <>
     {insecure && (
       <div className="insecure-banner">
-        <AlertIcon /> Ligação <strong>insegura (HTTP)</strong> — câmara, microfone e chamadas NÃO funcionam.
-        Abre em <strong>https://{location.hostname}</strong> (aceita o aviso do certificado).
+        <AlertIcon /> Ligação <strong>{t('common.inseguraHttp')}</strong>  {t('common.camaraMicrofoneEChamadas')} <strong>https://{location.hostname}</strong>  {t('common.aceitaOAvisoDo')}
       </div>
     )}
     <PresenceProvider onEnterRoom={enterRoom}>

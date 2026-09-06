@@ -238,7 +238,8 @@ export default function PresenceProvider({
                 <strong>{c.caller_name}</strong>
                 <span className="ring-kind">
                   {c.kind === 'voice' ? <VoiceCallIcon /> : <CamIcon />}
-                  Chamada de {c.kind === 'voice' ? 'voz' : 'vídeo'} a receber
+                  
+                  {t('status.chamadaDe')} {c.kind === 'voice' ? 'voz' : 'vídeo'}  {t('status.aReceber')}
                 </span>
                 <small>{c.title}</small>
               </div>
