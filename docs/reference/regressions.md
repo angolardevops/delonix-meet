@@ -1292,3 +1292,42 @@ vermelho.
 
 **Ficheiros.** `web/src/locales/{pt,en,fr}.ts`, `web/src/pages/Calendar.tsx`,
 `web/src/lote2.invariantes.test.ts`.
+
+### R115 — O módulo que cifra a media não tinha um único teste
+
+**Sintoma (ausência, não avaria).** `web/src/e2ee.ts` é o que cumpre a promessa
+mais destacada do produto — «nem o SFU nem qualquer intermediário consegue
+ver/ouvir». Não tinha **um** teste. Nem de derivação de chave, nem de ida e
+volta, nem de recusa.
+
+**Porque é que passou despercebido.** A lógica vive dentro de uma **string**
+(`WORKER_SRC`): é o código que corre no Worker, e um Worker recebe texto. Isso
+põe-na fora do alcance do TypeScript, do lint e da cobertura — um erro de sintaxe
+lá dentro só apareceria quando alguém entrasse numa sala E2EE. Uma string não
+compila.
+
+**Como se testa sem browser.** A string é **extraída do próprio ficheiro** e
+avaliada em Node, com a WebCrypto do Node — que é a mesma API. Não se copia o
+código para o teste: um teste sobre uma **cópia** prova que a cópia funciona, e é
+assim que se deixa de ver a divergência.
+
+**O que ficou provado.** O offset do header (10/3/1 — se mudar, os frames deixam
+de ser desempacotáveis e o sintoma é vídeo preto, não um erro); o **fail-closed**
+nos dois sentidos; a ida e volta byte a byte; o código da sala como **sal** (sem
+ele, a mesma frase-chave em duas reuniões daria a mesma chave, e gravar uma
+serviria para abrir a outra); a frase errada a não decifrar; e o **header
+autenticado** — mexer num byte do header em claro invalida o frame, que é a razão
+de ele ir como `additionalData`.
+
+**O defeito que só apareceu a sabotar.** A guarda de frame curto é
+`data.byteLength <= offset`. Trocada por `<`, sobreviveu aos oito primeiros
+testes: um keyframe de **exactamente** 10 bytes é só header, e com `<` sairia um
+frame com ciphertext vazio, tag e IV — 28 bytes de nada. O teste usava 8 bytes,
+que está do mesmo lado da fronteira nas duas versões. É o off-by-one de sempre, e
+só se vê a atacar a condição.
+
+**Não provado.** Isto não corre num Worker nem numa `RTCPeerConnection`. Prova as
+decisões — que é onde os defeitos desta família vivem —, não a ligação aos
+`RTCRtpSender`.
+
+**Ficheiros.** `web/src/e2ee.test.ts`.
