@@ -1545,3 +1545,47 @@ substituídos por duplos com a mesma forma. O que se prova são as decisões.
 **8 mutações, 8 mortas.**
 
 **Ficheiros.** `web/src/studio/directo.test.ts`, `scripts/mutantes.mjs`.
+
+### R118 — O único teste de media que ignorava o `E2E_TIMEOUT_FACTOR`
+
+**Sintoma.** Três corridas seguidas do CI a falhar no `web/e2e/tempos.mjs`, num
+PR que só mexia em testes do estúdio e no catálogo:
+
+```
+✗ os tempos NÃO ficaram prontos em 90000 ms
+✗ join_ms medido: null ms
+```
+
+A leitura fácil — «o produto não liga» — estava errada, e o próprio relatório
+tinha a resposta uma linha acima:
+
+```
+{"join_ms":null,"ws_ms":30,"ice_gathering_ms":74840,
+ "first_audio_ms":185,"first_video_ms":215,"ice_restarts":2} (esperou 90000 ms)
+```
+
+**A media chegou**: áudio a 185 ms, vídeo a 215 ms. O que estourou foi a recolha
+de candidatos ICE — **74 840 ms**, contra os ~377 ms de uma máquina normal. É o
+esfomeamento do R65 outra vez, duas ordens de grandeza pior.
+
+**Causa.** O CI declara `E2E_TIMEOUT_FACTOR=4` precisamente porque sabe que o
+runner é lento, e escreve porquê: *«um portão que falha ao acaso perde a
+credibilidade toda»*. O `tempos.mjs` era **o único teste do trabalho a
+ignorá-lo** — o `estudio.mjs`, ao lado no mesmo job, honra-o.
+
+**Regra.** Quem espera por uma ligação de media lê o factor do ambiente. E a
+mensagem de esgotamento passa a **distinguir as duas causas**: se a recolha de
+ICE passou dos 10 s e a media chegou, diz-se que foi a máquina a esfomear o
+agente — não o produto. Sem essa linha, três falhas leram-se como avaria.
+
+**Portão.** `web/src/e2eFator.invariantes.test.ts`.
+
+**E o portão falhou à primeira, pela razão mais instrutiva.** A versão 1
+procurava a palavra `E2E_TIMEOUT_FACTOR` no ficheiro — e **sobreviveu** a tirar o
+factor do `tempos.mjs`, porque o comentário logo acima continuava a mencioná-lo.
+Media a presença de uma palavra, não o comportamento. A versão 2 tira os
+comentários primeiro e exige a **leitura do ambiente**
+(`process.env.E2E_TIMEOUT_FACTOR`), não a menção. É exactamente a falha que este
+portão existe para impedir, cometida ao escrevê-lo.
+
+**Ficheiros.** `web/e2e/tempos.mjs`, `web/src/e2eFator.invariantes.test.ts`.
