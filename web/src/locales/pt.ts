@@ -256,6 +256,7 @@ export default {
       guardarAta: 'Guardar ata',
     },
     txt: {
+      audioDoSistemaSoEmSfu: "O áudio do sistema não viaja em salas mesh — só em salas SFU. A partilhar só a imagem.",
       transcricaoIniciadaPor: "Transcrição iniciada por {{nome}} — a tua fala é captada",
       quadroPartilhadoPor: "Quadro branco partilhado por {{nome}}",
       semLigacaoATentar: "Sem ligação ao servidor — a tentar de novo ({{n}}/{{total}})…",

@@ -839,6 +839,14 @@ export default function Room({
   const [momSaved, setMomSaved] = useState(false)
 
   const localVideo = useRef<HTMLVideoElement | null>(null)
+  /**
+   * O stream que veio do `getDisplayMedia`. Guardado porque no caminho MESH ele
+   * não fica em lado nenhum: o vídeo entra por `replaceVideoTrack` e o áudio do
+   * sistema é DESCARTADO. Sem esta referência, carregar no nosso botão de parar
+   * partilha deixava o browser a capturar o ecrã — com o aviso «está a partilhar
+   * o seu ecrã» aceso — porque ninguém parava as tracks (R111).
+   */
+  const displayStreamRef = useRef<MediaStream | null>(null)
   const videoAreaRef = useRef<HTMLDivElement>(null)
   const callRef = useRef<Call | null>(null)
   const signalRef = useRef<Signaling | null>(null)
@@ -1989,6 +1997,11 @@ export default function Room({
         setPresentation((p) => (p?.peerId === 'me' ? null : p))
       } else {
         // Mesh: o ecrã substituiu a câmara — repor a track.
+        // E PARAR o que veio do `getDisplayMedia`: aqui o stream não está
+        // guardado em `presentation`, e sem isto a captura continuava viva
+        // depois de a pessoa carregar em «parar partilha» (R111).
+        displayStreamRef.current?.getTracks().forEach((t) => t.stop())
+        displayStreamRef.current = null
         const back = (bgMode !== 'none' && effectRef.current?.output) || cameraTrackRef.current
         if (back) await callRef.current?.replaceVideoTrack(back)
         if (localVideo.current && localStreamRef.current) {
@@ -2009,8 +2022,21 @@ export default function Room({
         await callRef.current?.startScreen(screenTrack, display)
         setPresentation({ peerId: 'me', stream: display })
       } else {
+        displayStreamRef.current = display
         await callRef.current?.replaceVideoTrack(screenTrack)
         if (localVideo.current) localVideo.current.srcObject = display
+        // O `SCREEN_CONSTRAINTS` pede áudio do sistema, e o browser mostra a
+        // caixa «partilhar áudio do separador» — mas no mesh não há para onde o
+        // enviar: o ecrã VIAJA no lugar da câmara, e não há uma segunda track a
+        // publicar. Ficava a tocar em nada, com o indicador de captura aceso.
+        //
+        // Pára-se, e DIZ-SE. Uma caixa que a pessoa marcou e que não faz nada é
+        // da mesma família do consentimento vazio do R109.
+        const sysAudio = display.getAudioTracks()
+        if (sysAudio.length > 0) {
+          sysAudio.forEach((t) => t.stop())
+          setStatus(t('room.txt.audioDoSistemaSoEmSfu'))
+        }
       }
       screenTrack.onended = () => toggleShare()
       setSharing(true)

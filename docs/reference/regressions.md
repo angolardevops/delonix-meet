@@ -1156,3 +1156,46 @@ atributo.
 **Ficheiros.** `web/src/pages/Room.tsx`,
 `web/src/components/{PresenceProvider,Shell}.tsx`,
 `web/src/locales/{pt,en,fr}.ts`, `web/src/lote2.invariantes.test.ts`.
+
+### R111 — Em sala mesh, «parar partilha» não parava a captura do ecrã
+
+**Sintoma.** Numa sala com `topology: "mesh"`, carregar no botão de parar
+partilha repunha a câmara — e **deixava o browser a capturar o ecrã**, com o
+aviso «está a partilhar o seu ecrã» aceso. A pessoa acreditava que tinha parado.
+
+**Causa.** Os dois caminhos guardam o stream do `getDisplayMedia` em sítios
+diferentes, e só um deles o parava:
+
+- **SFU** — o ecrã é uma track ADICIONAL, e o stream fica em `presentation`. Ao
+  parar, `presentation?.stream.getTracks().forEach(stop)` apanha tudo. Correcto.
+- **Mesh** — o ecrã **substitui** a câmara por `replaceVideoTrack`. O stream não
+  fica em `presentation` nem em lado nenhum: passada a chamada, a única
+  referência era a variável local `display`, já fora de alcance. Nada o parava.
+
+Só parava por acidente: se a pessoa usasse o botão **do browser**, o
+`screenTrack.onended` disparava. Pelo nosso botão, não.
+
+**Segundo defeito, na mesma função.** O `SCREEN_CONSTRAINTS` pede áudio do
+sistema — por isso o browser mostra a caixa «partilhar áudio do separador». No
+mesh não há para onde o enviar: o ecrã viaja no lugar da câmara e não há uma
+segunda track a publicar. A pessoa marcava a caixa, a track era criada, ninguém a
+publicava e ninguém a parava. **É o consentimento vazio do R109 em ponto
+pequeno**: uma caixa que se marca e não faz nada.
+
+**Regra.** Quem adquire uma captura é dono de a parar, e o dono tem de ser
+alcançável a partir do sítio onde se pára. No mesh isso passou a ser o
+`displayStreamRef`. O áudio que o mesh não pode publicar é parado **e
+explicado** — não descartado em silêncio.
+
+**Portão.** `web/src/partilhaEcra.invariantes.test.ts`. Quatro testes: os dois
+caminhos param, o áudio órfão é parado com aviso, e o caminho SFU **continua** a
+publicar áudio do sistema — este último para que a promessa «partilha de ecrã com
+áudio do sistema» não se torne falsa nos dois caminhos em vez de um. Provado
+vermelho nos três sítios.
+
+**O que NÃO está provado.** Não abri dois browsers. O que se prova é que as
+tracks são paradas e que o aviso existe — não que o indicador do Chrome apaga.
+Isso é uma verificação à mão, e continua por fazer.
+
+**Ficheiros.** `web/src/pages/Room.tsx`,
+`web/src/partilhaEcra.invariantes.test.ts`, `web/src/locales/{pt,en,fr}.ts`.

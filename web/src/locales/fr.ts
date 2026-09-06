@@ -254,6 +254,7 @@ export default {
       guardarAta: 'Enregistrer le compte rendu',
     },
     txt: {
+      audioDoSistemaSoEmSfu: "L’audio système ne circule pas dans les salles mesh — seulement en SFU. Partage de l’image uniquement.",
       transcricaoIniciadaPor: "Transcription démarrée par {{nome}} — votre voix est captée",
       quadroPartilhadoPor: "Tableau blanc partagé par {{nome}}",
       semLigacaoATentar: "Pas de connexion au serveur — nouvelle tentative ({{n}}/{{total}})…",

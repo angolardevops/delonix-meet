@@ -254,6 +254,7 @@ export default {
       guardarAta: 'Save minutes',
     },
     txt: {
+      audioDoSistemaSoEmSfu: "System audio does not travel in mesh rooms — only in SFU rooms. Sharing the picture only.",
       transcricaoIniciadaPor: "Transcript started by {{nome}} — your speech is being captured",
       quadroPartilhadoPor: "Whiteboard shared by {{nome}}",
       semLigacaoATentar: "No connection to the server — retrying ({{n}}/{{total}})…",
