@@ -2,7 +2,7 @@
 server/target/
 
 # Node
-web/node_modules/
+web/node_modules
 web/dist/
 
 # Flutter

@@ -1464,3 +1464,45 @@ máquinas — isso é uma verificação à mão e continua por fazer.
 `web/src/signaling.ts`, `web/src/pages/Room.tsx`, `web/src/styles.scss`,
 `web/src/companion.invariantes.test.ts`, `web/src/locales/{pt,en,fr}.ts`,
 `docs/competitive-positioning.md`.
+
+### R119 — Um symlink para a minha máquina entrou na `main`
+
+**Sintoma.** Quem clonasse o repositório ficava com
+
+```
+web/node_modules -> /tmp/wtp2/web/node_modules
+```
+
+um link pendurado para um caminho que não existe em máquina nenhuma além da
+minha. Entrou pelo PR #54 e ficou lá durante cinco PRs.
+
+**Causa, em duas metades.** A primeira sou eu: uso worktrees em `/tmp` e ligo o
+`node_modules` de todos ao de um, para não instalar cinco vezes. Um `git add -A
+web` levou o symlink junto com o trabalho.
+
+A segunda é a que interessa a prazo: **o `.gitignore` tinha `web/node_modules/`,
+com barra final.** A barra faz o padrão casar **só com um directório** — e um
+symlink não é um directório. A linha que existia exactamente para impedir isto
+não o impediu, e ninguém tinha razão para desconfiar dela.
+
+**Porque é que o CI não deu por nada.** O `npm ci` substitui a pasta e segue. O
+verde do CI não é prova de que uma checkout limpa funciona: o CI **repara** este
+caso ao passar por ele.
+
+**Regra.** Nenhum caminho versionado aponta para fora da árvore. A regra é geral
+e não sobre `node_modules`: um symlink **relativo e interno** é legítimo; um
+**absoluto**, ou um que **suba acima da raiz**, é a máquina de alguém a entrar no
+repositório.
+
+**Portão.** `scripts/check-repo-hygiene.sh`. O alvo lê-se do **índice**
+(`git cat-file -p :caminho`) e não do `HEAD` — um symlink acabado de adicionar
+ainda não está em commit nenhum, e era assim que ele entrava. O `cat` **não
+serve**: segue o link e devolve vazio quando o alvo não existe, que é exactamente
+o caso mau. A primeira versão deste portão falhou por isso e deu zero achados
+nos dois testes de sabotagem.
+
+Provado nos três casos: absoluto → vermelho, a subir → vermelho, relativo interno
+→ passa.
+
+**Ficheiros.** `.gitignore`, `scripts/check-repo-hygiene.sh`, e a remoção de
+`web/node_modules` do índice.
