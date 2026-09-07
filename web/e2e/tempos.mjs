@@ -45,7 +45,19 @@ for(let i=0;i<2;i++){const c=await b.newContext();const p=await c.newPage();awai
 // quando o que aconteceu foi o teste ter lido cedo demais num runner lento.
 // «Ainda não chegou» e «veio errado» são diagnósticos diferentes e não podem
 // partilhar a mesma mensagem.
-const ESPERA_MAX_MS = 90000, PASSO_MS = 1500
+// O CI declara `E2E_TIMEOUT_FACTOR=4` porque sabe que o runner é lento — e este
+// teste era o único do trabalho que o IGNORAVA (o `estudio.mjs`, ao lado, honra-o).
+// Medido numa das três falhas seguidas que isto provocou:
+//
+//   {"join_ms":null,"ws_ms":30,"ice_gathering_ms":74840,
+//    "first_audio_ms":185,"first_video_ms":215,"ice_restarts":2} (esperou 90000 ms)
+//
+// A media CHEGOU — áudio a 185 ms, vídeo a 215 ms. O que estourou foi a recolha
+// de candidatos ICE: 74,8 s, contra os 377 ms de uma máquina normal. É o mesmo
+// esfomeamento do R65, agora pior, e é a razão pela qual o factor existe: «um
+// portão que falha ao acaso perde a credibilidade toda» (comentário do CI).
+const FATOR = Number(process.env.E2E_TIMEOUT_FACTOR) || 1
+const ESPERA_MAX_MS = 90000 * FATOR, PASSO_MS = 1500
 let pronto = false, esperou = 0
 for (let k = 0; k < ESPERA_MAX_MS / PASSO_MS; k++) {
   await sleep(PASSO_MS); esperou += PASSO_MS
@@ -56,6 +68,17 @@ const t = await ps[0].evaluate(()=>window.__dlx.tempos.resumo())
 console.log('  tempos medidos:', JSON.stringify(t), `(esperou ${esperou} ms)`)
 if (!pronto) {
   console.log(`  ✗ os tempos NÃO ficaram prontos em ${ESPERA_MAX_MS} ms — o que segue mede uma leitura incompleta, não o produto`)
+  // «Não ficou pronto» tem duas causas MUITO diferentes, e a mensagem tem de
+  // dizer qual: ou o produto não ligou, ou a máquina esfomeou o agente de ICE.
+  // Sem esta linha, três falhas seguidas leram-se como «o produto está
+  // partido» quando o áudio tinha chegado em 185 ms.
+  if (typeof t.ice_gathering_ms === 'number' && t.ice_gathering_ms > 10000) {
+    console.log(
+      `      a recolha de ICE levou ${t.ice_gathering_ms} ms (o normal é < 500). ` +
+      `A media chegou (áudio ${t.first_audio_ms} ms, vídeo ${t.first_video_ms} ms): ` +
+      `isto é a MÁQUINA a esfomear o agente de ICE, não o produto. Sobe E2E_TIMEOUT_FACTOR.`,
+    )
+  }
 }
 await b.close()
 
