@@ -171,6 +171,46 @@ for p in $hist_keys; do
   fi
 done
 
+# R119 — um SYMLINK para fora do repositório entrou na `main` e ficou lá.
+#
+# Era `web/node_modules -> /tmp/wtp2/web/node_modules`, o atalho que eu usava
+# para partilhar dependências entre worktrees. Um `git add -A web` levou-o, e o
+# `.gitignore` não o travou porque a linha era `web/node_modules/` — a barra
+# final faz o padrão casar só com um DIRECTÓRIO, e um symlink não é um
+# directório.
+#
+# Quem clonasse o repositório ficava com um link pendurado para um caminho que
+# não existe na máquina dele. O CI não deu por nada: o `npm ci` substitui a
+# pasta e segue.
+#
+# A regra é geral, não sobre `node_modules`: nenhum caminho versionado pode
+# apontar para fora da árvore. Um symlink relativo dentro do repositório é
+# legítimo; um absoluto, ou um que suba acima da raiz, é a máquina de alguém a
+# entrar no repositório.
+while IFS= read -r caminho; do
+  [ -z "$caminho" ] && continue
+  # O alvo lê-se do ÍNDICE (`:caminho`) e não do `HEAD`: um symlink acabado de
+  # adicionar ainda não está em commit nenhum, e era assim que ele entrava. O
+  # `readlink` é a rede se o índice não o tiver; `cat` não serve — segue o link
+  # e devolve vazio quando o alvo não existe, que é justamente o caso mau.
+  alvo=$(git cat-file -p ":$caminho" 2>/dev/null || readlink "$caminho" 2>/dev/null)
+  case "$alvo" in
+    /*)
+      echo "✗ higiene: SYMLINK ABSOLUTO versionado: $caminho -> $alvo"
+      echo "     Aponta para a máquina de quem o criou. Quem clonar fica com um"
+      echo "     link pendurado. Se era um atalho de trabalho, tem de sair do índice:"
+      echo "     git rm --cached $caminho"
+      fail=1
+      ;;
+    *../*|../*)
+      echo "✗ higiene: SYMLINK versionado a SAIR da árvore: $caminho -> $alvo"
+      fail=1
+      ;;
+  esac
+done <<EOF_SYMLINKS
+$(git ls-files -s | awk '$1 == "120000" { $1=$2=$3=""; sub(/^[ \t]+/,""); print }')
+EOF_SYMLINKS
+
 # R106 — um arnês de mutação morto a meio deixa o produto SABOTADO na árvore, e
 # o marcador é a única prova que sobrevive a um SIGKILL. Se ele está aqui, ou a
 # corrida ainda vai a meio (e ninguém devia estar a fazer commit), ou morreu e o
@@ -183,5 +223,5 @@ if [ -f scripts/.mutante-em-voo.json ]; then
   fail=1
 fi
 
-[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; fugas de chave no histórico todas com decisão escrita"
+[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita"
 exit $fail
