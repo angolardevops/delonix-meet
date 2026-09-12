@@ -115,6 +115,7 @@ export function RemoteTileBase({
         className={pinned ? 'tile-pin pinned' : 'tile-pin'}
         onClick={() => onPin?.(peer.peerId)}
         title={pinned ? t('room.desafixarDoPalcoTile') : t('room.fixarNoPalcoTile')}
+        aria-label={pinned ? t('room.desafixarDoPalcoTile') : t('room.fixarNoPalcoTile')}
       >
         <PinIcon />
       </button>
@@ -134,10 +135,10 @@ export function RemoteTileBase({
       </span>
       {isHost && !peer.host && (
         <div className="host-actions">
-          <button title={t('lobby.mute')} onClick={() => onMute(peer.peerId)}>
+          <button title={t('lobby.mute')} aria-label={t('lobby.mute')} onClick={() => onMute(peer.peerId)}>
             <MicOffIcon />
           </button>
-          <button title={t('lobby.remove')} onClick={() => onKick(peer.peerId)}>
+          <button title={t('lobby.remove')} aria-label={t('lobby.remove')} onClick={() => onKick(peer.peerId)}>
             <CloseIcon />
           </button>
         </div>

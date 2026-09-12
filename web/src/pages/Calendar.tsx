@@ -157,8 +157,8 @@ export default function Calendar({ onEnterRoom }: { onEnterRoom: (code: string, 
       <header className="cal-toolbar">
         <div className="cal-nav">
           <button className="btn-today" onClick={() => { setCursor(startOfDay(new Date())); if (view === 'year') setView('month') }}>{t('today')}</button>
-          <button className="icon-btn cal-arrow" onClick={() => move(-1)}><ChevronLeftIcon /></button>
-          <button className="icon-btn cal-arrow" onClick={() => move(1)}><ChevronRightIcon /></button>
+          <button className="icon-btn cal-arrow" aria-label={tRaw('a11y.mesAnterior')} onClick={() => move(-1)}><ChevronLeftIcon /></button>
+          <button className="icon-btn cal-arrow" aria-label={tRaw('a11y.mesSeguinte')} onClick={() => move(1)}><ChevronRightIcon /></button>
           <h1 className="cal-title">{title}</h1>
         </div>
         <div className="cal-right">
@@ -257,7 +257,10 @@ function MonthGrid({
             <div
               key={d.toISOString()}
               className={`month-cell${inMonth ? '' : ' out'}${isToday ? ' today' : ''}`}
+              role="button"
+              tabIndex={0}
               onClick={() => onDayClick(d)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.key === ' ') e.preventDefault(); onDayClick(d) } }}
             >
               <div className="month-daynum">
                 <span className={isToday ? 'daynum today' : 'daynum'}>{d.getDate()}</span>
@@ -319,7 +322,14 @@ function TimelineView({
         {days.map((d) => {
           const isToday = sameDay(d, today)
           return (
-            <div key={ymd(d)} className={`tl-col-head${isToday ? ' today' : ''}`} onClick={() => onSlot(d)}>
+            <div
+              key={ymd(d)}
+              className={`tl-col-head${isToday ? ' today' : ''}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => onSlot(d)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.key === ' ') e.preventDefault(); onSlot(d) } }}
+            >
               <span className="tl-wd">{WEEKDAYS[(d.getDay() + 6) % 7]}</span>
               <span className={`tl-num${isToday ? ' today' : ''}`}>{d.getDate()}</span>
             </div>
@@ -416,7 +426,14 @@ function YearView({
         const gridStart = mondayOf(first)
         const days = Array.from({ length: 42 }, (_, i) => addDays(gridStart, i))
         return (
-          <div key={mi} className="year-month" onClick={() => onMonth(first)}>
+          <div
+            key={mi}
+            className="year-month"
+            role="button"
+            tabIndex={0}
+            onClick={() => onMonth(first)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.key === ' ') e.preventDefault(); onMonth(first) } }}
+          >
             <div className="year-month-name">{MONTHS[mi]} {year}</div>
             <div className="year-mini-head">
               {WEEKDAYS.map((w) => <span key={w}>{w.charAt(0)}</span>)}
@@ -790,7 +807,7 @@ function ActionPlanPanel({ meetingId, isOwner }: { meetingId: string; isOwner: b
                 </td>
                 {isOwner && (
                   <td>
-                    <button className="action-del" onClick={() => void removeItem(item.id)}>
+                    <button className="action-del" aria-label={t('actionRemove')} onClick={() => void removeItem(item.id)}>
                       <TrashIcon />
                     </button>
                   </td>
@@ -849,6 +866,12 @@ function EventModal({
     if (meeting.is_owner) void meetingInvitees(meeting.id).then(setResponses).catch(() => {})
   }, [meeting.id, meeting.is_owner])
 
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }
+    window.addEventListener('keydown', on)
+    return () => window.removeEventListener('keydown', on)
+  }, [onClose])
+
   async function respond(status: 'accepted' | 'declined') {
     if (status === 'declined' && !reason.trim()) {
       setDeclining(true)
@@ -866,11 +889,11 @@ function EventModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal event-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal event-modal" role="dialog" aria-modal="true" aria-label={meeting.title} onClick={(e) => e.stopPropagation()}>
         <div className={`event-accent ${meeting.kind}`} />
         <div className="modal-head">
           <h3>{meeting.title}</h3>
-          <button className="panel-close" onClick={onClose}><CloseIcon /></button>
+          <button className="panel-close" aria-label={tRaw('common.close')} onClick={onClose}><CloseIcon /></button>
         </div>
         <div className="event-meta">
           <span className={`agenda-kind ${meeting.kind}`}>{meeting.kind === 'voice' ? <VoiceCallIcon /> : <VideoIcon />}</span>
@@ -1015,6 +1038,12 @@ function ScheduleModal({
   }, [])
 
   useEffect(() => {
+    const on = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }
+    window.addEventListener('keydown', on)
+    return () => window.removeEventListener('keydown', on)
+  }, [onClose])
+
+  useEffect(() => {
     if (query.trim().length < 2) {
       setResults([])
       return
@@ -1075,10 +1104,10 @@ function ScheduleModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+      <form className="modal" role="dialog" aria-modal="true" aria-labelledby="sched-modal-title" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="modal-head">
-          <h3>{t('schedTitle')}</h3>
-          <button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button>
+          <h3 id="sched-modal-title">{t('schedTitle')}</h3>
+          <button type="button" className="panel-close" aria-label={tRaw('common.close')} onClick={onClose}><CloseIcon /></button>
         </div>
 
         <input placeholder={t('schedTitlePh')} value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
@@ -1259,7 +1288,7 @@ function ScheduleModal({
             {invitees.map((u) => (
               <span key={u.id} className="chip">
                 {u.username}
-                <button type="button" onClick={() => setInvitees(invitees.filter((i) => i.id !== u.id))}>×</button>
+                <button type="button" aria-label={tRaw('a11y.removerConvidado', { nome: u.username })} onClick={() => setInvitees(invitees.filter((i) => i.id !== u.id))}>×</button>
               </span>
             ))}
           </div>

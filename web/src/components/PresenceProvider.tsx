@@ -200,10 +200,10 @@ export default function PresenceProvider({
       {children}
       {missed.length > 0 && (
         <div className="missed-layer">
-          <div className="missed-card">
+          <div className="missed-card" role="status" aria-live="polite">
             <div className="missed-head">
               <strong>{missed.length === 1 ? t('status.chamadaPerdida') : `${missed.length} chamadas perdidas`}</strong>
-              <button className="panel-close" onClick={dismissMissed}><CloseIcon /></button>
+              <button className="panel-close" aria-label={t('common.close')} onClick={dismissMissed}><CloseIcon /></button>
             </div>
             <div className="missed-list">
               {missed.map((mc) => (
@@ -221,10 +221,21 @@ export default function PresenceProvider({
         </div>
       )}
       {toasts.length > 0 && (
-        <div className="toast-layer">
-          {toasts.map((t) => (
-            <div key={t.id} className="toast" onClick={() => setToasts((cur) => cur.filter((x) => x.id !== t.id))}>
-              ✕ {t.text}
+        <div className="toast-layer" role="status" aria-live="polite">
+          {toasts.map((tst) => (
+            <div
+              key={tst.id}
+              className="toast"
+              role="button"
+              tabIndex={0}
+              onClick={() => setToasts((cur) => cur.filter((x) => x.id !== tst.id))}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return
+                if (e.key === ' ') e.preventDefault()
+                setToasts((cur) => cur.filter((x) => x.id !== tst.id))
+              }}
+            >
+              ✕ {tst.text}
             </div>
           ))}
         </div>
@@ -232,22 +243,28 @@ export default function PresenceProvider({
       {incoming.length > 0 && (
         <div className="ring-layer">
           {incoming.map((c) => (
-            <div key={c.room_code} className="ring-card">
+            <div
+              key={c.room_code}
+              className="ring-card"
+              role="alertdialog"
+              aria-live="assertive"
+              aria-label={`${t('status.chamadaDe')} ${c.caller_name}`}
+            >
               <div className="ring-avatar pulse">{c.caller_name.slice(0, 2).toUpperCase()}</div>
               <div className="ring-info">
                 <strong>{c.caller_name}</strong>
                 <span className="ring-kind">
                   {c.kind === 'voice' ? <VoiceCallIcon /> : <CamIcon />}
-                  
+
                   {t('status.chamadaDe')} {c.kind === 'voice' ? 'voz' : 'vídeo'}  {t('status.aReceber')}
                 </span>
                 <small>{c.title}</small>
               </div>
               <div className="ring-actions">
-                <button className="ring-btn decline" title={t('room.espera.recusar')} onClick={() => decline(c)}>
+                <button className="ring-btn decline" title={t('room.espera.recusar')} aria-label={t('room.espera.recusar')} onClick={() => decline(c)}>
                   <HangupIcon />
                 </button>
-                <button className="ring-btn accept" title={t('notif.atender')} onClick={() => accept(c)}>
+                <button className="ring-btn accept" title={t('notif.atender')} aria-label={t('notif.atender')} onClick={() => accept(c)}>
                   {c.kind === 'voice' ? <MicIcon /> : <CamIcon />}
                 </button>
               </div>

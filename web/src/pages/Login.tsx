@@ -199,6 +199,7 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
           {mode === 'register' && (
             <input
               placeholder={t('login.orgName')}
+              aria-label={t('login.orgName')}
               value={orgName}
               onChange={(e) => setOrgName(e.target.value)}
               required
@@ -208,6 +209,7 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
           <input
             type="email"
             placeholder={mode === 'register' ? t('login.emailCorp') : t('login.email')}
+            aria-label={mode === 'register' ? t('login.emailCorp') : t('login.email')}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
@@ -228,14 +230,17 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
             </div>
           ) : (
             <>
-              <PasswordInput
-                placeholder={t('login.pass')}
-                value={password}
-                onChange={setPassword}
-                required
-                minLength={8}
-                autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-              />
+              <label>
+                <span className="sr-only">{t('login.pass')}</span>
+                <PasswordInput
+                  placeholder={t('login.pass')}
+                  value={password}
+                  onChange={setPassword}
+                  required
+                  minLength={8}
+                  autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                />
+              </label>
               {error && <div className="error">{error}</div>}
               {notice && <div className="notice">{notice}</div>}
               <button className="primary" disabled={busy}>

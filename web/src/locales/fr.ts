@@ -286,6 +286,7 @@ export default {
       guardarAta: 'Enregistrer le compte rendu',
     },
     txt: {
+      tituloPagina: "Salle de réunion — {{codigo}}",
       aTranscrever: "transcription en cours",
       igualEmTodosOs: "— identique chez tous les participants si personne n’intercepte",
       daEspacoParaCada: "— laisse à chacun le temps de finir.",
@@ -545,6 +546,13 @@ export default {
     theme: 'Thème',
     themeSub: "Choisissez l'apparence de l'application.",
     ngDark: 'NgolaCloud sombre',
+  },
+  a11y: {
+    saltarParaConteudo: 'Passer au contenu',
+    mesAnterior: 'Mois précédent',
+    mesSeguinte: 'Mois suivant',
+    removerConvidado: 'Retirer {{nome}}',
+    reagirCom: 'Réagir avec {{emoji}}',
   },
   nav: {
     home: 'Accueil',
@@ -1044,6 +1052,7 @@ export default {
     agendaDurLabel: 'Durée (min)',
     agendaAdd: 'Ajouter',
     agendaRemove: 'Supprimer le sujet',
+    actionRemove: "Supprimer l'action",
     agendaMarkDone: 'Marquer comme fait',
     agendaMarkPending: 'Marquer comme en attente',
     actionLoading: "Chargement du plan d'action…",
