@@ -70,6 +70,13 @@ export default function Whiteboards() {
     listWhiteboards().then(setItems).catch(() => setItems([])).finally(() => setLoading(false))
   useEffect(() => { void refresh() }, [])
 
+  useEffect(() => {
+    if (!view) return
+    const on = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); setView(null) } }
+    window.addEventListener('keydown', on)
+    return () => window.removeEventListener('keydown', on)
+  }, [view])
+
   async function toggleShare(w: WhiteboardMeta) {
     const updated = await shareWhiteboard(w.id, !w.is_public).catch(() => null)
     if (updated) {
@@ -131,10 +138,10 @@ export default function Whiteboards() {
 
       {view && (
         <div className="modal-overlay" onClick={() => setView(null)}>
-          <div className="modal wb-viewer" onClick={(e) => e.stopPropagation()}>
+          <div className="modal wb-viewer" role="dialog" aria-modal="true" aria-labelledby="wb-viewer-title" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
-              <h3>{view.title}</h3>
-              <button className="panel-close" onClick={() => setView(null)}><CloseIcon /></button>
+              <h3 id="wb-viewer-title">{view.title}</h3>
+              <button className="panel-close" onClick={() => setView(null)} aria-label={t('common.close')}><CloseIcon /></button>
             </div>
             <FullBoard
               id={view.id}

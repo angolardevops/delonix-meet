@@ -47,6 +47,7 @@ export default function NotificationCenter({ onNavigate }: { onNavigate: (k: Nav
     [meetings],
   )
   const count = missed.length + pending.length
+  const badgeLabel = count > 9 ? '9+' : count
 
   // Fecha ao clicar fora / Esc.
   useEffect(() => {
@@ -64,10 +65,10 @@ export default function NotificationCenter({ onNavigate }: { onNavigate: (k: Nav
         className="nav-item notif-bell"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={t('notif.title', 'Notificações')}
+        aria-label={count > 0 ? `${t('notif.title', 'Notificações')} (${badgeLabel})` : t('notif.title', 'Notificações')}
         onClick={() => setOpen((o) => !o)}
       >
-        <span className="notif-bell-icon"><BellIcon />{count > 0 && <span className="notif-badge">{count > 9 ? '9+' : count}</span>}</span>
+        <span className="notif-bell-icon"><BellIcon />{count > 0 && <span className="notif-badge">{badgeLabel}</span>}</span>
         <span>{t('notif.title', 'Notificações')}</span>
       </button>
 

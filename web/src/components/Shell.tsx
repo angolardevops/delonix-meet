@@ -480,6 +480,7 @@ export default function Shell({
 
   return (
     <div className={`shell${collapsed ? ' collapsed' : ''}${navOpen ? ' nav-open' : ''}`}>
+      <a href="#main-content" className="skip-link">{t('a11y.saltarParaConteudo')}</a>
       {navOpen && (
         <div className="shell-nav-backdrop" onClick={() => setNavOpen(false)} aria-hidden="true" />
       )}
@@ -571,7 +572,7 @@ export default function Shell({
           </div>
         </div>
       </aside>
-      <main className="shell-main">
+      <main className="shell-main" id="main-content" tabIndex={-1}>
         <AppBar onEnterRoom={onEnterRoom} username={user.username} onOpenNav={() => setNavOpen(true)} navOpen={navOpen} />
         <div className="shell-body">{children}</div>
       </main>

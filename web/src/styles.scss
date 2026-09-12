@@ -3865,6 +3865,20 @@ button.link:hover {
   outline: none; box-shadow: var(--ring);
 }
 
+/* Conteúdo só para leitor de ecrã — sem impacto visual, sem tirar espaço no layout. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* Skip-link: invisível até ganhar foco por teclado, aí salta à frente do rail. */
+.skip-link {
+  position: absolute; top: -40px; left: var(--space-3); z-index: 4201;
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
+  background: var(--accent); color: #fff; font-weight: 600; text-decoration: none;
+}
+.skip-link:focus-visible { top: var(--space-3); outline: none; box-shadow: var(--ring); }
+
 /* PageHeader partilhado (linha de título + ações). */
 .ds-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
 .ds-page-sub { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.92rem; }

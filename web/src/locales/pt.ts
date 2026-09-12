@@ -288,6 +288,7 @@ export default {
       guardarAta: 'Guardar ata',
     },
     txt: {
+      tituloPagina: "Sala de reunião — {{codigo}}",
       aTranscrever: "a transcrever",
       igualEmTodosOs: "— igual em todos os participantes se ninguém estiver a intercetar",
       daEspacoParaCada: "— dá espaço para cada um terminar.",
@@ -547,6 +548,13 @@ export default {
     theme: 'Tema',
     themeSub: 'Escolhe o aspeto da aplicação.',
     ngDark: 'NgolaCloud escuro',
+  },
+  a11y: {
+    saltarParaConteudo: 'Saltar para o conteúdo',
+    mesAnterior: 'Mês anterior',
+    mesSeguinte: 'Mês seguinte',
+    removerConvidado: 'Remover {{nome}}',
+    reagirCom: 'Reagir com {{emoji}}',
   },
   nav: {
     home: 'Início',
@@ -1048,6 +1056,7 @@ export default {
     agendaDurLabel: 'Duração (min)',
     agendaAdd: 'Adicionar',
     agendaRemove: 'Remover tópico',
+    actionRemove: 'Remover ação',
     agendaMarkDone: 'Marcar como concluído',
     agendaMarkPending: 'Marcar como pendente',
     // Action plan

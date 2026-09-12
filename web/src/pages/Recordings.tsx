@@ -478,12 +478,18 @@ function ViewerBody({
 
 /** Leitor em modal (vistas Cartões/Tabela). */
 function ViewerModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void }) {
+  const { t } = useTranslation()
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }
+    window.addEventListener('keydown', on)
+    return () => window.removeEventListener('keydown', on)
+  }, [onClose])
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal viewer" onClick={(e) => e.stopPropagation()}>
+      <div className="modal viewer" role="dialog" aria-modal="true" aria-labelledby="viewer-modal-title" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>{rec.filename.replace(/\.webm$/, '')}</h3>
-          <button className="panel-close" onClick={onClose}>
+          <h3 id="viewer-modal-title">{rec.filename.replace(/\.webm$/, '')}</h3>
+          <button className="panel-close" onClick={onClose} aria-label={t('common.close')}>
             <CloseIcon />
           </button>
         </div>
@@ -510,6 +516,12 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
   useEffect(() => {
     void getRecordingLink(rec.id).then(setLink).catch(() => setLink(null))
   }, [rec.id])
+
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }
+    window.addEventListener('keydown', on)
+    return () => window.removeEventListener('keydown', on)
+  }, [onClose])
 
   function linkUrl(token: string) {
     return `${location.origin}/#/share/${token}`
@@ -588,10 +600,10 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal share-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal share-modal" role="dialog" aria-modal="true" aria-labelledby="share-modal-title" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>{t('recordings.shareRecording')}</h3>
-          <button className="panel-close" onClick={onClose}><CloseIcon /></button>
+          <h3 id="share-modal-title">{t('recordings.shareRecording')}</h3>
+          <button className="panel-close" onClick={onClose} aria-label={t('common.close')}><CloseIcon /></button>
         </div>
 
         {/* ---- Link público ---- */}

@@ -286,6 +286,7 @@ export default {
       guardarAta: 'Save minutes',
     },
     txt: {
+      tituloPagina: "Meeting room — {{codigo}}",
       aTranscrever: "transcribing",
       igualEmTodosOs: "— identical for every participant if no one is intercepting",
       daEspacoParaCada: "— gives everyone room to finish.",
@@ -545,6 +546,13 @@ export default {
     theme: 'Theme',
     themeSub: 'Choose the app appearance.',
     ngDark: 'NgolaCloud dark',
+  },
+  a11y: {
+    saltarParaConteudo: 'Skip to content',
+    mesAnterior: 'Previous month',
+    mesSeguinte: 'Next month',
+    removerConvidado: 'Remove {{nome}}',
+    reagirCom: 'React with {{emoji}}',
   },
   nav: {
     home: 'Home',
@@ -1044,6 +1052,7 @@ export default {
     agendaDurLabel: 'Duration (min)',
     agendaAdd: 'Add',
     agendaRemove: 'Remove topic',
+    actionRemove: 'Remove action',
     agendaMarkDone: 'Mark as done',
     agendaMarkPending: 'Mark as pending',
     actionLoading: 'Loading action plan…',

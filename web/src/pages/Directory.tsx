@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import PasswordInput from '../components/PasswordInput'
 import {
@@ -74,7 +74,7 @@ export default function Directory() {
           <PeopleIcon /> {t('directory.title')}
         </h1>
         <div className="org-bar">
-          <select value={orgId} onChange={(e) => setOrgId(e.target.value)} className="org-select">
+          <select value={orgId} onChange={(e) => setOrgId(e.target.value)} className="org-select" aria-label={t('directory.title')}>
             {orgs.map((o) => (
               <option key={o.id} value={o.id}>
                 {o.name} · {t('directory.membersCount', { count: o.member_count })}
@@ -155,11 +155,12 @@ function DirectoryTab({ org }: { org: OrgSummary }) {
         <input
           type="search"
           placeholder={t('directory.searchMembers')}
+          aria-label={t('directory.searchMembers')}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{ flex: 1, minWidth: '200px' }}
         />
-        <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+        <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} aria-label={t('directory.roleField')}>
           <option value="all">{t('directory.allRoles')}</option>
           <option value="admin">{t('directory.admins')}</option>
           <option value="member">{t('directory.members')}</option>
@@ -251,8 +252,8 @@ function BranchesTab({ org }: { org: OrgSummary }) {
     <>
       {org.role === 'admin' && (
         <form className="inline-form" onSubmit={add}>
-          <input placeholder={t('directory.branchName')} value={name} onChange={(e) => setName(e.target.value)} />
-          <input placeholder={t('directory.location')} value={location} onChange={(e) => setLocation(e.target.value)} />
+          <input placeholder={t('directory.branchName')} aria-label={t('directory.branchName')} value={name} onChange={(e) => setName(e.target.value)} />
+          <input placeholder={t('directory.location')} aria-label={t('directory.location')} value={location} onChange={(e) => setLocation(e.target.value)} />
           <button className="btn-sm" disabled={!name.trim()}><PlusIcon /> {t('directory.add')}</button>
         </form>
       )}
@@ -346,9 +347,9 @@ function RoomsTab({ org }: { org: OrgSummary }) {
       </p>
       {org.role === 'admin' && (
         <form className="inline-form" onSubmit={add}>
-          <input placeholder={t('directory.roomName')} value={name} onChange={(e) => setName(e.target.value)} />
-          <input placeholder={t('directory.location')} value={location} onChange={(e) => setLocation(e.target.value)} />
-          <input placeholder={t('directory.capacity')} type="number" min={0} value={capacity} onChange={(e) => setCapacity(e.target.value)} style={{ maxWidth: 110 }} />
+          <input placeholder={t('directory.roomName')} aria-label={t('directory.roomName')} value={name} onChange={(e) => setName(e.target.value)} />
+          <input placeholder={t('directory.location')} aria-label={t('directory.location')} value={location} onChange={(e) => setLocation(e.target.value)} />
+          <input placeholder={t('directory.capacity')} aria-label={t('directory.capacity')} type="number" min={0} value={capacity} onChange={(e) => setCapacity(e.target.value)} style={{ maxWidth: 110 }} />
           <button className="btn-sm" disabled={!name.trim()}><PlusIcon /> {t('directory.add')}</button>
         </form>
       )}
@@ -383,11 +384,16 @@ function CreateOrgModal({ onClose, onCreated }: { onClose: () => void; onCreated
       setBusy(false)
     }
   }
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }
+    window.addEventListener('keydown', on)
+    return () => window.removeEventListener('keydown', on)
+  }, [onClose])
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <div className="modal-head"><h3>{t('directory.createOrg')}</h3><button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button></div>
-        <input autoFocus placeholder={t('directory.companyName')} value={name} onChange={(e) => setName(e.target.value)} />
+      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="create-org-title">
+        <div className="modal-head"><h3 id="create-org-title">{t('directory.createOrg')}</h3><button type="button" className="panel-close" onClick={onClose} aria-label={t('common.close')}><CloseIcon /></button></div>
+        <input autoFocus placeholder={t('directory.companyName')} aria-label={t('directory.companyName')} value={name} onChange={(e) => setName(e.target.value)} />
         {error && <div className="error">{error}</div>}
         <button className="primary" disabled={busy || !name.trim()}>{busy ? '…' : t('directory.create')}</button>
       </form>
@@ -435,12 +441,17 @@ function AddEmployeeModal({
       setBusy(false)
     }
   }
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }
+    window.addEventListener('keydown', on)
+    return () => window.removeEventListener('keydown', on)
+  }, [onClose])
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <div className="modal-head"><h3>{t('directory.addEmployee')}</h3><button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button></div>
+      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="add-employee-title">
+        <div className="modal-head"><h3 id="add-employee-title">{t('directory.addEmployee')}</h3><button type="button" className="panel-close" onClick={onClose} aria-label={t('common.close')}><CloseIcon /></button></div>
         <p className="muted small">{t('directory.addEmployeeHint')}</p>
-        <input autoFocus type="email" placeholder={t('login.email')} value={email} onChange={(e) => setEmail(e.target.value)} />
+        <input autoFocus type="email" placeholder={t('login.email')} aria-label={t('login.email')} value={email} onChange={(e) => setEmail(e.target.value)} />
         <div className="field-row">
           <label>{t('directory.name')}<input placeholder={t('directory.usernamePh')} value={username} onChange={(e) => setUsername(e.target.value)} /></label>
           <label>{t('directory.initialPassword')}<PasswordInput placeholder={t('directory.initialPasswordPh')} value={password} onChange={setPassword} autoComplete="new-password" /></label>
@@ -486,6 +497,7 @@ function EditEmployeeModal({
   const [branchId, setBranchId] = useState(employee.branch_id ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const titleRef = useRef<HTMLInputElement>(null)
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -504,16 +516,25 @@ function EditEmployeeModal({
     }
   }
 
+  useEffect(() => {
+    setTimeout(() => titleRef.current?.focus(), 20)
+  }, [])
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }
+    window.addEventListener('keydown', on)
+    return () => window.removeEventListener('keydown', on)
+  }, [onClose])
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="edit-employee-title">
         <div className="modal-head">
-          <h3>{t('directory.editMemberTitle', { name: employee.username })}</h3>
-          <button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button>
+          <h3 id="edit-employee-title">{t('directory.editMemberTitle', { name: employee.username })}</h3>
+          <button type="button" className="panel-close" onClick={onClose} aria-label={t('common.close')}><CloseIcon /></button>
         </div>
         <div className="field-row">
           <label>{t('directory.role')}
-            <input placeholder={t('directory.rolePh')} value={title} onChange={(e) => setTitle(e.target.value)} />
+            <input ref={titleRef} placeholder={t('directory.rolePh')} value={title} onChange={(e) => setTitle(e.target.value)} />
           </label>
           <label>{t('directory.roleField')}
             <select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'member')}>
@@ -564,11 +585,16 @@ function CreateGroupModal({ orgId, onClose, onCreated }: { orgId: string; onClos
     }
   }
   const list = useMemo(() => emps, [emps])
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }
+    window.addEventListener('keydown', on)
+    return () => window.removeEventListener('keydown', on)
+  }, [onClose])
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <div className="modal-head"><h3>{t('directory.createGroup')}</h3><button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button></div>
-        <input autoFocus placeholder={t('directory.groupNamePh')} value={name} onChange={(e) => setName(e.target.value)} />
+      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="create-group-title">
+        <div className="modal-head"><h3 id="create-group-title">{t('directory.createGroup')}</h3><button type="button" className="panel-close" onClick={onClose} aria-label={t('common.close')}><CloseIcon /></button></div>
+        <input autoFocus placeholder={t('directory.groupNamePh')} aria-label={t('directory.groupNamePh')} value={name} onChange={(e) => setName(e.target.value)} />
         <div className="pick-list">
           {list.map((e) => (
             <label key={e.user_id} className="pick-row">
