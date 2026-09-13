@@ -1101,7 +1101,7 @@ function ScheduleModal({
           <label>{t('schedDate')}<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
           <label>{t('schedTime')}<input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></label>
           <label>{t('schedDuration')}
-            <select value={duration} onChange={(e) => setDuration(Number(e.target.value))}>
+            <select className="dx-select" value={duration} onChange={(e) => setDuration(Number(e.target.value))}>
               {[15, 30, 45, 60, 90, 120].map((d) => <option key={d} value={d}>{d} min</option>)}
             </select>
           </label>
@@ -1110,7 +1110,7 @@ function ScheduleModal({
         {rooms.length > 0 && (
           <label className="set-label">
             {t('schedRoom')}
-            <select value={roomRef} onChange={(e) => setRoomRef(e.target.value)}>
+            <select className="dx-select" value={roomRef} onChange={(e) => setRoomRef(e.target.value)}>
               <option value="">{t('schedNoRoom')}</option>
               {rooms.map((r) => (
                 <option key={r.id} value={r.id}>{r.name}{r.location ? ` · ${r.location}` : ''}</option>
@@ -1123,7 +1123,7 @@ function ScheduleModal({
         <div className="rrule-block">
           <label className="set-label">
             {t('schedRepeat')}
-            <select value={rrFreq} onChange={(e) => setRrFreq(e.target.value as RecurrenceFreq | '')}>
+            <select className="dx-select" value={rrFreq} onChange={(e) => setRrFreq(e.target.value as RecurrenceFreq | '')}>
               <option value="">{t('schedNoRepeat')}</option>
               <option value="daily">{t('schedDaily')}</option>
               <option value="weekly">{t('schedWeekly')}</option>

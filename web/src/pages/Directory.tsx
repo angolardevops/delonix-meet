@@ -164,7 +164,7 @@ function DirectoryTab({ org }: { org: OrgSummary }) {
           onChange={(e) => setSearch(e.target.value)}
           style={{ flex: 1, minWidth: '200px' }}
         />
-        <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+        <select className="dx-select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
           <option value="all">{t('directory.allRoles')}</option>
           <option value="admin">{t('directory.admins')}</option>
           <option value="member">{t('directory.members')}</option>
@@ -453,13 +453,13 @@ function AddEmployeeModal({
         <div className="field-row">
           <label>{t('directory.role')}<input placeholder={t('directory.rolePh')} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
           <label>{t('directory.roleField')}
-            <select value={role} onChange={(e) => setRole(e.target.value)}>
+            <select className="dx-select" value={role} onChange={(e) => setRole(e.target.value)}>
               <option value="member">{t('directory.roleMember')}</option>
               <option value="admin">{t('directory.roleAdmin')}</option>
             </select>
           </label>
           <label>{t('directory.branch')}
-            <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+            <select className="dx-select" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
               <option value="">—</option>
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
@@ -521,13 +521,13 @@ function EditEmployeeModal({
             <input placeholder={t('directory.rolePh')} value={title} onChange={(e) => setTitle(e.target.value)} />
           </label>
           <label>{t('directory.roleField')}
-            <select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'member')}>
+            <select className="dx-select" value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'member')}>
               <option value="member">{t('directory.roleMember')}</option>
               <option value="admin">{t('directory.roleAdmin')}</option>
             </select>
           </label>
           <label>{t('directory.branch')}
-            <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+            <select className="dx-select" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
               <option value="">—</option>
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>

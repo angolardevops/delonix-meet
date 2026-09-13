@@ -614,7 +614,7 @@ function PlatformStoragePanel() {
 
       <div className="field-row">
         <label className="field-label">{t('admin.tipoDeArmazenamento')}</label>
-        <select value={type} onChange={(e) => setType(e.target.value as typeof type)} className="select-ctl">
+        <select value={type} onChange={(e) => setType(e.target.value as typeof type)} className="dx-select">
           <option value="local">{t('admin.armazenamentoLocal')}</option>
           <option value="nfs">TrueNAS / NFS</option>
           <option value="webdav">Nextcloud / WebDAV</option>
