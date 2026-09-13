@@ -93,6 +93,13 @@ pub struct Config {
     /// só transcodifica o áudio — barato —, mas «barato» vezes N deixa de ser.
     /// Sem tecto, uma organização entusiasmada derruba as chamadas do nó.
     pub max_directos: usize,
+    /// Destinos RTMP simultâneos POR emissão (`MAX_DESTINOS_POR_DIRECTO`,
+    /// default 4) — o "multi-canal tipo StreamYard": um `ffmpeg` com N saídas
+    /// `-f flv`. O tecto aqui é diferente do `max_directos`: aquele limita
+    /// quantas SALAS emitem ao mesmo tempo; este limita quantas PLATAFORMAS
+    /// uma única emissão alimenta — cada destino a mais é mais uma ligação
+    /// TCP e mais banda de saída do mesmo pod, mesmo copiando o vídeo.
+    pub max_destinos_por_directo: usize,
     /// Binário do ffmpeg (`FFMPEG_BIN`, default `ffmpeg`).
     ///
     /// Configurável porque nem toda a instalação tem o ffmpeg no PATH — e
@@ -224,6 +231,7 @@ impl Config {
             ffmpeg_timeout_secs: bounded_env("FFMPEG_TIMEOUT_SECS", 3_600, 30, 86_400) as u64,
             ffmpeg_threads: bounded_env("FFMPEG_THREADS", 2, 1, 64) as u32,
             max_directos: bounded_env("MAX_DIRECTOS", 2, 0, 32),
+            max_destinos_por_directo: bounded_env("MAX_DESTINOS_POR_DIRECTO", 4, 1, 8),
             directo_threads: bounded_env("DIRECTO_THREADS", 1, 1, 16) as u32,
             ffmpeg_bin: env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into()),
         }

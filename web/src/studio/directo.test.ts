@@ -42,41 +42,56 @@ describe('urlDoDirecto', () => {
   const destino = { url: 'rtmp://a.rtmp.youtube.com/live2', chave: 'k-123', rotulo: 'YouTube' }
 
   it('usa wss quando a página é https', () => {
-    const u = urlDoDirecto({ protocol: 'https:', host: 'meet.exemplo' }, 'sala-azul', 't', destino)
+    const u = urlDoDirecto({ protocol: 'https:', host: 'meet.exemplo' }, 'sala-azul', 't', [destino])
     expect(u.startsWith('wss://meet.exemplo/')).toBe(true)
   })
 
   it('e ws quando é http (rede interna)', () => {
-    const u = urlDoDirecto({ protocol: 'http:', host: 'localhost:5173' }, 'sala-azul', 't', destino)
+    const u = urlDoDirecto({ protocol: 'http:', host: 'localhost:5173' }, 'sala-azul', 't', [destino])
     expect(u.startsWith('ws://localhost:5173/')).toBe(true)
   })
 
-  it('leva o token, o destino, a chave e o codec', () => {
-    const q = new URL(urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 'tok', destino)).searchParams
+  it('leva o token, os destinos (em JSON) e o codec', () => {
+    const q = new URL(urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 'tok', [destino])).searchParams
     expect(q.get('token')).toBe('tok')
-    expect(q.get('destino')).toBe(destino.url)
-    expect(q.get('chave')).toBe('k-123')
+    expect(JSON.parse(q.get('destinos')!)).toEqual([destino])
     // O codec vai declarado para o servidor poder RECUSAR antes de gastar um
     // processo de ffmpeg.
     expect(q.get('codec')).toBe('video/h264')
   })
 
   it('escapa o código da sala', () => {
-    const u = urlDoDirecto({ protocol: 'https:', host: 'h' }, 'a/b?c', 't', destino)
+    const u = urlDoDirecto({ protocol: 'https:', host: 'h' }, 'a/b?c', 't', [destino])
     expect(u).toContain('/api/rooms/a%2Fb%3Fc/broadcast')
   })
 
-  it('apara espaços à volta do destino e da chave', () => {
+  it('apara espaços à volta do url e da chave de cada destino', () => {
     // Colar uma chave de uma página web traz espaços, e um URL com espaço no
     // fim dá um erro do ffmpeg que ninguém liga à causa.
     const q = new URL(
-      urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 't', {
-        url: '  rtmp://x/live  ',
-        chave: '  k  ',
-      }),
+      urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 't', [
+        { url: '  rtmp://x/live  ', chave: '  k  ' },
+      ]),
     ).searchParams
-    expect(q.get('destino')).toBe('rtmp://x/live')
-    expect(q.get('chave')).toBe('k')
+    expect(JSON.parse(q.get('destinos')!)).toEqual([{ url: 'rtmp://x/live', chave: 'k' }])
+  })
+
+  it('leva VÁRIOS destinos — o multi-canal tipo StreamYard', () => {
+    // É a capacidade inteira desta mudança: um array, não um campo.
+    const outro = { url: 'rtmp://live.twitch.tv/app', chave: 'k-456', rotulo: 'Twitch' }
+    const q = new URL(urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 't', [destino, outro])).searchParams
+    expect(JSON.parse(q.get('destinos')!)).toEqual([destino, outro])
+  })
+
+  it('um destino sem rótulo não leva a chave "rotulo" no JSON', () => {
+    // O servidor já tem uma predefinição («directo») para quando falta — não
+    // se manda `rotulo: undefined`, que o `JSON.stringify` normal omitiria de
+    // qualquer forma, mas é o contrato que se quer garantido, não um acaso.
+    const q = new URL(
+      urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 't', [{ url: 'rtmp://x', chave: 'k' }]),
+    ).searchParams
+    const brutos = JSON.parse(q.get('destinos')!) as Record<string, unknown>[]
+    expect('rotulo' in brutos[0]).toBe(false)
   })
 })
 
@@ -206,7 +221,7 @@ describe('Directo · o ciclo de vida', () => {
     const d = new Directo()
     const fases: string[] = []
     d.aoMudar = (e) => fases.push(e.fase)
-    await d.comecar({} as MediaStream, 'sala', 'tok', { url: 'rtmp://x', chave: 'k' })
+    await d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
     expect(fases).toEqual(['a-ligar', 'no-ar'])
     expect(d.noAr).toBe(true)
 
@@ -220,7 +235,7 @@ describe('Directo · o ciclo de vida', () => {
   it('um pedaço VAZIO não vai para a rede', async () => {
     const { criados } = montarAmbiente()
     const d = new Directo()
-    await d.comecar({} as MediaStream, 'sala', 'tok', { url: 'rtmp://x', chave: 'k' })
+    await d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
     const rec = (d as unknown as { gravador: GravadorFalso }).gravador
     rec.ondataavailable?.(pedaco(0))
     await esperar()
@@ -231,7 +246,7 @@ describe('Directo · o ciclo de vida', () => {
   it('com o socket já fechado, não se envia — nem se contam bytes', async () => {
     const { criados } = montarAmbiente()
     const d = new Directo()
-    await d.comecar({} as MediaStream, 'sala', 'tok', { url: 'rtmp://x', chave: 'k' })
+    await d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
     criados[0].readyState = 3
     const rec = (d as unknown as { gravador: GravadorFalso }).gravador
     rec.ondataavailable?.(pedaco(500))
@@ -245,7 +260,7 @@ describe('Directo · o ciclo de vida', () => {
     // pode fechar no meio. Sem a segunda, o `send` atira num socket fechado.
     const { criados } = montarAmbiente()
     const d = new Directo()
-    await d.comecar({} as MediaStream, 'sala', 'tok', { url: 'rtmp://x', chave: 'k' })
+    await d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
     const rec = (d as unknown as { gravador: GravadorFalso }).gravador
     rec.ondataavailable?.({
       data: {
@@ -265,7 +280,7 @@ describe('Directo · o ciclo de vida', () => {
   it('parar fecha o socket com 1000 e volta a «parado»', async () => {
     const { criados } = montarAmbiente()
     const d = new Directo()
-    await d.comecar({} as MediaStream, 'sala', 'tok', { url: 'rtmp://x', chave: 'k' })
+    await d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
     await d.parar()
     expect(criados[0].fechado).toEqual([1000, 'fim'])
     expect(d.estado).toEqual({ fase: 'parado' })
@@ -288,7 +303,7 @@ describe('Directo · o ciclo de vida', () => {
     // é uma emissão que caiu e que ela tem de saber que caiu.
     const { criados } = montarAmbiente()
     const d = new Directo()
-    await d.comecar({} as MediaStream, 'sala', 'tok', { url: 'rtmp://x', chave: 'k' })
+    await d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
     criados[0].onclose?.()
     expect(d.estado).toMatchObject({ fase: 'erro' })
     expect(d.noAr).toBe(false)
@@ -300,7 +315,7 @@ describe('Directo · o ciclo de vida', () => {
     // de propósito.
     const { criados } = montarAmbiente()
     const d = new Directo()
-    await d.comecar({} as MediaStream, 'sala', 'tok', { url: 'rtmp://x', chave: 'k' })
+    await d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
     await d.parar()
     criados[0].onclose?.()
     expect(d.estado).toEqual({ fase: 'parado' })

@@ -5048,6 +5048,14 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
 .studio-no-ar::first-letter { animation: studio-pulsa 1.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .studio-no-ar::first-letter { animation: none; } }
 .studio-directo .error { color: var(--danger); font-size: 0.8rem; }
+/* Uma linha por destino RTMP — o multi-canal tipo StreamYard. Separadas por
+   um traço leve para não se confundirem quando há mais que uma. */
+.studio-destino-row {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 0; border-bottom: 1px dashed var(--border-soft);
+}
+.studio-destino-row:first-child { padding-top: 0; }
+.studio-destino-row:last-of-type { border-bottom: none; }
 
 /* ============================================================
    Barra de controlos em ecrã estreito — R86.
