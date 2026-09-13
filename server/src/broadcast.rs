@@ -418,13 +418,21 @@ mod testes {
         // O "multi-canal tipo StreamYard": vários destinos NA MESMA emissão,
         // não uma emissão por destino — é a diferença entre este tecto e o
         // `max_directos` (esse é por SALA, não por destino).
-        let d = [destino("yt", "k1"), destino("tw", "k2"), destino("fb", "k3")];
+        let d = [
+            destino("yt", "k1"),
+            destino("tw", "k2"),
+            destino("fb", "k3"),
+        ];
         assert!(pode_emitir(false, "video/h264", &d, 0, 4, 4).is_ok());
     }
 
     #[test]
     fn destinos_a_mais_para_o_tecto_do_no_sao_recusados_com_razao() {
-        let d = [destino("yt", "k1"), destino("tw", "k2"), destino("fb", "k3")];
+        let d = [
+            destino("yt", "k1"),
+            destino("tw", "k2"),
+            destino("fb", "k3"),
+        ];
         let r = pode_emitir(false, "video/h264", &d, 0, 4, 2).unwrap_err();
         assert_eq!(
             r,
