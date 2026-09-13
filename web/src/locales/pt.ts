@@ -602,6 +602,7 @@ export default {
     appearance: 'Aparência',
     language: 'Idioma',
     account: 'Conta',
+    brand: 'Marca',
   },
   tour: {
     aria: 'Introdução à plataforma',
@@ -824,6 +825,8 @@ export default {
     webhooksSub: 'Slack · Teams · Mattermost · genérico',
     webhooksEmpty: 'Sem webhooks configurados.',
     webhookAdd: 'Adicionar',
+    webhookKind: 'Tipo de webhook',
+    webhookUrl: 'URL do webhook',
     webhookSecret: 'Segredo HMAC (opcional)',
     webhookGeneric: 'Genérico (HMAC)',
     apiKeysTitle: 'Chaves de API',

@@ -19,6 +19,8 @@
 | **1 · Config e cortes** | 1.1 · 1.2 · 1.3 · 4.3 (+1.6 de borla) | **FECHADO** — `ui/lote-1-carregamento`, medido abaixo |
 | **2 · Layout** | 3.1.1 · 3.1.3 · 3.1.4 · 4.1 · 4.2 · 3.2.5 | **FECHADO** — `ui/lote-2-layout`, medido abaixo |
 | **3 · Sala e higiene** | perfil → 2.1–2.3 · 3.2.1 · 3.2.4 | **FECHADO** — `ui/lote-3-sala`, medido abaixo |
+| **4 · Acessibilidade** | nomes acessíveis, diálogos, `Escape`, navegação por teclado | **PR aberto** — `a11y/console-lote-4` (#61), medido abaixo |
+| **5 · Polimento** | 1.5 · 2.6 · 3.2.6 · 4.5 · 4.6 (+ rótulos órfãos no admin, achado novo) | **FECHADO** — `polish/console-lote-5`, medido abaixo |
 
 ### Lote 1 — o que mudou, medido
 
@@ -174,6 +176,57 @@ também fica: a troca por `grid` + `aspect-ratio` mexe no layout de vídeo, que 
 o sítio onde uma regressão se paga mais caro, e merece o seu próprio lote com
 verificação visual.
 
+### Lote 4 — acessibilidade (PR #61, aberto)
+
+Nomes acessíveis em 15 botões `panel-close`, `role="dialog"`+`aria-modal`+
+`Escape` em 9 modais de página e nas três sobreposições da sala que não tinham
+esse fecho, landmark+`h1` na `Room`, skip-link na `Shell`, `aria-live` correcto
+em toasts/chamada a receber, e três células do `Calendar` que só respondiam a
+`onClick` a ganharem teclado. Detalhe completo no corpo do PR #61 — fica como
+referência aqui porque o lote 5 constrói a seguir a ele, não a seguir ao 3.
+
+### Lote 5 — polimento (o que ficou por fazer nos lotes 1–4, e um achado novo)
+
+| Medida | Antes | Depois |
+|---|---|---|
+| `new Date()` na `.app-bar` sem timer (achado 4.6) | hora congelada desde que a sessão abriu | actualiza a cada minuto |
+| Tema com duas fontes de verdade — toggle da barra vs `<select>` do drawer (achado 3.2.6) | cada um com o seu `useState`, dessincronizavam | evento `dx-theme` partilhado (mesmo padrão do `dx-branding` já existente) |
+| `button:active { transform: scale(0.97) }` global (achado 2.6) | tocava até no rail, que a CONSOLA já declara sem movimento | removido; os cinco tiers de acção (`.ctrl`, `.btn-sm`, `.btn-ghost`, `.prejoin-join`, `.device-ctrl`) já tinham o seu próprio `:active` |
+| Pesos de fonte pré-carregados (achado 1.5) | 0 de 6 | 2 (Sans 400/600 latin — os dois do primeiro pixel) |
+| String PT solta num componente traduzido (achado 4.5, resto) | `label: 'Marca'` sem `t()` no drawer de definições | `t('settings.brand')` |
+| **Achado novo — `<label>` órfão no admin.** 10 pares label/controlo em `Analytics.tsx` (Odoo, armazenamento NFS/WebDAV) usavam `<label className="field-label">` como IRMÃO do controlo, nunca a envolvê-lo nem com `htmlFor`/`id`. Visualmente parece rotulado; um leitor de ecrã não tem associação nenhuma — o campo é anunciado sem nome. | 0 pares ligados | 10, por `id`+`htmlFor` |
+| `PasswordInput` sem `aria-label` reencaminhável (limite anotado no lote 4) | prop inexistente | `ariaLabel?: string`, opcional — não muda nenhum uso já correcto (o `Directory.tsx:446` continua a tirar o nome do `<label>` que o envolve, não do novo prop) |
+
+**Porque é que o `PasswordInput` NÃO ganhou um valor por omissão a partir do
+`placeholder`.** A primeira versão tentada fazia `aria-label={ariaLabel ??
+placeholder}` — parecia inofensivo, e passava no `tsc`. Mas
+`Directory.tsx:446` já envolve o componente num `<label>` com texto PRÓPRIO
+(«Password inicial»), diferente do `placeholder` («mín. 8, nova conta»); um
+`aria-label` no `<input>` GANHA ao `<label>` que o envolve, por isso o valor
+por omissão trocava silenciosamente um nome bom por um pior num sítio que já
+estava certo. Corrigido para só forçar o nome quando alguém o pede
+explicitamente — o comportamento por omissão continua a ser «tira o nome do
+que envolve o campo».
+
+**O que este lote NÃO tocou, e porquê.** `2.4` (`useGridLayout` → `grid` +
+`aspect-ratio`) e os `74 #fff` continuam de fora — a razão é a mesma do lote 3:
+risco visual real que pede verificação num browser a sério, não uma passagem
+de código. `2.5` (`transition: all`, 11 ocorrências) também ficou de fora:
+o próprio achado recomenda converter «ao tocar no bloco», não como varredura —
+enumerar as propriedades certas por selector sem ver o resultado é adivinhar.
+
+**O que ficou provado.** `tsc --noEmit` limpo, as 292 `vitest` continuam
+verdes, `vite build` produz um `dist/` válido, e os dois `<link
+rel="preload">` novos foram confirmados num Chromium real contra esse `dist`
+(`vite preview`, `NO_HTTPS=1`) a apontar para os ficheiros `.woff2` REAIS que o
+build emitiu — não para um nome adivinhado. A Landing carrega sem erros de
+consola nem pedidos falhados.
+
+**O que NÃO foi validado.** O sincronismo do tema (evento `dx-theme`) e o
+relógio da `.app-bar` vivem atrás do login — não foram vistos a funcionar num
+browser real pela mesma razão do lote 4: sem backend a correr, não há sessão
+autenticada para lá chegar. Os 10 pares `label`/`id` do admin também não foram
+confirmados com um leitor de ecrã.
 
 ---
 

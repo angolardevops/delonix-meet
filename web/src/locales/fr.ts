@@ -623,6 +623,7 @@ export default {
     appearance: 'Apparence',
     language: 'Langue',
     account: 'Compte',
+    brand: 'Marque',
   },
   wb: {
     title: 'Tableaux blancs',
@@ -822,6 +823,8 @@ export default {
     webhooksSub: 'Slack · Teams · Mattermost · générique',
     webhooksEmpty: 'Aucun webhook configuré.',
     webhookAdd: 'Ajouter',
+    webhookKind: 'Type de webhook',
+    webhookUrl: 'URL du webhook',
     webhookSecret: 'Secret HMAC (facultatif)',
     webhookGeneric: 'Générique (HMAC)',
     apiKeysTitle: 'Clés API',

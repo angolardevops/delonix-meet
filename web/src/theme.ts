@@ -12,6 +12,11 @@ export function applyTheme(theme: Theme) {
   if (theme === 'default') delete document.documentElement.dataset.theme
   else document.documentElement.dataset.theme = theme
   localStorage.setItem('dx_theme', theme)
+  // O toggle da app-bar e o <select> do drawer de definições (achado 3.2.6)
+  // tinham cada um o seu próprio useState — mudar num não actualizava o
+  // outro até um remount. Este evento é a única fonte de verdade partilhada,
+  // no mesmo padrão do `dx-branding`.
+  window.dispatchEvent(new Event('dx-theme'))
 }
 
 export function storedTheme(): Theme {
