@@ -910,8 +910,8 @@ function EventModal({
                   <>
                     <p className="muted small">{tr('inviteConfirm')}</p>
                     <div className="event-actions">
-                      <button className="btn-sm" disabled={busy} onClick={() => void respond('accepted')}>{tr('accept')}</button>
-                      <button className="btn-sm ghost" disabled={busy} onClick={() => setDeclining(true)}>{tr('decline')}</button>
+                      <Btn disabled={busy} onClick={() => void respond('accepted')}>{tr('accept')}</Btn>
+                      <Btn variant="ghost" disabled={busy} onClick={() => setDeclining(true)}>{tr('decline')}</Btn>
                     </div>
                   </>
                 )}
@@ -919,8 +919,8 @@ function EventModal({
                   <div className="decline-form">
                     <input placeholder={tr('declineReason')} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
                     <div className="event-actions">
-                      <button className="btn-sm danger" disabled={busy || !reason.trim()} onClick={() => void respond('declined')}>{tr('confirmDecline')}</button>
-                      <button className="btn-sm ghost" onClick={() => setDeclining(false)}>{tr('back')}</button>
+                      <Btn variant="danger" disabled={busy || !reason.trim()} onClick={() => void respond('declined')}>{tr('confirmDecline')}</Btn>
+                      <Btn variant="ghost" onClick={() => setDeclining(false)}>{tr('back')}</Btn>
                     </div>
                   </div>
                 )}
@@ -976,7 +976,7 @@ function EventModal({
             <CalendarIcon /> {tr('ics')}
           </button>
           {meeting.is_owner && (
-            <button className="btn-sm ghost" onClick={() => onRemove(meeting)}><TrashIcon /> {tr('cancel')}</button>
+            <Btn variant="ghost" onClick={() => onRemove(meeting)}><TrashIcon /> {tr('cancel')}</Btn>
           )}
         </div>
       </div>
@@ -1270,9 +1270,9 @@ function ScheduleModal({
         )}
 
         {error && <div className="error">{error}</div>}
-        <button className="primary" disabled={busy || roomConflict}>
+        <Btn variant="submit" disabled={busy || roomConflict}>
           {busy ? t('schedBusy') : roomConflict ? t('schedUnavailable') : t('schedSubmit')}
-        </button>
+        </Btn>
       </form>
     </div>
   )
