@@ -517,6 +517,14 @@ export default {
     arrastaBolha: 'Ou fais glisser la bulle sur l’aperçu.',
     erroRecorte: 'Impossible de préparer la suppression du fond.',
   },
+  multicam: {
+    titulo: 'Multi-caméra',
+    cena: 'Scène',
+    cenaGrelha: 'Grille',
+    cenaSolo: 'Solo',
+    cenaLadoALado: 'Côte à côte',
+    escolherQuem: 'Qui apparaît',
+  },
   load: {
     failedTitle: 'Chargement impossible',
     failedHint: "Le service n'a pas répondu. Cela ne veut pas dire qu'il n'y a rien ici.",

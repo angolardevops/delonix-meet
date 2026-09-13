@@ -2465,6 +2465,13 @@ button.link:hover {
   border-radius: 8px; overflow: hidden; background: #000; aspect-ratio: 16/9;
 }
 .fx-preview-wrap video { width: 100%; height: 100%; object-fit: cover; }
+
+/* ---- multicâmara (podcast) ---- */
+.multicam-preview {
+  border-radius: 8px; overflow: hidden; background: #000; aspect-ratio: 16/9;
+}
+.multicam-canvas { width: 100%; height: 100%; display: block; }
+.multicam-foco { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 8px; }
 .fx-preview-wrap video.mirror { transform: scaleX(-1); }
 .fx-row { display: flex; gap: 0.5rem; }
 .fx-opt {

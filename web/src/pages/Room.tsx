@@ -27,6 +27,9 @@ import { BreakoutRoom, PeerInfo, PollView, QaView, Signaling, WbStroke } from '.
 import ThemePicker from '../components/ThemePicker'
 import { Countdown, MeetingElapsed, WallClock } from '../room/Clocks'
 import { peerColor, RemotePeer, RemoteTile, SpeakingBars } from '../room/RemoteTile'
+import { Cena, Fonte, RoomCompositor } from '../room/compositor'
+import { Destino, Directo, directoSuportado, EstadoDoDirecto } from '../studio/directo'
+import PasswordInput from '../components/PasswordInput'
 import { Call, MeshCall, SCREEN_CONSTRAINTS, SfuCall } from '../webrtc'
 import type { CallState } from '../callRecovery'
 import { backoffDelay } from '../callRecovery'
@@ -840,6 +843,38 @@ export default function Room({
   const [parallax, setParallax] = useState(false)
   const [tilt, setTilt] = useState({ x: 0, y: 0 })
   const [notesOpen, setNotesOpen] = useState(false)
+  // Multicâmara (podcast) — compõe os participantes num canvas (ver
+  // room/compositor.ts) e envia-o ao Directo (studio/directo.ts, já pronto
+  // para N destinos). O objecto imperativo vive num ref pela MESMA razão do
+  // resto da sala: pô-lo em estado faria a raiz re-renderizar a cada frame.
+  const [multicamOpen, setMulticamOpen] = useState(false)
+  const [cena, setCena] = useState<Cena>('grelha')
+  const [focoIds, setFocoIds] = useState<string[]>([])
+  const MAX_MULTICAM_DESTINOS = 4
+  const [multicamDestinos, setMulticamDestinos] = useState<Destino[]>([
+    { url: 'rtmp://a.rtmp.youtube.com/live2', chave: '', rotulo: 'YouTube' },
+  ])
+  const adicionarMulticamDestino = () =>
+    setMulticamDestinos((ds) => (ds.length >= MAX_MULTICAM_DESTINOS ? ds : [...ds, { url: '', chave: '', rotulo: '' }]))
+  const removerMulticamDestino = (i: number) => setMulticamDestinos((ds) => ds.filter((_, j) => j !== i))
+  const mudarMulticamDestino = (i: number, patch: Partial<Destino>) =>
+    setMulticamDestinos((ds) => ds.map((d, j) => (j === i ? { ...d, ...patch } : d)))
+  const [multicam, setMulticam] = useState<EstadoDoDirecto>({ fase: 'parado' })
+  const compositorRef = useRef<RoomCompositor | null>(null)
+  const multicamDirectoRef = useRef<Directo | null>(null)
+  const roomTokenRef = useRef<string | null>(null)
+  const multicamPreviewRef = useRef<HTMLDivElement | null>(null)
+  // O canvas do compositor não é gerido pelo React — entra/sai do DOM à mão,
+  // no mesmo padrão do `palcoRef.current?.appendChild(c.canvas)` do Estúdio.
+  useEffect(() => {
+    if (!multicamOpen || !compositorRef.current || !multicamPreviewRef.current) return
+    const canvas = compositorRef.current.canvas
+    canvas.className = 'multicam-canvas'
+    multicamPreviewRef.current.appendChild(canvas)
+    return () => {
+      canvas.remove()
+    }
+  }, [multicamOpen])
   const [transcribing, setTranscribing] = useState(false)
   // Transcrição PARTILHADA ligada pelo anfitrião: obriga TODOS os clientes a
   // captar o próprio microfone → capta todos os oradores (#6). `scribeBy` é
@@ -888,6 +923,80 @@ export default function Room({
   linesRef.current = lines
   isHostRef.current = isHost
   momSavedRef.current = momSaved
+
+  // O compositor multicâmara segue os participantes enquanto o painel está
+  // aberto — entradas/saídas a meio de um directo têm de reflectir-se sem
+  // recriar o AudioContext (isso emudeceria a emissão a decorrer).
+  useEffect(() => {
+    if (!multicamOpen || !compositorRef.current) return
+    const fontes: Fonte[] = [
+      { id: 'eu', nome: currentUser()?.username ?? 'eu', stream: localStreamRef.current },
+      ...peers.filter((p) => p.stream).map((p): Fonte => ({ id: p.peerId, nome: p.username, stream: p.stream })),
+    ]
+    compositorRef.current.definirParticipantes(fontes)
+  }, [multicamOpen, peers])
+
+  useEffect(() => {
+    if (compositorRef.current) compositorRef.current.cena = cena
+  }, [cena])
+  useEffect(() => {
+    if (compositorRef.current) compositorRef.current.focoIds = focoIds
+  }, [focoIds])
+
+  function mmss(s: number): string {
+    const m = Math.floor(s / 60)
+    const r = s % 60
+    return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`
+  }
+
+  /** Abre o painel e o compositor — sem ainda ir para o ar nem gravar. */
+  function abrirMulticam() {
+    if (compositorRef.current) return
+    const c = new RoomCompositor()
+    c.cena = cena
+    c.focoIds = focoIds
+    compositorRef.current = c
+    setMulticamOpen(true)
+  }
+
+  async function fecharMulticam() {
+    const d = multicamDirectoRef.current
+    multicamDirectoRef.current = null
+    await d?.parar()
+    compositorRef.current?.destruir()
+    compositorRef.current = null
+    setMulticamOpen(false)
+    setMulticam({ fase: 'parado' })
+  }
+
+  /** Vai para o ar com a cena actual, para os destinos configurados. */
+  async function irMulticamAoAr() {
+    const c = compositorRef.current
+    if (!c) return
+    try {
+      const alvos = multicamDestinos.filter((dest) => dest.chave.trim())
+      const token = roomTokenRef.current
+      if (!token) throw new Error('sem token de sala — entra na sala outra vez')
+      const fluxo = c.montarFluxo()
+      const d = new Directo()
+      d.aoMudar = setMulticam
+      multicamDirectoRef.current = d
+      await d.comecar(fluxo, code, token, alvos)
+    } catch (e) {
+      setMulticam({
+        fase: 'erro',
+        motivo: (e as Error).message || t('studio.erroDirecto', 'Não foi possível iniciar o directo.'),
+      })
+      multicamDirectoRef.current = null
+    }
+  }
+
+  async function sairMulticamDoAr() {
+    const d = multicamDirectoRef.current
+    multicamDirectoRef.current = null
+    await d?.parar()
+    setMulticam({ fase: 'parado' })
+  }
 
   function floatReaction(emoji: string, username: string) {
     const id = ++reactionSeq
@@ -1047,6 +1156,7 @@ export default function Room({
         tempos.marcar('intencao')
         const [{ room, room_token, scheduled }, rtcConfig] = await Promise.all([joinRoom(code), iceServers()])
         tempos.marcar('token')
+        roomTokenRef.current = room_token
         setTopology(room.topology)
         setIsTraining(room.format === 'training')
         setIsInstant(scheduled === false) // só marca instantânea se o servidor o confirmar (degrada em falso)
@@ -1507,6 +1617,10 @@ export default function Room({
       rawMicRef.current?.stop()
       callRef.current?.hangup()
       localStreamRef.current?.getTracks().forEach((t) => t.stop())
+      void multicamDirectoRef.current?.parar()
+      multicamDirectoRef.current = null
+      compositorRef.current?.destruir()
+      compositorRef.current = null
     }
   }, [code, passTry, joinIntent])
 
@@ -3764,6 +3878,129 @@ export default function Room({
             </div>
           </aside>
         )}
+        {multicamOpen && (
+          <aside className="side-panel multicam-panel">
+            <div className="panel-head">
+              <h3>
+                {t('multicam.titulo', 'Multicâmara')}
+                {multicam.fase === 'no-ar' && <span className="studio-no-ar">● {t('studio.noAr', 'NO AR')}</span>}
+              </h3>
+              <button className="panel-close" aria-label={t('common.close')} onClick={() => void fecharMulticam()}>
+                <CloseIcon />
+              </button>
+            </div>
+
+            <div className="multicam-preview" ref={multicamPreviewRef} />
+
+            <label className="set-label">
+              {t('multicam.cena', 'Cena')}
+              <select value={cena} onChange={(e) => setCena(e.target.value as Cena)}>
+                <option value="grelha">{t('multicam.cenaGrelha', 'Grelha')}</option>
+                <option value="solo">{t('multicam.cenaSolo', 'Solo')}</option>
+                <option value="lado-a-lado">{t('multicam.cenaLadoALado', 'Lado a lado')}</option>
+              </select>
+            </label>
+
+            {cena !== 'grelha' && (
+              <div className="multicam-foco">
+                <span className="muted small">{t('multicam.escolherQuem', 'Quem aparece')}</span>
+                {[{ id: 'eu', username: currentUser()?.username ?? 'eu' }, ...peers.map((p) => ({ id: p.peerId, username: p.username }))].map(
+                  (p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={focoIds.includes(p.id) ? 'chip-btn on' : 'chip-btn'}
+                      onClick={() =>
+                        setFocoIds((ids) => {
+                          const maxFoco = cena === 'solo' ? 1 : 2
+                          if (ids.includes(p.id)) return ids.filter((x) => x !== p.id)
+                          return [...ids, p.id].slice(-maxFoco)
+                        })
+                      }
+                    >
+                      {p.username}
+                    </button>
+                  ),
+                )}
+              </div>
+            )}
+
+            {multicam.fase !== 'no-ar' ? (
+              <>
+                {multicamDestinos.map((d, i) => (
+                  <div key={i} className="studio-destino-row">
+                    <label className="set-label">
+                      {t('studio.rtmpUrl', 'Servidor RTMP')}
+                      <input
+                        value={d.url}
+                        onChange={(e) => mudarMulticamDestino(i, { url: e.target.value })}
+                        placeholder="rtmp://a.rtmp.youtube.com/live2"
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label className="set-label">
+                      {t('studio.rtmpChave', 'Chave de emissão')}
+                      <PasswordInput
+                        value={d.chave}
+                        onChange={(v) => mudarMulticamDestino(i, { chave: v })}
+                        placeholder={t('studio.rtmpChavePh', 'colada da plataforma')}
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label className="set-label">
+                      {t('studio.rtmpRotulo', 'Rótulo (ex.: YouTube, Twitch)')}
+                      <input
+                        value={d.rotulo ?? ''}
+                        onChange={(e) => mudarMulticamDestino(i, { rotulo: e.target.value })}
+                        autoComplete="off"
+                      />
+                    </label>
+                    {multicamDestinos.length > 1 && (
+                      <button
+                        type="button"
+                        className="panel-close"
+                        aria-label={t('studio.removerDestino', { rotulo: d.rotulo || d.url || String(i + 1) })}
+                        onClick={() => removerMulticamDestino(i)}
+                      >
+                        <CloseIcon />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {multicamDestinos.length < MAX_MULTICAM_DESTINOS ? (
+                  <button type="button" className="btn-sm" onClick={adicionarMulticamDestino}>
+                    + {t('studio.adicionarDestino', 'Adicionar plataforma')}
+                  </button>
+                ) : (
+                  <small className="muted">
+                    {t('studio.destinoLimiteAtingido', { maximo: MAX_MULTICAM_DESTINOS })}
+                  </small>
+                )}
+                <button
+                  className="primary"
+                  disabled={multicam.fase === 'a-ligar' || !multicamDestinos.some((d) => d.chave.trim())}
+                  onClick={() => void irMulticamAoAr()}
+                >
+                  {multicam.fase === 'a-ligar' ? t('studio.aLigar', 'A ligar…') : t('studio.irParaOAr', 'Ir para o ar')}
+                </button>
+                {multicam.fase === 'erro' && (
+                  <small className="error" role="alert">
+                    {multicam.motivo}
+                  </small>
+                )}
+              </>
+            ) : (
+              <>
+                <small className="muted mono">
+                  {mmss(Math.floor((Date.now() - multicam.desde) / 1000))} · {(multicam.bytes / 1_048_576).toFixed(1)} MB
+                </small>
+                <button className="danger" onClick={() => void sairMulticamDoAr()}>
+                  {t('studio.sairDoAr', 'Terminar directo')}
+                </button>
+              </>
+            )}
+          </aside>
+        )}
       </div>
 
       {/* Avisos da reunião — faixa própria por baixo do vídeo (NUNCA sobre o
@@ -4195,6 +4432,17 @@ export default function Room({
                   }}
                 >
                   <BlurIcon />{t('room.espera.fundosEEfeitos')}</button>
+                {isHost && directoSuportado() && (
+                  <button
+                    className="device-item"
+                    onClick={() => {
+                      abrirMulticam()
+                      setMoreOpen(false)
+                    }}
+                  >
+                    <GridIcon />{t('multicam.titulo', 'Multicâmara')}
+                  </button>
+                )}
                 {isHost && topology === 'sfu' && (
                   <button
                     className="device-item"
