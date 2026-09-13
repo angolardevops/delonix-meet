@@ -519,6 +519,14 @@ export default {
     arrastaBolha: 'Ou arrasta a bolha na pré-visualização.',
     erroRecorte: 'Não foi possível preparar o recorte de fundo.',
   },
+  multicam: {
+    titulo: 'Multicâmara',
+    cena: 'Cena',
+    cenaGrelha: 'Grelha',
+    cenaSolo: 'Solo',
+    cenaLadoALado: 'Lado a lado',
+    escolherQuem: 'Quem aparece',
+  },
   load: {
     failedTitle: 'Não foi possível carregar',
     failedHint: 'O serviço não respondeu. Isto não quer dizer que não tenhas nada aqui.',

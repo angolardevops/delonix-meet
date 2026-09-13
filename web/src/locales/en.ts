@@ -517,6 +517,14 @@ export default {
     arrastaBolha: 'Or drag the bubble on the preview.',
     erroRecorte: 'Could not prepare background removal.',
   },
+  multicam: {
+    titulo: 'Multi-camera',
+    cena: 'Scene',
+    cenaGrelha: 'Grid',
+    cenaSolo: 'Solo',
+    cenaLadoALado: 'Side by side',
+    escolherQuem: 'Who appears',
+  },
   load: {
     failedTitle: 'Could not load',
     failedHint: 'The service did not respond. This does not mean there is nothing here.',

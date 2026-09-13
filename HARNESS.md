@@ -81,7 +81,8 @@
 | `whisperWorker.ts` | Whisper-tiny ONNX em worker, modelo self-hosted, env.allowRemoteModels=false |
 | `matte.ts` | Matting RVM (fundo virtual com segmentação) |
 | `i18n.ts` | i18next PT/EN, persist `dx_lang` |
-| `pages/Room.tsx` | Sala: grelha↔palco, controls, breakouts, host controls, whiteboard, polls, Q&A, CC, timer, gravação |
+| `pages/Room.tsx` | Sala: grelha↔palco, controls, breakouts, host controls, whiteboard, polls, Q&A, CC, timer, gravação, multicâmara (painel `multicamOpen`, host-only) |
+| `room/compositor.ts` | `RoomCompositor` — compõe N câmaras (local + convidados remotos, via SFU) num canvas por cena (`solo`/`lado-a-lado`/`grelha`), para o `Directo` ou gravação. Irmão do `studio/compositor.ts` (esse é ecrã+câmara fixos, solo; este é participantes dinâmicos, painel). `participantesVisiveis`/`calcularRects` são puros e testados sem DOM |
 | `pages/Landing.tsx` | Página pública (unauth na raiz) |
 | `pages/Calendar.tsx` | Calendário mês/semana/agenda, agendamento, conflitos, ics |
 | `pages/Recordings.tsx` | Biblioteca, viewer, tarefas do MoM |
