@@ -24,7 +24,7 @@ function cx(...parts: Array<string | false | undefined>): string {
 
 // ---------- Botões (Tier 1: ação · Tier 2: ícone quadrado) ----------
 
-export type BtnVariant = 'primary' | 'ghost' | 'danger' | 'success' | 'link'
+export type BtnVariant = 'primary' | 'ghost' | 'danger' | 'success' | 'link' | 'submit'
 
 const BTN_CLASS: Record<BtnVariant, string> = {
   primary: 'btn-sm',
@@ -32,6 +32,10 @@ const BTN_CLASS: Record<BtnVariant, string> = {
   danger: 'btn-sm danger',
   success: 'btn-sm success',
   link: 'link small-link',
+  // CTA de formulário a toda a largura (login, lobby, modais) — já existia
+  // como `button.primary` solto em várias páginas; formalizado aqui para
+  // deixar de ser um className ad-hoc (docs/reference/design-system.md §3).
+  submit: 'primary',
 }
 
 /** Botão de ação pequeno — altura/raio/tipografia únicos em toda a app. */

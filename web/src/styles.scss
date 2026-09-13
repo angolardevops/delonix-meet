@@ -824,6 +824,9 @@ button.link:hover {
 .btn-new:hover:not(:disabled) { filter: brightness(1.1); }
 .btn-new:disabled { opacity: 0.6; cursor: not-allowed; }
 .btn-new.small { padding: 0.42rem 0.8rem; font-size: 0.86rem; margin-top: 0; }
+/* Mesmo modificador, mas para quem já usa o kit (<Btn className="small">) —
+   ver docs/reference/design-system.md §3. */
+.btn-sm.small { height: auto; padding: 0.42rem 0.8rem; font-size: 0.86rem; }
 
 .empty-state {
   display: flex; flex-direction: column; align-items: center; gap: 0.8rem;
