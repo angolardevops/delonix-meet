@@ -102,11 +102,11 @@ export default function Home({
       <div className="home-shortcuts">
         {([
           { k: 'calendar', ic: <CalendarIcon />, l: t('nav.calendar'), d: t('dash.scCalendar') },
-          { k: 'recordings', ic: <FilmIcon />, l: t('nav.recordings'), d: t('dash.scRecs') },
-          { k: 'whiteboards', ic: <NoteIcon />, l: t('nav.whiteboards'), d: t('dash.scWb') },
+          { k: 'recordings', ic: <FilmIcon />, l: t('nav.recordings'), d: t('dash.scRecs'), tone: 'gold' },
+          { k: 'whiteboards', ic: <NoteIcon />, l: t('nav.whiteboards'), d: t('dash.scWb'), tone: 'success' },
           { k: 'directory', ic: <PeopleIcon />, l: t('nav.org'), d: t('dash.scOrg') },
-        ] as { k: NavKey; ic: ReactNode; l: string; d: string }[]).map((s) => (
-          <button key={s.k} className="shortcut-tile" onClick={() => onNavigate(s.k)}>
+        ] as { k: NavKey; ic: ReactNode; l: string; d: string; tone?: string }[]).map((s) => (
+          <button key={s.k} className="shortcut-tile" data-tone={s.tone} onClick={() => onNavigate(s.k)}>
             <span className="shortcut-ic">{s.ic}</span>
             <span className="shortcut-txt">
               <strong>{s.l}</strong>
