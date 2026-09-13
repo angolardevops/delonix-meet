@@ -169,9 +169,21 @@ alimenta o encoder.
 
 **O que este ADR não decide:**
 
-- Quantos destinos RTMP em simultâneo, e se são um ffmpeg por destino ou um `tee`.
 - Se o directo grava em simultâneo (provavelmente sim, e de graça: o mesmo fluxo).
 - Latência e recuperação: o que acontece quando o RTMP do YouTube cai a meio.
+
+**Decidido depois, sem precisar de ADR novo — multi-canal (tipo StreamYard).**
+A pergunta «quantos destinos RTMP em simultâneo, e um ffmpeg por destino ou um
+`tee`?» ficou em aberto acima. Resposta: **um único `ffmpeg` com N saídas
+`-f flv`**, não um `tee` nem um processo por destino — `montar_argumentos`
+(`server/src/broadcast.rs`) já recebia `&[Destino]` desde o primeiro dia, só a
+rota WebSocket é que só expunha um. A query passou a levar `destinos` como
+JSON (um array, não `destino2`/`chave2` por cada plataforma a mais — um
+WebSocket não tem corpo), com um tecto próprio
+(`MAX_DESTINOS_POR_DIRECTO`, default 4) distinto do `MAX_DIRECTOS`: aquele
+limita SALAS a emitir ao mesmo tempo, este limita PLATAFORMAS na MESMA
+emissão. Não mudou nada da decisão central deste ADR — continua um browser,
+um `MediaRecorder`, um WebSocket; só o que ia num `Destino` passou a ir em N.
 
 Cada um é um ADR próprio ou uma decisão de implementação com portão medido.
 

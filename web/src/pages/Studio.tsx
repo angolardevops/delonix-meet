@@ -9,7 +9,7 @@ import { CamIcon, CamOffIcon, FilmIcon, RecordIcon, StopIcon } from '../icons'
 import { cortar, cortarVarios, cortesSuportados } from '../studio/editor'
 import { analisarPausas, AnaliseDeAudio, resumo, trocosSemPausas } from '../studio/analise'
 import * as arquivo from '../studio/arquivo'
-import { Directo, directoSuportado, EstadoDoDirecto } from '../studio/directo'
+import { Destino, Directo, directoSuportado, EstadoDoDirecto } from '../studio/directo'
 import { createRoom as criarSala, joinRoom } from '../api'
 import {
   AVATAR_INICIAL,
@@ -72,8 +72,21 @@ export default function Studio() {
   // faria a página re-renderizar a cada pedaço enviado.
   const directoRef = useRef<Directo | null>(null)
   const [directo, setDirecto] = useState<EstadoDoDirecto>({ fase: 'parado' })
-  const [rtmpUrl, setRtmpUrl] = useState('rtmp://a.rtmp.youtube.com/live2')
-  const [rtmpChave, setRtmpChave] = useState('')
+  // Multi-canal (tipo StreamYard): uma lista de destinos, não um só. O
+  // servidor faz o fan-out num único `ffmpeg` (ver `broadcast.rs`); aqui só
+  // se junta a lista antes de ligar. `MAX_DESTINOS` é o mesmo tecto por
+  // omissão do servidor (`MAX_DESTINOS_POR_DIRECTO`) — o servidor continua a
+  // ser quem decide de verdade, isto só evita mandar um pedido que se sabe
+  // à partida que vai ser recusado.
+  const MAX_DESTINOS = 4
+  const [destinos, setDestinos] = useState<Destino[]>([
+    { url: 'rtmp://a.rtmp.youtube.com/live2', chave: '', rotulo: 'YouTube' },
+  ])
+  const adicionarDestino = () =>
+    setDestinos((ds) => (ds.length >= MAX_DESTINOS ? ds : [...ds, { url: '', chave: '', rotulo: '' }]))
+  const removerDestino = (i: number) => setDestinos((ds) => ds.filter((_, j) => j !== i))
+  const mudarDestino = (i: number, patch: Partial<Destino>) =>
+    setDestinos((ds) => ds.map((d, j) => (j === i ? { ...d, ...patch } : d)))
   const [aCortar, setACortar] = useState(0)   // 0 = parado; senão fracção
   const previewRef = useRef<HTMLVideoElement>(null)
   const [titulo, setTitulo] = useState('')
@@ -329,7 +342,8 @@ export default function Studio() {
       const d = new Directo()
       d.aoMudar = setDirecto
       directoRef.current = d
-      await d.comecar(fluxo, sala.code, room_token, { url: rtmpUrl, chave: rtmpChave, rotulo: 'directo' })
+      const alvos = destinos.filter((dest) => dest.chave.trim())
+      await d.comecar(fluxo, sala.code, room_token, alvos)
     } catch (e) {
       // A razão vem do servidor — «esta sala tem cifra ponta-a-ponta…» chega
       // aqui tal como foi escrita, e é essa que se mostra.
@@ -616,31 +630,65 @@ export default function Studio() {
 
               {directo.fase !== 'no-ar' ? (
                 <>
-                  <label className="set-label">
-                    {t('studio.rtmpUrl', 'Servidor RTMP')}
-                    <input
-                      value={rtmpUrl}
-                      onChange={(e) => setRtmpUrl(e.target.value)}
-                      placeholder="rtmp://a.rtmp.youtube.com/live2"
-                      autoComplete="off"
-                    />
-                  </label>
-                  <label className="set-label">
-                    {t('studio.rtmpChave', 'Chave de emissão')}
-                    {/* `type=password`: a chave é uma credencial, e uma partilha
-                        de ecrã a configurar o directo mostrava-a a toda a gente. */}
-                    <PasswordInput
-                      value={rtmpChave}
-                      onChange={setRtmpChave}
-                      placeholder={t('studio.rtmpChavePh', 'colada da plataforma')}
-                      autoComplete="off"
-                    />
-                  </label>
+                  {destinos.map((d, i) => (
+                    <div key={i} className="studio-destino-row">
+                      <label className="set-label">
+                        {t('studio.rtmpUrl', 'Servidor RTMP')}
+                        <input
+                          value={d.url}
+                          onChange={(e) => mudarDestino(i, { url: e.target.value })}
+                          placeholder="rtmp://a.rtmp.youtube.com/live2"
+                          autoComplete="off"
+                        />
+                      </label>
+                      <label className="set-label">
+                        {t('studio.rtmpChave', 'Chave de emissão')}
+                        {/* `type=password`: a chave é uma credencial, e uma partilha
+                            de ecrã a configurar o directo mostrava-a a toda a gente. */}
+                        <PasswordInput
+                          value={d.chave}
+                          onChange={(v) => mudarDestino(i, { chave: v })}
+                          placeholder={t('studio.rtmpChavePh', 'colada da plataforma')}
+                          autoComplete="off"
+                        />
+                      </label>
+                      <label className="set-label">
+                        {t('studio.rtmpRotulo', 'Rótulo (ex.: YouTube, Twitch)')}
+                        <input
+                          value={d.rotulo ?? ''}
+                          onChange={(e) => mudarDestino(i, { rotulo: e.target.value })}
+                          autoComplete="off"
+                        />
+                      </label>
+                      {destinos.length > 1 && (
+                        <Btn
+                          variant="ghost"
+                          onClick={() => removerDestino(i)}
+                          aria-label={t('studio.removerDestino', { rotulo: d.rotulo || d.url || String(i + 1) })}
+                        >
+                          {t('common.delete')}
+                        </Btn>
+                      )}
+                    </div>
+                  ))}
+                  {destinos.length < MAX_DESTINOS ? (
+                    <Btn variant="ghost" onClick={adicionarDestino}>
+                      + {t('studio.adicionarDestino', 'Adicionar plataforma')}
+                    </Btn>
+                  ) : (
+                    <small className="muted">
+                      {t('studio.destinoLimiteAtingido', { maximo: MAX_DESTINOS })}
+                    </small>
+                  )}
                   <small className="muted">
                     {t('studio.directoNota', 'A imagem vai como está na pré-visualização. Salas com cifra ponta-a-ponta não podem emitir.')}
                   </small>
                   <Btn
-                    disabled={directo.fase === 'a-ligar' || !rtmpChave.trim() || (!temEcra && !temCamara)}
+                    disabled={
+                      directo.fase === 'a-ligar' ||
+                      !destinos.some((d) => d.chave.trim()) ||
+                      (!temEcra && !temCamara)
+                    }
                     onClick={() => void irParaOAr()}
                   >
                     {directo.fase === 'a-ligar'

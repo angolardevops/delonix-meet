@@ -45,7 +45,7 @@
 - `meetings.rs` — calendário, conflitos, quarentena, MoM, transcrição, webhooks de meeting
 - `recordings.rs` — biblioteca de gravações, partilha read-only, sweep de retenção
 - `recorder.rs` — gravação server-side: RTP→IVF(VP8)+OGG(Opus), ffmpeg post-stop (VP9+Opus webm), E2EE via decrypt_e2ee()
-- `broadcast.rs` — emissão em directo para RTMP (ADR-0003): o browser compõe e codifica em H.264, o servidor REMULTIPLEXA (`-c:v copy`, `-c:a aac`). Recusa E2EE, codec não copiável, chave vazia e acima do tecto (`MAX_DIRECTOS`). Rota WS `/api/rooms/{code}/broadcast`; registo por sala
+- `broadcast.rs` — emissão em directo para RTMP (ADR-0003): o browser compõe e codifica em H.264, o servidor REMULTIPLEXA (`-c:v copy`, `-c:a aac`). Multi-canal tipo StreamYard: um `ffmpeg` com N destinos (`destinos` na query, JSON), tecto próprio `MAX_DESTINOS_POR_DIRECTO` (por emissão) distinto do `MAX_DIRECTOS` (por nó/sala). Recusa E2EE, codec não copiável, chave vazia e acima de qualquer um dos dois tectos. Rota WS `/api/rooms/{code}/broadcast`; registo por sala
 - `webhooks.rs` — CRUD webhooks org, fire() best-effort (Slack/Teams/Mattermost/generic+HMAC), SSRF guard
 - `whiteboards.rs` — CRUD quadro branco persistente
 - `voice.rs` — PSTN (stub, aguarda operador)

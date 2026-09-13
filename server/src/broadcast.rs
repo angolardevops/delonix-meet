@@ -60,6 +60,10 @@ pub enum Recusa {
     Tecto { activas: usize, maximo: usize },
     /// Nenhum destino, ou um destino sem chave.
     SemDestino,
+    /// Mais destinos do que o nó admite numa só emissão (multi-canal tipo
+    /// StreamYard, mas com tecto — cada destino a mais é mais uma ligação TCP
+    /// e mais banda de saída do mesmo pod).
+    DemasiadosDestinos { pedidos: usize, maximo: usize },
     /// O servidor não tem ffmpeg. É configuração em falta, não erro do
     /// utilizador — e dizê-lo pelo nome poupa uma investigação inteira a quem
     /// recebe a queixa. Mesma forma que o `causa_legivel` do recorder.
@@ -87,6 +91,11 @@ impl fmt::Display for Recusa {
                 "este nó já tem {activas} emissões em directo (máximo {maximo})"
             ),
             Recusa::SemDestino => f.write_str("não foi indicado nenhum destino com chave"),
+            Recusa::DemasiadosDestinos { pedidos, maximo } => write!(
+                f,
+                "pediram-se {pedidos} destinos para a mesma emissão; este nó aceita no \
+                 máximo {maximo} de cada vez"
+            ),
             Recusa::SemFfmpeg => f.write_str(
                 "O servidor não tem o ffmpeg instalado, e sem ele não consegue emitir em \
                  directo. É uma configuração em falta no servidor — comunica-o a quem o \
@@ -116,6 +125,7 @@ pub fn pode_emitir(
     destinos: &[Destino],
     activas: usize,
     maximo: usize,
+    maximo_destinos: usize,
 ) -> Result<(), Recusa> {
     if e2ee_ligado {
         return Err(Recusa::E2ee);
@@ -127,6 +137,12 @@ pub fn pode_emitir(
     }
     if destinos.is_empty() || destinos.iter().any(|d| d.chave.expose().trim().is_empty()) {
         return Err(Recusa::SemDestino);
+    }
+    if destinos.len() > maximo_destinos {
+        return Err(Recusa::DemasiadosDestinos {
+            pedidos: destinos.len(),
+            maximo: maximo_destinos,
+        });
     }
     if activas >= maximo {
         return Err(Recusa::Tecto { activas, maximo });
@@ -325,7 +341,7 @@ mod testes {
     #[test]
     fn uma_sala_com_e2ee_e_recusada_com_razao() {
         let d = [destino("yt", "abc")];
-        let r = pode_emitir(true, "video/h264", &d, 0, 4).expect_err("tinha de recusar");
+        let r = pode_emitir(true, "video/h264", &d, 0, 4, 4).expect_err("tinha de recusar");
         assert_eq!(r, Recusa::E2ee);
         // A razão tem de explicar o porquê E dizer o que fazer.
         let texto = r.to_string();
@@ -339,7 +355,7 @@ mod testes {
         // de ser a do E2EE — é a que muda a decisão de quem criou a sala.
         let d: [Destino; 0] = [];
         assert_eq!(
-            pode_emitir(true, "video/vp8", &d, 99, 1).unwrap_err(),
+            pode_emitir(true, "video/vp8", &d, 99, 1, 4).unwrap_err(),
             Recusa::E2ee
         );
     }
@@ -348,7 +364,7 @@ mod testes {
     fn um_codec_que_nao_se_copia_e_recusado_em_vez_de_produzir_lixo() {
         let d = [destino("yt", "abc")];
         for mime in ["video/vp8", "video/vp9", "video/av1", ""] {
-            let r = pode_emitir(false, mime, &d, 0, 4).expect_err("{mime} tinha de recusar");
+            let r = pode_emitir(false, mime, &d, 0, 4, 4).expect_err("{mime} tinha de recusar");
             assert!(matches!(r, Recusa::Codec { .. }), "{mime}: {r:?}");
         }
     }
@@ -357,7 +373,7 @@ mod testes {
     fn o_h264_passa_com_os_dois_nomes_que_os_browsers_usam() {
         let d = [destino("yt", "abc")];
         for mime in ["video/H264", "video/h264", "video/avc"] {
-            assert!(pode_emitir(false, mime, &d, 0, 4).is_ok(), "{mime}");
+            assert!(pode_emitir(false, mime, &d, 0, 4, 4).is_ok(), "{mime}");
         }
     }
 
@@ -369,7 +385,7 @@ mod testes {
         for chave in ["", "   "] {
             let d = [destino("yt", chave)];
             assert_eq!(
-                pode_emitir(false, "video/h264", &d, 0, 4).unwrap_err(),
+                pode_emitir(false, "video/h264", &d, 0, 4, 4).unwrap_err(),
                 Recusa::SemDestino
             );
         }
@@ -387,14 +403,46 @@ mod testes {
     #[test]
     fn o_tecto_de_emissoes_e_imposto() {
         let d = [destino("yt", "abc")];
-        assert!(pode_emitir(false, "video/h264", &d, 1, 2).is_ok());
+        assert!(pode_emitir(false, "video/h264", &d, 1, 2, 4).is_ok());
         assert_eq!(
-            pode_emitir(false, "video/h264", &d, 2, 2).unwrap_err(),
+            pode_emitir(false, "video/h264", &d, 2, 2, 4).unwrap_err(),
             Recusa::Tecto {
                 activas: 2,
                 maximo: 2
             }
         );
+    }
+
+    #[test]
+    fn varios_destinos_dentro_do_tecto_passam_juntos() {
+        // O "multi-canal tipo StreamYard": vários destinos NA MESMA emissão,
+        // não uma emissão por destino — é a diferença entre este tecto e o
+        // `max_directos` (esse é por SALA, não por destino).
+        let d = [
+            destino("yt", "k1"),
+            destino("tw", "k2"),
+            destino("fb", "k3"),
+        ];
+        assert!(pode_emitir(false, "video/h264", &d, 0, 4, 4).is_ok());
+    }
+
+    #[test]
+    fn destinos_a_mais_para_o_tecto_do_no_sao_recusados_com_razao() {
+        let d = [
+            destino("yt", "k1"),
+            destino("tw", "k2"),
+            destino("fb", "k3"),
+        ];
+        let r = pode_emitir(false, "video/h264", &d, 0, 4, 2).unwrap_err();
+        assert_eq!(
+            r,
+            Recusa::DemasiadosDestinos {
+                pedidos: 3,
+                maximo: 2
+            }
+        );
+        let texto = r.to_string();
+        assert!(texto.contains('3') && texto.contains('2'), "{texto}");
     }
 
     // ------------------------------------------------------------- argumentos
@@ -584,16 +632,30 @@ use crate::AppState;
 pub struct DirectoQuery {
     /// Token de sala, o mesmo que o `/ws` usa — curto e com âmbito.
     pub token: String,
-    /// URL base do destino (sem a chave).
-    pub destino: String,
-    /// Chave de emissão. Vem na query porque um WebSocket não tem corpo; é
-    /// por isso que a rota EXIGE o token de sala e nunca regista a query.
-    pub chave: String,
-    #[serde(default)]
-    pub rotulo: Option<String>,
+    /// Os destinos, como JSON: `[{"url":"...","chave":"...","rotulo":"..."}]`.
+    ///
+    /// Um array e não N parâmetros nomeados (`destino1`, `chave1`,
+    /// `destino2`…): um WebSocket não tem corpo, a query é o único lugar, e
+    /// um array cresce para o multi-canal (tipo StreamYard) sem inventar
+    /// esquema novo por cada plataforma a mais. O parsing é manual (ver
+    /// `ws_directo`) e não `#[derive(Deserialize)]` num `Vec<DestinoBruto>`
+    /// directo no extractor: um JSON malformado tem de dar a MESMA recusa
+    /// legível pós-upgrade que as outras regras — um erro do extractor do
+    /// axum falha ANTES do upgrade, e é exactamente o que o comentário em
+    /// `ws_directo` explica que fica invisível para o browser.
+    pub destinos: String,
     /// MIME do vídeo que o browser vai empurrar, para se poder recusar ANTES
     /// de arrancar o ffmpeg.
     pub codec: String,
+}
+
+/// A forma solta que chega na query, antes de a chave virar `Secret`.
+#[derive(Deserialize)]
+struct DestinoBruto {
+    url: String,
+    chave: String,
+    #[serde(default)]
+    rotulo: Option<String>,
 }
 
 /// `GET /api/rooms/{code}/broadcast` (upgrade para WebSocket).
@@ -621,12 +683,6 @@ pub async fn ws_directo(
         return Err(ApiError::Unauthorized);
     }
 
-    let destinos = vec![Destino {
-        url: q.destino.clone(),
-        chave: Secret::new(q.chave.clone()),
-        rotulo: q.rotulo.clone().unwrap_or_else(|| "directo".into()),
-    }];
-
     // As regras correm ANTES de gastar um processo — mas a recusa é ENTREGUE
     // depois do upgrade, e é uma distinção que se descobre a testar.
     //
@@ -636,6 +692,23 @@ pub async fn ws_directo(
     // ponta-a-ponta…» chegava ao cliente como «não foi possível ligar» — ou
     // seja, a recusa mais importante do ADR-0003 era invisível a quem a devia
     // ler. Por isso aceita-se o upgrade e manda-se a razão numa trama de texto.
+    // O JSON dos destinos segue a MESMA regra: um parse malformado tem de
+    // chegar como razão legível, não como um 400 antes do upgrade.
+    let destinos: Vec<Destino> = match serde_json::from_str::<Vec<DestinoBruto>>(&q.destinos) {
+        Ok(brutos) => brutos
+            .into_iter()
+            .map(|b| Destino {
+                url: b.url,
+                chave: Secret::new(b.chave),
+                rotulo: b.rotulo.unwrap_or_else(|| "directo".into()),
+            })
+            .collect(),
+        Err(e) => {
+            let m = format!("os destinos vieram malformados: {e}");
+            return Ok(ws.on_upgrade(move |socket| recusar(socket, m)));
+        }
+    };
+
     let activas = state.directos.quantas().await;
     let mut motivo: Option<String> = match pode_emitir(
         e2ee,
@@ -643,6 +716,7 @@ pub async fn ws_directo(
         &destinos,
         activas,
         state.config.max_directos,
+        state.config.max_destinos_por_directo,
     ) {
         Err(r) => {
             tracing::warn!(sala = %codigo, motivo = ?r, "directo recusado");
