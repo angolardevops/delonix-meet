@@ -4442,7 +4442,9 @@ body { -webkit-font-smoothing: antialiased; }
    nem para o rail. Cantos maiores, mais respiração, badges de ícone com cor —
    decisão explícita do utilizador de trocar densidade por elegância aqui. */
 .page, .home { padding: 28px 34px; }
-.home { max-width: 1200px; }
+/* 1200px deixava metade de um ecrã largo em branco à direita — os cartões
+   maiores do registo espaçoso tornaram isso mais visível. */
+.home { max-width: 1600px; }
 .page-head { margin-bottom: 14px; }
 .page-head h1, .dash-greet h1 { font-size: 1.45rem; letter-spacing: -0.02em; }
 .dash-greet { margin-bottom: 0; }
