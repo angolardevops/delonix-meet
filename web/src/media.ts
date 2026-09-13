@@ -29,13 +29,30 @@ export function audioConstraints(deviceId?: string, noiseSuppression = true): Me
 }
 
 /**
- * Supressão de ruído por IA (RNNoise via AudioWorklet WASM) — remove teclado,
- * ventoinha, ruído de fundo muito melhor que a supressão nativa do browser.
- * Recebe a track do microfone e devolve uma track "limpa" para enviar à chamada.
+ * Cadeia de voz "estúdio": RNNoise → noise gate → nivelador → limitador.
+ *
+ * RNNoise (IA via AudioWorklet WASM) remove teclado, ventoinha, ruído de
+ * fundo muito melhor que a supressão nativa do browser — mas não zera o
+ * chão de ruído residual entre frases. O `noise-gate-processor`
+ * (noiseGateWorklet.js) corta esse chão a silêncio a sério quando ninguém
+ * fala. O nivelador (`DynamicsCompressorNode`, ratio moderado) aproxima o
+ * volume de quem fala baixo e alto — o "som de podcast" nivelado. O
+ * limitador (ratio muito alto, threshold perto de 0 dB) é a rede de
+ * segurança final contra picos que saturariam o codificador Opus.
+ *
+ * Ordem importa: o gate vem ANTES do nivelador — nivelar primeiro
+ * amplificaria o ruído residual durante o silêncio, que é exactamente o
+ * chão que o gate existe para cortar.
+ *
+ * Recebe a track do microfone e devolve uma track "limpa" para enviar à
+ * chamada.
  */
 export class Denoiser {
   private ctx: AudioContext | null = null
   private node: import('@sapphi-red/web-noise-suppressor').RnnoiseWorkletNode | null = null
+  private gate: AudioWorkletNode | null = null
+  private leveler: DynamicsCompressorNode | null = null
+  private limiter: DynamicsCompressorNode | null = null
   private source: MediaStreamAudioSourceNode | null = null
   private dest: MediaStreamAudioDestinationNode | null = null
 
@@ -50,22 +67,42 @@ export class Denoiser {
     if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume().catch(() => {})
   }
 
-  /** Encaminha a track do mic pelo RNNoise; devolve a track processada. */
+  /** Encaminha a track do mic pela cadeia; devolve a track processada. */
   async process(track: MediaStreamTrack): Promise<MediaStreamTrack> {
-    const [{ loadRnnoise, RnnoiseWorkletNode }, wasmUrl, wasmSimdUrl, workletUrl] = await Promise.all([
+    const [{ loadRnnoise, RnnoiseWorkletNode }, wasmUrl, wasmSimdUrl, workletUrl, gateWorkletUrl] = await Promise.all([
       import('@sapphi-red/web-noise-suppressor'),
       import('@sapphi-red/web-noise-suppressor/rnnoise.wasm?url').then((m) => m.default),
       import('@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url').then((m) => m.default),
       import('@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url').then((m) => m.default),
+      import('./noiseGateWorklet.js?url').then((m) => m.default),
     ])
     // RNNoise trabalha a 48 kHz — fixa a taxa para não reamostrar mal.
     this.ctx = new AudioContext({ sampleRate: 48000 })
     const wasmBinary = await loadRnnoise({ url: wasmUrl, simdUrl: wasmSimdUrl })
-    await this.ctx.audioWorklet.addModule(workletUrl)
+    await Promise.all([
+      this.ctx.audioWorklet.addModule(workletUrl),
+      this.ctx.audioWorklet.addModule(gateWorkletUrl),
+    ])
     this.source = this.ctx.createMediaStreamSource(new MediaStream([track]))
     this.node = new RnnoiseWorkletNode(this.ctx, { maxChannels: 1, wasmBinary })
+    this.gate = new AudioWorkletNode(this.ctx, 'noise-gate-processor')
+
+    this.leveler = this.ctx.createDynamicsCompressor()
+    this.leveler.threshold.value = -24
+    this.leveler.knee.value = 12
+    this.leveler.ratio.value = 3
+    this.leveler.attack.value = 0.01
+    this.leveler.release.value = 0.25
+
+    this.limiter = this.ctx.createDynamicsCompressor()
+    this.limiter.threshold.value = -3
+    this.limiter.knee.value = 0
+    this.limiter.ratio.value = 20
+    this.limiter.attack.value = 0.003
+    this.limiter.release.value = 0.1
+
     this.dest = this.ctx.createMediaStreamDestination()
-    this.source.connect(this.node).connect(this.dest)
+    this.source.connect(this.node).connect(this.gate).connect(this.leveler).connect(this.limiter).connect(this.dest)
     // Garante que arranca a processar (contextos criados sem gesto começam
     // 'suspended') e mantém-no vivo se o browser o suspender.
     await this.ctx.resume().catch(() => {})
@@ -83,10 +120,16 @@ export class Denoiser {
     }
     this.source?.disconnect()
     this.node?.disconnect()
+    this.gate?.disconnect()
+    this.leveler?.disconnect()
+    this.limiter?.disconnect()
     if (this.ctx) this.ctx.onstatechange = null
     void this.ctx?.close()
     this.ctx = null
     this.node = null
+    this.gate = null
+    this.leveler = null
+    this.limiter = null
     this.source = null
     this.dest = null
   }

@@ -1589,3 +1589,15 @@ comentários primeiro e exige a **leitura do ambiente**
 portão existe para impedir, cometida ao escrevê-lo.
 
 **Ficheiros.** `web/e2e/tempos.mjs`, `web/src/e2eFator.invariantes.test.ts`.
+
+### R120 — Um AudioWorklet pequeno de mais parte em produção, e funciona em dev
+
+**Sintoma.** Nenhum, em desenvolvimento — e é esse o perigo. Um `import('./x.js?url')` para um módulo de AudioWorklet novo (o noise gate a seguir ao RNNoise) resolvia para um `data:text/javascript;base64,...`, e `audioContext.audioWorklet.addModule(url)` engolia isso sem se queixar, no dev server.
+
+**Causa raiz.** O Vite inlinha em `data:` qualquer asset `?url` abaixo de 4 KB por omissão (`assetsInlineLimit`). O ficheiro do gate tem 3131 bytes — abaixo do limiar. O `rnnoiseWorklet.js` (do pacote `@sapphi-red/web-noise-suppressor`) nunca tinha mostrado este problema só por ser maior, não por o padrão de import estar certo. Em produção, o CSP (`deploy/nginx-delonix.conf`) declara `worker-src 'self' blob:` e `script-src 'self' 'wasm-unsafe-eval'` — **sem `data:`** — e um browser que respeite CSP recusa carregar o worklet a partir desse URL. O `addModule()` falha, a promise rejeita, e sem um `.catch()` a apanhar especificamente isto o utilizador fica sem o gate e sem aviso nenhum — o RNNoise continua a funcionar (é um ficheiro maior, nunca inlinado), por isso a chamada não fica muda; só perde a etapa nova, em silêncio.
+
+**Regra.** Um módulo de AudioWorklet (ou Worker) importado via `?url` precisa de ficar **sempre** como ficheiro à parte, nunca inline — independentemente do tamanho. Configurou-se `build.assetsInlineLimit` como função em `vite.config.ts` a excluir qualquer `*Worklet.js` da inlining. **Não chega testar em dev**: o dev server não aplica o CSP de produção, por isso o sintoma só existe atrás do nginx real — exactamente o gap que o R73 (`Vary` e o service worker) já tinha ensinado desta app.
+
+**Como se apanhou.** Por inspecionar o `dist/` a olho depois do build (`head -c 300` no ficheiro emitido) em vez de confiar em "o build passou e os testes ficaram verdes" — nenhum teste automático desta app corre atrás de um nginx com CSP real.
+
+**Ficheiros.** `web/vite.config.ts`, `web/src/noiseGateWorklet.js`.

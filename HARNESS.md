@@ -77,7 +77,7 @@
 | `webrtc.ts` | `SfuCall`: RTCPeerConnection, simulcast, screen share, `enhanceOpus()` (munge SDP recebido), QoS getStats |
 | `presence.ts` | `PresenceProvider`: WS `/rtc`, modal de chamada, toasts de recusa |
 | `e2ee.ts` | Insertable Streams AES-256-GCM, chave PBKDF2, worker |
-| `media.ts` | `BackgroundEffect` (blur/RVM ONNX), `HeadTracker` (parallax 3D), `Transcriber` (Web Speech + Whisper fallback), `MeetingRecorder`, `LevelWatcher` |
+| `media.ts` | `Denoiser` (RNNoise → noise gate → nivelador → limitador, cadeia de voz "estúdio"; ver `noiseGateWorklet.js`), `BackgroundEffect` (blur/RVM ONNX), `HeadTracker` (parallax 3D), `Transcriber` (Web Speech + Whisper fallback), `MeetingRecorder`, `LevelWatcher` |
 | `whisperWorker.ts` | Whisper-tiny ONNX em worker, modelo self-hosted, env.allowRemoteModels=false |
 | `matte.ts` | Matting RVM (fundo virtual com segmentação) |
 | `i18n.ts` | i18next PT/EN, persist `dx_lang` |
