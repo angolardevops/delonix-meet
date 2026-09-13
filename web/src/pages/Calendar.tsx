@@ -32,7 +32,7 @@ import {
   User,
 } from '../api'
 import { CalendarIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, ClockIcon, CloseIcon, DoorIcon, EditIcon, PlusIcon, RepeatIcon, TrashIcon, VideoIcon, VoiceCallIcon } from '../icons'
-import { Tabs } from '../components/ui'
+import { Btn, IconBtn, Tabs } from '../components/ui'
 
 /** Carrega as salas presenciais de todas as organizações do utilizador. */
 async function loadAllRooms(): Promise<MeetingRoom[]> {
@@ -496,9 +496,9 @@ function MeetingPopover({
             ? <span className="meet-popover-role owner">{t('organized')}</span>
             : <span className="meet-popover-role">{t('organizedBy', { name: m.owner_name })}</span>}
         </div>
-        <button className="btn-sm meet-popover-open" onClick={() => onOpen(m)}>
+        <Btn className="meet-popover-open" onClick={() => onOpen(m)}>
           {m.kind === 'voice' ? <VoiceCallIcon /> : <VideoIcon />} {t('tabDetails')}
-        </button>
+        </Btn>
       </div>
     </div>
   )
@@ -544,10 +544,10 @@ function AgendaView({
                   <strong>{m.title}{m.recurrence_freq && <span className="ev-recur" title={t('recur')}><RepeatIcon /></span>}</strong>
                   <small>{m.duration_min} min · {m.is_owner ? t('organized') : t('organizedBy', { name: m.owner_name })}{m.description ? ` · ${m.description}` : ''}</small>
                 </span>
-                <button className="btn-sm" onClick={() => onStart(m)}>
+                <Btn onClick={() => onStart(m)}>
                   {m.kind === 'voice' ? <VoiceCallIcon /> : <VideoIcon />}{m.is_owner ? t('start') : t('join')}
-                </button>
-                {m.is_owner && <button className="icon-btn" title={t('room.preEntrada.cancelar')} onClick={() => onRemove(m)}><TrashIcon /></button>}
+                </Btn>
+                {m.is_owner && <IconBtn title={t('room.preEntrada.cancelar')} onClick={() => onRemove(m)}><TrashIcon /></IconBtn>}
               </div>
             ))}
           </div>
@@ -640,9 +640,9 @@ function AgendaPanel({ meetingId, isOwner }: { meetingId: string; isOwner: boole
             onChange={(e) => setNewDuration(Number(e.target.value))}
             title={t('agendaDurLabel')}
           />
-          <button className="btn-sm" disabled={adding || !newTopic.trim()} onClick={() => void add()}>
+          <Btn disabled={adding || !newTopic.trim()} onClick={() => void add()}>
             <PlusIcon /> {t('agendaAdd')}
-          </button>
+          </Btn>
         </div>
       )}
     </div>
@@ -730,8 +730,8 @@ function ActionPlanPanel({ meetingId, isOwner }: { meetingId: string; isOwner: b
               placeholder={t('actionGoalPlaceholder')}
               autoFocus
             />
-            <button className="btn-sm" disabled={savingGoal} onClick={() => void saveGoal()}>{tRaw('common.save')}</button>
-            <button className="btn-sm ghost" onClick={() => setEditingGoal(false)}>{t('cancel')}</button>
+            <Btn disabled={savingGoal} onClick={() => void saveGoal()}>{tRaw('common.save')}</Btn>
+            <Btn variant="ghost" onClick={() => setEditingGoal(false)}>{t('cancel')}</Btn>
           </div>
         ) : (
           <span className="action-plan-meta-value" onClick={() => isOwner && setEditingGoal(true)}>
@@ -809,9 +809,9 @@ function ActionPlanPanel({ meetingId, isOwner }: { meetingId: string; isOwner: b
                 <td><input placeholder={t('actionHowPh')} value={newItem.how} onChange={(e) => setNewItem((p) => ({ ...p, how: e.target.value }))} /></td>
                 <td><input placeholder={t('actionResPh')} value={newItem.resources} onChange={(e) => setNewItem((p) => ({ ...p, resources: e.target.value }))} /></td>
                 <td colSpan={isOwner ? 2 : 1}>
-                  <button className="btn-sm" disabled={addingItem || !newItem.what.trim()} onClick={() => void addItem()}>
+                  <Btn disabled={addingItem || !newItem.what.trim()} onClick={() => void addItem()}>
                     <PlusIcon /> {t('agendaAdd')}
-                  </button>
+                  </Btn>
                 </td>
               </tr>
             )}
