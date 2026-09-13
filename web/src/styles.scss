@@ -4259,7 +4259,15 @@ button.link:hover {
 .lobby-admit,
 .integ-tab,
 .auth-tab,
-.tool-section .btn-sm.ghost {
+.tool-section .btn-sm.ghost,
+/* Juntam-se aqui à unificação: eram botões de ação/secundária com o seu
+   próprio raio e padding por página (4/5/6px, 0.42/0.45/0.5rem…) — a mesma
+   ideia ("Nova filial", "Hoje", "Reunião agora", "Entrar" numa linha) com
+   três tamanhos diferentes consoante o ecrã. */
+.btn-new,
+.btn-today,
+.btn-meet-now,
+.dash-enter {
   height: var(--ctl-h);
   padding: 0 12px;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
