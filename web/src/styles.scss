@@ -3942,6 +3942,70 @@ button.link:hover {
 .layout-ico { font-size: 1.05rem; width: 22px; text-align: center; flex: none; }
 
 /* ============================================================
+   Kit partilhado — Menu / SplitButton / Tabs (components/ui.tsx)
+   Generaliza o padrão acima (.layout-menu/.layout-opt) e o de
+   .nav-account-menu num popover único, reutilizável em qualquer
+   página. Ainda sem consumidores — nasce aqui para o Início e a
+   Sala convergirem no mesmo menu em vez de cada um ter o seu.
+   ============================================================ */
+.dx-menu {
+  position: absolute; z-index: 60; min-width: 240px; padding: 6px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2); animation: cmd-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.dx-menu-bottom { top: calc(100% + 8px); }
+.dx-menu-top { bottom: calc(100% + 8px); }
+.dx-menu-start { left: 0; }
+.dx-menu-end { right: 0; }
+.dx-menu-item {
+  display: flex; align-items: center; gap: 0.65rem; width: 100%;
+  padding: 0.55rem 0.6rem; border-radius: var(--radius-sm); background: none; border: none;
+  color: var(--text); text-align: left; cursor: pointer; transition: background 0.12s;
+}
+.dx-menu-item:hover:not(:disabled) { background: var(--surface-3); }
+.dx-menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
+.dx-menu-item.active {
+  background: color-mix(in oklab, var(--accent-2, #eda33b) 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent-2, #eda33b) 34%, transparent);
+}
+.dx-menu-item-danger { color: var(--accent); }
+.dx-menu-item-icon { display: inline-flex; width: 22px; flex: none; justify-content: center; }
+.dx-menu-item-icon svg { width: 16px; height: 16px; }
+.dx-menu-item-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.dx-menu-item-text strong { font-size: 0.86rem; font-weight: 600; }
+.dx-menu-item-text small { font-size: 0.74rem; color: var(--muted); }
+.dx-menu-sep { height: 1px; background: var(--border); margin: 5px 4px; }
+
+/* Botão dividido: ação principal + seta que abre um .dx-menu.
+   SEM overflow:hidden no wrapper — cortaria o próprio menu, que é filho
+   posicionado (achado ao testar: o menu existia no DOM mas nunca aparecia).
+   O recorte em pílula vem do border-radius em cada metade. */
+.dx-split { position: relative; display: inline-flex; height: var(--ctl-h); box-shadow: 0 8px 18px -10px color-mix(in oklab, var(--accent) 55%, transparent); }
+.dx-split-main {
+  display: inline-flex; align-items: center; gap: 0.5rem; border: none; padding: 0 0.9rem;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  background: linear-gradient(135deg, var(--accent-hi, var(--accent)), var(--accent));
+  color: #fff; font-family: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer;
+}
+.dx-split-main:disabled { opacity: 0.6; cursor: not-allowed; }
+.dx-split-caret {
+  border: none; border-left: 1px solid rgba(255, 255, 255, 0.22); padding: 0 0.55rem;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--accent); color: #fff; cursor: pointer; display: inline-flex; align-items: center;
+}
+.dx-split-caret:disabled { opacity: 0.6; cursor: not-allowed; }
+.dx-split-menu { min-width: 288px; }
+
+/* Abas de painel (ex.: painel lateral da Sala) */
+.dx-tabs { display: flex; gap: 4px; background: var(--surface-2); border-radius: var(--radius-md); padding: 3px; }
+.dx-tab { flex: 1; text-align: center; background: none; border: none; color: var(--muted); font-size: 0.82rem; font-weight: 600; padding: 0.45rem 0; border-radius: var(--radius-sm); cursor: pointer; }
+.dx-tab.active { background: var(--surface-3); color: var(--text); }
+
+.dx-menu-item:focus-visible, .dx-tab:focus-visible, .dx-split-caret:focus-visible, .dx-split-main:focus-visible {
+  outline: none; box-shadow: var(--ring);
+}
+
+/* ============================================================
    Login split-panel (tela do template NgolaCloud)
    ============================================================ */
 .auth-page.auth-split { display: flex; align-items: stretch; justify-content: center; gap: 0; }
@@ -4373,14 +4437,10 @@ body { -webkit-font-smoothing: antialiased; }
   display: grid; place-items: center; cursor: pointer; font-size: 0.85rem;
 }
 .app-bar-icon:hover { border-color: var(--accent); color: var(--accent-text); }
-.app-bar-new {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 14px; border-radius: var(--radius-sm);
-  background: var(--accent); color: #fff; font-weight: 600; font-size: 0.83rem;
-  border: none; cursor: pointer;
-}
-.app-bar-new:hover { filter: brightness(1.1); }
-.app-bar-new:disabled { opacity: 0.6; cursor: default; filter: none; }
+/* "Nova reunião" passou a .dx-split (kit partilhado, ver components/ui.tsx):
+   ação principal + seta que abre o menu com sala de espera/E2EE/treino —
+   antes eram três chips soltas na Home (`home-extra`, agora removido). */
+.dx-split-main { flex: 1; }
 /* Campo de código: input e botão fundidos numa só peça (como no template). */
 .app-bar-join {
   display: flex; align-items: center; overflow: hidden;
@@ -4463,21 +4523,9 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
 .shortcut-txt small { font-size: 0.72rem; color: var(--muted-2); }
 @media (max-width: 1000px) { .home-shortcuts { grid-template-columns: repeat(2, 1fr); } }
 
-/* A ação primária e o campo de código migraram para a barra de topo;
-   na Home ficam só as variantes (sala de espera, E2EE, treino). */
+/* A ação primária e o campo de código migraram para a barra de topo; a Home
+   já não tem grupo de variantes próprio — vivem no menu de QuickActions. */
 .home .home-actions { display: none; }
-.home-extra { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
-/* `.chip-outline` é a forma do template: contorno neutro que passa a acento
-   no hover. Vale para .link também, para não partir usos antigos. */
-.home-extra .chip-outline,
-.home-extra .link {
-  padding: 4px 11px; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: var(--surface); color: var(--muted); font-size: 0.78rem;
-  text-decoration: none; white-space: nowrap;
-}
-.home-extra .chip-outline:hover:not(:disabled),
-.home-extra .link:hover { border-color: var(--accent); color: var(--accent-text); }
-.home-extra .chip-outline:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ---- 5. Superfícies: borda fina, sombra mínima -------------- */
 .dash-card, .kpi-card, .rec-card, .rec-item, .wb-card, .shortcut-tile, .quality-card {
@@ -4755,7 +4803,8 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
   flex-direction: column; align-items: stretch; gap: 8px;
   padding: 4px 12px 10px; border-bottom: 1px solid var(--sb-line); margin-bottom: 6px;
 }
-.qa-drawer .app-bar-new { width: 100%; justify-content: center; padding: 9px 14px; }
+.qa-drawer .dx-split { width: 100%; }
+.qa-drawer .dx-split-main { justify-content: center; padding: 9px 14px; }
 .qa-drawer .app-bar-join { width: 100%; }
 .qa-drawer .app-bar-join input { width: 100%; }
 .qa-drawer .app-bar-err { font-size: 0.76rem; }
@@ -5227,7 +5276,8 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
     gap: 8px;
     margin: 0 0 18px;
   }
-  .qa-home .app-bar-new { flex: 1 1 100%; justify-content: center; padding: 11px 14px; font-size: 0.95rem; }
+  .qa-home .dx-split { flex: 1 1 100%; }
+  .qa-home .dx-split-main { justify-content: center; padding: 11px 14px; font-size: 0.95rem; }
   .qa-home .app-bar-join { flex: 1 1 100%; display: flex; }
   .qa-home .app-bar-join input { flex: 1 1 auto; min-width: 0; }
 }
