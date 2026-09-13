@@ -1043,14 +1043,6 @@ button.link:hover {
 /* Contentor com altura fixa para o canvas responsivo do Chart.js. */
 .chart-canvas-wrap { position: relative; height: 260px; width: 100%; }
 
-.tabs { display: flex; gap: 0.3rem; border-bottom: 1px solid var(--border); }
-.tab {
-  background: none; color: var(--muted); padding: 0.6rem 1rem;
-  border-bottom: 2px solid transparent; border-radius: 0; font-size: 0.95rem;
-}
-.tab:hover { color: var(--text); }
-.tab.active { color: var(--accent-text); border-bottom-color: var(--accent); }
-
 .emp-list { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 1rem; }
 .emp-row {
   display: flex; align-items: center; gap: 0.8rem;
@@ -3377,27 +3369,8 @@ button.link:hover {
   }
 }
 
-/* ── Event Modal Tabs ───────────────────────────────────────────────────────── */
-.event-tabs {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  margin: 0.4rem -1.2rem 0.8rem;
-  padding: 0 1.2rem;
-}
-.event-tab {
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-2);
-  cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 500;
-  padding: 0.45rem 0.9rem;
-  transition: color 0.15s, border-color 0.15s;
-  &:hover { color: var(--text); }
-  &.active { color: var(--accent-hi); border-bottom-color: var(--accent-hi); }
-}
+/* Abas do modal de evento — migradas para .dx-tabs (components/ui.tsx). */
+.event-modal .dx-tabs { margin: 0.4rem -1.2rem 0.8rem; }
 
 /* ── Agenda Panel ───────────────────────────────────────────────────────────── */
 .agenda-panel { display: flex; flex-direction: column; gap: 0.6rem; }

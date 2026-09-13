@@ -23,6 +23,7 @@ import {
 } from '../api'
 import { usePresence } from '../components/PresenceProvider'
 import { CamIcon, CloseIcon, DoorIcon, EditIcon, PeopleIcon, PlusIcon, TrashIcon, VoiceCallIcon } from '../icons'
+import { Tabs } from '../components/ui'
 
 type Tab = 'directory' | 'branches' | 'groups' | 'rooms'
 
@@ -85,12 +86,16 @@ export default function Directory() {
             <PlusIcon /> {t('directory.newOrg')}
           </button>
         </div>
-        <div className="tabs">
-          <button className={tab === 'directory' ? 'tab active' : 'tab'} onClick={() => setTab('directory')}>{t('directory.tabDirectory')}</button>
-          <button className={tab === 'branches' ? 'tab active' : 'tab'} onClick={() => setTab('branches')}>{t('directory.tabBranches')}</button>
-          <button className={tab === 'groups' ? 'tab active' : 'tab'} onClick={() => setTab('groups')}>{t('directory.tabGroups')}</button>
-          <button className={tab === 'rooms' ? 'tab active' : 'tab'} onClick={() => setTab('rooms')}>{t('directory.tabRooms')}</button>
-        </div>
+        <Tabs
+          tabs={[
+            { key: 'directory', label: t('directory.tabDirectory') },
+            { key: 'branches', label: t('directory.tabBranches') },
+            { key: 'groups', label: t('directory.tabGroups') },
+            { key: 'rooms', label: t('directory.tabRooms') },
+          ]}
+          active={tab}
+          onChange={setTab}
+        />
       </header>
 
       {org && tab === 'directory' && <DirectoryTab org={org} />}

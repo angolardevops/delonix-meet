@@ -32,6 +32,7 @@ import {
   User,
 } from '../api'
 import { CalendarIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, ClockIcon, CloseIcon, DoorIcon, EditIcon, PlusIcon, RepeatIcon, TrashIcon, VideoIcon, VoiceCallIcon } from '../icons'
+import { Tabs } from '../components/ui'
 
 /** Carrega as salas presenciais de todas as organizações do utilizador. */
 async function loadAllRooms(): Promise<MeetingRoom[]> {
@@ -885,12 +886,15 @@ function EventModal({
         </div>
         {meeting.room_name && <p className="event-room"><DoorIcon /> {tr('physRoom')}<strong>{meeting.room_name}</strong></p>}
 
-        {/* Tabs */}
-        <div className="event-tabs">
-          <button className={`event-tab${tab === 'details' ? ' active' : ''}`} onClick={() => setTab('details')}>{tr('tabDetails')}</button>
-          <button className={`event-tab${tab === 'agenda' ? ' active' : ''}`} onClick={() => setTab('agenda')}>{tr('tabAgenda')}</button>
-          <button className={`event-tab${tab === 'actions' ? ' active' : ''}`} onClick={() => setTab('actions')}>{tr('tabActions')}</button>
-        </div>
+        <Tabs
+          tabs={[
+            { key: 'details', label: tr('tabDetails') },
+            { key: 'agenda', label: tr('tabAgenda') },
+            { key: 'actions', label: tr('tabActions') },
+          ]}
+          active={tab}
+          onChange={setTab}
+        />
 
         {/* Tab: Detalhes */}
         {tab === 'details' && (
