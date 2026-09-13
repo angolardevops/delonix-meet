@@ -111,6 +111,15 @@ export default defineConfig(({ command }) => {
   const haveCerts = wantHttps && fs.existsSync(KEY) && fs.existsSync(CRT)
   return {
     plugins: [react(), precachePwa(), ...(wantHttps && !haveCerts ? [basicSsl()] : [])],
+    build: {
+      // `?url` em ficheiros pequenos (< 4 KB, o omisso do Vite) fica em
+      // `data:` inline. Para um módulo de AudioWorklet isso PARTE em
+      // produção: o CSP (`deploy/nginx-delonix.conf`) só deixa
+      // `worker-src 'self' blob:` — sem `data:` — e o `addModule(dataUrl)`
+      // é bloqueado em silêncio. Os `*Worklet.js` ficam sempre como
+      // ficheiro à parte, nunca inline.
+      assetsInlineLimit: (filePath: string) => !filePath.endsWith('Worklet.js'),
+    },
     server: {
       host: '0.0.0.0',
       port: Number(process.env.PORT) || 5173,
