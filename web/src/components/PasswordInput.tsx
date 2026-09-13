@@ -6,6 +6,7 @@ export default function PasswordInput({
   value,
   onChange,
   placeholder,
+  ariaLabel,
   autoComplete = 'current-password',
   required,
   minLength,
@@ -14,6 +15,7 @@ export default function PasswordInput({
   value: string
   onChange: (v: string) => void
   placeholder?: string
+  ariaLabel?: string
   autoComplete?: string
   required?: boolean
   minLength?: number
@@ -28,6 +30,7 @@ export default function PasswordInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        aria-label={ariaLabel}
         autoComplete={autoComplete}
         required={required}
         minLength={minLength}

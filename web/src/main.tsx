@@ -1,6 +1,12 @@
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import { initTheme } from './theme'
+// Pré-carregar os dois pesos que o primeiro pixel usa de verdade (corpo 400,
+// títulos/nav 600) — achado 1.5: seis pesos, nenhum pré-carregado. O URL final
+// (hash incluído) só o Vite sabe, daí o `?url` em vez de um <link> estático em
+// index.html.
+import sans400 from '@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-400-normal.woff2?url'
+import sans600 from '@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-600-normal.woff2?url'
 // Fontes do design system (self-hosted — nada sai da rede local).
 // Família única IBM Plex (Sans + Mono): corpo, títulos e dados numéricos
 // partilham a mesma métrica — é o que dá o look «consola» do template.
@@ -13,6 +19,16 @@ import '@fontsource/ibm-plex-mono/500.css'
 import { initLanguage } from './i18n'
 import './styles.scss'
 import { currentUser } from './api'
+
+for (const href of [sans400, sans600]) {
+  const link = document.createElement('link')
+  link.rel = 'preload'
+  link.as = 'font'
+  link.type = 'font/woff2'
+  link.crossOrigin = 'anonymous'
+  link.href = href
+  document.head.appendChild(link)
+}
 
 initTheme()
 

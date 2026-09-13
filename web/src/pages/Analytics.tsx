@@ -167,7 +167,7 @@ function OrgApiKeys({ orgId }: { orgId: string }) {
         </div>
       ))}
       <div className="apikey-form">
-        <input placeholder={t('admin.apiKeyName')} value={name} onChange={(e) => setName(e.target.value)} />
+        <input placeholder={t('admin.apiKeyName')} aria-label={t('admin.apiKeyName')} value={name} onChange={(e) => setName(e.target.value)} />
         <button className="btn-sm" onClick={() => void add()}>+ {t('admin.apiKeyCreate')}</button>
       </div>
     </div>
@@ -267,17 +267,20 @@ function OrgSso({ orgId }: { orgId: string }) {
             <div className="wh-form" style={{ flexDirection: 'column', gap: '0.5rem' }}>
               <input
                 placeholder={t('admin.ssoIssuerPlaceholder')}
+                aria-label={t('admin.ssoIssuerPlaceholder')}
                 value={issuer}
                 onChange={(e) => setIssuer(e.target.value)}
               />
               <input
                 placeholder={t('admin.ssoClientIdPlaceholder')}
+                aria-label={t('admin.ssoClientIdPlaceholder')}
                 value={clientId}
                 onChange={(e) => setClientId(e.target.value)}
               />
               <input
                 type="password"
                 placeholder={cfg ? t('admin.ssoSecretKeep') : t('admin.ssoSecretPlaceholder')}
+                aria-label={cfg ? t('admin.ssoSecretKeep') : t('admin.ssoSecretPlaceholder')}
                 value={clientSecret}
                 onChange={(e) => setClientSecret(e.target.value)}
                 autoComplete="new-password"
@@ -355,14 +358,14 @@ function OrgWebhooks({ orgId }: { orgId: string }) {
         </div>
       ))}
       <div className="wh-form">
-        <select className="dx-select" value={kind} onChange={(e) => setKind(e.target.value)}>
+        <select className="dx-select" aria-label={t('admin.webhookKind')} value={kind} onChange={(e) => setKind(e.target.value)}>
           {WH_KINDS.map((k) => (
             <option key={k.k} value={k.k}>{k.label}</option>
           ))}
         </select>
-        <input placeholder="https://hooks.slack.com/…" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <input placeholder="https://hooks.slack.com/…" aria-label={t('admin.webhookUrl')} value={url} onChange={(e) => setUrl(e.target.value)} />
         {kind === 'generic' && (
-          <input placeholder={t('admin.webhookSecret')} value={secret} onChange={(e) => setSecret(e.target.value)} />
+          <input placeholder={t('admin.webhookSecret')} aria-label={t('admin.webhookSecret')} value={secret} onChange={(e) => setSecret(e.target.value)} />
         )}
         <button className="btn-sm" disabled={!url.trim()} onClick={() => void add()}>
           + {t('admin.webhookAdd')}
@@ -440,9 +443,10 @@ function OrgOdooIntegration({ orgId }: { orgId: string }) {
       </p>
 
       <div className="field-row">
-        <label className="field-label">{t('admin.odooEnabled', 'Integração Odoo')}</label>
+        <label className="field-label" htmlFor="odoo-enabled">{t('admin.odooEnabled', 'Integração Odoo')}</label>
         <label className="switch-wrap">
           <input
+            id="odoo-enabled"
             type="checkbox"
             checked={cfg?.odoo_enabled ?? false}
             onChange={(e) => setCfg((c) => c ? { ...c, odoo_enabled: e.target.checked } : c)}
@@ -452,8 +456,9 @@ function OrgOdooIntegration({ orgId }: { orgId: string }) {
       </div>
 
       <div className="field-row">
-        <label className="field-label">{t('admin.odooUrl', 'URL do Odoo')}</label>
+        <label className="field-label" htmlFor="odoo-url">{t('admin.odooUrl', 'URL do Odoo')}</label>
         <input
+          id="odoo-url"
           className="field-input"
           placeholder="http://localhost:8090"
           value={cfg?.odoo_url ?? ''}
@@ -462,8 +467,9 @@ function OrgOdooIntegration({ orgId }: { orgId: string }) {
       </div>
 
       <div className="field-row">
-        <label className="field-label">{t('admin.odooDB', 'Base de dados Odoo')}</label>
+        <label className="field-label" htmlFor="odoo-db">{t('admin.odooDB', 'Base de dados Odoo')}</label>
         <input
+          id="odoo-db"
           className="field-input"
           placeholder="mycompany"
           value={cfg?.odoo_db ?? ''}
@@ -510,9 +516,10 @@ function OrgOdooIntegration({ orgId }: { orgId: string }) {
       <p className="field-label bold">{t('admin.odooVisibility', 'Visibilidade da plataforma')}</p>
 
       <div className="field-row">
-        <label className="field-label">{t('admin.hideOrgCreation', 'Ocultar "Criar organização"')}</label>
+        <label className="field-label" htmlFor="odoo-hide-org-creation">{t('admin.hideOrgCreation', 'Ocultar "Criar organização"')}</label>
         <label className="switch-wrap">
           <input
+            id="odoo-hide-org-creation"
             type="checkbox"
             checked={cfg?.hide_org_creation ?? false}
             onChange={(e) => setCfg((c) => c ? { ...c, hide_org_creation: e.target.checked } : c)}
@@ -523,9 +530,10 @@ function OrgOdooIntegration({ orgId }: { orgId: string }) {
       <p className="muted small odoo-hint">{t('admin.hideOrgCreationHint', 'Remove o tab «Criar conta» da página de login. Útil quando todos os utilizadores são provisionados via Odoo.')}</p>
 
       <div className="field-row">
-        <label className="field-label">{t('admin.hideSsoButton', 'Ocultar botão SSO')}</label>
+        <label className="field-label" htmlFor="odoo-hide-sso-button">{t('admin.hideSsoButton', 'Ocultar botão SSO')}</label>
         <label className="switch-wrap">
           <input
+            id="odoo-hide-sso-button"
             type="checkbox"
             checked={cfg?.hide_sso_button ?? false}
             onChange={(e) => setCfg((c) => c ? { ...c, hide_sso_button: e.target.checked } : c)}
@@ -613,8 +621,8 @@ function PlatformStoragePanel() {
       </p>
 
       <div className="field-row">
-        <label className="field-label">{t('admin.tipoDeArmazenamento')}</label>
-        <select value={type} onChange={(e) => setType(e.target.value as typeof type)} className="select-ctl">
+        <label className="field-label" htmlFor="storage-type">{t('admin.tipoDeArmazenamento')}</label>
+        <select id="storage-type" value={type} onChange={(e) => setType(e.target.value as typeof type)} className="select-ctl">
           <option value="local">{t('admin.armazenamentoLocal')}</option>
           <option value="nfs">TrueNAS / NFS</option>
           <option value="webdav">Nextcloud / WebDAV</option>
@@ -626,12 +634,12 @@ function PlatformStoragePanel() {
           <hr className="odoo-sep" />
           <p className="odoo-hint">{t('admin.nfsManifesto')} <code>kubectl apply</code>.</p>
           <div className="field-row">
-            <label className="field-label">{t('admin.servidorNfs')}</label>
-            <input value={nfsServer} onChange={(e) => setNfsServer(e.target.value)} placeholder="192.168.1.10" />
+            <label className="field-label" htmlFor="nfs-server">{t('admin.servidorNfs')}</label>
+            <input id="nfs-server" value={nfsServer} onChange={(e) => setNfsServer(e.target.value)} placeholder="192.168.1.10" />
           </div>
           <div className="field-row">
-            <label className="field-label">{t('admin.pathDeExportacao')}</label>
-            <input value={nfsPath} onChange={(e) => setNfsPath(e.target.value)} placeholder="/mnt/pool/delonix" />
+            <label className="field-label" htmlFor="nfs-path">{t('admin.pathDeExportacao')}</label>
+            <input id="nfs-path" value={nfsPath} onChange={(e) => setNfsPath(e.target.value)} placeholder="/mnt/pool/delonix" />
           </div>
           <button className="secondary" onClick={downloadPvc} type="button">{t('admin.descarregarManifestoK8sPvc')}</button>
         </>
@@ -642,20 +650,20 @@ function PlatformStoragePanel() {
           <hr className="odoo-sep" />
           <p className="odoo-hint">{t('admin.webdavExplicacao')}</p>
           <div className="field-row">
-            <label className="field-label">{t('admin.urlBaseWebdav')}</label>
-            <input value={wdUrl} onChange={(e) => setWdUrl(e.target.value)} placeholder="https://cloud.empresa.com" />
+            <label className="field-label" htmlFor="webdav-url">{t('admin.urlBaseWebdav')}</label>
+            <input id="webdav-url" value={wdUrl} onChange={(e) => setWdUrl(e.target.value)} placeholder="https://cloud.empresa.com" />
           </div>
           <div className="field-row">
-            <label className="field-label">Utilizador</label>
-            <input value={wdUser} onChange={(e) => setWdUser(e.target.value)} placeholder="delonix-service" />
+            <label className="field-label" htmlFor="webdav-user">{t('login.username')}</label>
+            <input id="webdav-user" value={wdUser} onChange={(e) => setWdUser(e.target.value)} placeholder="delonix-service" />
           </div>
           <div className="field-row">
-            <label className="field-label">Password {cfg?.webdav_password_set && <span className="odoo-hint">{t('admin.definidaDeixaEmBranco')}</span>}</label>
-            <input type="password" value={wdPwd} onChange={(e) => setWdPwd(e.target.value)} placeholder={cfg?.webdav_password_set ? '••••••••' : 'nova password'} />
+            <label className="field-label" htmlFor="webdav-password">{t('common.password')} {cfg?.webdav_password_set && <span className="odoo-hint">{t('admin.definidaDeixaEmBranco')}</span>}</label>
+            <input id="webdav-password" type="password" value={wdPwd} onChange={(e) => setWdPwd(e.target.value)} placeholder={cfg?.webdav_password_set ? '••••••••' : 'nova password'} />
           </div>
           <div className="field-row">
-            <label className="field-label">{t('admin.pathRemoto')}</label>
-            <input value={wdPath} onChange={(e) => setWdPath(e.target.value)} placeholder="/remote.php/dav/files/{user}/Delonix" />
+            <label className="field-label" htmlFor="webdav-remote-path">{t('admin.pathRemoto')}</label>
+            <input id="webdav-remote-path" value={wdPath} onChange={(e) => setWdPath(e.target.value)} placeholder="/remote.php/dav/files/{user}/Delonix" />
           </div>
         </>
       )}

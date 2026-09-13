@@ -230,6 +230,7 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
             <>
               <PasswordInput
                 placeholder={t('login.pass')}
+                ariaLabel={t('login.pass')}
                 value={password}
                 onChange={setPassword}
                 required
