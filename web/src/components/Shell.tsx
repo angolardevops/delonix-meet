@@ -10,8 +10,9 @@ import { appNameParts, getAppName, getLoginBg, setAppName, setLoginBg } from '..
 import PasswordInput from './PasswordInput'
 import MfaPanel from './MfaPanel'
 import OnboardingTour from './OnboardingTour'
-import { CalendarIcon, ChevronDownIcon, ClockIcon, CloseIcon, FilmIcon, HomeIcon, MenuIcon, NoteIcon, PeopleIcon, RecordIcon, SearchIcon, SettingsIcon, StageIcon, ThemeIcon } from '../icons'
+import { CalendarIcon, ChevronDownIcon, ClockIcon, CloseIcon, DoorIcon, FilmIcon, HomeIcon, LockIcon, MenuIcon, NoteIcon, PeopleIcon, RecordIcon, SearchIcon, SettingsIcon, StageIcon, ThemeIcon } from '../icons'
 import { BrandMark } from './BrandMark'
+import { MenuItem, SplitButton } from './ui'
 
 export type NavKey = 'home' | 'directory' | 'recordings' | 'calendar' | 'analytics' | 'roadmap' | 'whiteboards' | 'studio'
 
@@ -268,11 +269,18 @@ export function QuickActions({
   const [creating, setCreating] = useState(false)
   const [err, setErr] = useState('')
 
-  async function newMeeting() {
+  // Aceita waitingRoom/e2ee/format — as três variantes que antes viviam nas
+  // chips soltas da Home (`home-extra`) e hoje entram pelo menu do botão
+  // dividido. Mesma assinatura que a Home usava, agora num único sítio.
+  async function newMeeting(waitingRoom = false, e2ee = false, format: 'normal' | 'training' = 'normal') {
     setErr('')
     setCreating(true)
     try {
-      const room = await createRoom(t('common.reuniaoDe', { nome: username }), 'sfu', false, false, 'normal')
+      // Treino não tem chave i18n própria (também não tinha antes, na Home) —
+      // as restantes variantes usam a mesma tradução que o botão simples já usava.
+      const label = format === 'training' ? 'Treino' : null
+      const title = label ? `${label} de ${username}` : t('common.reuniaoDe', { nome: username })
+      const room = await createRoom(title, 'sfu', waitingRoom, e2ee, format)
       onDone?.()
       onEnterRoom(room.code)
     } catch (e) {
@@ -303,9 +311,34 @@ export function QuickActions({
 
   return (
     <div className={`quick-actions qa-${variant}`}>
-      <button className="app-bar-new" disabled={creating} onClick={() => void newMeeting()}>
-        {creating ? t('dash.creating') : t('dash.newMeeting')}
-      </button>
+      <SplitButton
+        label={creating ? t('dash.creating') : t('dash.newMeeting')}
+        disabled={creating}
+        onClick={() => void newMeeting()}
+        menuLabel={t('dash.newMeetingOptions', 'Mais opções de reunião')}
+      >
+        <MenuItem
+          icon={<DoorIcon />}
+          label={t('dash.waitingRoom')}
+          hint={t('dash.waitingRoomHint')}
+          disabled={creating}
+          onSelect={() => void newMeeting(true)}
+        />
+        <MenuItem
+          icon={<LockIcon />}
+          label={t('dash.e2ee')}
+          hint={t('dash.e2eeHint')}
+          disabled={creating}
+          onSelect={() => void newMeeting(false, true)}
+        />
+        <MenuItem
+          icon={<PeopleIcon />}
+          label={t('dash.training', 'Reunião de treino')}
+          hint={t('dash.trainingHint', 'Ativa as salas de grupo (breakouts)')}
+          disabled={creating}
+          onSelect={() => void newMeeting(false, false, 'training')}
+        />
+      </SplitButton>
       <form className="app-bar-join" onSubmit={join}>
         <input
           placeholder={t('dash.joinPh')}

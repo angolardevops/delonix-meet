@@ -23,6 +23,7 @@ import {
 } from '../api'
 import { usePresence } from '../components/PresenceProvider'
 import { CamIcon, CloseIcon, DoorIcon, EditIcon, PeopleIcon, PlusIcon, TrashIcon, VoiceCallIcon } from '../icons'
+import { Btn, IconBtn, Tabs } from '../components/ui'
 
 type Tab = 'directory' | 'branches' | 'groups' | 'rooms'
 
@@ -56,9 +57,9 @@ export default function Directory() {
         <div className="empty-state">
           <PeopleIcon />
           <p>{t('directory.noOrgs')}</p>
-          <button className="btn-new" onClick={() => setShowCreateOrg(true)}>
+          <Btn onClick={() => setShowCreateOrg(true)}>
             <PlusIcon /> {t('directory.createOrg')}
-          </button>
+          </Btn>
         </div>
         {showCreateOrg && (
           <CreateOrgModal onClose={() => setShowCreateOrg(false)} onCreated={(id) => { setShowCreateOrg(false); void refreshOrgs(id) }} />
@@ -81,16 +82,20 @@ export default function Directory() {
               </option>
             ))}
           </select>
-          <button className="btn-sm ghost" onClick={() => setShowCreateOrg(true)}>
+          <Btn variant="ghost" onClick={() => setShowCreateOrg(true)}>
             <PlusIcon /> {t('directory.newOrg')}
-          </button>
+          </Btn>
         </div>
-        <div className="tabs">
-          <button className={tab === 'directory' ? 'tab active' : 'tab'} onClick={() => setTab('directory')}>{t('directory.tabDirectory')}</button>
-          <button className={tab === 'branches' ? 'tab active' : 'tab'} onClick={() => setTab('branches')}>{t('directory.tabBranches')}</button>
-          <button className={tab === 'groups' ? 'tab active' : 'tab'} onClick={() => setTab('groups')}>{t('directory.tabGroups')}</button>
-          <button className={tab === 'rooms' ? 'tab active' : 'tab'} onClick={() => setTab('rooms')}>{t('directory.tabRooms')}</button>
-        </div>
+        <Tabs
+          tabs={[
+            { key: 'directory', label: t('directory.tabDirectory') },
+            { key: 'branches', label: t('directory.tabBranches') },
+            { key: 'groups', label: t('directory.tabGroups') },
+            { key: 'rooms', label: t('directory.tabRooms') },
+          ]}
+          active={tab}
+          onChange={setTab}
+        />
       </header>
 
       {org && tab === 'directory' && <DirectoryTab org={org} />}
@@ -159,15 +164,15 @@ function DirectoryTab({ org }: { org: OrgSummary }) {
           onChange={(e) => setSearch(e.target.value)}
           style={{ flex: 1, minWidth: '200px' }}
         />
-        <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+        <select className="dx-select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
           <option value="all">{t('directory.allRoles')}</option>
           <option value="admin">{t('directory.admins')}</option>
           <option value="member">{t('directory.members')}</option>
         </select>
         {org.role === 'admin' && (
-          <button className="btn-new small" onClick={() => setShowAdd(true)}>
+          <Btn className="small" onClick={() => setShowAdd(true)}>
             <PlusIcon /> {t('directory.add')}
-          </button>
+          </Btn>
         )}
       </div>
       <div className="emp-list">
@@ -194,12 +199,12 @@ function DirectoryTab({ org }: { org: OrgSummary }) {
               )}
               {org.role === 'admin' && e.user_id !== me?.id && (
                 <>
-                  <button className="icon-btn" title={t('directory.editMember')} onClick={() => setEditingEmp(e)}>
+                  <IconBtn title={t('directory.editMember')} onClick={() => setEditingEmp(e)}>
                     <EditIcon />
-                  </button>
-                  <button className="icon-btn" title={t('directory.removeMember')} onClick={() => void removeEmployee(org.id, e.user_id).then(refresh)}>
+                  </IconBtn>
+                  <IconBtn title={t('directory.removeMember')} onClick={() => void removeEmployee(org.id, e.user_id).then(refresh)}>
                     <TrashIcon />
-                  </button>
+                  </IconBtn>
                 </>
               )}
             </span>
@@ -209,9 +214,9 @@ function DirectoryTab({ org }: { org: OrgSummary }) {
       </div>
       {totalPages > 1 && (
         <div className="pagination" style={{ display: 'flex', gap: '8px', marginTop: '16px', justifyContent: 'center', alignItems: 'center' }}>
-          <button className="btn-sm ghost" disabled={page === 1} onClick={() => setPage(p => p - 1)}>{t('directory.prev')}</button>
+          <Btn variant="ghost" disabled={page === 1} onClick={() => setPage(p => p - 1)}>{t('directory.prev')}</Btn>
           <span className="muted small">{t('directory.pageOf', { page, total: totalPages })}</span>
-          <button className="btn-sm ghost" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>{t('directory.next')}</button>
+          <Btn variant="ghost" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>{t('directory.next')}</Btn>
         </div>
       )}
       {showAdd && (
@@ -253,7 +258,7 @@ function BranchesTab({ org }: { org: OrgSummary }) {
         <form className="inline-form" onSubmit={add}>
           <input placeholder={t('directory.branchName')} value={name} onChange={(e) => setName(e.target.value)} />
           <input placeholder={t('directory.location')} value={location} onChange={(e) => setLocation(e.target.value)} />
-          <button className="btn-sm" disabled={!name.trim()}><PlusIcon /> {t('directory.add')}</button>
+          <Btn disabled={!name.trim()}><PlusIcon /> {t('directory.add')}</Btn>
         </form>
       )}
       <div className="branch-grid">
@@ -285,9 +290,9 @@ function GroupsTab({ org }: { org: OrgSummary }) {
 
   return (
     <>
-      <button className="btn-new small" onClick={() => setShowCreate(true)}>
+      <Btn className="small" onClick={() => setShowCreate(true)}>
         <PlusIcon /> {t('directory.createGroup')}
-      </button>
+      </Btn>
       <div className="group-grid">
         {groups.map((g) => (
           <div key={g.id} className="group-card">
@@ -349,7 +354,7 @@ function RoomsTab({ org }: { org: OrgSummary }) {
           <input placeholder={t('directory.roomName')} value={name} onChange={(e) => setName(e.target.value)} />
           <input placeholder={t('directory.location')} value={location} onChange={(e) => setLocation(e.target.value)} />
           <input placeholder={t('directory.capacity')} type="number" min={0} value={capacity} onChange={(e) => setCapacity(e.target.value)} style={{ maxWidth: 110 }} />
-          <button className="btn-sm" disabled={!name.trim()}><PlusIcon /> {t('directory.add')}</button>
+          <Btn disabled={!name.trim()}><PlusIcon /> {t('directory.add')}</Btn>
         </form>
       )}
       <div className="branch-grid">
@@ -389,7 +394,7 @@ function CreateOrgModal({ onClose, onCreated }: { onClose: () => void; onCreated
         <div className="modal-head"><h3>{t('directory.createOrg')}</h3><button type="button" className="panel-close" onClick={onClose}><CloseIcon /></button></div>
         <input autoFocus placeholder={t('directory.companyName')} value={name} onChange={(e) => setName(e.target.value)} />
         {error && <div className="error">{error}</div>}
-        <button className="primary" disabled={busy || !name.trim()}>{busy ? '…' : t('directory.create')}</button>
+        <Btn variant="submit" disabled={busy || !name.trim()}>{busy ? '…' : t('directory.create')}</Btn>
       </form>
     </div>
   )
@@ -448,20 +453,20 @@ function AddEmployeeModal({
         <div className="field-row">
           <label>{t('directory.role')}<input placeholder={t('directory.rolePh')} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
           <label>{t('directory.roleField')}
-            <select value={role} onChange={(e) => setRole(e.target.value)}>
+            <select className="dx-select" value={role} onChange={(e) => setRole(e.target.value)}>
               <option value="member">{t('directory.roleMember')}</option>
               <option value="admin">{t('directory.roleAdmin')}</option>
             </select>
           </label>
           <label>{t('directory.branch')}
-            <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+            <select className="dx-select" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
               <option value="">—</option>
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </label>
         </div>
         {error && <div className="error">{error}</div>}
-        <button className="primary" disabled={busy || !email.trim()}>{busy ? '…' : t('directory.add')}</button>
+        <Btn variant="submit" disabled={busy || !email.trim()}>{busy ? '…' : t('directory.add')}</Btn>
       </form>
     </div>
   )
@@ -516,20 +521,20 @@ function EditEmployeeModal({
             <input placeholder={t('directory.rolePh')} value={title} onChange={(e) => setTitle(e.target.value)} />
           </label>
           <label>{t('directory.roleField')}
-            <select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'member')}>
+            <select className="dx-select" value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'member')}>
               <option value="member">{t('directory.roleMember')}</option>
               <option value="admin">{t('directory.roleAdmin')}</option>
             </select>
           </label>
           <label>{t('directory.branch')}
-            <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+            <select className="dx-select" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
               <option value="">—</option>
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </label>
         </div>
         {error && <div className="error">{error}</div>}
-        <button className="primary" disabled={busy}>{busy ? '…' : t('common.save')}</button>
+        <Btn variant="submit" disabled={busy}>{busy ? '…' : t('common.save')}</Btn>
       </form>
     </div>
   )
@@ -578,7 +583,7 @@ function CreateGroupModal({ orgId, onClose, onCreated }: { orgId: string; onClos
             </label>
           ))}
         </div>
-        <button className="primary" disabled={busy || !name.trim()}>{busy ? '…' : t('directory.createGroupCount', { count: selected.size })}</button>
+        <Btn variant="submit" disabled={busy || !name.trim()}>{busy ? '…' : t('directory.createGroupCount', { count: selected.size })}</Btn>
       </form>
     </div>
   )
