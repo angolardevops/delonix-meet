@@ -695,17 +695,10 @@ async fn finalize_inner(
     .fetch_one(&state.db)
     .await?;
 
-    let final_path = state.config.recordings_dir.join(format!("{rec_id}.webm"));
-    // rename falha com EXDEV (errno 18) se out e final_path estiverem em
-    // filesystems diferentes (e.g., tmp num volume separado). Fallback: copy+delete.
-    match tokio::fs::rename(&out, &final_path).await {
-        Ok(()) => {}
-        Err(e) if e.raw_os_error() == Some(18) => {
-            tokio::fs::copy(&out, &final_path).await?;
-            let _ = tokio::fs::remove_file(&out).await;
-        }
-        Err(e) => return Err(e.into()),
-    }
+    // Publica via a porta de storage (ADR-0004) em vez de `tokio::fs::rename`
+    // directo — `LocalFsStorage::put_from_path` faz o mesmo rename atómico
+    // com o mesmo fallback EXDEV; outros backends leriam o ficheiro aqui.
+    state.storage.put_from_path(rec_id, &out).await?;
     tracing::info!(%room_id, %rec_id, size, "server recording pronta na biblioteca");
 
     // Webhook recording.ready para as organizações de quem gravou.
@@ -756,8 +749,10 @@ pub async fn retention_sweep(state: &Arc<AppState>) -> usize {
     };
     let mut n = 0;
     for (id, _fname) in rows {
-        let path = state.config.recordings_dir.join(format!("{id}.webm"));
-        let _ = tokio::fs::remove_file(&path).await;
+        // Best-effort, como antes: uma falha a apagar o ficheiro não impede
+        // o apagamento do registo (ver ADR-0004 — mesmo comportamento,
+        // agora pela porta de storage em vez de `tokio::fs` directo).
+        let _ = state.storage.delete(id).await;
         if sqlx::query("DELETE FROM recordings WHERE id = $1")
             .bind(id)
             .execute(&state.db)
