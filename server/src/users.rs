@@ -63,11 +63,10 @@ pub async fn update_me(
             .await?;
     }
     if let Some(password) = req.password.as_deref() {
-        if password.len() < 8 {
-            return Err(ApiError::BadRequest(
-                "a password deve ter pelo menos 8 caracteres".into(),
-            ));
-        }
+        // Antes desta chamada faltava aqui o tecto de 128 que auth::register
+        // já impunha — a mesma política de password, agora num só sítio
+        // (ADR-0004, Fase 2).
+        crate::domain::validation::validate_password(password).map_err(ApiError::BadRequest)?;
         let hash = crate::auth::hash_password(password)?;
         sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
             .bind(hash)
