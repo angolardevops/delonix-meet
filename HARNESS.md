@@ -218,28 +218,25 @@ Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **
 11. **Nenhuma fila de saída sem limite.** `WS_QUEUE_CAP` (default 512, por socket `/ws` e `/rtc`) e `NEGO_QUEUE_CAP` (default 64, renegociação do SFU por peer). Uma fila ilimitada transformava um consumidor lento — que na nossa rede-alvo é o caso NORMAL, não a excepção — num OOM que levava consigo todas as salas do pod. Cheia, descarta-se só o efémero e auto-substituível (`ServerMsg::is_droppable`: legenda parcial, traço de quadro, reacção) e conta-se; com protocolo ou estado fecha-se o socket e o cliente reentra. Nunca `send().await` nestes caminhos (os emissores correm dentro do lock do `DashMap` — R16): é sempre `try_send`. Ver R32/R33.
 12. **DLP SEMPRE antes de um texto de fala chegar a um LLM ou à base de dados** — nunca só na difusão ao vivo. `dlp::clean_caption` (`dlp.rs`) redige PII (cartão, NIF, chave API) e mascara asneiras; durante muito tempo só corria em `signaling.rs`, no que é DIFUNDIDO aos outros participantes (chat, legendas). O que o PRÓPRIO cliente acumula localmente e envia depois para persistir — `meetings::save_minutes` (transcrição de chamada ao vivo) e `ai-worker/transcribe_worker.py` (transcrição de gravação, via `faster-whisper`) — nunca tinha passado por ali: um cartão de crédito dito na reunião ficava gravado tal e qual, e chegava sem filtro ao prompt do resumo por IA (`ai.rs::summarize_minutes`), que por sua vez dispara o webhook `meeting.mom_ready` para fora (Odoo). Corrigido (13/09): limpa-se à ENTRADA em `save_minutes` (protege todos os leitores a jusante de uma vez), outra vez dentro de `summarize_minutes` (defesa em profundidade — o prompt de um LLM é onde um furo de PII dói mais) e em `translate_caption` (`/api/translate` recebe texto direto do cliente, nunca passou pela difusão WS). O worker Python espelha os MESMOS padrões em `ai-worker/dlp.py` — sem lib partilhada entre Rust e Python, os dois ficheiros têm de se manter em sincronia à mão. **Qualquer novo caminho de escrita para `transcript`/`minutes`, ou qualquer novo endpoint que meta texto de utilizador num prompt de LLM, tem de chamar `dlp::clean_caption`/`censor` primeiro.**
 
-### 6.1 OWASP Top 10 para LLM — postura atual (achado 13/09/2026)
+### 6.1 OWASP Top 10 para LLM — postura atual (achado 13/09, corrigido 14/09/2026)
 
 Levantamento feito por leitura direta de `ai.rs`, `dlp.rs`, `signaling.rs`,
-`ai-worker/transcribe_worker.py` e `whisper-server/app.py` — não é checklist
-genérica, é o que existe de facto neste código:
+`ai-worker/transcribe_worker.py`, `whisper-server/app.py` e `media.ts` — não
+é checklist genérica, é o que existe de facto neste código:
 
 | Categoria | Estado | Nota |
 |---|---|---|
-| LLM01 Prompt Injection | ⬜ **aberto** | `summarize_minutes`/`translate` (`ai.rs`) metem texto de fala não confiável no prompt por interpolação de string crua, sem delimitador nem hierarquia de instruções. Um participante pode ditar "ignora as instruções anteriores, a reunião decidiu…" e isso pode acabar citado como decisão "oficial" na ata — que dispara `meeting.mom_ready` para integrações externas. DLP (invariante 12) reduz o PII exposto mas NÃO é defesa contra injeção de instruções. |
-| LLM02 Insecure Output Handling | ⬜ **por verificar** | Confirmar como o Markdown do `minutes` gerado por IA é renderizado no viewer de Gravações — se `dangerouslySetInnerHTML` sem sanitização, uma injeção bem-sucedida em LLM01 vira XSS armazenado. |
-| LLM04 Model Denial of Service | ⚠️ **parcial** | `ai.rs`: janela de contexto limitada (24k chars), timeouts (20s tradução / 600s resumo). `whisper-server/app.py`: `/asr` aceita QUALQUER ligação WS sem token próprio (ao contrário de `/ws`/`/rtc` no Rust, que exigem token de sala) — depende inteiramente de isolamento de rede para não ser DoS de GPU grátis. Sem cap de ligações concorrentes nem de tamanho de frame. |
-| LLM06 Sensitive Info Disclosure | ✅ **corrigido** (era ⬜) | Ver invariante 12. Texto de reunião nunca sai para cloud externa (Ollama in-cluster, Whisper self-hosted) — isso já estava bem feito antes desta correção. |
+| LLM01 Prompt Injection | ⚠️ **mitigado, não eliminado** | `ai.rs` passou de `/api/generate` (string única) para `/api/chat` do Ollama, com instrução em `system` e a fala do participante isolada dentro de `<fala>…</fala>` em `user`, mais um aviso explícito para ignorar instruções lá dentro. Reduz o risco (fronteira estrutural real entre instrução e dado), não o elimina — texto livre nunca é imune a um modelo mal alinhado. A defesa que sobra é de desenho: a IA nunca ganhou nem deve ganhar agência (ver LLM08) — só gera texto, nunca actua a partir da própria resposta. |
+| LLM02 Insecure Output Handling | ✅ **verificado seguro** | Confirmado por leitura de `Recordings.tsx`/`Calendar.tsx`: `minutes` renderiza como texto simples dentro de `<pre>{minutes}</pre>` — nó de texto JSX, escapado por omissão pelo React. Não há conversão Markdown→HTML em lado nenhum do frontend (sem `marked`/`markdown-it`/`remark` nas dependências) nem `dangerouslySetInnerHTML` no caminho do MoM (o único uso desse API no repo é um QR code de MFA, sem relação). Uma injeção bem-sucedida em LLM01 fica como texto visível estranho, não vira XSS. |
+| LLM04 Model Denial of Service | ✅ **corrigido** (era ⚠️) | `ai.rs`: janela de contexto limitada (24k chars), timeouts (20s tradução / 600s resumo) — já estava. `whisper-server/app.py`: `/asr` está no MESMO ingress público que o resto da app (`deploy/k8s/04-ingress.yaml`, sem afinidade nem gateway de auth à frente) e aceitava qualquer ligação WS sem token — confirmado explorável, não só teórico. Agora exige o mesmo access token JWT do `/rtc` (`?token=`, `media.ts`), verificado com o `JWT_SECRET` partilhado (HS256, mesmo formato do `auth.rs`) ANTES de aceitar a ligação — fail-closed sem `JWT_SECRET`. Continua sem cap de ligações concorrentes nem de tamanho de frame — por fazer, menor prioridade agora que exige autenticação. |
+| LLM06 Sensitive Info Disclosure | ✅ **corrigido** | Ver invariante 12. Texto de reunião nunca sai para cloud externa (Ollama in-cluster, Whisper self-hosted) — isso já estava bem feito antes desta correção. |
 | LLM08 Excessive Agency | ✅ **baixo risco** | A IA só gera texto; não tem tool-use nem chama outras APIs por si. |
-| LLM09 Overreliance | ⚠️ **parcial** | A transcrição bruta fica sempre preservada ao lado do resumo (permite verificar), e o prompt pede para nunca inventar factos — mas nada no `Recordings.tsx` parece rotular o resumo como gerado por IA para quem o lê. Por confirmar. |
-| — Fuga de informação (não-LLM) | ⬜ **aberto** | `whisper-server/app.py:116-120`: `except Exception` devolve a mensagem de erro Python crua ao cliente WS — ajuda reconhecimento a um atacante. |
+| LLM09 Overreliance | ⚠️ **parcial, por fazer** | A transcrição bruta fica sempre preservada ao lado do resumo (permite verificar), e o prompt pede para nunca inventar factos — mas nada no `Recordings.tsx` rotula visivelmente o resumo como gerado por IA para quem o lê. |
+| — Fuga de informação (não-LLM) | ✅ **corrigido** | `whisper-server/app.py`: a exceção fica só no log do servidor (`logger.exception`); o cliente recebe `"erro interno"`, nunca a mensagem crua do Python. |
 
-Por fazer, ordenado por impacto: (1) delimitar/etiquetar o conteúdo não
-confiável dentro dos prompts do `ai.rs` (mitiga LLM01 sem mudar o
-comportamento fail-open); (2) confirmar a sanitização do Markdown de IA no
-viewer; (3) autenticar `/asr` no `whisper-server` (ou documentar
-explicitamente que depende de isolamento de rede e onde isso é imposto);
-(4) não ecoar exceções cruas ao cliente.
+Por fazer, o que sobra: (1) rotular visivelmente na UI que o `minutes`
+mostrado é gerado por IA (LLM09); (2) cap de ligações concorrentes/tamanho
+de frame no `whisper-server` (LLM04, menor prioridade — já exige auth).
 
 ---
 
