@@ -38,6 +38,13 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
+          # JWT_SECRET vem do configmap partilhado com o server Rust — o /asr
+          # passou a validar o mesmo access token do /rtc (auth.rs), porque
+          # está no mesmo ingress público e antes aceitava qualquer ligação
+          # sem autenticação nenhuma.
+          envFrom:
+            - configMapRef:
+                name: delonix-config
           env:
             - { name: WHISPER_MODEL, value: "small" }   # base|small|medium|large-v3
             - { name: WHISPER_DEVICE, value: "cpu" }     # cuda em GPU
