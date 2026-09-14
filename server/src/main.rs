@@ -1,12 +1,15 @@
 mod actions;
 mod ai;
 mod apikeys;
+mod application;
 mod audit;
 mod auth;
 mod broadcast;
 mod config;
 mod dlp;
+mod domain;
 mod error;
+mod infrastructure;
 mod meetings;
 mod meetings_v1;
 mod metrics;
@@ -105,6 +108,11 @@ pub struct AppState {
     pub redis_bus: Option<Arc<pubsub::PubSubBus>>,
     /// Contadores de observabilidade expostos em `/metrics` (ver metrics.rs).
     pub metrics: Arc<metrics::Metrics>,
+    /// Onde os bytes das gravações vivem (ADR-0004). Hoje só
+    /// `LocalFsStorage` — disco local ou um mount NFS montado antes do
+    /// arranque; trocar de backend é escolher outra implementação aqui, não
+    /// editar `recordings.rs`/`recorder.rs`.
+    pub storage: Arc<dyn domain::ports::RecordingStorage>,
 }
 
 impl AppState {
@@ -513,6 +521,9 @@ async fn main() {
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
         webhook_client,
+        storage: Arc::new(infrastructure::storage::LocalFsStorage::new(
+            config.recordings_dir.clone(),
+        )),
         config: config.clone(),
         redis_bus: redis_bus.clone(),
         metrics,
