@@ -473,15 +473,18 @@ pub async fn save_minutes(
     if !allowed {
         return Err(ApiError::Unauthorized);
     }
+    // DLP ANTES de persistir: `req.transcript` é o que o cliente acumulou
+    // localmente da PRÓPRIA fala (nunca passou pelo `dlp::clean_caption` do
+    // `signaling.rs`, que só limpa o que é DIFUNDIDO aos outros). Sem isto,
+    // um cartão de crédito dito na reunião ficava gravado tal e qual — e
+    // chegava sem filtro ao prompt do resumo por IA (`ai.rs`). Limpar aqui,
+    // à entrada, protege todos os leitores a jusante (visualizador de
+    // Gravações, exportações, o próprio resumo por IA) de uma só vez.
+    let minutes = crate::dlp::clean_caption(req.minutes.trim());
+    let transcript = crate::dlp::clean_caption(req.transcript.trim());
     sqlx::query("UPDATE meetings SET minutes = $1, transcript = $2 WHERE id = $3")
-        .bind(req.minutes.trim().chars().take(200_000).collect::<String>())
-        .bind(
-            req.transcript
-                .trim()
-                .chars()
-                .take(200_000)
-                .collect::<String>(),
-        )
+        .bind(minutes.chars().take(200_000).collect::<String>())
+        .bind(transcript.chars().take(200_000).collect::<String>())
         .bind(id)
         .execute(&state.db)
         .await?;

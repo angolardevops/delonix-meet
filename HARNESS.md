@@ -216,6 +216,30 @@ Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **
 10. **Uma conta tem UMA autoridade de autenticação, explícita:** `users.odoo_org_id` — a org que a gere, gravada quando a conta nasce de um Odoo e nunca reescrita por outra. NULL = conta local, autenticada localmente. **Nunca** resolver o provedor de autenticação por email nem por pertença a org (`LIMIT 1` sem ordem = escolher a autoridade por sorteio). E uma sincronização de directório **nunca reclama uma conta que já existe** — nem de outra org, nem local. As duas metades são precisas; fechar só uma deixa a porta entreaberta. Ver R25.
 
 11. **Nenhuma fila de saída sem limite.** `WS_QUEUE_CAP` (default 512, por socket `/ws` e `/rtc`) e `NEGO_QUEUE_CAP` (default 64, renegociação do SFU por peer). Uma fila ilimitada transformava um consumidor lento — que na nossa rede-alvo é o caso NORMAL, não a excepção — num OOM que levava consigo todas as salas do pod. Cheia, descarta-se só o efémero e auto-substituível (`ServerMsg::is_droppable`: legenda parcial, traço de quadro, reacção) e conta-se; com protocolo ou estado fecha-se o socket e o cliente reentra. Nunca `send().await` nestes caminhos (os emissores correm dentro do lock do `DashMap` — R16): é sempre `try_send`. Ver R32/R33.
+12. **DLP SEMPRE antes de um texto de fala chegar a um LLM ou à base de dados** — nunca só na difusão ao vivo. `dlp::clean_caption` (`dlp.rs`) redige PII (cartão, NIF, chave API) e mascara asneiras; durante muito tempo só corria em `signaling.rs`, no que é DIFUNDIDO aos outros participantes (chat, legendas). O que o PRÓPRIO cliente acumula localmente e envia depois para persistir — `meetings::save_minutes` (transcrição de chamada ao vivo) e `ai-worker/transcribe_worker.py` (transcrição de gravação, via `faster-whisper`) — nunca tinha passado por ali: um cartão de crédito dito na reunião ficava gravado tal e qual, e chegava sem filtro ao prompt do resumo por IA (`ai.rs::summarize_minutes`), que por sua vez dispara o webhook `meeting.mom_ready` para fora (Odoo). Corrigido (13/09): limpa-se à ENTRADA em `save_minutes` (protege todos os leitores a jusante de uma vez), outra vez dentro de `summarize_minutes` (defesa em profundidade — o prompt de um LLM é onde um furo de PII dói mais) e em `translate_caption` (`/api/translate` recebe texto direto do cliente, nunca passou pela difusão WS). O worker Python espelha os MESMOS padrões em `ai-worker/dlp.py` — sem lib partilhada entre Rust e Python, os dois ficheiros têm de se manter em sincronia à mão. **Qualquer novo caminho de escrita para `transcript`/`minutes`, ou qualquer novo endpoint que meta texto de utilizador num prompt de LLM, tem de chamar `dlp::clean_caption`/`censor` primeiro.**
+
+### 6.1 OWASP Top 10 para LLM — postura atual (achado 13/09/2026)
+
+Levantamento feito por leitura direta de `ai.rs`, `dlp.rs`, `signaling.rs`,
+`ai-worker/transcribe_worker.py` e `whisper-server/app.py` — não é checklist
+genérica, é o que existe de facto neste código:
+
+| Categoria | Estado | Nota |
+|---|---|---|
+| LLM01 Prompt Injection | ⬜ **aberto** | `summarize_minutes`/`translate` (`ai.rs`) metem texto de fala não confiável no prompt por interpolação de string crua, sem delimitador nem hierarquia de instruções. Um participante pode ditar "ignora as instruções anteriores, a reunião decidiu…" e isso pode acabar citado como decisão "oficial" na ata — que dispara `meeting.mom_ready` para integrações externas. DLP (invariante 12) reduz o PII exposto mas NÃO é defesa contra injeção de instruções. |
+| LLM02 Insecure Output Handling | ⬜ **por verificar** | Confirmar como o Markdown do `minutes` gerado por IA é renderizado no viewer de Gravações — se `dangerouslySetInnerHTML` sem sanitização, uma injeção bem-sucedida em LLM01 vira XSS armazenado. |
+| LLM04 Model Denial of Service | ⚠️ **parcial** | `ai.rs`: janela de contexto limitada (24k chars), timeouts (20s tradução / 600s resumo). `whisper-server/app.py`: `/asr` aceita QUALQUER ligação WS sem token próprio (ao contrário de `/ws`/`/rtc` no Rust, que exigem token de sala) — depende inteiramente de isolamento de rede para não ser DoS de GPU grátis. Sem cap de ligações concorrentes nem de tamanho de frame. |
+| LLM06 Sensitive Info Disclosure | ✅ **corrigido** (era ⬜) | Ver invariante 12. Texto de reunião nunca sai para cloud externa (Ollama in-cluster, Whisper self-hosted) — isso já estava bem feito antes desta correção. |
+| LLM08 Excessive Agency | ✅ **baixo risco** | A IA só gera texto; não tem tool-use nem chama outras APIs por si. |
+| LLM09 Overreliance | ⚠️ **parcial** | A transcrição bruta fica sempre preservada ao lado do resumo (permite verificar), e o prompt pede para nunca inventar factos — mas nada no `Recordings.tsx` parece rotular o resumo como gerado por IA para quem o lê. Por confirmar. |
+| — Fuga de informação (não-LLM) | ⬜ **aberto** | `whisper-server/app.py:116-120`: `except Exception` devolve a mensagem de erro Python crua ao cliente WS — ajuda reconhecimento a um atacante. |
+
+Por fazer, ordenado por impacto: (1) delimitar/etiquetar o conteúdo não
+confiável dentro dos prompts do `ai.rs` (mitiga LLM01 sem mudar o
+comportamento fail-open); (2) confirmar a sanitização do Markdown de IA no
+viewer; (3) autenticar `/asr` no `whisper-server` (ou documentar
+explicitamente que depende de isolamento de rede e onde isso é imposto);
+(4) não ecoar exceções cruas ao cliente.
 
 ---
 
@@ -312,7 +336,7 @@ Ver `docs/competitive-positioning.md` para análise completa. Resumo:
 | **delonix-code** | Rust supremo (nível criador): safety, ownership/lifetimes, async Tokio, unsafe, perf hot-path RTP | `server/src/*.rs` (sobretudo `sfu.rs`, `recorder.rs`, `signaling.rs`) |
 | **delonix-devops** | Platform engineering: K8s, Docker, Ansible, Terraform, coturn/rede WebRTC, ingress, metallb, afinidade, media | `deploy/`, `deploy/k8s/`, Dockerfiles, Makefile, TURN |
 | **delonix-frontend** | Frontend supremo: React/TS/CSS4/HTML5/JS + UX Meet/Teams/Zoom | `web/src/**` (`Room.tsx`, `webrtc.ts`, `presence.ts`, `styles/`) |
-| **delonix-security-compliance** | Segurança (cripto/E2EE/TLS/DTLS/JWT/SSRF/rate-limit/cross-org) + compliance (eDiscovery/DLP/SCIM/audit/BNA/LGPD) | `auth.rs`, `e2ee.ts`, `webhooks.rs`, `config.rs`, `org.rs`, endpoints novos |
+| **delonix-security-compliance** | Segurança (cripto/E2EE/TLS/DTLS/JWT/SSRF/rate-limit/cross-org) + compliance (eDiscovery/DLP/SCIM/audit/BNA/LGPD) + segurança de IA (OWASP LLM Top 10 — ver §6.1) | `auth.rs`, `e2ee.ts`, `webhooks.rs`, `config.rs`, `org.rs`, `ai.rs`, `dlp.rs`, `ai-worker/`, `whisper-server/`, endpoints novos |
 | **webrtc-sfu-reviewer** | WebRTC/SFU (Justin Uberti): ICE, simulcast, codecs, media num-só-sentido | `sfu.rs`, `webrtc.ts`, `e2ee.ts`, `recorder.rs` |
 | **competitive-strategist** | Posicionamento vs Zoom/Teams/Meet, priorização de roadmap | features novas, decisões de produto |
 

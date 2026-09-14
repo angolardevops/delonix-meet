@@ -23,6 +23,8 @@ import signal
 import psycopg2
 from faster_whisper import WhisperModel
 
+from dlp import clean_caption
+
 DATABASE_URL = os.environ["DATABASE_URL"]
 RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/recordings")
 MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3")
@@ -98,7 +100,7 @@ def process_one(conn, model: WhisperModel) -> bool:
 
     log(f"a transcrever gravação {rec_id} ({path})…")
     t0 = time.time()
-    transcript = transcribe(model, path)
+    transcript = clean_caption(transcribe(model, path))
     mom = build_mom(transcript)
     log(f"gravação {rec_id} transcrita em {time.time() - t0:.1f}s ({len(transcript)} chars)")
 

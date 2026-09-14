@@ -70,6 +70,12 @@ pub async fn translate(state: &AppState, text: &str, target: &str) -> Option<Str
 /// Resumo organizado da ata a partir da transcrição bruta (a "ata bruta" é a
 /// própria transcrição, que fica SEMPRE preservada na coluna `transcript`).
 pub async fn summarize_minutes(state: &AppState, title: &str, transcript: &str) -> Option<String> {
+    // Segunda passagem de DLP, redundante DE PROPÓSITO: `save_minutes` já
+    // limpa antes de persistir, mas o prompt de um LLM é o sítio onde um
+    // furo de PII dói mais (o texto pode acabar citado na ata "oficial",
+    // que por sua vez dispara webhooks para fora). Nunca confiar só na
+    // limpeza a montante — limpar outra vez aqui é barato e idempotente.
+    let transcript = crate::dlp::clean_caption(transcript);
     // Janela de contexto: mantém o FIM da transcrição (decisões/ações tendem
     // a acontecer no fecho da reunião).
     let window: String = if transcript.chars().count() > 24_000 {
@@ -78,7 +84,7 @@ pub async fn summarize_minutes(state: &AppState, title: &str, transcript: &str) 
             .skip(transcript.chars().count() - 24_000)
             .collect()
     } else {
-        transcript.to_string()
+        transcript.clone()
     };
     let prompt = format!(
         "És um assistente de atas de reunião. A transcrição abaixo vem de \
@@ -184,7 +190,13 @@ pub async fn translate_caption(
             "tradução indisponível (sem LLM local)".into(),
         ));
     }
-    let text: String = req.text.trim().chars().take(500).collect();
+    // Este endpoint recebe o texto DIRETAMENTE do cliente — nunca passou pelo
+    // `dlp::clean_caption` do `signaling.rs` (que só limpa o que é difundido
+    // via WS). Sem isto, PII dita na legenda ia direita ao prompt do LLM.
+    let text: String = crate::dlp::clean_caption(req.text.trim())
+        .chars()
+        .take(500)
+        .collect();
     if text.is_empty() {
         return Err(ApiError::BadRequest("texto vazio".into()));
     }
