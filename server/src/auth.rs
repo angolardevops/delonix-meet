@@ -250,7 +250,9 @@ pub async fn register(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterReq>,
 ) -> Result<Response, ApiError> {
-    let email = req.email.trim().to_lowercase();
+    use crate::domain::validation;
+
+    let email = validation::normalize_email(&req.email);
     let org_name = req.org_name.trim().to_string();
     // Sem username explícito → deriva da parte local do email.
     let username = if req.username.trim().len() >= 2 {
@@ -258,23 +260,14 @@ pub async fn register(
     } else {
         email.split('@').next().unwrap_or("admin").to_string()
     };
-    if !email.contains('@') || email.len() > 254 {
-        return Err(ApiError::BadRequest("email inválido".into()));
-    }
+    validation::validate_email(&email).map_err(ApiError::BadRequest)?;
     if org_name.len() < 2 || org_name.len() > 80 {
         return Err(ApiError::BadRequest(
             "nome da organização deve ter 2-80 caracteres".into(),
         ));
     }
-    if !(8..=128).contains(&req.password.len()) {
-        return Err(ApiError::BadRequest(
-            "password deve ter 8-128 caracteres".into(),
-        ));
-    }
-    let domain = email.split('@').nth(1).unwrap_or("").to_string();
-    if domain.is_empty() || !domain.contains('.') {
-        return Err(ApiError::BadRequest("email corporativo inválido".into()));
-    }
+    validation::validate_password(&req.password).map_err(ApiError::BadRequest)?;
+    let domain = validation::require_corporate_domain(&email).map_err(ApiError::BadRequest)?;
 
     // Domínio já pertence a outra organização? (regra: 1 org por domínio)
     let taken: Option<(uuid::Uuid,)> =

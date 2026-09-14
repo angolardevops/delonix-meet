@@ -410,10 +410,10 @@ pub async fn add_employee(
     Json(req): Json<AddEmployeeReq>,
 ) -> Result<Json<Employee>, ApiError> {
     require_admin(&state, org_id, auth.user_id).await?;
-    let email = req.email.trim().to_lowercase();
-    if !email.contains('@') {
-        return Err(ApiError::BadRequest("email inválido".into()));
-    }
+    let email = crate::domain::validation::normalize_email(&req.email);
+    // Antes faltava aqui o limite de 254 caracteres que auth::register já
+    // impunha — mesma política de email, agora num só sítio (ADR-0004, Fase 2).
+    crate::domain::validation::validate_email(&email).map_err(ApiError::BadRequest)?;
     // Org-first: o email do colaborador tem de ser do domínio da organização.
     let org_domain: Option<(String,)> =
         sqlx::query_as("SELECT email_domain FROM organizations WHERE id = $1")
@@ -447,11 +447,7 @@ pub async fn add_employee(
                 .filter(|s| s.len() >= 2)
                 .unwrap_or_else(|| email.split('@').next().unwrap_or("employee").to_string());
             let password = req.password.as_deref().unwrap_or("changeme123");
-            if !(8..=128).contains(&password.len()) {
-                return Err(ApiError::BadRequest(
-                    "password deve ter 8-128 caracteres".into(),
-                ));
-            }
+            crate::domain::validation::validate_password(password).map_err(ApiError::BadRequest)?;
             let hash = crate::auth::hash_password(password)?;
             let row: Result<(Uuid,), sqlx::Error> = sqlx::query_as(
                 "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id",

@@ -6,6 +6,7 @@ mod auth;
 mod broadcast;
 mod config;
 mod dlp;
+mod domain;
 mod error;
 mod meetings;
 mod meetings_v1;
