@@ -20,10 +20,17 @@ pub struct UserPublic {
     pub locale: String,
 }
 
+/// Lista de colunas que cobre todos os campos de `UserPublic` — usar sempre
+/// que se hidrata `UserPublic`. Estava copiada à mão em quatro sítios (aqui e
+/// três em `auth.rs`) — mesmo padrão de risco de `meetings::MEETING_COLUMNS`
+/// (ver ADR-0004).
+pub const USER_PUBLIC_COLUMNS: &str =
+    "id, email, username, created_at, COALESCE(locale, 'pt') AS locale";
+
 pub async fn fetch_public(db: &PgPool, user_id: Uuid) -> Result<UserPublic, ApiError> {
-    Ok(sqlx::query_as::<_, UserPublic>(
-        "SELECT id, email, username, created_at, COALESCE(locale, 'pt') AS locale FROM users WHERE id = $1",
-    )
+    Ok(sqlx::query_as::<_, UserPublic>(&format!(
+        "SELECT {USER_PUBLIC_COLUMNS} FROM users WHERE id = $1"
+    ))
     .bind(user_id)
     .fetch_one(db)
     .await?)

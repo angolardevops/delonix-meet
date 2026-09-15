@@ -123,6 +123,11 @@ pub struct Webhook {
     pub active: bool,
 }
 
+/// Lista de colunas que cobre todos os campos de `Webhook` — usar sempre que
+/// se hidrata `Webhook`. Estava copiada à mão em três sítios (ver ADR-0004,
+/// mesmo padrão de risco de `meetings::MEETING_COLUMNS`/`rooms::ROOM_COLUMNS`).
+const WEBHOOK_COLUMNS: &str = "id, org_id, kind, url, secret, events, active";
+
 /// Um evento de webhook: nome + payload estruturado (o corpo do `generic`).
 pub struct Event {
     pub name: &'static str,
@@ -135,10 +140,9 @@ pub struct Event {
 /// tenham subscrito. Corre em background — falhas são registadas, não propagadas.
 pub fn fire(state: Arc<AppState>, org_id: Uuid, event: Event) {
     tokio::spawn(async move {
-        let hooks: Vec<Webhook> = match sqlx::query_as(
-            "SELECT id, org_id, kind, url, secret, events, active
-             FROM org_webhooks WHERE org_id = $1 AND active = TRUE",
-        )
+        let hooks: Vec<Webhook> = match sqlx::query_as(&format!(
+            "SELECT {WEBHOOK_COLUMNS} FROM org_webhooks WHERE org_id = $1 AND active = TRUE"
+        ))
         .bind(org_id)
         .fetch_all(&state.db)
         .await
@@ -224,10 +228,9 @@ pub async fn list(
     axum::extract::Path(org_id): axum::extract::Path<Uuid>,
 ) -> Result<axum::Json<Vec<Webhook>>, crate::error::ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-    let hooks: Vec<Webhook> = sqlx::query_as(
-        "SELECT id, org_id, kind, url, secret, events, active
-         FROM org_webhooks WHERE org_id = $1 ORDER BY created_at",
-    )
+    let hooks: Vec<Webhook> = sqlx::query_as(&format!(
+        "SELECT {WEBHOOK_COLUMNS} FROM org_webhooks WHERE org_id = $1 ORDER BY created_at"
+    ))
     .bind(org_id)
     .fetch_all(&state.db)
     .await?;
@@ -264,11 +267,11 @@ pub async fn create(
             KNOWN_EVENTS.join(", ")
         )));
     }
-    let hook: Webhook = sqlx::query_as(
+    let hook: Webhook = sqlx::query_as(&format!(
         "INSERT INTO org_webhooks (org_id, kind, url, secret, events, created_by)
          VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id, org_id, kind, url, secret, events, active",
-    )
+         RETURNING {WEBHOOK_COLUMNS}"
+    ))
     .bind(org_id)
     .bind(&req.kind)
     .bind(&req.url)

@@ -65,6 +65,11 @@ pub struct VoiceRoom {
     pub created_at: DateTime<Utc>,
 }
 
+/// Estava copiada à mão em `create_room` e `get_room` (ADR-0004, mesmo
+/// padrão de `meetings::MEETING_COLUMNS`).
+const VOICE_ROOM_COLUMNS: &str =
+    "id, org_id, room_code, pin, did_id, media_backend, status, created_at";
+
 #[derive(Serialize, sqlx::FromRow)]
 pub struct VoiceParticipant {
     pub id: Uuid,
@@ -85,6 +90,9 @@ pub struct VoiceDid {
     pub active: bool,
     pub created_at: DateTime<Utc>,
 }
+
+/// Estava copiada à mão em `create_did` e `list_dids` (ADR-0004).
+const VOICE_DID_COLUMNS: &str = "id, org_id, e164, market, model, provider, active, created_at";
 
 #[derive(Serialize, sqlx::FromRow)]
 pub struct VoiceCdr {
@@ -159,29 +167,29 @@ pub async fn create_room(
 
     // Resolver o DID: explícito (validado), dedicado da org, ou do pool partilhado.
     let did: Option<VoiceDid> = if let Some(id) = req.did_id {
-        sqlx::query_as(
-            "SELECT id, org_id, e164, market, model, provider, active, created_at
-             FROM voice_did WHERE id = $1 AND active AND (org_id = $2 OR org_id IS NULL)",
-        )
+        sqlx::query_as(&format!(
+            "SELECT {VOICE_DID_COLUMNS}
+             FROM voice_did WHERE id = $1 AND active AND (org_id = $2 OR org_id IS NULL)"
+        ))
         .bind(id)
         .bind(org_id)
         .fetch_optional(&state.db)
         .await?
     } else if did_model == "dedicated" {
-        sqlx::query_as(
-            "SELECT id, org_id, e164, market, model, provider, active, created_at
-             FROM voice_did WHERE org_id = $1 AND active ORDER BY created_at LIMIT 1",
-        )
+        sqlx::query_as(&format!(
+            "SELECT {VOICE_DID_COLUMNS}
+             FROM voice_did WHERE org_id = $1 AND active ORDER BY created_at LIMIT 1"
+        ))
         .bind(org_id)
         .fetch_optional(&state.db)
         .await?
     } else {
         // Modelo partilhado: primeiro um dedicado da org, senão o pool partilhado.
-        sqlx::query_as(
-            "SELECT id, org_id, e164, market, model, provider, active, created_at
+        sqlx::query_as(&format!(
+            "SELECT {VOICE_DID_COLUMNS}
              FROM voice_did WHERE active AND (org_id = $1 OR org_id IS NULL)
-             ORDER BY (org_id = $1) DESC, created_at LIMIT 1",
-        )
+             ORDER BY (org_id = $1) DESC, created_at LIMIT 1"
+        ))
         .bind(org_id)
         .fetch_optional(&state.db)
         .await?
@@ -194,11 +202,11 @@ pub async fn create_room(
     let mut last_err = None;
     for _ in 0..8 {
         let pin = gen_pin();
-        let res: Result<VoiceRoom, sqlx::Error> = sqlx::query_as(
+        let res: Result<VoiceRoom, sqlx::Error> = sqlx::query_as(&format!(
             "INSERT INTO voice_room (org_id, room_code, pin, did_id, media_backend, created_by)
              VALUES ($1, $2, $3, $4, $5, $6)
-             RETURNING id, org_id, room_code, pin, did_id, media_backend, status, created_at",
-        )
+             RETURNING {VOICE_ROOM_COLUMNS}"
+        ))
         .bind(org_id)
         .bind(&room_code)
         .bind(&pin)
@@ -232,10 +240,9 @@ pub async fn get_room(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<VoiceRoom>, ApiError> {
-    let vr: VoiceRoom = sqlx::query_as(
-        "SELECT id, org_id, room_code, pin, did_id, media_backend, status, created_at
-         FROM voice_room WHERE id = $1",
-    )
+    let vr: VoiceRoom = sqlx::query_as(&format!(
+        "SELECT {VOICE_ROOM_COLUMNS} FROM voice_room WHERE id = $1"
+    ))
     .bind(id)
     .fetch_one(&state.db)
     .await?;
@@ -346,11 +353,11 @@ pub async fn create_did(
     };
     // shared + org_scoped=false => pool partilhado (org_id NULL).
     let scoped = req.org_scoped.unwrap_or(model == "dedicated");
-    let did: VoiceDid = sqlx::query_as(
+    let did: VoiceDid = sqlx::query_as(&format!(
         "INSERT INTO voice_did (org_id, e164, market, model, provider)
          VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, org_id, e164, market, model, provider, active, created_at",
-    )
+         RETURNING {VOICE_DID_COLUMNS}"
+    ))
     .bind(if scoped { Some(org_id) } else { None })
     .bind(e164)
     .bind(req.market.trim())
@@ -374,10 +381,9 @@ pub async fn list_dids(
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<VoiceDid>>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-    let dids: Vec<VoiceDid> = sqlx::query_as(
-        "SELECT id, org_id, e164, market, model, provider, active, created_at
-         FROM voice_did WHERE org_id = $1 OR org_id IS NULL ORDER BY created_at DESC",
-    )
+    let dids: Vec<VoiceDid> = sqlx::query_as(&format!(
+        "SELECT {VOICE_DID_COLUMNS} FROM voice_did WHERE org_id = $1 OR org_id IS NULL ORDER BY created_at DESC"
+    ))
     .bind(org_id)
     .fetch_all(&state.db)
     .await?;
