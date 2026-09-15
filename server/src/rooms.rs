@@ -32,6 +32,15 @@ pub struct Room {
     pub created_at: DateTime<Utc>,
 }
 
+/// Lista de colunas que cobre **todos** os campos de `Room` — usar sempre que
+/// se hidrata `Room` (`SELECT`, `INSERT ... RETURNING`). O `FromRow` derivado
+/// faz `try_get` por campo: uma coluna em falta é um erro de RUNTIME, não de
+/// compilação. Esta lista estava copiada à mão em NOVE sítios (sete neste
+/// ficheiro, mais um em `apikeys.rs` e um em `recordings.rs`) — o mesmo padrão
+/// que partiu `meetings::start`/`ics` na migração 0022 (ver ADR-0004, Fase 3).
+pub const ROOM_COLUMNS: &str =
+    "id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at";
+
 /// Meet-style room code: `abc-defg-hij`, unambiguous lowercase letters.
 pub fn generate_room_code() -> String {
     const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz";
@@ -72,10 +81,10 @@ pub async fn insert_room(
 ) -> Result<Room, ApiError> {
     for _ in 0..5 {
         let code = generate_room_code();
-        let res: Result<Room, sqlx::Error> = sqlx::query_as(
+        let res: Result<Room, sqlx::Error> = sqlx::query_as(&format!(
             "INSERT INTO rooms (code, name, owner_id, topology, waiting_room, e2ee, format) VALUES ($1, $2, $3, $4, $5, $6, $7)
-             RETURNING id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at",
-        )
+             RETURNING {ROOM_COLUMNS}"
+        ))
         .bind(&code)
         .bind(name)
         .bind(owner_id)
@@ -133,12 +142,10 @@ pub async fn get_room(
     auth: AuthUser,
     Path(code): Path<String>,
 ) -> Result<Json<Room>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at FROM rooms WHERE code = $1",
-    )
-    .bind(code.to_lowercase())
-    .fetch_one(&state.db)
-    .await?;
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(code.to_lowercase())
+        .fetch_one(&state.db)
+        .await?;
     // O código da sala é a credencial (capability, estilo Meet): quem o conhece
     // pode ver os metadados e pedir para entrar. O controlo de acesso à REUNIÃO
     // ao vivo faz-se no join_room (não-membros vão para a sala de espera).
@@ -246,12 +253,10 @@ pub async fn join_room(
     auth: AuthUser,
     Path(code): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at FROM rooms WHERE code = $1",
-    )
-    .bind(code.to_lowercase())
-    .fetch_one(&state.db)
-    .await?;
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(code.to_lowercase())
+        .fetch_one(&state.db)
+        .await?;
     // Quem tem o código pode entrar (link-join estilo Meet), MAS só entra DIRETO
     // quem é dono ou está na AGENDA da reunião (convidado explícito). Um colega
     // de organização que apenas recebeu o link — ou um externo — vai para a SALA
@@ -368,14 +373,11 @@ pub async fn room_chat(
     auth: AuthUser,
     Path(code): Path<String>,
 ) -> Result<Json<Vec<ChatMessage>>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
-         FROM rooms WHERE code = $1",
-    )
-    .bind(&code)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(&code)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
     if !can_access_room(&state, auth.user_id, &room).await? {
         return Err(ApiError::Unauthorized);
@@ -410,14 +412,11 @@ pub async fn invite_to_room(
     Path(code): Path<String>,
     Json(req): Json<InviteReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
-         FROM rooms WHERE code = $1",
-    )
-    .bind(&code)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(&code)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
     if !can_access_room(&state, auth.user_id, &room).await? {
         return Err(ApiError::Unauthorized);
@@ -582,14 +581,11 @@ pub async fn post_timings(
     Path(code): Path<String>,
     Json(t): Json<TimingsReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
-         FROM rooms WHERE code = $1",
-    )
-    .bind(&code)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(&code)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
     if !can_access_room(&state, auth.user_id, &room).await? {
         return Err(ApiError::Unauthorized);
     }
@@ -640,14 +636,11 @@ pub async fn post_qos(
     Path(code): Path<String>,
     Json(s): Json<QosSample>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
-         FROM rooms WHERE code = $1",
-    )
-    .bind(&code)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(&code)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
     if !can_access_room(&state, auth.user_id, &room).await? {
         return Err(ApiError::Unauthorized);
