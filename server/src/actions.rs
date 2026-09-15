@@ -73,6 +73,11 @@ pub struct AgendaItem {
     pub created_at: DateTime<Utc>,
 }
 
+/// Estava copiada à mão em três sítios (ADR-0004, mesmo padrão de
+/// `meetings::MEETING_COLUMNS`).
+const AGENDA_ITEM_COLUMNS: &str =
+    "id, meeting_id, position, topic, description, duration_min, done, done_at, done_by_id, created_at";
+
 #[derive(Deserialize)]
 pub struct AgendaItemReq {
     pub topic: String,
@@ -108,11 +113,9 @@ pub async fn list_agenda(
     Path(meeting_id): Path<Uuid>,
 ) -> Result<Json<Vec<AgendaItem>>, ApiError> {
     require_member_or_owner(&state.db, meeting_id, auth.user_id).await?;
-    let items: Vec<AgendaItem> = sqlx::query_as(
-        "SELECT id, meeting_id, position, topic, description, duration_min,
-                done, done_at, done_by_id, created_at
-         FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position, created_at",
-    )
+    let items: Vec<AgendaItem> = sqlx::query_as(&format!(
+        "SELECT {AGENDA_ITEM_COLUMNS} FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position, created_at"
+    ))
     .bind(meeting_id)
     .fetch_all(&state.db)
     .await?;
@@ -145,13 +148,12 @@ pub async fn add_agenda_item(
         .await?;
         max.unwrap_or(0) + 1
     };
-    let item: AgendaItem = sqlx::query_as(
+    let item: AgendaItem = sqlx::query_as(&format!(
         "INSERT INTO meeting_agenda_items
             (meeting_id, position, topic, description, duration_min)
          VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, meeting_id, position, topic, description, duration_min,
-                   done, done_at, done_by_id, created_at",
-    )
+         RETURNING {AGENDA_ITEM_COLUMNS}"
+    ))
     .bind(meeting_id)
     .bind(pos)
     .bind(&topic)
@@ -242,11 +244,9 @@ pub async fn patch_agenda_item(
             .await?;
     }
 
-    let item: AgendaItem = sqlx::query_as(
-        "SELECT id, meeting_id, position, topic, description, duration_min,
-                done, done_at, done_by_id, created_at
-         FROM meeting_agenda_items WHERE id = $1",
-    )
+    let item: AgendaItem = sqlx::query_as(&format!(
+        "SELECT {AGENDA_ITEM_COLUMNS} FROM meeting_agenda_items WHERE id = $1"
+    ))
     .bind(item_id)
     .fetch_one(&state.db)
     .await?;
@@ -288,6 +288,11 @@ pub struct ActionItem {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+
+/// Estava copiada à mão em três sítios (ADR-0004, mesmo padrão de
+/// `meetings::MEETING_COLUMNS`).
+const ACTION_ITEM_COLUMNS: &str = "id, plan_id, position, what, when_date, where_text, \
+     who_id, who_name, why, how, resources, status, created_at, updated_at";
 
 #[derive(Debug, Serialize)]
 pub struct ActionPlan {
@@ -368,11 +373,9 @@ async fn load_plan_with_items(
         return Ok(None);
     };
 
-    let items: Vec<ActionItem> = sqlx::query_as(
-        "SELECT id, plan_id, position, what, when_date, where_text,
-                who_id, who_name, why, how, resources, status, created_at, updated_at
-         FROM action_items WHERE plan_id = $1 ORDER BY position, created_at",
-    )
+    let items: Vec<ActionItem> = sqlx::query_as(&format!(
+        "SELECT {ACTION_ITEM_COLUMNS} FROM action_items WHERE plan_id = $1 ORDER BY position, created_at"
+    ))
     .bind(plan_id)
     .fetch_all(db)
     .await?;
@@ -470,14 +473,13 @@ pub async fn add_action_item(
         req.who_name.trim().to_string()
     };
 
-    let item: ActionItem = sqlx::query_as(
+    let item: ActionItem = sqlx::query_as(&format!(
         "INSERT INTO action_items
             (plan_id, position, what, when_date, where_text, who_id, who_name,
              why, how, resources, status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-         RETURNING id, plan_id, position, what, when_date, where_text,
-                   who_id, who_name, why, how, resources, status, created_at, updated_at",
-    )
+         RETURNING {ACTION_ITEM_COLUMNS}"
+    ))
     .bind(plan_id)
     .bind(pos)
     .bind(req.what.trim())
@@ -618,11 +620,9 @@ pub async fn patch_action_item(
             .await?;
     }
 
-    let item: ActionItem = sqlx::query_as(
-        "SELECT id, plan_id, position, what, when_date, where_text,
-                who_id, who_name, why, how, resources, status, created_at, updated_at
-         FROM action_items WHERE id = $1",
-    )
+    let item: ActionItem = sqlx::query_as(&format!(
+        "SELECT {ACTION_ITEM_COLUMNS} FROM action_items WHERE id = $1"
+    ))
     .bind(item_id)
     .fetch_one(&state.db)
     .await?;
