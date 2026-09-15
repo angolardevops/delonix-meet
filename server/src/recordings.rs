@@ -71,9 +71,10 @@ pub struct RecordingItem {
 }
 
 async fn room_by_code(state: &AppState, code: &str) -> Result<Room, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at FROM rooms WHERE code = $1",
-    )
+    let room: Room = sqlx::query_as(&format!(
+        "SELECT {} FROM rooms WHERE code = $1",
+        crate::rooms::ROOM_COLUMNS
+    ))
     .bind(code.to_lowercase())
     .fetch_one(&state.db)
     .await?;
