@@ -284,10 +284,11 @@ pub async fn register(
     let password_hash = hash_password(&req.password)?;
     // Transação: utilizador + organização + membro admin, tudo-ou-nada.
     let mut tx = state.db.begin().await?;
-    let user: crate::users::UserPublic = sqlx::query_as(
+    let user: crate::users::UserPublic = sqlx::query_as(&format!(
         "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3)
-         RETURNING id, email, username, created_at, COALESCE(locale, 'pt') AS locale",
-    )
+         RETURNING {}",
+        crate::users::USER_PUBLIC_COLUMNS
+    ))
     .bind(&email)
     .bind(&username)
     .bind(&password_hash)
@@ -823,11 +824,13 @@ pub async fn sso_callback(
     let sso_subject = claims.subject().to_string();
 
     // Just-in-Time Provisioning: procurar ou criar o utilizador.
-    let existing: Option<crate::users::UserPublic> =
-        sqlx::query_as("SELECT id, email, username, created_at, COALESCE(locale, 'pt') AS locale FROM users WHERE email = $1")
-            .bind(&email)
-            .fetch_optional(&state.db)
-            .await?;
+    let existing: Option<crate::users::UserPublic> = sqlx::query_as(&format!(
+        "SELECT {} FROM users WHERE email = $1",
+        crate::users::USER_PUBLIC_COLUMNS
+    ))
+    .bind(&email)
+    .fetch_optional(&state.db)
+    .await?;
 
     let user = match existing {
         Some(u) => {
@@ -849,11 +852,12 @@ pub async fn sso_callback(
             // JIT: criar conta + adicionar como membro da org.
             let dummy_hash = hash_password(&Uuid::new_v4().to_string())?;
             let mut tx = state.db.begin().await?;
-            let new_user: crate::users::UserPublic = sqlx::query_as(
+            let new_user: crate::users::UserPublic = sqlx::query_as(&format!(
                 "INSERT INTO users (email, username, password_hash, sso_provider, sso_subject)
                  VALUES ($1, $2, $3, $4, $5)
-                 RETURNING id, email, username, created_at, COALESCE(locale, 'pt') AS locale",
-            )
+                 RETURNING {}",
+                crate::users::USER_PUBLIC_COLUMNS
+            ))
             .bind(&email)
             .bind(&name)
             .bind(&dummy_hash)

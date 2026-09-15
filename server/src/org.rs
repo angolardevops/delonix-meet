@@ -160,6 +160,10 @@ pub struct Branch {
     pub created_at: DateTime<Utc>,
 }
 
+/// Ver ADR-0004 (mesmo padrão de `meetings::MEETING_COLUMNS`): estava copiada
+/// à mão em `create_branch` e `list_branches`.
+const BRANCH_COLUMNS: &str = "id, org_id, name, location, created_at";
+
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct Employee {
     pub user_id: Uuid,
@@ -174,6 +178,12 @@ pub struct Employee {
     pub last_active: Option<DateTime<Utc>>,
 }
 
+/// Sem `last_active` (só a listagem o traz, via subquery à parte). Estava
+/// copiada à mão em `add_employee` e `update_employee`; `list_employees`
+/// agora compõe a partir daqui em vez de repetir a lista (ADR-0004).
+const EMPLOYEE_COLUMNS: &str =
+    "m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name";
+
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct Group {
     pub id: Uuid,
@@ -181,6 +191,10 @@ pub struct Group {
     pub name: String,
     pub member_count: i64,
 }
+
+/// Estava copiada à mão em `create_group` e `list_groups` (ADR-0004).
+const GROUP_COLUMNS: &str = "g.id, g.org_id, g.name, \
+     (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS member_count";
 
 // ---------- helpers ----------
 
@@ -358,10 +372,10 @@ pub async fn create_branch(
     if name.is_empty() || name.len() > 120 {
         return Err(ApiError::BadRequest("nome da filial inválido".into()));
     }
-    let branch: Branch = sqlx::query_as(
+    let branch: Branch = sqlx::query_as(&format!(
         "INSERT INTO branches (org_id, name, location) VALUES ($1, $2, $3)
-         RETURNING id, org_id, name, location, created_at",
-    )
+         RETURNING {BRANCH_COLUMNS}"
+    ))
     .bind(org_id)
     .bind(name)
     .bind(req.location.trim())
@@ -376,9 +390,9 @@ pub async fn list_branches(
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<Branch>>, ApiError> {
     require_member(&state, org_id, auth.user_id).await?;
-    let branches: Vec<Branch> = sqlx::query_as(
-        "SELECT id, org_id, name, location, created_at FROM branches WHERE org_id = $1 ORDER BY name",
-    )
+    let branches: Vec<Branch> = sqlx::query_as(&format!(
+        "SELECT {BRANCH_COLUMNS} FROM branches WHERE org_id = $1 ORDER BY name"
+    ))
     .bind(org_id)
     .fetch_all(&state.db)
     .await?;
@@ -503,12 +517,12 @@ pub async fn add_employee(
     .execute(&state.db)
     .await?;
 
-    let emp: Employee = sqlx::query_as(
-        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name
+    let emp: Employee = sqlx::query_as(&format!(
+        "SELECT {EMPLOYEE_COLUMNS}
            FROM org_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN branches b ON b.id = m.branch_id
-           WHERE m.org_id = $1 AND m.user_id = $2"#,
-    )
+           WHERE m.org_id = $1 AND m.user_id = $2"
+    ))
     .bind(org_id)
     .bind(user_id)
     .fetch_one(&state.db)
@@ -530,13 +544,13 @@ pub async fn list_employees(
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<Employee>>, ApiError> {
     require_member(&state, org_id, auth.user_id).await?;
-    let emps: Vec<Employee> = sqlx::query_as(
-        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name,
+    let emps: Vec<Employee> = sqlx::query_as(&format!(
+        "SELECT {EMPLOYEE_COLUMNS},
                   (SELECT MAX(a.created_at) FROM audit_logs a WHERE a.actor_id = m.user_id) AS last_active
            FROM org_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN branches b ON b.id = m.branch_id
-           WHERE m.org_id = $1 AND m.archived_at IS NULL ORDER BY u.username"#,
-    )
+           WHERE m.org_id = $1 AND m.archived_at IS NULL ORDER BY u.username"
+    ))
     .bind(org_id)
     .fetch_all(&state.db)
     .await?;
@@ -589,12 +603,12 @@ pub async fn update_employee(
                 .await?;
         }
     }
-    let emp: Employee = sqlx::query_as(
-        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name
+    let emp: Employee = sqlx::query_as(&format!(
+        "SELECT {EMPLOYEE_COLUMNS}
            FROM org_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN branches b ON b.id = m.branch_id
-           WHERE m.org_id = $1 AND m.user_id = $2"#,
-    )
+           WHERE m.org_id = $1 AND m.user_id = $2"
+    ))
     .bind(org_id)
     .bind(user_id)
     .fetch_one(&state.db)
@@ -697,10 +711,9 @@ pub async fn create_group(
         }
     }
 
-    let group: Group = sqlx::query_as(
-        "SELECT g.id, g.org_id, g.name, (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS member_count
-         FROM employee_groups g WHERE g.id = $1",
-    )
+    let group: Group = sqlx::query_as(&format!(
+        "SELECT {GROUP_COLUMNS} FROM employee_groups g WHERE g.id = $1"
+    ))
     .bind(group_id)
     .fetch_one(&mut *tx)
     .await?;
@@ -717,10 +730,9 @@ pub async fn list_groups(
     // RLS: employee_groups tem Row-Level Security (migração 0024). A query corre
     // no contexto de tenant do utilizador — ver AppState::tenant_tx / ADR-0002.
     let mut tx = state.tenant_tx(auth.user_id).await?;
-    let groups: Vec<Group> = sqlx::query_as(
-        "SELECT g.id, g.org_id, g.name, (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS member_count
-         FROM employee_groups g WHERE g.org_id = $1 ORDER BY g.name",
-    )
+    let groups: Vec<Group> = sqlx::query_as(&format!(
+        "SELECT {GROUP_COLUMNS} FROM employee_groups g WHERE g.org_id = $1 ORDER BY g.name"
+    ))
     .bind(org_id)
     .fetch_all(&mut *tx)
     .await?;
@@ -738,6 +750,9 @@ pub struct MeetingRoom {
     pub location: String,
     pub capacity: i32,
 }
+
+/// Estava copiada à mão em `create_meeting_room` e `list_meeting_rooms` (ADR-0004).
+const MEETING_ROOM_COLUMNS: &str = "id, org_id, name, location, capacity";
 
 #[derive(Deserialize)]
 pub struct CreateMeetingRoomReq {
@@ -766,10 +781,10 @@ pub async fn create_meeting_room(
         "SELECT COUNT(*) FROM meeting_rooms WHERE org_id = $1",
     )
     .await?;
-    let room: MeetingRoom = sqlx::query_as(
+    let room: MeetingRoom = sqlx::query_as(&format!(
         "INSERT INTO meeting_rooms (org_id, name, location, capacity) VALUES ($1, $2, $3, $4)
-         RETURNING id, org_id, name, location, capacity",
-    )
+         RETURNING {MEETING_ROOM_COLUMNS}"
+    ))
     .bind(org_id)
     .bind(name)
     .bind(req.location.trim())
@@ -785,9 +800,9 @@ pub async fn list_meeting_rooms(
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<MeetingRoom>>, ApiError> {
     require_member(&state, org_id, auth.user_id).await?;
-    let rooms: Vec<MeetingRoom> = sqlx::query_as(
-        "SELECT id, org_id, name, location, capacity FROM meeting_rooms WHERE org_id = $1 ORDER BY name",
-    )
+    let rooms: Vec<MeetingRoom> = sqlx::query_as(&format!(
+        "SELECT {MEETING_ROOM_COLUMNS} FROM meeting_rooms WHERE org_id = $1 ORDER BY name"
+    ))
     .bind(org_id)
     .fetch_all(&state.db)
     .await?;
