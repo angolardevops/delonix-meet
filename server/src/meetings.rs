@@ -37,6 +37,19 @@ pub struct Meeting {
     pub recurrence_parent_id: Option<Uuid>,
 }
 
+/// Lista de colunas que cobre **todos** os campos de `Meeting` — usar sempre
+/// que se hidrata `Meeting` (`SELECT`, `INSERT ... RETURNING`,
+/// `UPDATE ... RETURNING`). O `FromRow` derivado faz `try_get` por campo: uma
+/// coluna em falta é um erro de RUNTIME, não de compilação — foi assim que a
+/// migração 0022 (recorrência) partiu `start` e `ics` em silêncio, com esta
+/// mesma lista repetida à mão em três sítios diferentes dentro deste ficheiro
+/// e mais um em `meetings_v1.rs`. Um só lugar, uma só vez (ADR-0004, Fase 3).
+pub const MEETING_COLUMNS: &str =
+    "id, owner_id, title, description, kind, starts_at, duration_min, \
+     room_code, created_at, room_ref, minutes, transcript, recurrence_freq, \
+     recurrence_interval, recurrence_until, recurrence_count, recurrence_byday, \
+     recurrence_parent_id";
+
 /// Reunião enriquecida para a UI do calendário.
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct MeetingItem {
@@ -283,14 +296,12 @@ pub async fn create(
         )));
     }
 
-    let meeting: Meeting = sqlx::query_as(
+    let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
                                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-         RETURNING id, owner_id, title, description, kind, starts_at, duration_min, room_code, created_at, room_ref,
-                   minutes, transcript, recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
-                   recurrence_byday, recurrence_parent_id",
-    )
+         RETURNING {MEETING_COLUMNS}"
+    ))
     .bind(auth.user_id)
     .bind(title)
     .bind(req.description.trim().chars().take(4000).collect::<String>())
@@ -394,6 +405,82 @@ pub(crate) async fn fire_meeting_webhook(
             },
         );
     }
+}
+
+/// Só o dono ou um convidado pode arrancar/exportar a reunião. Antes desta
+/// função, `start` e `ics` repetiam a mesma verificação lado a lado
+/// (ADR-0004, Fase 3).
+async fn is_owner_or_invitee(
+    state: &AppState,
+    meeting_id: Uuid,
+    owner_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, ApiError> {
+    if owner_id == user_id {
+        return Ok(true);
+    }
+    let row: Option<(i32,)> =
+        sqlx::query_as("SELECT 1 FROM meeting_invitees WHERE meeting_id = $1 AND user_id = $2")
+            .bind(meeting_id)
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await?;
+    Ok(row.is_some())
+}
+
+/// Convidados que ainda não estão na sala (participantes ativos menos quem
+/// já está dentro e o próprio anfitrião). O alvo do "toca ao vivo" que
+/// `start`, `ring_upcoming_meetings` (cron) e `meetings_v1::ring` (API
+/// pública) reimplementavam cada um à sua maneira (ADR-0004, Fase 3).
+pub(crate) async fn invitees_to_ring(
+    state: &AppState,
+    meeting_id: Uuid,
+    owner_id: Uuid,
+    room_code: &str,
+) -> std::collections::HashSet<Uuid> {
+    let already_in: std::collections::HashSet<Uuid> =
+        match sqlx::query_as::<_, (Uuid,)>("SELECT id FROM rooms WHERE code = $1")
+            .bind(room_code)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+        {
+            Some((rid,)) => state.hub.users_in_room(rid),
+            None => Default::default(),
+        };
+
+    let invitees: Vec<(Uuid,)> = sqlx::query_as(
+        "SELECT user_id FROM meeting_invitees WHERE meeting_id = $1 AND status <> 'declined'",
+    )
+    .bind(meeting_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    invitees
+        .into_iter()
+        .map(|(uid,)| uid)
+        .filter(|uid| !already_in.contains(uid) && *uid != owner_id)
+        .collect()
+}
+
+/// Regista a chamada e toca aos alvos já filtrados por `invitees_to_ring`.
+/// O `register_call` é o que falta para quem atende entrar directo na sala
+/// em vez de cair na sala de espera — mesma mecânica nos três chamadores.
+pub(crate) async fn register_and_ring(
+    state: &Arc<AppState>,
+    room_code: &str,
+    owner_id: Uuid,
+    owner_name: &str,
+    targets: std::collections::HashSet<Uuid>,
+    kind: &str,
+    title: &str,
+) -> (Vec<Uuid>, Vec<Uuid>) {
+    state
+        .presence
+        .register_call(room_code.to_string(), owner_id, targets.clone());
+    crate::presence::ring_users(state, owner_id, owner_name, targets, room_code, kind, title).await
 }
 
 /// Reuniões do utilizador: as que criou + aquelas para que foi convidado.
@@ -576,32 +663,15 @@ pub async fn start(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let meeting: Meeting = sqlx::query_as(
-        // A lista TEM de cobrir todos os campos de `Meeting` — o `FromRow`
-        // derivado faz `try_get` de cada um e uma coluna em falta é um erro em
-        // runtime (não em compilação). Foi assim que a recorrência (0022)
-        // partiu `start` e `ics` em silêncio.
-        "SELECT id, owner_id, title, description, kind, starts_at, duration_min, room_code,
-                created_at, room_ref, minutes, transcript,
-                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
-                recurrence_byday, recurrence_parent_id
-         FROM meetings WHERE id = $1",
-    )
+    let meeting: Meeting = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
+    ))
     .bind(id)
     .fetch_one(&state.db)
     .await?;
 
     // Só dono ou convidado pode arrancar/entrar.
-    let allowed = meeting.owner_id == auth.user_id || {
-        let row: Option<(i32,)> =
-            sqlx::query_as("SELECT 1 FROM meeting_invitees WHERE meeting_id = $1 AND user_id = $2")
-                .bind(id)
-                .bind(auth.user_id)
-                .fetch_optional(&state.db)
-                .await?;
-        row.is_some()
-    };
-    if !allowed {
+    if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
         return Err(ApiError::Unauthorized);
     }
 
@@ -649,30 +719,18 @@ pub async fn start(
     // Estilo Teams: a reunião começou → "desperta" os convidados. Quem está
     // online recebe a chamada a tocar (aceitar entra na sala); quem não está
     // fica com chamada perdida. Quem recusou o convite não é incomodado.
-    let invitees: Vec<(Uuid,)> = sqlx::query_as(
-        "SELECT user_id FROM meeting_invitees
-         WHERE meeting_id = $1 AND status <> 'declined'",
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
-    if !invitees.is_empty() {
+    let targets = invitees_to_ring(&state, id, auth.user_id, &room.code).await;
+    if !targets.is_empty() {
         let caller_name: (String,) = sqlx::query_as("SELECT username FROM users WHERE id = $1")
             .bind(auth.user_id)
             .fetch_one(&state.db)
             .await?;
-        let targets: std::collections::HashSet<Uuid> = invitees.into_iter().map(|r| r.0).collect();
-        // Registar a chamada para que os convidados entrem diretamente (sem sala de espera).
-        state
-            .presence
-            .register_call(room.code.clone(), auth.user_id, targets.clone());
-        let (ringing, offline) = crate::presence::ring_users(
+        let (ringing, offline) = register_and_ring(
             &state,
+            &room.code,
             auth.user_id,
             &caller_name.0,
             targets,
-            &room.code,
             &meeting.kind,
             &meeting.title,
         )
@@ -692,30 +750,13 @@ pub async fn ics(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<axum::response::Response, ApiError> {
-    let meeting: Meeting = sqlx::query_as(
-        // A lista TEM de cobrir todos os campos de `Meeting` — o `FromRow`
-        // derivado faz `try_get` de cada um e uma coluna em falta é um erro em
-        // runtime (não em compilação). Foi assim que a recorrência (0022)
-        // partiu `start` e `ics` em silêncio.
-        "SELECT id, owner_id, title, description, kind, starts_at, duration_min, room_code,
-                created_at, room_ref, minutes, transcript,
-                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
-                recurrence_byday, recurrence_parent_id
-         FROM meetings WHERE id = $1",
-    )
+    let meeting: Meeting = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
+    ))
     .bind(id)
     .fetch_one(&state.db)
     .await?;
-    let allowed = meeting.owner_id == auth.user_id
-        || sqlx::query_as::<_, (i32,)>(
-            "SELECT 1 FROM meeting_invitees WHERE meeting_id = $1 AND user_id = $2",
-        )
-        .bind(id)
-        .bind(auth.user_id)
-        .fetch_optional(&state.db)
-        .await?
-        .is_some();
-    if !allowed {
+    if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
         return Err(ApiError::Unauthorized);
     }
 
@@ -1098,16 +1139,13 @@ fn next_occurrence(
 /// existem instâncias filhas para os próximos 6 meses.
 pub async fn extend_recurrence_horizon(db: &sqlx::PgPool) {
     // Pais com recorrência ativa (sem data de fim ou com data futura)
-    let parents: Vec<Meeting> = sqlx::query_as(
-        "SELECT id, owner_id, title, description, kind, starts_at, duration_min, room_code,
-                created_at, room_ref, minutes, transcript,
-                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
-                recurrence_byday, recurrence_parent_id
+    let parents: Vec<Meeting> = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS}
          FROM meetings
          WHERE recurrence_freq IS NOT NULL
            AND recurrence_parent_id IS NULL
-           AND (recurrence_until IS NULL OR recurrence_until > now()::date)",
-    )
+           AND (recurrence_until IS NULL OR recurrence_until > now()::date)"
+    ))
     .fetch_all(db)
     .await
     .unwrap_or_default();
@@ -1175,47 +1213,16 @@ pub async fn ring_upcoming_meetings(state: &Arc<AppState>) {
             None => continue,
         };
 
-        // Resolve o room_id para verificar quem já está na sala.
-        let room_id_row: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM rooms WHERE code = $1")
-            .bind(&room_code)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-
-        let already_in: std::collections::HashSet<Uuid> = room_id_row
-            .map(|(rid,)| state.hub.users_in_room(rid))
-            .unwrap_or_default();
-
-        let invitees: Vec<(Uuid,)> = sqlx::query_as(
-            "SELECT user_id FROM meeting_invitees
-             WHERE meeting_id = $1 AND status <> 'declined'",
-        )
-        .bind(meeting_id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
-
-        let targets: std::collections::HashSet<Uuid> = invitees
-            .into_iter()
-            .map(|(uid,)| uid)
-            .filter(|uid| !already_in.contains(uid) && *uid != owner_id)
-            .collect();
-
+        let targets = invitees_to_ring(state, meeting_id, owner_id, &room_code).await;
         if targets.is_empty() {
             continue;
         }
-
-        // Registar a chamada para que os convidados entrem diretamente (sem sala de espera).
-        state
-            .presence
-            .register_call(room_code.clone(), owner_id, targets.clone());
-        let (ringing, offline) = crate::presence::ring_users(
+        let (ringing, offline) = register_and_ring(
             state,
+            &room_code,
             owner_id,
             &owner_name,
             targets,
-            &room_code,
             &kind,
             &title,
         )

@@ -38,16 +38,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{apikeys::ApiKeyAuth, error::ApiError, meetings::Meeting, AppState};
-
-/// Lista de colunas de `meetings` que cobre **todos** os campos de `Meeting`.
-/// O `FromRow` derivado faz `try_get` de cada campo — uma coluna em falta é um
-/// erro em runtime, não em compilação. Ter a lista num sítio só evita repetir
-/// o erro que a migração 0022 introduziu em `start`/`ics`.
-const MEETING_COLS: &str = "id, owner_id, title, description, kind, starts_at, duration_min, \
-     room_code, created_at, room_ref, minutes, transcript, recurrence_freq, \
-     recurrence_interval, recurrence_until, recurrence_count, recurrence_byday, \
-     recurrence_parent_id";
+use crate::{
+    apikeys::ApiKeyAuth,
+    error::ApiError,
+    meetings::{Meeting, MEETING_COLUMNS as MEETING_COLS},
+    AppState,
+};
 
 // ---------- DTOs ----------
 
@@ -732,30 +728,9 @@ pub async fn ring(
         .await?
         .unwrap_or_default();
 
-    // Quem já está na sala não deve ser incomodado.
-    let already_in: std::collections::HashSet<Uuid> =
-        match sqlx::query_as::<_, (Uuid,)>("SELECT id FROM rooms WHERE code = $1")
-            .bind(&room_code)
-            .fetch_optional(&state.db)
-            .await?
-        {
-            Some((rid,)) => state.hub.users_in_room(rid),
-            None => Default::default(),
-        };
-
-    let invitees: Vec<(Uuid,)> = sqlx::query_as(
-        "SELECT user_id FROM meeting_invitees
-         WHERE meeting_id = $1 AND status <> 'declined'",
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await?;
-
-    let targets: std::collections::HashSet<Uuid> = invitees
-        .into_iter()
-        .map(|(uid,)| uid)
-        .filter(|uid| !already_in.contains(uid) && *uid != meeting.owner_id)
-        .collect();
+    // Mesma mecânica do arranque manual (meetings::start) e do auto-ring por
+    // cron (meetings::ring_upcoming_meetings) — ver ADR-0004, Fase 3.
+    let targets = crate::meetings::invitees_to_ring(&state, id, meeting.owner_id, &room_code).await;
 
     if targets.is_empty() {
         return Ok(Json(serde_json::json!({
@@ -765,15 +740,12 @@ pub async fn ring(
         })));
     }
 
-    state
-        .presence
-        .register_call(room_code.clone(), meeting.owner_id, targets.clone());
-    let (ringing, offline) = crate::presence::ring_users(
+    let (ringing, offline) = crate::meetings::register_and_ring(
         &state,
+        &room_code,
         meeting.owner_id,
         &owner_name,
         targets,
-        &room_code,
         &meeting.kind,
         &meeting.title,
     )
