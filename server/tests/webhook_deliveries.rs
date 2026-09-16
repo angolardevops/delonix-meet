@@ -34,6 +34,9 @@ struct Received {
     body: Bytes,
 }
 
+/// Estado do receptor: o código a devolver e o que já chegou.
+type ReceiverState = (Arc<AtomicU16>, Arc<Mutex<Vec<Received>>>);
+
 #[derive(Clone)]
 struct Receiver {
     status: Arc<AtomicU16>,
@@ -49,7 +52,7 @@ impl Receiver {
             .route(
                 "/hook",
                 post(
-                    |State((status, got)): State<(Arc<AtomicU16>, Arc<Mutex<Vec<Received>>>)>,
+                    |State((status, got)): State<ReceiverState>,
                      headers: HeaderMap,
                      body: Bytes| async move {
                         got.lock().unwrap().push(Received { headers, body });
