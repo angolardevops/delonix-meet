@@ -38,7 +38,7 @@
 Complete feature inventory — do not implement these again, they exist:
 
 ✅ **Auth:** Org-first registration (creates org+admin), JWT access tokens (15min), refresh tokens (HttpOnly cookie `dlx_refresh`), token rotation, logout revocation  
-✅ **Multi-tenant:** Organizations, branches, employee groups, cross-org isolation enforced per handler and proven on org routes by `web/e2e/isolamento.mjs`. ⚠ NOT «every endpoint»: 17 hand-written membership checks miss `archived_at` (archived member keeps access — audit 2026-09-16 **S3**), `odoo::provision` links other orgs' accounts by email (**S2**), and any registration counts as platform admin in `storage.rs` (**S1**). RLS only on `employee_groups` (ADR-0002)  
+✅ **Multi-tenant:** Organizations, branches, employee groups, cross-org isolation enforced per handler and proven on org routes by `web/e2e/isolamento.mjs`. Audit 2026-09-16 S1–S3 closed in #76 (R121): platform admin is `PLATFORM_ADMIN_USER_IDS`, Odoo sync goes through `upsert_member` (R25), archived members lose access. Still open: `add_employee` links existing accounts by email, S4–S6. RLS only on `employee_groups` (ADR-0002)  
 ✅ **SFU:** Rust WebRTC SFU (webrtc-rs), simulcast (q/h/f layers), screen share as separate track, server-side E2EE decrypt for recording  
 ✅ **Room features:** Google Meet-style grid, stage/audience view, split-pill mic/camera controls, whiteboard (persistent), breakout rooms (full), host controls (lock/share-only/kick), closed captions, reactions, raise hand, recording  
 ✅ **In-room tools:** Meeting timer, anonymous polls, Q&A with upvotes  
@@ -79,7 +79,7 @@ The workspace pins `reqwest = { version = "0.12", features = ["rustls-tls"] }`. 
 ## Security invariants — never break these
 
 1. **Fail-closed:** Server panics on startup without strong `JWT_SECRET`/`TURN_SECRET`/`DATABASE_URL`. `DELONIX_ALLOW_INSECURE=1` only in dev.
-2. **Cross-org isolation:** `rooms::can_access_room` and `org::role_in_org`/`org_co_members`/`admin_orgs_of_user` scope ALL data to the user's org(s). Never return cross-org data. **Membership is decided in `org.rs`, which filters `archived_at IS NULL`** — never a hand-written `FROM org_members` elsewhere. **Admin of some org is never platform admin.**
+2. **Cross-org isolation:** `rooms::can_access_room` and `org::role_in_org`/`org_co_members`/`admin_orgs_of_user` scope ALL data to the user's org(s). Never return cross-org data. **Membership is decided in `org.rs`, which filters `archived_at IS NULL`** — never a hand-written `FROM org_members` elsewhere. **Admin of some org is never platform admin** — platform admins are the UUIDs in `PLATFORM_ADMIN_USER_IDS` (fail-closed).
 3. **Room tokens:** Short-lived JWT (5 min), scope = 1 room. Rejected WS without valid token.
 4. **SSRF:** Webhook hosts validated (block private/loopback/link-local/metadata) on create AND delivery. No redirects.
 5. **Rate limiting:** Login lockout 8 attempts/5min; `/api/v1` rate-limited by IP; WS rate-limited per socket.

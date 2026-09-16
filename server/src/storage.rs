@@ -40,7 +40,7 @@ pub async fn get_storage(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_platform_admin(&state, auth.user_id).await?;
+    require_platform_admin(&state, auth.user_id)?;
 
     let row: Option<StorageConfig> = sqlx::query_as(
         "SELECT storage_type, nfs_server, nfs_path,
@@ -87,7 +87,7 @@ pub async fn save_storage(
     auth: AuthUser,
     Json(req): Json<StorageConfigReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_platform_admin(&state, auth.user_id).await?;
+    require_platform_admin(&state, auth.user_id)?;
 
     let valid = ["local", "nfs", "webdav"];
     if !valid.contains(&req.storage_type.as_str()) {
@@ -140,7 +140,7 @@ pub async fn test_storage(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_platform_admin(&state, auth.user_id).await?;
+    require_platform_admin(&state, auth.user_id)?;
 
     let row: Option<(
         String,
@@ -213,7 +213,7 @@ pub async fn pvc_manifest(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<axum::response::Response, ApiError> {
-    require_platform_admin(&state, auth.user_id).await?;
+    require_platform_admin(&state, auth.user_id)?;
 
     let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT storage_type, nfs_server, nfs_path FROM platform_storage WHERE id = 1",
@@ -272,21 +272,44 @@ spec:
         .unwrap())
 }
 
-/// Verifica se o utilizador é admin de pelo menos uma org (proxy para admin da plataforma
-/// neste contexto — sem superadmin separado na v1).
-async fn require_platform_admin(
-    state: &Arc<AppState>,
-    user_id: uuid::Uuid,
-) -> Result<(), ApiError> {
-    let is_admin: Option<(bool,)> = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM org_members WHERE user_id = $1 AND role = 'admin')",
-    )
-    .bind(user_id)
-    .fetch_optional(&state.db)
-    .await?;
-    if is_admin.map(|r| r.0).unwrap_or(false) {
+/// Administrador da PLATAFORMA — declarado na configuração
+/// (`PLATFORM_ADMIN_USER_IDS`), nunca derivado de `org_members`.
+///
+/// A versão anterior aceitava «admin de pelo menos uma org». Como o registo
+/// público cria sempre o autor como admin da sua org nova, isso era qualquer
+/// pessoa: lia e reescrevia o armazenamento de TODAS as organizações, e o
+/// `/test` fazia o servidor pedir um URL à escolha dela (SSRF). Auditoria
+/// 2026-09-16, S1 — provado ao vivo antes desta correcção.
+fn is_platform_admin(declared: &[uuid::Uuid], user_id: uuid::Uuid) -> bool {
+    declared.contains(&user_id)
+}
+
+fn require_platform_admin(state: &AppState, user_id: uuid::Uuid) -> Result<(), ApiError> {
+    if is_platform_admin(&state.config.platform_admin_user_ids, user_id) {
         Ok(())
     } else {
-        Err(ApiError::Unauthorized)
+        Err(ApiError::Forbidden)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_platform_admin;
+    use uuid::Uuid;
+
+    #[test]
+    fn nobody_is_platform_admin_when_none_is_declared() {
+        // Fail-closed: sem `PLATFORM_ADMIN_USER_IDS`, nem o primeiro utilizador
+        // do sistema administra a plataforma. Era aqui que «admin de uma org
+        // qualquer» abria a porta a quem se registasse.
+        assert!(!is_platform_admin(&[], Uuid::new_v4()));
+    }
+
+    #[test]
+    fn only_declared_users_are_platform_admins() {
+        let admin = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        assert!(is_platform_admin(&[admin], admin));
+        assert!(!is_platform_admin(&[admin], other));
     }
 }

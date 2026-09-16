@@ -1601,3 +1601,27 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Como se apanhou.** Por inspecionar o `dist/` a olho depois do build (`head -c 300` no ficheiro emitido) em vez de confiar em "o build passou e os testes ficaram verdes" — nenhum teste automático desta app corre atrás de um nginx com CSP real.
 
 **Ficheiros.** `web/vite.config.ts`, `web/src/noiseGateWorklet.js`.
+
+### R121 — Três regras de acesso escritas em mais de um sítio, e a cópia que decidia estava errada
+
+**Sintoma.** Nenhum para quem usa o produto como deve — e é o pior tipo. Provado ao vivo (2026-09-16, contra servidor e Postgres reais, com o `isolamento.mjs` escrito ANTES da correcção, 8 falhas):
+
+- **S1.** Qualquer pessoa que se registasse lia e reescrevia o armazenamento das gravações de TODA a plataforma, e o `/platform/storage/test` punha o servidor a fazer `PROPFIND` a um URL à escolha dela (SSRF — o teste antigo contava o `400` da ligação falhada como «recusa»).
+- **S2.** Uma org com uma chave `dlx_` listava no «directório Odoo» o email do admin de OUTRA org: a conta era renomeada, marcada como gerida, e entrava na org do atacante como admin.
+- **S3.** Um funcionário arquivado continuava a ler o chat das salas, a encontrar colegas na pesquisa, e (se admin) a descarregar gravações da ex-empresa; a chave da org criava reuniões com ele como anfitrião.
+
+**Causa raiz.** A mesma nas três: a regra existia CERTA num sítio e ERRADA numa cópia.
+- S1: «admin da plataforma» = «admin de qualquer org» (`storage.rs`), quando o `register` cria SEMPRE um admin.
+- S2: `odoo::provision` tinha o seu próprio «liga por email», sem a guarda de autoridade que `odoo_sso::upsert_member` já tinha desde a R25.
+- S3: 17 verificações de pertença escritas à mão sem `archived_at IS NULL`, que `org::role_in_org` e `org::org_co_members` já filtravam.
+
+**Regra.**
+- Administrador da plataforma é uma lista EXPLÍCITA de UUIDs (`PLATFORM_ADMIN_USER_IDS`), nunca derivada de `org_members`. UUID e não email: sem verificação de email, um endereço declarado antes de a conta existir podia ser registado por outro. Falta de papel é `403` (`ApiError::Forbidden`), não `401` — o web lê `401` como sessão caducada.
+- Uma sincronização de directório passa SEMPRE por `upsert_member`. A cópia saiu em vez de ser remendada. Contas recusadas vão em `skipped` com a razão, sem falhar o lote.
+- «Colega» e «admin que pede» são membros ACTIVOS. O SUJEITO não se filtra quando o dado é da organização: a gravação de quem saiu continua a ser descarregável pelo admin activo (retenção, eDiscovery); a auditoria e a retenção continuam a contar quem saiu.
+
+**Armadilha que o controlo positivo apanhou.** `/api/users/search` e `recordings::shares` devolviam SEMPRE `500` («no column found for name: locale» — o SQL de runtime não verifica colunas na compilação). A asserção «a arquivada já não encontra ninguém» passava ANTES da correcção — não por estar certa, mas porque a rota rebentava. Sem o «antes» positivo, o teste mediria uma avaria.
+
+**Portão.** `web/e2e/isolamento.mjs` (secções S1–S3, com controlo positivo antes de cada recusa); `storage::tests`; a metade positiva do S1 (utilizador declarado → `200`) foi verificada ao vivo com o servidor reiniciado com a variável, e não está automatizada — o utilizador do teste só nasce depois do arranque.
+
+**Ficheiros.** `server/src/{storage,config,error,odoo,rooms,users,recordings,meetings_v1}.rs`, `web/src/pages/Analytics.tsx`, `web/e2e/isolamento.mjs`, `docs/deployment.md`, `deploy/delonix.env.example`.

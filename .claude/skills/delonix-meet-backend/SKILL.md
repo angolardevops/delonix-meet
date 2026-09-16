@@ -56,31 +56,31 @@ Uma proposta que comece por apagar código que funciona é recusada na revisão.
 - **O limite:** a catraca conta padrões, não semântica. Um helper com outro nome que
   faça a mesma coisa escapa-lhe. Não confies nela em vez de ler o diff.
 
-## Segurança — as três falhas abertas (auditoria S1–S3)
+## Segurança — o que foi fechado e o que continua aberto
 
-Quem tocar nestes caminhos, fecha a falha ou nomeia-a no relatório. Não passa por cima
-em silêncio.
+**Fechadas no #76 (R121), provadas ao vivo antes e depois.** Não se reabrem:
 
-- **S1 — `storage::require_platform_admin`** (`storage.rs:277`) trata «admin de
-  QUALQUER org» como admin da plataforma, e o `register` cria sempre um admin.
-  - **Correcção:** um extractor `PlatformAdmin` baseado numa lista explícita na config.
-  - **Prova:** um utilizador acabado de registar leva `403` em `/api/v1/platform/storage`.
-- **S2 — `odoo::provision`** (`odoo.rs:284-340`) liga por email sem guarda de autoridade
-  e contraria o invariante 10 / R25.
-  - **Correcção:** um único `users::provision_by_email(org, email, origem)` com o
-    resultado `ForeignOrg`, a partir das versões certas (`odoo_sso::upsert_member`,
-    `meetings_v1::resolve_org_user`). As 6 cópias passam a chamá-lo.
-  - **Prova:** provisionar o email de um utilizador de outra org não o move nem o altera.
-- **S3 — `archived_at` esquecido** em 17 verificações de pertença, incluindo o `org_mate`
-  em `rooms::room_access` e o download de gravações.
-  - **Correcção:** um fragmento SQL único para «membro activo», com as verificações a
-    chamarem `org::`.
-  - **Prova:** um funcionário arquivado leva `403`/`404` na sala e na gravação da ex-org.
+- **S1 — administrador da plataforma** é `config.platform_admin_user_ids`
+  (`PLATFORM_ADMIN_USER_IDS`, UUIDs, fail-closed), verificado em
+  `storage::require_platform_admin`. **Nunca** se deriva de `org_members`: o registo
+  cria sempre um admin. Falta de papel é `ApiError::Forbidden` (`403`), não `401`.
+- **S2 — sincronização de directório** passa sempre por `odoo_sso::upsert_member`
+  (regra R25). As contas recusadas saem em `skipped` com a razão, sem falhar o lote.
+- **S3 — «colega» e «quem pede» são membros ACTIVOS** (`archived_at IS NULL`). O
+  SUJEITO não se filtra quando o dado é da organização: a gravação de quem saiu continua
+  descarregável pelo admin activo, e a auditoria e a retenção continuam a contá-lo.
 
-Outros pontos, que se corrigem quando se tocar no módulo:
-- **S4:** SSRF no `odoo_url`, no WebDAV e na descoberta OIDC.
-- **S5:** segredos de integração em claro.
-- **S6:** chaves de API sem escopos.
+**Continuam abertos** — quem tocar nestes caminhos fecha-os ou nomeia-os no relatório:
+
+- **`org::add_employee`** liga uma conta EXISTENTE por email, limitado só pelo domínio
+  da org. O registo não verifica emails, por isso o domínio não prova posse.
+- **`odoo::list_users`** devolve membros arquivados ao Odoo.
+- **`meetings_v1::resolve_org_user`** junta à org uma conta existente que não pertença a
+  nenhuma org (conta órfã).
+- **S4:** SSRF no `odoo_url`, no WebDAV e na descoberta OIDC. **S5:** segredos de
+  integração em claro. **S6:** chaves de API sem escopos.
+- A cópia única `users::provision_by_email` (ADR-0004 §6 passo 4) continua por fazer:
+  o #76 fechou a cópia que estava errada, não juntou as seis.
 
 ## A organização-alvo (ADR-0004 §3) e a ordem
 
@@ -94,7 +94,7 @@ core,protocol,store,media ◄─ realtime        todos ◄─ api ◄─ server
 
 | # | Passo | Porquê não antes |
 |---|---|---|
-| 0 | Fechar S1–S3 | — |
+| 0 | ~~Fechar S1–S3~~ — feito no #76 (R121) | — |
 | 1 | `src/lib.rs`, e `sfu_e2e` passa para `tests/` | sem lib não há testes de integração |
 | 2 | `#[sqlx::test]` em org/meetings/recordings + job com Postgres | sem isto, mover SQL parte queries em silêncio (302 queries de runtime, sem `query!`) |
 | 3 | Extrair `crypto`, `auth::extract`, `org::membership`, `net_guard`, `protocol` | parte o ciclo de 18 módulos |

@@ -258,10 +258,32 @@ pub struct ProvisionResult {
     pub org_id: Uuid,
     pub created: usize,
     pub updated: usize,
+    /// Entradas do directório que NÃO foram aplicadas, com a razão. Aditivo à
+    /// v1: um integrador antigo ignora o campo, e continua a receber `created`
+    /// e `updated` com o mesmo significado.
+    pub skipped: Vec<SkippedUser>,
+}
+
+#[derive(Serialize)]
+pub struct SkippedUser {
+    pub email: String,
+    pub reason: String,
 }
 
 /// `POST /api/v1/integration/odoo/provision`
 /// Chamado pelo módulo nk_delonix_meet para provisionar utilizadores.
+///
+/// Cada entrada passa por `odoo_sso::upsert_member` — a MESMA regra de
+/// autoridade que o login por conta Odoo já aplicava (R25): uma conta gerida
+/// por outra organização, ou uma conta local, NUNCA é reclamada por uma
+/// sincronização de directório.
+///
+/// Esta função tinha a sua própria cópia do «liga por email», sem essa regra:
+/// qualquer org com uma chave `dlx_` listava o endereço de alguém de outra
+/// empresa, reescrevia-lhe o nome, marcava a conta como gerida e punha-a na
+/// sua org — até como admin. Auditoria 2026-09-16, S2, provado ao vivo antes
+/// desta correcção. Duas cópias de uma regra de acesso acabam por divergir; por
+/// isso a cópia saiu, em vez de ser remendada.
 pub async fn provision(
     State(state): State<Arc<AppState>>,
     odoo: OdooTokenAuth,
@@ -270,6 +292,7 @@ pub async fn provision(
     let org_id = odoo.org_id;
     let mut created = 0usize;
     let mut updated = 0usize;
+    let mut skipped = Vec::new();
     let admin_email = req.admin_email.trim().to_lowercase();
 
     // Actualizar nome da org para o nome da empresa Odoo
@@ -283,61 +306,52 @@ pub async fn provision(
 
     for u in &req.users {
         let email = u.email.trim().to_lowercase();
-        let existing: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM users WHERE email = $1")
-            .bind(&email)
-            .fetch_optional(&state.db)
-            .await?;
+        let existed: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
+                .bind(&email)
+                .fetch_one(&state.db)
+                .await?;
+        let admin = email == admin_email || u.is_admin;
 
-        let user_id = if let Some((uid,)) = existing {
+        let user_id = match crate::odoo_sso::upsert_member(
+            &state,
+            org_id,
+            &email,
+            u.name.trim(),
+            u.odoo_uid,
+            admin,
+        )
+        .await
+        {
+            Ok(id) => id,
+            // Recusa de AUTORIDADE: a conta não é desta org. Salta a entrada e
+            // diz porquê — falhar o lote inteiro deixava o directório legítimo
+            // por sincronizar por causa de um único endereço.
+            Err(ApiError::Conflict(reason)) => {
+                skipped.push(SkippedUser { email, reason });
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+
+        if existed {
+            // O nome acompanha o Odoo, mas só numa conta que ESTA org gere (o
+            // `upsert_member` acabou de o garantir) e sem roubar um nome de
+            // utilizador que já é de outra pessoa.
             sqlx::query(
-                "UPDATE users SET username = $1, odoo_uid = $2, odoo_managed = TRUE
-                 WHERE id = $3",
+                "UPDATE users SET username = $1
+                 WHERE id = $2 AND odoo_org_id = $3 AND username <> $1
+                   AND NOT EXISTS (SELECT 1 FROM users WHERE username = $1 AND id <> $2)",
             )
             .bind(u.name.trim())
-            .bind(u.odoo_uid)
-            .bind(uid)
+            .bind(user_id)
+            .bind(org_id)
             .execute(&state.db)
             .await?;
             updated += 1;
-            uid
         } else {
-            // Utilizador criado sem password — requer login online via Odoo
-            // para obter o hash em cache antes de poder usar modo offline.
-            let (uid,): (Uuid,) = sqlx::query_as(
-                "INSERT INTO users (email, username, password_hash, odoo_uid, odoo_managed)
-                 VALUES ($1, $2, '', $3, TRUE) RETURNING id",
-            )
-            .bind(&email)
-            .bind(u.name.trim())
-            .bind(u.odoo_uid)
-            .fetch_one(&state.db)
-            .await
-            .map_err(|e| match &e {
-                sqlx::Error::Database(db) if db.is_unique_violation() => {
-                    ApiError::Conflict(format!("email {email} já em uso"))
-                }
-                _ => e.into(),
-            })?;
             created += 1;
-            uid
-        };
-
-        // O integrador e qualquer is_admin=true ficam como admin na org
-        let role = if email == admin_email || u.is_admin {
-            "admin"
-        } else {
-            "member"
-        };
-        sqlx::query(
-            "INSERT INTO org_members (org_id, user_id, role)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role",
-        )
-        .bind(org_id)
-        .bind(user_id)
-        .bind(role)
-        .execute(&state.db)
-        .await?;
+        }
     }
 
     sqlx::query("UPDATE organizations SET odoo_synced_at = now() WHERE id = $1")
@@ -350,7 +364,10 @@ pub async fn provision(
         Some(org_id),
         Uuid::nil(),
         "odoo.provision",
-        &format!("created={created} updated={updated}"),
+        &format!(
+            "created={created} updated={updated} skipped={}",
+            skipped.len()
+        ),
     )
     .await;
 
@@ -358,6 +375,7 @@ pub async fn provision(
         org_id,
         created,
         updated,
+        skipped,
     }))
 }
 

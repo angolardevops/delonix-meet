@@ -169,7 +169,7 @@ descer e não pode subir. As 8–10 são de revisão (agentes `delonix-meet-arch
 
 | # | Passo | Porquê nesta ordem | Portão de saída |
 |---|---|---|---|
-| 0 | **Segurança S1–S3** | falhas activas; não esperam por arquitectura | `isolamento.mjs` com os três casos negativos |
+| 0 | **Segurança S1–S3** — ✅ feito no #76 (R121) | falhas activas; não esperam por arquitectura | `isolamento.mjs` com os três casos negativos |
 | 1 | `src/lib.rs` + `sfu_e2e` para `tests/` | abre testes de integração sem mexer em código | `cargo test` verde |
 | 2 | Testes `#[sqlx::test]` dos handlers de org, meetings, recordings | a migração mecânica do SQL não se pode fazer às cegas | job com Postgres no CI |
 | 3 | Extrair `crypto`, `auth::extract`, `org::membership`, `net_guard`, `protocol` | parte o ciclo de 18 módulos | grafo sem componente > 1 |

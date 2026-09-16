@@ -768,6 +768,7 @@ export default {
     urlBaseWebdav: "URL base WebDAV",
     armazenamentoLocal: 'Local (padrão)',
     tipoDeArmazenamento: 'Tipo de armazenamento',
+    armazenamentoSoPlataforma: 'O armazenamento das gravações é configurado pelo administrador da plataforma, não por cada organização. Pede-lhe a alteração.',
     pathDeExportacao: 'Path de exportação',
     pathRemoto: 'Path remoto',
     badge: 'ADMIN',

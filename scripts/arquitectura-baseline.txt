@@ -1,7 +1,7 @@
 # Catraca da arquitectura (ADR-0004 §5). Gerado por
 #   BLESS=1 bash scripts/check-arquitectura-catraca.sh
 # Só se baixa. Subir um número é aceitar uma cópia nova — não se faz aqui.
-pertenca_org_fora_de_org_rs=28
+pertenca_org_fora_de_org_rs=26
 authorization_lido_a_mao=3
 clientes_reqwest=4
 primitivas_cripto_espalhadas=17

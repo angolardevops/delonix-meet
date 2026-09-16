@@ -80,6 +80,21 @@ async function recusado(nome, path, opts) {
   ok(`${nome} → ${status}`)
 }
 
+/**
+ * Recusa ANTES de o handler correr: só 401/403/404. Um `400` não conta — quer
+ * dizer que o pedido passou a autorização e o handler o rejeitou por outra
+ * razão (no `/platform/storage/test`, o 400 era o servidor a TENTAR o pedido
+ * ao URL do atacante e a falhar a ligação).
+ */
+async function recusadoNaPorta(nome, path, opts) {
+  const { status, json } = await req(path, opts)
+  if ([401, 403, 404].includes(status)) {
+    ok(`${nome} → ${status}`)
+    return
+  }
+  nok(nome, `devolveu ${status} com ${JSON.stringify(json).slice(0, 160)} — só 401/403/404 provam que o handler não correu`)
+}
+
 /** Um pedido que tem de ser ACEITE (prova que o teste não passa por acidente). */
 async function permitido(nome, path, opts) {
   const { status, json } = await req(path, opts)
@@ -362,6 +377,131 @@ await recusado('A cria link de partilha de uma gravação alheia', `/api/recordi
 })
 await recusado('A mexe num item de acção por id inventado', `/api/action-items/${inventado}`, {
   token: A.token, method: 'PATCH', body: { done: true },
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S1–S3 da auditoria de 2026-09-16 (docs/auditoria-2026-09-16-backend.md).
+//
+// As três tinham a mesma forma: uma regra de acesso escrita em mais de um sítio,
+// e a cópia que decidia estava errada. Cada caso abaixo corre o caminho de
+// ataque inteiro e verifica o ESTADO depois — não só o código de estado.
+// ─────────────────────────────────────────────────────────────────────────────
+
+console.log('\n--- S1: registar-se não faz de ninguém administrador da plataforma ---')
+// O `register` cria sempre o autor como admin da sua org nova. O armazenamento
+// da plataforma decidia «admin da plataforma» como «admin de QUALQUER org» — ou
+// seja, qualquer pessoa na Internet. Controlo positivo: não há aqui, e está
+// dito. O administrador da plataforma é declarado na configuração do servidor
+// (`PLATFORM_ADMIN_USER_IDS`) e o utilizador deste teste só nasce depois do
+// arranque; o caminho positivo é provado em `storage::tests`.
+await recusadoNaPorta('admin de org recém-registado LÊ o armazenamento da plataforma', '/api/v1/platform/storage', {
+  token: A.token,
+})
+await recusadoNaPorta('admin de org recém-registado ESCREVE o armazenamento da plataforma', '/api/v1/platform/storage', {
+  token: A.token, method: 'PUT',
+  body: { storage_type: 'webdav', webdav_url: 'http://169.254.169.254/', webdav_user: 'x' },
+})
+await recusadoNaPorta('admin de org recém-registado dispara o teste de ligação (PROPFIND)', '/api/v1/platform/storage/test', {
+  token: A.token, method: 'POST', body: {},
+})
+
+console.log('\n--- S2: a sincronização Odoo não captura contas de outra organização ---')
+// A org A emite uma chave `dlx_` (o extractor do Odoo aceita-a) e lista no seu
+// «directório» o endereço do administrador da org B. Antes: a conta de B era
+// reescrita (nome, `odoo_managed`) e entrava na org A como admin.
+const chaveA = await req(`/api/orgs/${A.orgId}/api-keys`, {
+  token: A.token, method: 'POST', body: { name: 's2-provision' },
+})
+if (chaveA.status >= 200 && chaveA.status < 300 && chaveA.json?.key) {
+  const novoEmail = `novo-${marca}@alfa${marca}.local`
+  const prov = await req('/api/v1/integration/odoo/provision', {
+    token: chaveA.json.key, method: 'POST',
+    body: {
+      company: `Org alfa${marca}`,
+      admin_email: A.email,
+      users: [
+        { odoo_uid: 91, name: 'CAPTURADO', email: B.email, is_admin: true },
+        { odoo_uid: 92, name: 'Novo da A', email: novoEmail },
+      ],
+    },
+  })
+  if (prov.status >= 200 && prov.status < 300) ok(`a sincronização corre para o resto do lote → ${prov.status}`)
+  else nok('a sincronização corre para o resto do lote', `devolveu ${prov.status}: ${JSON.stringify(prov.json).slice(0, 160)}`)
+
+  const empA = await req(`/api/orgs/${A.orgId}/employees`, { token: A.token })
+  const emails = Array.isArray(empA.json) ? empA.json.map((e) => e.email) : []
+  if (!emails.includes(B.email)) ok('o administrador da org B NÃO entrou na org A')
+  else nok('o administrador da org B NÃO entrou na org A', `está na lista de empregados da A: ${JSON.stringify(emails)}`)
+  if (emails.includes(novoEmail)) ok('controlo positivo: a conta NOVA foi criada na org A')
+  else nok('controlo positivo: a conta NOVA foi criada na org A', `não está: ${JSON.stringify(emails)} — sem isto a recusa acima pode ser o endpoint partido`)
+
+  const euB = await req('/api/users/me', { token: B.token })
+  if (euB.json?.username && euB.json.username !== 'CAPTURADO') ok('a conta de B não foi reescrita')
+  else nok('a conta de B não foi reescrita', `username = ${JSON.stringify(euB.json?.username)}`)
+  const loginB = await req('/api/auth/login', { method: 'POST', body: { email: B.email, password: PW } })
+  if (loginB.status === 200) ok('B continua a entrar com a sua password local')
+  else nok('B continua a entrar com a sua password local', `login devolveu ${loginB.status}`)
+} else {
+  nok('A cria uma chave de API para o teste S2', `devolveu ${chaveA.status}`)
+}
+
+console.log('\n--- S3: um membro ARQUIVADO perde o acesso da organização ---')
+// Dois colaboradores da org A: C (membro) e D (admin). Cada acesso é provado
+// ANTES de arquivar (controlo positivo) e recusado DEPOIS. Sem o «antes», um
+// «depois» recusado podia ser só o recurso a não existir.
+const dominioA = A.email.split('@')[1]
+async function colaborador(nome, role) {
+  const email = `${nome}-${marca}@${dominioA}`
+  const r = await req(`/api/orgs/${A.orgId}/employees`, {
+    token: A.token, method: 'POST',
+    body: { email, username: `${nome}-${marca}`, password: PW, role, title: nome },
+  })
+  if (!(r.status >= 200 && r.status < 300)) throw new Error(`não criei ${email}: ${r.status} ${JSON.stringify(r.json)}`)
+  const l = await req('/api/auth/login', { method: 'POST', body: { email, password: PW } })
+  return { email, token: l.json?.access_token, userId: r.json.user_id, username: `${nome}-${marca}` }
+}
+const C = await colaborador('carla', 'member')
+const D = await colaborador('dario', 'admin')
+
+const salaA = (await req('/api/rooms', { token: A.token, method: 'POST', body: { name: 'sala da A', topology: 'sfu' } })).json
+await req(`/api/rooms/${salaA.code}/join`, { token: A.token, method: 'POST' })
+const upload = await fetch(`${API}/api/rooms/${salaA.code}/recordings?name=s3.webm`, {
+  method: 'POST', headers: { Authorization: `Bearer ${A.token}` }, body: new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]),
+})
+const gravacaoA = upload.ok ? (await upload.json()).id : null
+if (!gravacaoA) nok('A carrega uma gravação para o teste S3', `devolveu ${upload.status}`)
+
+const pesquisaPorA = async (token) => {
+  const r = await req(`/api/users/search?q=${encodeURIComponent(`admin-alfa${marca}`)}`, { token })
+  return Array.isArray(r.json) && r.json.some((u) => u.id === A.userId)
+}
+
+// ANTES
+await permitido('C (membro activo) lê o chat da sala da A', `/api/rooms/${salaA.code}/chat`, { token: C.token })
+if (await pesquisaPorA(C.token)) ok('C (membro activo) encontra o admin da A na pesquisa')
+else nok('C (membro activo) encontra o admin da A na pesquisa', 'não encontrou — o controlo positivo falhou')
+if (gravacaoA) {
+  await permitido('D (admin activo) descarrega a gravação da A', `/api/recordings/${gravacaoA}?dl=1`, { token: D.token })
+}
+await permitido('controlo: a chave da A cria reunião com C como anfitriã', '/api/v1/meetings', {
+  token: chaveA.json?.key, method: 'POST',
+  body: { title: 's3 antes', starts_at: new Date(Date.now() + 7200_000).toISOString(), host_email: C.email },
+})
+
+// ARQUIVAR
+await permitido('A arquiva C', `/api/orgs/${A.orgId}/employees/${C.userId}`, { token: A.token, method: 'DELETE' })
+await permitido('A arquiva D', `/api/orgs/${A.orgId}/employees/${D.userId}`, { token: A.token, method: 'DELETE' })
+
+// DEPOIS
+await recusado('C ARQUIVADA lê o chat da sala da A', `/api/rooms/${salaA.code}/chat`, { token: C.token })
+if (!(await pesquisaPorA(C.token))) ok('C ARQUIVADA já não encontra o admin da A na pesquisa')
+else nok('C ARQUIVADA já não encontra o admin da A na pesquisa', 'o directório da ex-organização continua visível')
+if (gravacaoA) {
+  await recusado('D ARQUIVADO descarrega a gravação da A', `/api/recordings/${gravacaoA}?dl=1`, { token: D.token })
+}
+await recusado('a chave da A cria reunião com C ARQUIVADA como anfitriã', '/api/v1/meetings', {
+  token: chaveA.json?.key, method: 'POST',
+  body: { title: 's3 depois', starts_at: new Date(Date.now() + 9000_000).toISOString(), host_email: C.email },
 })
 
 console.log('\n--- sem autenticação nenhuma ---')

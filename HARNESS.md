@@ -66,7 +66,7 @@
 - `odoo_sso.rs` — **login com conta Odoo**: autentica em `/web/session/authenticate`, cria a organização a partir da EMPRESA do utilizador (chave `(odoo_db, company_id)`) e sincroniza em segundo plano todos os utilizadores internos activos. Fail-closed sem `PLATFORM_ODOO_URL`/`PLATFORM_ODOO_DB`
 - `meetings_v1.rs` — recurso `meetings` da API pública v1 (POST/PATCH/DELETE): cria REUNIÃO + sala com anfitrião humano (`host_email`) e convidados por email, idempotente por `external_ref`. É o que a integração de calendário usa — `/api/v1/rooms` cria salas sem anfitrião nem convidados, e ninguém consegue ser admitido nelas
 - `sfu_e2e.rs` — testes ponta-a-ponta do SFU com `RTCPeerConnection`s reais no papel de browser (media a fluir nos dois sentidos + R13/glare). Só compila em `#[cfg(test)]`
-- `storage.rs` — armazenamento remoto da plataforma (TrueNAS NFS / Nextcloud WebDAV); registo único em `platform_storage`. ⚠ «Admin global» é hoje `require_platform_admin` = admin de QUALQUER org, e o registo público cria sempre um admin (auditoria 2026-09-16 **S1**, aberta)
+- `storage.rs` — armazenamento remoto da plataforma (TrueNAS NFS / Nextcloud WebDAV); registo único em `platform_storage`. Só o administrador da PLATAFORMA — os UUIDs em `PLATFORM_ADMIN_USER_IDS` (fail-closed, `403` para os restantes). Antes era «admin de qualquer org», e o registo cria sempre um admin (S1, fechada no #76, R121)
 
 ### Organização do backend — estado e destino
 
@@ -110,7 +110,7 @@
 
 ### ✅ Feito e funcional
 - Auth org-first: registo cria org+admin; login; refresh cookie HttpOnly; logout revoga
-- Multi-tenant: isolamento cross-org por handler (rooms, presence, search, analytics), provado por `web/e2e/isolamento.mjs` nas rotas de org. ⚠ Não é «todos os endpoints»: 17 verificações de pertença esquecem `archived_at` (membro arquivado mantém acesso — **S3**) e o `odoo::provision` liga contas de outra org por email (**S2**). RLS só em `employee_groups` (ADR-0002)
+- Multi-tenant: isolamento cross-org por handler (rooms, presence, search, analytics), provado por `web/e2e/isolamento.mjs` nas rotas de org. S2 e S3 da auditoria de 2026-09-16 fechadas no #76 (R121). ⚠ Continua aberto: `org::add_employee` liga uma conta existente por email, limitado só pelo domínio (e o registo não verifica emails). RLS só em `employee_groups` (ADR-0002)
 - SFU Rust: simulcast (q/h/f), screen share como track separada, E2EE server-side (decrypt), gravação server-side (VP9+Opus webm, ffmpeg composite multi-publicador)
 - Sala de reunião: grelha Meet-style, palco com speaker detection, controles estilo Google Meet (pill dividida mic/câmara), whiteboard, breakouts (rename/add/move/timer/return-all), host controls (lock, share-only), CC (legendas partilhadas), reações, mão levantada, gravação
 - Ferramentas in-room: timer, sondagens anónimas, Q&A com upvote
@@ -212,7 +212,7 @@ Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **
 ## 6. Invariantes de segurança (nunca quebrar)
 
 1. **Segredos fail-closed:** `config.rs` faz panic sem `JWT_SECRET`/`TURN_SECRET`/`DATABASE_URL` fortes. `DELONIX_ALLOW_INSECURE=1` só em dev.
-2. **Isolamento multi-tenant:** `rooms::can_access_room` e `org::role_in_org`/`org_co_members`/`admin_orgs_of_user` escopam TUDO à(s) org(s) do utilizador. Nunca devolver dados cross-org. **A pertença decide-se em `org.rs`, que filtra `archived_at IS NULL`** — uma verificação escrita à mão noutro módulo foi exactamente como um membro arquivado manteve acesso (auditoria S3). **«Admin de alguma org» nunca é admin da plataforma** (S1).
+2. **Isolamento multi-tenant:** `rooms::can_access_room` e `org::role_in_org`/`org_co_members`/`admin_orgs_of_user` escopam TUDO à(s) org(s) do utilizador. Nunca devolver dados cross-org. **A pertença decide-se em `org.rs`, que filtra `archived_at IS NULL`** — uma verificação escrita à mão noutro módulo foi exactamente como um membro arquivado manteve acesso (auditoria S3). **«Admin de alguma org» nunca é admin da plataforma** — são os UUIDs de `PLATFORM_ADMIN_USER_IDS` (S1, R121).
 3. **Room tokens de curta duração:** JWT separado, âmbito = 1 sala, expira em 5 min. Sem room token válido → WS recusado.
 4. **SSRF em webhooks:** validar host (bloquear IPs privados/loopback/link-local/metadata) na criação E na entrega. Sem redirects.
 5. **Rate limit:** lockout por conta no login (8/5min); rate limit por IP em `/api/v1`; WS com rate limit por socket.
