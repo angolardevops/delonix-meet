@@ -56,7 +56,7 @@
 }
 .ed-top__title {
   min-width: 80px;
-  max-width: 34ch;
+  max-width: 52ch;
   field-sizing: content;
   padding: 2px 4px;
   border: 1px solid transparent;
@@ -186,8 +186,8 @@
 }
 .ed-col--right {
   border-left: 1px solid var(--border);
-  background: var(--surface);
-  padding: 11px 12px;
+  padding: 11px;
+  gap: 11px;
 }
 .ed-group {
   display: flex;
@@ -377,7 +377,8 @@
   padding: 10px;
   border-radius: var(--r-2);
   border: 1px solid var(--border);
-  background: var(--raised);
+  /* No template as colunas são `raised` e os cartões `surface`. */
+  background: var(--surface);
   min-width: 0;
   text-align: left;
   color: var(--text);
@@ -399,9 +400,16 @@
 .ed-card__title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 11.5px;
+  gap: 7px;
+  font-size: 11px;
   font-weight: 600;
+  min-width: 0;
+}
+.ed-card__clip {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .ed-dot {
   width: 8px;
@@ -432,19 +440,19 @@
 /* deslizadores: rótulo | barra | valor, como a correcção de cor do template */
 .ed-slider {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr) 40px;
+  grid-template-columns: 58px minmax(0, 1fr) 30px;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
 }
 .ed-slider__label {
   font-family: var(--font-ui);
   text-transform: none;
   letter-spacing: 0;
-  font-size: 10.5px;
+  font-size: 9.5px;
   color: var(--muted);
 }
 .ed-slider__val {
-  font-size: 9.5px;
+  font-size: 9px;
   color: var(--muted);
   text-align: right;
 }
@@ -498,6 +506,10 @@
   gap: 3px;
   min-width: 0;
 }
+.ed-io .st-label {
+  font-size: 8.5px;
+  letter-spacing: 0;
+}
 .ed-io__input {
   height: 28px;
   width: 100%;
@@ -508,7 +520,7 @@
   background: var(--surface);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
 }
 .ed-io__input--on {
   border-color: var(--accent);
@@ -813,38 +825,37 @@ button.ed-badge {
   align-items: center;
   flex-wrap: nowrap;
   overflow-x: auto;
-  gap: 2px 4px;
-  padding: 6px 10px;
+  gap: 7px;
+  padding: 7px 10px;
   border-radius: var(--r-2);
   border: 1px solid var(--border);
   background: var(--raised);
 }
+/* Ferramenta do template: caixa com ícone e rótulo lá dentro. */
 .ed-tool {
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 3px 0 0;
-  border: 0;
-  background: none;
-  color: var(--muted);
-  font: 500 10.5px var(--font-ui);
-  cursor: pointer;
-}
-.ed-tool__icon {
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
+  gap: 6px;
+  padding: 5px 9px;
   border-radius: var(--r-2);
   border: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  font: 600 10.5px var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ed-tool:hover {
+  color: var(--text);
+}
+.ed-tool__icon {
+  display: flex;
 }
 .ed-tool[aria-pressed='true'] {
   color: var(--accent);
-}
-.ed-tool[aria-pressed='true'] .ed-tool__icon {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .ed-ripple {
   height: 24px;
@@ -1773,4 +1784,27 @@ button.ed-badge {
   .ed-exp {
     padding: 16px;
   }
+}
+
+/* Faders da mistura: no template são barras sem pega; a pega aparece ao passar
+   ou com foco, para continuarem a ler-se como controlos. */
+.ed-range--ok,
+.ed-range--aviso {
+  height: 6px;
+}
+.ed-range--ok::-webkit-slider-thumb,
+.ed-range--aviso::-webkit-slider-thumb {
+  opacity: 0;
+}
+.ed-range--ok::-moz-range-thumb,
+.ed-range--aviso::-moz-range-thumb {
+  opacity: 0;
+}
+.ed-range--ok:is(:hover, :focus-visible)::-webkit-slider-thumb,
+.ed-range--aviso:is(:hover, :focus-visible)::-webkit-slider-thumb {
+  opacity: 1;
+}
+.ed-range--ok:is(:hover, :focus-visible)::-moz-range-thumb,
+.ed-range--aviso:is(:hover, :focus-visible)::-moz-range-thumb {
+  opacity: 1;
 }

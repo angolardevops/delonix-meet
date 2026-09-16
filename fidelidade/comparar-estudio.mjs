@@ -71,6 +71,12 @@ async function entrar() {
       localStorage.setItem('dx_access', 'falso')
       localStorage.setItem('dx_tour_v1', 'done')
     })
+    // A biblioteca e o ficheiro da gravação vêm do media-demo local, pela
+    // mesma rota (/api/recordings e /api/recordings/<id>) que a app usa.
+    const MEDIA = new URL('../../notas-ui-template/media-demo/Forma__o___Arquitect.webm', import.meta.url).pathname
+    const item = { id: 'demo-rec-1', room_id: 'r', room_code: 'abc-defg-hij', uploader_id: 'u', uploader_name: 'Demo', filename: 'Formação — Arquitectura de Voz Delonix · sessão 3.webm', size_bytes: 4906458, created_at: new Date().toISOString(), status: 'ready' }
+    await ctx.route('**/api/recordings', (r) => r.fulfill({ json: [item] }))
+    await ctx.route('**/api/recordings/demo-rec-1', (r) => r.fulfill({ path: MEDIA, contentType: 'video/webm' }))
     return
   }
   await p.goto(`${APP}/#/`)
@@ -86,7 +92,7 @@ async function entrar() {
 
 async function gravacaoComTranscricao() {
   if (process.env.GRAVACAO) return process.env.GRAVACAO
-  if (process.env.FAKE) return null
+  if (process.env.FAKE) return 'demo-rec-1'
   const lib = await p.evaluate(async () =>
     (await fetch('/api/recordings', { headers: { Authorization: `Bearer ${localStorage.getItem('dx_access')}` } })).json(),
   )
