@@ -580,3 +580,46 @@
     max-width: 140px;
   }
 }
+
+/* ---------------------------------------------------- frontend/l1-consola */
+.org-audit__chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 14px 10px;
+  font-size: var(--t-sm);
+}
+.org-row--active td {
+  background: var(--hover);
+}
+.org-voice__billing {
+  display: grid;
+  gap: 10px;
+  padding: 4px 14px 12px;
+}
+.org-voice__kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+.org-voice__kpis dt {
+  font-size: var(--t-xs);
+}
+.org-voice__kpis dd {
+  margin: 0;
+  font-size: var(--t-title);
+  line-height: 1.2;
+}
+.org-voice__note {
+  margin: 0;
+  font-size: var(--t-xs);
+}
+.org-voice__sub {
+  margin: 0;
+  padding: 10px 14px 4px;
+  border-top: 1px solid var(--border);
+  font-size: var(--t-sm);
+  font-weight: 600;
+}

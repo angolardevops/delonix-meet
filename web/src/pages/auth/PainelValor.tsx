@@ -1,10 +1,22 @@
 /**
  * Painel escuro da entrada: a proposta de valor que substitui a landing antiga.
  *
- * Só diz o que o servidor faz. O template anunciava 4K, multistream para cinco
- * destinos, dial-in e SIP — nada disso tem código por trás, e por isso não está
- * aqui. As quatro capacidades abaixo existem: `e2ee.ts`, `recorder.rs`,
- * `broadcast.rs` e `mfa.rs`.
+ * Só diz o que o servidor faz. As capacidades abaixo existem: `e2ee.ts`,
+ * `recorder.rs`, `broadcast.rs` (vários destinos RTMP por emissão, tecto
+ * `MAX_DESTINOS_POR_DIRECTO`, 4 por omissão) e `mfa.rs`; a videoaula é o
+ * formato `training` de `rooms.rs`; o login com a palavra-passe do Odoo é
+ * `auth.rs` + `odoo_sso.rs`.
+ *
+ * O que fica de fora, e porquê:
+ *  - «Gravação até 4K»: o gravador não tem resolução configurável.
+ *  - «Multistream 5 destinos»: o número depende da instalação e não é público;
+ *    diz-se «vários destinos» sem inventar o tecto.
+ *  - «Dial-in +244»: o plano de controlo do dial-in EXISTE (`voice.rs`: DIDs,
+ *    PIN, CDR) e a media Kamailio/FreeSWITCH está em `voice/`, mas falta a
+ *    ponte FreeSWITCH↔SFU — quem liga não ouve a reunião. Anunciá-lo na
+ *    entrada era prometer uma forma de entrar que não entra.
+ *  - SIP · Kamailio, Media · FreeSWITCH, residência AO-LAD: dependem da
+ *    instalação, não do produto.
  */
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -15,7 +27,7 @@ import { Icon, IconName } from '../../ui/icons'
 const CAPACIDADES: { chave: string; icon: IconName }[] = [
   { chave: 'auth.painel.e2ee', icon: 'lock' },
   { chave: 'auth.painel.gravacao', icon: 'record' },
-  { chave: 'auth.painel.directo', icon: 'live' },
+  { chave: 'consola.entrar.multidestino', icon: 'live' },
   { chave: 'auth.painel.mfa', icon: 'shieldCheck' },
 ]
 
@@ -44,8 +56,8 @@ export default function PainelValor() {
         <BrandLockup size={32} tone="tile" />
       </div>
       <div className="auth-aside__proposta">
-        <p className="auth-aside__titulo">{t('auth.painel.titulo')}</p>
-        <p className="auth-aside__texto">{t('auth.painel.texto')}</p>
+        <p className="auth-aside__titulo">{t('consola.entrar.titulo')}</p>
+        <p className="auth-aside__texto">{t('consola.entrar.texto')}</p>
         <ul className="auth-chips">
           {CAPACIDADES.map((c) => (
             <li key={c.chave} className="auth-chip">
