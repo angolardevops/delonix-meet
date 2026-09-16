@@ -945,7 +945,7 @@ pub fn spawn_worker(state: Arc<AppState>) {
                 tracing::warn!(error = %e, "SMS: lote de operador falhou");
             }
             ticks += 1;
-            if ticks % 30 == 0 {
+            if ticks.is_multiple_of(30) {
                 if let Err(e) = fail_stale(&state).await {
                     tracing::warn!(error = %e, "SMS: varrimento de paradas falhou");
                 }
