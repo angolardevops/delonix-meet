@@ -206,6 +206,10 @@
   gap: 5px;
 }
 .st-fader {
+  /* O valor (só para leitores de ecrã) é `position: absolute`: sem este
+     antecessor posicionado o bloco que o contém era o DOCUMENTO, e com a coluna
+     cheia ficava abaixo do ecrã e dava scroll à página inteira. */
+  position: relative;
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);
   align-items: center;
@@ -837,4 +841,26 @@
 }
 .st-local__queue[hidden] {
   display: none;
+}
+
+/* ------------------------------------------ revisão: palco e painéis
+
+/* O palco mede-se pela LARGURA (16:9) e só encolhe se a altura não chegar; o
+   que sobra da altura vai para os painéis por baixo, em vez de faixas pretas
+   acima e abaixo do palco e um vazio entre o palco e os painéis. Os painéis
+   ficam com a altura do que mostram (sem caixas vazias esticadas); se a altura
+   não chegar, é a faixa dos painéis que faz scroll, nunca a página. */
+@media (min-width: 901px) {
+  .st-stage-fit {
+    flex: 0 1 auto;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    align-items: flex-start;
+  }
+  .st-under {
+    flex: 0 1 auto;
+    min-height: 150px;
+    max-height: none;
+    align-items: start;
+  }
 }

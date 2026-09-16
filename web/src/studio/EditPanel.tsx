@@ -530,7 +530,7 @@ export default function EditPanel({
               <Preview projecto={p} leitor={leitor} lingua={p.legendas?.lingua ?? null} marcaDeAgua={marcaDeAgua} forma="edicao" onLegendas={() => onVista('legendas')} />
               <div className="ed-tools" role="toolbar" aria-label={t('studio.edicao.ferramentas')}>
                 {FERRAMENTAS.map((f) => (
-                  <button key={f.id} type="button" className="ed-tool" aria-pressed={ferramenta === f.id} onClick={() => setFerramenta(f.id)} data-ferramenta={f.id}>
+                  <button key={f.id} type="button" className="ed-tool" title={t(`editor.ferramentas.${f.id}`)} aria-pressed={ferramenta === f.id} onClick={() => setFerramenta(f.id)} data-ferramenta={f.id}>
                     <span className="ed-tool__icon" aria-hidden="true">
                       <Icon name={f.icone} size={13} />
                     </span>

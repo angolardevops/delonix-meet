@@ -650,6 +650,7 @@
 
 /* ------------------------------------------------------------- centro */
 .ed-centre {
+  container: ed-centre / inline-size;
   min-width: 0;
   min-height: 0;
   padding: 12px;
@@ -1807,4 +1808,31 @@ button.ed-badge {
 .ed-range--ok:is(:hover, :focus-visible)::-moz-range-thumb,
 .ed-range--aviso:is(:hover, :focus-visible)::-moz-range-thumb {
   opacity: 1;
+}
+
+/* ------------------------------------------------------------- revisão de layout
+   A linha de tempo tem a altura das suas faixas (régua + V1…CC). Com a altura
+   fixa de 272 px sobravam 3 px de conteúdo: aparecia uma barra de scroll
+   vertical e a faixa CC ficava cortada. */
+@media (min-width: 761px) {
+  .ed-tl {
+    height: auto;
+  }
+  .ed-tl__body {
+    flex: none;
+    overflow-y: visible;
+  }
+}
+/* As oito ferramentas não cabem em texto abaixo de ~820 px de centro (1440×900
+   com o rail aberto): ficam só com o ícone — o nome continua no `title` e no
+   nome acessível — em vez de uma faixa com scroll horizontal. */
+@container ed-centre (max-width: 820px) {
+  .ed-tool {
+    font-size: 0;
+    gap: 0;
+    padding: 6px 8px;
+  }
+  .ed-ripple {
+    font-size: 10px;
+  }
 }

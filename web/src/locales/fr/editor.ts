@@ -197,6 +197,7 @@ export default {
     marcadorEm: 'Marqueur {{r}} à {{t}}',
     zoom: 'Zoom',
     porDivisao: '{{s}} s/div',
+    ajustar: 'Ajuster',
   },
   faixas: {
     v1: 'caméra',
