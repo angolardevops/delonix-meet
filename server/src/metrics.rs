@@ -117,6 +117,11 @@ pub struct Metrics {
     /// problema é a máquina, não a rede, e sem isto conta como «rede má».
     pub qos_cpu_limited_total: AtomicU64,
 
+    /// Escritas de chat (mensagem ou reacção) descartadas por a fila de
+    /// persistência estar cheia — a sala recebeu-as, o histórico não.
+    pub chat_persist_dropped_total: AtomicU64,
+    /// Escritas de chat que a base de dados recusou.
+    pub chat_persist_failed_total: AtomicU64,
     /// Pacotes RTP perdidos por a fila de escrita da gravação estar cheia.
     /// `> 0` significa gravação DEGRADADA: o disco não acompanhou. Existe
     /// porque a alternativa — bloquear o executor até o disco alcançar — é
@@ -245,6 +250,12 @@ impl Metrics {
              # HELP delonix_join_slow_total Entradas acima de 5 s (a cauda que se sente).\n\
              # TYPE delonix_join_slow_total counter\n\
              delonix_join_slow_total {}\n\
+             # HELP delonix_chat_persist_dropped_total Escritas de chat descartadas por fila cheia.\n\
+             # TYPE delonix_chat_persist_dropped_total counter\n\
+             delonix_chat_persist_dropped_total {}\n\
+             # HELP delonix_chat_persist_failed_total Escritas de chat recusadas pela base de dados.\n\
+             # TYPE delonix_chat_persist_failed_total counter\n\
+             delonix_chat_persist_failed_total {}\n\
              # HELP delonix_uptime_seconds Uptime do processo em segundos.\n\
              # TYPE delonix_uptime_seconds gauge\n\
              delonix_uptime_seconds {}\n",
@@ -278,6 +289,8 @@ impl Metrics {
             self.join_total.load(Relaxed),
             self.join_ms_sum.load(Relaxed),
             self.join_slow_total.load(Relaxed),
+            self.chat_persist_dropped_total.load(Relaxed),
+            self.chat_persist_failed_total.load(Relaxed),
             uptime_secs,
         )
     }
