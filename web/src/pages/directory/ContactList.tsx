@@ -66,16 +66,18 @@ export default function ContactList({
   return (
     <aside className="org-dir__list" aria-label={t('org.dir.lista')}>
       <div className="org-dir__head">
-        <div className="org-search">
-          <Icon name="search" />
-          <input
-            type="search"
-            value={q}
-            onChange={(e) => onQ(e.target.value)}
-            placeholder={tab === 'groups' ? t('org.dir.pesquisarGrupos') : t('org.dir.pesquisar')}
-            aria-label={t('org.dir.pesquisar')}
-          />
-        </div>
+        {tab !== 'missed' && (
+          <div className="org-search">
+            <Icon name="search" />
+            <input
+              type="search"
+              value={q}
+              onChange={(e) => onQ(e.target.value)}
+              placeholder={tab === 'groups' ? t('org.dir.pesquisarGrupos') : t('org.dir.pesquisar')}
+              aria-label={tab === 'groups' ? t('org.dir.pesquisarGrupos') : t('org.dir.pesquisar')}
+            />
+          </div>
+        )}
         {tab === 'people' && branches.length > 0 && (
           <Select value={branchFilter} onChange={(e) => onBranchFilter(e.target.value)} aria-label={t('org.dir.filtrarFilial')}>
             <option value="">{t('org.dir.todasFiliais')}</option>

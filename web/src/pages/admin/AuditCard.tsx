@@ -43,7 +43,7 @@ export default function AuditCard({ orgId }: { orgId: string }) {
           rows.length === 0 ? (
             <p className="dx-muted org-card-note">{t('org.auditoria.vazio')}</p>
           ) : (
-            <div className="dx-table-wrap org-audit__scroll">
+            <div className="dx-table-wrap org-table-wrap org-audit__scroll">
               <table className="dx-table org-table">
                 <thead>
                   <tr>
