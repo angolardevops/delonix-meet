@@ -5,6 +5,7 @@ mod audit;
 mod auth;
 mod broadcast;
 mod config;
+mod crypto;
 mod dlp;
 mod error;
 mod meetings;
@@ -27,6 +28,9 @@ mod sfu;
 #[cfg(test)]
 mod sfu_e2e;
 mod signaling;
+mod sms;
+mod sms_codec;
+mod sms_smpp;
 mod storage;
 mod users;
 mod voice;
@@ -97,6 +101,9 @@ pub struct AppState {
     pub v1_limiter: RateLimiter,
     /// Anti-brute-force de PIN no dial-in PSTN (por DID). Só conta falhas.
     pub voice_pin_limiter: RateLimiter,
+    /// Envios de SMS por organização (ADR-0005). Um SMS custa dinheiro: é o
+    /// travão contra um admin comprometido ou um script descontrolado.
+    pub sms_send_limiter: RateLimiter,
     /// Salas de grupo ativas: sala principal -> conjunto de salas filhas.
     pub breakouts: dashmap::DashMap<uuid::Uuid, signaling::BreakoutSet>,
     /// Cliente HTTP partilhado para envio de webhooks (sem redirects, timeout 8s).
@@ -287,6 +294,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/voice/ivr/validate", post(voice::ivr_validate_pin))
         .route("/api/voice/ivr/cdr", post(voice::ivr_record_cdr))
         // Gestão de chaves de API (admin da org, sessão)
+        // Gateway de SMS (ADR-0005): consola da org (sessão, admin) e agente USB (token dlxg_).
+        .route("/api/orgs/{org_id}/sms/gateways", get(sms::list_gateways).post(sms::create_gateway))
+        .route("/api/orgs/{org_id}/sms/gateways/{gateway_id}", axum::routing::delete(sms::revoke_gateway))
+        .route("/api/orgs/{org_id}/sms/devices", get(sms::list_devices))
+        .route("/api/orgs/{org_id}/sms/route", get(sms::get_route).put(sms::put_route))
+        .route("/api/orgs/{org_id}/sms/messages", get(sms::list_messages).post(sms::send_message))
+        .route("/api/orgs/{org_id}/sms/messages/{message_id}", get(sms::get_message))
+        .route("/api/sms/agent/devices", axum::routing::put(sms::agent_put_devices))
+        .route("/api/sms/agent/claim", post(sms::agent_claim))
+        .route("/api/sms/agent/messages/{message_id}/result", post(sms::agent_result))
         .route("/api/orgs/{org_id}/api-keys", get(apikeys::list).post(apikeys::create))
         .route("/api/orgs/{org_id}/api-keys/{key_id}", axum::routing::delete(apikeys::revoke))
         // ---- Integração Odoo (nk_delonix_meet) ----
@@ -512,6 +529,7 @@ async fn main() {
         login_limiter: RateLimiter::new(8, Duration::from_secs(300)),
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
+        sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
         webhook_client,
         config: config.clone(),
         redis_bus: redis_bus.clone(),
@@ -640,6 +658,9 @@ async fn main() {
             }
         });
     }
+
+    // Gateway de SMS: envio pelos operadores e varrimento das mensagens paradas.
+    sms::spawn_worker(state.clone());
 
     let app = build_router(state.clone());
     let listener = tokio::net::TcpListener::bind(&config.bind_addr)

@@ -16,9 +16,7 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Utc};
-use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -27,7 +25,7 @@ use crate::{auth::AuthUser, error::ApiError, AppState};
 // ---------- helpers ----------
 
 pub fn sha256_hex_pub(s: &str) -> String {
-    hex::encode(Sha256::digest(s.as_bytes()))
+    crate::crypto::sha256_hex(s)
 }
 
 fn sha256_hex(s: &str) -> String {
@@ -39,9 +37,7 @@ pub fn gen_token_pub() -> String {
 }
 
 fn gen_token() -> String {
-    let mut b = [0u8; 32];
-    OsRng.fill_bytes(&mut b);
-    format!("dlxo_{}", hex::encode(b))
+    crate::crypto::random_token("dlxo_")
 }
 
 // ---------- extractor — token de integração Odoo ----------
@@ -65,14 +61,7 @@ impl FromRequestParts<Arc<AppState>> for OdooTokenAuth {
             .get("x-integration-token")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
-            .or_else(|| {
-                parts
-                    .headers
-                    .get(axum::http::header::AUTHORIZATION)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|h| h.strip_prefix("Bearer "))
-                    .map(|s| s.to_string())
-            })
+            .or_else(|| crate::auth::bearer_token(&parts.headers).map(str::to_string))
             .ok_or(ApiError::Unauthorized)?;
 
         let hash = sha256_hex(&raw);

@@ -18,6 +18,11 @@ pub enum ApiError {
     Forbidden,
     #[error("{0}")]
     Conflict(String),
+    /// Bem formado, mas não pode ser cumprido tal como pedido (ex.: um SMS sem
+    /// rota). Distinto de `BadRequest`: repetir o mesmo pedido não o corrige,
+    /// mudar o estado (seleccionar um dispositivo, contratar o operador) sim.
+    #[error("{0}")]
+    Unprocessable(String),
     #[error("not found")]
     NotFound,
     #[error("too many requests")]
@@ -53,6 +58,7 @@ impl IntoResponse for ApiError {
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized".into()),
             ApiError::Forbidden => (StatusCode::FORBIDDEN, "forbidden".into()),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
+            ApiError::Unprocessable(m) => (StatusCode::UNPROCESSABLE_ENTITY, m.clone()),
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not found".into()),
             ApiError::TooManyRequests => {
                 (StatusCode::TOO_MANY_REQUESTS, "too many requests".into())

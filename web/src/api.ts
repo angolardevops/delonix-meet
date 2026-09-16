@@ -117,6 +117,9 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true)
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw new ApiError(res.status, body, body?.error ?? res.statusText ?? 'request failed')
   }
+  // 204 não tem corpo: `res.json()` rejeitava com SyntaxError e um DELETE bem
+  // sucedido chegava a quem chama como falha.
+  if (res.status === 204) return undefined as T
   return res.json()
 }
 
