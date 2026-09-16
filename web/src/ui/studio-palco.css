@@ -1,15 +1,56 @@
 /*
- * Estúdio — o PALCO do DelonixStudio: layouts, banco de cenas, faders,
- * sobreposições, sala de convidados, quadro local e a emissão no telemóvel.
- * Folha à parte da `studio.css` (que também tem a edição) para as duas
- * equipas não se pisarem. Só tokens.
+ * Estúdio — o PALCO do DelonixStudio: topo, layouts, banco de cenas, faders,
+ * sobreposições, sala de convidados, quadro local, destinos simultâneos e a
+ * emissão no telemóvel. Medidas do template a 1440×900. Folha à parte da
+ * `studio.css` (que também tem a edição). Só tokens.
  */
 
 /* ------------------------------------------------------------- topo */
+.st-top__mark {
+  display: inline-flex;
+}
+.st-top__clock {
+  padding: 4px 9px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--raised);
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
 .st-top__meta {
   font-size: var(--t-xs);
   color: var(--muted);
   white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+.st-top__actions .dx-btn {
+  min-height: 28px;
+}
+.st-top__emit {
+  font-weight: 700;
+}
+.st-views {
+  flex: none;
+}
+
+/* --------------------------------------------------- coluna esquerda */
+/* As secções não encolhem: com a coluna cheia, rolam em vez de se sobrepor. */
+.st-col > * {
+  flex-shrink: 0;
+}
+.st-col--left .st-group {
+  gap: 6px;
+}
+.st-col--left .dx-select {
+  min-height: 28px;
+  font-size: var(--t-sm);
+}
+.st-col--left .dx-btn {
+  min-height: 28px;
+  font-size: var(--t-sm);
+}
+.st-col--left [data-studio-grupo='audio'] {
+  margin-top: auto;
 }
 
 /* ---------------------------------------------------------- layouts */
@@ -19,20 +60,20 @@
   gap: 6px;
 }
 .st-lay__btn {
-  aspect-ratio: 16 / 10;
+  height: 50px;
   max-width: 100%;
-  padding: 5px;
+  padding: 4px;
   border-radius: var(--r-2);
   border: 1px solid var(--border);
-  background: var(--stage);
+  background: var(--raised);
   cursor: pointer;
 }
 .st-lay__btn:hover {
   border-color: var(--muted);
 }
 .st-lay__btn[aria-pressed='true'] {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, var(--stage));
+  border: 2px solid var(--accent-strong);
+  padding: 3px;
 }
 .st-lay__mini {
   width: 100%;
@@ -53,7 +94,7 @@
   grid-template-columns: 1fr 1fr;
 }
 .st-lay__mini--destaque {
-  grid-template-columns: 7fr 3fr;
+  grid-template-columns: 2fr 1fr;
 }
 .st-lay__mini--grelha {
   grid-template-columns: 1fr 1fr;
@@ -76,46 +117,54 @@
   gap: 6px;
 }
 .st-scene {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
+  height: 34px;
   border-radius: var(--r-2);
   border: 1px solid var(--border);
   background: var(--raised);
   min-width: 0;
 }
 .st-scene.is-active {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--raised));
+  border-color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent-strong) 22%, var(--raised));
 }
 .st-scene__apply,
 .st-scene--new {
   flex: 1;
   min-width: 0;
+  height: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 6px;
+  padding: 0 5px;
   border: 0;
   background: none;
-  color: var(--text);
+  color: var(--muted);
   font: inherit;
   font-size: var(--t-sm);
   text-align: left;
   cursor: pointer;
 }
+.st-scene.is-active .st-scene__apply {
+  color: var(--text);
+  font-weight: 600;
+}
 .st-scene--new {
+  flex: none;
+  width: 100%;
+  height: 34px;
   border: 1px dashed var(--border);
-  background: none;
-  color: var(--muted);
+  border-radius: var(--r-2);
 }
 .st-scene--new:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 .st-scene__thumb {
-  width: 40px;
-  aspect-ratio: 16 / 9;
+  width: 34px;
+  height: 20px;
   flex: none;
   border-radius: var(--r-2);
   background: linear-gradient(140deg, var(--accent-strong), var(--stage)) center / cover no-repeat;
@@ -132,7 +181,17 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-weight: 600;
+}
+/* Apagar é secundário: aparece com o rato ou o foco, como no template não se vê. */
+.st-scene > .dx-iconbtn {
+  position: absolute;
+  right: 2px;
+  opacity: 0;
+  background: var(--raised);
+}
+.st-scene:hover > .dx-iconbtn,
+.st-scene:focus-within > .dx-iconbtn {
+  opacity: 1;
 }
 .st-scene-new {
   display: flex;
@@ -144,11 +203,11 @@
 .st-faders {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 .st-fader {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) 38px;
+  grid-template-columns: 42px minmax(0, 1fr);
   align-items: center;
   gap: 6px;
   font-size: var(--t-sm);
@@ -157,9 +216,15 @@
   color: var(--muted);
 }
 .st-fader__val {
-  text-align: right;
-  font-size: var(--t-xs);
-  color: var(--muted);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.st-fader .st-range {
+  height: 6px;
+  margin: 0;
 }
 .st-ellipsis {
   min-width: 0;
@@ -168,12 +233,12 @@
   text-overflow: ellipsis;
 }
 
-/* --------------------------------------------------- palco e fichas */
+/* ------------------------------------------------------------ palco */
 .st-overlay__chip {
   padding: 3px 8px;
   border-radius: var(--r-2);
   border: 1px solid var(--border);
-  background: var(--raised);
+  background: var(--stage);
   font-size: var(--t-xs);
   color: var(--text);
 }
@@ -186,10 +251,10 @@
   list-style: none;
   margin: 0;
   padding: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
 }
 .st-chip {
-  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -199,6 +264,9 @@
   border: 1px solid var(--border);
   background: var(--raised);
   font-size: var(--t-xs);
+}
+.st-chip.is-off .st-chip__state {
+  color: var(--live-text);
 }
 .st-chip.is-live .st-chip__state {
   color: var(--success);
@@ -216,7 +284,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
-  align-items: start;
+  align-items: stretch;
 }
 .st-panel {
   padding: 10px;
@@ -236,8 +304,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: var(--ctl-h);
-  padding: 0 10px;
+  height: 27px;
+  padding: 0 8px;
   border-radius: var(--r-2);
   border: 1px solid var(--border);
   background: var(--raised);
@@ -248,13 +316,14 @@
   cursor: pointer;
 }
 .st-overlay-btn[aria-pressed='true'] {
-  border-color: var(--accent);
+  border-color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent-strong) 18%, var(--raised));
   color: var(--text);
   font-weight: 600;
 }
 .st-overlay-btn__box {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -332,18 +401,24 @@
 }
 .st-guests {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+.st-guests--empty span {
+  height: 60px;
+  border-radius: var(--r-2);
+  border: 1px dashed var(--border);
+  background: var(--raised);
 }
 .st-guest {
   position: relative;
-  aspect-ratio: 16 / 10;
+  height: 60px;
   max-width: 100%;
   overflow: hidden;
   padding: 0;
   border-radius: var(--r-2);
   border: 1px solid var(--border);
-  background: var(--stage);
+  background: var(--raised);
   color: var(--text);
   cursor: pointer;
 }
@@ -375,6 +450,7 @@
   bottom: 4px;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 3px;
   padding: 1px 4px;
   border-radius: var(--r-2);
@@ -398,6 +474,7 @@
 .st-guests__actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  align-items: center;
   gap: 6px;
 }
 .st-pinned {
@@ -422,6 +499,11 @@
   position: absolute;
   inset: 0;
   z-index: 2;
+}
+.st-board,
+.st-board__area {
+  user-select: none;
+  -webkit-user-select: none;
 }
 .st-board__area {
   position: absolute;
@@ -454,26 +536,148 @@
   box-shadow: 0 0 0 2px var(--raised), 0 0 0 3px var(--accent);
 }
 
+/* ------------------------------------------- destinos simultâneos */
+.st-col--right {
+  padding: 12px;
+}
+.st-live {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.st-live__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.st-live__title {
+  margin: 0;
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+.st-live__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.st-dest {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--raised);
+  min-width: 0;
+}
+.st-dest.is-live {
+  border-color: var(--border);
+}
+.st-dest.is-error {
+  border-color: var(--record);
+}
+.st-dest__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.st-dest__who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.st-dest__url {
+  font-size: var(--t-xs);
+  color: var(--muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.st-dest__head > .dx-iconbtn {
+  flex: none;
+}
+.st-dest__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.st-live__actions {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.st-live__actions .dx-btn {
+  min-height: 32px;
+}
+.st-btn-stop {
+  border-color: var(--record);
+  color: var(--record-text);
+}
+
 /* ------------------------------------------------- gravação local */
+.st-local {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.st-local.is-rec {
+  border-color: var(--record);
+}
+.st-local__title {
+  margin: 0;
+  font-size: var(--t-md);
+  font-weight: 600;
+}
+.st-local__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+.st-local__row .dx-select {
+  min-height: 26px;
+}
+.st-local__queue {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .st-rec-line {
   margin: 0;
   display: flex;
   align-items: center;
   gap: 6px;
+  font-size: var(--t-xs);
   color: var(--muted);
 }
 .st-rec-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--record);
+}
+.st-rec-dot.is-off {
+  background: var(--border);
 }
 
 /* ----------------------------------------- barra do polegar */
 .st-thumb {
   display: none;
 }
-
 
 @media (max-width: 1180px) {
   .st-under {
@@ -486,11 +690,18 @@
     max-height: none;
     overflow: visible;
   }
+  .st-live__scroll {
+    overflow: visible;
+  }
+  .st-col--left [data-studio-grupo='audio'] {
+    margin-top: 0;
+  }
 }
 
 /* ------------------------------------------ telemóvel: emissão */
 @media (max-width: 720px) {
-  .st-top__meta {
+  .st-top__meta,
+  .st-top__emit {
     display: none;
   }
   /* A emissão no telemóvel está desenhada para esta largura: o aviso de
@@ -502,12 +713,11 @@
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
   .st-chips {
-    display: flex;
+    display: grid;
   }
-  .st-under {
-    grid-template-columns: minmax(0, 1fr);
+  .st-guests--empty {
+    display: none;
   }
-  /* A sala (chat interno, perguntas) vem logo a seguir ao palco. */
   .st-body > .st-centre {
     padding-bottom: 0;
   }
@@ -528,19 +738,4 @@
     max-height: 50vh;
     max-height: 50dvh;
   }
-}
-
-/* -------------------------------------------- estado por cima do palco */
-.st-stage-meta {
-  flex: none;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-height: 24px;
-}
-.st-board,
-.st-board__area {
-  user-select: none;
-  -webkit-user-select: none;
 }

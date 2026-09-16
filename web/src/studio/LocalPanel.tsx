@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button, cx, StatusBadge } from '../ui/kit'
+import { Button, cx, Select, StatusBadge } from '../ui/kit'
 import type { AulaGuardada } from './arquivo'
 import Cronometro from './Cronometro'
 import { formatarBytes } from './palco'
@@ -31,6 +31,9 @@ export default function LocalPanel({
   online,
   resolucao,
   qualidade,
+  qualidades,
+  qualidadeBloqueada,
+  onQualidade,
   lerBytes,
   onEnviar,
 }: {
@@ -41,8 +44,12 @@ export default function LocalPanel({
   online: boolean
   /** Tamanho real do canvas de gravação, lido do compositor. */
   resolucao: string
-  /** «2160p · 50 fps» — o perfil em uso. */
+  /** O perfil escolhido. */
   qualidade: string
+  qualidades: { valor: string; rotulo: string }[]
+  /** A gravar ou no ar: a qualidade não muda por baixo do fluxo. */
+  qualidadeBloqueada: boolean
+  onQualidade: (q: string) => void
   /** Bytes do ficheiro completo da gravação em curso. */
   lerBytes: () => number
   onEnviar: () => void
@@ -50,9 +57,9 @@ export default function LocalPanel({
   const { t } = useTranslation()
   const activo = estado !== 'parado'
   return (
-    <section className="st-group" data-studio="local" aria-labelledby="st-local-h">
-      <header className="st-group__head">
-        <h2 id="st-local-h" className="st-group__title">
+    <section className={cx('st-local', activo && 'is-rec')} data-studio="local" aria-labelledby="st-local-h">
+      <div className="st-card__row">
+        <h2 id="st-local-h" className="st-local__title">
           {t('studio.local.titulo')}
         </h2>
         <span className="dx-spacer" />
@@ -63,26 +70,41 @@ export default function LocalPanel({
         ) : (
           <StatusBadge tone="neutral">{t('studio.local.parada')}</StatusBadge>
         )}
-      </header>
-      <div className={cx('st-card', activo && 'st-card--rec')}>
-        <div className="st-card__row">
-          <span className="dx-num st-strong">
-            <Cronometro activo={estado === 'a-gravar'} ler={lerSegundos} />
-          </span>
-          <span className="dx-spacer" />
-          <span className="dx-num st-small dx-muted">{resolucao}</span>
-        </div>
-        {activo && (
-          <p className="dx-num st-small st-rec-line">
-            <span className="st-rec-dot" aria-hidden="true" />
-            {qualidade} · <TamanhoEmCurso activo={estado === 'a-gravar'} ler={lerBytes} />
-          </p>
-        )}
-        <p className="st-note">{t('studio.local.formato')}</p>
       </div>
-      <div className="st-card" data-studio="fila">
+      <p className="dx-num st-rec-line">
+        <span className={cx('st-rec-dot', !activo && 'is-off')} aria-hidden="true" />
+        <span>{resolucao}</span>
+        <span aria-hidden="true">·</span>
+        <Cronometro activo={estado === 'a-gravar'} ler={lerSegundos} />
+        {activo && (
+          <>
+            <span aria-hidden="true">·</span>
+            <TamanhoEmCurso activo={estado === 'a-gravar'} ler={lerBytes} />
+          </>
+        )}
+      </p>
+      <div className="st-local__row">
+        <label className="st-label" htmlFor="st-qualidade">
+          {t('studio.qualidade.titulo')}
+        </label>
+        <Select
+          id="st-qualidade"
+          value={qualidade}
+          disabled={qualidadeBloqueada}
+          data-studio="qualidade"
+          title={qualidadeBloqueada ? t('studio.qualidade.bloqueada') : t('studio.qualidade.nota')}
+          onChange={(e) => onQualidade(e.target.value)}
+        >
+          {qualidades.map((q) => (
+            <option key={q.valor} value={q.valor}>
+              {q.rotulo}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <div className="st-local__queue" data-studio="fila">
         {porEnviar.length === 0 ? (
-          <p className="st-note">{t('studio.local.nadaPorEnviar')}</p>
+          <span className="st-note">{t('studio.local.nadaPorEnviar')}</span>
         ) : (
           <>
             <div className="st-card__row">

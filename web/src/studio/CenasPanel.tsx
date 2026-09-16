@@ -4,8 +4,11 @@
  */
 import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button, cx, IconButton, TextInput } from '../ui/kit'
+import { Button, cx, IconButton, Select, TextInput } from '../ui/kit'
 import type { CenaGuardada } from './cenas'
+import type { ConteudoDoPalco } from './palco'
+
+const CONTEUDOS: ConteudoDoPalco[] = ['fontes', 'quadro', 'marca']
 
 /** A miniatura é um Blob; o URL vive enquanto o cartão existe. */
 function Miniatura({ blob }: { blob: Blob | null }) {
@@ -31,12 +34,13 @@ export default function CenasPanel({
   activa: string
   indisponivel: boolean
   onAplicar: (c: CenaGuardada) => void
-  onNova: (nome: string) => Promise<void>
+  onNova: (nome: string, conteudo: ConteudoDoPalco) => Promise<void>
   onApagar: (id: string) => void
 }) {
   const { t } = useTranslation()
   const [aCriar, setACriar] = useState(false)
   const [nome, setNome] = useState('')
+  const [conteudo, setConteudo] = useState<ConteudoDoPalco>('fontes')
   const [aGuardar, setAGuardar] = useState(false)
 
   async function submeter(e: FormEvent) {
@@ -45,7 +49,7 @@ export default function CenasPanel({
     if (!n) return
     setAGuardar(true)
     try {
-      await onNova(n)
+      await onNova(n, conteudo)
       setNome('')
       setACriar(false)
     } finally {
@@ -87,6 +91,18 @@ export default function CenasPanel({
             data-studio="cena-nome"
             onChange={(e) => setNome(e.target.value)}
           />
+          <Select
+            value={conteudo}
+            aria-label={t('studio.layouts.conteudo')}
+            data-studio="cena-conteudo"
+            onChange={(e) => setConteudo(e.target.value as ConteudoDoPalco)}
+          >
+            {CONTEUDOS.map((c) => (
+              <option key={c} value={c}>
+                {t(`studio.layouts.conteudos.${c}`)}
+              </option>
+            ))}
+          </Select>
           <div className="st-actions">
             <Button type="submit" size="sm" variant="primary" busy={aGuardar} disabled={!nome.trim()} data-studio="cena-guardar">
               {t('studio.cenas.guardar')}
@@ -101,10 +117,11 @@ export default function CenasPanel({
           <span className="st-scene__thumb st-scene__thumb--plus" aria-hidden="true">
             +
           </span>
-          <span className="st-scene__name">{t('studio.cenas.nova')}</span>
+          <span className="st-scene__name" title={t('studio.cenas.nota')}>
+            {t('studio.cenas.nova')}
+          </span>
         </button>
       )}
-      <p className="st-note">{t('studio.cenas.nota')}</p>
     </section>
   )
 }
