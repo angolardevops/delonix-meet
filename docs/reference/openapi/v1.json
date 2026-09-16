@@ -1,6 +1,86 @@
 {
   "components": {
     "schemas": {
+      "CreateMeetingReq": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "duration_min": {
+            "default": 30,
+            "description": "1-1440 minutos.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "e2ee": {
+            "type": "boolean"
+          },
+          "external_ref": {
+            "description": "Referência do sistema chamador. Opcional, mas **sem ela não há\nidempotência** — recomendada para qualquer integração de calendário.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host_email": {
+            "description": "Email do anfitrião. **Obrigatório**: é ele que fica `owner_id` da sala\ne o único que pode admitir convidados (ver `signaling::decide_waiting`).",
+            "type": "string"
+          },
+          "host_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "invitees": {
+            "description": "No máximo 200.",
+            "items": {
+              "$ref": "#/components/schemas/InviteeReq"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "default": "video",
+            "description": "`video` (omissão) | `voice`.",
+            "type": "string"
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "title": {
+            "description": "Obrigatório; cortado a 120 caracteres.",
+            "type": "string"
+          },
+          "waiting_room": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "title",
+          "starts_at",
+          "host_email"
+        ],
+        "type": "object"
+      },
+      "DeleteMeetingResp": {
+        "description": "Resposta de `DELETE /api/v1/meetings/{id}`.",
+        "properties": {
+          "ok": {
+            "description": "Sempre `true`.",
+            "type": "boolean"
+          },
+          "room_deleted": {
+            "description": "`false` quando a sala foi mantida por ter gravações (ou a reunião não\ntinha sala).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "room_deleted"
+        ],
+        "type": "object"
+      },
       "ErrorBody": {
         "description": "Envelope de erro de todas as superfícies (ver `error.rs`).",
         "properties": {
@@ -47,6 +127,164 @@
           "description"
         ],
         "type": "object"
+      },
+      "InviteeReq": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "type": "object"
+      },
+      "InviteeResp": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "user_id"
+        ],
+        "type": "object"
+      },
+      "MeetingResp": {
+        "properties": {
+          "duration_min": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "existing": {
+            "description": "`true` quando o pedido reencontrou uma reunião já existente pela\n`external_ref` em vez de criar uma nova.",
+            "type": "boolean"
+          },
+          "external_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host_email": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "invitees": {
+            "description": "Convidados efectivamente registados (email -> id do utilizador).",
+            "items": {
+              "$ref": "#/components/schemas/InviteeResp"
+            },
+            "type": "array"
+          },
+          "join_url": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "skipped": {
+            "description": "Emails NÃO registados e porquê. Nunca falha o pedido por causa de um\nconvidado — o link tem de sair na mesma.",
+            "items": {
+              "$ref": "#/components/schemas/SkippedInvitee"
+            },
+            "type": "array"
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "starts_at",
+          "duration_min",
+          "kind",
+          "room_code",
+          "join_url",
+          "host_email",
+          "invitees",
+          "skipped",
+          "existing"
+        ],
+        "type": "object"
+      },
+      "PatchMeetingReq": {
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_min": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "invitees": {
+            "description": "Se presente, **substitui** o conjunto de convidados. O estado de\nresposta (aceite/recusado) de quem se mantém é preservado.",
+            "items": {
+              "$ref": "#/components/schemas/InviteeReq"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SkippedInvitee": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "reason"
+        ],
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -72,5 +310,324 @@
     "version": "0.1.0"
   },
   "openapi": "3.1.0",
-  "paths": {}
+  "paths": {
+    "/api/v1/meetings": {
+      "post": {
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMeetingReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingResp"
+                }
+              }
+            },
+            "description": "Criada, ou reencontrada pela `external_ref` (`existing: true`)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`title` vazio, `kind`, `duration_min`, `host_email` inválidos ou mais de 200 convidados"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "chave de API ausente ou inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a `external_ref` aponta para uma reunião que já não se resolve na organização"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "o anfitrião pertence a outra organização"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "rate-limit da v1"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`POST /api/v1/meetings` — cria (ou reencontra) uma reunião agendada com\nsala, anfitrião e convidados.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/v1/meetings/{id}": {
+      "delete": {
+        "description": "A sala só é apagada se não tiver gravações: a reunião pode ter acontecido\ne sido cancelada no calendário depois, e uma gravação é um artefacto que o\nutilizador espera manter (a FK `recordings.room_id` é ON DELETE CASCADE —\napagar a sala apagaria o registo da gravação).",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteMeetingResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "chave de API ausente ou inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a reunião não existe ou o dono não é membro da organização da chave"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "rate-limit da v1"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`DELETE /api/v1/meetings/{id}` — cancela a reunião e liberta a sala.",
+        "tags": [
+          "meetings"
+        ]
+      },
+      "patch": {
+        "operationId": "patch",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchMeetingReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`title` vazio, `duration_min` fora de 1-1440 ou mais de 200 convidados"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "chave de API ausente ou inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a reunião não existe ou o dono não é membro da organização da chave"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "rate-limit da v1"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`PATCH /api/v1/meetings/{id}` — reagendar / renomear / actualizar convidados.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/v1/meetings/{id}/ring": {
+      "post": {
+        "description": "É o \"começar agora\" a partir de um sistema externo: o anfitrião carrega em\niniciar no ERP e o Delonix faz aparecer a chamada no ecrã de cada convidado,\ncomo uma chamada de telefone — não uma notificação que se perde no meio de\noutras.\n\nJá existia auto-ring por cron um minuto antes da hora marcada\n(`meetings::ring_upcoming_meetings`); o que faltava era **sob comando**.\nReutiliza a mesma mecânica para o comportamento ser idêntico nos dois\ncasos, incluindo o `register_call` — sem ele, quem atende cairia na sala\nde espera em vez de entrar directo.",
+        "operationId": "ring",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Com alvos: `{ringing: [uuid], offline: [uuid], room_code, join_url}`. Sem convidados por chamar: `{ringing: [], offline: [], reason, join_url}` (sem `room_code`)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a reunião ainda não tem sala"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "chave de API ausente ou inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a reunião não existe ou o dono não é membro da organização da chave"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "rate-limit da v1"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`POST /api/v1/meetings/{id}/ring` — toca nos dispositivos dos convidados.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    }
+  }
 }

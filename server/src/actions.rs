@@ -258,6 +258,14 @@ pub async fn patch_agenda_item(
     }
     // `done` pode ser alterado por qualquer membro.
     require_member_or_owner(&state.db, meeting_id, auth.user_id).await?;
+    // Validar ANTES de escrever: um tópico inválido recusava o pedido com 400
+    // depois de o `done` já estar gravado (escrita parcial).
+    if let Some(topic) = &req.topic {
+        let t = topic.trim();
+        if t.is_empty() || t.len() > 200 {
+            return Err(ApiError::BadRequest("tópico inválido".into()));
+        }
+    }
 
     if let Some(done) = req.done {
         let (done_at, done_by): (Option<DateTime<Utc>>, Option<Uuid>) = if done {
@@ -635,6 +643,11 @@ pub async fn patch_action_item(
     .await?;
     let (meeting_id,) = row.ok_or(ApiError::NotFound)?;
 
+    // Primeiro: quem pede tem de ser membro da reunião (convidado ou dono),
+    // SEMPRE. Esta verificação só corria quando o pedido trazia `status`, e um
+    // PATCH vazio devolvia o item inteiro a qualquer conta autenticada de
+    // qualquer organização (R125).
+    require_member_or_owner(&state.db, meeting_id, auth.user_id).await?;
     let owner = meeting_owner(&state.db, meeting_id).await?;
     let is_owner = owner == auth.user_id;
 
@@ -651,11 +664,7 @@ pub async fn patch_action_item(
     if editing && !is_owner {
         return Err(ApiError::Unauthorized);
     }
-    // Status pode ser alterado por qualquer membro.
-    if req.status.is_some() {
-        require_member_or_owner(&state.db, meeting_id, auth.user_id).await?;
-    }
-
+    // Status pode ser alterado por qualquer membro (já verificado acima).
     if let Some(s) = &req.status {
         if !matches!(s.as_str(), "todo" | "doing" | "done") {
             return Err(ApiError::BadRequest("status inválido".into()));

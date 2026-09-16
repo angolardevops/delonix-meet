@@ -1,6 +1,515 @@
 {
   "components": {
     "schemas": {
+      "ActionItem": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "how": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "plan_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "position": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "resources": {
+            "type": "string"
+          },
+          "status": {
+            "description": "'todo' | 'doing' | 'done'",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "what": {
+            "type": "string"
+          },
+          "when_date": {
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "where_text": {
+            "type": "string"
+          },
+          "who_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "who_name": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "plan_id",
+          "position",
+          "what",
+          "where_text",
+          "who_name",
+          "why",
+          "how",
+          "resources",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ActionItemPatch": {
+        "properties": {
+          "how": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "resources": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "what": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "when_date": {
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "where_text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "who_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "who_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "why": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ActionItemReq": {
+        "properties": {
+          "how": {
+            "type": "string"
+          },
+          "position": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "resources": {
+            "type": "string"
+          },
+          "status": {
+            "default": "todo",
+            "description": "`todo` (omissão) | `doing` | `done`.",
+            "type": "string"
+          },
+          "what": {
+            "type": "string"
+          },
+          "when_date": {
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "where_text": {
+            "type": "string"
+          },
+          "who_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "who_name": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ActionPlan": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ActionItem"
+            },
+            "type": "array"
+          },
+          "meeting_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "meeting_id",
+          "goal",
+          "items",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ActionPlanGoalReq": {
+        "properties": {
+          "goal": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "goal"
+        ],
+        "type": "object"
+      },
+      "AgendaItem": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "done_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "done_by_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_min": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "meeting_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "position": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "topic": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "meeting_id",
+          "position",
+          "topic",
+          "description",
+          "duration_min",
+          "done",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "AgendaItemReq": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "duration_min": {
+            "default": 5,
+            "description": "Limitado a 1-480 (valores fora são ajustados, não recusados).",
+            "format": "int32",
+            "type": "integer"
+          },
+          "position": {
+            "description": "Omisso: a seguir ao último tópico.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "topic": {
+            "description": "1-200 caracteres (depois de `trim`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic"
+        ],
+        "type": "object"
+      },
+      "AgendaPatchReq": {
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "done": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "duration_min": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "position": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "topic": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ConflictCheckReq": {
+        "properties": {
+          "duration_min": {
+            "default": 30,
+            "format": "int32",
+            "type": "integer"
+          },
+          "invitee_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "room_ref": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "starts_at"
+        ],
+        "type": "object"
+      },
+      "Conflicts": {
+        "description": "Sobreposições encontradas. As de participantes só avisam; as de sala\nfísica bloqueiam a criação.",
+        "properties": {
+          "participants": {
+            "items": {
+              "$ref": "#/components/schemas/ParticipantConflict"
+            },
+            "type": "array"
+          },
+          "room": {
+            "items": {
+              "$ref": "#/components/schemas/RoomConflict"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "participants",
+          "room"
+        ],
+        "type": "object"
+      },
+      "CreateMeetingReq": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "duration_min": {
+            "default": 30,
+            "description": "5-1440 minutos.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "invitee_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "default": "video",
+            "description": "`video` (omissão) | `voice`.",
+            "type": "string"
+          },
+          "recurrence_byday": {
+            "description": "Dias da semana para freq=weekly: \"MON,WED,FRI\"",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recurrence_count": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "recurrence_freq": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recurrence_interval": {
+            "default": 1,
+            "format": "int32",
+            "type": "integer"
+          },
+          "recurrence_until": {
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "room_ref": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "title": {
+            "description": "1-140 caracteres (depois de `trim`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "starts_at"
+        ],
+        "type": "object"
+      },
+      "CreateMeetingResp": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Meeting"
+          },
+          {
+            "properties": {
+              "conflicts": {
+                "$ref": "#/components/schemas/Conflicts"
+              }
+            },
+            "required": [
+              "conflicts"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "A reunião criada (campos de `Meeting` ao nível de topo) mais os avisos de\ncolisão de agenda."
+      },
       "ErrorBody": {
         "description": "Envelope de erro de todas as superfícies (ver `error.rs`).",
         "properties": {
@@ -45,6 +554,406 @@
         "required": [
           "field",
           "description"
+        ],
+        "type": "object"
+      },
+      "InviteeResponse": {
+        "properties": {
+          "decline_reason": {
+            "type": "string"
+          },
+          "responded_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "`pending` | `accepted` | `declined`.",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "status",
+          "decline_reason"
+        ],
+        "type": "object"
+      },
+      "Meeting": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "duration_min": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "minutes": {
+            "type": "string"
+          },
+          "owner_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "recurrence_byday": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recurrence_count": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "recurrence_freq": {
+            "description": "`daily` | `weekly` | `monthly` | `yearly`, ou `null` se não recorrente.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recurrence_interval": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "recurrence_parent_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recurrence_until": {
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "room_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "room_ref": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "transcript": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "owner_id",
+          "title",
+          "description",
+          "kind",
+          "starts_at",
+          "duration_min",
+          "created_at",
+          "recurrence_interval"
+        ],
+        "type": "object"
+      },
+      "MeetingItem": {
+        "description": "Reunião enriquecida para a UI do calendário.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "duration_min": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "is_owner": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "minutes": {
+            "type": "string"
+          },
+          "my_status": {
+            "description": "A minha resposta enquanto convidado: 'owner' | 'pending' | 'accepted' | 'declined'.",
+            "type": "string"
+          },
+          "owner_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "owner_name": {
+            "type": "string"
+          },
+          "recurrence_freq": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recurrence_interval": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "recurrence_parent_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "room_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "room_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "room_ref": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "owner_id",
+          "owner_name",
+          "title",
+          "description",
+          "kind",
+          "starts_at",
+          "duration_min",
+          "is_owner",
+          "minutes",
+          "my_status",
+          "recurrence_interval"
+        ],
+        "type": "object"
+      },
+      "MinutesReq": {
+        "properties": {
+          "minutes": {
+            "type": "string"
+          },
+          "room_code": {
+            "description": "Se dado, associa/cria pela sala em vez do id da reunião.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transcript": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ParticipantConflict": {
+        "properties": {
+          "meeting_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "meeting_title": {
+            "type": "string"
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "meeting_id",
+          "meeting_title",
+          "starts_at"
+        ],
+        "type": "object"
+      },
+      "QuarantineRow": {
+        "properties": {
+          "count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "count"
+        ],
+        "type": "object"
+      },
+      "RespondReq": {
+        "properties": {
+          "reason": {
+            "description": "Obrigatório quando `status` é `declined`.",
+            "type": "string"
+          },
+          "status": {
+            "description": "`accepted` | `declined`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "RoomConflict": {
+        "properties": {
+          "meeting_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "meeting_title": {
+            "type": "string"
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "meeting_id",
+          "meeting_title",
+          "starts_at"
+        ],
+        "type": "object"
+      },
+      "RoomNotes": {
+        "properties": {
+          "minutes": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "transcript": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "minutes",
+          "transcript"
+        ],
+        "type": "object"
+      },
+      "StartResp": {
+        "description": "Resposta de `POST /api/meetings/{id}/start`.",
+        "properties": {
+          "code": {
+            "description": "Código da sala a que o cliente se liga.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`video` | `voice`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "TranslateReq": {
+        "properties": {
+          "target": {
+            "description": "Língua de destino: `pt` | `en` | `fr` | `es` | `de`. Outra dá 400.",
+            "type": "string"
+          },
+          "text": {
+            "description": "Linha de legenda; cortada a 500 caracteres.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "target"
+        ],
+        "type": "object"
+      },
+      "TranslateResp": {
+        "properties": {
+          "text": {
+            "description": "O texto traduzido.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
         ],
         "type": "object"
       },
@@ -183,6 +1092,1141 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/action-items/{item_id}": {
+      "delete": {
+        "operationId": "delete_action_item",
+        "parameters": [
+          {
+            "description": "Id do item",
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{\"ok\": true}` (forma herdada)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é o anfitrião"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "item não existe"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`DELETE /api/action-items/:item_id` — só anfitrião.",
+        "tags": [
+          "meeting-actions"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_action_item",
+        "parameters": [
+          {
+            "description": "Id do item",
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionItemPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionItem"
+                }
+              }
+            },
+            "description": "Qualquer membro muda `status`; só o anfitrião edita os restantes campos"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`status` inválido"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "editar campos que não `status` sem ser anfitrião, ou mudar `status` sem ser membro"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "item não existe"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PATCH /api/action-items/:item_id` — atualiza campos ou status.\nQualquer membro pode mudar o status; só o anfitrião pode editar campos.",
+        "tags": [
+          "meeting-actions"
+        ]
+      }
+    },
+    "/api/meetings": {
+      "get": {
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MeetingItem"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Reuniões criadas pelo utilizador e aquelas para que foi convidado, por data"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Reuniões do utilizador: as que criou + aquelas para que foi convidado.",
+        "tags": [
+          "meetings"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMeetingReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateMeetingResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "título, `kind` ou duração inválidos"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "quota de reuniões da organização atingida, ou sala física já reservada nesse horário"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/conflicts": {
+      "post": {
+        "operationId": "check_conflicts",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConflictCheckReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conflicts"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{id}": {
+      "delete": {
+        "operationId": "delete",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{\"ok\": true}` (forma herdada)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não existe ou não é o dono"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{id}/action-plan": {
+      "get": {
+        "operationId": "get_action_plan",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ActionPlan"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "`null` se a reunião ainda não tem plano"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é dono nem convidado — também quando a reunião não existe"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/meetings/:id/action-plan`",
+        "tags": [
+          "meeting-actions"
+        ]
+      },
+      "put": {
+        "operationId": "upsert_action_plan",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionPlanGoalReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionPlan"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é o anfitrião"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "reunião não existe"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PUT /api/meetings/:id/action-plan` — cria ou atualiza a META do plano.",
+        "tags": [
+          "meeting-actions"
+        ]
+      }
+    },
+    "/api/meetings/{id}/action-plan/items": {
+      "post": {
+        "operationId": "add_action_item",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionItemReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionItem"
+                }
+              }
+            },
+            "description": "Cria o plano (sem meta) se ainda não existir"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`status` inválido"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é o anfitrião"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "reunião não existe"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/meetings/:id/action-plan/items` — adiciona linha 5W2H.",
+        "tags": [
+          "meeting-actions"
+        ]
+      }
+    },
+    "/api/meetings/{id}/agenda": {
+      "get": {
+        "operationId": "list_agenda",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AgendaItem"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é dono nem convidado — também quando a reunião não existe"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/meetings/:id/agenda`",
+        "tags": [
+          "meeting-actions"
+        ]
+      },
+      "post": {
+        "operationId": "add_agenda_item",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgendaItemReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgendaItem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "tópico vazio ou com mais de 200 caracteres"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é o anfitrião"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "reunião não existe"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/meetings/:id/agenda` — adiciona tópico (só anfitrião).",
+        "tags": [
+          "meeting-actions"
+        ]
+      }
+    },
+    "/api/meetings/{id}/agenda/{item_id}": {
+      "delete": {
+        "operationId": "delete_agenda_item",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Id do item",
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{\"ok\": true}` (forma herdada); também quando o tópico não existe"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é o anfitrião"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "reunião não existe"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`DELETE /api/meetings/:id/agenda/:item_id` — só anfitrião.",
+        "tags": [
+          "meeting-actions"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_agenda_item",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Id do item",
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgendaPatchReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgendaItem"
+                }
+              }
+            },
+            "description": "Qualquer membro muda `done`; só o anfitrião edita os restantes campos"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "tópico inválido"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "editar campos que não `done` sem ser anfitrião, ou não ser membro"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "reunião ou tópico não existe"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PATCH /api/meetings/:id/agenda/:item_id` — editar ou marcar como feito.\nQualquer membro pode marcar como feito; só o anfitrião pode editar os campos.",
+        "tags": [
+          "meeting-actions"
+        ]
+      }
+    },
+    "/api/meetings/{id}/ics": {
+      "get": {
+        "operationId": "ics",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/calendar": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Um VEVENT iCalendar, como anexo `reuniao.ics`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é dono nem convidado"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Exportação iCalendar (roadmap \"Google e Outlook Calendar\"): um .ics por\nreunião — importa/abre no Google Calendar, Outlook, Apple Calendar, etc.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{id}/invitees": {
+      "get": {
+        "operationId": "invitees",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InviteeResponse"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é o anfitrião"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Lista as respostas dos convidados (só o anfitrião vê tudo).",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{id}/minutes": {
+      "post": {
+        "operationId": "save_minutes",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MinutesReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "`{\"ok\": true}` (forma herdada). O resumo AI é gerado em segundo plano."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é dono nem convidado — também quando a reunião não existe"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Guarda as MoM (notas AI) numa reunião. Dono ou convidado podem guardar.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{id}/respond": {
+      "post": {
+        "operationId": "respond",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RespondReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "`{\"ok\": true}` (forma herdada)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`status` inválido, ou recusa sem motivo"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é convidado desta reunião"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O convidado aceita ou recusa (recusar exige motivo). Ao recusar, o\nanfitrião é notificado em tempo real (se online) com o motivo.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{id}/start": {
+      "post": {
+        "operationId": "start",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "um convidado tentou arrancar antes do anfitrião"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é dono nem convidado"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Arranca a reunião: cria a sala (se ainda não existe) e devolve o código.\nReuniões de voz criam na mesma uma sala — o cliente entra sem vídeo.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/missed-calls/ack": {
+      "post": {
+        "operationId": "ack_missed_calls",
+        "responses": {
+          "200": {
+            "description": "`{\"ok\": true}` (forma herdada)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Marca todas as chamadas perdidas do utilizador como vistas.",
+        "tags": [
+          "calls"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/webhooks": {
       "get": {
         "operationId": "list",
@@ -354,6 +2398,240 @@
         "summary": "Apaga um webhook.",
         "tags": [
           "webhooks"
+        ]
+      }
+    },
+    "/api/quarantine/analytics": {
+      "get": {
+        "operationId": "quarantine_analytics",
+        "parameters": [
+          {
+            "description": "`week` | `month` (omissão) | `quarter` | `year`. Valor desconhecido conta como `month`.",
+            "in": "query",
+            "name": "period",
+            "required": false,
+            "schema": {
+              "default": "month",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Se dado, restringe a membros dessa organização (o pedinte tem de ser membro).",
+            "in": "query",
+            "name": "org_id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/QuarantineRow"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Até 100 linhas; vazio se o utilizador não administra nenhuma organização"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "com `org_id`: membro mas não administrador"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "com `org_id`: não é membro"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Ranking de quem mais fica em quarentena, no período pedido. Opcionalmente\nfiltrado a uma organização (só membros dessa org).",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/rooms/{code}/minutes": {
+      "post": {
+        "operationId": "save_minutes_by_room",
+        "parameters": [
+          {
+            "description": "Código da sala",
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MinutesReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "`{\"ok\": true}` (forma herdada)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "sem reunião nesta sala de que seja dono ou convidado (os dois casos não se distinguem)"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Guarda MoM associando pela sala: encontra a reunião cuja `room_code` bate\ncerto (reuniões iniciadas a partir do calendário). Usado quando se grava\na partir de dentro da chamada.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/rooms/{code}/notes": {
+      "get": {
+        "operationId": "notes_by_room",
+        "parameters": [
+          {
+            "description": "Código da sala",
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoomNotes"
+                }
+              }
+            },
+            "description": "Ata da reunião mais recente da sala; campos vazios se a sala não tiver reunião"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não participou na sala"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Ata e transcrição da reunião associada a uma sala — para o leitor da\nbiblioteca de gravações. Só participantes da sala têm acesso.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/translate": {
+      "post": {
+        "operationId": "translate_caption",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranslateReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslateResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "texto vazio, língua não suportada, LLM local não configurado, ou a tradução falhou"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "POST /api/translate — traduz uma linha de legenda. Autenticado; o texto é\ncurto (legendas) e o rate-limit global de /api aplica-se por IP.",
+        "tags": [
+          "ai"
         ]
       }
     },
