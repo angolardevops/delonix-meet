@@ -259,7 +259,29 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/whiteboards/{id}/png", get(whiteboards::png))
         .route("/api/whiteboards/{id}/share", post(whiteboards::set_share))
         .route("/api/whiteboards/shared/{token}", get(whiteboards::shared_png))
-        .route("/api/recordings/{id}", get(recordings::download))
+        .route(
+            "/api/recordings/{id}",
+            get(recordings::download).patch(recordings::update),
+        )
+        .route("/api/recordings/{id}/metadata", get(recordings::get_metadata))
+        .route(
+            "/api/recordings/{id}/chapters",
+            get(recordings::list_chapters).post(recordings::create_chapter),
+        )
+        .route(
+            "/api/recordings/{id}/chapters/{chapter_id}",
+            get(recordings::get_chapter).delete(recordings::delete_chapter),
+        )
+        .route(
+            "/api/recordings/{id}/comments",
+            get(recordings::list_comments).post(recordings::create_comment),
+        )
+        .route(
+            "/api/recordings/{id}/comments/{comment_id}",
+            get(recordings::get_comment)
+                .patch(recordings::update_comment)
+                .delete(recordings::delete_comment),
+        )
         .route(
             "/api/recordings/{id}/share",
             post(recordings::share).get(recordings::shares),
