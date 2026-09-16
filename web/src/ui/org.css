@@ -586,9 +586,6 @@
   padding: 2px 14px 10px;
   font-size: var(--t-sm);
 }
-.org-row--active td {
-  background: var(--hover);
-}
 .org-voice__billing {
   display: grid;
   gap: 10px;

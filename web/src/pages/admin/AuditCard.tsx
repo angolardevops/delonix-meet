@@ -9,6 +9,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { listAudit, verifyAudit } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
+import { Icon } from '../../ui/icons'
 import { Button, Card, IconButton, Select, StatusBadge } from '../../ui/kit'
 import { formatDateTime, refusalAware, useLocaleTag } from './orgShared'
 
@@ -59,9 +60,7 @@ export default function AuditCard({ orgId }: { orgId: string }) {
         ) : chain.state.s === 'error' ? (
           <StatusBadge tone="warning">{t('consola.auditoria.naoVerificada')}</StatusBadge>
         ) : chain.state.d.intact ? (
-          <StatusBadge tone="success" icon="shieldCheck">
-            {t('consola.auditoria.imutavel')}
-          </StatusBadge>
+          <Icon name="shieldCheck" size={13} />
         ) : (
           <StatusBadge tone="record" icon="alert">
             {t('consola.auditoria.partida')}

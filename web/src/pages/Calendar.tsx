@@ -148,7 +148,7 @@ export default function Calendar() {
             {t('ui.cancelar')}
           </Button>
           <IconButton icon="x" className="cal-show-narrow" label={t('ui.cancelar')} onClick={() => go(calendarHash.browse())} />
-          <Button type="submit" form={FORM_ID} variant="primary" icon="send" busy={formState.busy} disabled={formState.blocked}>
+          <Button type="submit" form={FORM_ID} variant="primary" busy={formState.busy} disabled={formState.blocked}>
             {formState.blocked ? t('schedule.form.salaIndisponivel') : t('schedule.form.guardar')}
           </Button>
         </PageBar>
