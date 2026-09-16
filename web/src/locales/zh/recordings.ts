@@ -25,7 +25,7 @@ export default {
     falhadas: '失败',
   },
   colunas: {
-    sessao: '会话',
+    sessao: '会议',
     sala: '会议室',
     data: '日期',
     tamanho: '大小',
