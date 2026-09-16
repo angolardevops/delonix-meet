@@ -22,13 +22,20 @@ Segurança da skill [`delonix-meet-backend`](../skills/delonix-meet-backend/SKIL
 
 **Um utilizador acabado de registar, noutra organização, com o email da vítima,
 consegue chegar a isto?** Faz a pergunta em voz alta para cada caminho novo. As três
-falhas abertas da auditoria de 2026-09-16 respondiam todas «sim»:
+falhas da auditoria de 2026-09-16 respondiam todas «sim», e as três foram provadas ao
+vivo antes de fechadas (R121):
 
-| # | Falha | Onde está |
-|---|---|---|
-| S1 | Qualquer registo passa a admin da plataforma | `storage.rs:277` + `auth.rs:322` |
-| S2 | O `odoo::provision` captura contas de outra org por email | `odoo.rs:284-340`, contra o invariante 10 / R25 |
-| S3 | Um membro arquivado mantém acesso | 17 verificações sem `archived_at` |
+| # | Falha | Fechada com | Não pode voltar a |
+|---|---|---|---|
+| S1 | Qualquer registo era admin da plataforma | `PLATFORM_ADMIN_USER_IDS` (UUIDs, fail-closed), `403` | derivar «admin da plataforma» de `org_members` |
+| S2 | `odoo::provision` capturava contas de outra org por email | passa por `odoo_sso::upsert_member` (R25) | ter um «liga por email» próprio |
+| S3 | Um membro arquivado mantinha acesso | `archived_at IS NULL` em quem PEDE | verificar pertença à mão fora de `org.rs` |
+
+**Ainda abertos** — quem tocar nestes caminhos fecha-os ou nomeia-os:
+- `org::add_employee` liga uma conta EXISTENTE por email, limitado só pelo domínio da
+  org — e o registo não verifica emails, por isso o domínio não prova nada;
+- `odoo::list_users` devolve membros arquivados ao Odoo;
+- S4 (SSRF no `odoo_url`, WebDAV, OIDC), S5 (segredos em claro), S6 (chaves sem escopos).
 
 ## O que verificas, por ordem
 
@@ -64,8 +71,8 @@ falhas abertas da auditoria de 2026-09-16 respondiam todas «sim»:
 - **Distingues confirmado de explorado.** «Li o código e o caminho existe» não é o
   mesmo que «corri o pedido e obtive os dados». Dizes qual dos dois tens.
 - **Não aceitas «ninguém sabe o email».** Um email não é um segredo.
-- **Não bloqueias por dívida antiga,** mas um diff que toque em S1–S3 sem os fechar nem
-  os nomear é bloqueado.
+- **Não bloqueias por dívida antiga,** mas um diff que toque num dos abertos sem o
+  fechar nem o nomear é bloqueado, e um diff que reabra S1–S3 também.
 
 ## Formato do relatório
 
@@ -73,6 +80,6 @@ falhas abertas da auditoria de 2026-09-16 respondiam todas «sim»:
 VEREDICTO: pronto | não pronto
 
 CRÍTICO / ALTO / MÉDIO (cada: ficheiro:linha · cenário concreto de ataque · pré-condições · correcção · teste negativo que o prova)
-S1–S3 NESTE DIFF: fechadas | tocadas e nomeadas | não tocadas
+ABERTOS NESTE DIFF: fechados | tocados e nomeados | não tocados · S1–S3: intactas | reabertas
 PROVADO (o que correu, contra quê) / NÃO VALIDADO
 ```

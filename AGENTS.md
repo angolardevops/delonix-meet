@@ -21,7 +21,7 @@ Princípios: **self-hosted first** · **security by design** · **enterprise sem
 ## 3. Invariantes de segurança (NUNCA quebrar)
 
 1. **Segredos fail-closed**: `config.rs` faz panic sem `JWT_SECRET`/`TURN_SECRET`/`DATABASE_URL` fortes. `DELONIX_ALLOW_INSECURE=1` só em dev.
-2. **Isolamento multi-tenant**: `rooms::can_access_room` / `room_access` e `org::*` escopam TUDO à(s) org(s) do utilizador. Nunca devolver dados cross-org. **A pertença decide-se em `org.rs` (filtra `archived_at IS NULL`)**, nunca num `FROM org_members` local; «admin de alguma org» nunca é admin da plataforma. Abertas: S1–S3 da auditoria de 2026-09-16.
+2. **Isolamento multi-tenant**: `rooms::can_access_room` / `room_access` e `org::*` escopam TUDO à(s) org(s) do utilizador. Nunca devolver dados cross-org. **A pertença decide-se em `org.rs` (filtra `archived_at IS NULL`)**, nunca num `FROM org_members` local; «admin de alguma org» nunca é admin da plataforma. S1–S3 da auditoria de 2026-09-16 fechadas no #76 (R121); o administrador da plataforma é `PLATFORM_ADMIN_USER_IDS`.
 3. **Room tokens curtos**: JWT separado, âmbito = 1 sala, expira em minutos. Sem token válido → WS recusado.
 4. **SSRF em webhooks**: validar host (bloquear privados/loopback/link-local/metadata) na criação E na entrega. Sem redirects.
 5. **Rate limit**: lockout de login por conta; rate limit por IP em `/api/v1`; WS com token bucket por socket (600 burst / 300 sustained — tolera a rajada de ICE).
@@ -61,7 +61,7 @@ Portas dev: backend `8180`, frontend `5173`, Postgres `5435`, Redis `6379`, cotu
 
 ## 7. Painel de revisores e skills
 
-**Skills** (`.claude/skills/`): `delonix-meet` (ponto de entrada e encaminhamento) · `delonix-meet-backend` (organização do Rust, helpers canónicos, catraca, S1–S3, ordem de migração) · `delonix-meet-api` (superfícies, checklist de rota nova, gRPC).
+**Skills** (`.claude/skills/`): `delonix-meet` (ponto de entrada e encaminhamento) · `delonix-meet-backend` (organização do Rust, helpers canónicos, catraca, segurança fechada e aberta, ordem de migração) · `delonix-meet-api` (superfícies, checklist de rota nova, gRPC).
 
 **Subagentes** em `.claude/agents/` (versionados com o código; invocar via Agent/`@`). Prefixo `delonix-meet-` porque no workspace `delonix-*` sem `-meet` é o MOTOR:
 

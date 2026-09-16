@@ -59,13 +59,11 @@ description: Ponto de entrada do Delonix Meet (videoconferência self-hosted —
   ciclo de 18 módulos** (§6 passo 3).
 - **Não há gRPC nem OpenAPI.** O desenho de onde entram está no ADR-0004 §4. Não
   proponhas gRPC entre o browser e o servidor.
-- **Há três falhas de segurança abertas** (auditoria S1–S3):
-  - qualquer registo passa a admin da plataforma;
-  - o `odoo::provision` captura contas de outra org;
-  - um membro arquivado mantém acesso.
-
-  Enquanto não estiverem fechadas, **nenhuma tarefa nesses caminhos está pronta sem as
-  corrigir ou as nomear no relatório**.
+- **S1–S3 fechadas no #76** (R121): administrador da plataforma declarado em
+  `PLATFORM_ADMIN_USER_IDS`, sincronização Odoo pela regra R25, membro arquivado sem
+  acesso. **Continuam abertos** `add_employee` por email, S4–S6 e o registo sem
+  verificação de email — ver `delonix-meet-backend` §Segurança. Uma tarefa nesses
+  caminhos fecha-os ou nomeia-os no relatório.
 - **Os revisores estão em `.claude/agents/delonix-meet-*.md`.** A pasta `agents` na raiz, que o
   harness citava, nunca existiu no git.
 
@@ -84,12 +82,13 @@ description: Ponto de entrada do Delonix Meet (videoconferência self-hosted —
 ## Ao fechar uma tarefa
 
 Propõe um a três pedidos seguintes, por raio de dano. Cada um nomeia o alvo, a skill, a
-prova a medir e o que fica de fora. Os três que esta auditoria deixou em aberto, por
-ordem:
+prova a medir e o que fica de fora. Os três que a auditoria deixou em aberto, por
+ordem (S1–S3 já fechadas no #76):
 
-1. «Fecha S1–S3 da auditoria de 2026-09-16 (`delonix-meet-backend`). Prova: três casos
-   negativos novos em `web/e2e/isolamento.mjs`, corridos contra servidor e Postgres
-   reais. Fora: a divisão em crates.»
+1. «Fecha a ligação de conta existente por email no `org::add_employee`
+   (`delonix-meet-backend`, revisor `delonix-meet-security`). Prova: caso negativo em
+   `web/e2e/isolamento.mjs`, contra servidor e Postgres reais, com o controlo positivo
+   antes. Fora: verificação de email no registo (decisão de produto).»
 2. «ADR-0004 §6 passos 1–2: `src/lib.rs`, `sfu_e2e` para `tests/`, `#[sqlx::test]` em
    org/meetings/recordings, e um job com Postgres no CI. Fora: mover SQL.»
 3. «ADR-0004 §6 passo 5, só a separação da v1 em inquilino/operador/Odoo, com OpenAPI
