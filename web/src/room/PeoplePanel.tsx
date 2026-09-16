@@ -5,6 +5,7 @@ import { Icon } from '../ui/icons'
 import { Avatar, Button, IconButton, Select, Tag, TextInput, Toggle, cx } from '../ui/kit'
 import { Countdown } from './Clocks'
 import { SpeakingBars } from './ParticipantTile'
+import { ligacaoFraca } from './qosAmostra'
 import type { Breakouts } from './useBreakouts'
 import type { Participants } from './useParticipants'
 import type { RemotePeer } from './useRoomCore'
@@ -255,7 +256,7 @@ export function PeoplePanel({
               <span className="rm-person__name">
                 <strong>{p.username}</strong>
                 {pq && (
-                  <small className={cx('dx-num', pq.lossPct > 5 ? 'rm-bad' : 'dx-muted')}>
+                  <small className={cx('dx-num', ligacaoFraca(pq.lossPct) ? 'rm-bad' : 'dx-muted')}>
                     {t('room.pessoas.qualidadePar', { kbps: pq.kbps, perda: pq.lossPct })}
                     {pq.jitterMs > 30 && ` · ${t('room.pessoas.jitter', { ms: pq.jitterMs })}`}
                     {pq.freezeMs > 0 && ` · ${t('room.pessoas.congelado', { ms: Math.round(pq.freezeMs) })}`}
@@ -271,7 +272,9 @@ export function PeoplePanel({
               {p.host ? (
                 <Tag tone="accent">{t('room.papel.anfitriao')}</Tag>
               ) : p.canAdmit ? (
-                <Tag>{t('room.papel.admiteEntradas')}</Tag>
+                <span title={t('room.papel.coAnfitriaoDica')}>
+                  <Tag>{t('room.papel.coAnfitriao')}</Tag>
+                </span>
               ) : p.is_pstn ? (
                 <Tag>{t('room.papel.telefone')}</Tag>
               ) : p.is_bot ? (

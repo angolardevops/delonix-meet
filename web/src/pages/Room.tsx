@@ -204,6 +204,14 @@ export default function Room({
         : recording.remoteRecorder
           ? t('room.gravacao.aGravarPor', { nome: recording.remoteRecorder })
           : null
+    // Fonte 2: outra câmara deste dispositivo, publicada como apresentação. Só
+    // em SFU (no mesh a partilha substitui a câmara), e não por cima de uma
+    // partilha de ecrã que já esteja a decorrer.
+    const outraCamara = media.devices.cams.find((d) => d.deviceId && d.deviceId !== media.camId)
+    const fonte2 =
+      core.topology === 'sfu' && outraCamara && (!share.sharing || share.sourceDeviceId)
+        ? { deviceId: outraCamara.deviceId, label: outraCamara.label || t('room.controlos.fonte2') }
+        : null
     const panelTitle: Partial<Record<Panel, string>> = {
       settings: t('room.painel.definicoes'),
       notes: t('room.painel.notas'),
@@ -231,9 +239,13 @@ export default function Room({
           total={peers.length + 1}
           viewMode={layout.effectiveViewMode}
           onViewMode={(v) => {
+            if (chrome.panel === 'multicam') closePanel()
             layout.setViewMode(v)
             if (v === 'grid') layout.setPinnedId(null)
           }}
+          studioAvailable={isHost && multicam.supported}
+          studioOpen={chrome.panel === 'multicam'}
+          onStudio={openMulticam}
           locale={locale}
         />
 
@@ -249,6 +261,7 @@ export default function Room({
               onTileMute={onTileMute}
               onTileKick={onTileKick}
               onRequestControl={remote.requestControl}
+              onOpenPeople={() => chrome.setPanel('people')}
             >
               <ReactionsLayer reactions={reactions.reactions} />
               {transcription.ccOn && transcription.caption && <CaptionOverlay caption={transcription.caption} />}
@@ -403,6 +416,16 @@ export default function Room({
           serverRecOn={!!recording.serverRec}
           onToggleServerRec={toggleServerRecording}
           onLeave={leave}
+          fonte2Label={fonte2?.label ?? null}
+          fonte2On={share.sharing && !!share.sourceDeviceId}
+          onFonte={(f) => {
+            const aPartilharFonte = share.sharing && !!share.sourceDeviceId
+            if (f === 'fonte2' && !aPartilharFonte && fonte2) void share.shareSource(fonte2.deviceId)
+            if (f === 'camara' && aPartilharFonte) share.requestOrToggleShare()
+          }}
+          canAdmit={session.canAdmit}
+          waitingCount={participants.waitingQueue.length}
+          onAdmitAll={participants.admitAll}
         />
 
         {invite.open && <InviteDialog invite={invite} />}

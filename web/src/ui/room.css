@@ -2711,3 +2711,172 @@ div.rm-only-narrow,
     flex-wrap: wrap;
   }
 }
+
+/* palco: plateia com «+N», «a falar», câmara de quem apresenta */
+.rm-strip__more {
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-3);
+  background: none;
+  color: var(--muted);
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.rm-strip__more:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.is-side > .rm-strip > .rm-strip__more {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+}
+.is-bottom > .rm-strip > .rm-strip__more {
+  height: 100%;
+  aspect-ratio: 16 / 10;
+}
+.rm-stage__talking {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  border-color: var(--success);
+  color: var(--success);
+}
+.rm-prescam {
+  --tone: var(--accent-strong);
+  position: absolute;
+  right: 12px;
+  bottom: 52px;
+  z-index: 3;
+  width: min(180px, 28%);
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: linear-gradient(150deg, color-mix(in srgb, var(--tone) 72%, var(--stage)), var(--stage) 78%);
+  container-type: size;
+}
+.rm-prescam.is-speaking {
+  border-color: var(--success);
+}
+.rm-prescam__name {
+  position: absolute;
+  left: 6px;
+  bottom: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: calc(100% - 12px);
+  padding: 2px 6px;
+  overflow: hidden;
+  border-radius: var(--r-2);
+  background: color-mix(in srgb, var(--stage) 74%, transparent);
+  font-size: 9.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.rm-prescam__hide {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--r-2);
+  background: color-mix(in srgb, var(--stage) 74%, transparent);
+  color: var(--text);
+  cursor: pointer;
+}
+.rm-prescam--min {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  aspect-ratio: 1;
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* barra: fonte, ocupação, rótulos e dispositivos no telemóvel */
+.rm-fonte {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+.rm-occupancy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 8px;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+.rm-ctrl__caption,
+.rm-devices-narrow {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .rm-stage > .rm-strip > .rm-strip__more {
+    width: auto;
+    height: 100%;
+    aspect-ratio: 16 / 11;
+  }
+  .rm-prescam {
+    bottom: 48px;
+    width: 34%;
+  }
+  .rm-ctrl,
+  .rm-ctrl--hangup {
+    width: 52px;
+    height: 52px;
+    align-content: center;
+    gap: 1px;
+  }
+  .rm-ctrl__caption {
+    display: block;
+    font-size: 8.5px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .rm-devices-narrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 40px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-3);
+    background: none;
+    color: var(--muted);
+    font-size: 11.5px;
+    cursor: pointer;
+  }
+}
+@media (max-width: 359px) {
+  .rm-ctrl__caption {
+    display: none;
+  }
+}
+@media (max-width: 767px) {
+  .rm-ctrl__caption {
+    max-width: 50px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

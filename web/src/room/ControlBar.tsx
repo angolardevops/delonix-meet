@@ -2,7 +2,7 @@ import { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { CallState } from '../callRecovery'
 import { Icon, IconName } from '../ui/icons'
-import { Button, Select, Toggle, cx } from '../ui/kit'
+import { Button, Segmented, Select, Toggle, cx } from '../ui/kit'
 import { Countdown } from './Clocks'
 import { MenuItem, PopoverPanel, usePopover } from './Popover'
 import type { LocalMedia } from './useLocalMedia'
@@ -23,10 +23,13 @@ export function Ctrl({
   pressed,
   popup,
   expanded,
+  caption,
   children,
 }: {
   icon: IconName
   label: string
+  /** Rótulo curto visível por baixo do ícone no telemóvel («Som», «Vídeo»). */
+  caption?: string
   onClick: () => void
   active?: boolean
   off?: boolean
@@ -50,6 +53,11 @@ export function Ctrl({
       aria-expanded={popup ? expanded : undefined}
     >
       <Icon name={icon} />
+      {caption && (
+        <span className="rm-ctrl__caption" aria-hidden="true">
+          {caption}
+        </span>
+      )}
       {children}
       {badge != null && <span className="rm-ctrl__badge dx-num">{badge}</span>}
     </button>
@@ -103,6 +111,15 @@ export interface ControlBarProps {
   serverRecOn: boolean
   onToggleServerRec: () => void
   onLeave: () => void
+  // fonte de vídeo (câmara ou segunda fonte publicada como apresentação)
+  /** Há uma segunda câmara que pode entrar como fonte 2 (só SFU). */
+  fonte2Label: string | null
+  fonte2On: boolean
+  onFonte: (fonte: 'camara' | 'fonte2') => void
+  // quem está na sala e à porta
+  canAdmit: boolean
+  waitingCount: number
+  onAdmitAll: () => void
 }
 
 export function ControlBar(p: ControlBarProps) {
@@ -164,6 +181,22 @@ export function ControlBar(p: ControlBarProps) {
             {p.callState === 'degraded' ? t('room.topo.ligacaoInstavel') : t('room.topo.aRestabelecer')}
           </span>
         )}
+        {p.fonte2Label && (
+          <span className="rm-hide-narrow">
+          <span className="rm-fonte">
+            <span className="dx-eyebrow">{t('room.controlos.fonte')}</span>
+            <Segmented<'camara' | 'fonte2'>
+              label={t('room.controlos.fonteDeVideo')}
+              value={p.fonte2On ? 'fonte2' : 'camara'}
+              onChange={p.onFonte}
+              options={[
+                { value: 'camara', label: t('room.controlos.fonteCamara') },
+                { value: 'fonte2', label: <span title={p.fonte2Label}>{t('room.controlos.fonte2')}</span> },
+              ]}
+            />
+          </span>
+          </span>
+        )}
         {/* `polite`: informação, não pedido — mas quem não vê fica a saber (R104). */}
         <span className="rm-controls__status" role="status" aria-live="polite">
           {p.status}
@@ -173,7 +206,7 @@ export function ControlBar(p: ControlBarProps) {
       <div className="rm-controls__center">
         <div className="rm-controls__group">
           <div className="rm-split" ref={micPop.wrapRef}>
-            <Ctrl icon={media.micOn ? 'mic' : 'micOff'} label={micLabel} off={!media.micOn} onClick={() => void media.toggleMic()} pressed={!media.micOn} />
+            <Ctrl icon={media.micOn ? 'mic' : 'micOff'} label={micLabel} caption={t('room.controlos.rotuloSom')} off={!media.micOn} onClick={() => void media.toggleMic()} pressed={!media.micOn} />
             <button
               type="button"
               className="rm-split__chevron"
@@ -224,7 +257,7 @@ export function ControlBar(p: ControlBarProps) {
             )}
           </div>
           <div className="rm-split" ref={camPop.wrapRef}>
-            <Ctrl icon={media.camOn && media.hasLocalVideo ? 'video' : 'videoOff'} label={camLabel} off={!media.camOn || !media.hasLocalVideo} onClick={() => void media.toggleCam()} pressed={!media.camOn} />
+            <Ctrl icon={media.camOn && media.hasLocalVideo ? 'video' : 'videoOff'} label={camLabel} caption={t('room.controlos.rotuloVideo')} off={!media.camOn || !media.hasLocalVideo} onClick={() => void media.toggleCam()} pressed={!media.camOn} />
             <button
               type="button"
               className="rm-split__chevron"
@@ -297,8 +330,9 @@ export function ControlBar(p: ControlBarProps) {
             onClick={() => p.onTogglePanel('chat')}
             badge={p.unreadChat > 0 ? (p.unreadChat > 9 ? '9+' : p.unreadChat) : undefined}
             className="rm-only-narrow"
+            caption={t('room.painel.chat')}
           />
-          <Ctrl icon="hand" label={p.handRaised ? t('room.controlos.baixarMao') : t('room.controlos.levantarMao')} active={p.handRaised} pressed={p.handRaised} onClick={p.onToggleHand} />
+          <Ctrl icon="hand" label={p.handRaised ? t('room.controlos.baixarMao') : t('room.controlos.levantarMao')} caption={t('room.controlos.rotuloMao')} active={p.handRaised} pressed={p.handRaised} onClick={p.onToggleHand} />
           <Ctrl
             icon={p.recording ? 'stop' : 'record'}
             label={p.recording ? t('room.controlos.pararGravacao') : t('room.controlos.gravar')}
@@ -309,7 +343,7 @@ export function ControlBar(p: ControlBarProps) {
             className="rm-hide-narrow"
           />
           <div className="rm-split" ref={morePop.wrapRef}>
-            <Ctrl icon="more" label={t('room.controlos.maisOpcoes')} active={morePop.open} popup expanded={morePop.open} onClick={morePop.toggle} />
+            <Ctrl icon="more" label={t('room.controlos.maisOpcoes')} caption={t('room.controlos.rotuloMais')} active={morePop.open} popup expanded={morePop.open} onClick={morePop.toggle} />
             {morePop.open && (
               <PopoverPanel label={t('room.controlos.maisOpcoes')} role="menu" align="end" className="rm-menu">
                 {/* No telemóvel a barra só leva o essencial; o resto vive aqui. */}
@@ -401,8 +435,17 @@ export function ControlBar(p: ControlBarProps) {
         </div>
         <button type="button" className="rm-ctrl rm-ctrl--hangup" onClick={p.onLeave} aria-label={t('room.controlos.sair')} title={t('room.controlos.sair')}>
           <Icon name="phoneOff" />
+          <span className="rm-ctrl__caption" aria-hidden="true">
+            {t('room.controlos.rotuloSair')}
+          </span>
         </button>
       </div>
+
+      {/* No telemóvel os seletores de dispositivo não cabem na barra: um botão só, ao alcance do polegar. */}
+      <button type="button" className="rm-devices-narrow" onClick={p.onOpenSettings}>
+        <Icon name="sliders" size={14} />
+        {t('room.controlos.mudarDispositivos')}
+      </button>
 
       {/* A recusa da janela flutuante tem de chegar ao ecrã, mesmo com o menu fechado. */}
       {pipErro && (
@@ -412,6 +455,20 @@ export function ControlBar(p: ControlBarProps) {
       )}
 
       <div className="rm-controls__side">
+        <span className="rm-hide-mid">
+        <span className="rm-occupancy">
+          <span className="dx-num">
+            {p.canAdmit && p.waitingCount > 0
+              ? t('room.controlos.naSalaEspera', { naSala: p.total, espera: p.waitingCount })
+              : t('room.controlos.naSala', { count: p.total })}
+          </span>
+          {p.canAdmit && p.waitingCount > 0 && (
+            <Button size="sm" variant="outline" onClick={p.onAdmitAll} aria-label={t('room.avisos.admitirTodos', { count: p.waitingCount })}>
+              {t('room.avisos.admitir')}
+            </Button>
+          )}
+        </span>
+        </span>
         <Ctrl icon="board" label={t('room.controlos.quadro')} active={p.wbOpen} pressed={p.wbOpen} onClick={p.onToggleWhiteboard} />
         <Ctrl icon="notes" label={t('room.controlos.notas')} active={p.panel === 'notes'} pressed={p.panel === 'notes'} onClick={() => p.onTogglePanel('notes')}>
           {p.transcribing && <span className="rm-ctrl__live" aria-hidden="true" />}
