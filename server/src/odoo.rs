@@ -93,14 +93,47 @@ impl FromRequestParts<Arc<AppState>> for OdooTokenAuth {
     }
 }
 
+// ---------- documentação OpenAPI ----------
+
+/// Rotas da BFF deste módulo: configuração da integração (admin) e as
+/// configurações públicas da página de login.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(get_config, save_config, rotate_token, public_settings),
+    components(schemas(
+        OdooConfig,
+        OdooConfigReq,
+        OdooTokenResp,
+        PublicSettings,
+        PublicCapabilities
+    ))
+)]
+pub struct ApiDoc;
+
+/// Rotas da API pública v1 deste módulo, usadas pelo módulo Odoo
+/// `nk_delonix_meet`.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(provision, list_users),
+    components(schemas(
+        ProvisionReq,
+        OdooUserEntry,
+        ProvisionResult,
+        SkippedUser,
+        OdooDirectoryUser
+    ))
+)]
+pub struct V1ApiDoc;
+
 // ---------- DTO da configuração ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct OdooConfig {
     pub org_id: Uuid,
     pub odoo_enabled: bool,
     pub odoo_url: Option<String>,
     pub odoo_db: Option<String>,
+    /// Primeiros 12 caracteres do token (`dlxo_…`); o token nunca volta a sair.
     pub odoo_token_prefix: Option<String>,
     pub odoo_admin_id: Option<Uuid>,
     pub odoo_synced_at: Option<DateTime<Utc>>,
@@ -108,9 +141,10 @@ pub struct OdooConfig {
     pub hide_sso_button: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct OdooConfigReq {
     pub odoo_enabled: bool,
+    /// Guardado sem `/` finais. Não é validado.
     pub odoo_url: Option<String>,
     pub odoo_db: Option<String>,
     pub hide_org_creation: bool,
@@ -120,6 +154,18 @@ pub struct OdooConfigReq {
 // ---------- handlers BFF (sessão admin) ----------
 
 /// `GET /api/orgs/{org_id}/integration/odoo`
+///
+/// Configuração da integração Odoo da organização (admin).
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/integration/odoo", tag = "odoo",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = OdooConfig),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_config(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -138,6 +184,20 @@ pub async fn get_config(
 }
 
 /// `PUT /api/orgs/{org_id}/integration/odoo`
+///
+/// Grava a configuração (admin). Na primeira gravação o autenticado fica
+/// registado como `odoo_admin_id`.
+#[utoipa::path(
+    put, path = "/api/orgs/{org_id}/integration/odoo", tag = "odoo",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    request_body = OdooConfigReq,
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn save_config(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -179,12 +239,33 @@ pub async fn save_config(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+/// Token de integração acabado de gerar. É a única vez que sai em claro.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OdooTokenResp {
+    /// `dlxo_<hex>`, para colar no módulo `nk_delonix_meet`.
+    pub token: String,
+    /// Primeiros 12 caracteres, o que fica visível na configuração.
+    pub prefix: String,
+}
+
 /// `POST /api/orgs/{org_id}/integration/odoo/token` — gera/rota token
+///
+/// Invalida o token anterior e ACTIVA a integração (`odoo_enabled = true`).
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/integration/odoo/token", tag = "odoo",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = OdooTokenResp),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn rotate_token(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<OdooTokenResp>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
 
     let token = gen_token();
@@ -213,14 +294,12 @@ pub async fn rotate_token(
         "",
     )
     .await;
-    Ok(Json(
-        serde_json::json!({ "token": token, "prefix": prefix }),
-    ))
+    Ok(Json(OdooTokenResp { token, prefix }))
 }
 
 // ---------- provisioning (Odoo → Delonix Meet) ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct OdooUserEntry {
     pub odoo_uid: i32,
     pub name: String,
@@ -229,7 +308,7 @@ pub struct OdooUserEntry {
     pub is_admin: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ProvisionReq {
     /// Nome da empresa Odoo (actualiza o nome da org se a org ainda tem o nome
     /// padrão ou se force_name=true).
@@ -240,7 +319,7 @@ pub struct ProvisionReq {
     pub users: Vec<OdooUserEntry>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ProvisionResult {
     pub org_id: Uuid,
     pub created: usize,
@@ -251,7 +330,7 @@ pub struct ProvisionResult {
     pub skipped: Vec<SkippedUser>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct SkippedUser {
     pub email: String,
     pub reason: String,
@@ -271,6 +350,20 @@ pub struct SkippedUser {
 /// sua org — até como admin. Auditoria 2026-09-16, S2, provado ao vivo antes
 /// desta correcção. Duas cópias de uma regra de acesso acabam por divergir; por
 /// isso a cópia saiu, em vez de ser remendada.
+#[utoipa::path(
+    post, path = "/api/v1/integration/odoo/provision", tag = "odoo",
+    description = "Provisiona o directório de utilizadores do Odoo na organização do token.\n\n\
+Autentica pelo token de integração `dlxo_` (a chave `dlx_` da organização também é aceite), \
+em `Authorization: Bearer …` ou `X-Integration-Token: …`. Uma entrada cuja conta pertence a \
+outra organização ou é local não é aplicada e vem em `skipped`.",
+    security(("api_key" = [])),
+    request_body = ProvisionReq,
+    responses(
+        (status = 200, body = ProvisionResult),
+        (status = 401, description = "Token em falta, desconhecido, ou integração desactivada.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Rate-limit da v1 por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn provision(
     State(state): State<Arc<AppState>>,
     odoo: OdooTokenAuth,
@@ -366,11 +459,35 @@ pub async fn provision(
     }))
 }
 
+/// Membro da organização, como o Odoo o vê.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OdooDirectoryUser {
+    pub id: Uuid,
+    pub email: String,
+    pub username: String,
+    /// `null` se a conta não veio do Odoo.
+    pub odoo_uid: Option<i32>,
+    /// Papel na organização (`admin` | `member`).
+    pub role: String,
+}
+
 /// `GET /api/v1/integration/odoo/users` — lista utilizadores para o Odoo
+#[utoipa::path(
+    get, path = "/api/v1/integration/odoo/users", tag = "odoo",
+    description = "Membros da organização do token, por `username`.\n\n\
+Autentica pelo token de integração `dlxo_` (a chave `dlx_` da organização também é aceite), \
+em `Authorization: Bearer …` ou `X-Integration-Token: …`.",
+    security(("api_key" = [])),
+    responses(
+        (status = 200, body = Vec<OdooDirectoryUser>),
+        (status = 401, description = "Token em falta, desconhecido, ou integração desactivada.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Rate-limit da v1 por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_users(
     State(state): State<Arc<AppState>>,
     odoo: OdooTokenAuth,
-) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+) -> Result<Json<Vec<OdooDirectoryUser>>, ApiError> {
     let rows = sqlx::query_as::<_, (Uuid, String, String, Option<i32>, String)>(
         "SELECT u.id, u.email, u.username, u.odoo_uid, m.role
          FROM users u
@@ -384,14 +501,12 @@ pub async fn list_users(
 
     Ok(Json(
         rows.into_iter()
-            .map(|(id, email, username, odoo_uid, role)| {
-                serde_json::json!({
-                    "id": id,
-                    "email": email,
-                    "username": username,
-                    "odoo_uid": odoo_uid,
-                    "role": role,
-                })
+            .map(|(id, email, username, odoo_uid, role)| OdooDirectoryUser {
+                id,
+                email,
+                username,
+                odoo_uid,
+                role,
             })
             .collect(),
     ))
@@ -399,11 +514,48 @@ pub async fn list_users(
 
 // ---------- configurações públicas da plataforma ----------
 
+/// Configurações públicas da instalação.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct PublicSettings {
+    /// Esconder «criar organização»: alguma org Odoo o pediu, ou tenancy `single`.
+    pub hide_org_creation: bool,
+    pub hide_sso_button: bool,
+    /// `saas` | `enterprise` | `personal`.
+    #[schema(value_type = String)]
+    pub edition: delonix_meet_core::edition::Edition,
+    /// `open` | `domain` | `invite` | `closed`.
+    #[schema(value_type = String)]
+    pub registration_mode: delonix_meet_core::edition::RegistrationMode,
+    /// `registration_mode` é `open` ou `domain`.
+    pub registration_open: bool,
+    /// `multi` | `single`.
+    #[schema(value_type = String)]
+    pub tenancy_mode: delonix_meet_core::edition::TenancyMode,
+    pub capabilities: PublicCapabilities,
+}
+
+/// O que ESTA instalação faz — cada flag lê a configuração que a liga.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct PublicCapabilities {
+    pub odoo_login: bool,
+    pub ai: bool,
+    pub pstn_dial_in: bool,
+    pub livestream: bool,
+    pub multi_organization: bool,
+    pub operator_surface: bool,
+}
+
 /// `GET /api/public/settings` — sem autenticação; usado na página de login.
 /// Agrega flags de todas as orgs com integração Odoo activa.
+#[utoipa::path(
+    get, path = "/api/public/settings", tag = "odoo",
+    responses(
+        (status = 200, body = PublicSettings),
+    )
+)]
 pub async fn public_settings(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<PublicSettings>, ApiError> {
     let row: Option<(Option<bool>, Option<bool>)> = sqlx::query_as(
         "SELECT BOOL_OR(hide_org_creation), BOOL_OR(hide_sso_button)
          FROM organizations WHERE odoo_enabled = TRUE",
@@ -425,22 +577,22 @@ pub async fn public_settings(
     // mostrar um botão para uma capacidade desligada. Cada linha lê a
     // configuração que liga a capacidade — nenhuma é afirmada sem código por
     // trás (check-capability-claims.sh).
-    Ok(Json(serde_json::json!({
-        "hide_org_creation": hide_org || c.tenancy_mode == TenancyMode::Single,
-        "hide_sso_button": hide_sso,
-        "edition": c.edition,
-        "registration_mode": c.registration_mode,
-        "registration_open": registration_open,
-        "tenancy_mode": c.tenancy_mode,
-        "capabilities": {
-            "odoo_login": c.platform_odoo_url.is_some() && c.platform_odoo_db.is_some(),
-            "ai": c.ollama_url.is_some(),
-            "pstn_dial_in": !c.voice_internal_secret.is_empty(),
-            "livestream": c.max_directos > 0,
-            "multi_organization": c.tenancy_mode == TenancyMode::Multi,
-            "operator_surface": c.edition.operator_surface(),
+    Ok(Json(PublicSettings {
+        hide_org_creation: hide_org || c.tenancy_mode == TenancyMode::Single,
+        hide_sso_button: hide_sso,
+        edition: c.edition,
+        registration_mode: c.registration_mode,
+        registration_open,
+        tenancy_mode: c.tenancy_mode,
+        capabilities: PublicCapabilities {
+            odoo_login: c.platform_odoo_url.is_some() && c.platform_odoo_db.is_some(),
+            ai: c.ollama_url.is_some(),
+            pstn_dial_in: !c.voice_internal_secret.is_empty(),
+            livestream: c.max_directos > 0,
+            multi_organization: c.tenancy_mode == TenancyMode::Multi,
+            operator_surface: c.edition.operator_surface(),
         },
-    })))
+    }))
 }
 
 // ---------- descoberta da config Odoo de um utilizador ----------

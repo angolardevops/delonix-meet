@@ -28,7 +28,41 @@ fn recordings_dir() -> std::path::PathBuf {
         .into()
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+/// Ficheiro webm em bruto (só para o spec).
+#[derive(utoipa::ToSchema)]
+#[schema(value_type = String, format = Binary)]
+#[allow(dead_code)]
+pub struct WebmBytes(Vec<u8>);
+
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        upload,
+        list,
+        library,
+        download,
+        share,
+        shares,
+        unshare,
+        get_link,
+        create_link,
+        revoke_link,
+        public_share,
+        public_share_download
+    ),
+    components(schemas(
+        Recording,
+        RecordingItem,
+        ShareReq,
+        ShareLink,
+        CreateLinkReq,
+        PublicShareResp
+    ))
+)]
+pub struct ApiDoc;
+
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Recording {
     pub id: Uuid,
     pub room_id: Uuid,
@@ -39,7 +73,7 @@ pub struct Recording {
 }
 
 /// Item da biblioteca, enriquecido para a UI.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct RecordingItem {
     pub id: Uuid,
     pub room_id: Uuid,
@@ -104,12 +138,30 @@ async fn can_access(state: &AppState, rec: &Recording, user_id: Uuid) -> Result<
     Ok(shared.is_some())
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct UploadQuery {
+    /// Nome de apresentação; omissão `<código>-<AAAAMMDD-HHMMSS>.webm`.
     #[serde(default)]
     pub name: Option<String>,
 }
 
+/// Carrega uma gravação da sala. O corpo é o ficheiro **em bruto** (não
+/// multipart); o `Content-Type` não é verificado. Máximo 512 MiB. Só quem
+/// participou na sala pode carregar — senão **401**, não 403.
+#[utoipa::path(
+    post, path = "/api/rooms/{code}/recordings", tag = "recordings",
+    security(("session" = [])),
+    params(("code" = String, Path, description = "Código da sala."), UploadQuery),
+    request_body(content = inline(WebmBytes), content_type = "video/webm", description = "Ficheiro webm em bruto."),
+    responses(
+        (status = 200, body = Recording),
+        (status = 400, description = "Corpo vazio.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida OU não participou na sala.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Sala inexistente.", body = crate::openapi::ErrorBody),
+        (status = 413, description = "Corpo acima de 512 MiB (rejeitado pelo axum, texto simples)."),
+    )
+)]
 pub async fn upload(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -160,6 +212,17 @@ pub async fn upload(
 }
 
 /// Gravações de uma sala específica (painel dentro da reunião).
+/// Só para participantes da sala — senão **401**, não 403.
+#[utoipa::path(
+    get, path = "/api/rooms/{code}/recordings", tag = "recordings",
+    security(("session" = [])),
+    params(("code" = String, Path, description = "Código da sala.")),
+    responses(
+        (status = 200, body = Vec<Recording>, description = "Mais recentes primeiro."),
+        (status = 401, description = "Sessão inválida OU não participou na sala.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -180,6 +243,14 @@ pub async fn list(
 }
 
 /// Biblioteca do utilizador: gravações onde participou + partilhadas consigo.
+#[utoipa::path(
+    get, path = "/api/recordings", tag = "recordings",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = Vec<RecordingItem>, description = "Inclui as falhadas (`status = failed`)."),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn library(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -219,8 +290,11 @@ pub async fn library(
 /// `?dl=1` pede o ficheiro para DESCARREGAR (attachment); sem isso, é para
 /// REPRODUZIR inline. Descarregar exige RBAC (dono + admin da org); reproduzir
 /// basta ter acesso (participante/partilhado/dono).
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct DownloadQuery {
+    /// `1` = descarregar (`attachment`, exige dono ou admin da org do dono);
+    /// outro valor ou ausente = reproduzir `inline` (basta ter acesso).
     #[serde(default)]
     pub dl: Option<i32>,
 }
@@ -252,6 +326,19 @@ async fn can_download(state: &AppState, rec: &Recording, user_id: Uuid) -> Resul
     Ok(is_admin)
 }
 
+/// O ficheiro webm de uma gravação, para reproduzir ou descarregar (`?dl=1`).
+#[utoipa::path(
+    get, path = "/api/recordings/{id}", tag = "recordings",
+    security(("session" = [])),
+    params(("id" = Uuid, Path), DownloadQuery),
+    responses(
+        (status = 200, body = inline(WebmBytes), content_type = "video/webm",
+         description = "`Content-Disposition: inline`, ou `attachment` com `dl=1`."),
+        (status = 400, description = "A gravação falhou e não tem ficheiro (mensagem = causa).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida OU sem acesso/permissão de download.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Gravação inexistente ou ficheiro em falta no disco.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn download(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -307,13 +394,28 @@ pub async fn download(
     ))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
+#[schema(as = RecordingShareReq)]
 pub struct ShareReq {
+    /// Utilizador com quem partilhar (só-leitura). Não é verificado que exista
+    /// nem que seja da mesma organização.
     pub user_id: Uuid,
 }
 
 /// Partilha só-leitura de uma gravação com outro utilizador.
-/// Apenas quem fez o upload (o "dono") pode partilhar.
+/// Apenas quem fez o upload (o "dono") pode partilhar. Idempotente.
+#[utoipa::path(
+    post, path = "/api/recordings/{id}/share", tag = "recordings",
+    security(("session" = [])),
+    params(("id" = Uuid, Path)),
+    request_body = ShareReq,
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 400, description = "Partilhar consigo próprio.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn share(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -344,7 +446,17 @@ pub async fn share(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// Remove a partilha com um utilizador.
+/// Remove a partilha com um utilizador (só o dono). Idempotente.
+#[utoipa::path(
+    delete, path = "/api/recordings/{id}/share/{user_id}", tag = "recordings",
+    security(("session" = [])),
+    params(("id" = Uuid, Path), ("user_id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn unshare(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -369,7 +481,9 @@ pub async fn unshare(
 
 // ---------- Links públicos de partilha ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+/// Link público de uma gravação. O hash da password nunca sai.
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = RecordingShareLink)]
 pub struct ShareLink {
     pub id: Uuid,
     pub recording_id: Uuid,
@@ -378,8 +492,10 @@ pub struct ShareLink {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
+#[schema(as = RecordingLinkReq)]
 pub struct CreateLinkReq {
+    /// Password opcional; vazia = sem password.
     #[serde(default)]
     pub password: Option<String>,
     #[serde(default)]
@@ -392,7 +508,19 @@ fn gen_token() -> String {
     delonix_meet_core::crypto::random_hex(16)
 }
 
-/// Cria (ou substitui) um link público de partilha.
+/// Cria (ou substitui) um link público de partilha. Substituir roda o token:
+/// o link anterior deixa de funcionar.
+#[utoipa::path(
+    post, path = "/api/recordings/{id}/link", tag = "recordings",
+    security(("session" = [])),
+    params(("id" = Uuid, Path)),
+    request_body = CreateLinkReq,
+    responses(
+        (status = 200, body = ShareLink),
+        (status = 401, description = "Sessão inválida OU não é o dono (401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_link(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -451,6 +579,16 @@ pub async fn create_link(
 }
 
 /// Devolve o link público existente de uma gravação (sem expor password_hash).
+#[utoipa::path(
+    get, path = "/api/recordings/{id}/link", tag = "recordings",
+    security(("session" = [])),
+    params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Option<ShareLink>, description = "`null` se não houver link."),
+        (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_link(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -475,7 +613,17 @@ pub async fn get_link(
     Ok(Json(link))
 }
 
-/// Revoga o link público de partilha.
+/// Revoga o link público de partilha. Idempotente.
+#[utoipa::path(
+    delete, path = "/api/recordings/{id}/link", tag = "recordings",
+    security(("session" = [])),
+    params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn revoke_link(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -505,18 +653,43 @@ pub async fn revoke_link(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct PublicShareQuery {
+    /// Password do link, se tiver. Vai na query string.
     #[serde(default)]
     pub password: Option<String>,
 }
 
+/// Metadados de uma gravação partilhada por link público.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct PublicShareResp {
+    pub recording_id: Uuid,
+    pub filename: String,
+    pub size_bytes: i64,
+    pub created_at: DateTime<Utc>,
+    /// `/api/share/<token>/download`.
+    pub download_url: String,
+    pub has_password: bool,
+}
+
 /// Acesso público a uma gravação via token (sem autenticação).
+///
+/// Link expirado responde como inexistente (404).
+#[utoipa::path(
+    get, path = "/api/share/{token}", tag = "recordings",
+    params(("token" = String, Path, description = "Token do link público."), PublicShareQuery),
+    responses(
+        (status = 200, body = PublicShareResp),
+        (status = 401, description = "O link tem password e a dada (ou a sua falta) não confere.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Token inexistente ou expirado.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn public_share(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
     Query(q): Query<PublicShareQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<PublicShareResp>, ApiError> {
     let row: Option<(
         Uuid,
         Option<String>,
@@ -554,17 +727,26 @@ pub async fn public_share(
         }
     }
 
-    Ok(Json(serde_json::json!({
-        "recording_id": rec_id,
-        "filename": filename,
-        "size_bytes": size_bytes,
-        "created_at": created_at,
-        "download_url": format!("/api/share/{token}/download"),
-        "has_password": password_hash.is_some(),
-    })))
+    Ok(Json(PublicShareResp {
+        recording_id: rec_id,
+        filename,
+        size_bytes,
+        created_at,
+        download_url: format!("/api/share/{token}/download"),
+        has_password: password_hash.is_some(),
+    }))
 }
 
 /// Download via link público (sem autenticação — token é a credencial).
+#[utoipa::path(
+    get, path = "/api/share/{token}/download", tag = "recordings",
+    params(("token" = String, Path, description = "Token do link público."), PublicShareQuery),
+    responses(
+        (status = 200, body = inline(WebmBytes), content_type = "video/webm", description = "Sempre `Content-Disposition: attachment`."),
+        (status = 401, description = "Password em falta ou errada.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Token inexistente, expirado, ou sem ficheiro (gravação falhada).", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn public_share_download(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
@@ -612,6 +794,16 @@ pub async fn public_share_download(
 }
 
 /// Lista com quem uma gravação está partilhada (só o dono).
+#[utoipa::path(
+    get, path = "/api/recordings/{id}/share", tag = "recordings",
+    security(("session" = [])),
+    params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Vec<crate::users::UserPublic>),
+        (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn shares(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

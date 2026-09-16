@@ -53,14 +53,45 @@ pub fn estimate_cost(duration_secs: i64, tariff_per_min: f64) -> f64 {
 
 // ---------- Tipos de saída ----------
 
-#[derive(Serialize, sqlx::FromRow)]
+/// Documentação OpenAPI do control plane de voz (`openapi.rs` junta-a). A API
+/// interna de IVR (`/api/voice/ivr/*`) fica de fora: o contrato dela é o
+/// `.proto`.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        create_room,
+        get_room,
+        list_participants,
+        close_room,
+        list_dids,
+        create_did,
+        list_cdr,
+        billing_summary
+    ),
+    components(schemas(
+        VoiceRoom,
+        VoiceRoomResp,
+        CreateVoiceRoomReq,
+        VoiceParticipant,
+        VoiceDid,
+        CreateDidReq,
+        VoiceCdr,
+        BillingSummary
+    ))
+)]
+pub struct ApiDoc;
+
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct VoiceRoom {
     pub id: Uuid,
     pub org_id: Uuid,
     pub room_code: String,
+    /// PIN de 6 dígitos para o dial-in.
     pub pin: String,
     pub did_id: Option<Uuid>,
+    /// `freeswitch` | `provider`.
     pub media_backend: String,
+    /// `active` | `closed`.
     pub status: String,
     pub created_at: DateTime<Utc>,
 }
@@ -70,7 +101,7 @@ pub struct VoiceRoom {
 const VOICE_ROOM_COLUMNS: &str =
     "id, org_id, room_code, pin, did_id, media_backend, status, created_at";
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct VoiceParticipant {
     pub id: Uuid,
     pub channel: String,
@@ -79,12 +110,15 @@ pub struct VoiceParticipant {
     pub left_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct VoiceDid {
     pub id: Uuid,
+    /// `null` = pool partilhado entre organizações.
     pub org_id: Option<Uuid>,
+    /// Número em +E.164.
     pub e164: String,
     pub market: String,
+    /// `shared` | `dedicated`.
     pub model: String,
     pub provider: String,
     pub active: bool,
@@ -94,7 +128,7 @@ pub struct VoiceDid {
 /// Estava copiada à mão em `create_did` e `list_dids` (ADR-0004).
 const VOICE_DID_COLUMNS: &str = "id, org_id, e164, market, model, provider, active, created_at";
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct VoiceCdr {
     pub id: Uuid,
     pub direction: String,
@@ -126,7 +160,7 @@ async fn caller_org(state: &AppState, user_id: Uuid) -> Result<Uuid, ApiError> {
 //  API do utilizador (autenticada por sessão, escopada à org)
 // ============================================================
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateVoiceRoomReq {
     /// Código da sala de conferência existente (rooms.code) a ligar ao dial-in.
     pub room_code: String,
@@ -135,7 +169,7 @@ pub struct CreateVoiceRoomReq {
     pub did_id: Option<Uuid>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct VoiceRoomResp {
     pub id: Uuid,
     pub room_code: String,
@@ -145,6 +179,20 @@ pub struct VoiceRoomResp {
 }
 
 /// Cria uma sala de voz (dial-in) para uma sala de conferência existente.
+///
+/// A sala de voz pertence à primeira organização do utilizador. O `room_code`
+/// é normalizado para minúsculas mas NÃO é verificado contra as salas.
+#[utoipa::path(
+    post, path = "/api/voice/rooms", tag = "voice",
+    security(("session" = [])),
+    request_body = CreateVoiceRoomReq,
+    responses(
+        (status = 200, body = VoiceRoomResp),
+        (status = 400, description = "Utilizador sem organização ou `room_code` vazio.", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 409, description = "Sem DID disponível para dial-in nesta organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -234,7 +282,17 @@ pub async fn create_room(
         .unwrap_or_else(|| ApiError::internal("não foi possível gerar PIN")))
 }
 
-/// Detalhes de uma sala de voz (membro da org dona).
+/// Detalhes de uma sala de voz (membro da org dona). Inclui o PIN.
+#[utoipa::path(
+    get, path = "/api/voice/rooms/{id}", tag = "voice",
+    security(("session" = [])),
+    params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, body = VoiceRoom),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "Inexistente ou de outra organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -255,7 +313,17 @@ pub async fn get_room(
     Ok(Json(vr))
 }
 
-/// Participantes de uma sala de voz.
+/// Participantes de uma sala de voz (membro da org dona).
+#[utoipa::path(
+    get, path = "/api/voice/rooms/{id}/participants", tag = "voice",
+    security(("session" = [])),
+    params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Vec<VoiceParticipant>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "Inexistente ou de outra organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_participants(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -281,7 +349,18 @@ pub async fn list_participants(
     Ok(Json(parts))
 }
 
-/// Encerra uma sala de voz (o PIN deixa de ser válido).
+/// Encerra uma sala de voz (o PIN deixa de ser válido). Basta ser membro da
+/// org dona (não exige admin nem ser o criador). Idempotente.
+#[utoipa::path(
+    post, path = "/api/voice/rooms/{id}/close", tag = "voice",
+    security(("session" = [])),
+    params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "Inexistente ou de outra organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn close_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -312,11 +391,14 @@ pub async fn close_room(
 
 // ---------- Inventário de DIDs (admin) ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateDidReq {
+    /// `+` seguido do número; 8–20 caracteres.
     pub e164: String,
+    /// Omissão `AO`.
     #[serde(default = "default_market")]
     pub market: String,
+    /// `dedicated`; qualquer outro valor conta como `shared` (omissão).
     #[serde(default = "default_model")]
     pub model: String,
     #[serde(default)]
@@ -333,6 +415,22 @@ fn default_model() -> String {
 }
 
 /// Adiciona um DID ao inventário de uma org (admin).
+///
+/// Com `model = shared` e `org_scoped` falso/ausente o DID vai para o pool
+/// PARTILHADO (`org_id = null`), visível a todas as organizações.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/voice/dids", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    request_body = CreateDidReq,
+    responses(
+        (status = 200, body = VoiceDid),
+        (status = 400, description = "Número fora do formato +E.164.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "Número já existe no inventário.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_did(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -374,7 +472,17 @@ pub async fn create_did(
     Ok(Json(did))
 }
 
-/// Lista os DIDs visíveis a uma org (dedicados + pool partilhado).
+/// Lista os DIDs visíveis a uma org (dedicados + pool partilhado). Admin.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/voice/dids", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Vec<VoiceDid>),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_dids(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -390,7 +498,17 @@ pub async fn list_dids(
     Ok(Json(dids))
 }
 
-/// CDRs da org para billing/auditoria (admin).
+/// CDRs da org para billing/auditoria (admin). Os 500 mais recentes.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/voice/cdr", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Vec<VoiceCdr>),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_cdr(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -407,8 +525,11 @@ pub async fn list_cdr(
     Ok(Json(rows))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct BillingQuery {
+    /// `week` (7 dias) | `month` (30, omissão) | `quarter` (90) | `year` (365).
+    /// Um valor desconhecido conta como 30 dias e é ecoado tal como veio.
     #[serde(default = "default_period")]
     pub period: String,
 }
@@ -416,7 +537,7 @@ fn default_period() -> String {
     "month".into()
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct BillingSummary {
     pub period: String,
     pub calls: i64,
@@ -426,6 +547,16 @@ pub struct BillingSummary {
 }
 
 /// Resumo de billing de voz do período (admin) — alimenta a faturação Delonix.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/voice/billing", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path), BillingQuery),
+    responses(
+        (status = 200, body = BillingSummary),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn billing_summary(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

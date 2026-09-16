@@ -18,12 +18,15 @@ use crate::{
     AppState,
 };
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+/// Sala de conferência. O `code` (`abc-defg-hij`) é a credencial de acesso
+/// por link, estilo Meet.
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Room {
     pub id: Uuid,
     pub code: String,
     pub name: String,
     pub owner_id: Uuid,
+    /// `mesh` | `sfu`.
     pub topology: String,
     pub waiting_room: bool,
     pub e2ee: bool,
@@ -41,6 +44,32 @@ pub struct Room {
 pub const ROOM_COLUMNS: &str =
     "id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at";
 
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        create_room,
+        get_room,
+        join_room,
+        ice_servers,
+        room_chat,
+        invite_to_room,
+        post_timings,
+        post_qos
+    ),
+    components(schemas(
+        Room,
+        CreateRoomReq,
+        JoinRoomResp,
+        ChatMessage,
+        InviteReq,
+        InviteResp,
+        TimingsReq,
+        QosSample
+    ))
+)]
+pub struct ApiDoc;
+
 /// Meet-style room code: `abc-defg-hij`, unambiguous lowercase letters.
 pub fn generate_room_code() -> String {
     const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz";
@@ -53,9 +82,11 @@ pub fn generate_room_code() -> String {
     format!("{}-{}-{}", part(3), part(4), part(3))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateRoomReq {
+    /// 1–100 caracteres (depois de `trim`).
     pub name: String,
+    /// `mesh` | `sfu` (omissão `sfu`).
     #[serde(default)]
     pub topology: Option<String>,
     #[serde(default)]
@@ -103,6 +134,17 @@ pub async fn insert_room(
     Err(ApiError::internal("could not allocate room code"))
 }
 
+/// Cria uma sala; o autenticado fica dono.
+#[utoipa::path(
+    post, path = "/api/rooms", tag = "rooms",
+    security(("session" = [])),
+    request_body = CreateRoomReq,
+    responses(
+        (status = 200, body = Room),
+        (status = 400, description = "Nome fora de 1–100, `topology` ou `format` inválidos.", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -137,6 +179,19 @@ pub async fn create_room(
     Ok(Json(room))
 }
 
+/// Metadados de uma sala. O código é a credencial: qualquer sessão válida que
+/// o conheça lê os metadados (o controlo de entrada faz-se no `join`). O código
+/// é normalizado para minúsculas.
+#[utoipa::path(
+    get, path = "/api/rooms/{code}", tag = "rooms",
+    security(("session" = [])),
+    params(("code" = String, Path, description = "Código da sala (`abc-defg-hij`).")),
+    responses(
+        (status = 200, body = Room),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -251,14 +306,41 @@ pub async fn can_access_room(
     Ok(room_access(state, user_id, room).await?.authorized)
 }
 
+/// Resposta do `join`: a sala e o token de sala para o WebSocket.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct JoinRoomResp {
+    pub room: Room,
+    /// JWT de sala (`typ = room`), de curta duração; a única credencial que o
+    /// `/ws` aceita. Leva `wait` (vai para a sala de espera) e `adm` (pode admitir).
+    pub room_token: String,
+    /// `/ws?token=<room_token>`.
+    pub ws_path: String,
+    /// Existe uma reunião agendada para esta sala (senão é chamada instantânea).
+    pub scheduled: bool,
+}
+
 /// Exchange an access token for a short-lived, signed **room token** — the
 /// only credential the signaling WebSocket accepts. Scoped to one room and
 /// expiring in minutes, it prevents room hijacking with stolen/old URLs.
+///
+/// Troca a sessão por um token de sala. Nunca recusa quem tem o código: quem
+/// não é dono, convidado na agenda nem co-anfitrião recebe um token com
+/// `wait = true` (sala de espera). O código é normalizado para minúsculas.
+#[utoipa::path(
+    post, path = "/api/rooms/{code}/join", tag = "rooms",
+    security(("session" = [])),
+    params(("code" = String, Path, description = "Código da sala.")),
+    responses(
+        (status = 200, body = JoinRoomResp),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn join_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(code): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<JoinRoomResp>, ApiError> {
     let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
         .bind(code.to_lowercase())
         .fetch_one(&state.db)
@@ -316,16 +398,29 @@ pub async fn join_room(
             .fetch_one(&state.db)
             .await?;
 
-    Ok(Json(json!({
-        "room": room,
-        "room_token": room_token,
-        "ws_path": format!("/ws?token={room_token}"),
-        "scheduled": scheduled,
-    })))
+    Ok(Json(JoinRoomResp {
+        room,
+        ws_path: format!("/ws?token={room_token}"),
+        room_token,
+        scheduled,
+    }))
 }
 
 /// Time-limited TURN credentials (coturn `use-auth-secret` / REST API spec):
 /// username = expiry unix ts, password = base64(HMAC-SHA1(secret, username)).
+///
+/// Configuração ICE para o `RTCPeerConnection`: STUN + TURN com credenciais
+/// válidas por 1 hora. Rate-limit por IP (partilha o limitador da v1).
+#[utoipa::path(
+    get, path = "/api/ice", tag = "rooms",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = serde_json::Value,
+         description = "`RTCConfiguration`: `{\"iceServers\": [{\"urls\": [\"stun:…\"]}, {\"urls\": [\"turn:…\"], \"username\": \"<expiry>\", \"credential\": \"<base64>\"}]}`, com `\"iceTransportPolicy\": \"relay\"` só quando o servidor força relay."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 429, description = "Rate-limit por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn ice_servers(
     State(state): State<Arc<AppState>>,
     _auth: AuthUser,
@@ -364,7 +459,7 @@ pub async fn ice_servers(
 
 // ---------- Chat persistente ----------
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ChatMessage {
     pub id: Uuid,
     pub user_id: Uuid,
@@ -374,6 +469,17 @@ pub struct ChatMessage {
 }
 
 /// Últimas 200 mensagens de chat de uma sala (requer autenticação + acesso).
+/// Sem acesso à sala devolve **401**, não 403. O código NÃO é normalizado.
+#[utoipa::path(
+    get, path = "/api/rooms/{code}/chat", tag = "rooms",
+    security(("session" = [])),
+    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    responses(
+        (status = 200, body = Vec<ChatMessage>, description = "Ordem cronológica ascendente."),
+        (status = 401, description = "Sessão inválida OU sem acesso à sala.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn room_chat(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -405,19 +511,44 @@ pub async fn room_chat(
 
 // ---------- Convidar membros para sala em curso ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct InviteReq {
+    /// 1–50 utilizadores. Só contam colegas activos de organização (o próprio
+    /// e estranhos são filtrados em silêncio).
     pub targets: Vec<Uuid>,
+    /// `video` | `voice` (omissão `video`).
     #[serde(default)]
     pub kind: Option<String>,
 }
 
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct InviteResp {
+    /// Destinatários com dispositivo ligado, a tocar.
+    pub ringing: Vec<Uuid>,
+    /// Destinatários sem ligação: ficam com chamada perdida.
+    pub offline: Vec<Uuid>,
+}
+
+/// Faz tocar os dispositivos de colegas de organização para a sala em curso.
+/// Sem acesso à sala devolve **401**, não 403. O código NÃO é normalizado.
+#[utoipa::path(
+    post, path = "/api/rooms/{code}/invite", tag = "rooms",
+    security(("session" = [])),
+    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    request_body = InviteReq,
+    responses(
+        (status = 200, body = InviteResp),
+        (status = 400, description = "`kind` inválido, `targets` fora de 1–50, ou nenhum destinatário válido depois do filtro.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida OU sem acesso à sala.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn invite_to_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(code): Path<String>,
     Json(req): Json<InviteReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<InviteResp>, ApiError> {
     let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
         .bind(&code)
         .fetch_optional(&state.db)
@@ -472,10 +603,7 @@ pub async fn invite_to_room(
     )
     .await;
 
-    Ok(Json(serde_json::json!({
-        "ringing": ringing,
-        "offline": offline,
-    })))
+    Ok(Json(InviteResp { ringing, offline }))
 }
 
 /// Amostra de qualidade reportada pelo CLIENTE.
@@ -489,7 +617,7 @@ pub async fn invite_to_room(
 /// app em cache antiga continua a reportar só os três originais, e a amostra
 /// dele continua a contar. Exigi-los perderia exactamente as amostras das
 /// sessões mais problemáticas.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct QosSample {
     pub rtt_ms: Option<i32>,
     pub loss_pct: f32,
@@ -562,7 +690,7 @@ fn clamp_candidate_pair(v: Option<String>) -> Option<String> {
 /// Todos os campos são `Option` e vêm do cliente: um marco que não aconteceu é
 /// `null`, e `null` significa «não sei», que é diferente de zero. Zero seria
 /// uma medição («foi instantâneo») e enviesava as médias para baixo.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct TimingsReq {
     #[serde(default)]
     pub join_ms: Option<i32>,
@@ -581,6 +709,20 @@ pub struct TimingsReq {
 }
 
 /// `POST /api/rooms/{code}/timings` — uma vez por sessão.
+///
+/// Valores limitados a 10 minutos (`ice_restarts`/`reconnects` a 1000) antes
+/// de gravar. Sem acesso à sala devolve **401**, não 403.
+#[utoipa::path(
+    post, path = "/api/rooms/{code}/timings", tag = "rooms",
+    security(("session" = [])),
+    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    request_body = TimingsReq,
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 401, description = "Sessão inválida OU sem acesso à sala.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn post_timings(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -636,6 +778,18 @@ pub async fn post_timings(
 /// Recebe uma amostra de qualidade (QoS) do cliente durante a chamada (~1/30s).
 /// Alimenta o cartão "Qualidade das chamadas" do admin (org_stats). Valores
 /// clampados; autorização igual à do resto da sala (can_access_room).
+/// Sem acesso à sala devolve **401**, não 403.
+#[utoipa::path(
+    post, path = "/api/rooms/{code}/qos", tag = "rooms",
+    security(("session" = [])),
+    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    request_body = QosSample,
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 401, description = "Sessão inválida OU sem acesso à sala.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn post_qos(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
