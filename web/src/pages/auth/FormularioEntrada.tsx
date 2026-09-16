@@ -155,7 +155,7 @@ export default function FormularioEntrada({
         <Field
           label={registo ? t('auth.registo.emailEmpresa') : t('auth.entrar.email')}
           htmlFor="auth-email"
-          hint={sso.aVerificar ? t('auth.sso.aVerificar') : registo ? undefined : t('consola.entrar.odoo')}
+          hint={sso.aVerificar ? t('auth.sso.aVerificar') : undefined}
         >
           <TextInput
             id="auth-email"
@@ -213,7 +213,7 @@ export default function FormularioEntrada({
 
             <Button
               type="submit"
-              variant={ssoVisivel ? 'secondary' : 'primary'}
+              variant="secondary"
               size="lg"
               block
               busy={busy}

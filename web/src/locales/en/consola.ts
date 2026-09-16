@@ -74,8 +74,8 @@ export default {
     titulo: 'One room. Meeting, video lesson and public broadcast.',
     texto: "Identity and contacts can come from your organisation's Odoo. End-to-end encryption when the meeting asks for it, and two-step verification.",
     multidestino: 'Broadcast to several destinations',
-    odoo: 'If your organisation uses Odoo, sign in with your Odoo email and password.',
-  },
+
+    codigoTitulo: 'Join with a code',  },
   inicio: {
     erroCopiar: 'Could not copy the link.',
     comecaEm_one: 'Starts in {{count}} minute',
@@ -94,7 +94,15 @@ export default {
     importarErro: 'Could not import the recording.',
     destino: 'Destination: {{destino}}',
     agendarOdoo: 'Sent to the Odoo calendar',
-  },
+
+    pesquisar: 'Search sessions, recordings, people…',
+    iniciarSub: 'Instant meeting',
+    novoEstudio: 'New studio',
+    novoEstudioSub: 'Multichannel broadcast',
+    odooCalendario: 'Odoo Calendar',
+    copiarLigacaoDe: 'Copy the link for room {{codigo}}',
+    importarLimite: 'MP4 up to 512 MB',
+    semRetencao: 'No retention limit',  },
   dispositivos: {
     titulo: 'Devices',
     testar: 'Test camera and microphone',
