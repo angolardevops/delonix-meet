@@ -25,6 +25,11 @@ export default {
     criar: 'Não foi possível criar o projecto.',
     autoGuardar: 'A gravação automática falhou — o armazenamento do browser pode estar cheio.',
   },
+  biblioteca: {
+    abrir: 'Abrir gravação da biblioteca',
+    erro: 'Não foi possível abrir a gravação.',
+    naoEncontrada: 'Essa gravação não está na tua biblioteca.',
+  },
   projectos: {
     titulo: 'Projectos neste dispositivo',
     nota: 'Cada projecto guarda as fontes e a lista de edições no browser. Apagar um projecto apaga as fontes dele.',

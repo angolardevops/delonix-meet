@@ -25,6 +25,11 @@ export default {
     criar: 'Could not create the project.',
     autoGuardar: 'Autosave failed — browser storage may be full.',
   },
+  biblioteca: {
+    abrir: 'Open a library recording',
+    erro: 'Could not open the recording.',
+    naoEncontrada: 'That recording is not in your library.',
+  },
   projectos: {
     titulo: 'Projects on this device',
     nota: 'Each project keeps its sources and edit list in the browser. Deleting a project deletes its sources.',

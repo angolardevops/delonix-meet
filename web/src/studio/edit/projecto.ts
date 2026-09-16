@@ -36,6 +36,12 @@ export interface Fonte {
   altura: number | null
   bytes: number
   criadaEm: number
+  /**
+   * Gravação da biblioteca de onde a fonte veio (só o id; o ficheiro foi
+   * descarregado para este dispositivo). Abrir a mesma gravação outra vez
+   * reabre o projecto em vez de descarregar de novo.
+   */
+  gravacao?: string
 }
 
 export interface Cor {

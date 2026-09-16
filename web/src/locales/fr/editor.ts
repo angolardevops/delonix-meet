@@ -25,6 +25,11 @@ export default {
     criar: 'Impossible de créer le projet.',
     autoGuardar: "L'enregistrement automatique a échoué — le stockage du navigateur est peut-être plein.",
   },
+  biblioteca: {
+    abrir: 'Ouvrir un enregistrement',
+    erro: "Impossible d'ouvrir l'enregistrement.",
+    naoEncontrada: "Cet enregistrement n'est pas dans ta bibliothèque.",
+  },
   projectos: {
     titulo: 'Projets sur cet appareil',
     nota: "Chaque projet garde ses sources et sa liste d'éditions dans le navigateur. Supprimer un projet supprime ses sources.",

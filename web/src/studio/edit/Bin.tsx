@@ -26,7 +26,7 @@ function etiqueta(f: Fonte): string {
   return f.tipo === 'audio' ? 'A' : 'V'
 }
 
-function Biblioteca({ onFechar, onEscolher }: { onFechar: () => void; onEscolher: (r: RecordingItem) => Promise<void> }) {
+export function Biblioteca({ onFechar, onEscolher }: { onFechar: () => void; onEscolher: (r: RecordingItem) => Promise<void> }) {
   const { t, i18n } = useTranslation()
   const [estado, setEstado] = useState<{ fase: 'a-carregar' } | { fase: 'erro'; msg: string } | { fase: 'ok'; lista: RecordingItem[] }>({ fase: 'a-carregar' })
   const [aImportar, setAImportar] = useState<string | null>(null)
@@ -115,10 +115,10 @@ export default function Bin({
   const musica = useRef<HTMLInputElement>(null)
   const temAudio = p.fontes.some((f) => f.tipo !== 'video')
 
-  async function importar(blob: Blob, nome: string, origem: OrigemDaFonte, faixaMusica = false) {
+  async function importar(blob: Blob, nome: string, origem: OrigemDaFonte, faixaMusica = false, gravacao?: string) {
     setAImportar(true)
     try {
-      const [f] = await acrescentar([{ blob, nome, origem }])
+      const [f] = await acrescentar([{ blob, nome, origem, ...(gravacao ? { gravacao } : {}) }])
       if (f && faixaMusica && f.tipo !== 'video') aplicar({ tipo: 'inserir', fonteId: f.id, faixa: 'A2', inicio: 0 })
     } catch (e) {
       onErro(apiErrorMessage(e, t('editor.bin.importarErro')))
@@ -324,7 +324,7 @@ export default function Bin({
             try {
               url = await recordingObjectUrl(r)
               const blob = await fetch(url).then((x) => x.blob())
-              await importar(blob, r.filename, 'biblioteca')
+              await importar(blob, r.filename, 'biblioteca', false, r.id)
             } catch (e) {
               onErro(apiErrorMessage(e, t('editor.bin.importarErro')))
             } finally {
