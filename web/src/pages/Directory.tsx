@@ -24,7 +24,7 @@
  */
 import { ReactNode, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Employee, Group, listBranches, listEmployees, listGroups, listMeetingRooms } from '../api'
+import { Employee, getSmsPolicy, Group, listBranches, listEmployees, listGroups, listMeetingRooms } from '../api'
 import { Async, AsyncSection, useAsync } from '../components/AsyncSection'
 import PageBar from '../components/PageBar'
 import { usePresence } from '../components/PresenceProvider'
@@ -35,6 +35,7 @@ import CreateOrgDialog from './admin/CreateOrgDialog'
 import { refusalAware, useOrgSelection } from './admin/orgShared'
 import CallStage, { GroupStage, OrgStage } from './directory/CallStage'
 import ContactList, { DirTab, Selection } from './directory/ContactList'
+import SmsDialog from './directory/SmsDialog'
 import '../ui/org.css'
 import '../ui/call.css'
 
@@ -149,6 +150,12 @@ function DirectoryBody({
     return u ? { kind: 'person', id: u } : null
   })
   const [creatingGroup, setCreatingGroup] = useState(false)
+  const [smsTo, setSmsTo] = useState<Employee | null>(null)
+  // Quem pode mandar SMS a contactos é decisão da org (`sms_send_policy`); o
+  // servidor volta a decidir no envio. Sem política lida, o botão não aparece.
+  const smsPolicy = useAsync(() => getSmsPolicy(orgId), [orgId])
+  const canSendSms = smsPolicy.state.s === 'ready' && (isAdmin || smsPolicy.state.d.send_policy === 'members')
+  const smsFor = (p: Employee) => (canSendSms && p.can_sms === true && p.user_id !== meId ? () => setSmsTo(p) : undefined)
 
   const branches = places.state.s === 'ready' ? places.state.d[0] : []
   const allPeople = useMemo(() => (people.state.s === 'ready' ? people.state.d : []), [people.state])
@@ -189,7 +196,7 @@ function DirectoryBody({
   }, [selection])
 
   function callPerson(p: Employee, kind: 'video' | 'voice') {
-    presence.startCall({ targets: [p.user_id], kind, title: t('org.dir.chamadaCom', { nome: p.username }) })
+    presence.startCall({ targets: [p.user_id], kind, title: t('org.dir.chamadaCom', { nome: p.username }), peerName: p.username })
   }
   function callGroup(g: Group, kind: 'video' | 'voice') {
     presence.startCall({ groupId: g.id, kind, title: g.name })
@@ -220,6 +227,7 @@ function DirectoryBody({
         me={selPerson.user_id === meId}
         online={isOnline(selPerson.user_id)}
         onCall={(k) => callPerson(selPerson, k)}
+        onSms={smsFor(selPerson)}
       />
     )
   } else if (selGroup) {
@@ -255,6 +263,7 @@ function DirectoryBody({
         focus={focus}
         onSelect={setSelection}
         onCallPerson={callPerson}
+        smsFor={smsFor}
         onCallGroup={callGroup}
         onCallBack={presence.callBack}
         onAckMissed={presence.ackMissed}
@@ -269,6 +278,15 @@ function DirectoryBody({
       <section className={selection ? 'call-main call-main--open' : 'call-main'} aria-label={t('org.dir.detalhe')}>
         {main}
       </section>
+      {smsTo && (
+        <SmsDialog
+          orgId={orgId}
+          person={smsTo}
+          senderName={shell.user.username}
+          onClose={() => setSmsTo(null)}
+          onRefused={() => people.reload()}
+        />
+      )}
       {creatingGroup && (
         <CreateGroupDialog
           orgId={orgId}

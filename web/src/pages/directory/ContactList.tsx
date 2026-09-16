@@ -1,7 +1,8 @@
 /**
  * Coluna de contactos das Chamadas (296 px, como no DelonixCall): marca e
  * título, pesquisa, separadores Contactos · Grupos · Histórico e a lista com
- * presença. Ligar de uma linha é o atalho (voz); o centro tem as duas formas.
+ * presença. Cada linha tem os atalhos voz, vídeo e — quando o servidor diz que
+ * a pessoa recebe e a org deixa enviar — SMS; o centro tem as mesmas três.
  *
  * O separador «Teclado» e a marcação PSTN do template não existem aqui: não há
  * chamadas de saída no servidor. No lugar do teclado ficam os grupos, que
@@ -34,6 +35,7 @@ export default function ContactList({
   focus,
   onSelect,
   onCallPerson,
+  smsFor,
   onCallGroup,
   onCallBack,
   onAckMissed,
@@ -59,6 +61,8 @@ export default function ContactList({
   focus: Selection
   onSelect: (s: Selection) => void
   onCallPerson: (p: Employee, kind: 'video' | 'voice') => void
+  /** Abre o SMS a esta pessoa; `undefined` quando não se pode (sem número, recusou, política). */
+  smsFor: (p: Employee) => (() => void) | undefined
   onCallGroup: (g: Group, kind: 'video' | 'voice') => void
   onCallBack: (m: MissedCall) => void
   onAckMissed: () => void
@@ -146,6 +150,7 @@ export default function ContactList({
                 const on = isOnline(p.user_id)
                 const me = p.user_id === meId
                 const active = focus?.kind === 'person' && focus.id === p.user_id
+                const sms = me ? undefined : smsFor(p)
                 return (
                   <li key={p.user_id} className={cx('call-row', active && 'call-row--active')}>
                     <button
@@ -169,7 +174,11 @@ export default function ContactList({
                       </span>
                     </button>
                     {!me && (
-                      <IconButton icon="phone" bare className="call-rowbtn" label={t('org.dir.ligarVozA', { nome: p.username })} onClick={() => onCallPerson(p, 'voice')} />
+                      <span className="call-rowbtns">
+                        <IconButton icon="phone" bare className="call-rowbtn" label={t('org.dir.ligarVozA', { nome: p.username })} onClick={() => onCallPerson(p, 'voice')} />
+                        <IconButton icon="video" bare className="call-rowbtn" label={t('org.dir.ligarVideoA', { nome: p.username })} onClick={() => onCallPerson(p, 'video')} />
+                        {sms && <IconButton icon="sms" bare className="call-rowbtn" label={t('org.sms.enviarA', { nome: p.username })} onClick={sms} />}
+                      </span>
                     )}
                   </li>
                 )

@@ -621,7 +621,8 @@ export interface Branch {
   name: string
   location: string
 }
-export interface Employee {
+/** `phone`/`phone_source`/`can_sms` vêm da extensão de SMS (ADR-0005 §Contactos). */
+export interface Employee extends Partial<EmployeeSmsFields> {
   user_id: string
   username: string
   email: string

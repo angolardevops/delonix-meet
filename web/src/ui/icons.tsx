@@ -117,6 +117,8 @@ const P: Record<string, string> = {
   highlighter: 'M4 20h16M7 16l9.5-10 3.5 3.5L10 19H7z',
   shapes: 'M4 4h7v7H4zM17.5 13a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM16 4l4 7h-8z',
   ruler: 'M3 9h18v6H3zM7 9v3M11 9v3M15 9v3M19 9v2',
+  // chamadas · SMS (frontend/chamadas-voz-sms)
+  sms: 'M4 5h16v11H9l-5 4zM8 9h8M8 12h5',
 }
 
 export type IconName = keyof typeof P

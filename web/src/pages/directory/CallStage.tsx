@@ -99,7 +99,19 @@ function SideColumn({ side, actions, target }: { side: Side; actions: ReactNode;
   )
 }
 
-function Controls({ onCall, video, voice }: { onCall: (k: 'video' | 'voice') => void; video: string; voice: string }) {
+function Controls({
+  onCall,
+  video,
+  voice,
+  onSms,
+  sms,
+}: {
+  onCall: (k: 'video' | 'voice') => void
+  video: string
+  voice: string
+  onSms?: () => void
+  sms?: string
+}) {
   return (
     <div className="call-controls" role="group">
       <button type="button" className="call-ctl call-ctl--primary" onClick={() => onCall('video')}>
@@ -114,6 +126,14 @@ function Controls({ onCall, video, voice }: { onCall: (k: 'video' | 'voice') => 
         </span>
         <span>{voice}</span>
       </button>
+      {onSms && (
+        <button type="button" className="call-ctl" onClick={onSms}>
+          <span className="call-ctl__btn" aria-hidden="true">
+            <Icon name="sms" size={17} />
+          </span>
+          <span>{sms}</span>
+        </button>
+      )}
     </div>
   )
 }
@@ -132,8 +152,9 @@ export default function CallStage({
   me,
   online,
   onCall,
+  onSms,
   ...side
-}: Side & { person: Employee; me: boolean; online: boolean; onCall: (k: 'video' | 'voice') => void }) {
+}: Side & { person: Employee; me: boolean; online: boolean; onCall: (k: 'video' | 'voice') => void; onSms?: () => void }) {
   const { t } = useTranslation()
   const locale = useLocaleTag()
   const ago = formatAgo(person.last_active, locale)
@@ -177,7 +198,7 @@ export default function CallStage({
             <p className="call-note">{t('org.dir.tuMesmo')}</p>
           ) : (
             <>
-              <Controls onCall={onCall} video={t('org.dir.videochamada')} voice={t('org.dir.chamadaVoz')} />
+              <Controls onCall={onCall} video={t('org.dir.videochamada')} voice={t('org.dir.chamadaVoz')} onSms={onSms} sms={t('org.sms.botao')} />
               {!online && <p className="call-note">{t('org.dir.offlineNota')}</p>}
             </>
           )}
@@ -188,6 +209,7 @@ export default function CallStage({
             <>
               {!me && <ActionTile icon="video" label={t('org.dir.videochamada')} onClick={() => onCall('video')} />}
               {!me && <ActionTile icon="phone" label={t('org.dir.chamadaVoz')} onClick={() => onCall('voice')} />}
+              {onSms && <ActionTile icon="sms" label={t('org.sms.enviarSms')} onClick={onSms} />}
               {commonActions(side, t)}
             </>
           }

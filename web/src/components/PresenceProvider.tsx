@@ -10,6 +10,7 @@ import { ackMissedCalls } from '../api'
 import { MissedCall, Presence, PresenceEvent } from '../presence'
 import { startRingtone } from '../ringtone'
 import { RING_TIMEOUT_MS, roomCodeInHash } from '../callRing'
+import { DirectCall, loadDirectCall, saveDirectCall } from '../room/voiceCall'
 import { Icon } from '../ui/icons'
 import { Avatar, Button, IconButton } from '../ui/kit'
 
@@ -23,7 +24,10 @@ interface Ringing {
 interface PresenceCtx {
   online: Set<string>
   isOnline: (id: string) => boolean
-  startCall: (opts: { targets?: string[]; groupId?: string; kind: 'video' | 'voice'; title?: string }) => void
+  /** `peerName`: nome de quem se chama, para o ecrã de voz o mostrar antes de atender. */
+  startCall: (opts: { targets?: string[]; groupId?: string; kind: 'video' | 'voice'; title?: string; peerName?: string }) => void
+  /** O que se sabe de uma chamada directa desta sessão (quem liga, se tocou, se recusaram). */
+  directCall: (roomCode: string) => DirectCall | null
   missed: MissedCall[]
   ackMissed: () => void
   callBack: (mc: MissedCall) => void
@@ -50,12 +54,30 @@ export default function PresenceProvider({
   const [incoming, setIncoming] = useState<Ringing[]>([])
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([])
   const [missed, setMissed] = useState<MissedCall[]>([])
+  /** Chamadas directas desta sessão, por código de sala (espelho do sessionStorage). */
+  const [calls, setCalls] = useState<Record<string, DirectCall>>({})
+  /** O `call-start` enviado à espera do `ringing` que traz o código da sala. */
+  const pendingStart = useRef<{ kind: 'video' | 'voice'; peerName: string | null } | null>(null)
   const notif = useRef<Notification | null>(null)
   // Chamadas que ESTA sessão fez e que ainda ninguém atendeu: se quem liga
   // sair da sala antes disso, os outros deixam de tocar (`call-cancel`).
   const outgoing = useRef(new Set<string>())
   const enterRef = useRef(onEnterRoom)
   enterRef.current = onEnterRoom
+
+  const rememberCall = useCallback((c: DirectCall) => {
+    saveDirectCall(c)
+    setCalls((cur) => ({ ...cur, [c.room_code]: c }))
+  }, [])
+  const updateCall = useCallback((code: string, fn: (c: DirectCall) => DirectCall) => {
+    setCalls((cur) => {
+      const prev = cur[code] ?? loadDirectCall(code)
+      if (!prev) return cur
+      const next = fn(prev)
+      saveDirectCall(next)
+      return { ...cur, [code]: next }
+    })
+  }, [])
 
   const pushToast = useCallback((text: string) => {
     const id = Date.now() + Math.random()
@@ -103,13 +125,40 @@ export default function PresenceProvider({
             }
           }
           break
-        case 'ringing':
-          // Quem liga entra logo na sala e espera pelos outros.
+        case 'ringing': {
+          // Quem liga entra logo na sala e espera pelos outros. O que o
+          // servidor disse (a quem tocou, quem estava offline) fica com a sala.
           outgoing.current.add(e.room_code)
+          const pend = pendingStart.current
+          pendingStart.current = null
+          rememberCall({
+            room_code: e.room_code,
+            kind: e.kind,
+            direction: 'out',
+            peer_name: pend?.peerName ?? null,
+            ringing: e.ringing,
+            offline: e.offline,
+            accepted: [],
+            declined: [],
+            answered_by_server: true,
+          })
           enterRef.current(e.room_code, e.kind === 'voice')
           break
+        }
         case 'accepted':
           outgoing.current.delete(e.room_code)
+          updateCall(e.room_code, (c) => ({ ...c, accepted: [...new Set([...c.accepted, e.by_id])] }))
+          break
+        case 'declined':
+          updateCall(e.room_code, (c) => ({ ...c, declined: [...new Set([...c.declined, e.by_id])] }))
+          break
+        case 'error':
+          // Um `call-start` recusado (sem destinatários válidos, sala por criar)
+          // não abre sala nenhuma: sem isto, o clique em «Ligar» não fazia nada.
+          if (pendingStart.current) {
+            pendingStart.current = null
+            pushToast(e.message)
+          }
           break
         case 'cancelled':
           setIncoming((cur) => cur.filter((c) => c.room_code !== e.room_code))
@@ -175,19 +224,35 @@ export default function PresenceProvider({
     () => ({
       online,
       isOnline: (id) => online.has(id),
-      startCall: (opts) => presenceRef.current?.startCall(opts),
+      startCall: (opts) => {
+        pendingStart.current = { kind: opts.kind, peerName: opts.peerName ?? null }
+        presenceRef.current?.startCall(opts)
+      },
+      directCall: (code) => calls[code] ?? loadDirectCall(code),
       missed,
       ackMissed,
       callBack: (mc) => {
+        pendingStart.current = { kind: mc.kind, peerName: mc.caller_name }
         presenceRef.current?.startCall({ targets: [mc.caller_id], kind: mc.kind, title: t('shell.chamada.com', { nome: mc.caller_name }) })
         ackMissed()
       },
     }),
-    [online, missed, ackMissed, t],
+    [online, missed, ackMissed, t, calls],
   )
 
   function accept(c: Ringing) {
     presenceRef.current?.accept(c.room_code)
+    rememberCall({
+      room_code: c.room_code,
+      kind: c.kind,
+      direction: 'in',
+      peer_name: c.caller_name,
+      ringing: [],
+      offline: [],
+      accepted: [],
+      declined: [],
+      answered_by_server: true,
+    })
     setIncoming((cur) => cur.filter((x) => x.room_code !== c.room_code))
     onEnterRoom(c.room_code, c.kind === 'voice')
   }
