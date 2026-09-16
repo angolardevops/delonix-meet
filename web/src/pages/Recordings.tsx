@@ -41,6 +41,11 @@ function storedView(): View {
   }
 }
 
+function hashParam(name: string): string | null {
+  const i = location.hash.indexOf('?')
+  return i < 0 ? null : new URLSearchParams(location.hash.slice(i + 1)).get(name)
+}
+
 export default function Recordings() {
   const { t, i18n } = useTranslation()
   const { state, reload } = useAsync((signal) => recordingsLibrary(signal), [])
@@ -50,8 +55,9 @@ export default function Recordings() {
   // Seleccionada: o painel mostra-a. `picked` distingue a escolha da pessoa
   // (carrega o vídeo, e em ecrã estreito abre o painel por cima) da selecção
   // por omissão (primeira pronta, sem descarregar nada).
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [picked, setPicked] = useState(false)
+  // `#/recordings?id=<id>` (pesquisa global) abre já essa gravação.
+  const [selectedId, setSelectedId] = useState<string | null>(() => hashParam('id'))
+  const [picked, setPicked] = useState(() => hashParam('id') !== null)
   const [panelOpen, setPanelOpen] = useState(false)
   const [shareTarget, setShareTarget] = useState<RecordingItem | null>(null)
 
