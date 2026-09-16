@@ -53,7 +53,7 @@ const browser = await chromium.launch({
 const ctx = { ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] }
 const page = await (await browser.newContext(ctx)).newPage()
 await entrar(page, APP, conta)
-await page.getByRole('button', { name: /nova reuni/i }).first().click()
+await page.getByRole('button', { name: /iniciar agora/i }).first().click()
 await page.waitForFunction(() => /^#\/r\/[a-z-]+$/.test(location.hash), null, { timeout: 60000 })
 const rota = await page.evaluate(() => location.hash)
 await page.getByRole('button', { name: /entrar na sessão/i }).first().click({ timeout: 60000 })

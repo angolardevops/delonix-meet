@@ -128,7 +128,9 @@ function EngineRow({
         <div className="ai-engine__head">
           <span className="ai-engine__title">
             <strong>{title}</strong>
-            <small className="dx-num">{where}</small>
+            <small className="dx-num" title={where}>
+              {where}
+            </small>
           </span>
           {badge}
         </div>
@@ -237,7 +239,7 @@ export default function Intelligence() {
                       {m.installed ? t('consola.ia.modeloTamanho', { tamanho: fmtMb(m.bytes, locale) }) : t('consola.ia.modeloNome')}
                     </span>
                     <span className="dx-spacer" />
-                    <span className="dx-num dx-muted ai-engine__cache" data-testid="ai-cache">
+                    <span className="dx-num dx-muted ai-engine__cache" data-testid="ai-cache" title={m.cached ? t('consola.ia.emCache') : t('consola.ia.semCache')}>
                       {m.cached ? t('consola.ia.emCache') : t('consola.ia.semCache')}
                       {m.originUsage !== null && ` · ${t('consola.ia.usoOrigem', { tamanho: fmtMb(m.originUsage, locale) })}`}
                     </span>
@@ -271,14 +273,23 @@ export default function Intelligence() {
                   </Button>
                 </div>
               </EngineRow>
-              <EngineRow title={t('consola.ia.ollama')} where={t('consola.ia.ollamaOnde')} badge={<span className="ai-tag">{t('consola.ia.noServidor')}</span>}>
-                <div className="ai-engine__actions">
-                  <span className="dx-spacer" />
-                  <ProbeResult probe={llmProbe} />
-                  <Button size="sm" variant="secondary" busy={llmProbe.s === 'busy'} onClick={() => void testLlm()}>
-                    {t('consola.ia.testar')}
-                  </Button>
-                </div>
+              <EngineRow
+                title={t('consola.ia.ollama')}
+                where={t('consola.ia.ollamaOnde')}
+                badge={
+                  <span className="ai-engine__side">
+                    <span className="ai-tag">{t('consola.ia.noServidor')}</span>
+                    <Button size="sm" variant="secondary" busy={llmProbe.s === 'busy'} onClick={() => void testLlm()}>
+                      {t('consola.ia.testar')}
+                    </Button>
+                  </span>
+                }
+              >
+                {llmProbe.s !== 'idle' && llmProbe.s !== 'busy' && (
+                  <div className="ai-engine__actions">
+                    <ProbeResult probe={llmProbe} />
+                  </div>
+                )}
               </EngineRow>
               <EngineRow
                 dashed
@@ -405,7 +416,9 @@ function Feature({ title, state, on }: { title: string; state: string; on: boole
     <li className="ai-feature">
       <span className="ai-feature__text">
         <strong>{title}</strong>
-        <small className="dx-num dx-muted">{state}</small>
+        <small className="dx-num dx-muted" title={state}>
+          {state}
+        </small>
       </span>
       <span className={on ? 'ai-tag ai-tag--ok' : 'ai-tag'}>{on ? t('consola.ia.existe') : t('consola.ia.porLigar')}</span>
     </li>

@@ -34,7 +34,7 @@ const novaPagina = async () =>
 // ---- O anfitrião abre a sala ----
 const page = await novaPagina()
 await entrar(page, APP, await criarConta(API, 'reent'))
-await page.getByRole('button', { name: /nova reuni/i }).first().click()
+await page.getByRole('button', { name: /iniciar agora/i }).first().click()
 await page.waitForFunction(() => /^#\/r\/[a-z-]+$/.test(location.hash), null, { timeout: 60000 })
 const codigo = await page.evaluate(() => location.hash.split('/r/')[1])
 await page.getByRole('button', { name: /entrar na sessão/i }).first().click({ timeout: 60000 })
