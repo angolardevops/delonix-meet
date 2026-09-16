@@ -10,7 +10,13 @@
 //      a mensagem fica `failed` com o command_status do bind — não fica `sent`.
 //   3. Sem rota: Movicel não está configurada e não há USB → 422 com a razão.
 //   4. Idempotência: a mesma `Idempotency-Key` devolve a mesma mensagem.
-//   5. (Opcional, `AGENT_BIN`) o agente VERDADEIRO lê o USB desta máquina e o
+//   5. SMS de reunião: agendar com `sms_invite` e `sms_reminder_min` põe no SMSC
+//      o convite E o lembrete (este pelo varrimento do worker, sem outro pedido),
+//      para o número de cada convidado resolvido no servidor, em GSM-7 num só
+//      segmento, com a hora em WAT e o link do domínio da org. Quem desligou os
+//      SMS de reunião e quem só tem rota Movicel (por contratar) ficam de fora,
+//      com o código — e não chega nada ao SMSC para eles.
+//   6. (Opcional, `AGENT_BIN`) o agente VERDADEIRO lê o USB desta máquina e o
 //      inventário aparece na consola; um telefone sem modem exposto não pode ser
 //      escolhido (422 com a razão do agente).
 //
@@ -99,8 +105,16 @@ function submitHeader(body) {
   const srcEnd = body.indexOf(0, i)
   const source = body.subarray(i, srcEnd).toString('latin1')
   i = srcEnd + 3
-  const dest = body.subarray(i, body.indexOf(0, i)).toString('latin1')
-  return { srcTon, source, dest }
+  const destEnd = body.indexOf(0, i)
+  const dest = body.subarray(i, destEnd).toString('latin1')
+  // esm, protocol, priority, schedule(""), validity(""), registered, replace, data_coding, default_msg, sm_length
+  const dataCoding = body[destEnd + 8]
+  const smLength = body[destEnd + 10]
+  const sm = body.subarray(destEnd + 11, destEnd + 11 + smLength)
+  // Septetos GSM por empacotar: nas letras, dígitos e na pontuação dos modelos
+  // coincidem com o ASCII.
+  const text = dataCoding === 0 ? sm.toString('latin1') : null
+  return { srcTon, source, dest, dataCoding, text }
 }
 
 async function ateEstado(orgId, token, id, estados, ms = 15000) {
@@ -204,7 +218,83 @@ const grande = await req(`/api/orgs/${orgId}/sms/messages?page_size=101`, { toke
 if (grande.status === 400) ok('page_size acima de 100 é recusado, não cortado em silêncio')
 else nok('page_size > 100', `${grande.status}`)
 
-// ---------- 5. agente verdadeiro contra o USB desta máquina ----------
+// ---------- 5. SMS de reunião: convite e lembrete ----------
+{
+  const dominio = email.split('@')[1]
+  await req(`/api/orgs/${orgId}/settings`, { token, method: 'POST', body: { domain: 'meet.exemplo.ao', retention_days: 0 } })
+  const membro = async (nome, telefone) => {
+    const r = await req(`/api/orgs/${orgId}/employees`, {
+      token, method: 'POST', body: { email: `${nome}-${marca}@${dominio}`, username: `${nome}-${marca}`, password: PW },
+    })
+    const t = await req(`/api/orgs/${orgId}/employees/${r.json?.user_id}/phone`, { token, method: 'PUT', body: { phone: telefone } })
+    if (t.status !== 200) nok(`telefone de ${nome}`, `${t.status} ${JSON.stringify(t.json)}`)
+    return { userId: r.json?.user_id, email: `${nome}-${marca}@${dominio}` }
+  }
+  const ines = await membro('ines', '923 700 800') // Unitel, recebe
+  const jose = await membro('jose', '923 700 900') // Unitel, desligou SMS de reunião
+  const kiala = await membro('kiala', '912 700 000') // Movicel: sem rota
+  const loginJose = await req('/api/auth/login', { method: 'POST', body: { email: jose.email, password: PW } })
+  await req('/api/users/me/sms-preferences', {
+    token: loginJose.json?.access_token, method: 'PUT', body: { meeting_opt_out: true },
+  })
+
+  const antesReuniao = submits.length
+  // Começa daqui a 4 min com lembrete 5 min antes: o lembrete já está vencido e
+  // o próximo varrimento (≤ 20 s) tem de o enviar sem mais nenhum pedido.
+  const inicio = new Date(Date.now() + 4 * 60_000)
+  const titulo = 'Revisão das acções do trimestre'
+  const r = await req('/api/meetings', {
+    token, method: 'POST',
+    body: {
+      title: titulo, starts_at: inicio.toISOString(), duration_min: 30,
+      invitee_ids: [ines.userId, jose.userId, kiala.userId], sms_invite: true, sms_reminder_min: 5,
+    },
+  })
+  const saltos = Object.fromEntries((r.json?.sms?.invite?.skipped ?? []).map((x) => [x.user_id, x.reason]))
+  if (r.status === 200 && r.json?.sms?.invite?.queued === 1 && saltos[jose.userId] === 'sms.recipient_opted_out' && saltos[kiala.userId] === 'sms.no_route') {
+    ok('agendar com sms_invite: 1 convite em fila; opt-out e sem rota saltados com código')
+  } else nok('agendar com sms_invite', `${r.status} ${JSON.stringify(r.json?.sms ?? r.json)}`)
+
+  const fim = Date.now() + 60_000
+  let paraInes = []
+  while (Date.now() < fim) {
+    paraInes = submits.slice(antesReuniao).map(submitHeader).filter((h) => h.dest === '244923700800')
+    if (paraInes.length >= 2) break
+    await esperar(500)
+  }
+  const hora = new Intl.DateTimeFormat('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit', hour12: false }).format(inicio)
+  const convite = paraInes.find((h) => /convite/.test(h.text ?? ''))
+  const lembrete = paraInes.find((h) => /comeca/.test(h.text ?? ''))
+  const link = 'https://meet.exemplo.ao/#/calendar'
+  if (convite && convite.dataCoding === 0 && convite.text.includes(`as ${hora} WAT`) && convite.text.endsWith(link)
+      && convite.text.includes('Revisao das accoes')) {
+    ok(`o convite chegou ao SMSC em GSM-7: «${convite.text}»`)
+  } else nok('o convite chegou ao SMSC', JSON.stringify(paraInes))
+  if (lembrete && lembrete.dataCoding === 0 && lembrete.text.includes(`as ${hora} WAT`) && lembrete.text.endsWith(link)) {
+    ok(`o lembrete chegou ao SMSC pelo varrimento, sem outro pedido: «${lembrete.text}»`)
+  } else nok('o lembrete chegou ao SMSC pelo varrimento', JSON.stringify(paraInes))
+  const outros = submits.slice(antesReuniao).map(submitHeader).filter((h) => ['244923700900', '244912700000'].includes(h.dest))
+  if (outros.length === 0) ok('nada chegou ao SMSC para quem desligou nem para quem não tem rota')
+  else nok('nada para opt-out / sem rota', JSON.stringify(outros))
+
+  const daReuniao = ((await req(`/api/orgs/${orgId}/sms/messages?page_size=100`, { token })).json?.items ?? [])
+    .filter((m) => m.meeting_id === r.json?.id)
+  const finais = []
+  for (const m of daReuniao) finais.push(await ateEstado(orgId, token, m.id, ['sent', 'failed']))
+  const tipos = finais.map((m) => `${m?.purpose}:${m?.status}:${m?.segments}`).sort()
+  if (JSON.stringify(tipos) === JSON.stringify(['meeting_invite:sent:1', 'meeting_reminder:sent:1'])
+      && finais.every((m) => m.recipient_user_id === ines.userId)) {
+    ok('convite e lembrete ficam sent, 1 segmento cada, ligados à reunião e à Inês')
+  } else nok('estado das mensagens da reunião', JSON.stringify(tipos))
+
+  // Um segundo varrimento não lembra outra vez.
+  await esperar(25_000)
+  const repetidos = submits.slice(antesReuniao).map(submitHeader).filter((h) => h.dest === '244923700800')
+  if (repetidos.length === 2) ok('o varrimento seguinte não repete o lembrete')
+  else nok('o lembrete não se repete', `${repetidos.length} submits para a Inês`)
+}
+
+// ---------- 6. agente verdadeiro contra o USB desta máquina ----------
 if (process.env.AGENT_BIN) {
   const gw = await req(`/api/orgs/${orgId}/sms/gateways`, { token, method: 'POST', body: { name: 'e2e' } })
   const agente = spawn(process.env.AGENT_BIN, ['--server', API, '--token', gw.json.token], {
