@@ -122,13 +122,10 @@
 .rec-row__size {
   font-size: var(--t-sm);
   white-space: nowrap;
+  color: var(--muted);
 }
 .rec-row__date {
   font-size: var(--t-sm);
-}
-.rec-row__room,
-.rec-row__size {
-  color: var(--muted);
 }
 .rec-row[data-status='failed'] td {
   background: color-mix(in srgb, var(--danger) 4%, var(--raised));

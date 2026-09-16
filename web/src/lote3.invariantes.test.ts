@@ -1,7 +1,7 @@
 /**
  * Fitness functions do lote 3 (docs/ux-perf-review.md).
  */
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -65,25 +65,53 @@ describe('2.2 e 2.3 · os mosaicos não voltam a renderizar à toa', () => {
   })
 })
 
-describe('3.2.1 · o dashboard deixa de se resolver pela posição no ficheiro', () => {
-  const css = () => read('web/src/styles.scss')
-  for (const sel of ['.dash-card', '.dash-grid', '.dash-card-head']) {
-    it(`${sel} está definido uma vez só ao nível de topo`, () => {
-      // Só regras na COLUNA 0. Uma regra indentada está dentro de um
-      // `@media` ou de um `[data-theme]`, e essa é uma variação legítima —
-      // não é o problema do 3.2.1, que é a mesma regra declarada duas vezes
-      // no mesmo âmbito e resolvida por quem aparece mais abaixo.
-      const n = css().split('\n').filter((l) => l.startsWith(`${sel} {`)).length
-      expect(n).toBe(1)
+/** As folhas de estilo da app, derivadas da árvore. */
+function folhas(dir = 'web/src'): string[] {
+  const out: string[] = []
+  for (const e of readdirSync(join(root, dir), { withFileTypes: true })) {
+    const p = `${dir}/${e.name}`
+    if (e.isDirectory()) out.push(...folhas(p))
+    else if (e.name.endsWith('.css')) out.push(p)
+  }
+  return out.sort()
+}
+
+describe('3.2.1 · nenhuma regra se resolve pela posição no ficheiro', () => {
+  // O defeito original: `.dash-card` declarado duas vezes no mesmo âmbito, e
+  // quem ganhava era quem aparecia mais abaixo. Só contam regras na COLUNA 0 —
+  // uma regra indentada está dentro de um `@media`, e essa variação é legítima.
+  for (const f of folhas()) {
+    it(`${f} não repete um selector ao nível de topo`, () => {
+      // O selector é o grupo INTEIRO («a,\nb {»): uma regra de grupo seguida de
+      // um refinamento de um dos membros é uma variação, não uma repetição.
+      const vistos = new Map<string, number>()
+      let grupo: string[] = []
+      for (const l of read(f).split('\n')) {
+        if (/^[.#\[:a-z][^{}@/]*,\s*$/i.test(l)) {
+          grupo.push(l.trim().replace(/,$/, ''))
+          continue
+        }
+        const m = l.match(/^([.#\[:a-z][^{}@/]*?)\s*\{\s*$/i)
+        if (m) {
+          const sel = [...grupo, m[1]].join(', ')
+          vistos.set(sel, (vistos.get(sel) ?? 0) + 1)
+        }
+        grupo = []
+      }
+      expect([...vistos].filter(([, n]) => n > 1).map(([s]) => s)).toEqual([])
     })
   }
 })
 
 describe('3.2.4 · a marca não aparece em hexadecimal solto', () => {
-  it('sem #eda33b nem #c8201d fora de fallbacks de var()', () => {
-    const soltos = read('web/src/styles.scss')
-      .split('\n')
-      .filter((l) => /#(eda33b|c8201d)/i.test(l) && !/var\(--[a-z0-9-]+,\s*#/i.test(l))
+  it('o vermelho Delonix só existe como token', () => {
+    const soltos: string[] = []
+    for (const f of folhas()) {
+      if (f.endsWith('/ui/tokens.css')) continue
+      read(f).split('\n').forEach((l, i) => {
+        if (/#(e8232b|eda33b|c8201d)/i.test(l)) soltos.push(`${f}:${i + 1}`)
+      })
+    }
     expect(soltos).toEqual([])
   })
 })

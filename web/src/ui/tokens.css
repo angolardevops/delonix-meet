@@ -64,6 +64,10 @@
 }
 
 :root {
+  /* Vermelho da marca Delonix (símbolo sobre preto) — não é cor de acção. */
+  --brand: #e8232b;
+  --brand-ink: #1a0002;
+
   --font-ui: 'Archivo', system-ui, sans-serif;
   --font-display: 'Archivo Black', 'Archivo', sans-serif;
   --font-mono: 'DM Mono', ui-monospace, monospace;

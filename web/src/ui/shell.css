@@ -46,15 +46,15 @@
   flex: none;
 }
 .brand-symbol--dark {
-  color: #e8232b;
+  color: var(--brand);
 }
 .brand-tile {
   display: inline-grid;
   place-content: center;
   flex: none;
   border-radius: var(--r-2);
-  background: #e8232b;
-  color: #1a0002;
+  background: var(--brand);
+  color: var(--brand-ink);
 }
 .brand-square {
   display: inline-grid;
