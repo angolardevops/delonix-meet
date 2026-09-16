@@ -34,7 +34,7 @@ export function example(n: Notation, tx: ExampleText): Pick<DiagramDoc, 'nodes' 
 function uml(tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> {
   return {
     nodes: [
-      N('x_t1', 'text', 18, 12, tx('uml.tituloClasses'), {}, [520, 26]),
+      N('x_t1', 'text', 18, 6, tx('uml.tituloClasses'), {}, [620, 34]),
       N('x_session', 'class', 18, 48, 'Session', {
         stereotype: 'entity',
         package: 'meet.core',
@@ -58,7 +58,7 @@ function uml(tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> {
       N('x_rtmp', 'class', 300, 330, 'RtmpTarget', {}, [110, 0]),
       N('x_srv', 'class', 420, 330, 'InternalSrv', {}, [110, 0]),
       N('x_note', 'note', 566, 230, '', { text: tx('uml.nota') }, [206, 80]),
-      N('x_t2', 'text', 18, 452, tx('uml.tituloSequencia'), {}, [520, 26]),
+      N('x_t2', 'text', 18, 446, tx('uml.tituloSequencia'), {}, [620, 34]),
       N('x_l1', 'lifeline', 18, 484, 'Participant', { length: 150 }),
       N('x_l2', 'lifeline', 166, 484, 'MeetGateway', { length: 150 }),
       N('x_l3', 'lifeline', 314, 484, 'MediaNode', { length: 150 }),
@@ -90,15 +90,16 @@ function uml(tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> {
 
 function bpmn(tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> {
   const lanes = [
-    { id: 'x_la', name: tx('bpmn.formadora'), size: 190 },
-    { id: 'x_lb', name: tx('bpmn.tecnico'), size: 170 },
-    { id: 'x_lc', name: tx('bpmn.plataforma'), size: 170 },
+    // Pistas altas como no template: a piscina ocupa a página (≈ 1,27 : 1).
+    { id: 'x_la', name: tx('bpmn.formadora'), size: 278 },
+    { id: 'x_lb', name: tx('bpmn.tecnico'), size: 278 },
+    { id: 'x_lc', name: tx('bpmn.plataforma'), size: 278 },
   ]
-  const top = [44, 44 + 190, 44 + 360]
+  const top = [48, 48 + 278, 48 + 556]
   return {
     nodes: [
-      N('x_title', 'text', 18, 8, tx('bpmn.titulo'), {}, [520, 26]),
-      N('x_pool', 'pool', 18, 44, 'Delonix Meet', { lanes }, [1060, 530]),
+      N('x_title', 'text', 18, 4, tx('bpmn.titulo'), {}, [620, 34]),
+      N('x_pool', 'pool', 18, 48, 'Delonix Meet', { lanes }, [1060, 834]),
       N('x_s', 'startEvent', 96, top[0] + 60, tx('bpmn.agendada'), { trigger: 'message' }),
       N('x_v', 'task', 160, top[0] + 46, tx('bpmn.verificar'), { taskKind: 'user' }, [124, 64]),
       N('x_g', 'gateway', 320, top[0] + 53, tx('bpmn.tipo'), { gatewayKind: 'exclusive' }),
@@ -108,12 +109,12 @@ function bpmn(tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> {
       N('x_timer', 'intermediateEvent', 766, top[0] + 60, tx('bpmn.fimTempo'), { trigger: 'timer' }),
       N('x_close', 'task', 836, top[0] + 46, tx('bpmn.encerrar'), { taskKind: 'service' }, [130, 64]),
       N('x_end', 'endEvent', 1010, top[0] + 60, ''),
-      N('x_watch', 'task', 590, top[1] + 50, tx('bpmn.vigiar'), { taskKind: 'user' }, [140, 64]),
-      N('x_low', 'intermediateEvent', 766, top[1] + 64, tx('bpmn.bitrate'), { trigger: 'signal' }),
-      N('x_reduce', 'task', 836, top[1] + 50, tx('bpmn.reduzir'), { taskKind: 'service' }, [130, 64]),
-      N('x_end2', 'endEvent', 1010, top[1] + 64, ''),
-      N('x_trans', 'task', 836, top[2] + 50, tx('bpmn.transcodificar'), { taskKind: 'script' }, [130, 64]),
-      N('x_ready', 'endEvent', 1010, top[2] + 64, 'recording.ready', { trigger: 'message' }),
+      N('x_watch', 'task', 590, top[1] + 22, tx('bpmn.vigiar'), { taskKind: 'user' }, [140, 64]),
+      N('x_low', 'intermediateEvent', 766, top[1] + 36, tx('bpmn.bitrate'), { trigger: 'signal' }),
+      N('x_reduce', 'task', 836, top[1] + 22, tx('bpmn.reduzir'), { taskKind: 'service' }, [130, 64]),
+      N('x_end2', 'endEvent', 1010, top[1] + 36, ''),
+      N('x_trans', 'task', 836, top[2] + 22, tx('bpmn.transcodificar'), { taskKind: 'script' }, [130, 64]),
+      N('x_ready', 'endEvent', 1010, top[2] + 36, 'recording.ready', { trigger: 'message' }),
     ],
     edges: [
       E('x_f1', 'sequenceFlow', 'x_s', 'x_v'),

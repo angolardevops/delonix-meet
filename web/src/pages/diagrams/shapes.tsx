@@ -455,7 +455,7 @@ function NodeBody({ n, sub }: { n: DNode; sub?: string }): ReactNode {
       return (
         <>
           <rect width={n.w} height={n.h} fill="transparent" />
-          <text x={0} y={n.h / 2} fontSize={15} fontWeight={900} fill={INK.ink} dominantBaseline="middle" letterSpacing={-0.3}>
+          <text x={0} y={n.h / 2} fontSize={Math.max(11, Math.round(n.h * 0.58))} fontWeight={900} fill={INK.ink} dominantBaseline="middle" letterSpacing={-0.3}>
             {n.name}
           </text>
         </>

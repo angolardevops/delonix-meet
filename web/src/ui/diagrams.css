@@ -995,7 +995,9 @@ button.dg-chip {
   flex-wrap: nowrap;
 }
 .dg .dg-status > .dg-chip:first-child {
-  flex: none;
+  /* A contagem do modelo fica legível (até 60%); a validação encolhe no resto. */
+  flex: 0 0 auto;
+  max-width: 60%;
 }
 .dg .dg-status > button.dg-chip {
   flex: 0 1 auto;
@@ -1003,9 +1005,10 @@ button.dg-chip {
 }
 .dg .dg-card .dx-input,
 .dg .dg-card .dx-select {
-  height: 28px;
-  min-height: 28px;
-  font-size: 10.5px;
+  height: 26px;
+  min-height: 26px;
+  padding-block: 3px;
+  font-size: 10px;
 }
 .dg .dg-card .dx-input--code {
   letter-spacing: 0;
@@ -1077,5 +1080,38 @@ button.dg-chip {
 }
 .dg .dg-row {
   max-width: 100%;
+  min-height: 24px;
   overflow: hidden;
+  font-size: 9.5px;
+}
+
+/* Lote 2 — inspector e paleta com as medidas das referências recapturadas. */
+.dg .dg-card .dx-field {
+  gap: 4px;
+}
+.dg .dg-card .dx-field__label,
+.dg .dg-label {
+  font-weight: 400;
+  letter-spacing: 0.4px;
+}
+.dg .dg-member .dx-iconbtn,
+.dg .dg-lane .dx-iconbtn,
+.dg .dg-flow .dx-iconbtn {
+  width: 22px;
+  height: 22px;
+}
+.dg .dg-add {
+  min-height: 24px;
+  font-size: 9.5px;
+}
+.dg .dg-item {
+  min-height: 42px;
+  padding: 5px 3px;
+  font-size: 8.5px;
+}
+.dg .dg-find__field .dx-input {
+  min-height: 26px;
+  height: 26px;
+  padding-block: 3px;
+  font-size: 10.5px;
 }
