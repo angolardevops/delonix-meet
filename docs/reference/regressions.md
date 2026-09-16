@@ -1711,3 +1711,13 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `server/tests/organization.rs::my_orgs_hides_org_from_archived_member`.
 
 **Ficheiros.** `server/src/org.rs`.
+
+### R153 — Falta de permissão respondia 401, e o web renovava a sessão por nada
+
+**Sintoma.** Um membro sem papel de admin (ou um participante sem acesso a uma sala, ou um convidado que não é anfitrião) recebia `401`. O `web/src/api.ts` lê `401` como «a sessão caducou»: chamava `/api/auth/refresh`, repetia o pedido, levava outro `401` e só então mostrava o erro — dois pedidos a mais por clique, e um erro que dizia «sessão» quando o problema era papel.
+
+**Causa raiz.** `org::require_admin`, o acesso a sala em `rooms.rs`, as guardas de `whiteboards.rs` e `actions.rs` usavam `ApiError::Unauthorized` para falta de PERMISSÃO. O `error.rs` já tinha `Forbidden` com o comentário a explicar exactamente isto; faltava usá-lo.
+
+**Regra.** `401` é só «não sei quem és». Sem o papel: `403`. Recurso de outra organização ou reunião de que não és membro: `404` — não se confirma que existe. 22 asserções dos testes de caracterização mudaram com intenção (18× `401→403`, 3× `401→404`), e o OpenAPI descreve os três casos em separado.
+
+**Ficheiros.** `server/src/{org,rooms,whiteboards,actions}.rs`, `server/tests/{content,organization,scheduling}.rs`. Por fazer: as mesmas guardas em `meetings.rs` e `recordings.rs` (esta última foi reescrita no G4–G6 com 403/404).

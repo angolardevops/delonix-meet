@@ -196,7 +196,7 @@ async fn room_chat_invite_qos_timings_access(db: sqlx::PgPool) {
     let (st, _) = app
         .get(&format!("/api/rooms/{code}/chat"), Some(&b.token))
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (st, _) = app
         .get("/api/rooms/aaa-bbbb-ccc/chat", Some(&a.token))
         .await;
@@ -207,7 +207,7 @@ async fn room_chat_invite_qos_timings_access(db: sqlx::PgPool) {
     let (st, _) = app
         .post(&inv, Some(&b.token), json!({"targets": [a.user_id]}))
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (st, _) = app.post(&inv, Some(&a.token), json!({"targets": []})).await;
     assert_eq!(st, 400);
     let (st, _) = app
@@ -242,7 +242,7 @@ async fn room_chat_invite_qos_timings_access(db: sqlx::PgPool) {
     let sample = json!({"rtt_ms": 40, "loss_pct": 1.5, "up_kbps": 900, "score": 250,
                         "turn_relay": true, "limited_by": "cpu", "candidate_pair": "relay/srflx"});
     let (st, _) = app.post(&qos, Some(&b.token), sample.clone()).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (st, body) = app.post(&qos, Some(&c.token), sample).await;
     assert_eq!(st, 200);
     assert_eq!(body, json!({"ok": true}));
@@ -250,7 +250,7 @@ async fn room_chat_invite_qos_timings_access(db: sqlx::PgPool) {
     let (st, _) = app
         .post(&timings, Some(&b.token), json!({"join_ms": 1}))
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (st, body) = app
         .post(&timings, Some(&a.token), json!({"join_ms": 900_000}))
         .await;
@@ -628,7 +628,7 @@ async fn whiteboards_save_list_png_share_delete(db: sqlx::PgPool) {
     let (st, _) = app
         .post(&share, Some(&b.token), json!({"public": true}))
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (st, pubwb) = app
         .post(&share, Some(&c.token), json!({"public": true}))
         .await;
@@ -660,9 +660,9 @@ async fn whiteboards_save_list_png_share_delete(db: sqlx::PgPool) {
     let d = app.add_member(&a, "dario", "member").await;
     let del = format!("/api/whiteboards/{id}");
     let (st, _) = app.delete(&del, Some(&b.token)).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (st, _) = app.delete(&del, Some(&d.token)).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (_, list) = app.get("/api/whiteboards", Some(&a.token)).await;
     assert_eq!(list.as_array().unwrap().len(), 1, "o quadro continua lá");
     let (st, body) = app.delete(&del, Some(&a.token)).await;

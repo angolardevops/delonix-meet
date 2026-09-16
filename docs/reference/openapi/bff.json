@@ -3365,6 +3365,16 @@
                 }
               }
             },
+            "description": "sessão inválida"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
             "description": "não é o anfitrião"
           },
           "404": {
@@ -3441,7 +3451,17 @@
                 }
               }
             },
-            "description": "editar campos que não `status` sem ser anfitrião, ou mudar `status` sem ser membro"
+            "description": "sessão inválida"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "editar campos que não `status` sem ser anfitrião"
           },
           "404": {
             "content": {
@@ -4228,7 +4248,17 @@
                 }
               }
             },
-            "description": "não é dono nem convidado — também quando a reunião não existe"
+            "description": "sessão inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não existe, ou não és dono nem convidado"
           }
         },
         "security": [
@@ -4277,6 +4307,16 @@
             "description": ""
           },
           "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "sessão inválida"
+          },
+          "403": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4362,6 +4402,16 @@
                 }
               }
             },
+            "description": "sessão inválida"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
             "description": "não é o anfitrião"
           },
           "404": {
@@ -4423,7 +4473,17 @@
                 }
               }
             },
-            "description": "não é dono nem convidado — também quando a reunião não existe"
+            "description": "sessão inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não existe, ou não és dono nem convidado"
           }
         },
         "security": [
@@ -4489,6 +4549,16 @@
                 }
               }
             },
+            "description": "sessão inválida"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
             "description": "não é o anfitrião"
           },
           "404": {
@@ -4543,6 +4613,16 @@
             "description": "`{\"ok\": true}` (forma herdada); também quando o tópico não existe"
           },
           "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "sessão inválida"
+          },
+          "403": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4636,7 +4716,17 @@
                 }
               }
             },
-            "description": "editar campos que não `done` sem ser anfitrião, ou não ser membro"
+            "description": "sessão inválida"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "editar campos que não `done` sem ser anfitrião"
           },
           "404": {
             "content": {
@@ -5148,7 +5238,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -5214,7 +5314,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -5280,7 +5390,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -5361,7 +5481,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -5420,7 +5550,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -5557,7 +5697,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -5694,7 +5844,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -5780,7 +5940,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -5866,7 +6036,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -6325,7 +6505,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -6413,7 +6603,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -6469,7 +6669,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -6532,7 +6742,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -6606,7 +6826,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -6664,7 +6894,17 @@
                 }
               }
             },
-            "description": "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403)."
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
           },
           "404": {
             "content": {
@@ -8338,7 +8578,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU sem acesso à sala."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem acesso à sala."
           },
           "404": {
             "content": {
@@ -8356,7 +8606,7 @@
             "session": []
           }
         ],
-        "summary": "Últimas 200 mensagens de chat de uma sala (requer autenticação + acesso).\nSem acesso à sala devolve **401**, não 403. O código NÃO é normalizado.",
+        "summary": "Últimas 200 mensagens de chat de uma sala (requer autenticação + acesso).\nSem acesso à sala devolve **403**. O código NÃO é normalizado.",
         "tags": [
           "rooms"
         ]
@@ -8415,7 +8665,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU sem acesso à sala."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem acesso à sala."
           },
           "404": {
             "content": {
@@ -8433,7 +8693,7 @@
             "session": []
           }
         ],
-        "summary": "Faz tocar os dispositivos de colegas de organização para a sala em curso.\nSem acesso à sala devolve **401**, não 403. O código NÃO é normalizado.",
+        "summary": "Faz tocar os dispositivos de colegas de organização para a sala em curso.\nSem acesso à sala devolve **403**. O código NÃO é normalizado.",
         "tags": [
           "rooms"
         ]
@@ -8640,7 +8900,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU sem acesso à sala."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem acesso à sala."
           },
           "404": {
             "content": {
@@ -8851,7 +9121,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU sem acesso à sala."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem acesso à sala."
           },
           "404": {
             "content": {
@@ -9810,7 +10090,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU nem dono nem admin."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Nem dono nem admin."
           },
           "404": {
             "content": {
@@ -9869,7 +10159,7 @@
                 }
               }
             },
-            "description": "Sessão inválida OU não é membro da org dona (401, não 403)."
+            "description": "Sessão inválida."
           },
           "404": {
             "content": {
@@ -9936,7 +10226,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU nem dono nem admin."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Nem dono nem admin."
           },
           "404": {
             "content": {

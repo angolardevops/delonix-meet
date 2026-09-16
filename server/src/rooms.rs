@@ -469,14 +469,15 @@ pub struct ChatMessage {
 }
 
 /// Últimas 200 mensagens de chat de uma sala (requer autenticação + acesso).
-/// Sem acesso à sala devolve **401**, não 403. O código NÃO é normalizado.
+/// Sem acesso à sala devolve **403**. O código NÃO é normalizado.
 #[utoipa::path(
     get, path = "/api/rooms/{code}/chat", tag = "rooms",
     security(("session" = [])),
     params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
     responses(
         (status = 200, body = Vec<ChatMessage>, description = "Ordem cronológica ascendente."),
-        (status = 401, description = "Sessão inválida OU sem acesso à sala.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Sem acesso à sala.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -492,7 +493,7 @@ pub async fn room_chat(
         .ok_or(ApiError::NotFound)?;
 
     if !can_access_room(&state, auth.user_id, &room).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
 
     let msgs: Vec<ChatMessage> = sqlx::query_as(
@@ -530,7 +531,7 @@ pub struct InviteResp {
 }
 
 /// Faz tocar os dispositivos de colegas de organização para a sala em curso.
-/// Sem acesso à sala devolve **401**, não 403. O código NÃO é normalizado.
+/// Sem acesso à sala devolve **403**. O código NÃO é normalizado.
 #[utoipa::path(
     post, path = "/api/rooms/{code}/invite", tag = "rooms",
     security(("session" = [])),
@@ -539,7 +540,8 @@ pub struct InviteResp {
     responses(
         (status = 200, body = InviteResp),
         (status = 400, description = "`kind` inválido, `targets` fora de 1–50, ou nenhum destinatário válido depois do filtro.", body = crate::openapi::ErrorBody),
-        (status = 401, description = "Sessão inválida OU sem acesso à sala.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Sem acesso à sala.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -556,7 +558,7 @@ pub async fn invite_to_room(
         .ok_or(ApiError::NotFound)?;
 
     if !can_access_room(&state, auth.user_id, &room).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
 
     let kind = req.kind.as_deref().unwrap_or("video");
@@ -719,7 +721,8 @@ pub struct TimingsReq {
     request_body = TimingsReq,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
-        (status = 401, description = "Sessão inválida OU sem acesso à sala.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Sem acesso à sala.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -735,7 +738,7 @@ pub async fn post_timings(
         .await?
         .ok_or(ApiError::NotFound)?;
     if !can_access_room(&state, auth.user_id, &room).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
 
     // Tecto de 10 minutos: acima disto não é um tempo de entrada, é um cliente
@@ -786,7 +789,8 @@ pub async fn post_timings(
     request_body = QosSample,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
-        (status = 401, description = "Sessão inválida OU sem acesso à sala.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Sem acesso à sala.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -803,7 +807,7 @@ pub async fn post_qos(
         .ok_or(ApiError::NotFound)?;
 
     if !can_access_room(&state, auth.user_id, &room).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
 
     let rtt = s.rtt_ms.map(|v| v.clamp(0, 10_000));

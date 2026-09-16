@@ -31,7 +31,7 @@ async fn meeting_owner(db: &sqlx::PgPool, meeting_id: Uuid) -> Result<Uuid, ApiE
 async fn require_owner(db: &sqlx::PgPool, meeting_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
     let owner = meeting_owner(db, meeting_id).await?;
     if owner != user_id {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
     Ok(())
 }
@@ -53,7 +53,8 @@ async fn require_member_or_owner(
     .bind(user_id)
     .fetch_optional(db)
     .await?;
-    row.ok_or(ApiError::Unauthorized)?;
+    // Quem não é membro da reunião não fica a saber que ela existe.
+    row.ok_or(ApiError::NotFound)?;
     Ok(())
 }
 
@@ -144,7 +145,8 @@ pub struct AgendaPatchReq {
     params(("id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = Vec<AgendaItem>),
-        (status = 401, body = crate::openapi::ErrorBody, description = "não é dono nem convidado — também quando a reunião não existe"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não és dono nem convidado"),
     )
 )]
 pub async fn list_agenda(
@@ -171,7 +173,8 @@ pub async fn list_agenda(
     responses(
         (status = 200, body = AgendaItem),
         (status = 400, body = crate::openapi::ErrorBody, description = "tópico vazio ou com mais de 200 caracteres"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
         (status = 404, body = crate::openapi::ErrorBody, description = "reunião não existe"),
     )
 )]
@@ -226,7 +229,8 @@ pub async fn add_agenda_item(
     responses(
         (status = 200, body = AgendaItem, description = "Qualquer membro muda `done`; só o anfitrião edita os restantes campos"),
         (status = 400, body = crate::openapi::ErrorBody, description = "tópico inválido"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "editar campos que não `done` sem ser anfitrião, ou não ser membro"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "editar campos que não `done` sem ser anfitrião"),
         (status = 404, body = crate::openapi::ErrorBody, description = "reunião ou tópico não existe"),
     )
 )]
@@ -254,7 +258,7 @@ pub async fn patch_agenda_item(
         || req.position.is_some())
         && !is_owner
     {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
     // `done` pode ser alterado por qualquer membro.
     require_member_or_owner(&state.db, meeting_id, auth.user_id).await?;
@@ -332,7 +336,8 @@ pub async fn patch_agenda_item(
     params(("id" = Uuid, Path, description = "Id da reunião"), ("item_id" = Uuid, Path, description = "Id do item")),
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada); também quando o tópico não existe"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
         (status = 404, body = crate::openapi::ErrorBody, description = "reunião não existe"),
     )
 )]
@@ -480,7 +485,8 @@ async fn load_plan_with_items(
     params(("id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = Option<ActionPlan>, description = "`null` se a reunião ainda não tem plano"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "não é dono nem convidado — também quando a reunião não existe"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não és dono nem convidado"),
     )
 )]
 pub async fn get_action_plan(
@@ -500,7 +506,8 @@ pub async fn get_action_plan(
     request_body = ActionPlanGoalReq,
     responses(
         (status = 200, body = ActionPlan),
-        (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
         (status = 404, body = crate::openapi::ErrorBody, description = "reunião não existe"),
     )
 )]
@@ -535,7 +542,8 @@ pub async fn upsert_action_plan(
     responses(
         (status = 200, body = ActionItem, description = "Cria o plano (sem meta) se ainda não existir"),
         (status = 400, body = crate::openapi::ErrorBody, description = "`status` inválido"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
         (status = 404, body = crate::openapi::ErrorBody, description = "reunião não existe"),
     )
 )]
@@ -622,7 +630,9 @@ pub async fn add_action_item(
     responses(
         (status = 200, body = ActionItem, description = "Qualquer membro muda `status`; só o anfitrião edita os restantes campos"),
         (status = 400, body = crate::openapi::ErrorBody, description = "`status` inválido"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "editar campos que não `status` sem ser anfitrião, ou mudar `status` sem ser membro"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "editar campos que não `status` sem ser anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "item inexistente, ou não és membro da reunião"),
         (status = 404, body = crate::openapi::ErrorBody, description = "item não existe"),
     )
 )]
@@ -662,7 +672,7 @@ pub async fn patch_action_item(
         || req.position.is_some()
         || req.when_date.is_some();
     if editing && !is_owner {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
     // Status pode ser alterado por qualquer membro (já verificado acima).
     if let Some(s) = &req.status {
@@ -765,7 +775,8 @@ pub async fn patch_action_item(
     params(("item_id" = Uuid, Path, description = "Id do item")),
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
         (status = 404, body = crate::openapi::ErrorBody, description = "item não existe"),
     )
 )]

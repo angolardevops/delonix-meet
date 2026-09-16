@@ -128,7 +128,8 @@ pub struct OrgSettingsUpdated {
     responses(
         (status = 200, body = OrgSettingsUpdated),
         (status = 400, description = "Domínio inválido (>253 caracteres ou com espaços).", body = crate::openapi::ErrorBody),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -288,7 +289,9 @@ pub async fn role_in_org(
 async fn require_admin(state: &AppState, org_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
     match role_in_org(state, org_id, user_id).await? {
         Some(r) if r == "admin" => Ok(()),
-        Some(_) => Err(ApiError::Unauthorized),
+        // Membro sem o papel: 403. O web lê 401 como «a sessão não serve» e
+        // gastava um refresh antes de mostrar o erro (R153).
+        Some(_) => Err(ApiError::Forbidden),
         None => Err(ApiError::NotFound),
     }
 }
@@ -494,7 +497,8 @@ pub struct CreateBranchReq {
     responses(
         (status = 200, body = Branch),
         (status = 400, description = "Nome vazio ou com mais de 120 caracteres.", body = crate::openapi::ErrorBody),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -576,7 +580,8 @@ pub struct AddEmployeeReq {
     responses(
         (status = 200, body = AddEmployeeResp, description = "Sem `password` no pedido e conta nova: `temporary_password` vem preenchida (uma só vez)."),
         (status = 400, description = "Email/password inválidos, email fora do domínio da organização, ou `role` diferente de `admin`/`member`.", body = crate::openapi::ErrorBody),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
         (status = 409, description = "A conta já pertence a outra organização, ou email/username já existe.", body = crate::openapi::ErrorBody),
     )
@@ -777,7 +782,8 @@ pub struct UpdateEmployeeReq {
     responses(
         (status = 200, body = Employee),
         (status = 400, description = "`role` diferente de `admin`/`member`.", body = crate::openapi::ErrorBody),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "Quem pede não é membro activo, ou o utilizador não é membro da organização.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -842,7 +848,8 @@ pub async fn update_employee(
     responses(
         (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
         (status = 400, description = "Tentativa de arquivar o próprio acesso.", body = crate::openapi::ErrorBody),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -1040,7 +1047,8 @@ pub struct CreateMeetingRoomReq {
     responses(
         (status = 200, body = MeetingRoom),
         (status = 400, description = "Nome vazio ou com mais de 120 caracteres.", body = crate::openapi::ErrorBody),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
         (status = 409, description = "Quota `max_rooms` da organização atingida.", body = crate::openapi::ErrorBody),
     )
@@ -1166,7 +1174,8 @@ pub struct Organizer {
     params(("org_id" = Uuid, Path, description = "Organização.")),
     responses(
         (status = 200, body = OrgStats),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -1443,7 +1452,8 @@ pub struct SsoConfigReq {
     params(("org_id" = Uuid, Path, description = "Organização.")),
     responses(
         (status = 200, description = "Configuração OIDC, ou `null` se não houver.", body = Option<SsoConfigPublic>),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -1473,7 +1483,8 @@ pub async fn get_sso_config(
     responses(
         (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
         (status = 400, description = "`issuer_url`/`client_id` em falta, ou `issuer_url` sem `https://`.", body = crate::openapi::ErrorBody),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -1548,7 +1559,8 @@ pub async fn upsert_sso_config(
     params(("org_id" = Uuid, Path, description = "Organização.")),
     responses(
         (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]

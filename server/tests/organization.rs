@@ -618,12 +618,10 @@ async fn member_reads_directory_and_creates_groups(db: sqlx::PgPool) {
     assert_eq!(orgs[0]["role"], "member");
 }
 
-/// DÍVIDA: um MEMBRO autenticado que pede uma operação de admin recebe 401
-/// (`org::require_admin` devolve `ApiError::Unauthorized`), não 403. O cliente
-/// web lê 401 como «sessão inválida» e tenta renovar — o próprio `error.rs`
-/// diz que falta de PERMISSÃO devia ser `Forbidden`.
+/// R153 (fechada): um MEMBRO autenticado que pede uma operação de admin recebia
+/// 401, e o web lia-o como «sessão inválida» e gastava um refresh. Agora 403.
 #[sqlx::test(migrations = "./migrations")]
-async fn member_admin_ops_current_behavior_401_instead_of_403(db: sqlx::PgPool) {
+async fn member_admin_ops_are_forbidden_403(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let c = app.add_member(&a, "carla", "member").await;
@@ -644,8 +642,8 @@ async fn member_admin_ops_current_behavior_401_instead_of_403(db: sqlx::PgPool) 
     ];
     for p in gets {
         let (st, body) = app.get(&org_path(&org, p), t).await;
-        // DÍVIDA: devia ser 403.
-        assert_eq!(st, 401, "GET {p}: {body}");
+        // R153: membro sem papel de admin → 403 (era 401).
+        assert_eq!(st, 403, "GET {p}: {body}");
     }
     let posts = [
         ("branches", json!({"name": "x"})),
@@ -664,12 +662,12 @@ async fn member_admin_ops_current_behavior_401_instead_of_403(db: sqlx::PgPool) 
     ];
     for (p, b) in posts {
         let (st, body) = app.post(&org_path(&org, p), t, b).await;
-        assert_eq!(st, 401, "POST {p}: {body}");
+        assert_eq!(st, 403, "POST {p}: {body}");
     }
     let (st, _) = app
         .delete(&org_path(&org, &format!("employees/{}", a.user_id)), t)
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (st, _) = app
         .patch(
             &org_path(&org, &format!("employees/{}", c.user_id)),
@@ -677,7 +675,7 @@ async fn member_admin_ops_current_behavior_401_instead_of_403(db: sqlx::PgPool) 
             json!({"role": "admin"}),
         )
         .await;
-    assert_eq!(st, 401, "um membro não se promove a si próprio");
+    assert_eq!(st, 403, "um membro não se promove a si próprio");
     let (_, orgs) = app.get("/api/orgs", t).await;
     assert_eq!(orgs[0]["role"], "member");
 }
@@ -889,7 +887,7 @@ async fn archived_members_lose_org_access(db: sqlx::PgPool) {
     let (st, _) = app
         .get(&format!("/api/rooms/{code}/chat"), Some(&c.token))
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (_, found) = app
         .get("/api/users/search?q=admin-alfa", Some(&c.token))
         .await;

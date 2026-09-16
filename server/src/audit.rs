@@ -203,7 +203,8 @@ pub async fn verificar_cadeia(db: &PgPool, org_id: Uuid) -> Result<VerificacaoCa
     params(("org_id" = Uuid, Path, description = "Organização.")),
     responses(
         (status = 200, body = VerificacaoCadeia),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -242,7 +243,8 @@ pub struct AuditQuery {
     responses(
         (status = 200, body = Vec<AuditEntry>),
         (status = 400, description = "`limit` não numérico.", body = crate::openapi::ErrorBody),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]

@@ -574,12 +574,12 @@ async fn agenda_crud_and_permissions(db: sqlx::PgPool) {
     assert_eq!(st, 200);
     assert_eq!(list, json!([]));
     let (st, _) = app.get(&base, Some(&d.token)).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404);
 
     let (st, _) = app
         .post(&base, Some(&c.token), json!({"topic": "do convidado"}))
         .await;
-    assert_eq!(st, 401, "só o anfitrião acrescenta");
+    assert_eq!(st, 403, "só o anfitrião acrescenta");
     for bad in [json!({"topic": " "}), json!({"topic": "t".repeat(201)})] {
         let (st, _) = app.post(&base, Some(&a.token), bad).await;
         assert_eq!(st, 400);
@@ -613,11 +613,11 @@ async fn agenda_crud_and_permissions(db: sqlx::PgPool) {
     let (st, _) = app
         .patch(&item, Some(&c.token), json!({"topic": "x"}))
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (st, _) = app
         .patch(&item, Some(&d.token), json!({"done": false}))
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404);
     let (st, it) = app
         .patch(
             &item,
@@ -639,7 +639,7 @@ async fn agenda_crud_and_permissions(db: sqlx::PgPool) {
     assert_eq!(st, 404);
 
     let (st, _) = app.delete(&item, Some(&c.token)).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (st, body) = app.delete(&item, Some(&a.token)).await;
     assert_eq!(st, 200);
     assert_eq!(body, json!({"ok": true}));
@@ -662,10 +662,10 @@ async fn action_plan_crud_and_permissions(db: sqlx::PgPool) {
     assert_eq!(st, 200);
     assert!(body.is_null(), "sem plano ainda: {body}");
     let (st, _) = app.get(&plan, Some(&d.token)).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404);
 
     let (st, _) = app.put(&plan, Some(&c.token), json!({"goal": "x"})).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (st, p) = app
         .put(&plan, Some(&a.token), json!({"goal": "  Entregar v1  "}))
         .await;
@@ -683,7 +683,7 @@ async fn action_plan_crud_and_permissions(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 400);
     let (st, _) = app.post(&items, Some(&c.token), json!({"what": "x"})).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (st, it) = app
         .post(
             &items,
@@ -711,7 +711,7 @@ async fn action_plan_crud_and_permissions(db: sqlx::PgPool) {
     let (st, _) = app
         .patch(&item, Some(&c.token), json!({"what": "outra coisa"}))
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (st, _) = app
         .patch(&item, Some(&a.token), json!({"status": "parado"}))
         .await;
@@ -740,7 +740,7 @@ async fn action_plan_crud_and_permissions(db: sqlx::PgPool) {
     assert_eq!(p["items"].as_array().unwrap().len(), 1);
 
     let (st, _) = app.delete(&item, Some(&c.token)).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 403);
     let (st, _) = app.delete(&item, Some(&a.token)).await;
     assert_eq!(st, 200);
     let (st, _) = app.delete(&item, Some(&a.token)).await;

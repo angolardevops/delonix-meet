@@ -172,7 +172,8 @@ pub async fn list(
     params(("id" = Uuid, Path)),
     responses(
         (status = 200, body = inline(PngBytes), content_type = "image/png"),
-        (status = 401, description = "Sessão inválida OU não é membro da org dona (401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não existe, ou é de uma organização de que não és membro.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -187,7 +188,8 @@ pub async fn png(
         .fetch_one(&state.db)
         .await?;
     if !orgs.contains(&row.1) {
-        return Err(ApiError::Unauthorized);
+        // Quadro de outra organização: não se confirma que existe.
+        return Err(ApiError::NotFound);
     }
     Ok(([(header::CONTENT_TYPE, "image/png")], row.0))
 }
@@ -199,7 +201,8 @@ pub async fn png(
     params(("id" = Uuid, Path)),
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
-        (status = 401, description = "Sessão inválida OU nem dono nem admin.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Nem dono nem admin.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -218,7 +221,7 @@ pub async fn delete(
         .await
         .is_ok();
     if !is_owner && !is_admin {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
     sqlx::query("DELETE FROM whiteboards WHERE id = $1")
         .bind(id)
@@ -242,7 +245,8 @@ pub struct ShareReq {
     request_body = ShareReq,
     responses(
         (status = 200, body = WhiteboardMeta),
-        (status = 401, description = "Sessão inválida OU nem dono nem admin.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Nem dono nem admin.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -262,7 +266,7 @@ pub async fn set_share(
         .await
         .is_ok();
     if !is_owner && !is_admin {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
     // Ao desativar a partilha, roda o token (o link antigo deixa de funcionar).
     let meta: WhiteboardMeta = sqlx::query_as(

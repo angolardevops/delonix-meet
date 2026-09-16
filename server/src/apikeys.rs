@@ -143,7 +143,8 @@ pub struct CreatedKey {
     params(("org_id" = Uuid, Path, description = "Organização.")),
     responses(
         (status = 200, body = Vec<ApiKeyInfo>),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -172,7 +173,8 @@ pub async fn list(
     request_body = CreateKeyReq,
     responses(
         (status = 200, body = CreatedKey),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -222,7 +224,8 @@ pub async fn create(
     params(("org_id" = Uuid, Path, description = "Organização."), ("key_id" = Uuid, Path, description = "Chave a revogar.")),
     responses(
         (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
-        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]
