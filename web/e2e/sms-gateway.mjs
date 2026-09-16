@@ -16,6 +16,9 @@
 //      segmento, com a hora em WAT e o link do domínio da org. Quem desligou os
 //      SMS de reunião e quem só tem rota Movicel (por contratar) ficam de fora,
 //      com o código — e não chega nada ao SMSC para eles.
+//   5b. Telefone vindo do Odoo (`provision`): telemóvel e depois o de serviço,
+//      campos ausentes não apagam, a edição manual nunca é sobrescrita,
+//      `follow_directory` devolve o campo, número inutilizável sai reportado.
 //   6. (Opcional, `AGENT_BIN`) o agente VERDADEIRO lê o USB desta máquina e o
 //      inventário aparece na consola; um telefone sem modem exposto não pode ser
 //      escolhido (422 com a razão do agente).
@@ -292,6 +295,46 @@ else nok('page_size > 100', `${grande.status}`)
   const repetidos = submits.slice(antesReuniao).map(submitHeader).filter((h) => h.dest === '244923700800')
   if (repetidos.length === 2) ok('o varrimento seguinte não repete o lembrete')
   else nok('o lembrete não se repete', `${repetidos.length} submits para a Inês`)
+}
+
+// ---------- 5b. telefone vindo do Odoo: a edição manual ganha ----------
+{
+  const odoo = (await req(`/api/orgs/${orgId}/integration/odoo/token`, { token, method: 'POST' })).json?.token
+  const correio = `odoo-${marca}@odoo${marca}.local`
+  const sync = (entrada) => req('/api/v1/integration/odoo/provision', {
+    token: odoo, method: 'POST', body: { company: '', admin_email: email, users: [{ odoo_uid: 77, name: `odoo-${marca}`, email: correio, ...entrada }] },
+  })
+  const telefoneDe = async () => {
+    const lista = (await req(`/api/orgs/${orgId}/employees`, { token })).json ?? []
+    const e = lista.find((x) => x.email === correio)
+    return { phone: e?.phone ?? null, source: e?.phone_source ?? null, userId: e?.user_id }
+  }
+  const s1 = await sync({ mobile_phone: '+351 912 000 000', work_phone: '923 400 500' })
+  let t = await telefoneDe()
+  if (s1.status === 200 && t.phone === '+244923400500' && t.source === 'odoo') ok('provision: telemóvel estrangeiro cai para o de serviço angolano (fonte odoo)')
+  else nok('provision grava o telefone do Odoo', `${s1.status} ${JSON.stringify(s1.json)} ${JSON.stringify(t)}`)
+  await sync({})
+  t = await telefoneDe()
+  if (t.phone === '+244923400500') ok('provision sem campos de telefone (integrador antigo) não apaga o número')
+  else nok('campos ausentes não apagam', JSON.stringify(t))
+  await req(`/api/orgs/${orgId}/employees/${t.userId}/phone`, { token, method: 'PUT', body: { phone: '944 111 222' } })
+  await sync({ mobile_phone: '923 999 000', work_phone: false })
+  t = await telefoneDe()
+  if (t.phone === '+244944111222' && t.source === 'manual') ok('provision seguinte NÃO sobrescreve o número editado à mão')
+  else nok('edição manual sobrevive à sincronização', JSON.stringify(t))
+  await req(`/api/orgs/${orgId}/employees/${t.userId}/phone`, { token, method: 'PUT', body: { follow_directory: true } })
+  const s4 = await sync({ mobile_phone: false, work_phone: '+33 6 00 00 00 00' })
+  t = await telefoneDe()
+  if (t.phone === null && s4.json?.phones_rejected?.[0]?.email === correio) ok('follow_directory devolve o campo ao Odoo; número inutilizável sai em phones_rejected')
+  else nok('follow_directory + phones_rejected', `${JSON.stringify(s4.json)} ${JSON.stringify(t)}`)
+  await sync({ mobile_phone: '923 999 000' })
+  t = await telefoneDe()
+  if (t.phone === '+244923999000' && t.source === 'odoo') ok('depois de follow_directory o Odoo volta a preencher')
+  else nok('o Odoo volta a preencher', JSON.stringify(t))
+  await sync({ mobile_phone: false, work_phone: false })
+  t = await telefoneDe()
+  if (t.phone === null && t.source === null) ok('o Odoo apaga o número que ele próprio escreveu (false)')
+  else nok('o Odoo apaga o seu número', JSON.stringify(t))
 }
 
 // ---------- 6. agente verdadeiro contra o USB desta máquina ----------
