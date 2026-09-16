@@ -27,6 +27,7 @@ import CapacityRow from './admin/CapacityRow'
 import CreateOrgDialog from './admin/CreateOrgDialog'
 import MembersCard from './admin/MembersCard'
 import OrgsCard from './admin/OrgsCard'
+import { RetentionCard, StorageCard } from './admin/PolicyCards'
 import { refusalAware, useOrgSelection } from './admin/orgShared'
 import SettingsCard from './admin/SettingsCard'
 import { BranchesCard, GroupsCard, RoomsCard } from './admin/StructureCards'
@@ -45,7 +46,7 @@ export default function Admin() {
   return (
     <>
       <PageBar
-        title={t('org.admin.titulo')}
+        title={t('consola.admin.titulo')}
         meta={
           org || versionText ? (
             <span data-testid="admin-meta">
@@ -63,8 +64,8 @@ export default function Admin() {
             ))}
           </Select>
         )}
-        <Button variant="primary" size="sm" icon="plus" aria-label={t('org.novaOrg.titulo')} onClick={() => setCreatingOrg(true)}>
-          <span className="org-hide-narrow">{t('org.novaOrg.titulo')}</span>
+        <Button variant="primary" size="sm" onClick={() => setCreatingOrg(true)}>
+          {t('org.novaOrg.titulo')}
         </Button>
       </PageBar>
       <AsyncSection state={list.state} onRetry={list.reload}>
@@ -141,11 +142,13 @@ function AdminBody({
       <div className="org-admin__grid">
         <div className="org-admin__main">
           <OrgsCard orgs={orgs} activeId={org.id} onSelect={onSelectOrg} />
-          <MembersCard orgId={org.id} meId={user.id} state={people.state} reload={reloadMembers} branches={branchList} />
           <AuditCard orgId={org.id} />
+          <MembersCard orgId={org.id} meId={user.id} state={people.state} reload={reloadMembers} branches={branchList} />
           <VoiceCard orgId={org.id} />
         </div>
         <div className="org-admin__side">
+          <StorageCard stats={stats.state} />
+          <RetentionCard org={org} />
           <SettingsCard org={org} onSaved={onOrgChanged} />
           <BranchesCard orgId={org.id} state={branches.state} reload={branches.reload} people={peopleList} />
           <GroupsCard orgId={org.id} meId={user.id} state={groups.state} reload={groups.reload} people={peopleList} maxGroups={org.max_groups} />

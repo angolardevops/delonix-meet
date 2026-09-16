@@ -109,8 +109,6 @@ function OdooForm({ orgId, initial, onSaved }: { orgId: string; initial: OdooCon
 
   return (
     <div className="integ-stack">
-      <p className="integ-desc">{t('integrations.odoo.descricao')}</p>
-
       <Toggle label={t('integrations.odoo.activar')} checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
 
       <div className="integ-grid2">

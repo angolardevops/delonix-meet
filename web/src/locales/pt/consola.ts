@@ -3,6 +3,11 @@
 export default {
   admin: {
     versao: 'servidor v{{v}}',
+    titulo: 'Consola de administração',
+    armazenamento: 'Armazenamento',
+    gravacoesBytes: 'Gravações {{tamanho}}',
+    retencao: 'Políticas de retenção',
+    retencaoGravacoes: 'Gravações de reuniões',
   },
   auditoria: {
     aVerificar: 'A verificar a cadeia…',
@@ -14,6 +19,7 @@ export default {
     partidaEm: 'O registo nº {{seq}} foi alterado depois de escrito.',
     cadeiaExplica: 'Cada registo leva o hash do anterior.',
     verificar: 'Verificar cadeia',
+    imutavelMeta: 'imutável',
   },
   orgs: {
     titulo: 'Organizações',
@@ -28,6 +34,8 @@ export default {
     dias_other: '{{count}} dias',
     semLimite: 'sem limite',
     abrir: 'Gerir',
+    pessoasTotal_one: '{{count}} pessoa',
+    pessoasTotal_other: '{{count}} pessoas',
   },
   voz: {
     titulo: 'Voz · dial-in PSTN',
