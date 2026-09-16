@@ -650,7 +650,20 @@ pub async fn ring_users(
 
 // ---------- endpoints REST (ack de chamadas perdidas) ----------
 
+/// Documentação OpenAPI das rotas HTTP deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(ack_missed_calls))]
+pub struct ApiDoc;
+
 /// Marca todas as chamadas perdidas do utilizador como vistas.
+#[utoipa::path(
+    post, path = "/api/missed-calls/ack", tag = "calls",
+    security(("session" = [])),
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn ack_missed_calls(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     auth: crate::auth::AuthUser,

@@ -57,9 +57,36 @@ async fn require_member_or_owner(
     Ok(())
 }
 
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        list_agenda,
+        add_agenda_item,
+        patch_agenda_item,
+        delete_agenda_item,
+        get_action_plan,
+        upsert_action_plan,
+        add_action_item,
+        patch_action_item,
+        delete_action_item
+    ),
+    components(schemas(
+        AgendaItem,
+        AgendaItemReq,
+        AgendaPatchReq,
+        ActionItem,
+        ActionPlan,
+        ActionPlanGoalReq,
+        ActionItemReq,
+        ActionItemPatch
+    ))
+)]
+pub struct ApiDoc;
+
 // ─── Agenda ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct AgendaItem {
     pub id: Uuid,
     pub meeting_id: Uuid,
@@ -78,13 +105,17 @@ pub struct AgendaItem {
 const AGENDA_ITEM_COLUMNS: &str =
     "id, meeting_id, position, topic, description, duration_min, done, done_at, done_by_id, created_at";
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct AgendaItemReq {
+    /// 1-200 caracteres (depois de `trim`).
     pub topic: String,
     #[serde(default)]
     pub description: String,
+    /// Limitado a 1-480 (valores fora são ajustados, não recusados).
     #[serde(default = "default_dur")]
+    #[schema(default = 5)]
     pub duration_min: i16,
+    /// Omisso: a seguir ao último tópico.
     #[serde(default)]
     pub position: Option<i16>,
 }
@@ -92,7 +123,7 @@ fn default_dur() -> i16 {
     5
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct AgendaPatchReq {
     #[serde(default)]
     pub topic: Option<String>,
@@ -107,6 +138,15 @@ pub struct AgendaPatchReq {
 }
 
 /// `GET /api/meetings/:id/agenda`
+#[utoipa::path(
+    get, path = "/api/meetings/{id}/agenda", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = Vec<AgendaItem>),
+        (status = 401, body = crate::openapi::ErrorBody, description = "não é dono nem convidado — também quando a reunião não existe"),
+    )
+)]
 pub async fn list_agenda(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -123,6 +163,18 @@ pub async fn list_agenda(
 }
 
 /// `POST /api/meetings/:id/agenda` — adiciona tópico (só anfitrião).
+#[utoipa::path(
+    post, path = "/api/meetings/{id}/agenda", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    request_body = AgendaItemReq,
+    responses(
+        (status = 200, body = AgendaItem),
+        (status = 400, body = crate::openapi::ErrorBody, description = "tópico vazio ou com mais de 200 caracteres"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "reunião não existe"),
+    )
+)]
 pub async fn add_agenda_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -166,6 +218,18 @@ pub async fn add_agenda_item(
 
 /// `PATCH /api/meetings/:id/agenda/:item_id` — editar ou marcar como feito.
 /// Qualquer membro pode marcar como feito; só o anfitrião pode editar os campos.
+#[utoipa::path(
+    patch, path = "/api/meetings/{id}/agenda/{item_id}", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião"), ("item_id" = Uuid, Path, description = "Id do item")),
+    request_body = AgendaPatchReq,
+    responses(
+        (status = 200, body = AgendaItem, description = "Qualquer membro muda `done`; só o anfitrião edita os restantes campos"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "tópico inválido"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "editar campos que não `done` sem ser anfitrião, ou não ser membro"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "reunião ou tópico não existe"),
+    )
+)]
 pub async fn patch_agenda_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -254,6 +318,16 @@ pub async fn patch_agenda_item(
 }
 
 /// `DELETE /api/meetings/:id/agenda/:item_id` — só anfitrião.
+#[utoipa::path(
+    delete, path = "/api/meetings/{id}/agenda/{item_id}", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião"), ("item_id" = Uuid, Path, description = "Id do item")),
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada); também quando o tópico não existe"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "reunião não existe"),
+    )
+)]
 pub async fn delete_agenda_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -270,7 +344,7 @@ pub async fn delete_agenda_item(
 
 // ─── Plano de Ação 5W2H ────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ActionItem {
     pub id: Uuid,
     pub plan_id: Uuid,
@@ -294,7 +368,7 @@ pub struct ActionItem {
 const ACTION_ITEM_COLUMNS: &str = "id, plan_id, position, what, when_date, where_text, \
      who_id, who_name, why, how, resources, status, created_at, updated_at";
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ActionPlan {
     pub id: Uuid,
     pub meeting_id: Uuid,
@@ -303,12 +377,12 @@ pub struct ActionPlan {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ActionPlanGoalReq {
     pub goal: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ActionItemReq {
     #[serde(default)]
     pub what: String,
@@ -326,7 +400,9 @@ pub struct ActionItemReq {
     pub how: String,
     #[serde(default)]
     pub resources: String,
+    /// `todo` (omissão) | `doing` | `done`.
     #[serde(default = "default_status")]
+    #[schema(default = "todo")]
     pub status: String,
     #[serde(default)]
     pub position: Option<i16>,
@@ -335,7 +411,7 @@ fn default_status() -> String {
     "todo".into()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ActionItemPatch {
     #[serde(default)]
     pub what: Option<String>,
@@ -390,6 +466,15 @@ async fn load_plan_with_items(
 }
 
 /// `GET /api/meetings/:id/action-plan`
+#[utoipa::path(
+    get, path = "/api/meetings/{id}/action-plan", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = Option<ActionPlan>, description = "`null` se a reunião ainda não tem plano"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "não é dono nem convidado — também quando a reunião não existe"),
+    )
+)]
 pub async fn get_action_plan(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -400,6 +485,17 @@ pub async fn get_action_plan(
 }
 
 /// `PUT /api/meetings/:id/action-plan` — cria ou atualiza a META do plano.
+#[utoipa::path(
+    put, path = "/api/meetings/{id}/action-plan", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    request_body = ActionPlanGoalReq,
+    responses(
+        (status = 200, body = ActionPlan),
+        (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "reunião não existe"),
+    )
+)]
 pub async fn upsert_action_plan(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -423,6 +519,18 @@ pub async fn upsert_action_plan(
 }
 
 /// `POST /api/meetings/:id/action-plan/items` — adiciona linha 5W2H.
+#[utoipa::path(
+    post, path = "/api/meetings/{id}/action-plan/items", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    request_body = ActionItemReq,
+    responses(
+        (status = 200, body = ActionItem, description = "Cria o plano (sem meta) se ainda não existir"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`status` inválido"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "reunião não existe"),
+    )
+)]
 pub async fn add_action_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -498,6 +606,18 @@ pub async fn add_action_item(
 
 /// `PATCH /api/action-items/:item_id` — atualiza campos ou status.
 /// Qualquer membro pode mudar o status; só o anfitrião pode editar campos.
+#[utoipa::path(
+    patch, path = "/api/action-items/{item_id}", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("item_id" = Uuid, Path, description = "Id do item")),
+    request_body = ActionItemPatch,
+    responses(
+        (status = 200, body = ActionItem, description = "Qualquer membro muda `status`; só o anfitrião edita os restantes campos"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`status` inválido"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "editar campos que não `status` sem ser anfitrião, ou mudar `status` sem ser membro"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "item não existe"),
+    )
+)]
 pub async fn patch_action_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -630,6 +750,16 @@ pub async fn patch_action_item(
 }
 
 /// `DELETE /api/action-items/:item_id` — só anfitrião.
+#[utoipa::path(
+    delete, path = "/api/action-items/{item_id}", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("item_id" = Uuid, Path, description = "Id do item")),
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "item não existe"),
+    )
+)]
 pub async fn delete_action_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

@@ -113,11 +113,15 @@ fn bff_parts() -> Vec<utoipa::openapi::OpenApi> {
     vec![
         crate::users::ApiDoc::openapi(),
         crate::webhooks::ApiDoc::openapi(),
+        crate::meetings::ApiDoc::openapi(),
+        crate::actions::ApiDoc::openapi(),
+        crate::presence::ApiDoc::openapi(),
+        crate::ai::ApiDoc::openapi(),
     ]
 }
 
 fn v1_parts() -> Vec<utoipa::openapi::OpenApi> {
-    vec![]
+    vec![crate::meetings_v1::ApiDoc::openapi()]
 }
 
 pub async fn bff_json() -> Json<utoipa::openapi::OpenApi> {

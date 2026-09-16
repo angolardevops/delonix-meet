@@ -46,33 +46,39 @@ use crate::{
 
 // ---------- DTOs ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct InviteeReq {
     pub email: String,
     #[serde(default)]
     pub name: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateMeetingReq {
     /// Referência do sistema chamador. Opcional, mas **sem ela não há
     /// idempotência** — recomendada para qualquer integração de calendário.
     #[serde(default)]
     pub external_ref: Option<String>,
+    /// Obrigatório; cortado a 120 caracteres.
     pub title: String,
     #[serde(default)]
     pub description: String,
     pub starts_at: DateTime<Utc>,
+    /// 1-1440 minutos.
     #[serde(default = "default_duration")]
+    #[schema(default = 30)]
     pub duration_min: i32,
     /// Email do anfitrião. **Obrigatório**: é ele que fica `owner_id` da sala
     /// e o único que pode admitir convidados (ver `signaling::decide_waiting`).
     pub host_email: String,
     #[serde(default)]
     pub host_name: Option<String>,
+    /// No máximo 200.
     #[serde(default)]
     pub invitees: Vec<InviteeReq>,
+    /// `video` (omissão) | `voice`.
     #[serde(default = "default_kind")]
+    #[schema(default = "video")]
     pub kind: String,
     #[serde(default)]
     pub e2ee: bool,
@@ -87,7 +93,7 @@ fn default_kind() -> String {
     "video".into()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct PatchMeetingReq {
     #[serde(default)]
     pub title: Option<String>,
@@ -103,7 +109,7 @@ pub struct PatchMeetingReq {
     pub invitees: Option<Vec<InviteeReq>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct MeetingResp {
     pub id: Uuid,
     pub external_ref: Option<String>,
@@ -124,17 +130,43 @@ pub struct MeetingResp {
     pub existing: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct InviteeResp {
     pub email: String,
     pub user_id: Uuid,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct SkippedInvitee {
     pub email: String,
     pub reason: String,
 }
+
+/// Resposta de `DELETE /api/v1/meetings/{id}`.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct DeleteMeetingResp {
+    /// Sempre `true`.
+    pub ok: bool,
+    /// `false` quando a sala foi mantida por ter gravações (ou a reunião não
+    /// tinha sala).
+    pub room_deleted: bool,
+}
+
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as à v1).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(create, patch, ring, delete),
+    components(schemas(
+        InviteeReq,
+        CreateMeetingReq,
+        PatchMeetingReq,
+        MeetingResp,
+        InviteeResp,
+        SkippedInvitee,
+        DeleteMeetingResp
+    ))
+)]
+pub struct ApiDoc;
 
 // ---------- resolução de utilizadores por email ----------
 
@@ -438,6 +470,19 @@ async fn email_of(state: &AppState, user_id: Uuid) -> String {
 
 /// `POST /api/v1/meetings` — cria (ou reencontra) uma reunião agendada com
 /// sala, anfitrião e convidados.
+#[utoipa::path(
+    post, path = "/api/v1/meetings", tag = "meetings",
+    security(("api_key" = [])),
+    request_body = CreateMeetingReq,
+    responses(
+        (status = 200, body = MeetingResp, description = "Criada, ou reencontrada pela `external_ref` (`existing: true`)"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`title` vazio, `kind`, `duration_min`, `host_email` inválidos ou mais de 200 convidados"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente ou inválida"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a `external_ref` aponta para uma reunião que já não se resolve na organização"),
+        (status = 409, body = crate::openapi::ErrorBody, description = "o anfitrião pertence a outra organização"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1"),
+    )
+)]
 pub async fn create(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
@@ -598,6 +643,19 @@ pub async fn create(
 }
 
 /// `PATCH /api/v1/meetings/{id}` — reagendar / renomear / actualizar convidados.
+#[utoipa::path(
+    patch, path = "/api/v1/meetings/{id}", tag = "meetings",
+    security(("api_key" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    request_body = PatchMeetingReq,
+    responses(
+        (status = 200, body = MeetingResp),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`title` vazio, `duration_min` fora de 1-1440 ou mais de 200 convidados"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente ou inválida"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1"),
+    )
+)]
 pub async fn patch(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
@@ -713,6 +771,18 @@ pub async fn patch(
 /// Reutiliza a mesma mecânica para o comportamento ser idêntico nos dois
 /// casos, incluindo o `register_call` — sem ele, quem atende cairia na sala
 /// de espera em vez de entrar directo.
+#[utoipa::path(
+    post, path = "/api/v1/meetings/{id}/ring", tag = "meetings",
+    security(("api_key" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = serde_json::Value, description = "Com alvos: `{ringing: [uuid], offline: [uuid], room_code, join_url}`. Sem convidados por chamar: `{ringing: [], offline: [], reason, join_url}` (sem `room_code`)."),
+        (status = 400, body = crate::openapi::ErrorBody, description = "a reunião ainda não tem sala"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente ou inválida"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1"),
+    )
+)]
 pub async fn ring(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
@@ -772,11 +842,22 @@ pub async fn ring(
 /// e sido cancelada no calendário depois, e uma gravação é um artefacto que o
 /// utilizador espera manter (a FK `recordings.room_id` é ON DELETE CASCADE —
 /// apagar a sala apagaria o registo da gravação).
+#[utoipa::path(
+    delete, path = "/api/v1/meetings/{id}", tag = "meetings",
+    security(("api_key" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = DeleteMeetingResp),
+        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente ou inválida"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1"),
+    )
+)]
 pub async fn delete(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
     Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeleteMeetingResp>, ApiError> {
     let meeting = meeting_in_org(&state, key.org_id, id).await?;
 
     sqlx::query("DELETE FROM meetings WHERE id = $1")
@@ -805,10 +886,10 @@ pub async fn delete(
     )
     .await;
 
-    Ok(Json(serde_json::json!({
-        "ok": true,
-        "room_deleted": room_deleted,
-    })))
+    Ok(Json(DeleteMeetingResp {
+        ok: true,
+        room_deleted,
+    }))
 }
 
 #[cfg(test)]
