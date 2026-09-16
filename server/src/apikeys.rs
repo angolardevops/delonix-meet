@@ -631,7 +631,7 @@ pub async fn v1_provision_org(
 
     // Org com slug único (sufixo em colisão). SEM a quota anti-abuso de
     // create_org: aqui a autorização é o segredo de plataforma, não um user.
-    let base = crate::org::slugify_pub(name);
+    let base = crate::org::slugify(name);
     let mut created: Option<(Uuid, String)> = existing_org;
     for i in 0..8 {
         if created.is_some() {

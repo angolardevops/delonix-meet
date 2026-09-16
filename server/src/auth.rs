@@ -137,7 +137,10 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
 
 #[derive(Deserialize)]
 pub struct RegisterReq {
-    /// Nome da organização — o registo público cria SEMPRE uma organização.
+    /// Nome da organização. Obrigatório em tenancy `multi` (o registo cria
+    /// uma organização); opcional na edição pessoal e ao juntar-se à org
+    /// única da instalação.
+    #[serde(default)]
     pub org_name: String,
     pub email: String,
     #[serde(default)]
@@ -223,49 +226,53 @@ async fn issue_tokens(
     })
 }
 
-/// Registo público = criar uma ORGANIZAÇÃO. O Delonix Meet não aceita contas
-/// individuais: cria-se a organização com o primeiro utilizador (admin), e o
-/// domínio do email do admin passa a ser o domínio da organização (único).
-/// Os restantes utilizadores são adicionados no workspace (diretório) com
-/// email do mesmo domínio.
+/// Registo de conta. O QUE acontece decide-o a política da instalação
+/// (`delonix_meet_domain::identity::registration`, ADR-0005 §2); aqui só se lê
+/// o retrato da instalação e se executa o plano.
+///
+/// No perfil histórico (`saas` + `open` + `multi`) o registo cria uma
+/// organização com o primeiro utilizador como admin, e o domínio do email passa
+/// a ser o domínio da organização (único) — igual ao que sempre foi.
 pub async fn register(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterReq>,
 ) -> Result<Response, ApiError> {
-    use crate::domain::validation;
+    use delonix_meet_domain::identity::registration::{
+        self, RegistrationPlan, RegistrationRequest,
+    };
+    use delonix_meet_domain::identity::validation;
 
     let email = validation::normalize_email(&req.email);
-    let org_name = req.org_name.trim().to_string();
     // Sem username explícito → deriva da parte local do email.
     let username = if req.username.trim().len() >= 2 {
         req.username.trim().to_string()
     } else {
         email.split('@').next().unwrap_or("admin").to_string()
     };
-    validation::validate_email(&email).map_err(ApiError::BadRequest)?;
-    if org_name.len() < 2 || org_name.len() > 80 {
-        return Err(ApiError::BadRequest(
-            "nome da organização deve ter 2-80 caracteres".into(),
-        ));
-    }
-    validation::validate_password(&req.password).map_err(ApiError::BadRequest)?;
-    let domain = validation::require_corporate_domain(&email).map_err(ApiError::BadRequest)?;
+    let request = RegistrationRequest {
+        email: email.clone(),
+        org_name: Some(req.org_name.clone()).filter(|n| !n.trim().is_empty()),
+        username: username.clone(),
+        password: req.password.clone(),
+    };
+    let policy = state.config.registration_policy();
 
-    // Domínio já pertence a outra organização? (regra: 1 org por domínio)
-    let taken: Option<(uuid::Uuid,)> =
-        sqlx::query_as("SELECT id FROM organizations WHERE email_domain = $1")
-            .bind(&domain)
-            .fetch_optional(&state.db)
-            .await?;
-    if taken.is_some() {
-        return Err(ApiError::Conflict(format!(
-            "o domínio «{domain}» já tem uma organização registada — pede ao teu administrador para te adicionar"
-        )));
-    }
-
+    // 1.ª decisão sem trinco: recusa cedo, antes do argon2 (caro), o que já se
+    // sabe que não entra.
+    let snapshot = installation_snapshot(&state.db, &email).await?;
+    registration::plan(&policy, &request, &snapshot)?;
     let password_hash = hash_password(&req.password)?;
-    // Transação: utilizador + organização + membro admin, tudo-ou-nada.
+
+    // 2.ª decisão, a que conta: dentro da transação e com trinco, para que duas
+    // contas a nascer ao mesmo tempo numa instalação vazia não sejam ambas «a
+    // primeira».
     let mut tx = state.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('delonix.registration'))")
+        .execute(&mut *tx)
+        .await?;
+    let snapshot = installation_snapshot(&mut *tx, &email).await?;
+    let plan = registration::plan(&policy, &request, &snapshot)?;
+
     let user: crate::users::UserPublic = sqlx::query_as(&format!(
         "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3)
          RETURNING {}",
@@ -283,29 +290,78 @@ pub async fn register(
         _ => e.into(),
     })?;
 
-    let slug = crate::org::slugify_pub(&org_name);
-    let (org_id,): (uuid::Uuid,) = sqlx::query_as(
-        "INSERT INTO organizations (name, slug, created_by, email_domain)
-         VALUES ($1, $2, $3, $4) RETURNING id",
-    )
-    .bind(&org_name)
-    // slug único: acrescenta sufixo curto do domínio para evitar colisão de nome
-    .bind(format!("{slug}-{}", &domain.replace('.', "-")))
-    .bind(user.id)
-    .bind(&domain)
-    .fetch_one(&mut *tx)
-    .await?;
-    sqlx::query(
-        "INSERT INTO org_members (org_id, user_id, role, title) VALUES ($1, $2, 'admin', 'Administrador')",
-    )
-    .bind(org_id)
-    .bind(user.id)
-    .execute(&mut *tx)
-    .await?;
+    let (org_id, action, target) = match plan {
+        RegistrationPlan::CreateOrganization {
+            name,
+            email_domain,
+            kind,
+        } => {
+            let base = crate::org::slugify(&name);
+            // slug único: sufixo do domínio (histórico) ou aleatório (sem domínio).
+            let slug = match &email_domain {
+                Some(d) => format!("{base}-{}", d.replace('.', "-")),
+                None => format!("{base}-{}", delonix_meet_core::crypto::random_hex(3)),
+            };
+            let (org_id,): (uuid::Uuid,) = sqlx::query_as(
+                "INSERT INTO organizations (name, slug, created_by, email_domain, kind)
+                 VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            )
+            .bind(&name)
+            .bind(&slug)
+            .bind(user.id)
+            .bind(email_domain.as_deref().unwrap_or(""))
+            .bind(kind.as_str())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| match &e {
+                sqlx::Error::Database(db) if db.is_unique_violation() => {
+                    ApiError::Conflict("já existe uma organização para este domínio".into())
+                }
+                _ => e.into(),
+            })?;
+            crate::org::insert_member_tx(&mut tx, org_id, user.id, "admin", "Administrador")
+                .await?;
+            (org_id, "org.created", name)
+        }
+        RegistrationPlan::JoinOrganization { org_id, as_admin } => {
+            let role = if as_admin { "admin" } else { "member" };
+            crate::org::insert_member_tx(&mut tx, org_id, user.id, role, "").await?;
+            (org_id, "member.registered", email.clone())
+        }
+    };
     tx.commit().await?;
 
-    crate::audit::log(&state.db, Some(org_id), user.id, "org.created", &org_name).await;
+    crate::audit::log(&state.db, Some(org_id), user.id, action, &target).await;
     Ok(auth_ok(&state, issue_tokens(&state, user).await?))
+}
+
+/// O que a política de registo precisa de saber sobre a instalação.
+async fn installation_snapshot<'e, E>(
+    db: E,
+    email: &str,
+) -> Result<delonix_meet_domain::identity::registration::InstallationSnapshot, ApiError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let domain = email.split('@').nth(1).unwrap_or("");
+    // As contas técnicas (`…@delonix.internal`, ex.: a de provisionamento) não
+    // fazem de uma instalação vazia uma instalação com utilizadores.
+    let (has_users, domain_taken, single_org): (bool, bool, Option<uuid::Uuid>) = sqlx::query_as(
+        "SELECT
+            EXISTS (SELECT 1 FROM users WHERE email NOT LIKE '%@delonix.internal'),
+            EXISTS (SELECT 1 FROM organizations WHERE email_domain = $1 AND email_domain <> ''),
+            (SELECT id FROM organizations ORDER BY created_at, id LIMIT 1)",
+    )
+    .bind(domain)
+    .fetch_one(db)
+    .await?;
+    Ok(
+        delonix_meet_domain::identity::registration::InstallationSnapshot {
+            has_users,
+            domain_taken,
+            single_org,
+        },
+    )
 }
 
 pub async fn login(

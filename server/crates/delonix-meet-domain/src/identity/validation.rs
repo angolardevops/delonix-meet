@@ -1,4 +1,4 @@
-//! Regras de campo partilhadas (ADR-0004, Fase 2). Antes disto, email e
+//! Regras de campo partilhadas (ADR-0004, Fase 2; contexto identity, ADR-0005). Antes disto, email e
 //! password eram validados de forma diferente em três sítios —
 //! `auth::register` exigia `8..=128` na password e email com `@`+254
 //! caracteres; `users::update_me` só verificava `>= 8` (sem tecto);

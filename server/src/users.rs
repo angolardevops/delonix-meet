@@ -73,7 +73,8 @@ pub async fn update_me(
         // Antes desta chamada faltava aqui o tecto de 128 que auth::register
         // já impunha — a mesma política de password, agora num só sítio
         // (ADR-0004, Fase 2).
-        crate::domain::validation::validate_password(password).map_err(ApiError::BadRequest)?;
+        delonix_meet_domain::identity::validation::validate_password(password)
+            .map_err(ApiError::BadRequest)?;
         let hash = crate::auth::hash_password(password)?;
         sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
             .bind(hash)

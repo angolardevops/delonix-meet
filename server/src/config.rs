@@ -6,6 +6,35 @@ const DEV_DB: &str = "postgres://delonix:delonix_dev@localhost:5435/delonix_meet
 
 #[derive(Clone)]
 pub struct Config {
+    /// Perfil da instalação (`DELONIX_EDITION`, por omissão `saas` — o
+    /// comportamento histórico). Fixa os valores por omissão das políticas
+    /// abaixo; cada uma pode ser sobreposta (ADR-0005 §2).
+    pub edition: delonix_meet_core::edition::Edition,
+    /// Quem pode criar conta (`REGISTRATION_MODE`).
+    pub registration_mode: delonix_meet_core::edition::RegistrationMode,
+    /// Domínios aceites em `REGISTRATION_MODE=domain` (`REGISTRATION_DOMAINS`, csv).
+    pub registration_domains: Vec<String>,
+    /// Uma org por empresa, ou uma só org na instalação (`TENANCY_MODE`).
+    pub tenancy_mode: delonix_meet_core::edition::TenancyMode,
+    /// Correr as migrações no arranque (`DELONIX_MIGRATE`, omissão `1`). Em
+    /// SaaS com várias réplicas corre-se `delonix-server migrate` num Job e
+    /// põe-se `0` no Deployment, para não haver N réplicas a migrar ao mesmo tempo.
+    pub migrate_on_start: bool,
+    /// `LOG_FORMAT=json` para os logs saírem estruturados (K8s/Loki).
+    pub log_json: bool,
+    /// Listener HTTP INTERNO (`INTERNAL_BIND_ADDR`): a API de IVR e o
+    /// `/metrics` saem da árvore pública e passam a viver aqui, numa porta que
+    /// nenhum ingress publica. Vazio => tudo fica no listener público, como antes.
+    pub internal_bind_addr: Option<String>,
+    /// Listener gRPC interno (`GRPC_BIND_ADDR`). Vazio => desligado.
+    pub grpc_bind_addr: Option<String>,
+    /// mTLS do gRPC (`GRPC_TLS_CERT`, `GRPC_TLS_KEY`, `GRPC_CLIENT_CA`: caminhos).
+    pub grpc_tls_cert: Option<String>,
+    pub grpc_tls_key: Option<String>,
+    pub grpc_client_ca: Option<String>,
+    /// Directório da SPA a servir pelo próprio binário (`UI_DIR`). Vazio =>
+    /// a UI é servida à parte (nginx/CDN), como antes.
+    pub ui_dir: Option<std::path::PathBuf>,
     /// `DELONIX_ALLOW_INSECURE=1`: segredos de dev aceites e CORS permissivo.
     /// Lido UMA vez aqui — nenhum outro módulo lê o ambiente.
     pub allow_insecure: bool,
@@ -205,13 +234,48 @@ impl Config {
         // Fail-closed: por omissão exige-se segredos fortes. Só se
         // DELONIX_ALLOW_INSECURE=1 (dev) é que se aceitam os defaults.
         let insecure = src.var("DELONIX_ALLOW_INSECURE").ok().as_deref() == Some("1");
-        if insecure {
-            tracing::warn!(
-                "DELONIX_ALLOW_INSECURE=1 — a usar segredos de desenvolvimento. NÃO usar em produção."
-            );
-        }
         let cors_origins = csv_env(src, "CORS_ORIGINS");
+        use delonix_meet_core::edition::{Edition, RegistrationMode, TenancyMode};
+        let edition = match src.var("DELONIX_EDITION") {
+            Err(_) => Edition::Saas,
+            Ok(v) => Edition::parse(&v).unwrap_or_else(|| {
+                panic!("DELONIX_EDITION: «{v}» não é saas | enterprise | personal")
+            }),
+        };
+        let registration_mode = match src.var("REGISTRATION_MODE") {
+            Err(_) => edition.default_registration(),
+            Ok(v) => RegistrationMode::parse(&v).unwrap_or_else(|| {
+                panic!("REGISTRATION_MODE: «{v}» não é open | domain | invite | closed")
+            }),
+        };
+        let tenancy_mode = match src.var("TENANCY_MODE") {
+            Err(_) => edition.default_tenancy(),
+            Ok(v) => TenancyMode::parse(&v)
+                .unwrap_or_else(|| panic!("TENANCY_MODE: «{v}» não é multi | single")),
+        };
+        let registration_domains: Vec<String> = csv_env(src, "REGISTRATION_DOMAINS")
+            .into_iter()
+            .map(|d| d.to_lowercase())
+            .collect();
+        if registration_mode == RegistrationMode::Domain && registration_domains.is_empty() {
+            // Fail-closed e em voz alta: «domain» sem domínios fecharia o registo
+            // a toda a gente sem que o operador percebesse porquê.
+            panic!("REGISTRATION_MODE=domain exige REGISTRATION_DOMAINS (csv)");
+        }
+        let opt = |k: &str| src.var(k).ok().filter(|v| !v.trim().is_empty());
         Self {
+            edition,
+            registration_mode,
+            registration_domains,
+            tenancy_mode,
+            migrate_on_start: src.var("DELONIX_MIGRATE").ok().as_deref() != Some("0"),
+            log_json: src.var("LOG_FORMAT").ok().as_deref() == Some("json"),
+            internal_bind_addr: opt("INTERNAL_BIND_ADDR"),
+            grpc_bind_addr: opt("GRPC_BIND_ADDR"),
+            grpc_tls_cert: opt("GRPC_TLS_CERT"),
+            grpc_tls_key: opt("GRPC_TLS_KEY"),
+            grpc_client_ca: opt("GRPC_CLIENT_CA"),
+            ui_dir: opt("UI_DIR").map(std::path::PathBuf::from),
             allow_insecure: insecure,
             database_url: secret(src, "DATABASE_URL", DEV_DB, insecure, 0),
             bind_addr: src
@@ -362,6 +426,18 @@ fn secret(src: &Source, var: &str, dev_default: &str, insecure: bool, min_len: u
 }
 
 impl Config {
+    /// A política de registo do domínio, montada a partir da configuração.
+    pub fn registration_policy(
+        &self,
+    ) -> delonix_meet_domain::identity::registration::RegistrationPolicy {
+        delonix_meet_domain::identity::registration::RegistrationPolicy {
+            edition: self.edition,
+            mode: self.registration_mode,
+            tenancy: self.tenancy_mode,
+            allowed_domains: self.registration_domains.clone(),
+        }
+    }
+
     /// A janela de graça como `Duration`. Existe para os chamadores não terem
     /// de se lembrar da unidade — um `45` lido como milissegundos daria uma
     /// janela de 45 ms e a reclamação nunca aconteceria.

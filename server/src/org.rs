@@ -246,11 +246,27 @@ pub async fn require_member_pub(
 }
 
 /// Slugify exposto para o registo de organizações (auth.rs).
-pub fn slugify_pub(name: &str) -> String {
-    slugify(name)
+/// Junta uma conta a uma organização dentro de uma transação já aberta. É o
+/// único `INSERT INTO org_members` fora dos handlers deste módulo — quem
+/// precisa de o fazer (o registo) chama isto em vez de escrever o SQL.
+pub(crate) async fn insert_member_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_id: Uuid,
+    user_id: Uuid,
+    role: &str,
+    title: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO org_members (org_id, user_id, role, title) VALUES ($1, $2, $3, $4)")
+        .bind(org_id)
+        .bind(user_id)
+        .bind(role)
+        .bind(title)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
-fn slugify(name: &str) -> String {
+pub(crate) fn slugify(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.to_lowercase().chars() {
         if c.is_ascii_alphanumeric() {
@@ -279,6 +295,16 @@ pub async fn create_org(
     auth: AuthUser,
     Json(req): Json<CreateOrgReq>,
 ) -> Result<Json<Organization>, ApiError> {
+    // Tenancy `single` (ADR-0005 §2): a instalação tem UMA organização, criada
+    // pelo primeiro registo. Criar outra partia a premissa de que toda a gente
+    // se encontra no mesmo directório.
+    if state.config.tenancy_mode == delonix_meet_core::edition::TenancyMode::Single {
+        return Err(delonix_meet_core::DomainError::precondition(
+            "organization.single_tenancy",
+            "esta instalação tem uma só organização",
+        )
+        .into());
+    }
     let name = req.name.trim();
     if name.is_empty() || name.len() > 120 {
         return Err(ApiError::BadRequest("nome da organização inválido".into()));
@@ -424,10 +450,11 @@ pub async fn add_employee(
     Json(req): Json<AddEmployeeReq>,
 ) -> Result<Json<Employee>, ApiError> {
     require_admin(&state, org_id, auth.user_id).await?;
-    let email = crate::domain::validation::normalize_email(&req.email);
+    let email = delonix_meet_domain::identity::validation::normalize_email(&req.email);
     // Antes faltava aqui o limite de 254 caracteres que auth::register já
     // impunha — mesma política de email, agora num só sítio (ADR-0004, Fase 2).
-    crate::domain::validation::validate_email(&email).map_err(ApiError::BadRequest)?;
+    delonix_meet_domain::identity::validation::validate_email(&email)
+        .map_err(ApiError::BadRequest)?;
     // Org-first: o email do colaborador tem de ser do domínio da organização.
     let org_domain: Option<(String,)> =
         sqlx::query_as("SELECT email_domain FROM organizations WHERE id = $1")
@@ -485,7 +512,8 @@ pub async fn add_employee(
                 .filter(|s| s.len() >= 2)
                 .unwrap_or_else(|| email.split('@').next().unwrap_or("employee").to_string());
             let password = req.password.as_deref().unwrap_or("changeme123");
-            crate::domain::validation::validate_password(password).map_err(ApiError::BadRequest)?;
+            delonix_meet_domain::identity::validation::validate_password(password)
+                .map_err(ApiError::BadRequest)?;
             let hash = crate::auth::hash_password(password)?;
             let row: Result<(Uuid,), sqlx::Error> = sqlx::query_as(
                 "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id",

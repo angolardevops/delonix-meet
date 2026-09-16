@@ -83,6 +83,12 @@ impl DomainError {
         Self::new(ErrorKind::Internal, "internal", detail.to_string())
     }
 
+    /// Substitui a mensagem para pessoas, mantendo classe e código.
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.message = message.into();
+        self
+    }
+
     pub fn with_field(mut self, field: impl Into<String>, description: impl Into<String>) -> Self {
         self.details.push(FieldViolation {
             field: field.into(),

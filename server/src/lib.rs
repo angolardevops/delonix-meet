@@ -12,7 +12,6 @@ mod auth;
 mod broadcast;
 pub mod config;
 mod dlp;
-mod domain;
 mod error;
 mod meetings;
 mod meetings_v1;
@@ -35,6 +34,7 @@ mod sfu;
 mod sfu_e2e;
 mod signaling;
 mod storage;
+mod ui;
 mod users;
 mod voice;
 mod webhooks;
@@ -44,7 +44,7 @@ use axum::{
     extract::DefaultBodyLimit,
     http::HeaderValue,
     middleware,
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Router,
 };
@@ -136,6 +136,30 @@ impl AppState {
     }
 }
 
+/// Rotas de máquina e de observação. Com `INTERNAL_BIND_ADDR` vivem SÓ no
+/// listener interno (porta que nenhum ingress publica, ADR-0005 §3); sem ele
+/// ficam no público, como sempre estiveram — uma instalação existente não perde
+/// o IVR por actualizar o binário.
+fn internal_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        // `/metrics` — exposição Prometheus. Só contadores agregados, nenhum
+        // dado de inquilino.
+        .route("/metrics", get(metrics_handler))
+        // API interna de IVR (autenticada por segredo partilhado, usada pela media)
+        .route("/api/voice/ivr/validate", post(voice::ivr_validate_pin))
+        .route("/api/voice/ivr/cdr", post(voice::ivr_record_cdr))
+}
+
+/// Router do listener INTERNO (`INTERNAL_BIND_ADDR`).
+pub fn build_internal_router(state: Arc<AppState>) -> Router {
+    internal_routes()
+        .route("/health", get(|| async { "ok" }))
+        .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
+        .layer(middleware::from_fn(error::normalize_error_body))
+        .layer(middleware::from_fn(request_id))
+        .with_state(state)
+}
+
 pub fn build_router(state: Arc<AppState>) -> Router {
     let auth_routes = Router::new()
         .route("/register", post(auth::register))
@@ -165,7 +189,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // continuava a mandar-lhe entradas novas, que morriam com ele.
         .route("/ready", get(readiness))
         .route("/api/status", get(status))
-        .route("/metrics", get(metrics_handler))
         .nest("/api/auth", auth_routes)
         .route("/api/users/me", get(users::me).patch(users::update_me))
         // MFA (TOTP, RFC 6238) — ver mfa.rs.
@@ -290,9 +313,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/orgs/{org_id}/voice/dids", get(voice::list_dids).post(voice::create_did))
         .route("/api/orgs/{org_id}/voice/cdr", get(voice::list_cdr))
         .route("/api/orgs/{org_id}/voice/billing", get(voice::billing_summary))
-        // API interna de IVR (autenticada por segredo partilhado, usada pela media)
-        .route("/api/voice/ivr/validate", post(voice::ivr_validate_pin))
-        .route("/api/voice/ivr/cdr", post(voice::ivr_record_cdr))
         // Gestão de chaves de API (admin da org, sessão)
         .route("/api/orgs/{org_id}/api-keys", get(apikeys::list).post(apikeys::create))
         .route("/api/orgs/{org_id}/api-keys/{key_id}", axum::routing::delete(apikeys::revoke))
@@ -376,6 +396,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(broadcast::ws_directo),
         )
         .route("/rtc", get(presence::rtc_handler))
+        .merge(if state.config.internal_bind_addr.is_none() {
+            internal_routes()
+        } else {
+            Router::new()
+        })
+        .fallback({
+            let ui_dir = state.config.ui_dir.clone();
+            move |req: axum::extract::Request| async move {
+                match ui_dir {
+                    Some(dir) => ui::serve(dir, req).await,
+                    None => axum::http::StatusCode::NOT_FOUND.into_response(),
+                }
+            }
+        })
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
         .layer(middleware::from_fn(security_headers))
         .layer(build_cors(&state))
@@ -586,17 +620,42 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
     state
 }
 
+/// Logs em texto (desenvolvimento) ou JSON (`LOG_FORMAT=json`, K8s/Loki).
+fn init_tracing(json: bool) {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "delonix_server=info,tower_http=info".into());
+    if json {
+        tracing_subscriber::fmt()
+            .json()
+            .with_current_span(true)
+            .with_env_filter(filter)
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    }
+}
+
 /// Arranca o servidor: configuração, base, estado partilhado, tarefas de
 /// fundo e o listener HTTP, até ao fim do drain.
 pub async fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "delonix_server=info,tower_http=info".into()),
-        )
-        .init();
-
     let config = Config::from_env();
+    init_tracing(config.log_json);
+    // Avisado DEPOIS de os logs existirem — antes perdia-se sem ninguém ver.
+    if config.allow_insecure {
+        tracing::warn!(
+            "DELONIX_ALLOW_INSECURE=1 — a usar segredos de desenvolvimento. NÃO usar em produção."
+        );
+    }
+    tracing::info!(
+        edition = ?config.edition,
+        registration = ?config.registration_mode,
+        tenancy = ?config.tenancy_mode,
+        "perfil da instalação"
+    );
+
+    // `delonix-server migrate`: corre as migrações e sai. É o que o Job de
+    // migração do SaaS executa antes do rollout (ADR-0005 §4).
+    let migrate_only = std::env::args().nth(1).as_deref() == Some("migrate");
 
     let db = PgPoolOptions::new()
         .max_connections(10)
@@ -605,10 +664,16 @@ pub async fn run() {
         .await
         .expect("failed to connect to Postgres — is `docker compose up -d postgres` running?");
 
-    sqlx::migrate!("./migrations")
-        .run(&db)
-        .await
-        .expect("migrations failed");
+    if migrate_only || config.migrate_on_start {
+        sqlx::migrate!("./migrations")
+            .run(&db)
+            .await
+            .expect("migrations failed");
+        tracing::info!("migrações aplicadas");
+    }
+    if migrate_only {
+        return;
+    }
 
     let state = build_state(config.clone(), db).await;
 
@@ -693,6 +758,24 @@ pub async fn run() {
             loop {
                 ticker.tick().await;
                 meetings::ring_upcoming_meetings(&state).await;
+            }
+        });
+    }
+
+    if let Some(addr) = config.internal_bind_addr.clone() {
+        let internal = build_internal_router(state.clone());
+        let listener = tokio::net::TcpListener::bind(&addr)
+            .await
+            .expect("failed to bind INTERNAL_BIND_ADDR");
+        tracing::info!("listener interno (IVR, métricas) em {addr}");
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(
+                listener,
+                internal.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            {
+                tracing::error!(error = %e, "listener interno terminou");
             }
         });
     }

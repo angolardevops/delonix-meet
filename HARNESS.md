@@ -34,6 +34,8 @@
 
 **Ficheiros principais:**
 - `lib.rs` — bootstrap (`run`), router, estado global (`AppState`), cron jobs (retention sweep). `main.rs` só chama `delonix_server::run()` (ADR-0004 §6 passo 1)
+- **Workspace (ADR-0005 §1)** — `server/crates/delonix-meet-core` (sem IO: `crypto`, `DomainError` com código estável, paginação por cursor, edições) e `server/crates/delonix-meet-domain` (sem IO: contexto `identity` — `validation`, `registration`). O pacote da raiz é o monólito em transição; `scripts/check-crate-deps.sh` impõe a regra da dependência.
+- **Edições e listeners (ADR-0005 §2–§4)** — `DELONIX_EDITION` (`saas` por omissão = comportamento histórico | `enterprise` | `personal`), `REGISTRATION_MODE` (`open`/`domain`/`invite`/`closed`) + `REGISTRATION_DOMAINS`, `TENANCY_MODE` (`multi`/`single`); `INTERNAL_BIND_ADDR` tira `/metrics` e `/api/voice/ivr/*` do router público para um listener interno; `UI_DIR` serve a SPA; `DELONIX_MIGRATE=0` + `delonix-server migrate` (Job); `LOG_FORMAT=json`. O `GET /api/public/settings` publica `edition` e `capabilities`.
 - `config.rs` — lê env vars, **fail-closed sem segredos fortes** (panic no arranque)
 - `auth.rs` — registo (cria org+admin), login, refresh, logout, room tokens
 - `org.rs` — multi-tenant: organizations, branches, org_members, employee groups, salas presenciais, quotas, stats, SSO stubs
@@ -66,6 +68,7 @@
 - `odoo_sso.rs` — **login com conta Odoo**: autentica em `/web/session/authenticate`, cria a organização a partir da EMPRESA do utilizador (chave `(odoo_db, company_id)`) e sincroniza em segundo plano todos os utilizadores internos activos. Fail-closed sem `PLATFORM_ODOO_URL`/`PLATFORM_ODOO_DB`
 - `meetings_v1.rs` — recurso `meetings` da API pública v1 (POST/PATCH/DELETE): cria REUNIÃO + sala com anfitrião humano (`host_email`) e convidados por email, idempotente por `external_ref`. É o que a integração de calendário usa — `/api/v1/rooms` cria salas sem anfitrião nem convidados, e ninguém consegue ser admitido nelas
 - `sfu_e2e.rs` — testes ponta-a-ponta do SFU com `RTCPeerConnection`s reais no papel de browser (media a fluir nos dois sentidos + R13/glare). Só compila em `#[cfg(test)]`
+- `ui.rs` — a SPA servida pelo próprio binário quando há `UI_DIR` (edição pessoal / enterprise pequeno, ADR-0005 §4): COOP/COEP/CORP e CSP iguais às do nginx, `/assets/*` imutável, `index.html`/`sw.js` sem cache, fallback SPA que NUNCA engole um 404 de `/api/`, `/ws` ou `/rtc`
 - `storage.rs` — armazenamento remoto da plataforma (TrueNAS NFS / Nextcloud WebDAV); registo único em `platform_storage`. Só o administrador da PLATAFORMA — os UUIDs em `PLATFORM_ADMIN_USER_IDS` (fail-closed, `403` para os restantes). Antes era «admin de qualquer org», e o registo cria sempre um admin (S1, fechada no #76, R121)
 
 ### Organização do backend — estado e destino
@@ -100,7 +103,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0038) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0039) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 

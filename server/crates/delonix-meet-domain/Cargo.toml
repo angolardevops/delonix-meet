@@ -1,0 +1,13 @@
+[package]
+name = "delonix-meet-domain"
+description = "Domínio do Delonix Meet: contextos delimitados (identity, organization, scheduling, …), políticas e casos de uso. Sem IO."
+version.workspace = true
+edition.workspace = true
+
+# Regra (ADR-0005 §1): o domínio não conhece sqlx, axum, tonic, reqwest, redis
+# nem webrtc. Fala com o mundo por portos (traits) que os adaptadores implementam.
+[dependencies]
+delonix-meet-core = { path = "../delonix-meet-core" }
+serde.workspace = true
+uuid.workspace = true
+chrono.workspace = true

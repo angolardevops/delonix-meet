@@ -415,9 +415,31 @@ pub async fn public_settings(
         .map(|(a, b)| (a.unwrap_or(false), b.unwrap_or(false)))
         .unwrap_or((false, false));
 
+    use delonix_meet_core::edition::{RegistrationMode, TenancyMode};
+    let c = &state.config;
+    let registration_open = matches!(
+        c.registration_mode,
+        RegistrationMode::Open | RegistrationMode::Domain
+    );
+    // `capabilities` diz ao frontend o que ESTA instalação faz, para não
+    // mostrar um botão para uma capacidade desligada. Cada linha lê a
+    // configuração que liga a capacidade — nenhuma é afirmada sem código por
+    // trás (check-capability-claims.sh).
     Ok(Json(serde_json::json!({
-        "hide_org_creation": hide_org,
+        "hide_org_creation": hide_org || c.tenancy_mode == TenancyMode::Single,
         "hide_sso_button": hide_sso,
+        "edition": c.edition,
+        "registration_mode": c.registration_mode,
+        "registration_open": registration_open,
+        "tenancy_mode": c.tenancy_mode,
+        "capabilities": {
+            "odoo_login": c.platform_odoo_url.is_some() && c.platform_odoo_db.is_some(),
+            "ai": c.ollama_url.is_some(),
+            "pstn_dial_in": !c.voice_internal_secret.is_empty(),
+            "livestream": c.max_directos > 0,
+            "multi_organization": c.tenancy_mode == TenancyMode::Multi,
+            "operator_surface": c.edition.operator_surface(),
+        },
     })))
 }
 
