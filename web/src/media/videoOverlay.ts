@@ -41,10 +41,19 @@ export interface OverlayOptions {
   beforeRender?: (video: HTMLVideoElement, now: number, frame: number) => void
   onStats?: (s: OverlayStats) => void
   onStop?: (why: OverlayStop, last: OverlayStats | null, verdict: BudgetVerdict | null) => void
+  /**
+   * `false` enquanto o efeito ainda está a aquecer (ex.: o modelo de recorte a
+   * compilar). Não se julga o orçamento nessa fase: medido a 2026-09-16, a
+   * carga do segmentador bloqueava o thread principal segundos a fio e o palco
+   * imersivo desligava-se «por não aguentar» antes de ter desenhado uma máscara.
+   */
+  ready?: () => boolean
 }
 
 /** Um frame em cada N é cronometrado com `gl.finish()` — o resto não paga a espera. */
 const TIME_EVERY = 10
+/** Compilar shaders e subir a primeira textura custa; não conta para o orçamento. */
+const WARMUP_MS = 2000
 
 type VideoWithRvfc = HTMLVideoElement & {
   requestVideoFrameCallback?: (cb: (now: number, meta: { presentedFrames: number }) => void) => number
@@ -66,6 +75,7 @@ export class VideoOverlay {
   private lastSizeCheck = 0
   private ro: ResizeObserver | null = null
   private hidden = false
+  private startedAt = 0
 
   constructor(private o: OverlayOptions) {}
 
@@ -167,9 +177,13 @@ export class VideoOverlay {
       const cost = summarizeCost(this.samples, now)
       const stats: OverlayStats = { ...cost, sourceFps: this.sourceFps, width: canvas.width, height: canvas.height }
       this.lastStats = stats
+      // Legível de fora (testes, depuração): quantos frames este canvas já desenhou.
+      canvas.dataset.frames = String(this.frame)
       this.o.onStats?.(stats)
       // Em segundo plano ou comparação o efeito não é julgado: não está a correr a sério.
-      if (visible && !this.hidden && document.visibilityState === 'visible') {
+      if (this.startedAt === 0) this.startedAt = now
+      const warm = now - this.startedAt >= WARMUP_MS && (this.o.ready?.() ?? true)
+      if (warm && visible && !this.hidden && document.visibilityState === 'visible') {
         const v = budgetVerdict(cost, this.sourceFps, this.overSince, now, this.o.budget)
         this.overSince = v.overSince
         if (v.disable) return this.halt('budget', v)

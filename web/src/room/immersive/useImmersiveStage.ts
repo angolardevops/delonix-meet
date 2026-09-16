@@ -1,7 +1,7 @@
 import { MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { HeadTracker } from '../../media'
 import { webgl2Supported } from '../../media/glUtil'
-import { IMMERSIVE_BUDGET } from '../../media/sharpen'
+import { IMMERSIVE_BUDGET, type BudgetVerdict } from '../../media/sharpen'
 import type { OverlayStats } from '../../media/videoOverlay'
 import { readPref, saveDataOn, useBatteryLow, useReducedMotion, writePref } from '../enhance/deviceEnv'
 import { createStore, type EnhanceTarget } from '../enhance/target'
@@ -29,7 +29,14 @@ export interface ImmersiveStats extends OverlayStats {
   gpu: boolean
 }
 
-export type ImmersiveOff = { why: 'budget' | 'lost' | 'unsupported' | 'segmenter'; ms: number | null } | null
+export type ImmersiveOff = {
+  why: 'budget' | 'lost' | 'unsupported' | 'segmenter'
+  ms: number | null
+  fps?: number
+  src?: number
+  /** Desligou por não acompanhar o ritmo do vídeo (e não por tempo por frame). */
+  lagging?: boolean
+} | null
 
 export interface ImmersiveDeps {
   /** A minha câmara (para seguir a cabeça). */
@@ -51,6 +58,13 @@ const SEGMENT_EVERY = 2
  */
 export function useImmersiveStage(target: EnhanceTarget | null, deps: ImmersiveDeps) {
   const [wanted, setWanted] = useState(() => readPref('dx_palco_imersivo', '0') === '1')
+  /**
+   * Seguir a cabeça com a MINHA câmara é opt-in. Medido a 2026-09-16: o
+   * `HeadTracker` detecta caras a cada frame no thread principal e, com a
+   * câmara falsa a 4K, levou o thread a 99,9 % — o custo do palco imersivo
+   * inteiro é pequeno ao lado disso. Se a «sala 3D» já o tem ligado, reutiliza-se.
+   */
+  const [followHead, setFollowHeadState] = useState(() => readPref('dx_palco_cabeca', '0') === '1')
   const [off, setOff] = useState<ImmersiveOff>(null)
   const [stats] = useState(() => createStore<ImmersiveStats | null>(null))
   const reducedMotion = useReducedMotion()
@@ -60,6 +74,7 @@ export function useImmersiveStage(target: EnhanceTarget | null, deps: ImmersiveD
   const running = wanted && !off && !block && !!target
 
   const segRef = useRef<PersonSegmenter | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const segReady = useRef(false)
   const speakingRef = useRef(false)
   speakingRef.current = !!target && deps.speaking.has(target.peerId)
@@ -99,12 +114,12 @@ export function useImmersiveStage(target: EnhanceTarget | null, deps: ImmersiveD
     window.addEventListener('pointermove', onPointer, { passive: true })
     window.addEventListener('deviceorientation', onOrientation)
 
-    // A cabeça: reutiliza o seguidor da «sala 3D» se estiver ligado; senão, com
-    // câmara, arranca um próprio. Sem cara detectada não manda (ver
-    // `chooseTiltSource`) — o rato ou o telemóvel continuam a guiar.
+    // A cabeça: reutiliza o seguidor da «sala 3D» se estiver ligado; senão, só
+    // se a pessoa o pediu e tem câmara, arranca um próprio. Sem cara detectada
+    // não manda (ver `chooseTiltSource`) — o rato ou o telemóvel continuam a guiar.
     let cancelled = false
     const cam = depsRef.current.cameraTrackRef.current
-    if (!depsRef.current.headRef.current && cam && cam.readyState === 'live' && depsRef.current.camOn) {
+    if (followHead && !depsRef.current.headRef.current && cam && cam.readyState === 'live' && depsRef.current.camOn) {
       const ht = new HeadTracker()
       ht.start(new MediaStream([cam]))
         .then(() => {
@@ -123,7 +138,7 @@ export function useImmersiveStage(target: EnhanceTarget | null, deps: ImmersiveD
       i.orientationAt = null
       i.headAt = null
     }
-  }, [running])
+  }, [running, followHead])
 
   // Orador novo: transição de cena.
   const key = target ? target.peerId : ''
@@ -152,6 +167,7 @@ export function useImmersiveStage(target: EnhanceTarget | null, deps: ImmersiveD
         const r = ImmersiveRenderer.create(c)
         if (!r) return null
         c.dataset.imersivo = 'on'
+        canvasRef.current = c
         if (!segRef.current) {
           const s = new PersonSegmenter()
           segRef.current = s
@@ -203,11 +219,13 @@ export function useImmersiveStage(target: EnhanceTarget | null, deps: ImmersiveD
         }
         // Prova legível de fora (e2e, depuração): camadas e deslocamento actuais.
         if (frame % 6 === 0) {
-          const c = video.nextElementSibling as HTMLCanvasElement | null
-          if (c?.dataset.imersivo) {
+          const c = canvasRef.current
+          if (c) {
             c.dataset.bgX = offsets.bg.x.toFixed(4)
             c.dataset.bgY = offsets.bg.y.toFixed(4)
             c.dataset.fonte = source
+            c.dataset.fala = i.env.toFixed(2)
+            c.dataset.escala = r.frame.fgScale.toFixed(4)
             c.dataset.mascaras = String(r.masksUploaded)
             c.dataset.camadas = r.masksUploaded > 0 ? 'fundo,sombra,pessoa' : 'fundo'
           }
@@ -221,7 +239,10 @@ export function useImmersiveStage(target: EnhanceTarget | null, deps: ImmersiveD
             : null,
         )
       },
-      onEnd: (why: 'budget' | 'lost' | 'unsupported', last: OverlayStats | null) => setOff({ why, ms: last?.p95Ms ?? null }),
+      onEnd: (why: 'budget' | 'lost' | 'unsupported', last: OverlayStats | null, verdict: BudgetVerdict | null) =>
+        setOff({ why, ms: last?.p95Ms ?? null, fps: last?.fps ?? 0, src: last?.sourceFps ?? 0, lagging: verdict?.why === 'fps' }),
+      // Só se julga o custo depois de o recorte estar a produzir máscaras.
+      ready: () => segReady.current && (segRef.current?.masks ?? 0) >= 3,
     }),
     [stats],
   )
@@ -240,7 +261,12 @@ export function useImmersiveStage(target: EnhanceTarget | null, deps: ImmersiveD
     setOff((o) => (o?.why === 'unsupported' ? o : null))
   }, [wanted])
 
-  return { wanted, running, toggle, off, block, stats, target }
+  const setFollowHead = useCallback((v: boolean) => {
+    setFollowHeadState(v)
+    writePref('dx_palco_cabeca', v ? '1' : '0')
+  }, [])
+
+  return { wanted, running, toggle, off, block, stats, target, followHead, setFollowHead }
 }
 
 export type ImmersiveStage = ReturnType<typeof useImmersiveStage>

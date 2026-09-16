@@ -1,12 +1,12 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { SHARPEN_BUDGET } from '../../media/sharpen'
+import { SHARPEN_BUDGET, type BudgetVerdict } from '../../media/sharpen'
 import { UnsharpRenderer } from '../../media/sharpenGl'
 import type { OverlayStats, VideoOverlay } from '../../media/videoOverlay'
 import { createStore, type EnhanceTarget } from './target'
 import { readPref, writePref } from './deviceEnv'
 import { useOverlay } from './useOverlay'
 
-export type SharpenOff = { why: 'budget' | 'lost' | 'unsupported'; ms: number | null } | null
+export type SharpenOff = { why: 'budget' | 'lost' | 'unsupported'; ms: number | null; fps?: number; src?: number; lagging?: boolean } | null
 
 /**
  * Realce de nitidez no vídeo RECEBIDO em destaque. Por quem vê, só neste ecrã.
@@ -44,9 +44,9 @@ export function useReceiveSharpen(target: EnhanceTarget | null, blocked: boolean
         r.strength = strengthRef.current / 100
       },
       onStats: (s: OverlayStats | null) => stats.set(s),
-      onEnd: (why: 'budget' | 'lost' | 'unsupported', last: OverlayStats | null) => {
+      onEnd: (why: 'budget' | 'lost' | 'unsupported', last: OverlayStats | null, verdict: BudgetVerdict | null) => {
         overlayObj.current = null
-        setOff({ why, ms: last?.p95Ms ?? null })
+        setOff({ why, ms: last?.p95Ms ?? null, fps: last?.fps ?? 0, src: last?.sourceFps ?? 0, lagging: verdict?.why === 'fps' })
       },
     }),
     [stats],

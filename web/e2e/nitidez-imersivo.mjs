@@ -50,6 +50,19 @@ const APANHAR_PCS = () => {
   Object.setPrototypeOf(window.RTCPeerConnection, Orig)
 }
 
+/** O que chega: vídeo recebido pelo anfitrião (diagnóstico, não asserção). */
+const recebido = (page) =>
+  page.evaluate(async () => {
+    const out = []
+    for (const pc of window.__pcs ?? []) {
+      if (pc.connectionState === 'closed') continue
+      ;(await pc.getStats()).forEach((s) => {
+        if (s.type === 'inbound-rtp' && s.kind === 'video') out.push({ w: s.frameWidth ?? 0, h: s.frameHeight ?? 0, fps: s.framesPerSecond ?? 0, dec: s.framesDecoded ?? 0 })
+      })
+    }
+    return out
+  })
+
 /** Maior camada de vídeo enviada, média de N amostras espaçadas. */
 async function medirEnvio(page, amostras = 4) {
   const leituras = []
@@ -57,10 +70,13 @@ async function medirEnvio(page, amostras = 4) {
     leituras.push(
       await page.evaluate(async () => {
         const out = []
+        const todas = []
         for (const pc of window.__pcs ?? []) {
+          todas.push(pc.connectionState)
           if (pc.connectionState === 'closed') continue
           const r = await pc.getStats()
           r.forEach((s) => {
+            if (s.type === 'outbound-rtp' && s.kind === 'video') todas.push(`${s.rid}:${s.frameWidth ?? 0}x${s.frameHeight ?? 0}@${s.framesPerSecond ?? 0} enc=${s.framesEncoded ?? 0} ${s.qualityLimitationReason ?? ''} active=${s.active}`)
             // Só camadas A SAIR: uma camada parada guarda o frameWidth do último frame.
             if (s.type === 'outbound-rtp' && s.kind === 'video' && s.frameWidth && (s.framesPerSecond ?? 0) > 0) {
               out.push({ rid: s.rid ?? '', w: s.frameWidth, h: s.frameHeight, fps: s.framesPerSecond ?? 0, lim: s.qualityLimitationReason })
@@ -75,7 +91,7 @@ async function medirEnvio(page, amostras = 4) {
             return { hint: s.track.contentHint, deg: p.degradationPreference ?? null, top: p.encodings?.map((e) => [e.rid, e.maxBitrate, e.maxFramerate ?? null]) }
           })
         const cam = (window.__pcs ?? []).flatMap((pc) => pc.getSenders()).find((s) => s.track?.kind === 'video')?.track?.getSettings()
-        return { camadas: out, params, cam: cam ? { w: cam.width, h: cam.height, fps: cam.frameRate } : null }
+        return { camadas: out, todas, params, cam: cam ? { w: cam.width, h: cam.height, fps: cam.frameRate } : null }
       }),
     )
     await pausa(1500)
@@ -129,14 +145,16 @@ const browser = await chromium.launch({
 const ctxOpts = { ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'], viewport: { width: 1440, height: 900 } }
 const hostCtx = await browser.newContext(ctxOpts)
 const guestCtx = await browser.newContext(ctxOpts)
+await hostCtx.addInitScript(APANHAR_PCS)
 await guestCtx.addInitScript(APANHAR_PCS)
 const avisos = []
 const host = await hostCtx.newPage()
 const guest = await guestCtx.newPage()
 for (const [quem, pg] of [['anfitrião', host], ['convidado', guest]]) {
   pg.on('console', (m) => {
-    if (/\[(nitidez|imersivo)\]/.test(m.text())) avisos.push(`${quem}: ${m.text().slice(0, 200)}`)
+    if (/\[(nitidez|imersivo)\]/.test(m.text()) || m.type() === 'error') avisos.push(`${quem}: ${m.text().slice(0, 200)}`)
   })
+  pg.on('pageerror', (e) => avisos.push(`${quem} (pageerror): ${String(e).slice(0, 300)}`))
 }
 
 console.log('· sessão e sala de formação')
@@ -177,11 +195,11 @@ ok(!(await guest.locator('[data-enh="sugestao"]').isVisible().catch(() => false)
 console.log('· perfil de envio nítido')
 await pausa(12000) // o controlo de congestão sobe a banda nos primeiros segundos
 const antes = await medirEnvio(guest)
-console.log('  · antes:', JSON.stringify(antes.melhores), JSON.stringify(antes.ultima.params), JSON.stringify(antes.ultima.cam))
+console.log('  · antes:', JSON.stringify(antes.melhores), JSON.stringify(antes.ultima.cam), JSON.stringify(antes.ultima.todas))
 await ligar(guest, 'envio')
 await pausa(12000)
 const depois = await medirEnvio(guest)
-console.log('  · depois:', JSON.stringify(depois.melhores), JSON.stringify(depois.ultima.params), JSON.stringify(depois.ultima.cam))
+console.log('  · depois:', JSON.stringify(depois.melhores), JSON.stringify(depois.ultima.cam), JSON.stringify(depois.ultima.todas))
 medidas.envio = { antesPx: antes.px, depoisPx: depois.px, antes: antes.melhores.at(-1), depois: depois.melhores.at(-1), camAntes: antes.ultima.cam, camDepois: depois.ultima.cam }
 const p = depois.ultima.params[0]
 ok(p?.hint === 'detail' && p?.deg === 'maintain-resolution', 'o sender passou a detail + maintain-resolution', JSON.stringify(p))
@@ -190,6 +208,8 @@ const perfil = await guest.locator('[data-enh="envio"]').getAttribute('data-perf
 ok(perfil === 'sharp', 'a interface diz que o perfil está activo', perfil)
 const ui = await guest.locator('[data-enh="envio"] dd').allTextContents()
 console.log('  · a interface mostra:', JSON.stringify(ui))
+
+console.log('  · o anfitrião recebe:', JSON.stringify(await recebido(host)))
 
 // ── 2. Realce na recepção (quem vê: o anfitrião) ──────────────────────────────
 console.log('· realce de nitidez na recepção')
@@ -204,6 +224,7 @@ const aChegar = await host
   .waitForFunction(() => (document.querySelector('.rm-stage__main .rm-tile[data-peer="remoto"] > video')?.videoWidth ?? 0) > 0, null, { timeout: 30000 * FATOR })
   .then(() => true)
   .catch(() => false)
+console.log('  · depois de fixar, o anfitrião recebe:', JSON.stringify(await recebido(host)))
 ok(aChegar, 'o vídeo do orador em destaque está a chegar ao anfitrião', await host.evaluate(() => { const v = document.querySelector('.rm-stage__main .rm-tile[data-peer="remoto"] > video'); return v ? `${v.videoWidth}×${v.videoHeight}` : 'sem vídeo' }))
 medidas.cpuBase = await cpuDuring(cdp, 8000)
 const gl2 = await host.evaluate(() => !!document.createElement('canvas').getContext('webgl2'))
@@ -220,6 +241,10 @@ const canvasRealce = await host
   .then(() => true)
   .catch(() => false)
 ok(canvasRealce, 'o canvas do realce está por cima do vídeo do orador')
+for (let i = 0; i < 6 && process.env.DEPURAR; i++) {
+  console.log('  · dbg:', JSON.stringify(await host.evaluate(() => [...document.querySelectorAll('canvas[data-realce]')].map((c) => ({ w: c.width, f: c.dataset.frames, prevIsVideo: c.previousElementSibling?.tagName, vw: c.previousElementSibling?.videoWidth, peer: c.parentElement?.dataset.peerId, inStage: !!c.closest('.rm-stage__main'), disp: c.style.display })))))
+  await pausa(1000)
+}
 await host.locator('[data-hud="realce"]').waitFor({ timeout: 10000 * FATOR }).catch(() => {})
 await pausa(4000)
 const hudRealce = (await host.locator('[data-hud="realce"] .enh-pill__cost').textContent().catch(() => '')) ?? ''
@@ -235,9 +260,14 @@ const dimsRealce = await host.evaluate(() => {
 console.log('  · canvas/vídeo:', JSON.stringify(dimsRealce))
 ok(!!dimsRealce && dimsRealce.cw > 1 && Math.abs(dimsRealce.cw / dimsRealce.ch - dimsRealce.vw / dimsRealce.vh) < 0.02, 'o canvas tem a proporção do vídeo', JSON.stringify(dimsRealce))
 // Ver original esconde o canvas sem o parar.
-await host.locator('[data-hud="realce"]').getByRole('button', { name: /ver original/i }).click()
-ok((await host.evaluate(() => getComputedStyle(document.querySelector('canvas[data-realce="on"]')).visibility)) === 'hidden', '«Ver original» mostra o vídeo sem o filtro')
-await host.locator('[data-hud="realce"]').getByRole('button', { name: /ver original/i }).click()
+const verOriginal = host.locator('[data-hud="realce"]').getByRole('button', { name: /ver original/i })
+if (await verOriginal.isVisible().catch(() => false)) {
+  await verOriginal.click()
+  ok((await host.evaluate(() => getComputedStyle(document.querySelector('canvas[data-realce="on"]')).visibility)) === 'hidden', '«Ver original» mostra o vídeo sem o filtro')
+  await verOriginal.click()
+} else {
+  ok(false, '«Ver original» existe no HUD do realce', `avisos: ${JSON.stringify(avisos)}`)
+}
 
 // ── 3. Palco imersivo ─────────────────────────────────────────────────────────
 console.log('· palco imersivo')

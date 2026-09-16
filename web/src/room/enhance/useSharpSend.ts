@@ -159,11 +159,10 @@ export function useSharpSend(core: RoomCore, conditions: LocalConditions) {
   }, [core.roomState, wanted, tick])
 
   const toggle = useCallback(() => {
-    setWanted((v) => {
-      const next = !v
-      if (next) store.set({ before: null, now: store.get().now })
-      return next
-    })
+    // A guarda notifica componentes: nunca dentro do actualizador de estado
+    // (o React avisa «Cannot update a component while rendering»).
+    if (!wantedRef.current) store.set({ before: null, now: store.get().now })
+    setWanted((v) => !v)
   }, [store])
 
   return { wanted, toggle, active: profile.active, reason: profile.reason, refused: profile.refused, store }

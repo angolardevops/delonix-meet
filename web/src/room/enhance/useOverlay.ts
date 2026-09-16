@@ -11,6 +11,8 @@ export interface OverlayHandlers<R extends OverlayRenderer> {
   onStart?: (renderer: R, overlay: VideoOverlay, canvas: HTMLCanvasElement) => void
   onStats: (s: OverlayStats | null) => void
   onEnd: (why: OverlayEnd, last: OverlayStats | null, verdict: BudgetVerdict | null) => void
+  /** Ver `OverlayOptions.ready`. */
+  ready?: () => boolean
 }
 
 /**
@@ -65,6 +67,7 @@ export function useOverlay<R extends OverlayRenderer>(
         maxPixels,
         beforeRender: (v, now, frame) => h.current.beforeRender?.(renderer, v, now, frame),
         onStats: (s) => h.current.onStats(s),
+        ready: () => h.current.ready?.() ?? true,
         onStop: (why, last, verdict) => {
           if (overlayRef.current?.overlay === overlay) overlayRef.current = null
           // Retrato remontado: o próximo `poll` volta a ligar ao vídeo novo.

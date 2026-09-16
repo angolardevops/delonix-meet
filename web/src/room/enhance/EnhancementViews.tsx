@@ -13,6 +13,14 @@ function useStore<T>(store: Store<T>): T {
 
 const fmtMs = (ms: number) => ms.toLocaleString(undefined, { maximumFractionDigits: 1 })
 
+type TFn = (k: string, o?: Record<string, unknown>) => string
+
+/** Porque é que o orçamento desligou o efeito: tempo por frame, ou ritmo. */
+function budgetText(t: TFn, area: 'rececao' | 'imersivo', off: { ms: number | null; fps?: number; src?: number; lagging?: boolean } | null) {
+  if (off?.lagging) return t(`nitidez.${area}.offRitmo`, { fps: off.fps ?? 0, src: off.src ?? 0 })
+  return t(`nitidez.${area}.offBudget`, { ms: fmtMs(off?.ms ?? 0) })
+}
+
 /* ------------------------------------------------------------------ */
 /* Definições (entra no fim do painel de definições da sala)           */
 /* ------------------------------------------------------------------ */
@@ -43,7 +51,18 @@ export function EnhancementSettings({
           onChange={enh.immersive.toggle}
           data-enh-toggle="imersivo"
         />
-        {enh.immersive.wanted && <ImmersiveStatus enh={enh} viewMode={viewMode} onSpeakerView={onSpeakerView} />}
+        {enh.immersive.wanted && (
+          <>
+            <ImmersiveStatus enh={enh} viewMode={viewMode} onSpeakerView={onSpeakerView} />
+            <Toggle
+              label={t('nitidez.imersivo.seguirCabeca')}
+              hint={t('nitidez.imersivo.seguirCabecaDica')}
+              checked={enh.immersive.followHead}
+              onChange={(e) => enh.immersive.setFollowHead(e.target.checked)}
+              data-enh-toggle="cabeca"
+            />
+          </>
+        )}
       </section>
     </>
   )
@@ -115,7 +134,7 @@ function ReceiveSection({ enh }: { enh: StageEnhancements }) {
   const stats = useStore(receive.stats)
   const tgt = receive.target
   let offMsg: string | null = null
-  if (receive.off?.why === 'budget') offMsg = t('nitidez.rececao.offBudget', { ms: fmtMs(receive.off.ms ?? 0) })
+  if (receive.off?.why === 'budget') offMsg = budgetText(t, 'rececao', receive.off)
   else if (receive.off?.why === 'lost') offMsg = t('nitidez.rececao.offLost')
   else if (receive.off?.why === 'unsupported') offMsg = t('nitidez.rececao.offUnsupported')
   const pausedByImmersive = receive.wanted && !receive.running && !receive.off && !!tgt && immersive.running
@@ -171,8 +190,9 @@ function ImmersiveStatus({ enh, viewMode, onSpeakerView }: { enh: StageEnhanceme
   if (immersive.block) return <Alert tone="warning">{t(`nitidez.imersivo.bloqueio_${immersive.block}`)}</Alert>
   const off = immersive.off
   if (off) {
-    const k = { budget: 'offBudget', lost: 'offLost', unsupported: 'offUnsupported', segmenter: 'offSegmenter' }[off.why]
-    return <Alert tone="warning">{t(`nitidez.imersivo.${k}`, { ms: fmtMs(off.ms ?? 0) })}</Alert>
+    if (off.why === 'budget') return <Alert tone="warning">{budgetText(t, 'imersivo', off)}</Alert>
+    const k = { lost: 'offLost', unsupported: 'offUnsupported', segmenter: 'offSegmenter' }[off.why]
+    return <Alert tone="warning">{t(`nitidez.imersivo.${k}`)}</Alert>
   }
   if (!immersive.target) {
     return (
@@ -236,7 +256,7 @@ export function StageEnhancementsLayer({
   }
   const [noticeSeen, setNoticeSeen] = useState<string | null>(null)
   const autoOff = immersive.off?.why === 'budget' ? 'imersivo' : receive.off?.why === 'budget' ? 'realce' : null
-  const autoOffMs = (immersive.off?.why === 'budget' ? immersive.off.ms : receive.off?.ms) ?? 0
+  const autoOffInfo = immersive.off?.why === 'budget' ? immersive.off : receive.off
 
   const showHud = (immersive.running && immStats) || (receive.running && rxStats) || (autoOff && noticeSeen !== autoOff)
   return (
@@ -265,7 +285,7 @@ export function StageEnhancementsLayer({
           {autoOff && noticeSeen !== autoOff && (
             <span className="enh-pill enh-pill--notice" role="status" data-hud="aviso">
               <Icon name="alert" size={12} />
-              <span>{t(autoOff === 'imersivo' ? 'nitidez.imersivo.offBudget' : 'nitidez.rececao.offBudget', { ms: fmtMs(autoOffMs) })}</span>
+              <span>{budgetText(t, autoOff === 'imersivo' ? 'imersivo' : 'rececao', autoOffInfo)}</span>
               <IconButton icon="x" bare label={t('nitidez.hud.fecharAviso')} onClick={() => setNoticeSeen(autoOff)} />
             </span>
           )}
