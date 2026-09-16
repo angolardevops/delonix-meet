@@ -81,14 +81,14 @@ async fn api_key_authenticates_org_endpoint(db: sqlx::PgPool) {
         assert_eq!(st, 401, "{bad}");
     }
 
-    // Revogar: a chave deixa de servir.
+    // Revogar: 204, e a chave deixa de servir.
     let (st, _) = app
         .delete(
             &format!("/api/orgs/{}/api-keys/{key_id}", a.org()),
             Some(&a.token),
         )
         .await;
-    assert_eq!(st, 200);
+    assert_eq!(st, 204);
     let (st, _) = v1(&app, reqwest::Method::GET, "/org", &key, None).await;
     assert_eq!(st, 401);
 }
@@ -96,7 +96,8 @@ async fn api_key_authenticates_org_endpoint(db: sqlx::PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn v1_is_rate_limited_per_ip(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
-    // 120 pedidos/min por IP; o limitador corre ANTES da autenticação.
+    // Sem chave válida, 120 pedidos/min por IP; o limitador corre ANTES da
+    // autenticação. Com chave válida o balde é da chave (`api_key_scopes`).
     let mut statuses = Vec::new();
     for _ in 0..121 {
         let (st, _) = v1(&app, reqwest::Method::GET, "/org", "dlx_invalida", None).await;

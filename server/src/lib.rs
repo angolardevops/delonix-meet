@@ -111,7 +111,8 @@ pub struct AppState {
     pub auth_limiter: RateLimiter,
     /// Anti-brute-force por conta (email) no login.
     pub login_limiter: RateLimiter,
-    /// Rate-limit da API pública v1 (por IP do cliente).
+    /// Rate-limit da API pública v1: balde por chave `dlx_` válida, por IP
+    /// sem ela (`rate_limit::v1_bucket`). Partilhado com `/api/ice` (por IP).
     pub v1_limiter: RateLimiter,
     /// Anti-brute-force de PIN no dial-in PSTN (por DID). Só conta falhas.
     pub voice_pin_limiter: RateLimiter,
@@ -433,7 +434,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         //  com rate-limit e (a caminho) testes de contrato. Não misturar: um
         //  endpoint novo é interno até ser promovido conscientemente a v1.
         // ══════════════════════════════════════════════════════════════════
-        // ---- API pública v1 (autenticada por chave de API, com rate-limit) ----
+        // ---- API pública v1 (chave de API com escopos, rate-limit por chave) ----
         .nest(
             "/api/v1",
             Router::new()
@@ -481,7 +482,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/ice",
             get(rooms::ice_servers).layer(middleware::from_fn_with_state(
                 state.clone(),
-                rate_limit::v1_rate_limit,
+                rate_limit::ip_rate_limit,
             )),
         )
         .route("/ws", get(signaling::ws_handler))

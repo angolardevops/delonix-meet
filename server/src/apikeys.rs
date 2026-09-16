@@ -20,11 +20,79 @@ use delonix_meet_core::crypto::{ct_eq, sha256_hex};
 
 // ---------- Autenticação por chave de API (extractor) ----------
 
-/// Pedido autenticado por chave de API: transporta a organização e o
-/// utilizador dono da chave (usado como owner das salas criadas via API).
+use delonix_meet_domain::identity::api_key as policy;
+pub use delonix_meet_domain::identity::api_key::Scope;
+
+/// A linha de uma chave `dlx_` tal como está na base de dados. Procurada UMA
+/// vez por pedido: o `v1_rate_limit` precisa dela para escolher o balde, e o
+/// extractor reutiliza-a (vai nas extensões do pedido).
+#[derive(Clone, Debug, sqlx::FromRow)]
+pub struct KeyRecord {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub created_by: Uuid,
+    pub scopes: Vec<String>,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl KeyRecord {
+    /// A chave ainda não expirou.
+    pub fn is_usable(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+        policy::ensure_not_expired(self.expires_at, now).is_ok()
+    }
+}
+
+/// Resultado da procura da chave, guardado nas extensões do pedido. `None`
+/// quando não havia chave `dlx_` ou ela não existe.
+#[derive(Clone)]
+pub struct KeyLookup(pub Option<KeyRecord>);
+
+/// Lê a chave dos cabeçalhos (`X-API-Key` ou `Authorization: Bearer dlx_…`).
+fn raw_key(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .or_else(|| crate::auth::bearer_token(headers).map(str::to_string))
+        .filter(|k| k.starts_with("dlx_"))
+}
+
+/// Procura a chave apresentada. Não decide nada: expiração e escopos são do
+/// extractor e de `ApiKeyAuth::require`.
+pub async fn lookup_key(state: &AppState, headers: &HeaderMap) -> Result<KeyLookup, ApiError> {
+    let Some(raw) = raw_key(headers) else {
+        return Ok(KeyLookup(None));
+    };
+    let row: Option<KeyRecord> = sqlx::query_as(
+        "SELECT id, org_id, created_by, scopes, expires_at, last_used_at
+         FROM org_api_keys WHERE key_hash = $1",
+    )
+    .bind(sha256_hex(&raw))
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(KeyLookup(row))
+}
+
+/// Pedido autenticado por chave de API: transporta a organização, o
+/// utilizador dono da chave (usado como owner das salas criadas via API) e os
+/// escopos concedidos.
+///
+/// **Todo o handler que o recebe chama `key.require(Scope::…)?` na primeira
+/// linha.** O teste `api_key_scopes::cada_rota_v1_exige_o_seu_escopo` percorre
+/// as rotas e falha se alguma servir sem o seu escopo.
 pub struct ApiKeyAuth {
     pub org_id: Uuid,
     pub owner_id: Uuid,
+    scopes: Vec<Scope>,
+}
+
+impl ApiKeyAuth {
+    /// `403 api_key.scope_missing`, com o escopo em `details`, se a chave
+    /// não o tiver. O único sítio onde a v1 decide escopos.
+    pub fn require(&self, scope: Scope) -> Result<(), ApiError> {
+        policy::require_scope(&self.scopes, scope).map_err(ApiError::from)
+    }
 }
 
 impl FromRequestParts<Arc<AppState>> for ApiKeyAuth {
@@ -34,29 +102,40 @@ impl FromRequestParts<Arc<AppState>> for ApiKeyAuth {
         parts: &mut Parts,
         state: &Arc<AppState>,
     ) -> Result<Self, ApiError> {
-        let raw = parts
-            .headers
-            .get("x-api-key")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
-            .or_else(|| crate::auth::bearer_token(&parts.headers).map(str::to_string))
-            .ok_or(ApiError::Unauthorized)?;
-        if !raw.starts_with("dlx_") {
-            return Err(ApiError::Unauthorized);
-        }
-        let hash = sha256_hex(&raw);
-        let row: Option<(Uuid, Uuid)> =
-            sqlx::query_as("SELECT org_id, created_by FROM org_api_keys WHERE key_hash = $1")
-                .bind(&hash)
-                .fetch_optional(&state.db)
-                .await?;
-        let (org_id, owner_id) = row.ok_or(ApiError::Unauthorized)?;
-        // Regista uso (best-effort) sem falhar o pedido.
-        let _ = sqlx::query("UPDATE org_api_keys SET last_used_at = now() WHERE key_hash = $1")
-            .bind(&hash)
+        // O `v1_rate_limit` já procurou a chave; sem ele, procura-se aqui.
+        let lookup = match parts.extensions.get::<KeyLookup>() {
+            Some(l) => l.clone(),
+            None => lookup_key(state, &parts.headers).await?,
+        };
+        // Revogada (apagada) ou desconhecida: 401 como sempre.
+        let key = lookup.0.ok_or(ApiError::Unauthorized)?;
+        let now = chrono::Utc::now();
+        policy::ensure_not_expired(key.expires_at, now)?;
+
+        // Registo de uso: no máximo uma escrita por minuto por chave. A guarda
+        // repete-se no SQL para que dois nós com a mesma leitura antiga não
+        // escrevam os dois.
+        if policy::should_record_use(key.last_used_at, now) {
+            if let Err(e) = sqlx::query(
+                "UPDATE org_api_keys SET last_used_at = now()
+                 WHERE id = $1
+                   AND (last_used_at IS NULL
+                        OR last_used_at <= now() - make_interval(secs => $2))",
+            )
+            .bind(key.id)
+            .bind(policy::LAST_USED_THROTTLE_SECS as f64)
             .execute(&state.db)
-            .await;
-        Ok(ApiKeyAuth { org_id, owner_id })
+            .await
+            {
+                // Não falha o pedido: o uso é informação, não autorização.
+                tracing::warn!(error = %e, key_id = %key.id, "last_used_at não registado");
+            }
+        }
+        Ok(ApiKeyAuth {
+            org_id: key.org_id,
+            owner_id: key.created_by,
+            scopes: policy::granted_from_stored(&key.scopes),
+        })
     }
 }
 
@@ -104,13 +183,20 @@ pub struct V1ApiDoc;
 
 // ---------- Gestão das chaves (admin, sessão) ----------
 
+/// Chave de API como a lista a mostra. Nunca leva a chave nem o hash.
 #[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ApiKeyInfo {
     pub id: Uuid,
     pub name: String,
     pub prefix: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Actualizado no máximo uma vez por minuto por chave.
     pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Escopos concedidos (`org:read`, `rooms:read`, `rooms:write`, `bots:join`,
+    /// `meetings:read`, `meetings:write`, `recordings:read`).
+    pub scopes: Vec<String>,
+    /// Ausente ⇒ não expira.
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -118,6 +204,16 @@ pub struct CreateKeyReq {
     /// Rótulo (cortado a 60 caracteres).
     #[serde(default)]
     pub name: String,
+    /// Escopos do catálogo (`org:read`, `rooms:read`, `rooms:write`,
+    /// `bots:join`, `meetings:read`, `meetings:write`, `recordings:read`).
+    /// **Omisso ⇒ o catálogo inteiro** (compatibilidade com os clientes que
+    /// já criam chaves sem escopos); `[]` é recusado.
+    #[serde(default)]
+    pub scopes: Option<Vec<String>>,
+    /// Expiração opcional: no futuro e a no máximo dois anos. Omissa ⇒ não
+    /// expira.
+    #[serde(default)]
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -127,9 +223,41 @@ pub struct CreatedKey {
     pub prefix: String,
     /// A chave completa — só devolvida AGORA, não fica guardada em claro.
     pub key: String,
+    pub scopes: Vec<String>,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// Chaves de API da organização (só admin). Nunca devolve a chave, só o prefixo.
+/// Grava uma chave nova e devolve `(id, chave completa, prefixo)`. Um só
+/// sítio para a geração: a BFF e o provisionamento chamam isto.
+async fn insert_key(
+    state: &AppState,
+    org_id: Uuid,
+    name: &str,
+    created_by: Uuid,
+    scopes: &[Scope],
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<(Uuid, String, String), ApiError> {
+    let key = delonix_meet_core::crypto::prefixed_token("dlx_"); // 256 bits de entropia
+    let prefix = key.chars().take(12).collect::<String>();
+    let scopes: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
+    let (id,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO org_api_keys (org_id, name, prefix, key_hash, created_by, scopes, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+    )
+    .bind(org_id)
+    .bind(name)
+    .bind(&prefix)
+    .bind(sha256_hex(&key))
+    .bind(created_by)
+    .bind(&scopes)
+    .bind(expires_at)
+    .fetch_one(&state.db)
+    .await?;
+    Ok((id, key, prefix))
+}
+
+/// Chaves de API da organização (só admin). Nunca devolve a chave nem o hash,
+/// só o prefixo, os escopos, a expiração e o último uso.
 #[utoipa::path(
     get, path = "/api/orgs/{org_id}/api-keys", tag = "api-keys",
     security(("session" = [])),
@@ -148,8 +276,8 @@ pub async fn list(
 ) -> Result<Json<Vec<ApiKeyInfo>>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let keys: Vec<ApiKeyInfo> = sqlx::query_as(
-        "SELECT id, name, prefix, created_at, last_used_at FROM org_api_keys
-         WHERE org_id = $1 ORDER BY created_at DESC",
+        "SELECT id, name, prefix, created_at, last_used_at, scopes, expires_at
+         FROM org_api_keys WHERE org_id = $1 ORDER BY created_at DESC",
     )
     .bind(org_id)
     .fetch_all(&state.db)
@@ -166,6 +294,7 @@ pub async fn list(
     request_body = CreateKeyReq,
     responses(
         (status = 200, body = CreatedKey),
+        (status = 400, description = "`api_key.scopes_empty`, `api_key.unknown_scope`, `api_key.expiry_in_past` ou `api_key.expiry_too_far`.", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
@@ -178,21 +307,11 @@ pub async fn create(
     Json(req): Json<CreateKeyReq>,
 ) -> Result<Json<CreatedKey>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-    let key = delonix_meet_core::crypto::prefixed_token("dlx_"); // 256 bits de entropia
-    let prefix = key.chars().take(12).collect::<String>();
-    let hash = sha256_hex(&key);
+    let scopes = policy::scopes_for_new_key(req.scopes.as_deref())?;
+    policy::validate_expiry(req.expires_at, chrono::Utc::now())?;
     let name = req.name.trim().chars().take(60).collect::<String>();
-    let (id,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO org_api_keys (org_id, name, prefix, key_hash, created_by)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id",
-    )
-    .bind(org_id)
-    .bind(&name)
-    .bind(&prefix)
-    .bind(&hash)
-    .bind(auth.user_id)
-    .fetch_one(&state.db)
-    .await?;
+    let (id, key, prefix) =
+        insert_key(&state, org_id, &name, auth.user_id, &scopes, req.expires_at).await?;
     crate::audit::log(
         &state.db,
         Some(org_id),
@@ -206,33 +325,40 @@ pub async fn create(
         name,
         prefix,
         key,
+        scopes: scopes.iter().map(|s| s.as_str().to_string()).collect(),
+        expires_at: req.expires_at,
     }))
 }
 
-/// Revoga (apaga) uma chave (só admin). Idempotente: uma chave inexistente
-/// também devolve `ok`.
+/// Revoga (apaga) uma chave (só admin). `204`; uma chave que não existe — ou
+/// que é de outra organização — dá `404 api_key.not_found`, sem confirmar que
+/// existe noutro sítio.
 #[utoipa::path(
     delete, path = "/api/orgs/{org_id}/api-keys/{key_id}", tag = "api-keys",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização."), ("key_id" = Uuid, Path, description = "Chave a revogar.")),
     responses(
-        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 204, description = "Revogada: a chave deixa de servir no pedido seguinte."),
         (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
-        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe, quem pede não é membro activo, ou a chave não existe nesta organização (`api_key.not_found`).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn revoke(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path((org_id, key_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-    sqlx::query("DELETE FROM org_api_keys WHERE id = $1 AND org_id = $2")
+    let deleted = sqlx::query("DELETE FROM org_api_keys WHERE id = $1 AND org_id = $2")
         .bind(key_id)
         .bind(org_id)
         .execute(&state.db)
-        .await?;
+        .await?
+        .rows_affected();
+    if deleted == 0 {
+        return Err(delonix_meet_core::DomainError::not_found("api_key.not_found").into());
+    }
     crate::audit::log(
         &state.db,
         Some(org_id),
@@ -241,7 +367,7 @@ pub async fn revoke(
         &key_id.to_string(),
     )
     .await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 // ---------- API pública v1 (autenticada por chave) ----------
@@ -288,12 +414,13 @@ pub struct V1RoomInfo {
 /// O dono da sala é o utilizador que criou a chave.
 #[utoipa::path(
     post, path = "/api/v1/rooms", tag = "v1",
-    security(("api_key" = [])),
+    security(("api_key" = ["rooms:write"])),
     request_body = ApiCreateRoomReq,
     responses(
         (status = 200, body = V1RoomInfo),
-        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
-        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`).", body = crate::openapi::ErrorBody),
+        (status = 403, description = "A chave não tem o escopo `rooms:write` (`api_key.scope_missing`, escopo em `details`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn v1_create_room(
@@ -301,6 +428,7 @@ pub async fn v1_create_room(
     key: ApiKeyAuth,
     Json(req): Json<ApiCreateRoomReq>,
 ) -> Result<Json<V1RoomInfo>, ApiError> {
+    key.require(Scope::RoomsWrite)?;
     let name: String = req
         .name
         .unwrap_or_else(|| "Reunião (API)".into())
@@ -331,12 +459,13 @@ pub async fn v1_create_room(
 /// `GET /api/v1/rooms/{code}` — metadados de uma sala da organização da chave.
 #[utoipa::path(
     get, path = "/api/v1/rooms/{code}", tag = "v1",
-    security(("api_key" = [])),
+    security(("api_key" = ["rooms:read"])),
     params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas aqui).")),
     responses(
         (status = 200, body = V1RoomInfo),
-        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
-        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`).", body = crate::openapi::ErrorBody),
+        (status = 403, description = "A chave não tem o escopo `rooms:read` (`api_key.scope_missing`, escopo em `details`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela).", body = crate::openapi::ErrorBody),
         (status = 404, description = "A sala não existe ou o dono não é membro activo da organização da chave.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -345,6 +474,7 @@ pub async fn v1_get_room(
     key: ApiKeyAuth,
     Path(code): Path<String>,
 ) -> Result<Json<V1RoomInfo>, ApiError> {
+    key.require(Scope::RoomsRead)?;
     let row: Option<(String, String, bool, bool, Uuid)> = sqlx::query_as(
         "SELECT code, name, e2ee, waiting_room, owner_id FROM rooms WHERE code = $1",
     )
@@ -389,13 +519,14 @@ pub struct V1BotJoin {
 /// O token contorna a sala de espera.
 #[utoipa::path(
     post, path = "/api/v1/rooms/{code}/join-bot", tag = "v1",
-    security(("api_key" = [])),
+    security(("api_key" = ["bots:join"])),
     params(("code" = String, Path, description = "Código da sala (normalizado para minúsculas).")),
     request_body = JoinBotReq,
     responses(
         (status = 200, body = V1BotJoin),
-        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
-        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`).", body = crate::openapi::ErrorBody),
+        (status = 403, description = "A chave não tem o escopo `bots:join` (`api_key.scope_missing`, escopo em `details`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela).", body = crate::openapi::ErrorBody),
         (status = 404, description = "A sala não existe ou o dono não é membro activo da organização da chave.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -405,6 +536,7 @@ pub async fn v1_join_bot_room(
     Path(code): Path<String>,
     Json(req): Json<JoinBotReq>,
 ) -> Result<Json<V1BotJoin>, ApiError> {
+    key.require(Scope::BotsJoin)?;
     let room: crate::rooms::Room = sqlx::query_as(&format!(
         "SELECT {} FROM rooms WHERE code = $1",
         crate::rooms::ROOM_COLUMNS
@@ -470,17 +602,19 @@ pub struct V1RecordingList {
 /// recentes.
 #[utoipa::path(
     get, path = "/api/v1/recordings", tag = "v1",
-    security(("api_key" = [])),
+    security(("api_key" = ["recordings:read"])),
     responses(
         (status = 200, body = V1RecordingList),
-        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
-        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`).", body = crate::openapi::ErrorBody),
+        (status = 403, description = "A chave não tem o escopo `recordings:read` (`api_key.scope_missing`, escopo em `details`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn v1_recordings(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
 ) -> Result<Json<V1RecordingList>, ApiError> {
+    key.require(Scope::RecordingsRead)?;
     let rows: Vec<(Uuid, String, i64, chrono::DateTime<chrono::Utc>, String)> = sqlx::query_as(
         "SELECT r.id, r.filename, r.size_bytes, r.created_at, rm.code
          FROM recordings r
@@ -542,13 +676,14 @@ pub struct V1MeetingList {
 /// No máximo 500, por `starts_at`.
 #[utoipa::path(
     get, path = "/api/v1/meetings", tag = "v1",
-    security(("api_key" = [])),
+    security(("api_key" = ["meetings:read"])),
     params(MeetingsQuery),
     responses(
         (status = 200, body = V1MeetingList),
         (status = 400, description = "`since` não é RFC 3339.", body = crate::openapi::ErrorBody),
-        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
-        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`).", body = crate::openapi::ErrorBody),
+        (status = 403, description = "A chave não tem o escopo `meetings:read` (`api_key.scope_missing`, escopo em `details`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn v1_meetings(
@@ -556,6 +691,7 @@ pub async fn v1_meetings(
     key: ApiKeyAuth,
     axum::extract::Query(q): axum::extract::Query<MeetingsQuery>,
 ) -> Result<Json<V1MeetingList>, ApiError> {
+    key.require(Scope::MeetingsRead)?;
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
         Uuid,
@@ -626,12 +762,13 @@ pub struct V1MeetingNotes {
 /// `minutes_ai_at` presente => o MoM já é a versão final do LLM local.
 #[utoipa::path(
     get, path = "/api/v1/meetings/{id}/notes", tag = "v1",
-    security(("api_key" = [])),
+    security(("api_key" = ["meetings:read"])),
     params(("id" = Uuid, Path, description = "Reunião.")),
     responses(
         (status = 200, body = V1MeetingNotes),
-        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
-        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`).", body = crate::openapi::ErrorBody),
+        (status = 403, description = "A chave não tem o escopo `meetings:read` (`api_key.scope_missing`, escopo em `details`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela).", body = crate::openapi::ErrorBody),
         (status = 404, description = "A reunião não existe ou o dono não é membro da organização da chave.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -640,6 +777,7 @@ pub async fn v1_meeting_notes(
     key: ApiKeyAuth,
     Path(id): Path<Uuid>,
 ) -> Result<Json<V1MeetingNotes>, ApiError> {
+    key.require(Scope::MeetingsRead)?;
     let row: Option<(
         String,
         String,
@@ -684,17 +822,19 @@ pub struct V1Org {
 /// `GET /api/v1/org` — dados da organização da chave.
 #[utoipa::path(
     get, path = "/api/v1/org", tag = "v1",
-    security(("api_key" = [])),
+    security(("api_key" = ["org:read"])),
     responses(
         (status = 200, body = V1Org),
-        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
-        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`).", body = crate::openapi::ErrorBody),
+        (status = 403, description = "A chave não tem o escopo `org:read` (`api_key.scope_missing`, escopo em `details`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn v1_org(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
 ) -> Result<Json<V1Org>, ApiError> {
+    key.require(Scope::OrgRead)?;
     let row: (String, String, String) =
         sqlx::query_as("SELECT name, email_domain, domain FROM organizations WHERE id = $1")
             .bind(key.org_id)
@@ -734,6 +874,10 @@ pub struct ProvisionOrgReq {
     /// Rótulo da chave de API emitida (default "Integration").
     #[serde(default)]
     pub key_name: Option<String>,
+    /// Escopos da chave emitida (ver `CreateKeyReq::scopes`). **Omisso ⇒ o
+    /// catálogo inteiro** — é o que o módulo Odoo recebe hoje.
+    #[serde(default)]
+    pub scopes: Option<Vec<String>>,
     /// Domínio de email da org — necessário para o ``/api/auth/sso/login?domain=``
     /// resolver esta org. Opcional.
     #[serde(default)]
@@ -835,7 +979,7 @@ async fn ensure_provisioning_user(state: &AppState) -> Result<Uuid, ApiError> {
     request_body = ProvisionOrgReq,
     responses(
         (status = 200, body = ProvisionedOrg),
-        (status = 400, description = "Nome vazio/longo, ou `odoo_db` sem `odoo_company_id`.", body = crate::openapi::ErrorBody),
+        (status = 400, description = "Nome vazio/longo, `odoo_db` sem `odoo_company_id`, ou `scopes` inválidos (`api_key.scopes_empty`, `api_key.unknown_scope`).", body = crate::openapi::ErrorBody),
         (status = 401, description = "Segredo ausente, errado, ou provisionamento desactivado.", body = crate::openapi::ErrorBody),
         (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
     )
@@ -861,6 +1005,8 @@ pub async fn v1_provision_org(
     if name.is_empty() || name.len() > 120 {
         return Err(ApiError::BadRequest("nome da organização inválido".into()));
     }
+    // Antes de criar a organização: um escopo inválido não deixa uma org a meio.
+    let key_scopes = policy::scopes_for_new_key(req.scopes.as_deref())?;
 
     let service_user_id = ensure_provisioning_user(&state).await?;
 
@@ -970,27 +1116,27 @@ pub async fn v1_provision_org(
     .execute(&state.db)
     .await?;
 
-    // Chave de API da org (mesma geração que apikeys::create).
-    let key = delonix_meet_core::crypto::prefixed_token("dlx_");
-    let prefix = key.chars().take(12).collect::<String>();
-    let hash = sha256_hex(&key);
+    // Chave de API da org (mesma geração que apikeys::create). Sem `scopes`
+    // ⇒ o catálogo inteiro: o módulo Odoo usa `meetings:read` (sync e atas) e
+    // `meetings:write` (criar/alterar/cancelar/tocar), e o provisionamento é
+    // a única forma de ele obter a chave — uma chave provisionada mais pobre
+    // partia a integração sem ninguém mudar nada do lado de lá.
     let key_name: String = req
         .key_name
+        .clone()
         .unwrap_or_else(|| "Integration".into())
         .trim()
         .chars()
         .take(60)
         .collect();
-    sqlx::query(
-        "INSERT INTO org_api_keys (org_id, name, prefix, key_hash, created_by)
-         VALUES ($1, $2, $3, $4, $5)",
+    let (_, key, _) = insert_key(
+        &state,
+        org_id,
+        &key_name,
+        service_user_id,
+        &key_scopes,
+        None,
     )
-    .bind(org_id)
-    .bind(&key_name)
-    .bind(&prefix)
-    .bind(&hash)
-    .bind(service_user_id)
-    .execute(&state.db)
     .await?;
 
     // Domínio de email (best-effort — o índice único pode colidir com outra
@@ -1178,6 +1324,24 @@ mod tests {
             .unwrap(),
             serde_json::json!({"id": id, "name": "n", "email_domain": "e", "domain": "", "members": 3})
         );
+    }
+
+    /// A migração 0046 dá às chaves antigas o catálogo de HOJE, escrito à mão
+    /// no SQL. Se o catálogo crescer, este teste lembra que as chaves antigas
+    /// NÃO recebem o escopo novo — e que isso é de propósito.
+    #[test]
+    fn migracao_0046_da_as_chaves_antigas_o_catalogo_inteiro() {
+        let sql = include_str!("../migrations/0046_api_key_scopes.sql");
+        let default = sql
+            .split("ARRAY[")
+            .nth(1)
+            .and_then(|r| r.split(']').next())
+            .unwrap();
+        let listed: Vec<String> = default
+            .split(',')
+            .map(|s| s.trim().trim_matches('\'').to_string())
+            .collect();
+        assert_eq!(listed, Scope::all_strings());
     }
 
     #[test]

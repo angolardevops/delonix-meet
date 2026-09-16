@@ -527,8 +527,7 @@ async fn admin_api_keys_voice_and_odoo(db: sqlx::PgPool) {
             t,
         )
         .await;
-    assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    assert_eq!(st, 204, "{body}");
     let (_, list) = app.get(&org_path(&org, "api-keys"), t).await;
     assert!(list.as_array().unwrap().is_empty());
 
@@ -819,7 +818,7 @@ async fn cross_org_delete_leaves_key_and_webhook_alive(db: sqlx::PgPool) {
             Some(&a.token),
         )
         .await;
-    assert_eq!(st, 200, "responde ok mas não apaga nada");
+    assert_eq!(st, 404, "a chave é da B: não existe nesta organização");
     let (st, _) = app
         .delete(
             &org_path(a.org(), &format!("webhooks/{hook_id}")),
