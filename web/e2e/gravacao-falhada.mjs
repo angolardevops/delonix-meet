@@ -35,7 +35,7 @@ if(falhada){
   chk(!!falhada.failure_reason, `traz uma causa: "${(falhada.failure_reason||'').slice(0,72)}…"`)
   chk(!/\/tmp|ffmpeg exited|errno/i.test(falhada.failure_reason||''), 'a causa NÃO vaza caminhos nem detalhe técnico')
   chk(falhada.size_bytes===0, 'tamanho zero — não é um ficheiro vazio, é ausência de ficheiro')
-  const d=await j(`${API}/api/recordings/${falhada.id}`,{token:tok})
+  const d=await j(`${API}/api/recordings/${falhada.id}/content`,{token:tok})
   chk(d.s===400, `descarregar uma falhada é recusado com explicação → ${d.s}`)
   chk(typeof d.j?.error==='string' && d.j.error.length>20, 'e a recusa diz PORQUÊ, não um 500 opaco')
 }

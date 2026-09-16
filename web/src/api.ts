@@ -440,7 +440,7 @@ export const getRecordingLink = (id: string) =>
 
 export const createRecordingLink = (id: string, opts: { password?: string; expires_at?: string | null }) =>
   request<ShareLink>(`/api/recordings/${id}/public-link`, {
-    method: 'POST',
+    method: 'PUT',
     body: JSON.stringify(opts),
   })
 
@@ -502,12 +502,12 @@ export const startMeeting = (id: string) =>
   request<{ code: string; kind: 'video' | 'voice' }>(`/api/meetings/${id}/start`, { method: 'POST' })
 
 export const respondMeeting = (id: string, status: 'accepted' | 'declined', reason = '') =>
-  request(`/api/meetings/${id}/invitees/me`, { method: 'POST', body: JSON.stringify({ status, reason }) })
+  request(`/api/meetings/${id}/invitees/me`, { method: 'PUT', body: JSON.stringify({ status, reason }) })
 
 export const meetingInvitees = (id: string) => request<InviteeResponse[]>(`/api/meetings/${id}/invitees`)
 
-export const quarantineAnalytics = (period: 'week' | 'month' | 'quarter' | 'year', orgId?: string) =>
-  request<QuarantineRow[]>(`/api/quarantine/analytics?period=${period}${orgId ? `&org_id=${orgId}` : ''}`)
+export const quarantineAnalytics = (period: 'week' | 'month' | 'quarter' | 'year', orgId: string) =>
+  request<QuarantineRow[]>(`/api/orgs/${orgId}/analytics/quarantine?period=${period}`)
 
 export const listMeetingRooms = (orgId: string) => request<MeetingRoom[]>(`/api/orgs/${orgId}/meeting-rooms`)
 export const createMeetingRoom = (orgId: string, name: string, location: string, capacity: number) =>
@@ -517,7 +517,7 @@ export const createMeetingRoom = (orgId: string, name: string, location: string,
   })
 
 export const saveMinutesByRoom = (code: string, minutes: string, transcript: string) =>
-  request(`/api/rooms/${code}/minutes`, { method: 'POST', body: JSON.stringify({ minutes, transcript }) })
+  request(`/api/rooms/${code}/minutes`, { method: 'PUT', body: JSON.stringify({ minutes, transcript }) })
 
 // ---------- Enterprise ----------
 
@@ -558,7 +558,7 @@ export const saveWhiteboard = (title: string, roomCode: string, pngBase64: strin
 export const deleteWhiteboard = (id: string) => request(`/api/whiteboards/${id}`, { method: 'DELETE' })
 export const shareWhiteboard = (id: string, isPublic: boolean) =>
   request<WhiteboardMeta>(`/api/whiteboards/${id}/public-link`, {
-    method: 'POST',
+    method: 'PUT',
     body: JSON.stringify({ public: isPublic }),
   })
 export const whiteboardPngUrl = (id: string) => `/api/whiteboards/${id}/image`
@@ -578,8 +578,8 @@ export const updateOrgSettings = (
   retentionDays: number,
   quotas?: Partial<OrgQuotas>,
 ) =>
-  request(`/api/orgs/${orgId}/settings`, {
-    method: 'POST',
+  request(`/api/orgs/${orgId}`, {
+    method: 'PATCH',
     body: JSON.stringify({ domain, retention_days: retentionDays, ...quotas }),
   })
 
@@ -857,7 +857,7 @@ export const roomNotes = (code: string) => request<RoomNotes>(`/api/rooms/${code
 
 /** URL de objeto para reproduzir a gravação inline (o <video> não envia Bearer). */
 export async function recordingObjectUrl(rec: Recording): Promise<string> {
-  const res = await fetch(`/api/recordings/${rec.id}`, { headers: authHeader() })
+  const res = await fetch(`/api/recordings/${rec.id}/content`, { headers: authHeader() })
   if (!res.ok) throw new Error('failed to load recording')
   return URL.createObjectURL(await res.blob())
 }
@@ -875,7 +875,7 @@ export async function downloadMeetingIcs(id: string, title: string): Promise<voi
 
 export async function downloadRecording(rec: Recording): Promise<void> {
   // ?dl=1 → o servidor exige a permissão de download (RBAC: dono + admin da org).
-  const res = await fetch(`/api/recordings/${rec.id}?dl=1`, { headers: authHeader() })
+  const res = await fetch(`/api/recordings/${rec.id}/content?dl=1`, { headers: authHeader() })
   if (res.status === 401 || res.status === 403) throw new Error('Sem permissão para descarregar')
   if (!res.ok) throw new Error('download failed')
   const url = URL.createObjectURL(await res.blob())
@@ -984,18 +984,19 @@ export async function addActionItem(
 }
 
 export async function patchActionItem(
+  meetingId: string,
   itemId: string,
   patch: Partial<Omit<ActionItem, 'id' | 'plan_id' | 'created_at' | 'updated_at'>>,
 ): Promise<ActionItem> {
-  return request<ActionItem>(`/api/action-items/${itemId}`, {
+  return request<ActionItem>(`/api/meetings/${meetingId}/action-plan/items/${itemId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   })
 }
 
-export async function deleteActionItem(itemId: string): Promise<void> {
-  await request(`/api/action-items/${itemId}`, { method: 'DELETE' })
+export async function deleteActionItem(meetingId: string, itemId: string): Promise<void> {
+  await request(`/api/meetings/${meetingId}/action-plan/items/${itemId}`, { method: 'DELETE' })
 }
 
 // ---------- SSO Config (admin) ----------

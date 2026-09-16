@@ -55,17 +55,25 @@
   integração de calendário usa `POST /api/v1/meetings`, que cria reunião + sala
   com `host_email` humano e convidados por email. `/rooms` fica para bots e
   chamadas ad-hoc.
-- **Marcador no código:** a fronteira está anotada em `server/src/main.rs` (bloco
-  "FRONTEIRA DE CONTRATO DE API"), imediatamente antes do `.nest("/api/v1", ...)`.
+- **Endpoints da v1** (fonte de verdade: `docs/reference/openapi/v1.json`):
+  `GET /api/v1/organization`, `POST /api/v1/rooms`, `GET /api/v1/rooms/{room_code}`,
+  `POST /api/v1/rooms/{room_code}/bots`, `GET /api/v1/recordings`,
+  `GET/POST /api/v1/meetings`, `GET/PATCH/DELETE /api/v1/meetings/{meeting_id}`,
+  `POST /api/v1/meetings/{meeting_id}/ring`, `GET /api/v1/meetings/{meeting_id}/minutes`.
+- **Marcador no código:** `server/src/lib.rs`, `let v1_routes = Router::new()…`.
 
-> **Drift medido a 2026-09-16** (auditoria §2.4): a v1 contém também
-> `POST /meetings/{id}/ring`, `POST /admin/orgs` (segredo de plataforma — é do
-> OPERADOR), `/integration/odoo/{provision,users}` (token `dlxo_` — é da
-> INTEGRAÇÃO) e `/platform/storage*` (sessão JWT — é do OPERADOR). São três
-> públicos e quatro autenticações na mesma superfície. A separação está no
-> [ADR-0004 §4](../adr/0004-organizacao-alvo-do-backend.md); até lá, **nenhuma
-> rota nova de operador ou de integração entra em `/api/v1`** (catraca
-> `rotas_v1_com_sessao`). A checklist de rota nova é a skill `delonix-meet-api`.
+> **Separação feita a 2026-09-16** (reorganização sem aliases, `api-routes.md`): o
+> provisionamento de orgs e o armazenamento da plataforma saíram para
+> `/api/operator/v1`, e a integração Odoo para `/api/integrations/odoo/v1`. A catraca
+> `rotas_v1_com_sessao` está a zero e não pode subir.
+
+## Superfícies além da v1
+
+| Superfície | Prefixo | Público | Spec |
+|---|---|---|---|
+| Operador | `/api/operator/v1` | quem opera a plataforma | `openapi/operator.json` |
+| Integrações | `/api/integrations/odoo/v1`, `/api/integrations/sms-agent/v1` | módulo Odoo, agente SMS | `openapi/integrations.json` |
+| Interna | `/internal/v1` | FreeSWITCH (IVR) | — |
 
 ## Regras
 

@@ -735,8 +735,13 @@ export default function Analytics() {
   }, [orgId])
 
   useEffect(() => {
+    // A análise de quarentena é por organização (e só para admin).
+    if (!orgId) {
+      setRows([])
+      return
+    }
     setLoading(true)
-    quarantineAnalytics(period, orgId || undefined)
+    quarantineAnalytics(period, orgId)
       .then(setRows)
       .catch(() => setRows([]))
       .finally(() => setLoading(false))

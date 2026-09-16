@@ -77,6 +77,13 @@ async function recusado(nome, path, opts) {
     nok(nome, `devolveu ${status} com ${JSON.stringify(json).slice(0, 160)}`)
     return
   }
+  // 405 é o ROUTER a dizer que o método não existe naquele caminho — não prova
+  // nada sobre autorização. Com a reorganização das rotas (POST→PUT/PATCH) um
+  // caso com o método antigo passava a verde por engano; agora falha.
+  if (status === 405) {
+    nok(nome, `405: o método ${opts?.method ?? 'GET'} não existe em ${path} — o caso mede o router, não a regra`)
+    return
+  }
   ok(`${nome} → ${status}`)
 }
 
@@ -137,8 +144,13 @@ await recusado('A lista DIDs de voz da org B', `/api/orgs/${B.orgId}/voice/dids`
 await recusado('A lista CDR de voz da org B', `/api/orgs/${B.orgId}/voice/call-records`, { token: A.token })
 
 console.log('\n--- escrita cross-tenant ---')
-await recusado('A altera definições da org B', `/api/orgs/${B.orgId}/settings`, {
-  token: A.token, method: 'POST', body: { hide_org_creation: true },
+await recusado('A lê a org B', `/api/orgs/${B.orgId}`, { token: A.token })
+await recusado('A altera definições da org B', `/api/orgs/${B.orgId}`, {
+  token: A.token, method: 'PATCH', body: { hide_org_creation: true },
+})
+await recusado('A lê a análise de quarentena da org B', `/api/orgs/${B.orgId}/analytics/quarantine`, { token: A.token })
+await recusado('A cria uma sala de voz na org B', `/api/orgs/${B.orgId}/voice/rooms`, {
+  token: A.token, method: 'POST', body: { room_code: salaB.code },
 })
 await recusado('A roda o token Odoo da org B', `/api/orgs/${B.orgId}/integrations/odoo/rotate-token`, {
   token: A.token, method: 'POST', body: {},
@@ -328,23 +340,20 @@ const reuniaoB = await req('/api/meetings', {
 })
 if (reuniaoB.status >= 200 && reuniaoB.status < 300 && reuniaoB.json?.id) {
   const m = reuniaoB.json.id
-  // `/api/meetings/{id}` só tem DELETE e `/minutes` só tem POST — um GET
-  // devolve 405, que o helper contava como recusa sem provar nada. Foi o
-  // CONTROLO POSITIVO abaixo que deu por isso: «B lê a sua própria reunião»
-  // devolvia 405 também. Sem ele, duas asserções verdes mediam o router, não a
-  // autorização.
+  // Um 405 (método inexistente) já não conta como recusa — ver `recusado`.
+  await recusado('A lê a reunião da org B', `/api/meetings/${m}`, { token: A.token })
   await recusado('A APAGA a reunião da org B', `/api/meetings/${m}`, {
     token: A.token, method: 'DELETE',
   })
   await recusado('A escreve a ACTA da reunião da B', `/api/meetings/${m}/minutes`, {
-    token: A.token, method: 'POST', body: { markdown: 'acta forjada' },
+    token: A.token, method: 'PUT', body: { markdown: 'acta forjada' },
   })
   await recusado('A lê a agenda da reunião da B', `/api/meetings/${m}/agenda-items`, { token: A.token })
   await recusado('A lê os convidados da reunião da B', `/api/meetings/${m}/invitees`, { token: A.token })
   await recusado('A lê o plano de acção da reunião da B', `/api/meetings/${m}/action-plan`, { token: A.token })
   await recusado('A descarrega o ICS da reunião da B', `/api/meetings/${m}/calendar.ics`, { token: A.token })
   await recusado('A responde ao convite da reunião da B', `/api/meetings/${m}/invitees/me`, {
-    token: A.token, method: 'POST', body: { status: 'accepted' },
+    token: A.token, method: 'PUT', body: { status: 'accepted' },
   })
   await recusado('A ARRANCA a reunião da B', `/api/meetings/${m}/start`, {
     token: A.token, method: 'POST', body: {},
@@ -387,8 +396,9 @@ if (quadroB.status >= 200 && quadroB.status < 300 && quadroB.json?.id) {
   await recusado('A forja um URL assinado do quadro da B', `/api/whiteboards/${q}/image?exp=${Math.floor(Date.now() / 1000) + 600}&sig=${'0'.repeat(64)}`, {
     token: A.token,
   })
+  await recusado('A lê os metadados do quadro da B', `/api/whiteboards/${q}`, { token: A.token })
   await recusado('A PARTILHA o quadro da B por link', `/api/whiteboards/${q}/public-link`, {
-    token: A.token, method: 'POST', body: { public: true },
+    token: A.token, method: 'PUT', body: { public: true },
   })
   await recusado('A apaga o quadro da B', `/api/whiteboards/${q}`, {
     token: A.token, method: 'DELETE',
@@ -410,7 +420,7 @@ await recusado('A convida gente para a sala da B', `/api/rooms/${salaB.code}/inv
 })
 await recusado('A lê a acta da sala da B', `/api/rooms/${salaB.code}/minutes`, { token: A.token })
 await recusado('A escreve a acta da sala da B', `/api/rooms/${salaB.code}/minutes`, {
-  token: A.token, method: 'POST', body: { markdown: 'acta forjada' },
+  token: A.token, method: 'PUT', body: { markdown: 'acta forjada' },
 })
 await recusado('A reporta tempos de chamada na sala da B', `/api/rooms/${salaB.code}/join-timings`, {
   token: A.token, method: 'POST', body: { join_ms: 1 },
@@ -427,14 +437,19 @@ await recusado('A revoga a partilha de uma gravação alheia', `/api/recordings/
 // que o resto deste ficheiro e está dito: um `404` aqui não distingue «não é
 // tua» de «não existe». O caminho por id fica coberto pela sala
 // (`/api/rooms/{code}/recordings`, acima), que usa um id REAL da org B.
-await recusado('A descarrega uma gravação por id inventado', `/api/recordings/${inventado}`, {
+await recusado('A descarrega uma gravação por id inventado', `/api/recordings/${inventado}/content`, {
   token: A.token,
 })
 await recusado('A cria link de partilha de uma gravação alheia', `/api/recordings/${inventado}/public-link`, {
-  token: A.token, method: 'POST', body: {},
+  token: A.token, method: 'PUT', body: {},
 })
-await recusado('A mexe num item de acção por id inventado', `/api/action-items/${inventado}`, {
-  token: A.token, method: 'PATCH', body: { done: true },
+await recusado('A mexe num item de acção por id inventado', `/api/meetings/${inventado}/action-plan/items/${inventado}`, {
+  token: A.token, method: 'PATCH', body: { status: 'done' },
+})
+await recusado('A lê uma sala de voz da org B', `/api/orgs/${B.orgId}/voice/rooms/${inventado}`, { token: A.token })
+await recusado('A lê os participantes de uma sala de voz da org B', `/api/orgs/${B.orgId}/voice/rooms/${inventado}/participants`, { token: A.token })
+await recusado('A encerra uma sala de voz da org B', `/api/orgs/${B.orgId}/voice/rooms/${inventado}/close`, {
+  token: A.token, method: 'POST', body: {},
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -540,8 +555,8 @@ if (gravacaoA) {
   const comA = await permitido('A comenta a sua gravação', `/api/recordings/${gravacaoA}/comments`, {
     token: A.token, method: 'POST', body: { body: 'comentário privado da A' },
   })
-  await permitido('A lê os metadados da sua gravação', `/api/recordings/${gravacaoA}/metadata`, { token: A.token })
-  await recusado('B lê os metadados da gravação da A', `/api/recordings/${gravacaoA}/metadata`, { token: B.token })
+  await permitido('A lê os metadados da sua gravação', `/api/recordings/${gravacaoA}`, { token: A.token })
+  await recusado('B lê os metadados da gravação da A', `/api/recordings/${gravacaoA}`, { token: B.token })
   await recusado('B muda a categoria da gravação da A', `/api/recordings/${gravacaoA}`, {
     token: B.token, method: 'PATCH', body: { category: 'other' },
   })
@@ -589,7 +604,7 @@ await permitido('C (membro activo) lê o chat da sala da A', `/api/rooms/${salaA
 if (await pesquisaPorA(C.token)) ok('C (membro activo) encontra o admin da A na pesquisa')
 else nok('C (membro activo) encontra o admin da A na pesquisa', 'não encontrou — o controlo positivo falhou')
 if (gravacaoA) {
-  await permitido('D (admin activo) descarrega a gravação da A', `/api/recordings/${gravacaoA}?dl=1`, { token: D.token })
+  await permitido('D (admin activo) descarrega a gravação da A', `/api/recordings/${gravacaoA}/content?dl=1`, { token: D.token })
   await permitido('D (admin activo) lê os comentários da gravação da A', `/api/recordings/${gravacaoA}/comments`, { token: D.token })
 }
 // Chave de API `dlx_` da A, própria destes casos. A `chaveA` de cima passou a
@@ -612,7 +627,7 @@ await recusado('C ARQUIVADA lê o chat da sala da A', `/api/rooms/${salaA.code}/
 if (!(await pesquisaPorA(C.token))) ok('C ARQUIVADA já não encontra o admin da A na pesquisa')
 else nok('C ARQUIVADA já não encontra o admin da A na pesquisa', 'o directório da ex-organização continua visível')
 if (gravacaoA) {
-  await recusado('D ARQUIVADO descarrega a gravação da A', `/api/recordings/${gravacaoA}?dl=1`, { token: D.token })
+  await recusado('D ARQUIVADO descarrega a gravação da A', `/api/recordings/${gravacaoA}/content?dl=1`, { token: D.token })
   await recusado('D ARQUIVADO lê os comentários da gravação da A', `/api/recordings/${gravacaoA}/comments`, { token: D.token })
 }
 await recusado('a chave da A cria reunião com C ARQUIVADA como anfitriã', '/api/v1/meetings', {
