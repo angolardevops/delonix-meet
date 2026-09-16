@@ -73,10 +73,11 @@ export default {
     maisChamadas_other: 'E mais {{count}} chamadas no registo.',
   },
   contactos: {
-    telefone: 'Telefone',
     telefoneTitulo: 'Chamadas pelo dial-in',
     semTelefone: 'Ainda não entrou nenhuma chamada pelo dial-in desta organização.',
     recebidaEm: 'recebida em {{numero}}',
+    historico: 'Histórico',
+    pesquisar: 'Procurar contactos…',
   },
   entrar: {
     titulo: 'Uma sala. Reunião, videoaula e emissão pública.',
