@@ -1625,3 +1625,19 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `web/e2e/isolamento.mjs` (secções S1–S3, com controlo positivo antes de cada recusa); `storage::tests`; a metade positiva do S1 (utilizador declarado → `200`) foi verificada ao vivo com o servidor reiniciado com a variável, e não está automatizada — o utilizador do teste só nasce depois do arranque.
 
 **Ficheiros.** `server/src/{storage,config,error,odoo,rooms,users,recordings,meetings_v1}.rs`, `web/src/pages/Analytics.tsx`, `web/e2e/isolamento.mjs`, `docs/deployment.md`, `deploy/delonix.env.example`.
+
+### R122 — O chat «persistente» nunca foi escrito, e três regras que a sinalização nova da sala não pode perder
+
+**Sintoma.** `GET /api/rooms/{code}/chat` devolvia sempre `[]`. A tabela `room_chat_messages` existia desde a migração 0018 e nenhum código a escrevia — medido com `grep -rn room_chat server/src` (só a leitura). E a leitura estava errada à sua maneira: `ORDER BY created_at ASC LIMIT 200` devolve as PRIMEIRAS 200 mensagens, não as últimas.
+
+**Regra 1 — a escrita do chat não entra no caminho quente.** O handler corre com o lock da sala (R16): a mensagem vai para uma fila LIMITADA (`room_chat::ChatStore`, `try_send`) consumida por uma tarefa própria, por ordem (a reacção nunca chega antes da mensagem). Fila cheia descarta e conta (`delonix_chat_persist_dropped_total`); a sala recebe a mensagem na mesma. A retenção prometida na 0018 («até ao fim do dia UTC da última mensagem») passou a ser cumprida por `room_chat::retention_sweep`, porque agora há o que reter.
+
+**Regra 2 — o que se esconde a um público não lhe é ENVIADO.** Uma pergunta de Q&A escondida não sai para quem não é anfitrião (`qa_view_for`). As duas vistas vão por difusões SEM sobreposição (`broadcast_hosts` + `broadcast_non_hosts`): com «toda a sala» seguida de «anfitriões», a ordem de chegada pelo Redis (duas tarefas `spawn`) decidia qual das vistas o anfitrião ficava a ver. Um `TransferHost` reenvia as duas.
+
+**Regra 3 — desligar a sala de espera não abre a porta a quem não tem entrada directa.** O token antigo juntava duas coisas num só `wait` (sala de espera da sala OU sem convite). Os tokens novos separam `lobby` (sem entrada directa: espera sempre) de `wr` (a configuração da sala), e só o segundo é substituível pelo anfitrião em runtime (`WaitPolicy::must_wait`). Um token antigo continua a valer pelo `wait`.
+
+**Encontrado e NÃO corrigido (fora do âmbito do ramo):** o servidor envia `companion-ended` (`rename_all = "kebab-case"`) e o cliente escuta `companion_ended` (`web/src/room/useCallSession.ts`) — o fim do modo companion (R114) nunca chega ao browser.
+
+**Portão.** `signaling::b1_sala_tests` (36 testes, com a metade negativa de cada controlo novo e mutação manual das guardas), `web/e2e/isolamento.mjs` (espreitar a sala de espera: dona `200`, outra org `404`), `web/src/signaling.b1.test.ts` (nomes do fio).
+
+**Ficheiros.** `server/src/{signaling,room_tools,room_chat,rooms,net_probe,auth,org,users,pubsub,metrics,main}.rs`, `server/migrations/0039_room_chat_threads_reactions.sql`, `web/src/{signaling,api}.ts`.
