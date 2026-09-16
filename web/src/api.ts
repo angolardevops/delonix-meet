@@ -1791,3 +1791,238 @@ export const createMeetingWithSms = (m: Parameters<typeof createMeeting>[0] & Me
     method: 'POST',
     body: JSON.stringify(m),
   })
+
+// ---------------------------------------------------------------------------
+//  Pesquisa — contrato `docs/reference/pesquisa.md` (ADR-0007) do backend.
+//  Ctrl+K (`/api/search`), descrição das listas (`/api/search/schemas`), as
+//  listas estilo Odoo (parâmetros uniformes na própria colecção) e os
+//  favoritos (`/api/users/me/saved-searches`).
+// ---------------------------------------------------------------------------
+
+/** Código estável do envelope de erro plano (ADR-0006 §3): `search.invalid_filter`… */
+export function apiErrorCode(e: unknown): string | null {
+  if (!(e instanceof ApiError)) return null
+  const b = e.body as { code?: unknown } | null
+  return b && typeof b === 'object' && typeof b.code === 'string' ? b.code : null
+}
+
+export type SearchType =
+  | 'meetings'
+  | 'recordings'
+  | 'people'
+  | 'whiteboards'
+  | 'rooms'
+  | 'messages'
+  | 'stream_destinations'
+  | 'webhooks'
+  | 'audit_events'
+
+/** Ordem fixa dos grupos (a da tabela do contrato). */
+export const SEARCH_TYPES: SearchType[] = [
+  'meetings',
+  'recordings',
+  'people',
+  'whiteboards',
+  'rooms',
+  'messages',
+  'stream_destinations',
+  'webhooks',
+  'audit_events',
+]
+
+/** Texto partido em segmentos; a UI escapa cada um e realça os `match`. Nunca HTML. */
+export interface HighlightSegment {
+  text: string
+  match: boolean
+}
+
+export interface SearchHit {
+  type: SearchType
+  id: string
+  title: string
+  subtitle: string | null
+  highlight: HighlightSegment[]
+  matched_in: string
+  score: number
+  /** Ids para abrir: `{recording_id, at_secs}`, `{room_code, message_id, created_at}`… */
+  target: Record<string, string | number | null>
+  href: string
+  occurred_at: string | null
+}
+
+export interface SearchResultGroup {
+  type: SearchType
+  count: number
+  count_kind: 'exact' | 'at_least'
+  more_href: string
+  items: SearchHit[]
+}
+
+export interface GlobalSearchResult {
+  query: string
+  took_ms: number
+  groups: SearchResultGroup[]
+  skipped: { type: SearchType; code: string }[]
+}
+
+export const globalSearch = (q: string, opts: { types?: SearchType[]; limit?: number } = {}, signal?: AbortSignal) => {
+  const p = new URLSearchParams({ q })
+  if (opts.types?.length) p.set('types', opts.types.join(','))
+  if (opts.limit) p.set('limit', String(opts.limit))
+  return request<GlobalSearchResult>(`/api/search?${p}`, { signal })
+}
+
+export type SearchFieldType = 'text' | 'enum' | 'number' | 'datetime' | 'bool' | 'user' | 'ref'
+export type SearchOperator =
+  | 'eq'
+  | 'ne'
+  | 'contains'
+  | 'not_contains'
+  | 'starts_with'
+  | 'in'
+  | 'not_in'
+  | 'is_set'
+  | 'is_not_set'
+  | 'lt'
+  | 'lte'
+  | 'gt'
+  | 'gte'
+  | 'between'
+  | 'in_period'
+export type DateGranularity = 'day' | 'week' | 'month' | 'quarter' | 'year'
+
+export interface SearchSchemaField {
+  name: string
+  label: string
+  type: SearchFieldType
+  operators: SearchOperator[]
+  filterable: boolean
+  sortable: boolean
+  groupable: boolean
+  granularities?: DateGranularity[]
+  /** `['sum']`, `['sum','avg']`… sobre o conjunto filtrado do grupo. */
+  aggregates: string[]
+  options?: { value: string; label: string }[]
+}
+
+/** Nó do domínio: `[campo, op]`, `[campo, op, valor]`, `{and}`, `{or}`, `{not}`. Lista no topo = E. */
+export type DomainNode =
+  | [string, SearchOperator]
+  | [string, SearchOperator, unknown]
+  | { and: DomainNode[] }
+  | { or: DomainNode[] }
+  | { not: DomainNode }
+export type Domain = DomainNode | DomainNode[]
+
+export interface SearchSchema {
+  resource: string
+  label: string
+  /** `/api/recordings`, ou com `{org_id}` quando `org_scoped`. */
+  collection: string
+  org_scoped: boolean
+  timezone: string
+  text_search: { fields: string[]; typo_tolerant: boolean }
+  fields: SearchSchemaField[]
+  filters: { name: string; label: string; group: string; filter: Domain }[]
+  group_by: { value: string; label: string }[]
+  default_order: string[]
+  periods: string[]
+}
+
+export const searchSchema = (resource: string, signal?: AbortSignal) =>
+  request<SearchSchema>(`/api/search/schemas/${encodeURIComponent(resource)}`, { signal })
+
+export interface ListQuery {
+  q?: string
+  filter?: Domain | null
+  filters?: string[]
+  group_by?: string[]
+  order_by?: string[]
+  page_size?: number
+  page_token?: string | null
+  groups_page_token?: string | null
+}
+
+export interface ListGroup {
+  key: string | null
+  label: string | null
+  count: number
+  aggregates: Record<string, Record<string, number>>
+  range?: { from: string; to: string }
+  /** O nó a JUNTAR ao `filter` corrente para abrir o grupo. */
+  filter: Domain
+  /** O que falta agrupar dentro deste grupo. */
+  group_by: string[]
+}
+
+export interface ListEnvelope<T> {
+  items: (T & { search?: { score: number; highlight: HighlightSegment[] } })[]
+  next_page_token: string | null
+  total: number
+  total_kind: 'exact' | 'at_least'
+  groups?: ListGroup[]
+  next_groups_page_token?: string | null
+}
+
+/** Caminho da colecção a partir do schema — nunca escrito à mão por ecrã. */
+export function collectionPath(schema: Pick<SearchSchema, 'collection' | 'org_scoped'>, orgId?: string | null): string {
+  if (!schema.collection.startsWith('/api/')) throw new Error('collection fora de /api')
+  if (!schema.org_scoped) return schema.collection
+  if (!orgId) throw new Error('org_id em falta')
+  return schema.collection.replace('{org_id}', encodeURIComponent(orgId))
+}
+
+/** Parâmetros da lista. Leva SEMPRE `page_size`: assim a resposta é o envelope, nunca o array herdado. */
+export function listQueryString(query: ListQuery): string {
+  const p = new URLSearchParams()
+  if (query.q?.trim()) p.set('q', query.q.trim())
+  const f = query.filter
+  if (f && !(Array.isArray(f) && f.length === 0)) p.set('filter', JSON.stringify(f))
+  if (query.filters?.length) p.set('filters', query.filters.join(','))
+  if (query.group_by?.length) p.set('group_by', query.group_by.join(','))
+  if (query.order_by?.length) p.set('order_by', query.order_by.join(','))
+  p.set('page_size', String(query.page_size ?? 50))
+  if (query.page_token) p.set('page_token', query.page_token)
+  if (query.groups_page_token) p.set('groups_page_token', query.groups_page_token)
+  return p.toString()
+}
+
+export const searchList = <T>(path: string, query: ListQuery, signal?: AbortSignal) =>
+  request<ListEnvelope<T>>(`${path}?${listQueryString(query)}`, { signal })
+
+export interface SavedSearchQuery {
+  q?: string
+  filter?: Domain | null
+  filters?: string[]
+  group_by?: string[]
+  order_by?: string[]
+}
+
+export interface SavedSearch {
+  id: string
+  resource: string
+  name: string
+  query: SavedSearchQuery
+  shared: boolean
+  is_default: boolean
+  owner: { id: string; username: string }
+  editable: boolean
+  valid: boolean
+  invalid_code: string | null
+  created_at: string
+  updated_at: string
+}
+
+export const listSavedSearches = (resource: string, signal?: AbortSignal) =>
+  request<Page<SavedSearch>>(`/api/users/me/saved-searches?resource=${encodeURIComponent(resource)}&page_size=100`, { signal })
+
+export const createSavedSearch = (body: { resource: string; name: string; query: SavedSearchQuery; shared: boolean; is_default: boolean }) =>
+  request<SavedSearch>('/api/users/me/saved-searches', { method: 'POST', body: JSON.stringify(body) })
+
+export const updateSavedSearch = (
+  id: string,
+  body: Partial<{ name: string; query: SavedSearchQuery; shared: boolean; is_default: boolean }>,
+) => request<SavedSearch>(`/api/users/me/saved-searches/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) })
+
+export const deleteSavedSearch = (id: string) =>
+  request<void>(`/api/users/me/saved-searches/${encodeURIComponent(id)}`, { method: 'DELETE' })
