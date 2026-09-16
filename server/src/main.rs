@@ -384,6 +384,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/orgs/{org_id}/sms/gateways/{gateway_id}", axum::routing::delete(sms::revoke_gateway))
         .route("/api/orgs/{org_id}/sms/devices", get(sms::list_devices))
         .route("/api/orgs/{org_id}/sms/route", get(sms::get_route).put(sms::put_route))
+        .route("/api/orgs/{org_id}/sms/policy", get(sms::get_policy).put(sms::put_policy))
         .route("/api/orgs/{org_id}/sms/messages", get(sms::list_messages).post(sms::send_message))
         .route("/api/orgs/{org_id}/sms/messages/{message_id}", get(sms::get_message))
         .route("/api/sms/agent/devices", axum::routing::put(sms::agent_put_devices))

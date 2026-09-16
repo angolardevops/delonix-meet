@@ -1056,6 +1056,68 @@ pub(crate) async fn find_by_idempotency_key(
 }
 
 // ============================================================
+//  Política da org: quem envia SMS a contactos
+// ============================================================
+
+#[derive(Serialize, Deserialize)]
+pub struct PolicyBody {
+    /// `admins` | `members`.
+    send_policy: String,
+}
+
+/// `GET /api/orgs/{org_id}/sms/policy` — qualquer membro lê (a UI decide se
+/// mostra «Enviar SMS»); só o admin muda.
+pub async fn get_policy(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<PolicyBody>, ApiError> {
+    caller_role(&state, org_id, auth.user_id).await?;
+    let send_policy: String =
+        sqlx::query_scalar("SELECT sms_send_policy FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_one(&state.db)
+            .await?;
+    Ok(Json(PolicyBody { send_policy }))
+}
+
+/// `PUT /api/orgs/{org_id}/sms/policy` `{send_policy}` — singleton, só admin.
+/// Um valor desconhecido é RECUSADO: é uma permissão, e ignorá-lo em silêncio
+/// deixava o admin a julgar que a tinha mudado.
+pub async fn put_policy(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<PolicyBody>,
+) -> Result<Json<PolicyBody>, ApiError> {
+    if caller_role(&state, org_id, auth.user_id).await? != Role::Admin {
+        return Err(ApiError::Forbidden);
+    }
+    let policy = req.send_policy.trim();
+    if !matches!(policy, "admins" | "members") {
+        return Err(ApiError::BadRequest(
+            "send_policy tem de ser admins ou members".into(),
+        ));
+    }
+    sqlx::query("UPDATE organizations SET sms_send_policy = $1 WHERE id = $2")
+        .bind(policy)
+        .bind(org_id)
+        .execute(&state.db)
+        .await?;
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "sms.policy_updated",
+        policy,
+    )
+    .await;
+    Ok(Json(PolicyBody {
+        send_policy: policy.to_string(),
+    }))
+}
+
+// ============================================================
 //  Telefone do membro e consentimento
 // ============================================================
 
