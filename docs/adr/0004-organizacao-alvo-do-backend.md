@@ -146,8 +146,10 @@ Três dependências têm de ser invertidas:
 1. **Não se escreve `FROM org_members` fora de `org.rs`.** A pertença decide-se com
    `org::role_in_org` / `require_member_pub` / `require_admin_pub` (filtram `archived_at`).
 2. **Não se lê `Authorization` à mão.** Usa-se um extractor que já existe, ou cria-se um em `auth.rs`.
-3. **Não se cria cliente `reqwest`.** Um URL que o cliente escolhe passa por
-   `webhooks::validate_public_url` e usa o `state.webhook_client` (timeout, sem redirects).
+3. **Não se cria cliente `reqwest`.** Usa-se o `state.webhook_client` (timeout, sem
+   redirects). Um URL que o cliente escolhe passa por `webhooks::validate_public_url`,
+   que hoje é privada: a primeira utilização fora dos webhooks torna-a `pub(crate)`,
+   e não a copia.
 4. **Não se reimplementa cripto** (sha256, token, tempo constante, argon2): usa-se a
    função que existe; a próxima cópia tem de ser a extracção para `crypto`.
 5. **Não se cria função `*_pub`.** Usa-se `pub(crate)`.

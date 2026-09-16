@@ -1,0 +1,125 @@
+---
+name: delonix-meet-backend
+description: Organização do backend Rust do Delonix Meet (`server/`) — onde fica cada coisa, as camadas http→service→store, os helpers canónicos que NÃO se copiam (pertença à org, extractors de auth, cripto, pedidos de saída), a catraca da arquitectura, a divisão-alvo em crates `delonix-meet-*` e a ordem para lá chegar, e as três falhas de segurança abertas. Usa-a quando fores escrever ou rever código em `server/src/`, criar um módulo, mover código, propor crates, ou quando o pedido falar em «duplicado», «refactor», «camada», «crate», «workspace», «nome do módulo». NÃO a uses para o desenho das rotas e do contrato (isso é `delonix-meet-api`), nem para o motor `delonix-runtime`.
+---
+
+# Backend do Delonix Meet — organização e regras
+
+**Autoridade:** [ADR-0004](../../../docs/adr/0004-organizacao-alvo-do-backend.md) (Proposto).
+**Evidência:** [auditoria de 2026-09-16](../../../docs/auditoria-2026-09-16-backend.md).
+**Precedência:** ADR aceite > esta skill > hábito do módulo que estás a editar.
+
+## Regra 0 — descobrir antes de mexer
+
+Antes de mover, extrair ou renomear, segue quatro passos:
+
+1. **Mapeia quem usa o que vais tocar:** `grep -n 'crate::<mod>' server/src/*.rs`.
+2. **Classifica cada cópia:** é igual, ou já divergiu?
+3. **Escolhe a versão certa.** Se as cópias divergiram, a certa é a mais restritiva.
+   Numa regra de acesso, **nunca** se escolhe a mais permissiva por ser a mais usada.
+4. **Planeia de modo a que cada commit deixe a árvore verde.**
+
+Uma proposta que comece por apagar código que funciona é recusada na revisão.
+
+## Onde fica código novo (enquanto o crate é um só)
+
+| Estás a escrever… | Vai para | Não vai para |
+|---|---|---|
+| Uma verificação «é membro/admin da org?» | chamar `org::role_in_org` / `org::require_member_pub` / `org::require_admin_pub` | um `SELECT … FROM org_members` no teu módulo |
+| Autenticação de um pedido | um extractor existente (`auth::AuthUser`, `apikeys::ApiKeyAuth`, `odoo::OdooTokenAuth`), ou um novo em `auth.rs` | `headers.get("authorization")…strip_prefix("Bearer ")` |
+| Um pedido HTTP de saída | `state.webhook_client`; se o URL vem do cliente, `webhooks::validate_public_url` (torna-a `pub(crate)`, não a copies) | `reqwest::Client::builder()` |
+| sha256, token aleatório, comparação em tempo constante, argon2 | a função que já existe (`auth::hash_password`/`verify_password`, `auth::hash_refresh_token`, `apikeys::ct_eq`); **a próxima necessidade é a extracção para `crypto.rs`** | uma cópia local |
+| Uma regra usada pela BFF E pela v1 | uma função partilhada no módulo do domínio, chamada pelas duas | dois handlers com a mesma validação |
+| Um erro de unicidade | `ApiError::Conflict` a partir de um helper; se não existir, cria `ApiError::from_unique` | o 15.º `match db.is_unique_violation()` à mão |
+| Tipos de mensagem WebSocket | junto dos outros `ClientMsg`/`ServerMsg` — destino: crate `protocol` | um módulo que importe `signaling` só pelos tipos |
+| Uma tarefa de fundo | com `CancellationToken`/`JoinSet`, parada no shutdown | `tokio::spawn` solto em `main.rs` |
+| Uma função para outro módulo usar | `pub(crate) fn nome_real` | `pub fn nome_real_pub` |
+| Identificadores novos | inglês | `inscrever`, `Emissao` (os existentes ficam até mudarem de crate) |
+
+## A catraca da arquitectura
+
+`scripts/check-arquitectura-catraca.sh` corre no `make fitness` e no CI. Conta sete padrões:
+
+| Medida | Referência 2026-09-16 | O que conta |
+|---|---|---|
+| `pertenca_org_fora_de_org_rs` | 28 | `org_members` fora de `org.rs` |
+| `authorization_lido_a_mao` | 3 | `strip_prefix("Bearer ` |
+| `clientes_reqwest` | 4 | `reqwest::Client::builder()`/`new()` |
+| `primitivas_cripto_espalhadas` | 17 | `Sha256::digest`, `Argon2::default()`, `fill_bytes`, `thread_rng().fill` fora de `crypto.rs` |
+| `funcoes_sufixo_pub` | 7 | `fn …_pub` |
+| `respostas_ok_true` | 28 | `"ok": true` |
+| `rotas_v1_com_sessao` | 4 | handlers em `/api/v1` que extraem `AuthUser` |
+
+- **Subiu:** a cópia nova sai. Não se edita a referência para a deixar entrar.
+- **Desceu:** óptimo. `BLESS=1 bash scripts/check-arquitectura-catraca.sh` grava a fasquia
+  nova. O `BLESS` recusa gravar subidas.
+- **O limite:** a catraca conta padrões, não semântica. Um helper com outro nome que
+  faça a mesma coisa escapa-lhe. Não confies nela em vez de ler o diff.
+
+## Segurança — as três falhas abertas (auditoria S1–S3)
+
+Quem tocar nestes caminhos, fecha a falha ou nomeia-a no relatório. Não passa por cima
+em silêncio.
+
+- **S1 — `storage::require_platform_admin`** (`storage.rs:277`) trata «admin de
+  QUALQUER org» como admin da plataforma, e o `register` cria sempre um admin.
+  - **Correcção:** um extractor `PlatformAdmin` baseado numa lista explícita na config.
+  - **Prova:** um utilizador acabado de registar leva `403` em `/api/v1/platform/storage`.
+- **S2 — `odoo::provision`** (`odoo.rs:284-340`) liga por email sem guarda de autoridade
+  e contraria o invariante 10 / R25.
+  - **Correcção:** um único `users::provision_by_email(org, email, origem)` com o
+    resultado `ForeignOrg`, a partir das versões certas (`odoo_sso::upsert_member`,
+    `meetings_v1::resolve_org_user`). As 6 cópias passam a chamá-lo.
+  - **Prova:** provisionar o email de um utilizador de outra org não o move nem o altera.
+- **S3 — `archived_at` esquecido** em 17 verificações de pertença, incluindo o `org_mate`
+  em `rooms::room_access` e o download de gravações.
+  - **Correcção:** um fragmento SQL único para «membro activo», com as verificações a
+    chamarem `org::`.
+  - **Prova:** um funcionário arquivado leva `403`/`404` na sala e na gravação da ex-org.
+
+Outros pontos, que se corrigem quando se tocar no módulo:
+- **S4:** SSRF no `odoo_url`, no WebDAV e na descoberta OIDC.
+- **S5:** segredos de integração em claro.
+- **S6:** chaves de API sem escopos.
+
+## A organização-alvo (ADR-0004 §3) e a ordem
+
+```
+core ◄─ protocol        core ◄─ store        core,store ◄─ identity
+core,store,identity ◄─ integrations          core,protocol ◄─ media (único com webrtc)
+core,protocol,store,media ◄─ realtime        todos ◄─ api ◄─ server
+```
+
+**Nunca saltes passos.** Cada um depende do anterior (ADR-0004 §6):
+
+| # | Passo | Porquê não antes |
+|---|---|---|
+| 0 | Fechar S1–S3 | — |
+| 1 | `src/lib.rs`, e `sfu_e2e` passa para `tests/` | sem lib não há testes de integração |
+| 2 | `#[sqlx::test]` em org/meetings/recordings + job com Postgres | sem isto, mover SQL parte queries em silêncio (302 queries de runtime, sem `query!`) |
+| 3 | Extrair `crypto`, `auth::extract`, `org::membership`, `net_guard`, `protocol` | parte o ciclo de 18 módulos |
+| 4 | Serviços partilhados BFF/v1 (`meetings::service`, `users::provision_by_email`) | as cópias divergentes juntam-se sobre testes |
+| 5 | Separar a v1 + OpenAPI | → `delonix-meet-api` |
+| 6 | Workspace crate a crate: `core`, `protocol`, … | com ciclo, não compila |
+| 7 | gRPC voz/IVR e transcrição | → `delonix-meet-api` |
+
+**Como medir o ciclo antes de declarar o passo 3 feito:** constrói o grafo a partir de
+`grep -o 'crate::[a-z_]*' server/src/<mod>.rs` (sem os blocos `#[cfg(test)]`) e calcula
+as componentes fortemente ligadas. O passo está feito quando nenhuma componente tem
+mais de um módulo.
+
+## Armadilhas medidas
+
+- **O SQL é de runtime.** Um nome de coluna errado compila e só falha em produção.
+  Qualquer mudança de esquema ou de query exige o teste que percorre esse caminho.
+- **`AppState` é usado em 231 sítios.** Não o partas num PR com outras coisas.
+- **`redis_state.rs` faz ler-alterar-gravar sem atomicidade**, e votos simultâneos em
+  nós diferentes perdem-se. Um script Lua ou um `WATCH` resolvem; mais uma cópia do
+  padrão não.
+- **Há três caminhos para fechar uma sondagem** (`signaling.rs:1468`, `:2625`,
+  `room_tools.rs:105`), e o último não é alcançável pelo WebSocket. Antes de mexer nas
+  regras das sondagens, junta os três.
+- **`mls.rs` está todo marcado `#![allow(dead_code)]`** e não está montado. O
+  `check-route-auth.sh` impede que volte a sê-lo por acaso. Não o documentes como activo.
+- **A catraca do clippy (31) conta avisos de `sfu.rs` e `recorder.rs`.** Não os limpes
+  em bloco à pressa: é o caminho do RTP e o da gravação.
