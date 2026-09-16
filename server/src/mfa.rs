@@ -212,7 +212,15 @@ fn agora() -> u64 {
         .unwrap_or(0)
 }
 
-#[derive(Serialize)]
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(estado, inscrever, activar, desactivar),
+    components(schemas(EstadoMfa, Inscricao, CodigoReq, CodigosRecuperacao))
+)]
+pub struct ApiDoc;
+
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct EstadoMfa {
     pub enabled: bool,
     /// Inscrito mas por confirmar — o autenticador já tem o segredo, falta a prova.
@@ -220,6 +228,15 @@ pub struct EstadoMfa {
     pub backup_codes_left: i64,
 }
 
+/// Estado do MFA de quem está autenticado.
+#[utoipa::path(
+    get, path = "/api/users/me/mfa", tag = "mfa",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = EstadoMfa),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn estado(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -242,7 +259,7 @@ pub async fn estado(
     }))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct Inscricao {
     /// Segredo em base32, para quem escreve à mão em vez de ler o QR.
     pub secret: String,
@@ -256,6 +273,16 @@ pub struct Inscricao {
 /// recomeçar quando o QR foi lido para o autenticador errado. Depois de
 /// confirmado, recusa: trocar o segredo de uma conta com MFA activo sem provar
 /// posse do actual seria uma forma de o desligar sem o saber.
+#[utoipa::path(
+    post, path = "/api/users/me/mfa/enrol", tag = "mfa",
+    security(("session" = [])),
+    responses(
+        (status = 200, description = "Segredo novo (mostrado uma vez) e URI `otpauth://` para o QR.", body = Inscricao),
+        (status = 400, description = "O MFA já está activo nesta conta.", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "A conta já não existe.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn inscrever(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -290,12 +317,13 @@ pub async fn inscrever(
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CodigoReq {
+    /// Código TOTP de 6 dígitos (ou, na desactivação, também um código de recuperação).
     pub code: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct CodigosRecuperacao {
     /// Mostrados UMA vez. Só o hash fica guardado.
     pub backup_codes: Vec<String>,
@@ -303,6 +331,16 @@ pub struct CodigosRecuperacao {
 
 /// Confirma a inscrição com um código do autenticador e devolve os códigos de
 /// recuperação — a única vez em que são visíveis.
+#[utoipa::path(
+    post, path = "/api/users/me/mfa/activate", tag = "mfa",
+    security(("session" = [])),
+    request_body = CodigoReq,
+    responses(
+        (status = 200, description = "MFA activo; os códigos de recuperação só aparecem aqui.", body = CodigosRecuperacao),
+        (status = 400, description = "Não há inscrição em curso, ou o MFA já está activo.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida ou código TOTP errado.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn activar(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -355,6 +393,15 @@ pub async fn activar(
 /// Desactiva o MFA. Exige um código VÁLIDO (TOTP ou de recuperação): sem isso,
 /// um token de sessão roubado bastava para o desligar — e o segundo factor
 /// existe precisamente para o caso de a sessão estar comprometida.
+#[utoipa::path(
+    post, path = "/api/users/me/mfa/disable", tag = "mfa",
+    security(("session" = [])),
+    request_body = CodigoReq,
+    responses(
+        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 401, description = "Sessão inválida, código errado/já usado, ou MFA não inscrito.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn desactivar(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

@@ -122,6 +122,11 @@ fn bff_parts() -> Vec<utoipa::openapi::OpenApi> {
         crate::whiteboards::ApiDoc::openapi(),
         crate::voice::ApiDoc::openapi(),
         crate::odoo::ApiDoc::openapi(),
+        crate::auth::ApiDoc::openapi(),
+        crate::mfa::ApiDoc::openapi(),
+        crate::org::ApiDoc::openapi(),
+        crate::audit::ApiDoc::openapi(),
+        crate::apikeys::ApiDoc::openapi(),
     ]
 }
 
@@ -129,6 +134,8 @@ fn v1_parts() -> Vec<utoipa::openapi::OpenApi> {
     vec![
         crate::meetings_v1::ApiDoc::openapi(),
         crate::odoo::V1ApiDoc::openapi(),
+        crate::apikeys::V1ApiDoc::openapi(),
+        crate::storage::ApiDoc::openapi(),
     ]
 }
 

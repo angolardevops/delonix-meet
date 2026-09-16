@@ -135,7 +135,7 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
 
 // ---------- Handlers ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct RegisterReq {
     /// Nome da organização. Obrigatório em tenancy `multi` (o registo cria
     /// uma organização); opcional na edição pessoal e ao juntar-se à org
@@ -148,7 +148,7 @@ pub struct RegisterReq {
     pub password: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct LoginReq {
     pub email: String,
     pub password: String,
@@ -164,10 +164,30 @@ pub struct TokenPair {
 /// Resposta de auth ao cliente: o access token vai no corpo (usado no header
 /// Authorization); o refresh token NUNCA vai no corpo — vai num cookie
 /// HttpOnly (inacessível a JS, imune a roubo por XSS).
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct AuthOk {
     pub access_token: String,
     pub user: crate::users::UserPublic,
+}
+
+/// Desafio do segundo factor: a password foi aceite mas a conta tem MFA
+/// activo, por isso ainda não há sessão. O `mfa_token` troca-se em
+/// `/api/auth/mfa`.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct MfaChallenge {
+    /// Sempre `true`.
+    pub mfa_required: bool,
+    /// JWT `typ: "mfa"`, válido 5 minutos; não abre mais nenhum endpoint.
+    pub mfa_token: String,
+}
+
+/// Resposta do login: sessão aberta OU desafio de MFA (sem discriminador — o
+/// cliente distingue pela presença de `mfa_required`).
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub enum LoginResponse {
+    Session(AuthOk),
+    MfaRequired(MfaChallenge),
 }
 
 const REFRESH_COOKIE: &str = "dlx_refresh";
@@ -187,10 +207,11 @@ fn auth_ok(state: &AppState, pair: TokenPair) -> Response {
     );
     (
         [(header::SET_COOKIE, cookie)],
-        Json(AuthOk {
+        // `untagged`: serializa exactamente como o `AuthOk` sozinho.
+        Json(LoginResponse::Session(AuthOk {
             access_token: pair.access_token,
             user: pair.user,
-        }),
+        })),
     )
         .into_response()
 }
@@ -226,6 +247,31 @@ async fn issue_tokens(
     })
 }
 
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        register,
+        login,
+        mfa_login,
+        refresh,
+        logout,
+        sso_check,
+        sso_login,
+        sso_callback
+    ),
+    components(schemas(
+        RegisterReq,
+        LoginReq,
+        MfaReq,
+        AuthOk,
+        MfaChallenge,
+        LoginResponse,
+        SsoCheck
+    ))
+)]
+pub struct ApiDoc;
+
 /// Registo de conta. O QUE acontece decide-o a política da instalação
 /// (`delonix_meet_domain::identity::registration`, ADR-0005 §2); aqui só se lê
 /// o retrato da instalação e se executa o plano.
@@ -233,6 +279,19 @@ async fn issue_tokens(
 /// No perfil histórico (`saas` + `open` + `multi`) o registo cria uma
 /// organização com o primeiro utilizador como admin, e o domínio do email passa
 /// a ser o domínio da organização (único) — igual ao que sempre foi.
+///
+/// Abre sessão: O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo.
+#[utoipa::path(
+    post, path = "/api/auth/register", tag = "auth",
+    request_body = RegisterReq,
+    responses(
+        (status = 200, description = "Conta criada e sessão aberta. Define o cookie de refresh `dlx_refresh`.", body = AuthOk),
+        (status = 400, description = "Email, password ou nome da organização inválidos (`registration.invalid_*`, `registration.corporate_email_required`).", body = crate::openapi::ErrorBody),
+        (status = 403, description = "A política da instalação não admite este registo (`registration.closed`, `registration.invite_only`, `registration.domain_not_allowed`).", body = crate::openapi::ErrorBody),
+        (status = 409, description = "Email/username já em uso, ou já existe organização para o domínio (`registration.domain_taken`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn register(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterReq>,
@@ -364,6 +423,21 @@ where
     )
 }
 
+/// Login por email e password.
+///
+/// Sem MFA, abre sessão: O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo. Com MFA activo devolve só o desafio
+/// (`MfaChallenge`) e nenhum cookie; os tokens saem em `/api/auth/mfa`. Sem
+/// conta local, tenta o primeiro login pelo Odoo da plataforma.
+#[utoipa::path(
+    post, path = "/api/auth/login", tag = "auth",
+    request_body = LoginReq,
+    responses(
+        (status = 200, description = "Sessão aberta (`AuthOk` + cookie `dlx_refresh`) ou desafio de MFA (`MfaChallenge`, sem cookie).", body = LoginResponse),
+        (status = 400, description = "A organização do domínio exige SSO exclusivo.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Credenciais inválidas.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Demasiadas tentativas (por IP ou por conta).", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn login(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LoginReq>,
@@ -479,9 +553,9 @@ pub async fn login(
         // bastasse para obter o access token, o resto era teatro.
         if crate::mfa::activo(&state.db, user.id).await? {
             crate::audit::log(&state.db, None, user.id, "auth.mfa_challenge", &user.email).await;
-            return Ok(Json(serde_json::json!({
-                "mfa_required": true,
-                "mfa_token": mfa_challenge_token(&state, user.id)?,
+            return Ok(Json(LoginResponse::MfaRequired(MfaChallenge {
+                mfa_required: true,
+                mfa_token: mfa_challenge_token(&state, user.id)?,
             }))
             .into_response());
         }
@@ -517,13 +591,25 @@ fn mfa_challenge_token(state: &AppState, user_id: Uuid) -> Result<String, ApiErr
     )
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct MfaReq {
     pub mfa_token: String,
     pub code: String,
 }
 
 /// Segunda metade do login: troca o desafio + código pelos tokens de sessão.
+///
+/// O código pode ser TOTP ou de recuperação. O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo.
+#[utoipa::path(
+    post, path = "/api/auth/mfa", tag = "auth",
+    request_body = MfaReq,
+    responses(
+        (status = 200, description = "Sessão aberta. Define o cookie de refresh `dlx_refresh`.", body = AuthOk),
+        (status = 401, description = "Desafio inválido/expirado ou código errado/já usado.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A conta do desafio já não existe.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Demasiadas tentativas (por IP ou por conta).", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn mfa_login(
     State(state): State<Arc<AppState>>,
     Json(req): Json<MfaReq>,
@@ -550,6 +636,19 @@ pub async fn mfa_login(
     Ok(auth_ok(&state, issue_tokens(&state, user).await?))
 }
 
+/// Roda a sessão: consome o refresh token do cookie `dlx_refresh` (revoga-o)
+/// e emite um par novo.
+///
+/// Autentica-se pelo cookie HttpOnly, não por header. O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo.
+#[utoipa::path(
+    post, path = "/api/auth/refresh", tag = "auth",
+    responses(
+        (status = 200, description = "Access token novo. Define o cookie `dlx_refresh` rodado.", body = AuthOk),
+        (status = 401, description = "Cookie ausente, revogado ou expirado.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A conta do token já não existe.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn refresh(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -577,6 +676,16 @@ pub async fn refresh(
 }
 
 /// Termina a sessão: revoga o refresh token (se presente) e limpa o cookie.
+///
+/// Responde sempre 200, com ou sem cookie; o `Set-Cookie` devolvido expira o
+/// `dlx_refresh` (`Max-Age=0`).
+#[utoipa::path(
+    post, path = "/api/auth/logout", tag = "auth",
+    responses(
+        (status = 200, description = "{\"ok\": true} (forma herdada). Limpa o cookie `dlx_refresh`.", body = serde_json::Value),
+        (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn logout(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -616,7 +725,7 @@ static SSO_PENDING: std::sync::LazyLock<DashMap<String, PkceEntry>> =
     std::sync::LazyLock::new(DashMap::new);
 
 /// Resultado da verificação de SSO para um domínio de email.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct SsoCheck {
     pub sso_enabled: bool,
     /// Se true, o login por password está bloqueado para este domínio.
@@ -626,6 +735,14 @@ pub struct SsoCheck {
 /// `GET /api/auth/sso/check?domain=example.com`
 /// O frontend chama isto ao preencher o email para decidir se mostra o campo
 /// de password ou redireciona para o IdP.
+#[utoipa::path(
+    get, path = "/api/auth/sso/check", tag = "auth",
+    params(("domain" = Option<String>, Query, description = "Domínio de email (ex.: `example.com`). Vazio ou omisso ⇒ tudo `false`.")),
+    responses(
+        (status = 200, body = SsoCheck),
+        (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn sso_check(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -665,6 +782,17 @@ pub async fn sso_check(
 /// `GET /api/auth/sso/login?domain=example.com`
 /// Descobre o IdP OIDC da organização, gera state+PKCE e redireciona (302)
 /// o browser do utilizador para o IdP (Google/Microsoft/Okta).
+#[utoipa::path(
+    get, path = "/api/auth/sso/login", tag = "auth",
+    params(("domain" = String, Query, description = "Domínio de email da organização.")),
+    responses(
+        (status = 302, description = "Redirecção (`Location`) para o endpoint de autorização do IdP, com state + PKCE."),
+        (status = 400, description = "`domain` em falta.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Nenhuma organização com SSO configurado para o domínio.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
+        (status = 500, description = "Issuer inválido ou discovery OIDC falhou.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn sso_login(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -761,6 +889,25 @@ pub async fn sso_login(
 /// `GET /api/auth/sso/callback?code=...&state=...`
 /// Recebe o código de autorização do IdP, troca-o pelo id_token, e faz
 /// Just-in-Time Provisioning se o utilizador não existir.
+///
+/// Abre sessão e redirecciona para o frontend com o access token no fragmento
+/// (`/#/sso-complete?token=…`). O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo.
+#[utoipa::path(
+    get, path = "/api/auth/sso/callback", tag = "auth",
+    params(
+        ("code" = String, Query, description = "Código de autorização do IdP."),
+        ("state" = String, Query, description = "State anti-CSRF emitido por `/api/auth/sso/login` (uso único, 10 min)."),
+    ),
+    responses(
+        (status = 302, description = "Redirecção para o frontend com o access token no fragmento. Define o cookie `dlx_refresh`."),
+        (status = 400, description = "`code`/`state` em falta, ou o IdP não devolveu email.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "State desconhecido, já consumido ou expirado.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A configuração SSO da organização foi removida entretanto.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "Provisionamento JIT colidiu com email/username existente.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
+        (status = 500, description = "Discovery, troca de código ou verificação do id_token falhou.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn sso_callback(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -984,6 +1131,41 @@ pub async fn is_sso_enforced(db: &sqlx::PgPool, email: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// As respostas de login passaram de `json!` a tipos (OpenAPI): o JSON
+    /// tem de continuar igual ao que o web já lê.
+    #[test]
+    fn login_response_serializa_como_antes() {
+        let user = crate::users::UserPublic {
+            id: Uuid::nil(),
+            email: "a@b.c".into(),
+            username: "a".into(),
+            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap(),
+            locale: "pt".into(),
+        };
+        let sessao = serde_json::to_value(LoginResponse::Session(AuthOk {
+            access_token: "t".into(),
+            user,
+        }))
+        .unwrap();
+        assert_eq!(
+            sessao,
+            serde_json::json!({
+                "access_token": "t",
+                "user": {"id": Uuid::nil(), "email": "a@b.c", "username": "a",
+                         "created_at": "1970-01-01T00:00:00Z", "locale": "pt"},
+            })
+        );
+        let desafio = serde_json::to_value(LoginResponse::MfaRequired(MfaChallenge {
+            mfa_required: true,
+            mfa_token: "m".into(),
+        }))
+        .unwrap();
+        assert_eq!(
+            desafio,
+            serde_json::json!({ "mfa_required": true, "mfa_token": "m" })
+        );
+    }
 
     #[test]
     fn password_hash_roundtrip() {

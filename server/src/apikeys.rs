@@ -67,9 +67,51 @@ impl FromRequestParts<Arc<AppState>> for ApiKeyAuth {
     }
 }
 
+// ---------- OpenAPI ----------
+
+/// Rotas de gestão de chaves (BFF, sessão de admin da org).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(list, create, revoke),
+    components(schemas(ApiKeyInfo, CreateKeyReq, CreatedKey))
+)]
+pub struct ApiDoc;
+
+/// Rotas da superfície pública v1 servidas por este módulo (chave `dlx_`,
+/// excepto a provisão, que usa o segredo de plataforma).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        v1_org,
+        v1_provision_org,
+        v1_create_room,
+        v1_get_room,
+        v1_join_bot_room,
+        v1_recordings,
+        v1_meetings,
+        v1_meeting_notes,
+    ),
+    components(schemas(
+        V1Org,
+        ApiCreateRoomReq,
+        V1RoomInfo,
+        JoinBotReq,
+        V1BotJoin,
+        V1Recording,
+        V1RecordingList,
+        V1MeetingSummary,
+        V1MeetingList,
+        V1MeetingNotes,
+        ProvisionOrgReq,
+        ProvisionSso,
+        ProvisionedOrg,
+    ))
+)]
+pub struct V1ApiDoc;
+
 // ---------- Gestão das chaves (admin, sessão) ----------
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ApiKeyInfo {
     pub id: Uuid,
     pub name: String,
@@ -78,13 +120,14 @@ pub struct ApiKeyInfo {
     pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateKeyReq {
+    /// Rótulo (cortado a 60 caracteres).
     #[serde(default)]
     pub name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct CreatedKey {
     pub id: Uuid,
     pub name: String,
@@ -93,6 +136,17 @@ pub struct CreatedKey {
     pub key: String,
 }
 
+/// Chaves de API da organização (só admin). Nunca devolve a chave, só o prefixo.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/api-keys", tag = "api-keys",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = Vec<ApiKeyInfo>),
+        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -109,6 +163,19 @@ pub async fn list(
     Ok(Json(keys))
 }
 
+/// Emite uma chave `dlx_` nova (só admin). A chave completa só aparece nesta
+/// resposta; guarda-se o SHA-256.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/api-keys", tag = "api-keys",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = CreateKeyReq,
+    responses(
+        (status = 200, body = CreatedKey),
+        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -147,6 +214,18 @@ pub async fn create(
     }))
 }
 
+/// Revoga (apaga) uma chave (só admin). Idempotente: uma chave inexistente
+/// também devolve `ok`.
+#[utoipa::path(
+    delete, path = "/api/orgs/{org_id}/api-keys/{key_id}", tag = "api-keys",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização."), ("key_id" = Uuid, Path, description = "Chave a revogar.")),
+    responses(
+        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn revoke(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -186,8 +265,9 @@ pub async fn room_link(state: &AppState, org_id: Uuid, code: &str) -> String {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ApiCreateRoomReq {
+    /// Omisso ⇒ «Reunião (API)»; cortado a 120 caracteres.
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
@@ -196,12 +276,35 @@ pub struct ApiCreateRoomReq {
     pub waiting_room: bool,
 }
 
+/// Sala vista pela API v1.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct V1RoomInfo {
+    pub code: String,
+    pub name: String,
+    pub e2ee: bool,
+    pub waiting_room: bool,
+    /// Link de entrada: absoluto com o domínio de produção da org, ou relativo
+    /// (`/#/r/{code}`) se não houver domínio.
+    pub join_url: String,
+}
+
 /// `POST /api/v1/rooms` — cria uma sala e devolve o código + link de entrada.
+/// O dono da sala é o utilizador que criou a chave.
+#[utoipa::path(
+    post, path = "/api/v1/rooms", tag = "v1",
+    security(("api_key" = [])),
+    request_body = ApiCreateRoomReq,
+    responses(
+        (status = 200, body = V1RoomInfo),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn v1_create_room(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
     Json(req): Json<ApiCreateRoomReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<V1RoomInfo>, ApiError> {
     let name: String = req
         .name
         .unwrap_or_else(|| "Reunião (API)".into())
@@ -220,21 +323,32 @@ pub async fn v1_create_room(
     )
     .await?;
     let link = room_link(&state, key.org_id, &room.code).await;
-    Ok(Json(serde_json::json!({
-        "code": room.code,
-        "name": room.name,
-        "e2ee": room.e2ee,
-        "waiting_room": room.waiting_room,
-        "join_url": link,
-    })))
+    Ok(Json(V1RoomInfo {
+        code: room.code,
+        name: room.name,
+        e2ee: room.e2ee,
+        waiting_room: room.waiting_room,
+        join_url: link,
+    }))
 }
 
-/// `GET /api/v1/rooms/{code}` — metadados de uma sala.
+/// `GET /api/v1/rooms/{code}` — metadados de uma sala da organização da chave.
+#[utoipa::path(
+    get, path = "/api/v1/rooms/{code}", tag = "v1",
+    security(("api_key" = [])),
+    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas aqui).")),
+    responses(
+        (status = 200, body = V1RoomInfo),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A sala não existe ou o dono não é membro activo da organização da chave.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn v1_get_room(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
     Path(code): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<V1RoomInfo>, ApiError> {
     let row: Option<(String, String, bool, bool, Uuid)> = sqlx::query_as(
         "SELECT code, name, e2ee, waiting_room, owner_id FROM rooms WHERE code = $1",
     )
@@ -247,23 +361,54 @@ pub async fn v1_get_room(
     crate::org::require_member_pub(&state, key.org_id, owner_id).await?;
 
     let link = room_link(&state, key.org_id, &code).await;
-    Ok(Json(serde_json::json!({
-        "code": code, "name": name, "e2ee": e2ee, "waiting_room": waiting, "join_url": link,
-    })))
+    Ok(Json(V1RoomInfo {
+        code,
+        name,
+        e2ee,
+        waiting_room: waiting,
+        join_url: link,
+    }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct JoinBotReq {
+    /// Nome mostrado na sala; vazio ⇒ «AI Assistant»; cortado a 40 caracteres.
     pub bot_name: String,
 }
 
+/// Credenciais de entrada de um bot numa sala.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct V1BotJoin {
+    /// A sala completa (`id`, `code`, `name`, `owner_id`, `topology`,
+    /// `waiting_room`, `e2ee`, `format`, `created_at`).
+    #[schema(value_type = Object)]
+    pub room: crate::rooms::Room,
+    /// JWT `typ: "room"` com `is_bot: true`, atribuído ao criador da chave.
+    pub room_token: String,
+    /// `/ws?token=<room_token>`.
+    pub ws_path: String,
+}
+
 /// `POST /api/v1/rooms/{code}/join-bot` — gera um room_token para um bot headless.
+/// O token contorna a sala de espera.
+#[utoipa::path(
+    post, path = "/api/v1/rooms/{code}/join-bot", tag = "v1",
+    security(("api_key" = [])),
+    params(("code" = String, Path, description = "Código da sala (normalizado para minúsculas).")),
+    request_body = JoinBotReq,
+    responses(
+        (status = 200, body = V1BotJoin),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A sala não existe ou o dono não é membro activo da organização da chave.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn v1_join_bot_room(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
     Path(code): Path<String>,
     Json(req): Json<JoinBotReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<V1BotJoin>, ApiError> {
     let room: crate::rooms::Room = sqlx::query_as(&format!(
         "SELECT {} FROM rooms WHERE code = $1",
         crate::rooms::ROOM_COLUMNS
@@ -301,18 +446,45 @@ pub async fn v1_join_bot_room(
         },
     )?;
 
-    Ok(Json(serde_json::json!({
-        "room": room,
-        "room_token": room_token,
-        "ws_path": format!("/ws?token={room_token}"),
-    })))
+    Ok(Json(V1BotJoin {
+        ws_path: format!("/ws?token={room_token}"),
+        room,
+        room_token,
+    }))
 }
 
-/// `GET /api/v1/recordings` — gravações da organização (membros).
+/// Gravação vista pela API v1.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct V1Recording {
+    pub id: Uuid,
+    pub filename: String,
+    pub size_bytes: i64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub room_code: String,
+    /// `/api/recordings/{id}` (rota da BFF, autenticada por sessão).
+    pub download_url: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct V1RecordingList {
+    pub recordings: Vec<V1Recording>,
+}
+
+/// `GET /api/v1/recordings` — gravações da organização (membros), as 200 mais
+/// recentes.
+#[utoipa::path(
+    get, path = "/api/v1/recordings", tag = "v1",
+    security(("api_key" = [])),
+    responses(
+        (status = 200, body = V1RecordingList),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn v1_recordings(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<V1RecordingList>, ApiError> {
     let rows: Vec<(Uuid, String, i64, chrono::DateTime<chrono::Utc>, String)> = sqlx::query_as(
         "SELECT r.id, r.filename, r.size_bytes, r.created_at, rm.code
          FROM recordings r
@@ -323,22 +495,24 @@ pub async fn v1_recordings(
     .bind(key.org_id)
     .fetch_all(&state.db)
     .await?;
-    let items: Vec<serde_json::Value> = rows
+    let recordings: Vec<V1Recording> = rows
         .into_iter()
-        .map(|(id, filename, size, created, code)| {
-            serde_json::json!({
-                "id": id, "filename": filename, "size_bytes": size,
-                "created_at": created, "room_code": code,
-                "download_url": format!("/api/recordings/{id}"),
-            })
+        .map(|(id, filename, size, created, code)| V1Recording {
+            id,
+            filename,
+            size_bytes: size,
+            created_at: created,
+            room_code: code,
+            download_url: format!("/api/recordings/{id}"),
         })
         .collect();
-    Ok(Json(serde_json::json!({ "recordings": items })))
+    Ok(Json(V1RecordingList { recordings }))
 }
 
 // ---------- Reuniões (sync de calendário e MoM — nk_delonix_meet) ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct MeetingsQuery {
     /// Cursor incremental: devolve reuniões criadas, com ata AI atualizada ou
     /// com início desde este instante. Omisso => tudo (limitado a 500).
@@ -346,13 +520,46 @@ pub struct MeetingsQuery {
     pub since: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// Reunião vista pelo sync de calendário v1.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct V1MeetingSummary {
+    pub id: Uuid,
+    pub title: String,
+    pub description: String,
+    /// `video` | `voice`.
+    pub kind: String,
+    pub starts_at: chrono::DateTime<chrono::Utc>,
+    pub duration_min: i32,
+    pub room_code: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Presente ⇒ a ata AI já foi gerada.
+    pub minutes_ai_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct V1MeetingList {
+    pub meetings: Vec<V1MeetingSummary>,
+}
+
 /// `GET /api/v1/meetings?since=<rfc3339>` — reuniões da organização (dono é
 /// membro), incremental para o cron de sync do Odoo (idempotente no cliente).
+/// No máximo 500, por `starts_at`.
+#[utoipa::path(
+    get, path = "/api/v1/meetings", tag = "v1",
+    security(("api_key" = [])),
+    params(MeetingsQuery),
+    responses(
+        (status = 200, body = V1MeetingList),
+        (status = 400, description = "`since` não é RFC 3339.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn v1_meetings(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
     axum::extract::Query(q): axum::extract::Query<MeetingsQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<V1MeetingList>, ApiError> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
         Uuid,
@@ -378,7 +585,7 @@ pub async fn v1_meetings(
     .bind(q.since)
     .fetch_all(&state.db)
     .await?;
-    let items: Vec<serde_json::Value> = rows
+    let meetings: Vec<V1MeetingSummary> = rows
         .into_iter()
         .map(
             |(
@@ -391,26 +598,52 @@ pub async fn v1_meetings(
                 room_code,
                 created_at,
                 minutes_ai_at,
-            )| {
-                serde_json::json!({
-                    "id": id, "title": title, "description": description, "kind": kind,
-                    "starts_at": starts_at, "duration_min": duration_min,
-                    "room_code": room_code, "created_at": created_at,
-                    "minutes_ai_at": minutes_ai_at,
-                })
+            )| V1MeetingSummary {
+                id,
+                title,
+                description,
+                kind,
+                starts_at,
+                duration_min,
+                room_code,
+                created_at,
+                minutes_ai_at,
             },
         )
         .collect();
-    Ok(Json(serde_json::json!({ "meetings": items })))
+    Ok(Json(V1MeetingList { meetings }))
+}
+
+/// Ata e transcrição de uma reunião.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct V1MeetingNotes {
+    pub id: Uuid,
+    pub title: String,
+    /// Ata (MoM).
+    pub minutes: String,
+    /// Transcrição bruta.
+    pub transcript: String,
+    pub minutes_ai_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// `GET /api/v1/meetings/{id}/notes` — ata (MoM) + transcrição (ata bruta).
 /// `minutes_ai_at` presente => o MoM já é a versão final do LLM local.
+#[utoipa::path(
+    get, path = "/api/v1/meetings/{id}/notes", tag = "v1",
+    security(("api_key" = [])),
+    params(("id" = Uuid, Path, description = "Reunião.")),
+    responses(
+        (status = 200, body = V1MeetingNotes),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A reunião não existe ou o dono não é membro da organização da chave.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn v1_meeting_notes(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
     Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<V1MeetingNotes>, ApiError> {
     let row: Option<(
         String,
         String,
@@ -430,17 +663,42 @@ pub async fn v1_meeting_notes(
     let Some((title, minutes, transcript, minutes_ai_at)) = row else {
         return Err(ApiError::NotFound);
     };
-    Ok(Json(serde_json::json!({
-        "id": id, "title": title, "minutes": minutes,
-        "transcript": transcript, "minutes_ai_at": minutes_ai_at,
-    })))
+    Ok(Json(V1MeetingNotes {
+        id,
+        title,
+        minutes,
+        transcript,
+        minutes_ai_at,
+    }))
+}
+
+/// Organização vista pela API v1.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct V1Org {
+    pub id: Uuid,
+    pub name: String,
+    /// Domínio de email da organização (vazio se não definido).
+    pub email_domain: String,
+    /// Domínio de produção dos links (vazio se não definido).
+    pub domain: String,
+    /// Número de linhas de membro da organização.
+    pub members: i64,
 }
 
 /// `GET /api/v1/org` — dados da organização da chave.
+#[utoipa::path(
+    get, path = "/api/v1/org", tag = "v1",
+    security(("api_key" = [])),
+    responses(
+        (status = 200, body = V1Org),
+        (status = 401, description = "Chave ausente, sem prefixo `dlx_`, ou desconhecida.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn v1_org(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<V1Org>, ApiError> {
     let row: (String, String, String) =
         sqlx::query_as("SELECT name, email_domain, domain FROM organizations WHERE id = $1")
             .bind(key.org_id)
@@ -450,10 +708,13 @@ pub async fn v1_org(
         .bind(key.org_id)
         .fetch_one(&state.db)
         .await?;
-    Ok(Json(serde_json::json!({
-        "id": key.org_id, "name": row.0, "email_domain": row.1,
-        "domain": row.2, "members": members,
-    })))
+    Ok(Json(V1Org {
+        id: key.org_id,
+        name: row.0,
+        email_domain: row.1,
+        domain: row.2,
+        members,
+    }))
 }
 
 // ---------- Provisão de organização (segredo de plataforma) ----------
@@ -461,7 +722,7 @@ pub async fn v1_org(
 /// Config OIDC opcional a aplicar à org acabada de criar — deixa o provisionador
 /// (Odoo) apontar a org ao seu próprio IdP num só passo, sem um segundo pedido
 /// autenticado por sessão de admin (que a org recém-criada ainda não tem).
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ProvisionSso {
     pub issuer_url: String,
     pub client_id: String,
@@ -470,7 +731,7 @@ pub struct ProvisionSso {
     pub enforce_sso: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ProvisionOrgReq {
     /// Nome da organização (== nome da empresa no sistema chamador).
     pub name: String,
@@ -506,7 +767,7 @@ pub struct ProvisionOrgReq {
     pub odoo_company_id: Option<i32>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ProvisionedOrg {
     pub org_id: Uuid,
     pub slug: String,
@@ -569,6 +830,20 @@ async fn ensure_provisioning_user(state: &AppState) -> Result<Uuid, ApiError> {
 /// de cada empresa e receber a chave para depois criar salas via `/api/v1/rooms`.
 ///
 /// Fail-closed: com `PROVISIONING_SECRET` vazio o endpoint recusa sempre.
+///
+/// Idempotente por empresa Odoo (`odoo_db` + `odoo_company_id`): reprovisionar
+/// reutiliza a organização, mas emite SEMPRE uma chave de API nova.
+#[utoipa::path(
+    post, path = "/api/v1/admin/orgs", tag = "v1",
+    params(("X-Provisioning-Secret" = String, Header, description = "Segredo de plataforma (`PROVISIONING_SECRET`).")),
+    request_body = ProvisionOrgReq,
+    responses(
+        (status = 200, body = ProvisionedOrg),
+        (status = 400, description = "Nome vazio/longo, ou `odoo_db` sem `odoo_company_id`.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Segredo ausente, errado, ou provisionamento desactivado.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn v1_provision_org(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -807,7 +1082,107 @@ pub async fn v1_provision_org(
 
 #[cfg(test)]
 mod tests {
-    use super::ct_eq;
+    use super::*;
+
+    /// Os tipos que substituíram os `json!` da v1 (OpenAPI) serializam com os
+    /// mesmos campos e valores — a v1 é contrato estável.
+    #[test]
+    fn respostas_v1_tipadas_serializam_como_antes() {
+        let t0 = chrono::DateTime::from_timestamp(0, 0).unwrap();
+        let id = Uuid::nil();
+        assert_eq!(
+            serde_json::to_value(V1RoomInfo {
+                code: "c".into(),
+                name: "n".into(),
+                e2ee: true,
+                waiting_room: false,
+                join_url: "/#/r/c".into(),
+            })
+            .unwrap(),
+            serde_json::json!({"code": "c", "name": "n", "e2ee": true, "waiting_room": false, "join_url": "/#/r/c"})
+        );
+        let room = crate::rooms::Room {
+            id,
+            code: "c".into(),
+            name: "n".into(),
+            owner_id: id,
+            topology: "sfu".into(),
+            waiting_room: false,
+            e2ee: false,
+            format: "normal".into(),
+            created_at: t0,
+        };
+        let room_json = serde_json::to_value(&room).unwrap();
+        assert_eq!(
+            serde_json::to_value(V1BotJoin {
+                room,
+                room_token: "tok".into(),
+                ws_path: "/ws?token=tok".into(),
+            })
+            .unwrap(),
+            serde_json::json!({"room": room_json, "room_token": "tok", "ws_path": "/ws?token=tok"})
+        );
+        assert_eq!(
+            serde_json::to_value(V1RecordingList {
+                recordings: vec![V1Recording {
+                    id,
+                    filename: "f".into(),
+                    size_bytes: 7,
+                    created_at: t0,
+                    room_code: "c".into(),
+                    download_url: format!("/api/recordings/{id}"),
+                }],
+            })
+            .unwrap(),
+            serde_json::json!({"recordings": [{
+                "id": id, "filename": "f", "size_bytes": 7, "created_at": t0,
+                "room_code": "c", "download_url": format!("/api/recordings/{id}"),
+            }]})
+        );
+        assert_eq!(
+            serde_json::to_value(V1MeetingList {
+                meetings: vec![V1MeetingSummary {
+                    id,
+                    title: "t".into(),
+                    description: "d".into(),
+                    kind: "video".into(),
+                    starts_at: t0,
+                    duration_min: 30,
+                    room_code: None,
+                    created_at: t0,
+                    minutes_ai_at: Some(t0),
+                }],
+            })
+            .unwrap(),
+            serde_json::json!({"meetings": [{
+                "id": id, "title": "t", "description": "d", "kind": "video",
+                "starts_at": t0, "duration_min": 30, "room_code": null,
+                "created_at": t0, "minutes_ai_at": t0,
+            }]})
+        );
+        assert_eq!(
+            serde_json::to_value(V1MeetingNotes {
+                id,
+                title: "t".into(),
+                minutes: "m".into(),
+                transcript: "x".into(),
+                minutes_ai_at: None,
+            })
+            .unwrap(),
+            serde_json::json!({"id": id, "title": "t", "minutes": "m", "transcript": "x", "minutes_ai_at": null})
+        );
+        assert_eq!(
+            serde_json::to_value(V1Org {
+                id,
+                name: "n".into(),
+                email_domain: "e".into(),
+                domain: "".into(),
+                members: 3,
+            })
+            .unwrap(),
+            serde_json::json!({"id": id, "name": "n", "email_domain": "e", "domain": "", "members": 3})
+        );
+    }
 
     #[test]
     fn ct_eq_matches_only_identical() {

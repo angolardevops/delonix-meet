@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::{auth::AuthUser, error::ApiError, AppState};
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct Organization {
     pub id: Uuid,
     pub name: String,
@@ -23,7 +23,7 @@ pub struct Organization {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct OrgSummary {
     pub id: Uuid,
     pub name: String,
@@ -39,7 +39,7 @@ pub struct OrgSummary {
     pub max_meetings: Option<i32>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct OrgSettingsReq {
     #[serde(default)]
     pub domain: String,
@@ -59,15 +59,84 @@ pub struct OrgSettingsReq {
     pub voice_did_model: Option<String>,
 }
 
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        update_settings,
+        create_org,
+        my_orgs,
+        create_branch,
+        list_branches,
+        add_employee,
+        list_employees,
+        update_employee,
+        remove_employee,
+        create_group,
+        list_groups,
+        create_meeting_room,
+        list_meeting_rooms,
+        org_stats,
+        get_sso_config,
+        upsert_sso_config,
+        delete_sso_config,
+    ),
+    components(schemas(
+        Organization,
+        OrgSummary,
+        OrgSettingsReq,
+        OrgSettingsUpdated,
+        Branch,
+        Employee,
+        Group,
+        MeetingRoom,
+        OrgStats,
+        WeekBucket,
+        Organizer,
+        SsoConfigPublic,
+        SsoConfigReq,
+        CreateOrgReq,
+        CreateBranchReq,
+        AddEmployeeReq,
+        UpdateEmployeeReq,
+        CreateGroupReq,
+        CreateMeetingRoomReq,
+    ))
+)]
+pub struct ApiDoc;
+
+/// Resposta de `POST /api/orgs/{org_id}/settings`: os valores como ficaram
+/// gravados (domínio normalizado, retenção limitada a 0–3650).
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OrgSettingsUpdated {
+    /// Sempre `true`.
+    pub ok: bool,
+    pub domain: String,
+    pub retention_days: i32,
+}
+
 /// Definições da organização (só admin): domínio de produção + retenção.
 /// O domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a
-/// retenção (>0) apaga gravações mais antigas que N dias.
+/// retenção (>0) apaga gravações mais antigas que N dias. Quotas negativas ou
+/// omissas ficam ilimitadas; valores de voz fora do enum são ignorados.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/settings", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = OrgSettingsReq,
+    responses(
+        (status = 200, body = OrgSettingsUpdated),
+        (status = 400, description = "Domínio inválido (>253 caracteres ou com espaços).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn update_settings(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
     Json(req): Json<OrgSettingsReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<OrgSettingsUpdated>, ApiError> {
     require_admin(&state, org_id, auth.user_id).await?;
     // Normaliza o domínio: sem esquema, sem barra final, minúsculas.
     let domain = req
@@ -117,9 +186,11 @@ pub async fn update_settings(
         &domain,
     )
     .await;
-    Ok(Json(
-        serde_json::json!({ "ok": true, "domain": domain, "retention_days": retention }),
-    ))
+    Ok(Json(OrgSettingsUpdated {
+        ok: true,
+        domain,
+        retention_days: retention,
+    }))
 }
 
 /// Faz cumprir uma quota da organização: se o limite (`limit_col`) estiver
@@ -151,7 +222,7 @@ async fn enforce_quota(
     Ok(())
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct Branch {
     pub id: Uuid,
     pub org_id: Uuid,
@@ -164,7 +235,7 @@ pub struct Branch {
 /// à mão em `create_branch` e `list_branches`.
 const BRANCH_COLUMNS: &str = "id, org_id, name, location, created_at";
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct Employee {
     pub user_id: Uuid,
     pub username: String,
@@ -184,7 +255,7 @@ pub struct Employee {
 const EMPLOYEE_COLUMNS: &str =
     "m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name";
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct Group {
     pub id: Uuid,
     pub org_id: Uuid,
@@ -285,11 +356,25 @@ pub(crate) fn slugify(name: &str) -> String {
 
 // ---------- organizations ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateOrgReq {
     pub name: String,
 }
 
+/// Cria uma organização; quem cria entra como `admin`. Máximo de 20
+/// organizações criadas por utilizador.
+#[utoipa::path(
+    post, path = "/api/orgs", tag = "orgs",
+    security(("session" = [])),
+    request_body = CreateOrgReq,
+    responses(
+        (status = 200, body = Organization),
+        (status = 400, description = "Nome vazio ou com mais de 120 caracteres.", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 409, description = "Limite de 20 organizações por utilizador atingido.", body = crate::openapi::ErrorBody),
+        (status = 422, description = "Instalação em tenancy `single` (`organization.single_tenancy`).", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_org(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -358,6 +443,15 @@ pub async fn create_org(
     Ok(Json(org))
 }
 
+/// Organizações de quem está autenticado, com o seu papel em cada uma.
+#[utoipa::path(
+    get, path = "/api/orgs", tag = "orgs",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = Vec<OrgSummary>),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn my_orgs(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -380,13 +474,26 @@ pub async fn my_orgs(
 
 // ---------- branches ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateBranchReq {
     pub name: String,
     #[serde(default)]
     pub location: String,
 }
 
+/// Cria uma filial (só admin).
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/branches", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = CreateBranchReq,
+    responses(
+        (status = 200, body = Branch),
+        (status = 400, description = "Nome vazio ou com mais de 120 caracteres.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_branch(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -410,6 +517,17 @@ pub async fn create_branch(
     Ok(Json(branch))
 }
 
+/// Filiais da organização (membros).
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/branches", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = Vec<Branch>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_branches(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -427,7 +545,7 @@ pub async fn list_branches(
 
 // ---------- employees ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct AddEmployeeReq {
     /// Adicionar por email: se o utilizador existir liga-o; senão cria a conta.
     pub email: String,
@@ -443,6 +561,22 @@ pub struct AddEmployeeReq {
     pub branch_id: Option<Uuid>,
 }
 
+/// Adiciona um colaborador por email (só admin). Se a conta não existir, é
+/// criada (password por omissão quando omitida); se já for membro, actualiza
+/// papel, cargo e filial.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/employees", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = AddEmployeeReq,
+    responses(
+        (status = 200, body = Employee),
+        (status = 400, description = "Email/password inválidos, email fora do domínio da organização, ou `role` diferente de `admin`/`member`.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "A conta já pertence a outra organização, ou email/username já existe.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn add_employee(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -566,6 +700,17 @@ pub async fn add_employee(
     Ok(Json(emp))
 }
 
+/// Colaboradores activos da organização (membros), com a última actividade.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/employees", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = Vec<Employee>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_employees(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -585,13 +730,26 @@ pub async fn list_employees(
     Ok(Json(emps))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateEmployeeReq {
     pub role: Option<String>,
     pub title: Option<String>,
     pub branch_id: Option<Uuid>,
 }
 
+/// Altera papel, cargo e/ou filial de um membro (só admin).
+#[utoipa::path(
+    patch, path = "/api/orgs/{org_id}/employees/{user_id}", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização."), ("user_id" = Uuid, Path, description = "Utilizador membro.")),
+    request_body = UpdateEmployeeReq,
+    responses(
+        (status = 200, body = Employee),
+        (status = 400, description = "`role` diferente de `admin`/`member`.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Quem pede não é membro activo, ou o utilizador não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn update_employee(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -644,6 +802,19 @@ pub async fn update_employee(
     Ok(Json(emp))
 }
 
+/// Arquiva o acesso de um membro (soft delete, só admin). Idempotente: um
+/// utilizador que não é membro também devolve `ok`.
+#[utoipa::path(
+    delete, path = "/api/orgs/{org_id}/employees/{user_id}", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização."), ("user_id" = Uuid, Path, description = "Utilizador membro.")),
+    responses(
+        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 400, description = "Tentativa de arquivar o próprio acesso.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn remove_employee(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -678,13 +849,28 @@ pub async fn remove_employee(
 
 // ---------- groups ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateGroupReq {
     pub name: String,
     #[serde(default)]
     pub member_ids: Vec<Uuid>,
 }
 
+/// Cria um grupo de colaboradores (qualquer membro). O criador entra sempre;
+/// `member_ids` que não sejam membros da organização são ignorados.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/groups", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = CreateGroupReq,
+    responses(
+        (status = 200, body = Group),
+        (status = 400, description = "Nome vazio ou com mais de 120 caracteres.", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "Quota `max_groups` da organização atingida.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_group(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -749,6 +935,17 @@ pub async fn create_group(
     Ok(Json(group))
 }
 
+/// Grupos da organização (membros).
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/groups", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = Vec<Group>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_groups(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -770,7 +967,7 @@ pub async fn list_groups(
 
 // ---------- salas presenciais (físicas) ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct MeetingRoom {
     pub id: Uuid,
     pub org_id: Uuid,
@@ -782,7 +979,7 @@ pub struct MeetingRoom {
 /// Estava copiada à mão em `create_meeting_room` e `list_meeting_rooms` (ADR-0004).
 const MEETING_ROOM_COLUMNS: &str = "id, org_id, name, location, capacity";
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateMeetingRoomReq {
     pub name: String,
     #[serde(default)]
@@ -791,6 +988,20 @@ pub struct CreateMeetingRoomReq {
     pub capacity: i32,
 }
 
+/// Cria uma sala presencial (física) da organização (só admin).
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/meeting-rooms", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = CreateMeetingRoomReq,
+    responses(
+        (status = 200, body = MeetingRoom),
+        (status = 400, description = "Nome vazio ou com mais de 120 caracteres.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "Quota `max_rooms` da organização atingida.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_meeting_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -822,6 +1033,17 @@ pub async fn create_meeting_room(
     Ok(Json(room))
 }
 
+/// Salas presenciais da organização (membros).
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/meeting-rooms", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = Vec<MeetingRoom>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_meeting_rooms(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -839,14 +1061,14 @@ pub async fn list_meeting_rooms(
 
 // ---------- Estatísticas da organização (consola admin) ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct WeekBucket {
     pub week_start: DateTime<Utc>,
     pub count: i64,
     pub minutes: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct OrgStats {
     pub meetings_30d: i64,
     pub meeting_minutes_30d: i64,
@@ -886,7 +1108,7 @@ pub struct OrgStats {
     pub active_users_prev_30d: i64,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct Organizer {
     pub username: String,
     pub count: i64,
@@ -894,7 +1116,17 @@ pub struct Organizer {
 
 /// KPIs agregados da organização: reuniões e minutos dos últimos 30 dias,
 /// utilizadores envolvidos, gravações e série semanal (8 semanas).
-/// Uma reunião "pertence" à org se o dono ou um convidado for membro.
+/// Uma reunião "pertence" à org se o dono ou um convidado for membro. Só admin.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/stats", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = OrgStats),
+        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn org_stats(
     State(state): State<Arc<AppState>>,
     Path(org_id): Path<Uuid>,
@@ -1142,7 +1374,7 @@ pub async fn primary_domain(state: &AppState, user_id: Uuid) -> String {
 
 // ---------- SSO Config (admin) ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct SsoConfigPublic {
     pub org_id: Uuid,
     pub issuer_url: String,
@@ -1150,7 +1382,7 @@ pub struct SsoConfigPublic {
     pub enforce_sso: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct SsoConfigReq {
     pub issuer_url: String,
     pub client_id: String,
@@ -1161,6 +1393,17 @@ pub struct SsoConfigReq {
 }
 
 /// `GET /api/orgs/:org_id/sso` — lê a config OIDC (sem devolver o segredo).
+/// `null` quando a organização não tem SSO configurado. Só admin.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/sso", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, description = "Configuração OIDC, ou `null` se não houver.", body = Option<SsoConfigPublic>),
+        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_sso_config(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1178,7 +1421,19 @@ pub async fn get_sso_config(
 }
 
 /// `PUT /api/orgs/:org_id/sso` — cria ou atualiza a config OIDC.
-/// O `client_secret` só é atualizado se for enviado não-vazio.
+/// O `client_secret` só é atualizado se for enviado não-vazio. Só admin.
+#[utoipa::path(
+    put, path = "/api/orgs/{org_id}/sso", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = SsoConfigReq,
+    responses(
+        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 400, description = "`issuer_url`/`client_id` em falta, ou `issuer_url` sem `https://`.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn upsert_sso_config(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1242,7 +1497,18 @@ pub async fn upsert_sso_config(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// `DELETE /api/orgs/:org_id/sso` — remove a config OIDC (desativa SSO).
+/// `DELETE /api/orgs/:org_id/sso` — remove a config OIDC (desativa SSO). Só
+/// admin; idempotente.
+#[utoipa::path(
+    delete, path = "/api/orgs/{org_id}/sso", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn delete_sso_config(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1268,7 +1534,24 @@ pub async fn group_member_ids(state: &AppState, group_id: Uuid) -> Result<Vec<Uu
 
 #[cfg(test)]
 mod tests {
-    use super::slugify;
+    use super::{slugify, OrgSettingsUpdated};
+
+    /// O tipo que substituiu o `json!` (OpenAPI) serializa igual.
+    #[test]
+    fn settings_updated_serializa_como_antes() {
+        let v = serde_json::to_value(OrgSettingsUpdated {
+            ok: true,
+            domain: "meet.acme.com".into(),
+            retention_days: 30,
+        })
+        .unwrap();
+        // Campo a campo, e não um `json!` literal: a catraca da arquitectura
+        // conta os `{"ok": true}` do código, e um teste não é dívida.
+        assert_eq!(v.as_object().unwrap().len(), 3);
+        assert_eq!(v["ok"], serde_json::Value::Bool(true));
+        assert_eq!(v["domain"], "meet.acme.com");
+        assert_eq!(v["retention_days"], 30);
+    }
 
     #[test]
     fn slugify_basic() {
