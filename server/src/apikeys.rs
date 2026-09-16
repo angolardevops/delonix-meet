@@ -42,14 +42,7 @@ impl FromRequestParts<Arc<AppState>> for ApiKeyAuth {
             .get("x-api-key")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
-            .or_else(|| {
-                parts
-                    .headers
-                    .get(axum::http::header::AUTHORIZATION)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|h| h.strip_prefix("Bearer "))
-                    .map(|s| s.to_string())
-            })
+            .or_else(|| crate::auth::bearer_token(&parts.headers).map(str::to_string))
             .ok_or(ApiError::Unauthorized)?;
         if !raw.starts_with("dlx_") {
             return Err(ApiError::Unauthorized);
