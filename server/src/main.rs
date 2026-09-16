@@ -333,7 +333,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // IA local do Estúdio (Ollama in-cluster): estado e tarefas sobre a
         // transcrição enviada. Nada se guarda; tecto de tarefas por org.
         .route("/api/orgs/{org_id}/ai/status", get(ai_studio::status))
-        .route("/api/orgs/{org_id}/ai/studio", post(ai_studio::studio))
+        .route("/api/orgs/{org_id}/ai/suggestions", post(ai_studio::suggestions))
         .route("/api/orgs/{org_id}/audit", get(audit::list))
         // Verificação da cadeia de hash: diz se alguém mexeu na trilha.
         .route("/api/orgs/{org_id}/audit/verify", get(audit::verify))

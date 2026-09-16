@@ -119,7 +119,7 @@ fn valid_language(code: &str) -> bool {
     base_ok && region_ok && parts.next().is_none()
 }
 
-/// Valida o corpo do `POST …/ai/studio`. Recusa (`400`) em vez de cortar.
+/// Valida o corpo do `POST …/ai/suggestions`. Recusa (`400`) em vez de cortar.
 pub(crate) fn validate(req: StudioReq) -> Result<StudioInput, ApiError> {
     let task = StudioTask::parse(req.task.trim())
         .ok_or_else(|| bad("tarefa desconhecida (summary, publication ou fillers)"))?;
@@ -494,7 +494,15 @@ pub(crate) async fn probe_status(
 // ---------- rotas ----------
 
 /// `GET /api/orgs/{org_id}/ai/status` — a IA local está pronta para o Estúdio?
-/// Sempre `200` para um membro: é um estado, e o erro vai no corpo.
+///
+/// Contrato (para o `#[utoipa::path]` na integração com o #81):
+/// - método/caminho: `GET /api/orgs/{org_id}/ai/status`, `org_id` UUID;
+/// - autenticação: sessão (`AuthUser`), membro activo da organização;
+/// - pedido: sem corpo;
+/// - `200` [`AiStatus`]: `{"configured": bool, "reachable": bool, "model": string,
+///   "model_installed": bool|null, "error": string|null}` — sempre `200` para um
+///   membro: é um estado, e a causa vai em `error`;
+/// - `401` sem sessão · `404` não é membro (não se confirma que a org existe).
 pub async fn status(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -512,13 +520,23 @@ pub async fn status(
     ))
 }
 
-/// `POST /api/orgs/{org_id}/ai/studio` — executa uma tarefa do Estúdio sobre a
-/// transcrição enviada e devolve a proposta. Nada se guarda.
+/// `POST /api/orgs/{org_id}/ai/suggestions` — calcula uma sugestão da IA local
+/// sobre a transcrição enviada. Nada se guarda: é `200` com a sugestão, não
+/// `201`.
 ///
-/// `400` corpo inválido · `404` não é membro · `429` (+ `Retry-After`) a
-/// organização já tem as suas tarefas a correr · `503` IA indisponível ou
-/// resposta inutilizável, com a causa na mensagem.
-pub async fn studio(
+/// Contrato (para o `#[utoipa::path]` na integração com o #81):
+/// - método/caminho: `POST /api/orgs/{org_id}/ai/suggestions`, `org_id` UUID;
+/// - autenticação: sessão (`AuthUser`), membro activo da organização;
+/// - pedido [`StudioReq`]: `{"task": "summary"|"publication"|"fillers",
+///   "language"?: string, "title"?: string, "segments": [{"start_ms": i64,
+///   "end_ms": i64, "text": string}]}`;
+/// - `200`: `summary` → `{"summary": string, "chapters": [{"t_ms": i64, "title": string}]}`;
+///   `publication` → `{"title": string, "description": string, "tags": [string]}`;
+///   `fillers` → `{"terms": [string]}`;
+/// - `400` corpo inválido · `401` sem sessão · `404` não é membro · `429` (+
+///   `Retry-After`) a organização já tem as suas tarefas a correr · `503` IA
+///   indisponível ou resposta inutilizável, com a causa em `{"error": string}`.
+pub async fn suggestions(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,

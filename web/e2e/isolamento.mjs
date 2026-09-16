@@ -161,13 +161,13 @@ await recusado('A lê a facturação de voz da org B', `/api/orgs/${B.orgId}/voi
   token: A.token,
 })
 
-// IA local do Estúdio. O `studio` leva um corpo VÁLIDO: só 401/403/404 provam
+// IA local do Estúdio. O `suggestions` leva um corpo VÁLIDO: só 401/403/404 provam
 // que a pertença foi decidida antes de o handler validar ou chamar o modelo (um
 // 400/429/503 seria o handler a correr para quem não é da org).
 console.log('\n--- IA local do Estúdio ---')
 await permitido('B lê o estado da IA da própria org', `/api/orgs/${B.orgId}/ai/status`, { token: B.token })
 await recusadoNaPorta('A lê o estado da IA da org B', `/api/orgs/${B.orgId}/ai/status`, { token: A.token })
-await recusadoNaPorta('A usa a IA do Estúdio da org B', `/api/orgs/${B.orgId}/ai/studio`, {
+await recusadoNaPorta('A usa a IA do Estúdio da org B', `/api/orgs/${B.orgId}/ai/suggestions`, {
   token: A.token,
   method: 'POST',
   body: {
