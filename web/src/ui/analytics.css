@@ -1,0 +1,326 @@
+/*
+ * Análise — importada por `pages/Analytics.tsx` (chunk lazy dela). Barras em
+ * CSS com os tokens, na gramática do cartão «Capacidade de sessões».
+ */
+.an-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: var(--s-3);
+  align-items: start;
+}
+.an-card--wide {
+  grid-column: 1 / -1;
+}
+.an-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.an-desc {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+.an-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---------------------------------------------------------------- KPIs */
+.an-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s-3);
+}
+.an-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  min-width: 0;
+}
+.an-kpi__label {
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.9px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.an-kpi__value {
+  font-family: var(--font-display);
+  font-size: var(--t-h1);
+  letter-spacing: -0.8px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+.an-kpi__of {
+  margin-left: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.an-kpi__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 18px;
+}
+.an-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  align-self: flex-start;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.an-delta--up {
+  color: var(--success);
+}
+.an-delta--down {
+  color: var(--live-text);
+}
+
+/* -------------------------------------------------------- uso por semana */
+.an-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 10px;
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+.an-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.an-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-2);
+}
+.an-swatch--count,
+.an-bar--count {
+  background: var(--accent-strong);
+}
+.an-swatch--min,
+.an-bar--min {
+  background: color-mix(in srgb, var(--live) 70%, var(--raised));
+}
+[data-theme='dark'] .an-swatch--count,
+[data-theme='dark'] .an-bar--count {
+  background: var(--accent);
+}
+.an-weeks-scroll {
+  overflow-x: auto;
+}
+.an-weeks {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  height: 180px;
+  min-width: 296px;
+}
+.an-week {
+  flex: 1;
+  min-width: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.an-week__value {
+  font-size: 10px;
+  color: var(--muted);
+}
+.an-week__bars {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  border-bottom: 1px solid var(--border);
+}
+.an-bar {
+  width: 38%;
+  max-width: 16px;
+  min-height: 1px;
+  border-radius: var(--r-2) var(--r-2) 0 0;
+}
+.an-week__label {
+  font-size: 9.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.an-substats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.an-substats dt {
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+.an-substats dd {
+  margin: 2px 0 0;
+  font-size: var(--t-md);
+}
+
+/* ----------------------------------------------------------- qualidade */
+.an-dist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.an-dist__row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 52px;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--t-sm);
+}
+.an-dist__pct {
+  text-align: right;
+  font-size: var(--t-sm);
+}
+.an-track {
+  height: 8px;
+  border-radius: var(--r-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.an-track__fill {
+  display: block;
+  height: 100%;
+}
+.an-track__fill--good {
+  background: var(--success);
+}
+.an-track__fill--mid {
+  background: var(--warning);
+}
+.an-track__fill--poor {
+  background: var(--danger);
+}
+.an-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.an-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  min-width: 0;
+}
+.an-stat__value {
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+.an-stat__label {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.an-stat--poor .an-stat__value {
+  color: var(--live-text);
+}
+
+/* ------------------------------------------------------------- rankings */
+.an-rank {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.an-rank__row {
+  display: grid;
+  grid-template-columns: 18px 22px minmax(0, 10rem) minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 9px;
+  font-size: var(--t-md);
+}
+.an-rank__pos {
+  font-size: var(--t-sm);
+  color: var(--muted);
+  text-align: right;
+}
+.an-rank__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.an-rank__bar {
+  height: 6px;
+  border-radius: var(--r-2);
+  background: var(--surface);
+  overflow: hidden;
+}
+.an-rank__bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent-strong);
+}
+[data-theme='dark'] .an-rank__bar > span {
+  background: var(--accent);
+}
+.an-rank__count {
+  text-align: right;
+  font-size: var(--t-sm);
+}
+
+.an-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-sm);
+}
+
+@media (max-width: 1100px) {
+  .an-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 900px) {
+  .an-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 520px) {
+  .an-kpis {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .an-substats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .an-rank__row {
+    grid-template-columns: 18px 22px minmax(0, 1fr) 40px;
+  }
+  .an-rank__count {
+    grid-row: 1;
+    grid-column: 4;
+  }
+  .an-rank__bar {
+    grid-row: 2;
+    grid-column: 3 / 5;
+  }
+}
