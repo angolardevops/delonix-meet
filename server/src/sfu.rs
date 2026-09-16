@@ -1915,14 +1915,21 @@ async fn switch_layer(
             old_local.id().to_owned(),
             old_local.stream_id().to_owned(),
         ));
+        // A porta à camada antiga fecha-se ANTES do `replace_track`, não depois.
+        // Depois, um pacote da camada antiga aceite pelo `LayerRewriter` (que já
+        // avançou a numeração) ia para a track antiga JÁ desligada do sender e
+        // perdia-se: o subscritor via um buraco na numeração exactamente na
+        // fronteira da troca (medido: 2 em 12 trocas a ~1 kpps). Assim, o que
+        // a camada antiga ainda escreve sai pelo sender ainda ligado a ela, e a
+        // nova só começa a escrever quando entra nos subscritores dela, abaixo.
+        // Se o `replace_track` recusar, o caminho de recurso cria uma subscrição
+        // nova com a sua própria numeração — este `rw` deixa de ser usado.
+        rw.expect(source_id(chosen));
         match old_sender
             .replace_track(Some(Arc::clone(&local) as Arc<dyn TrackLocal + Send + Sync>))
             .await
         {
             Ok(()) => {
-                // Primeiro fecha a porta à camada antiga, só depois a nova
-                // começa a escrever (entra nos subscritores dela abaixo).
-                rw.expect(source_id(chosen));
                 for p in &siblings {
                     if p.subscribers.lock().await.remove(&sub_id).is_some() {
                         p.touch_subs();
