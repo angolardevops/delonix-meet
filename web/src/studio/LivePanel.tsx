@@ -7,11 +7,13 @@
  * — não um débito por plataforma que ninguém mediu. O único débito no ecrã é o
  * que o browser ENVIOU, calculado a partir dos bytes que o `Directo` conta.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Alert, Button, cx, Field, IconButton, Meter, StatusBadge, TextInput } from '../ui/kit'
 import type { BadgeTone } from '../ui/kit'
 import Cronometro from './Cronometro'
+import { useDebito } from './debito'
+import { plataformaDoUrl } from './palco'
 import type { Destino, EstadoDoDirecto } from './directo'
 
 /**
@@ -65,29 +67,6 @@ function CampoChave({ value, onChange, disabled, id }: { value: string; onChange
       />
     </div>
   )
-}
-
-/** Débito enviado, em kbps, a partir de duas leituras de bytes. */
-function useDebito(estado: EstadoDoDirecto): number {
-  const ant = useRef<{ bytes: number; t: number } | null>(null)
-  const [kbps, setKbps] = useState(0)
-  const bytes = estado.fase === 'no-ar' ? estado.bytes : -1
-  useEffect(() => {
-    if (bytes < 0) {
-      ant.current = null
-      setKbps(0)
-      return
-    }
-    const agora = performance.now()
-    const a = ant.current
-    if (a && agora - a.t >= 900) {
-      setKbps(Math.round(((bytes - a.bytes) * 8) / 1000 / ((agora - a.t) / 1000)))
-      ant.current = { bytes, t: agora }
-    } else if (!a) {
-      ant.current = { bytes, t: agora }
-    }
-  }, [bytes])
-  return kbps
 }
 
 export default function LivePanel({
@@ -168,8 +147,9 @@ export default function LivePanel({
               return (
                 <li key={i} className={cx('st-card', noAr && d.chave.trim() && 'st-card--live')} data-studio="destino">
                   <div className="st-card__row">
-                    <span className="st-dest__tag dx-num" aria-hidden="true">
-                      {String(i + 1).padStart(2, '0')}
+                    {/* A etiqueta lê-se do HOST do servidor RTMP, não do rótulo. */}
+                    <span className="st-dest__tag dx-num" data-studio="destino-tag" title={t('studio.directo.tagDica')}>
+                      {plataformaDoUrl(d.url, location.host)}
                     </span>
                     <strong className="st-dest__name">{nome}</strong>
                     <span className="dx-spacer" />

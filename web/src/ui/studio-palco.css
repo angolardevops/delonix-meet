@@ -1,0 +1,546 @@
+/*
+ * Estúdio — o PALCO do DelonixStudio: layouts, banco de cenas, faders,
+ * sobreposições, sala de convidados, quadro local e a emissão no telemóvel.
+ * Folha à parte da `studio.css` (que também tem a edição) para as duas
+ * equipas não se pisarem. Só tokens.
+ */
+
+/* ------------------------------------------------------------- topo */
+.st-top__meta {
+  font-size: var(--t-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------- layouts */
+.st-lay {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.st-lay__btn {
+  aspect-ratio: 16 / 10;
+  max-width: 100%;
+  padding: 5px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--stage);
+  cursor: pointer;
+}
+.st-lay__btn:hover {
+  border-color: var(--muted);
+}
+.st-lay__btn[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--stage));
+}
+.st-lay__mini {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  gap: 3px;
+}
+.st-lay__mini span {
+  display: block;
+  border-radius: var(--r-2);
+  background: var(--border);
+}
+.st-lay__btn[aria-pressed='true'] .st-lay__mini > span:not(.st-lay__col),
+.st-lay__btn[aria-pressed='true'] .st-lay__col span {
+  background: var(--accent);
+}
+.st-lay__mini--lado-a-lado {
+  grid-template-columns: 1fr 1fr;
+}
+.st-lay__mini--destaque {
+  grid-template-columns: 7fr 3fr;
+}
+.st-lay__mini--grelha {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.st-lay__mini .st-lay__col {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 3px;
+  background: none;
+}
+
+/* ------------------------------------------------------------ cenas */
+.st-scenes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.st-scene {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--raised);
+  min-width: 0;
+}
+.st-scene.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--raised));
+}
+.st-scene__apply,
+.st-scene--new {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.st-scene--new {
+  border: 1px dashed var(--border);
+  background: none;
+  color: var(--muted);
+}
+.st-scene--new:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.st-scene__thumb {
+  width: 40px;
+  aspect-ratio: 16 / 9;
+  flex: none;
+  border-radius: var(--r-2);
+  background: linear-gradient(140deg, var(--accent-strong), var(--stage)) center / cover no-repeat;
+}
+.st-scene__thumb--plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--border);
+}
+.st-scene__name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+.st-scene-new {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ------------------------------------------------------------- áudio */
+.st-faders {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.st-fader {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-sm);
+}
+.st-fader__name {
+  color: var(--muted);
+}
+.st-fader__val {
+  text-align: right;
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+.st-ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* --------------------------------------------------- palco e fichas */
+.st-overlay__chip {
+  padding: 3px 8px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--raised);
+  font-size: var(--t-xs);
+  color: var(--text);
+}
+.st-overlay--tr {
+  align-items: center;
+}
+
+.st-chips {
+  display: none;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  gap: 6px;
+}
+.st-chip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--raised);
+  font-size: var(--t-xs);
+}
+.st-chip.is-live .st-chip__state {
+  color: var(--success);
+}
+.st-chip__state {
+  color: var(--muted);
+}
+
+/* ------------------------------------------ por baixo do palco */
+.st-under {
+  flex: none;
+  /* Altura limitada: o palco é que manda. */
+  max-height: min(42%, 340px);
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+.st-panel {
+  padding: 10px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  min-width: 0;
+}
+
+/* ---------------------------------------------------- sobreposições */
+.st-overlays {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.st-overlay-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--ctl-h);
+  padding: 0 10px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--raised);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--t-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.st-overlay-btn[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+.st-overlay-btn__box {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.st-overlay-btn[aria-pressed='true'] .st-overlay-btn__box {
+  background: var(--accent-strong);
+  border-color: var(--accent);
+}
+.st-overlay-edit {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.st-overlay-edit > .st-actions {
+  grid-column: 1 / -1;
+}
+
+/* ------------------------------------------------------------- sala */
+.st-sala-join {
+  display: flex;
+  gap: 6px;
+}
+.st-sala-join .dx-input {
+  flex: 1;
+  min-width: 0;
+}
+.st-sala__bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.st-sala__code {
+  font-size: var(--t-sm);
+  color: var(--text);
+}
+.st-sala .dx-tabs {
+  padding: 0;
+  overflow-x: auto;
+}
+.st-sala__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.st-sala__chat .rm-chat {
+  max-height: 320px;
+}
+.st-sala__body .rm-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+}
+.st-wait {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.st-wait__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--live);
+  font-size: var(--t-sm);
+  min-width: 0;
+}
+.st-guests {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 6px;
+}
+.st-guest {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--stage);
+  color: var(--text);
+  cursor: pointer;
+}
+.st-guest.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.st-guest.is-live {
+  border-color: var(--live);
+}
+.st-guest__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.st-guest__avatar {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.st-guest__name {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 4px;
+  border-radius: var(--r-2);
+  background: var(--scrim);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.st-guest__badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 0 4px;
+  border-radius: var(--r-2);
+  background: var(--live);
+  color: var(--stage);
+  font-size: var(--t-xs);
+}
+.st-guests__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.st-pinned {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--live);
+  background: color-mix(in srgb, var(--live) 10%, var(--raised));
+  font-size: var(--t-md);
+}
+.st-pinned__head {
+  font-size: var(--t-xs);
+  color: var(--live-text);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+/* ------------------------------------------------------------ quadro */
+.st-board {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+.st-board__area {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  touch-action: none;
+}
+.st-board__bar {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--r-2);
+  background: var(--raised);
+  border: 1px solid var(--border);
+}
+.st-board__ink {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  cursor: pointer;
+}
+.st-board__ink[aria-pressed='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--raised), 0 0 0 3px var(--accent);
+}
+
+/* ------------------------------------------------- gravação local */
+.st-rec-line {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+.st-rec-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--record);
+}
+
+/* ----------------------------------------- barra do polegar */
+.st-thumb {
+  display: none;
+}
+
+
+@media (max-width: 1180px) {
+  .st-under {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .st-under {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+/* ------------------------------------------ telemóvel: emissão */
+@media (max-width: 720px) {
+  .st-top__meta {
+    display: none;
+  }
+  /* A emissão no telemóvel está desenhada para esta largura: o aviso de
+     «ecrã estreito» deixa de ser verdade. */
+  .st-narrow-note {
+    display: none;
+  }
+  .st-lay {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .st-chips {
+    display: flex;
+  }
+  .st-under {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* A sala (chat interno, perguntas) vem logo a seguir ao palco. */
+  .st-body > .st-centre {
+    padding-bottom: 0;
+  }
+  .st-overlays,
+  .st-overlay-edit {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .st-thumb {
+    display: block;
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
+  .st-sala__chat .rm-chat {
+    max-height: 50vh;
+    max-height: 50dvh;
+  }
+}
+
+/* -------------------------------------------- estado por cima do palco */
+.st-stage-meta {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 24px;
+}
+.st-board,
+.st-board__area {
+  user-select: none;
+  -webkit-user-select: none;
+}

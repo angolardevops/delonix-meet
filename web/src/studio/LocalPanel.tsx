@@ -3,10 +3,25 @@
  * guardadas que ainda não subiram). Os números vêm do IndexedDB, não do
  * template — `arquivo.porEnviar()` e `arquivo.ocupacao()`.
  */
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, cx, StatusBadge } from '../ui/kit'
 import type { AulaGuardada } from './arquivo'
 import Cronometro from './Cronometro'
+import { formatarBytes } from './palco'
+
+/** O tamanho da gravação em curso, lido do compositor uma vez por segundo. */
+function TamanhoEmCurso({ activo, ler }: { activo: boolean; ler: () => number }) {
+  const { i18n } = useTranslation()
+  const [bytes, setBytes] = useState(() => ler())
+  useEffect(() => {
+    setBytes(ler())
+    if (!activo) return
+    const id = setInterval(() => setBytes(ler()), 1000)
+    return () => clearInterval(id)
+  }, [activo, ler])
+  return <span data-studio="tamanho-gravacao">{formatarBytes(bytes, i18n.language)}</span>
+}
 
 export default function LocalPanel({
   estado,
@@ -15,6 +30,8 @@ export default function LocalPanel({
   ocupacaoBytes,
   online,
   resolucao,
+  qualidade,
+  lerBytes,
   onEnviar,
 }: {
   estado: 'parado' | 'a-gravar' | 'pausa'
@@ -24,6 +41,10 @@ export default function LocalPanel({
   online: boolean
   /** Tamanho real do canvas de gravação, lido do compositor. */
   resolucao: string
+  /** «2160p · 50 fps» — o perfil em uso. */
+  qualidade: string
+  /** Bytes do ficheiro completo da gravação em curso. */
+  lerBytes: () => number
   onEnviar: () => void
 }) {
   const { t } = useTranslation()
@@ -51,6 +72,12 @@ export default function LocalPanel({
           <span className="dx-spacer" />
           <span className="dx-num st-small dx-muted">{resolucao}</span>
         </div>
+        {activo && (
+          <p className="dx-num st-small st-rec-line">
+            <span className="st-rec-dot" aria-hidden="true" />
+            {qualidade} · <TamanhoEmCurso activo={estado === 'a-gravar'} ler={lerBytes} />
+          </p>
+        )}
         <p className="st-note">{t('studio.local.formato')}</p>
       </div>
       <div className="st-card" data-studio="fila">
