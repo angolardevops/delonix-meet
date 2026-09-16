@@ -406,7 +406,7 @@ export default function Room({
                 <SettingsPanel media={media} transcription={transcription} localVideo={core.localVideoRef.current} />
               )}
               {chrome.panel === 'notes' && <NotesPanel transcription={transcription} isHost={isHost} />}
-              {chrome.panel === 'multicam' && <MulticamPanel multicam={multicam} peers={peers} />}
+              {chrome.panel === 'multicam' && <MulticamPanel multicam={multicam} peers={peers} roomTitle={session.roomName || code} />}
             </aside>
           )}
         </div>

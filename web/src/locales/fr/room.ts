@@ -570,7 +570,9 @@ export default {
     limite: 'Maximum {{n}} destinations.',
     irParaOAr: "Passer à l'antenne",
     aLigar: 'Connexion…',
-    terminar: 'Terminer le direct',
+    terminar: 'Arrêter la diffusion',
+    noArDesde: "À l'antenne · {{tempo}}",
+    legendaPrograma: '{{nome}} · {{titulo}}',
   },
   confirmar: {
     cancelar: 'Annuler',

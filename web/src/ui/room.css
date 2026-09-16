@@ -3563,3 +3563,56 @@ div.rm-only-narrow,
   font-size: 10.5px;
   font-weight: 600;
 }
+
+/* estúdio da sala: o programa com estado por cima; parar ao alcance do polegar */
+.rm-multicam__stage {
+  position: relative;
+}
+.rm-multicam__stage.is-live > .rm-multicam__preview {
+  border-color: var(--live);
+}
+.rm-multicam__onair,
+.rm-multicam__caption {
+  position: absolute;
+  left: 8px;
+  padding: 3px 7px;
+  border-radius: var(--r-2);
+  background: color-mix(in srgb, var(--stage) 74%, transparent);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.rm-multicam__onair {
+  top: 8px;
+  color: var(--live-text);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+.rm-multicam__caption {
+  bottom: 8px;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-multicam__stop {
+  position: sticky;
+  bottom: 0;
+  padding-top: 8px;
+  background: var(--surface);
+}
+.rm-multicam__stop .dx-btn {
+  min-height: 50px;
+  font-weight: 700;
+}
+@media (max-width: 767px) {
+  .rm-multicam__stage {
+    margin: -12px -14px 0;
+  }
+  .rm-multicam__stage > .rm-multicam__preview {
+    border-width: 0 0 1px;
+    border-radius: 0;
+  }
+  .rm-multicam__stop {
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+}
