@@ -1432,6 +1432,8 @@ pub struct SsoConfigPublic {
     pub issuer_url: String,
     pub client_id: String,
     pub enforce_sso: bool,
+    /// Há `client_secret` guardado? (o segredo nunca é devolvido).
+    pub has_client_secret: bool,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -1439,6 +1441,7 @@ pub struct SsoConfigReq {
     pub issuer_url: String,
     pub client_id: String,
     /// Vazio → mantém o segredo existente (no-op em update sem nova rotação).
+    /// Guarda-se cifrado; não vazio sem `DATA_ENCRYPTION_KEYS` → `422`.
     #[serde(default)]
     pub client_secret: String,
     pub enforce_sso: bool,
@@ -1464,7 +1467,8 @@ pub async fn get_sso_config(
 ) -> Result<Json<Option<SsoConfigPublic>>, ApiError> {
     require_admin(&state, org_id, auth.user_id).await?;
     let row: Option<SsoConfigPublic> = sqlx::query_as(
-        "SELECT org_id, issuer_url, client_id, enforce_sso
+        "SELECT org_id, issuer_url, client_id, enforce_sso,
+                client_secret <> '' AS has_client_secret
          FROM org_sso_configs WHERE org_id = $1",
     )
     .bind(org_id)
@@ -1486,6 +1490,7 @@ pub async fn get_sso_config(
         (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 422, description = "`client_secret` não vazio sem DATA_ENCRYPTION_KEYS (`secrets.encryption_unconfigured`).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn upsert_sso_config(
@@ -1541,7 +1546,11 @@ pub async fn upsert_sso_config(
         .bind(org_id)
         .bind(&issuer)
         .bind(&client_id)
-        .bind(req.client_secret.trim())
+        .bind(seal_sso_client_secret(
+            &state.config,
+            org_id,
+            req.client_secret.trim(),
+        )?)
         .bind(req.enforce_sso)
         .execute(&state.db)
         .await?;
@@ -1549,6 +1558,21 @@ pub async fn upsert_sso_config(
 
     tracing::info!(%org_id, %issuer, "SSO config upserted");
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `aad` do `client_secret` do SSO de uma org (a linha é a org).
+pub(crate) fn sso_client_secret_aad(org_id: Uuid) -> String {
+    crate::secrets_at_rest::aad("org_sso_configs", "client_secret", org_id)
+}
+
+/// O `client_secret` cifrado para gravar em `org_sso_configs` (S5). Quem
+/// escreve essa coluna passa por aqui; sem `DATA_ENCRYPTION_KEYS` é `422`.
+pub(crate) fn seal_sso_client_secret(
+    config: &crate::config::Config,
+    org_id: Uuid,
+    plain: &str,
+) -> Result<String, ApiError> {
+    crate::secrets_at_rest::seal(config, plain, &sso_client_secret_aad(org_id))
 }
 
 /// `DELETE /api/orgs/:org_id/sso` — remove a config OIDC (desativa SSO). Só

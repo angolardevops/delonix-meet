@@ -34,6 +34,7 @@ mod recordings;
 mod redis_state;
 mod room_tools;
 mod rooms;
+pub mod secrets_at_rest;
 mod sfu;
 #[cfg(test)]
 mod sfu_e2e;
@@ -908,6 +909,22 @@ pub async fn run() {
                     }
                     Err(e) => tracing::warn!(error = %e, "webhook deliveries sweep failed"),
                 }
+            }
+        });
+    }
+
+    // Cron: segredos de integração herdados em claro (S5) — no arranque (o
+    // primeiro `tick` é imediato) e de hora a hora: com DATA_ENCRYPTION_KEYS
+    // cifra-os; sem chaves, avisa quantos continuam em claro. A hora apanha
+    // escritas em claro que ainda não passem por `secrets_at_rest`.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                secrets_at_rest::reseal_pass(&state.db, &state.config).await;
             }
         });
     }

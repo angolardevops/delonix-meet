@@ -818,6 +818,12 @@ pub async fn sso_login(
     .await?;
 
     let (org_id, issuer_url, client_id, client_secret) = sso.ok_or_else(|| ApiError::NotFound)?;
+    // Guardado cifrado (S5); o herdado em claro passa como está.
+    let client_secret = crate::secrets_at_rest::open(
+        &state.config,
+        &client_secret,
+        &crate::org::sso_client_secret_aad(org_id),
+    )?;
 
     // OIDC Discovery (cached pelo crate; contacta <issuer>/.well-known/openid-configuration).
     use openidconnect::{
@@ -944,6 +950,11 @@ pub async fn sso_callback(
     .fetch_one(&state.db)
     .await?;
     let (issuer_url, client_id, client_secret) = sso;
+    let client_secret = crate::secrets_at_rest::open(
+        &state.config,
+        &client_secret,
+        &crate::org::sso_client_secret_aad(entry.org_id),
+    )?;
 
     use openidconnect::{
         core::CoreClient, AuthorizationCode, ClientId, ClientSecret, IssuerUrl, Nonce,

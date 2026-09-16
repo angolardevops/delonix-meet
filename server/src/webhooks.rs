@@ -6,6 +6,13 @@
 //! MessageCard; o alvo `generic` recebe o JSON estruturado com a assinatura
 //! `X-Delonix-Signature: sha256=<hmac>` (chave = `secret`) para verificação.
 //!
+//! **O segredo em repouso (S5).** `org_webhooks.secret` guarda-se cifrado
+//! (`secrets_at_rest`, aad `org_webhooks.secret:<id>`) e abre-se só no envio.
+//! Criar um webhook COM segredo sem `DATA_ENCRYPTION_KEYS` é `422`; SEM segredo
+//! continua a funcionar sem chaves (não há nada a proteger, e Slack/Teams/
+//! Mattermost nunca o usam). Um segredo que não abre não envia a entrega sem
+//! assinatura: a entrega fica `failed`.
+//!
 //! O envio é best-effort e assíncrono (não bloqueia o pedido do utilizador).
 //!
 //! **Registo de entregas (G7).** Cada envio a um webhook fica numa linha de
@@ -42,7 +49,7 @@ use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{auth::AuthUser, error::ApiError, AppState};
+use crate::{auth::AuthUser, error::ApiError, secrets_at_rest, AppState};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -145,6 +152,7 @@ pub struct Webhook {
     /// `slack` | `teams` | `mattermost` | `generic`.
     pub kind: String,
     pub url: String,
+    /// Como está GUARDADO (cifrado, ou herdado em claro) — nunca serializado.
     #[serde(skip_serializing)]
     #[schema(ignore)]
     pub secret: String,
@@ -157,6 +165,11 @@ pub struct Webhook {
 /// se hidrata `Webhook`. Estava copiada à mão em três sítios (ver ADR-0004,
 /// mesmo padrão de risco de `meetings::MEETING_COLUMNS`/`rooms::ROOM_COLUMNS`).
 const WEBHOOK_COLUMNS: &str = "id, org_id, kind, url, secret, events, active";
+
+/// `aad` do segredo de um webhook.
+fn secret_aad(id: Uuid) -> String {
+    secrets_at_rest::aad("org_webhooks", "secret", id)
+}
 
 /// Um evento de webhook: nome + payload estruturado (o corpo do `generic`).
 pub struct Event {
@@ -281,10 +294,24 @@ async fn attempt(
                 tracing::warn!(hook = %hook.id, error = %e, "webhook destino bloqueado (SSRF)");
                 Err(format!("destino bloqueado: {e}"))
             }
-            Ok(()) => send(&state.webhook_client, hook, event, body, delivery_id)
-                .await
-                // `without_url`: o URL de um webhook do Slack/Teams é a credencial.
-                .map_err(|e| e.without_url().to_string()),
+            // Um segredo que não abre não se troca por um envio sem assinatura:
+            // o receptor aceitaria (ou recusaria) sem saber porquê.
+            Ok(()) => {
+                match secrets_at_rest::open(&state.config, &hook.secret, &secret_aad(hook.id)) {
+                    Err(_) => Err("o segredo do webhook não abre neste servidor".to_string()),
+                    Ok(secret) => send(
+                        &state.webhook_client,
+                        hook,
+                        &secret,
+                        event,
+                        body,
+                        delivery_id,
+                    )
+                    .await
+                    // `without_url`: o URL de um webhook do Slack/Teams é a credencial.
+                    .map_err(|e| e.without_url().to_string()),
+                }
+            }
         };
     let elapsed_ms = i32::try_from(started.elapsed().as_millis()).unwrap_or(i32::MAX);
     let (status, response_status, response_ms, error) = match outcome {
@@ -332,6 +359,7 @@ async fn attempt(
 async fn send(
     client: &reqwest::Client,
     hook: &Webhook,
+    secret: &str,
     event: &str,
     body: &serde_json::Value,
     delivery_id: Option<Uuid>,
@@ -348,9 +376,9 @@ async fn send(
             rb = rb.header("X-Delonix-Delivery", id.to_string());
         }
         // Assinatura HMAC opcional, sempre sobre os bytes que seguem — com o
-        // segredo ACTUAL do webhook (nunca guardada no registo).
-        if !hook.secret.is_empty() {
-            if let Ok(mut mac) = HmacSha256::new_from_slice(hook.secret.as_bytes()) {
+        // segredo ACTUAL do webhook, já decifrado (nunca guardada no registo).
+        if !secret.is_empty() {
+            if let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) {
                 mac.update(&raw);
                 let sig = hex::encode(mac.finalize().into_bytes());
                 rb = rb.header("X-Delonix-Signature", format!("sha256={sig}"));
@@ -389,6 +417,8 @@ pub(crate) async fn sweep_deliveries(db: &sqlx::PgPool) -> Result<(u64, u64), sq
 pub struct WebhookReq {
     pub kind: String,
     pub url: String,
+    /// Segredo HMAC do alvo `generic`. Guarda-se cifrado e nunca é devolvido.
+    /// Vazio = sem assinatura. Não vazio sem `DATA_ENCRYPTION_KEYS` → `422`.
     #[serde(default)]
     pub secret: String,
     #[serde(default)]
@@ -453,6 +483,7 @@ pub async fn list(
         (status = 200, body = Webhook),
         (status = 400, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`secret` não vazio sem DATA_ENCRYPTION_KEYS (`secrets.encryption_unconfigured`)"),
     )
 )]
 pub async fn create(
@@ -485,15 +516,23 @@ pub async fn create(
             KNOWN_EVENTS.join(", ")
         )));
     }
+    // O id nasce aqui: o segredo cifra-se ligado a ESTA linha.
+    let id = Uuid::new_v4();
+    let secret = if req.secret.is_empty() {
+        String::new()
+    } else {
+        secrets_at_rest::seal(&state.config, &req.secret, &secret_aad(id))?
+    };
     let hook: Webhook = sqlx::query_as(&format!(
-        "INSERT INTO org_webhooks (org_id, kind, url, secret, events, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        "INSERT INTO org_webhooks (id, org_id, kind, url, secret, events, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING {WEBHOOK_COLUMNS}"
     ))
+    .bind(id)
     .bind(org_id)
     .bind(&req.kind)
     .bind(&req.url)
-    .bind(&req.secret)
+    .bind(&secret)
     .bind(&events)
     .bind(auth.user_id)
     .fetch_one(&state.db)

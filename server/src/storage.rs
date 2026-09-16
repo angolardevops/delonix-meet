@@ -2,6 +2,11 @@
 //!
 //! A tabela `platform_storage` tem um único registo (id=1). Lê/escreve o admin
 //! global pelo painel de definições da plataforma.
+//!
+//! A password WebDAV guarda-se CIFRADA (S5; `secrets_at_rest`, aad
+//! `platform_storage.webdav_password:1`) e só se abre para o teste de ligação.
+//! Gravar uma password nova sem `DATA_ENCRYPTION_KEYS` é `422`; guardar o resto
+//! da configuração sem mexer na password continua a funcionar sem chaves.
 
 use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
@@ -68,6 +73,7 @@ pub struct StorageConfigReq {
     pub webdav_url: Option<String>,
     pub webdav_user: Option<String>,
     /// Novo valor; se omitido ou vazio mantém o valor actual (nunca apaga por engano).
+    /// Guarda-se cifrado; não vazio sem `DATA_ENCRYPTION_KEYS` → `422`.
     pub webdav_password: Option<String>,
     pub webdav_path: Option<String>,
 }
@@ -142,6 +148,7 @@ pub async fn get_storage(
         (status = 400, description = "`storage_type` fora de `local`/`nfs`/`webdav`.", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sem sessão válida.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`).", body = crate::openapi::ErrorBody),
+        (status = 422, description = "`webdav_password` não vazia sem DATA_ENCRYPTION_KEYS (`secrets.encryption_unconfigured`).", body = crate::openapi::ErrorBody),
         (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -157,12 +164,13 @@ pub async fn save_storage(
         return Err(ApiError::BadRequest("storage_type inválido".into()));
     }
 
-    // Se password vazia/omitida → manter a existente (COALESCE).
+    // Se password vazia/omitida → manter a existente (COALESCE). Nova → cifrada.
     let new_pwd = req
         .webdav_password
         .as_deref()
         .filter(|p| !p.is_empty())
-        .map(|p| p.to_string());
+        .map(|p| crate::secrets_at_rest::seal(&state.config, p, &webdav_password_aad()))
+        .transpose()?;
 
     sqlx::query(
         "INSERT INTO platform_storage (id, storage_type, nfs_server, nfs_path,
@@ -262,7 +270,11 @@ pub async fn test_storage(
         "webdav" => {
             let url = wurl.unwrap_or_default();
             let user = wuser.unwrap_or_default();
-            let pwd = wpwd.unwrap_or_default();
+            let pwd = crate::secrets_at_rest::open(
+                &state.config,
+                wpwd.as_deref().unwrap_or_default(),
+                &webdav_password_aad(),
+            )?;
             if url.is_empty() || user.is_empty() {
                 return Err(ApiError::BadRequest(
                     "webdav_url e webdav_user são obrigatórios".into(),
@@ -367,6 +379,11 @@ spec:
         )
         .body(axum::body::Body::from(yaml))
         .unwrap())
+}
+
+/// `aad` da password WebDAV: a tabela tem um único registo, `id = 1`.
+fn webdav_password_aad() -> String {
+    crate::secrets_at_rest::aad("platform_storage", "webdav_password", 1)
 }
 
 /// Administrador da PLATAFORMA — declarado na configuração
