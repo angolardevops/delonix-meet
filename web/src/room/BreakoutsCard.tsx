@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { BreakoutRoom } from '../signaling'
 import { AvatarStack, Button, Select, TextInput, cx } from '../ui/kit'
@@ -16,6 +17,11 @@ export interface BreakoutsApi {
   moveUser: (name: string, roomCode: string) => void
   closeAll: () => void
   visit: (roomCode: string) => void
+  /** À vez (servidor) ou à mão (as salas começam vazias). */
+  assign: 'auto' | 'manual'
+  setAssign: (a: 'auto' | 'manual') => void
+  /** Mensagem a todas as salas (só anfitrião). */
+  broadcast: (text: string) => void
 }
 
 const MINUTOS = [0, 5, 10, 15, 20, 30, 45, 60]
@@ -23,12 +29,14 @@ const MINUTOS = [0, 5, 10, 15, 20, 30, 45, 60]
 /**
  * Salas paralelas (template DelonixModeration): cabeçalho com salas e tempo
  * restante, a regra de atribuição, um cartão por sala com quem lá está,
- * temporizador e acções. A distribuição é SEMPRE automática (à vez) — a
- * manual precisa de servidor e não aparece.
+ * temporizador, mensagem a todas as salas e acções. Em «Manual» as salas
+ * nascem vazias e cada pessoa é posta numa sala pela lista.
  */
 export function BreakoutsCard({ code, api, className }: { code: string; api: BreakoutsApi; className?: string }) {
   const { t } = useTranslation()
   const ativas = api.rooms.length > 0
+  const [mensagem, setMensagem] = useState('')
+  const [difundida, setDifundida] = useState(false)
   return (
     <section className={cx('rm-bocard', className)} aria-labelledby={`rm-bo-${code}`}>
       <div className="rm-bocard__head">
@@ -46,8 +54,22 @@ export function BreakoutsCard({ code, api, className }: { code: string; api: Bre
         )}
       </div>
 
-      <div className="rm-bocard__mode" aria-live="polite">
-        <span className="is-on">{t('room.paralelas.atribuicaoAutomatica')}</span>
+      <div className="rm-bocard__mode" role="radiogroup" aria-label={t('room.paralelas.titulo')}>
+        {(['auto', 'manual'] as const).map((a) => (
+          <button
+            key={a}
+            type="button"
+            role="radio"
+            aria-checked={api.assign === a}
+            className={cx(api.assign === a && 'is-on')}
+            // A regra só vale para salas a criar: com salas abertas, mostra-se mas não muda nada.
+            disabled={ativas}
+            title={a === 'auto' ? t('room.paralelas.automaticaDica') : t('room.paralelas.manualDica')}
+            onClick={() => api.setAssign(a)}
+          >
+            {a === 'auto' ? t('room.paralelas.atribuicaoAutomatica') : t('room.paralelas.manual')}
+          </button>
+        ))}
       </div>
 
       {!ativas ? (
@@ -91,7 +113,7 @@ export function BreakoutsCard({ code, api, className }: { code: string; api: Bre
                       if (label && label !== b.label) api.rename(b.code, label)
                     }}
                   />
-                  <span className="dx-num dx-muted">{t('room.paralelas.vazia')}</span>
+                  <span className="dx-num dx-muted">{t('room.paralelas.vaziaMin')}</span>
                 </div>
               ) : (
                 <div key={b.code} className="rm-boroom">
@@ -143,6 +165,34 @@ export function BreakoutsCard({ code, api, className }: { code: string; api: Bre
                 <span className="dx-num dx-muted">{t('room.paralelas.temporizador')}</span>
                 <Countdown endsAt={api.endsAt} render={(txt) => <strong className="dx-num">{txt}</strong>} />
               </div>
+            )}
+            <form
+              className="rm-bocard__broadcast"
+              onSubmit={(e) => {
+                e.preventDefault()
+                const texto = mensagem.trim()
+                if (!texto) return
+                api.broadcast(texto)
+                setMensagem('')
+                setDifundida(true)
+                window.setTimeout(() => setDifundida(false), 4000)
+              }}
+            >
+              <input
+                value={mensagem}
+                maxLength={500}
+                placeholder={t('room.paralelas.mensagemTodas')}
+                aria-label={t('room.paralelas.mensagemTodas')}
+                onChange={(e) => setMensagem(e.target.value)}
+              />
+              <button type="submit" disabled={!mensagem.trim()}>
+                {t('room.paralelas.difundir')}
+              </button>
+            </form>
+            {difundida && (
+              <span className="dx-muted rm-bocard__text" role="status">
+                {t('room.paralelas.difundida')}
+              </span>
             )}
             <div className="rm-bocard__row">
               <Button size="sm" variant="outline" block onClick={api.add}>

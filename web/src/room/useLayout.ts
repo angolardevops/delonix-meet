@@ -13,36 +13,40 @@ export type ViewMode = 'grid' | 'stage'
 export type PresLayout = 'bottom' | 'side'
 
 /**
- * Grelha: para N retratos 16:9 num contentor W×H, escolhe o número de colunas
- * que maximiza o tamanho de cada um. A largura medida é também o que a
+ * Grelha: para N retratos num contentor W×H, escolhe o número de colunas que
+ * maximiza o tamanho de cada um (medido como 16:9) e depois ENCHE a área com
+ * essas colunas e linhas — como no template (4×3 retratos que ocupam o palco
+ * todo, não caixas 16:9 a flutuar). A largura da célula é também o que a
  * política de camada usa para pedir a qualidade certa.
  */
+export function melhorGrelha(w: number, h: number, count: number, gap = 10): { cols: number; rows: number; w: number; h: number } {
+  if (w <= 0 || h <= 0 || count <= 1) return { cols: 1, rows: 1, w: Math.floor(Math.max(0, w)), h: Math.floor(Math.max(0, h)) }
+  const RATIO = 16 / 9
+  let best = { cols: 1, rows: count, scale: -1 }
+  for (let cols = 1; cols <= count; cols++) {
+    const rows = Math.ceil(count / cols)
+    const cellW = (w - gap * (cols - 1)) / cols
+    const cellH = (h - gap * (rows - 1)) / rows
+    const scale = Math.min(cellW / RATIO, cellH)
+    if (scale > best.scale) best = { cols, rows, scale }
+  }
+  return {
+    cols: best.cols,
+    rows: best.rows,
+    w: Math.floor((w - gap * (best.cols - 1)) / best.cols),
+    h: Math.floor((h - gap * (best.rows - 1)) / best.rows),
+  }
+}
+
 function useGridSize(areaRef: RefObject<HTMLDivElement | null>, count: number, active: boolean) {
-  const [size, setSize] = useState({ w: 480, h: 270 })
+  const [size, setSize] = useState({ w: 480, h: 270, cols: 1, rows: 1 })
   useEffect(() => {
     const el = areaRef.current
     if (!el || !active) return
-    const GAP = 10
     const compute = () => {
-      const w = el.clientWidth
-      const h = el.clientHeight
-      if (w <= 0 || h <= 0 || count === 0) return
-      if (count === 1) {
-        const nw = Math.floor(w)
-        const nh = Math.floor(h)
-        setSize((s) => (s.w === nw && s.h === nh ? s : { w: nw, h: nh }))
-        return
-      }
-      const RATIO = 16 / 9
-      let best = { w: 480, h: 270, scale: 0 }
-      for (let cols = 1; cols <= count; cols++) {
-        const rows = Math.ceil(count / cols)
-        const cellW = (w - GAP * (cols - 1)) / cols
-        const cellH = (h - GAP * (rows - 1)) / rows
-        const scale = Math.min(cellW / RATIO, cellH)
-        if (scale > best.scale) best = { w: Math.floor(RATIO * scale), h: Math.floor(scale), scale }
-      }
-      setSize((s) => (s.w === best.w && s.h === best.h ? s : { w: best.w, h: best.h }))
+      if (el.clientWidth <= 0 || el.clientHeight <= 0 || count === 0) return
+      const g = melhorGrelha(el.clientWidth, el.clientHeight, count)
+      setSize((s) => (s.w === g.w && s.h === g.h && s.cols === g.cols && s.rows === g.rows ? s : g))
     }
     compute()
     const raf = requestAnimationFrame(compute)
@@ -74,6 +78,20 @@ export function useLayout(core: RoomCore, conditions: LocalConditions) {
 
   const togglePin = useCallback((id: string) => setPinnedId((cur) => (cur === id ? null : id)), [])
 
+  // Destaque PARA TODOS (`spotlight`): decidido pelo anfitrião e guardado no
+  // servidor (quem entra depois recebe-o). O pin local ganha-lhe — é a escolha
+  // de quem está a ver —, mas sem pin local o palco segue o destaque.
+  const [spotlightPeer, setSpotlightPeer] = useState<string | null>(null)
+  useEffect(() => signal.onB1('spotlight', (m) => setSpotlightPeer(m.peer)), [signal])
+  const spotlightId = spotlightPeer && spotlightPeer === core.meuPeerIdRef.current ? 'me' : spotlightPeer
+  /** Quem escolheu a grelha por cima de um destaque não é arrastado de volta — até o destaque mudar. */
+  const [ignorado, setIgnorado] = useState<string | null>(null)
+  /** Só anfitrião (o servidor recusa aos outros). `'me'` é o meu peer_id. */
+  const setSpotlight = useCallback(
+    (id: string | null) => signal.sendB1({ type: 'spotlight', peer: id === 'me' ? core.meuPeerIdRef.current || null : id }),
+    [signal, core.meuPeerIdRef],
+  )
+
   useEffect(() => {
     const onFs = () => setFullscreen(!!document.fullscreenElement)
     document.addEventListener('fullscreenchange', onFs)
@@ -97,14 +115,18 @@ export function useLayout(core: RoomCore, conditions: LocalConditions) {
   const total = visiblePeers.length + (showSelf ? 1 : 0)
   const tileSize = useGridSize(areaRef, total, core.roomState === 'in')
 
-  // O orador activo vai ao palco — inclui-me a MIM. O pin ganha a tudo.
-  const pinnedPeer = pinnedId && pinnedId !== 'me' ? peers.find((p) => p.peerId === pinnedId) ?? null : null
-  const pinnedSelf = pinnedId === 'me'
+  // O orador activo vai ao palco — inclui-me a MIM. O pin ganha a tudo; sem
+  // pin local, vale o destaque do anfitrião (se a pessoa ainda estiver cá).
+  const destaqueValido =
+    spotlightId !== ignorado && (spotlightId === 'me' || (!!spotlightId && peers.some((p) => p.peerId === spotlightId)))
+  const pinEfectivo = pinnedId ?? (destaqueValido ? spotlightId : null)
+  const pinnedPeer = pinEfectivo && pinEfectivo !== 'me' ? peers.find((p) => p.peerId === pinEfectivo) ?? null : null
+  const pinnedSelf = pinEfectivo === 'me'
   const remoteSpeaker = pinnedPeer ?? (pinnedSelf ? null : peers.find((p) => speaking.has(p.peerId)) ?? null)
   const stagePeer = pinnedPeer ?? remoteSpeaker ?? peers[0] ?? null
   const stageOnSelf = pinnedSelf || (!pinnedPeer && !remoteSpeaker && (speaking.has('me') || peers.length === 0))
   // Com pin, força-se o palco (é o «não trocar a toda a hora»).
-  const effectiveViewMode: ViewMode = pinnedId ? 'stage' : viewMode
+  const effectiveViewMode: ViewMode = pinEfectivo ? 'stage' : viewMode
 
   // De quem precisamos MESMO de vídeo. Inclui sempre o palco e o fixado.
   const videoInterest = useMemo(() => {
@@ -150,6 +172,10 @@ export function useLayout(core: RoomCore, conditions: LocalConditions) {
     pinnedId,
     setPinnedId,
     togglePin,
+    /** Destaque para todos (`'me'` quando sou eu), válido ou não. */
+    spotlightId: destaqueValido ? spotlightId : null,
+    setSpotlight,
+    ignoreSpotlight: () => setIgnorado(spotlightId),
     presLayout,
     setPresLayout,
     hideSelf,

@@ -46,6 +46,11 @@ pub enum ClientMsg {
         /// Um cliente antigo não o manda e não recebe confirmação nenhuma.
         #[serde(default)]
         client_id: Option<String>,
+        /// Conversa directa: o `peer_id` de quem a recebe (tem de estar na
+        /// sala). A mensagem vai SÓ a essa pessoa (e o remetente recebe a
+        /// confirmação); ninguém mais a vê, nem o anfitrião, nem no histórico.
+        #[serde(default)]
+        to: Option<Uuid>,
     },
     /// Liga/desliga uma reacção (emoji) de ESTA conta a uma mensagem de chat.
     ChatReact {
@@ -466,6 +471,11 @@ pub enum ServerMsg {
         at: i64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reply_to: Option<Uuid>,
+        /// Conversa directa: `peer_id` e nome de quem a recebe. Ausente = pública.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to_username: Option<String>,
     },
     /// Só para quem enviou: a mensagem `client_id` ficou com este `id`/`at`.
     ChatSent {
@@ -1276,6 +1286,9 @@ pub(crate) struct Room {
     chat_recent: std::collections::VecDeque<Uuid>,
     /// Reacções por mensagem recente: emoji → contas.
     chat_reactions: HashMap<Uuid, std::collections::BTreeMap<String, HashSet<Uuid>>>,
+    /// Conversas directas recentes: mensagem → as DUAS contas (remetente,
+    /// destinatário). Só elas respondem, reagem e recebem as reacções.
+    chat_private: HashMap<Uuid, (Uuid, Uuid)>,
     /// Autor (conta) de cada objecto do quadro — para apagar/mover/editar.
     pub(crate) wb_owner: HashMap<Uuid, Uuid>,
     /// Páginas do quadro além da primeira (total = 1 + isto).
@@ -1414,12 +1427,31 @@ impl SignalingHub {
         host_share_only: bool,
     ) {
         let mut room = self.rooms.entry(room_id).or_default();
-        room.polls = polls;
-        room.questions = questions;
-        room.wb_strokes = wb_strokes;
-        room.timer_ends_at = timer_ends_at;
-        room.locked = locked;
-        room.host_share_only = host_share_only;
+        // O Redis serve para uma sala que ACORDA neste nó (migração de pod): o
+        // que ele guarda repõe-se. Numa sala que já tem gente aqui, a memória é
+        // a verdade e o Redis está atrás dela — nem todos os estados são lá
+        // escritos (o quadro, por exemplo, não é). Sobrescrever a cada entrada
+        // apagava o quadro inteiro de uma sala activa sempre que alguém entrava:
+        // quem chegava depois recebia um `wb-state` vazio e o servidor esquecia
+        // os traços para toda a gente.
+        if !room.peers.is_empty() {
+            return;
+        }
+        // Mesmo numa sala vazia, o Redis só ACRESCENTA o que a memória não tem.
+        if !polls.is_empty() || room.polls.is_empty() {
+            room.polls = polls;
+        }
+        if !questions.is_empty() || room.questions.is_empty() {
+            room.questions = questions;
+        }
+        if !wb_strokes.is_empty() || room.wb_strokes.is_empty() {
+            room.wb_strokes = wb_strokes;
+        }
+        if timer_ends_at.is_some() {
+            room.timer_ends_at = timer_ends_at;
+        }
+        room.locked = room.locked || locked;
+        room.host_share_only = room.host_share_only || host_share_only;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2472,6 +2504,7 @@ impl SignalingHub {
                 text,
                 reply_to,
                 client_id,
+                to,
             } => {
                 if text.is_empty() || text.len() > 4000 {
                     return true;
@@ -2484,7 +2517,8 @@ impl SignalingHub {
                 // socket — é a mesma razão pela qual os controlos de anfitrião
                 // se validam no servidor desde sempre (invariante 8 do
                 // AGENTS.md). O anfitrião continua a poder falar: fechar o chat
-                // é para os outros, e um moderador sem voz não modera nada.
+                // é para os outros, e um moderador sem voz não modera nada. A
+                // conversa directa obedece à MESMA regra.
                 if self
                     .rooms
                     .get(&room_id)
@@ -2497,36 +2531,104 @@ impl SignalingHub {
                 let text = crate::dlp::censor(&text);
                 let id = Uuid::new_v4();
                 let at = now_ms();
+                let erro = |hub: &Self, message: &str| {
+                    hub.send_to_local(
+                        room_id,
+                        peer_id,
+                        ServerMsg::Error {
+                            message: message.into(),
+                        },
+                    );
+                };
                 // Regista a mensagem como recente (fios e reacções só se
-                // aceitam sobre estas) e valida o fio, sob o mesmo lock.
-                let autor = {
+                // aceitam sobre estas), valida o fio e resolve o destinatário
+                // de uma conversa directa, tudo sob o mesmo lock.
+                enum Destino {
+                    Publica,
+                    Privada {
+                        peer: Uuid,
+                        user: Uuid,
+                        nome: String,
+                    },
+                }
+                let resolvido: Result<(Uuid, String, Destino), &'static str> = {
                     let Some(mut room) = self.rooms.get_mut(&room_id) else {
                         return true;
                     };
-                    if reply_to.is_some_and(|r| !room.chat_recent.contains(&r)) {
-                        drop(room);
-                        self.send_to_local(
-                            room_id,
-                            peer_id,
-                            ServerMsg::Error {
-                                message: "chat: a mensagem a que respondes já não está disponível"
-                                    .into(),
-                            },
-                        );
-                        return true;
-                    }
-                    room.chat_recent.push_back(id);
-                    while room.chat_recent.len() > CHAT_RECENT_CAP {
-                        if let Some(velha) = room.chat_recent.pop_front() {
-                            room.chat_reactions.remove(&velha);
-                        }
-                    }
-                    room.peers
+                    let Some((user_id, username)) = room
+                        .peers
                         .get(&peer_id)
                         .map(|p| (p.user_id, p.username.clone()))
+                    else {
+                        return true;
+                    };
+                    let par_da_mae = reply_to.and_then(|r| room.chat_private.get(&r).copied());
+                    if reply_to.is_some_and(|r| !room.chat_recent.contains(&r)) {
+                        Err("chat: a mensagem a que respondes já não está disponível")
+                    } else if par_da_mae.is_some_and(|(de, para)| user_id != de && user_id != para)
+                    {
+                        // Uma privada alheia não se revela a quem responde: a
+                        // mesma resposta que a de um id que não existe.
+                        Err("chat: a mensagem a que respondes já não está disponível")
+                    } else {
+                        // Responder a uma privada continua privado para o mesmo par.
+                        let alvo_conta = match (to, par_da_mae) {
+                            (Some(peer), _) => room
+                                .peers
+                                .get(&peer)
+                                .map(|p| (peer, p.user_id, p.username.clone()))
+                                .ok_or("chat: essa pessoa já não está na sala"),
+                            (None, Some((de, para))) => {
+                                let outra = if user_id == de { para } else { de };
+                                room.peers
+                                    .iter()
+                                    .find(|(_, p)| p.user_id == outra)
+                                    .map(|(id, p)| (*id, p.user_id, p.username.clone()))
+                                    .ok_or("chat: essa pessoa já não está na sala")
+                            }
+                            (None, None) => Ok((Uuid::nil(), Uuid::nil(), String::new())),
+                        };
+                        match alvo_conta {
+                            Err(e) => Err(e),
+                            Ok((peer, _, _)) if peer == peer_id => {
+                                Err("chat: não podes mandar uma mensagem privada a ti")
+                            }
+                            // Um fio privado não muda de par a meio.
+                            Ok((_, user, _))
+                                if par_da_mae.is_some_and(|(de, para)| {
+                                    !([de, para].contains(&user_id) && [de, para].contains(&user))
+                                }) =>
+                            {
+                                Err("chat: essa resposta é privada entre outras duas pessoas")
+                            }
+                            Ok((peer, user, nome)) => {
+                                room.chat_recent.push_back(id);
+                                while room.chat_recent.len() > CHAT_RECENT_CAP {
+                                    if let Some(velha) = room.chat_recent.pop_front() {
+                                        room.chat_reactions.remove(&velha);
+                                        room.chat_private.remove(&velha);
+                                    }
+                                }
+                                if peer.is_nil() {
+                                    Ok((user_id, username, Destino::Publica))
+                                } else {
+                                    room.chat_private.insert(id, (user_id, user));
+                                    Ok((user_id, username, Destino::Privada { peer, user, nome }))
+                                }
+                            }
+                        }
+                    }
                 };
-                let Some((user_id, username)) = autor else {
-                    return true;
+                let (user_id, username, destino) = match resolvido {
+                    Ok(r) => r,
+                    Err(e) => {
+                        erro(self, e);
+                        return true;
+                    }
+                };
+                let (to_user_id, to_username) = match &destino {
+                    Destino::Privada { user, nome, .. } => (Some(*user), Some(nome.clone())),
+                    Destino::Publica => (None, None),
                 };
                 if let Some(store) = &self.chat_store {
                     store.write(crate::room_chat::ChatWrite::Message {
@@ -2537,23 +2639,46 @@ impl SignalingHub {
                         text: text.clone(),
                         parent_id: reply_to,
                         at,
+                        to_user_id,
+                        to_username: to_username.clone(),
                     });
                 }
                 if let Some(client_id) = client_id {
                     self.send_to_local(room_id, peer_id, ServerMsg::ChatSent { client_id, id, at });
                 }
-                self.broadcast(
-                    room_id,
-                    peer_id,
-                    ServerMsg::Chat {
-                        from: peer_id,
-                        username,
-                        text,
-                        id,
-                        at,
-                        reply_to,
-                    },
-                );
+                match destino {
+                    Destino::Publica => self.broadcast(
+                        room_id,
+                        peer_id,
+                        ServerMsg::Chat {
+                            from: peer_id,
+                            username,
+                            text,
+                            id,
+                            at,
+                            reply_to,
+                            to: None,
+                            to_username: None,
+                        },
+                    ),
+                    // NUNCA `broadcast`: vai só a quem a recebe.
+                    Destino::Privada { peer, nome, .. } => {
+                        self.send_to(
+                            room_id,
+                            peer,
+                            ServerMsg::Chat {
+                                from: peer_id,
+                                username,
+                                text,
+                                id,
+                                at,
+                                reply_to,
+                                to: Some(peer),
+                                to_username: Some(nome),
+                            },
+                        );
+                    }
+                }
             }
             ClientMsg::ChatReact { id, emoji } => {
                 if emoji.is_empty() || emoji.chars().count() > 4 {
@@ -2575,6 +2700,10 @@ impl SignalingHub {
                     if !room.chat_recent.contains(&id) {
                         return true;
                     }
+                    let par = room.chat_private.get(&id).copied();
+                    if par.is_some_and(|(de, para)| user_id != de && user_id != para) {
+                        return true;
+                    }
                     let mapa = room.chat_reactions.entry(id).or_default();
                     if !mapa.contains_key(&emoji) && mapa.len() >= CHAT_REACTION_KINDS_CAP {
                         return true;
@@ -2589,9 +2718,17 @@ impl SignalingHub {
                         .iter()
                         .map(|(e, c)| (e.clone(), c.len() as u32))
                         .collect();
-                    (user_id, on, counts)
+                    // As reacções de uma privada só vão ao par (os peers dessas contas).
+                    let destinos: Option<Vec<Uuid>> = par.map(|(de, para)| {
+                        room.peers
+                            .iter()
+                            .filter(|(_, p)| p.user_id == de || p.user_id == para)
+                            .map(|(id, _)| *id)
+                            .collect()
+                    });
+                    (user_id, on, counts, destinos)
                 };
-                let (user_id, on, counts) = resultado;
+                let (user_id, on, counts, destinos) = resultado;
                 if let Some(store) = &self.chat_store {
                     store.write(crate::room_chat::ChatWrite::Reaction {
                         message_id: id,
@@ -2600,7 +2737,21 @@ impl SignalingHub {
                         on,
                     });
                 }
-                self.broadcast_all(room_id, ServerMsg::ChatReactions { id, counts });
+                match destinos {
+                    Some(peers) => {
+                        for p in peers {
+                            self.send_to(
+                                room_id,
+                                p,
+                                ServerMsg::ChatReactions {
+                                    id,
+                                    counts: counts.clone(),
+                                },
+                            );
+                        }
+                    }
+                    None => self.broadcast_all(room_id, ServerMsg::ChatReactions { id, counts }),
+                }
             }
             ClientMsg::Reaction { emoji } => {
                 // Só emojis curtos — nada de spam de texto por aqui.
@@ -4218,6 +4369,7 @@ mod tests {
                 text: "olá!".into(),
                 reply_to: None,
                 client_id: None,
+                to: None,
             },
             None,
         );
@@ -4287,6 +4439,7 @@ mod tests {
                 text: "room1 only".into(),
                 reply_to: None,
                 client_id: None,
+                to: None,
             },
             None,
         );
@@ -4301,6 +4454,7 @@ mod tests {
                 text: "outra vez só na sala 1".into(),
                 reply_to: None,
                 client_id: None,
+                to: None,
             },
             None,
         );
@@ -4472,6 +4626,7 @@ mod tests {
                 text: "ainda cá estou?".into(),
                 reply_to: None,
                 client_id: None,
+                to: None,
             },
             None,
         );
@@ -4852,6 +5007,7 @@ mod tests {
                 text: "passo à frente".into(),
                 reply_to: None,
                 client_id: None,
+                to: None,
             },
             None,
         );
@@ -4869,6 +5025,7 @@ mod tests {
                 text: "só eu falo".into(),
                 reply_to: None,
                 client_id: None,
+                to: None,
             },
             None,
         );
@@ -4891,6 +5048,7 @@ mod tests {
                 text: "voltei".into(),
                 reply_to: None,
                 client_id: None,
+                to: None,
             },
             None,
         );
@@ -5197,6 +5355,186 @@ mod b1_sala_tests {
             text: text.into(),
             reply_to,
             client_id: client_id.map(String::from),
+            to: None,
+        }
+    }
+
+    fn privada(text: &str, to: Option<Uuid>, reply_to: Option<Uuid>) -> ClientMsg {
+        ClientMsg::Chat {
+            text: text.into(),
+            reply_to,
+            client_id: Some("p-1".into()),
+            to,
+        }
+    }
+
+    /// (id, to, to_username, reply_to) de um chat recebido.
+    type ChatRecebido = (Uuid, Option<Uuid>, Option<String>, Option<Uuid>);
+
+    /// O chat privado que chegou a este receptor.
+    fn privada_recebida(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<ChatRecebido> {
+        recolher(rx).into_iter().find_map(|m| match m {
+            ServerMsg::Chat {
+                id,
+                to,
+                to_username,
+                reply_to,
+                ..
+            } => Some((id, to, to_username, reply_to)),
+            _ => None,
+        })
+    }
+
+    fn confirmada(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<Uuid> {
+        recolher(rx).into_iter().find_map(|m| match m {
+            ServerMsg::ChatSent { id, .. } => Some(id),
+            _ => None,
+        })
+    }
+
+    #[tokio::test]
+    async fn a_conversa_directa_so_chega_a_quem_a_recebe() {
+        let mut s = sala();
+        s.hub
+            .handle(s.room, s.b, privada("só para ti", Some(s.c), None), None);
+        let (id, to, nome, _) = privada_recebida(&mut s.rx_c).expect("o destinatário recebe-a");
+        assert_eq!(to, Some(s.c));
+        assert_eq!(nome.as_deref(), Some("carlos"));
+        assert_eq!(
+            confirmada(&mut s.rx_b),
+            Some(id),
+            "o remetente recebe a confirmação"
+        );
+        assert!(
+            privada_recebida(&mut s.rx_a).is_none(),
+            "a anfitriã NÃO lê privadas alheias"
+        );
+    }
+
+    #[tokio::test]
+    async fn responder_a_uma_privada_continua_privado_para_o_mesmo_par() {
+        let mut s = sala();
+        s.hub
+            .handle(s.room, s.b, privada("pergunta", Some(s.c), None), None);
+        let (mae, ..) = privada_recebida(&mut s.rx_c).unwrap();
+        recolher(&mut s.rx_b);
+        // O Carlos responde SEM `to`: o servidor mantém-na privada para a Bia.
+        s.hub.handle(
+            s.room,
+            s.c,
+            ClientMsg::Chat {
+                text: "resposta".into(),
+                reply_to: Some(mae),
+                client_id: None,
+                to: None,
+            },
+            None,
+        );
+        let (_, to, _, reply) = privada_recebida(&mut s.rx_b).expect("a Bia recebe a resposta");
+        assert_eq!((to, reply), (Some(s.b), Some(mae)));
+        assert!(
+            privada_recebida(&mut s.rx_a).is_none(),
+            "a resposta não sai do par"
+        );
+
+        // Um terceiro não responde a uma privada alheia — nem a pode desviar.
+        s.hub
+            .handle(s.room, s.a, privada("intrusa", Some(s.b), Some(mae)), None);
+        assert!(privada_recebida(&mut s.rx_b).is_none());
+        assert!(recolher(&mut s.rx_a)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::Error { .. })));
+    }
+
+    #[tokio::test]
+    async fn privada_para_quem_nao_esta_na_sala_ou_para_si_e_recusada() {
+        let mut s = sala();
+        s.hub
+            .handle(s.room, s.b, privada("?", Some(Uuid::new_v4()), None), None);
+        s.hub
+            .handle(s.room, s.b, privada("eu", Some(s.b), None), None);
+        assert!(privada_recebida(&mut s.rx_a).is_none());
+        assert!(privada_recebida(&mut s.rx_c).is_none());
+        let erros = recolher(&mut s.rx_b)
+            .into_iter()
+            .filter(|m| matches!(m, ServerMsg::Error { .. }))
+            .count();
+        assert_eq!(erros, 2);
+    }
+
+    #[tokio::test]
+    async fn com_o_chat_fechado_a_privada_tambem_so_sai_do_anfitriao() {
+        let mut s = sala();
+        s.hub
+            .handle(s.room, s.a, ClientMsg::ChatToggle { on: false }, None);
+        recolher(&mut s.rx_c);
+        s.hub
+            .handle(s.room, s.b, privada("fechado", Some(s.c), None), None);
+        assert!(privada_recebida(&mut s.rx_c).is_none());
+        s.hub
+            .handle(s.room, s.a, privada("do anfitrião", Some(s.c), None), None);
+        assert!(privada_recebida(&mut s.rx_c).is_some());
+    }
+
+    #[tokio::test]
+    async fn as_reaccoes_de_uma_privada_so_vao_ao_par_e_so_o_par_reage() {
+        let mut s = sala();
+        s.hub
+            .handle(s.room, s.b, privada("olá", Some(s.c), None), None);
+        let (id, ..) = privada_recebida(&mut s.rx_c).unwrap();
+        recolher(&mut s.rx_b);
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::ChatReact {
+                id,
+                emoji: "👍".into(),
+            },
+            None,
+        );
+        assert!(
+            recolher(&mut s.rx_b).is_empty(),
+            "um terceiro não reage a uma privada"
+        );
+        s.hub.handle(
+            s.room,
+            s.c,
+            ClientMsg::ChatReact {
+                id,
+                emoji: "👍".into(),
+            },
+            None,
+        );
+        let reaccoes = |rx: &mut mpsc::Receiver<ServerMsg>| {
+            recolher(rx)
+                .into_iter()
+                .any(|m| matches!(m, ServerMsg::ChatReactions { id: i, .. } if i == id))
+        };
+        assert!(reaccoes(&mut s.rx_b) && reaccoes(&mut s.rx_c));
+        assert!(
+            !reaccoes(&mut s.rx_a),
+            "a anfitriã não recebe as reacções da privada"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_privada_persiste_com_o_destinatario() {
+        let mut s = sala();
+        let (store, mut writes, _m) = crate::room_chat::ChatStore::for_test(8);
+        s.hub.chat_store = Some(store);
+        s.hub
+            .handle(s.room, s.b, privada("guardada", Some(s.c), None), None);
+        recolher(&mut s.rx_c);
+        match writes.try_recv().unwrap() {
+            crate::room_chat::ChatWrite::Message {
+                to_user_id,
+                to_username,
+                ..
+            } => {
+                assert_eq!(to_user_id, Some(s.c));
+                assert_eq!(to_username.as_deref(), Some("carlos"));
+            }
+            other => panic!("esperava a mensagem: {other:?}"),
         }
     }
 
@@ -5218,6 +5556,7 @@ mod b1_sala_tests {
             ClientMsg::Chat {
                 reply_to,
                 client_id,
+                to: None,
                 ..
             } => assert!(reply_to.is_none() && client_id.is_none()),
             _ => panic!("variante errada"),
@@ -5801,6 +6140,51 @@ mod b1_sala_tests {
 
     fn objectos(hub: &SignalingHub, room: Uuid) -> Vec<WbStrokeData> {
         hub.wb_snapshot(room)
+    }
+
+    #[tokio::test]
+    async fn quem_entra_depois_nao_apaga_o_quadro_de_uma_sala_activa() {
+        // Defeito visto na stack de validação (com Redis): a cada entrada o
+        // estado do Redis — sem traços, porque o quadro não é lá escrito —
+        // substituía o da memória. Quem entrava depois via o quadro vazio, e o
+        // servidor esquecia os traços para toda a gente.
+        let s = sala();
+        for _ in 0..3 {
+            s.hub.handle(
+                s.room,
+                s.b,
+                ClientMsg::WbStroke {
+                    stroke: traco(None),
+                },
+                None,
+            );
+        }
+        assert_eq!(objectos(&s.hub, s.room).len(), 3);
+        // O que o `handle_socket` faz ANTES de juntar quem chega, com o Redis vazio.
+        s.hub
+            .apply_redis_state(s.room, vec![], vec![], vec![], None, false, false);
+        assert_eq!(
+            objectos(&s.hub, s.room).len(),
+            3,
+            "o Redis não apaga o quadro de uma sala com gente"
+        );
+    }
+
+    #[test]
+    fn uma_sala_que_acorda_neste_no_recupera_o_quadro_do_redis() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        hub.apply_redis_state(
+            room,
+            vec![],
+            vec![],
+            vec![traco(Some(Uuid::new_v4()))],
+            None,
+            true,
+            false,
+        );
+        assert_eq!(objectos(&hub, room).len(), 1);
+        assert!(hub.is_locked(room));
     }
 
     #[test]

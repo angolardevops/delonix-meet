@@ -2,7 +2,7 @@ import { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { CallState } from '../callRecovery'
 import { DelonixSymbol, Icon } from '../ui/icons'
-import { Button, Segmented, StatusBadge, cx } from '../ui/kit'
+import { AvatarStack, Button, Segmented, StatusBadge, cx } from '../ui/kit'
 import { MeetingElapsed, WallClock } from './Clocks'
 import type { ViewMode } from './useLayout'
 
@@ -58,7 +58,8 @@ export function TopBar({
   callState: CallState
   /** Texto do indicador de gravação, ou `null` se ninguém grava. */
   recordingLabel: string | null
-  live: boolean
+  /** Estado AO VIVO da sala (anunciado pelo servidor), ou emissão local deste anfitrião. */
+  live: { on: boolean; destinos: { label: string; state: string }[]; since: number | null }
   e2eeOn: boolean
   secOpen: boolean
   secCode: string
@@ -75,18 +76,28 @@ export function TopBar({
   /** Quadro aberto: a barra passa a ser a do quadro (template DelonixWhiteboard). */
   /** «A partilhar · Nome» quando há apresentação (template DelonixRoomChat). */
   presenterLabel: string | null
-  board: { sharedBy: string | null; saving: boolean; canSave: boolean; onSave: () => void; onClose: () => void; pen: { on: boolean; pressao: boolean } } | null
+  board: {
+    sharedBy: string | null
+    saving: boolean
+    canSave: boolean
+    onSave: () => void
+    pen: { on: boolean; pressao: boolean }
+    /** Quem mexeu no quadro nos últimos segundos («A editar:»). */
+    editors: string[]
+    /** Quadro partilhado (caneta, ajustes, palco): a barra é a do template DelonixBoardShared. */
+    shared: boolean
+  } | null
   locale: string
 }) {
   const { t } = useTranslation()
   return (
-    <header className="rm-top">
+    <header className={cx('rm-top', board && 'is-board')}>
       <span className="rm-top__mark" aria-hidden="true">
         <DelonixSymbol size={18} />
       </span>
       <h1 className="rm-top__title">
         {board
-          ? board.sharedBy
+          ? board.shared
             ? t('room.quadro.tituloPartilhado', { nome: title || code })
             : t('room.quadro.tituloBarra', { nome: title || code })
           : title || code}
@@ -98,7 +109,23 @@ export function TopBar({
           <span className="dx-sr-only">{recordingLabel}</span>
         </span>
       )}
-      {live && <StatusBadge tone="live">{t('room.topo.aoVivo')}</StatusBadge>}
+      {live.on && (
+        <span
+          role="status"
+          title={
+            live.destinos.length
+              ? t('room.topo.aoVivoDica', {
+                  hora: live.since ? new Date(live.since).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : '—',
+                  destinos: live.destinos.map((d) => d.label).join(', '),
+                })
+              : undefined
+          }
+        >
+          <StatusBadge tone="live">
+            {live.destinos.length ? t('room.topo.aoVivoDestinos', { count: live.destinos.length }) : t('room.topo.aoVivo')}
+          </StatusBadge>
+        </span>
+      )}
       {e2eeOn && (
         <button type="button" className="rm-top__e2ee" onClick={onToggleSec} aria-expanded={secOpen} title={t('room.topo.e2eeDica')}>
           <Icon name="lock" size={11} />
@@ -112,38 +139,41 @@ export function TopBar({
         </span>
       )}
       <span className="dx-spacer" />
+      {/* No desktop a fila de espera vive na barra de baixo (template); no telemóvel, aqui. */}
       {waitingCount > 0 && (
-        <button type="button" className="rm-waiting-pill" onClick={onOpenPeople}>
+        <button type="button" className="rm-waiting-pill rm-only-narrow-inline" onClick={onOpenPeople}>
           <Icon name="people" size={12} />
           {t('room.topo.aEspera', { count: waitingCount })}
         </button>
       )}
       {board && (
         <>
-          {board.sharedBy && <span className="rm-top__meta rm-hide-narrow">{t('room.quadro.abertoPor', { nome: board.sharedBy })}</span>}
-          {board.pen.on && (
-            <span className="rm-top__pen rm-hide-narrow">
-              <span className="rm-top__penchip">
-                <Icon name="pen" size={11} />
-                {t('room.quadro.caneta')}
+          {board.shared ? (
+            board.pen.on && (
+              <span className="rm-top__pen rm-hide-narrow">
+                <span className="rm-top__penchip">
+                  <Icon name="pen" size={11} />
+                  {t('room.quadro.caneta')}
+                </span>
+                {board.pen.pressao && <span className="rm-top__meta dx-num">{t('room.quadro.pressaoActiva')}</span>}
               </span>
-              {board.pen.pressao && <span className="rm-top__meta dx-num">{t('room.quadro.pressaoActiva')}</span>}
-            </span>
+            )
+          ) : (
+            <>
+              {board.editors.length > 0 && (
+                <span className="rm-top__editing rm-hide-narrow" role="status" aria-label={t('room.quadro.aEditarNomes', { nomes: board.editors.join(', ') })}>
+                  <span aria-hidden="true">{t('room.quadro.aEditar')}</span>
+                  <AvatarStack names={board.editors} max={4} size={22} />
+                </span>
+              )}
+              <Button size="sm" variant="outline" busy={board.saving} disabled={!board.canSave} onClick={board.onSave} className="rm-top__save">
+                <span className="rm-hide-narrow">{t('room.quadro.guardar')}</span>
+              </Button>
+            </>
           )}
-          <Button size="sm" variant="outline" icon="download" busy={board.saving} disabled={!board.canSave} onClick={board.onSave}>
-            <span className="rm-hide-narrow">{t('room.quadro.guardar')}</span>
-          </Button>
-          <Button size="sm" variant="primary" icon="x" onClick={board.onClose}>
-            <span className="rm-hide-narrow">{t('room.quadro.fechar')}</span>
-          </Button>
         </>
       )}
-      {presenterLabel && !board ? (
-        <span className="rm-top__presenting rm-hide-narrow">
-          <Icon name="screen" size={11} />
-          {presenterLabel}
-        </span>
-      ) : null}
+      {presenterLabel && !board ? <span className="rm-top__presenting rm-hide-narrow">{presenterLabel}</span> : null}
       <span className={cx('rm-hide-narrow', 'rm-top__conn', (board || presenterLabel) && 'is-hidden')}>
         <ConnectionChip state={callState}>
           <WallClock locale={locale} />

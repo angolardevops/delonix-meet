@@ -129,7 +129,6 @@ export function ControlBar(p: ControlBarProps) {
   const camPop = usePopover()
   const reactPop = usePopover()
   const morePop = usePopover()
-  const recovering = p.callState !== 'connected' && p.callState !== 'connecting' && p.callState !== 'disconnected'
 
   const micLabel = media.micOn ? t('room.controlos.desligarMicrofone') : t('room.controlos.ligarMicrofone')
   const camLabel = media.camOn ? t('room.controlos.desligarCamara') : t('room.controlos.ligarCamara')
@@ -168,13 +167,6 @@ export function ControlBar(p: ControlBarProps) {
               </span>
             )}
           />
-        )}
-        {/* «A partilhar · Nome» vive na barra de topo (template DelonixRoomChat). */}
-        {recovering && (
-          <span className="rm-chip is-warn" role="status">
-            <Icon name="refresh" size={12} />
-            {p.callState === 'degraded' ? t('room.topo.ligacaoInstavel') : t('room.topo.aRestabelecer')}
-          </span>
         )}
         {p.fonte2Label && (
           <span className="rm-hide-narrow">
@@ -341,8 +333,8 @@ export function ControlBar(p: ControlBarProps) {
             <Ctrl icon="more" label={t('room.controlos.maisOpcoes')} caption={t('room.controlos.rotuloMais')} active={morePop.open} popup expanded={morePop.open} onClick={morePop.toggle} />
             {morePop.open && (
               <PopoverPanel label={t('room.controlos.maisOpcoes')} role="menu" align="end" className="rm-menu">
-                {/* No telemóvel a barra só leva o essencial; o resto vive aqui. */}
-                <div className="rm-only-narrow">
+                {/* Numa coluna estreita (telemóvel, ou painel aberto) a barra só leva o essencial; o resto vive aqui. */}
+                <div className="rm-only-narrow rm-menu__extra">
                   <MenuItem icon={<Icon name="captions" />} checked={p.ccOn} onClick={fecharMais(p.onToggleCc)}>
                     {t('room.controlos.legendas')}
                   </MenuItem>
@@ -428,6 +420,23 @@ export function ControlBar(p: ControlBarProps) {
             )}
           </div>
         </div>
+        <div className="rm-controls__group rm-controls__group--panels">
+          <Ctrl icon="board" label={t('room.controlos.quadro')} active={p.wbOpen} pressed={p.wbOpen} onClick={p.onToggleWhiteboard} />
+          <Ctrl icon="notes" label={t('room.controlos.notas')} active={p.panel === 'notes'} pressed={p.panel === 'notes'} onClick={() => p.onTogglePanel('notes')}>
+            {p.transcribing && <span className="rm-ctrl__live" aria-hidden="true" />}
+          </Ctrl>
+          <Ctrl icon="question" label={t('room.painel.perguntas')} active={p.panel === 'qa'} pressed={p.panel === 'qa'} onClick={() => p.onTogglePanel('qa')} badge={p.openQuestions || undefined} />
+          <Ctrl icon="poll" label={t('room.painel.sondagens')} active={p.panel === 'polls'} pressed={p.panel === 'polls'} onClick={() => p.onTogglePanel('polls')} badge={p.openPolls || undefined} />
+          <Ctrl icon="people" label={t('room.painel.participantes')} active={p.panel === 'people'} pressed={p.panel === 'people'} onClick={() => p.onTogglePanel('people')} badge={p.total} />
+          <Ctrl
+            icon="chat"
+            label={t('room.painel.chat')}
+            active={p.panel === 'chat'}
+            pressed={p.panel === 'chat'}
+            onClick={() => p.onTogglePanel('chat')}
+            badge={p.unreadChat > 0 ? (p.unreadChat > 9 ? '9+' : p.unreadChat) : undefined}
+          />
+        </div>
         <button type="button" className="rm-ctrl rm-ctrl--hangup" onClick={p.onLeave} aria-label={t('room.controlos.sair')} title={t('room.controlos.sair')}>
           <Icon name="phoneOff" />
           <span className="rm-ctrl__caption" aria-hidden="true">
@@ -450,7 +459,7 @@ export function ControlBar(p: ControlBarProps) {
       )}
 
       <div className="rm-controls__side">
-        <span className="rm-hide-mid">
+        {/* Ocupação e fila de espera (template DelonixRoomGrid, canto inferior direito). */}
         <span className="rm-occupancy">
           <span className="dx-num">
             {p.canAdmit && p.waitingCount > 0
@@ -458,27 +467,11 @@ export function ControlBar(p: ControlBarProps) {
               : t('room.controlos.naSala', { count: p.total })}
           </span>
           {p.canAdmit && p.waitingCount > 0 && (
-            <Button size="sm" variant="outline" onClick={p.onAdmitAll} aria-label={t('room.avisos.admitirTodos', { count: p.waitingCount })}>
+            <button type="button" className="rm-occupancy__admit rm-occupancy__waiting" onClick={p.onAdmitAll} aria-label={t('room.avisos.admitirTodos', { count: p.waitingCount })}>
               {t('room.avisos.admitir')}
-            </Button>
+            </button>
           )}
         </span>
-        </span>
-        <Ctrl icon="board" label={t('room.controlos.quadro')} active={p.wbOpen} pressed={p.wbOpen} onClick={p.onToggleWhiteboard} />
-        <Ctrl icon="notes" label={t('room.controlos.notas')} active={p.panel === 'notes'} pressed={p.panel === 'notes'} onClick={() => p.onTogglePanel('notes')}>
-          {p.transcribing && <span className="rm-ctrl__live" aria-hidden="true" />}
-        </Ctrl>
-        <Ctrl icon="question" label={t('room.painel.perguntas')} active={p.panel === 'qa'} pressed={p.panel === 'qa'} onClick={() => p.onTogglePanel('qa')} badge={p.openQuestions || undefined} className="rm-hide-mid" />
-        <Ctrl icon="poll" label={t('room.painel.sondagens')} active={p.panel === 'polls'} pressed={p.panel === 'polls'} onClick={() => p.onTogglePanel('polls')} badge={p.openPolls || undefined} className="rm-hide-mid" />
-        <Ctrl icon="people" label={t('room.painel.participantes')} active={p.panel === 'people'} pressed={p.panel === 'people'} onClick={() => p.onTogglePanel('people')} badge={p.total} />
-        <Ctrl
-          icon="chat"
-          label={t('room.painel.chat')}
-          active={p.panel === 'chat'}
-          pressed={p.panel === 'chat'}
-          onClick={() => p.onTogglePanel('chat')}
-          badge={p.unreadChat > 0 ? (p.unreadChat > 9 ? '9+' : p.unreadChat) : undefined}
-        />
       </div>
     </footer>
   )

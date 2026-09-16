@@ -117,6 +117,12 @@ const P: Record<string, string> = {
   highlighter: 'M4 20h16M7 16l9.5-10 3.5 3.5L10 19H7z',
   shapes: 'M4 4h7v7H4zM17.5 13a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM16 4l4 7h-8z',
   ruler: 'M3 9h18v6H3zM7 9v3M11 9v3M15 9v3M19 9v2',
+  // sala · lote 2 (frontend/l2-sala)
+  arrowUp: 'M12 19V5M6 11l6-6 6 6',
+  cursor: 'M5 3l14 7-6 2-2 6z',
+  laser: 'M12 3v4M12 17v4M3 12h4M17 12h4M12 12h.01',
+  note: 'M5 4h14v11l-5 5H5zM14 20v-5h5',
+  move: 'M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3',
 }
 
 export type IconName = keyof typeof P

@@ -128,7 +128,8 @@ await entrar(page2, APP, conta2)
 await page2.goto(`${APP}/#/r/${codigo}`, { waitUntil: 'domcontentloaded' })
 await page2.getByRole('button', { name: /entrar na sessão/i }).first().click({ timeout: 60000 })
 
-const pilula = page.locator('.rm-waiting-pill')
+// A fila de espera vive na barra de baixo (template DelonixRoomGrid).
+const pilula = page.locator('.rm-occupancy__waiting')
 const viuPedido = await pilula
   .waitFor({ timeout: 90000 })
   .then(() => true)

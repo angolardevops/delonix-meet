@@ -16,6 +16,13 @@ export function fmtDuracao(secs: number): string {
   return h > 0 ? `${h}:${dois(m)}:${dois(r)}` : `${dois(m)}:${dois(r)}`
 }
 
+/** hh:mm:ss sempre (o cronómetro da sessão no template: «00:24:18»). */
+export function fmtRelogio(secs: number): string {
+  const s = Math.max(0, Math.floor(secs))
+  const dois = (n: number) => String(n).padStart(2, '0')
+  return `${dois(Math.floor(s / 3600))}:${dois(Math.floor((s % 3600) / 60))}:${dois(s % 60)}`
+}
+
 /** Um render por segundo — NESTE nó e em mais nenhum. */
 function useSegundo(): void {
   const [, setN] = useState(0)
@@ -32,7 +39,7 @@ export function MeetingElapsed({ startedAt, className }: { startedAt: number; cl
   // distância à época Unix e lia-se como um relógio a funcionar.
   if (!startedAt) return null
   const secs = Math.floor((Date.now() - startedAt) / 1000)
-  return <span className={className}>{fmtDuracao(Math.max(0, secs))}</span>
+  return <span className={className}>{fmtRelogio(Math.max(0, secs))}</span>
 }
 
 /**

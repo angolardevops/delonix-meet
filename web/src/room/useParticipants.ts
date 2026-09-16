@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { postQos } from '../api'
-import type { PeerInfo } from '../signaling'
+import type { PeerInfo, Role } from '../signaling'
 import type { QosReport } from '../webrtc'
 import type { LocalConditions } from '../layerPolicy'
 import { chaveFracos, deveActualizarQos, INTERVALO_RELATORIO_MS, intervaloQos } from './qosAmostra'
 import type { RemotePeer, RoomCore } from './useRoomCore'
 
-function toPeer(p: PeerInfo): RemotePeer {
+/** Papel de um PeerInfo: o do servidor, ou deduzido dos campos antigos. */
+export function papelDe(p: Pick<PeerInfo, 'host' | 'can_admit' | 'role'>): Role {
+  return p.role ?? (p.host ? 'host' : p.can_admit ? 'cohost' : 'attendee')
+}
+
+export function toPeer(p: PeerInfo): RemotePeer {
   return {
     peerId: p.peer_id,
     username: p.username,
@@ -18,6 +23,9 @@ function toPeer(p: PeerInfo): RemotePeer {
     stream: null,
     is_pstn: p.is_pstn,
     is_bot: p.is_bot,
+    role: papelDe(p),
+    origin: p.origin,
+    title: p.title,
   }
 }
 
@@ -30,6 +38,8 @@ export function useParticipants(core: RoomCore, peoplePanelOpen: boolean) {
   const { signal, code, setPeers } = core
   const [waitingQueue, setWaitingQueue] = useState<PeerInfo[]>([])
   const [roomLocked, setRoomLocked] = useState(false)
+  /** Sala de espera ligada AGORA (`room-settings.waiting_room`); `null` até o servidor dizer. */
+  const [waitingRoomOn, setWaitingRoomOn] = useState<boolean | null>(null)
   const [qos, setQos] = useState<QosReport | null>(null)
   const [conditions, setConditions] = useState<LocalConditions>({})
   const [talkOver, setTalkOver] = useState(false)
@@ -54,17 +64,25 @@ export function useParticipants(core: RoomCore, peoplePanelOpen: boolean) {
       signal.on('media', (m) =>
         setPeers((ps) => ps.map((p) => (p.peerId === m.from ? { ...p, camOn: m.cam, micOn: m.mic } : p))),
       ),
-      signal.on('peer-role', (m) =>
-        setPeers((ps) => ps.map((p) => (p.peerId === m.peer_id ? { ...p, canAdmit: m.can_admit } : p))),
-      ),
+      // `peer-role` do b1-sala traz o papel; o antigo só `can_admit`. O MEU
+      // papel também chega por aqui (é difundido à sala inteira).
+      signal.onB1('peer-role', (m) => {
+        const role = m.role ?? (m.can_admit ? 'cohost' : 'attendee')
+        if (m.peer_id === core.meuPeerIdRef.current) core.setMyRole(role)
+        setPeers((ps) => ps.map((p) => (p.peerId === m.peer_id ? { ...p, canAdmit: m.can_admit, role: p.host ? 'host' : role } : p)))
+      }),
       signal.on('waiting-join', (m) => setWaitingQueue((q) => [...q.filter((p) => p.peer_id !== m.peer.peer_id), m.peer])),
       signal.on('waiting-left', (m) => setWaitingQueue((q) => q.filter((p) => p.peer_id !== m.peer_id))),
       signal.on('admit-role', (m) => {
         if (!m.allowed) setWaitingQueue([])
       }),
-      signal.on('room-settings', (m) => setRoomLocked(m.locked)),
+      signal.onB1('room-settings', (m) => {
+        setRoomLocked(m.locked)
+        if (m.waiting_room !== undefined) setWaitingRoomOn(m.waiting_room)
+      }),
     ]
     return () => offs.forEach((off) => off())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal, setPeers, core.levelsRef])
 
   // Telemetria: UMA amostra de `getStats` serve o retrato («▲ FRACA»), a
@@ -156,6 +174,14 @@ export function useParticipants(core: RoomCore, peoplePanelOpen: boolean) {
   )
   const muteAll = useCallback((allowUnmute: boolean) => signal.send({ type: 'mute-all', allow_unmute: allowUnmute }), [signal])
   const setLocked = useCallback((locked: boolean) => signal.send({ type: 'room-lock', locked }), [signal])
+  /** Só anfitrião. `host` passa-se pelo `transfer-host`, nunca por aqui. */
+  const setRole = useCallback((peerId: string, role: Exclude<Role, 'host'>) => signal.sendB1({ type: 'set-role', to: peerId, role }), [signal])
+  /** Anfitrião ou co-anfitrião: o servidor admite a fila inteira de uma vez. */
+  const admitAll = useCallback(() => {
+    signal.sendB1({ type: 'admit-all' })
+    setWaitingQueue([])
+  }, [signal])
+  const setWaitingRoom = useCallback((on: boolean) => signal.sendB1({ type: 'waiting-room', on }), [signal])
 
   return {
     waitingQueue,
@@ -165,7 +191,10 @@ export function useParticipants(core: RoomCore, peoplePanelOpen: boolean) {
     talkOver,
     talkOverIds,
     admit,
-    admitAll: () => waitingQueue.forEach((p) => admit(p.peer_id, true)),
+    admitAll,
+    waitingRoomOn,
+    setWaitingRoom,
+    setRole,
     mute,
     camOff,
     kick,

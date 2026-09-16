@@ -219,7 +219,15 @@ export function useCallSession(
           setStatus(m.allowed ? t('room.estado.podesAdmitir') : '')
         })
         s.on('host-changed', (m) => {
-          setPeers((ps) => ps.map((p) => ({ ...p, host: p.peerId === m.to ? true : p.peerId === m.from ? false : p.host })))
+          setPeers((ps) =>
+            ps.map((p) =>
+              p.peerId === m.to
+                ? { ...p, host: true, role: 'host' }
+                : p.peerId === m.from
+                  ? { ...p, host: false, role: p.role === 'host' ? 'attendee' : p.role }
+                  : p,
+            ),
+          )
           core.setIsHost((h) => (core.meuPeerIdRef.current === m.to ? true : core.meuPeerIdRef.current === m.from ? false : h))
         })
         // Salas paralelas: mover para o grupo (guardando o caminho de volta) ou
@@ -227,9 +235,13 @@ export function useCallSession(
         s.on('breakout-move', (m) => {
           const returnTo = sessionStorage.getItem(`dx_return_${code}`)
           if (m.back) {
+            sessionStorage.setItem(`dx_rejoin_${m.code}`, String(Date.now()))
             sessionStorage.removeItem(`dx_return_${code}`)
             sessionStorage.removeItem(`dx_bo_ends_${code}`)
           } else {
+            // Ir para o grupo não passa pela pré-entrada: a pessoa já estava na
+            // reunião, e sem isto ficava parada no «Entrar» e o grupo vazio.
+            sessionStorage.setItem(`dx_rejoin_${m.code}`, String(Date.now()))
             sessionStorage.setItem(`dx_return_${m.code}`, returnTo ?? code)
             if (m.ends_at) sessionStorage.setItem(`dx_bo_ends_${m.code}`, String(m.ends_at))
             else sessionStorage.removeItem(`dx_bo_ends_${m.code}`)
@@ -249,6 +261,9 @@ export function useCallSession(
             media.setMicOn(false)
           }
           core.meuPeerIdRef.current = m.peer_id
+          // Início da sessão no servidor: o cronómetro é o mesmo para todos.
+          const inicio = (m as { started_at?: number }).started_at
+          if (inicio && inicio > 0) core.startedAtRef.current = inicio
           sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
           callHolder.start() // SÓ agora, depois da admissão
           setStatus(spectator ? t('room.estado.modoEspectador') : '')

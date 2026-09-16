@@ -292,7 +292,8 @@ export interface LiveDestination {
 export type ServerMsgB1 =
   /** `joined` passou a trazer o início da sessão (epoch ms; 0 = desconhecido). */
   | { type: 'joined'; peer_id: string; peers: PeerInfo[]; reconnect?: string; companion?: boolean; started_at?: number }
-  | { type: 'chat'; from: string; username: string; text: string; id?: string; at?: number; reply_to?: string }
+  /** `to`/`to_username`: conversa directa (só chega a quem a recebe). */
+  | { type: 'chat'; from: string; username: string; text: string; id?: string; at?: number; reply_to?: string; to?: string; to_username?: string }
   /** Só para quem enviou com `client_id`. */
   | { type: 'chat-sent'; client_id: string; id: string; at: number }
   /** Estado completo das reacções de uma mensagem. */
@@ -318,7 +319,8 @@ export type ServerMsgB1 =
   | { type: 'announcement'; from: string; text: string; at: number }
 
 export type ClientMsgB1 =
-  | { type: 'chat'; text: string; reply_to?: string | null; client_id?: string | null }
+  /** `to`: `peer_id` de quem recebe uma conversa directa (tem de estar na sala). */
+  | { type: 'chat'; text: string; reply_to?: string | null; client_id?: string | null; to?: string | null }
   | { type: 'chat-react'; id: string; emoji: string }
   /** Só anfitrião. `host` não se dá por aqui (é o `transfer-host`). */
   | { type: 'set-role'; to: string; role: Exclude<Role, 'host'> }

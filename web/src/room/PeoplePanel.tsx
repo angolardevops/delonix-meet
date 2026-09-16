@@ -32,6 +32,9 @@ export function PeoplePanel({
   recordings,
   onDownload,
   onInvite,
+  onPrivateMessage,
+  spotlightId,
+  onSpotlight,
 }: {
   code: string
   isHost: boolean
@@ -53,6 +56,11 @@ export function PeoplePanel({
   recordings: Recording[]
   onDownload: (r: Recording) => void
   onInvite: () => void
+  /** «Mensagem privada»: abre o chat com o «Para» nessa pessoa. */
+  onPrivateMessage?: (peer: RemotePeer) => void
+  /** Destaque para todos (só anfitrião). */
+  spotlightId?: string | null
+  onSpotlight?: (peerId: string | null) => void
 }) {
   const { t, i18n } = useTranslation()
   const [search, setSearch] = useState('')
@@ -171,16 +179,31 @@ export function PeoplePanel({
               )}
               {p.host ? (
                 <Tag tone="accent">{t('room.papel.anfitriao')}</Tag>
-              ) : p.canAdmit ? (
+              ) : p.role === 'cohost' || p.canAdmit ? (
                 <span title={t('room.papel.coAnfitriaoDica')}>
                   <Tag>{t('room.papel.coAnfitriao')}</Tag>
                 </span>
+              ) : p.role === 'speaker' ? (
+                <Tag tone="live">{t('room.papel.orador')}</Tag>
+              ) : p.role === 'broadcast' ? (
+                <Tag tone="live">{t('room.papel.emissao')}</Tag>
               ) : p.is_pstn ? (
                 <Tag>{t('room.papel.telefone')}</Tag>
               ) : p.is_bot ? (
                 <Tag>{t('room.papel.assistente')}</Tag>
               ) : null}
               {speaking.has(p.peerId) ? <SpeakingBars /> : p.micOn ? <Icon name="mic" size={13} /> : <Icon name="micOff" size={13} className="dx-icon rm-tile__muted" />}
+              {onPrivateMessage && !p.is_pstn && !p.is_bot && (
+                <IconButton icon="chat" label={t('room.pessoas.mensagemPrivada', { nome: p.username })} onClick={() => onPrivateMessage(p)} />
+              )}
+              {isHost && onSpotlight && (
+                <IconButton
+                  icon="pin"
+                  label={spotlightId === p.peerId ? t('room.pessoas.desafixarParaTodos', { nome: p.username }) : t('room.pessoas.fixarParaTodos', { nome: p.username })}
+                  aria-pressed={spotlightId === p.peerId}
+                  onClick={() => onSpotlight(spotlightId === p.peerId ? null : p.peerId)}
+                />
+              )}
               {isHost && !p.host && (
                 <div className="rm-person__actions" role="group" aria-label={t('room.pessoas.accoesSobre', { nome: p.username })}>
                   <IconButton icon="micOff" label={t('room.tile.silenciar', { nome: p.username })} onClick={() => participants.mute(p.peerId)} />
@@ -195,7 +218,8 @@ export function PeoplePanel({
                     icon="door"
                     label={p.canAdmit ? t('room.pessoas.retirarAdmissao', { nome: p.username }) : t('room.pessoas.permitirAdmissao', { nome: p.username })}
                     aria-pressed={p.canAdmit}
-                    onClick={() => participants.promoteAdmit(p.peerId, !p.canAdmit)}
+                    // Co-anfitrião pelo `set-role` (o antigo `promote-admit` não tem handler no servidor).
+                    onClick={() => participants.setRole(p.peerId, p.canAdmit ? 'attendee' : 'cohost')}
                   />
                   <IconButton icon="key" label={t('room.pessoas.passarAnfitriao', { nome: p.username })} onClick={() => onTransferHost(p)} />
                   <IconButton icon="x" label={t('room.tile.remover', { nome: p.username })} onClick={() => participants.kick(p.peerId)} />
