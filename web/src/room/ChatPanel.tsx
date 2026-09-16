@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { intlLocale } from '../i18n'
 import { Icon } from '../ui/icons'
 import { Alert, Avatar, IconButton, cx } from '../ui/kit'
 import { chatEmTexto, nomeFicheiroChat } from './chatExport'
@@ -43,7 +44,7 @@ export function ChatPanel({
   onNewPoll: () => void
 }) {
   const { t, i18n } = useTranslation()
-  const locale = i18n.language === 'en' ? 'en-GB' : i18n.language === 'fr' ? 'fr-FR' : 'pt-PT'
+  const locale = intlLocale(i18n.language)
   const [emojiOpen, setEmojiOpen] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)

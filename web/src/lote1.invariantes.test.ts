@@ -68,8 +68,8 @@ describe('1.3 · só o idioma em uso viaja', () => {
     expect(i18n).toContain("import pt from './locales/pt'")
   })
 
-  it('EN e FR só chegam por import() dinâmico', () => {
-    for (const l of ['en', 'fr']) {
+  it('EN, FR e ZH só chegam por import() dinâmico', () => {
+    for (const l of ['en', 'fr', 'zh']) {
       expect(i18n).not.toMatch(new RegExp(`^import ${l} from './locales/${l}'`, 'm'))
       expect(i18n).toContain(`import('./locales/${l}')`)
     }

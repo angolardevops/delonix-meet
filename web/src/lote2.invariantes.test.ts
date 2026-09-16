@@ -208,7 +208,7 @@ describe('3.2.5 · nada de emoji como controlo na consola', () => {
       'cadenas 🔒', 'prêt ! 🎉', 'période. 🎉',
     ]
     const soltos: string[] = []
-    for (const loc of ['pt', 'en', 'fr']) {
+    for (const loc of ['pt', 'en', 'fr', 'zh']) {
       for (const l of lerLocale(loc).split('\n')) {
         if (l.trim().startsWith('//')) continue
         if (!EMOJI.test(l)) continue
@@ -474,11 +474,43 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     return out
   }
 
-  it('pt, en e fr têm exactamente as mesmas chaves — em TODOS os blocos', () => {
+  it('pt, en, fr e zh têm exactamente as mesmas chaves — em TODOS os blocos', () => {
     const pt = Object.keys(mapaDeLocale('pt')).sort()
     expect(pt.length).toBeGreaterThan(900)
     expect(Object.keys(mapaDeLocale('en')).sort()).toEqual(pt)
     expect(Object.keys(mapaDeLocale('fr')).sort()).toEqual(pt)
+    expect(Object.keys(mapaDeLocale('zh')).sort()).toEqual(pt)
+  })
+
+  it('as quatro línguas têm as mesmas áreas, e nenhuma deixa um valor vazio onde o pt o preenche', () => {
+    // Uma área inteira só em `pt` (ficheiro em falta) passava ao lado da
+    // contagem de chaves se outra área tivesse chaves a mais. E um valor vazio
+    // é pior do que uma chave em falta: o i18next mostra NADA, sem fallback.
+    const pt = mapaDeLocale('pt')
+    const vazios: string[] = []
+    for (const loc of ['en', 'fr', 'zh']) {
+      expect(areasDeLocale(loc)).toEqual(areasDeLocale('pt'))
+      const o = mapaDeLocale(loc)
+      for (const [k, v] of Object.entries(pt)) {
+        if (v.trim() !== '' && (o[k] ?? '').trim() === '') vazios.push(`${loc}: ${k}`)
+      }
+    }
+    expect(vazios).toEqual([])
+  })
+
+  it('os placeholders {{…}} de cada tradução são os mesmos do português', () => {
+    // Um `{{nome}}` traduzido (ou esquecido) não falha: mostra a chave crua
+    // ou come o nome da pessoa. No chinês a ordem muda, o conjunto não.
+    const ph = (v: string) => (v.match(/\{\{[^}]+\}\}/g) ?? []).sort().join(' ')
+    const pt = mapaDeLocale('pt')
+    const maus: string[] = []
+    for (const loc of ['en', 'fr', 'zh']) {
+      const o = mapaDeLocale(loc)
+      for (const [k, v] of Object.entries(pt)) {
+        if (o[k] !== undefined && ph(o[k]) !== ph(v)) maus.push(`${loc}: ${k}`)
+      }
+    }
+    expect(maus).toEqual([])
   })
 
   it('nenhuma tradução é uma FRASE onde o português é um rótulo', () => {
@@ -493,7 +525,7 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     // 20 %) e apanha quem escreveu uma explicação onde devia estar um rótulo.
     const pt = mapaDeLocale('pt')
     const maus: string[] = []
-    for (const loc of ['en', 'fr']) {
+    for (const loc of ['en', 'fr', 'zh']) {
       const o = mapaDeLocale(loc)
       for (const [k, v] of Object.entries(pt)) {
         const w = o[k]

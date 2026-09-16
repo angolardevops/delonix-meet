@@ -1,10 +1,11 @@
 /** Formatos da Análise: números no idioma activo e variação vs. período anterior. */
 import { useTranslation } from 'react-i18next'
+import { intlLocale } from '../../i18n'
 import { ApiError } from '../../api'
 
 export function useNumFmt() {
   const { i18n } = useTranslation()
-  const tag = i18n.language.startsWith('en') ? 'en-GB' : i18n.language.startsWith('fr') ? 'fr-FR' : 'pt-PT'
+  const tag = intlLocale(i18n.language)
   return {
     tag,
     n: (v: number, digits = 0) => v.toLocaleString(tag, { maximumFractionDigits: digits }),

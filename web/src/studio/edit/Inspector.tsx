@@ -121,7 +121,7 @@ function CartaoDoClip({
   ripple: boolean
   ferramenta: Ferramenta
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   if (!c) {
     return (
       <div className="ed-card" data-cartao="corte">
@@ -168,7 +168,7 @@ function CartaoDoClip({
             <label className="st-label" htmlFor="ed-vel">
               {t('editor.inspector.velocidade')}
             </label>
-            <span className="dx-num ed-slider__val">{`${c.velocidade.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}×`}</span>
+            <span className="dx-num ed-slider__val">{`${c.velocidade.toLocaleString(i18n.language, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}×`}</span>
           </div>
           <input
             id="ed-vel"

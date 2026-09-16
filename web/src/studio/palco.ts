@@ -299,7 +299,7 @@ export function hhmmss(segundos: number): string {
 }
 
 /** Bytes legíveis (KB, MB, GB) com a vírgula da língua. */
-export function formatarBytes(bytes: number, locale = 'pt-PT'): string {
+export function formatarBytes(bytes: number, locale = 'pt-AO'): string {
   const unidades = ['B', 'KB', 'MB', 'GB', 'TB']
   let v = Math.max(0, bytes)
   let i = 0

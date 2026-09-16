@@ -99,3 +99,12 @@
   --controls-h: 66px;
   --focus: 2px solid var(--accent);
 }
+
+/* Chinês: a Archivo e a DM Mono não têm glifos CJK. Nomeiam-se as fontes do
+   sistema em chinês SIMPLIFICADO antes do system-ui — senão o browser pode
+   cair numa fonte japonesa e desenhar as variantes erradas dos caracteres. */
+:root:lang(zh) {
+  --font-ui: 'Archivo', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC', system-ui, sans-serif;
+  --font-display: 'Archivo Black', 'Archivo', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC', sans-serif;
+  --font-mono: 'DM Mono', ui-monospace, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', monospace;
+}

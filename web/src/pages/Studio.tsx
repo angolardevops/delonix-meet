@@ -70,7 +70,7 @@ function vistaDoEndereco(): Vista {
 }
 
 export default function Studio() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { navOpen, setNavOpen, org } = useShell()
   const compRef = useRef<CompositorDeAula | null>(null)
   const canvasHostRef = useRef<HTMLDivElement>(null)
@@ -555,7 +555,7 @@ export default function Studio() {
         <span className="dx-spacer" />
 
         <span className="st-top__meta dx-num" data-studio="topo-meta">
-          {noAr && <span>{t('studio.topo.enc', { kbps: kbps.toLocaleString() })} · </span>}
+          {noAr && <span>{t('studio.topo.enc', { kbps: kbps.toLocaleString(i18n.language) })} · </span>}
           <Relogio />
         </span>
 

@@ -5,6 +5,7 @@
  */
 import { ReactNode, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { intlLocale } from '../../i18n'
 import { ApiError } from '../../api'
 import { Icon, IconName } from '../../ui/icons'
 import { IconButton } from '../../ui/kit'
@@ -32,7 +33,7 @@ export function isForbidden(e: unknown): boolean {
 }
 
 export function localeTag(lang: string): string {
-  return lang.startsWith('en') ? 'en-GB' : lang.startsWith('fr') ? 'fr-FR' : 'pt-PT'
+  return intlLocale(lang)
 }
 
 export function useDateFmt() {
