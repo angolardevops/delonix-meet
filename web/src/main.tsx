@@ -1,4 +1,9 @@
 import { createRoot } from 'react-dom/client'
+// As folhas globais entram ANTES do App: as páginas eager (Entrar, Início)
+// importam as suas folhas e têm de vencer a base na cascata, não perder.
+import './ui/tokens.css'
+import './ui/base.css'
+import './ui/shell.css'
 import App from './App'
 import { initTheme } from './theme'
 // Fontes do template, self-hosted — nada sai da rede local.
@@ -11,9 +16,6 @@ import '@fontsource/archivo/700.css'
 import '@fontsource/archivo-black/400.css'
 import '@fontsource/dm-mono/400.css'
 import '@fontsource/dm-mono/500.css'
-import './ui/tokens.css'
-import './ui/base.css'
-import './ui/shell.css'
 import { initLanguage } from './i18n'
 import { currentUser } from './api'
 
