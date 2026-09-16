@@ -118,6 +118,9 @@ jobs:
       - name: Afinidade por sala (ADR-0001 / regressão R3)
         run: bash scripts/check-room-affinity.sh
 
+      - name: Catraca da arquitectura (ADR-0004 — nenhuma cópia nova)
+        run: bash scripts/check-arquitectura-catraca.sh
+
       - name: Cobertura do isolamento (R95 — toda a rota de org é exercitada)
         run: bash scripts/check-isolamento-cobertura.sh
 

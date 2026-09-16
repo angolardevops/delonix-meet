@@ -49,7 +49,9 @@
 | `recordings.rs` | Biblioteca, partilha read-only, RBAC download, sweep de retenção |
 | `recorder.rs` | Gravação server-side: RTP→IVF(VP8)+OGG(Opus)→ffmpeg webm, E2EE decrypt |
 | `webhooks.rs` | CRUD webhooks, fire() (Slack/Teams/Mattermost/generic+HMAC), SSRF guard |
-| `whiteboards.rs` · `voice.rs` · `apikeys.rs` · `rate_limit.rs` · `error.rs` · `dlp.rs` · `pubsub.rs`/`redis_state.rs` | quadro branco · PSTN (stub) · API keys · rate limit · `AppError` · censura DLP · multi-nó Redis |
+| `whiteboards.rs` · `voice.rs` · `apikeys.rs` · `rate_limit.rs` · `error.rs` · `dlp.rs` · `pubsub.rs`/`redis_state.rs` | quadro branco · PSTN (controlo) · API keys (sem escopos) + handlers da v1 · rate limit · `AppError` · censura DLP · multi-nó Redis |
+
+> **Organização:** o backend é hoje UM crate com um ciclo de 18 módulos. O destino — camadas, workspace `delonix-meet-*`, superfícies de API e onde entra gRPC — está no [ADR-0004](../adr/0004-organizacao-alvo-do-backend.md) (Proposto), com a evidência na [auditoria de 2026-09-16](../auditoria-2026-09-16-backend.md).
 
 ## 3. Modelo de dados (Postgres)
 
@@ -98,4 +100,4 @@ Entidades-núcleo e relações (ver `server/migrations/` para o esquema exato):
 
 Ver a lista completa em [`AGENTS.md` §3](../../AGENTS.md) e [`HARNESS.md` §6](../../HARNESS.md). Resumo: segredos fail-closed · isolamento multi-tenant em TODOS os endpoints · room tokens curtos · SSRF guard nos webhooks · rate limit (token bucket no WS) · cookie refresh Secure · E2EE real com key delegation explícita · autorização de host controls no servidor · afinidade por sala em multi-réplica.
 
-**Regressões a não reintroduzir:** [`regressions.md`](regressions.md) — catálogo R1–R12 (sintoma → causa raiz → regra → ficheiros) de armadilhas onde a "correção óbvia" quebra media/deploy. Ler antes de mexer em `webrtc.ts`/`sfu.rs`/`Room.tsx`/`deploy/`. Os revisores em `agents/` verificam-nas no diff.
+**Regressões a não reintroduzir:** [`regressions.md`](regressions.md) — catálogo R1–R12 (sintoma → causa raiz → regra → ficheiros) de armadilhas onde a "correção óbvia" quebra media/deploy. Ler antes de mexer em `webrtc.ts`/`sfu.rs`/`Room.tsx`/`deploy/`. Os revisores em `.claude/agents/delonix-meet-*` verificam-nas no diff.
