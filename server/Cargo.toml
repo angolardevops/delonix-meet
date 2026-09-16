@@ -30,6 +30,12 @@ edition = "2021"
 [dependencies]
 delonix-meet-core = { path = "crates/delonix-meet-core" }
 delonix-meet-domain = { path = "crates/delonix-meet-domain" }
+delonix-meet-protocol = { path = "crates/delonix-meet-protocol" }
+# gRPC interno (ADR-0005 §3): mTLS com rustls/ring, health e reflection.
+tonic = { version = "0.14", features = ["tls-ring"] }
+tonic-health = "0.14"
+tonic-reflection = "0.14"
+tokio-stream = { version = "0.1", features = ["net"] }
 axum = { version = "0.8", features = ["ws", "macros"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "fs", "set-header"] }
@@ -68,3 +74,5 @@ tokio-tungstenite = "0.24"
 # Testes de integração em tests/: `#[sqlx::test]` dá a cada teste uma base
 # própria, migrada, no Postgres de DATABASE_URL.
 sqlx = { version = "0.8", features = ["macros"] }
+# Certificados de teste para o mTLS do gRPC interno (tests/grpc.rs).
+rcgen = "0.13"

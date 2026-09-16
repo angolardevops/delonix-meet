@@ -144,6 +144,12 @@ jobs:
       - name: Regra da dependência entre crates (ADR-0005 §1)
         run: bash scripts/check-crate-deps.sh
 
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+      - name: Contratos gRPC (buf lint + breaking contra a main)
+        run: bash scripts/check-proto.sh
+
       - name: Cobertura do isolamento (R95 — toda a rota de org é exercitada)
         run: bash scripts/check-isolamento-cobertura.sh
 

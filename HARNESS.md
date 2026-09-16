@@ -68,6 +68,8 @@
 - `odoo_sso.rs` — **login com conta Odoo**: autentica em `/web/session/authenticate`, cria a organização a partir da EMPRESA do utilizador (chave `(odoo_db, company_id)`) e sincroniza em segundo plano todos os utilizadores internos activos. Fail-closed sem `PLATFORM_ODOO_URL`/`PLATFORM_ODOO_DB`
 - `meetings_v1.rs` — recurso `meetings` da API pública v1 (POST/PATCH/DELETE): cria REUNIÃO + sala com anfitrião humano (`host_email`) e convidados por email, idempotente por `external_ref`. É o que a integração de calendário usa — `/api/v1/rooms` cria salas sem anfitrião nem convidados, e ninguém consegue ser admitido nelas
 - `sfu_e2e.rs` — testes ponta-a-ponta do SFU com `RTCPeerConnection`s reais no papel de browser (media a fluir nos dois sentidos + R13/glare). Só compila em `#[cfg(test)]`
+- `grpc.rs` — gRPC INTERNO (ADR-0005 §3), `GRPC_BIND_ADDR`, mTLS obrigatório (`GRPC_TLS_CERT/KEY/CLIENT_CA`; texto claro só com `DELONIX_ALLOW_INSECURE=1`), `grpc.health.v1` + reflection. `IvrService` e `TranscriptionService` são adaptadores finos: chamam `voice::validate_pin`/`record_cdr` e `transcription::*`, as mesmas funções do HTTP. Contratos em `server/proto/delonix/meet/*/v1`, gerados pelo crate `delonix-meet-protocol` (protoc vendorizado), `scripts/check-proto.sh` (buf lint/breaking). Nunca para o browser
+- `transcription.rs` — fila de transcrição com reserva (`FOR UPDATE SKIP LOCKED`, token, prazo, tentativas; migração 0040): o ai-worker reserva, transcreve e entrega, e o texto passa pelo `dlp::censor` antes da base
 - `ui.rs` — a SPA servida pelo próprio binário quando há `UI_DIR` (edição pessoal / enterprise pequeno, ADR-0005 §4): COOP/COEP/CORP e CSP iguais às do nginx, `/assets/*` imutável, `index.html`/`sw.js` sem cache, fallback SPA que NUNCA engole um 404 de `/api/`, `/ws` ou `/rtc`
 - `storage.rs` — armazenamento remoto da plataforma (TrueNAS NFS / Nextcloud WebDAV); registo único em `platform_storage`. Só o administrador da PLATAFORMA — os UUIDs em `PLATFORM_ADMIN_USER_IDS` (fail-closed, `403` para os restantes). Antes era «admin de qualquer org», e o registo cria sempre um admin (S1, fechada no #76, R121)
 
@@ -103,7 +105,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0039) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0040) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 

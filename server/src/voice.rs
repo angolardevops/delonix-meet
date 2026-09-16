@@ -503,22 +503,35 @@ pub async fn ivr_validate_pin(
     Json(req): Json<ValidatePinReq>,
 ) -> Result<Json<ValidatePinResp>, ApiError> {
     check_media_secret(&state, &headers)?;
-    let did = req.did_e164.trim();
+    validate_pin(&state, &req.did_e164, &req.pin)
+        .await
+        .map(Json)
+}
+
+/// A regra do IVR, partilhada pelo HTTP (`/api/voice/ivr/validate`) e pelo gRPC
+/// (`IvrService.ValidatePin`). Fronteira de isolamento: só encontra salas
+/// ATIVAS cujo DID corresponde.
+pub(crate) async fn validate_pin(
+    state: &AppState,
+    did_e164: &str,
+    pin: &str,
+) -> Result<ValidatePinResp, ApiError> {
+    let did = did_e164.trim();
     let row: Option<(Uuid, String, String)> = sqlx::query_as(
         "SELECT vr.id, vr.room_code, vr.media_backend
          FROM voice_room vr JOIN voice_did d ON d.id = vr.did_id
          WHERE d.e164 = $1 AND vr.pin = $2 AND vr.status = 'active'",
     )
     .bind(did)
-    .bind(req.pin.trim())
+    .bind(pin.trim())
     .fetch_optional(&state.db)
     .await?;
     match row {
-        Some((id, room_code, backend)) => Ok(Json(ValidatePinResp {
+        Some((id, room_code, backend)) => Ok(ValidatePinResp {
             voice_room_id: id,
             room_code,
             media_backend: backend,
-        })),
+        }),
         None => {
             // Anti-toll-fraud / PIN-guessing: só as FALHAS contam para o limite;
             // chamadores legítimos com PIN certo nunca são penalizados.
@@ -542,7 +555,7 @@ pub struct CdrReq {
     pub did_e164: String,
     pub duration_secs: i64,
 }
-fn inbound() -> String {
+pub(crate) fn inbound() -> String {
     "inbound".into()
 }
 
@@ -553,6 +566,12 @@ pub async fn ivr_record_cdr(
     Json(req): Json<CdrReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_media_secret(&state, &headers)?;
+    let (id, cost) = record_cdr(&state, &req).await?;
+    Ok(Json(serde_json::json!({ "id": id, "cost_estimate": cost })))
+}
+
+/// Regista o CDR — partilhada pelo HTTP e pelo gRPC (`RecordCallDetail`).
+pub(crate) async fn record_cdr(state: &AppState, req: &CdrReq) -> Result<(Uuid, f64), ApiError> {
     let org_id: Uuid = sqlx::query_scalar("SELECT org_id FROM voice_room WHERE id = $1")
         .bind(req.voice_room_id)
         .fetch_one(&state.db)
@@ -572,7 +591,7 @@ pub async fn ivr_record_cdr(
     .bind(cost)
     .fetch_one(&state.db)
     .await?;
-    Ok(Json(serde_json::json!({ "id": id, "cost_estimate": cost })))
+    Ok((id, cost))
 }
 
 #[cfg(test)]

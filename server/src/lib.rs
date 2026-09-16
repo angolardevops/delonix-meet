@@ -13,6 +13,7 @@ mod broadcast;
 pub mod config;
 mod dlp;
 mod error;
+pub mod grpc;
 mod meetings;
 mod meetings_v1;
 mod metrics;
@@ -34,6 +35,7 @@ mod sfu;
 mod sfu_e2e;
 mod signaling;
 mod storage;
+mod transcription;
 mod ui;
 mod users;
 mod voice;
@@ -776,6 +778,22 @@ pub async fn run() {
             .await
             {
                 tracing::error!(error = %e, "listener interno terminou");
+            }
+        });
+    }
+
+    if let Some(addr) = config.grpc_bind_addr.clone() {
+        let listener = tokio::net::TcpListener::bind(&addr)
+            .await
+            .expect("failed to bind GRPC_BIND_ADDR");
+        tracing::info!("gRPC interno (IVR, transcrição) em {addr}");
+        let grpc_state = state.clone();
+        tokio::spawn(async move {
+            // Pára com o sinal de shutdown; as chamadas em curso terminam.
+            if let Err(e) = grpc::serve(grpc_state, listener, shutdown_signal()).await {
+                // Configuração inválida (mTLS em falta) não pode ficar em silêncio.
+                tracing::error!(error = %e, "gRPC interno não arrancou");
+                std::process::exit(2);
             }
         });
     }
