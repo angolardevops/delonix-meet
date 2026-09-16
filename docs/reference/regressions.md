@@ -1732,3 +1732,15 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `server/tests/security_identity.rs::{sso_callback_refuses_account_of_another_org, sso_jit_only_creates_accounts_of_the_org_domain, sso_refuses_archived_member}` (controlo positivo em cada: o membro activo entra, o JIT do próprio domínio cria), e `auth::tests::sso_login_decision_is_the_most_restrictive_rule`. Não validado contra um IdP real (Google, Entra, Okta); o `email_verified` do id_token continua sem ser lido.
 
 **Ficheiros.** `server/src/auth.rs`, `server/tests/security_identity.rs`, `server/Cargo.toml` (`rsa` em dev-dependencies, para a chave do IdP falso gerada em memória).
+
+### R131 — A activação e a desactivação do MFA aceitavam tentativas ilimitadas
+
+**Sintoma.** Nenhum para a vítima. Com uma sessão roubada, `POST /api/users/me/mfa/disable` aceitava quantos códigos errados o atacante quisesse — seis dígitos adivinham-se, e acertar desliga o segundo factor. O `activate` tinha o mesmo oráculo sem travão. Provado a 2026-09-16 contra Postgres real: a sexta tentativa errada devolvia `left: 401, right: 429`.
+
+**Causa raiz.** O passo MFA do LOGIN (`/api/auth/mfa`) tinha travão por conta desde o início (`login_limiter`, chave `mfa:{user}`); os dois endpoints da sessão, escritos depois, não o herdaram. Não havia teste que contasse tentativas fora do login.
+
+**Regra.** Todo o endpoint que verifica um segredo curto (código MFA, PIN) tem travão por conta, e o travão pergunta ANTES de verificar (`RateLimiter::is_blocked`) — senão o código certo passa durante o bloqueio e o travão só atrasa quem adivinha. Só as falhas contam (`check` depois da falha, como o `voice_pin_limiter`): quem acerta à primeira nunca gasta tentativas. `mfa_limiter`: 5 falhas em 5 min, partilhado entre activar e desactivar → `429` com `Retry-After`.
+
+**Portão.** `server/tests/security_identity.rs::{mfa_activate_locks_after_five_failures, mfa_disable_locks_after_five_failures}` (controlo positivo: noutra conta, 4 falhas não bloqueiam e o código certo activa; o código de recuperação desactiva), `mfa_login_step_is_limited_per_account` (guarda do travão que já existia), e `rate_limit::tests::is_blocked_*`. O limitador é em memória por pod: com N réplicas o orçamento é N×5 — o mesmo limite dos outros travões (`rate_limit.rs`).
+
+**Ficheiros.** `server/src/{mfa,rate_limit,lib}.rs`, `server/tests/security_identity.rs`, `HARNESS.md`.

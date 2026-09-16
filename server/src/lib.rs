@@ -108,6 +108,9 @@ pub struct AppState {
     pub v1_limiter: RateLimiter,
     /// Anti-brute-force de PIN no dial-in PSTN (por DID). Só conta falhas.
     pub voice_pin_limiter: RateLimiter,
+    /// Anti-força-bruta do código MFA na activação e na desactivação (por
+    /// conta). Só conta falhas; trava também o código certo (R131).
+    pub mfa_limiter: RateLimiter,
     /// Salas de grupo ativas: sala principal -> conjunto de salas filhas.
     pub breakouts: dashmap::DashMap<uuid::Uuid, signaling::BreakoutSet>,
     /// Cliente HTTP partilhado para envio de webhooks (sem redirects, timeout 8s).
@@ -610,6 +613,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         login_limiter: RateLimiter::new(8, Duration::from_secs(300)),
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
+        mfa_limiter: RateLimiter::new(5, Duration::from_secs(300)),
         webhook_client,
         config: config.clone(),
         redis_bus: redis_bus.clone(),

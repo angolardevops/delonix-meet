@@ -1,4 +1,4 @@
-//! Ataques à IDENTIDADE, com controlo positivo (R51/R94):
+//! Ataques à IDENTIDADE (SSO, MFA, login), com controlo positivo (R51/R94):
 //! cada recusa vem acompanhada da prova de que o caminho legítimo continua a
 //! funcionar — senão o teste mediria uma avaria, não a regra.
 //!
@@ -16,7 +16,8 @@ use std::{
 };
 
 use axum::{extract::State, routing::get, routing::post, Json, Router};
-use common::{jwt_claims, TestApp};
+use common::{jwt_claims, TestApp, PASSWORD};
+use hmac::{Hmac, Mac};
 use serde_json::{json, Value};
 
 // ---------------------------------------------------------------------------
@@ -315,4 +316,283 @@ async fn sso_refuses_archived_member(db: sqlx::PgPool) {
         "arquivado entrou: {body}"
     );
     assert_eq!(body["code"], "sso.account_not_in_org", "{body}");
+}
+
+// ---------------------------------------------------------------------------
+//  MFA — força bruta do código
+// ---------------------------------------------------------------------------
+
+const B32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+fn base32_decode(s: &str) -> Vec<u8> {
+    let (mut buf, mut bits, mut out) = (0u32, 0u32, Vec::new());
+    for c in s.chars().filter(|c| *c != '=') {
+        let v = B32
+            .iter()
+            .position(|&a| a == c.to_ascii_uppercase() as u8)
+            .expect("base32") as u32;
+        buf = (buf << 5) | v;
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((buf >> bits) & 0xff) as u8);
+        }
+    }
+    out
+}
+
+/// Gerador independente (RFC 6238, SHA-1, 6 dígitos) — não usa o do servidor,
+/// para o teste não herdar um defeito dele.
+fn totp_at_step(secret_b32: &str, step: u64) -> String {
+    let mut mac = Hmac::<sha1::Sha1>::new_from_slice(&base32_decode(secret_b32)).unwrap();
+    mac.update(&step.to_be_bytes());
+    let tag = mac.finalize().into_bytes();
+    let off = (tag[19] & 0x0f) as usize;
+    let bin = ((tag[off] as u32 & 0x7f) << 24)
+        | ((tag[off + 1] as u32) << 16)
+        | ((tag[off + 2] as u32) << 8)
+        | tag[off + 3] as u32;
+    format!("{:06}", bin % 1_000_000)
+}
+
+fn current_step() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        / 30
+}
+
+#[test]
+fn test_totp_generator_matches_rfc6238_vectors() {
+    let seed = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+    assert_eq!(totp_at_step(seed, 59 / 30), "287082");
+    assert_eq!(totp_at_step(seed, 1_234_567_890 / 30), "005924");
+}
+
+/// Um código de 6 dígitos que NÃO é válido em nenhum passo aceite (±1).
+fn wrong_code(secret: &str) -> String {
+    let s = current_step();
+    let validos: Vec<String> = (s - 2..=s + 2).map(|p| totp_at_step(secret, p)).collect();
+    (0..1_000_000u32)
+        .map(|n| format!("{n:06}"))
+        .find(|c| !validos.contains(c))
+        .unwrap()
+}
+
+async fn enrol(app: &TestApp, token: &str) -> String {
+    let (st, body) = app
+        .post("/api/users/me/mfa/enrol", Some(token), json!({}))
+        .await;
+    assert_eq!(st, 200, "{body}");
+    body["secret"].as_str().unwrap().to_string()
+}
+
+/// Activa o MFA e devolve (segredo, códigos de recuperação).
+async fn enable_mfa(app: &TestApp, token: &str) -> (String, Vec<String>) {
+    let secret = enrol(app, token).await;
+    let (st, act) = app
+        .post(
+            "/api/users/me/mfa/activate",
+            Some(token),
+            json!({"code": totp_at_step(&secret, current_step())}),
+        )
+        .await;
+    assert_eq!(st, 200, "{act}");
+    let backup = act["backup_codes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap().to_string())
+        .collect();
+    (secret, backup)
+}
+
+/// R131 — `POST /api/users/me/mfa/activate` aceitava tentativas ilimitadas.
+/// O risco aqui é menor do que no `disable` (quem tem a sessão pode reinscrever
+/// e receber um segredo seu), mas um verificador de códigos sem travão é um
+/// oráculo, e o limite é o mesmo nos dois. Tem de travar também o código CERTO
+/// enquanto dura — senão é decoração.
+#[sqlx::test(migrations = "./migrations")]
+async fn mfa_activate_locks_after_five_failures(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let alvo = app.new_org("mfa-activar.test").await;
+    let secret = enrol(&app, &alvo.token).await;
+    let errado = wrong_code(&secret);
+
+    for i in 1..=5 {
+        let (st, body) = app
+            .post(
+                "/api/users/me/mfa/activate",
+                Some(&alvo.token),
+                json!({"code": errado}),
+            )
+            .await;
+        assert_eq!(st, 401, "falha {i}: {body}");
+    }
+    let (st, body) = app
+        .post(
+            "/api/users/me/mfa/activate",
+            Some(&alvo.token),
+            json!({"code": errado}),
+        )
+        .await;
+    assert_eq!(
+        st, 429,
+        "a sexta tentativa errada devia ser travada: {body}"
+    );
+
+    let (st, body) = app
+        .post(
+            "/api/users/me/mfa/activate",
+            Some(&alvo.token),
+            json!({"code": totp_at_step(&secret, current_step())}),
+        )
+        .await;
+    assert_eq!(st, 429, "o código CERTO passou durante o bloqueio: {body}");
+
+    // Controlo positivo: noutra conta, 4 falhas não bloqueiam e o código certo
+    // activa. Só as falhas contam, e só acima do limite.
+    let ok = app.new_org("mfa-activar-ok.test").await;
+    let secret = enrol(&app, &ok.token).await;
+    let errado = wrong_code(&secret);
+    for _ in 0..4 {
+        let (st, _) = app
+            .post(
+                "/api/users/me/mfa/activate",
+                Some(&ok.token),
+                json!({"code": errado}),
+            )
+            .await;
+        assert_eq!(st, 401);
+    }
+    let (st, body) = app
+        .post(
+            "/api/users/me/mfa/activate",
+            Some(&ok.token),
+            json!({"code": totp_at_step(&secret, current_step())}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+}
+
+/// R131 — `POST /api/users/me/mfa/disable` aceitava tentativas ilimitadas:
+/// com uma sessão roubada, adivinhar o código desligava o segundo factor.
+#[sqlx::test(migrations = "./migrations")]
+async fn mfa_disable_locks_after_five_failures(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let alvo = app.new_org("mfa-desligar.test").await;
+    let (secret, backup) = enable_mfa(&app, &alvo.token).await;
+    let errado = wrong_code(&secret);
+
+    for i in 1..=5 {
+        let (st, body) = app
+            .post(
+                "/api/users/me/mfa/disable",
+                Some(&alvo.token),
+                json!({"code": errado}),
+            )
+            .await;
+        assert_eq!(st, 401, "falha {i}: {body}");
+    }
+    let (st, body) = app
+        .post(
+            "/api/users/me/mfa/disable",
+            Some(&alvo.token),
+            json!({"code": errado}),
+        )
+        .await;
+    assert_eq!(
+        st, 429,
+        "a sexta tentativa errada devia ser travada: {body}"
+    );
+    // O código de recuperação é válido — e mesmo assim não passa no bloqueio.
+    let (st, body) = app
+        .post(
+            "/api/users/me/mfa/disable",
+            Some(&alvo.token),
+            json!({"code": backup[0]}),
+        )
+        .await;
+    assert_eq!(
+        st, 429,
+        "um código VÁLIDO passou durante o bloqueio: {body}"
+    );
+    let (_, e) = app.get("/api/users/me/mfa", Some(&alvo.token)).await;
+    assert_eq!(e["enabled"], true, "o MFA foi desligado: {e}");
+
+    // Controlo positivo: noutra conta, o código de recuperação desliga.
+    let ok = app.new_org("mfa-desligar-ok.test").await;
+    let (_, backup) = enable_mfa(&app, &ok.token).await;
+    let (st, body) = app
+        .post(
+            "/api/users/me/mfa/disable",
+            Some(&ok.token),
+            json!({"code": backup[0]}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+}
+
+/// O passo MFA do login (`/api/auth/mfa`) JÁ tinha travão por conta (8 em
+/// 5 min, `login_limiter`). Este teste não corrige nada: guarda que o travão
+/// continua lá e que trava também o código válido.
+#[sqlx::test(migrations = "./migrations")]
+async fn mfa_login_step_is_limited_per_account(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let acc = app.new_org("mfa-login.test").await;
+    let (secret, backup) = enable_mfa(&app, &acc.token).await;
+    let errado = wrong_code(&secret);
+
+    let challenge = || async {
+        let (st, body) = app
+            .post(
+                "/api/auth/login",
+                None,
+                json!({"email": acc.email, "password": PASSWORD}),
+            )
+            .await;
+        assert_eq!(st, 200, "{body}");
+        body["mfa_token"].as_str().unwrap().to_string()
+    };
+
+    // Controlo positivo: o código de recuperação abre sessão.
+    let ch = challenge().await;
+    let (st, body) = app
+        .post(
+            "/api/auth/mfa",
+            None,
+            json!({"mfa_token": ch, "code": backup[0]}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+
+    let ch = challenge().await;
+    let mut ultimo = 0;
+    for _ in 0..10 {
+        let (st, _) = app
+            .post(
+                "/api/auth/mfa",
+                None,
+                json!({"mfa_token": ch, "code": errado}),
+            )
+            .await;
+        ultimo = st;
+        if st == 429 {
+            break;
+        }
+        assert_eq!(st, 401);
+    }
+    assert_eq!(ultimo, 429, "o passo MFA do login não trava");
+    let (st, body) = app
+        .post(
+            "/api/auth/mfa",
+            None,
+            json!({"mfa_token": ch, "code": backup[1]}),
+        )
+        .await;
+    assert_eq!(
+        st, 429,
+        "um código VÁLIDO passou durante o bloqueio: {body}"
+    );
 }

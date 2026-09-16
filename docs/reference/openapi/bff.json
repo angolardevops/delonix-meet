@@ -9536,6 +9536,16 @@
               }
             },
             "description": "Sessão inválida ou código TOTP errado."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Cinco códigos errados em 5 minutos nesta conta (partilhado com a desactivação). Durante o bloqueio, também o código certo é recusado."
           }
         },
         "security": [
@@ -9580,6 +9590,16 @@
               }
             },
             "description": "Sessão inválida, código errado/já usado, ou MFA não inscrito."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Cinco códigos errados em 5 minutos nesta conta (partilhado com a activação). Durante o bloqueio, também um código válido é recusado."
           }
         },
         "security": [

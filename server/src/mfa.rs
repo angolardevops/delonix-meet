@@ -339,6 +339,7 @@ pub struct CodigosRecuperacao {
         (status = 200, description = "MFA activo; os códigos de recuperação só aparecem aqui.", body = CodigosRecuperacao),
         (status = 400, description = "Não há inscrição em curso, ou o MFA já está activo.", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sessão inválida ou código TOTP errado.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Cinco códigos errados em 5 minutos nesta conta (partilhado com a desactivação). Durante o bloqueio, também o código certo é recusado.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn activar(
@@ -357,9 +358,10 @@ pub async fn activar(
     if enabled_at.is_some() {
         return Err(ApiError::BadRequest("O MFA já está activo.".into()));
     }
+    travao(&state, auth.user_id)?;
     let segredo = base32_decode(&b32).ok_or(ApiError::Unauthorized)?;
     let Some(passo_usado) = passo_do_codigo(&segredo, &req.code, agora()) else {
-        return Err(ApiError::Unauthorized);
+        return Err(falhou(&state, auth.user_id));
     };
     let codigos = codigos_de_recuperacao();
     let mut tx = state.db.begin().await?;
@@ -400,6 +402,7 @@ pub async fn activar(
     responses(
         (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
         (status = 401, description = "Sessão inválida, código errado/já usado, ou MFA não inscrito.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Cinco códigos errados em 5 minutos nesta conta (partilhado com a activação). Durante o bloqueio, também um código válido é recusado.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn desactivar(
@@ -407,8 +410,9 @@ pub async fn desactivar(
     auth: AuthUser,
     Json(req): Json<CodigoReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    travao(&state, auth.user_id)?;
     if !consome_codigo(&state, auth.user_id, &req.code).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(falhou(&state, auth.user_id));
     }
     sqlx::query("DELETE FROM user_mfa WHERE user_id = $1")
         .bind(auth.user_id)
@@ -420,6 +424,32 @@ pub async fn desactivar(
         .await?;
     crate::audit::log(&state.db, None, auth.user_id, "auth.mfa_disabled", "").await;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Chave do travão de força bruta do MFA desta conta.
+fn chave_do_travao(user_id: Uuid) -> String {
+    format!("mfa-self:{user_id}")
+}
+
+/// Recusa já se a conta esgotou as falhas da janela (R131). Corre ANTES de
+/// verificar o código: um código certo durante o bloqueio também é recusado,
+/// senão o travão só atrasava quem adivinha e acertava.
+fn travao(state: &AppState, user_id: Uuid) -> Result<(), ApiError> {
+    if state.mfa_limiter.is_blocked(&chave_do_travao(user_id)) {
+        tracing::warn!(%user_id, "MFA: falhas a mais na janela — a bloquear");
+        return Err(ApiError::TooManyRequests);
+    }
+    Ok(())
+}
+
+/// Regista uma falha e devolve o erro a responder. Só as FALHAS contam: quem
+/// acerta à primeira nunca gasta tentativas.
+fn falhou(state: &AppState, user_id: Uuid) -> ApiError {
+    if state.mfa_limiter.check(&chave_do_travao(user_id)) {
+        ApiError::Unauthorized
+    } else {
+        ApiError::TooManyRequests
+    }
 }
 
 /// Está o MFA activo nesta conta?
