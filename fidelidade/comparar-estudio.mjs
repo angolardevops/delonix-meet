@@ -32,7 +32,7 @@ const DESTINOS = [
   ['RTMP personalizado', 'rtmp://parceiro.ao/ch2', ''],
 ]
 async function prepararEstudio() {
-  await p.waitForSelector('[data-studio="canvas"]', { timeout: 20000 })
+  await p.waitForSelector('[data-studio="canvas"]', { state: 'attached', timeout: 20000 })
   await p.locator('[data-studio-grupo="imagem"] [data-studio="camara"]').click().catch(() => {})
   for (let i = 0; i < DESTINOS.length; i++) {
     const [rotulo, url, chave] = DESTINOS[i]
