@@ -5,7 +5,7 @@
  * com câmara e ecrã falsos. Estes testes guardam as decisões que um `git
  * revert` distraído desfaz sem nada ficar vermelho.
  */
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { AVATAR_INICIAL, ECRA_PARA_GRAVACAO, RECORTE_INTEIRO } from './studio/compositor'
@@ -55,8 +55,10 @@ describe('o recorte é em fracções, não em pixéis', () => {
   it('o seletor guarda fracções', () => {
     // Guardar pixéis da pré-visualização partia o recorte assim que a janela
     // mudasse de tamanho — a pré-visualização e o canvas de gravação têm
-    // tamanhos diferentes.
-    const s = readCodigo('web/src/pages/Studio.tsx')
+    // tamanhos diferentes. Na UI nova o seletor vive no seu componente
+    // (`studio/RegionPicker.tsx`), e a página tem de o usar.
+    expect(readCodigo('web/src/pages/Studio.tsx')).toContain("from '../studio/RegionPicker'")
+    const s = readCodigo('web/src/studio/RegionPicker.tsx')
     expect(s).toContain('(e.clientX - r.left) / r.width')
     expect(s).toContain('(e.clientY - r.top) / r.height')
   })
@@ -99,7 +101,13 @@ describe('a gravação não sai vazia', () => {
 
 describe('o estúdio não depende do caminho de media da sala', () => {
   it('não importa webrtc, signaling nem e2ee', () => {
-    for (const f of ['web/src/pages/Studio.tsx', 'web/src/studio/compositor.ts']) {
+    // Os painéis `studio/*.tsx` da UI nova entram na mesma regra: um import
+    // da sala escondido num sub-componente puxava o mesmo caminho de media.
+    const paineis = readdirSync(join(root, 'web/src/studio'))
+      .filter((f) => f.endsWith('.tsx'))
+      .map((f) => `web/src/studio/${f}`)
+    expect(paineis.length).toBeGreaterThan(0)
+    for (const f of ['web/src/pages/Studio.tsx', 'web/src/studio/compositor.ts', ...paineis]) {
       const s = readCodigo(f)
       for (const mod of ['webrtc', 'signaling', 'e2ee']) {
         expect(s).not.toMatch(new RegExp(`from '.*/${mod}'`))
@@ -159,7 +167,10 @@ describe('o corte é de pouco recurso', () => {
 
   it('degrada com aviso onde o WebCodecs não existe', () => {
     expect(readCodigo('web/src/studio/editor.ts')).toContain('export function cortesSuportados()')
-    expect(readCodigo('web/src/pages/Studio.tsx')).toContain('cortesSuportados()')
+    expect(readCodigo('web/src/pages/Studio.tsx')).toContain('podeCortar={cortesSuportados()}')
+    // «Com aviso» quer dizer um aviso NO ECRÃ, não só esconder os cursores.
+    const edicao = readCodigo('web/src/studio/EditPanel.tsx')
+    expect(edicao).toMatch(/!podeCortar \? \(\s*<Alert tone="warning">\{t\('studio\.edicao\.semWebCodecs'\)\}<\/Alert>/)
   })
 })
 
@@ -266,11 +277,15 @@ describe('o corte degrada em vez de arrastar', () => {
 })
 
 describe('as três línguas têm as chaves do estúdio', () => {
+  // Os dicionários passaram a um ficheiro por área: o bloco `studio` é
+  // `locales/<língua>/studio.ts`, composto no `index.ts`, e a entrada do rail
+  // é `shell.nav.estudio`.
   for (const loc of ['pt', 'en', 'fr']) {
     it(loc, () => {
-      const s = read(`web/src/locales/${loc}.ts`)
-      expect(s).toContain('  studio: {')
-      expect(s).toMatch(/^\s+studio: '/m) // nav.studio
+      const s = read(`web/src/locales/${loc}/studio.ts`)
+      expect(s).toMatch(/^export default \{/)
+      expect(read(`web/src/locales/${loc}/index.ts`)).toMatch(/import studio from '\.\/studio'/)
+      expect(read(`web/src/locales/${loc}/shell.ts`)).toMatch(/^\s+estudio: '/m) // nav
       for (const k of ['gravar:', 'regiao:', 'posicao:', 'guardar:']) expect(s).toContain(k)
     })
   }

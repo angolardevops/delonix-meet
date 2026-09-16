@@ -1,0 +1,659 @@
+/*
+ * Estúdio — gramática do DelonixStudio / DelonixStudioEdit do template:
+ * barra de topo escura, coluna de fontes, palco 16:9 ao centro, coluna de
+ * destinos e gravação local; na edição, pré-visualização, corte e linha de
+ * tempo. Tudo dentro de `.dx-stage`, que força o escuro. Só tokens.
+ */
+
+.st {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--stage);
+  color: var(--text);
+}
+
+/* ------------------------------------------------------------- topo */
+.st-top {
+  min-height: 50px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 7px 18px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.st-top__burger {
+  display: none;
+}
+.st-top__title {
+  margin: 0;
+  font-size: var(--t-md);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 32ch;
+}
+.st-top__sub {
+  color: var(--muted);
+  font-weight: 500;
+}
+.st-top__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.st-views button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ------------------------------------------------------------ avisos */
+.st-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 14px;
+}
+.st-notices:has(> :not(.st-narrow-note)) {
+  padding-block: 10px 0;
+}
+.st-narrow-note {
+  display: none;
+}
+
+/* ------------------------------------------------------------- corpo */
+.st-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr) 330px;
+}
+.st-body[hidden] {
+  display: none;
+}
+.st-body--edit {
+  display: flex;
+  flex-direction: column;
+}
+
+.st-col {
+  background: var(--surface);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  min-width: 0;
+}
+.st-col--left {
+  border-right: 1px solid var(--border);
+}
+.st-col--right {
+  border-left: 1px solid var(--border);
+}
+
+.st-centre {
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* --------------------------------------------------------- grupos */
+.st-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.st-group__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.st-group__title,
+.st-label {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.st-label--row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.st-note {
+  margin: 0;
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  color: var(--muted);
+}
+.st-note--ok {
+  color: var(--success);
+}
+.st-note--warn {
+  color: var(--live-text);
+}
+.st-small {
+  font-size: var(--t-sm);
+}
+.st-strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.st-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.st-actions--center {
+  justify-content: center;
+}
+
+.st-seg {
+  display: flex;
+  width: 100%;
+}
+.st-seg button {
+  flex: 1;
+  min-height: 28px;
+}
+.st-seg button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.st-range {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+/* Cartões — `raised` sobre `surface`, como os destinos do template. */
+.st-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--r-2);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  min-width: 0;
+}
+.st-card__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.st-card__row .dx-meter {
+  flex: 1;
+}
+.st-card--live {
+  border-color: var(--live);
+}
+.st-card--rec {
+  border-color: var(--record);
+}
+.st-card--active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--raised));
+}
+
+/* ------------------------------------------------ posição da bolha */
+.st-corners {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.st-corner {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  max-width: 100%;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--stage);
+  cursor: pointer;
+  padding: 0;
+}
+.st-corner:hover {
+  border-color: var(--muted);
+}
+.st-corner[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--stage));
+}
+.st-corner__dot {
+  position: absolute;
+  width: 26%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--border);
+}
+.st-corner[aria-pressed='true'] .st-corner__dot {
+  background: var(--accent);
+}
+.st-corner--superior-esquerdo .st-corner__dot {
+  top: 12%;
+  left: 8%;
+}
+.st-corner--superior-direito .st-corner__dot {
+  top: 12%;
+  right: 8%;
+}
+.st-corner--inferior-esquerdo .st-corner__dot {
+  bottom: 12%;
+  left: 8%;
+}
+.st-corner--inferior-direito .st-corner__dot {
+  bottom: 12%;
+  right: 8%;
+}
+
+/* ------------------------------------------------------------ palco */
+.st-stage-fit {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  container-type: size;
+}
+.st-stage {
+  position: relative;
+  width: min(100cqw, 100cqh * 16 / 9);
+  aspect-ratio: 16 / 9;
+  max-width: 100%;
+  border-radius: var(--r-3);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--stage);
+  touch-action: none;
+}
+.st-stage--drag {
+  cursor: grab;
+}
+.st-stage--drag:active {
+  cursor: grabbing;
+}
+.st-stage--rec {
+  border-color: var(--record);
+}
+.st-stage--live {
+  border-color: var(--live);
+}
+.st-stage__canvas,
+.st-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.st-stage__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--t-md);
+}
+.st-stage__empty p {
+  margin: 0;
+}
+
+.st-overlay {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  gap: 6px;
+  pointer-events: none;
+}
+.st-overlay--tl {
+  top: 10px;
+  left: 10px;
+  padding: 3px 8px;
+  border-radius: var(--r-2);
+  background: var(--scrim);
+  font-size: var(--t-xs);
+  color: var(--text);
+}
+.st-overlay--tr {
+  top: 10px;
+  right: 10px;
+}
+
+/* Escolha da região — cobre o palco inteiro. */
+.st-region {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: color-mix(in srgb, var(--stage) 35%, transparent);
+}
+.st-region__area {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  touch-action: none;
+  outline: 1px dashed var(--accent);
+  outline-offset: -4px;
+}
+.st-region__sel {
+  position: absolute;
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  pointer-events: none;
+}
+.st-region__bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--r-2);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  font-size: var(--t-sm);
+}
+
+/* --------------------------------------------------------- directo */
+.st-dests {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.st-dest__tag {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-2);
+  background: var(--stage);
+  border: 1px solid var(--border);
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+.st-dest__name {
+  font-size: var(--t-md);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.st-secret {
+  display: flex;
+  gap: 6px;
+}
+.st-secret .dx-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------- edição */
+.st-edit {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 304px;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+.st-edit--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.st-edit > .st-col--left {
+  grid-column: 1;
+  grid-row: 1;
+}
+.st-edit > .st-centre {
+  grid-column: 2;
+  grid-row: 1;
+}
+.st-edit > .st-col--right {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.st-take__thumb {
+  width: 44px;
+  height: 26px;
+  flex: none;
+  border-radius: var(--r-2);
+  background: linear-gradient(140deg, var(--accent-strong), var(--stage));
+}
+.st-take__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.st-preview {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border-radius: var(--r-3);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--stage);
+  display: flex;
+}
+.st-preview__video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--stage);
+}
+.st-tools {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border-radius: var(--r-2);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  min-height: var(--ctl-h);
+}
+.st-tools:empty {
+  display: none;
+}
+
+.st-trim {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.st-trim__io {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.st-trim__io > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.st-timecode {
+  display: block;
+  padding: 6px 8px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  font-size: var(--t-sm);
+}
+.st-timecode--on {
+  border-color: var(--accent);
+}
+.st-timeline__head .st-timecode {
+  border: 0;
+  padding: 0;
+  font-size: var(--t-lg);
+}
+
+.st-timeline {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  background: var(--raised);
+  border-top: 1px solid var(--border);
+}
+.st-timeline__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.st-timeline__tracks {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+.st-track__label {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: var(--t-xs);
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.st-track {
+  position: relative;
+  height: 44px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.st-track--audio {
+  height: 36px;
+  cursor: default;
+  background: color-mix(in srgb, var(--success) 12%, var(--surface));
+}
+.st-clip {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  border-radius: var(--r-2);
+  background: linear-gradient(90deg, var(--accent-strong), var(--accent-pressed));
+  border: 1px solid var(--accent);
+}
+.st-gap {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-left: 1px solid var(--record);
+  border-right: 1px solid var(--record);
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--record) 50%, transparent) 0 4px,
+    transparent 4px 8px
+  );
+}
+.st-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------ ecrã estreito */
+@media (max-width: 900px) {
+  .st-top__burger {
+    display: inline-flex;
+  }
+  .st {
+    flex: none;
+  }
+  .st-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .st-body > .st-centre {
+    order: -1;
+  }
+  .st-col {
+    overflow: visible;
+    border: 0;
+    border-top: 1px solid var(--border);
+  }
+  .st-stage-fit {
+    container-type: normal;
+  }
+  .st-stage {
+    width: 100%;
+  }
+  .st-edit {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+  }
+  .st-edit > .st-col--left,
+  .st-edit > .st-centre,
+  .st-edit > .st-col--right,
+  .st-timeline {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .st-edit > .st-centre {
+    order: -2;
+  }
+  .st-timeline {
+    order: -1;
+  }
+  .st-preview {
+    flex: none;
+    aspect-ratio: 16 / 9;
+  }
+  .st-narrow-note {
+    display: block;
+    margin: 10px 0 0;
+    font-size: var(--t-sm);
+    color: var(--muted);
+  }
+  .st-hide-narrow {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .st-top {
+    padding: 7px 12px;
+  }
+  .st-top__actions {
+    width: 100%;
+  }
+  .st-top__actions .dx-btn {
+    flex: 1;
+  }
+  .st-centre {
+    padding: 10px 12px;
+  }
+}
