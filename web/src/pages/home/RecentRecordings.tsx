@@ -12,16 +12,15 @@ import { ChangeEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, createRoom, joinRoom, MAX_RECORDING_UPLOAD_BYTES, recordingsLibrary, RecordingItem, uploadRecording } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
-import { useShell } from '../../components/shellContext'
 import { Icon } from '../../ui/icons'
-import { Alert, Button, Empty, Skeleton, StatusBadge } from '../../ui/kit'
+import { Alert, Skeleton, StatusBadge } from '../../ui/kit'
 import { fmtBytes, localeOf } from '../calendar/dates'
 
-const MAX = 4
+/** Três gravações e o cartão de importar: a fila de quatro do template. */
+const MAX = 3
 
 export default function RecentRecordings() {
   const { t, i18n } = useTranslation()
-  const { navigate } = useShell()
   const locale = localeOf(i18n.language)
   const fileRef = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
@@ -80,12 +79,9 @@ export default function RecentRecordings() {
               {t('home.gravacoes.falhou')}
             </StatusBadge>
           ) : (
-            <>
-              <Icon name="play" size={18} />
-              <span className="home-rec__chip dx-num">
-                {size.value} {size.unit}
-              </span>
-            </>
+            <span className="home-rec__chip dx-num">
+              {size.value} {size.unit}
+            </span>
           )}
         </span>
         <span className="home-rec__body">
@@ -100,52 +96,59 @@ export default function RecentRecordings() {
     )
   }
 
+  const importCard = (
+    <li>
+      <button
+        type="button"
+        className="home-rec home-rec--import"
+        disabled={importing}
+        aria-busy={importing || undefined}
+        onClick={() => fileRef.current?.click()}
+        data-testid="home-importar"
+      >
+        {importing ? <span className="dx-spinner" aria-hidden="true" /> : <Icon name="download" size={14} />}
+        <strong>{t('consola.inicio.importar')}</strong>
+        <small className="dx-muted">{t('consola.inicio.importarLimite')}</small>
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="video/mp4,video/webm,video/x-matroska,.mp4,.webm,.mkv"
+        hidden
+        onChange={(e) => void onFile(e)}
+        aria-label={t('consola.inicio.importar')}
+        title={t('consola.inicio.importarDica')}
+      />
+    </li>
+  )
+
   return (
     <section className="home-section" aria-labelledby="home-gravacoes">
       <div className="home-section__head">
         <h2 id="home-gravacoes">{t('home.gravacoes.titulo')}</h2>
         <span className="dx-spacer" />
-        <Button size="sm" variant="ghost" icon="upload" busy={importing} onClick={() => fileRef.current?.click()} data-testid="home-importar">
-          {t('consola.inicio.importar')}
-        </Button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="video/mp4,video/webm,video/x-matroska,.mp4,.webm,.mkv"
-          hidden
-          onChange={(e) => void onFile(e)}
-          aria-label={t('consola.inicio.importar')}
-        />
         <a className="home-link" href="#/recordings">
           {t('home.gravacoes.biblioteca')}
         </a>
       </div>
-      <p className="dx-muted home-import-hint">{t('consola.inicio.importarDica')}</p>
       {importMsg && <Alert tone={importMsg.tone}>{importMsg.text}</Alert>}
       <AsyncSection state={state} onRetry={reload} skeleton={skeleton}>
-        {(rs) =>
-          rs.length === 0 ? (
-            <div className="home-panel">
-              <Empty icon="film" title={t('home.gravacoes.vazio')}>
-                {t('home.gravacoes.vazioDica')}
-              </Empty>
-            </div>
-          ) : (
-            <ul className="home-recs" role="list">
-              {rs.map((r) => (
-                <li key={r.id}>
-                  {r.status === 'ready' ? (
-                    <button type="button" className="home-rec" onClick={() => navigate('recordings')}>
-                      {body(r)}
-                    </button>
-                  ) : (
-                    <div className="home-rec home-rec--failed">{body(r)}</div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )
-        }
+        {(rs) => (
+          <ul className="home-recs" role="list">
+            {rs.map((r) => (
+              <li key={r.id}>
+                {r.status === 'ready' ? (
+                  <button type="button" className="home-rec" onClick={() => (location.hash = `/recordings?id=${r.id}`)}>
+                    {body(r)}
+                  </button>
+                ) : (
+                  <div className="home-rec home-rec--failed">{body(r)}</div>
+                )}
+              </li>
+            ))}
+            {importCard}
+          </ul>
+        )}
       </AsyncSection>
     </section>
   )

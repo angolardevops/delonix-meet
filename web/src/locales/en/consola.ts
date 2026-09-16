@@ -115,8 +115,11 @@ export default {
   },
   agenda: {
     ocorrencia: 'occurrence {{n}} of {{total}}',
-    metaOdoo: 'guests get the invitation · sent to the Odoo calendar',
-  },
+
+    dataHora: 'Date and time · {{fuso}}',
+    participantes: 'Participants',
+    autocompletar: 'autocomplete · organisation contacts',
+    metaOdooCurta: 'syncs with Odoo Calendar',  },
   integracoes: {
     instancia: 'instance {{host}}',
     registo: 'Event log',

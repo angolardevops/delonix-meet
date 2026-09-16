@@ -589,18 +589,46 @@ button.cal-week__day:hover {
 }
 
 /* ----------------------------------------------------------- agendamento */
+/* DelonixSchedule: formulário à esquerda sobre o fundo da página, painel
+   branco de 442 px colado à direita com a semana e os conflitos em baixo. */
+.sched-page {
+  padding: 0;
+}
 .sched {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 460px;
-  gap: 18px;
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) 442px;
+  align-items: stretch;
+  min-height: calc(100vh - var(--top-h));
+  min-height: calc(100dvh - var(--top-h));
 }
 .sched__form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
-  max-width: 720px;
+  padding: 20px 24px 32px;
+}
+.sched__pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+.sched__when {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+}
+.sched__aside {
+  font-size: 9.5px;
+  font-weight: 400;
+}
+.cal-metachip {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  font-size: 9.5px;
 }
 .sched__fieldset {
   margin: 0;
@@ -612,14 +640,15 @@ button.cal-week__day:hover {
 }
 .sched__kinds {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 7px;
 }
 .sched__kind {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 9px 10px;
+  min-height: 44px;
+  padding: 7px 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-2);
   background: var(--raised);
@@ -632,6 +661,9 @@ button.cal-week__day:hover {
   flex-direction: column;
 }
 .sched__kind strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11.5px;
   font-weight: 600;
 }
@@ -654,15 +686,12 @@ button.cal-week__day:hover {
   align-items: end;
 }
 .sched__recur {
+  display: grid;
+  gap: 8px;
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-2);
   background: var(--raised);
-}
-.sched__recur legend {
-  float: left;
-  width: 100%;
-  margin-bottom: 2px;
 }
 .sched__every {
   display: flex;
@@ -758,15 +787,51 @@ button.cal-week__day:hover {
 /* Lado direito: semana + conflitos */
 .sched__side {
   position: sticky;
-  top: calc(var(--top-h) + 20px);
+  top: var(--top-h);
+  align-self: start;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
-  padding: 16px;
+  height: calc(100vh - var(--top-h));
+  height: calc(100dvh - var(--top-h));
+  padding: 18px 18px 16px;
   background: var(--raised);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+.sched__side .cal-week {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 280px;
+  border-radius: var(--r-2);
+}
+.sched__side .cal-week__scroller {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.sched__side .cal-week--compact .cal-week__body {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+.cal-week--compact .cal-ev {
   border: 1px solid var(--border);
-  border-radius: var(--r-3);
+  background: var(--surface);
+}
+.cal-week--compact .cal-draft {
+  border: 1px solid var(--accent-strong);
+  background: var(--accent-strong);
+  color: var(--raised);
+}
+[data-theme='dark'] .cal-week--compact .cal-draft {
+  color: var(--text);
+}
+.cal-week--compact .cal-draft .dx-num {
+  opacity: 0.85;
 }
 .sched__side-head {
   display: flex;
@@ -775,8 +840,11 @@ button.cal-week__day:hover {
 }
 .sched__side-head h2 {
   margin: 0;
-  font-size: var(--t-md);
+  font-size: 12.5px;
   font-weight: 600;
+}
+.sched__side-head .dx-num {
+  font-size: 9.5px;
 }
 .sched__legend {
   display: flex;
@@ -791,17 +859,18 @@ button.cal-week__day:hover {
   gap: 5px;
 }
 .sched__swatch {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: var(--r-2);
-  border-left: 3px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, var(--raised));
+  border: 1px solid var(--border);
+  background: var(--surface);
 }
 .sched__swatch--draft {
-  border: 1px dashed var(--accent-strong);
-  background: color-mix(in srgb, var(--accent) 22%, var(--raised));
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
 }
 .sched__conflicts {
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -847,6 +916,24 @@ button.cal-week__day:hover {
   }
   .sched__side {
     position: static;
+    height: auto;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+  .sched__side .cal-week--compact .cal-week__body {
+    height: 420px;
+  }
+}
+@media (max-width: 720px) {
+  .sched__pair,
+  .sched__when {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sched__kinds {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .sched__form {
+    padding: 16px;
   }
 }
 @media (max-width: 720px) {
@@ -910,4 +997,10 @@ button.cal-week__day:hover {
   .sched__side {
     padding: 10px;
   }
+}
+.sched__when .dx-input,
+.sched__when .dx-select {
+  padding-inline: 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
 }

@@ -142,7 +142,7 @@ export default function Calendar() {
       <>
         <PageBar
           title={t('schedule.form.tituloPagina')}
-          meta={odooCalendar ? t('consola.agenda.metaOdoo') : t('schedule.form.metaPagina')}
+          meta={<span className="cal-metachip">{odooCalendar ? t('consola.agenda.metaOdooCurta') : t('schedule.form.metaPagina')}</span>}
         >
           <Button variant="secondary" className="cal-hide-narrow" onClick={() => go(calendarHash.browse())}>
             {t('ui.cancelar')}

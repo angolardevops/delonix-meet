@@ -115,8 +115,11 @@ export default {
   },
   agenda: {
     ocorrencia: 'ocorrência {{n}} de {{total}}',
-    metaOdoo: 'convidados recebem o convite · enviada ao calendário do Odoo',
-  },
+
+    dataHora: 'Data e hora · {{fuso}}',
+    participantes: 'Participantes',
+    autocompletar: 'autocompletar · contactos da organização',
+    metaOdooCurta: 'sincroniza com Odoo Calendário',  },
   integracoes: {
     instancia: 'instância {{host}}',
     registo: 'Registo de eventos',
