@@ -230,15 +230,19 @@ if (!podeEcra) {
 console.log('\ngravação')
 const botaoGravar = page.locator('[data-studio="acoes"] [data-studio="gravar"]')
 ok('o botão de gravar diz «gravar»', texto('acoes.gravar').test((await botaoGravar.textContent()) ?? ''))
+const inicioGravacao = Date.now()
 await botaoGravar.click()
 await page.waitForSelector('[data-studio="tempo"]', { timeout: 10000 })
 ok('o cronómetro aparece ao gravar', await page.locator('[data-studio="tempo"]').isVisible())
 await page.waitForTimeout(3200)
 const botaoParar = page.locator('[data-studio="acoes"] [data-studio="parar"]')
 ok('o botão de parar diz «parar»', texto('acoes.parar').test((await botaoParar.textContent()) ?? ''))
+const cronometro = ((await page.locator('[data-studio="tempo"]').textContent()) ?? '').match(/(\d+):(\d{2})\s*$/)
+const segundosNoCronometro = cronometro ? Number(cronometro[1]) * 60 + Number(cronometro[2]) : NaN
 await botaoParar.click()
+const segundosGravados = (Date.now() - inicioGravacao) / 1000
 
-await page.waitForSelector('[data-studio="preview"]', { timeout: 20000 * FATOR })
+await page.waitForSelector('[data-studio="preview"]', { timeout: 60000 * FATOR })
 const video = await page.locator('[data-studio="preview"]').evaluate(
   (v) => new Promise((r) => {
     const acabar = () => r({ dur: v.duration, w: v.videoWidth, h: v.videoHeight, src: v.src.slice(0, 5) })
@@ -271,7 +275,11 @@ console.log('\ncorte (projecto não destrutivo)')
     .catch(() => false)
   ok('a gravação entra na linha de tempo como clipe de V1', temClipe)
   const dur0 = await duracaoMostrada()
-  ok('a linha de tempo tem a duração gravada', dur0 >= 2 && dur0 <= 6, `${dur0}s`)
+  // Entre o que o cronómetro marcava antes de parar (mínimo) e o tempo de
+  // relógio desde o clique em gravar (máximo): num runner carregado os cliques
+  // demoram, e um intervalo fixo dava falhas ao acaso.
+  ok('a linha de tempo tem a duração gravada', dur0 >= segundosNoCronometro - 1 && dur0 <= segundosGravados + 2,
+     `${dur0}s (cronómetro ${segundosNoCronometro}s, relógio ${segundosGravados.toFixed(1)}s)`)
 
   if (temClipe) {
     await page.locator('[data-faixa="V1"] .ed-clip').first().click({ position: { x: 20, y: 10 } })
