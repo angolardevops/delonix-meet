@@ -23,8 +23,30 @@ const STATE = `${DIR}.sessao.json`
 mkdirSync(`${DIR}app`, { recursive: true })
 mkdirSync(`${DIR}lado-a-lado`, { recursive: true })
 
+// Os destinos do template, no formulário LOCAL (sem destinos guardados no
+// servidor, que ainda não são contrato desta UI). O último fica sem chave.
+const DESTINOS = [
+  ['YouTube', 'rtmp://a.rtmp.youtube.com/live2', 'k1'],
+  ['Facebook', 'rtmps://live-api-s.facebook.com:443/rtmp', 'k2'],
+  ['LinkedIn', 'rtmps://1-live.linkedin.com/live', 'k3'],
+  ['RTMP personalizado', 'rtmp://parceiro.ao/ch2', ''],
+]
+async function prepararEstudio() {
+  await p.waitForSelector('[data-studio="canvas"]', { timeout: 20000 })
+  await p.locator('[data-studio-grupo="imagem"] [data-studio="camara"]').click().catch(() => {})
+  for (let i = 0; i < DESTINOS.length; i++) {
+    const [rotulo, url, chave] = DESTINOS[i]
+    if (i === 0) await p.locator('[data-studio="destino-editar"]').first().click()
+    else await p.locator('[data-studio="destino-adicionar"]').click()
+    await p.fill('#st-dest-rotulo', rotulo)
+    await p.fill('[data-studio="destino-url"]', url)
+    await p.fill('[data-studio="destino-chave"]', chave)
+    await p.locator('[data-studio="destino-guardar"]').click()
+  }
+}
+
 const ROTAS = {
-  DelonixStudio: { hash: '/studio' },
+  DelonixStudio: { hash: '/studio', preparar: prepararEstudio },
   DelonixStudioEdit: { hash: '/studio?vista=edicao', gravacao: true },
   DelonixStudioCaptions: { hash: '/studio?vista=legendas', gravacao: true },
   DelonixExports: { hash: '/studio?vista=exportacoes', gravacao: true },
@@ -42,6 +64,15 @@ const p = await ctx.newPage()
 p.on('pageerror', (e) => console.log('pageerror', e.message))
 
 async function entrar() {
+  if (process.env.FAKE) {
+    // Sem servidor: sessão falsa. Prova layout e estados vazios/erro, não dados.
+    await ctx.addInitScript(() => {
+      localStorage.setItem('dx_user', JSON.stringify({ id: '00000000-0000-0000-0000-000000000001', email: 'demo@delonix.co.ao', username: 'Demo' }))
+      localStorage.setItem('dx_access', 'falso')
+      localStorage.setItem('dx_tour_v1', 'done')
+    })
+    return
+  }
   await p.goto(`${APP}/#/`)
   await p.waitForTimeout(1500)
   if (await p.locator('.shell').count()) return
@@ -55,6 +86,7 @@ async function entrar() {
 
 async function gravacaoComTranscricao() {
   if (process.env.GRAVACAO) return process.env.GRAVACAO
+  if (process.env.FAKE) return null
   const lib = await p.evaluate(async () =>
     (await fetch('/api/recordings', { headers: { Authorization: `Bearer ${localStorage.getItem('dx_access')}` } })).json(),
   )
@@ -73,6 +105,7 @@ for (const doc of want) {
   }
   await p.goto(`${APP}/#${hash}`)
   await p.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {})
+  if (r.preparar) await r.preparar()
   await p.waitForTimeout(r.gravacao ? 6000 : 3000)
   const suf = MOBILE ? '-390' : ''
   await p.screenshot({ path: `${DIR}app/${doc}${suf}.png` })

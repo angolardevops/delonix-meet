@@ -79,7 +79,7 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 176px minmax(0, 1fr) 318px;
+  grid-template-columns: 176px minmax(0, 1fr) 330px;
 }
 .st-body[hidden] {
   display: none;
