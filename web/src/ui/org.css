@@ -527,6 +527,9 @@
   opacity: 0.6;
 }
 @media (max-width: 760px) {
+  .org-admin .dx-card__head {
+    flex-wrap: wrap;
+  }
   .org-audit__row {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }

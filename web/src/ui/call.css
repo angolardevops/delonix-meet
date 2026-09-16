@@ -516,6 +516,9 @@
   min-height: 0;
   overflow: hidden;
 }
+.call-card--grow .call-hist {
+  min-height: 0;
+}
 .call-card--foot {
   flex: none;
   margin-top: auto;
@@ -649,7 +652,8 @@ button.call-hist__row:hover strong {
     grid-template-columns: minmax(0, 1fr);
     overflow-y: auto;
   }
-  .call-side {
+  .call-side,
+  .call-card--grow {
     overflow: visible;
   }
   .call-card--foot {
