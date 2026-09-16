@@ -45,8 +45,8 @@
 - `room_tools.rs` — contexto de colaboração in-room extraído de `signaling.rs`: sondagens, Q&A, temporizador, quadro branco (`impl SignalingHub::handle_tool_msg`)
 - `presence.rs` — WebSocket `/rtc` (access token), chamadas WhatsApp-style: call-start/accept/decline/cancel, ring de reunião agendada
 - `meetings.rs` — calendário, conflitos, quarentena, MoM, transcrição, webhooks de meeting
-- `recordings.rs` — biblioteca de gravações, partilha read-only, sweep de retenção
-- `recorder.rs` — gravação server-side: RTP→IVF(VP8)+OGG(Opus), ffmpeg post-stop (VP9+Opus webm), E2EE via decrypt_e2ee()
+- `recordings.rs` — biblioteca de gravações, partilha read-only, metadados e `processing_state` derivado (G4), capítulos e comentários (G5), pesquisa `?q=` com FTS `simple` + `snippet` (G6; migração 0044). UMA regra de acesso: `load_item` lê os factos numa só junção de pertença e `domain::content::recording::AccessFacts` decide reproduzir/descarregar/gerir/comentar — um membro arquivado (S3) perde tudo. `GET /api/recordings` sem parâmetros continua a lista inteira (o web lê-a assim); com `q`/`page_size`/`page_token` é uma página. O ficheiro vai para `config.recordings_dir`. Testes: `server/tests/recordings_metadata.rs`
+- `recorder.rs` — gravação server-side: RTP→IVF(VP8)+OGG(Opus), ffmpeg post-stop (VP9+Opus webm), E2EE via decrypt_e2ee(); ao inserir grava `duration_secs` (relógio de parede da sessão, não ffprobe) e `width`/`height` (grelha do xstack, ou cabeçalho IVF no remux)
 - `broadcast.rs` — emissão em directo para RTMP (ADR-0003): o browser compõe e codifica em H.264, o servidor REMULTIPLEXA (`-c:v copy`, `-c:a aac`). Multi-canal tipo StreamYard: um `ffmpeg` com N destinos (`destinos` na query, JSON), tecto próprio `MAX_DESTINOS_POR_DIRECTO` (por emissão) distinto do `MAX_DIRECTOS` (por nó/sala). Recusa E2EE, codec não copiável, chave vazia e acima de qualquer um dos dois tectos. Rota WS `/api/rooms/{code}/broadcast`; registo por sala
 - `webhooks.rs` — CRUD webhooks org, fire() best-effort (Slack/Teams/Mattermost/generic+HMAC), SSRF guard; registo de entregas (G7; migração 0042): cada envio fica em `webhook_deliveries` (`pending` antes, `succeeded`/`failed` com código, tempo e erro limpo de URLs depois; sem segredo nem assinatura), `GET …/webhooks/{hook_id}/deliveries[/{delivery_id}]` paginado e `POST …/redeliver` (método personalizado: `202` + `Location`, mesmo payload ao URL actual com a guarda reaplicada, 10/min por webhook → `429`); varredor horário fecha as `pending` abandonadas e apaga as de mais de 30 dias. Regras em `domain::integration::webhook_delivery`
 - `whiteboards.rs` — CRUD quadro branco persistente
@@ -110,6 +110,7 @@
 |---|---|---|
 | PostgreSQL | 5435 | Dados principais (migrações 0001–0042) |
 | PostgreSQL | 5435 | Dados principais (migrações 0001–0043) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0044; 0042–0043 reservadas para outros ramos) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 

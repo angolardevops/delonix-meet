@@ -519,6 +519,55 @@ const upload = await fetch(`${API}/api/rooms/${salaA.code}/recordings?name=s3.we
 const gravacaoA = upload.ok ? (await upload.json()).id : null
 if (!gravacaoA) nok('A carrega uma gravação para o teste S3', `devolveu ${upload.status}`)
 
+console.log('\n--- G4–G6: metadados, capítulos e comentários de uma gravação REAL da A ---')
+// Aqui o id é verdadeiro (a gravação acabou de ser carregada), por isso um
+// `404` para a B quer mesmo dizer «não é tua» — o controlo positivo é a A.
+if (gravacaoA) {
+  const capA = await permitido('A cria um capítulo na sua gravação', `/api/recordings/${gravacaoA}/chapters`, {
+    token: A.token, method: 'POST', body: { at_secs: 0, title: 'abertura' },
+  })
+  const comA = await permitido('A comenta a sua gravação', `/api/recordings/${gravacaoA}/comments`, {
+    token: A.token, method: 'POST', body: { body: 'comentário privado da A' },
+  })
+  await permitido('A lê os metadados da sua gravação', `/api/recordings/${gravacaoA}/metadata`, { token: A.token })
+  await recusado('B lê os metadados da gravação da A', `/api/recordings/${gravacaoA}/metadata`, { token: B.token })
+  await recusado('B muda a categoria da gravação da A', `/api/recordings/${gravacaoA}`, {
+    token: B.token, method: 'PATCH', body: { category: 'other' },
+  })
+  await recusado('B lê os capítulos da gravação da A', `/api/recordings/${gravacaoA}/chapters`, { token: B.token })
+  await recusado('B cria um capítulo na gravação da A', `/api/recordings/${gravacaoA}/chapters`, {
+    token: B.token, method: 'POST', body: { at_secs: 1, title: 'forjado' },
+  })
+  await recusado('B lê os comentários da gravação da A', `/api/recordings/${gravacaoA}/comments`, { token: B.token })
+  await recusado('B comenta a gravação da A', `/api/recordings/${gravacaoA}/comments`, {
+    token: B.token, method: 'POST', body: { body: 'forjado' },
+  })
+  if (capA?.id) {
+    await recusado('B lê um capítulo da A', `/api/recordings/${gravacaoA}/chapters/${capA.id}`, { token: B.token })
+    await recusado('B apaga um capítulo da A', `/api/recordings/${gravacaoA}/chapters/${capA.id}`, {
+      token: B.token, method: 'DELETE',
+    })
+  }
+  if (comA?.id) {
+    await recusado('B lê um comentário da A', `/api/recordings/${gravacaoA}/comments/${comA.id}`, { token: B.token })
+    await recusado('B edita um comentário da A', `/api/recordings/${gravacaoA}/comments/${comA.id}`, {
+      token: B.token, method: 'PATCH', body: { body: 'forjado' },
+    })
+    await recusado('B apaga um comentário da A', `/api/recordings/${gravacaoA}/comments/${comA.id}`, {
+      token: B.token, method: 'DELETE',
+    })
+    const ainda = await req(`/api/recordings/${gravacaoA}/comments/${comA.id}`, { token: A.token })
+    if (ainda.status === 200 && ainda.json?.body === 'comentário privado da A') ok('o comentário da A continua intacto')
+    else nok('o comentário da A continua intacto', `devolveu ${ainda.status}: ${JSON.stringify(ainda.json).slice(0, 160)}`)
+  }
+  const pesquisaB = await req('/api/recordings?q=s3', { token: B.token })
+  if (pesquisaB.status === 200 && !(pesquisaB.json?.items ?? []).some((r) => r.id === gravacaoA)) {
+    ok('a pesquisa da B não devolve a gravação da A')
+  } else {
+    nok('a pesquisa da B não devolve a gravação da A', `devolveu ${pesquisaB.status}: ${JSON.stringify(pesquisaB.json).slice(0, 160)}`)
+  }
+}
+
 const pesquisaPorA = async (token) => {
   const r = await req(`/api/users/search?q=${encodeURIComponent(`admin-alfa${marca}`)}`, { token })
   return Array.isArray(r.json) && r.json.some((u) => u.id === A.userId)
@@ -530,6 +579,7 @@ if (await pesquisaPorA(C.token)) ok('C (membro activo) encontra o admin da A na 
 else nok('C (membro activo) encontra o admin da A na pesquisa', 'não encontrou — o controlo positivo falhou')
 if (gravacaoA) {
   await permitido('D (admin activo) descarrega a gravação da A', `/api/recordings/${gravacaoA}?dl=1`, { token: D.token })
+  await permitido('D (admin activo) lê os comentários da gravação da A', `/api/recordings/${gravacaoA}/comments`, { token: D.token })
 }
 await permitido('controlo: a chave da A cria reunião com C como anfitriã', '/api/v1/meetings', {
   token: chaveA.json?.key, method: 'POST',
@@ -546,6 +596,7 @@ if (!(await pesquisaPorA(C.token))) ok('C ARQUIVADA já não encontra o admin da
 else nok('C ARQUIVADA já não encontra o admin da A na pesquisa', 'o directório da ex-organização continua visível')
 if (gravacaoA) {
   await recusado('D ARQUIVADO descarrega a gravação da A', `/api/recordings/${gravacaoA}?dl=1`, { token: D.token })
+  await recusado('D ARQUIVADO lê os comentários da gravação da A', `/api/recordings/${gravacaoA}/comments`, { token: D.token })
 }
 await recusado('a chave da A cria reunião com C ARQUIVADA como anfitriã', '/api/v1/meetings', {
   token: chaveA.json?.key, method: 'POST',
