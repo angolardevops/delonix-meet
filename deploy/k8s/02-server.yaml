@@ -54,6 +54,15 @@ spec:
                 name: delonix-config
             - secretRef:
                 name: delonix-secrets
+          env:
+            # Segredo da API interna de IVR (R154). Secret próprio, criado fora
+            # do repositório — nunca em 01-config.yaml. `optional: true`: sem
+            # ele o servidor arranca e só as rotas /api/voice/ivr/* dão 503.
+            # `env` ganha ao `envFrom`, por isso um valor antigo que tenha
+            # ficado no `delonix-secrets` é substituído quando este existe.
+            - name: VOICE_INTERNAL_SECRET
+              valueFrom:
+                secretKeyRef: { name: delonix-voice, key: VOICE_INTERNAL_SECRET, optional: true }
           # READINESS aponta para /ready, NÃO para /health.
           #
           # Apontava para o /health, que devolve `ok` enquanto o processo

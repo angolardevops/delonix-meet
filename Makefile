@@ -396,6 +396,7 @@ stage: image-push ## Build + kind load + deploy k8s completo no cluster kind loc
 	  -f deploy/k8s/helm-values/redis-stage-values.yaml -n delonix-meet
 	@printf "$(C)▶ Aplicação Delonix (config + server + web + ingress + coturn)...$(Z)\n"
 	@kubectl apply -f deploy/k8s/01-config.yaml
+	@$(MAKE) --no-print-directory voice-secret-k8s
 	@kubectl apply -f deploy/k8s/02-server.yaml
 	@kubectl apply -f deploy/k8s/03-web.yaml
 	@kubectl apply -f deploy/k8s/04-ingress.yaml
@@ -421,6 +422,19 @@ stage: image-push ## Build + kind load + deploy k8s completo no cluster kind loc
 
 DOMAIN ?= meet.delonix.local
 
+# R154 — o segredo da API interna de IVR nasce aleatório no cluster e nunca
+# num ficheiro do repositório. Idempotente: se o Secret já existe, não o toca
+# (rodar = apagar o Secret e voltar a correr, e actualizar o FreeSWITCH).
+.PHONY: voice-secret-k8s
+voice-secret-k8s: ## Cria o Secret delonix-voice (VOICE_INTERNAL_SECRET aleatório) se não existir
+	@if kubectl -n delonix-meet get secret delonix-voice >/dev/null 2>&1; then \
+	  printf "   delonix-voice já existe — mantido\n"; \
+	else \
+	  kubectl -n delonix-meet create secret generic delonix-voice \
+	    --from-literal=VOICE_INTERNAL_SECRET="$$(openssl rand -hex 32)" >/dev/null && \
+	  printf "   $(G)✓ delonix-voice criado (VOICE_INTERNAL_SECRET aleatório, 64 hex)$(Z)\n"; \
+	fi
+
 .PHONY: prod
 prod: ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
 	@printf "$(C)▶ Provisionando Cluster K8s Bare-Metal via Ansible...$(Z)\n"
@@ -439,6 +453,7 @@ prod: ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
 	@docker build -t delonix-meet-server:latest -f Dockerfile.server .
 	@printf "$(C)▶ Fazendo deploy da Aplicação com Domínio $(DOMAIN)...$(Z)\n"
 	@kubectl apply -f deploy/k8s/01-config.yaml
+	@$(MAKE) --no-print-directory voice-secret-k8s
 	@kubectl apply -f deploy/k8s/02-server.yaml
 	@kubectl apply -f deploy/k8s/03-web.yaml
 	@sed "s/meet.delonix.local/$(DOMAIN)/g" deploy/k8s/04-ingress.yaml | kubectl apply -f -

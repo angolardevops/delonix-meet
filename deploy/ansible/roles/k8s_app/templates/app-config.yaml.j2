@@ -21,7 +21,18 @@ stringData:
   DATABASE_URL: "postgres://delonix:{{ postgres_password }}@{{ _pg_host }}.delonix-meet.svc.cluster.local:5432/delonix_meet"
   JWT_SECRET: "{{ jwt_secret }}"
   TURN_SECRET: "{{ turn_secret }}"
-  VOICE_INTERNAL_SECRET: "{{ voice_secret }}"
   POSTGRES_PASSWORD: "{{ postgres_password }}"
   POSTGRES_USER: "delonix"
   POSTGRES_DB: "delonix_meet"
+---
+# Segredo da API interna de IVR em Secret próprio (R154): é o que o
+# 02-server.yaml referencia por secretKeyRef. `voice_secret` é aleatório,
+# gerado e persistido em group_vars/all.yml — nunca um valor do repositório.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: delonix-voice
+  namespace: delonix-meet
+type: Opaque
+stringData:
+  VOICE_INTERNAL_SECRET: "{{ voice_secret }}"
