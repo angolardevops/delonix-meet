@@ -126,6 +126,15 @@ export default function EditPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resultado])
 
+  // Projecto aberto: o primeiro clipe de V1 fica seleccionado, para o
+  // inspector mostrar logo a entrada/saída em vez de um cartão vazio.
+  const projectoId = p?.id
+  useEffect(() => {
+    if (!p) return
+    setSeleccao(clipsDaFaixa(p, 'V1')[0]?.id ?? null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectoId])
+
   const tituloDoProjecto = p?.titulo
   useEffect(() => {
     if (tituloDoProjecto !== undefined) onTitulo(tituloDoProjecto)

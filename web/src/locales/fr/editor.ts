@@ -374,6 +374,7 @@ export default {
     },
     incluir: 'Inclure',
     legendas: 'Sous-titres incrustés ({{l}})',
+    legendasSem: 'Sous-titres incrustés',
     linguaLegendas: 'Langue des sous-titres',
     semTranscricao: 'Pas de transcription — transcrivez dans «Sous-titres et traduction» pour les incruster.',
     marcaDeAgua: "Filigrane de l'organisation",

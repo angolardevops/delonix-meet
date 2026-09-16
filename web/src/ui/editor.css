@@ -811,8 +811,9 @@ button.ed-badge {
   min-height: 38px;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 2px 4px;
   padding: 6px 10px;
   border-radius: var(--r-2);
   border: 1px solid var(--border);
@@ -821,9 +822,9 @@ button.ed-badge {
 .ed-tool {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   height: 26px;
-  padding: 0 4px 0 0;
+  padding: 0 3px 0 0;
   border: 0;
   background: none;
   color: var(--muted);
@@ -831,8 +832,8 @@ button.ed-badge {
   cursor: pointer;
 }
 .ed-tool__icon {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
   border-radius: var(--r-2);
@@ -951,7 +952,7 @@ button.ed-badge {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
+  grid-template-columns: 112px minmax(0, 1fr);
   overflow-y: auto;
 }
 .ed-tl__labels {
@@ -964,9 +965,9 @@ button.ed-badge {
 }
 .ed-tl__label {
   display: grid;
-  grid-template-columns: 22px 1fr auto auto;
+  grid-template-columns: 18px minmax(0, 1fr) 14px 14px;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   padding: 0 4px 0 8px;
   border-bottom: 1px solid var(--border);
   box-sizing: border-box;
@@ -993,8 +994,10 @@ button.ed-badge {
   text-overflow: ellipsis;
 }
 .ed-flag.dx-iconbtn {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
+  min-width: 0;
+  padding: 0;
   color: var(--muted);
 }
 .ed-flag.dx-iconbtn svg {
@@ -1578,7 +1581,8 @@ button.ed-badge {
 }
 .ed-job__result {
   width: 100%;
-  max-height: 180px;
+  max-width: 320px;
+  max-height: 120px;
   border-radius: var(--r-2);
   background: var(--stage);
 }
