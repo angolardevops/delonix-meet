@@ -206,6 +206,10 @@
   gap: 5px;
 }
 .st-fader {
+  /* O valor (só para leitores de ecrã) é `position: absolute`: sem este
+     antecessor posicionado o bloco que o contém era o DOCUMENTO, e com a coluna
+     cheia ficava abaixo do ecrã e dava scroll à página inteira. */
+  position: relative;
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);
   align-items: center;
@@ -265,11 +269,20 @@
   background: var(--raised);
   font-size: var(--t-xs);
 }
-.st-chip.is-off .st-chip__state {
+.st-chip--sem-chave .st-chip__state {
   color: var(--live-text);
 }
-.st-chip.is-live .st-chip__state {
+.st-chip--no-ar .st-chip__state {
   color: var(--success);
+}
+.st-chip--a-ligar .st-chip__state {
+  color: var(--warning);
+}
+.st-chip--erro {
+  border-color: var(--record);
+}
+.st-chip--erro .st-chip__state {
+  color: var(--record-text);
 }
 .st-chip__state {
   color: var(--muted);
@@ -554,8 +567,14 @@
 }
 .st-live__title {
   margin: 0;
-  font-size: var(--t-lg);
+  font-size: var(--t-md);
   font-weight: 600;
+}
+.st-live__count {
+  margin-left: auto;
+  font-size: 9.5px;
+  color: var(--muted);
+  white-space: nowrap;
 }
 .st-live__scroll {
   flex: 1;
@@ -565,62 +584,139 @@
   flex-direction: column;
   gap: 10px;
 }
+/* Cartão de destino — medidas do template (padding 10, gap 7). */
 .st-dest {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
   padding: 10px;
   border-radius: var(--r-2);
   border: 1px solid var(--border);
   background: var(--raised);
   min-width: 0;
+  --st-dest-fg: var(--muted);
 }
-.st-dest.is-live {
-  border-color: var(--border);
+.st-dest--no-ar {
+  --st-dest-fg: var(--success);
 }
-.st-dest.is-error {
+.st-dest--a-ligar {
+  --st-dest-fg: var(--warning);
+}
+.st-dest--erro {
+  --st-dest-fg: var(--accent);
   border-color: var(--record);
 }
 .st-dest__head {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   min-width: 0;
+}
+.st-dest .st-dest__tag {
+  width: 26px;
+  height: 26px;
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--muted);
 }
 .st-dest__who {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+}
+.st-dest .st-dest__name {
+  font-size: 11.5px;
+  font-weight: 600;
 }
 .st-dest__url {
-  font-size: var(--t-xs);
+  font-size: 9px;
   color: var(--muted);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.st-dest__head > .dx-iconbtn {
+.st-dest__state {
   flex: none;
+  padding: 2px 7px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--st-dest-fg);
+  color: var(--st-dest-fg);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
-.st-dest__form {
+.st-dest__foot {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 9px;
+  color: var(--muted);
+  min-width: 0;
+}
+.st-dest__edit {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.st-dest__edit:hover:not(:disabled),
+.st-dest__edit:focus-visible {
+  color: var(--text);
+}
+.st-dest__edit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.st-dest-dialog {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 .st-live__actions {
   flex: none;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  display: flex;
+  gap: 7px;
 }
-.st-live__actions .dx-btn {
-  min-height: 32px;
+.st-live__btn {
+  flex: 1;
+  min-height: 36px;
+  padding: 9px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
 }
-.st-btn-stop {
-  border-color: var(--record);
+.st-live__btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--muted);
+}
+.st-live__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.st-live__btn--stop {
+  border-color: var(--danger);
   color: var(--record-text);
+}
+.st-live__btn--stop:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--text);
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
+.st-live__btn--go {
+  border-color: var(--live);
+  color: var(--live-text);
 }
 
 /* ------------------------------------------------- gravação local */
@@ -629,17 +725,17 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px 12px;
+  padding: 10px;
   border-radius: var(--r-2);
   border: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--raised);
 }
 .st-local.is-rec {
   border-color: var(--record);
 }
 .st-local__title {
   margin: 0;
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
   font-weight: 600;
 }
 .st-local__row {
@@ -648,8 +744,12 @@
   align-items: center;
   gap: 8px;
 }
+.st-local__row .st-label {
+  font-size: 9px;
+}
 .st-local__row .dx-select {
-  min-height: 26px;
+  min-height: 24px;
+  font-size: var(--t-xs);
 }
 .st-local__queue {
   display: flex;
@@ -661,7 +761,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--t-xs);
+  font-size: 9.5px;
   color: var(--muted);
 }
 .st-rec-dot {
@@ -737,5 +837,30 @@
   .st-sala__chat .rm-chat {
     max-height: 50vh;
     max-height: 50dvh;
+  }
+}
+.st-local__queue[hidden] {
+  display: none;
+}
+
+/* ------------------------------------------ revisão: palco e painéis
+
+/* O palco mede-se pela LARGURA (16:9) e só encolhe se a altura não chegar; o
+   que sobra da altura vai para os painéis por baixo, em vez de faixas pretas
+   acima e abaixo do palco e um vazio entre o palco e os painéis. Os painéis
+   ficam com a altura do que mostram (sem caixas vazias esticadas); se a altura
+   não chegar, é a faixa dos painéis que faz scroll, nunca a página. */
+@media (min-width: 901px) {
+  .st-stage-fit {
+    flex: 0 1 auto;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    align-items: flex-start;
+  }
+  .st-under {
+    flex: 0 1 auto;
+    min-height: 150px;
+    max-height: none;
+    align-items: start;
   }
 }

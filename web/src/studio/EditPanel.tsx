@@ -13,7 +13,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { apiErrorMessage } from '../api'
+import { apiErrorMessage, isAbort, recordingObjectUrl, recordingsLibrary } from '../api'
+import type { RecordingItem } from '../api'
 import { getAppName } from '../branding'
 import { useShell } from '../components/shellContext'
 import { DelonixSymbol, Icon } from '../ui/icons'
@@ -24,7 +25,8 @@ import { analisarPausas } from './analise'
 import CaptionsPanel from './captions/CaptionsPanel'
 import { contarPreenchimento, encontrarPreenchimento, palavrasDasCues, relogio } from './captions/legendas'
 import type { ResultadoDaGravacao } from './compositor'
-import Bin from './edit/Bin'
+import AssistenteIA from './edit/AssistenteIA'
+import Bin, { Biblioteca } from './edit/Bin'
 import type { AbaDoBin, ResumoDePausas } from './edit/Bin'
 import Inspector from './edit/Inspector'
 import type { AbaDoInspector } from './edit/Inspector'
@@ -57,6 +59,25 @@ const FERRAMENTAS: { id: Ferramenta; icone: IconName }[] = [
   { id: 'mascara', icone: 'square' },
   { id: 'audio', icone: 'volume' },
 ]
+
+/** `#/studio?vista=legendas&gravacao=<id>` — a gravação da biblioteca a abrir no editor. */
+function gravacaoDoEndereco(): string | null {
+  return new URLSearchParams(location.hash.split('?')[1] ?? '').get('gravacao')
+}
+
+function semGravacaoNoEndereco() {
+  const [rota, query = ''] = location.hash.split('?')
+  const q = new URLSearchParams(query)
+  if (!q.has('gravacao')) return
+  q.delete('gravacao')
+  const resto = q.toString()
+  history.replaceState(null, '', resto ? `${rota}?${resto}` : rota)
+}
+
+/** Título do projecto a partir do nome do ficheiro da gravação. */
+function tituloDaGravacao(nome: string): string {
+  return nome.replace(/\.(webm|weba|mp4|mkv|mov)$/i, '')
+}
 
 function useAgora(ms: number): number {
   const [agora, setAgora] = useState(() => Date.now())
@@ -104,7 +125,11 @@ export default function EditPanel({
   const [aProcurar, setAProcurar] = useState(false)
   const [ondas, setOndas] = useState<Map<string, Float32Array>>(new Map())
   const [capitulo, setCapitulo] = useState<string | null>(null)
+  // Palavras de preenchimento que o LLM local encontrou na transcrição deste projecto.
+  const [termosIA, setTermosIA] = useState<string[]>([])
   const [projectos, setProjectos] = useState(false)
+  const [biblioteca, setBiblioteca] = useState(false)
+  const [aAbrirGravacao, setAAbrirGravacao] = useState(false)
   const agora = useAgora(1000)
   const marcaDeAgua = org?.name || getAppName()
   const ultimoResultado = useRef<Gravado | null>(null)
@@ -126,11 +151,61 @@ export default function EditPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resultado])
 
+  const abrirGravacao = useCallback(
+    async (r: Pick<RecordingItem, 'id' | 'filename'>) => {
+      setErro('')
+      setAAbrirGravacao(true)
+      setSeleccao(null)
+      setPausas(null)
+      try {
+        const ok = await pr.abrirGravacao({ id: r.id, titulo: tituloDaGravacao(r.filename) }, async () => {
+          const url = await recordingObjectUrl({ id: r.id } as RecordingItem)
+          try {
+            return await fetch(url).then((x) => x.blob())
+          } finally {
+            URL.revokeObjectURL(url)
+          }
+        }, r.filename)
+        if (!ok) setErro(t('editor.biblioteca.erro'))
+      } catch (e) {
+        setErro(apiErrorMessage(e, t('editor.biblioteca.erro')))
+      } finally {
+        setAAbrirGravacao(false)
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pr.abrirGravacao, t],
+  )
+
+  // Chegou com `?gravacao=<id>` (ex.: «Editar no Estúdio»): abre-a quando o
+  // último projecto deste browser acabar de carregar, e tira o parâmetro do
+  // endereço para um recarregar não voltar a puxá-la por cima do que se abriu depois.
+  const pedidoDoEndereco = useRef(gravacaoDoEndereco())
+  useEffect(() => {
+    const id = pedidoDoEndereco.current
+    if (!id || pr.aCarregar) return
+    pedidoDoEndereco.current = null
+    semGravacaoNoEndereco()
+    if (p?.fontes.some((f) => f.gravacao === id)) return
+    const ctl = new AbortController()
+    recordingsLibrary(ctl.signal)
+      .then((lista) => {
+        const r = lista.find((x) => x.id === id)
+        if (!r) setErro(t('editor.biblioteca.naoEncontrada'))
+        else void abrirGravacao(r)
+      })
+      .catch((e) => {
+        if (!isAbort(e)) setErro(apiErrorMessage(e, t('editor.biblioteca.erro')))
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pr.aCarregar])
+
   // Projecto aberto: o primeiro clipe de V1 fica seleccionado, para o
   // inspector mostrar logo a entrada/saída em vez de um cartão vazio.
   const projectoId = p?.id
   useEffect(() => {
     if (!p) return
+    setTermosIA([])
     setSeleccao(clipsDaFaixa(p, 'V1')[0]?.id ?? null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectoId])
@@ -170,8 +245,8 @@ export default function EditPanel({
   const preenchimento = useMemo(() => {
     if (!p?.legendas) return null
     const ws = palavrasDasCues(p.legendas.cues).map((x) => x.palavra)
-    return contarPreenchimento(encontrarPreenchimento(ws, p.legendas.lingua))
-  }, [p?.legendas])
+    return contarPreenchimento(encontrarPreenchimento(ws, p.legendas.lingua, termosIA))
+  }, [p?.legendas, termosIA])
 
   const procurarPausas = useCallback(async () => {
     if (!p) return
@@ -240,6 +315,7 @@ export default function EditPanel({
 
   const dialogos = (
     <>
+      {biblioteca && <Biblioteca onFechar={() => setBiblioteca(false)} onEscolher={abrirGravacao} />}
       {capitulo !== null && p && (
         <Dialog
           title={t('editor.linha.capitulo')}
@@ -291,6 +367,16 @@ export default function EditPanel({
             ))}
           </ul>
           <Button
+            variant="ghost"
+            icon="film"
+            onClick={() => {
+              setProjectos(false)
+              setBiblioteca(true)
+            }}
+          >
+            {t('editor.biblioteca.abrir')}
+          </Button>
+          <Button
             variant="secondary"
             icon="plus"
             onClick={() => {
@@ -314,7 +400,7 @@ export default function EditPanel({
           {separadores}
         </header>
         <div className="ed-empty">
-          {pr.aCarregar ? (
+          {pr.aCarregar || aAbrirGravacao ? (
             <p className="st-note">{t('editor.aCarregar')}</p>
           ) : (
             <Empty
@@ -324,6 +410,9 @@ export default function EditPanel({
                 <div className="st-actions st-actions--center">
                   <Button variant="secondary" icon="record" onClick={() => onVista('emissao')}>
                     {t('editor.vazio.gravar')}
+                  </Button>
+                  <Button variant="secondary" icon="film" onClick={() => setBiblioteca(true)} data-studio="abrir-gravacao">
+                    {t('editor.biblioteca.abrir')}
                   </Button>
                   <Button variant="primary" icon="plus" onClick={() => void pr.criar(t('editor.projectos.novoTitulo'), [])} data-studio="novo-projecto">
                     {t('editor.projectos.novo')}
@@ -369,6 +458,11 @@ export default function EditPanel({
       {vista === 'edicao' ? (
         <header className="ed-top">
           {topoMarca}
+          <span className="ed-top__sep" aria-hidden="true" />
+          {/* Os três separadores também aqui: sem eles, a Linha de tempo só
+              chegava às Legendas pelo selo da pré-visualização ou pelo cartão
+              das palavras de preenchimento. */}
+          {separadores}
           <span className="ed-top__sep" aria-hidden="true" />
           <input
             className="ed-top__title"
@@ -440,12 +534,13 @@ export default function EditPanel({
               preenchimento={preenchimento}
               onIrParaLegendas={() => onVista('legendas')}
               marcaDeAgua={marcaDeAgua}
+              assistente={<AssistenteIA p={p} aplicar={pr.aplicar} onIrParaLegendas={() => onVista('legendas')} onTermos={setTermosIA} />}
             />
             <section className="ed-centre" aria-label={t('studio.palco.previsualizacao')}>
               <Preview projecto={p} leitor={leitor} lingua={p.legendas?.lingua ?? null} marcaDeAgua={marcaDeAgua} forma="edicao" onLegendas={() => onVista('legendas')} />
               <div className="ed-tools" role="toolbar" aria-label={t('studio.edicao.ferramentas')}>
                 {FERRAMENTAS.map((f) => (
-                  <button key={f.id} type="button" className="ed-tool" aria-pressed={ferramenta === f.id} onClick={() => setFerramenta(f.id)} data-ferramenta={f.id}>
+                  <button key={f.id} type="button" className="ed-tool" title={t(`editor.ferramentas.${f.id}`)} aria-pressed={ferramenta === f.id} onClick={() => setFerramenta(f.id)} data-ferramenta={f.id}>
                     <span className="ed-tool__icon" aria-hidden="true">
                       <Icon name={f.icone} size={13} />
                     </span>
@@ -479,7 +574,7 @@ export default function EditPanel({
           />
         </>
       ) : (
-        <CaptionsPanel projecto={p} leitor={leitor} aplicar={pr.aplicar} lerBlob={pr.lerBlob} onErro={setErro} marcaDeAgua={marcaDeAgua} />
+        <CaptionsPanel projecto={p} leitor={leitor} aplicar={pr.aplicar} lerBlob={pr.lerBlob} onErro={setErro} marcaDeAgua={marcaDeAgua} termosExtra={termosIA} />
       )}
       {dialogos}
     </div>

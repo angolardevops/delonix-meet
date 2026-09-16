@@ -18,6 +18,23 @@ export type Ferramenta = 'seleccionar' | 'lamina' | 'aparar' | 'deslizar' | 'tra
 
 export const ZOOMS = [1, 2, 4, 10, 30, 60, 120] as const
 const PX_POR_DIVISAO = 80
+/** Distância mínima entre marcas da régua, para os rótulos não se tocarem. */
+const PX_MIN_DIVISAO = 64
+
+/**
+ * Escala da linha de tempo. Com `zoomFixo` é a escala da régua (80 px por
+ * divisão). Sem ele, AJUSTA: a duração ocupa a largura visível e a divisão da
+ * régua é o menor degrau de `ZOOMS` cujas marcas ficam a ≥ 64 px.
+ */
+export function escalaDaLinha(duracao: number, larguraVisivel: number, zoomFixo: number | null): { zoom: number; pps: number } {
+  if (zoomFixo !== null || larguraVisivel <= 0 || duracao <= 0) {
+    const zoom = zoomFixo ?? 10
+    return { zoom, pps: PX_POR_DIVISAO / zoom }
+  }
+  const pps = Math.max(0.02, (larguraVisivel - 24) / duracao)
+  const zoom = ZOOMS.find((z) => z * pps >= PX_MIN_DIVISAO) ?? ZOOMS[ZOOMS.length - 1]
+  return { zoom, pps }
+}
 
 function Onda({ picos, c, largura, altura }: { picos: Float32Array | undefined; c: Clip; largura: number; altura: number }) {
   const ref = useRef<HTMLCanvasElement>(null)
@@ -75,17 +92,30 @@ export default function Timeline({
 }) {
   const { t, i18n } = useTranslation()
   const dur = p.clips.reduce((a, c) => Math.max(a, fimDoClip(c)), 0)
-  const [zoom, setZoom] = useState<number>(() => ZOOMS.find((z) => (dur / z) * PX_POR_DIVISAO < 1100) ?? 120)
-  const pps = PX_POR_DIVISAO / zoom
-  const largura = Math.max(600, (dur + zoom * 2) * pps)
   const areaRef = useRef<HTMLDivElement>(null)
+  // Largura VISÍVEL da área dos clipes. A linha de tempo abre «ajustada»: o
+  // projecto inteiro cabe nessa largura, sem régua a acabar a meio do ecrã nem
+  // scroll horizontal; mexer no zoom passa à escala fixa da régua.
+  const [visivel, setVisivel] = useState(0)
+  const [ajustada, setAjustada] = useState(true)
+  const [zoomFixo, setZoomFixo] = useState<number>(10)
+  useEffect(() => {
+    const a = areaRef.current
+    if (!a) return
+    const medir = () => setVisivel(a.clientWidth)
+    medir()
+    const ro = new ResizeObserver(medir)
+    ro.observe(a)
+    return () => ro.disconnect()
+  }, [])
+  const { zoom, pps } = escalaDaLinha(dur, visivel, ajustada ? null : zoomFixo)
+  const largura = Math.max(visivel, ajustada ? dur * pps + 12 : (dur + zoom * 2) * pps)
   const T = leitor.tempo
 
-  // Ao abrir outro projecto, o zoom ajusta-se para caber.
+  // Ao abrir outro projecto, volta a ajustar para caber.
   const projectoId = p.id
   useEffect(() => {
-    setZoom(ZOOMS.find((z) => (dur / z) * PX_POR_DIVISAO < 1100) ?? 120)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setAjustada(true)
   }, [projectoId])
 
   // A cabeça de leitura fica à vista enquanto toca.
@@ -97,9 +127,9 @@ export default function Timeline({
   }, [T, pps, leitor.aTocar])
 
   const regua = useMemo(() => {
-    const n = Math.ceil(largura / PX_POR_DIVISAO)
+    const n = Math.ceil(largura / (zoom * pps))
     return Array.from({ length: n }, (_, i) => i * zoom)
-  }, [largura, zoom])
+  }, [largura, zoom, pps])
 
   function tempoDoPonteiro(e: { clientX: number }): number {
     const a = areaRef.current
@@ -257,12 +287,18 @@ export default function Timeline({
             className="st-range"
             min={0}
             max={ZOOMS.length - 1}
-            value={ZOOMS.indexOf(zoom as (typeof ZOOMS)[number])}
-            onChange={(e) => setZoom(ZOOMS[Number(e.target.value)])}
+            value={Math.max(0, ZOOMS.indexOf(zoom as (typeof ZOOMS)[number]))}
+            onChange={(e) => {
+              setZoomFixo(ZOOMS[Number(e.target.value)])
+              setAjustada(false)
+            }}
             aria-valuetext={t('editor.linha.porDivisao', { s: zoom })}
           />
           <span className="dx-num st-small dx-muted">{t('editor.linha.porDivisao', { s: zoom })}</span>
         </label>
+        <button type="button" className="ed-chip" aria-pressed={ajustada} disabled={ajustada} onClick={() => setAjustada(true)} data-studio="ajustar-linha">
+          {t('editor.linha.ajustar')}
+        </button>
       </div>
 
       <div className="ed-tl__body">

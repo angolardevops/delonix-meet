@@ -161,6 +161,21 @@ await recusado('A lê a facturação de voz da org B', `/api/orgs/${B.orgId}/voi
   token: A.token,
 })
 
+// IA local do Estúdio. O `suggestions` leva um corpo VÁLIDO: só 401/403/404 provam
+// que a pertença foi decidida antes de o handler validar ou chamar o modelo (um
+// 400/429/503 seria o handler a correr para quem não é da org).
+console.log('\n--- IA local do Estúdio ---')
+await permitido('B lê o estado da IA da própria org', `/api/orgs/${B.orgId}/ai/status`, { token: B.token })
+await recusadoNaPorta('A lê o estado da IA da org B', `/api/orgs/${B.orgId}/ai/status`, { token: A.token })
+await recusadoNaPorta('A usa a IA do Estúdio da org B', `/api/orgs/${B.orgId}/ai/suggestions`, {
+  token: A.token,
+  method: 'POST',
+  body: {
+    task: 'fillers',
+    segments: [{ start_ms: 0, end_ms: 4000, text: 'Bom dia, tipo, vamos rever a rede de Luanda e o troço do Kilamba.' }],
+  },
+})
+
 // Os dois DELETE precisam de um recurso REAL. Com um UUID ao acaso, um `404`
 // contaria como recusa e não provaria autorização nenhuma — só que o recurso
 // não existe. B cria, A tenta apagar, e a asserção que interessa é a última: o

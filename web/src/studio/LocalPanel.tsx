@@ -67,9 +67,7 @@ export default function LocalPanel({
           <StatusBadge tone="record">{t('studio.local.aGravar')}</StatusBadge>
         ) : estado === 'pausa' ? (
           <StatusBadge tone="warning">{t('studio.local.emPausa')}</StatusBadge>
-        ) : (
-          <StatusBadge tone="neutral">{t('studio.local.parada')}</StatusBadge>
-        )}
+        ) : null}
       </div>
       <p className="dx-num st-rec-line">
         <span className={cx('st-rec-dot', !activo && 'is-off')} aria-hidden="true" />
@@ -102,10 +100,10 @@ export default function LocalPanel({
           ))}
         </Select>
       </div>
-      <div className="st-local__queue" data-studio="fila">
-        {porEnviar.length === 0 ? (
-          <span className="st-note">{t('studio.local.nadaPorEnviar')}</span>
-        ) : (
+      {/* A fila só ocupa espaço quando há aulas por enviar (no template o
+          cartão é o título e uma linha). */}
+      <div className="st-local__queue" data-studio="fila" hidden={porEnviar.length === 0}>
+        {porEnviar.length === 0 ? null : (
           <>
             <div className="st-card__row">
               <strong className="st-small">{t('studio.local.porEnviar', { count: porEnviar.length })}</strong>

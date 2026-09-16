@@ -32,6 +32,7 @@ import { cortesSuportados } from '../studio/editor'
 import LayoutsPanel from '../studio/LayoutsPanel'
 import LivePanel from '../studio/LivePanel'
 import LocalPanel from '../studio/LocalPanel'
+import { estadoDoCartao } from '../studio/destinosLocais'
 import { eh4k, plataformaDoUrl, type Qualidade, QUALIDADES, rotuloDaQualidade } from '../studio/palco'
 import QuadroLocal from '../studio/QuadroLocal'
 import RegionPicker from '../studio/RegionPicker'
@@ -62,6 +63,8 @@ const ecraDeTelemovel = () => typeof window !== 'undefined' && window.matchMedia
 const MAX_DESTINOS = 4
 
 type Vista = 'emissao' | VistaDoEditor
+
+const CHIP = { 'sem-chave': 'semChave', pronto: 'pronto', 'a-ligar': 'aLigar', 'no-ar': 'noAr', erro: 'erro' } as const
 
 /** A vista vem do endereço (`#/studio?vista=legendas`), para se poder voltar a ela. */
 function vistaDoEndereco(): Vista {
@@ -708,17 +711,11 @@ export default function Studio() {
               a ficha diz a fase e não um número inventado). */}
           <ul className="st-chips" aria-label={t('studio.directo.titulo')}>
             {destinos.map((d, i) => {
-              const temChave = !!d.chave.trim()
+              const e = estadoDoCartao(directo.fase, !!d.chave.trim())
               return (
-                <li key={i} className={cx('st-chip', noAr && temChave && 'is-live', !temChave && 'is-off')}>
+                <li key={i} className={cx('st-chip', `st-chip--${e}`)} data-estado={e}>
                   <span className="dx-num">{plataformaDoUrl(d.url, location.host)}</span>
-                  <span className="st-chip__state dx-num">
-                    {!temChave
-                      ? t('studio.directo.estados.semChave')
-                      : noAr
-                        ? t('studio.directo.estados.noAr')
-                        : t('studio.directo.estados.pronto')}
-                  </span>
+                  <span className="st-chip__state dx-num">{t(`studio.directo.estados.${CHIP[e]}`)}</span>
                 </li>
               )
             })}
@@ -785,10 +782,12 @@ export default function Studio() {
             maximo={MAX_DESTINOS}
             estado={directo}
             podeEmitir={temFonte}
-            onMudar={(i, patch) => setDestinos((ds) => ds.map((d, j) => (j === i ? { ...d, ...patch } : d)))}
-            onAdicionar={() =>
+            onMudar={(i, novo) => setDestinos((ds) => ds.map((d, j) => (j === i ? novo : d)))}
+            onAdicionar={() => {
+              const i = destinos.length
               setDestinos((ds) => (ds.length >= MAX_DESTINOS ? ds : [...ds, { url: '', chave: '', rotulo: '' }]))
-            }
+              return i
+            }}
             onRemover={(i) => setDestinos((ds) => ds.filter((_, j) => j !== i))}
             onIrParaOAr={() => void irParaOAr()}
             onParar={() => void sairDoAr()}

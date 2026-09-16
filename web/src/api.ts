@@ -1310,6 +1310,51 @@ export const deleteRecordingChapter = (id: string, chapterId: string) =>
 export const generateRecordingChapters = (id: string) =>
   request<RecordingChapter[]>(`/api/recordings/${id}/chapters/generate`, { method: 'POST' })
 
+// ---------- IA local no servidor (Ollama) para o Estúdio ----------
+
+/** Estado do LLM local visto pela organização. Sempre 200: o erro vem em `error`. */
+export interface StudioAiStatus {
+  configured: boolean
+  reachable: boolean
+  model: string
+  model_installed: boolean | null
+  error: string | null
+}
+
+export const studioAiStatus = (orgId: string, signal?: AbortSignal) =>
+  request<StudioAiStatus>(`/api/orgs/${orgId}/ai/status`, { signal })
+
+export type StudioAiTask = 'summary' | 'publication' | 'fillers'
+
+export interface StudioAiRequest {
+  task: StudioAiTask
+  language?: string
+  title?: string
+  segments: { start_ms: number; end_ms: number; text: string }[]
+}
+
+export interface StudioAiSummary {
+  summary: string
+  chapters: { t_ms: number; title: string }[]
+}
+export interface StudioAiPublication {
+  title: string
+  description: string
+  tags: string[]
+}
+export interface StudioAiFillers {
+  terms: string[]
+}
+
+/**
+ * Pede ao LLM local da organização (Ollama, pelo servidor — o browser nunca
+ * fala com o Ollama). Nada fica guardado no servidor. `503` com a razão quando
+ * o modelo não está disponível; `429` quando a organização já tem um pedido a
+ * correr.
+ */
+export const studioAi = <T,>(orgId: string, body: StudioAiRequest, signal?: AbortSignal) =>
+  request<T>(`/api/orgs/${orgId}/ai/suggestions`, { method: 'POST', body: JSON.stringify(body), signal })
+
 export interface RecordingCaption {
   recording_id: string
   lang: string

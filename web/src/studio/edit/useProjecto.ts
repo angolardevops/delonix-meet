@@ -19,6 +19,8 @@ export interface FonteEmBruto {
   nome: string
   origem: OrigemDaFonte
   tipo?: TipoDeFonte
+  /** Id da gravação da biblioteca, quando a fonte veio de lá. */
+  gravacao?: string
 }
 
 export interface EstadoDeGravacao {
@@ -163,7 +165,8 @@ export function useProjecto() {
     async (projectoId: string, brutas: FonteEmBruto[]): Promise<Fonte[]> => {
       const out: Fonte[] = []
       for (const b of brutas) {
-        const f = await criarFonte(b.blob, b.nome, b.origem, b.tipo)
+        const criada = await criarFonte(b.blob, b.nome, b.origem, b.tipo)
+        const f = b.gravacao ? { ...criada, gravacao: b.gravacao } : criada
         await bd.guardarFonte({ id: f.id, projectoId, blob: b.blob })
         registarUrl(f.id, b.blob)
         out.push(f)
@@ -212,6 +215,32 @@ export function useProjecto() {
     [guardarFontes, mudar],
   )
 
+  /**
+   * Abre no editor uma gravação da biblioteca. Se um projecto deste
+   * dispositivo já tem essa gravação como fonte, reabre-o; senão descarrega o
+   * ficheiro (`descarregar`) e cria um projecto novo com ele.
+   */
+  const abrirGravacao = useCallback(
+    async (gravacao: { id: string; titulo: string }, descarregar: () => Promise<Blob>, nomeDaFonte: string) => {
+      const existentes = await bd.listarProjectos().catch(() => [] as bd.RegistoDeProjecto[])
+      const ja = existentes.find((r) => r.projecto.fontes.some((f) => f.gravacao === gravacao.id))
+      if (ja) {
+        if (historicoRef.current && sujo.current) await guardarJa()
+        return abrir(ja.id)
+      }
+      setACarregar(true)
+      let blob: Blob
+      try {
+        blob = await descarregar()
+      } finally {
+        setACarregar(false)
+      }
+      await criar(gravacao.titulo, [{ blob, nome: nomeDaFonte, origem: 'biblioteca', gravacao: gravacao.id }])
+      return true
+    },
+    [abrir, criar, guardarJa],
+  )
+
   const apagar = useCallback(
     async (id: string) => {
       await bd.apagarProjecto(id)
@@ -250,6 +279,7 @@ export function useProjecto() {
     abrir,
     criar,
     acrescentar,
+    abrirGravacao,
     apagar,
     lerBlob,
     guardarJa,

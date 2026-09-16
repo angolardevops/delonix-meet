@@ -20,6 +20,18 @@ use crate::{error::ApiError, AppState};
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// O cliente HTTP de saída partilhado (`AppState.webhook_client`): sem
+/// redirects e com tecto de 8 s. Quem precisa de outro tecto usa
+/// `RequestBuilder::timeout` no pedido, não um cliente novo. Existe como
+/// função para que os testes usem EXACTAMENTE o cliente de produção.
+pub(crate) fn outbound_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("falha ao criar HTTP client para webhooks")
+}
+
 /// True se o IP pertence a um intervalo interno/privado que não deve ser
 /// alcançável a partir do servidor (anti-SSRF).
 fn ip_is_blocked(ip: IpAddr) -> bool {

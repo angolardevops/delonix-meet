@@ -79,7 +79,7 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 176px minmax(0, 1fr) 318px;
+  grid-template-columns: 176px minmax(0, 1fr) 330px;
 }
 .st-body[hidden] {
   display: none;
@@ -90,6 +90,10 @@
 }
 
 .st-col {
+  /* Contém qualquer texto só-para-leitores (`position: absolute`) que viva
+     numa coluna: sem isto escapa para o documento e a página ganha scroll
+     (68 px a 1440×900, 168 px a 1280×800 com a câmara ligada). */
+  position: relative;
   background: var(--surface);
   padding: 12px 10px;
   display: flex;

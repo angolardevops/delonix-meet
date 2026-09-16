@@ -81,6 +81,16 @@ pub struct Config {
     pub ollama_model_translate: String,
     /// Modelo para o resumo da ata (qualidade; ex.: qwen2.5:7b em prod).
     pub ollama_model_summary: String,
+    /// Modelo das tarefas do Estúdio (`OLLAMA_MODEL_STUDIO`; por omissão, o
+    /// do resumo): resumo e capítulos, texto de publicação, bordões.
+    pub ollama_model_studio: String,
+    /// Tecto de uma tarefa do Estúdio (`OLLAMA_TIMEOUT_SECS`, 120, 5..=900).
+    /// O pedido é síncrono: o ecrã espera pela resposta ou pelo erro.
+    pub ollama_timeout_secs: u64,
+    /// Tarefas do Estúdio em simultâneo POR ORGANIZAÇÃO
+    /// (`AI_STUDIO_CONCURRENCY_PER_ORG`, 1, 1..=8). O modelo local é um só e
+    /// partilhado: sem este tecto, uma organização monopolizava-o.
+    pub ai_studio_concurrency_per_org: usize,
     /// Capacidade da fila de saída de CADA WebSocket (`WS_QUEUE_CAP`). As filas
     /// são LIMITADAS por desenho: um cliente cujo socket TCP estagna (rede
     /// degradada, aba suspensa, cliente parado no depurador) deixa de drenar a
@@ -194,6 +204,8 @@ impl Config {
             );
         }
         let cors_origins = csv_env("CORS_ORIGINS");
+        let ollama_model_summary =
+            env::var("OLLAMA_MODEL_SUMMARY").unwrap_or_else(|_| "qwen2.5:1.5b".into());
         Self {
             database_url: secret("DATABASE_URL", DEV_DB, insecure, 0),
             bind_addr: env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8180".into()),
@@ -239,8 +251,13 @@ impl Config {
             ollama_url: env::var("OLLAMA_URL").ok().filter(|s| !s.is_empty()),
             ollama_model_translate: env::var("OLLAMA_MODEL_TRANSLATE")
                 .unwrap_or_else(|_| "qwen2.5:1.5b".into()),
-            ollama_model_summary: env::var("OLLAMA_MODEL_SUMMARY")
-                .unwrap_or_else(|_| "qwen2.5:1.5b".into()),
+            ollama_model_summary: ollama_model_summary.clone(),
+            ollama_model_studio: env::var("OLLAMA_MODEL_STUDIO")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(ollama_model_summary),
+            ollama_timeout_secs: bounded_env("OLLAMA_TIMEOUT_SECS", 120, 5, 900) as u64,
+            ai_studio_concurrency_per_org: bounded_env("AI_STUDIO_CONCURRENCY_PER_ORG", 1, 1, 8),
             ws_queue_cap: bounded_env("WS_QUEUE_CAP", 512, 32, 65_536),
             nego_queue_cap: bounded_env("NEGO_QUEUE_CAP", 64, 4, 4_096),
             rec_queue_cap: bounded_env("REC_QUEUE_CAP", 2_048, 64, 65_536),

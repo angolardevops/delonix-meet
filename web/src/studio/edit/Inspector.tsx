@@ -138,7 +138,9 @@ function CartaoDoClip({
     <div className="ed-card" data-cartao="corte">
       <div className="ed-card__title">
         <span className="ed-dot" aria-hidden="true" />
-        <span>{t('editor.inspector.seleccionado', { faixa: c.faixa, n: indice + 1, nome: f?.nome ?? '' })}</span>
+        <span className="ed-card__clip" title={t('editor.inspector.seleccionado', { faixa: c.faixa, n: indice + 1, nome: f?.nome ?? '' })}>
+          {t('editor.inspector.seleccionado', { faixa: c.faixa, n: indice + 1, nome: f?.nome ?? '' })}
+        </span>
       </div>
       {estadoDaFaixa(p, c.faixa).bloqueada && <p className="st-note">{t('editor.inspector.bloqueada')}</p>}
       {c.congelado !== null ? (
@@ -292,7 +294,9 @@ export function CartaoDeMistura({ p, c, aplicar }: { p: Projecto; c: Clip | null
   return (
     <div className="ed-card" data-cartao="audio">
       <div className="ed-card__title ed-row--between">
-        <span>{t('editor.audio.mistura')}</span>
+        {/* «aplica-se na exportação» vai no título: a nota por baixo empurrava
+            o destino do projecto para fora do ecrã a 900 px. */}
+        <span title={t('editor.audio.soNaExportacao')}>{t('editor.audio.mistura')}</span>
         <button
           type="button"
           className={cx('ed-lufs dx-num', alvo && 'ed-lufs--on')}
@@ -352,7 +356,6 @@ export function CartaoDeMistura({ p, c, aplicar }: { p: Projecto; c: Clip | null
           {t('editor.audio.normalizar')}
         </button>
       </div>
-      {(p.mistura.reduzirRuido || alvo || p.mistura.normalizar) && <p className="st-note">{t('editor.audio.soNaExportacao')}</p>}
     </div>
   )
 }

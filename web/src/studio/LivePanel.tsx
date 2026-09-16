@@ -1,47 +1,35 @@
 /**
- * Destinos em directo (ADR-0003): um cartão por plataforma, com estado.
+ * «Destinos simultâneos» (ADR-0003): um cartão por destino, na forma do
+ * template — etiqueta, nome, canal, estado.
  *
- * O QUE O ESTADO QUER DIZER, E O QUE NÃO QUER: é UMA ligação ao servidor e um
- * só `ffmpeg` que reparte para todos os destinos. O servidor não devolve saúde
- * POR destino, por isso cada cartão mostra a fase da emissão (e se tem chave)
- * — não um débito por plataforma que ninguém mediu. O único débito no ecrã é o
- * que o browser ENVIOU, calculado a partir dos bytes que o `Directo` conta.
+ * O QUE O ESTADO QUER DIZER, E O QUE NÃO QUER: o cartão mostra o que ESTE
+ * browser sabe — se o destino tem chave e em que fase está a emissão (uma só
+ * ligação ao servidor, que reparte para todos; ver `destinosLocais.ts`).
+ * Saúde, débito e perdas POR destino dependem do estado por destino do
+ * servidor, que ainda não é contrato desta UI: não há barra nem kbps no
+ * cartão, em vez de um número inventado. O único débito no ecrã é o que o
+ * browser ENVIOU (topo).
+ *
+ * Os campos (rótulo, servidor, chave) editam-se num diálogo, para o cartão
+ * manter a forma do template.
  */
-import { ReactNode, useCallback, useState } from 'react'
+import { ReactNode, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Alert, Button, cx, Field, IconButton, Meter, StatusBadge, TextInput } from '../ui/kit'
-import type { BadgeTone } from '../ui/kit'
-import Cronometro from './Cronometro'
-import { useDebito } from './debito'
+import { Alert, Button, cx, Dialog, Field, IconButton, TextInput } from '../ui/kit'
+import { contagemDosDestinos, estadoDoCartao, ORDEM_DA_CONTAGEM } from './destinosLocais'
+import type { EstadoDoCartao } from './destinosLocais'
 import { plataformaDoUrl } from './palco'
 import type { Destino, EstadoDoDirecto } from './directo'
 
-/**
- * O débito de vídeo que o `Directo` pede ao `MediaRecorder` por omissão
- * (`opcoes.bitrate ?? 4_500_000` em `directo.ts`). Serve só de escala ao
- * medidor — o número mostrado é o medido.
- */
-const DEBITO_ALVO_KBPS = 4500
-
-function EstadoDoDestino({ fase, temChave }: { fase: EstadoDoDirecto['fase']; temChave: boolean }) {
-  const { t } = useTranslation()
-  let tone: BadgeTone = 'neutral'
-  let texto = t('studio.directo.estados.pronto')
-  if (!temChave) texto = t('studio.directo.estados.semChave')
-  else if (fase === 'a-ligar') {
-    tone = 'warning'
-    texto = t('studio.directo.estados.aLigar')
-  } else if (fase === 'no-ar') {
-    tone = 'live'
-    texto = t('studio.directo.estados.noAr')
-  } else if (fase === 'erro') {
-    tone = 'record'
-    texto = t('studio.directo.estados.erro')
-  }
-  return <StatusBadge tone={tone}>{texto}</StatusBadge>
+const CHAVE_DO_ESTADO: Record<EstadoDoCartao, string> = {
+  'sem-chave': 'semChave',
+  pronto: 'pronto',
+  'a-ligar': 'aLigar',
+  'no-ar': 'noAr',
+  erro: 'erro',
 }
 
-function CampoChave({ value, onChange, disabled, id }: { value: string; onChange: (v: string) => void; disabled: boolean; id: string }) {
+function CampoChave({ value, onChange, id }: { value: string; onChange: (v: string) => void; id: string }) {
   const { t } = useTranslation()
   const [ver, setVer] = useState(false)
   return (
@@ -52,7 +40,6 @@ function CampoChave({ value, onChange, disabled, id }: { value: string; onChange
         id={id}
         type={ver ? 'text' : 'password'}
         value={value}
-        disabled={disabled}
         autoComplete="off"
         spellCheck={false}
         placeholder={t('studio.directo.chavePh')}
@@ -69,38 +56,83 @@ function CampoChave({ value, onChange, disabled, id }: { value: string; onChange
   )
 }
 
-/**
- * Um destino. Fechado mostra o que o template mostra (etiqueta, nome, servidor,
- * estado); aberto, os campos. Abre sozinho enquanto não tem chave — é o único
- * momento em que há alguma coisa para preencher — e fecha-se no ar.
- */
-function CartaoDoDestino({
+/** Editar um destino: os campos num diálogo, aplicados ao «Guardar». */
+function DialogoDoDestino({
   d,
-  i,
-  fase,
-  bloqueado,
+  nome,
   podeRemover,
-  onMudar,
+  onFechar,
+  onGuardar,
   onRemover,
 }: {
   d: Destino
-  i: number
-  fase: EstadoDoDirecto['fase']
-  bloqueado: boolean
+  nome: string
   podeRemover: boolean
-  onMudar: (patch: Partial<Destino>) => void
+  onFechar: () => void
+  onGuardar: (d: Destino) => void
   onRemover: () => void
 }) {
   const { t } = useTranslation()
-  const [aEditar, setAEditar] = useState(() => !d.chave.trim())
+  const [rascunho, setRascunho] = useState<Destino>(d)
+  const mudar = (patch: Partial<Destino>) => setRascunho((r) => ({ ...r, ...patch }))
+  return (
+    <Dialog
+      title={t('studio.directo.editar', { rotulo: nome })}
+      onClose={onFechar}
+      footer={
+        <>
+          {podeRemover && (
+            <Button variant="ghost" icon="trash" data-studio="destino-remover" onClick={onRemover}>
+              {t('studio.directo.removerCurto')}
+            </Button>
+          )}
+          <span className="dx-spacer" />
+          <Button variant="ghost" onClick={onFechar}>
+            {t('studio.directo.cancelar')}
+          </Button>
+          <Button variant="primary" data-studio="destino-guardar" onClick={() => onGuardar(rascunho)}>
+            {t('studio.directo.guardar')}
+          </Button>
+        </>
+      }
+    >
+      <div className="st-dest-dialog" data-studio="destino-form">
+        <Field label={t('studio.directo.rotulo')} htmlFor="st-dest-rotulo">
+          <TextInput
+            id="st-dest-rotulo"
+            value={rascunho.rotulo ?? ''}
+            autoComplete="off"
+            placeholder={t('studio.directo.rotuloPh')}
+            onChange={(e) => mudar({ rotulo: e.target.value })}
+          />
+        </Field>
+        <Field label={t('studio.directo.url')} htmlFor="st-dest-url">
+          <TextInput
+            id="st-dest-url"
+            value={rascunho.url}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="rtmp://"
+            data-studio="destino-url"
+            onChange={(e) => mudar({ url: e.target.value })}
+          />
+        </Field>
+        <Field label={t('studio.directo.chave')} htmlFor="st-dest-chave">
+          <CampoChave id="st-dest-chave" value={rascunho.chave} onChange={(v) => mudar({ chave: v })} />
+        </Field>
+        <p className="st-note">{t('studio.directo.soNestaSessao')}</p>
+      </div>
+    </Dialog>
+  )
+}
+
+function CartaoDoDestino({ d, i, fase, bloqueado, onEditar }: { d: Destino; i: number; fase: EstadoDoDirecto['fase']; bloqueado: boolean; onEditar: () => void }) {
+  const { t } = useTranslation()
   const nome = d.rotulo?.trim() || t('studio.directo.destino', { n: i + 1 })
   const temChave = !!d.chave.trim()
-  const aberto = aEditar && !bloqueado
+  const estado = estadoDoCartao(fase, temChave)
   return (
-    <li
-      className={cx('st-dest', fase === 'no-ar' && temChave && 'is-live', fase === 'erro' && temChave && 'is-error')}
-      data-studio="destino"
-    >
+    <li className={cx('st-dest', `st-dest--${estado}`)} data-studio="destino" data-estado={estado}>
       <div className="st-dest__head">
         {/* A etiqueta lê-se do HOST do servidor RTMP, não do rótulo. */}
         <span className="st-dest__tag dx-num" data-studio="destino-tag" title={t('studio.directo.tagDica')}>
@@ -108,50 +140,25 @@ function CartaoDoDestino({
         </span>
         <span className="st-dest__who">
           <strong className="st-dest__name">{nome}</strong>
-          <span className="st-dest__url dx-num">{d.url || 'rtmp://'}</span>
+          <span className="st-dest__url dx-num">{d.url.trim() || 'rtmp://'}</span>
         </span>
-        <EstadoDoDestino fase={fase} temChave={temChave} />
-        <IconButton
-          icon="edit"
-          bare
-          disabled={bloqueado}
-          aria-expanded={aberto}
-          label={t('studio.directo.editar', { rotulo: nome })}
-          onClick={() => setAEditar((v) => !v)}
-        />
-        {podeRemover && (
-          <IconButton icon="trash" bare disabled={bloqueado} label={t('studio.directo.remover', { rotulo: nome })} onClick={onRemover} />
-        )}
+        <span className="st-dest__state dx-num" data-studio="destino-estado">
+          {t(`studio.directo.estados.${CHAVE_DO_ESTADO[estado]}`)}
+        </span>
       </div>
-      {aberto && (
-        <div className="st-dest__form">
-          <Field label={t('studio.directo.rotulo')} htmlFor={`st-d${i}-rotulo`}>
-            <TextInput
-              id={`st-d${i}-rotulo`}
-              value={d.rotulo ?? ''}
-              disabled={bloqueado}
-              autoComplete="off"
-              placeholder={t('studio.directo.rotuloPh')}
-              onChange={(e) => onMudar({ rotulo: e.target.value })}
-            />
-          </Field>
-          <Field label={t('studio.directo.url')} htmlFor={`st-d${i}-url`}>
-            <TextInput
-              id={`st-d${i}-url`}
-              value={d.url}
-              disabled={bloqueado}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="rtmp://"
-              data-studio="destino-url"
-              onChange={(e) => onMudar({ url: e.target.value })}
-            />
-          </Field>
-          <Field label={t('studio.directo.chave')} htmlFor={`st-d${i}-chave`}>
-            <CampoChave id={`st-d${i}-chave`} value={d.chave} disabled={bloqueado} onChange={(v) => onMudar({ chave: v })} />
-          </Field>
-        </div>
-      )}
+      <div className="st-dest__foot dx-num">
+        <span>{temChave ? t('studio.directo.chaveDefinida') : t('studio.directo.chaveEmFalta')}</span>
+        <button
+          type="button"
+          className="st-dest__edit"
+          disabled={bloqueado}
+          data-studio="destino-editar"
+          aria-label={t('studio.directo.editar', { rotulo: nome })}
+          onClick={onEditar}
+        >
+          {t('studio.directo.editarCurto')}
+        </button>
+      </div>
     </li>
   )
 }
@@ -179,8 +186,9 @@ export default function LivePanel({
   estado: EstadoDoDirecto
   /** Há imagem para emitir (ecrã ou câmara). */
   podeEmitir: boolean
-  onMudar: (i: number, patch: Partial<Destino>) => void
-  onAdicionar: () => void
+  onMudar: (i: number, d: Destino) => void
+  /** Acrescenta um destino vazio e devolve o índice dele (para o abrir). */
+  onAdicionar: () => number
   onRemover: (i: number) => void
   onIrParaOAr: () => void
   onParar: () => void
@@ -188,13 +196,16 @@ export default function LivePanel({
   children?: ReactNode
 }) {
   const { t } = useTranslation()
-  const kbps = useDebito(estado)
+  const [aEditar, setAEditar] = useState<number | null>(null)
   const noAr = estado.fase === 'no-ar'
   const aLigar = estado.fase === 'a-ligar'
   const bloqueado = noAr || aLigar
-  const comChave = destinos.filter((d) => d.chave.trim()).length
-  const desde = estado.fase === 'no-ar' ? estado.desde : 0
-  const lerNoAr = useCallback(() => (Date.now() - desde) / 1000, [desde])
+  const n = contagemDosDestinos(destinos, estado.fase)
+  const comChave = destinos.length - n['sem-chave']
+  const contagem = ORDEM_DA_CONTAGEM.filter((e) => n[e] > 0)
+    .map((e) => t(`studio.directo.contagem.${CHAVE_DO_ESTADO[e]}`, { count: n[e] }))
+    .join(' · ')
+  const emEdicao = aEditar !== null ? destinos[aEditar] : undefined
 
   return (
     <section className={cx('st-live', noAr && 'st-live--on')} data-studio="directo" aria-labelledby="st-live-h">
@@ -202,10 +213,9 @@ export default function LivePanel({
         <h2 id="st-live-h" className="st-live__title">
           {t('studio.directo.titulo')}
         </h2>
-        <span className="dx-spacer" />
         {suportado && (
-          <span className="dx-num dx-muted st-small">
-            {noAr ? t('studio.directo.noArN', { n: comChave }) : t('studio.directo.comChave', { n: comChave })}
+          <span className="st-live__count dx-num" data-studio="destinos-contagem">
+            {contagem}
           </span>
         )}
       </header>
@@ -215,46 +225,18 @@ export default function LivePanel({
           <Alert tone="warning">{t('studio.directo.indisponivel')}</Alert>
         ) : (
           <>
-            {estado.fase === 'no-ar' && (
-              <div className="st-dest is-live" data-studio="no-ar">
-                <div className="st-card__row">
-                  <StatusBadge tone="live">
-                    {t('studio.topo.aoVivo')} <Cronometro activo ler={lerNoAr} />
-                  </StatusBadge>
-                  <span className="dx-spacer" />
-                  <span className="dx-num st-small" data-studio="directo-bytes">
-                    {t('studio.directo.enviado')} {(estado.bytes / 1_048_576).toFixed(1)} MB
-                  </span>
-                </div>
-                <div className="st-card__row">
-                  <Meter value={(kbps / DEBITO_ALVO_KBPS) * 100} tone="live" />
-                  <span className="dx-num st-small">{kbps} kbps</span>
-                </div>
-                <p className="st-note">{t('studio.directo.umaLigacao')}</p>
-              </div>
-            )}
-
             <ul className="st-dests">
               {destinos.map((d, i) => (
-                <CartaoDoDestino
-                  key={i}
-                  d={d}
-                  i={i}
-                  fase={estado.fase}
-                  bloqueado={bloqueado}
-                  podeRemover={destinos.length > 1}
-                  onMudar={(patch) => onMudar(i, patch)}
-                  onRemover={() => onRemover(i)}
-                />
+                <CartaoDoDestino key={i} d={d} i={i} fase={estado.fase} bloqueado={bloqueado} onEditar={() => setAEditar(i)} />
               ))}
             </ul>
-
+            {/* Marca para os e2e: a emissão foi aceite. */}
+            {noAr && <span data-studio="no-ar" hidden />}
             {estado.fase === 'erro' && (
               <div className="dx-alert dx-alert--danger" role="alert" data-studio="directo-erro">
                 {estado.motivo}
               </div>
             )}
-            {destinos.length >= maximo && <p className="st-note">{t('studio.directo.limite', { maximo })}</p>}
           </>
         )}
       </div>
@@ -263,25 +245,51 @@ export default function LivePanel({
 
       {suportado && (
         <div className="st-live__actions">
-          <Button variant="secondary" disabled={bloqueado || destinos.length >= maximo} onClick={onAdicionar}>
+          <button
+            type="button"
+            className="st-live__btn"
+            disabled={bloqueado || destinos.length >= maximo}
+            // O tecto vai no título do botão: uma nota por baixo dos cartões
+            // não existe no template e empurrava a gravação local.
+            title={destinos.length >= maximo ? t('studio.directo.limite', { maximo }) : undefined}
+            data-studio="destino-adicionar"
+            onClick={() => setAEditar(onAdicionar())}
+          >
             {t('studio.directo.adicionar')}
-          </Button>
-          {noAr ? (
-            <Button variant="outline" className="st-btn-stop" data-studio="sair-do-ar" onClick={onParar}>
-              {t('studio.directo.parar')}
-            </Button>
+          </button>
+          {noAr || aLigar ? (
+            <button type="button" className="st-live__btn st-live__btn--stop" data-studio="sair-do-ar" disabled={aLigar} onClick={onParar}>
+              {aLigar ? t('studio.directo.aLigar') : t('studio.directo.parar')}
+            </button>
           ) : (
-            <Button
-              variant="live"
-              busy={aLigar}
-              disabled={aLigar || comChave === 0 || !podeEmitir}
+            <button
+              type="button"
+              className="st-live__btn st-live__btn--go"
+              disabled={comChave === 0 || !podeEmitir}
               data-studio="ir-para-o-ar"
               onClick={onIrParaOAr}
             >
-              {aLigar ? t('studio.directo.aLigar') : t('studio.directo.irParaOAr')}
-            </Button>
+              {t('studio.directo.irParaOAr')}
+            </button>
           )}
         </div>
+      )}
+
+      {emEdicao && aEditar !== null && (
+        <DialogoDoDestino
+          d={emEdicao}
+          nome={emEdicao.rotulo?.trim() || t('studio.directo.destino', { n: aEditar + 1 })}
+          podeRemover={destinos.length > 1}
+          onFechar={() => setAEditar(null)}
+          onGuardar={(d) => {
+            onMudar(aEditar, d)
+            setAEditar(null)
+          }}
+          onRemover={() => {
+            onRemover(aEditar)
+            setAEditar(null)
+          }}
+        />
       )}
     </section>
   )
