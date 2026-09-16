@@ -75,3 +75,6 @@ CLAUDE.md
 # CSS compilado pelo portão da barra (web/e2e/bar-responsivo.mjs)
 web/e2e/room.css
 .mutante-em-voo.json
+
+# Stubs gRPC do ai-worker — gerados de server/proto por ai-worker/gen_protos.sh
+ai-worker/gen/

@@ -1,0 +1,2 @@
+# Só para gerar os stubs (ai-worker/gen_protos.sh) — nunca entra na imagem final.
+grpcio-tools==1.66.2

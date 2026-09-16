@@ -2,155 +2,146 @@
 """
 Delonix Meet — worker de transcrição em GPU.
 
-Consome as gravações produzidas pelo servidor (recorder.rs → RECORDINGS_DIR/
-<id>.webm), transcreve-as com faster-whisper (GPU quando disponível) e preenche
-a transcrição + a ATA (MoM) na base de dados. É idempotente: só processa
-gravações com `transcribed_at IS NULL`.
+Reserva gravações no servidor pelo gRPC interno
+(`delonix.meet.transcription.v1.TranscriptionService`, ADR-0005 §3), transcreve-as
+com faster-whisper (GPU quando disponível), gera a ATA (MoM) e entrega. O servidor
+é o dono do estado: aplica o DLP antes de gravar, controla a reserva (lease) e as
+tentativas (máx. 5). O worker não toca na base.
 
-Env:
-  DATABASE_URL     ligação Postgres (obrigatório)
-  RECORDINGS_DIR   pasta das gravações (default: /recordings)
-  WHISPER_MODEL    modelo faster-whisper (default: large-v3)
-  WHISPER_DEVICE   cuda|cpu (default: cuda)
-  WHISPER_COMPUTE  float16|int8_float16|int8 (default: float16)
-  POLL_SECONDS     intervalo de sondagem quando não há trabalho (default: 20)
+Env — modo gRPC (o suportado):
+  DELONIX_GRPC_ADDR  host:porta do gRPC interno (ex.: delonix-server-internal:9180)
+  GRPC_CLIENT_CERT   certificado de cliente (PEM)   ┐
+  GRPC_CLIENT_KEY    chave do certificado (PEM)     ├ mTLS: os três, ou nenhum
+  GRPC_CA            CA que assina o servidor (PEM) ┘
+  GRPC_INSECURE      =1 aceita texto claro sem certificados (só desenvolvimento;
+                     o servidor tem de ter DELONIX_ALLOW_INSECURE=1)
+  WORKER_ID          identificador para logs/auditoria (default: hostname)
+  LEASE_SECONDS      duração pedida da reserva (default: 1800; o servidor limita a
+                     60..7200). Não há renovação: tem de cobrir a gravação mais longa.
+
+Env — modo legado (DEPRECADO, escreve no Postgres SEM DLP nem reservas):
+  DATABASE_URL       só é usado quando DELONIX_GRPC_ADDR NÃO está definido
+
+Env — comuns:
+  RECORDINGS_DIR     pasta das gravações partilhada com o servidor (default: /recordings)
+  WHISPER_MODEL      modelo faster-whisper (default: large-v3)
+  WHISPER_DEVICE     cuda|cpu (default: cuda)
+  WHISPER_COMPUTE    float16|int8_float16|int8 (default: float16)
+  POLL_SECONDS       espera quando não há trabalho (default: 20)
+  TRANSCRIBER        whisper (default) | fake — o fake só serve os testes e devolve
+                     FAKE_TRANSCRIPT sem carregar modelo nenhum
+
+Opções:
+  --once   trata no máximo um trabalho e sai. Código de saída: 0 entregue (ou
+           falha registada), 3 sem trabalho, 4 reserva perdida, 1 erro, 2 configuração.
+
+Stubs gRPC: gerados de server/proto por `ai-worker/gen_protos.sh` para
+`ai-worker/gen/` (no build da imagem; nunca versionados).
 """
+import argparse
 import os
-import sys
-import time
 import signal
+import socket
+import sys
+import threading
 
-import psycopg2
-from faster_whisper import WhisperModel
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.environ.get("DELONIX_PROTO_GEN_DIR", os.path.join(HERE, "gen")))
 
-DATABASE_URL = os.environ["DATABASE_URL"]
-RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/recordings")
-MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3")
-DEVICE = os.environ.get("WHISPER_DEVICE", "cuda")
-COMPUTE = os.environ.get("WHISPER_COMPUTE", "float16")
-POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "20"))
+from job_source import ConfigError, GrpcJobSource, LegacyDbJobSource, open_channel  # noqa: E402
+from transcriber import FakeTranscriber, WhisperTranscriber  # noqa: E402
+import worker  # noqa: E402
 
-_running = True
-
-
-def _stop(*_):
-    global _running
-    _running = False
-
-
-signal.signal(signal.SIGTERM, _stop)
-signal.signal(signal.SIGINT, _stop)
+EXIT_CODES = {
+    worker.Outcome.COMPLETED: 0,
+    worker.Outcome.FAILED: 0,
+    worker.Outcome.IDLE: 3,
+    worker.Outcome.LEASE_LOST: 4,
+    worker.Outcome.ERROR: 1,
+}
 
 
 def log(msg: str):
     print(f"[ai-worker] {msg}", flush=True)
 
 
-def build_mom(transcript: str) -> str:
-    """Ata (MoM) simples e extractiva a partir da transcrição — sem LLM.
-    Resumo por tópicos: primeiras frases + linhas com marcadores de ação."""
-    text = " ".join(transcript.split())
-    if not text:
-        return ""
-    # Divide em frases de forma tosca mas robusta.
-    import re
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-    action_kw = ("decid", "ficou", "vamos", "próximo", "proximo", "ação", "acao",
-                 "tarefa", "responsáv", "responsav", "prazo", "até", "ate ", "todo")
-    actions = [s for s in sentences if any(k in s.lower() for k in action_kw)]
-    lines = ["# Ata (gerada automaticamente)", "", "## Resumo"]
-    lines += [f"- {s}" for s in sentences[:5]]
-    if actions:
-        lines += ["", "## Ações / decisões"]
-        lines += [f"- {s}" for s in actions[:8]]
-    return "\n".join(lines)
-
-
-def transcribe(model: WhisperModel, path: str) -> str:
-    # vad_filter corta silêncios; language=None deixa o modelo detetar (PT/EN/…).
-    segments, _info = model.transcribe(path, vad_filter=True, beam_size=5)
-    return " ".join(seg.text.strip() for seg in segments).strip()
-
-
-def process_one(conn, model: WhisperModel) -> bool:
-    """Processa uma gravação pendente. Devolve True se havia trabalho."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT r.id, rm.code
-            FROM recordings r
-            LEFT JOIN rooms rm ON rm.id = r.room_id
-            WHERE r.transcribed_at IS NULL
-            ORDER BY r.id ASC
-            LIMIT 1
-            """
-        )
-        row = cur.fetchone()
-    if not row:
-        return False
-
-    rec_id, room_code = row
-    path = os.path.join(RECORDINGS_DIR, f"{rec_id}.webm")
-    if not os.path.exists(path):
-        log(f"ficheiro em falta {path} — a marcar como processado para não repetir")
-        _mark_done(conn, rec_id, "", "")
-        return True
-
-    log(f"a transcrever gravação {rec_id} ({path})…")
-    t0 = time.time()
-    transcript = transcribe(model, path)
-    mom = build_mom(transcript)
-    log(f"gravação {rec_id} transcrita em {time.time() - t0:.1f}s ({len(transcript)} chars)")
-
-    _mark_done(conn, rec_id, transcript, mom)
-
-    # Preenche também a ATA da reunião ligada (é o que o leitor mostra), se
-    # existir uma reunião com este room_code e ainda sem transcrição.
-    if room_code:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE meetings SET transcript = %s, minutes = %s "
-                "WHERE room_code = %s AND transcript = ''",
-                (transcript, mom, room_code),
-            )
-        conn.commit()
-    return True
-
-
-def _mark_done(conn, rec_id, transcript: str, mom: str):
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE recordings SET transcript = %s, minutes = %s, transcribed_at = now() WHERE id = %s",
-            (transcript, mom, rec_id),
-        )
-    conn.commit()
-
-
-def main():
-    log(f"a carregar modelo {MODEL_NAME} em {DEVICE}/{COMPUTE}…")
+def _int_env(env, name: str, default: int) -> int:
+    raw = env.get(name, "").strip()
+    if not raw:
+        return default
     try:
-        model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE)
-    except Exception as e:  # GPU indisponível → cai para CPU (mais lento)
-        log(f"falha a carregar em {DEVICE} ({e}); a tentar CPU/int8")
-        model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
-    log("modelo pronto — a sondar gravações")
+        return int(raw)
+    except ValueError as e:
+        raise ConfigError(f"{name}={raw!r} não é um inteiro") from e
 
-    conn = psycopg2.connect(DATABASE_URL)
-    conn.autocommit = False
-    while _running:
-        try:
-            worked = process_one(conn, model)
-        except Exception as e:  # não deixar o worker morrer por uma gravação má
-            log(f"erro a processar: {e}")
-            conn.rollback()
-            worked = False
-        if not worked:
-            for _ in range(POLL_SECONDS):
-                if not _running:
-                    break
-                time.sleep(1)
-    conn.close()
-    log("terminado")
+
+def build_source(env):
+    grpc_addr = env.get("DELONIX_GRPC_ADDR", "").strip()
+    if grpc_addr:
+        channel = open_channel(
+            grpc_addr,
+            env.get("GRPC_CLIENT_CERT") or None,
+            env.get("GRPC_CLIENT_KEY") or None,
+            env.get("GRPC_CA") or None,
+            insecure=env.get("GRPC_INSECURE") == "1",
+        )
+        worker_id = env.get("WORKER_ID") or socket.gethostname()
+        lease = _int_env(env, "LEASE_SECONDS", 1800)
+        mode = "mTLS" if env.get("GRPC_CA") else "TEXTO CLARO (GRPC_INSECURE=1)"
+        log(f"modo gRPC: {grpc_addr} ({mode}), worker {worker_id}, reserva {lease}s")
+        return GrpcJobSource.connect(channel, worker_id, lease)
+    if env.get("DATABASE_URL"):
+        log("AVISO: modo legado DATABASE_URL está DEPRECADO — escreve directamente no "
+            "Postgres e CONTORNA o DLP, as reservas e o limite de tentativas do servidor "
+            "(ADR-0005 §3). Definir DELONIX_GRPC_ADDR e os certificados mTLS.")
+        return LegacyDbJobSource(env["DATABASE_URL"])
+    raise ConfigError("falta DELONIX_GRPC_ADDR (ou, deprecado, DATABASE_URL)")
+
+
+def build_transcriber(env):
+    kind = env.get("TRANSCRIBER", "whisper")
+    if kind == "fake":
+        log("AVISO: TRANSCRIBER=fake — não há modelo; só para testes")
+        return FakeTranscriber(env.get("FAKE_TRANSCRIPT", "transcrição de teste."))
+    if kind != "whisper":
+        raise ConfigError(f"TRANSCRIBER={kind!r} desconhecido (whisper|fake)")
+    return WhisperTranscriber(env.get("WHISPER_MODEL", "large-v3"),
+                              env.get("WHISPER_DEVICE", "cuda"),
+                              env.get("WHISPER_COMPUTE", "float16"), log)
+
+
+def main(argv=None, env=None) -> int:
+    env = os.environ if env is None else env
+    parser = argparse.ArgumentParser(description="Delonix Meet — worker de transcrição")
+    parser.add_argument("--once", action="store_true",
+                        help="trata no máximo um trabalho e sai")
+    opts = parser.parse_args(argv)
+
+    source = None
+    try:
+        recordings_dir = env.get("RECORDINGS_DIR", "/recordings")
+        poll_seconds = _int_env(env, "POLL_SECONDS", 20)
+        # A fonte primeiro: um erro de configuração não deve esperar 3GB de modelo.
+        source = build_source(env)
+        transcriber = build_transcriber(env)
+    except ConfigError as e:
+        log(f"ERRO de configuração: {e}")
+        if source is not None:
+            source.close()
+        return 2
+
+    try:
+        if opts.once:
+            return EXIT_CODES[worker.process_one(source, transcriber, recordings_dir, log)]
+        stop = threading.Event()
+        signal.signal(signal.SIGTERM, lambda *_: stop.set())
+        signal.signal(signal.SIGINT, lambda *_: stop.set())
+        log("a sondar trabalhos")
+        worker.run(source, transcriber, recordings_dir, poll_seconds, stop, log)
+        log("terminado")
+        return 0
+    finally:
+        source.close()
 
 
 if __name__ == "__main__":
