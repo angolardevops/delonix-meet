@@ -536,11 +536,7 @@ async fn main() {
         .await
         .expect("migrations failed");
 
-    let webhook_client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .expect("falha ao criar HTTP client para webhooks");
+    let webhook_client = webhooks::outbound_http_client();
 
     // Redis pub/sub: opcional — só ativo se REDIS_URL estiver definido.
     let redis_bus = if let Some(url) = &config.redis_url {
