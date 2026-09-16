@@ -25,10 +25,18 @@ export default function AuditCard({ orgId }: { orgId: string }) {
     <Card
       className="org-audit"
       title={t('org.auditoria.titulo')}
-      eyebrow={audit.state.s === 'ready' ? t('org.auditoria.eventos', { count: audit.state.d.length }) : undefined}
+      eyebrow={undefined}
       flush
       actions={
         <span className="org-row-actions">
+          <span className="dx-num dx-muted org-meta">
+            {[
+              audit.state.s === 'ready' ? t('org.auditoria.eventos', { count: audit.state.d.length }) : null,
+              chain.state.s === 'ready' && chain.state.d.intact ? t('consola.auditoria.imutavelMeta') : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
           <Select
             value={String(limit)}
             onChange={(e) => setLimit(Number(e.target.value))}

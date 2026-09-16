@@ -19,7 +19,16 @@ export default function OrgsCard({
 }) {
   const { t } = useTranslation()
   return (
-    <Card title={t('consola.orgs.titulo')} eyebrow={t('consola.orgs.contagem', { count: orgs.length })} flush>
+    <Card
+      title={t('consola.orgs.titulo')}
+      actions={
+        <span className="dx-num dx-muted org-meta">
+          {t('consola.orgs.contagem', { count: orgs.length })} · {t('consola.orgs.pessoasTotal', { count: orgs.reduce((n, o) => n + o.member_count, 0) })}
+        </span>
+      }
+      flush
+      className="org-boxed"
+    >
       <div className="dx-table-wrap org-table-wrap">
         <table className="dx-table org-table" data-testid="admin-orgs">
           <thead>

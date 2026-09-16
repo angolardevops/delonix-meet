@@ -21,7 +21,8 @@ import {
   testPlatformStorage,
 } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
-import { Alert, Button, Card, cx, Field, StatusBadge, TextInput } from '../../ui/kit'
+import { Alert, Button, Card, cx, Field, TextInput } from '../../ui/kit'
+import { Icon } from '../../ui/icons'
 import { formatBytes } from '../admin/orgShared'
 import { guarded, IntegHead } from './common'
 
@@ -31,7 +32,6 @@ const BACKENDS: Backend[] = ['local', 'nfs', 'webdav']
 export function StorageCard({ orgId }: { orgId?: string }) {
   const { t, i18n } = useTranslation()
   const { state, reload } = useAsync(() => guarded(getPlatformStorage()), [])
-  const saved = state.s === 'ready' && !state.d.forbidden ? state.d.d : null
   const used = useAsync(async () => {
     if (!orgId) return null
     try {
@@ -48,20 +48,13 @@ export function StorageCard({ orgId }: { orgId?: string }) {
         icon="database"
         title={t('integrations.storage.titulo')}
         sub={t('integrations.storage.sub')}
-        badge={saved && <StatusBadge tone="neutral">{t(`integrations.storage.tipo.${saved.storage_type}`)}</StatusBadge>}
       />
-      {usedText && (
-        <div className="integ-used" data-testid="integ-storage-used">
-          <StatusBadge tone="success">{usedText}</StatusBadge>
-          <span className="dx-muted">{t('consola.integracoes.ocupado')}</span>
-        </div>
-      )}
       <AsyncSection state={state} onRetry={reload}>
         {(g) =>
           g.forbidden ? (
             <Alert tone="warning">{t('integrations.storage.soPlataforma')}</Alert>
           ) : (
-            <StorageForm initial={g.d} onSaved={reload} />
+            <StorageForm initial={g.d} onSaved={reload} usedText={usedText} />
           )
         }
       </AsyncSection>
@@ -69,7 +62,7 @@ export function StorageCard({ orgId }: { orgId?: string }) {
   )
 }
 
-function StorageForm({ initial, onSaved }: { initial: StorageConfig; onSaved: () => void }) {
+function StorageForm({ initial, onSaved, usedText }: { initial: StorageConfig; onSaved: () => void; usedText: string | null }) {
   const { t } = useTranslation()
   const [type, setType] = useState<Backend>(initial.storage_type)
   const [nfsServer, setNfsServer] = useState(initial.nfs_server ?? '')
@@ -145,7 +138,7 @@ function StorageForm({ initial, onSaved }: { initial: StorageConfig; onSaved: ()
   return (
     <div className="integ-stack">
       <fieldset className="integ-options">
-        <legend className="dx-eyebrow">{t('integrations.storage.destino')}</legend>
+        <legend className="dx-sr-only">{t('integrations.storage.destino')}</legend>
         {BACKENDS.map((b) => (
           <label key={b} className={cx('integ-option', type === b && 'is-on')}>
             <input type="radio" name="storage-backend" value={b} checked={type === b} onChange={() => setType(b)} />
@@ -153,7 +146,17 @@ function StorageForm({ initial, onSaved }: { initial: StorageConfig; onSaved: ()
               <span className="integ-option__title">{t(`integrations.storage.tipo.${b}`)}</span>
               <span className="integ-option__sub">{t(`integrations.storage.tipoDica.${b}`)}</span>
             </span>
-            {initial.storage_type === b && <span className="integ-option__tag dx-num">{t('integrations.storage.emUso')}</span>}
+            {initial.storage_type === b && (
+              <span className="integ-option__tag dx-num" data-testid={usedText ? 'integ-storage-used' : undefined} title={usedText ? t('consola.integracoes.ocupado') : undefined}>
+                {usedText ? (
+                  <>
+                    <Icon name="check" size={10} /> {usedText}
+                  </>
+                ) : (
+                  t('integrations.storage.emUso')
+                )}
+              </span>
+            )}
           </label>
         ))}
       </fieldset>

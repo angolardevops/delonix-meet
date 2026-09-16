@@ -3,6 +3,11 @@
 export default {
   admin: {
     versao: 'server v{{v}}',
+    titulo: 'Administration console',
+    armazenamento: 'Storage',
+    gravacoesBytes: 'Recordings {{tamanho}}',
+    retencao: 'Retention policies',
+    retencaoGravacoes: 'Meeting recordings',
   },
   auditoria: {
     aVerificar: 'Checking the chain…',
@@ -14,6 +19,7 @@ export default {
     partidaEm: 'Entry #{{seq}} was changed after it was written.',
     cadeiaExplica: 'Each entry carries the hash of the previous one.',
     verificar: 'Verify chain',
+    imutavelMeta: 'immutable',
   },
   orgs: {
     titulo: 'Organisations',
@@ -28,6 +34,8 @@ export default {
     dias_other: '{{count}} days',
     semLimite: 'no limit',
     abrir: 'Manage',
+    pessoasTotal_one: '{{count}} person',
+    pessoasTotal_other: '{{count}} people',
   },
   voz: {
     titulo: 'Voice · PSTN dial-in',

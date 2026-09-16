@@ -54,14 +54,14 @@ export default function Integrations() {
 
   return (
     <>
-      <PageBar title={t('integrations.titulo')} meta={<span data-testid="integ-meta">{[org?.name, instance].filter(Boolean).join(' · ')}</span>}>
+      <PageBar title={t('integrations.titulo')} meta={<span data-testid="integ-meta">{instance}</span>}>
         {org && isAdmin && (
-          <Button variant="secondary" size="sm" icon="list" onClick={() => setAuditOpen(true)} aria-label={t('consola.integracoes.registo')}>
-            <span className="integ-hide-narrow">{t('consola.integracoes.registo')}</span>
+          <Button variant="secondary" size="sm" onClick={() => setAuditOpen(true)}>
+            {t('consola.integracoes.registo')}
           </Button>
         )}
-        <Button variant="primary" size="sm" icon="plus" onClick={() => setPickerOpen(true)} aria-label={t('consola.integracoes.nova')}>
-          <span className="integ-hide-narrow">{t('consola.integracoes.nova')}</span>
+        <Button variant="primary" size="sm" onClick={() => setPickerOpen(true)}>
+          {t('consola.integracoes.nova')}
         </Button>
       </PageBar>
       <div className="page integ-page">

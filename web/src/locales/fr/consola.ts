@@ -3,6 +3,11 @@
 export default {
   admin: {
     versao: 'serveur v{{v}}',
+    titulo: "Console d'administration",
+    armazenamento: 'Stockage',
+    gravacoesBytes: 'Enregistrements {{tamanho}}',
+    retencao: 'Politiques de conservation',
+    retencaoGravacoes: 'Enregistrements de réunions',
   },
   auditoria: {
     aVerificar: 'Vérification de la chaîne…',
@@ -14,6 +19,7 @@ export default {
     partidaEm: "L'entrée nº {{seq}} a été modifiée après son écriture.",
     cadeiaExplica: 'Chaque entrée porte le hachage de la précédente.',
     verificar: 'Vérifier la chaîne',
+    imutavelMeta: 'immuable',
   },
   orgs: {
     titulo: 'Organisations',
@@ -28,6 +34,8 @@ export default {
     dias_other: '{{count}} jours',
     semLimite: 'sans limite',
     abrir: 'Gérer',
+    pessoasTotal_one: '{{count}} personne',
+    pessoasTotal_other: '{{count}} personnes',
   },
   voz: {
     titulo: 'Voix · accès RTC',
