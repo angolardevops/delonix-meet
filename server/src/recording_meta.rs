@@ -366,7 +366,7 @@ pub async fn room_participants(
 
 // ---------- transcrição ----------
 
-/// Um segmento da transcrição (forma guardada pelo ai-worker, migração 0051).
+/// Um segmento da transcrição (forma guardada pelo ai-worker, migração 0041).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Segment {
     pub start_ms: i64,

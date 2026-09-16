@@ -172,7 +172,7 @@ export function useCallSession(
         const callHolder: { start: () => void } = { start: () => {} }
 
         // A outra sessão desta conta saiu — já não há com quem fazer eco (R114).
-        s.on('companion_ended', () => {
+        s.on('companion-ended', () => {
           setCompanion(false)
           setStatus(t('room.companion.oOutroSaiu'))
         })

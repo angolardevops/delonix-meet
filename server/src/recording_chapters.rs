@@ -1,6 +1,6 @@
 //! Capítulos de uma gravação.
 //!
-//! Dois caminhos para a mesma tabela (`recording_chapters`, migração 0053):
+//! Dois caminhos para a mesma tabela (`recording_chapters`, migração 0043):
 //! - **automático** — o LLM local (`ai::generate`, Ollama in-cluster) lê os
 //!   segmentos da transcrição e propõe capítulos; corre sozinho depois da
 //!   transcrição (`auto_chapters_sweep`) ou a pedido

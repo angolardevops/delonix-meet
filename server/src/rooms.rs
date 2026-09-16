@@ -73,7 +73,7 @@ pub(crate) fn room_format_for_meeting(format: &str) -> &'static str {
     }
 }
 
-/// O que o gravador do servidor tem de cumprir nesta sala (migração 0056).
+/// O que o gravador do servidor tem de cumprir nesta sala (migração 0046).
 pub(crate) async fn set_recording_options(
     db: &sqlx::PgPool,
     room_id: Uuid,

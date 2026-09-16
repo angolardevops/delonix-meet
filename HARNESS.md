@@ -41,6 +41,8 @@
 - `sfu.rs` — SFU Rust: Hub, Room, Publication, simulcast, PLI, gravação RTP→IVF/OGG
 - `signaling.rs` — WebSocket `/ws` (room token): transporte SFU (offer/answer/ice) + moderação (admit/kick/lock/host-*) + chat/breakout-*/media
 - `room_tools.rs` — contexto de colaboração in-room extraído de `signaling.rs`: sondagens, Q&A, temporizador, quadro branco (`impl SignalingHub::handle_tool_msg`)
+- `room_chat.rs` — chat da sala persistido: fila limitada fora do caminho quente (R122), fios (`parent_id`), reacções, histórico das últimas 200 mensagens e varredura horária da retenção (migração 0018/0039)
+- `net_probe.rs` — `GET`/`POST /api/net-probe`: medição de descida e subida contra este servidor para a «qualidade prevista» da pré-entrada (4 MiB por pedido, 30 por conta por minuto)
 - `presence.rs` — WebSocket `/rtc` (access token), chamadas WhatsApp-style: call-start/accept/decline/cancel, ring de reunião agendada
 - `meetings.rs` — calendário, conflitos, quarentena, MoM, transcrição, webhooks de meeting
 - `recordings.rs` — biblioteca de gravações, partilha read-only, sweep de retenção

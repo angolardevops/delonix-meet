@@ -428,7 +428,7 @@ if (quadroB.status >= 200 && quadroB.status < 300 && quadroB.json?.id) {
 }
 
 
-// O LEITOR DE GRAVAÇÕES (migrações 0050–0056) contra uma gravação REAL da org B.
+// O LEITOR DE GRAVAÇÕES (migrações 0040–0046) contra uma gravação REAL da org B.
 //
 // Aqui a gravação FABRICA-SE: B entra na sua sala e carrega um ficheiro. Com um
 // id que existe, um 404 prova a recusa e não a ausência — e o controlo

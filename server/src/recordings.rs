@@ -35,7 +35,7 @@ use crate::{
 
 pub const MAX_RECORDING_BYTES: usize = 512 * 1024 * 1024;
 
-/// Tipos de sessão de uma gravação (coluna `recordings.kind`, migração 0050).
+/// Tipos de sessão de uma gravação (coluna `recordings.kind`, migração 0040).
 pub const RECORDING_KINDS: &[&str] = &["meeting", "training", "broadcast", "hybrid"];
 
 fn recordings_dir() -> std::path::PathBuf {

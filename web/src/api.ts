@@ -1099,7 +1099,7 @@ export async function netProbe(bytes = 256 * 1024, signal?: AbortSignal): Promis
 // ---------- frontend/b1-gravacoes ----------
 //
 // Contrato das rotas abertas pelo branch `frontend/b1-gravacoes` (migrações
-// 0050–0056). Os tipos estendem os que já existem em vez de os alterar, para a
+// 0040–0046). Os tipos estendem os que já existem em vez de os alterar, para a
 // integração com os outros branches do lote ser trivial.
 
 /** Pedido cuja resposta de sucesso não tem corpo (`204 No Content`). */
@@ -1113,79 +1113,6 @@ async function requestEmpty(path: string, options: RequestInit = {}, retry = tru
   if (res.status === 401 && retry && localStorage.getItem('dx_user')) {
     await refreshSession()
     return requestEmpty(path, options, false)
-// ---------- frontend/b1-emissao ----------
-
-/**
- * Destino de directo GUARDADO pela organização (`server/src/stream_destinations.rs`).
- *
- * A chave de emissão NÃO vem aqui, nem cifrada: depois de guardada só volta
- * `key_set: true`. Para emitir com ele, passa `{ id }` no `Destino` do
- * `studio/directo.ts` — o servidor decifra a chave do lado dele.
- */
-export type StreamPlatform = 'youtube' | 'facebook' | 'linkedin' | 'twitch' | 'rtmp'
-
-export interface StreamDestination {
-  id: string
-  org_id: string
-  label: string
-  platform: StreamPlatform
-  /** URL base, sem a chave. */
-  rtmp_url: string
-  key_set: true
-  created_by: string | null
-  created_at: string
-  updated_at: string
-  last_used_at: string | null
-  /** Como acabou a última emissão que o usou: `ok` (esteve no ar) ou `erro`. */
-  last_status: 'ok' | 'erro' | null
-  last_error: string | null
-}
-
-export interface StreamDestinationCreate {
-  label: string
-  /** Omitido: o servidor deriva do host do URL. */
-  platform?: StreamPlatform
-  rtmp_url: string
-  stream_key: string
-}
-
-/** Omitir um campo mantém-no; `stream_key` presente SUBSTITUI a chave guardada. */
-export type StreamDestinationPatch = Partial<StreamDestinationCreate>
-
-/** Lista (membro da organização). No máximo 50 por organização. */
-export const listStreamDestinations = (orgId: string, signal?: AbortSignal) =>
-  request<StreamDestination[]>(`/api/orgs/${orgId}/stream-destinations`, { signal })
-
-export const getStreamDestination = (orgId: string, id: string, signal?: AbortSignal) =>
-  request<StreamDestination>(`/api/orgs/${orgId}/stream-destinations/${id}`, { signal })
-
-/** Cria (administrador). `409` = nome repetido ou tecto; `503` = servidor sem `SECRETS_KEY`. */
-export const createStreamDestination = (orgId: string, body: StreamDestinationCreate) =>
-  request<StreamDestination>(`/api/orgs/${orgId}/stream-destinations`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  })
-
-/** Altera (administrador). */
-export const updateStreamDestination = (orgId: string, id: string, patch: StreamDestinationPatch) =>
-  request<StreamDestination>(`/api/orgs/${orgId}/stream-destinations/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify(patch),
-  })
-
-/**
- * Apaga (administrador). O servidor responde `204` sem corpo, que o `request`
- * (que lê sempre JSON) não sabe tratar — por isso este pedido tem o seu
- * próprio caminho, com a mesma renovação de sessão no `401`.
- */
-export async function deleteStreamDestination(orgId: string, id: string): Promise<void> {
-  const path = `/api/orgs/${orgId}/stream-destinations/${id}`
-  const tentar = () =>
-    fetch(path, { method: 'DELETE', headers: authHeader(), credentials: 'same-origin' })
-  let res = await tentar()
-  if (res.status === 401 && localStorage.getItem('dx_user')) {
-    await refreshSession()
-    res = await tentar()
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
@@ -1499,3 +1426,83 @@ export const startMeetingWithOptions = (id: string) =>
 
 export const respondMeetingStatus = (id: string, status: 'accepted' | 'declined' | 'tentative', reason = '') =>
   request(`/api/meetings/${id}/respond`, { method: 'POST', body: JSON.stringify({ status, reason }) })
+
+// ---------- frontend/b1-emissao ----------
+
+/**
+ * Destino de directo GUARDADO pela organização (`server/src/stream_destinations.rs`).
+ *
+ * A chave de emissão NÃO vem aqui, nem cifrada: depois de guardada só volta
+ * `key_set: true`. Para emitir com ele, passa `{ id }` no `Destino` do
+ * `studio/directo.ts` — o servidor decifra a chave do lado dele.
+ */
+export type StreamPlatform = 'youtube' | 'facebook' | 'linkedin' | 'twitch' | 'rtmp'
+
+export interface StreamDestination {
+  id: string
+  org_id: string
+  label: string
+  platform: StreamPlatform
+  /** URL base, sem a chave. */
+  rtmp_url: string
+  key_set: true
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  last_used_at: string | null
+  /** Como acabou a última emissão que o usou: `ok` (esteve no ar) ou `erro`. */
+  last_status: 'ok' | 'erro' | null
+  last_error: string | null
+}
+
+export interface StreamDestinationCreate {
+  label: string
+  /** Omitido: o servidor deriva do host do URL. */
+  platform?: StreamPlatform
+  rtmp_url: string
+  stream_key: string
+}
+
+/** Omitir um campo mantém-no; `stream_key` presente SUBSTITUI a chave guardada. */
+export type StreamDestinationPatch = Partial<StreamDestinationCreate>
+
+/** Lista (membro da organização). No máximo 50 por organização. */
+export const listStreamDestinations = (orgId: string, signal?: AbortSignal) =>
+  request<StreamDestination[]>(`/api/orgs/${orgId}/stream-destinations`, { signal })
+
+export const getStreamDestination = (orgId: string, id: string, signal?: AbortSignal) =>
+  request<StreamDestination>(`/api/orgs/${orgId}/stream-destinations/${id}`, { signal })
+
+/** Cria (administrador). `409` = nome repetido ou tecto; `503` = servidor sem `SECRETS_KEY`. */
+export const createStreamDestination = (orgId: string, body: StreamDestinationCreate) =>
+  request<StreamDestination>(`/api/orgs/${orgId}/stream-destinations`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+/** Altera (administrador). */
+export const updateStreamDestination = (orgId: string, id: string, patch: StreamDestinationPatch) =>
+  request<StreamDestination>(`/api/orgs/${orgId}/stream-destinations/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+/**
+ * Apaga (administrador). O servidor responde `204` sem corpo, que o `request`
+ * (que lê sempre JSON) não sabe tratar — por isso este pedido tem o seu
+ * próprio caminho, com a mesma renovação de sessão no `401`.
+ */
+export async function deleteStreamDestination(orgId: string, id: string): Promise<void> {
+  const path = `/api/orgs/${orgId}/stream-destinations/${id}`
+  const tentar = () =>
+    fetch(path, { method: 'DELETE', headers: authHeader(), credentials: 'same-origin' })
+  let res = await tentar()
+  if (res.status === 401 && localStorage.getItem('dx_user')) {
+    await refreshSession()
+    res = await tentar()
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new ApiError(res.status, body, body?.error ?? res.statusText ?? 'request failed')
+  }
+}

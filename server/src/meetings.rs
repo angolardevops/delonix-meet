@@ -58,7 +58,7 @@ pub struct MeetingItem {
     pub recurrence_freq: Option<String>,
     pub recurrence_interval: i16,
     pub recurrence_parent_id: Option<Uuid>,
-    /// `meeting` | `training` | `broadcast` | `hybrid` (migração 0056).
+    /// `meeting` | `training` | `broadcast` | `hybrid` (migração 0046).
     pub format: String,
     pub waiting_room: bool,
     pub auto_record: bool,
@@ -71,7 +71,7 @@ pub struct MeetingItem {
     pub external_source: Option<String>,
 }
 
-/// Opções de sessão de uma reunião (migração 0056).
+/// Opções de sessão de uma reunião (migração 0046).
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct SessionOptions {
     #[serde(default = "default_format")]

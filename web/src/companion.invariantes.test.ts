@@ -62,7 +62,13 @@ describe('R114 · a segunda sessão da mesma conta entra sem áudio', () => {
     // Uma funcionalidade que se liga sozinha e não se desliga sozinha é meia
     // funcionalidade: quem fechasse o portátil ficava com o telemóvel mudo e um
     // aviso a falar de um aparelho que já não está lá.
-    expect(sessao).toMatch(/s\.on\('companion_ended', \(\) => \{\s*setCompanion\(false\)/)
+    expect(sessao).toMatch(/s\.on\('companion-ended', \(\) => \{\s*setCompanion\(false\)/)
+    // O nome tem de ser o que o SERVIDOR envia: `ServerMsg` serializa em
+    // kebab-case, e `companion_ended` nunca chegou a casar (encontrado na
+    // integração do lote 1 — o modo companheiro nunca desligava no browser).
+    const servidor = readFileSync(join(__dirname, '..', '..', 'server/src/signaling.rs'), 'utf8')
+    expect(servidor).toMatch(/#\[serde\(tag = "type", rename_all = "kebab-case"\)\]\s*pub enum ServerMsg/)
+    expect(servidor).toContain('CompanionEnded,')
     expect(rust).toMatch(/ServerMsg::CompanionEnded/)
     // E só quando resta UMA sessão: com três, sair uma deixa duas, e duas ainda
     // fazem eco.

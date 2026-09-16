@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Contrato do leitor de gravações e das opções de reunião, contra um servidor
-// A SÉRIO (migrações 0050–0056).
+// A SÉRIO (migrações 0040–0046).
 //
 // Cobre, com controlo positivo antes de cada recusa:
 //   - upload de um webm real → duração, resolução, fps, codecs e miniatura

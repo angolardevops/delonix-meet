@@ -32,7 +32,7 @@ UPDATE recordings r SET kind = 'training'
 
 -- Estados: `processing` (a compor), `transcribing` (há ficheiro; o ai-worker
 -- está a transcrever), `ready`, `failed`. «Publicada» não é um estado do
--- ficheiro: é `published_at` (0055).
+-- ficheiro: é `published_at` (0045).
 ALTER TABLE recordings DROP CONSTRAINT IF EXISTS recordings_status_check;
 ALTER TABLE recordings ADD CONSTRAINT recordings_status_check
     CHECK (status IN ('processing', 'transcribing', 'ready', 'failed'));

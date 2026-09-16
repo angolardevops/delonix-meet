@@ -1636,7 +1636,7 @@ portão existe para impedir, cometida ao escrevê-lo.
 
 **Regra 3 — desligar a sala de espera não abre a porta a quem não tem entrada directa.** O token antigo juntava duas coisas num só `wait` (sala de espera da sala OU sem convite). Os tokens novos separam `lobby` (sem entrada directa: espera sempre) de `wr` (a configuração da sala), e só o segundo é substituível pelo anfitrião em runtime (`WaitPolicy::must_wait`). Um token antigo continua a valer pelo `wait`.
 
-**Encontrado e NÃO corrigido (fora do âmbito do ramo):** o servidor envia `companion-ended` (`rename_all = "kebab-case"`) e o cliente escuta `companion_ended` (`web/src/room/useCallSession.ts`) — o fim do modo companion (R114) nunca chega ao browser.
+**Encontrado no ramo e corrigido na integração do lote 1:** o servidor envia `companion-ended` (`rename_all = "kebab-case"`) e o cliente escuta `companion_ended` (`web/src/room/useCallSession.ts`) — o fim do modo companion (R114) nunca chega ao browser.
 
 **Portão.** `signaling::b1_sala_tests` (36 testes, com a metade negativa de cada controlo novo e mutação manual das guardas), `web/e2e/isolamento.mjs` (espreitar a sala de espera: dona `200`, outra org `404`), `web/src/signaling.b1.test.ts` (nomes do fio).
 

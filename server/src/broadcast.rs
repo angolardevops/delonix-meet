@@ -1749,7 +1749,7 @@ fn fire_stream_event(
 ///     /// sempre que muda o número de destinos no ar); `None` = saiu do ar.
 ///     /// Não espera, não falha: difunde aos participantes locais e guarda para
 ///     /// quem entrar depois (o `Joined` leva-o).
-///     pub fn set_live(&self, room_id: Uuid, info: Option<broadcast::LiveInfo>);
+///     pub fn set_live(&self, room_id: Uuid, info: signaling::LiveInfo) -> Option<signaling::LiveInfo>;
 /// }
 /// ```
 ///
@@ -1764,12 +1764,27 @@ pub struct LiveInfo {
     pub platforms: Vec<String>,
 }
 
-fn announce_live(_state: &AppState, room_id: Uuid, info: Option<LiveInfo>) {
-    // TODO(frontend/b1-sala): quando `SignalingHub::set_live` existir, trocar
-    // este log pela chamada:
-    //     _state.hub.set_live(room_id, info);
-    // Até lá o estado AO VIVO não chega à sala — dito, não simulado.
-    tracing::info!(sala = %room_id, ao_vivo = ?info, "estado ao vivo da sala (set_live por ligar)");
+fn announce_live(state: &AppState, room_id: Uuid, info: Option<LiveInfo>) {
+    // O contrato da sinalização (`SignalingHub::set_live`) leva só rótulo e
+    // estado por destino — nunca URL nem chave. Aqui o rótulo é a plataforma.
+    let live = match info {
+        Some(i) => crate::signaling::LiveInfo {
+            on: true,
+            destinations: i
+                .platforms
+                .into_iter()
+                .map(|p| crate::signaling::LiveDestination {
+                    label: p,
+                    state: "live".into(),
+                    kbps: None,
+                })
+                .collect(),
+            since: Some(i.started_at.timestamp_millis()),
+        },
+        None => crate::signaling::LiveInfo::default(),
+    };
+    // Não há sala neste nó (o hub devolve `None`): nada a difundir aqui.
+    let _ = state.hub.set_live(room_id, live);
 }
 
 #[cfg(test)]

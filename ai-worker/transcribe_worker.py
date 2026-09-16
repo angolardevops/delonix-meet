@@ -8,7 +8,7 @@ a transcrição + a ATA (MoM) na base de dados. É idempotente: só processa
 gravações com `transcribed_at IS NULL`.
 
 Guarda os SEGMENTOS (início, fim, texto, confiança) e a língua detectada
-(migração 0051) — são eles que alimentam a legenda no leitor, os capítulos
+(migração 0041) — são eles que alimentam a legenda no leitor, os capítulos
 automáticos e o `GET /api/recordings/{id}/transcript`. Enquanto trabalha, a
 gravação fica em `status = 'transcribing'` com `progress_pct`; vários workers
 não pegam na mesma (`FOR UPDATE SKIP LOCKED`), e uma gravação cujo worker

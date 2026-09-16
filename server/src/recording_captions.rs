@@ -1,6 +1,6 @@
 //! Legendas por língua, servidas ao leitor como WebVTT (`<track>`).
 //!
-//! Três origens para a mesma tabela (`recording_captions`, migração 0052):
+//! Três origens para a mesma tabela (`recording_captions`, migração 0042):
 //! - `upload` — um VTT enviado por quem gere a gravação (validado);
 //! - `transcript` — construído dos segmentos da transcrição, na língua dela;
 //! - `translation` — cada segmento traduzido pelo LLM local (`ai::translate`),
