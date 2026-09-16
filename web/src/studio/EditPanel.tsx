@@ -25,6 +25,7 @@ import { analisarPausas } from './analise'
 import CaptionsPanel from './captions/CaptionsPanel'
 import { contarPreenchimento, encontrarPreenchimento, palavrasDasCues, relogio } from './captions/legendas'
 import type { ResultadoDaGravacao } from './compositor'
+import AssistenteIA from './edit/AssistenteIA'
 import Bin, { Biblioteca } from './edit/Bin'
 import type { AbaDoBin, ResumoDePausas } from './edit/Bin'
 import Inspector from './edit/Inspector'
@@ -124,6 +125,8 @@ export default function EditPanel({
   const [aProcurar, setAProcurar] = useState(false)
   const [ondas, setOndas] = useState<Map<string, Float32Array>>(new Map())
   const [capitulo, setCapitulo] = useState<string | null>(null)
+  // Palavras de preenchimento que o LLM local encontrou na transcrição deste projecto.
+  const [termosIA, setTermosIA] = useState<string[]>([])
   const [projectos, setProjectos] = useState(false)
   const [biblioteca, setBiblioteca] = useState(false)
   const [aAbrirGravacao, setAAbrirGravacao] = useState(false)
@@ -202,6 +205,7 @@ export default function EditPanel({
   const projectoId = p?.id
   useEffect(() => {
     if (!p) return
+    setTermosIA([])
     setSeleccao(clipsDaFaixa(p, 'V1')[0]?.id ?? null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectoId])
@@ -241,8 +245,8 @@ export default function EditPanel({
   const preenchimento = useMemo(() => {
     if (!p?.legendas) return null
     const ws = palavrasDasCues(p.legendas.cues).map((x) => x.palavra)
-    return contarPreenchimento(encontrarPreenchimento(ws, p.legendas.lingua))
-  }, [p?.legendas])
+    return contarPreenchimento(encontrarPreenchimento(ws, p.legendas.lingua, termosIA))
+  }, [p?.legendas, termosIA])
 
   const procurarPausas = useCallback(async () => {
     if (!p) return
@@ -530,6 +534,7 @@ export default function EditPanel({
               preenchimento={preenchimento}
               onIrParaLegendas={() => onVista('legendas')}
               marcaDeAgua={marcaDeAgua}
+              assistente={<AssistenteIA p={p} aplicar={pr.aplicar} onIrParaLegendas={() => onVista('legendas')} onTermos={setTermosIA} />}
             />
             <section className="ed-centre" aria-label={t('studio.palco.previsualizacao')}>
               <Preview projecto={p} leitor={leitor} lingua={p.legendas?.lingua ?? null} marcaDeAgua={marcaDeAgua} forma="edicao" onLegendas={() => onVista('legendas')} />
@@ -569,7 +574,7 @@ export default function EditPanel({
           />
         </>
       ) : (
-        <CaptionsPanel projecto={p} leitor={leitor} aplicar={pr.aplicar} lerBlob={pr.lerBlob} onErro={setErro} marcaDeAgua={marcaDeAgua} />
+        <CaptionsPanel projecto={p} leitor={leitor} aplicar={pr.aplicar} lerBlob={pr.lerBlob} onErro={setErro} marcaDeAgua={marcaDeAgua} termosExtra={termosIA} />
       )}
       {dialogos}
     </div>

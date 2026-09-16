@@ -1881,3 +1881,13 @@ button.ed-badge {
     display: none;
   }
 }
+
+/* Resultados da IA do servidor (resumo/capítulos, termos de preenchimento). */
+.ed-ai-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--t-sm);
+}

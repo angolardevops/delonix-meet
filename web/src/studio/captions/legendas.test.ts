@@ -144,6 +144,16 @@ describe('palavras de preenchimento', () => {
   it('língua sem lista não inventa nada', () => {
     expect(encontrarPreenchimento(ws, 'umb')).toEqual([])
   })
+
+  it('aceita termos de fora da lista (os que o LLM encontrou) sem duplicar os fixos', () => {
+    const ws = ['Então', 'basicamente', 'o', 'failover,', 'tipo,', 'funciona', 'Basicamente.'].map((x, i) => w(i, i + 0.5, x))
+    const o = encontrarPreenchimento(ws, 'pt', ['basicamente', 'tipo', '  '])
+    expect(o.map((x) => [x.termo, x.indices])).toEqual([
+      ['basicamente', [1]],
+      ['tipo', [4]],
+      ['basicamente', [6]],
+    ])
+  })
 })
 
 describe('corte pelo texto', () => {

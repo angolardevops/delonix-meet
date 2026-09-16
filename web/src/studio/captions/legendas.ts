@@ -232,9 +232,17 @@ export interface Ocorrencia {
   indices: number[]
 }
 
-/** Encontra enchimentos (incluindo expressões de duas palavras). */
-export function encontrarPreenchimento(palavras: Palavra[], lingua: string): Ocorrencia[] {
-  const termos = PREENCHIMENTO[lingua.split('-')[0]] ?? []
+/**
+ * Encontra enchimentos (incluindo expressões de várias palavras). `extra` são
+ * termos vindos de fora da lista fixa — os que o LLM local encontrou NESTA
+ * transcrição (o servidor só devolve termos que lá estão).
+ */
+export function encontrarPreenchimento(palavras: Palavra[], lingua: string, extra: readonly string[] = []): Ocorrencia[] {
+  const fixos = PREENCHIMENTO[lingua.split('-')[0]] ?? []
+  const vistos = new Set(fixos)
+  const novos = extra.map((x) => x.split(/\s+/).map(normalizarPalavra).filter(Boolean).join(' ')).filter((x) => x && !vistos.has(x) && (vistos.add(x), true))
+  // Expressões mais longas primeiro: «quer dizer» não pode ser apanhada como «quer».
+  const termos = [...fixos, ...novos].sort((a, b) => b.split(' ').length - a.split(' ').length)
   const norm = palavras.map((w) => normalizarPalavra(w.texto))
   const out: Ocorrencia[] = []
   for (let i = 0; i < norm.length; i++) {

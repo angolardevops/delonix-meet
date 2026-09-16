@@ -4,6 +4,7 @@
  * palavras de preenchimento.
  */
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, isAbort, recordingObjectUrl, recordingsLibrary } from '../../api'
@@ -91,7 +92,10 @@ export default function Bin({
   preenchimento,
   onIrParaLegendas,
   marcaDeAgua,
+  assistente,
 }: {
+  /** O cartão da IA do servidor, por baixo da IA no browser. */
+  assistente?: ReactNode
   p: Projecto
   aba: AbaDoBin
   onAba: (a: AbaDoBin) => void
@@ -315,6 +319,7 @@ export default function Bin({
           </span>
         </button>
       </section>
+      {assistente}
 
       {biblioteca && (
         <Biblioteca

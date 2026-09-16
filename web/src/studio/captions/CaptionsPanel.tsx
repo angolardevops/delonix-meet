@@ -69,7 +69,10 @@ export default function CaptionsPanel({
   lerBlob,
   onErro,
   marcaDeAgua,
+  termosExtra = [],
 }: {
+  /** Palavras de preenchimento que o LLM local encontrou nesta transcrição. */
+  termosExtra?: readonly string[]
   projecto: Projecto
   leitor: Leitor
   aplicar: (e: Edicao, chave?: string | null) => void
@@ -144,7 +147,7 @@ export default function CaptionsPanel({
   const eOrigem = !!leg && vista === leg.lingua
   const cues: Cue[] = !leg ? [] : eOrigem ? leg.cues : leg.traducoes[vista ?? ''] ?? []
   const palavras = useMemo(() => (leg ? palavrasDasCues(leg.cues) : []), [leg])
-  const enchimentos = useMemo(() => (leg ? encontrarPreenchimento(palavras.map((x) => x.palavra), leg.lingua) : []), [palavras, leg])
+  const enchimentos = useMemo(() => (leg ? encontrarPreenchimento(palavras.map((x) => x.palavra), leg.lingua, termosExtra) : []), [palavras, leg, termosExtra])
   const indicesEnchimento = useMemo(() => new Set(enchimentos.flatMap((o) => o.indices)), [enchimentos])
   const gaps = useMemo(() => {
     const out: { i: number; inicio: number; fim: number }[] = []
