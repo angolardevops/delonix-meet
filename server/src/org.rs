@@ -178,7 +178,7 @@ pub struct Employee {
     /// os colegas vai `null` e basta-lhes `can_sms`.
     #[sqlx(default)]
     pub phone: Option<String>,
-    /// `odoo` | `manual` | `null` — quem escreveu o número (ver migração 0040).
+    /// `odoo` | `manual` | `null` — quem escreveu o número (ver migração 0049).
     #[sqlx(default)]
     pub phone_source: Option<String>,
     /// Tem número e não desligou os SMS de contactos. Não diz se QUEM PERGUNTA
@@ -1259,7 +1259,7 @@ pub(crate) async fn set_member_phone(
 }
 
 /// Telefone vindo da sincronização do directório (Odoo). A regra escrita na
-/// migração 0040: um número `manual` NUNCA é sobrescrito; um número `odoo`
+/// migração 0049: um número `manual` NUNCA é sobrescrito; um número `odoo`
 /// acompanha o directório, incluindo ser apagado quando o directório o apaga.
 /// Devolve `true` se mudou alguma coisa.
 pub(crate) async fn sync_member_phone_from_directory(

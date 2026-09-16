@@ -420,10 +420,6 @@ pub async fn create(
 
     fire_meeting_webhook(&state, &meeting, auth.user_id, "meeting.created").await;
 
-    Ok(Json(CreateMeetingResp {
-        meeting,
-        options: req.options,
-        conflicts,
     let sms = match sms_org {
         None => None,
         Some(org_id) => {
@@ -456,6 +452,7 @@ pub async fn create(
 
     Ok(Json(CreateMeetingResp {
         meeting,
+        options: req.options,
         conflicts,
         sms,
     }))

@@ -1,8 +1,9 @@
 -- SMS a contactos e a convidados de reunião (ADR-0005, extensão «contactos»).
 --
--- NUMERAÇÃO: 0040 era o próximo número livre na `main` a 2026-09-16. Colide com
--- a linha ADR-0004 (`backend-enterprise`, 0039–0045) e com a branch do convidado
--- sem conta (também 0040) — tem de ser renumerada na integração.
+-- NUMERAÇÃO: nasceu 0040 na `main` a 2026-09-16 e colidia com a linha da UI
+-- nova (0039–0047). Renumerada para 0049 na `frontend/chamadas-voz-sms`, a seguir
+-- ao gateway (0039 → 0048). Uma base que já correu 0039/0040 da `main` precisa
+-- de reconciliação da `_sqlx_migrations` na integração.
 
 -- 1. Telefone do MEMBRO. Fica em `org_members` e não em `users`: o número que
 --    interessa é o contacto da pessoa NESTA organização (o telemóvel de serviço

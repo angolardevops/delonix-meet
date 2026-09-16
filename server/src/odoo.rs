@@ -231,7 +231,7 @@ pub struct OdooUserEntry {
     pub is_admin: bool,
     /// `hr.employee.mobile_phone` / `work_phone`. Aditivos à v1: ausentes não
     /// mexem no número; `false`/`""` apagam o que veio do Odoo; um número
-    /// editado à mão no Delonix nunca é sobrescrito (migração 0040).
+    /// editado à mão no Delonix nunca é sobrescrito (migração 0049).
     #[serde(default)]
     pub mobile_phone: Option<serde_json::Value>,
     #[serde(default)]
