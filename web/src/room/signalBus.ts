@@ -1,4 +1,4 @@
-import type { ClientMsg, ServerMsg, Signaling } from '../signaling'
+import type { ClientMsg, ClientMsgB1, ServerMsg, ServerMsgB1, Signaling } from '../signaling'
 
 type Tipo = ServerMsg['type']
 type Handler = (m: never) => void
@@ -64,5 +64,19 @@ export class RoomSignal {
 
   send(msg: ClientMsg) {
     this.actual?.send(msg)
+  }
+
+  /**
+   * Mensagens novas da sala (`frontend/b1-sala`): vivem em uniões próprias em
+   * `signaling.ts`, mas viajam pelo MESMO socket e o encaminhamento é pelo
+   * `type` — por isso o barramento serve-as sem caminho paralelo.
+   */
+  onB1<T extends ServerMsgB1['type']>(tipo: T, handler: (msg: Extract<ServerMsgB1, { type: T }>) => void): () => void {
+    const on = this.on as unknown as (this: RoomSignal, t: string, h: (msg: unknown) => void) => () => void
+    return on.call(this, tipo, handler as (msg: unknown) => void)
+  }
+
+  sendB1(msg: ClientMsgB1) {
+    this.actual?.send(msg as unknown as ClientMsg)
   }
 }

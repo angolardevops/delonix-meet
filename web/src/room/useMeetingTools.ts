@@ -144,6 +144,8 @@ export function useMeetingTools(core: RoomCore) {
     polls,
     pollSeenAt,
     questions,
+    /** A pergunta em destaque no palco (para todos). */
+    spotlitQuestion: questions.find((q) => q.spotlight && !q.hidden) ?? null,
     timerEndsAt,
     myVotes,
     myUpvotes,
@@ -159,6 +161,10 @@ export function useMeetingTools(core: RoomCore) {
       setMyUpvotes((m) => ({ ...m, [id]: !m[id] }))
     },
     markAnswered: (id: string) => signal.send({ type: 'qa-answered', id }),
+    /** Só anfitrião: quem não é anfitrião deixa de receber a pergunta. */
+    hideQuestion: (id: string, hidden = true) => signal.sendB1({ type: 'qa-hide', id, hidden }),
+    /** Só anfitrião: uma de cada vez; `null` limpa. Destacar também a mostra. */
+    spotlightQuestion: (id: string | null) => signal.sendB1({ type: 'qa-spotlight', id }),
     setTimer: (minutes: number) => signal.send({ type: 'timer-set', minutes }),
     clearTimer: () => signal.send({ type: 'timer-clear' }),
   }

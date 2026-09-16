@@ -134,7 +134,7 @@ export function ChatPanel({
           const anterior = itens.slice(0, i).reverse().find((x) => x.kind === 'msg') as Extract<Item, { kind: 'msg' }> | undefined
           const role = papel(m)
           return (
-            <Fragment key={m.id}>
+            <Fragment key={m.key}>
               {!m.historical && anterior?.msg.historical && <div className="rm-chat__divider">{t('room.chat.inicioSessao')}</div>}
               <div className={cx('rm-chat__msg', m.own && 'is-own')}>
                 <Avatar name={m.username} size={26} />

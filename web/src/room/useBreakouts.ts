@@ -16,17 +16,23 @@ export function useBreakouts(core: RoomCore, onSwitch?: (code: string) => void) 
     return v ? Number(v) : null
   })
   const [minutes, setMinutes] = useState(0)
+  /** Como se distribuem as pessoas ao criar: à vez (servidor) ou à mão (começam vazias). */
+  const [assign, setAssign] = useState<'auto' | 'manual'>('auto')
+  /** Última mensagem do anfitrião a todas as salas (`announcement`). */
+  const [announcement, setAnnouncement] = useState<{ from: string; text: string; at: number } | null>(null)
   // Relido a cada render: a sessão escreve-o quando o servidor nos move.
   const returnTo = sessionStorage.getItem(`dx_return_${code}`)
 
-  useEffect(
-    () =>
+  useEffect(() => {
+    const offs = [
       signal.on('breakouts-created', (m) => {
         setRooms(m.rooms)
         setEndsAt(m.ends_at)
       }),
-    [signal],
-  )
+      signal.onB1('announcement', (m) => setAnnouncement({ from: m.from, text: m.text, at: m.at })),
+    ]
+    return () => offs.forEach((off) => off())
+  }, [signal])
 
   return {
     rooms,
@@ -34,7 +40,13 @@ export function useBreakouts(core: RoomCore, onSwitch?: (code: string) => void) 
     minutes,
     setMinutes,
     returnTo,
-    create: (count: number) => signal.send({ type: 'breakouts-create', count, minutes: minutes || null }),
+    assign,
+    setAssign,
+    announcement,
+    dismissAnnouncement: () => setAnnouncement(null),
+    create: (count: number) => signal.sendB1({ type: 'breakouts-create', count, minutes: minutes || null, assign }),
+    /** Só anfitrião: vai para a sala principal e para todas as salas de grupo. */
+    broadcast: (text: string) => signal.sendB1({ type: 'breakouts-broadcast', text }),
     rename: (roomCode: string, label: string) => signal.send({ type: 'breakout-rename', code: roomCode, label }),
     add: () => signal.send({ type: 'breakout-add' }),
     moveUser: (name: string, roomCode: string) => signal.send({ type: 'breakout-move-user', name, code: roomCode }),

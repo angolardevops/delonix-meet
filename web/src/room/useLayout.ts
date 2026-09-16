@@ -74,6 +74,20 @@ export function useLayout(core: RoomCore, conditions: LocalConditions) {
 
   const togglePin = useCallback((id: string) => setPinnedId((cur) => (cur === id ? null : id)), [])
 
+  // Destaque PARA TODOS (`spotlight`): decidido pelo anfitrião e guardado no
+  // servidor (quem entra depois recebe-o). O pin local ganha-lhe — é a escolha
+  // de quem está a ver —, mas sem pin local o palco segue o destaque.
+  const [spotlightPeer, setSpotlightPeer] = useState<string | null>(null)
+  useEffect(() => signal.onB1('spotlight', (m) => setSpotlightPeer(m.peer)), [signal])
+  const spotlightId = spotlightPeer && spotlightPeer === core.meuPeerIdRef.current ? 'me' : spotlightPeer
+  /** Quem escolheu a grelha por cima de um destaque não é arrastado de volta — até o destaque mudar. */
+  const [ignorado, setIgnorado] = useState<string | null>(null)
+  /** Só anfitrião (o servidor recusa aos outros). `'me'` é o meu peer_id. */
+  const setSpotlight = useCallback(
+    (id: string | null) => signal.sendB1({ type: 'spotlight', peer: id === 'me' ? core.meuPeerIdRef.current || null : id }),
+    [signal, core.meuPeerIdRef],
+  )
+
   useEffect(() => {
     const onFs = () => setFullscreen(!!document.fullscreenElement)
     document.addEventListener('fullscreenchange', onFs)
@@ -97,14 +111,18 @@ export function useLayout(core: RoomCore, conditions: LocalConditions) {
   const total = visiblePeers.length + (showSelf ? 1 : 0)
   const tileSize = useGridSize(areaRef, total, core.roomState === 'in')
 
-  // O orador activo vai ao palco — inclui-me a MIM. O pin ganha a tudo.
-  const pinnedPeer = pinnedId && pinnedId !== 'me' ? peers.find((p) => p.peerId === pinnedId) ?? null : null
-  const pinnedSelf = pinnedId === 'me'
+  // O orador activo vai ao palco — inclui-me a MIM. O pin ganha a tudo; sem
+  // pin local, vale o destaque do anfitrião (se a pessoa ainda estiver cá).
+  const destaqueValido =
+    spotlightId !== ignorado && (spotlightId === 'me' || (!!spotlightId && peers.some((p) => p.peerId === spotlightId)))
+  const pinEfectivo = pinnedId ?? (destaqueValido ? spotlightId : null)
+  const pinnedPeer = pinEfectivo && pinEfectivo !== 'me' ? peers.find((p) => p.peerId === pinEfectivo) ?? null : null
+  const pinnedSelf = pinEfectivo === 'me'
   const remoteSpeaker = pinnedPeer ?? (pinnedSelf ? null : peers.find((p) => speaking.has(p.peerId)) ?? null)
   const stagePeer = pinnedPeer ?? remoteSpeaker ?? peers[0] ?? null
   const stageOnSelf = pinnedSelf || (!pinnedPeer && !remoteSpeaker && (speaking.has('me') || peers.length === 0))
   // Com pin, força-se o palco (é o «não trocar a toda a hora»).
-  const effectiveViewMode: ViewMode = pinnedId ? 'stage' : viewMode
+  const effectiveViewMode: ViewMode = pinEfectivo ? 'stage' : viewMode
 
   // De quem precisamos MESMO de vídeo. Inclui sempre o palco e o fixado.
   const videoInterest = useMemo(() => {
@@ -150,6 +168,10 @@ export function useLayout(core: RoomCore, conditions: LocalConditions) {
     pinnedId,
     setPinnedId,
     togglePin,
+    /** Destaque para todos (`'me'` quando sou eu), válido ou não. */
+    spotlightId: destaqueValido ? spotlightId : null,
+    setSpotlight,
+    ignoreSpotlight: () => setIgnorado(spotlightId),
     presLayout,
     setPresLayout,
     hideSelf,

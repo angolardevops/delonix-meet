@@ -246,7 +246,10 @@ export default function Room({
           onViewMode={(v) => {
             if (chrome.panel === 'multicam') closePanel()
             layout.setViewMode(v)
-            if (v === 'grid') layout.setPinnedId(null)
+            if (v === 'grid') {
+              layout.setPinnedId(null)
+              layout.ignoreSpotlight()
+            }
           }}
           studioAvailable={isHost && multicam.supported}
           studioOpen={chrome.panel === 'multicam'}

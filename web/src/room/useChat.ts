@@ -1,23 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { currentUser, roomChatHistory } from '../api'
+import { comConfirmada, comEnviada, comHistorico, comReaccoes, comRecebida, type ChatMsg, type HistoricoChat } from './chatState'
 import type { RoomCore } from './useRoomCore'
 
-export interface ChatMsg {
-  id: number
-  username: string
-  text: string
-  own: boolean
-  historical?: boolean
-  /**
-   * Quando chegou (ms). O histórico traz `created_at` do servidor; uma mensagem
-   * ao vivo NÃO traz hora (`ServerMsg::Chat`), por isso é a hora de chegada a
-   * este dispositivo — que numa sala ao vivo difere de milissegundos.
-   */
-  at: number
-  /** peer_id de quem enviou (ao vivo) — para o papel na mensagem. */
-  from?: string
-}
+export type { ChatMsg } from './chatState'
 
 /** Emojis para inserir numa mensagem (diferentes das reacções flutuantes). */
 export const CHAT_EMOJIS = [
@@ -25,7 +12,8 @@ export const CHAT_EMOJIS = [
   '🔥', '🎉', '✅', '⚠️', '📌', '💡', '🚀', '💪', '👏', '😭',
 ]
 
-let seq = 0
+/** Reacções rápidas numa mensagem (as do template). */
+export const CHAT_REACTIONS = ['👍', '🎯', '❤️', '😂', '👏']
 
 export function useChat(core: RoomCore, chatOpen: boolean) {
   const { t } = useTranslation()
@@ -36,6 +24,10 @@ export function useChat(core: RoomCore, chatOpen: boolean) {
   const [chatOn, setChatOn] = useState(true)
   const [input, setInput] = useState('')
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  /** Mensagem a que se está a responder. */
+  const [replyTo, setReplyTo] = useState<ChatMsg | null>(null)
+  /** O servidor só dá contagens: o que EU reagi lembra-se aqui (alterna por conta). */
+  const [mine, setMine] = useState<Record<string, string[]>>({})
   const openRef = useRef(chatOpen)
   openRef.current = chatOpen
 
@@ -45,26 +37,17 @@ export function useChat(core: RoomCore, chatOpen: boolean) {
 
   useEffect(() => {
     const offs = [
-      signal.on('chat', (m) => {
-        setMessages((c) => [...c, { id: ++seq, username: m.username, text: m.text, own: false, at: Date.now(), from: m.from }])
+      signal.onB1('chat', (m) => {
+        setMessages((c) => comRecebida(c, m))
         if (!openRef.current) setUnread((n) => n + 1)
       }),
-      // Histórico ao entrar: melhor esforço, não bloqueia a sala.
+      signal.onB1('chat-sent', (m) => setMessages((c) => comConfirmada(c, m))),
+      signal.onB1('chat-reactions', (m) => setMessages((c) => comReaccoes(c, m))),
+      // Histórico ao entrar (as ÚLTIMAS 200, com fios e reacções): melhor
+      // esforço, não bloqueia a sala.
       signal.on('joined', () => {
         void roomChatHistory(code)
-          .then((history) =>
-            setMessages((live) => [
-              ...history.map((h) => ({
-                id: ++seq,
-                username: h.username,
-                text: h.message,
-                own: h.user_id === currentUser()?.id,
-                historical: true,
-                at: Date.parse(h.created_at) || Date.now(),
-              })),
-              ...live.filter((m) => !m.historical),
-            ]),
-          )
+          .then((history) => setMessages((live) => comHistorico(live, history as HistoricoChat[], currentUser()?.id)))
           .catch(() => {})
       }),
       signal.on('room-settings', (m) => setChatOn(m.chat_on ?? true)),
@@ -103,10 +86,26 @@ export function useChat(core: RoomCore, chatOpen: boolean) {
       setStatus(t('room.estado.chatFechado'))
       return
     }
-    signal.send({ type: 'chat', text })
-    setMessages((c) => [...c, { id: ++seq, username: currentUser()?.username ?? '', text, own: true, at: Date.now() }])
+    const clientId = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+    const mae = replyTo?.id ?? null
+    signal.sendB1({ type: 'chat', text, reply_to: mae, client_id: clientId })
+    setMessages((c) => comEnviada(c, { clientId, username: currentUser()?.username ?? '', text, replyTo: mae, at: Date.now() }))
     setInput('')
     setMentionQuery(null)
+    setReplyTo(null)
+  }
+
+  /** Alterna uma reacção (o servidor devolve as contagens a toda a sala). */
+  function react(id: string, emoji: string) {
+    if (!chatOn && !core.isHost) {
+      setStatus(t('room.estado.chatFechado'))
+      return
+    }
+    signal.sendB1({ type: 'chat-react', id, emoji })
+    setMine((m) => {
+      const l = m[id] ?? []
+      return { ...m, [id]: l.includes(emoji) ? l.filter((e) => e !== emoji) : [...l, emoji] }
+    })
   }
 
   return {
@@ -120,6 +119,11 @@ export function useChat(core: RoomCore, chatOpen: boolean) {
     clearMention: () => setMentionQuery(null),
     completeMention,
     send,
+    replyTo,
+    /** Só mensagens confirmadas (com id) aceitam respostas. */
+    startReply: (m: ChatMsg | null) => setReplyTo(m && m.id ? m : null),
+    react,
+    myReactions: mine,
     setChatOpenForAll: (on: boolean) => signal.send({ type: 'chat-toggle', on }),
   }
 }

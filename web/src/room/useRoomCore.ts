@@ -2,6 +2,7 @@ import { Dispatch, MutableRefObject, SetStateAction, useCallback, useRef, useSta
 import { useTranslation } from 'react-i18next'
 import type { Call } from '../webrtc'
 import type { BackgroundEffect, Denoiser, HeadTracker, LevelWatcher } from '../media'
+import type { Origin, Role } from '../signaling'
 import type { MicMix } from './micMix'
 import { RoomSignal } from './signalBus'
 
@@ -18,6 +19,12 @@ export interface RemotePeer {
   stream: MediaStream | null
   is_pstn?: boolean
   is_bot?: boolean
+  /** Papel na sala (b1-sala). Só `host`/`cohost` mudam permissões no servidor. */
+  role: Role
+  /** Como entrou (decidido no servidor a partir do token). */
+  origin?: Origin
+  /** Cargo na organização do dono da sala. */
+  title?: string
   /** O socket caiu e o lugar está reservado (R91): o retrato fica, esbatido. */
   reconnecting?: boolean
 }
@@ -46,6 +53,9 @@ export interface RoomCore {
   setTopology: Dispatch<SetStateAction<string>>
   isHost: boolean
   setIsHost: Dispatch<SetStateAction<boolean>>
+  /** O MEU papel, como o servidor o anuncia (`peer-role` com o meu peer_id). */
+  myRole: Role
+  setMyRole: Dispatch<SetStateAction<Role>>
   peers: RemotePeer[]
   setPeers: Dispatch<SetStateAction<RemotePeer[]>>
   presentation: Presentation | null
@@ -71,6 +81,8 @@ export interface RoomCore {
   roomTokenRef: MutableRefObject<string | null>
   e2eeKeyRef: MutableRefObject<string | null>
   joinedAtRef: MutableRefObject<number>
+  /** Início da SESSÃO (epoch ms) segundo o servidor — `joined.started_at`; 0 = desconhecido. */
+  startedAtRef: MutableRefObject<number>
   meuPeerIdRef: MutableRefObject<string>
   peersRef: MutableRefObject<RemotePeer[]>
   isHostRef: MutableRefObject<boolean>
@@ -101,6 +113,7 @@ export function useRoomCore(code: string, initialState: RoomState): RoomCore {
   const [status, setStatus] = useState(() => t('room.estado.aLigar'))
   const [topology, setTopology] = useState('')
   const [isHost, setIsHost] = useState(false)
+  const [myRole, setMyRole] = useState<Role>('attendee')
   const [peers, setPeers] = useState<RemotePeer[]>([])
   const [presentation, setPresentation] = useState<Presentation | null>(null)
   const [sharing, setSharing] = useState(false)
@@ -132,6 +145,8 @@ export function useRoomCore(code: string, initialState: RoomState): RoomCore {
     setTopology,
     isHost,
     setIsHost,
+    myRole: isHost ? 'host' : myRole,
+    setMyRole,
     peers,
     setPeers,
     presentation,
@@ -155,6 +170,7 @@ export function useRoomCore(code: string, initialState: RoomState): RoomCore {
     roomTokenRef: useRef<string | null>(null),
     e2eeKeyRef: useRef<string | null>(null),
     joinedAtRef,
+    startedAtRef: useRef(0),
     meuPeerIdRef: useRef(''),
     peersRef,
     isHostRef,
