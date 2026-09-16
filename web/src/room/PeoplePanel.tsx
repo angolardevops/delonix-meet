@@ -2,114 +2,14 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { currentUser, Recording } from '../api'
 import { Icon } from '../ui/icons'
-import { Avatar, Button, IconButton, Select, Tag, TextInput, Toggle, cx } from '../ui/kit'
-import { Countdown } from './Clocks'
+import { Avatar, Button, IconButton, Tag, Toggle, cx } from '../ui/kit'
+import { BreakoutsCard } from './BreakoutsCard'
 import { SpeakingBars } from './ParticipantTile'
 import { ligacaoFraca } from './qosAmostra'
 import type { Breakouts } from './useBreakouts'
 import type { Participants } from './useParticipants'
 import type { RemotePeer } from './useRoomCore'
 import type { QosReport } from '../webrtc'
-
-const BREAKOUT_MINUTES = [0, 5, 10, 15, 20, 30, 45, 60]
-
-/** Salas paralelas (formação): criar, renomear, mover, visitar, encerrar. */
-function BreakoutsBlock({ code, breakouts }: { code: string; breakouts: Breakouts }) {
-  const { t } = useTranslation()
-  return (
-    <section className="rm-block" aria-labelledby="rm-bo-h">
-      <h3 id="rm-bo-h" className="rm-block__title">
-        <Icon name="grid" size={13} />
-        {t('room.paralelas.titulo')}
-        <span className="dx-spacer" />
-        {breakouts.rooms.length > 0 && <span className="dx-num dx-muted">{t('room.paralelas.salas', { count: breakouts.rooms.length })}</span>}
-      </h3>
-      {breakouts.rooms.length === 0 ? (
-        <>
-          <p className="dx-muted">{t('room.paralelas.dividir')}</p>
-          <div className="rm-block__row">
-            {[2, 3, 4].map((n) => (
-              <Button key={n} size="sm" variant="outline" onClick={() => breakouts.create(n)}>
-                {t('room.paralelas.grupos', { count: n })}
-              </Button>
-            ))}
-          </div>
-          <label className="rm-block__row">
-            <span className="dx-muted">{t('room.paralelas.duracao')}</span>
-            <Select value={breakouts.minutes} onChange={(e) => breakouts.setMinutes(Number(e.target.value))}>
-              {BREAKOUT_MINUTES.map((m) => (
-                <option key={m} value={m}>
-                  {m === 0 ? t('room.paralelas.semLimite') : t('room.temporizador.minutos', { n: m })}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <p className="dx-muted">{t('room.paralelas.noFimVoltam')}</p>
-        </>
-      ) : (
-        <>
-          {breakouts.endsAt && (
-            <p className="rm-timer">
-              <Icon name="clock" size={13} />
-              <span>{t('room.paralelas.terminaEm')}</span>
-              <Countdown endsAt={breakouts.endsAt} render={(txt) => <strong className="dx-num">{txt}</strong>} />
-            </p>
-          )}
-          {breakouts.rooms.map((b) => (
-            <div key={b.code} className="rm-bo">
-              <div className="rm-bo__head">
-                <TextInput
-                  className="rm-bo__name"
-                  defaultValue={b.label}
-                  maxLength={60}
-                  aria-label={t('room.paralelas.renomear')}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                  }}
-                  onBlur={(e) => {
-                    const label = e.target.value.trim()
-                    if (label && label !== b.label) breakouts.rename(b.code, label)
-                  }}
-                />
-                <span className="dx-num dx-muted">{t('room.paralelas.pessoas', { count: b.people.length })}</span>
-                <Button size="sm" variant="outline" onClick={() => breakouts.visit(b.code)}>
-                  {t('room.paralelas.entrar')}
-                </Button>
-              </div>
-              {b.people.length === 0 && <p className="dx-muted">{t('room.paralelas.vazia')}</p>}
-              {b.people.map((name) => (
-                <div key={name} className="rm-bo__person">
-                  <Avatar name={name} size={20} />
-                  <span className="rm-bo__pname">{name}</span>
-                  <Select
-                    aria-label={t('room.paralelas.moverPessoa', { nome: name })}
-                    value={b.code}
-                    onChange={(e) => breakouts.moveUser(name, e.target.value)}
-                  >
-                    {breakouts.rooms.map((o) => (
-                      <option key={o.code} value={o.code}>
-                        {o.label}
-                      </option>
-                    ))}
-                    <option value={code}>{t('room.paralelas.principal')}</option>
-                  </Select>
-                </div>
-              ))}
-            </div>
-          ))}
-          <div className="rm-block__row">
-            <Button size="sm" variant="outline" icon="plus" onClick={breakouts.add}>
-              {t('room.paralelas.novaSala')}
-            </Button>
-            <Button size="sm" variant="primary" onClick={breakouts.closeAll}>
-              {t('room.paralelas.encerrar')}
-            </Button>
-          </div>
-        </>
-      )}
-    </section>
-  )
-}
 
 export function PeoplePanel({
   code,
@@ -328,7 +228,7 @@ export function PeoplePanel({
         </section>
       )}
 
-      {isHost && isTraining && <BreakoutsBlock code={code} breakouts={breakouts} />}
+      {isHost && isTraining && <BreakoutsCard code={code} api={breakouts} className="rm-block" />}
 
       <section className="rm-block" aria-labelledby="rm-recs-h">
         <h3 id="rm-recs-h" className="rm-block__title">
