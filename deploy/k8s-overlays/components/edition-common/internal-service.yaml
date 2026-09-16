@@ -1,0 +1,31 @@
+# Service INTERNO — os mesmos pods do delonix-server, mas só as portas que
+# nunca podem sair do cluster:
+#   8181 internal  → /api/voice/ivr/* (FreeSWITCH, por HTTP a partir de Lua)
+#                    e /metrics
+#   9180 grpc      → IvrService, TranscriptionService, grpc.health.v1 (mTLS)
+#
+# REGRA: nenhum Ingress referencia este Service nem as portas 8181/9180.
+# `scripts/check-k8s-render.sh` falha se isso acontecer. O /api e o /ws
+# continuam nos Services delonix-server e delonix-server-ws da base (ADR-0001).
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-server-internal
+  namespace: delonix-meet
+  labels:
+    app: delonix-server
+    delonix.io/exposure: internal
+spec:
+  type: ClusterIP
+  selector:
+    app: delonix-server
+  ports:
+    - name: internal
+      protocol: TCP
+      port: 8181
+      targetPort: internal
+    - name: grpc
+      protocol: TCP
+      port: 9180
+      targetPort: grpc
+      appProtocol: grpc
