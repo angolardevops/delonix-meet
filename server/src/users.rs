@@ -39,8 +39,8 @@ pub async fn fetch_public(db: &PgPool, user_id: Uuid) -> Result<UserPublic, ApiE
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(me, update_me, search),
-    components(schemas(UserPublic, UpdateMeReq))
+    paths(me, update_me, search, my_room, update_my_room, rotate_my_room_code),
+    components(schemas(UserPublic, UpdateMeReq, PersonalRoom, UpdatePersonalRoomReq))
 )]
 pub struct ApiDoc;
 
@@ -170,4 +170,141 @@ pub async fn search(
     .fetch_all(&state.db)
     .await?;
     Ok(Json(users))
+}
+
+// ---------- «A minha sala» (G2) ----------
+//
+// - `GET   /api/users/me/room`              a sala pessoal; criada na primeira chamada
+// - `PATCH /api/users/me/room`              nome e/ou sala de espera
+// - `POST  /api/users/me/room/rotate-code`  método personalizado: código novo, o antigo deixa de abrir
+//
+// Só o próprio: não há caminho com o id de outra pessoa, por isso não há como
+// tocar na sala de outro. Entrar na sala segue `rooms::room_access`, como
+// qualquer outra.
+
+/// A sala pessoal, o link para a partilhar e o dial-in, se houver.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct PersonalRoom {
+    #[serde(flatten)]
+    pub room: crate::rooms::Room,
+    /// Link partilhável (`https://<domínio da org>/#/r/<código>`, ou relativo
+    /// se a organização não tem domínio).
+    pub join_url: String,
+    /// Número e PIN, se uma organização do dono tiver uma sala de voz ACTIVA
+    /// ligada a este código. Só leitura: esta rota não cria DIDs.
+    pub dial_in: Option<crate::voice::DialIn>,
+}
+
+/// Campos alteráveis. Um campo desconhecido é recusado (`422`): um campo que o
+/// cliente escreve e o servidor ignora é pior do que não existir.
+#[derive(Debug, Deserialize, Default, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdatePersonalRoomReq {
+    /// 1–100 caracteres (depois de `trim`).
+    pub name: Option<String>,
+    pub waiting_room: Option<bool>,
+}
+
+async fn personal_room_view(
+    state: &AppState,
+    user_id: Uuid,
+    room: crate::rooms::Room,
+) -> Result<PersonalRoom, ApiError> {
+    let orgs = crate::org::orgs_of_user(state, user_id).await;
+    let join_url = match orgs.first() {
+        Some(org) => crate::apikeys::room_link(state, *org, &room.code).await,
+        None => format!("/#/r/{}", room.code),
+    };
+    let dial_in = crate::voice::dial_in_for_room(state, &orgs, &room.code).await?;
+    Ok(PersonalRoom {
+        room,
+        join_url,
+        dial_in,
+    })
+}
+
+async fn ensure_my_room(state: &AppState, user_id: Uuid) -> Result<crate::rooms::Room, ApiError> {
+    let user = fetch_public(&state.db, user_id).await?;
+    let default_name =
+        delonix_meet_domain::conferencing::personal_room::default_name(&user.username);
+    crate::rooms::ensure_personal_room(&state.db, user_id, &default_name).await
+}
+
+/// A sala pessoal de quem está autenticado. Na primeira chamada é criada (com
+/// a sala de espera ligada); as seguintes devolvem sempre a mesma.
+#[utoipa::path(
+    get, path = "/api/users/me/room", tag = "users",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = PersonalRoom),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn my_room(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> Result<Json<PersonalRoom>, ApiError> {
+    let room = ensure_my_room(&state, auth.user_id).await?;
+    Ok(Json(personal_room_view(&state, auth.user_id, room).await?))
+}
+
+/// Altera o nome e/ou a sala de espera. Valida tudo antes de escrever.
+#[utoipa::path(
+    patch, path = "/api/users/me/room", tag = "users",
+    security(("session" = [])),
+    request_body = UpdatePersonalRoomReq,
+    responses(
+        (status = 200, body = PersonalRoom),
+        (status = 400, description = "`personal_room.invalid_name`.", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 422, description = "Corpo que não desserializa, incluindo um campo desconhecido.", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn update_my_room(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<UpdatePersonalRoomReq>,
+) -> Result<Json<PersonalRoom>, ApiError> {
+    let name = req
+        .name
+        .as_deref()
+        .map(delonix_meet_domain::conferencing::personal_room::validate_name)
+        .transpose()?;
+    ensure_my_room(&state, auth.user_id).await?;
+    let room = crate::rooms::update_personal_room(
+        &state.db,
+        auth.user_id,
+        name.as_deref(),
+        req.waiting_room,
+    )
+    .await?;
+    Ok(Json(personal_room_view(&state, auth.user_id, room).await?))
+}
+
+/// Método personalizado: dá à sala pessoal um código novo. O link antigo
+/// deixa de abrir (`GET /api/rooms/{antigo}` → `404`). Um dial-in ligado ao
+/// código antigo NÃO acompanha: fica no código antigo e deixa de aparecer.
+#[utoipa::path(
+    post, path = "/api/users/me/room/rotate-code", tag = "users",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = PersonalRoom),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn rotate_my_room_code(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> Result<Json<PersonalRoom>, ApiError> {
+    let old = ensure_my_room(&state, auth.user_id).await?;
+    let room = crate::rooms::rotate_personal_room_code(&state.db, auth.user_id).await?;
+    crate::audit::log(
+        &state.db,
+        None,
+        auth.user_id,
+        "personal_room.code_rotated",
+        &old.id.to_string(),
+    )
+    .await;
+    Ok(Json(personal_room_view(&state, auth.user_id, room).await?))
 }

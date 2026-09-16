@@ -149,6 +149,39 @@ pub struct VoiceCdr {
 
 // ---------- Helpers ----------
 
+/// Como ligar para uma sala de conferência por telefone.
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct DialIn {
+    /// Número em +E.164.
+    pub number: String,
+    /// PIN de 6 dígitos.
+    pub pin: String,
+}
+
+/// O dial-in ACTIVO ligado à sala `room_code` por uma das organizações
+/// `org_ids` — só leitura: não cria sala de voz nem escolhe DID. `None` quando
+/// não há sala de voz activa com DID activo. Com várias, a mais recente.
+pub(crate) async fn dial_in_for_room(
+    state: &AppState,
+    org_ids: &[Uuid],
+    room_code: &str,
+) -> Result<Option<DialIn>, ApiError> {
+    if org_ids.is_empty() {
+        return Ok(None);
+    }
+    Ok(sqlx::query_as(
+        "SELECT d.e164 AS number, vr.pin
+           FROM voice_room vr JOIN voice_did d ON d.id = vr.did_id
+          WHERE vr.room_code = $1 AND vr.org_id = ANY($2)
+            AND vr.status = 'active' AND d.active
+          ORDER BY vr.created_at DESC LIMIT 1",
+    )
+    .bind(room_code)
+    .bind(org_ids)
+    .fetch_optional(&state.db)
+    .await?)
+}
+
 fn gen_pin() -> String {
     let mut rng = rand::thread_rng();
     format!("{:06}", rng.gen_range(0..1_000_000))

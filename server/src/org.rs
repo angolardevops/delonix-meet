@@ -1266,10 +1266,10 @@ pub async fn org_stats(
             .fetch_one(&state.db)
             .await?;
 
-    let (recordings_total, recordings_bytes): (i64, i64) = sqlx::query_as(
-        "SELECT COUNT(*), COALESCE(SUM(r.size_bytes), 0)::bigint FROM recordings r
-         WHERE EXISTS (SELECT 1 FROM org_members om WHERE om.org_id = $1 AND om.user_id = r.uploader_id)",
-    )
+    let (recordings_total, recordings_bytes): (i64, i64) = sqlx::query_as(&format!(
+        "SELECT COUNT(*), COALESCE(SUM(r.size_bytes), 0)::bigint FROM recordings r WHERE {}",
+        recording_uploader_in_org_sql("$1", "r.uploader_id")
+    ))
     .bind(org_id)
     .fetch_one(&state.db)
     .await?;
@@ -1363,6 +1363,20 @@ pub async fn org_stats(
         meeting_minutes_prev_30d,
         active_users_prev_30d,
     }))
+}
+
+/// A gravação carregada por `uploader` conta para a organização `org`: quem a
+/// carregou é, ou FOI, membro dela. Predicado SQL com as expressões dadas
+/// (parâmetros `$n` ou colunas).
+///
+/// Não filtra `archived_at`, e de propósito: é atribuição, não acesso. A
+/// gravação de quem saiu continua da empresa (S3) — continua nas estatísticas
+/// e continua a ocupar a quota de armazenamento (G3). Um só dono para as duas
+/// contas, para o painel e a quota nunca darem números diferentes.
+pub(crate) fn recording_uploader_in_org_sql(org: &str, uploader: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM org_members om WHERE om.org_id = {org} AND om.user_id = {uploader})"
+    )
 }
 
 /// user_ids dos membros de um grupo (para iniciar chamada de grupo).

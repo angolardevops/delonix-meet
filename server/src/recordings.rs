@@ -357,6 +357,7 @@ pub struct UploadQuery {
         (status = 400, description = "Corpo vazio.", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sessão inválida OU não participou na sala.", body = crate::openapi::ErrorBody),
         (status = 404, description = "Sala inexistente.", body = crate::openapi::ErrorBody),
+        (status = 422, description = "`storage.quota_exceeded`: a gravação não cabe na quota de armazenamento de uma organização do autor. Nada é escrito.", body = crate::openapi::ErrorBody),
         (status = 413, description = "Corpo acima de 512 MiB (rejeitado pelo axum, texto simples)."),
     )
 )]
@@ -378,6 +379,8 @@ pub async fn upload(
     if !is_participant(&state, room.id, auth.user_id).await? {
         return Err(ApiError::Unauthorized);
     }
+    // Quota de armazenamento (G3): antes de escrever a linha ou o ficheiro.
+    crate::usage::enforce_recording_quota(&state, auth.user_id, body.len() as i64).await?;
 
     let stamp = Utc::now().format("%Y%m%d-%H%M%S");
     let display = q

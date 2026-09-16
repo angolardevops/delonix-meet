@@ -46,6 +46,7 @@ mod storage;
 mod stream_destinations;
 mod transcription;
 mod ui;
+mod usage;
 mod users;
 mod voice;
 mod webhooks;
@@ -214,6 +215,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/openapi.json", get(openapi::v1_json))
         .nest("/api/auth", auth_routes)
         .route("/api/users/me", get(users::me).patch(users::update_me))
+        // «A minha sala» (G2) — ver users.rs.
+        .route(
+            "/api/users/me/room",
+            get(users::my_room).patch(users::update_my_room),
+        )
+        .route(
+            "/api/users/me/room/rotate-code",
+            post(users::rotate_my_room_code),
+        )
+        // Armazenamento usado (G3) — ver usage.rs.
+        .route("/api/users/me/storage-usage", get(usage::my_storage_usage))
         // MFA (TOTP, RFC 6238) — ver mfa.rs.
         // Centro de notificações pessoal (G8) — ver notifications.rs.
         .route("/api/users/me/notifications", get(notifications::list))
@@ -269,6 +281,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/whiteboards/{id}", axum::routing::delete(whiteboards::delete))
         .route("/api/whiteboards/{id}/png", get(whiteboards::png))
+        // URL assinado do PNG (G11): o `<img>` carrega-o sem sessão.
+        .route(
+            "/api/whiteboards/{id}/signed-url",
+            post(whiteboards::signed_url),
+        )
         .route("/api/whiteboards/{id}/share", post(whiteboards::set_share))
         .route("/api/whiteboards/shared/{token}", get(whiteboards::shared_png))
         .route(
@@ -377,6 +394,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/orgs/{org_id}/webhooks/{hook_id}/deliveries/{delivery_id}/redeliver",
             post(webhooks::redeliver),
+        )
+        // ---- Armazenamento usado e quota (G3) — ver usage.rs ----
+        .route(
+            "/api/orgs/{org_id}/storage-usage",
+            get(usage::org_storage_usage),
         )
         // ---- Destinos de emissão em directo (G1) ----
         .route(
