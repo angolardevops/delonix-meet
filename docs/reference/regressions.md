@@ -1639,3 +1639,22 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `web/e2e/captura-empregado.mjs` (ataque directo à base, no job `isolamento` do CI).
 
 **Ficheiros.** `server/src/org.rs` (`add_employee`), `web/e2e/captura-empregado.mjs`, `.github/workflows/ci.yml`.
+
+### R154 — O segredo da API interna de IVR estava escrito no manifesto de um repositório público
+
+**Sintoma.** Nenhum para quem usa o produto. `deploy/k8s/01-config.yaml` trazia `VOICE_INTERNAL_SECRET: "voice-internal-secret-for-pstn"` desde 98f5b28 (2026-07-10), e as rotas `POST /api/voice/ivr/validate` e `POST /api/voice/ivr/cdr` estão no router PÚBLICO, protegidas só pelo cabeçalho `X-Voice-Secret`. Em qualquer deploy que tenha aplicado esse manifesto, quem lesse o GitHub validava PINs de dial-in (limitado a 10 falhas por DID em 5 min) e injectava CDRs — minutos e custo — na org de qualquer sala de voz cujo UUID conhecesse. Medido por leitura (2026-09-16, `origin/main` 4ff5249); não foi explorado contra um cluster.
+
+**Causa raiz.** Duas metades. (1) O Secret de stage estava versionado com valores literais, e o valor de voz ficou lá como se fosse de exemplo. (2) O servidor não tinha chão para este segredo: ao contrário do `JWT_SECRET`/`TURN_SECRET` (`config::secret`, panic sem valor forte), o `VOICE_INTERNAL_SECRET` era lido com `unwrap_or_default()` e qualquer valor não vazio — curto ou publicado — autenticava.
+
+**Regra.**
+- O `VOICE_INTERNAL_SECRET` **nunca** está num ficheiro versionado. Em K8s vem do Secret `delonix-voice` por `secretKeyRef` (`optional: true`) no `02-server.yaml`; o `make stage`/`make prod` criam-no aleatório (`make voice-secret-k8s`) e o Ansible `k8s_app` a partir do `voice_secret` gerado em `deploy/ansible/.secrets/`.
+- **Fail-closed sem partir o servidor.** `config::voice_secret_refusal` decide UMA vez no arranque: vazio, `< 32` caracteres, ou valor da lista `BURNED_VOICE_SECRETS` → as rotas de IVR dão `503` com a razão, venha o cabeçalho que vier, e o arranque avisa. Não é panic como o JWT: quem não usa voz não perde o servidor. Com `DELONIX_ALLOW_INSECURE=1` aceita-se qualquer valor não vazio (é o `make dev`).
+- Ordem: primeiro o segredo configurado (`503`), depois o cabeçalho (`401`). Um cabeçalho «certo» contra um valor publicado não autentica ninguém. Comparação com `apikeys::ct_eq`, não uma cópia local.
+- **Não se reescreve o histórico** (repositório público, force-push parte clones e PRs, e não tira o valor a quem já o tem). A decisão e a rotação obrigatória estão em `scripts/leaked-secrets-accepted.txt`, e o `check-repo-hygiene.sh` recusa que um valor desse livro volte a um ficheiro seguido.
+- **Armadilha do `kubectl apply`:** tirar uma chave do `stringData` não a apaga do Secret já existente. Um cluster antigo continua com o valor publicado dentro do `delonix-secrets` — é por isso que o servidor tem de o recusar por valor, e não basta mudar o manifesto. Limpeza e rotação em `docs/deployment.md` §6.
+
+**Portão.** `voice::tests` — `ivr_refuses_missing_short_or_burned_secret_with_503`, `ivr_rejects_wrong_or_absent_header_with_401`, `ivr_accepts_the_right_strong_secret`, `insecure_dev_keeps_the_dev_value_but_not_empty` (verificado a falhar com a guarda do segredo desligada); `scripts/check-repo-hygiene.sh` ponto 7 (verificado a falhar com o valor reposto no `01-config.yaml`). Não há teste contra servidor real nem contra um cluster: a camada de media (FreeSWITCH) nunca correu (ver `voice/README.md`).
+
+**Fora deste passo.** O mesmo `01-config.yaml` continua a versionar `PROVISIONING_SECRET`, `JWT_SECRET`, `TURN_SECRET` e a password do Postgres de stage — mesma classe, não tratada aqui. Na linha ADR-0004 (`delonix-meet-backend/backend-enterprise`), o `grpc.rs` e o `odoo.rs` testam só `voice_internal_secret.is_empty()`: ao juntar, têm de passar a respeitar `voice_secret_refusal`.
+
+**Ficheiros.** `server/src/{config,voice}.rs`, `deploy/k8s/{01-config,02-server}.yaml`, `deploy/ansible/roles/k8s_app/templates/app-config.yaml.j2`, `Makefile` (`voice-secret-k8s`), `scripts/{check-repo-hygiene.sh,leaked-secrets-accepted.txt}`, `docs/deployment.md`, `voice/README.md`.

@@ -171,6 +171,38 @@ for p in $hist_keys; do
   fi
 done
 
+# 7. Segredos PARTILHADOS queimados não voltam a ficheiros de deploy (R154).
+#
+#    O ponto 6 vê chaves por caminho. Um segredo partilhado não tem caminho: o
+#    `VOICE_INTERNAL_SECRET` esteve numa linha do deploy/k8s/01-config.yaml,
+#    num repositório público, e quem o lesse validava PINs e injectava CDRs.
+#    Cada valor de scripts/leaked-secrets-accepted.txt está queimado e tem a
+#    decisão escrita lá; o que este ponto impede é que volte a entrar num
+#    ficheiro seguido — o «copia do exemplo antigo» que o reintroduz.
+#
+#    Ficam de fora os sítios que o nomeiam DE PROPÓSITO para o recusar: o
+#    próprio livro, este script, o código do servidor (a lista de recusa e o
+#    teste) e a documentação que explica a rotação.
+#
+#    Limite honesto: só apanha valores que já sabemos queimados. Um segredo NOVO
+#    escrito num manifesto não é detectado aqui — isso é revisão.
+SLEDGER=scripts/leaked-secrets-accepted.txt
+if [ -f "$SLEDGER" ]; then
+  while IFS= read -r valor; do
+    case "$valor" in ''|'#'*) continue;; esac
+    hits=$(git grep -lIF -e "$valor" -- . \
+             ':(exclude)scripts/leaked-secrets-accepted.txt' \
+             ':(exclude)scripts/check-repo-hygiene.sh' \
+             ':(exclude)server/src' ':(exclude)docs' 2>/dev/null || true)
+    if [ -n "$hits" ]; then
+      echo "✗ higiene: segredo QUEIMADO ($SLEDGER) de volta a ficheiros seguidos:"
+      echo "$hits" | sed 's/^/     /'
+      echo "     Está publicado no histórico; o servidor recusa-o. Gera um novo fora do repo."
+      fail=1
+    fi
+  done < "$SLEDGER"
+fi
+
 # R119 — um SYMLINK para fora do repositório entrou na `main` e ficou lá.
 #
 # Era `web/node_modules -> /tmp/wtp2/web/node_modules`, o atalho que eu usava
@@ -223,5 +255,5 @@ if [ -f scripts/.mutante-em-voo.json ]; then
   fail=1
 fi
 
-[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita"
+[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita; nenhum segredo queimado de volta aos ficheiros"
 exit $fail

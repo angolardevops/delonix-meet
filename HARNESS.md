@@ -215,7 +215,7 @@ Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **
 
 ## 6. Invariantes de segurança (nunca quebrar)
 
-1. **Segredos fail-closed:** `config.rs` faz panic sem `JWT_SECRET`/`TURN_SECRET`/`DATABASE_URL` fortes. `DELONIX_ALLOW_INSECURE=1` só em dev.
+1. **Segredos fail-closed:** `config.rs` faz panic sem `JWT_SECRET`/`TURN_SECRET`/`DATABASE_URL` fortes. `DELONIX_ALLOW_INSECURE=1` só em dev. O `VOICE_INTERNAL_SECRET` fecha sem panic: vazio, curto (<32) ou já publicado no repo → `/api/voice/ivr/*` dá 503 (R154). Nunca volta a um ficheiro versionado (Secret `delonix-voice`); o livro `scripts/leaked-secrets-accepted.txt` regista o valor queimado. **Ainda em aberto:** `PROVISIONING_SECRET`/`JWT_SECRET`/`TURN_SECRET`/password do Postgres de stage continuam em `deploy/k8s/01-config.yaml`.
 2. **Isolamento multi-tenant:** `rooms::can_access_room` e `org::role_in_org`/`org_co_members`/`admin_orgs_of_user` escopam TUDO à(s) org(s) do utilizador. Nunca devolver dados cross-org. **A pertença decide-se em `org.rs`, que filtra `archived_at IS NULL`** — uma verificação escrita à mão noutro módulo foi exactamente como um membro arquivado manteve acesso (auditoria S3). **«Admin de alguma org» nunca é admin da plataforma** — são os UUIDs de `PLATFORM_ADMIN_USER_IDS` (S1, R121).
 3. **Room tokens de curta duração:** JWT separado, âmbito = 1 sala, expira em 5 min. Sem room token válido → WS recusado.
 4. **SSRF em webhooks:** validar host (bloquear IPs privados/loopback/link-local/metadata) na criação E na entrega. Sem redirects.
