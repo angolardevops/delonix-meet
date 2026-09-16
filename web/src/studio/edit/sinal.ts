@@ -5,7 +5,7 @@
  */
 
 // ---------------------------------------------------------------------------
-//  Sonoridade integrada (ITU-R BS.1770-4 / EBU R128)
+//  Sonoridade integrada (ITU-R BS.1770-4 / EBU R 128, a recomendação de sonoridade)
 // ---------------------------------------------------------------------------
 
 interface Biquad {
