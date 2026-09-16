@@ -1,11 +1,12 @@
 # ADR-0004 — Organização-alvo do backend: camadas, crates e superfícies de API
 
-**Estado:** Proposto · **Data:** 2026-09-16 · **Contexto:** [auditoria do backend de 2026-09-16](../auditoria-2026-09-16-backend.md)
+**Estado:** Aceite (2026-09-16, pedido do dono do produto) · §3 sucedido pelo [ADR-0005](0005-backend-enterprise-contextos-edicoes-e-entrega.md) · **Data:** 2026-09-16 · **Contexto:** [auditoria do backend de 2026-09-16](../auditoria-2026-09-16-backend.md)
 
-> **Proposto, não aceite.** Aceitá-lo é decisão do dono do produto. Enquanto estiver
-> proposto, valem já as **regras para código NOVO** (§5) — porque só impedem que o
-> problema cresça e não obrigam a mexer em nada que funciona. A migração do código
-> existente (§6) só arranca com o ADR aceite.
+> **Aceite a 2026-09-16.** O dono do produto pediu a reestruturação do backend
+> (SOLID/Clean Architecture/DDD, REST + gRPC, K8s e `delonix-runtime`, SaaS e
+> on-premise). A migração do §6 arranca. A lista de crates do §3 é refinada pelo
+> [ADR-0005](0005-backend-enterprise-contextos-edicoes-e-entrega.md), que acrescenta
+> o crate de domínio por contextos e as edições; o resto deste ADR mantém-se.
 
 ## Contexto
 

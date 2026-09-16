@@ -71,7 +71,7 @@
 ### Organização do backend — estado e destino
 
 - **Estado (2026-09-16):** UM crate (`delonix-server`), 34 módulos planos, um **ciclo de 18 módulos**, handlers com SQL dentro (302 queries de runtime), regras copiadas entre BFF e v1 que já divergiram. **Não há gRPC nem OpenAPI.** Evidência: [`docs/auditoria-2026-09-16-backend.md`](docs/auditoria-2026-09-16-backend.md).
-- **Destino:** [ADR-0004](docs/adr/0004-organizacao-alvo-do-backend.md) (**Proposto**) — camadas http→service→store, workspace `delonix-meet-{core,protocol,store,identity,integrations,media,realtime,api,server}`, uma superfície de API por público, gRPC só máquina-a-máquina. A ordem de migração (§6) não se salta: segurança → `lib.rs` → testes com Postgres → partir o ciclo → serviços → v1/OpenAPI → crates → gRPC.
+- **Destino:** [ADR-0004](docs/adr/0004-organizacao-alvo-do-backend.md) (**Aceite**, §3 refinado pelo [ADR-0005](docs/adr/0005-backend-enterprise-contextos-edicoes-e-entrega.md): contextos de domínio, edições SaaS/enterprise/pessoal, gRPC interno, entrega K8s e `delonix-runtime`) — camadas http→service→store, workspace `delonix-meet-{core,protocol,store,identity,integrations,media,realtime,api,server}`, uma superfície de API por público, gRPC só máquina-a-máquina. A ordem de migração (§6) não se salta: segurança → `lib.rs` → testes com Postgres → partir o ciclo → serviços → v1/OpenAPI → crates → gRPC.
 - **Já vale para código novo** (ADR-0004 §5), contado por `scripts/check-arquitectura-catraca.sh`: nada de `org_members` fora de `org.rs`, `Authorization` lido à mão, cliente `reqwest` novo, cripto copiada, funções `*_pub`, `{"ok": true}`, nem sessão dentro de `/api/v1`.
 - **Skills:** `.claude/skills/delonix-meet` (entrada), `delonix-meet-backend`, `delonix-meet-api`.
 
