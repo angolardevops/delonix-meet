@@ -235,9 +235,13 @@ export function useCallSession(
         s.on('breakout-move', (m) => {
           const returnTo = sessionStorage.getItem(`dx_return_${code}`)
           if (m.back) {
+            sessionStorage.setItem(`dx_rejoin_${m.code}`, String(Date.now()))
             sessionStorage.removeItem(`dx_return_${code}`)
             sessionStorage.removeItem(`dx_bo_ends_${code}`)
           } else {
+            // Ir para o grupo não passa pela pré-entrada: a pessoa já estava na
+            // reunião, e sem isto ficava parada no «Entrar» e o grupo vazio.
+            sessionStorage.setItem(`dx_rejoin_${m.code}`, String(Date.now()))
             sessionStorage.setItem(`dx_return_${m.code}`, returnTo ?? code)
             if (m.ends_at) sessionStorage.setItem(`dx_bo_ends_${m.code}`, String(m.ends_at))
             else sessionStorage.removeItem(`dx_bo_ends_${m.code}`)

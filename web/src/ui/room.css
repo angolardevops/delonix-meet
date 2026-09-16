@@ -3101,8 +3101,19 @@ div.rm-only-narrow,
   top: 10px;
   right: 10px;
   z-index: 2;
-  border-color: var(--success);
-  color: var(--success);
+  padding: 3px 8px;
+  border-color: transparent;
+  color: color-mix(in srgb, var(--text) 85%, var(--muted));
+  font-size: 9.5px;
+  font-weight: 400;
+  text-transform: none;
+}
+.rm-stage__talking .rm-bars {
+  display: none;
+}
+/* Na fila (plateia) o papel não cabe ao lado do nome: o retrato grande mostra-o. */
+.rm-strip .rm-tile__role {
+  display: none;
 }
 .rm-prescam {
   --tone: var(--accent-strong);
