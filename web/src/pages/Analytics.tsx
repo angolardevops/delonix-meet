@@ -33,6 +33,7 @@ import {
   savePlatformStorage,
   testPlatformStorage,
   StorageConfig,
+  ApiError,
 } from '../api'
 import { ClockIcon, PlugIcon, KeyIcon, LockIcon, SaveIcon, SettingsIcon, ShareLinkIcon } from '../icons'
 
@@ -558,6 +559,10 @@ function PlatformStoragePanel() {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [testMsg, setTestMsg] = useState('')
+  // O armazenamento é da PLATAFORMA, não da organização: só quem está declarado
+  // em `PLATFORM_ADMIN_USER_IDS` o vê. Um admin de org leva 403 — e em vez de
+  // um formulário que falha ao guardar, diz-se porquê (auditoria S1).
+  const [semPermissao, setSemPermissao] = useState(false)
 
   useEffect(() => {
     getPlatformStorage()
@@ -570,7 +575,9 @@ function PlatformStoragePanel() {
         setWdUser(s.webdav_user ?? '')
         setWdPath(s.webdav_path)
       })
-      .catch(() => {})
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 403) setSemPermissao(true)
+      })
   }, [])
 
   async function save() {
@@ -596,6 +603,14 @@ function PlatformStoragePanel() {
       const r = await testPlatformStorage()
       setTestMsg(r.message)
     } catch (e) { setTestMsg(`Erro: ${(e as Error).message}`) } finally { setBusy(false) }
+  }
+
+  if (semPermissao) {
+    return (
+      <div className="odoo-panel">
+        <p className="odoo-desc">{t('admin.armazenamentoSoPlataforma')}</p>
+      </div>
+    )
   }
 
   function downloadPvc() {

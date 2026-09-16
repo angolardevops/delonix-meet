@@ -766,6 +766,7 @@ export default {
     urlBaseWebdav: "WebDAV base URL",
     armazenamentoLocal: 'Local (default)',
     tipoDeArmazenamento: 'Storage type',
+    armazenamentoSoPlataforma: 'Recording storage is configured by the platform administrator, not by each organisation. Ask them to make the change.',
     pathDeExportacao: 'Export path',
     pathRemoto: 'Remote path',
     badge: 'ADMIN',
