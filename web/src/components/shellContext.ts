@@ -19,6 +19,8 @@ export interface ShellApi {
   /** Organização activa: a primeira onde a pessoa é admin, senão a primeira. */
   org: OrgSummary | null
   isAdmin: boolean
+  /** Volta a pedir as organizações (depois de criar uma ou mudar um papel). */
+  reloadOrgs: () => void
   navOpen: boolean
   setNavOpen: (open: boolean) => void
   navigate: (k: NavKey) => void

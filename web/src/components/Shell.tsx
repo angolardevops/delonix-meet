@@ -52,6 +52,7 @@ export default function Shell({
   const [settings, setSettings] = useState<SettingsTab | null>(null)
   const [orgs, setOrgs] = useState<Async<OrgSummary[]>>({ s: 'loading' })
   const [theme, setTheme] = useState(storedTheme())
+  const [orgsNonce, setOrgsNonce] = useState(0)
 
   useEffect(() => {
     const ctrl = new AbortController()
@@ -62,7 +63,7 @@ export default function Shell({
         setOrgs({ s: 'error', msg: e instanceof Error ? e.message : t('ui.erroCarregar') })
       })
     return () => ctrl.abort()
-  }, [t])
+  }, [t, orgsNonce])
 
   // Esc fecha a gaveta; Ctrl/Cmd+K abre a paleta em qualquer ecrã da consola.
   useEffect(() => {
@@ -108,6 +109,7 @@ export default function Shell({
     orgs,
     org,
     isAdmin,
+    reloadOrgs: () => setOrgsNonce((n) => n + 1),
     navOpen,
     setNavOpen,
     navigate: go,
