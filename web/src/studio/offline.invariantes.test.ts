@@ -49,6 +49,13 @@ describe('o precache vem do GRAFO, não de nomes escritos à mão', () => {
     expect(cfg).toMatch(/Studio-\[\^\/\]\+/)
   })
 
+  it('e a folha de estilo dele também', () => {
+    // A UI nova importa `ui/studio.css` na página, e o Vite faz dela um
+    // `Studio-*.css` que não aparece nos `imports` do Rollup. Fora do
+    // precache, a rota offline rebentava com «Unable to preload CSS».
+    expect(cfg).toContain('parte.viteMetadata?.importedCss')
+  })
+
   it('a Room e os modelos NÃO entram', () => {
     // A Room precisa do servidor por definição; os modelos passam dos 30 MB.
     expect(cfg).not.toMatch(/assets\\\/Room-/)

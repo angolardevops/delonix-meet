@@ -217,6 +217,7 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
+  max-width: 168px;
 }
 .st-corner {
   position: relative;
@@ -637,9 +638,6 @@
     margin: 10px 0 0;
     font-size: var(--t-sm);
     color: var(--muted);
-  }
-  .st-hide-narrow {
-    display: none;
   }
 }
 
