@@ -443,7 +443,7 @@ export default function CaptionsPanel({
         <div className="ed-transcript">
           {!leg ? (
             <div className="ed-transcript__empty">
-              <p className="st-note">{modelo === false && !doServidor ? t('editor.legendas.semTranscricaoSemModelo') : t('editor.legendas.semTranscricao')}</p>
+              <p className="st-note">{modelo === false ? t('editor.legendas.semTranscricaoSemModelo') : t('editor.legendas.semTranscricao')}</p>
               {doServidor && (
                 <>
                   <p className="st-note">{t('editor.legendas.servidorDisponivel', { count: doServidor.segmentos.length })}</p>
