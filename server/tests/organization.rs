@@ -22,10 +22,23 @@ fn org_path(org: &str, rest: &str) -> String {
 async fn my_orgs_shape(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
-    app.add_member(&a, "carla", "member").await;
+    let c = app.add_member(&a, "carla", "member").await;
     let (st, orgs) = app.get("/api/orgs", Some(&a.token)).await;
     assert_eq!(st, 200);
     let o = &orgs[0];
+    // `GET /api/orgs/{org_id}` devolve o MESMO item da lista, e um membro sem
+    // papel também o lê (com o papel dele).
+    let (st, one) = app.get(&format!("/api/orgs/{}", a.org()), Some(&a.token)).await;
+    assert_eq!(st, 200, "{one}");
+    assert_eq!(&one, o);
+    let (st, one) = app.get(&format!("/api/orgs/{}", a.org()), Some(&c.token)).await;
+    assert_eq!(st, 200, "{one}");
+    assert_eq!(one["id"], a.org());
+    assert_eq!(one["role"], "member");
+    let (st, _) = app.get(&format!("/api/orgs/{INVENTED_ID}"), Some(&a.token)).await;
+    assert_eq!(st, 404);
+    let (st, _) = app.get(&format!("/api/orgs/{}", a.org()), None).await;
+    assert_eq!(st, 401);
     assert_eq!(o["id"], a.org());
     assert_eq!(o["role"], "admin");
     assert_eq!(o["member_count"], 2);
@@ -118,7 +131,7 @@ async fn admin_employees_add_list_patch_archive(db: sqlx::PgPool) {
     // Email de outro domínio: 400.
     let (st, body) = app
         .post(
-            &org_path(&org, "employees"),
+            &org_path(&org, "members"),
             t,
             json!({"email": "x@outro.test", "password": PASSWORD}),
         )
@@ -128,7 +141,7 @@ async fn admin_employees_add_list_patch_archive(db: sqlx::PgPool) {
     // Papel inválido: 400.
     let (st, _) = app
         .post(
-            &org_path(&org, "employees"),
+            &org_path(&org, "members"),
             t,
             json!({"email": "y@alfa.test", "role": "root", "password": PASSWORD}),
         )
@@ -137,7 +150,7 @@ async fn admin_employees_add_list_patch_archive(db: sqlx::PgPool) {
     // Password curta numa conta nova: 400.
     let (st, _) = app
         .post(
-            &org_path(&org, "employees"),
+            &org_path(&org, "members"),
             t,
             json!({"email": "z@alfa.test", "password": "curta"}),
         )
@@ -146,7 +159,7 @@ async fn admin_employees_add_list_patch_archive(db: sqlx::PgPool) {
 
     let (st, emp) = app
         .post(
-            &org_path(&org, "employees"),
+            &org_path(&org, "members"),
             t,
             json!({"email": " Dario@ALFA.test ", "username": "dario", "password": PASSWORD,
                    "title": " Engenheiro ", "branch_id": br["id"]}),
@@ -163,7 +176,7 @@ async fn admin_employees_add_list_patch_archive(db: sqlx::PgPool) {
     // Re-adicionar alguém que já é desta org actualiza (não duplica).
     let (st, emp) = app
         .post(
-            &org_path(&org, "employees"),
+            &org_path(&org, "members"),
             t,
             json!({"email": "dario@alfa.test", "role": "admin", "title": "Chefe"}),
         )
@@ -175,7 +188,7 @@ async fn admin_employees_add_list_patch_archive(db: sqlx::PgPool) {
         "re-adicionar sem branch limpa-a"
     );
 
-    let (st, list) = app.get(&org_path(&org, "employees"), t).await;
+    let (st, list) = app.get(&org_path(&org, "members"), t).await;
     assert_eq!(st, 200);
     let list = list.as_array().unwrap();
     assert_eq!(list.len(), 2);
@@ -189,7 +202,7 @@ async fn admin_employees_add_list_patch_archive(db: sqlx::PgPool) {
     // PATCH
     let (st, emp) = app
         .patch(
-            &org_path(&org, &format!("employees/{dario}")),
+            &org_path(&org, &format!("members/{dario}")),
             t,
             json!({"role": "member", "title": "  Analista "}),
         )
@@ -199,7 +212,7 @@ async fn admin_employees_add_list_patch_archive(db: sqlx::PgPool) {
     assert_eq!(emp["title"], "Analista");
     let (st, _) = app
         .patch(
-            &org_path(&org, &format!("employees/{dario}")),
+            &org_path(&org, &format!("members/{dario}")),
             t,
             json!({"role": "dono"}),
         )
@@ -208,7 +221,7 @@ async fn admin_employees_add_list_patch_archive(db: sqlx::PgPool) {
     // PATCH de alguém que não é membro: 404.
     let (st, _) = app
         .patch(
-            &org_path(&org, &format!("employees/{INVENTED_ID}")),
+            &org_path(&org, &format!("members/{INVENTED_ID}")),
             t,
             json!({"title": "x"}),
         )
@@ -217,16 +230,16 @@ async fn admin_employees_add_list_patch_archive(db: sqlx::PgPool) {
 
     // Arquivar-se a si próprio: 400.
     let (st, _) = app
-        .delete(&org_path(&org, &format!("employees/{}", a.user_id)), t)
+        .delete(&org_path(&org, &format!("members/{}", a.user_id)), t)
         .await;
     assert_eq!(st, 400);
     // Arquivar: soft delete, sai da listagem.
     let (st, body) = app
-        .delete(&org_path(&org, &format!("employees/{dario}")), t)
+        .delete(&org_path(&org, &format!("members/{dario}")), t)
         .await;
     assert_eq!(st, 200);
     assert_eq!(body, json!({"ok": true}));
-    let (_, list) = app.get(&org_path(&org, "employees"), t).await;
+    let (_, list) = app.get(&org_path(&org, "members"), t).await;
     assert_eq!(list.as_array().unwrap().len(), 1);
     let archived: bool = sqlx::query_scalar(
         "SELECT archived_at IS NOT NULL FROM org_members WHERE user_id = $1::uuid",
@@ -238,7 +251,7 @@ async fn admin_employees_add_list_patch_archive(db: sqlx::PgPool) {
     assert!(archived);
     // Arquivar alguém que não existe: 200 na mesma (UPDATE sem linhas).
     let (st, _) = app
-        .delete(&org_path(&org, &format!("employees/{INVENTED_ID}")), t)
+        .delete(&org_path(&org, &format!("members/{INVENTED_ID}")), t)
         .await;
     assert_eq!(st, 200);
 }
@@ -281,7 +294,7 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
     }
 
     // Auditoria: o registo e o login ficaram na trilha, e a cadeia fecha.
-    let (st, audit) = app.get(&org_path(&org, "audit?limit=50"), t).await;
+    let (st, audit) = app.get(&org_path(&org, "audit-events?limit=50"), t).await;
     assert_eq!(st, 200);
     let actions: Vec<&str> = audit
         .as_array()
@@ -292,7 +305,7 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
     assert!(actions.contains(&"org.created"), "{actions:?}");
     assert!(actions.contains(&"auth.login"), "{actions:?}");
     assert_eq!(audit[0]["actor"], "admin-alfa.test");
-    let (st, v) = app.get(&org_path(&org, "audit/verify"), t).await;
+    let (st, v) = app.get(&org_path(&org, "audit-events/verification"), t).await;
     assert_eq!(st, 200);
     assert_eq!(v["intact"], true, "{v}");
     assert!(v["broken_at_seq"].is_null());
@@ -300,8 +313,8 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
 
     // Definições: normaliza o domínio.
     let (st, body) = app
-        .post(
-            &org_path(&org, "settings"),
+        .patch(
+            &format!("/api/orgs/{org}"),
             t,
             json!({"domain": "HTTPS://Meet.Alfa.test/", "retention_days": 99999, "max_rooms": 1}),
         )
@@ -316,8 +329,8 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
         json!({"ok": true, "domain": "https://meet.alfa.test", "retention_days": 3650})
     );
     let (st, body) = app
-        .post(
-            &org_path(&org, "settings"),
+        .patch(
+            &format!("/api/orgs/{org}"),
             t,
             json!({"domain": "https://Meet.Alfa.test/", "retention_days": 99999, "max_rooms": 1}),
         )
@@ -328,8 +341,8 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
         json!({"ok": true, "domain": "meet.alfa.test", "retention_days": 3650})
     );
     let (st, _) = app
-        .post(
-            &org_path(&org, "settings"),
+        .patch(
+            &format!("/api/orgs/{org}"),
             t,
             json!({"domain": "com espaço.test"}),
         )
@@ -537,7 +550,7 @@ async fn admin_api_keys_voice_and_odoo(db: sqlx::PgPool) {
     let (st, dids) = app.get(&org_path(&org, "voice/dids"), t).await;
     assert_eq!(st, 200);
     assert!(dids.is_array());
-    let (st, cdr) = app.get(&org_path(&org, "voice/cdr"), t).await;
+    let (st, cdr) = app.get(&org_path(&org, "voice/call-records"), t).await;
     assert_eq!(st, 200);
     assert_eq!(cdr, json!([]));
     let (st, bill) = app
@@ -550,32 +563,32 @@ async fn admin_api_keys_voice_and_odoo(db: sqlx::PgPool) {
     assert_eq!(bill["total_cost"], 0.0);
 
     // Odoo
-    let (st, cfg) = app.get(&org_path(&org, "integration/odoo"), t).await;
+    let (st, cfg) = app.get(&org_path(&org, "integrations/odoo"), t).await;
     assert_eq!(st, 200);
     assert_eq!(cfg["org_id"], org.as_str());
     assert_eq!(cfg["odoo_enabled"], false);
     assert!(cfg["odoo_token_prefix"].is_null());
     let (st, body) = app
         .put(
-            &org_path(&org, "integration/odoo"),
+            &org_path(&org, "integrations/odoo"),
             t,
             json!({"odoo_enabled": false, "odoo_url": "https://erp.alfa.test/", "odoo_db": "prod",
                    "hide_org_creation": true, "hide_sso_button": false}),
         )
         .await;
     assert_eq!(st, 200, "{body}");
-    let (_, cfg) = app.get(&org_path(&org, "integration/odoo"), t).await;
+    let (_, cfg) = app.get(&org_path(&org, "integrations/odoo"), t).await;
     assert_eq!(cfg["odoo_url"], "https://erp.alfa.test");
     assert_eq!(cfg["hide_org_creation"], true);
     assert_eq!(cfg["odoo_admin_id"], a.user_id.as_str());
     let (st, tok) = app
-        .post(&org_path(&org, "integration/odoo/token"), t, json!({}))
+        .post(&org_path(&org, "integrations/odoo/rotate-token"), t, json!({}))
         .await;
     assert_eq!(st, 200, "{tok}");
     let token = tok["token"].as_str().unwrap();
     assert!(token.starts_with("dlxo_"));
     assert_eq!(tok["prefix"], &token[..12]);
-    let (_, cfg) = app.get(&org_path(&org, "integration/odoo"), t).await;
+    let (_, cfg) = app.get(&org_path(&org, "integrations/odoo"), t).await;
     assert_eq!(
         cfg["odoo_enabled"], true,
         "rodar o token activa a integração"
@@ -605,7 +618,7 @@ async fn member_reads_directory_and_creates_groups(db: sqlx::PgPool) {
     let c = app.add_member(&a, "carla", "member").await;
     let org = a.org().to_string();
     let t = Some(c.token.as_str());
-    for p in ["branches", "employees", "groups", "meeting-rooms"] {
+    for p in ["branches", "members", "groups", "meeting-rooms"] {
         let (st, body) = app.get(&org_path(&org, p), t).await;
         assert_eq!(st, 200, "{p}: {body}");
     }
@@ -631,15 +644,15 @@ async fn member_admin_ops_are_forbidden_403(db: sqlx::PgPool) {
 
     let gets = [
         "stats",
-        "audit",
-        "audit/verify",
+        "audit-events",
+        "audit-events/verification",
         "sso",
         "webhooks",
         "api-keys",
         "voice/dids",
-        "voice/cdr",
+        "voice/call-records",
         "voice/billing",
-        "integration/odoo",
+        "integrations/odoo",
     ];
     for p in gets {
         let (st, body) = app.get(&org_path(&org, p), t).await;
@@ -649,29 +662,33 @@ async fn member_admin_ops_are_forbidden_403(db: sqlx::PgPool) {
     let posts = [
         ("branches", json!({"name": "x"})),
         (
-            "employees",
+            "members",
             json!({"email": "novo@alfa.test", "password": PASSWORD}),
         ),
         ("meeting-rooms", json!({"name": "x"})),
-        ("settings", json!({"domain": "x.test"})),
         ("api-keys", json!({"name": "x"})),
         (
             "webhooks",
             json!({"kind": "generic", "url": "https://x.test"}),
         ),
-        ("integration/odoo/token", json!({})),
+        ("integrations/odoo/rotate-token", json!({})),
     ];
     for (p, b) in posts {
         let (st, body) = app.post(&org_path(&org, p), t, b).await;
         assert_eq!(st, 403, "POST {p}: {body}");
     }
+    // As definições são o próprio recurso: `PATCH /api/orgs/{org_id}`.
+    let (st, body) = app
+        .patch(&format!("/api/orgs/{org}"), t, json!({"domain": "x.test"}))
+        .await;
+    assert_eq!(st, 403, "PATCH org: {body}");
     let (st, _) = app
-        .delete(&org_path(&org, &format!("employees/{}", a.user_id)), t)
+        .delete(&org_path(&org, &format!("members/{}", a.user_id)), t)
         .await;
     assert_eq!(st, 403);
     let (st, _) = app
         .patch(
-            &org_path(&org, &format!("employees/{}", c.user_id)),
+            &org_path(&org, &format!("members/{}", c.user_id)),
             t,
             json!({"role": "admin"}),
         )
@@ -696,22 +713,27 @@ async fn cross_org_admin_is_denied_on_every_org_route(db: sqlx::PgPool) {
     // Controlo positivo: B alcança o que é seu.
     let (st, _) = app.get(&org_path(&borg, "stats"), Some(&b.token)).await;
     assert_eq!(st, 200);
+    let (st, own) = app.get(&format!("/api/orgs/{borg}"), Some(&b.token)).await;
+    assert_eq!(st, 200, "{own}");
+    assert_eq!(own["id"], borg.as_str());
+    assert_eq!(own["name"], "Org beta.test");
+    assert_eq!(own["role"], "admin");
 
     let gets = [
         "branches",
-        "employees",
+        "members",
         "groups",
         "meeting-rooms",
         "stats",
-        "audit",
-        "audit/verify",
+        "audit-events",
+        "audit-events/verification",
         "sso",
         "webhooks",
         "api-keys",
         "voice/dids",
-        "voice/cdr",
+        "voice/call-records",
         "voice/billing",
-        "integration/odoo",
+        "integrations/odoo",
     ];
     for p in gets {
         let (st, body) = app.get(&org_path(&borg, p), t).await;
@@ -723,18 +745,25 @@ async fn cross_org_admin_is_denied_on_every_org_route(db: sqlx::PgPool) {
         ("branches", json!({"name": "forjada"})),
         ("groups", json!({"name": "forjado"})),
         (
-            "employees",
+            "members",
             json!({"email": "x@beta.test", "password": PASSWORD}),
         ),
         ("meeting-rooms", json!({"name": "forjada"})),
-        ("settings", json!({"domain": "evil.test"})),
         ("api-keys", json!({"name": "forjada"})),
-        ("integration/odoo/token", json!({})),
+        ("integrations/odoo/rotate-token", json!({})),
     ];
     for (p, body) in writes {
         let (st, resp) = app.post(&org_path(&borg, p), t, body).await;
         assert_eq!(st, 404, "POST {p}: {resp}");
     }
+    let (st, resp) = app
+        .patch(&format!("/api/orgs/{borg}"), t, json!({"domain": "evil.test"}))
+        .await;
+    assert_eq!(st, 404, "PATCH org da B: {resp}");
+    // Leitura do recurso (rota nova): não-membro 404, sem fuga de dados.
+    let (st, resp) = app.get(&format!("/api/orgs/{borg}"), t).await;
+    assert_eq!(st, 404, "GET org da B: {resp}");
+    assert_denied("GET /api/orgs/{org_id} da B", st, &resp, "Org beta.test");
     let (st, _) = app
         .put(
             &org_path(&borg, "sso"),
@@ -745,7 +774,7 @@ async fn cross_org_admin_is_denied_on_every_org_route(db: sqlx::PgPool) {
     assert_eq!(st, 404);
     let (st, _) = app
         .put(
-            &org_path(&borg, "integration/odoo"),
+            &org_path(&borg, "integrations/odoo"),
             t,
             json!({"odoo_enabled": true, "odoo_url": "https://evil.test", "odoo_db": "x",
                    "hide_org_creation": true, "hide_sso_button": true}),
@@ -753,12 +782,12 @@ async fn cross_org_admin_is_denied_on_every_org_route(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 404);
     let (st, _) = app
-        .delete(&org_path(&borg, &format!("employees/{}", b.user_id)), t)
+        .delete(&org_path(&borg, &format!("members/{}", b.user_id)), t)
         .await;
     assert_eq!(st, 404);
     let (st, _) = app
         .patch(
-            &org_path(&borg, &format!("employees/{}", b.user_id)),
+            &org_path(&borg, &format!("members/{}", b.user_id)),
             t,
             json!({"role": "member"}),
         )
@@ -870,14 +899,14 @@ async fn archived_members_lose_org_access(db: sqlx::PgPool) {
     assert_eq!(st, 200);
     // D (admin) pode descarregar: passa a autorização e só falha no ficheiro.
     let (st, _) = app
-        .get(&format!("/api/recordings/{rec}?dl=1"), Some(&d.token))
+        .get(&format!("/api/recordings/{rec}/content?dl=1"), Some(&d.token))
         .await;
     assert_eq!(st, 404, "autorizado; o ficheiro não existe");
 
     // ARQUIVAR pelo endpoint.
     for u in [&c.user_id, &d.user_id] {
         let (st, _) = app
-            .delete(&org_path(&org, &format!("employees/{u}")), Some(&a.token))
+            .delete(&org_path(&org, &format!("members/{u}")), Some(&a.token))
             .await;
         assert_eq!(st, 200);
     }
@@ -889,14 +918,14 @@ async fn archived_members_lose_org_access(db: sqlx::PgPool) {
     assert_eq!(st, 403);
     let (_, found) = app.get("/api/users?q=admin-alfa", Some(&c.token)).await;
     assert_eq!(found, json!([]));
-    for p in ["employees", "branches", "groups"] {
+    for p in ["members", "branches", "groups"] {
         let (st, _) = app.get(&org_path(&org, p), Some(&c.token)).await;
         assert_eq!(st, 404, "{p}");
     }
     let (st, _) = app.get(&org_path(&org, "stats"), Some(&d.token)).await;
     assert_eq!(st, 404);
     let (st, _) = app
-        .get(&format!("/api/recordings/{rec}?dl=1"), Some(&d.token))
+        .get(&format!("/api/recordings/{rec}/content?dl=1"), Some(&d.token))
         .await;
     assert_eq!(st, 401);
     // A sessão em si continua válida (o JWT não é revogado).
@@ -922,6 +951,9 @@ async fn my_orgs_hides_org_from_archived_member(db: sqlx::PgPool) {
     let (st, orgs) = app.get("/api/orgs", Some(&c.token)).await;
     assert_eq!(st, 200);
     assert_eq!(orgs, serde_json::json!([]), "{orgs}");
+    // Nem pelo id: arquivado deixa de ser membro activo.
+    let (st, _) = app.get(&format!("/api/orgs/{}", a.org()), Some(&c.token)).await;
+    assert_eq!(st, 404);
     let (_, orgs) = app.get("/api/orgs", Some(&a.token)).await;
     assert_eq!(orgs[0]["member_count"], 1);
 }
@@ -947,7 +979,7 @@ async fn add_employee_refuses_active_member_of_another_org(db: sqlx::PgPool) {
     // qualquer domínio.
     let (st, body) = app
         .post(
-            &org_path(a.org(), "employees"),
+            &org_path(a.org(), "members"),
             Some(&a.token),
             json!({"email": "novo@qualquer.test", "username": "novo", "password": PASSWORD}),
         )
@@ -956,7 +988,7 @@ async fn add_employee_refuses_active_member_of_another_org(db: sqlx::PgPool) {
 
     let (st, body) = app
         .post(
-            &org_path(a.org(), "employees"),
+            &org_path(a.org(), "members"),
             Some(&a.token),
             json!({"email": v.email, "role": "admin"}),
         )
@@ -997,7 +1029,7 @@ async fn add_employee_accepts_account_archived_elsewhere(db: sqlx::PgPool) {
         .unwrap();
     let (st, body) = app
         .post(
-            &org_path(a.org(), "employees"),
+            &org_path(a.org(), "members"),
             Some(&a.token),
             json!({"email": x.email}),
         )
