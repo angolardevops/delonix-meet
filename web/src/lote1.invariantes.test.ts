@@ -30,7 +30,7 @@ describe('1.2 · as páginas pesadas não entram no chunk de arranque', () => {
   const app = read('web/src/App.tsx')
   // Room arrasta webrtc/media/e2ee/signaling atrás de si; as outras são as
   // maiores da consola. Nenhuma pode voltar a ser importada estaticamente.
-  const pesadas = ['Room', 'Calendar', 'Analytics', 'Recordings', 'Directory', 'Whiteboards']
+  const pesadas = ['Room', 'Lobby', 'Calendar', 'Analytics', 'Recordings', 'Directory', 'Whiteboards', 'Studio', 'Integrations', 'Admin']
 
   for (const p of pesadas) {
     it(`${p} é lazy`, () => {
@@ -52,11 +52,11 @@ describe('1.2 · as páginas pesadas não entram no chunk de arranque', () => {
     expect(fallbackDentro).toBeLessThan(shellFecha)
   })
 
-  it('o Shell não é arrastado pelo Login nem pela Landing', () => {
-    // LanguageToggle/ThemePicker viviam no Shell; importá-los de lá trazia a
-    // consola inteira (CommandPalette, NotificationCenter, OnboardingTour…).
-    for (const p of ['web/src/pages/Login.tsx', 'web/src/pages/Landing.tsx', 'web/src/pages/Room.tsx']) {
-      expect(read(p)).not.toContain("from '../components/Shell'")
+  it('o Shell não é arrastado pelos ecrãs que vivem fora da consola', () => {
+    // Entrar, a sala, o lobby e as páginas públicas não têm rail: importar o
+    // Shell trazia a consola inteira (paleta, definições, MFA) para esses chunks.
+    for (const p of ['Login', 'Room', 'Lobby', 'SharePage', 'Status', 'Legal', 'ApiDocs']) {
+      expect(read(`web/src/pages/${p}.tsx`)).not.toMatch(/from '\.\.\/components\/(Shell|PageBar|shellContext)'/)
     }
   })
 })
@@ -82,7 +82,7 @@ describe('1.3 · só o idioma em uso viaja', () => {
 })
 
 describe('4.3 · nenhum foco fica invisível', () => {
-  const css = read('web/src/styles.scss')
+  const css = read('web/src/ui/base.css')
 
   it('existe uma rede de segurança em :focus-visible', () => {
     expect(css).toMatch(/:where\([^)]*button[^)]*\):focus-visible\s*\{[^}]*outline:\s*2px solid/)
@@ -97,8 +97,9 @@ describe('4.3 · nenhum foco fica invisível', () => {
   })
 
   it('os inputs sem borda têm o anel no contentor', () => {
-    for (const c of ['.join-box', '.people-search', '.cmd-search', '.app-bar-join']) {
-      expect(css).toContain(`${c}:focus-within`)
-    }
+    // Um input com `border: 0` dentro de uma caixa desenhada não tem onde
+    // mostrar o foco: o anel tem de ir para a caixa.
+    const shell = read('web/src/ui/shell.css')
+    expect(shell).toContain('.palette__search:focus-within')
   })
 })
