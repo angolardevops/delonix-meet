@@ -11,6 +11,7 @@ use argon2::{
     },
     Argon2,
 };
+use hmac::{Hmac, Mac};
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
 
@@ -23,6 +24,22 @@ pub fn sha256_hex(data: impl AsRef<[u8]>) -> String {
 /// SHA-256 em bytes (derivação de chaves de desenvolvimento, etc.).
 pub fn sha256(data: impl AsRef<[u8]>) -> [u8; 32] {
     Sha256::digest(data.as_ref()).into()
+}
+
+/// HMAC-SHA256 de `data` com `key`. É a base dos URLs assinados: quem não tem
+/// a chave não consegue produzir uma assinatura que [`ct_eq`] aceite.
+pub fn hmac_sha256(key: impl AsRef<[u8]>, data: impl AsRef<[u8]>) -> [u8; 32] {
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key.as_ref())
+        .expect("o HMAC aceita chaves de qualquer tamanho");
+    mac.update(data.as_ref());
+    mac.finalize().into_bytes().into()
+}
+
+/// Deriva uma subchave de `secret` para UM propósito (`purpose`). Uma
+/// assinatura feita com a subchave de um propósito não vale noutro, e o
+/// segredo de origem (p.ex. o do JWT) nunca assina nada fora do seu uso.
+pub fn derive_key(secret: impl AsRef<[u8]>, purpose: &str) -> [u8; 32] {
+    hmac_sha256(secret, format!("delonix-meet/derive/{purpose}"))
 }
 
 /// `N` bytes do gerador do sistema operativo.
@@ -93,6 +110,21 @@ mod tests {
             sha256_hex("abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn hmac_sha256_rfc4231_case_2() {
+        assert_eq!(
+            hex::encode(hmac_sha256("Jefe", "what do ya want for nothing?")),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
+
+    #[test]
+    fn derived_keys_are_per_purpose() {
+        assert_ne!(derive_key("s", "a"), derive_key("s", "b"));
+        assert_ne!(derive_key("s", "a"), derive_key("t", "a"));
+        assert_eq!(derive_key("s", "a"), derive_key("s", "a"));
     }
 
     #[test]

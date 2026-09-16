@@ -755,6 +755,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "hex",
+ "hmac",
  "rand 0.8.6",
  "serde",
  "serde_json",
@@ -769,6 +770,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "delonix-meet-core",
+ "hex",
  "serde",
  "url",
  "uuid",

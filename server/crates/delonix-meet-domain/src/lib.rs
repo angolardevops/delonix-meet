@@ -5,8 +5,10 @@
 //! adaptadores (HTTP, gRPC, Postgres) chamam estas funções e nunca as
 //! reimplementam — é assim que a BFF e a v1 deixam de divergir.
 
+pub mod conferencing;
 pub mod content;
 pub mod identity;
 pub mod integration;
 pub mod notification;
 pub mod operations;
+pub mod organization;
