@@ -4,3 +4,4 @@ app/
 lado-a-lado/
 *.webm
 *.png
+.tokens-*.json

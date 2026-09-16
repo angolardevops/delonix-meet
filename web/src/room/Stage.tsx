@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { currentUser } from '../api'
 import { Icon } from '../ui/icons'
 import { cx } from '../ui/kit'
-import { ParticipantTile, SpeakingBars, TileAvatar, TileFrame } from './ParticipantTile'
+import { ParticipantTile, rotuloPapel, SpeakingBars, TileAvatar, TileFrame, TileName } from './ParticipantTile'
 import { PresentationTile } from './PresentationTile'
 import { ligacaoFraca } from './qosAmostra'
 import { repartirFila } from './stripCapacity'
@@ -73,9 +73,10 @@ export function Stage({ core, media, layout, qos, handRaised, onTilePin, onTileM
   const meSpeaking = speaking.has('me') && media.micOn
   const { effectiveViewMode, visiblePeers, tileSize, pinnedId } = layout
   const isSolo = layout.total === 1
-  const gridSized = !presentation && effectiveViewMode === 'grid' && !isSolo
-  const w = gridSized ? tileSize.w : undefined
-  const h = gridSized ? tileSize.h : undefined
+  // Na grelha os retratos enchem as células (CSS grid); o tamanho só se passa
+  // fora dela, onde a fila decide.
+  const w = undefined
+  const h = undefined
   const strip = useStripCapacity('.rm-strip > .rm-tile, .rm-strip > .rm-strip__more')
   // A minha câmara por cima do que apresento: com fundo, a saída do efeito.
   const fxOut = media.bgMode !== 'none' ? core.effectRef.current?.output ?? null : null
@@ -101,7 +102,7 @@ export function Stage({ core, media, layout, qos, handRaised, onTilePin, onTileM
       <div className="rm-tile__flags">
         {handRaised && (
           <span className="rm-flag rm-flag--live">
-            <Icon name="hand" size={11} />
+            <Icon name="hand" size={10} />
             {t('room.tile.mao')}
           </span>
         )}
@@ -113,18 +114,8 @@ export function Stage({ core, media, layout, qos, handRaised, onTilePin, onTileM
         )}
       </div>
       <div className="rm-tile__foot">
-        <span className="rm-tile__name">
-          {media.micOn ? (
-            meSpeaking ? <SpeakingBars /> : <Icon name="mic" size={11} />
-          ) : (
-            <>
-              <Icon name="micOff" size={11} className="dx-icon rm-tile__muted" />
-              <span className="dx-sr-only">{t('room.tile.microfoneDesligado')}</span>
-            </>
-          )}
-          <span className="rm-tile__label">{me ? t('room.tile.nomeTu', { nome: me }) : t('room.tile.tu')}</span>
-        </span>
-        {isHost && <span className="rm-tile__role">{t('room.papel.anfitriao')}</span>}
+        <TileName name={me ? t('room.tile.nomeTu', { nome: me }) : t('room.tile.tu')} muted={!media.micOn} speaking={meSpeaking} />
+        {rotuloPapel(t, core.myRole) && <span className="rm-tile__role">{rotuloPapel(t, core.myRole)}</span>}
       </div>
       <div className="rm-tile__actions">
         <button
@@ -250,7 +241,10 @@ export function Stage({ core, media, layout, qos, handRaised, onTilePin, onTileM
   } else {
     body = (
       <>
-        <div className={cx('rm-grid', isSolo && 'is-solo')} style={parallax}>
+        <div
+          className={cx('rm-grid', isSolo && 'is-solo')}
+          style={{ ...parallax, gridTemplateColumns: `repeat(${tileSize.cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${tileSize.rows}, minmax(0, 1fr))` }}
+        >
           {layout.showSelf && selfTile}
           {visiblePeers.map((p) => remoteTile(p))}
         </div>

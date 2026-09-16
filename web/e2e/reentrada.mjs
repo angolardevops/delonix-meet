@@ -55,9 +55,9 @@ await entrar(page2, APP, await criarConta(API, 'reent2'))
 await page2.goto(`${APP}/#/r/${codigo}`, { waitUntil: 'domcontentloaded' })
 await page2.getByRole('button', { name: /entrar na sessão/i }).first().click({ timeout: 60000 })
 
-const pilula = page.locator('.rm-waiting-pill')
+// A fila de espera vive na barra de baixo (template DelonixRoomGrid: «N na sala · M em espera · Admitir»).
+const pilula = page.locator('.rm-occupancy__waiting')
 await pilula.waitFor({ timeout: 90000 }).catch(() => {})
-await pilula.click().catch(() => {})
 const admitir = page.locator('.rm-admit-accept').first()
 await admitir.waitFor({ timeout: 30000 }).catch(() => {})
 await admitir.click().catch(() => {})

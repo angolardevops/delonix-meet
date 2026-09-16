@@ -2,7 +2,50 @@ import { CSSProperties, memo, ReactNode, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../ui/icons'
 import { avatarTone, cx, initials } from '../ui/kit'
+import type { Role } from '../signaling'
 import type { RemotePeer } from './useRoomCore'
+
+/** Rótulo do papel num retrato; `null` para quem assiste. */
+export function rotuloPapel(t: (k: string) => string, role: Role): string | null {
+  switch (role) {
+    case 'host':
+      return t('room.papel.anfitriao')
+    case 'cohost':
+      return t('room.papel.coAnfitriao')
+    case 'speaker':
+      return t('room.papel.orador')
+    case 'broadcast':
+      return t('room.papel.emissao')
+    default:
+      return null
+  }
+}
+
+/**
+ * Chip do nome (template DelonixRoomGrid): «⊘» sem som, «◉» a falar, e o nome.
+ * Com som e calado não há marca — o silêncio não precisa de ícone.
+ */
+export function TileName({ name, muted, speaking }: { name: string; muted: boolean; speaking: boolean }) {
+  const { t } = useTranslation()
+  return (
+    <span className="rm-tile__name">
+      {muted ? (
+        <>
+          <Icon name="ban" size={9} className="dx-icon rm-tile__muted" />
+          <span className="dx-sr-only">{t('room.tile.microfoneDesligado')}</span>
+        </>
+      ) : (
+        speaking && (
+          <>
+            <span className="rm-speakdot" aria-hidden="true" />
+            <span className="dx-sr-only">{t('room.tile.aFalar')}</span>
+          </>
+        )
+      )}
+      <span className="rm-tile__label">{name}</span>
+    </span>
+  )
+}
 
 export function SpeakingBars() {
   return (
@@ -105,7 +148,7 @@ export function ParticipantTileBase({
   // Vídeo só com track E câmara ligada: uma track desactivada chega como preto.
   const hasVideo = !!peer.stream?.getVideoTracks().length && peer.camOn
   const hasAudio = !!peer.stream?.getAudioTracks().length && peer.micOn
-  const role = peer.host ? t('room.papel.anfitriao') : peer.canAdmit ? t('room.papel.coAnfitriao') : null
+  const role = rotuloPapel(t, peer.host ? 'host' : peer.role)
   return (
     <TileFrame
       kind="remoto"
@@ -124,39 +167,29 @@ export function ParticipantTileBase({
       <div className="rm-tile__flags">
         {peer.hand && (
           <span className="rm-flag rm-flag--live">
-            <Icon name="hand" size={11} />
+            <Icon name="hand" size={10} />
             {t('room.tile.mao')}
           </span>
         )}
         {weak && (
-          <span className="rm-flag rm-flag--live">
-            <Icon name="alert" size={11} />
+          <span className="rm-flag rm-flag--warn">
+            <Icon name="alert" size={10} />
             {t('room.tile.ligacaoFraca')}
+          </span>
+        )}
+        {peer.is_pstn && (
+          <span className="rm-flag rm-flag--plain">
+            <Icon name="phone" size={10} />
+            {t('room.papel.telefone')}
           </span>
         )}
         {peer.reconnecting && <span className="rm-flag">{t('room.tile.aVoltar')}</span>}
       </div>
       <div className="rm-tile__foot">
-        <span className="rm-tile__name">
-          {hasAudio ? (
-            speaking ? <SpeakingBars /> : <Icon name="mic" size={11} />
-          ) : (
-            <>
-              <Icon name="micOff" size={11} className="dx-icon rm-tile__muted" />
-              <span className="dx-sr-only">{t('room.tile.microfoneDesligado')}</span>
-            </>
-          )}
-          <span className="rm-tile__label">{peer.username}</span>
-        </span>
+        <TileName name={peer.username} muted={!hasAudio} speaking={speaking && hasAudio} />
         {role && (
-          <span className="rm-tile__role" title={!peer.host && peer.canAdmit ? t('room.papel.coAnfitriaoDica') : undefined}>
+          <span className="rm-tile__role" title={peer.role === 'cohost' ? t('room.papel.coAnfitriaoDica') : undefined}>
             {role}
-          </span>
-        )}
-        {peer.is_pstn && (
-          <span className="rm-tile__role">
-            <Icon name="phone" size={10} />
-            {t('room.papel.telefone')}
           </span>
         )}
         {peer.is_bot && (
@@ -218,6 +251,7 @@ export const ParticipantTile = memo(ParticipantTileBase, (a, b) =>
   a.peer.hand === b.peer.hand &&
   a.peer.host === b.peer.host &&
   a.peer.canAdmit === b.peer.canAdmit &&
+  a.peer.role === b.peer.role &&
   a.peer.reconnecting === b.peer.reconnecting &&
   a.peer.is_pstn === b.peer.is_pstn &&
   a.peer.is_bot === b.peer.is_bot &&

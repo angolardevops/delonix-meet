@@ -39,7 +39,9 @@ describe('2.1 · nenhum relógio bate na raiz da sala', () => {
     expect(read('web/src/room/TopBar.tsx')).toContain("from './Clocks'")
     expect(read('web/src/room/ControlBar.tsx')).toContain("from './Clocks'")
     expect(read('web/src/room/TopBar.tsx')).toContain('<MeetingElapsed startedAt={joinedAt}')
-    expect(sala()).toContain('joinedAt={core.joinedAtRef.current}')
+    // Conta desde o início da SESSÃO no servidor (`joined.started_at`, lote 2);
+    // sem ele, desde a minha entrada — nunca desde zero.
+    expect(sala()).toContain('joinedAt={core.startedAtRef.current || core.joinedAtRef.current}')
   })
 
   it('a duração ainda sabe DE ONDE conta', () => {

@@ -25,6 +25,7 @@ import { entradaDirecta, useCallSession } from '../room/useCallSession'
 import { useChat } from '../room/useChat'
 import { useInvite } from '../room/useInvite'
 import { useLayout } from '../room/useLayout'
+import { destinosNoAr, useLive } from '../room/useLive'
 import { useLocalMedia } from '../room/useLocalMedia'
 import { useMeetingTools } from '../room/useMeetingTools'
 import { useMulticam } from '../room/useMulticam'
@@ -84,6 +85,7 @@ export default function Room({
   const remote = useRemoteControl(core)
   const invite = useInvite(code)
   const multicam = useMulticam(core)
+  const live = useLive(core)
 
   const [secOpen, setSecOpen] = useState(false)
   /** O painel de sondagens abriu pelo atalho do chat: foca o compositor. */
@@ -196,13 +198,18 @@ export default function Room({
   } else if (core.roomState === 'denied' || core.roomState === 'kicked' || core.roomState === 'notfound') {
     content = <EndedScreen kind={core.roomState} onLeave={onLeave} />
   } else {
-    const tabbed = chrome.panel === 'chat' || chrome.panel === 'qa' || chrome.panel === 'polls' || chrome.panel === 'people'
+    // Três separadores, como no template; as sondagens aparecem no fio do chat e
+    // o compositor abre como painel próprio («Nova sondagem»).
+    const tabbed = chrome.panel === 'chat' || chrome.panel === 'qa' || chrome.panel === 'people'
     const openQuestions = tools.questions.filter((q) => !q.answered).length
     const openPolls = tools.polls.filter((p) => p.open).length
     const presenterLabel = core.presentation
-      ? core.presentation.peerId === 'me'
-        ? t('room.apresentacao.aApresentar')
-        : t('room.apresentacao.apresenta', { nome: peers.find((p) => p.peerId === core.presentation!.peerId)?.username ?? '' })
+      ? t('room.topo.aPartilhar', {
+          nome:
+            core.presentation.peerId === 'me'
+              ? currentUser()?.username ?? ''
+              : peers.find((p) => p.peerId === core.presentation!.peerId)?.username ?? '',
+        })
       : null
     const recordingLabel = recording.serverRec
       ? t('room.gravacao.noServidorPor', { nome: recording.serverRec.by })
@@ -223,6 +230,7 @@ export default function Room({
       settings: t('room.painel.definicoes'),
       notes: t('room.painel.notas'),
       multicam: t('room.multicam.titulo'),
+      polls: t('room.painel.sondagensTitulo'),
     }
 
     content = (
@@ -230,11 +238,15 @@ export default function Room({
         <TopBar
           title={session.roomName}
           code={code}
-          joinedAt={core.joinedAtRef.current}
+          joinedAt={core.startedAtRef.current || core.joinedAtRef.current}
           inRoom={inRoom}
           callState={session.callState}
           recordingLabel={recordingLabel}
-          live={multicam.estado.fase === 'no-ar'}
+          live={
+            live.on
+              ? { on: true, destinos: destinosNoAr(live), since: live.since }
+              : { on: multicam.estado.fase === 'no-ar', destinos: [], since: null }
+          }
           e2eeOn={session.e2eeOn}
           secOpen={secOpen}
           secCode={session.secCode}
@@ -343,6 +355,62 @@ export default function Room({
                 talkOverNames={talkOverNames}
               />
             </div>
+            {/* A barra vive na coluna principal: o painel lateral ocupa a altura toda (template DelonixRoomChat). */}
+            <ControlBar
+              isHost={isHost}
+              topology={core.topology}
+              status={core.status}
+              callState={session.callState}
+              media={media}
+              layout={layout}
+              panel={chrome.panel}
+              onTogglePanel={chrome.togglePanel}
+              onOpenSettings={() => chrome.setPanel('settings')}
+              presenterLabel={presenterLabel}
+              returnTo={breakouts.returnTo}
+              onReturnToMain={breakouts.returnToMain}
+              breakoutEndsAt={breakouts.endsAt}
+              timerEndsAt={tools.timerEndsAt}
+              ccOn={transcription.ccOn}
+              onToggleCc={transcription.toggleCc}
+              onReaction={reactions.sendReaction}
+              sharing={share.sharing}
+              shareNeedsPermission={share.needsPermission}
+              onShare={share.requestOrToggleShare}
+              handRaised={reactions.handRaised}
+              onToggleHand={reactions.toggleHand}
+              recording={recording.recording}
+              recBusy={recording.recBusy}
+              onToggleRecording={() => void recording.toggleLocal()}
+              wbOpen={whiteboard.open}
+              onToggleWhiteboard={whiteboard.toggle}
+              transcribing={transcription.transcribing}
+              unreadChat={chat.unread}
+              total={peers.length + 1}
+              openQuestions={openQuestions}
+              openPolls={openPolls}
+              hasPresentation={!!core.presentation}
+              pipDisponivel={pip.pipDisponivel}
+              pipOn={pip.pipOn}
+              pipErro={pip.pipErro}
+              onTogglePip={() => void pip.alternarPip()}
+              multicamAvailable={isHost && multicam.supported}
+              onOpenMulticam={openMulticam}
+              serverRecAvailable={isHost && core.topology === 'sfu'}
+              serverRecOn={!!recording.serverRec}
+              onToggleServerRec={toggleServerRecording}
+              onLeave={leave}
+              fonte2Label={fonte2?.label ?? null}
+              fonte2On={share.sharing && !!share.sourceDeviceId}
+              onFonte={(f) => {
+                const aPartilharFonte = share.sharing && !!share.sourceDeviceId
+                if (f === 'fonte2' && !aPartilharFonte && fonte2) void share.shareSource(fonte2.deviceId)
+                if (f === 'camara' && aPartilharFonte) share.requestOrToggleShare()
+              }}
+              canAdmit={session.canAdmit}
+              waitingCount={participants.waitingQueue.length}
+              onAdmitAll={participants.admitAll}
+            />
           </div>
 
           {chrome.panel !== 'none' && (
@@ -356,14 +424,13 @@ export default function Room({
                     tabs={[
                       { value: 'chat', label: t('room.painel.chat'), count: chat.unread },
                       { value: 'qa', label: t('room.painel.perguntas'), count: openQuestions },
-                      { value: 'polls', label: t('room.painel.sondagens'), count: openPolls },
                       { value: 'people', label: t('room.painel.participantes'), count: peers.length + 1 },
                     ]}
                   />
                 ) : (
                   <h2 className="rm-panel__title">{panelTitle[chrome.panel]}</h2>
                 )}
-                <IconButton icon="x" bare label={t('room.painel.fechar')} onClick={closePanel} />
+                <IconButton icon="x" bare label={t('room.painel.fechar')} onClick={closePanel} className={tabbed ? 'rm-panel__close is-tabbed' : 'rm-panel__close'} />
               </header>
               {chrome.panel === 'chat' && (
                 <ChatPanel
@@ -372,6 +439,7 @@ export default function Room({
                   code={code}
                   peers={peers}
                   tools={tools}
+                  myRole={core.myRole}
                   onNewPoll={() => {
                     setPollFromChat(true)
                     chrome.setPanel('polls')
@@ -415,62 +483,6 @@ export default function Room({
 
         {/* O áudio de TODOS, fora do palco: o que se ouve não depende do layout. */}
         <AudioSink peers={peers} sinkId={speakerId} mudo={companion} volume={media.outputVolume} />
-
-        <ControlBar
-          isHost={isHost}
-          topology={core.topology}
-          status={core.status}
-          callState={session.callState}
-          media={media}
-          layout={layout}
-          panel={chrome.panel}
-          onTogglePanel={chrome.togglePanel}
-          onOpenSettings={() => chrome.setPanel('settings')}
-          presenterLabel={presenterLabel}
-          returnTo={breakouts.returnTo}
-          onReturnToMain={breakouts.returnToMain}
-          breakoutEndsAt={breakouts.endsAt}
-          timerEndsAt={tools.timerEndsAt}
-          ccOn={transcription.ccOn}
-          onToggleCc={transcription.toggleCc}
-          onReaction={reactions.sendReaction}
-          sharing={share.sharing}
-          shareNeedsPermission={share.needsPermission}
-          onShare={share.requestOrToggleShare}
-          handRaised={reactions.handRaised}
-          onToggleHand={reactions.toggleHand}
-          recording={recording.recording}
-          recBusy={recording.recBusy}
-          onToggleRecording={() => void recording.toggleLocal()}
-          wbOpen={whiteboard.open}
-          onToggleWhiteboard={whiteboard.toggle}
-          transcribing={transcription.transcribing}
-          unreadChat={chat.unread}
-          total={peers.length + 1}
-          openQuestions={openQuestions}
-          openPolls={openPolls}
-          hasPresentation={!!core.presentation}
-          pipDisponivel={pip.pipDisponivel}
-          pipOn={pip.pipOn}
-          pipErro={pip.pipErro}
-          onTogglePip={() => void pip.alternarPip()}
-          multicamAvailable={isHost && multicam.supported}
-          onOpenMulticam={openMulticam}
-          serverRecAvailable={isHost && core.topology === 'sfu'}
-          serverRecOn={!!recording.serverRec}
-          onToggleServerRec={toggleServerRecording}
-          onLeave={leave}
-          fonte2Label={fonte2?.label ?? null}
-          fonte2On={share.sharing && !!share.sourceDeviceId}
-          onFonte={(f) => {
-            const aPartilharFonte = share.sharing && !!share.sourceDeviceId
-            if (f === 'fonte2' && !aPartilharFonte && fonte2) void share.shareSource(fonte2.deviceId)
-            if (f === 'camara' && aPartilharFonte) share.requestOrToggleShare()
-          }}
-          canAdmit={session.canAdmit}
-          waitingCount={participants.waitingQueue.length}
-          onAdmitAll={participants.admitAll}
-        />
 
         {invite.open && <InviteDialog invite={invite} />}
       </div>

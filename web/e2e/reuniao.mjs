@@ -110,10 +110,10 @@ console.log('  · página 1:', JSON.stringify(await page.evaluate(() => ({
 // A segunda pessoa é de OUTRA organização e cai na sala de espera — é a
 // co-admissão, e é o que faz os quatro testes `#[ignore]` do hub estarem
 // desactualizados. O anfitrião tem de a admitir, como faria um utilizador.
-const pilula = page.locator('.rm-waiting-pill')
+// A fila de espera vive na barra de baixo (template DelonixRoomGrid: «N na sala · M em espera · Admitir»).
+const pilula = page.locator('.rm-occupancy__waiting')
 await pilula.waitFor({ timeout: 60000 }).catch(() => {})
 ok(await pilula.isVisible().catch(() => false), 'o anfitrião VÊ o aviso de convidado à espera')
-await pilula.click().catch(() => {})
 // Com UM convidado o controlo é o «Admitir» da linha; o «Admitir todos» só
 // existe a partir de dois. O cartão da sala de espera já está visível — não é
 // preciso abrir painel nenhum.

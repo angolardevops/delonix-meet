@@ -58,7 +58,8 @@ export function TopBar({
   callState: CallState
   /** Texto do indicador de gravação, ou `null` se ninguém grava. */
   recordingLabel: string | null
-  live: boolean
+  /** Estado AO VIVO da sala (anunciado pelo servidor), ou emissão local deste anfitrião. */
+  live: { on: boolean; destinos: { label: string; state: string }[]; since: number | null }
   e2eeOn: boolean
   secOpen: boolean
   secCode: string
@@ -98,7 +99,23 @@ export function TopBar({
           <span className="dx-sr-only">{recordingLabel}</span>
         </span>
       )}
-      {live && <StatusBadge tone="live">{t('room.topo.aoVivo')}</StatusBadge>}
+      {live.on && (
+        <span
+          role="status"
+          title={
+            live.destinos.length
+              ? t('room.topo.aoVivoDica', {
+                  hora: live.since ? new Date(live.since).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : '—',
+                  destinos: live.destinos.map((d) => d.label).join(', '),
+                })
+              : undefined
+          }
+        >
+          <StatusBadge tone="live">
+            {live.destinos.length ? t('room.topo.aoVivoDestinos', { count: live.destinos.length }) : t('room.topo.aoVivo')}
+          </StatusBadge>
+        </span>
+      )}
       {e2eeOn && (
         <button type="button" className="rm-top__e2ee" onClick={onToggleSec} aria-expanded={secOpen} title={t('room.topo.e2eeDica')}>
           <Icon name="lock" size={11} />
@@ -112,8 +129,9 @@ export function TopBar({
         </span>
       )}
       <span className="dx-spacer" />
+      {/* No desktop a fila de espera vive na barra de baixo (template); no telemóvel, aqui. */}
       {waitingCount > 0 && (
-        <button type="button" className="rm-waiting-pill" onClick={onOpenPeople}>
+        <button type="button" className="rm-waiting-pill rm-only-narrow-inline" onClick={onOpenPeople}>
           <Icon name="people" size={12} />
           {t('room.topo.aEspera', { count: waitingCount })}
         </button>
@@ -138,12 +156,7 @@ export function TopBar({
           </Button>
         </>
       )}
-      {presenterLabel && !board ? (
-        <span className="rm-top__presenting rm-hide-narrow">
-          <Icon name="screen" size={11} />
-          {presenterLabel}
-        </span>
-      ) : null}
+      {presenterLabel && !board ? <span className="rm-top__presenting rm-hide-narrow">{presenterLabel}</span> : null}
       <span className={cx('rm-hide-narrow', 'rm-top__conn', (board || presenterLabel) && 'is-hidden')}>
         <ConnectionChip state={callState}>
           <WallClock locale={locale} />

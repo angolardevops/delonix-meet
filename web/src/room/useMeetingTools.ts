@@ -20,6 +20,8 @@ export function useMeetingTools(core: RoomCore) {
   /** Quando cada sondagem apareceu NESTE dispositivo — para a pôr no fio do chat. */
   const [pollSeenAt, setPollSeenAt] = useState<Record<string, number>>({})
   const [questions, setQuestions] = useState<QaView[]>([])
+  /** Quando cada pergunta apareceu NESTE dispositivo — para a pôr no fio do chat. */
+  const [qaSeenAt, setQaSeenAt] = useState<Record<string, number>>({})
   /** Fim do temporizador, em SEGUNDOS epoch (`room_tools.rs`). */
   const [timerEndsAt, setTimerEndsAt] = useState<number | null>(null)
   const [myVotes, setMyVotes] = useState<Record<string, number>>(() => {
@@ -48,7 +50,15 @@ export function useMeetingTools(core: RoomCore) {
           return { ...seen, ...Object.fromEntries(novas.map((p) => [p.id, agora])) }
         })
       }),
-      signal.on('qa', (m) => setQuestions(m.questions)),
+      signal.on('qa', (m) => {
+        setQuestions(m.questions)
+        setQaSeenAt((seen) => {
+          const novas = m.questions.filter((q) => seen[q.id] == null)
+          if (novas.length === 0) return seen
+          const agora = Date.now()
+          return { ...seen, ...Object.fromEntries(novas.map((q) => [q.id, agora])) }
+        })
+      }),
       signal.on('timer', (m) => setTimerEndsAt(m.ends_at)),
     ]
     return () => offs.forEach((off) => off())
@@ -144,6 +154,7 @@ export function useMeetingTools(core: RoomCore) {
     polls,
     pollSeenAt,
     questions,
+    qaSeenAt,
     /** A pergunta em destaque no palco (para todos). */
     spotlitQuestion: questions.find((q) => q.spotlight && !q.hidden) ?? null,
     timerEndsAt,

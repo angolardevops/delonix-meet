@@ -53,11 +53,22 @@ describe('1.2 · as páginas pesadas não entram no chunk de arranque', () => {
   })
 
   it('o Shell não é arrastado pelos ecrãs que vivem fora da consola', () => {
-    // Entrar, a sala, o lobby e as páginas públicas não têm rail: importar o
-    // Shell trazia a consola inteira (paleta, definições, MFA) para esses chunks.
-    for (const p of ['Login', 'Room', 'Lobby', 'SharePage', 'Status', 'Legal', 'ApiDocs']) {
+    // Entrar, a sala e as páginas públicas não têm rail: importar o Shell
+    // trazia a consola inteira (paleta, definições, MFA) para esses chunks.
+    for (const p of ['Login', 'Room', 'SharePage', 'Status', 'Legal', 'ApiDocs']) {
       expect(read(`web/src/pages/${p}.tsx`)).not.toMatch(/from '\.\.\/components\/(Shell|PageBar|shellContext)'/)
     }
+  })
+
+  it('a moderação vive DENTRO da consola (lote 2, template DelonixModeration com o rail)', () => {
+    // Saiu da lista acima de propósito: o template desenha-a com o rail, e a
+    // `PageBar` que importa só é legítima se a página for mesmo filha do Shell.
+    const app = read('web/src/App.tsx')
+    const shellAbre = app.indexOf('<Shell')
+    const shellFecha = app.indexOf('</Shell>')
+    const lobby = app.indexOf('<Lobby code={route.code} />')
+    expect(lobby).toBeGreaterThan(shellAbre)
+    expect(lobby).toBeLessThan(shellFecha)
   })
 })
 

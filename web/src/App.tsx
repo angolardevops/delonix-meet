@@ -141,11 +141,7 @@ export default function App() {
         </div>
       )}
       <PresenceProvider onEnterRoom={enterRoom}>
-        {route.kind === 'lobby' ? (
-          <RouteFallback>
-            <Lobby code={route.code} />
-          </RouteFallback>
-        ) : route.kind === 'room' ? (
+        {route.kind === 'room' ? (
           <RouteFallback>
             <Room
               key={route.code}
@@ -158,7 +154,8 @@ export default function App() {
         ) : (
           <Shell
             user={user}
-            active={route.kind === 'diagram' ? 'whiteboards' : route.kind === 'player' ? 'recordings' : route.kind}
+            // A moderação é de UMA sala e não tem destino no rail: nenhum item fica activo.
+            active={(route.kind === 'lobby' ? null : route.kind === 'diagram' ? 'whiteboards' : route.kind === 'player' ? 'recordings' : route.kind) as NavKey}
             onNavigate={navigate}
             onEnterRoom={enterRoom}
             onLogout={() => {
@@ -168,6 +165,7 @@ export default function App() {
             }}
           >
             <RouteFallback>
+              {route.kind === 'lobby' && <Lobby code={route.code} />}
               {route.kind === 'home' && <Home />}
               {route.kind === 'calendar' && <Calendar />}
               {route.kind === 'studio' && <Studio />}

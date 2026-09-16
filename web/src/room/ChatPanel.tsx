@@ -3,8 +3,11 @@ import { useTranslation } from 'react-i18next'
 import { Icon } from '../ui/icons'
 import { Alert, Avatar, IconButton, cx } from '../ui/kit'
 import { chatEmTexto, nomeFicheiroChat } from './chatExport'
+import { respostasPorMae } from './chatState'
+import { rotuloPapel } from './ParticipantTile'
 import { PollCard } from './PollCard'
-import { CHAT_EMOJIS, type Chat, type ChatMsg } from './useChat'
+import { QuestionCard } from './QuestionCard'
+import { CHAT_EMOJIS, CHAT_REACTIONS, type Chat, type ChatMsg } from './useChat'
 import type { MeetingTools } from './useMeetingTools'
 import type { RemotePeer } from './useRoomCore'
 
@@ -24,7 +27,10 @@ function ChatText({ text }: { text: string }) {
   )
 }
 
-type Item = { kind: 'msg'; at: number; msg: ChatMsg; index: number } | { kind: 'poll'; at: number; id: string }
+type Item =
+  | { kind: 'msg'; at: number; msg: ChatMsg; index: number }
+  | { kind: 'poll'; at: number; id: string }
+  | { kind: 'qa'; at: number; id: string }
 
 export function ChatPanel({
   chat,
@@ -33,6 +39,7 @@ export function ChatPanel({
   peers,
   tools,
   onNewPoll,
+  myRole,
 }: {
   chat: Chat
   isHost: boolean
@@ -41,10 +48,14 @@ export function ChatPanel({
   tools: MeetingTools
   /** Atalho do anfitrião para o compositor de sondagens. */
   onNewPoll: () => void
+  /** O meu papel (para o chip nas minhas mensagens). */
+  myRole?: RemotePeer['role']
 }) {
   const { t, i18n } = useTranslation()
   const locale = i18n.language === 'en' ? 'en-GB' : i18n.language === 'fr' ? 'fr-FR' : 'pt-PT'
   const [emojiOpen, setEmojiOpen] = useState(false)
+  /** Fios fechados pela pessoa (abertos por omissão, como no template). */
+  const [fechados, setFechados] = useState<Record<string, boolean>>({})
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const blocked = !chat.chatOn && !isHost
@@ -56,29 +67,40 @@ export function ChatPanel({
     if (!blocked) inputRef.current?.focus()
   }, [blocked])
 
-  // O fio: mensagens e sondagens pela ordem em que chegaram a este dispositivo.
+  const respostas = useMemo(() => respostasPorMae(chat.messages), [chat.messages])
+  const ids = useMemo(() => new Set(chat.messages.map((m) => m.id).filter(Boolean)), [chat.messages])
+
+  // O fio: mensagens (as respostas vão debaixo da mãe), sondagens e perguntas,
+  // pela ordem em que chegaram.
   const itens = useMemo<Item[]>(() => {
-    const out: Item[] = chat.messages.map((msg, index) => ({ kind: 'msg', at: msg.at, msg, index }))
+    const out: Item[] = chat.messages
+      .map((msg, index) => ({ kind: 'msg' as const, at: msg.at, msg, index }))
+      // Resposta a uma mensagem que já não está no histórico: fica no fio.
+      .filter((it) => !it.msg.replyTo || !ids.has(it.msg.replyTo))
     for (const p of tools.polls) {
       const at = tools.pollSeenAt[p.id]
       if (at != null) out.push({ kind: 'poll', at, id: p.id })
     }
-    // Estável: empates mantêm a ordem de chegada das mensagens.
+    for (const q of tools.questions) {
+      const at = tools.qaSeenAt[q.id]
+      if (at != null) out.push({ kind: 'qa', at, id: q.id })
+    }
     return out.sort((a, b) => a.at - b.at || (a.kind === 'msg' && b.kind === 'msg' ? a.index - b.index : 0))
-  }, [chat.messages, tools.polls, tools.pollSeenAt])
+  }, [chat.messages, ids, tools.polls, tools.pollSeenAt, tools.questions, tools.qaSeenAt])
 
   // Segue a conversa: o item novo fica à vista.
+  const ultimo = chat.messages.length + tools.polls.length + tools.questions.length
   useEffect(() => {
     const el = listRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [itens.length])
+  }, [ultimo])
 
   /** Papel de quem escreveu, lido de quem está na sala AGORA. */
   function papel(m: ChatMsg): string | null {
-    if (m.own) return isHost ? t('room.papel.anfitriao') : null
+    if (m.own) return myRole ? rotuloPapel(t, myRole) : isHost ? t('room.papel.anfitriao') : null
     const p = (m.from && peers.find((x) => x.peerId === m.from)) || peers.find((x) => x.username === m.username)
     if (!p) return null
-    return p.host ? t('room.papel.anfitriao') : p.canAdmit ? t('room.papel.coAnfitriao') : null
+    return rotuloPapel(t, p.host ? 'host' : p.role)
   }
 
   function guardar() {
@@ -99,6 +121,66 @@ export function ChatPanel({
     a.click()
     a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
+  const hora = (at: number) => new Date(at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
+
+  /** Reacções e acções de uma mensagem (as acções aparecem ao passar/focar). */
+  function rodape(m: ChatMsg, filhas: ChatMsg[] | undefined) {
+    const reaccoes = Object.entries(m.reactions).sort((a, b) => b[1] - a[1])
+    const minhas = (m.id && chat.myReactions[m.id]) || []
+    const aberto = m.id ? !fechados[m.id] : true
+    return (
+      <>
+        {(reaccoes.length > 0 || (filhas && filhas.length > 0)) && (
+          <div className="rm-chat__reacts">
+            {reaccoes.map(([emoji, n]) => (
+              <button
+                key={emoji}
+                type="button"
+                className={cx('rm-chat__react', minhas.includes(emoji) && 'is-on')}
+                aria-pressed={minhas.includes(emoji)}
+                aria-label={t('room.chat.reaccao', { emoji, count: n })}
+                disabled={!m.id || blocked}
+                onClick={() => m.id && chat.react(m.id, emoji)}
+              >
+                {emoji} <span className="dx-num">{n}</span>
+              </button>
+            ))}
+            {filhas && filhas.length > 0 && m.id && (
+              <button
+                type="button"
+                className="rm-chat__thread"
+                aria-expanded={aberto}
+                onClick={() => setFechados((f) => ({ ...f, [m.id!]: aberto }))}
+              >
+                {t('room.chat.respostas', { count: filhas.length })}
+              </button>
+            )}
+          </div>
+        )}
+        {m.id && !blocked && (
+          <div className="rm-chat__actions" role="group" aria-label={t('room.chat.acoesMensagem', { nome: m.username })}>
+            {CHAT_REACTIONS.map((e) => (
+              <button key={e} type="button" aria-label={t('room.chat.reagir', { emoji: e })} title={t('room.chat.reagir', { emoji: e })} onClick={() => chat.react(m.id!, e)}>
+                {e}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="rm-chat__replybtn"
+              onClick={() => {
+                // Responder a uma resposta continua o MESMO fio.
+                chat.startReply(m.replyTo && ids.has(m.replyTo) ? chat.messages.find((x) => x.id === m.replyTo) ?? m : m)
+                inputRef.current?.focus()
+              }}
+            >
+              {t('room.chat.responder')}
+            </button>
+          </div>
+        )}
+      </>
+    )
   }
 
   const vazio = itens.length === 0
@@ -130,34 +212,68 @@ export function ChatPanel({
               </div>
             )
           }
+          if (it.kind === 'qa') {
+            const q = tools.questions.find((x) => x.id === it.id)
+            if (!q) return null
+            return <QuestionCard key={`qa-${it.id}`} q={q} tools={tools} isHost={isHost} />
+          }
           const m = it.msg
           const anterior = itens.slice(0, i).reverse().find((x) => x.kind === 'msg') as Extract<Item, { kind: 'msg' }> | undefined
           const role = papel(m)
+          const filhas = m.id ? respostas.get(m.id) : undefined
+          const abertas = m.id ? !fechados[m.id] : false
           return (
             <Fragment key={m.key}>
               {!m.historical && anterior?.msg.historical && <div className="rm-chat__divider">{t('room.chat.inicioSessao')}</div>}
-              <div className={cx('rm-chat__msg', m.own && 'is-own')}>
+              <div className={cx('rm-chat__msg', m.own && 'is-own', m.pending && 'is-pending')}>
                 <Avatar name={m.username} size={26} />
                 <div className="rm-chat__content">
                   <span className="rm-chat__who">
-                    {m.username}
-                    {m.own && <span className="dx-muted"> · {t('room.tile.tu')}</span>}
+                    <span className="rm-chat__name">{m.username}</span>
                     <time className="rm-chat__time dx-num" dateTime={new Date(m.at).toISOString()}>
-                      {new Date(m.at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}
+                      {hora(m.at)}
                     </time>
                     {role && <span className="rm-chat__role">{role}</span>}
+                    {m.pending && <span className="rm-chat__time">{t('room.chat.aEnviar')}</span>}
                   </span>
                   <p className="rm-chat__bubble">
                     <ChatText text={m.text} />
                   </p>
+                  {rodape(m, filhas)}
                 </div>
               </div>
+              {abertas &&
+                filhas?.map((r) => (
+                  <div key={r.key} className={cx('rm-chat__reply', r.pending && 'is-pending')}>
+                    <Avatar name={r.username} size={22} />
+                    <div className="rm-chat__content">
+                      <span className="rm-chat__who">
+                        <span className="rm-chat__name">{r.username}</span>
+                        <time className="rm-chat__time dx-num" dateTime={new Date(r.at).toISOString()}>
+                          {hora(r.at)}
+                        </time>
+                      </span>
+                      <p className="rm-chat__replytext">
+                        <ChatText text={r.text} />
+                      </p>
+                      {rodape(r, undefined)}
+                    </div>
+                  </div>
+                ))}
             </Fragment>
           )
         })}
       </div>
       <div className="rm-chat__compose">
         {blocked && <Alert tone="warning">{t('room.chat.fechadoPeloAnfitriao')}</Alert>}
+        {chat.replyTo && (
+          <div className="rm-chat__replying">
+            <Icon name="undo" size={11} />
+            <span>{t('room.chat.aResponderA', { nome: chat.replyTo.username })}</span>
+            <span className="dx-spacer" />
+            <IconButton icon="x" bare label={t('room.chat.cancelarResposta')} onClick={() => chat.startReply(null)} />
+          </div>
+        )}
         {chat.mentionSuggestions.length > 0 && (
           <div className="rm-chat__mentions" role="listbox" aria-label={t('room.chat.mencionar')}>
             {chat.mentionSuggestions.map((name) => (
@@ -208,11 +324,12 @@ export function ChatPanel({
                 e.preventDefault()
                 chat.send()
                 setEmojiOpen(false)
-              } else if (e.key === 'Escape' && (emojiOpen || chat.mentionSuggestions.length > 0)) {
+              } else if (e.key === 'Escape' && (emojiOpen || chat.mentionSuggestions.length > 0 || chat.replyTo)) {
                 e.preventDefault()
                 e.stopPropagation()
                 setEmojiOpen(false)
                 chat.clearMention()
+                chat.startReply(null)
               } else if (e.key === 'Tab' && chat.mentionSuggestions.length > 0) {
                 e.preventDefault()
                 chat.completeMention(chat.mentionSuggestions[0])
@@ -231,24 +348,16 @@ export function ChatPanel({
             aria-label={t('room.chat.enviar')}
             title={t('room.chat.enviar')}
           >
-            <Icon name="send" size={14} />
+            <Icon name="arrowUp" size={12} />
           </button>
         </div>
         <div className="rm-chat__shortcuts">
           {isHost && (
             <button type="button" className="rm-chat__shortcut" onClick={onNewPoll}>
-              <Icon name="poll" size={12} />
               {t('room.chat.novaSondagem')}
             </button>
           )}
-          <button
-            type="button"
-            className="rm-chat__shortcut"
-            onClick={guardar}
-            disabled={vazio}
-            title={t('room.chat.guardarChatDica')}
-          >
-            <Icon name="download" size={12} />
+          <button type="button" className="rm-chat__shortcut" onClick={guardar} disabled={vazio} title={t('room.chat.guardarChatDica')}>
             {t('room.chat.guardarChat')}
           </button>
         </div>
