@@ -287,12 +287,12 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingItem; lib
                   {t('player.editarStudio')}
                 </Button>
                 {rec.owned && (
-                  <Button size="sm" icon="share" onClick={() => setShare(true)}>
+                  <Button size="sm" onClick={() => setShare(true)}>
                     {rec.share_count > 0 ? t('recordings.accoes.partilharN', { count: rec.share_count }) : t('recordings.accoes.partilhar')}
                   </Button>
                 )}
                 {rec.can_download && (
-                  <Button size="sm" icon="download" busy={downloading} onClick={() => void download()}>
+                  <Button size="sm" busy={downloading} onClick={() => void download()}>
                     {t('recordings.accoes.descarregar')}
                   </Button>
                 )}

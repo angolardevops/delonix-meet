@@ -31,6 +31,9 @@
 }
 .pl-main {
   min-width: 0;
+  min-height: calc(100vh - var(--top-h));
+  min-height: calc(100dvh - var(--top-h));
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -129,7 +132,8 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
+  min-height: 260px;
 }
 .pl-lower.is-single {
   grid-template-columns: minmax(0, 1fr);
