@@ -29,8 +29,11 @@ export function MonthView({
     <div className="cal-month" role="grid" aria-label={cursor.toLocaleDateString(locale, { month: 'long', year: 'numeric' })}>
       <div className="cal-month__head" role="row">
         {weekdayNames(locale).map((w) => (
-          <span key={w} role="columnheader">
-            {w}
+          <span key={w} role="columnheader" aria-label={w}>
+            <span className="cal-month__wd-long">{w}</span>
+            <span className="cal-month__wd-short" aria-hidden="true">
+              {w.slice(0, 3)}
+            </span>
           </span>
         ))}
       </div>

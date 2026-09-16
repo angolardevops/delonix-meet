@@ -138,9 +138,10 @@ export default function Calendar() {
     return (
       <>
         <PageBar title={t('schedule.form.tituloPagina')} meta={t('schedule.form.metaPagina')}>
-          <Button variant="secondary" onClick={() => go(calendarHash.browse())}>
+          <Button variant="secondary" className="cal-hide-narrow" onClick={() => go(calendarHash.browse())}>
             {t('ui.cancelar')}
           </Button>
+          <IconButton icon="x" className="cal-show-narrow" label={t('ui.cancelar')} onClick={() => go(calendarHash.browse())} />
           <Button type="submit" form={FORM_ID} variant="primary" icon="send" busy={formState.busy} disabled={formState.blocked}>
             {formState.blocked ? t('schedule.form.salaIndisponivel') : t('schedule.form.guardar')}
           </Button>
