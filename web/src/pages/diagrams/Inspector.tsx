@@ -35,7 +35,9 @@ import type { Issue } from './validate'
 export type InspectorTab = 'element' | 'style' | 'layers' | 'lanes' | 'validation'
 
 export function tabsFor(notation: Notation): InspectorTab[] {
-  return notation === 'bpmn' ? ['element', 'lanes', 'validation'] : ['element', 'style', 'layers', 'validation']
+  // Os separadores do template: BPMN tem «Validação»; UML (e as notações que
+  // seguem a mesma gramática) mostram a validação como cartão em «Elemento».
+  return notation === 'bpmn' ? ['element', 'lanes', 'validation'] : ['element', 'style', 'layers']
 }
 
 type Change = (next: DiagramDoc, coalesce?: string) => void
@@ -64,6 +66,7 @@ export default function Inspector({
   selection,
   tab,
   issues,
+  showValidation = false,
   onTab,
   onChange,
   onSelect,
@@ -78,6 +81,7 @@ export default function Inspector({
   selection: Sel | null
   tab: InspectorTab
   issues: Issue[]
+  showValidation?: boolean
   onTab: (t: InspectorTab) => void
   onChange: Change
   onSelect: (s: Sel | null) => void
@@ -120,6 +124,9 @@ export default function Inspector({
           ) : (
             <p className="dg-empty">{t('diagrams.inspector.nada')}</p>
           ))}
+        {current === 'element' && notation !== 'free' && (issues.length > 0 || (showValidation && notation !== 'bpmn')) && (
+          <ValidationPanel doc={doc} issues={issues} onSelect={onSelect} onFix={onFix} onFixAll={onFixAll} />
+        )}
         {current === 'style' && <StylePanel doc={doc} n={node} onChange={onChange} />}
         {current === 'layers' && <LayersPanel doc={doc} notation={notation} selection={selection} onChange={onChange} onSelect={onSelect} />}
         {current === 'lanes' && <LanesPanel doc={doc} selected={node} onChange={onChange} onSelect={onSelect} />}

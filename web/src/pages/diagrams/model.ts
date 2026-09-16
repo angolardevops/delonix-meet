@@ -7,7 +7,7 @@
  * desenho lêem daqui, e é por isso que se testam sem browser.
  *
  * ONDE VIVE: o modelo editável fica no IndexedDB deste browser (`store.ts`).
- * O servidor só guarda um PNG (`POST /api/whiteboards`) — guardar o modelo no
+ * O servidor só guarda um PNG (POST /api/whiteboards) — guardar o modelo no
  * servidor e editá-lo a várias mãos é do lote 2 (precisa de `doc JSONB` e de
  * uma mensagem de sinalização). Não se finge aqui que já existe.
  */

@@ -161,7 +161,7 @@ function TaskMarker({ kind }: { kind: string | undefined }) {
   }
 }
 
-function NodeBody({ n }: { n: DNode }): ReactNode {
+function NodeBody({ n, sub }: { n: DNode; sub?: string }): ReactNode {
   const stroke = strokeOf(n)
   const surface = fillOf(n, INK.surface)
   switch (n.type) {
@@ -271,16 +271,16 @@ function NodeBody({ n }: { n: DNode }): ReactNode {
             <TaskMarker kind={n.type === 'task' ? n.props.taskKind : undefined} />
           </g>
           <Lines
-            lines={wrapText(n.name, n.w - 16, 10, n.props.implementation ? 2 : 3)}
+            lines={wrapText(n.name, n.w - 16, 10, sub ? 2 : 3)}
             x={n.w / 2}
-            y={n.props.implementation ? n.h / 2 - 6 : n.h / 2}
+            y={sub ? n.h / 2 - 6 : n.h / 2}
             size={10}
             weight={600}
             color={accentBorder ? INK.accent : INK.ink}
           />
-          {n.props.implementation && (
-            <text x={n.w / 2} y={n.h - 18} fontSize={8} fill={INK.muted} textAnchor="middle" fontFamily={MONO}>
-              {n.props.implementation}
+          {sub && (
+            <text x={n.w / 2} y={n.h - 16} fontSize={8} fill={accentBorder ? INK.accent : INK.muted} textAnchor="middle" fontFamily={MONO}>
+              {sub}
             </text>
           )}
           {n.type === 'subProcess' && (
@@ -463,10 +463,11 @@ function NodeBody({ n }: { n: DNode }): ReactNode {
   }
 }
 
-export const NodeShape = memo(function NodeShape({ n }: { n: DNode }) {
+/** `sub`: linha secundária já traduzida (tipo de tarefa ou executor). */
+export const NodeShape = memo(function NodeShape({ n, sub }: { n: DNode; sub?: string }) {
   return (
     <g transform={`translate(${n.x} ${n.y})`}>
-      <NodeBody n={n} />
+      <NodeBody n={n} sub={sub} />
     </g>
   )
 })

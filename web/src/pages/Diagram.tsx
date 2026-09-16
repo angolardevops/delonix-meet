@@ -23,7 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { WhiteboardMeta } from '../api'
 import { useShell } from '../components/shellContext'
-import { Icon } from '../ui/icons'
+import { DelonixSymbol, Icon } from '../ui/icons'
 import { Alert, Button, cx, IconButton, Spinner } from '../ui/kit'
 import '../ui/diagrams.css'
 import Canvas, { Sel, Tool, View } from './diagrams/Canvas'
@@ -52,6 +52,7 @@ import SaveDialog from './diagrams/SaveDialog'
 import { downloadBlob, downloadText, pngFromSvg, svgFromCanvas } from './diagrams/snapshot'
 import { getDiagram, putDiagram } from './diagrams/store'
 import { applyFix, fixAll, Issue, validate } from './diagrams/validate'
+import { example, hasExample } from './diagrams/examples'
 
 type Load = { s: 'loading' } | { s: 'ready' } | { s: 'missing' } | { s: 'error' }
 type Persist = 'idle' | 'saving' | 'saved' | 'error'
@@ -63,6 +64,12 @@ const HISTORY_MAX = 100
 function roomFromHash(): string {
   const m = location.hash.match(/[?&]sala=([a-z-]+)/)
   return m ? m[1] : ''
+}
+
+/** `?tipo=bpmn` escolhe a notação de um quadro novo; `?exemplo=1` começa do exemplo. */
+function startFromHash(): { notation: Notation; example: boolean } {
+  const tipo = location.hash.match(/[?&]tipo=([a-z]+)/)?.[1] as Notation | undefined
+  return { notation: tipo && NOTATIONS.includes(tipo) ? tipo : 'uml', example: /[?&]exemplo=1/.test(location.hash) }
 }
 
 function isTyping(el: EventTarget | null): boolean {
@@ -90,9 +97,11 @@ export default function Diagram({ id }: { id: string | null }) {
   const [saving, setSaving] = useState(false)
   const [menu, setMenu] = useState(false)
   const [drawer, setDrawer] = useState<'palette' | 'inspector' | null>(null)
+  const [showValidation, setShowValidation] = useState(false)
   const svgRef = useRef<SVGSVGElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const loadedId = useRef<string | null>(null)
+  const createdFor = useRef('')
   const fitted = useRef(false)
 
   // ---------------------------------------------------------------- carregar
@@ -100,11 +109,22 @@ export default function Diagram({ id }: { id: string | null }) {
     if (id && id === loadedId.current) return
     let live = true
     if (!id) {
-      // O duplo efeito do StrictMode não pode criar dois diagramas.
-      if (loadedId.current) return
-      const fresh = emptyDoc(uid('d'), t('diagrams.semTitulo'), 'uml', roomFromHash())
+      // O duplo efeito do StrictMode não pode criar dois diagramas; um
+      // «novo» pedido noutro endereço cria outro.
+      if (loadedId.current && createdFor.current === location.hash) return
+      createdFor.current = location.hash
+      past.current = []
+      future.current = []
+      fitted.current = false
+      const start = startFromHash()
+      const base = emptyDoc(uid('d'), t('diagrams.semTitulo'), start.notation, roomFromHash())
+      const sample = start.example ? example(start.notation, (k) => t(`diagrams.exemplos.${k}`)) : null
+      const fresh = sample ? { ...base, title: t(`diagrams.exemplos.${start.notation}.nome`), ...sample } : base
       loadedId.current = fresh.id
       setDoc(fresh)
+      // Um exemplo abre com o elemento em destaque seleccionado, como o template.
+      const featured = fresh.nodes.find((n) => n.props.emphasis)
+      setSelection(featured ? { kind: 'node', id: featured.id } : null)
       setLoad({ s: 'ready' })
       putDiagram(fresh)
         .then(() => location.replace(`#/whiteboards/diagram/${fresh.id}`))
@@ -227,6 +247,14 @@ export default function Diagram({ id }: { id: string | null }) {
   const notation: Notation = doc?.notation ?? 'uml'
   const issues = useMemo(() => (doc ? validate(doc, notation) : []), [doc, notation])
   const typeLabel = useCallback((n: DNode) => t(`diagrams.tipos.${n.type}`), [t])
+  // Linha secundária das tarefas BPMN: o executor, ou o tipo («service task»).
+  const subLabel = useCallback(
+    (n: DNode) =>
+      n.type !== 'task'
+        ? undefined
+        : n.props.implementation?.trim() || (n.props.taskKind && n.props.taskKind !== 'none' ? t(`diagrams.opcoes.tarefaCurta.${n.props.taskKind}`) : undefined),
+    [t],
+  )
 
   // ---------------------------------------------------------------- criar
   function defaultName(d: DiagramDoc, type: DNode['type'], key: string): string {
@@ -364,9 +392,15 @@ export default function Diagram({ id }: { id: string | null }) {
       setNotice({ tone: 'success', text: t('diagrams.validacao.corrigidos', { count: fixed }) })
     } else setNotice({ tone: 'warning', text: t('diagrams.validacao.nadaACorrigir') })
   }
-  function runValidation() {
-    setTab('validation')
+  // BPMN tem o separador «Validação» (como o template); nas outras notações o
+  // cartão de validação vive no separador «Elemento».
+  function openValidation() {
+    setTab(notation === 'bpmn' ? 'validation' : 'element')
+    setShowValidation(true)
     setDrawer('inspector')
+  }
+  function runValidation() {
+    openValidation()
     setNotice(
       issues.length === 0
         ? { tone: 'success', text: t('diagrams.validacao.semProblemas') }
@@ -493,21 +527,29 @@ export default function Diagram({ id }: { id: string | null }) {
     notation === 'uml' || notation === 'bpmn' ? (
       <section className="dg-card dg-outputs" aria-label={t('diagrams.saidas.titulo')}>
         <h3 className="dg-card__title">{t('diagrams.saidas.titulo')}</h3>
-        <div className="dg-outputs__row">
-          {formats
-            .filter((f) => f !== 'json')
-            .map((f) => (
-              <Button key={f} size="sm" variant="outline" icon="download" onClick={() => void exportAs(f)}>
-                {t(`diagrams.exportar.curto.${f}`)}
-              </Button>
-            ))}
-        </div>
-        <p className="dg-muted">
-          {d.roomCode ? t('diagrams.saidas.anexadaA', { sala: d.roomCode }) : t('diagrams.saidas.semSala')}{' '}
-          <button type="button" className="dg-link" onClick={() => setSaving(true)}>
-            {d.roomCode ? t('diagrams.saidas.mudarSala') : t('diagrams.saidas.anexar')}
-          </button>
-        </p>
+        <ul className="dg-outputs__list">
+          <li>
+            <Icon name="check" size={11} />
+            <span>
+              {formats
+                .filter((f) => f !== 'json')
+                .map((f, i) => (
+                  <span key={f}>
+                    {i > 0 && ' · '}
+                    <button type="button" className="dg-out" onClick={() => void exportAs(f)}>
+                      {t(`diagrams.exportar.curto.${f}`)}
+                    </button>
+                  </span>
+                ))}
+            </span>
+          </li>
+          <li>
+            <Icon name={d.roomCode ? 'check' : 'link'} size={11} />
+            <button type="button" className="dg-out" onClick={() => setSaving(true)}>
+              {d.roomCode ? t('diagrams.saidas.anexadaA', { sala: d.roomCode }) : t('diagrams.saidas.anexar')}
+            </button>
+          </li>
+        </ul>
       </section>
     ) : null
 
@@ -518,16 +560,23 @@ export default function Diagram({ id }: { id: string | null }) {
           <Icon name="menu" />
         </button>
         <span className="dg-bar__mark" aria-hidden="true">
-          <Icon name="board" size={18} />
+          <DelonixSymbol size={24} />
         </span>
-        <input
-          className="dg-title"
-          value={d.title}
-          aria-label={t('diagrams.barra.titulo')}
-          placeholder={t('diagrams.semTitulo')}
-          maxLength={120}
-          onChange={(e) => commit({ ...d, title: e.target.value }, undefined, 'title')}
-        />
+        <span className="dg-title-wrap">
+          <span className="dg-title-prefix">{t('diagrams.barra.prefixo')}</span>
+          <input
+            className="dg-title"
+            value={d.title}
+            size={Math.max(8, Math.min(48, d.title.length + 1))}
+            aria-label={t('diagrams.barra.titulo')}
+            placeholder={t('diagrams.semTitulo')}
+            maxLength={120}
+            onChange={(e) => commit({ ...d, title: e.target.value }, undefined, 'title')}
+          />
+          <span className={cx('dg-persist dx-num', persist === 'error' && 'is-warn')} aria-live="polite">
+            {persist === 'error' ? t('diagrams.estado.localErro') : persist === 'idle' ? '' : t('diagrams.estado.localGuardado')}
+          </span>
+        </span>
         <div className="dg-notations" role="tablist" aria-label={t('diagrams.notacoes.rotulo')}>
           {NOTATIONS.map((n) => (
             <button key={n} type="button" role="tab" aria-selected={notation === n} onClick={() => setNotation(n)}>
@@ -540,12 +589,12 @@ export default function Diagram({ id }: { id: string | null }) {
           <IconButton icon="undo" bare label={t('diagrams.barra.desfazer')} disabled={past.current.length === 0} onClick={undo} />
           <IconButton icon="undo" bare className="dg-redo" label={t('diagrams.barra.refazer')} disabled={future.current.length === 0} onClick={redo} />
           {notation !== 'free' && (
-            <Button size="sm" variant="outline" icon="check" className="dg-bar__validate" onClick={runValidation}>
+            <Button size="sm" className="dg-bar__btn dg-bar__validate" onClick={runValidation}>
               {t(notation === 'bpmn' ? 'diagrams.barra.validarBpmn' : 'diagrams.barra.validarUml')}
             </Button>
           )}
           <div className="dg-export">
-            <Button size="sm" variant="outline" icon="download" className="dg-export__main" onClick={() => void exportAs(primaryExport)}>
+            <Button size="sm" className="dg-bar__btn dg-export__main" onClick={() => void exportAs(primaryExport)}>
               {t(`diagrams.exportar.botao.${primaryExport}`)}
             </Button>
             <IconButton icon="more" label={t('diagrams.barra.mais')} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((m) => !m)} />
@@ -569,7 +618,7 @@ export default function Diagram({ id }: { id: string | null }) {
               </div>
             )}
           </div>
-          <Button size="sm" variant="primary" icon="upload" className="dg-bar__save" onClick={() => setSaving(true)}>
+          <Button size="sm" variant="primary" className="dg-bar__save" onClick={() => setSaving(true)}>
             {t('diagrams.barra.guardar')}
           </Button>
         </div>
@@ -623,6 +672,7 @@ export default function Diagram({ id }: { id: string | null }) {
             svgRef={svgRef}
             penColor={penColor}
             typeLabel={typeLabel}
+            subLabel={subLabel}
             onView={setView}
             onSelect={(s) => {
               setSelection(s)
@@ -638,9 +688,24 @@ export default function Diagram({ id }: { id: string | null }) {
           />
 
           {empty && (
-            <p className="dg-hint" aria-live="polite">
-              {t(notation === 'free' ? 'diagrams.canvas.vazioLivre' : 'diagrams.canvas.vazio')}
-            </p>
+            <div className="dg-hint" aria-live="polite">
+              <p>{t(notation === 'free' ? 'diagrams.canvas.vazioLivre' : 'diagrams.canvas.vazio')}</p>
+              {hasExample(notation) && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon="sparkles"
+                  onClick={() => {
+                    const sample = example(notation, (k) => t(`diagrams.exemplos.${k}`))
+                    if (!sample) return
+                    commit({ ...d, ...sample, title: d.title === t('diagrams.semTitulo') ? t(`diagrams.exemplos.${notation}.nome`) : d.title })
+                    fitted.current = false
+                  }}
+                >
+                  {t('diagrams.canvas.exemplo')}
+                </Button>
+              )}
+            </div>
           )}
 
           {notice && (
@@ -661,18 +726,12 @@ export default function Diagram({ id }: { id: string | null }) {
               <button
                 type="button"
                 className={cx('dg-chip', issues.length === 0 ? 'is-ok' : 'is-warn')}
-                onClick={() => {
-                  setTab('validation')
-                  setDrawer('inspector')
-                }}
+                onClick={openValidation}
               >
                 <Icon name={issues.length === 0 ? 'check' : 'alert'} size={12} />
                 {issues.length === 0 ? t('diagrams.estado.valido') : t('diagrams.estado.problemaPrimeiro', { count: issues.length, primeiro: t(`diagrams.regras.${first.code}`, first.params) })}
               </button>
             )}
-            <span className={cx('dg-chip dg-persist', persist === 'error' && 'is-warn')} aria-live="polite">
-              {persist === 'error' ? t('diagrams.estado.localErro') : persist === 'idle' ? '' : t('diagrams.estado.localGuardado')}
-            </span>
           </div>
 
           <div className="dg-zoom" role="group" aria-label={t('diagrams.zoom.rotulo')}>
@@ -691,6 +750,7 @@ export default function Diagram({ id }: { id: string | null }) {
             selection={selection}
             tab={tab}
             issues={issues}
+            showValidation={showValidation}
             onTab={setTab}
             onChange={(next, key) => commit(next, undefined, key)}
             onSelect={(s) => {

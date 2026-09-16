@@ -5,6 +5,7 @@
  * `pages/diagrams/paint.ts`, porque vão para os ficheiros exportados.
  */
 .dg {
+  color: var(--text);
   flex: 1;
   min-height: 0;
   height: 100%;
@@ -39,7 +40,6 @@
   padding: 6px 16px;
   background: var(--raised);
   border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
 }
 .dg-bar__mark {
   display: inline-flex;
@@ -350,9 +350,6 @@
 .dg-canvas.is-eraser .dg-svg {
   cursor: cell;
 }
-.dg-svg text {
-  font-family: var(--font-ui);
-}
 .dg-node {
   cursor: move;
   outline: none;
@@ -423,16 +420,22 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   margin: 0;
-  padding: 8px 14px;
+  padding: 12px 16px;
   border-radius: var(--r-2);
   background: var(--raised);
   border: 1px dashed var(--border);
   color: var(--muted);
   font-size: var(--t-sm);
-  pointer-events: none;
   text-align: center;
   max-width: calc(100% - 32px);
+}
+.dg-hint p {
+  margin: 0;
 }
 
 .dg-notice {
@@ -853,6 +856,7 @@ button.dg-chip {
   .dg-bar {
     gap: 6px;
     padding: 6px 10px;
+    flex-wrap: wrap;
   }
   .dg-bar__mark {
     display: none;
@@ -927,4 +931,151 @@ button.dg-chip {
   .dg-side {
     transition: none;
   }
+}
+
+/* ---------------------------------------------------------------- fidelidade ao template */
+.dg .dg-bar__mark {
+  color: var(--accent);
+}
+.dg .dg-title-wrap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.dg .dg-title-prefix {
+  flex: none;
+}
+.dg .dg-title {
+  width: auto;
+  field-sizing: content;
+  max-width: 280px;
+  min-width: 8ch;
+  font-size: 12.5px;
+  padding: 0 4px;
+}
+.dg .dg-persist:not(.is-warn) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.dg .dg-persist {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.dg .dg-persist.is-warn {
+  color: var(--warning);
+}
+.dg .dg-bar .dg-bar__btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.dg .dg-bar .dg-bar__btn:hover {
+  color: var(--text);
+}
+.dg .dg-bar .dg-bar__save {
+  font-size: 11.5px;
+}
+.dg .dg-notations button {
+  font-size: 11px;
+}
+
+/* Barra de estado e zoom: pousam no papel, e por isso usam as cores dele. */
+.dg .dg-status {
+  right: 230px;
+  flex-wrap: nowrap;
+}
+.dg .dg-status > .dg-chip:first-child {
+  flex: none;
+}
+.dg .dg-status > button.dg-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.dg .dg-card .dx-input,
+.dg .dg-card .dx-select {
+  height: 28px;
+  min-height: 28px;
+  font-size: 10.5px;
+}
+.dg .dg-card .dx-input--code {
+  letter-spacing: 0;
+  font-family: var(--font-mono);
+}
+.dg .dg-chip {
+  background: #fff;
+  border-color: #dedee1;
+  color: #5c5c63;
+}
+.dg .dg-chip.is-ok {
+  border-color: #2f9e6a;
+  color: #1e7a4a;
+}
+.dg .dg-chip.is-warn {
+  border-color: #a85b00;
+  color: #6b3d00;
+}
+.dg .dg-zoom {
+  background: #fff;
+  border-color: #dedee1;
+}
+.dg .dg-zoom .dx-iconbtn {
+  color: #5c5c63;
+  width: 24px;
+  height: 24px;
+}
+.dg .dg-zoom__fit {
+  color: #5c5c63;
+}
+
+.dg .dg-outputs {
+  background: none;
+}
+.dg .dg-outputs__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 9.5px;
+  color: var(--muted);
+}
+.dg .dg-outputs__list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dg .dg-outputs__list .dx-icon {
+  color: var(--success);
+}
+.dg .dg-out {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.dg .dg-out:hover,
+.dg .dg-out:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+}
+.dg .dg-list > li {
+  min-width: 0;
+}
+.dg .dg-row {
+  max-width: 100%;
+  overflow: hidden;
 }
