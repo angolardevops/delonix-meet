@@ -196,10 +196,11 @@ medidas.foco = foco
 
 // ── 375 px ────────────────────────────────────────────────────────────────────
 await page.setViewportSize({ width: 375, height: 812 })
-await alternar('realce').catch(() => {})
+if (!(await page.locator('input[data-enh-toggle="realce"]').isChecked())) await alternar('realce')
+await page.locator('[data-hud="realce"]').waitFor({ timeout: 10000 * FATOR }).catch(() => {})
 await pausa(1500)
 const larg = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, hud: document.querySelector('.enh-hud')?.getBoundingClientRect().width ?? 0, suggest: document.querySelector('.enh-suggest')?.getBoundingClientRect().right ?? 0 }))
-ok(larg.hud <= 375 && larg.suggest <= 375, 'a 375 px o HUD e a sugestão cabem no ecrã', JSON.stringify(larg))
+ok(larg.doc <= 375 && larg.hud > 0 && larg.hud <= 375 && larg.suggest <= 375, 'a 375 px o HUD (visível) e a sugestão cabem no ecrã', JSON.stringify(larg))
 if (OUT) await page.screenshot({ path: `${OUT}/palco-375.png` })
 await page.setViewportSize({ width: 1440, height: 900 })
 if (OUT) await page.screenshot({ path: `${OUT}/palco-1440.png` })

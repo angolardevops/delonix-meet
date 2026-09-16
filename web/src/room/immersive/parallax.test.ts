@@ -1,11 +1,13 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   BG_TRAVEL,
   chooseTiltSource,
   computeParallax,
-  confidenceToAlpha,
   immersiveBlock,
-  maskCoverage,
+  MASK_RAMP,
+  maskAlpha,
   microMotion,
   orientationToTilt,
   pointerToTilt,
@@ -121,16 +123,18 @@ describe('immersiveBlock — acessibilidade e bateria antes do efeito', () => {
 })
 
 describe('máscara', () => {
-  it('mesma rampa do BackgroundEffect: 0,30 → 0, 0,62 → 255, suave no meio', () => {
-    const out = confidenceToAlpha(new Float32Array([0, 0.3, 0.46, 0.62, 1]), new Uint8Array(5))
-    expect([...out]).toEqual([0, 0, 128, 255, 255])
+  it('rampa: 0,30 → 0, 0,62 → 1, suave no meio', () => {
+    expect([0, 0.3, 0.46, 0.62, 1].map((c) => Math.round(maskAlpha(c) * 255))).toEqual([0, 0, 128, 255, 255])
   })
-  it('mistura temporal com a máscara anterior', () => {
-    const out = confidenceToAlpha(new Float32Array([1]), new Uint8Array(1), new Uint8Array([0]), 0.5)
-    expect(out[0]).toBe(128)
+  it('é a MESMA rampa do BackgroundEffect (media.ts) — o recorte não pode divergir entre efeitos', () => {
+    const media = readFileSync(join(__dirname, '..', '..', 'media.ts'), 'utf8')
+    const m = /\(conf\[i\] - ([\d.]+)\) \/ ([\d.]+)/.exec(media)
+    expect(m, 'a rampa do BackgroundEffect mudou de forma').not.toBeNull()
+    expect(Number(m![1])).toBe(MASK_RAMP.lo)
+    expect(Number(m![1]) + Number(m![2])).toBeCloseTo(MASK_RAMP.hi, 10)
   })
-  it('cobertura', () => {
-    expect(maskCoverage(new Uint8Array([0, 200, 255, 10]))).toBe(0.5)
-    expect(maskCoverage(new Uint8Array(0))).toBe(0)
+  it('e o shader usa estas constantes', () => {
+    const gl = readFileSync(join(__dirname, 'immersiveGl.ts'), 'utf8')
+    expect(gl).toMatch(/smoothstep\(\$\{MASK_RAMP\.lo\.toFixed\(2\)\}, \$\{MASK_RAMP\.hi\.toFixed\(2\)\}, c\)/)
   })
 })

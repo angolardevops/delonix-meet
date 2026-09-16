@@ -175,27 +175,15 @@ export function immersiveBlock(env: ImmersiveEnv): ImmersiveBlock | null {
 }
 
 /**
- * Confiança do segmentador → alfa (0–255), com a MESMA rampa do
- * `BackgroundEffect` (0,30…0,62 com smoothstep): inclusiva no limite, para o
- * cabelo — a zona de menor confiança do modelo leve — não ficar de fora.
- * `prev` mistura com a máscara anterior: sem isso a borda cintila com a
- * paralaxe a ampliar cada hesitação do modelo.
+ * Rampa confiança → alfa (smoothstep), a MESMA do `BackgroundEffect`:
+ * inclusiva no limite, para o cabelo — a zona de menor confiança do modelo
+ * leve — não ficar de fora. Aplicada na GPU (`immersiveGl.ts`); um teste
+ * garante que não diverge da de `media.ts`.
  */
-export function confidenceToAlpha(conf: ArrayLike<number>, out: Uint8Array, prev: Uint8Array | null = null, keep = 0.35): Uint8Array {
-  const len = Math.min(conf.length, out.length)
-  for (let i = 0; i < len; i++) {
-    const a = Math.min(1, Math.max(0, (conf[i] - 0.3) / 0.32))
-    let v = a * a * (3 - 2 * a) * 255
-    if (prev) v = prev[i] * keep + v * (1 - keep)
-    out[i] = Math.round(v)
-  }
-  return out
-}
+export const MASK_RAMP = { lo: 0.3, hi: 0.62 } as const
 
-/** Fracção da máscara ocupada pela pessoa (alfa > 50 %). */
-export function maskCoverage(mask: Uint8Array): number {
-  if (mask.length === 0) return 0
-  let c = 0
-  for (let i = 0; i < mask.length; i++) if (mask[i] > 127) c++
-  return c / mask.length
+/** A rampa em JS — a mesma função que o shader aplica, para a testar. */
+export function maskAlpha(confidence: number): number {
+  const a = Math.min(1, Math.max(0, (confidence - MASK_RAMP.lo) / (MASK_RAMP.hi - MASK_RAMP.lo)))
+  return a * a * (3 - 2 * a)
 }

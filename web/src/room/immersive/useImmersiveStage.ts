@@ -2,7 +2,7 @@ import { MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } f
 import { HeadTracker } from '../../media'
 import { webgl2Supported } from '../../media/glUtil'
 import { IMMERSIVE_BUDGET, type BudgetVerdict } from '../../media/sharpen'
-import type { OverlayStats } from '../../media/videoOverlay'
+import type { OverlayRenderer, OverlayStats } from '../../media/videoOverlay'
 import { readPref, saveDataOn, useBatteryLow, useReducedMotion, writePref } from '../enhance/deviceEnv'
 import { createStore, type EnhanceTarget } from '../enhance/target'
 import { useOverlay } from '../enhance/useOverlay'
@@ -75,6 +75,7 @@ export function useImmersiveStage(target: EnhanceTarget | null, deps: ImmersiveD
 
   const segRef = useRef<PersonSegmenter | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const rendRef = useRef<ImmersiveRenderer | null>(null)
   const segReady = useRef(false)
   const speakingRef = useRef(false)
   speakingRef.current = !!target && deps.speaking.has(target.peerId)
@@ -146,32 +147,40 @@ export function useImmersiveStage(target: EnhanceTarget | null, deps: ImmersiveD
     input.current.sceneStart = performance.now()
   }, [key])
 
-  // O segmentador fecha-se quando o efeito deixa de ser pedido — pesa ~10 MB.
-  useEffect(() => {
-    if (wanted) return
+  // Canvas, contexto WebGL e segmentador vivem JUNTOS (o segmentador desenha no
+  // contexto do canvas) e sobrevivem às remontagens do retrato. Libertam-se
+  // quando o efeito deixa de ser pedido — o modelo pesa ~10 MB.
+  const release = useCallback(() => {
     segRef.current?.close()
     segRef.current = null
     segReady.current = false
-  }, [wanted])
-  useEffect(
-    () => () => {
-      segRef.current?.close()
-      segRef.current = null
-    },
-    [],
-  )
+    rendRef.current?.destroy()
+    rendRef.current = null
+    canvasRef.current = null
+  }, [])
+  useEffect(() => {
+    if (!wanted) release()
+  }, [wanted, release])
+  useEffect(() => release, [release])
 
   const handlers = useMemo(
     () => ({
-      make: (c: HTMLCanvasElement) => {
-        const r = ImmersiveRenderer.create(c)
-        if (!r) return null
-        c.dataset.imersivo = 'on'
-        canvasRef.current = c
-        if (!segRef.current) {
+      canvas: () => {
+        if (!canvasRef.current || rendRef.current?.lost) {
+          release()
+          canvasRef.current = document.createElement('canvas')
+        }
+        return canvasRef.current
+      },
+      make: (c: HTMLCanvasElement): OverlayRenderer | null => {
+        if (!rendRef.current) {
+          const r = ImmersiveRenderer.create(c)
+          if (!r) return null
+          rendRef.current = r
+          c.dataset.imersivo = 'on'
           const s = new PersonSegmenter()
           segRef.current = s
-          s.init()
+          s.init(c)
             .then(() => {
               if (segRef.current === s) segReady.current = true
             })
@@ -183,15 +192,26 @@ export function useImmersiveStage(target: EnhanceTarget | null, deps: ImmersiveD
               }
             })
         }
+        const r = rendRef.current
         input.current.sceneStart = performance.now()
-        return r
+        // O overlay destrói o renderer ao sair; este é partilhado entre
+        // remontagens e só o `release` o destrói.
+        return {
+          render: (v, w, h) => r.render(v, w, h),
+          finish: () => r.finish(),
+          get lost() {
+            return r.lost
+          },
+          destroy: () => {},
+        }
       },
-      beforeRender: (r: ImmersiveRenderer, video: HTMLVideoElement, now: number, frame: number) => {
+      beforeRender: (_o: OverlayRenderer, video: HTMLVideoElement, now: number, frame: number) => {
         const i = input.current
+        const r = rendRef.current
+        if (!r) return
         const seg = segRef.current
         if (seg && segReady.current && frame % SEGMENT_EVERY === 0) {
-          const m = seg.segment(video)
-          if (m) r.setMask(m.data, m.w, m.h)
+          seg.segment(video, (m) => r.acceptMask(m))
         }
         // Cabeça: conta como «a detectar» quando os valores mudam.
         const head = depsRef.current.headRef.current ?? i.ownHead
@@ -244,7 +264,7 @@ export function useImmersiveStage(target: EnhanceTarget | null, deps: ImmersiveD
       // Só se julga o custo depois de o recorte estar a produzir máscaras.
       ready: () => segReady.current && (segRef.current?.masks ?? 0) >= 3,
     }),
-    [stats],
+    [stats, release],
   )
   // Palco a 1080p no máximo: o fundo é desfocado por desenho e a pessoa vem de
   // um vídeo que raramente passa disso.

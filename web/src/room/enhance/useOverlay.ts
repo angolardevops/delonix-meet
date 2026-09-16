@@ -7,6 +7,12 @@ export type OverlayEnd = 'budget' | 'lost' | 'unsupported'
 
 export interface OverlayHandlers<R extends OverlayRenderer> {
   make: (canvas: HTMLCanvasElement) => R | null
+  /**
+   * Canvas a reutilizar entre ligações (o do palco imersivo partilha o contexto
+   * WebGL com o segmentador e não pode ser recriado a cada remontagem). Sem
+   * isto, cria-se um novo de cada vez.
+   */
+  canvas?: () => HTMLCanvasElement
   beforeRender?: (renderer: R, video: HTMLVideoElement, now: number, frame: number) => void
   onStart?: (renderer: R, overlay: VideoOverlay, canvas: HTMLCanvasElement) => void
   onStats: (s: OverlayStats | null) => void
@@ -52,7 +58,7 @@ export function useOverlay<R extends OverlayRenderer>(
         h.current.onStats(null)
         return
       }
-      const canvas = document.createElement('canvas')
+      const canvas = h.current.canvas?.() ?? document.createElement('canvas')
       const renderer = h.current.make(canvas)
       if (!renderer) {
         ended = true
