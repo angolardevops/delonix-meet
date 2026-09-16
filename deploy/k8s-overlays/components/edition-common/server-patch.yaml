@@ -15,6 +15,11 @@ spec:
         # namespace `monitoring`.
         prometheus.io/port: "8181"
     spec:
+      # O Secret do mTLS é montado com modo 0440. Sem fsGroup os ficheiros
+      # ficam root:root e o processo (uid/gid 65532) não lê a própria chave —
+      # o gRPC interno não arrancava (e o servidor sai com código 2).
+      securityContext:
+        fsGroup: 65532
       containers:
         - name: server
           ports:
