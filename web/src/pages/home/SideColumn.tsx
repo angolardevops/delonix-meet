@@ -13,7 +13,7 @@
  * do armazenamento da plataforma (só para quem o servidor deixa ler).
  */
 import { useTranslation } from 'react-i18next'
-import { ApiError, listWhiteboards, orgStats } from '../../api'
+import { ApiError, getPlatformStorage, listWhiteboards, orgStats } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { useShell } from '../../components/shellContext'
 import { Icon } from '../../ui/icons'
@@ -85,6 +85,16 @@ function Storage() {
     },
     [orgId],
   )
+  // Destino do armazenamento da PLATAFORMA (local/NFS/WebDAV): só quem o
+  // servidor declara administrador da plataforma o lê; os outros não vêem rótulo.
+  const backend = useAsync(async () => {
+    try {
+      return (await getPlatformStorage()).storage_type
+    } catch {
+      return null
+    }
+  }, [])
+  const backendLabel = backend.state.s === 'ready' && backend.state.d ? t(`integrations.storage.tipo.${backend.state.d}`) : null
   if (!orgId || (state.s === 'ready' && state.d === null)) return null
   return (
     <Card title={t('home.armazenamento.titulo')} eyebrow={org?.name}>
@@ -99,6 +109,11 @@ function Storage() {
                 <small className="dx-num">{b.unit}</small>
               </div>
               <div className="dx-muted">{t('home.armazenamento.gravacoes', { count: s.recordings_total })}</div>
+              {backendLabel && (
+                <div className="dx-muted" data-testid="home-storage-backend">
+                  {t('consola.inicio.destino', { destino: backendLabel })}
+                </div>
+              )}
               {org?.retention_days ? (
                 <div className="dx-muted">{t('home.armazenamento.retencao', { count: org.retention_days })}</div>
               ) : null}

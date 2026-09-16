@@ -20,6 +20,7 @@ import { Greeting, TodayStamp } from './home/Clock'
 import RecentRecordings from './home/RecentRecordings'
 import SideColumn from './home/SideColumn'
 import Upcoming from './home/Upcoming'
+import { useOdooCalendar } from './home/useOdooCalendar'
 
 type Format = 'normal' | 'training'
 
@@ -34,6 +35,7 @@ export default function Home() {
   const [code, setCode] = useState('')
   const [joining, setJoining] = useState(false)
   const [joinErr, setJoinErr] = useState('')
+  const odooCalendar = useOdooCalendar()
 
   async function startNow() {
     setStartErr('')
@@ -81,7 +83,7 @@ export default function Home() {
       <div className="page home">
         <div className="home-grid">
           <div className="home-main">
-            <section aria-label={t('home.accoes.rotulo')}>
+            <section className="home-actions" aria-label={t('home.accoes.rotulo')}>
               <div className="quick-actions">
                 <button
                   type="button"
@@ -101,7 +103,7 @@ export default function Home() {
                   <Icon name="calendar" size={18} />
                   <span className="qa-tile__text">
                     <strong>{t('home.accoes.agendar')}</strong>
-                    <small>{t('home.accoes.agendarSub')}</small>
+                    <small>{odooCalendar ? t('consola.inicio.agendarOdoo') : t('home.accoes.agendarSub')}</small>
                   </span>
                 </button>
 

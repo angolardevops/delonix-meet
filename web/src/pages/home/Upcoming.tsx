@@ -1,20 +1,47 @@
 /**
  * Próximas reuniões: o que ainda não acabou, sem as que recusei, por hora.
  * Um convite por responder responde-se aqui; as outras entram-se aqui.
+ *
+ * Nas que organizo, o número de participantes e as iniciais vêm de
+ * /meetings/{id}/invitees (o servidor só os dá ao dono — nas outras não se
+ * mostra número nenhum). O código da sala aparece quando já existe (a sala
+ * nasce ao iniciar) e com ele «Copiar ligação». A mais próxima diz quanto
+ * falta, entra «só com áudio» e testa câmara e microfone antes.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { apiErrorMessage, downloadMeetingIcs, listMeetings, Meeting, startMeeting } from '../../api'
+import { apiErrorMessage, downloadMeetingIcs, InviteeResponse, listMeetings, Meeting, meetingInvitees, startMeeting } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { useShell } from '../../components/shellContext'
 import { Icon } from '../../ui/icons'
-import { Alert, Avatar, Button, cx, Empty, IconButton, Skeleton, Tag } from '../../ui/kit'
+import { Alert, Avatar, AvatarStack, Button, cx, Empty, IconButton, Skeleton, Tag } from '../../ui/kit'
 import { calendarHash, fmtTime, localeOf, meetingEnd, meetingStart, sameDay } from '../calendar/dates'
 import Respond, { InviteStatus } from '../calendar/Respond'
+import DeviceCheck from './DeviceCheck'
 
 const MAX = 5
 /** Uma reunião que começa dentro deste intervalo (ou já começou) é «a próxima». */
 const SOON_MS = 15 * 60_000
+
+type Row = { m: Meeting; invitees: InviteeResponse[] | null }
+
+/** Minutos que faltam (negativo: já começou). */
+export function minutesUntil(start: Date, now: number): number {
+  return Math.round((start.getTime() - now) / 60_000)
+}
+
+export function roomLink(code: string, origin = location.origin): string {
+  return `${origin}/#/r/${code}`
+}
+
+function useNow(ms = 30_000): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), ms)
+    return () => clearInterval(id)
+  }, [ms])
+  return now
+}
 
 export default function Upcoming() {
   const { t, i18n } = useTranslation()
@@ -22,20 +49,36 @@ export default function Upcoming() {
   const locale = localeOf(i18n.language)
   const [err, setErr] = useState('')
   const [entering, setEntering] = useState<string | null>(null)
-  const { state, reload } = useAsync(async (signal) => {
+  const [copied, setCopied] = useState<string | null>(null)
+  const nowTick = useNow()
+  const { state, reload } = useAsync(async (signal): Promise<Row[]> => {
     const now = Date.now()
-    return (await listMeetings(signal))
+    const ms = (await listMeetings(signal))
       .filter((m) => meetingEnd(m).getTime() >= now && m.my_status !== 'declined')
       .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
       .slice(0, MAX)
+    // Convidados só para o dono; uma falha num deles não apaga a lista.
+    const invitees = await Promise.all(ms.map((m) => (m.is_owner ? meetingInvitees(m.id).catch(() => null) : Promise.resolve(null))))
+    return ms.map((m, i) => ({ m, invitees: invitees[i] }))
   }, [])
 
-  async function enter(m: Meeting) {
+  async function copyLink(code: string) {
     setErr('')
-    setEntering(m.id)
+    try {
+      await navigator.clipboard.writeText(roomLink(code))
+      setCopied(code)
+      setTimeout(() => setCopied((c) => (c === code ? null : c)), 2000)
+    } catch {
+      setErr(t('consola.inicio.erroCopiar'))
+    }
+  }
+
+  async function enter(m: Meeting, audioOnly = false) {
+    setErr('')
+    setEntering(audioOnly ? `${m.id}:audio` : m.id)
     try {
       const { code, kind } = await startMeeting(m.id)
-      enterRoom(code, kind === 'voice')
+      enterRoom(code, audioOnly || kind === 'voice')
     } catch (e) {
       setErr(apiErrorMessage(e, t('home.proximas.erroEntrar')))
       setEntering(null)
@@ -76,8 +119,8 @@ export default function Upcoming() {
       </div>
       {err && <Alert tone="danger">{err}</Alert>}
       <AsyncSection state={state} onRetry={reload} skeleton={skeleton}>
-        {(ms) =>
-          ms.length === 0 ? (
+        {(rows) =>
+          rows.length === 0 ? (
             <div className="home-meetings">
               <Empty
                 icon="calendar"
@@ -93,10 +136,12 @@ export default function Upcoming() {
             </div>
           ) : (
             <ul className="home-meetings" role="list">
-              {ms.map((m, i) => {
+              {rows.map(({ m, invitees }, i) => {
                 const start = meetingStart(m)
-                const soon = i === 0 && start.getTime() - Date.now() <= SOON_MS
+                const soon = i === 0 && start.getTime() - nowTick <= SOON_MS
                 const pending = m.my_status === 'pending'
+                const going = invitees?.filter((v) => v.status !== 'declined') ?? null
+                const mins = minutesUntil(start, nowTick)
                 return (
                   <li key={m.id} className={cx('home-meeting', soon && 'home-meeting--soon')}>
                     <div className="home-meeting__time">
@@ -113,8 +158,21 @@ export default function Upcoming() {
                         <Tag plain>{m.kind === 'voice' ? t('home.proximas.voz') : t('home.proximas.video')}</Tag>
                         {m.recurrence_freq && <Icon name="repeat" size={12} aria-label={t('home.proximas.recorrente')} role="img" />}
                       </div>
+                      {soon && (
+                        <div className="home-meeting__when" data-testid="home-comeca">
+                          {mins > 0 ? t('consola.inicio.comecaEm', { count: mins }) : t('consola.inicio.aDecorrer')}
+                        </div>
+                      )}
                       <div className="home-meeting__meta">
                         <span>{m.is_owner ? t('home.proximas.organizasTu') : m.owner_name}</span>
+                        {going && (
+                          <span data-testid="home-participantes">{t('consola.inicio.participantes', { count: going.length + 1 })}</span>
+                        )}
+                        {m.room_code && (
+                          <span>
+                            {t('consola.inicio.sala')} <span className="dx-num">{m.room_code}</span>
+                          </span>
+                        )}
                         {!sameDay(start, new Date()) && <span>{t('home.proximas.duracao', { n: m.duration_min })}</span>}
                         {m.room_name && (
                           <span>
@@ -124,16 +182,32 @@ export default function Upcoming() {
                         {!m.is_owner && <InviteStatus status={m.my_status} />}
                       </div>
                     </div>
-                    {!m.is_owner && <Avatar name={m.owner_name} />}
+                    {going && going.length > 0 ? (
+                      <AvatarStack names={[m.owner_name, ...going.map((v) => v.username)]} max={3} />
+                    ) : (
+                      !m.is_owner && <Avatar name={m.owner_name} />
+                    )}
                     <div className="home-meeting__actions">
                       {pending ? (
                         <Respond meeting={m} compact onDone={() => reload()} />
                       ) : (
                         <>
+                          {m.room_code && (
+                            <IconButton
+                              icon={copied === m.room_code ? 'check' : 'link'}
+                              label={copied === m.room_code ? t('consola.inicio.copiada') : t('consola.inicio.copiarLigacao')}
+                              onClick={() => void copyLink(m.room_code!)}
+                            />
+                          )}
                           <IconButton icon="download" label={t('home.proximas.ics')} onClick={() => void ics(m)} />
                           <Button size="sm" variant="secondary" onClick={() => (location.hash = calendarHash.meeting(m.id))}>
                             {t('home.proximas.detalhes')}
                           </Button>
+                          {soon && m.kind !== 'voice' && (
+                            <Button size="sm" variant="outline" icon="mic" busy={entering === `${m.id}:audio`} onClick={() => void enter(m, true)}>
+                              {t('consola.inicio.soAudio')}
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant={soon ? 'primary' : 'outline'}
@@ -145,6 +219,7 @@ export default function Upcoming() {
                         </>
                       )}
                     </div>
+                    {soon && !pending && m.kind !== 'voice' && <DeviceCheck />}
                   </li>
                 )
               })}
