@@ -259,6 +259,8 @@ export default function Studio() {
     try {
       await compRef.current?.iniciarGravacao()
       setEstado('a-gravar')
+      // Grava-se a olhar para o palco, não para a edição da gravação anterior.
+      setVista('emissao')
     } catch {
       setErro(t('studio.erros.gravar'))
     }

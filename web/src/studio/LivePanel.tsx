@@ -134,7 +134,7 @@ export default function LivePanel({
           {t('studio.directo.titulo')}
         </h2>
         <span className="dx-spacer" />
-        {suportado && <span className="dx-num dx-muted st-small">{t('studio.directo.comChave', { count: comChave })}</span>}
+        {suportado && <span className="dx-num dx-muted st-small">{t('studio.directo.comChave', { n: comChave })}</span>}
       </header>
 
       {!suportado ? (

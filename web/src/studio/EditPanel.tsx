@@ -8,7 +8,7 @@
  */
 import { RefObject, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Alert, Button, cx, Empty, Field, TextInput } from '../ui/kit'
+import { Alert, Button, Empty, Field, TextInput } from '../ui/kit'
 import { AnaliseDeAudio, resumo } from './analise'
 import type { ResultadoDaGravacao } from './compositor'
 import { mmss } from './Cronometro'
@@ -293,13 +293,6 @@ export default function EditPanel({
         <div className="st-timeline__head">
           <span className="dx-num st-timecode">{mmss(agora)}</span>
           <span className="dx-num st-small dx-muted">/ {temDuracao ? mmss(dur) : '--:--'}</span>
-          <span className="dx-spacer" />
-          {temDuracao &&
-            [0.25, 0.5, 0.75].map((f) => (
-              <span key={f} className="dx-num st-small dx-muted st-hide-narrow">
-                {mmss(dur * f)}
-              </span>
-            ))}
         </div>
         <div className="st-timeline__tracks">
           <span className="st-track__label dx-num">{t('studio.edicao.pistaVideo')}</span>
@@ -334,7 +327,7 @@ export default function EditPanel({
           )}
         </div>
       </section>
-      <span className={cx('dx-sr-only')} aria-live="polite">
+      <span className="dx-sr-only" aria-live="polite">
         {aTrabalhar ? rotuloProgresso : ''}
       </span>
     </div>
