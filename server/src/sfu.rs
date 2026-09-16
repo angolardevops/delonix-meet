@@ -1961,6 +1961,7 @@ async fn switch_layer(
     let _ = sub_peer.pc.remove_track(old_sender).await;
     sub_peer.subscribed.lock().await.remove(&key);
     if let Err(e) = subscribe_layer(state, room_id, chosen, sub_id, sub_peer).await {
+        crate::metrics::Metrics::bump(&state.metrics.sfu_layer_switch_failures_total);
         tracing::warn!(%room_id, %sub_id, error = %e, "sfu layer switch failed");
     }
 }
