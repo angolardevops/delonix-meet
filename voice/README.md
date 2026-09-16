@@ -39,7 +39,9 @@ Telefone → SIP Trunk → Kamailio (ACL trunk + TLS + dispatcher)
 - **Anti-toll-fraud**: só se aceita inbound dos **IPs do trunk** (`ao_trunk.txt`,
   fornecido pelo provedor 5.1). Sem outbound não autenticado.
 - **Segredos do ambiente**: `VOICE_INTERNAL_SECRET` (== do backend) e URLs vêm de env,
-  nunca hardcoded no repo.
+  nunca hardcoded no repo. O backend recusa (503) um segredo vazio, com menos de 32
+  caracteres ou que já tenha estado publicado no repositório (R154); gera-o com
+  `openssl rand -hex 32`.
 
 ## Testar sem trunk (com softphone SIP)
 A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Zoiper):

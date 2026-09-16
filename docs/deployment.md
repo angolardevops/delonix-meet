@@ -120,7 +120,7 @@ openssl rand -hex 24   # → password do Postgres
 | `WEBHOOK_ALLOW_HOSTS` | Hosts isentos da guarda anti-SSRF dos webhooks, por nome exacto. Necessário para um Odoo on-prem em rede privada |
 | `OLLAMA_URL` | LLM local para atas e legendas. Vazio = MoM por regras (fail-open) |
 | `OLLAMA_MODEL_SUMMARY` / `OLLAMA_MODEL_TRANSLATE` | modelos (ex. `qwen2.5:7b` / `qwen2.5:1.5b`) |
-| `VOICE_INTERNAL_SECRET` | API interna de IVR (PSTN). Vazio = desligada |
+| `VOICE_INTERNAL_SECRET` | Segredo da API interna de IVR (PSTN), cabeçalho `X-Voice-Secret`. Vazio, com menos de 32 caracteres, ou igual a um valor que já esteve no repositório (`BURNED_VOICE_SECRETS` em `server/src/config.rs`) = `/api/voice/ivr/*` responde **503** com a razão e o arranque avisa; o resto do servidor corre. Com `DELONIX_ALLOW_INSECURE=1` aceita-se qualquer valor não vazio. Gerar com `openssl rand -hex 32`. Em Kubernetes vem do Secret `delonix-voice` ([§6](#6-cenário-b--kubernetes)), nunca de `01-config.yaml` (R154) |
 
 ---
 
@@ -232,6 +232,33 @@ make image-push                        # build versionado + load + pin da tag
 > avulso repõe `:latest` — que pode estar obsoleto no nó — e reintroduz a versão
 > antiga em silêncio. A seguir a um apply manual, correr sempre `make pin`.
 
+**Segredo da voz (R154).** O `VOICE_INTERNAL_SECRET` vive num Secret próprio,
+`delonix-voice`, que o `02-server.yaml` lê por `secretKeyRef` e que **não está em
+nenhum ficheiro do repositório**. O `make stage`/`make prod` criam-no aleatório se
+não existir (`make voice-secret-k8s`); o Ansible (`k8s_app`) cria-o a partir do
+`voice_secret` gerado em `deploy/ansible/.secrets/`. Quem aplica os manifestos à mão
+ou por kustomize cria-o antes:
+
+```bash
+kubectl -n delonix-meet create secret generic delonix-voice \
+  --from-literal=VOICE_INTERNAL_SECRET="$(openssl rand -hex 32)"
+```
+
+Sem ele o servidor arranca e só as rotas de IVR dão `503`. O mesmo valor tem de ir
+para a camada de media (FreeSWITCH, `voice/README.md`).
+
+**Um cluster que já tenha sido instalado com o `01-config.yaml` antigo tem o valor
+publicado `voice-internal-secret-for-pstn` dentro do `delonix-secrets`** — o
+`kubectl apply` não apaga uma chave que saiu do `stringData`. O servidor recusa esse
+valor (503), mas a chave deve sair e o segredo tem de ser rodado:
+
+```bash
+kubectl -n delonix-meet patch secret delonix-secrets --type=json \
+  -p='[{"op":"remove","path":"/data/VOICE_INTERNAL_SECRET"}]'
+make voice-secret-k8s                                   # cria o delonix-voice novo
+kubectl -n delonix-meet rollout restart deploy/delonix-server
+```
+
 Pontos que exigem atenção: `FORCE_TURN_RELAY=1`, o Service dedicado para `/ws`
 com afinidade por sala ([§4](#4-a-rede-de-media-a-parte-que-mais-falha)), e
 **RWX** para o PVC de gravações em multi-nó (RWO só funciona em nó único).
@@ -319,6 +346,7 @@ outro, confirmar vídeo **e** áudio nos dois sentidos, partilhar ecrã, gravar.
 
 - [ ] `JWT_SECRET`/`TURN_SECRET`/`DATABASE_URL` fortes; `DELONIX_ALLOW_INSECURE` **ausente**
 - [ ] `TURN_SECRET` do backend == `--static-auth-secret` do coturn
+- [ ] Se há dial-in PSTN: `VOICE_INTERNAL_SECRET` aleatório (≥32), fora do repositório, igual no FreeSWITCH; `POST /api/voice/ivr/validate` sem cabeçalho dá `401` e não `503` (R154)
 - [ ] `nginx -t` OK; HSTS/CSP/X-Frame-Options/nosniff/Referrer-Policy presentes
 - [ ] Cookie de refresh `Secure` (site em HTTPS); `COOKIE_INSECURE` não definido
 - [ ] Postgres/Redis só no loopback; password do Postgres trocada
