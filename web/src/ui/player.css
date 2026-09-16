@@ -535,6 +535,9 @@
   color: var(--text);
   text-decoration: none;
 }
+.pl-item:hover {
+  text-decoration: none;
+}
 .pl-item:hover .pl-item__title {
   color: var(--accent);
 }
@@ -611,8 +614,19 @@
 }
 
 @media (max-width: 900px) {
+  /* Uma coluna: a página cresce e rola, em vez de espremer as linhas da grelha. */
+  .pl-root,
+  .pl-layout {
+    flex: none;
+  }
   .pl-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .pl-lower {
+    flex: none;
+  }
+  .pl-chapters .rec-chapters {
+    max-height: 320px;
   }
   .pl-main {
     min-height: 0;
@@ -648,5 +662,12 @@
   }
   .pl-editable {
     margin-top: 4px;
+  }
+}
+
+@media (max-width: 600px) {
+  .pl-root .page-bar__title,
+  .pl-root .page-bar .dx-spacer {
+    display: none;
   }
 }
