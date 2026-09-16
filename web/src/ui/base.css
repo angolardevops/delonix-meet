@@ -602,6 +602,7 @@ textarea {
 
 /* ------------------------------------------------------------------ tabela */
 .dx-table-wrap {
+  position: relative;
   overflow-x: auto;
 }
 .dx-table {
