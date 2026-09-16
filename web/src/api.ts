@@ -1613,3 +1613,6 @@ export const listVoiceCdr = (orgId: string, signal?: AbortSignal) =>
   request<VoiceCdr[]>(`/api/orgs/${orgId}/voice/cdr`, { signal })
 export const voiceBilling = (orgId: string, period: VoicePeriod = 'month', signal?: AbortSignal) =>
   request<VoiceBilling>(`/api/orgs/${orgId}/voice/billing?period=${period}`, { signal })
+
+/** Tecto de upload de uma gravação no servidor (recordings.rs MAX_RECORDING_BYTES). */
+export const MAX_RECORDING_UPLOAD_BYTES = 512 * 1024 * 1024

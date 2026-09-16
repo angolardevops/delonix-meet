@@ -1,13 +1,20 @@
 /**
  * Gravações recentes em cartões. Uma gravação falhada NÃO é clicável (R59):
  * não há nada para abrir, e o cartão diz porquê em vez de fingir um vídeo.
+ *
+ * «Importar gravação» usa o mesmo caminho do Estúdio: uma gravação pertence a
+ * uma sala e só quem participou nela a pode carregar (recordings.rs), por isso
+ * cria-se uma sala com o nome do ficheiro, regista-se a entrada e carrega-se.
+ * O tecto é o do servidor, 512 MiB (MAX_RECORDING_BYTES) — não os 12 GB do
+ * template, que precisam de upload resumível.
  */
+import { ChangeEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { recordingsLibrary, RecordingItem } from '../../api'
+import { apiErrorMessage, createRoom, joinRoom, MAX_RECORDING_UPLOAD_BYTES, recordingsLibrary, RecordingItem, uploadRecording } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { useShell } from '../../components/shellContext'
 import { Icon } from '../../ui/icons'
-import { Empty, Skeleton, StatusBadge } from '../../ui/kit'
+import { Alert, Button, Empty, Skeleton, StatusBadge } from '../../ui/kit'
 import { fmtBytes, localeOf } from '../calendar/dates'
 
 const MAX = 4
@@ -16,10 +23,37 @@ export default function RecentRecordings() {
   const { t, i18n } = useTranslation()
   const { navigate } = useShell()
   const locale = localeOf(i18n.language)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [importing, setImporting] = useState(false)
+  const [importMsg, setImportMsg] = useState<{ tone: 'danger' | 'success'; text: string } | null>(null)
   const { state, reload } = useAsync(async (signal) => {
     const all = await recordingsLibrary(signal)
     return [...all].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, MAX)
   }, [])
+
+  async function onFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setImportMsg(null)
+    if (file.size > MAX_RECORDING_UPLOAD_BYTES) {
+      setImportMsg({ tone: 'danger', text: t('consola.inicio.importarGrande', { max: fmtBytes(MAX_RECORDING_UPLOAD_BYTES, locale).value + ' ' + fmtBytes(MAX_RECORDING_UPLOAD_BYTES, locale).unit }) })
+      return
+    }
+    setImporting(true)
+    try {
+      const title = file.name.replace(/\.[a-z0-9]+$/i, '') || file.name
+      const room = await createRoom(title)
+      await joinRoom(room.code)
+      await uploadRecording(room.code, file, file.name)
+      setImportMsg({ tone: 'success', text: t('consola.inicio.importada', { nome: file.name }) })
+      reload()
+    } catch (x) {
+      setImportMsg({ tone: 'danger', text: apiErrorMessage(x, t('consola.inicio.importarErro')) })
+    } finally {
+      setImporting(false)
+    }
+  }
 
   const skeleton = (
     <div className="home-recs" aria-busy="true">
@@ -71,10 +105,23 @@ export default function RecentRecordings() {
       <div className="home-section__head">
         <h2 id="home-gravacoes">{t('home.gravacoes.titulo')}</h2>
         <span className="dx-spacer" />
+        <Button size="sm" variant="ghost" icon="upload" busy={importing} onClick={() => fileRef.current?.click()} data-testid="home-importar">
+          {t('consola.inicio.importar')}
+        </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="video/mp4,video/webm,video/x-matroska,.mp4,.webm,.mkv"
+          hidden
+          onChange={(e) => void onFile(e)}
+          aria-label={t('consola.inicio.importar')}
+        />
         <a className="home-link" href="#/recordings">
           {t('home.gravacoes.biblioteca')}
         </a>
       </div>
+      <p className="dx-muted home-import-hint">{t('consola.inicio.importarDica')}</p>
+      {importMsg && <Alert tone={importMsg.tone}>{importMsg.text}</Alert>}
       <AsyncSection state={state} onRetry={reload} skeleton={skeleton}>
         {(rs) =>
           rs.length === 0 ? (
