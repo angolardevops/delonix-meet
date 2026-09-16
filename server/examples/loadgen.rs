@@ -191,6 +191,23 @@ struct Global {
     /// ms desde o arranque do cliente até ao 1.º RTP de vídeo recebido.
     first_media_ms: Mutex<Vec<u64>>,
     stop: AtomicBool,
+    /// Diagnóstico por cliente: (idx, sala, peer_id, vídeo recebido, ofertas do
+    /// servidor, respostas do servidor, erros de sinalização).
+    clients: Mutex<Vec<Arc<ClientDiag>>>,
+}
+
+#[derive(Default)]
+struct ClientDiag {
+    idx: usize,
+    room: usize,
+    peer_id: Mutex<String>,
+    video_tracks: AtomicU64,
+    srv_offers: AtomicU64,
+    srv_answers: AtomicU64,
+    nego_errors: Mutex<Vec<String>>,
+    /// Da última oferta do servidor: m-lines de vídeo que ENVIAM (sendonly/
+    /// sendrecv) e têm `a=ssrc` — o que o SFU diz que nos está a mandar.
+    last_offer_video_send: AtomicU64,
 }
 
 impl Global {
@@ -271,6 +288,12 @@ async fn run_client(
     recorder_slot: Option<Arc<Mutex<Option<WsTx>>>>,
 ) -> anyhow::Result<()> {
     let started = Instant::now();
+    let diag = Arc::new(ClientDiag {
+        idx,
+        room: idx / args.per_room,
+        ..Default::default()
+    });
+    g.clients.lock().unwrap().push(diag.clone());
     let join = post(
         &http,
         format!("{}/api/rooms/{code}/join", args.api),
@@ -314,6 +337,7 @@ async fn run_client(
             Some(Ok(Message::Text(t))) => {
                 let v: Value = serde_json::from_str(&t).unwrap_or(Value::Null);
                 if v["type"] == "joined" {
+                    *diag.peer_id.lock().unwrap() = v["peer_id"].as_str().unwrap_or("").into();
                     break;
                 }
                 if v["type"] == "waiting" || v["type"] == "denied" {
@@ -359,11 +383,16 @@ async fn run_client(
     {
         let g = g.clone();
         let first_video = Arc::new(AtomicBool::new(false));
+        let diag = diag.clone();
         pc.on_track(Box::new(move |remote, _r, _t| {
             let g = g.clone();
             let first_video = first_video.clone();
+            let diag = diag.clone();
             Box::pin(async move {
                 let video = remote.kind() == RTPCodecType::Video;
+                if video {
+                    diag.video_tracks.fetch_add(1, Ordering::Relaxed);
+                }
                 let clock = if video { 90_000.0 } else { 48_000.0 };
                 let st = Arc::new(Mutex::new(StreamStat {
                     video,
@@ -564,17 +593,41 @@ async fn run_client(
         };
         match v["type"].as_str().unwrap_or("") {
             "sfu-answer" => {
+                diag.srv_answers.fetch_add(1, Ordering::Relaxed);
                 let sdp = v["sdp"].as_str().unwrap_or("").to_string();
-                pc.set_remote_description(RTCSessionDescription::answer(sdp)?)
-                    .await?;
+                if let Err(e) = pc
+                    .set_remote_description(RTCSessionDescription::answer(sdp)?)
+                    .await
+                {
+                    let st = pc.signaling_state();
+                    diag.nego_errors.lock().unwrap().push(format!("answer em {st}: {e}"));
+                    continue;
+                }
                 for c in pending.drain(..) {
                     let _ = pc.add_ice_candidate(c).await;
                 }
             }
             "sfu-offer" => {
+                diag.srv_offers.fetch_add(1, Ordering::Relaxed);
                 let sdp = v["sdp"].as_str().unwrap_or("").to_string();
-                pc.set_remote_description(RTCSessionDescription::offer(sdp)?)
-                    .await?;
+                let n = sdp
+                    .split("\nm=")
+                    .skip(1)
+                    .filter(|m| {
+                        m.starts_with("video")
+                            && (m.contains("a=sendonly") || m.contains("a=sendrecv"))
+                            && m.contains("a=ssrc:")
+                    })
+                    .count();
+                diag.last_offer_video_send.store(n as u64, Ordering::Relaxed);
+                if let Err(e) = pc
+                    .set_remote_description(RTCSessionDescription::offer(sdp)?)
+                    .await
+                {
+                    let st = pc.signaling_state();
+                    diag.nego_errors.lock().unwrap().push(format!("offer em {st}: {e}"));
+                    continue;
+                }
                 let ans = pc.create_answer(None).await?;
                 pc.set_local_description(ans).await?;
                 let sdp = pc.local_description().await.unwrap().sdp;
@@ -945,6 +998,17 @@ async fn main() -> anyhow::Result<()> {
         "primeiro_video_ms_p50": pct(&mut fm, 0.5),
         "primeiro_video_ms_p95": pct(&mut fm, 0.95),
         "gravacao_salas": args.record_rooms,
+        "clientes_incompletos": g.clients.lock().unwrap().iter()
+            .filter(|c| (c.video_tracks.load(Ordering::Relaxed) as usize) < args.per_room - 1)
+            .map(|c| json!({
+                "idx": c.idx, "sala": c.room, "peer_id": *c.peer_id.lock().unwrap(),
+                "video_tracks": c.video_tracks.load(Ordering::Relaxed),
+                "ofertas_srv": c.srv_offers.load(Ordering::Relaxed),
+                "respostas_srv": c.srv_answers.load(Ordering::Relaxed),
+                "oferta_srv_video_a_enviar": c.last_offer_video_send.load(Ordering::Relaxed),
+                "erros_nego": c.nego_errors.lock().unwrap().clone(),
+            }))
+            .collect::<Vec<_>>(),
         "composicao": if args.record_rooms > 0 { json!({
             "duracao_s": composition_secs.map(|s| s.round()),
             "ffmpeg_pico": ffmpeg_peak,
