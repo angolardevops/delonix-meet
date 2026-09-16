@@ -1875,6 +1875,13 @@
       },
       "CreateRoomReq": {
         "properties": {
+          "allow_guests": {
+            "description": "Aceitar convidados sem conta. Ausente = sim (ver migração 0086).",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "e2ee": {
             "description": "Encriptação ponta-a-ponta do media (a chave nunca passa pelo servidor).",
             "type": "boolean"
@@ -3267,6 +3274,103 @@
           "org_id",
           "name",
           "member_count"
+        ],
+        "type": "object"
+      },
+      "GuestIdentity": {
+        "description": "Quem é o convidado nesta entrada.",
+        "properties": {
+          "display_name": {
+            "description": "O nome, já normalizado.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Identificador gerado para ESTA entrada; não existe em `users`.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "GuestJoinReq": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "description": "1–60 caracteres, sem caracteres de controlo nem invisíveis.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "GuestJoinResp": {
+        "description": "Resposta do `guest-join`.",
+        "properties": {
+          "expires_in": {
+            "description": "Validade do token, em segundos.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "guest": {
+            "$ref": "#/components/schemas/GuestIdentity"
+          },
+          "ice_servers": {
+            "description": "A mesma forma do `/api/ice-servers`, que o convidado não pode chamar.",
+            "type": "object"
+          },
+          "room": {
+            "$ref": "#/components/schemas/GuestRoomView"
+          },
+          "room_token": {
+            "description": "JWT de sala (`typ = room`, `origin = guest`, `guest = true`); só serve\npara o `/ws`, e o `/ws` põe-no SEMPRE na sala de espera.",
+            "type": "string"
+          },
+          "ws_path": {
+            "description": "`/ws?token=<room_token>`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "room",
+          "room_token",
+          "ws_path",
+          "expires_in",
+          "guest",
+          "ice_servers"
+        ],
+        "type": "object"
+      },
+      "GuestRoomView": {
+        "description": "O que um convidado vê da sala. Menos do que `Room`: o `owner_id` e o\n`created_at` não são da conta de quem só tem o link.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "e2ee": {
+            "type": "boolean"
+          },
+          "format": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "topology": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "topology",
+          "e2ee",
+          "format"
         ],
         "type": "object"
       },
@@ -5655,6 +5759,19 @@
         },
         "type": "object"
       },
+      "PatchRoomReq": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_guests": {
+            "description": "Único campo alterável hoje. `deny_unknown_fields`: um campo que o\ncliente escreve e o servidor ignora é pior do que um que não existe.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "allow_guests"
+        ],
+        "type": "object"
+      },
       "PermissionMatrix": {
         "properties": {
           "catalog_version": {
@@ -7682,6 +7799,10 @@
       "Room": {
         "description": "Sala de conferência. O `code` (`abc-defg-hij`) é a credencial de acesso\npor link, estilo Meet.",
         "properties": {
+          "allow_guests": {
+            "description": "A sala aceita convidados SEM conta (`POST /api/rooms/{code}/guest-join`).\nMesmo aceitando, um convidado passa SEMPRE pela sala de espera.",
+            "type": "boolean"
+          },
           "code": {
             "type": "string"
           },
@@ -7724,6 +7845,7 @@
           "waiting_room",
           "e2ee",
           "format",
+          "allow_guests",
           "created_at"
         ],
         "type": "object"
@@ -10587,6 +10709,10 @@
       "WaitingView": {
         "description": "Quem está na sala de espera, visto por um anfitrião antes de entrar\n(`GET /api/rooms/{code}/waiting`).",
         "properties": {
+          "is_guest": {
+            "description": "Convidado SEM conta (`guest-join`): o nome foi escrito à mão.",
+            "type": "boolean"
+          },
           "origin": {
             "oneOf": [
               {
@@ -10618,6 +10744,7 @@
         "required": [
           "peer_id",
           "username",
+          "is_guest",
           "since"
         ],
         "type": "object"

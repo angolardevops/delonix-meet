@@ -40,6 +40,7 @@
 - `auth.rs` — registo (cria org+admin), login, refresh, logout, room tokens
 - `org.rs` — multi-tenant: organizations, branches, org_members, employee groups, salas presenciais, quotas, stats, SSO stubs. **Ponto único de autorização (ADR-0008 §4):** `require_capability` (uma query: pertença activa + `org_role_effective_capabilities`), `require_admin` = `org.administer`, `require_session_create`, e TODAS as escritas de papel/estado/departamento da pertença (`set_member_role_tx`, `set_system_role`, `archive_member_tx`, `reactivate_member_tx`, `activate_membership_tx`), lugares medidos com `FOR UPDATE` na org, directório de pessoas e aplicação dos grupos do Odoo
 - `rooms.rs` — CRUD salas, `can_access_room` (isolamento cross-org), `insert_room` (helper reutilizado); sala pessoal (G2; migração 0047): `ensure_personal_room` cria-a na primeira leitura com `ON CONFLICT` sobre o índice único parcial `rooms_personal_owner_uidx` (idempotente sob concorrência), `update_personal_room`, `rotate_personal_room_code` (o código antigo deixa de existir). A sala pessoal NÃO tem regras de acesso próprias
+- `guests.rs` — convidado SEM conta: `POST /api/rooms/{room_code}/guest-join` (pública, travão por IP e por sala, `429`+`Retry-After`) emite um token de sala `origin: "guest"` + `guest: true` que o `/ws` força a passar pela sala de espera (`signaling::seat_policy`), nunca promovido a anfitrião nem a co-anfitrião; `rooms.allow_guests` (migração 0086, `PATCH /api/rooms/{room_code}`, só o dono) fecha a porta; auditado como `room.guest_join`. Ver R155
 - `sfu.rs` — SFU Rust: Hub, Room, Publication, simulcast, PLI, gravação RTP→IVF/OGG. `Census`: o que está VIVO de facto (PCs por `Weak`, `close()` que nunca regressou, peers/publicações/tarefas por `Drop`) em `/metrics` — é aí que se vê uma fuga, não nos gauges de negócio (R158)
 - `signaling.rs` — WebSocket `/ws` (room token): transporte SFU (offer/answer/ice) + moderação (admit/kick/lock/host-*, `set-role`, `spotlight`, `admit-all`, sala de espera em runtime) + chat (fios, reacções, conversa directa só ao par) + breakout-* (incl. `breakouts-broadcast`) + media; papéis, origem e cargo no `PeerInfo`, decididos no servidor (R182)
 - `room_tools.rs` — contexto de colaboração in-room extraído de `signaling.rs`: sondagens, Q&A, temporizador, quadro branco (`impl SignalingHub::handle_tool_msg`)
@@ -138,7 +139,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0073) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0086) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 

@@ -41,7 +41,9 @@ pub struct Claims {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_bot: bool,
     /// Room token: como a pessoa chegou (`sso`|`password`|`guest`|`pstn`|`bot`),
-    /// decidido no servidor ao emitir o token.
+    /// decidido no servidor ao emitir o token. `guest` diz só «entrou pelo
+    /// link, sem pertença nem convite» — vale também para quem TEM conta; o
+    /// convidado SEM conta é o `guest` abaixo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
     /// Room token: cargo (`org_members.title`) na organização do dono da sala.
@@ -55,6 +57,23 @@ pub struct Claims {
     /// Room token: a sala de espera configurada na sala (BD).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wr: Option<bool>,
+    /// Room token: convidado SEM conta (`guests.rs`). O `sub` é um
+    /// identificador gerado para esta entrada, que não existe em `users` e não
+    /// abre nenhuma rota `/api/*`. É um claim próprio, e não só
+    /// `origin: "guest"`, porque o `join_room` já dá essa origem a quem TEM
+    /// conta e entrou pelo link sem convite — e esse pode receber papéis.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub guest: bool,
+}
+
+/// Valor de `Claims::origin` de quem entrou pelo link (com ou sem conta).
+pub const ORIGIN_GUEST: &str = "guest";
+
+impl Claims {
+    /// Este token é de um convidado sem conta?
+    pub fn is_guest(&self) -> bool {
+        self.guest
+    }
 }
 
 pub fn sign_jwt(secret: &str, claims: &Claims) -> Result<String, ApiError> {
@@ -99,6 +118,7 @@ pub fn access_token(state: &AppState, user_id: Uuid) -> Result<String, ApiError>
             title: None,
             lobby: None,
             wr: None,
+            guest: false,
         },
     )
 }
@@ -677,6 +697,7 @@ fn mfa_challenge_token(state: &AppState, user_id: Uuid) -> Result<String, ApiErr
             title: None,
             lobby: None,
             wr: None,
+            guest: false,
         },
     )
 }
@@ -1457,6 +1478,7 @@ mod tests {
                 title: None,
                 lobby: None,
                 wr: None,
+                guest: false,
             },
         )
         .unwrap();
@@ -1490,6 +1512,7 @@ mod tests {
                 title: None,
                 lobby: None,
                 wr: None,
+                guest: false,
             },
         )
         .unwrap();

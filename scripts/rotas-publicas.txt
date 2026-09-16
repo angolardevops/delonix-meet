@@ -28,3 +28,4 @@
 /api/v1/openapi.json         Contrato OpenAPI da v1 pública. Igual ao commitado em docs/reference/openapi/.
 /api/operator/v1/openapi.json          Contrato OpenAPI da superfície de operador. Descreve rotas, não dados.
 /api/integrations/openapi.json         Contrato OpenAPI das integrações (Odoo, agente SMS). Descreve rotas, não dados.
+/api/rooms/{room_code}/guest-join  Entrada de convidado SEM conta (alavanca 1 da adopção). É pública por ser o ponto: quem entra não tem conta. Só emite um ROOM TOKEN (`typ: "room"`, `origin: "guest"`, `guest: true`, minutos) que nenhum extractor da API aceita e que o /ws força a passar pela SALA DE ESPERA; a sala pode recusar (`allow_guests = false` → 403). Travão por IP e por sala com 429 + Retry-After; auditado como `room.guest_join`. Ver server/src/guests.rs.

@@ -58,7 +58,7 @@
 Entidades-núcleo e relações (ver `server/migrations/` para o esquema exato):
 
 - **users** (email único por org via `email_domain`) → **org_members** → **organizations** → **branches** → **employee_groups**.
-- **rooms** (`code`, `owner_id`, `topology` p2p/sfu, `waiting_room`, `e2ee`, `format` normal/training) → **room_participants**, **room_admitters** (co-anfitriões de admissões).
+- **rooms** (`code`, `owner_id`, `topology` p2p/sfu, `waiting_room`, `e2ee`, `format` normal/training, `allow_guests` — convidados sem conta, ver `guests.rs`) → **room_participants**, **room_admitters** (co-anfitriões de admissões).
 - **meetings** (`room_code`, agenda) → **meeting_invitees** (attendees da agenda → entrada direta).
 - **recordings** (+ share links read-only, retenção) · **whiteboards** · **webhooks** · **api_keys** · **org_quotas** · **voice_*** (PSTN).
 

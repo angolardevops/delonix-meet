@@ -2332,3 +2332,25 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Ficheiros.** `server/src/signaling.rs` (a porta `StageControl`, o `Spotlight` a accioná-la e o crachá `on_stage`), `server/src/sfu.rs` (`set_audio_pinned`), `server/src/lib.rs` (registo no arranque), `server/src/sfu_e2e.rs`.
 
 **O que NÃO está provado.** O caminho inteiro WebSocket → `Spotlight` → SFU num só teste: as duas metades estão medidas em separado e a cola é o adaptador de 15 linhas em `lib.rs`. E nenhum cliente web foi alterado — o destaque já existia na interface.
+
+### R155 — Um convidado sem conta entra pela porta, e a porta não abre mais nada
+
+**Sintoma (antes).** Um externo sem conta não conseguia entrar numa reunião: o `join_room` exige `AuthUser`, e o link levava ao ecrã de login. Era o bloqueio n.º 1 à adopção face ao Zoom e ao Meet (`notas-ui-template/adopcao-vs-meet-teams-zoom.md`, alavanca 1).
+
+**O risco que a correcção cria.** É a primeira rota PÚBLICA que dá acesso a uma reunião. As quatro formas óbvias de a errar: (1) o token do convidado abrir alguma rota `/api/*` (gravações, chat guardado, actas, quadros, convites); (2) o convidado entrar sem ser admitido — basta um `wait: false` mal emitido; (3) o convidado ganhar o papel de anfitrião (`transfer-host`) ou reclamá-lo por reconexão; (4) a rota servir para esgotar o TURN ou inundar a sala de espera de alguém.
+
+**Regra.**
+- O token é `typ: "room"` com `origin: "guest"`, o claim `guest: true` e um `sub` gerado que não existe em `users`. Nenhum extractor da API aceita `typ: "room"` — a exclusão é por construção, não por lista. O claim é próprio porque `origin: "guest"` sozinho já é o que o `join_room` dá a quem TEM conta e entrou pelo link sem convite (R182): esse continua a poder receber papéis.
+- O `/ws` decide o lugar em `signaling::seat_policy` a partir do claim `guest`: convidado espera sempre (`lobby` forçado — nem o anfitrião a desligar a sala de espera a meio o deixa passar) e não tem papel, seja o que for que venha nos outros campos do token. `Hub::join_with` volta a impô-lo (`JoinExtras::is_guest`), e o lugar reclamado guarda a marca (`ReclaimedSeat::is_guest`). O anfitrião vê-o marcado: `PeerInfo::is_guest` na espera e na sala, `WaitingView::is_guest` na REST.
+- `TransferHost`, `PromoteAdmit` e `SetRole` para `cohost` são recusados quando o alvo é um convidado (os papéis de palco, `speaker`/`broadcast`, não); o directo (`/api/rooms/{room_code}/live`) recusa tokens de convidado com `403`.
+- `rooms.allow_guests` (0086, por omissão `true`, `PATCH /api/rooms/{room_code}` só pelo dono) → `403` antes de emitir seja o que for.
+- Travão por IP (`GUEST_JOIN_PER_IP_PER_MIN`, 10) antes de ler a base e por sala (`GUEST_JOIN_PER_ROOM_PER_MIN`, 30) depois de a sala existir, com `429` + `Retry-After` com o que falta da janela (`ApiError::RateLimited`, do `RateLimiter::acquire`).
+- `room.guest_join` na auditoria da org do dono, com o código da sala e o nome marcado «(convidado)». Nem IP nem agente.
+
+**Portão.** Unidade: `guests::tests` (nome, admissão, forma do token, token ≠ acesso, travão) e `signaling::b1_sala_tests::convidado_*` (espera forçada, não admite nem por promoção, não é promovido, reclama o lugar e continua convidado) — no ramo de origem, os dois de promoção/admissão foram verificados a FALHAR com as guardas retiradas. Servidor real: `web/e2e/isolamento.mjs` (secção «convidado sem conta»: 14 rotas autenticadas recusadas com o token de convidado, sala de espera, directo, `allow_guests`, 400/404/422, travões por IP e por sala, auditoria) e `web/e2e/convidado.mjs` (admissão, recusa, reentrada no mesmo lugar, expulsão), os dois no job `isolamento` do CI.
+
+**Fora.** Media do convidado (não há e2e com `RTCPeerConnection` para convidados), salas de grupo (a troca de sala chama `/join`, que exige conta: um convidado não vai para um grupo), e os travões são por pod (memória), como os restantes.
+
+**Ficheiros.** `server/src/guests.rs`, `server/src/signaling.rs`, `server/src/auth.rs`, `server/src/rooms.rs`, `server/src/audit.rs`, `server/src/error.rs`, `server/src/broadcast.rs`, `server/src/lib.rs`, `server/migrations/0086_room_allow_guests.sql`, `scripts/rotas-publicas.txt`, `web/e2e/isolamento.mjs`, `web/e2e/convidado.mjs`, `web/src/api.ts`, `.github/workflows/ci.yml`.
+
+**Porte para o `develop` (2026-10-03).** A entrada nasceu no ramo `delonix-meet-backend/convidado-sem-conta` (2026-09-16) e foi portada por cima do `develop`: a rota vive em `lib.rs`, a migração passou de 0040 a 0086, e o `join_seat` do ramo deu lugar ao `join_with` com `JoinExtras::is_guest`. **Não revalidado no porte:** os dois e2e (`isolamento.mjs`, `convidado.mjs`) não correram contra servidor e Postgres reais; a prova de que os testes falham sem as guardas é a do ramo de origem; e o que o `handle_socket` do `develop` grava com o `user_id` (chat persistido, presenças) nunca foi medido com um `sub` que não existe em `users`.

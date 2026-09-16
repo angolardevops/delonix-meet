@@ -55,6 +55,11 @@ pub enum ApiError {
     NotFound,
     #[error("too many requests")]
     TooManyRequests,
+    /// Igual a `TooManyRequests`, mas diz ao cliente QUANDO voltar
+    /// (`Retry-After`, em segundos). É o que se usa em rotas novas: sem o
+    /// cabeçalho, o cliente só pode adivinhar, e adivinhar é tentar já outra vez.
+    #[error("too many requests")]
+    RateLimited { retry_after_secs: u64 },
     /// Este nó não pode servir AGORA, mas outro pode — é o caso do drain. É
     /// diferente de `Unauthorized` (nunca pode) e de `Internal` (avariou): diz
     /// ao cliente para voltar a tentar, e o balanceador manda-o para outro pod.
@@ -106,7 +111,7 @@ impl ApiError {
                 m.clone(),
             ),
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not_found", "not found".into()),
-            ApiError::TooManyRequests => (
+            ApiError::TooManyRequests | ApiError::RateLimited { .. } => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "rate_limited",
                 "too many requests".into(),
@@ -165,6 +170,12 @@ impl IntoResponse for ApiError {
             }
             _ => {}
         }
+        // `RateLimited` diz quanto falta; os outros 429 ficam com a janela
+        // por omissão. Nunca 0 — um `Retry-After: 0` convida a repetir já.
+        let retry_after = match &self {
+            ApiError::RateLimited { retry_after_secs } => (*retry_after_secs).max(1),
+            _ => 60,
+        };
         let (status, code, msg) = self.parts();
         let details = match &self {
             ApiError::Domain(e) => json!(e.details),
@@ -183,7 +194,7 @@ impl IntoResponse for ApiError {
             .into_response();
         if status == StatusCode::TOO_MANY_REQUESTS {
             res.headers_mut()
-                .insert("Retry-After", HeaderValue::from_static("60"));
+                .insert("Retry-After", HeaderValue::from(retry_after));
         }
         res
     }
@@ -298,5 +309,26 @@ mod tests {
     async fn rate_limited_sets_retry_after() {
         let res = ApiError::TooManyRequests.into_response();
         assert_eq!(res.headers()["Retry-After"], "60");
+    }
+
+    #[tokio::test]
+    async fn rate_limited_leva_retry_after_e_o_mesmo_corpo() {
+        // 17 e não 60: com 60 o teste passava mesmo que a variante caísse no
+        // valor por omissão dos outros 429.
+        let res = ApiError::RateLimited {
+            retry_after_secs: 17,
+        }
+        .into_response();
+        assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            res.headers()
+                .get(axum::http::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok()),
+            Some("17")
+        );
+        let body = axum::body::to_bytes(res.into_body(), 4096).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["error"], "too many requests");
+        assert_eq!(v["code"], "rate_limited");
     }
 }
