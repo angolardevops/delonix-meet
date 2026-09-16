@@ -570,7 +570,9 @@ export default {
     limite: 'Maximum of {{n}} destinations.',
     irParaOAr: 'Go live',
     aLigar: 'Connecting…',
-    terminar: 'End live stream',
+    terminar: 'Stop broadcast',
+    noArDesde: 'On air · {{tempo}}',
+    legendaPrograma: '{{nome}} · {{titulo}}',
   },
   confirmar: {
     cancelar: 'Cancel',

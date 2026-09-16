@@ -3,13 +3,13 @@ import { useTranslation } from 'react-i18next'
 import { currentUser } from '../api'
 import type { Cena } from './compositor'
 import { Icon } from '../ui/icons'
-import { Alert, Button, Field, IconButton, Segmented, StatusBadge, TextInput } from '../ui/kit'
+import { Alert, Button, Field, IconButton, Segmented, StatusBadge, TextInput, cx } from '../ui/kit'
 import { Since } from './Clocks'
 import { MAX_MULTICAM_DESTINOS, type Multicam } from './useMulticam'
 import type { RemotePeer } from './useRoomCore'
 
 /** Multicâmara: compõe a sala num quadro e emite-o para plataformas RTMP. */
-export function MulticamPanel({ multicam, peers }: { multicam: Multicam; peers: RemotePeer[] }) {
+export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multicam; peers: RemotePeer[]; roomTitle: string }) {
   const { t } = useTranslation()
   const [verChave, setVerChave] = useState<Record<number, boolean>>({})
   const m = multicam
@@ -18,11 +18,21 @@ export function MulticamPanel({ multicam, peers }: { multicam: Multicam; peers: 
 
   return (
     <div className="rm-scroll">
-      <div className="rm-multicam__preview" ref={m.previewRef} aria-label={t('room.multicam.previsualizacao')} />
+      {/* O programa: no telemóvel ocupa a largura toda, com o estado por cima (template DelonixMobile). */}
+      <div className={cx('rm-multicam__stage', noAr && 'is-live')}>
+        <div className="rm-multicam__preview" ref={m.previewRef} aria-label={t('room.multicam.previsualizacao')} />
+        {m.estado.fase === 'no-ar' && (
+          <>
+            <span className="rm-multicam__onair dx-num" role="status">
+              <Since desde={m.estado.desde} render={(txt) => t('room.multicam.noArDesde', { tempo: txt })} />
+            </span>
+            <span className="rm-multicam__caption">{t('room.multicam.legendaPrograma', { nome: currentUser()?.username ?? '', titulo: roomTitle })}</span>
+          </>
+        )}
+      </div>
       {m.estado.fase === 'no-ar' && (
         <p className="rm-block__row dx-num">
           <StatusBadge tone="live">{t('room.topo.aoVivo')}</StatusBadge>
-          <Since desde={m.estado.desde} render={(txt) => <span>{txt}</span>} />
           <span className="dx-muted">{t('room.multicam.megabytes', { n: (m.estado.bytes / 1_048_576).toFixed(1) })}</span>
         </p>
       )}
@@ -119,9 +129,11 @@ export function MulticamPanel({ multicam, peers }: { multicam: Multicam; peers: 
 
       {m.estado.fase === 'erro' && <Alert tone="danger">{m.estado.motivo}</Alert>}
       {noAr ? (
-        <Button variant="danger" block icon="stop" onClick={() => void m.stopLive()}>
-          {t('room.multicam.terminar')}
-        </Button>
+        <div className="rm-multicam__stop">
+          <Button variant="live" size="lg" block icon="stop" onClick={() => void m.stopLive()}>
+            {t('room.multicam.terminar')}
+          </Button>
+        </div>
       ) : (
         <Button
           variant="live"

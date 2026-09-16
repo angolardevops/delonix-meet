@@ -570,7 +570,9 @@ export default {
     limite: 'Máximo de {{n}} destinos.',
     irParaOAr: 'Ir para o ar',
     aLigar: 'A ligar…',
-    terminar: 'Terminar directo',
+    terminar: 'Parar emissão',
+    noArDesde: 'No ar · {{tempo}}',
+    legendaPrograma: '{{nome}} · {{titulo}}',
   },
   confirmar: {
     cancelar: 'Cancelar',
