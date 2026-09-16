@@ -5,10 +5,12 @@
 // era possível fechando o separador — o gesto que a recuperação lê como quebra
 // de rede e tenta reverter.
 //
-// PORQUE UM ARNÊS ESTÁTICO e não a sala a sério: a sala precisa de servidor,
-// base de dados e media. O que aqui se mede é LAYOUT, e para isso basta o CSS
-// compilado a sério (`web/src/styles.scss`) com a marcação real da barra. É o
-// mesmo princípio do arnês de media: carrega-se o que é real, não um duplo.
+// PORQUE UM ARNÊS e não a sala a sério: a sala precisa de servidor, base de
+// dados e media. O que aqui se mede é LAYOUT, e para isso basta o CSS real da
+// sala (`ui/tokens.css`, `ui/base.css`, `ui/room.css`) com o componente REAL da
+// barra (`room/ControlBar.tsx`), montado pelo React a partir de um bundle feito
+// na hora (`bar-responsivo.entry.tsx`). A versão anterior tinha a barra copiada
+// à mão para o HTML — e uma cópia prova a cópia, não o produto.
 //
 // PORQUE NÃO A EMULAÇÃO DO NAVEGADOR: testei-a primeiro e o `innerWidth` da
 // página não acompanhava a viewport emulada — dava 693px com o ecrã a 375. Uma
@@ -19,36 +21,47 @@
 import { chromium } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { readFileSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const AQUI = dirname(fileURLToPath(import.meta.url))
-// Compila a folha A SÉRIO. Um teste contra um CSS à parte provaria o CSS à
-// parte — o que interessa é o que o produto serve.
-execFileSync(join(AQUI, '../node_modules/.bin/sass'),
-  ['--no-source-map', '--load-path=' + join(AQUI, '../src'),
-   join(AQUI, '../src/styles.scss'), join(AQUI, 'room.css')], { stdio: 'inherit' })
+// As folhas A SÉRIO, pela ordem em que a app as carrega. Um teste contra um CSS
+// à parte provaria o CSS à parte — o que interessa é o que o produto serve.
+const CSS = ['../src/ui/tokens.css', '../src/ui/base.css', '../src/ui/room.css']
+  .map((f) => readFileSync(join(AQUI, f), 'utf8'))
+  .join('\n')
+// O componente A SÉRIO, empacotado na hora (o esbuild vem com o Vite).
+const BARRA = join(tmpdir(), `dx-barra-${process.pid}.js`)
+execFileSync(join(AQUI, '../node_modules/.bin/esbuild'),
+  [join(AQUI, 'bar-responsivo.entry.tsx'), '--bundle', '--format=iife', '--jsx=automatic',
+   '--define:import.meta.env.DEV=false', '--log-level=warning', `--outfile=${BARRA}`], { stdio: 'inherit' })
 
 const srv = createServer((q, r) => {
-  const f = q.url.startsWith('/room.css') ? 'room.css' : 'bar-responsivo.html'
-  r.writeHead(200, { 'content-type': f.endsWith('.css') ? 'text/css' : 'text/html' })
-  r.end(readFileSync(join(AQUI, f)))
+  const [tipo, corpo] = q.url.startsWith('/sala.css')
+    ? ['text/css', CSS]
+    : q.url.startsWith('/barra.js')
+      ? ['text/javascript', readFileSync(BARRA)]
+      : ['text/html', readFileSync(join(AQUI, 'bar-responsivo.html'))]
+  r.writeHead(200, { 'content-type': tipo })
+  r.end(corpo)
 }).listen(0)
 const PORTA = srv.address().port
 const URL = `http://127.0.0.1:${PORTA}/bar-responsivo.html`
-const LARGURAS = [320, 375, 414, 768, 1440]
+const LARGURAS = [320, 375, 414, 768, 1024, 1440]
 // As acções sem as quais uma reunião não se opera.
-const NUCLEARES = ['Sair da chamada', 'Desativar microfone', 'Desativar câmara']
+const NUCLEARES = ['Sair da chamada', 'Desligar microfone', 'Desligar câmara']
 
 const b = await chromium.launch()
 let mau = 0
 for (const w of LARGURAS) {
   const p = await b.newPage({ viewport: { width: w, height: 812 } })
   await p.goto(URL, { waitUntil: 'load' })
+  await p.waitForSelector('.rm-controls .rm-ctrl--hangup')
   const r = await p.evaluate((nucleares) => {
     const out = { vw: innerWidth, itens: [], overflow: 0 }
-    const bar = document.querySelector('.controls-bar')
+    const bar = document.querySelector('.rm-controls')
     out.overflow = Math.max(0, bar.scrollWidth - innerWidth)
     for (const label of nucleares) {
       const el = document.querySelector(`[aria-label="${label}"]`)
@@ -75,5 +88,6 @@ for (const w of LARGURAS) {
 }
 await b.close()
 srv.close()
+rmSync(BARRA, { force: true })
 console.log(mau ? `\n✗ ${mau} largura(s) sem as acções nucleares no ecrã` : '\n✓ acções nucleares presentes em todas as larguras')
 process.exit(mau ? 1 : 0)
