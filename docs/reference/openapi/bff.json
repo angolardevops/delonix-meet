@@ -421,16 +421,26 @@
         "type": "object"
       },
       "ApiKeyInfo": {
+        "description": "Chave de API como a lista a mostra. Nunca leva a chave nem o hash.",
         "properties": {
           "created_at": {
             "format": "date-time",
             "type": "string"
+          },
+          "expires_at": {
+            "description": "Ausente ⇒ não expira.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "id": {
             "format": "uuid",
             "type": "string"
           },
           "last_used_at": {
+            "description": "Actualizado no máximo uma vez por minuto por chave.",
             "format": "date-time",
             "type": [
               "string",
@@ -442,13 +452,21 @@
           },
           "prefix": {
             "type": "string"
+          },
+          "scopes": {
+            "description": "Escopos concedidos (`org:read`, `rooms:read`, `rooms:write`, `bots:join`,\n`meetings:read`, `meetings:write`, `recordings:read`).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
           "id",
           "name",
           "prefix",
-          "created_at"
+          "created_at",
+          "scopes"
         ],
         "type": "object"
       },
@@ -802,9 +820,27 @@
       },
       "CreateKeyReq": {
         "properties": {
+          "expires_at": {
+            "description": "Expiração opcional: no futuro e a no máximo dois anos. Omissa ⇒ não\nexpira.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
             "description": "Rótulo (cortado a 60 caracteres).",
             "type": "string"
+          },
+          "scopes": {
+            "description": "Escopos do catálogo (`org:read`, `rooms:read`, `rooms:write`,\n`bots:join`, `meetings:read`, `meetings:write`, `recordings:read`).\n**Omisso ⇒ o catálogo inteiro** (compatibilidade com os clientes que\njá criam chaves sem escopos); `[]` é recusado.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "type": "object"
@@ -1039,6 +1075,13 @@
       },
       "CreatedKey": {
         "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -1052,13 +1095,20 @@
           },
           "prefix": {
             "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
           "id",
           "name",
           "prefix",
-          "key"
+          "key",
+          "scopes"
         ],
         "type": "object"
       },
@@ -6489,7 +6539,7 @@
             "session": []
           }
         ],
-        "summary": "Chaves de API da organização (só admin). Nunca devolve a chave, só o prefixo.",
+        "summary": "Chaves de API da organização (só admin). Nunca devolve a chave nem o hash,\nsó o prefixo, os escopos, a expiração e o último uso.",
         "tags": [
           "api-keys"
         ]
@@ -6528,6 +6578,16 @@
               }
             },
             "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`api_key.scopes_empty`, `api_key.unknown_scope`, `api_key.expiry_in_past` ou `api_key.expiry_too_far`."
           },
           "401": {
             "content": {
@@ -6597,13 +6657,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "{\"ok\": true} (forma herdada)"
+          "204": {
+            "description": "Revogada: a chave deixa de servir no pedido seguinte."
           },
           "401": {
             "content": {
@@ -6633,7 +6688,7 @@
                 }
               }
             },
-            "description": "A organização não existe ou quem pede não é membro activo."
+            "description": "A organização não existe, quem pede não é membro activo, ou a chave não existe nesta organização (`api_key.not_found`)."
           }
         },
         "security": [
@@ -6641,7 +6696,7 @@
             "session": []
           }
         ],
-        "summary": "Revoga (apaga) uma chave (só admin). Idempotente: uma chave inexistente\ntambém devolve `ok`.",
+        "summary": "Revoga (apaga) uma chave (só admin). `204`; uma chave que não existe — ou\nque é de outra organização — dá `404 api_key.not_found`, sem confirmar que\nexiste noutro sítio.",
         "tags": [
           "api-keys"
         ]

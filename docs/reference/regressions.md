@@ -1827,3 +1827,29 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Não validado.** O fluxo OIDC completo contra um IdP (o teste prova o aad que `auth.rs` usa, não um `sso_login` real — a discovery exige `https://`). **Fica aberto:** `apikeys.rs` (provisão de org pela integração, `sso.client_secret`) continua a gravar o `client_secret` em claro — não era ficheiro desta sessão; deve chamar `org::seal_sso_client_secret`. Até lá a leitura funciona e a tarefa horária cifra-o.
 
 **Ficheiros.** `server/src/{secrets_at_rest,webhooks,org,auth,storage,lib}.rs`, `server/tests/secrets_at_rest.rs`, `docs/reference/openapi/{bff,v1}.json`.
+
+### R170 — Uma chave `dlx_` era um cheque em branco: sem escopos, sem expiração, e o limite era do IP (S6)
+
+**Sintoma.** Uma chave emitida para o sync de calendário (ler reuniões) também criava salas, punha bots em salas com a sala de espera contornada, listava gravações e cancelava reuniões — e servia para sempre. O `HARNESS.md` chegou a afirmar «hash + scopes». O limite da v1 era por IP: duas integrações da mesma organização atrás do mesmo NAT partilhavam 120 pedidos/min, e a mais faladora deixava a outra a receber `429` com um `Retry-After: 60` constante.
+
+**Causa raiz.** `org_api_keys` não tinha onde guardar escopos nem expiração, e o `ApiKeyAuth` só devolvia `org_id`/`owner_id`. O `v1_rate_limit` corria antes da autenticação e só conhecia o IP.
+
+**Regra.**
+- **Catálogo fixo** em `delonix_meet_domain::identity::api_key::Scope`: `org:read`, `rooms:read`, `rooms:write`, `bots:join`, `meetings:read`, `meetings:write`, `recordings:read`. Sem `*`. Uma chave guarda a lista EXPLÍCITA: um escopo novo no catálogo não chega às chaves existentes.
+- **Um só ponto de decisão:** `key.require(Scope::…)?` na primeira linha de cada handler v1 → `403 api_key.scope_missing` com o escopo em `details`. O teste `cada_rota_v1_exige_o_seu_escopo` percorre as 11 rotas nas duas direcções (sem o escopo → 403; só com ele → 2xx): um handler que esqueça o `require` falha ali.
+- **Expiração:** `expires_at` opcional, futuro e ≤ 2 anos. Expirada → `401 api_key.expired` (distinto de desconhecida/revogada, que continua `401 auth.unauthenticated`).
+- **Compatibilidade — decisão explícita:** (1) as chaves anteriores à migração 0046 recebem o catálogo inteiro (o `DEFAULT` só existe durante o `ALTER` e cai logo a seguir); (2) uma chave criada **sem `scopes`**, pela BFF ou pelo provisionamento `POST /api/v1/admin/orgs`, recebe também o catálogo inteiro. O cliente web e o módulo Odoo não enviam `scopes`; tornar o omisso mais restritivo dentro da v1 partia integrações que se criam hoje sem mudar nada do lado delas, e a v1 só quebra com v2. Quem quer menos privilégio pede a lista; `[]` é recusado (`api_key.scopes_empty`).
+- **Limite por chave:** o middleware procura a chave UMA vez (segue nas extensões para o extractor). Balde = a chave, se existe e não expirou; o IP em todos os outros casos — um hash do que vier no cabeçalho dava um balde novo por chave inventada e anulava o limite. `429` com `Retry-After` = o que falta da janela, arredondado para cima e nunca 0. A `/api/ice` passa a `ip_rate_limit` (só IP): autentica por sessão, e um balde escolhido por uma `dlx_` que a rota nem lê deixava contorná-lo.
+- **`last_used_at`:** no máximo uma escrita por minuto por chave, com a guarda repetida no SQL para dois nós não escreverem os dois.
+
+**Portão.** `server/tests/api_key_scopes.rs` (Postgres real): `cada_rota_v1_exige_o_seu_escopo`, `sem_meetings_write_o_post_e_403_e_com_ele_200`, `criacao_valida_escopos_e_expiracao_e_a_lista_mostra_os`, `chave_expirada_e_401_api_key_expired`, `last_used_at_no_maximo_uma_escrita_por_minuto`, `chave_anterior_a_migracao_continua_a_servir` (desfaz as colunas, grava a chave com o INSERT antigo, aplica o SQL da 0046 e percorre as 11 rotas), `chave_provisionada_serve_os_fluxos_do_odoo`, `limite_por_chave_isola_duas_chaves_do_mesmo_ip`. Unitários no domínio e em `apikeys::tests::migracao_0046_da_as_chaves_antigas_o_catalogo_inteiro`.
+
+**Ficheiros.** `server/crates/delonix-meet-domain/src/identity/api_key.rs`, `server/migrations/0046_api_key_scopes.sql`, `server/src/{apikeys,meetings_v1,rate_limit,lib}.rs`, `server/tests/{api_key_scopes,api_v1,organization}.rs`, `docs/reference/openapi/{bff,v1}.json`.
+
+### R171 — Revogar uma chave que não existia respondia `{"ok": true}`
+
+**Sintoma.** `DELETE /api/orgs/{org}/api-keys/{id}` devolvia `200 {"ok": true}` para uma chave inexistente ou de OUTRA organização — o teste de isolamento chegava a afirmar «responde ok mas não apaga nada». Quem revogava uma chave comprometida com o id errado era informado de que tinha corrido bem.
+
+**Regra.** `204` sem corpo quando apaga; `404 api_key.not_found` quando não há linha com esse id NESTA organização (não se confirma que existe noutra). O `web/src/api.ts` trata `204` desde `b36661f`. As asserções de `tests/organization.rs` mudaram com intenção (`200→204`, `200→404`).
+
+**Ficheiros.** `server/src/apikeys.rs` (`revoke`), `server/tests/{api_key_scopes,api_v1,organization}.rs`.

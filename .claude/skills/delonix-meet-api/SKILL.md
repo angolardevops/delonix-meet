@@ -138,9 +138,9 @@ Quem propuser «gRPC completo em todo o backend» leva esta tabela como resposta
   - `/api/rooms/{code}/minutes` duplica `/api/meetings/{id}/minutes`.
 - **Na v1:**
   - `/admin/orgs` e `/platform/storage*` na superfície do inquilino;
-  - chaves sem escopos;
-  - `revoke` responde `{"ok":true}` mesmo sem a chave existir;
-  - rate-limit por IP e não por chave.
+  - ~~chaves sem escopos; `revoke` com `{"ok":true}`; rate-limit por IP~~ **fechado
+    (R170, R171)**. Rota v1 nova com chave: um `Scope` do catálogo, `key.require(…)?` na
+    primeira linha, e uma linha em `tests/api_key_scopes.rs::routes`.
 
 ## Portões
 

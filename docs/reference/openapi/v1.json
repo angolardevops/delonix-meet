@@ -400,6 +400,16 @@
               "null"
             ]
           },
+          "scopes": {
+            "description": "Escopos da chave emitida (ver `CreateKeyReq::scopes`). **Omisso ⇒ o\ncatálogo inteiro** — é o que o módulo Odoo recebe hoje.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "setup_odoo": {
             "description": "Se `true`, activa a integração Odoo e devolve também um `dlxo_...` token\npronto a colar no módulo nk_delonix_meet. Requer `odoo_url` e `odoo_db`.",
             "type": "boolean"
@@ -988,7 +998,7 @@
                 }
               }
             },
-            "description": "Nome vazio/longo, ou `odoo_db` sem `odoo_company_id`."
+            "description": "Nome vazio/longo, `odoo_db` sem `odoo_company_id`, ou `scopes` inválidos (`api_key.scopes_empty`, `api_key.unknown_scope`)."
           },
           "401": {
             "content": {
@@ -1168,7 +1178,17 @@
                 }
               }
             },
-            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A chave não tem o escopo `meetings:read` (`api_key.scope_missing`, escopo em `details`)."
           },
           "429": {
             "content": {
@@ -1178,12 +1198,14 @@
                 }
               }
             },
-            "description": "Limite de pedidos da superfície v1 por IP."
+            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
           }
         },
         "security": [
           {
-            "api_key": []
+            "api_key": [
+              "meetings:read"
+            ]
           }
         ],
         "summary": "`GET /api/v1/meetings?since=<rfc3339>` — reuniões da organização (dono é\nmembro), incremental para o cron de sync do Odoo (idempotente no cliente).\nNo máximo 500, por `starts_at`.",
@@ -1232,7 +1254,17 @@
                 }
               }
             },
-            "description": "chave de API ausente ou inválida"
+            "description": "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"
           },
           "404": {
             "content": {
@@ -1262,12 +1294,14 @@
                 }
               }
             },
-            "description": "rate-limit da v1"
+            "description": "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"
           }
         },
         "security": [
           {
-            "api_key": []
+            "api_key": [
+              "meetings:write"
+            ]
           }
         ],
         "summary": "`POST /api/v1/meetings` — cria (ou reencontra) uma reunião agendada com\nsala, anfitrião e convidados.",
@@ -1311,7 +1345,17 @@
                 }
               }
             },
-            "description": "chave de API ausente ou inválida"
+            "description": "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"
           },
           "404": {
             "content": {
@@ -1331,12 +1375,14 @@
                 }
               }
             },
-            "description": "rate-limit da v1"
+            "description": "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"
           }
         },
         "security": [
           {
-            "api_key": []
+            "api_key": [
+              "meetings:write"
+            ]
           }
         ],
         "summary": "`DELETE /api/v1/meetings/{id}` — cancela a reunião e liberta a sala.",
@@ -1397,7 +1443,17 @@
                 }
               }
             },
-            "description": "chave de API ausente ou inválida"
+            "description": "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"
           },
           "404": {
             "content": {
@@ -1417,12 +1473,14 @@
                 }
               }
             },
-            "description": "rate-limit da v1"
+            "description": "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"
           }
         },
         "security": [
           {
-            "api_key": []
+            "api_key": [
+              "meetings:write"
+            ]
           }
         ],
         "summary": "`PATCH /api/v1/meetings/{id}` — reagendar / renomear / actualizar convidados.",
@@ -1465,7 +1523,17 @@
                 }
               }
             },
-            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A chave não tem o escopo `meetings:read` (`api_key.scope_missing`, escopo em `details`)."
           },
           "404": {
             "content": {
@@ -1485,12 +1553,14 @@
                 }
               }
             },
-            "description": "Limite de pedidos da superfície v1 por IP."
+            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
           }
         },
         "security": [
           {
-            "api_key": []
+            "api_key": [
+              "meetings:read"
+            ]
           }
         ],
         "summary": "`GET /api/v1/meetings/{id}/notes` — ata (MoM) + transcrição (ata bruta).\n`minutes_ai_at` presente => o MoM já é a versão final do LLM local.",
@@ -1542,7 +1612,17 @@
                 }
               }
             },
-            "description": "chave de API ausente ou inválida"
+            "description": "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"
           },
           "404": {
             "content": {
@@ -1562,12 +1642,14 @@
                 }
               }
             },
-            "description": "rate-limit da v1"
+            "description": "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"
           }
         },
         "security": [
           {
-            "api_key": []
+            "api_key": [
+              "meetings:write"
+            ]
           }
         ],
         "summary": "`POST /api/v1/meetings/{id}/ring` — toca nos dispositivos dos convidados.",
@@ -1598,7 +1680,17 @@
                 }
               }
             },
-            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A chave não tem o escopo `org:read` (`api_key.scope_missing`, escopo em `details`)."
           },
           "429": {
             "content": {
@@ -1608,12 +1700,14 @@
                 }
               }
             },
-            "description": "Limite de pedidos da superfície v1 por IP."
+            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
           }
         },
         "security": [
           {
-            "api_key": []
+            "api_key": [
+              "org:read"
+            ]
           }
         ],
         "summary": "`GET /api/v1/org` — dados da organização da chave.",
@@ -1905,7 +1999,17 @@
                 }
               }
             },
-            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A chave não tem o escopo `recordings:read` (`api_key.scope_missing`, escopo em `details`)."
           },
           "429": {
             "content": {
@@ -1915,12 +2019,14 @@
                 }
               }
             },
-            "description": "Limite de pedidos da superfície v1 por IP."
+            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
           }
         },
         "security": [
           {
-            "api_key": []
+            "api_key": [
+              "recordings:read"
+            ]
           }
         ],
         "summary": "`GET /api/v1/recordings` — gravações da organização (membros), as 200 mais\nrecentes.",
@@ -1961,7 +2067,17 @@
                 }
               }
             },
-            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A chave não tem o escopo `rooms:write` (`api_key.scope_missing`, escopo em `details`)."
           },
           "429": {
             "content": {
@@ -1971,12 +2087,14 @@
                 }
               }
             },
-            "description": "Limite de pedidos da superfície v1 por IP."
+            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
           }
         },
         "security": [
           {
-            "api_key": []
+            "api_key": [
+              "rooms:write"
+            ]
           }
         ],
         "summary": "`POST /api/v1/rooms` — cria uma sala e devolve o código + link de entrada.\nO dono da sala é o utilizador que criou a chave.",
@@ -2018,7 +2136,17 @@
                 }
               }
             },
-            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A chave não tem o escopo `rooms:read` (`api_key.scope_missing`, escopo em `details`)."
           },
           "404": {
             "content": {
@@ -2038,12 +2166,14 @@
                 }
               }
             },
-            "description": "Limite de pedidos da superfície v1 por IP."
+            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
           }
         },
         "security": [
           {
-            "api_key": []
+            "api_key": [
+              "rooms:read"
+            ]
           }
         ],
         "summary": "`GET /api/v1/rooms/{code}` — metadados de uma sala da organização da chave.",
@@ -2095,7 +2225,17 @@
                 }
               }
             },
-            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A chave não tem o escopo `bots:join` (`api_key.scope_missing`, escopo em `details`)."
           },
           "404": {
             "content": {
@@ -2115,12 +2255,14 @@
                 }
               }
             },
-            "description": "Limite de pedidos da superfície v1 por IP."
+            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
           }
         },
         "security": [
           {
-            "api_key": []
+            "api_key": [
+              "bots:join"
+            ]
           }
         ],
         "summary": "`POST /api/v1/rooms/{code}/join-bot` — gera um room_token para um bot headless.\nO token contorna a sala de espera.",

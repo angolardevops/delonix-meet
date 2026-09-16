@@ -55,7 +55,7 @@
 - `sms_codec.rs` — o ÚNICO sítio que codifica SMS: GSM 03.38/UCS-2, segmentação, PDU SMS-SUBMIT para `AT+CMGS`. Puro, sem I/O
 - `sms_smpp.rs` — cliente SMPP 3.4 de saída (`bind_transmitter`/`submit_sm`/`unbind`) para Unitel/Movicel/Africell; credenciais em `SMS_*_SMPP`. Provado contra SMSC falso, **nunca contra um operador**; sem recibos nem TLS
 - `crypto.rs` — sha256 de token e token aleatório (`random_token`). Código novo chama isto; a catraca conta as cópias fora dele
-- `apikeys.rs` — chaves de API por org (hash, **sem escopos nem expiração** — auditoria 2026-09-16 S6) **e** os handlers `v1_*` da API pública, apesar do nome (ADR-0004 §3 separa-os)
+- `apikeys.rs` — chaves de API por org (hash, escopos de um catálogo fixo em `delonix_meet_domain::identity::api_key`, expiração opcional — S6 fechada, R170) **e** os handlers `v1_*` da API pública, apesar do nome (ADR-0004 §3 separa-os)
 - `audit.rs` — auditoria IMUTÁVEL e verificável: cada linha inclui o hash da anterior, numa cadeia por organização (migração 0037). Editar ou apagar uma linha parte a cadeia e é detectável em `/api/orgs/{id}/audit/verify` — mesmo por quem não confia em quem administra a base de dados, que é o adversário que interessa. Gatilhos recusam UPDATE/DELETE; a cadeia é a defesa que sobrevive a quem os possa remover. Ver R61
 - `openapi.rs` — OpenAPI 3.1 gerado do código com `utoipa` (ADR-0006 §3): `GET /api/openapi.json` (BFF, instável) e `/api/v1/openapi.json` (estável), `delonix-server openapi bff|v1` sem base nem configuração. Cada módulo declara o seu `ApiDoc` com `#[utoipa::path]` nos handlers e entra em `bff_parts`/`v1_parts`. O spec commitado em `docs/reference/openapi/` tem de ser igual ao gerado, e as operações montadas sem documentação são uma catraca (`scripts/check-openapi.sh`)
 - `rate_limit.rs` — rate limit por IP/conta (DashMap, lockout login 8/5min)
@@ -135,7 +135,7 @@
 - Recordings: biblioteca, viewer (player+transcrição+MoM+tarefas), toggle cards/tabela, partilha read-only
 - Analytics admin: KPIs 30d, série semanal, top organizadores, kind split, duração média, postura SSO/SCIM (stubs)
 - Webhooks: Slack/Teams/Mattermost/generic+HMAC, SSRF guard, events: meeting.created/started/recording.ready
-- API keys por org (hash; sem escopos nem expiração)
+- API keys por org (hash; escopos por rota, `expires_at` opcional, rate-limit por chave — R170)
 - PWA: manifest + service worker
 - Temas: Delonix (dark), NgolaCloud (claro quente), NgolaCloud-dark, Kaeso (corporativo flat)
 - i18n PT/EN (Landing, Shell, Login, Home, Analytics, Roadmap — Room/Calendar/Recordings/Directory por traduzir)
