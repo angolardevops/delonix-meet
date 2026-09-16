@@ -583,7 +583,7 @@
             "type": "string"
           },
           "webdav_password": {
-            "description": "Novo valor; se omitido ou vazio mantém o valor actual (nunca apaga por engano).",
+            "description": "Novo valor; se omitido ou vazio mantém o valor actual (nunca apaga por engano).\nGuarda-se cifrado; não vazio sem `DATA_ENCRYPTION_KEYS` → `422`.",
             "type": [
               "string",
               "null"
@@ -1727,6 +1727,16 @@
               }
             },
             "description": "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`webdav_password` não vazia sem DATA_ENCRYPTION_KEYS (`secrets.encryption_unconfigured`)."
           },
           "429": {
             "content": {

@@ -3561,6 +3561,10 @@
           "enforce_sso": {
             "type": "boolean"
           },
+          "has_client_secret": {
+            "description": "Há `client_secret` guardado? (o segredo nunca é devolvido).",
+            "type": "boolean"
+          },
           "issuer_url": {
             "type": "string"
           },
@@ -3573,7 +3577,8 @@
           "org_id",
           "issuer_url",
           "client_id",
-          "enforce_sso"
+          "enforce_sso",
+          "has_client_secret"
         ],
         "type": "object"
       },
@@ -3583,7 +3588,7 @@
             "type": "string"
           },
           "client_secret": {
-            "description": "Vazio → mantém o segredo existente (no-op em update sem nova rotação).",
+            "description": "Vazio → mantém o segredo existente (no-op em update sem nova rotação).\nGuarda-se cifrado; não vazio sem `DATA_ENCRYPTION_KEYS` → `422`.",
             "type": "string"
           },
           "enforce_sso": {
@@ -4365,6 +4370,7 @@
             "type": "string"
           },
           "secret": {
+            "description": "Segredo HMAC do alvo `generic`. Guarda-se cifrado e nunca é devolvido.\nVazio = sem assinatura. Não vazio sem `DATA_ENCRYPTION_KEYS` → `422`.",
             "type": "string"
           },
           "url": {
@@ -8790,6 +8796,16 @@
               }
             },
             "description": "A organização não existe ou quem pede não é membro activo."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`client_secret` não vazio sem DATA_ENCRYPTION_KEYS (`secrets.encryption_unconfigured`)."
           }
         },
         "security": [
@@ -9746,6 +9762,16 @@
               }
             },
             "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`secret` não vazio sem DATA_ENCRYPTION_KEYS (`secrets.encryption_unconfigured`)"
           }
         },
         "security": [
