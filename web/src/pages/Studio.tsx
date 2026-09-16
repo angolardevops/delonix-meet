@@ -19,7 +19,6 @@ import { BrandMark } from '../components/BrandMark'
 import { useShell } from '../components/shellContext'
 import { BackgroundEffect } from '../media'
 import { Alert, Button, cx, IconButton, Spinner, StatusBadge } from '../ui/kit'
-import { analisarPausas, AnaliseDeAudio, trocosSemPausas } from '../studio/analise'
 import * as arquivo from '../studio/arquivo'
 import AudioPanel from '../studio/AudioPanel'
 import CenasPanel from '../studio/CenasPanel'
@@ -28,8 +27,8 @@ import Cronometro from '../studio/Cronometro'
 import { useDebito } from '../studio/debito'
 import type { SondagemNoPalco } from '../studio/desenho'
 import { Destino, Directo, directoSuportado, EstadoDoDirecto } from '../studio/directo'
-import EditPanel, { Gravado } from '../studio/EditPanel'
-import { cortar, cortarVarios, cortesSuportados } from '../studio/editor'
+import EditPanel, { Gravado, VistaDoEditor } from '../studio/EditPanel'
+import { cortesSuportados } from '../studio/editor'
 import LayoutsPanel from '../studio/LayoutsPanel'
 import LivePanel from '../studio/LivePanel'
 import LocalPanel from '../studio/LocalPanel'
@@ -62,7 +61,13 @@ const ecraDeTelemovel = () => typeof window !== 'undefined' && window.matchMedia
  */
 const MAX_DESTINOS = 4
 
-type Vista = 'emissao' | 'edicao'
+type Vista = 'emissao' | VistaDoEditor
+
+/** A vista vem do endereço (`#/studio?vista=legendas`), para se poder voltar a ela. */
+function vistaDoEndereco(): Vista {
+  const v = new URLSearchParams(location.hash.split('?')[1] ?? '').get('vista')
+  return v === 'edicao' || v === 'legendas' || v === 'exportacoes' ? v : 'emissao'
+}
 
 export default function Studio() {
   const { t } = useTranslation()
@@ -70,12 +75,16 @@ export default function Studio() {
   const compRef = useRef<CompositorDeAula | null>(null)
   const canvasHostRef = useRef<HTMLDivElement>(null)
   const efeitoRef = useRef<BackgroundEffect | null>(null)
-  const previewRef = useRef<HTMLVideoElement>(null)
   // O directo é imperativo e vive num ref: pô-lo em estado faria a página
   // re-renderizar a cada pedaço enviado.
   const directoRef = useRef<Directo | null>(null)
 
-  const [vista, setVista] = useState<Vista>('emissao')
+  const [vista, setVistaEstado] = useState<Vista>(vistaDoEndereco)
+  const setVista = useCallback((v: Vista) => {
+    setVistaEstado(v)
+    const alvo = v === 'emissao' ? '#/studio' : `#/studio?vista=${v}`
+    if (location.hash !== alvo) history.replaceState(null, '', alvo)
+  }, [])
   const [pronto, setPronto] = useState(false)
   const [temEcra, setTemEcra] = useState(false)
   const [temCamara, setTemCamara] = useState(false)
@@ -87,11 +96,6 @@ export default function Studio() {
   const [erro, setErro] = useState('')
 
   const [resultado, setResultado] = useState<Gravado | null>(null)
-  const [de, setDe] = useState(0)
-  const [ate, setAte] = useState(0)
-  const [aCortar, setACortar] = useState(0)
-  const [analise, setAnalise] = useState<AnaliseDeAudio | null>(null)
-  const [aAnalisar, setAAnalisar] = useState(false)
   const [titulo, setTitulo] = useState('')
   const [aGuardar, setAGuardar] = useState(false)
   const [guardado, setGuardado] = useState('')
@@ -340,123 +344,10 @@ export default function Studio() {
       return
     }
     if (resultado) URL.revokeObjectURL(resultado.url)
+    // A gravação passa ao editor, que a transforma num projecto não destrutivo
+    // (as faixas são fontes; cortar é uma edição, não um ficheiro novo).
     setResultado({ faixas, url: URL.createObjectURL(faixas.completo), duracao: 0 })
-    setAnalise(null)
-    setDe(0)
-    setAte(0)
     setVista('edicao')
-  }
-
-  const mudarDuracao = useCallback((d: number) => {
-    setResultado((r) => (r && r.duracao !== d ? { ...r, duracao: d } : r))
-    setAte((a) => (a > 0 ? a : d))
-  }, [])
-
-  function mudarDe(v: number) {
-    setDe(v)
-    if (v >= ate) setAte(Math.min(resultado?.duracao ?? v + 1, v + 1))
-  }
-
-  function mudarAte(v: number) {
-    setAte(v)
-    if (v <= de) setDe(Math.max(0, v - 1))
-  }
-
-  function nomeBase() {
-    return (titulo.trim() || t('studio.semTitulo')).replace(/[^\w.-]+/g, '-')
-  }
-
-  function descarregar(qual: 'completo' | 'video' | 'audio') {
-    if (!resultado) return
-    const b = resultado.faixas[qual]
-    if (!b) return
-    const url = qual === 'completo' ? resultado.url : URL.createObjectURL(b)
-    const a = document.createElement('a')
-    a.href = url
-    const sufixo = qual === 'completo' ? '' : `-${qual}`
-    a.download = `${nomeBase()}${sufixo}.${qual === 'audio' ? 'weba' : 'webm'}`
-    a.click()
-    if (qual !== 'completo') setTimeout(() => URL.revokeObjectURL(url), 10_000)
-  }
-
-  /**
-   * Procura as pausas mortas. É análise de SINAL, não um modelo: corre em
-   * milissegundos e funciona no primeiro arranque, offline.
-   */
-  async function procurarPausas() {
-    const faixa = resultado?.faixas.audio
-    if (!faixa) {
-      setErro(t('studio.erros.semAudio'))
-      return
-    }
-    setErro('')
-    setAAnalisar(true)
-    try {
-      setAnalise(await analisarPausas(faixa))
-    } catch {
-      setErro(t('studio.erros.analise'))
-    } finally {
-      setAAnalisar(false)
-    }
-  }
-
-  /** Substitui o resultado pelo cortado — o que se guarda é o que se vê. */
-  function substituir(novo: Blob, duracao: number) {
-    if (!resultado) return
-    URL.revokeObjectURL(resultado.url)
-    setResultado({
-      faixas: { completo: novo, video: null, audio: resultado.faixas.audio },
-      url: URL.createObjectURL(novo),
-      duracao,
-    })
-    setAnalise(null)
-    setDe(0)
-    setAte(0)
-  }
-
-  async function removerPausas() {
-    if (!resultado || !analise) return
-    const trocos = trocosSemPausas(analise)
-    if (!trocos.length) {
-      setErro(t('studio.erros.tudoPausa'))
-      return
-    }
-    setErro('')
-    setACortar(0.001)
-    try {
-      const novo = await cortarVarios(
-        resultado.faixas.completo,
-        trocos,
-        (pr) => setACortar(Math.max(0.001, pr.fraccao ?? 0.001)),
-        4,
-        resultado.faixas.audio,
-      )
-      substituir(novo, trocos.reduce((a, tr) => a + (tr.fim - tr.inicio), 0))
-    } catch (e) {
-      setErro(apiErrorMessage(e, t('studio.erros.corte')))
-    } finally {
-      setACortar(0)
-    }
-  }
-
-  async function aplicarCorte() {
-    if (!resultado) return
-    setErro('')
-    setACortar(0.001)
-    try {
-      const novo = await cortar(
-        resultado.faixas.completo,
-        { inicio: de, fim: ate },
-        (p) => setACortar(Math.max(0.001, p.fraccao ?? 0.001)),
-        4,
-        resultado.faixas.audio,
-      )
-      substituir(novo, ate - de)
-    } catch (e) {
-      setErro(apiErrorMessage(e, t('studio.erros.corte')))
-    } finally {
-      setACortar(0)
-    }
   }
 
   /**
@@ -533,19 +424,18 @@ export default function Studio() {
    * em caso de falha perde a aula quando o upload rebenta a meio — que é
    * precisamente quando ela é mais precisa.
    */
-  async function guardarNaBiblioteca() {
-    if (!resultado) return
+  async function guardarNaBiblioteca(exportado: Blob, duracao: number, tituloDoProjecto: string) {
     setAGuardar(true)
     setErro('')
     setGuardado('')
-    const nome = titulo.trim() || t('studio.semTitulo')
+    const nome = tituloDoProjecto.trim() || titulo.trim() || t('studio.semTitulo')
     try {
       const id = await arquivo.guardar({
         titulo: nome,
         criadaEm: Date.now(),
-        duracao: resultado.duracao,
-        completo: resultado.faixas.completo,
-        audio: resultado.faixas.audio,
+        duracao,
+        completo: exportado,
+        audio: null,
         enviada: false,
       })
       if (!navigator.onLine) {
@@ -555,7 +445,7 @@ export default function Studio() {
       }
       try {
         const sala = await createRoom(nome, 'sfu', false, false, 'normal')
-        await uploadRecording(sala.code, resultado.faixas.completo, `${nome}.webm`)
+        await uploadRecording(sala.code, exportado, `${nome}.webm`)
         await arquivo.marcarEnviada(id)
         setGuardado(t('studio.guardado'))
       } catch (e) {
@@ -587,7 +477,23 @@ export default function Studio() {
   const podeIrParaOAr = directo.fase !== 'a-ligar' && !noAr && destinosComChave.length > 0 && temFonte && directoSuportado()
 
   return (
-    <div className="dx-stage st">
+    <>
+    {vista !== 'emissao' && (
+      <EditPanel
+        vista={vista}
+        onVista={setVista}
+        resultado={resultado}
+        podeCortar={cortesSuportados()}
+        titulo={titulo}
+        onTitulo={setTitulo}
+        aGuardar={aGuardar}
+        guardado={guardado}
+        onGuardar={guardarNaBiblioteca}
+      />
+    )}
+    {/* A emissão fica montada (escondida) enquanto se edita: o compositor e o
+        canvas vivem nela, e desmontá-la perdia o palco a meio de um directo. */}
+    <div className="dx-stage st" hidden={vista !== 'emissao'}>
       <header className="st-top">
         <IconButton
           icon="menu"
@@ -635,7 +541,6 @@ export default function Studio() {
             type="button"
             aria-pressed={vista === 'edicao'}
             data-studio-vista="edicao"
-            disabled={!resultado}
             onClick={() => setVista('edicao')}
           >
             {t('studio.vistas.edicao')}
@@ -913,32 +818,7 @@ export default function Studio() {
           )}
         </div>
       </div>
-
-      <div className="st-body st-body--edit" hidden={vista !== 'edicao'}>
-        <EditPanel
-          resultado={resultado}
-          previewRef={previewRef}
-          onDuracao={mudarDuracao}
-          podeCortar={cortesSuportados()}
-          de={de}
-          ate={ate}
-          onDe={mudarDe}
-          onAte={mudarAte}
-          aCortar={aCortar}
-          onCortar={() => void aplicarCorte()}
-          analise={analise}
-          aAnalisar={aAnalisar}
-          onProcurarPausas={() => void procurarPausas()}
-          onRemoverPausas={() => void removerPausas()}
-          onCancelarPausas={() => setAnalise(null)}
-          onDescarregar={descarregar}
-          titulo={titulo}
-          onTitulo={setTitulo}
-          aGuardar={aGuardar}
-          onGuardar={() => void guardarNaBiblioteca()}
-          guardado={guardado}
-        />
-      </div>
     </div>
+    </>
   )
 }

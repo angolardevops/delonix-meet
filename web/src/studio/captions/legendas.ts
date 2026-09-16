@@ -41,6 +41,21 @@ export function timecode(s: number, fps = 30): string {
   return `${doisDigitos(Math.floor(seg / 3600))}:${doisDigitos(Math.floor(seg / 60) % 60)}:${doisDigitos(seg % 60)}:${doisDigitos(f)}`
 }
 
+/**
+ * Lê o que alguém escreve num campo de tempo: `hh:mm:ss:ff`, `hh:mm:ss`,
+ * `mm:ss`, `ss` — com decimais opcionais nos segundos. `NaN` se não for tempo.
+ */
+export function lerTimecode(txt: string, fps = 30): number {
+  const s = txt.trim().replace(',', '.')
+  if (!/^\d+(:\d+){0,3}(\.\d+)?$/.test(s)) return NaN
+  const partes = s.split(':')
+  let frames = 0
+  if (partes.length === 4) frames = Number(partes.pop())
+  let total = 0
+  for (const p of partes) total = total * 60 + Number(p)
+  return total + frames / fps
+}
+
 /** `mm:ss` ou `h:mm:ss`. */
 export function relogio(s: number): string {
   const t = Math.max(0, Math.floor(s))

@@ -112,8 +112,11 @@ describe('guardar é local PRIMEIRO', () => {
     // Procura DENTRO da função, não no ficheiro todo: o `enviarUma` também
     // chama `uploadRecording`, e uma busca global encontrava-o e dava verde a
     // uma ordem invertida. Foi o que a primeira versão deste teste fazia.
+    // A função passou a receber o ficheiro EXPORTADO pelo editor (o projecto é
+    // não destrutivo e o que se guarda é a exportação, não a gravação crua);
+    // a ordem protegida — dispositivo primeiro, servidor depois — é a mesma.
     const s = semComentarios('web/src/pages/Studio.tsx')
-    const inicio = s.indexOf('async function guardarNaBiblioteca()')
+    const inicio = s.indexOf('async function guardarNaBiblioteca(')
     expect(inicio).toBeGreaterThan(-1)
     const corpo = s.slice(inicio, s.indexOf('\n  }', inicio))
     const iArquivo = corpo.indexOf('arquivo.guardar(')

@@ -140,7 +140,7 @@ export default {
     vazio: 'No recording yet. Record first and editing opens here.',
     take: 'Session recording',
     faixasCompletas: 'video + audio',
-    semWebCodecs: 'This browser has no WebCodecs: you can save and download, but not trim or remove pauses.',
+    semWebCodecs: 'This browser has no WebCodecs: you can edit the project and captions, but not export the video.',
     corte: 'Trim',
     entrada: 'In',
     saida: 'Out',

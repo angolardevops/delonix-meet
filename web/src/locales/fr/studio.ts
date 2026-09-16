@@ -140,7 +140,7 @@ export default {
     vazio: "Pas encore d'enregistrement. Enregistrez d'abord, le montage s'ouvre ici.",
     take: 'Enregistrement de la séance',
     faixasCompletas: 'vidéo + audio',
-    semWebCodecs: "Ce navigateur n'a pas WebCodecs : vous pouvez enregistrer et télécharger, pas couper ni retirer les pauses.",
+    semWebCodecs: "Ce navigateur n'a pas WebCodecs : vous pouvez éditer le projet et les sous-titres, pas exporter la vidéo.",
     corte: 'Coupe',
     entrada: 'Entrée',
     saida: 'Sortie',

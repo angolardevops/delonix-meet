@@ -108,6 +108,9 @@ export interface ResultadoDaGravacao {
   completo: Blob
   video: Blob | null
   audio: Blob | null
+  /** Câmara e ecrã em bruto, cada um no seu ficheiro — clipes próprios no editor. */
+  camara?: Blob | null
+  ecra?: Blob | null
 }
 
 export interface OpcoesDoCompositor {
@@ -203,6 +206,16 @@ export class CompositorDeAula {
   private pedacosVideo: Blob[] = []
   private pedacosAudio: Blob[] = []
   private bytesCompleto = 0
+  /**
+   * Câmara e ecrã em BRUTO (antes da composição), para o editor os ter como
+   * clipes separados em V1/V2. Custam um codificador cada; desliga-se com
+   * `gravarFontesSeparadas = false` numa máquina que não aguente.
+   */
+  gravarFontesSeparadas = true
+  private gravadorCamara: MediaRecorder | null = null
+  private gravadorEcra: MediaRecorder | null = null
+  private pedacosCamara: Blob[] = []
+  private pedacosEcra: Blob[] = []
   private raf = 0
   private vivo = true
 
@@ -832,12 +845,30 @@ export class CompositorDeAula {
       this.gravadorAudio.ondataavailable = (e) => e.data.size && this.pedacosAudio.push(e.data)
       this.gravadorAudio.start(1000)
     }
+
+    this.pedacosCamara = []
+    this.pedacosEcra = []
+    if (this.gravarFontesSeparadas) {
+      const soImagem = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm'
+      const camara = this.camaraStream?.getVideoTracks() ?? []
+      if (camara.length) {
+        this.gravadorCamara = new MediaRecorder(new MediaStream(camara), { mimeType: soImagem, videoBitsPerSecond: 1_500_000 })
+        this.gravadorCamara.ondataavailable = (e) => e.data.size && this.pedacosCamara.push(e.data)
+        this.gravadorCamara.start(1000)
+      }
+      const ecra = this.ecraStream?.getVideoTracks() ?? []
+      if (ecra.length) {
+        this.gravadorEcra = new MediaRecorder(new MediaStream(ecra), { mimeType: soImagem, videoBitsPerSecond: 2_500_000 })
+        this.gravadorEcra.ondataavailable = (e) => e.data.size && this.pedacosEcra.push(e.data)
+        this.gravadorEcra.start(1000)
+      }
+    }
     this.inicioMs = Date.now()
     this.iniciarPreVisualizacao()
   }
 
   private get todos(): MediaRecorder[] {
-    return [this.gravador, this.gravadorVideo, this.gravadorAudio].filter(Boolean) as MediaRecorder[]
+    return [this.gravador, this.gravadorVideo, this.gravadorAudio, this.gravadorCamara, this.gravadorEcra].filter(Boolean) as MediaRecorder[]
   }
   pausar(): void {
     for (const g of this.todos) if (g.state === 'recording') g.pause()
@@ -863,10 +894,12 @@ export class CompositorDeAula {
             r.stop()
           })
         : Promise.resolve()
-    await Promise.all([parar(this.gravador), parar(this.gravadorVideo), parar(this.gravadorAudio)])
+    await Promise.all([parar(this.gravador), parar(this.gravadorVideo), parar(this.gravadorAudio), parar(this.gravadorCamara), parar(this.gravadorEcra)])
     this.gravador = null
     this.gravadorVideo = null
     this.gravadorAudio = null
+    this.gravadorCamara = null
+    this.gravadorEcra = null
     this.inicioMs = 0
     await this.largarFluxo()
     if (!this.pedacos.length) return null
@@ -875,6 +908,8 @@ export class CompositorDeAula {
       completo: new Blob(this.pedacos, { type: tipo }),
       video: this.pedacosVideo.length ? new Blob(this.pedacosVideo, { type: tipo }) : null,
       audio: this.pedacosAudio.length ? new Blob(this.pedacosAudio, { type: 'audio/webm' }) : null,
+      camara: this.pedacosCamara.length ? new Blob(this.pedacosCamara, { type: 'video/webm' }) : null,
+      ecra: this.pedacosEcra.length ? new Blob(this.pedacosEcra, { type: 'video/webm' }) : null,
     }
   }
 
@@ -946,6 +981,8 @@ export class CompositorDeAula {
     this.gravador = null
     this.gravadorVideo = null
     this.gravadorAudio = null
+    this.gravadorCamara = null
+    this.gravadorEcra = null
     this.pararEcra()
     this.pararCamara()
     for (const n of this.fontesAudio) n.disconnect()

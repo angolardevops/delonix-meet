@@ -14,6 +14,7 @@ import {
   intervalosDasPalavras,
   lerLegendas,
   lerTempo,
+  lerTimecode,
   palavrasParaCues,
   paraSrt,
   paraVtt,
@@ -44,6 +45,14 @@ describe('tempos', () => {
 
   it('timecode com frame', () => {
     expect(timecode(1102.5, 30)).toBe('00:18:22:15')
+  })
+
+  it('lê o que se escreve num campo de tempo', () => {
+    expect(lerTimecode('00:18:22:15')).toBeCloseTo(1102.5)
+    expect(lerTimecode('16:04')).toBe(964)
+    expect(lerTimecode('01:02:03')).toBe(3723)
+    expect(lerTimecode('3,5')).toBe(3.5)
+    expect(lerTimecode('abc')).toBeNaN()
   })
 })
 
