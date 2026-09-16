@@ -1,4 +1,4 @@
-// Cópia do notas-ui-template/comparar.mjs para o ramo frontend/l1-diagramas:
+// Cópia do notas-ui-template/comparar.mjs para o ramo frontend/l2-gravacoes:
 // escreve em fidelidade/{app,lado-a-lado} (não nas pastas partilhadas), entra
 // UMA vez e reutiliza a sessão (o servidor de validação limita logins), e tem
 // as rotas reais deste ramo.
@@ -18,6 +18,7 @@ const PASS = process.env.DX_PASS ?? 'demo12345'
 const STATE = `${DIR}.sessao.json`
 
 const ROTAS = {
+  DelonixRecordings: { hash: '/recordings' },
   DelonixCanvasUML: { hash: '/whiteboards/diagram?tipo=uml&exemplo=1' },
   DelonixCanvasBPMN: { hash: '/whiteboards/diagram?tipo=bpmn&exemplo=1' },
   DelonixPlayer: { player: true },
@@ -58,12 +59,19 @@ for (const doc of want) {
   let hash = r.hash
   if (r.player) {
     const lib = await p.evaluate(async () => (await fetch('/api/recordings', { headers: { Authorization: `Bearer ${localStorage.getItem('dx_access')}` } })).json())
-    const rec = Array.isArray(lib) ? lib.find((x) => x.status !== 'failed') : null
+    // A gravação real com mais capítulos (a «sessão 3» do seed-v2), como no template.
+    const rec = Array.isArray(lib) ? lib.filter((x) => x.status !== 'failed').sort((a, b) => (b.chapter_count ?? 0) - (a.chapter_count ?? 0))[0] : null
     if (!rec) { console.log('sem gravações na biblioteca', JSON.stringify(lib).slice(0, 200)); continue }
     hash = `/recordings/${rec.id}`
   }
   await p.goto(`${APP}/#${hash}`)
-  await p.waitForTimeout(r.player ? 6000 : 2500)
+  await p.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {})
+  await p.waitForTimeout(r.player ? 6000 : 3000)
+  if (r.player && process.env.SEEK) {
+    // Põe o leitor a meio de um capítulo, como no template (18:22 de 48:12).
+    await p.evaluate((f) => { const v = document.querySelector('video'); if (v) { v.pause(); v.currentTime = (v.duration || 0) * f } }, Number(process.env.SEEK))
+    await p.waitForTimeout(1200)
+  }
   const suf = MOBILE ? '-390' : ''
   await p.screenshot({ path: `${DIR}app/${doc}${suf}.png` })
   const ref = `${REF}${doc}.png`
