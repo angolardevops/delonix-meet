@@ -62,31 +62,23 @@ impl FromRequestParts<Arc<AppState>> for OdooTokenAuth {
             })
             .ok_or(ApiError::Unauthorized)?;
 
-        let hash = sha256_hex(&raw);
-
-        // Aceitar dlxo_ (token de integração Odoo) OU dlx_ (API key da org).
-        // O fluxo de auto-provisão via /admin/orgs gera uma dlx_ key que o
-        // módulo nk_delonix_meet usa diretamente sem passo extra de token.
-        let org_id: Option<Uuid> = if raw.starts_with("dlxo_") {
-            sqlx::query_scalar(
-                "SELECT id FROM organizations
-                 WHERE odoo_token_hash = $1 AND odoo_enabled = TRUE",
-            )
-            .bind(&hash)
-            .fetch_optional(&state.db)
-            .await?
-        } else if raw.starts_with("dlx_") {
-            // `org_api_keys` NÃO tem coluna de revogação — revogar é apagar a
-            // linha (ver apikeys::revoke). Filtrar por `revoked_at IS NULL`
-            // rebentava com "column does not exist" (500) e deixava TODO o
-            // caminho /api/v1/integration/odoo/* inacessível com chave dlx_.
-            sqlx::query_scalar("SELECT org_id FROM org_api_keys WHERE key_hash = $1")
-                .bind(&hash)
-                .fetch_optional(&state.db)
-                .await?
-        } else {
+        // Só o token de integração `dlxo_`. A chave `dlx_` do inquilino também
+        // era aceite aqui (R142): uma credencial emitida para a superfície v1
+        // da org abria o provisionamento de directório, que reescreve membros e
+        // papéis — um público e um poder que a chave nunca declarou. O módulo
+        // `nk_delonix_meet` usa a `dlx_` só em `/api/v1/meetings` e
+        // `/api/v1/admin/orgs`; estas rotas são do token `dlxo_`.
+        if !raw.starts_with("dlxo_") {
             return Err(ApiError::Unauthorized);
-        };
+        }
+        let hash = sha256_hex(&raw);
+        let org_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM organizations
+             WHERE odoo_token_hash = $1 AND odoo_enabled = TRUE",
+        )
+        .bind(&hash)
+        .fetch_optional(&state.db)
+        .await?;
 
         let org_id = org_id.ok_or(ApiError::Unauthorized)?;
         Ok(OdooTokenAuth { org_id })
@@ -353,14 +345,14 @@ pub struct SkippedUser {
 #[utoipa::path(
     post, path = "/api/v1/integration/odoo/provision", tag = "odoo",
     description = "Provisiona o directório de utilizadores do Odoo na organização do token.\n\n\
-Autentica pelo token de integração `dlxo_` (a chave `dlx_` da organização também é aceite), \
+Autentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), \
 em `Authorization: Bearer …` ou `X-Integration-Token: …`. Uma entrada cuja conta pertence a \
 outra organização ou é local não é aplicada e vem em `skipped`.",
     security(("api_key" = [])),
     request_body = ProvisionReq,
     responses(
         (status = 200, body = ProvisionResult),
-        (status = 401, description = "Token em falta, desconhecido, ou integração desactivada.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Token em falta, desconhecido, integração desactivada, ou chave `dlx_` (não é o token desta rota).", body = crate::openapi::ErrorBody),
         (status = 429, description = "Rate-limit da v1 por IP.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -475,12 +467,12 @@ pub struct OdooDirectoryUser {
 #[utoipa::path(
     get, path = "/api/v1/integration/odoo/users", tag = "odoo",
     description = "Membros da organização do token, por `username`.\n\n\
-Autentica pelo token de integração `dlxo_` (a chave `dlx_` da organização também é aceite), \
+Autentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), \
 em `Authorization: Bearer …` ou `X-Integration-Token: …`.",
     security(("api_key" = [])),
     responses(
         (status = 200, body = Vec<OdooDirectoryUser>),
-        (status = 401, description = "Token em falta, desconhecido, ou integração desactivada.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Token em falta, desconhecido, integração desactivada, ou chave `dlx_` (não é o token desta rota).", body = crate::openapi::ErrorBody),
         (status = 429, description = "Rate-limit da v1 por IP.", body = crate::openapi::ErrorBody),
     )
 )]

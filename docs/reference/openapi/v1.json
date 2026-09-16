@@ -1019,7 +1019,7 @@
     },
     "/api/v1/integration/odoo/provision": {
       "post": {
-        "description": "Provisiona o directório de utilizadores do Odoo na organização do token.\n\nAutentica pelo token de integração `dlxo_` (a chave `dlx_` da organização também é aceite), em `Authorization: Bearer …` ou `X-Integration-Token: …`. Uma entrada cuja conta pertence a outra organização ou é local não é aplicada e vem em `skipped`.",
+        "description": "Provisiona o directório de utilizadores do Odoo na organização do token.\n\nAutentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), em `Authorization: Bearer …` ou `X-Integration-Token: …`. Uma entrada cuja conta pertence a outra organização ou é local não é aplicada e vem em `skipped`.",
         "operationId": "provision",
         "requestBody": {
           "content": {
@@ -1050,7 +1050,7 @@
                 }
               }
             },
-            "description": "Token em falta, desconhecido, ou integração desactivada."
+            "description": "Token em falta, desconhecido, integração desactivada, ou chave `dlx_` (não é o token desta rota)."
           },
           "429": {
             "content": {
@@ -1076,7 +1076,7 @@
     },
     "/api/v1/integration/odoo/users": {
       "get": {
-        "description": "Membros da organização do token, por `username`.\n\nAutentica pelo token de integração `dlxo_` (a chave `dlx_` da organização também é aceite), em `Authorization: Bearer …` ou `X-Integration-Token: …`.",
+        "description": "Membros da organização do token, por `username`.\n\nAutentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), em `Authorization: Bearer …` ou `X-Integration-Token: …`.",
         "operationId": "list_users",
         "responses": {
           "200": {
@@ -1100,7 +1100,7 @@
                 }
               }
             },
-            "description": "Token em falta, desconhecido, ou integração desactivada."
+            "description": "Token em falta, desconhecido, integração desactivada, ou chave `dlx_` (não é o token desta rota)."
           },
           "429": {
             "content": {

@@ -591,7 +591,17 @@ async fn odoo_provision_does_not_capture_accounts(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let b = app.new_org("beta.test").await;
-    let (_, ka) = app.api_key(&a).await;
+    // Estas rotas são do token de integração `dlxo_`; a chave `dlx_` recebe
+    // 401 desde o R142 (`tests/security_voice_odoo.rs`).
+    let (st, tok) = app
+        .post(
+            &format!("/api/orgs/{}/integration/odoo/token", a.org()),
+            Some(&a.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{tok}");
+    let ka = tok["token"].as_str().unwrap().to_string();
 
     let (st, prov) = v1(
         &app,

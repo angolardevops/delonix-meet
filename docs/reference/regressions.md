@@ -1781,3 +1781,17 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `server/tests/security_voice_odoo.rs::{voice_room_close_requires_creator_or_org_admin, shared_did_pool_requires_platform_admin}` (controlos positivos: a criadora e o admin encerram; o admin de org cria DIDs da sua org; o administrador da plataforma escreve no pool).
 
 **Ficheiros.** `server/src/{voice,storage}.rs`, `server/tests/security_voice_odoo.rs`, `docs/reference/openapi/bff.json`.
+
+### R142 — A chave de API do inquilino (`dlx_`) abria as rotas da integração Odoo
+
+**Sintoma.** `GET /api/v1/integration/odoo/users` e `POST /api/v1/integration/odoo/provision` aceitavam, além do token de integração `dlxo_`, a chave de API `dlx_` da organização. Uma chave emitida para ler salas e reuniões (`/api/v1/org`, `/rooms`, `/meetings`) listava o directório de membros e provisionava contas e papéis — incluindo com a integração Odoo DESACTIVADA, porque o ramo `dlx_` não olhava para `odoo_enabled`. Foi este o vector da S2 (R121). Provado a 2026-09-16 contra Postgres real: `dlx_ lista o directório Odoo: devia ser recusado e devolveu 200: [{"email":"admin@zeta-odoo.ao",…,"role":"admin"}]`.
+
+**Causa raiz.** O `OdooTokenAuth` tinha dois ramos, e o segundo justificava-se por um fluxo («a auto-provisão via `/admin/orgs` gera uma `dlx_` que o módulo usa directamente») que o módulo não segue: medido a 2026-09-16 em `kaeso-18/nokubiko/nk_delonix_meet` (e nas outras árvores do módulo no workspace), a `dlx_` só é usada em `/api/v1/admin/orgs` e `/api/v1/meetings`; nenhuma chama `/integration/odoo/*`. Duas credenciais com públicos diferentes (inquilino vs integração) numa mesma porta.
+
+**Decisão de compatibilidade — explícita.** A descrição OpenAPI das duas rotas DOCUMENTAVA a `dlx_` como aceite («a chave `dlx_` da organização também é aceite»), embora o `api-contract.md` e o `HARNESS.md` já dissessem `dlxo_`. A aceitação é retirada sem período de transição nem flag: um integrador que siga a descrição antiga passa a receber `401` e tem de emitir o token em `POST /api/orgs/{org}/integration/odoo/token`. Não se encontrou nenhum consumidor real; se aparecer, a correcção é do lado dele, não reabrir a porta.
+
+**Regra.** O extractor de uma superfície aceita a credencial DESSA superfície e mais nenhuma. `OdooTokenAuth` recusa (`401`) tudo o que não seja `dlxo_`, antes de consultar a base.
+
+**Portão.** `server/tests/security_voice_odoo.rs::odoo_integration_routes_refuse_tenant_api_key` (controlos positivos: a mesma `dlx_` abre `/api/v1/org`; o `dlxo_` abre as duas rotas). `web/e2e/isolamento.mjs` S2 passa a atacar com o `dlxo_` — com a `dlx_` o ataque já nem chegava ao `upsert_member`.
+
+**Ficheiros.** `server/src/odoo.rs`, `server/tests/{security_voice_odoo,api_v1}.rs` (o `odoo_provision_does_not_capture_accounts` passa a autenticar com `dlxo_`), `web/e2e/isolamento.mjs`, `docs/reference/openapi/v1.json`.

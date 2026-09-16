@@ -426,16 +426,17 @@ await recusadoNaPorta('admin de org recém-registado dispara o teste de ligaçã
 })
 
 console.log('\n--- S2: a sincronização Odoo não captura contas de outra organização ---')
-// A org A emite uma chave `dlx_` (o extractor do Odoo aceita-a) e lista no seu
-// «directório» o endereço do administrador da org B. Antes: a conta de B era
-// reescrita (nome, `odoo_managed`) e entrava na org A como admin.
-const chaveA = await req(`/api/orgs/${A.orgId}/api-keys`, {
-  token: A.token, method: 'POST', body: { name: 's2-provision' },
+// A org A emite o seu token de integração `dlxo_` e lista no seu «directório»
+// o endereço do administrador da org B. Antes: a conta de B era reescrita
+// (nome, `odoo_managed`) e entrava na org A como admin. (Até ao R142 usava-se a
+// chave `dlx_`, que o extractor do Odoo aceitava; já não aceita.)
+const chaveA = await req(`/api/orgs/${A.orgId}/integration/odoo/token`, {
+  token: A.token, method: 'POST', body: {},
 })
-if (chaveA.status >= 200 && chaveA.status < 300 && chaveA.json?.key) {
+if (chaveA.status >= 200 && chaveA.status < 300 && chaveA.json?.token) {
   const novoEmail = `novo-${marca}@alfa${marca}.local`
   const prov = await req('/api/v1/integration/odoo/provision', {
-    token: chaveA.json.key, method: 'POST',
+    token: chaveA.json.token, method: 'POST',
     body: {
       company: `Org alfa${marca}`,
       admin_email: A.email,
@@ -462,7 +463,7 @@ if (chaveA.status >= 200 && chaveA.status < 300 && chaveA.json?.key) {
   if (loginB.status === 200) ok('B continua a entrar com a sua password local')
   else nok('B continua a entrar com a sua password local', `login devolveu ${loginB.status}`)
 } else {
-  nok('A cria uma chave de API para o teste S2', `devolveu ${chaveA.status}`)
+  nok('A emite o token de integração Odoo para o teste S2', `devolveu ${chaveA.status}`)
 }
 
 console.log('\n--- S3: um membro ARQUIVADO perde o acesso da organização ---')

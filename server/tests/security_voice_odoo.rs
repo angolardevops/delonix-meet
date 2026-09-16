@@ -228,3 +228,61 @@ async fn shared_did_pool_requires_platform_admin(db: sqlx::PgPool) {
     assert_eq!(st, 200, "{body}");
     assert_eq!(body["org_id"], Value::Null, "{body}");
 }
+
+/// R142 — a chave de API do inquilino (`dlx_`) abria as rotas da integração
+/// Odoo, que são do token `dlxo_`.
+#[sqlx::test(migrations = "./migrations")]
+async fn odoo_integration_routes_refuse_tenant_api_key(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let admin = app.new_org("zeta-odoo.ao").await;
+    let (_, dlx) = app.api_key(&admin).await;
+    assert!(dlx.starts_with("dlx_"), "{dlx}");
+
+    // A chave está boa: abre a SUA superfície (controlo positivo da chave).
+    let (st, body) = app.get("/api/v1/org", Some(&dlx)).await;
+    assert_eq!(st, 200, "{body}");
+
+    // O ataque: a mesma chave nas rotas da integração.
+    let (st, body) = app.get("/api/v1/integration/odoo/users", Some(&dlx)).await;
+    assert_denied("dlx_ lista o directório Odoo", st, &body, &admin.email);
+    assert_eq!(st, 401, "{body}");
+    let r = app
+        .raw(
+            reqwest::Method::GET,
+            "/api/v1/integration/odoo/users",
+            &[("x-integration-token", &dlx)],
+            None,
+        )
+        .await;
+    assert_eq!(r.status, 401, "{}", r.text);
+    let (st, body) = app
+        .post(
+            "/api/v1/integration/odoo/provision",
+            Some(&dlx),
+            json!({"company": "Capturada", "admin_email": admin.email, "users": []}),
+        )
+        .await;
+    assert_eq!(st, 401, "dlx_ provisiona pelo caminho do Odoo: {body}");
+
+    // Controlo positivo: o token de integração `dlxo_` abre as duas.
+    let (st, tok) = app
+        .post(
+            &format!("/api/orgs/{}/integration/odoo/token", admin.org()),
+            Some(&admin.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{tok}");
+    let dlxo = tok["token"].as_str().unwrap();
+    let (st, body) = app.get("/api/v1/integration/odoo/users", Some(dlxo)).await;
+    assert_eq!(st, 200, "{body}");
+    assert!(body.to_string().contains(&admin.email), "{body}");
+    let (st, body) = app
+        .post(
+            "/api/v1/integration/odoo/provision",
+            Some(dlxo),
+            json!({"company": "Org zeta-odoo.ao", "admin_email": admin.email, "users": []}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+}
