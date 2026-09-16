@@ -886,6 +886,11 @@ pub async fn run() {
                         tracing::info!(abandoned, deleted, "webhook deliveries sweep")
                     }
                     Err(e) => tracing::warn!(error = %e, "webhook deliveries sweep failed"),
+                }
+            }
+        });
+    }
+
     // Cron: retenção das notificações (G8) a cada 6 h — lidas com mais de 90
     // dias, todas com mais de 180 (regra em `domain::notification`).
     {
