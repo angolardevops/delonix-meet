@@ -253,6 +253,22 @@ export default function Room({
           studioAvailable={isHost && multicam.supported}
           studioOpen={chrome.panel === 'multicam'}
           onStudio={openMulticam}
+          board={
+            whiteboard.open
+              ? {
+                  sharedBy: whiteboard.openedBy,
+                  saving: whiteboard.saving,
+                  canSave: whiteboard.strokes.length > 0,
+                  onSave: () => void whiteboard.save(),
+                  // Fechar guarda na biblioteca se houver conteúdo por guardar.
+                  onClose: () => {
+                    if (whiteboard.unsaved && !whiteboard.saving) void whiteboard.save()
+                    whiteboard.close()
+                  },
+                  pen: whiteboard.pen,
+                }
+              : null
+          }
           locale={locale}
         />
 
@@ -278,11 +294,18 @@ export default function Room({
 
             {whiteboard.open && (
               <Whiteboard
-                strokes={whiteboard.strokes}
-                onStroke={whiteboard.addStroke}
-                onClear={whiteboard.clear}
-                onSave={whiteboard.save}
-                onClose={whiteboard.close}
+                wb={whiteboard}
+                me={currentUser()?.username ?? ''}
+                micOn={media.micOn}
+                meSpeaking={core.speaking.has('me') && media.micOn}
+                peers={peers}
+                speaking={core.speaking}
+                onOpenPeople={() => chrome.setPanel('people')}
+                stage={
+                  isHost && multicam.estado.fase === 'no-ar'
+                    ? { destinos: multicam.destinos.filter((d) => d.chave.trim()).length, onStage: multicam.boardOnStage, setStream: multicam.setBoardStream }
+                    : null
+                }
               />
             )}
 

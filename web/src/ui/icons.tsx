@@ -111,6 +111,12 @@ const P: Record<string, string> = {
   notes: 'M5 3h14v18H5zM8 8h8M8 12h8M8 16h5',
   hourglass: 'M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9',
   undo: 'M4 9h11a5 5 0 0 1 0 10H9M8 5 4 9l4 4',
+  // sala · quadro (frontend/l1-sala)
+  circle: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16z',
+  arrowRight: 'M4 12h15M14 7l5 5-5 5',
+  highlighter: 'M4 20h16M7 16l9.5-10 3.5 3.5L10 19H7z',
+  shapes: 'M4 4h7v7H4zM17.5 13a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM16 4l4 7h-8z',
+  ruler: 'M3 9h18v6H3zM7 9v3M11 9v3M15 9v3M19 9v2',
 }
 
 export type IconName = keyof typeof P

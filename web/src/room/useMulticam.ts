@@ -20,6 +20,9 @@ export function useMulticam(core: RoomCore) {
   const [focoIds, setFocoIds] = useState<string[]>([])
   const [destinos, setDestinos] = useState<Destino[]>([{ url: '', chave: '', rotulo: '' }])
   const [estado, setEstado] = useState<EstadoDoDirecto>({ fase: 'parado' })
+  /** O quadro como fonte (canvas → stream). Com ele no palco, a cena é SÓ o quadro. */
+  const [boardStream, setBoardStreamState] = useState<MediaStream | null>(null)
+  const cenaAntesDoQuadro = useRef<{ cena: Cena; focoIds: string[] } | null>(null)
   const compositorRef = useRef<RoomCompositor | null>(null)
   const directoRef = useRef<Directo | null>(null)
   // O canvas do compositor não é do React — entra no DOM à mão sempre que o
@@ -35,11 +38,13 @@ export function useMulticam(core: RoomCore) {
   useEffect(() => {
     if (!open || !compositorRef.current) return
     const fontes: Fonte[] = [
+      ...(boardStream ? [{ id: 'quadro', nome: t('room.quadro.titulo'), stream: boardStream }] : []),
       { id: 'eu', nome: currentUser()?.username ?? '', stream: core.localStreamRef.current },
       ...core.peers.filter((p) => p.stream).map((p): Fonte => ({ id: p.peerId, nome: p.username, stream: p.stream })),
     ]
     compositorRef.current.definirParticipantes(fontes)
-  }, [open, core.peers, core.localStreamRef])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, core.peers, core.localStreamRef, boardStream])
 
   useEffect(() => {
     if (compositorRef.current) compositorRef.current.cena = cena
@@ -107,6 +112,23 @@ export function useMulticam(core: RoomCore) {
     setEstado({ fase: 'parado' })
   }
 
+  /** Põe (ou tira) o quadro no palco da emissão. Tirar devolve a cena que estava. */
+  function setBoardStream(stream: MediaStream | null) {
+    setBoardStreamState((cur) => {
+      if (cur && cur !== stream) cur.getTracks().forEach((tr) => tr.stop())
+      return stream
+    })
+    if (stream) {
+      if (!cenaAntesDoQuadro.current) cenaAntesDoQuadro.current = { cena, focoIds }
+      setCena('solo')
+      setFocoIds(['quadro'])
+    } else if (cenaAntesDoQuadro.current) {
+      setCena(cenaAntesDoQuadro.current.cena)
+      setFocoIds(cenaAntesDoQuadro.current.focoIds)
+      cenaAntesDoQuadro.current = null
+    }
+  }
+
   function toggleFoco(id: string) {
     setFocoIds((ids) => {
       const max = cena === 'solo' ? 1 : 2
@@ -132,6 +154,8 @@ export function useMulticam(core: RoomCore) {
     updateDestino: (i: number, patch: Partial<Destino>) =>
       setDestinos((ds) => ds.map((d, j) => (j === i ? { ...d, ...patch } : d))),
     estado,
+    boardOnStage: !!boardStream,
+    setBoardStream,
     goLive,
     stopLive,
   }
