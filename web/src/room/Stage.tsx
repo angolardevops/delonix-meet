@@ -145,6 +145,8 @@ export function Stage({ core, media, layout, qos, handRaised, onTilePin, onTileM
       onPin={onTilePin}
       onMute={onTileMute}
       onKick={onTileKick}
+      spotlit={layout.spotlightId === p.peerId}
+      onSpotlight={layout.setSpotlight}
     />
   )
 

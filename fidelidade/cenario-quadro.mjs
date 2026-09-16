@@ -31,6 +31,8 @@ export default async function ({ hp, convidados, esperar, fotografar, want, log,
     await hp.locator('.rm-notices button', { hasText: /^admitir todos/i }).first().click({ timeout: 3000 }).catch(() => {})
     for (const p of [hp, ...convidados]) await p.locator('.rm-notices button[aria-label="Dispensar"]').first().click({ timeout: 1500 }).catch(() => {})
     await hp.getByRole('button', { name: /^chat$/i }).first().click({ timeout: 5000 }).catch(() => {})
+    // A 900 px os painéis dos convidados cobrem o quadro: fecham-se.
+    for (const p of convidados) await p.getByRole('button', { name: /^fechar painel$/i }).first().click({ timeout: 1500 }).catch(() => {})
     await hp.getByRole('button', { name: /^quadro branco$/i }).first().click({ timeout: 8000 })
     await hp.locator('.rm-wb__live').waitFor({ timeout: 8000 })
     await esperar(1500)
@@ -81,5 +83,5 @@ export default async function ({ hp, convidados, esperar, fotografar, want, log,
   })
   await esperar(600)
   if (want.has('DelonixBoardShared')) await fotografar(hp, 'DelonixBoardShared')
-  log('quadro: objectos no anfitrião', await hp.locator('.rm-wb').getAttribute('data-objects'))
+  log('quadro: objectos no anfitrião', await hp.locator('.rm-wb').getAttribute('data-objects', { timeout: 3000 }).catch(() => '?'))
 }

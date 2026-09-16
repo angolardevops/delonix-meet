@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { currentUser } from '../api'
+import { Icon } from '../ui/icons'
 import { Button, Dialog, IconButton, Tabs } from '../ui/kit'
 import '../ui/room.css'
 import { AudioSink } from '../room/AudioSink'
@@ -16,7 +17,7 @@ import { Prejoin } from '../room/Prejoin'
 import { QaPanel } from '../room/QaPanel'
 import { SettingsPanel } from '../room/SettingsPanel'
 import { Stage } from '../room/Stage'
-import { CaptionOverlay, ReactionsLayer, ReadyCard, WaitingOverlay, WinnerOverlay } from '../room/StageOverlays'
+import { CaptionOverlay, ReactionsLayer, ReadyCard, SpotlightQuestion, WaitingOverlay, WinnerOverlay } from '../room/StageOverlays'
 import { EndedScreen, PassphraseScreen } from '../room/StateScreens'
 import { TopBar } from '../room/TopBar'
 import { Whiteboard } from '../room/Whiteboard'
@@ -370,6 +371,7 @@ export default function Room({
               <ReactionsLayer reactions={reactions.reactions} />
               {transcription.ccOn && transcription.caption && <CaptionOverlay caption={transcription.caption} />}
               {tools.winnerFx && <WinnerOverlay />}
+              {tools.spotlitQuestion && <SpotlightQuestion q={tools.spotlitQuestion} />}
               {core.roomState === 'waiting' && <WaitingOverlay />}
             </Stage>
 
@@ -404,6 +406,17 @@ export default function Room({
                     invite.show()
                   }}
                 />
+              )}
+              {breakouts.announcement && (
+                <section className="rm-notice" role="status" aria-label={t('room.paralelas.anuncio')}>
+                  <header className="rm-notice__head">
+                    <Icon name="bell" size={13} />
+                    <strong>{t('room.paralelas.anuncioDe', { nome: breakouts.announcement.from })}</strong>
+                    <span className="dx-spacer" />
+                    <IconButton icon="x" bare label={t('room.avisos.dispensar')} onClick={breakouts.dismissAnnouncement} />
+                  </header>
+                  <p className="rm-notice__text">{breakouts.announcement.text}</p>
+                </section>
               )}
               <Notices
                 canAdmit={session.canAdmit}

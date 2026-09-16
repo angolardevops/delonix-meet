@@ -123,6 +123,8 @@ export function ParticipantTileBase({
   onPin,
   onMute,
   onKick,
+  spotlit,
+  onSpotlight,
 }: {
   peer: RemotePeer
   isHost: boolean
@@ -135,6 +137,10 @@ export function ParticipantTileBase({
   onPin: (peerId: string) => void
   onMute: (peerId: string) => void
   onKick: (peerId: string) => void
+  /** Destacado para toda a gente pelo anfitrião. */
+  spotlit?: boolean
+  /** Só o anfitrião: fixar para toda a gente (`spotlight`). */
+  onSpotlight?: (peerId: string | null) => void
 }) {
   const { t } = useTranslation()
   const ref = useRef<HTMLVideoElement>(null)
@@ -183,6 +189,7 @@ export function ParticipantTileBase({
             {t('room.papel.telefone')}
           </span>
         )}
+        {spotlit && <span className="rm-flag">{t('room.tile.emDestaque')}</span>}
         {peer.reconnecting && <span className="rm-flag">{t('room.tile.aVoltar')}</span>}
       </div>
       <div className="rm-tile__foot">
@@ -210,6 +217,18 @@ export function ParticipantTileBase({
         >
           <Icon name="pin" size={13} />
         </button>
+        {isHost && onSpotlight && (
+          <button
+            type="button"
+            className={cx('rm-tile__btn', spotlit && 'is-on')}
+            onClick={() => onSpotlight(spotlit ? null : peer.peerId)}
+            aria-pressed={!!spotlit}
+            aria-label={spotlit ? t('room.tile.desafixarParaTodos', { nome: peer.username }) : t('room.tile.fixarParaTodos', { nome: peer.username })}
+            title={spotlit ? t('room.tile.desafixarParaTodos', { nome: peer.username }) : t('room.tile.fixarParaTodos', { nome: peer.username })}
+          >
+            <Icon name="people" size={13} />
+          </button>
+        )}
         {isHost && !peer.host && (
           <>
             <button
@@ -263,5 +282,7 @@ export const ParticipantTile = memo(ParticipantTileBase, (a, b) =>
   a.height === b.height &&
   a.onPin === b.onPin &&
   a.onMute === b.onMute &&
-  a.onKick === b.onKick,
+  a.onKick === b.onKick &&
+  a.spotlit === b.spotlit &&
+  a.onSpotlight === b.onSpotlight,
 )

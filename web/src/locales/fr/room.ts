@@ -164,6 +164,9 @@ export default {
     tu: 'vous',
     nomeTu: '{{nome}} (vous)',
     aFalar: 'Parle',
+    fixarParaTodos: 'Épingler {{nome}} pour tout le monde',
+    desafixarParaTodos: 'Retirer {{nome}} de la une pour tout le monde',
+    emDestaque: 'À la une',
   },
   papel: {
     anfitriao: 'Hôte',
@@ -383,6 +386,7 @@ export default {
     ocultaDica: 'Seuls les hôtes voient les questions masquées.',
     citacao: '« {{texto}} »',
     etiquetaEstado: 'Question · {{estado}}',
+    noPalcoTitulo: "Question à l'écran · {{nome}}",
   },
   sondagens: {
     sondagem: 'Sondage',
@@ -494,6 +498,7 @@ export default {
     difundida: 'Message envoyé à toutes les salles.',
     anuncio: "Message de l'hôte",
     vaziaMin: 'vide',
+    anuncioDe: 'Message de {{nome}} à toutes les salles',
   },
   convite: {
     titulo: 'Inviter à la réunion',

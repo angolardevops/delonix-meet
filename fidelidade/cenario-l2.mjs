@@ -15,11 +15,8 @@ export default async function ({ hp, convidados, code, esperar, fotografar, want
     }
   }
 
-  await passo('admitir três', async () => {
-    for (const nome of ['Joaquim', 'Teresa', 'Domingos']) {
-      await hp.locator('.rm-notice__row', { hasText: nome }).locator('.rm-admit-accept').click({ timeout: 15000 })
-      await esperar(700)
-    }
+  await passo('a pré-entrada admitiu quem já esperava', async () => {
+    await hp.locator('.rm-tile[data-peer="remoto"]').nth(2).waitFor({ timeout: 20000 })
   })
   await esperar(4000)
 
@@ -43,11 +40,9 @@ export default async function ({ hp, convidados, code, esperar, fotografar, want
     await teresa.getByRole('button', { name: /levantar a mão/i }).click({ timeout: 8000 })
   })
   // A consola de moderação é outra ligação do anfitrião (aparece como pessoa na
-  // sala): fecha-se para a grelha, e volta a abrir-se no fim.
-  // Sair da página desmonta a consola e ela larga o lugar (fechar a aba deixava-o reservado).
+  // sala): sai-se dela para a grelha, e volta-se no fim.
   await lp.goto(`${APP}/#/`)
   await esperar(800)
-  await lp.close()
   await hp.bringToFront()
   await esperar(1500)
   if (want.has('DelonixRoomGrid')) await fotografar(hp, 'DelonixRoomGrid')
@@ -63,7 +58,7 @@ export default async function ({ hp, convidados, code, esperar, fotografar, want
     const msg = hp.locator('.rm-chat__msg', { hasText: 'failover entre os dois SBC' })
     await msg.waitFor({ timeout: 10000 })
     await msg.hover()
-    await msg.getByRole('button', { name: 'Responder' }).click({ timeout: 5000 })
+    await msg.getByRole('button', { name: 'Responder', exact: true }).first().click({ timeout: 5000 })
     const campoH = hp.getByRole('textbox', { name: /mensagem para/i })
     await campoH.fill('Sim — corrigido na versão 2.4. Mostro o relatório no diapositivo 21.')
     await campoH.press('Enter')
@@ -122,4 +117,39 @@ export default async function ({ hp, convidados, code, esperar, fotografar, want
 
   const cont = (await import('./cenario-quadro.mjs').catch(() => null))?.default
   if (cont) await cont({ hp, convidados, code, esperar, fotografar, want, APP, log, passo, lp })
+
+  // Telemóvel (reunião activa): a mesma sessão do anfitrião a 390×844.
+  if (want.has('DelonixMobile')) {
+    await passo('telemóvel', async () => {
+      await hp.getByRole('button', { name: /^quadro branco$/i }).first().click({ timeout: 4000 }).catch(() => {})
+      await hp.setViewportSize({ width: 390, height: 844 })
+      await hp.reload()
+      await hp.locator('.rm-shell').waitFor({ timeout: 30000 })
+      await esperar(5000)
+      await fotografar(hp, 'DelonixMobile')
+      await hp.setViewportSize({ width: 1440, height: 900 })
+    })
+  }
+
+  // Moderação no fim: com as duas pessoas à porta e três salas paralelas.
+  if (want.has('DelonixModeration')) {
+    await passo('moderação com salas paralelas', async () => {
+      // A Luísa e o Paulo saem e voltam: ficam outra vez à porta.
+      for (const p of convidados.slice(3)) {
+        await p.goto(`${APP}/#/`)
+        await esperar(800)
+        await p.goto(`${APP}/#/r/${code}`)
+        const botao = p.getByRole('button', { name: /^entrar na sess/i })
+        if (await botao.waitFor({ timeout: 8000 }).then(() => true).catch(() => false)) await botao.click()
+      }
+      await lp.goto(`${APP}/#/lobby/${code}`)
+      await lp.locator('.lb-table').waitFor({ timeout: 20000 })
+      await esperar(2500)
+      await lp.locator('.rm-bocard select').selectOption('15').catch(() => {})
+      await lp.getByRole('button', { name: /^3 grupos$/ }).click({ timeout: 8000 })
+      await esperar(2500)
+      await lp.mouse.move(5, 5)
+      await fotografar(lp, 'DelonixModeration')
+    })
+  }
 }

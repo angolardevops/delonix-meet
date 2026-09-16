@@ -164,6 +164,9 @@ export default {
     tu: 'you',
     nomeTu: '{{nome}} (you)',
     aFalar: 'Speaking',
+    fixarParaTodos: 'Pin {{nome}} for everyone',
+    desafixarParaTodos: "Remove {{nome}} from everyone's spotlight",
+    emDestaque: 'Spotlight',
   },
   papel: {
     anfitriao: 'Host',
@@ -383,6 +386,7 @@ export default {
     ocultaDica: 'Only hosts see hidden questions.',
     citacao: '“{{texto}}”',
     etiquetaEstado: 'Question · {{estado}}',
+    noPalcoTitulo: 'Spotlight question · {{nome}}',
   },
   sondagens: {
     sondagem: 'Poll',
@@ -494,6 +498,7 @@ export default {
     difundida: 'Message sent to all rooms.',
     anuncio: 'Message from the host',
     vaziaMin: 'empty',
+    anuncioDe: 'Message from {{nome}} to all rooms',
   },
   convite: {
     titulo: 'Invite to the meeting',

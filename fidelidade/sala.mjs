@@ -109,12 +109,17 @@ if (!sala.ok) throw new Error(`sala: ${sala.status} ${JSON.stringify(sala.data)}
 const code = sala.data.code
 log('sala', code)
 
-// Os convidados chegam primeiro: ficam na sala de espera (a sala tem-na ligada).
+// Três convidados chegam primeiro e ficam na sala de espera (a sala tem-na
+// ligada): o anfitrião vê-os na pré-entrada e entrar admite-os. Os outros dois
+// chegam DEPOIS e ficam à porta (a moderação mostra-os).
 const convidados = []
-for (const s of outros) {
+const tarde = []
+for (const [i, s] of outros.entries()) {
   const p = await pagina(s, { width: 900, height: 700 })
-  await p.goto(`${APP}/#/r/${code}`)
-  await entrar(p)
+  if (i < 3) {
+    await p.goto(`${APP}/#/r/${code}`)
+    await entrar(p)
+  } else tarde.push(p)
   convidados.push(p)
 }
 await esperar(2500)
@@ -129,6 +134,11 @@ if (want.has('DelonixPrejoin')) await fotografar(hp, 'DelonixPrejoin')
 await entrar(hp)
 await hp.waitForSelector('.rm-shell', { timeout: 30000 })
 await esperar(2500)
+for (const p of tarde) {
+  await p.goto(`${APP}/#/r/${code}`)
+  await entrar(p)
+}
+await esperar(2000)
 
 // Admite três e deixa dois à espera (Luísa e Paulo).
 const cenario = process.env.CENARIO ? await import(process.env.CENARIO) : null

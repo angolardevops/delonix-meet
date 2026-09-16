@@ -164,6 +164,9 @@ export default {
     tu: 'tu',
     nomeTu: '{{nome}} (tu)',
     aFalar: 'A falar',
+    fixarParaTodos: 'Fixar {{nome}} para toda a gente',
+    desafixarParaTodos: 'Tirar {{nome}} do destaque de toda a gente',
+    emDestaque: 'Em destaque',
   },
   papel: {
     anfitriao: 'Anfitrião',
@@ -383,6 +386,7 @@ export default {
     ocultaDica: 'Só os anfitriões vêem as perguntas ocultas.',
     citacao: '«{{texto}}»',
     etiquetaEstado: 'Pergunta · {{estado}}',
+    noPalcoTitulo: 'Pergunta em destaque · {{nome}}',
   },
   sondagens: {
     sondagem: 'Sondagem',
@@ -494,6 +498,7 @@ export default {
     difundida: 'Mensagem enviada a todas as salas.',
     anuncio: 'Mensagem do anfitrião',
     vaziaMin: 'vazia',
+    anuncioDe: 'Mensagem de {{nome}} a todas as salas',
   },
   convite: {
     titulo: 'Convidar para a reunião',

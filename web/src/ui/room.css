@@ -3545,3 +3545,38 @@ div.rm-only-narrow,
     display: grid;
   }
 }
+
+/* pergunta destacada no palco (qa-spotlight) e anúncio a todas as salas */
+.rm-qspot {
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: min(620px, calc(100% - 28px));
+  padding: 11px 14px;
+  border: 1px solid var(--live);
+  border-radius: var(--r-3);
+  background: color-mix(in srgb, var(--stage) 86%, transparent);
+  transform: translateX(-50%);
+}
+.rm-qspot__head {
+  color: var(--live-text);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.rm-qspot p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.rm-notice__text {
+  margin: 0;
+  font-size: var(--t-md);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}

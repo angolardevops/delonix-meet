@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { currentUser } from '../api'
 import { Icon } from '../ui/icons'
 import { Button, IconButton, Spinner } from '../ui/kit'
+import type { QaView } from '../signaling'
 import type { FloatingReaction } from './useReactions'
 
 export function ReactionsLayer({ reactions }: { reactions: FloatingReaction[] }) {
@@ -23,6 +24,17 @@ export function CaptionOverlay({ caption }: { caption: { who: string; text: stri
   return (
     <div className="rm-caption" aria-live="polite">
       <strong>{caption.who}</strong> {caption.text}
+    </div>
+  )
+}
+
+/** A pergunta que o anfitrião destacou no palco — para toda a gente (`qa-spotlight`). */
+export function SpotlightQuestion({ q }: { q: QaView }) {
+  const { t } = useTranslation()
+  return (
+    <div className="rm-qspot" role="status">
+      <span className="rm-qspot__head">{t('room.perguntas.noPalcoTitulo', { nome: q.by })}</span>
+      <p>{t('room.perguntas.citacao', { texto: q.text })}</p>
     </div>
   )
 }
