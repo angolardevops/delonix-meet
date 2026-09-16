@@ -11,7 +11,7 @@ import { Icon } from '../../ui/icons'
 import { Avatar, cx, IconButton, Select, Tabs } from '../../ui/kit'
 import { formatAgo, useLocaleTag } from '../admin/orgShared'
 
-export type DirTab = 'people' | 'groups' | 'missed'
+export type DirTab = 'people' | 'groups' | 'missed' | 'phone'
 export type Selection = { kind: 'person'; id: string } | { kind: 'group'; id: string } | { kind: 'org' } | null
 
 export default function ContactList({
@@ -36,6 +36,7 @@ export default function ContactList({
   onAckMissed,
   onNewGroup,
   pending,
+  phoneHistory,
 }: {
   tab: DirTab
   onTab: (t: DirTab) => void
@@ -59,6 +60,8 @@ export default function ContactList({
   onNewGroup: () => void
   /** O que mostrar no lugar da lista enquanto carrega ou quando falhou. */
   pending: ReactNode
+  /** Histórico PSTN (só para quem administra; sem ele o separador não aparece). */
+  phoneHistory?: ReactNode
 }) {
   const { t } = useTranslation()
   const locale = useLocaleTag()
@@ -66,7 +69,7 @@ export default function ContactList({
   return (
     <aside className="org-dir__list" aria-label={t('org.dir.lista')}>
       <div className="org-dir__head">
-        {tab !== 'missed' && (
+        {(tab === 'people' || tab === 'groups') && (
           <div className="org-search">
             <Icon name="search" />
             <input
@@ -96,6 +99,7 @@ export default function ContactList({
             { value: 'people', label: t('org.dir.pessoas') },
             { value: 'groups', label: t('org.dir.grupos') },
             { value: 'missed', label: t('org.dir.perdidas'), count: missed.length },
+            ...(phoneHistory ? [{ value: 'phone' as const, label: t('consola.contactos.telefone') }] : []),
           ]}
         />
       </div>
@@ -228,6 +232,7 @@ export default function ContactList({
             </ul>
           </>
         )}
+        {tab === 'phone' && phoneHistory}
       </div>
 
       <div className="org-dir__foot">

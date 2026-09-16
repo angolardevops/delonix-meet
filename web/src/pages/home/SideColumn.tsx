@@ -2,11 +2,15 @@
  * Coluna direita da Início — só com dados que o servidor tem.
  *
  * O template mostra aqui «Canais de emissão», «A minha sala» (ligação pessoal
- * e dial-in) e um armazenamento com quota total. Nenhum dos três tem endpoint:
- * os destinos de emissão não se guardam, não há sala pessoal nem PSTN, e o
- * servidor sabe quanto ocupam as gravações da organização mas não conhece um
- * tecto. Ficam os quadros recentes (que a Início antiga já mostrava) e o
- * volume real das gravações, para quem o servidor deixa ver.
+ * e dial-in) e um armazenamento com quota total.
+ *  - Canais de emissão: os destinos vão por sessão e não se guardam.
+ *  - A minha sala: não há sala pessoal (cada reunião tem código aleatório).
+ *    O dial-in PSTN tem plano de controlo (`voice.rs`: número + PIN por sala)
+ *    mas falta a ponte FreeSWITCH↔SFU — um número aqui levava a pessoa a uma
+ *    conferência só de voz, fora da reunião. Não se mostra.
+ *  - Quota total: o servidor sabe quanto ocupam as gravações, não o tecto.
+ * Ficam os quadros recentes, o volume real das gravações (admins) e o destino
+ * do armazenamento da plataforma (só para quem o servidor deixa ler).
  */
 import { useTranslation } from 'react-i18next'
 import { ApiError, listWhiteboards, orgStats } from '../../api'

@@ -8,7 +8,7 @@
  */
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ApiError } from '../api'
+import { serverStatus } from '../api'
 import { useAsync } from '../components/AsyncSection'
 import { BadgeTone, Button, Card, Skeleton, StatusBadge } from '../ui/kit'
 import { EstadoServico, partesUptime, Saude, saudeGlobal } from './auth/logica'
@@ -22,9 +22,7 @@ interface Leitura {
 }
 
 async function lerEstado(signal: AbortSignal): Promise<Leitura> {
-  const r = await fetch('/api/status', { signal, cache: 'no-store' })
-  if (!r.ok) throw new ApiError(r.status, null, r.statusText)
-  return { info: (await r.json()) as EstadoServico, em: new Date() }
+  return { info: await serverStatus(signal), em: new Date() }
 }
 
 const TOM: Record<Saude, BadgeTone> = { operacional: 'success', degradado: 'warning', indisponivel: 'record' }

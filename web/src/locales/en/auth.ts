@@ -21,11 +21,8 @@ export default {
   },
   lingua: 'Language',
   painel: {
-    titulo: "Meetings, recordings and live streams, on your organisation's infrastructure.",
-    texto: 'End-to-end encryption when the meeting calls for it, two-step verification and sign-in with your company identity.',
     e2ee: 'End-to-end encryption',
     gravacao: 'Server-side recording',
-    directo: 'Live streaming',
     mfa: 'Two-step verification',
     ligacoes: 'Public links',
     estado: 'Service status',

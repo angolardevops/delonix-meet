@@ -21,11 +21,8 @@ export default {
   },
   lingua: 'Língua',
   painel: {
-    titulo: 'Reuniões, gravações e emissões em directo, na infraestrutura da tua organização.',
-    texto: 'Encriptação ponta-a-ponta quando a reunião o pede, verificação em dois passos e entrada com a identidade da empresa.',
     e2ee: 'Encriptação ponta-a-ponta',
     gravacao: 'Gravação no servidor',
-    directo: 'Emissão em directo',
     mfa: 'Verificação em dois passos',
     ligacoes: 'Ligações públicas',
     estado: 'Estado do serviço',

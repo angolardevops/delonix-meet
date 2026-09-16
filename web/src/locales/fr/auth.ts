@@ -21,11 +21,8 @@ export default {
   },
   lingua: 'Langue',
   painel: {
-    titulo: "Réunions, enregistrements et diffusions en direct, sur l'infrastructure de votre organisation.",
-    texto: "Chiffrement de bout en bout quand la réunion l'exige, vérification en deux étapes et connexion avec l'identité de l'entreprise.",
     e2ee: 'Chiffrement de bout en bout',
     gravacao: 'Enregistrement sur le serveur',
-    directo: 'Diffusion en direct',
     mfa: 'Vérification en deux étapes',
     ligacoes: 'Liens publics',
     estado: 'État du service',

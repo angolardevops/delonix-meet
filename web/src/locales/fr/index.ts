@@ -14,5 +14,6 @@ import org from './org'
 import analytics from './analytics'
 import integrations from './integrations'
 import publico from './publico'
+import consola from './consola'
 
-export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico }
+export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico, consola }

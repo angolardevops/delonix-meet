@@ -1506,3 +1506,110 @@ export async function deleteStreamDestination(orgId: string, id: string): Promis
     throw new ApiError(res.status, body, body?.error ?? res.statusText ?? 'request failed')
   }
 }
+
+// ---------- frontend/l1-consola ----------
+
+/** `GET /api/status` — público, sem sessão (`server/src/main.rs` `status`). */
+export interface ServerStatus {
+  status: 'ok' | 'degraded' | string
+  api: boolean
+  db: boolean
+  uptime_secs: number
+  version: string
+}
+export async function serverStatus(signal?: AbortSignal): Promise<ServerStatus> {
+  const r = await fetch('/api/status', { signal, cache: 'no-store' })
+  if (!r.ok) throw new ApiError(r.status, null, r.statusText)
+  return (await r.json()) as ServerStatus
+}
+
+/**
+ * `GET /api/orgs/{org}/audit/verify` — recalcula a cadeia de hashes do registo
+ * de auditoria (migração 0037). Só admins. `intact: false` diz em que registo
+ * a cadeia partiu.
+ */
+export interface AuditChainCheck {
+  intact: boolean
+  entries: number
+  broken_at_seq: number | null
+  detail: string
+}
+export const verifyAudit = (orgId: string, signal?: AbortSignal) =>
+  request<AuditChainCheck>(`/api/orgs/${orgId}/audit/verify`, { signal })
+
+// Dial-in PSTN — plano de controlo (`server/src/voice.rs`). Salas de voz com
+// número e PIN, inventário de DIDs, CDR e resumo de facturação. A camada de
+// media (Kamailio + FreeSWITCH, `voice/`) e a ponte FreeSWITCH↔SFU são outra
+// coisa: sem a ponte, quem liga fala numa conferência só de voz, não na sala.
+
+export interface VoiceRoomCreated {
+  id: string
+  room_code: string
+  pin: string
+  dial_in_number: string | null
+  media_backend: string
+}
+export interface VoiceRoom {
+  id: string
+  org_id: string
+  room_code: string
+  pin: string
+  did_id: string | null
+  media_backend: string
+  status: 'active' | 'closed' | string
+  created_at: string
+}
+export interface VoiceParticipant {
+  id: string
+  channel: string
+  caller_number: string
+  joined_at: string
+  left_at: string | null
+}
+export interface VoiceDid {
+  id: string
+  org_id: string | null
+  e164: string
+  market: string
+  model: 'shared' | 'dedicated' | string
+  provider: string
+  active: boolean
+  created_at: string
+}
+export interface VoiceCdr {
+  id: string
+  direction: string
+  caller_number: string
+  did_e164: string
+  duration_secs: number
+  cost_estimate: number
+  started_at: string
+  ended_at: string | null
+}
+export type VoicePeriod = 'week' | 'month' | 'quarter' | 'year'
+export interface VoiceBilling {
+  period: string
+  calls: number
+  total_minutes: number
+  total_cost: number
+  currency_note: string
+}
+
+export const createVoiceRoom = (roomCode: string, didId?: string) =>
+  request<VoiceRoomCreated>('/api/voice/rooms', {
+    method: 'POST',
+    body: JSON.stringify({ room_code: roomCode, ...(didId ? { did_id: didId } : {}) }),
+  })
+export const getVoiceRoom = (id: string) => request<VoiceRoom>(`/api/voice/rooms/${id}`)
+export const voiceRoomParticipants = (id: string) => request<VoiceParticipant[]>(`/api/voice/rooms/${id}/participants`)
+export const closeVoiceRoom = (id: string) => request<{ ok: boolean }>(`/api/voice/rooms/${id}/close`, { method: 'POST' })
+export const listVoiceDids = (orgId: string, signal?: AbortSignal) =>
+  request<VoiceDid[]>(`/api/orgs/${orgId}/voice/dids`, { signal })
+export const createVoiceDid = (
+  orgId: string,
+  did: { e164: string; market?: string; model?: 'shared' | 'dedicated'; provider?: string; org_scoped?: boolean },
+) => request<VoiceDid>(`/api/orgs/${orgId}/voice/dids`, { method: 'POST', body: JSON.stringify(did) })
+export const listVoiceCdr = (orgId: string, signal?: AbortSignal) =>
+  request<VoiceCdr[]>(`/api/orgs/${orgId}/voice/cdr`, { signal })
+export const voiceBilling = (orgId: string, period: VoicePeriod = 'month', signal?: AbortSignal) =>
+  request<VoiceBilling>(`/api/orgs/${orgId}/voice/billing?period=${period}`, { signal })

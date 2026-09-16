@@ -155,7 +155,7 @@ export default function FormularioEntrada({
         <Field
           label={registo ? t('auth.registo.emailEmpresa') : t('auth.entrar.email')}
           htmlFor="auth-email"
-          hint={sso.aVerificar ? t('auth.sso.aVerificar') : undefined}
+          hint={sso.aVerificar ? t('auth.sso.aVerificar') : registo ? undefined : t('consola.entrar.odoo')}
         >
           <TextInput
             id="auth-email"

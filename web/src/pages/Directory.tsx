@@ -3,8 +3,11 @@
  * chamadas perdidas — e ligar por vídeo ou voz. A chamada acontece na sala
  * (o `PresenceProvider` leva quem liga para lá); este ecrã só escolhe a quem.
  *
- * O teclado PSTN, transferir e DTMF do template não existem: não há backend
- * de telefonia para eles.
+ * Telefonia: o dial-in PSTN de ENTRADA existe (`server/src/voice.rs` +
+ * `voice/`), e quem administra vê aqui as chamadas que entraram (CDR). O
+ * teclado de marcação, transferir e DTMF do template não existem: não há
+ * chamadas de saída («Sem outbound» em `voice/README.md`), nem mensagem de
+ * transferência, e o DTMF depende da ponte FreeSWITCH↔SFU que ainda falta.
  */
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -18,6 +21,7 @@ import CreateGroupDialog from './admin/CreateGroupDialog'
 import CreateOrgDialog from './admin/CreateOrgDialog'
 import { refusalAware, useOrgSelection } from './admin/orgShared'
 import { GroupDetail, PersonDetail } from './directory/ContactDetail'
+import PstnHistory from './directory/PstnHistory'
 import ContactList, { DirTab, Selection } from './directory/ContactList'
 import OrgOverview from './directory/OrgOverview'
 import '../ui/org.css'
@@ -205,6 +209,7 @@ function DirectoryBody({ orgId, orgName, isAdmin, meId }: { orgId: string; orgNa
         onCallBack={presence.callBack}
         onAckMissed={presence.ackMissed}
         onNewGroup={() => setCreatingGroup(true)}
+        phoneHistory={isAdmin ? <PstnHistory orgId={orgId} /> : undefined}
         pending={
           tab === 'groups' ? <Pending state={groups.state} onRetry={groups.reload} /> : <Pending state={people.state} onRetry={people.reload} />
         }
