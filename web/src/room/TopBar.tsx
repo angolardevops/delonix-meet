@@ -2,7 +2,7 @@ import { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { CallState } from '../callRecovery'
 import { DelonixSymbol, Icon } from '../ui/icons'
-import { Button, Segmented, StatusBadge, cx } from '../ui/kit'
+import { AvatarStack, Button, Segmented, StatusBadge, cx } from '../ui/kit'
 import { MeetingElapsed, WallClock } from './Clocks'
 import type { ViewMode } from './useLayout'
 
@@ -76,18 +76,28 @@ export function TopBar({
   /** Quadro aberto: a barra passa a ser a do quadro (template DelonixWhiteboard). */
   /** «A partilhar · Nome» quando há apresentação (template DelonixRoomChat). */
   presenterLabel: string | null
-  board: { sharedBy: string | null; saving: boolean; canSave: boolean; onSave: () => void; onClose: () => void; pen: { on: boolean; pressao: boolean } } | null
+  board: {
+    sharedBy: string | null
+    saving: boolean
+    canSave: boolean
+    onSave: () => void
+    pen: { on: boolean; pressao: boolean }
+    /** Quem mexeu no quadro nos últimos segundos («A editar:»). */
+    editors: string[]
+    /** Quadro partilhado (caneta, ajustes, palco): a barra é a do template DelonixBoardShared. */
+    shared: boolean
+  } | null
   locale: string
 }) {
   const { t } = useTranslation()
   return (
-    <header className="rm-top">
+    <header className={cx('rm-top', board && 'is-board')}>
       <span className="rm-top__mark" aria-hidden="true">
         <DelonixSymbol size={18} />
       </span>
       <h1 className="rm-top__title">
         {board
-          ? board.sharedBy
+          ? board.shared
             ? t('room.quadro.tituloPartilhado', { nome: title || code })
             : t('room.quadro.tituloBarra', { nome: title || code })
           : title || code}
@@ -138,22 +148,29 @@ export function TopBar({
       )}
       {board && (
         <>
-          {board.sharedBy && <span className="rm-top__meta rm-hide-narrow">{t('room.quadro.abertoPor', { nome: board.sharedBy })}</span>}
-          {board.pen.on && (
-            <span className="rm-top__pen rm-hide-narrow">
-              <span className="rm-top__penchip">
-                <Icon name="pen" size={11} />
-                {t('room.quadro.caneta')}
+          {board.shared ? (
+            board.pen.on && (
+              <span className="rm-top__pen rm-hide-narrow">
+                <span className="rm-top__penchip">
+                  <Icon name="pen" size={11} />
+                  {t('room.quadro.caneta')}
+                </span>
+                {board.pen.pressao && <span className="rm-top__meta dx-num">{t('room.quadro.pressaoActiva')}</span>}
               </span>
-              {board.pen.pressao && <span className="rm-top__meta dx-num">{t('room.quadro.pressaoActiva')}</span>}
-            </span>
+            )
+          ) : (
+            <>
+              {board.editors.length > 0 && (
+                <span className="rm-top__editing rm-hide-narrow" role="status" aria-label={t('room.quadro.aEditarNomes', { nomes: board.editors.join(', ') })}>
+                  <span aria-hidden="true">{t('room.quadro.aEditar')}</span>
+                  <AvatarStack names={board.editors} max={4} size={22} />
+                </span>
+              )}
+              <Button size="sm" variant="outline" busy={board.saving} disabled={!board.canSave} onClick={board.onSave} className="rm-top__save">
+                <span className="rm-hide-narrow">{t('room.quadro.guardar')}</span>
+              </Button>
+            </>
           )}
-          <Button size="sm" variant="outline" icon="download" busy={board.saving} disabled={!board.canSave} onClick={board.onSave}>
-            <span className="rm-hide-narrow">{t('room.quadro.guardar')}</span>
-          </Button>
-          <Button size="sm" variant="primary" icon="x" onClick={board.onClose}>
-            <span className="rm-hide-narrow">{t('room.quadro.fechar')}</span>
-          </Button>
         </>
       )}
       {presenterLabel && !board ? <span className="rm-top__presenting rm-hide-narrow">{presenterLabel}</span> : null}

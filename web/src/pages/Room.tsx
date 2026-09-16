@@ -40,6 +40,7 @@ import { useRoomCore, type RemotePeer } from '../room/useRoomCore'
 import { useScreenShare } from '../room/useScreenShare'
 import { useTranscription } from '../room/useTranscription'
 import { useWhiteboard } from '../room/useWhiteboard'
+import { aEditar } from '../room/wbState'
 
 type Confirmacao = { kind: 'transfer'; peer: RemotePeer } | { kind: 'server-rec-e2ee' } | null
 
@@ -233,6 +234,65 @@ export default function Room({
       polls: t('room.painel.sondagensTitulo'),
     }
 
+    const editoresDoQuadro = aEditar(whiteboard.actividade, Date.now())
+    const controlos = (
+      <ControlBar
+        isHost={isHost}
+        topology={core.topology}
+        status={core.status}
+        callState={session.callState}
+        media={media}
+        layout={layout}
+        panel={chrome.panel}
+        onTogglePanel={chrome.togglePanel}
+        onOpenSettings={() => chrome.setPanel('settings')}
+        presenterLabel={presenterLabel}
+        returnTo={breakouts.returnTo}
+        onReturnToMain={breakouts.returnToMain}
+        breakoutEndsAt={breakouts.endsAt}
+        timerEndsAt={tools.timerEndsAt}
+        ccOn={transcription.ccOn}
+        onToggleCc={transcription.toggleCc}
+        onReaction={reactions.sendReaction}
+        sharing={share.sharing}
+        shareNeedsPermission={share.needsPermission}
+        onShare={share.requestOrToggleShare}
+        handRaised={reactions.handRaised}
+        onToggleHand={reactions.toggleHand}
+        recording={recording.recording}
+        recBusy={recording.recBusy}
+        onToggleRecording={() => void recording.toggleLocal()}
+        wbOpen={whiteboard.open}
+        onToggleWhiteboard={whiteboard.toggle}
+        transcribing={transcription.transcribing}
+        unreadChat={chat.unread}
+        total={peers.length + 1}
+        openQuestions={openQuestions}
+        openPolls={openPolls}
+        hasPresentation={!!core.presentation}
+        pipDisponivel={pip.pipDisponivel}
+        pipOn={pip.pipOn}
+        pipErro={pip.pipErro}
+        onTogglePip={() => void pip.alternarPip()}
+        multicamAvailable={isHost && multicam.supported}
+        onOpenMulticam={openMulticam}
+        serverRecAvailable={isHost && core.topology === 'sfu'}
+        serverRecOn={!!recording.serverRec}
+        onToggleServerRec={toggleServerRecording}
+        onLeave={leave}
+        fonte2Label={fonte2?.label ?? null}
+        fonte2On={share.sharing && !!share.sourceDeviceId}
+        onFonte={(f) => {
+          const aPartilharFonte = share.sharing && !!share.sourceDeviceId
+          if (f === 'fonte2' && !aPartilharFonte && fonte2) void share.shareSource(fonte2.deviceId)
+          if (f === 'camara' && aPartilharFonte) share.requestOrToggleShare()
+        }}
+        canAdmit={session.canAdmit}
+        waitingCount={participants.waitingQueue.length}
+        onAdmitAll={participants.admitAll}
+      />
+    )
+
     content = (
       <div className="rm-shell">
         <TopBar
@@ -274,12 +334,9 @@ export default function Room({
                   saving: whiteboard.saving,
                   canSave: whiteboard.strokes.length > 0,
                   onSave: () => void whiteboard.save(),
-                  // Fechar guarda na biblioteca se houver conteúdo por guardar.
-                  onClose: () => {
-                    if (whiteboard.unsaved && !whiteboard.saving) void whiteboard.save()
-                    whiteboard.close()
-                  },
                   pen: whiteboard.pen,
+                  editors: editoresDoQuadro,
+                  shared: whiteboard.pen.on || multicam.boardOnStage,
                 }
               : null
           }
@@ -310,6 +367,9 @@ export default function Room({
               <Whiteboard
                 wb={whiteboard}
                 me={currentUser()?.username ?? ''}
+                myPeerId={core.meuPeerIdRef.current}
+                isHost={isHost}
+                controls={controlos}
                 micOn={media.micOn}
                 meSpeaking={core.speaking.has('me') && media.micOn}
                 peers={peers}
@@ -355,62 +415,9 @@ export default function Room({
                 talkOverNames={talkOverNames}
               />
             </div>
-            {/* A barra vive na coluna principal: o painel lateral ocupa a altura toda (template DelonixRoomChat). */}
-            <ControlBar
-              isHost={isHost}
-              topology={core.topology}
-              status={core.status}
-              callState={session.callState}
-              media={media}
-              layout={layout}
-              panel={chrome.panel}
-              onTogglePanel={chrome.togglePanel}
-              onOpenSettings={() => chrome.setPanel('settings')}
-              presenterLabel={presenterLabel}
-              returnTo={breakouts.returnTo}
-              onReturnToMain={breakouts.returnToMain}
-              breakoutEndsAt={breakouts.endsAt}
-              timerEndsAt={tools.timerEndsAt}
-              ccOn={transcription.ccOn}
-              onToggleCc={transcription.toggleCc}
-              onReaction={reactions.sendReaction}
-              sharing={share.sharing}
-              shareNeedsPermission={share.needsPermission}
-              onShare={share.requestOrToggleShare}
-              handRaised={reactions.handRaised}
-              onToggleHand={reactions.toggleHand}
-              recording={recording.recording}
-              recBusy={recording.recBusy}
-              onToggleRecording={() => void recording.toggleLocal()}
-              wbOpen={whiteboard.open}
-              onToggleWhiteboard={whiteboard.toggle}
-              transcribing={transcription.transcribing}
-              unreadChat={chat.unread}
-              total={peers.length + 1}
-              openQuestions={openQuestions}
-              openPolls={openPolls}
-              hasPresentation={!!core.presentation}
-              pipDisponivel={pip.pipDisponivel}
-              pipOn={pip.pipOn}
-              pipErro={pip.pipErro}
-              onTogglePip={() => void pip.alternarPip()}
-              multicamAvailable={isHost && multicam.supported}
-              onOpenMulticam={openMulticam}
-              serverRecAvailable={isHost && core.topology === 'sfu'}
-              serverRecOn={!!recording.serverRec}
-              onToggleServerRec={toggleServerRecording}
-              onLeave={leave}
-              fonte2Label={fonte2?.label ?? null}
-              fonte2On={share.sharing && !!share.sourceDeviceId}
-              onFonte={(f) => {
-                const aPartilharFonte = share.sharing && !!share.sourceDeviceId
-                if (f === 'fonte2' && !aPartilharFonte && fonte2) void share.shareSource(fonte2.deviceId)
-                if (f === 'camara' && aPartilharFonte) share.requestOrToggleShare()
-              }}
-              canAdmit={session.canAdmit}
-              waitingCount={participants.waitingQueue.length}
-              onAdmitAll={participants.admitAll}
-            />
+            {/* A barra vive na coluna principal: o painel lateral ocupa a altura toda
+                (template DelonixRoomChat). Com o quadro aberto, vive por baixo da folha. */}
+            {!whiteboard.open && controlos}
           </div>
 
           {chrome.panel !== 'none' && (
