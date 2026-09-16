@@ -52,6 +52,14 @@ pub struct Config {
     /// por quem o soubesse — e herdava a plataforma. Um UUID só existe depois
     /// de a conta nascer, e é o operador que o vai buscar.
     pub platform_admin_user_ids: Vec<uuid::Uuid>,
+    /// Ligações SMPP aos operadores móveis (ADR-0005):
+    /// `smpp://system_id:password@host:2775?source_addr=DELONIX`. Ausente =>
+    /// operador por contratar, e o encaminhamento não o escolhe. São da
+    /// PLATAFORMA (o contrato é da Delonix), por isso vêm do ambiente e não de
+    /// uma tabela — não há cifra de segredos em repouso (S5).
+    pub sms_unitel_smpp: Option<String>,
+    pub sms_movicel_smpp: Option<String>,
+    pub sms_africell_smpp: Option<String>,
     /// Tarifa estimada por minuto (inbound) para o cálculo de custo no CDR.
     pub voice_tariff_inbound: f64,
     /// Diretório onde as gravações são armazenadas (lido uma vez no arranque).
@@ -214,6 +222,9 @@ impl Config {
             voice_internal_secret: env::var("VOICE_INTERNAL_SECRET").unwrap_or_default(),
             provisioning_secret: env::var("PROVISIONING_SECRET").unwrap_or_default(),
             platform_admin_user_ids: uuid_list("PLATFORM_ADMIN_USER_IDS"),
+            sms_unitel_smpp: env::var("SMS_UNITEL_SMPP").ok().filter(|v| !v.is_empty()),
+            sms_movicel_smpp: env::var("SMS_MOVICEL_SMPP").ok().filter(|v| !v.is_empty()),
+            sms_africell_smpp: env::var("SMS_AFRICELL_SMPP").ok().filter(|v| !v.is_empty()),
             voice_tariff_inbound: env::var("VOICE_TARIFF_INBOUND")
                 .ok()
                 .and_then(|v| v.parse().ok())

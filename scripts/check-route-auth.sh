@@ -21,7 +21,7 @@ MAIN = 'server/src/main.rs'
 PUBLICAS = 'scripts/rotas-publicas.txt'
 
 # Autenticação por EXTRACTOR na assinatura.
-EXTRACTORES = ('AuthUser', 'ApiKey', 'OdooTokenAuth')
+EXTRACTORES = ('AuthUser', 'ApiKey', 'OdooTokenAuth', 'SmsGatewayAuth')
 # Autenticação por GUARDA chamada no corpo. Nem tudo pode ser um extractor: a
 # API interna da voz autentica por segredo partilhado em header, e isso lê-se
 # do `HeaderMap`, não de um tipo.
