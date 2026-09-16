@@ -7,6 +7,10 @@ export default {
   temaClaro: '浅色主题',
   temaEscuro: '深色主题',
   abrirNavegacao: '打开导航',
+  fecharNavegacao: '关闭导航',
+  recolherMenu: '收起菜单',
+  expandirMenu: '展开菜单',
+  atalhoMenu: 'Ctrl B',
   inseguro: 'HTTP 连接不安全：浏览器会阻止摄像头、麦克风和通话。请打开 https://{{host}}。',
   nav: {
     rotulo: '主导航',

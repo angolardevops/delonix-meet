@@ -24,6 +24,12 @@ export interface ShellApi {
   reloadOrgs: () => void
   navOpen: boolean
   setNavOpen: (open: boolean) => void
+  /** Rail recolhido a só ícones (só conta em ecrã largo). */
+  navCollapsed: boolean
+  /** Estado que o hambúrguer anuncia em `aria-expanded`: gaveta aberta (estreito) ou rail expandido (largo). */
+  navExpanded: boolean
+  /** Gaveta em ecrã estreito, recolher/expandir em ecrã largo. */
+  toggleNav: () => void
   navigate: (k: NavKey) => void
   enterRoom: (code: string, voice?: boolean) => void
   openPalette: () => void

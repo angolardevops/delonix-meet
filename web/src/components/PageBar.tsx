@@ -1,7 +1,8 @@
 /**
  * Barra de topo de uma página da consola (58 px): título, metadado em mono,
  * e as acções da página à direita. Em ecrã estreito mostra o botão que abre
- * a gaveta de navegação.
+ * a gaveta de navegação; em ecrã largo mostra-o só com o rail recolhido, e
+ * aí expande-o.
  */
 import { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -18,16 +19,17 @@ export default function PageBar({
   children?: ReactNode
 }) {
   const { t } = useTranslation()
-  const { navOpen, setNavOpen } = useShell()
+  const { navExpanded, toggleNav } = useShell()
   return (
     <header className="page-bar">
       <button
         type="button"
         className="dx-iconbtn page-bar__burger"
         aria-label={t('shell.abrirNavegacao')}
-        aria-expanded={navOpen}
+        title={`${t('shell.abrirNavegacao')} (${t('shell.atalhoMenu')})`}
+        aria-expanded={navExpanded}
         aria-controls="shell-nav"
-        onClick={() => setNavOpen(!navOpen)}
+        onClick={toggleNav}
       >
         <Icon name="menu" />
       </button>

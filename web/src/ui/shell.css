@@ -102,8 +102,14 @@
   flex: none;
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  gap: 8px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--border);
+}
+.shell-nav__lockup {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
 }
 .shell-nav__search {
   display: flex;
@@ -338,6 +344,73 @@ kbd {
   }
   .page-bar__meta {
     display: none;
+  }
+}
+
+/* Rail recolhido a só ícones, acima de 900 px (abaixo manda a gaveta). O
+   texto sai da vista mas fica no nome acessível de cada botão. */
+@media (min-width: 901px) {
+  .shell-nav {
+    transition: width 0.18s ease;
+    overflow-x: hidden;
+  }
+  .shell.nav-collapsed .shell-nav {
+    width: var(--nav-w-collapsed);
+  }
+  .shell.nav-collapsed .nav-item__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .shell.nav-collapsed .shell-nav__brand {
+    justify-content: center;
+    padding: 0;
+  }
+  .shell.nav-collapsed .shell-nav__lockup,
+  .shell.nav-collapsed .shell-nav__search kbd,
+  .shell.nav-collapsed .shell-user__id,
+  .shell.nav-collapsed .shell-nav__missed > :not(.dx-icon) {
+    display: none;
+  }
+  .shell.nav-collapsed .shell-nav__search {
+    justify-content: center;
+    padding: 0;
+  }
+  .shell.nav-collapsed .shell-nav__scroll {
+    padding: 8px 10px;
+  }
+  .shell.nav-collapsed .nav-item {
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+  }
+  .shell.nav-collapsed .nav-section {
+    margin: 8px 4px 6px;
+    padding: 0;
+    border-top: 1px solid var(--border);
+  }
+  .shell.nav-collapsed .shell-nav__missed {
+    justify-content: center;
+    margin: 0 10px 8px;
+    padding: 8px 0;
+  }
+  .shell.nav-collapsed .shell-nav__foot {
+    align-items: center;
+    padding: 10px 0;
+  }
+  .shell.nav-collapsed .shell-user {
+    justify-content: center;
+  }
+  .shell.nav-collapsed .shell-nav__tools {
+    flex-direction: column;
+    align-items: center;
+  }
+  /* Com o rail recolhido, a barra de cada página também oferece o hambúrguer. */
+  .shell.nav-collapsed .page-bar__burger {
+    display: inline-flex;
   }
 }
 @media (prefers-reduced-motion: reduce) {

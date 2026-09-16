@@ -95,6 +95,7 @@
   --ctl-h: 32px;
   --ctl-h-lg: 42px;
   --nav-w: 228px;
+  --nav-w-collapsed: 64px;
   --top-h: 58px;
   --controls-h: 66px;
   --focus: 2px solid var(--accent);
