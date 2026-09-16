@@ -26,6 +26,8 @@ export function useChat(core: RoomCore, chatOpen: boolean) {
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   /** Mensagem a que se está a responder. */
   const [replyTo, setReplyTo] = useState<ChatMsg | null>(null)
+  /** «Para»: toda a gente (`null`) ou uma pessoa (conversa directa). */
+  const [target, setTarget] = useState<{ peerId: string; username: string } | null>(null)
   /** O servidor só dá contagens: o que EU reagi lembra-se aqui (alterna por conta). */
   const [mine, setMine] = useState<Record<string, string[]>>({})
   const openRef = useRef(chatOpen)
@@ -88,11 +90,22 @@ export function useChat(core: RoomCore, chatOpen: boolean) {
     }
     const clientId = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
     const mae = replyTo?.id ?? null
-    signal.sendB1({ type: 'chat', text, reply_to: mae, client_id: clientId })
-    setMessages((c) => comEnviada(c, { clientId, username: currentUser()?.username ?? '', text, replyTo: mae, at: Date.now() }))
+    // Uma resposta a uma privada é privada para o mesmo par (o servidor impõe-no).
+    const para = target ?? (replyTo?.private ? parDaPrivada(replyTo) : null)
+    signal.sendB1({ type: 'chat', text, reply_to: mae, client_id: clientId, to: para?.peerId ?? null })
+    setMessages((c) =>
+      comEnviada(c, { clientId, username: currentUser()?.username ?? '', text, replyTo: mae, at: Date.now(), to: para?.peerId ?? null, toUsername: para?.username ?? null }),
+    )
     setInput('')
     setMentionQuery(null)
     setReplyTo(null)
+  }
+
+  /** A outra pessoa de uma conversa directa, entre quem está na sala. */
+  function parDaPrivada(m: ChatMsg): { peerId: string; username: string } | null {
+    const nome = m.own ? m.toUsername : m.username
+    const peer = (!m.own && m.from && core.peersRef.current.find((p) => p.peerId === m.from)) || core.peersRef.current.find((p) => p.username === nome)
+    return peer ? { peerId: peer.peerId, username: peer.username } : null
   }
 
   /** Alterna uma reacção (o servidor devolve as contagens a toda a sala). */
@@ -120,8 +133,21 @@ export function useChat(core: RoomCore, chatOpen: boolean) {
     completeMention,
     send,
     replyTo,
-    /** Só mensagens confirmadas (com id) aceitam respostas. */
-    startReply: (m: ChatMsg | null) => setReplyTo(m && m.id ? m : null),
+    /** Só mensagens confirmadas (com id) aceitam respostas. Responder a uma privada fixa o «Para». */
+    startReply: (m: ChatMsg | null) => {
+      setReplyTo(m && m.id ? m : null)
+      if (m?.private) setTarget(parDaPrivada(m))
+    },
+    /** «Responder em privado»: fio sobre a mensagem, só para quem a escreveu. */
+    replyPrivately: (m: ChatMsg) => {
+      const autor = parDaPrivada({ ...m, own: false })
+      if (!autor) return
+      setTarget(autor)
+      setReplyTo(m.id ? m : null)
+    },
+    target,
+    /** «Mensagem privada» (menu do participante) ou «Para: Todos». */
+    setTarget,
     react,
     myReactions: mine,
     setChatOpenForAll: (on: boolean) => signal.send({ type: 'chat-toggle', on }),

@@ -43,4 +43,13 @@ describe('chat da sala como dados', () => {
     s = comRecebida(s, { from: 'q', username: 'Y', text: 'r2', id: 'r2', reply_to: 'm' })
     expect(respostasPorMae(s).get('m')?.map((m) => m.id)).toEqual(['r1', 'r2'])
   })
+
+  it('uma privada fica marcada ao vivo, na minha e no histórico', () => {
+    let s = comRecebida([], { from: 'p', username: 'Rui', text: 'só tu', id: 'x', to: 'eu', to_username: 'Ana' })
+    expect(s[0]).toMatchObject({ private: true, to: 'eu', toUsername: 'Ana' })
+    s = comEnviada(s, { clientId: 'c', username: 'Ana', text: 'ok', replyTo: 'x', at: 1, to: 'p', toUsername: 'Rui' })
+    expect(s[1]).toMatchObject({ private: true, toUsername: 'Rui', replyTo: 'x' })
+    const h = comHistorico([], [{ id: 'h', user_id: 'u2', username: 'Rui', message: 'antiga', created_at: new Date(0).toISOString(), to_user_id: 'u1', to_username: 'Ana' }], 'u1')
+    expect(h[0]).toMatchObject({ private: true, toUsername: 'Ana', own: false })
+  })
 })

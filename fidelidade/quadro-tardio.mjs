@@ -13,7 +13,7 @@ const appIdx = args.indexOf('--app')
 const APP = appIdx >= 0 ? args.splice(appIdx, 2)[1] : 'http://127.0.0.1:5601'
 const API = process.env.API ?? 'http://127.0.0.1:8190'
 const N = Number(process.env.N ?? 6)
-const TOKENS = `${DIR}.tokens-sala.json`
+const TOKENS = process.env.TOKENS ?? `${DIR}.tokens-sala.json`
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a)
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms))
 let falhas = 0

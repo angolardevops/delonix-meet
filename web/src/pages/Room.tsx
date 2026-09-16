@@ -89,6 +89,15 @@ export default function Room({
   const live = useLive(core)
 
   const [secOpen, setSecOpen] = useState(false)
+  // «Serão admitidos ao entrar» (pré-entrada): quem admite e viu gente à
+  // porta admite-a toda assim que entra (`admit-all`, validado no servidor).
+  const admitirAoEntrar = useRef(false)
+  const admitAll = participants.admitAll
+  useEffect(() => {
+    if (!inRoom || !admitirAoEntrar.current) return
+    admitirAoEntrar.current = false
+    admitAll()
+  }, [inRoom, admitAll])
   /** O painel de sondagens abriu pelo atalho do chat: foca o compositor. */
   const [pollFromChat, setPollFromChat] = useState(false)
   const [confirmacao, setConfirmacao] = useState<Confirmacao>(null)
@@ -189,6 +198,7 @@ export default function Room({
         status={core.status}
         onCancel={onLeave}
         onJoin={(audioOnly) => {
+          if (prejoin.waiting && prejoin.waiting.length > 0) admitirAoEntrar.current = true
           if (audioOnly) prejoin.dropVideo()
           session.join(audioOnly)
         }}
@@ -477,6 +487,12 @@ export default function Room({
                   recordings={recording.recordings}
                   onDownload={recording.download}
                   onInvite={invite.show}
+                  onPrivateMessage={(peer) => {
+                    chat.setTarget({ peerId: peer.peerId, username: peer.username })
+                    chrome.setPanel('chat')
+                  }}
+                  spotlightId={layout.spotlightId}
+                  onSpotlight={layout.setSpotlight}
                 />
               )}
               {chrome.panel === 'settings' && (

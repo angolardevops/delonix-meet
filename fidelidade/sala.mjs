@@ -17,7 +17,7 @@ const appIdx = args.indexOf('--app')
 const APP = appIdx >= 0 ? args.splice(appIdx, 2)[1] : 'http://127.0.0.1:5601'
 const API = process.env.API ?? 'http://127.0.0.1:8190'
 const want = new Set(args.length ? args : ['DelonixPrejoin', 'DelonixRoomGrid', 'DelonixRoomChat', 'DelonixWhiteboard', 'DelonixBoardShared', 'DelonixModeration', 'DelonixMobile'])
-const TOKENS = `${DIR}.tokens-sala.json`
+const TOKENS = process.env.TOKENS ?? `${DIR}.tokens-sala.json`
 const PASS = 'Delonix-UI-2026!'
 const PESSOAS = [
   ['demo@delonix.co.ao', 'demo12345'],

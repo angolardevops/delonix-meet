@@ -26,6 +26,12 @@ export interface ChatMsg {
   /** Contagens por emoji, sempre as do servidor. */
   reactions: Record<string, number>
   pending?: boolean
+  /** Conversa directa: só eu e a outra pessoa a vemos. */
+  private?: boolean
+  /** Privada: `peer_id` de quem a recebe (ao vivo). */
+  to?: string | null
+  /** Privada: nome de quem a recebe. */
+  toUsername?: string | null
 }
 
 export interface HistoricoChat {
@@ -36,6 +42,8 @@ export interface HistoricoChat {
   created_at: string
   parent_id?: string | null
   reactions?: Record<string, number> | null
+  to_user_id?: string | null
+  to_username?: string | null
 }
 
 let seq = 0
@@ -57,6 +65,8 @@ export function comHistorico(actual: ChatMsg[], historico: HistoricoChat[], meuI
       at: Date.parse(h.created_at) || Date.now(),
       replyTo: h.parent_id ?? null,
       reactions: h.reactions ?? {},
+      private: !!h.to_user_id,
+      toUsername: h.to_username ?? null,
     }))
     .sort((a, b) => a.at - b.at)
   return [...antigos, ...vivos]
@@ -65,7 +75,7 @@ export function comHistorico(actual: ChatMsg[], historico: HistoricoChat[], meuI
 /** Mensagem de outra pessoa (ou o eco da minha, se o servidor o mandar). */
 export function comRecebida(
   actual: ChatMsg[],
-  m: { from: string; username: string; text: string; id?: string; at?: number; reply_to?: string | null },
+  m: { from: string; username: string; text: string; id?: string; at?: number; reply_to?: string | null; to?: string | null; to_username?: string | null },
 ): ChatMsg[] {
   if (m.id && actual.some((x) => x.id === m.id)) return actual
   return [
@@ -80,15 +90,35 @@ export function comRecebida(
       from: m.from,
       replyTo: m.reply_to ?? null,
       reactions: {},
+      private: !!m.to,
+      to: m.to ?? null,
+      toUsername: m.to_username ?? null,
     },
   ]
 }
 
 /** A minha, antes da confirmação. */
-export function comEnviada(actual: ChatMsg[], m: { clientId: string; username: string; text: string; replyTo: string | null; at: number }): ChatMsg[] {
+export function comEnviada(
+  actual: ChatMsg[],
+  m: { clientId: string; username: string; text: string; replyTo: string | null; at: number; to?: string | null; toUsername?: string | null },
+): ChatMsg[] {
   return [
     ...actual,
-    { key: chave(), id: null, clientId: m.clientId, username: m.username, text: m.text, own: true, at: m.at, replyTo: m.replyTo, reactions: {}, pending: true },
+    {
+      key: chave(),
+      id: null,
+      clientId: m.clientId,
+      username: m.username,
+      text: m.text,
+      own: true,
+      at: m.at,
+      replyTo: m.replyTo,
+      reactions: {},
+      pending: true,
+      private: !!m.to,
+      to: m.to ?? null,
+      toUsername: m.toUsername ?? null,
+    },
   ]
 }
 

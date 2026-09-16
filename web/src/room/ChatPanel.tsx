@@ -27,6 +27,17 @@ function ChatText({ text }: { text: string }) {
   )
 }
 
+/** «Privada · para X» (ou «para ti») numa mensagem de conversa directa. */
+function PrivadaChip({ m }: { m: ChatMsg }) {
+  const { t } = useTranslation()
+  return (
+    <span className="rm-chat__private">
+      <Icon name="lock" size={9} />
+      {m.own ? t('room.chat.privadaPara', { nome: m.toUsername ?? '' }) : t('room.chat.privadaParaTi')}
+    </span>
+  )
+}
+
 type Item =
   | { kind: 'msg'; at: number; msg: ChatMsg; index: number }
   | { kind: 'poll'; at: number; id: string }
@@ -177,6 +188,18 @@ export function ChatPanel({
             >
               {t('room.chat.responder')}
             </button>
+            {!m.own && !m.private && (
+              <button
+                type="button"
+                className="rm-chat__replybtn"
+                onClick={() => {
+                  chat.replyPrivately(m)
+                  inputRef.current?.focus()
+                }}
+              >
+                {t('room.chat.responderPrivado')}
+              </button>
+            )}
           </div>
         )}
       </>
@@ -234,9 +257,10 @@ export function ChatPanel({
                       {hora(m.at)}
                     </time>
                     {role && <span className="rm-chat__role">{role}</span>}
+                    {m.private && <PrivadaChip m={m} />}
                     {m.pending && <span className="rm-chat__time">{t('room.chat.aEnviar')}</span>}
                   </span>
-                  <p className="rm-chat__bubble">
+                  <p className={cx('rm-chat__bubble', m.private && 'is-private')}>
                     <ChatText text={m.text} />
                   </p>
                   {rodape(m, filhas)}
@@ -252,6 +276,7 @@ export function ChatPanel({
                         <time className="rm-chat__time dx-num" dateTime={new Date(r.at).toISOString()}>
                           {hora(r.at)}
                         </time>
+                        {r.private && <PrivadaChip m={r} />}
                       </span>
                       <p className="rm-chat__replytext">
                         <ChatText text={r.text} />
@@ -266,6 +291,34 @@ export function ChatPanel({
       </div>
       <div className="rm-chat__compose">
         {blocked && <Alert tone="warning">{t('room.chat.fechadoPeloAnfitriao')}</Alert>}
+        {!blocked && (
+          <div className="rm-chat__to">
+            <label htmlFor="rm-chat-to" className="dx-muted">
+              {t('room.chat.para')}
+            </label>
+            <select
+              id="rm-chat-to"
+              value={chat.target?.peerId ?? ''}
+              // Uma resposta a uma privada fica no mesmo par: o «Para» não se muda a meio.
+              disabled={!!chat.replyTo?.private}
+              onChange={(e) => {
+                const p = peers.find((x) => x.peerId === e.target.value)
+                chat.setTarget(p ? { peerId: p.peerId, username: p.username } : null)
+              }}
+            >
+              <option value="">{t('room.chat.paraTodos')}</option>
+              {chat.target && !peers.some((p) => p.peerId === chat.target!.peerId) && <option value={chat.target.peerId}>{chat.target.username}</option>}
+              {peers
+                .filter((p) => !p.is_pstn && !p.is_bot)
+                .map((p) => (
+                  <option key={p.peerId} value={p.peerId}>
+                    {p.username}
+                  </option>
+                ))}
+            </select>
+            {chat.target && <span className="rm-chat__todica">{t('room.chat.privadaDica', { nome: chat.target.username })}</span>}
+          </div>
+        )}
         {chat.replyTo && (
           <div className="rm-chat__replying">
             <Icon name="undo" size={11} />
@@ -310,14 +363,14 @@ export function ChatPanel({
             ))}
           </div>
         )}
-        <div className="rm-chat__input">
+        <div className={cx('rm-chat__input', chat.target && 'is-private')}>
           <textarea
             ref={inputRef}
             rows={1}
             value={chat.input}
             disabled={blocked}
-            placeholder={t('room.chat.placeholder')}
-            aria-label={t('room.chat.placeholder')}
+            placeholder={chat.target ? t('room.chat.placeholderPrivado', { nome: chat.target.username }) : t('room.chat.placeholder')}
+            aria-label={chat.target ? t('room.chat.placeholderPrivado', { nome: chat.target.username }) : t('room.chat.placeholder')}
             onChange={(e) => chat.setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {

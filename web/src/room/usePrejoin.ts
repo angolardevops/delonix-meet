@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { currentUser, getRoom, isAbort, listMeetings } from '../api'
+import { ApiError, currentUser, getRoom, isAbort, listMeetings, netProbe, roomWaiting, type WaitingPeer } from '../api'
+import { SONDAGENS, type AmostraRede } from './qualidadePrevista'
 import { audioConstraints, listDevices, videoConstraints } from '../media'
 import { MicMix } from './micMix'
 import { reuniaoMaisProxima } from './salaInfo'
@@ -37,6 +38,64 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
   const [second, setSecond] = useState<{ deviceId: string; stream: MediaStream } | null>(null)
   const [mix, setMix] = useState<{ deviceId: string; mix: MicMix } | null>(null)
   const active = core.roomState === 'prejoin'
+  /** Sondagens de rede contra este servidor (qualidade prevista). */
+  const [rede, setRede] = useState<{ amostras: AmostraRede[]; estado: 'a-medir' | 'feito' | 'erro' }>({ amostras: [], estado: 'a-medir' })
+  const [medicao, setMedicao] = useState(0)
+  /** Quem já está à porta — só para quem admite (o servidor responde 403 aos outros). */
+  const [waiting, setWaiting] = useState<WaitingPeer[] | null>(null)
+
+  useEffect(() => {
+    if (!active) return
+    const ctrl = new AbortController()
+    let cancelado = false
+    setRede({ amostras: [], estado: 'a-medir' })
+    void (async () => {
+      const amostras: AmostraRede[] = []
+      for (let i = 0; i < SONDAGENS; i++) {
+        try {
+          const r = await netProbe(128 * 1024, ctrl.signal)
+          if (cancelado) return
+          amostras.push({ downKbps: r.download_kbps, upKbps: r.upload_kbps })
+          setRede({ amostras: [...amostras], estado: i === SONDAGENS - 1 ? 'feito' : 'a-medir' })
+        } catch (e) {
+          if (cancelado || isAbort(e)) return
+          // Travão do servidor (30/min) ou rede: fica o que já se mediu.
+          setRede({ amostras: [...amostras], estado: amostras.length ? 'feito' : 'erro' })
+          return
+        }
+      }
+    })()
+    return () => {
+      cancelado = true
+      ctrl.abort()
+    }
+  }, [active, medicao])
+
+  useEffect(() => {
+    if (!active) return
+    let parar = false
+    let id = 0
+    const espreitar = () => {
+      void roomWaiting(code)
+        .then((l) => {
+          if (!parar) setWaiting(l)
+        })
+        .catch((e) => {
+          // 403/404: esta pessoa não admite — não se volta a perguntar.
+          if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
+            parar = true
+            window.clearInterval(id)
+          }
+          if (!isAbort(e)) setWaiting(null)
+        })
+    }
+    espreitar()
+    id = window.setInterval(espreitar, 5000)
+    return () => {
+      parar = true
+      window.clearInterval(id)
+    }
+  }, [active, code])
 
   // A sessão: nome, dono, topologia e hora marcada. Melhor esforço — sem isto
   // a pré-entrada continua a servir, só com menos contexto.
@@ -286,6 +345,9 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
 
   return {
     info,
+    rede,
+    medirDeNovo: () => setMedicao((n) => n + 1),
+    waiting,
     previewStream,
     previewVersion,
     attachPreview,

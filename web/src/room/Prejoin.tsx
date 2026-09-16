@@ -2,9 +2,10 @@ import { ReactNode, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { currentUser } from '../api'
 import { DelonixSymbol, Icon } from '../ui/icons'
-import { Alert, Button, Checkbox, IconButton, cx } from '../ui/kit'
+import { Alert, AvatarStack, Button, Checkbox, cx } from '../ui/kit'
 import { metaCurta, metaLonga, videoMeta } from './mediaMeta'
 import { MicLevel } from './MicLevel'
+import { barras, debito, medias, veredicto } from './qualidadePrevista'
 import { TileAvatar } from './ParticipantTile'
 import type { LocalMedia } from './useLocalMedia'
 import type { Prejoin as PrejoinState } from './usePrejoin'
@@ -102,23 +103,6 @@ export function Prejoin({
         </span>
         <h1 className="rm-top__title">{info?.name || t('room.preEntrada.titulo')}</h1>
         <span className="rm-top__meta dx-num">{hora ? t('room.preEntrada.horaSala', { hora, code }) : t('room.preEntrada.sala', { code })}</span>
-        <span className="dx-spacer" />
-        {info?.owner && (
-          <>
-            <Button size="sm" variant="ghost" icon="door" className="rm-hide-narrow" onClick={() => (location.hash = `/lobby/${code}`)}>
-              {t('room.preEntrada.gerirSalaDeEspera')}
-            </Button>
-            <IconButton
-              icon="door"
-              label={t('room.preEntrada.gerirSalaDeEspera')}
-              className="rm-only-narrow"
-              onClick={() => (location.hash = `/lobby/${code}`)}
-            />
-          </>
-        )}
-        <Button size="sm" variant="outline" onClick={onCancel}>
-          {t('room.preEntrada.cancelar')}
-        </Button>
       </header>
 
       <div className="rm-prejoin__body">
@@ -128,7 +112,7 @@ export function Prejoin({
             <span className="dx-num dx-muted">{fontes > 0 ? t('room.preEntrada.fontesActivas', { count: fontes }) : t('room.preEntrada.semVideo')}</span>
           </div>
 
-          <div className={cx('rm-prejoin__stage', media.hasLocalVideo && 'has-second')}>
+          <div className="rm-prejoin__stage has-second">
             <div className="rm-prejoin__preview" style={{ ['--tone' as string]: 'var(--accent-strong)' }}>
               {media.hasLocalVideo && (
                 <video
@@ -195,38 +179,41 @@ export function Prejoin({
               </div>
             </div>
 
-            {prejoin.second ? (
-              <div className="rm-prejoin__preview rm-prejoin__preview--second">
-                <video ref={prejoin.attachSecond} autoPlay playsInline muted className="rm-prejoin__video is-plain" />
-                <div className="rm-prejoin__tags">
-                  <span className="rm-flag">{t('room.preEntrada.fonteN', { n: 2, tipo: segundaLabel })}</span>
-                </div>
-                <div className="rm-prejoin__foot">
-                  {secondMeta && <span className="rm-flag rm-flag--meta">{metaLonga(secondMeta, t('room.preEntrada.fps'))}</span>}
-                  <span className="dx-spacer" />
-                  <span className="rm-flag rm-flag--meta">{t('room.preEntrada.entraComoApresentacao')}</span>
-                </div>
-              </div>
-            ) : (
-              media.hasLocalVideo && (
-                // O lugar da fonte 2 existe mesmo vazio: diz o que se pode pôr lá e porque não está.
-                <div className="rm-prejoin__preview rm-prejoin__preview--empty">
+            <div className="rm-prejoin__col">
+              {prejoin.second ? (
+                <div className="rm-prejoin__preview rm-prejoin__preview--second">
+                  <video ref={prejoin.attachSecond} autoPlay playsInline muted className="rm-prejoin__video is-plain" />
                   <div className="rm-prejoin__tags">
-                    <span className="rm-flag">{t('room.preEntrada.fonte2')}</span>
+                    <span className="rm-flag">{t('room.preEntrada.fonteN', { n: 2, tipo: segundaLabel })}</span>
                   </div>
-                  <div className="rm-prejoin__placeholder">
-                    <Icon name="screen" size={22} />
-                    <span>
-                      {info && info.topology !== 'sfu'
-                        ? t('room.preEntrada.fonte2SoSfu')
-                        : devices.cams.length > 1
-                          ? t('room.preEntrada.fonte2Escolher')
-                          : t('room.preEntrada.fonte2Ligar')}
-                    </span>
+                  <div className="rm-prejoin__foot">
+                    {secondMeta && <span className="rm-flag rm-flag--meta">{metaLonga(secondMeta, t('room.preEntrada.fps'))}</span>}
+                    <span className="dx-spacer" />
+                    <span className="rm-flag rm-flag--meta">{t('room.preEntrada.entraComoApresentacao')}</span>
                   </div>
                 </div>
-              )
-            )}
+              ) : (
+                media.hasLocalVideo && (
+                  // O lugar da fonte 2 existe mesmo vazio: diz o que se pode pôr lá e porque não está.
+                  <div className="rm-prejoin__preview rm-prejoin__preview--empty">
+                    <div className="rm-prejoin__tags">
+                      <span className="rm-flag">{t('room.preEntrada.fonte2')}</span>
+                    </div>
+                    <div className="rm-prejoin__placeholder">
+                      <Icon name="screen" size={22} />
+                      <span>
+                        {info && info.topology !== 'sfu'
+                          ? t('room.preEntrada.fonte2SoSfu')
+                          : devices.cams.length > 1
+                            ? t('room.preEntrada.fonte2Escolher')
+                            : t('room.preEntrada.fonte2Ligar')}
+                      </span>
+                    </div>
+                  </div>
+                )
+              )}
+              <QualidadePrevista prejoin={prejoin} locale={locale} />
+            </div>
           </div>
 
           {/* Antes de entrar só há microfone e câmara — a barra da sala nasce na sala. */}
@@ -429,14 +416,34 @@ export function Prejoin({
           </section>
 
           <div className="rm-prejoin__cta">
+            {/* Quem admite vê quem já espera — e entrar admite-os (template). */}
+            {prejoin.waiting && prejoin.waiting.length > 0 && (
+              <div className="rm-prejoin__waiting" role="status">
+                <strong>{t('room.preEntrada.naSalaDeEspera', { count: prejoin.waiting.length })}</strong>
+                <span className="rm-prejoin__waitrow">
+                  <AvatarStack names={prejoin.waiting.map((w) => w.username)} max={4} size={22} />
+                  <span className="dx-muted">{t('room.preEntrada.seraoAdmitidos')}</span>
+                  {info?.owner && (
+                    <a className="rm-prejoin__manage" href={`#/lobby/${code}`}>
+                      {t('room.preEntrada.gerir')}
+                    </a>
+                  )}
+                </span>
+              </div>
+            )}
             <Button variant="primary" size="lg" block onClick={() => onJoin(false)}>
               {t('room.preEntrada.entrar')}
             </Button>
-            {media.hasLocalVideo && (
-              <button type="button" className="rm-prejoin__alt" onClick={() => onJoin(true)}>
-                {t('room.preEntrada.entrarApenasAudio')}
+            <div className="rm-prejoin__links">
+              {media.hasLocalVideo && (
+                <button type="button" className="rm-prejoin__alt" onClick={() => onJoin(true)}>
+                  {t('room.preEntrada.entrarApenasAudio')}
+                </button>
+              )}
+              <button type="button" className="rm-prejoin__alt" onClick={onCancel}>
+                {t('room.preEntrada.cancelar')}
               </button>
-            )}
+            </div>
           </div>
         </aside>
       </div>
@@ -466,5 +473,49 @@ export function VolumeSlider({ media, id }: { media: LocalMedia; id: string }) {
       />
       <span className="dx-num dx-muted rm-volume__n">{media.outputVolume}</span>
     </div>
+  )
+}
+
+/** «Qualidade prevista»: sondagens contra este servidor, em barras, e o que dizem. */
+function QualidadePrevista({ prejoin, locale }: { prejoin: PrejoinState; locale: string }) {
+  const { t } = useTranslation()
+  const { amostras, estado } = prejoin.rede
+  const v = veredicto(amostras)
+  const m = medias(amostras)
+  const rotulo = {
+    '4k': t('room.preEntrada.veredicto4k'),
+    '1080p': t('room.preEntrada.veredicto1080p'),
+    '720p': t('room.preEntrada.veredicto720p'),
+    baixa: t('room.preEntrada.veredictoBaixa'),
+    fraca: t('room.preEntrada.veredictoFraca'),
+  }
+  return (
+    <section className="rm-quality" aria-labelledby="rm-quality-h">
+      <h3 id="rm-quality-h">{t('room.preEntrada.qualidadePrevista')}</h3>
+      <div className="rm-quality__bars" aria-hidden="true">
+        {barras(amostras).map((b, i) => (
+          <span key={i} className={cx(b.quebra && 'is-dip')} style={{ height: `${Math.round(b.altura * 100)}%` }} />
+        ))}
+      </div>
+      <div className="rm-quality__foot dx-num">
+        {amostras.length > 0 ? (
+          <span>{t('room.preEntrada.debitos', { down: debito(m.down, locale), up: debito(m.up, locale) })}</span>
+        ) : (
+          <span>{estado === 'erro' ? t('room.preEntrada.semMedida') : t('room.preEntrada.aMedir')}</span>
+        )}
+        {v && estado === 'feito' ? (
+          <button type="button" className={cx('rm-quality__verdict', (v === 'baixa' || v === 'fraca') && 'is-weak')} onClick={prejoin.medirDeNovo} title={t('room.preEntrada.medirDeNovo')}>
+            {(v === 'baixa' || v === 'fraca') ? <Icon name="alert" size={10} /> : <Icon name="check" size={10} />}
+            {rotulo[v]}
+          </button>
+        ) : (
+          estado === 'erro' && (
+            <button type="button" className="rm-quality__verdict" onClick={prejoin.medirDeNovo}>
+              {t('room.preEntrada.medirDeNovo')}
+            </button>
+          )
+        )}
+      </div>
+    </section>
   )
 }
