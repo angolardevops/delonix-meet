@@ -7,6 +7,13 @@ Consome as gravações produzidas pelo servidor (recorder.rs → RECORDINGS_DIR/
 a transcrição + a ATA (MoM) na base de dados. É idempotente: só processa
 gravações com `transcribed_at IS NULL`.
 
+Guarda os SEGMENTOS (início, fim, texto, confiança) e a língua detectada
+(migração 0051) — são eles que alimentam a legenda no leitor, os capítulos
+automáticos e o `GET /api/recordings/{id}/transcript`. Enquanto trabalha, a
+gravação fica em `status = 'transcribing'` com `progress_pct`; vários workers
+não pegam na mesma (`FOR UPDATE SKIP LOCKED`), e uma gravação cujo worker
+morreu (sem sinal de vida há `STALE_MINUTES`) volta a ser apanhada.
+
 Env:
   DATABASE_URL     ligação Postgres (obrigatório)
   RECORDINGS_DIR   pasta das gravações (default: /recordings)
@@ -14,7 +21,10 @@ Env:
   WHISPER_DEVICE   cuda|cpu (default: cuda)
   WHISPER_COMPUTE  float16|int8_float16|int8 (default: float16)
   POLL_SECONDS     intervalo de sondagem quando não há trabalho (default: 20)
+  STALE_MINUTES    sem progresso há mais do que isto = worker morto (default: 30)
 """
+import json
+import math
 import os
 import sys
 import time
@@ -29,6 +39,7 @@ MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3")
 DEVICE = os.environ.get("WHISPER_DEVICE", "cuda")
 COMPUTE = os.environ.get("WHISPER_COMPUTE", "float16")
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "20"))
+STALE_MINUTES = int(os.environ.get("STALE_MINUTES", "30"))
 
 _running = True
 
@@ -66,26 +77,67 @@ def build_mom(transcript: str) -> str:
     return "\n".join(lines)
 
 
-def transcribe(model: WhisperModel, path: str) -> str:
+def segment_row(start: float, end: float, text: str, avg_logprob) -> dict | None:
+    """Um segmento do faster-whisper na forma guardada em `transcript_segments`.
+
+    A confiança é exp(avg_logprob), presa a [0, 1]. Texto vazio não é segmento."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    conf = None
+    if avg_logprob is not None and not math.isnan(avg_logprob):
+        conf = round(max(0.0, min(1.0, math.exp(avg_logprob))), 3)
+    start_ms = max(0, int(round(start * 1000)))
+    end_ms = max(start_ms, int(round(end * 1000)))
+    return {"start_ms": start_ms, "end_ms": end_ms, "text": text, "confidence": conf}
+
+
+def transcribe(model: WhisperModel, path: str, on_progress=None):
+    """Devolve (texto, segmentos, língua, confiança média)."""
     # vad_filter corta silêncios; language=None deixa o modelo detetar (PT/EN/…).
-    segments, _info = model.transcribe(path, vad_filter=True, beam_size=5)
-    return " ".join(seg.text.strip() for seg in segments).strip()
+    segments, info = model.transcribe(path, vad_filter=True, beam_size=5)
+    total = float(getattr(info, "duration", 0) or 0)
+    rows = []
+    for seg in segments:
+        row = segment_row(seg.start, seg.end, seg.text, getattr(seg, "avg_logprob", None))
+        if row:
+            rows.append(row)
+        if on_progress and total > 0:
+            on_progress(min(99, int(seg.end * 100 / total)))
+    text = " ".join(r["text"] for r in rows).strip()
+    confs = [r["confidence"] for r in rows if r["confidence"] is not None]
+    avg = round(sum(confs) / len(confs), 3) if confs else None
+    return text, rows, getattr(info, "language", None), avg
+
+
+def _claim(conn):
+    """Reserva uma gravação para transcrever. Devolve (id, room_code) ou None."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE recordings SET status = 'transcribing', progress_pct = 0, progress_at = now()
+            WHERE id = (
+                SELECT id FROM recordings
+                WHERE transcribed_at IS NULL
+                  AND (status = 'ready'
+                       OR (status = 'transcribing'
+                           AND progress_at < now() - make_interval(mins => %s)))
+                ORDER BY created_at ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING id, (SELECT code FROM rooms WHERE rooms.id = recordings.room_id)
+            """,
+            (STALE_MINUTES,),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    return row
 
 
 def process_one(conn, model: WhisperModel) -> bool:
     """Processa uma gravação pendente. Devolve True se havia trabalho."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT r.id, rm.code
-            FROM recordings r
-            LEFT JOIN rooms rm ON rm.id = r.room_id
-            WHERE r.transcribed_at IS NULL
-            ORDER BY r.id ASC
-            LIMIT 1
-            """
-        )
-        row = cur.fetchone()
+    row = _claim(conn)
     if not row:
         return False
 
@@ -93,16 +145,37 @@ def process_one(conn, model: WhisperModel) -> bool:
     path = os.path.join(RECORDINGS_DIR, f"{rec_id}.webm")
     if not os.path.exists(path):
         log(f"ficheiro em falta {path} — a marcar como processado para não repetir")
-        _mark_done(conn, rec_id, "", "")
+        _mark_failed(conn, rec_id, "O ficheiro da gravação não foi encontrado pelo serviço de transcrição.")
         return True
+
+    last = {"pct": -1, "at": 0.0}
+
+    def on_progress(pct: int):
+        now = time.time()
+        if pct >= last["pct"] + 5 or now - last["at"] > 30:
+            last.update(pct=pct, at=now)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE recordings SET progress_pct = %s, progress_at = now() "
+                    "WHERE id = %s AND status = 'transcribing'",
+                    (pct, rec_id),
+                )
+            conn.commit()
 
     log(f"a transcrever gravação {rec_id} ({path})…")
     t0 = time.time()
-    transcript = transcribe(model, path)
+    try:
+        transcript, rows, language, confidence = transcribe(model, path, on_progress)
+    except Exception as e:  # ficheiro ilegível, modelo sem memória, …
+        conn.rollback()
+        log(f"gravação {rec_id}: transcrição falhou: {e}")
+        _mark_failed(conn, rec_id, "A transcrição falhou. A equipa de operação tem o detalhe no registo.")
+        return True
     mom = build_mom(transcript)
-    log(f"gravação {rec_id} transcrita em {time.time() - t0:.1f}s ({len(transcript)} chars)")
+    log(f"gravação {rec_id} transcrita em {time.time() - t0:.1f}s "
+        f"({len(transcript)} chars, {len(rows)} segmentos, língua {language})")
 
-    _mark_done(conn, rec_id, transcript, mom)
+    _mark_done(conn, rec_id, transcript, mom, rows, language, confidence)
 
     # Preenche também a ATA da reunião ligada (é o que o leitor mostra), se
     # existir uma reunião com este room_code e ainda sem transcrição.
@@ -117,11 +190,34 @@ def process_one(conn, model: WhisperModel) -> bool:
     return True
 
 
-def _mark_done(conn, rec_id, transcript: str, mom: str):
+def _mark_done(conn, rec_id, transcript: str, mom: str, rows, language, confidence):
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE recordings SET transcript = %s, minutes = %s, transcribed_at = now() WHERE id = %s",
-            (transcript, mom, rec_id),
+            """
+            UPDATE recordings SET transcript = %s, minutes = %s, transcribed_at = now(),
+                   transcript_segments = %s::jsonb, transcript_language = %s,
+                   transcript_confidence = %s, transcript_error = NULL,
+                   status = CASE WHEN status = 'transcribing' THEN 'ready' ELSE status END,
+                   progress_pct = NULL, progress_at = NULL
+            WHERE id = %s
+            """,
+            (transcript, mom, json.dumps(rows, ensure_ascii=False), language, confidence, rec_id),
+        )
+    conn.commit()
+
+
+def _mark_failed(conn, rec_id, reason: str):
+    """Marca como processada COM erro: `transcribed_at` fica preenchido para
+    não repetir em ciclo, e `transcript_error` diz porquê."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE recordings SET transcribed_at = now(), transcript_error = %s,
+                   status = CASE WHEN status = 'transcribing' THEN 'ready' ELSE status END,
+                   progress_pct = NULL, progress_at = NULL
+            WHERE id = %s
+            """,
+            (reason, rec_id),
         )
     conn.commit()
 

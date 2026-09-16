@@ -50,7 +50,12 @@ while read -r rota; do
   sufixo=$(echo "$rota" | sed -E 's|^/api/[a-z-]+||; s|/\{[a-z_]+\}||g')
   # Rotas de colecção (sem parâmetro) não são recursos por id.
   echo "$rota" | grep -q '{' || continue
-  if ! grep -qE "/api/${base}/\\$\{[A-Za-z0-9_.]+\}${sufixo}" "$ISO"; then
+  # Uma rota com parâmetros A MEIO (`/captions/{lang}/vtt`) não tem sufixo
+  # literal que um pedido real possa conter; aceita-se então a rota inteira com
+  # cada parâmetro interpolado — que é uma prova mais forte, não mais fraca.
+  completa=$(echo "$rota" | sed -E 's|\{[a-z_]+\}|\\$\\{[A-Za-z0-9_.]+\\}|g')
+  if ! grep -qE "/api/${base}/\\$\{[A-Za-z0-9_.]+\}${sufixo}" "$ISO" \
+     && ! grep -qE "$completa" "$ISO"; then
     echo "✗ isolamento: $rota (recurso por id) não é exercitada por $ISO"
     falta=1
   fi

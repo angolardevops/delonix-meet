@@ -3578,6 +3578,26 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                 message: "sfu unavailable".into(),
             });
         }
+        // Reunião agendada com «gravar automaticamente»: o gravador do servidor
+        // arranca quando o anfitrião entra — as tracks anexam-se à medida que
+        // são publicadas. A decisão (e a recusa em salas E2EE) é do recorder.
+        if is_host && crate::recorder::auto_record_wanted(&state, room_id).await {
+            let dir = state.config.recordings_dir.clone();
+            if state
+                .sfu
+                .start_recording(room_id, user_id, &username, None, &dir)
+                .await
+            {
+                tracing::info!(%room_id, "gravação automática iniciada");
+                state.hub.broadcast_all(
+                    room_id,
+                    ServerMsg::ServerRecording {
+                        active: true,
+                        by: username.clone(),
+                    },
+                );
+            }
+        }
     }
     tracing::info!(%room_id, %peer_id, %username, sfu = sfu_mode, host = is_host, "peer joined");
     // Entrou numa sala de grupo? Atualiza o mapa de grupos dos anfitriões.

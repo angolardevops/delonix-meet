@@ -119,6 +119,9 @@ pub struct Config {
     /// porque permite apontá-lo a um invólucro em desenvolvimento sem o
     /// instalar no host.
     pub ffmpeg_bin: String,
+    /// Binário do ffprobe (`FFPROBE_BIN`, default `ffprobe`). Mede duração,
+    /// resolução, fps e codecs de cada gravação (ver `media_probe.rs`).
+    pub ffprobe_bin: String,
     /// Threads do ffmpeg de cada emissão (`DIRECTO_THREADS`, default 1).
     ///
     /// Um por emissão, não dois: a composição de uma gravação é diferível e
@@ -248,6 +251,7 @@ impl Config {
             max_destinos_por_directo: bounded_env("MAX_DESTINOS_POR_DIRECTO", 4, 1, 8),
             directo_threads: bounded_env("DIRECTO_THREADS", 1, 1, 16) as u32,
             ffmpeg_bin: env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into()),
+            ffprobe_bin: env::var("FFPROBE_BIN").unwrap_or_else(|_| "ffprobe".into()),
         }
     }
 }

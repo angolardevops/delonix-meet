@@ -18,7 +18,7 @@ struct GenResponse {
 }
 
 /// Chamada única ao /api/generate do Ollama (sem streaming).
-async fn generate(
+pub(crate) async fn generate(
     state: &AppState,
     model: &str,
     prompt: String,
@@ -44,16 +44,33 @@ async fn generate(
     (!out.is_empty()).then_some(out)
 }
 
-/// Traduz uma linha de legenda para o idioma alvo (código curto: pt/en/fr/es…).
-pub async fn translate(state: &AppState, text: &str, target: &str) -> Option<String> {
-    let lang = match target {
+/// Línguas de chegada que o prompt de tradução conhece (código curto).
+///
+/// Umbundu, Kimbundu e Kikongo NÃO estão: nenhum modelo local as traduz com
+/// qualidade que se possa pôr numa legenda, e uma língua anunciada que devolve
+/// texto inventado é pior do que uma que não está na lista.
+pub const TRANSLATE_TARGETS: &[&str] = &["pt", "en", "fr", "es", "de", "zh"];
+
+fn target_name(target: &str) -> Option<&'static str> {
+    Some(match target {
         "pt" => "European Portuguese",
         "en" => "English",
         "fr" => "French",
         "es" => "Spanish",
         "de" => "German",
+        "zh" => "Simplified Chinese",
         _ => return None,
-    };
+    })
+}
+
+/// A tradução para `target` (código curto) é suportada.
+pub fn supports_target(target: &str) -> bool {
+    target_name(target).is_some()
+}
+
+/// Traduz uma linha de legenda para o idioma alvo (código curto: pt/en/fr/es…).
+pub async fn translate(state: &AppState, text: &str, target: &str) -> Option<String> {
+    let lang = target_name(target)?;
     let prompt = format!(
         "Translate the following spoken caption to {lang}. \
          Output ONLY the translation, no quotes, no explanations.\n\nCaption: {text}"

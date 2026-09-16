@@ -44,7 +44,11 @@
 - `presence.rs` — WebSocket `/rtc` (access token), chamadas WhatsApp-style: call-start/accept/decline/cancel, ring de reunião agendada
 - `meetings.rs` — calendário, conflitos, quarentena, MoM, transcrição, webhooks de meeting
 - `recordings.rs` — biblioteca de gravações, partilha read-only, sweep de retenção
-- `recorder.rs` — gravação server-side: RTP→IVF(VP8)+OGG(Opus), ffmpeg post-stop (VP9+Opus webm), E2EE via decrypt_e2ee()
+- `recorder.rs` — gravação server-side: RTP→IVF(VP8)+OGG(Opus), ffmpeg post-stop (VP9+Opus webm), E2EE via decrypt_e2ee(); a linha nasce em `processing` com progresso (`-progress`), cumpre `rooms.record_quality` (grelha na tela pedida, redução, só áudio) e a gravação automática (`auto_record_wanted`)
+- `media_probe.rs` — `ffprobe`/`ffmpeg`: duração (incl. webm do browser sem duração no cabeçalho), resolução, fps, codecs e miniatura, no fim da composição e no upload
+- `recording_meta.rs` — leitor: descrição/etiquetas (`PATCH`), publicação para a organização, miniatura, visualizações, participantes, transcrição com segmentos, comentários com marca temporal; paginação por cursor. Acesso SEMPRE por `recordings::access` (404 a quem não vê)
+- `recording_chapters.rs` — capítulos manuais e automáticos (LLM local via `ai::generate`, a partir dos segmentos; varredura de 5 em 5 min); gerar de novo nunca apaga os manuais
+- `recording_captions.rs` — legendas por língua em WebVTT (validação, rascunho/publicada, gerada da transcrição ou traduzida em segundo plano), servidas ao `<track>`
 - `broadcast.rs` — emissão em directo para RTMP (ADR-0003): o browser compõe e codifica em H.264, o servidor REMULTIPLEXA (`-c:v copy`, `-c:a aac`). Multi-canal tipo StreamYard: um `ffmpeg` com N destinos (`destinos` na query, JSON), tecto próprio `MAX_DESTINOS_POR_DIRECTO` (por emissão) distinto do `MAX_DIRECTOS` (por nó/sala). Recusa E2EE, codec não copiável, chave vazia e acima de qualquer um dos dois tectos. Rota WS `/api/rooms/{code}/broadcast`; registo por sala
 - `webhooks.rs` — CRUD webhooks org, fire() best-effort (Slack/Teams/Mattermost/generic+HMAC), SSRF guard
 - `whiteboards.rs` — CRUD quadro branco persistente
@@ -100,7 +104,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0038) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0038 e 0050–0056; 0039–0049 reservadas ao branch da sala) — range total 0001–0056 |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 

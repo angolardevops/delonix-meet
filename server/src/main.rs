@@ -7,6 +7,7 @@ mod broadcast;
 mod config;
 mod dlp;
 mod error;
+mod media_probe;
 mod meetings;
 mod meetings_v1;
 mod metrics;
@@ -20,6 +21,9 @@ mod presence;
 mod pubsub;
 mod rate_limit;
 mod recorder;
+mod recording_captions;
+mod recording_chapters;
+mod recording_meta;
 mod recordings;
 mod redis_state;
 mod room_chat;
@@ -219,7 +223,54 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/whiteboards/{id}/png", get(whiteboards::png))
         .route("/api/whiteboards/{id}/share", post(whiteboards::set_share))
         .route("/api/whiteboards/shared/{token}", get(whiteboards::shared_png))
-        .route("/api/recordings/{id}", get(recordings::download))
+        .route(
+            "/api/recordings/{id}",
+            get(recordings::download).patch(recording_meta::patch),
+        )
+        // ---- Leitor: metadados, transcrição, capítulos, legendas, comentários ----
+        // O acesso decide-se SEMPRE em `recordings::access` (404 a quem não vê).
+        .route("/api/recordings/{id}/details", get(recordings::details))
+        .route("/api/recordings/{id}/publish", post(recording_meta::publish))
+        .route("/api/recordings/{id}/unpublish", post(recording_meta::unpublish))
+        .route("/api/recordings/{id}/thumbnail", get(recording_meta::thumbnail))
+        .route("/api/recordings/{id}/views", post(recording_meta::record_view))
+        .route(
+            "/api/recordings/{id}/participants",
+            get(recording_meta::recording_participants),
+        )
+        .route("/api/rooms/{code}/participants", get(recording_meta::room_participants))
+        .route("/api/recordings/{id}/transcript", get(recording_meta::transcript))
+        .route(
+            "/api/recordings/{id}/comments",
+            get(recording_meta::list_comments).post(recording_meta::create_comment),
+        )
+        .route(
+            "/api/recordings/{id}/comments/{comment_id}",
+            get(recording_meta::get_comment).delete(recording_meta::delete_comment),
+        )
+        .route(
+            "/api/recordings/{id}/chapters",
+            get(recording_chapters::list).post(recording_chapters::create),
+        )
+        .route("/api/recordings/{id}/chapters/generate", post(recording_chapters::generate))
+        .route(
+            "/api/recordings/{id}/chapters/{chapter_id}",
+            get(recording_chapters::get)
+                .patch(recording_chapters::patch)
+                .delete(recording_chapters::delete),
+        )
+        .route("/api/recordings/{id}/captions", get(recording_captions::list))
+        .route("/api/recordings/{id}/captions/generate", post(recording_captions::generate))
+        .route(
+            "/api/recordings/{id}/captions/{lang}",
+            get(recording_captions::get)
+                .put(recording_captions::put)
+                .patch(recording_captions::patch)
+                .delete(recording_captions::delete)
+                // Um VTT pode chegar aos 2 MB; em JSON, com escapes, um pouco mais.
+                .layer(DefaultBodyLimit::max(recording_captions::MAX_VTT_BYTES * 2)),
+        )
+        .route("/api/recordings/{id}/captions/{lang}/vtt", get(recording_captions::vtt))
         .route(
             "/api/recordings/{id}/share",
             post(recordings::share).get(recordings::shares),
@@ -651,6 +702,21 @@ async fn main() {
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, "chat retention sweep failed"),
                 }
+            }
+        });
+    }
+
+    // Cron: gravações — as presas em `processing` por um pod que morreu passam
+    // a `failed`, e as transcritas ganham capítulos automáticos (LLM local).
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(300));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                recorder::fail_stale_processing(&state).await;
+                recording_chapters::auto_chapters_sweep(&state).await;
             }
         });
     }

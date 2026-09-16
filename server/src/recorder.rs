@@ -4,6 +4,12 @@
 //!  - 1 publicador  → remux `-c copy` (zero reencode, zero perda);
 //!  - N publicadores → grelha xstack em VP9 CRF 30 + Opus 128k (melhor
 //!    rácio qualidade/tamanho sem perda percetível).
+//!
+//! A gravação entra na biblioteca LOGO ao parar, em `processing`, com o
+//! progresso da composição lido do `-progress` do ffmpeg; passa a `ready`
+//! quando o ficheiro existe e depois é medida (`media_probe`). A qualidade
+//! pedida na reunião (`rooms.record_quality`) decide a grelha, a redução de
+//! resolução e o «só áudio».
 
 use aes_gcm::{
     aead::{Aead, Payload},
@@ -432,16 +438,175 @@ impl RecordingSession {
 /// Compõe a gravação num único webm (em background) e insere-a na biblioteca.
 pub fn finalize(state: Arc<AppState>, room_id: Uuid, session: RecordingSession) {
     tokio::spawn(async move {
-        if let Err(e) = finalize_inner(&state, room_id, &session).await {
+        // A linha nasce JÁ, em `processing`: quem parou a gravação vê-a na
+        // biblioteca a compor, com progresso, em vez de um vazio de minutos.
+        let rec_id = insert_processing(&state, room_id, &session).await;
+        if let Err(e) = finalize_inner(&state, room_id, &session, rec_id).await {
             tracing::error!(%room_id, error = %e, "server recording finalize failed");
             // A falha passa a ser VISÍVEL. Antes ficava só aqui, o directório
             // temporário era apagado, e a biblioteca não mostrava nada — do
             // lado de quem carregou em «gravar» e viu o indicador aceso a
             // reunião inteira, isso é indistinguível de nunca ter gravado.
-            registar_falha(&state, room_id, &session, &e).await;
+            registar_falha(&state, room_id, &session, rec_id, &e).await;
         }
         let _ = tokio::fs::remove_dir_all(&session.dir).await;
     });
+}
+
+/// O que o gravador precisa de saber da sala.
+struct RoomRecInfo {
+    code: String,
+    format: String,
+    quality: Option<String>,
+}
+
+async fn room_rec_info(state: &AppState, room_id: Uuid) -> RoomRecInfo {
+    let row: Option<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT code, format, record_quality FROM rooms WHERE id = $1")
+            .bind(room_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    let (code, format, quality) = row.unwrap_or_default();
+    RoomRecInfo {
+        code,
+        format,
+        quality,
+    }
+}
+
+fn recording_filename(code: &str) -> String {
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M");
+    format!("Reunião {code} — servidor — {stamp}.webm")
+}
+
+/// Insere a gravação em `processing`. `None` se a base falhar — a composição
+/// segue na mesma e a linha é inserida no fim, como antes.
+async fn insert_processing(
+    state: &Arc<AppState>,
+    room_id: Uuid,
+    session: &RecordingSession,
+) -> Option<Uuid> {
+    let info = room_rec_info(state, room_id).await;
+    let r: Result<(Uuid,), _> = sqlx::query_as(
+        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, status,
+                                 progress_pct, progress_at, kind)
+         VALUES ($1, $2, $3, 0, 'processing', 0, now(), $4) RETURNING id",
+    )
+    .bind(room_id)
+    .bind(session.by_user)
+    .bind(recording_filename(&info.code))
+    .bind(crate::recordings::kind_from_room_format(&info.format))
+    .fetch_one(&state.db)
+    .await;
+    match r {
+        Ok((id,)) => Some(id),
+        Err(e) => {
+            tracing::error!(%room_id, error = %e, "não foi possível registar a gravação em processamento");
+            None
+        }
+    }
+}
+
+/// Caixa de resolução de uma qualidade pedida. `audio` e desconhecidas: `None`.
+pub(crate) fn quality_box(quality: &str) -> Option<(u32, u32)> {
+    match quality {
+        "2160p" => Some((3840, 2160)),
+        "1080p" => Some((1920, 1080)),
+        "720p" => Some((1280, 720)),
+        _ => None,
+    }
+}
+
+/// Tamanho de cada mosaico da grelha para `n` vídeos.
+///
+/// Sem qualidade pedida, a composição de sempre: mosaicos de 640×360 e a tela
+/// cresce com o número de pessoas. Com qualidade, a TELA é a caixa pedida e os
+/// mosaicos dividem-na (dimensões pares, que o yuv420p exige).
+pub(crate) fn grid_tile(quality: Option<&str>, n: usize) -> (u32, u32) {
+    let Some((w, h)) = quality.and_then(quality_box) else {
+        return (640, 360);
+    };
+    let n = n.max(1);
+    let cols = (n as f64).sqrt().ceil() as u32;
+    let rows = (n as u32).div_ceil(cols);
+    let even = |v: u32| (v / 2) * 2;
+    (even(w / cols), even(h / rows))
+}
+
+/// Percentagem da composição, presa a 0–99 (o 100 é o `ready`).
+pub(crate) fn composition_pct(done_ms: i64, expected_ms: i64) -> i16 {
+    if expected_ms <= 0 || done_ms <= 0 {
+        return 0;
+    }
+    ((done_ms.saturating_mul(100) / expected_ms).clamp(0, 99)) as i16
+}
+
+/// Grava o progresso lido do ffmpeg, no máximo a cada 2 s.
+fn spawn_progress_writer(
+    state: Arc<AppState>,
+    rec_id: Uuid,
+    expected_ms: i64,
+    mut rx: tokio::sync::watch::Receiver<i64>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        while rx.changed().await.is_ok() {
+            let done = *rx.borrow_and_update();
+            let _ = sqlx::query(
+                "UPDATE recordings SET progress_pct = $2, progress_at = now()
+                 WHERE id = $1 AND status = 'processing'",
+            )
+            .bind(rec_id)
+            .bind(composition_pct(done, expected_ms))
+            .execute(&state.db)
+            .await;
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    })
+}
+
+/// Gravações presas em `processing` há mais do que o tecto do ffmpeg (com
+/// folga) passam a `failed`: o pod que as compunha morreu a meio.
+pub async fn fail_stale_processing(state: &Arc<AppState>) -> u64 {
+    let limit = state.config.ffmpeg_timeout_secs as i64 + 600;
+    match sqlx::query(
+        "UPDATE recordings SET status = 'failed', progress_pct = NULL,
+                failure_reason = 'O processamento foi interrompido (o servidor reiniciou a meio). A equipa de operação tem o detalhe no registo.'
+         WHERE status = 'processing' AND COALESCE(progress_at, created_at) < now() - make_interval(secs => $1)",
+    )
+    .bind(limit as f64)
+    .execute(&state.db)
+    .await
+    {
+        Ok(r) => {
+            if r.rows_affected() > 0 {
+                tracing::warn!(n = r.rows_affected(), "gravações presas em processamento marcadas como falhadas");
+            }
+            r.rows_affected()
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "varredura de processamento falhou");
+            0
+        }
+    }
+}
+
+/// A sala pede gravação automática, não é E2EE (sem chave cedida o gravador
+/// só escreveria ruído cifrado), e ainda não tem nenhuma gravação — parar à
+/// mão e voltar a entrar não recomeça.
+pub(crate) async fn auto_record_wanted(state: &AppState, room_id: Uuid) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT r.auto_record AND NOT r.e2ee
+                AND NOT EXISTS(SELECT 1 FROM recordings x WHERE x.room_id = r.id)
+         FROM rooms r WHERE r.id = $1",
+    )
+    .bind(room_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(false)
 }
 
 /// Traduz um erro técnico para uma causa que se possa mostrar a uma pessoa.
@@ -473,8 +638,27 @@ async fn registar_falha(
     state: &Arc<AppState>,
     room_id: Uuid,
     session: &RecordingSession,
+    rec_id: Option<Uuid>,
     erro: &anyhow::Error,
 ) {
+    if let Some(id) = rec_id {
+        let r = sqlx::query(
+            "UPDATE recordings SET status = 'failed', failure_reason = $2, size_bytes = 0,
+                    progress_pct = NULL, progress_at = NULL
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(causa_legivel(erro))
+        .execute(&state.db)
+        .await;
+        match r {
+            Ok(done) if done.rows_affected() > 0 => return,
+            Ok(_) => {}
+            Err(e) => {
+                tracing::error!(%room_id, error = %e, "não foi possível marcar a gravação como falhada")
+            }
+        }
+    }
     let nome = format!(
         "Gravação falhada · {}",
         chrono::Utc::now().format("%d/%m/%Y %H:%M")
@@ -502,10 +686,25 @@ async fn registar_falha(
 /// Existe separado para ser testável sem um `ffmpeg` instalado: o
 /// comportamento que interessa — não ficar pendurado para sempre, e matar o
 /// processo em vez de o deixar órfão — é o mesmo seja qual for o binário.
+#[cfg(test)]
 async fn run_bounded(
     cmd: &mut tokio::process::Command,
     limit: std::time::Duration,
 ) -> anyhow::Result<std::process::ExitStatus> {
+    run_bounded_progress(cmd, limit, None).await
+}
+
+/// `run_bounded` que, com `progress`, lê o `-progress pipe:1` do ffmpeg e
+/// publica cada `out_time_us` (em ms). O stdout é lido até ao fim: um pipe
+/// que ninguém esvazia bloqueia o processo.
+async fn run_bounded_progress(
+    cmd: &mut tokio::process::Command,
+    limit: std::time::Duration,
+    progress: Option<tokio::sync::watch::Sender<i64>>,
+) -> anyhow::Result<std::process::ExitStatus> {
+    if progress.is_some() {
+        cmd.stdout(std::process::Stdio::piped());
+    }
     // Contexto na ORIGEM. Sem isto, um ffmpeg em falta chega ao utilizador como
     // «No such file or directory (os error 2)» — indistinguível de um ficheiro
     // de track em falta, e a causa real (uma instalação incompleta do servidor)
@@ -517,6 +716,22 @@ async fn run_bounded(
             anyhow::Error::from(e)
         }
     })?;
+    if let (Some(tx), Some(out)) = (progress, child.stdout.take()) {
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut lines = tokio::io::BufReader::new(out).lines();
+            while let Ok(Some(l)) = lines.next_line().await {
+                if let Some(ms) = l
+                    .strip_prefix("out_time_us=")
+                    .and_then(|v| v.trim().parse::<i64>().ok())
+                    .filter(|v| *v > 0)
+                    .map(|us| us / 1000)
+                {
+                    let _ = tx.send(ms);
+                }
+            }
+        });
+    }
     match tokio::time::timeout(limit, child.wait()).await {
         Ok(res) => Ok(res?),
         Err(_) => {
@@ -536,7 +751,11 @@ async fn finalize_inner(
     state: &Arc<AppState>,
     room_id: Uuid,
     session: &RecordingSession,
+    rec_id: Option<Uuid>,
 ) -> anyhow::Result<()> {
+    let info = room_rec_info(state, room_id).await;
+    let quality = info.quality.as_deref();
+    let expected_ms = session.started.elapsed().as_millis() as i64;
     // Tracks com conteúdo real (ficheiros ~vazios ficam de fora).
     let mut videos: Vec<&RecTrackMeta> = Vec::new();
     let mut audios: Vec<&RecTrackMeta> = Vec::new();
@@ -554,6 +773,10 @@ async fn finalize_inner(
             videos.push(t);
         }
     }
+    if quality == Some("audio") {
+        // «Só áudio» pedido na reunião: o vídeo nem entra na composição.
+        videos.clear();
+    }
     if videos.is_empty() && audios.is_empty() {
         anyhow::bail!("nothing recorded");
     }
@@ -568,7 +791,24 @@ async fn finalize_inner(
     // ele em vez de ficar órfão a consumir o nó.
     cmd.arg("-nostdin");
     cmd.args(["-threads", &state.config.ffmpeg_threads.to_string()]);
+    cmd.args(["-progress", "pipe:1", "-nostats"]);
     cmd.kill_on_drop(true);
+
+    // Resolução acima da pedida → reduz-se. Nunca se amplia: aumentar não
+    // acrescenta detalhe, só bytes.
+    let downscale_to: Option<u32> = match (videos.len(), quality.and_then(quality_box)) {
+        (1, Some((_, target_h))) => crate::media_probe::probe(
+            &state.config.ffprobe_bin,
+            &state.config.ffmpeg_bin,
+            &videos[0].path,
+        )
+        .await
+        .ok()
+        .and_then(|m| m.height)
+        .filter(|h| *h as u32 > target_h)
+        .map(|_| target_h),
+        _ => None,
+    };
 
     if videos.len() == 1 && audios.len() <= 1 {
         // Caso simples: remux sem reencode — zero perda de qualidade.
@@ -580,7 +820,13 @@ async fn finalize_inner(
         if !audios.is_empty() {
             cmd.args(["-map", "1:a:0"]);
         }
-        cmd.args(["-c", "copy"]);
+        if let Some(h) = downscale_to {
+            cmd.args(["-vf", &format!("scale=-2:{h}")]);
+            cmd.args(VP9_ARGS);
+            cmd.args(["-c:a", "copy"]);
+        } else {
+            cmd.args(["-c", "copy"]);
+        }
     } else {
         // Composição em grelha + mistura de áudio (VP9 CRF 30 + Opus 128k).
         for v in &videos {
@@ -591,16 +837,17 @@ async fn finalize_inner(
         }
         let n = videos.len();
         let cols = (n as f64).sqrt().ceil() as usize;
+        let (tw, th) = grid_tile(quality, n);
         let mut fc = String::new();
         for (i, v) in videos.iter().enumerate() {
             let off = v.offset_ms as f64 / 1000.0;
             fc.push_str(&format!(
-                "[{i}:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=start_duration={off:.3}:start_mode=add:color=black[v{i}];"
+                "[{i}:v]scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=start_duration={off:.3}:start_mode=add:color=black[v{i}];"
             ));
         }
         let vout = if n > 1 {
             let layout = (0..n)
-                .map(|i| format!("{}_{}", (i % cols) * 640, (i / cols) * 360))
+                .map(|i| format!("{}_{}", (i % cols) * tw as usize, (i / cols) * th as usize))
                 .collect::<Vec<_>>()
                 .join("|");
             let ins = (0..n).map(|i| format!("[v{i}]")).collect::<String>();
@@ -639,22 +886,7 @@ async fn finalize_inner(
         cmd.arg("-filter_complex").arg(&fc);
         if !vout.is_empty() {
             cmd.args(["-map", vout]);
-            cmd.args([
-                "-c:v",
-                "libvpx-vp9",
-                "-b:v",
-                "0",
-                "-crf",
-                "30",
-                "-deadline",
-                "good",
-                "-cpu-used",
-                "4",
-                "-row-mt",
-                "1",
-                "-pix_fmt",
-                "yuv420p",
-            ]);
+            cmd.args(VP9_ARGS);
         }
         if !aout.is_empty() {
             cmd.args(["-map", &aout]);
@@ -669,31 +901,43 @@ async fn finalize_inner(
     // volume, a gravação nunca chegava à biblioteca, e não havia erro nenhum
     // para ver. Falhar em tempo limitado é a única resposta honesta.
     let limit = std::time::Duration::from_secs(state.config.ffmpeg_timeout_secs);
-    let status = run_bounded(&mut cmd, limit).await?;
+    let (tx, rx) = tokio::sync::watch::channel(0i64);
+    let writer = rec_id.map(|id| spawn_progress_writer(state.clone(), id, expected_ms, rx));
+    let status = run_bounded_progress(&mut cmd, limit, Some(tx)).await;
+    if let Some(w) = writer {
+        // O leitor do stdout larga o `Sender` no EOF e o escritor sai sozinho;
+        // se o ffmpeg foi morto por tempo, corta-se aqui.
+        w.abort();
+    }
+    let status = status?;
     if !status.success() {
         anyhow::bail!("ffmpeg exited with {status}");
     }
     let size = tokio::fs::metadata(&out).await?.len() as i64;
+    let kind = crate::recordings::kind_from_room_format(&info.format);
 
-    // Nome amigável com o código da sala e a hora.
-    let code: Option<(String,)> = sqlx::query_as("SELECT code FROM rooms WHERE id = $1")
-        .bind(room_id)
-        .fetch_optional(&state.db)
-        .await?;
-    let code = code.map(|c| c.0).unwrap_or_default();
-    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M");
-    let filename = format!("Reunião {code} — servidor — {stamp}.webm");
-
-    let (rec_id,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes)
-         VALUES ($1, $2, $3, $4) RETURNING id",
-    )
-    .bind(room_id)
-    .bind(session.by_user)
-    .bind(&filename)
-    .bind(size)
-    .fetch_one(&state.db)
-    .await?;
+    let (rec_id, filename): (Uuid, String) = match rec_id {
+        Some(id) => {
+            sqlx::query_as("SELECT id, filename FROM recordings WHERE id = $1")
+                .bind(id)
+                .fetch_one(&state.db)
+                .await?
+        }
+        None => {
+            let filename = recording_filename(&info.code);
+            let (id,): (Uuid,) = sqlx::query_as(
+                "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, status, kind)
+                 VALUES ($1, $2, $3, 0, 'processing', $4) RETURNING id",
+            )
+            .bind(room_id)
+            .bind(session.by_user)
+            .bind(&filename)
+            .bind(kind)
+            .fetch_one(&state.db)
+            .await?;
+            (id, filename)
+        }
+    };
 
     let final_path = state.config.recordings_dir.join(format!("{rec_id}.webm"));
     // rename falha com EXDEV (errno 18) se out e final_path estiverem em
@@ -706,34 +950,54 @@ async fn finalize_inner(
         }
         Err(e) => return Err(e.into()),
     }
+    // Só é `ready` depois de o ficheiro estar no sítio final: um `ready` sem
+    // ficheiro era um download partido.
+    sqlx::query(
+        "UPDATE recordings SET size_bytes = $2, status = 'ready', progress_pct = NULL,
+                progress_at = NULL, failure_reason = NULL
+         WHERE id = $1",
+    )
+    .bind(rec_id)
+    .bind(size)
+    .execute(&state.db)
+    .await?;
     tracing::info!(%room_id, %rec_id, size, "server recording pronta na biblioteca");
 
-    // Webhook recording.ready para as organizações de quem gravou.
-    let orgs = crate::org::orgs_of_user(state, session.by_user).await;
-    if !orgs.is_empty() {
-        let mb = size / (1024 * 1024);
-        let text = format!("Nova gravação disponível: «{filename}» ({mb} MB)");
-        let payload = serde_json::json!({
-            "recording_id": rec_id,
-            "filename": filename,
-            "size_bytes": size,
-            "room_code": code,
-        });
-        for org_id in orgs {
-            crate::webhooks::fire(
-                state.clone(),
-                org_id,
-                crate::webhooks::Event {
-                    name: "recording.ready",
-                    title: "Delonix Meet".into(),
-                    text: text.clone(),
-                    payload: payload.clone(),
-                },
-            );
-        }
-    }
+    let media = crate::media_probe::probe_and_store(state, rec_id, &final_path).await;
+    crate::recordings::fire_recording_ready(
+        state,
+        crate::recordings::ReadyRecording {
+            id: rec_id,
+            uploader: session.by_user,
+            filename: &filename,
+            size,
+            room_code: &info.code,
+            kind,
+            media: &media,
+            source: "server",
+        },
+    )
+    .await;
     Ok(())
 }
+
+/// Codificação VP9 da composição (CRF 30, sem tecto de débito).
+const VP9_ARGS: [&str; 14] = [
+    "-c:v",
+    "libvpx-vp9",
+    "-b:v",
+    "0",
+    "-crf",
+    "30",
+    "-deadline",
+    "good",
+    "-cpu-used",
+    "4",
+    "-row-mt",
+    "1",
+    "-pix_fmt",
+    "yuv420p",
+];
 
 /// Cron de retenção (DLP-lite): apaga gravações mais antigas que
 /// `organizations.retention_days` (>0) de cada org, ficheiro + registo.
@@ -1116,6 +1380,52 @@ mod tests {
         );
         w.close().await;
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn grelha_sem_qualidade_e_a_de_sempre() {
+        assert_eq!(grid_tile(None, 1), (640, 360));
+        assert_eq!(grid_tile(None, 9), (640, 360));
+        assert_eq!(grid_tile(Some("audio"), 4), (640, 360));
+    }
+
+    #[test]
+    fn grelha_com_qualidade_divide_a_tela_pedida() {
+        // 2 pessoas em 1080p: 2 colunas × 1 linha.
+        assert_eq!(grid_tile(Some("1080p"), 2), (960, 1080));
+        // 4 pessoas em 4K: 2×2 mosaicos de 1920×1080.
+        assert_eq!(grid_tile(Some("2160p"), 4), (1920, 1080));
+        // 5 em 720p: 3 colunas × 2 linhas, dimensões pares.
+        let (w, h) = grid_tile(Some("720p"), 5);
+        assert_eq!((w, h), (426, 360));
+        assert_eq!(w % 2, 0);
+    }
+
+    #[test]
+    fn progresso_nunca_chega_a_100_antes_do_ready() {
+        assert_eq!(composition_pct(0, 10_000), 0);
+        assert_eq!(composition_pct(5_000, 10_000), 50);
+        assert_eq!(composition_pct(12_000, 10_000), 99);
+        assert_eq!(composition_pct(5_000, 0), 0);
+    }
+
+    #[tokio::test]
+    async fn run_bounded_progress_le_o_out_time_do_processo() {
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.args(["-c", "echo out_time_us=1500000; echo progress=continue; echo out_time_us=N/A; echo out_time_us=3000000; echo progress=end"]);
+        let (tx, mut rx) = tokio::sync::watch::channel(0i64);
+        let st = run_bounded_progress(&mut cmd, Duration::from_secs(10), Some(tx))
+            .await
+            .unwrap();
+        assert!(st.success());
+        // O leitor termina no EOF; espera-se pelo último valor.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while *rx.borrow_and_update() != 3000 && std::time::Instant::now() < deadline {
+            if rx.changed().await.is_err() {
+                break;
+            }
+        }
+        assert_eq!(*rx.borrow(), 3000);
     }
 
     #[tokio::test]

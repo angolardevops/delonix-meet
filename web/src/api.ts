@@ -1096,3 +1096,333 @@ export async function netProbe(bytes = 256 * 1024, signal?: AbortSignal): Promis
     upload_kbps: (r.bytes * 8) / serverMs,
   }
 }
+// ---------- frontend/b1-gravacoes ----------
+//
+// Contrato das rotas abertas pelo branch `frontend/b1-gravacoes` (migrações
+// 0050–0056). Os tipos estendem os que já existem em vez de os alterar, para a
+// integração com os outros branches do lote ser trivial.
+
+/** Pedido cuja resposta de sucesso não tem corpo (`204 No Content`). */
+async function requestEmpty(path: string, options: RequestInit = {}, retry = true): Promise<void> {
+  const headers: Record<string, string> = {
+    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(options.headers as Record<string, string>),
+  }
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+  const res = await fetch(path, { ...options, headers, credentials: 'same-origin' })
+  if (res.status === 401 && retry && localStorage.getItem('dx_user')) {
+    await refreshSession()
+    return requestEmpty(path, options, false)
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new ApiError(res.status, body, body?.error ?? res.statusText ?? 'request failed')
+  }
+}
+
+export type SessionKind = 'meeting' | 'training' | 'broadcast' | 'hybrid'
+export type RecordQuality = '2160p' | '1080p' | '720p' | 'audio'
+export type RecordingFileStatus = 'processing' | 'transcribing' | 'ready' | 'failed'
+export type TranscriptStatus = 'none' | 'transcribing' | 'ready' | 'failed'
+
+/** Página de uma listagem por cursor (`page_size` ≤ 100, `page_token` opaco). */
+export interface Page<T> {
+  items: T[]
+  next_page_token: string | null
+}
+
+export interface PageParams {
+  page_size?: number
+  page_token?: string | null
+}
+
+function pageQuery(p?: PageParams): string {
+  const q = new URLSearchParams()
+  if (p?.page_size) q.set('page_size', String(p.page_size))
+  if (p?.page_token) q.set('page_token', p.page_token)
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
+
+/** Item da biblioteca com metadados de media, estados, contagens e publicação. */
+export interface RecordingLibraryItem extends RecordingItem {
+  status: RecordingFileStatus
+  /** `status`, com `published` quando está pronta e publicada. */
+  state: RecordingFileStatus | 'published'
+  progress_pct: number | null
+  kind: SessionKind
+  /** Medidos com ffprobe; `null` = não foi possível medir (nunca inventado). */
+  duration_ms: number | null
+  width: number | null
+  height: number | null
+  fps: number | null
+  video_codec: string | null
+  audio_codec: string | null
+  has_thumbnail: boolean
+  transcript_status: TranscriptStatus
+  transcript_language: string | null
+  transcribed_at: string | null
+  chapter_count: number
+  comment_count: number
+  view_count: number
+  participant_count: number
+  /** Línguas com legenda publicada. */
+  caption_languages: string[]
+  description: string
+  tags: string[]
+  visibility: 'private' | 'org'
+  published_at: string | null
+  can_manage: boolean
+  uploader_org_id: string | null
+  uploader_org_name: string | null
+}
+
+/**
+ * Biblioteca com metadados. `q` pesquisa no nome, autor, sala, descrição,
+ * etiquetas e na TRANSCRIÇÃO. `scope: 'published'` lista as publicadas que o
+ * utilizador vê (incluindo as da organização em que não participou).
+ */
+export const recordingsLibraryMeta = (
+  params: { q?: string; scope?: 'mine' | 'published' } = {},
+  signal?: AbortSignal,
+) => {
+  const q = new URLSearchParams()
+  if (params.q) q.set('q', params.q)
+  if (params.scope) q.set('scope', params.scope)
+  const s = q.toString()
+  return request<RecordingLibraryItem[]>(`/api/recordings${s ? `?${s}` : ''}`, { signal })
+}
+
+export const recordingDetails = (id: string, signal?: AbortSignal) =>
+  request<RecordingLibraryItem>(`/api/recordings/${id}/details`, { signal })
+
+export const updateRecording = (id: string, patch: { filename?: string; description?: string; tags?: string[] }) =>
+  request<RecordingLibraryItem>(`/api/recordings/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
+
+export const publishRecording = (id: string) =>
+  request<RecordingLibraryItem>(`/api/recordings/${id}/publish`, {
+    method: 'POST',
+    body: JSON.stringify({ visibility: 'org' }),
+  })
+
+export const unpublishRecording = (id: string) =>
+  request<RecordingLibraryItem>(`/api/recordings/${id}/unpublish`, { method: 'POST' })
+
+/** URL de objecto da miniatura (o `<img>` não envia Bearer). Rejeita com 404 se não houver. */
+export async function recordingThumbnailUrl(id: string): Promise<string> {
+  const res = await fetch(`/api/recordings/${id}/thumbnail`, { headers: authHeader() })
+  if (!res.ok) throw new ApiError(res.status, null, 'sem miniatura')
+  return URL.createObjectURL(await res.blob())
+}
+
+/** Regista uma visualização (uma por pessoa por dia). */
+export const recordRecordingView = (id: string) => requestEmpty(`/api/recordings/${id}/views`, { method: 'POST' })
+
+export interface RecordingParticipant {
+  user_id: string
+  username: string
+  joined_at: string
+}
+
+export const recordingParticipants = (id: string, page?: PageParams) =>
+  request<Page<RecordingParticipant>>(`/api/recordings/${id}/participants${pageQuery(page)}`)
+
+export const roomParticipants = (code: string, page?: PageParams) =>
+  request<Page<RecordingParticipant>>(`/api/rooms/${code}/participants${pageQuery(page)}`)
+
+export interface TranscriptSegment {
+  start_ms: number
+  end_ms: number
+  text: string
+  confidence: number | null
+}
+
+export interface RecordingTranscript {
+  recording_id: string
+  status: TranscriptStatus
+  progress_pct: number | null
+  language: string | null
+  /** Média de exp(avg_logprob) dos segmentos, 0–1. */
+  confidence: number | null
+  transcribed_at: string | null
+  error: string | null
+  text: string
+  segments: TranscriptSegment[]
+}
+
+export const recordingTranscript = (id: string, signal?: AbortSignal) =>
+  request<RecordingTranscript>(`/api/recordings/${id}/transcript`, { signal })
+
+export interface RecordingComment {
+  id: string
+  recording_id: string
+  user_id: string
+  username: string
+  /** Instante do vídeo; `null` = comentário à gravação inteira. */
+  t_ms: number | null
+  body: string
+  created_at: string
+  can_delete: boolean
+}
+
+export const recordingComments = (id: string, page?: PageParams) =>
+  request<Page<RecordingComment>>(`/api/recordings/${id}/comments${pageQuery(page)}`)
+
+export const addRecordingComment = (id: string, body: string, tMs?: number | null) =>
+  request<RecordingComment>(`/api/recordings/${id}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ body, t_ms: tMs ?? null }),
+  })
+
+export const deleteRecordingComment = (id: string, commentId: string) =>
+  requestEmpty(`/api/recordings/${id}/comments/${commentId}`, { method: 'DELETE' })
+
+export interface RecordingChapter {
+  id: string
+  recording_id: string
+  t_ms: number
+  title: string
+  source: 'auto' | 'manual'
+  created_at: string
+}
+
+export const recordingChapters = (id: string) => request<RecordingChapter[]>(`/api/recordings/${id}/chapters`)
+
+export const addRecordingChapter = (id: string, tMs: number, title: string) =>
+  request<RecordingChapter>(`/api/recordings/${id}/chapters`, {
+    method: 'POST',
+    body: JSON.stringify({ t_ms: tMs, title }),
+  })
+
+export const updateRecordingChapter = (id: string, chapterId: string, patch: { t_ms?: number; title?: string }) =>
+  request<RecordingChapter>(`/api/recordings/${id}/chapters/${chapterId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+export const deleteRecordingChapter = (id: string, chapterId: string) =>
+  requestEmpty(`/api/recordings/${id}/chapters/${chapterId}`, { method: 'DELETE' })
+
+/**
+ * Gera (ou volta a gerar) os capítulos automáticos pelo LLM local; os manuais
+ * ficam. `409` sem transcrição, `503` sem LLM.
+ */
+export const generateRecordingChapters = (id: string) =>
+  request<RecordingChapter[]>(`/api/recordings/${id}/chapters/generate`, { method: 'POST' })
+
+export interface RecordingCaption {
+  recording_id: string
+  lang: string
+  source: 'upload' | 'transcript' | 'translation'
+  status: 'generating' | 'draft' | 'published' | 'failed'
+  progress_pct: number | null
+  error: string | null
+  created_at: string
+  updated_at: string
+  published_at: string | null
+}
+
+export const recordingCaptions = (id: string) => request<RecordingCaption[]>(`/api/recordings/${id}/captions`)
+
+export const recordingCaption = (id: string, lang: string) =>
+  request<RecordingCaption & { vtt: string }>(`/api/recordings/${id}/captions/${lang}`)
+
+/** URL de objecto do VTT para `<track src>` (o elemento não envia Bearer). */
+export async function recordingCaptionVttUrl(id: string, lang: string): Promise<string> {
+  const res = await fetch(`/api/recordings/${id}/captions/${lang}/vtt`, { headers: authHeader() })
+  if (!res.ok) throw new ApiError(res.status, null, 'legenda indisponível')
+  return URL.createObjectURL(await res.blob())
+}
+
+export const putRecordingCaption = (id: string, lang: string, vtt: string, publish = false) =>
+  request<RecordingCaption>(`/api/recordings/${id}/captions/${lang}`, {
+    method: 'PUT',
+    body: JSON.stringify({ vtt, publish }),
+  })
+
+export const setRecordingCaptionStatus = (id: string, lang: string, status: 'draft' | 'published') =>
+  request<RecordingCaption>(`/api/recordings/${id}/captions/${lang}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  })
+
+export const deleteRecordingCaption = (id: string, lang: string) =>
+  requestEmpty(`/api/recordings/${id}/captions/${lang}`, { method: 'DELETE' })
+
+/**
+ * Gera legenda: na língua da transcrição sai já (rascunho); noutra língua é
+ * traduzida em segundo plano (`status: 'generating'`, ver `progress_pct`).
+ */
+export const generateRecordingCaption = (id: string, lang?: string) =>
+  request<RecordingCaption>(`/api/recordings/${id}/captions/generate`, {
+    method: 'POST',
+    body: JSON.stringify(lang ? { lang } : {}),
+  })
+
+export interface RecordingUploadResult extends Recording {
+  kind: SessionKind
+  status: RecordingFileStatus
+  duration_ms: number | null
+  width: number | null
+  height: number | null
+  fps: number | null
+  video_codec: string | null
+  audio_codec: string | null
+  has_thumbnail: boolean
+}
+
+/** Upload que declara o tipo de sessão (o estúdio envia `broadcast`) e devolve os metadados medidos. */
+export async function uploadRecordingWithKind(
+  code: string,
+  blob: Blob,
+  name: string,
+  kind?: SessionKind,
+): Promise<RecordingUploadResult> {
+  const q = new URLSearchParams({ name })
+  if (kind) q.set('kind', kind)
+  const res = await fetch(`/api/rooms/${code}/recordings?${q}`, {
+    method: 'POST',
+    headers: authHeader(),
+    body: blob,
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new ApiError(res.status, body, body?.error ?? 'upload failed')
+  }
+  return res.json()
+}
+
+/** Opções de sessão de uma reunião agendada (passadas à sala no arranque). */
+export interface MeetingSessionOptions {
+  format: SessionKind
+  waiting_room: boolean
+  auto_record: boolean
+  record_quality: RecordQuality
+}
+
+export interface MeetingWithOptions extends Omit<Meeting, 'my_status'>, MeetingSessionOptions {
+  my_status?: 'owner' | 'pending' | 'accepted' | 'declined' | 'tentative'
+  /** Convidados (sem o anfitrião), qualquer que seja a resposta. */
+  invitee_count: number
+  /** Sistema de origem (`odoo`), ou `null` se criada no Meet. */
+  external_source: string | null
+}
+
+export const listMeetingsWithOptions = (signal?: AbortSignal) =>
+  request<MeetingWithOptions[]>('/api/meetings', { signal })
+
+export const createMeetingWithOptions = (
+  m: Parameters<typeof createMeeting>[0] & Partial<MeetingSessionOptions>,
+) =>
+  request<Meeting & MeetingSessionOptions & { conflicts: Conflicts }>('/api/meetings', {
+    method: 'POST',
+    body: JSON.stringify(m),
+  })
+
+export const startMeetingWithOptions = (id: string) =>
+  request<{ code: string; kind: 'video' | 'voice' } & MeetingSessionOptions>(`/api/meetings/${id}/start`, {
+    method: 'POST',
+  })
+
+export const respondMeetingStatus = (id: string, status: 'accepted' | 'declined' | 'tentative', reason = '') =>
+  request(`/api/meetings/${id}/respond`, { method: 'POST', body: JSON.stringify({ status, reason }) })

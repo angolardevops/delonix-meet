@@ -1018,6 +1018,51 @@ pub async fn org_stats(
     }))
 }
 
+// ---------- a regra de pertença como fragmento SQL ----------
+//
+// Há consultas que precisam da regra DENTRO de um JOIN (a biblioteca de
+// gravações filtra centenas de linhas numa ida à base). Em vez de a copiar
+// para esse módulo — que é como `archived_at` ficou esquecido da outra vez
+// (auditoria S3) —, a regra escreve-se aqui e os outros módulos pedem-na.
+//
+// Os argumentos são EXPRESSÕES SQL do próprio chamador (`$1`, `r.uploader_id`),
+// nunca texto do cliente.
+
+/// `viewer` é membro ACTIVO de uma organização a que `subject` pertence.
+///
+/// O sujeito não se filtra por `archived_at`: o dado de quem saiu continua a
+/// ser da organização (mesma regra do download, ver `recordings::can_download`).
+pub(crate) fn sql_active_member_with(viewer: &str, subject: &str) -> String {
+    format!(
+        "EXISTS(SELECT 1 FROM org_members me JOIN org_members o ON o.org_id = me.org_id \
+         WHERE me.user_id = {viewer} AND me.archived_at IS NULL AND o.user_id = {subject})"
+    )
+}
+
+/// `viewer` é admin ACTIVO de uma organização a que `subject` pertence.
+pub(crate) fn sql_active_admin_of(viewer: &str, subject: &str) -> String {
+    format!(
+        "EXISTS(SELECT 1 FROM org_members me JOIN org_members o ON o.org_id = me.org_id \
+         WHERE me.user_id = {viewer} AND me.role = 'admin' AND me.archived_at IS NULL \
+           AND o.user_id = {subject})"
+    )
+}
+
+/// Subconsulta `(id, name)` da organização de `subject` que se mostra a
+/// `viewer`: a que os dois partilham, se houver; senão a mais antiga do sujeito.
+/// Uso: `LEFT JOIN LATERAL (<isto>) alias ON true`.
+pub(crate) fn sql_lateral_org_of(subject: &str, viewer: &str) -> String {
+    format!(
+        "SELECT org.id, org.name FROM org_members om \
+         JOIN organizations org ON org.id = om.org_id \
+         WHERE om.user_id = {subject} \
+         ORDER BY EXISTS(SELECT 1 FROM org_members v WHERE v.org_id = om.org_id \
+                         AND v.user_id = {viewer} AND v.archived_at IS NULL) DESC, \
+                  om.created_at, org.id \
+         LIMIT 1"
+    )
+}
+
 /// user_ids dos membros de um grupo (para iniciar chamada de grupo).
 /// Organizações a que um utilizador pertence (para disparar webhooks dos
 /// eventos das suas reuniões/gravações).

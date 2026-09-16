@@ -349,6 +349,71 @@ if (quadroB.status >= 200 && quadroB.status < 300 && quadroB.json?.id) {
 }
 
 
+// O LEITOR DE GRAVAÇÕES (migrações 0050–0056) contra uma gravação REAL da org B.
+//
+// Aqui a gravação FABRICA-SE: B entra na sua sala e carrega um ficheiro. Com um
+// id que existe, um 404 prova a recusa e não a ausência — e o controlo
+// positivo (B lê os seus detalhes) garante que a rota não está simplesmente
+// partida. Um recurso de outra organização é 404, nunca 403: não se confirma
+// que existe. O contrato completo (e o colega da mesma organização que só vê o
+// que foi publicado) está em `gravacoes-meta.mjs`.
+console.log('\n--- leitor de gravações da org B ---')
+await req(`/api/rooms/${salaB.code}/join`, { token: B.token, method: 'POST' })
+const upB = await fetch(`${API}/api/rooms/${salaB.code}/recordings?name=iso.webm`, {
+  method: 'POST', headers: { Authorization: `Bearer ${B.token}` }, body: new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]),
+})
+const gravB = upB.ok ? (await upB.json()).id : null
+if (gravB) {
+  await permitido('B lê os detalhes da sua gravação (controlo positivo)', `/api/recordings/${gravB}/details`, { token: B.token })
+  const lingua = 'pt'
+  await permitido('B envia uma legenda (controlo positivo)', `/api/recordings/${gravB}/captions/${lingua}`, {
+    token: B.token, method: 'PUT', body: { vtt: 'WEBVTT\n\n00:00.000 --> 00:01.000\nprivado da B\n', publish: true },
+  })
+  const capB = (await req(`/api/recordings/${gravB}/chapters`, { token: B.token, method: 'POST', body: { t_ms: 0, title: 'da B' } })).json
+  const comB = (await req(`/api/recordings/${gravB}/comments`, { token: B.token, method: 'POST', body: { body: 'da B' } })).json
+  const capId = capB?.id ?? inventado
+  const comId = comB?.id ?? inventado
+
+  await recusadoNaPorta('A lê os detalhes da gravação da B', `/api/recordings/${gravB}/details`, { token: A.token })
+  await recusadoNaPorta('A EDITA a gravação da B', `/api/recordings/${gravB}`, { token: A.token, method: 'PATCH', body: { description: 'forjada' } })
+  await recusadoNaPorta('A PUBLICA a gravação da B', `/api/recordings/${gravB}/publish`, { token: A.token, method: 'POST', body: { visibility: 'org' } })
+  await recusadoNaPorta('A despublica a gravação da B', `/api/recordings/${gravB}/unpublish`, { token: A.token, method: 'POST' })
+  await recusadoNaPorta('A lê a miniatura da B', `/api/recordings/${gravB}/thumbnail`, { token: A.token })
+  await recusadoNaPorta('A regista visualizações na gravação da B', `/api/recordings/${gravB}/views`, { token: A.token, method: 'POST' })
+  await recusadoNaPorta('A lista os participantes da gravação da B', `/api/recordings/${gravB}/participants`, { token: A.token })
+  await recusadoNaPorta('A lista os participantes da sala da B', `/api/rooms/${salaB.code}/participants`, { token: A.token })
+  await recusadoNaPorta('A lê a transcrição da B', `/api/recordings/${gravB}/transcript`, { token: A.token })
+  await recusadoNaPorta('A lista os comentários da B', `/api/recordings/${gravB}/comments`, { token: A.token })
+  await recusadoNaPorta('A comenta a gravação da B', `/api/recordings/${gravB}/comments`, { token: A.token, method: 'POST', body: { body: 'intruso' } })
+  await recusadoNaPorta('A lê um comentário da B', `/api/recordings/${gravB}/comments/${comId}`, { token: A.token })
+  await recusadoNaPorta('A APAGA um comentário da B', `/api/recordings/${gravB}/comments/${comId}`, { token: A.token, method: 'DELETE' })
+  await recusadoNaPorta('A lista os capítulos da B', `/api/recordings/${gravB}/chapters`, { token: A.token })
+  await recusadoNaPorta('A cria um capítulo na B', `/api/recordings/${gravB}/chapters`, { token: A.token, method: 'POST', body: { t_ms: 1, title: 'x' } })
+  await recusadoNaPorta('A gera capítulos na B', `/api/recordings/${gravB}/chapters/generate`, { token: A.token, method: 'POST' })
+  await recusadoNaPorta('A lê um capítulo da B', `/api/recordings/${gravB}/chapters/${capId}`, { token: A.token })
+  await recusadoNaPorta('A EDITA um capítulo da B', `/api/recordings/${gravB}/chapters/${capId}`, { token: A.token, method: 'PATCH', body: { title: 'forjado' } })
+  await recusadoNaPorta('A APAGA um capítulo da B', `/api/recordings/${gravB}/chapters/${capId}`, { token: A.token, method: 'DELETE' })
+  await recusadoNaPorta('A lista as legendas da B', `/api/recordings/${gravB}/captions`, { token: A.token })
+  await recusadoNaPorta('A lê uma legenda publicada da B', `/api/recordings/${gravB}/captions/${lingua}`, { token: A.token })
+  await recusadoNaPorta('A lê o VTT publicado da B', `/api/recordings/${gravB}/captions/${lingua}/vtt`, { token: A.token })
+  await recusadoNaPorta('A SUBSTITUI a legenda da B', `/api/recordings/${gravB}/captions/${lingua}`, {
+    token: A.token, method: 'PUT', body: { vtt: 'WEBVTT\n', publish: true },
+  })
+  await recusadoNaPorta('A gera legendas na B', `/api/recordings/${gravB}/captions/generate`, { token: A.token, method: 'POST', body: {} })
+  const pub = await req('/api/recordings?scope=published', { token: A.token })
+  if (Array.isArray(pub.json) && !pub.json.some((r) => r.id === gravB)) ok('a gravação da B não aparece nas publicadas da A')
+  else nok('a gravação da B não aparece nas publicadas da A', JSON.stringify(pub.json).slice(0, 160))
+  // O estado, não só o código: nada do que A tentou ficou escrito.
+  const depois = (await req(`/api/recordings/${gravB}/details`, { token: B.token })).json
+  if (depois?.description === '' && depois.comment_count === 1 && depois.chapter_count === 1 && depois.visibility === 'private') {
+    ok('e a gravação da B ficou exactamente como estava')
+  } else {
+    nok('e a gravação da B ficou exactamente como estava', JSON.stringify(depois).slice(0, 200))
+  }
+} else {
+  nok('B carrega uma gravação para o teste do leitor', `devolveu ${upB.status}`)
+}
+
 // Recursos ligados à SALA da org B, com o código real dela. O código é uma
 // capability para VER metadados e PEDIR entrada — não para escrever.
 console.log('\n--- o que o código da sala NÃO autoriza a escrever ---')

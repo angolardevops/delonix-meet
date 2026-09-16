@@ -27,7 +27,8 @@ pub struct Room {
     pub topology: String,
     pub waiting_room: bool,
     pub e2ee: bool,
-    /// 'normal' (por defeito) ou 'training' — só treino permite salas de grupo.
+    /// `normal` (por defeito), `training` (só este permite salas de grupo),
+    /// `broadcast` ou `hybrid`. Passa a `recordings.kind` das gravações da sala.
     pub format: String,
     pub created_at: DateTime<Utc>,
 }
@@ -54,9 +55,38 @@ pub struct CreateRoomReq {
     /// Encriptação ponta-a-ponta do media (a chave nunca passa pelo servidor).
     #[serde(default)]
     pub e2ee: bool,
-    /// 'normal' (por defeito) ou 'training' (ativa salas de grupo).
+    /// 'normal' (por defeito), 'training' (ativa salas de grupo), 'broadcast' ou 'hybrid'.
     #[serde(default)]
     pub format: Option<String>,
+}
+
+/// Formatos de sala aceites.
+pub const ROOM_FORMATS: &[&str] = &["normal", "training", "broadcast", "hybrid"];
+
+/// Formato de reunião agendada (`meetings.format`) → formato da sala.
+pub(crate) fn room_format_for_meeting(format: &str) -> &'static str {
+    match format {
+        "training" => "training",
+        "broadcast" => "broadcast",
+        "hybrid" => "hybrid",
+        _ => "normal",
+    }
+}
+
+/// O que o gravador do servidor tem de cumprir nesta sala (migração 0056).
+pub(crate) async fn set_recording_options(
+    db: &sqlx::PgPool,
+    room_id: Uuid,
+    auto_record: bool,
+    record_quality: Option<&str>,
+) -> Result<(), ApiError> {
+    sqlx::query("UPDATE rooms SET auto_record = $2, record_quality = $3 WHERE id = $1")
+        .bind(room_id)
+        .bind(auto_record)
+        .bind(record_quality)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// Cria uma sala (com retry em colisão de código). Reutilizado pelo endpoint
@@ -110,9 +140,9 @@ pub async fn create_room(
         ));
     }
     let format = req.format.as_deref().unwrap_or("normal");
-    if !matches!(format, "normal" | "training") {
+    if !ROOM_FORMATS.contains(&format) {
         return Err(ApiError::BadRequest(
-            "format must be 'normal' or 'training'".into(),
+            "format must be 'normal', 'training', 'broadcast' or 'hybrid'".into(),
         ));
     }
     let room = insert_room(
