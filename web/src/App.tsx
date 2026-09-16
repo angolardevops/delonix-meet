@@ -61,7 +61,7 @@ function parseHash(): Route {
   if (share) return { kind: 'share', token: share[1] }
   const diagram = h.match(/^#\/whiteboards\/diagram(?:\/([A-Za-z0-9_-]+))?(?:\?.*)?$/)
   if (diagram) return { kind: 'diagram', id: diagram[1] ?? null }
-  const player = h.match(/^#\/recordings\/([0-9a-f-]{36})$/)
+  const player = h.match(/^#\/recordings\/([0-9a-f-]{36})(?:\?.*)?$/)
   if (player) return { kind: 'player', id: player[1] }
   for (const p of PAGES) if (h.startsWith(`#/${p}`)) return { kind: p }
   return { kind: 'home' }

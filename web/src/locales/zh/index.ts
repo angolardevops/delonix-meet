@@ -19,5 +19,6 @@ import diagrams from './diagrams'
 import editor from './editor'
 import player from './player'
 import nitidez from './nitidez'
+import search from './search'
 
-export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico, consola, diagrams, editor, player, nitidez }
+export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico, consola, diagrams, editor, player, nitidez, search }
