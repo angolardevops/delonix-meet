@@ -72,7 +72,7 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr) 330px;
+  grid-template-columns: 232px minmax(0, 1fr) 304px;
 }
 .st-body[hidden] {
   display: none;
@@ -653,5 +653,10 @@
   }
   .st-centre {
     padding: 10px 12px;
+  }
+  /* No palco pequeno a instrução taparia a região; ficam os botões (o
+     diálogo continua anunciado pelo seu rótulo). */
+  .st-region__hint {
+    display: none;
   }
 }

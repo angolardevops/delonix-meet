@@ -75,7 +75,7 @@ export default function RegionPicker({
         {sel && <div className="st-region__sel" style={sel} />}
       </div>
       <div className="st-region__bar">
-        <span>{t('studio.recorte.instrucao')}</span>
+        <span className="st-region__hint">{t('studio.recorte.instrucao')}</span>
         <span className="dx-spacer" />
         <Button size="sm" variant="secondary" onClick={() => onAplicar({ ...RECORTE_INTEIRO })}>
           {t('studio.fonte.tudo')}
