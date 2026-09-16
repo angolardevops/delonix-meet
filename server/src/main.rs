@@ -12,6 +12,7 @@ mod meetings_v1;
 mod metrics;
 mod mfa;
 mod mls;
+mod net_probe;
 mod odoo;
 mod odoo_sso;
 mod org;
@@ -183,6 +184,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/rooms/{code}", get(rooms::get_room))
         .route("/api/rooms/{code}/join", post(rooms::join_room))
         .route("/api/rooms/{code}/chat", get(rooms::room_chat))
+        // Anfitrião/co-anfitrião espreita a sala de espera antes de entrar.
+        // Chamar com `?room={code}`: é a chave de afinidade do balanceador, e
+        // a fila vive no pod da sala.
+        .route("/api/rooms/{code}/waiting", get(rooms::room_waiting))
+        // Sondagem de rede da pré-entrada (descarga e subida).
+        .route(
+            "/api/net-probe",
+            get(net_probe::download)
+                .post(net_probe::upload)
+                .layer(DefaultBodyLimit::max(net_probe::MAX_PROBE_BYTES + 1024)),
+        )
         .route("/api/rooms/{code}/qos", post(rooms::post_qos))
         // Tempos de estabelecimento (um por sessão) — ver callTimings.ts.
         .route("/api/rooms/{code}/timings", post(rooms::post_timings))

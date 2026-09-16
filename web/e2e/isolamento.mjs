@@ -248,6 +248,11 @@ await recusado('A reporta QoS na sala da B', `/api/rooms/${salaB.code}/qos`, {
   token: A.token, method: 'POST', body: { rtt_ms: 1, loss_pct: 0, up_kbps: 1 },
 })
 await recusado('anónimo vê metadados da sala da B', `/api/rooms/${salaB.code}`, {})
+// A fila da sala de espera traz nomes, origem e cargo de quem espera: só o
+// dono/co-anfitrião a vê. O controlo positivo vem primeiro — sem ele, a recusa
+// não prova nada.
+await permitido('B (dona) espreita a sala de espera da sua sala', `/api/rooms/${salaB.code}/waiting?room=${salaB.code}`, { token: B.token })
+await recusadoNaPorta('A espreita a sala de espera da sala da B', `/api/rooms/${salaB.code}/waiting?room=${salaB.code}`, { token: A.token })
 
 // REUNIÕES, GRAVAÇÕES E QUADROS da org B (R96).
 //

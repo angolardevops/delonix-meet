@@ -385,9 +385,14 @@ pub struct ChatMessage {
     pub username: String,
     pub message: String,
     pub created_at: DateTime<Utc>,
+    /// Mensagem a que esta responde (fio), se houver.
+    pub parent_id: Option<Uuid>,
+    /// Contagem de reacções por emoji (`{}` sem reacções).
+    pub reactions: serde_json::Value,
 }
 
-/// Últimas 200 mensagens de chat de uma sala (requer autenticação + acesso).
+/// Últimas 200 mensagens de chat de uma sala, da mais antiga para a mais
+/// recente (requer autenticação + acesso).
 pub async fn room_chat(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -406,18 +411,62 @@ pub async fn room_chat(
         return Err(ApiError::Unauthorized);
     }
 
+    // As ÚLTIMAS 200 (DESC + LIMIT) devolvidas por ordem cronológica. Antes era
+    // `ASC LIMIT 200`, que numa conversa longa devolvia as primeiras 200 e
+    // escondia exactamente as mais recentes.
     let msgs: Vec<ChatMessage> = sqlx::query_as(
-        "SELECT id, user_id, username, message, created_at
-         FROM room_chat_messages
-         WHERE room_id = $1
-         ORDER BY created_at ASC
-         LIMIT 200",
+        "SELECT * FROM (
+             SELECT m.id, m.user_id, m.username, m.message, m.created_at, m.parent_id,
+                    COALESCE((SELECT jsonb_object_agg(r.emoji, r.n)
+                              FROM (SELECT emoji, count(*)::int AS n
+                                    FROM room_chat_reactions
+                                    WHERE message_id = m.id
+                                    GROUP BY emoji) r), '{}'::jsonb) AS reactions
+             FROM room_chat_messages m
+             WHERE m.room_id = $1
+             ORDER BY m.created_at DESC
+             LIMIT 200
+         ) ultimas ORDER BY created_at ASC",
     )
     .bind(room.id)
     .fetch_all(&state.db)
     .await?;
 
     Ok(Json(msgs))
+}
+
+/// Quem está na sala de espera — para o anfitrião ou co-anfitrião decidir
+/// ANTES de entrar na reunião.
+///
+/// Quem pode: o dono da sala, um co-anfitrião persistido (`room_admitters`), ou
+/// quem está AGORA na sala com papel de admitir. Quem tem acesso à sala mas não
+/// admite leva `403`; quem nem acesso tem leva `404` (não se confirma nada).
+///
+/// A fila vive na memória do pod da sala: chama-se com `?room={code}` para o
+/// balanceador (hash por `$arg_room`) mandar o pedido a esse pod.
+pub async fn room_waiting(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(code): Path<String>,
+) -> Result<Json<Vec<crate::signaling::WaitingView>>, ApiError> {
+    let room: Room = sqlx::query_as(
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
+         FROM rooms WHERE code = $1",
+    )
+    .bind(code.to_lowercase())
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    let access = room_access(&state, auth.user_id, &room).await?;
+    let em_sala = state.hub.user_admits(room.id, auth.user_id);
+    if !access.admitter && !em_sala {
+        return Err(if access.authorized {
+            ApiError::Forbidden
+        } else {
+            ApiError::NotFound
+        });
+    }
+    Ok(Json(state.hub.waiting_list(room.id)))
 }
 
 // ---------- Convidar membros para sala em curso ----------

@@ -1027,3 +1027,72 @@ export async function deleteSsoConfig(orgId: string): Promise<void> {
 function authHeader(): Record<string, string> {
   return accessToken ? { Authorization: `Bearer ${accessToken}` } : {}
 }
+
+// ---------- frontend/b1-sala ----------
+
+/** Campos que o histórico de chat passou a trazer (fios e reacções). */
+export interface ChatHistoryMsg {
+  /** Mensagem a que esta responde (fio), ou `null`. */
+  parent_id?: string | null
+  /** Contagem de reacções por emoji (`{}` sem reacções). */
+  reactions?: Record<string, number>
+}
+
+/** Quem espera na sala de espera (só dono/co-anfitrião — 403/404 aos outros). */
+export interface WaitingPeer {
+  peer_id: string
+  username: string
+  origin?: 'sso' | 'password' | 'guest' | 'pstn' | 'bot'
+  title?: string
+  /** Epoch ms de quando começou a esperar. */
+  since: number
+}
+
+/**
+ * Espreitar a sala de espera ANTES de entrar. O `?room=` é a chave de
+ * afinidade do balanceador: a fila vive na memória do pod da sala.
+ */
+export const roomWaiting = (code: string) =>
+  request<WaitingPeer[]>(`/api/rooms/${code}/waiting?room=${encodeURIComponent(code)}`)
+
+/** Resultado de uma sondagem de rede contra este servidor. */
+export interface NetProbeResult {
+  download_bytes: number
+  download_ms: number
+  /** kbit/s medidos no cliente. */
+  download_kbps: number
+  upload_bytes: number
+  /** Tempo a ler o corpo, medido NO SERVIDOR. */
+  upload_server_ms: number
+  upload_kbps: number
+}
+
+/**
+ * Sondagem de descarga e subida (tecto 4 MiB por pedido; 30 sondagens por
+ * conta por minuto). `bytes` é por sentido; por omissão 256 KiB.
+ */
+export async function netProbe(bytes = 256 * 1024, signal?: AbortSignal): Promise<NetProbeResult> {
+  const t0 = performance.now()
+  const dl = await fetch(`/api/net-probe?bytes=${bytes}`, { headers: authHeader(), cache: 'no-store', signal })
+  if (!dl.ok) throw new ApiError(dl.status, null, `net-probe ${dl.status}`)
+  const down = await dl.arrayBuffer()
+  const downloadMs = Math.max(1, performance.now() - t0)
+
+  const up = await fetch('/api/net-probe', {
+    method: 'POST',
+    headers: { ...authHeader(), 'Content-Type': 'application/octet-stream' },
+    body: new Uint8Array(bytes),
+    signal,
+  })
+  if (!up.ok) throw new ApiError(up.status, null, `net-probe ${up.status}`)
+  const r = (await up.json()) as { bytes: number; server_ms: number }
+  const serverMs = Math.max(1, r.server_ms)
+  return {
+    download_bytes: down.byteLength,
+    download_ms: downloadMs,
+    download_kbps: (down.byteLength * 8) / downloadMs,
+    upload_bytes: r.bytes,
+    upload_server_ms: r.server_ms,
+    upload_kbps: (r.bytes * 8) / serverMs,
+  }
+}
