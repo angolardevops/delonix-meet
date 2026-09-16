@@ -29,6 +29,8 @@ const Status = lazy(() => import('./pages/Status'))
 const ApiDocs = lazy(() => import('./pages/ApiDocs'))
 const Legal = lazy(() => import('./pages/Legal'))
 const SharePage = lazy(() => import('./pages/SharePage'))
+const Diagram = lazy(() => import('./pages/Diagram'))
+const RecordingPlayer = lazy(() => import('./pages/RecordingPlayer'))
 
 /**
  * Espera de rota. Deliberadamente MUDA: o chunk chega em dezenas de
@@ -43,6 +45,8 @@ type Route =
   | { kind: 'room'; code: string; voice: boolean }
   | { kind: 'lobby'; code: string }
   | { kind: 'share'; token: string }
+  | { kind: 'diagram'; id: string | null }
+  | { kind: 'player'; id: string }
 
 const PAGES: NavKey[] = ['calendar', 'studio', 'recordings', 'whiteboards', 'directory', 'integrations', 'analytics', 'admin', 'ai']
 
@@ -54,6 +58,10 @@ function parseHash(): Route {
   if (lobby) return { kind: 'lobby', code: lobby[1] }
   const share = h.match(/^#\/share\/([a-f0-9]+)$/)
   if (share) return { kind: 'share', token: share[1] }
+  const diagram = h.match(/^#\/whiteboards\/diagram(?:\/([A-Za-z0-9_-]+))?(?:\?.*)?$/)
+  if (diagram) return { kind: 'diagram', id: diagram[1] ?? null }
+  const player = h.match(/^#\/recordings\/([0-9a-f-]{36})$/)
+  if (player) return { kind: 'player', id: player[1] }
   for (const p of PAGES) if (h.startsWith(`#/${p}`)) return { kind: p }
   return { kind: 'home' }
 }
@@ -150,7 +158,7 @@ export default function App() {
         ) : (
           <Shell
             user={user}
-            active={route.kind}
+            active={route.kind === 'diagram' ? 'whiteboards' : route.kind === 'player' ? 'recordings' : route.kind}
             onNavigate={navigate}
             onEnterRoom={enterRoom}
             onLogout={() => {
@@ -165,6 +173,8 @@ export default function App() {
               {route.kind === 'studio' && <Studio />}
               {route.kind === 'recordings' && <Recordings />}
               {route.kind === 'whiteboards' && <Whiteboards />}
+              {route.kind === 'diagram' && <Diagram id={route.id} />}
+              {route.kind === 'player' && <RecordingPlayer key={route.id} id={route.id} />}
               {route.kind === 'directory' && <Directory />}
               {route.kind === 'integrations' && <Integrations />}
               {route.kind === 'analytics' && <Analytics />}

@@ -21,6 +21,7 @@ import { Alert, Button, cx, Dialog, Empty, IconButton, Skeleton, TextInput } fro
 import '../ui/boards.css'
 import BoardCard from './boards/BoardCard'
 import BoardViewer, { boardShareUrl } from './boards/BoardViewer'
+import LocalDiagrams from './diagrams/LocalDiagrams'
 
 type Filter = 'all' | 'public' | 'private'
 
@@ -126,9 +127,13 @@ export default function Whiteboards() {
             onChange={(e) => setQuery(e.target.value)}
           />
         </label>
+        <Button size="sm" variant="primary" icon="plus" onClick={() => (location.hash = '/whiteboards/diagram')}>
+          {t('diagrams.novo')}
+        </Button>
       </PageBar>
 
       <div className="page board-page">
+        <LocalDiagrams />
         <div className="dx-chips" role="group" aria-label={t('boards.filtros.rotulo')}>
           {filters.map((f) => (
             <button
