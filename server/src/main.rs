@@ -36,6 +36,7 @@ mod sfu_e2e;
 mod signaling;
 mod sms;
 mod sms_codec;
+mod sms_notify;
 mod sms_smpp;
 mod storage;
 mod stream_destinations;
@@ -111,6 +112,9 @@ pub struct AppState {
     /// Envios de SMS por organização (ADR-0005). Um SMS custa dinheiro: é o
     /// travão contra um admin comprometido ou um script descontrolado.
     pub sms_send_limiter: RateLimiter,
+    /// Envios de SMS por utilizador dentro de uma org (chave `org:user`). Com a
+    /// política `members`, um membro não esgota sozinho a quota da org.
+    pub sms_user_limiter: RateLimiter,
     /// Salas de grupo ativas: sala principal -> conjunto de salas filhas.
     pub breakouts: dashmap::DashMap<uuid::Uuid, signaling::BreakoutSet>,
     /// Cliente HTTP partilhado para envio de webhooks (sem redirects, timeout 8s).
@@ -180,6 +184,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/users/me/mfa/enrol", post(mfa::inscrever))
         .route("/api/users/me/mfa/activate", post(mfa::activar))
         .route("/api/users/me/mfa/disable", post(mfa::desactivar))
+        // Consentimento de SMS da pessoa (contactos / reuniões) e os seus telefones.
+        .route("/api/users/me/sms-preferences", get(sms::get_preferences).put(sms::put_preferences))
         // /api/mls NÃO está registado — de propósito. O `mls.rs` descreve a
         // interface MLS pretendida (RFC 9420) mas os handlers são stubs: não
         // guardam nada, não verificam nada, e devolviam 201/200/202 com
@@ -332,6 +338,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/orgs/{org_id}/branches", get(org::list_branches).post(org::create_branch))
         .route("/api/orgs/{org_id}/employees", get(org::list_employees).post(org::add_employee))
         .route("/api/orgs/{org_id}/employees/{user_id}", axum::routing::delete(org::remove_employee).patch(org::update_employee))
+        // Telefone do membro (o próprio ou admin) — ver sms::put_member_phone.
+        .route("/api/orgs/{org_id}/employees/{user_id}/phone", axum::routing::put(sms::put_member_phone))
         .route("/api/orgs/{org_id}/groups", get(org::list_groups).post(org::create_group))
         .route("/api/orgs/{org_id}/meeting-rooms", get(org::list_meeting_rooms).post(org::create_meeting_room))
         .route("/api/orgs/{org_id}/stats", get(org::org_stats))
@@ -608,6 +616,10 @@ async fn main() {
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
         sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
+        sms_user_limiter: RateLimiter::new(
+            sms::USER_SENDS_PER_WINDOW,
+            Duration::from_secs(sms::USER_SEND_WINDOW_SECS),
+        ),
         webhook_client,
         config: config.clone(),
         redis_bus: redis_bus.clone(),

@@ -134,6 +134,12 @@ pub struct CreateMeetingReq {
     pub recurrence_byday: Option<String>,
     #[serde(flatten)]
     pub options: SessionOptions,
+    /// Avisar os convidados por SMS ao agendar (sms_notify).
+    #[serde(default)]
+    pub sms_invite: bool,
+    /// Lembrete por SMS N minutos antes (5–1440). Nulo = sem lembrete.
+    #[serde(default)]
+    pub sms_reminder_min: Option<i32>,
 }
 
 fn default_kind() -> String {
@@ -261,6 +267,9 @@ pub struct CreateMeetingResp {
     #[serde(flatten)]
     pub options: SessionOptions,
     pub conflicts: Conflicts,
+    /// Só presente quando o pedido trouxe opções de SMS.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sms: Option<crate::sms_notify::MeetingSmsReport>,
 }
 
 pub async fn create(
@@ -281,6 +290,26 @@ pub async fn create(
         return Err(ApiError::BadRequest("duration must be 5-1440 min".into()));
     }
     req.options.validate()?;
+    if let Some(min) = req.sms_reminder_min {
+        if !crate::sms_notify::REMINDER_MIN_RANGE.contains(&min) {
+            return Err(ApiError::BadRequest(
+                "sms_reminder_min tem de estar entre 5 e 1440".into(),
+            ));
+        }
+        // As instâncias de uma série nascem sem lembrete; aceitar o campo aqui
+        // era prometer um SMS por ocorrência e mandar só o primeiro.
+        if req.recurrence_freq.is_some() {
+            return Err(ApiError::Unprocessable(
+                "sms.reminder_recurring_unsupported: lembrete por SMS ainda não existe em reuniões recorrentes".into(),
+            ));
+        }
+    }
+    // Permissão ANTES de criar: pedir SMS sem poder enviá-los recusa o pedido.
+    let sms_org = if req.sms_invite || req.sms_reminder_min.is_some() {
+        Some(crate::sms_notify::authorize(&state, auth.user_id).await?)
+    } else {
+        None
+    };
 
     // Quota de reuniões da organização (agenda): conta as reuniões cujo dono é
     // membro da org do criador. NULL => ilimitado.
@@ -341,8 +370,8 @@ pub async fn create(
     let meeting: Meeting = sqlx::query_as(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
                                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday,
-                               format, waiting_room, auto_record, record_quality)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                               format, waiting_room, auto_record, record_quality, sms_reminder_min)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
          RETURNING id, owner_id, title, description, kind, starts_at, duration_min, room_code, created_at, room_ref,
                    minutes, transcript, recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
                    recurrence_byday, recurrence_parent_id",
@@ -363,6 +392,7 @@ pub async fn create(
     .bind(req.options.waiting_room)
     .bind(req.options.auto_record)
     .bind(&req.options.record_quality)
+    .bind(req.sms_reminder_min)
     .fetch_one(&state.db)
     .await?;
 
@@ -394,6 +424,40 @@ pub async fn create(
         meeting,
         options: req.options,
         conflicts,
+    let sms = match sms_org {
+        None => None,
+        Some(org_id) => {
+            let invite = if req.sms_invite {
+                let meeting_ref = crate::sms_notify::MeetingRef {
+                    id: meeting.id,
+                    owner_id: meeting.owner_id,
+                    title: &meeting.title,
+                    starts_at: meeting.starts_at,
+                };
+                Some(
+                    crate::sms_notify::queue_for_meeting(
+                        &state,
+                        org_id,
+                        &meeting_ref,
+                        &req.invitee_ids,
+                        crate::sms::Purpose::MeetingInvite,
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
+            Some(crate::sms_notify::MeetingSmsReport {
+                invite,
+                reminder_min: req.sms_reminder_min,
+            })
+        }
+    };
+
+    Ok(Json(CreateMeetingResp {
+        meeting,
+        conflicts,
+        sms,
     }))
 }
 
