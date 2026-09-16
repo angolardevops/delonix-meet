@@ -59,16 +59,18 @@ export function PassphraseScreen({ code, onSubmit, onCancel }: { code: string; o
 }
 
 /** Recusado à porta ou removido pelo anfitrião. */
-export function EndedScreen({ kind, onLeave }: { kind: 'denied' | 'kicked'; onLeave: () => void }) {
+export function EndedScreen({ kind, onLeave }: { kind: 'denied' | 'kicked' | 'notfound'; onLeave: () => void }) {
   const { t } = useTranslation()
+  const titulo = { denied: t('room.fim.recusado'), kicked: t('room.fim.removido'), notfound: t('room.fim.naoExiste') }[kind]
+  const texto = { denied: t('room.fim.recusadoTexto'), kicked: t('room.fim.removidoTexto'), notfound: t('room.fim.naoExisteTexto') }[kind]
   return (
     <div className="rm-center">
       <div className="rm-center__card" role="alert">
         <span className="rm-center__icon" aria-hidden="true">
           <DelonixSymbol size={22} />
         </span>
-        <h1>{kind === 'denied' ? t('room.fim.recusado') : t('room.fim.removido')}</h1>
-        <p className="dx-muted">{kind === 'denied' ? t('room.fim.recusadoTexto') : t('room.fim.removidoTexto')}</p>
+        <h1>{titulo}</h1>
+        <p className="dx-muted">{texto}</p>
         <div className="rm-center__actions">
           <Button variant="primary" icon="home" onClick={onLeave}>
             {t('room.fim.voltar')}

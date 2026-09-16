@@ -191,6 +191,8 @@ export default {
     entrar: 'Entrar na reunião',
   },
   fim: {
+    naoExiste: 'Esta sala não existe',
+    naoExisteTexto: 'O código não corresponde a nenhuma sala. Confirma o link com quem o enviou.',
     recusado: 'Entrada recusada',
     recusadoTexto: 'O anfitrião não admitiu a tua entrada nesta reunião.',
     removido: 'Foste removido da reunião',

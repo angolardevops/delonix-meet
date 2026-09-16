@@ -21,7 +21,7 @@ export interface RemotePeer {
   reconnecting?: boolean
 }
 
-export type RoomState = 'prejoin' | 'connecting' | 'waiting' | 'denied' | 'kicked' | 'in' | 'e2ee-pass'
+export type RoomState = 'prejoin' | 'connecting' | 'waiting' | 'denied' | 'kicked' | 'notfound' | 'in' | 'e2ee-pass'
 
 export interface Presentation {
   peerId: string

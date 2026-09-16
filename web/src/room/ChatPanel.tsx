@@ -27,6 +27,12 @@ export function ChatPanel({ chat, isHost }: { chat: Chat; isHost: boolean }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const blocked = !chat.chatOn && !isHost
 
+  // Abrir o chat é para escrever: o foco vai para o campo (sem isto, o que se
+  // escrevia logo a seguir perdia-se).
+  useEffect(() => {
+    if (!blocked) inputRef.current?.focus()
+  }, [blocked])
+
   // Segue a conversa: a mensagem nova fica à vista.
   useEffect(() => {
     const el = listRef.current

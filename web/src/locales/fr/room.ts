@@ -191,6 +191,8 @@ export default {
     entrar: 'Rejoindre la réunion',
   },
   fim: {
+    naoExiste: "Cette salle n'existe pas",
+    naoExisteTexto: "Le code ne correspond à aucune salle. Vérifiez le lien auprès de l'expéditeur.",
     recusado: 'Entrée refusée',
     recusadoTexto: "L'hôte ne vous a pas admis dans cette réunion.",
     removido: 'Vous avez été retiré de la réunion',
