@@ -12,6 +12,7 @@ import { cx } from '../../ui/kit'
 import { center, clampZoom, contains, edgeSegment, nodeBox, Pt } from './geometry'
 import { CONTAINERS, DiagramDoc, DNode, EdgeType, Stroke, uid } from './model'
 import { EdgeShape, NodeShape, strokePath } from './shapes'
+import { FONT } from './paint'
 
 export type Sel = { kind: 'node' | 'edge' | 'stroke'; id: string }
 export type Tool = { kind: 'select' } | { kind: 'edge'; edge: EdgeType } | { kind: 'pen' } | { kind: 'eraser' }
@@ -46,6 +47,7 @@ export default function Canvas({
   svgRef,
   penColor,
   typeLabel,
+  subLabel,
   onView,
   onSelect,
   onLive,
@@ -60,6 +62,7 @@ export default function Canvas({
   svgRef: RefObject<SVGSVGElement | null>
   penColor: string
   typeLabel: (n: DNode) => string
+  subLabel: (n: DNode) => string | undefined
   onView: (v: View) => void
   onSelect: (s: Sel | null) => void
   onLive: (d: DiagramDoc) => void
@@ -338,7 +341,7 @@ export default function Canvas({
       onKeyDown={(e) => nodeKey(e, n)}
       onFocus={() => tool.kind === 'select' && onSelect({ kind: 'node', id: n.id })}
     >
-      <NodeShape n={n} />
+      <NodeShape n={n} sub={subLabel(n)} />
     </g>
   )
 
@@ -362,6 +365,7 @@ export default function Canvas({
       <svg
         ref={svgRef}
         className="dg-svg"
+        fontFamily={FONT}
         role="application"
         aria-label={t('diagrams.canvas.rotulo')}
         onPointerDown={startBackground}

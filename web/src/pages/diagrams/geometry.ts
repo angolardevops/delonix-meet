@@ -175,10 +175,12 @@ export function contentBox(doc: Pick<DiagramDoc, 'nodes' | 'strokes'>): Box | nu
 }
 
 /** Vista (deslocamento e escala) que enquadra `box` numa área `vw × vh`. */
-export function fitView(box: Box | null, vw: number, vh: number, pad = 32): { x: number; y: number; k: number } {
+export function fitView(box: Box | null, vw: number, vh: number, pad = 18): { x: number; y: number; k: number } {
   if (!box || box.w <= 0 || box.h <= 0) return { x: pad, y: pad, k: 1 }
-  const k = clampZoom(Math.min((vw - pad * 2) / box.w, (vh - pad * 2) / box.h, 1.5))
-  return { x: (vw - box.w * k) / 2 - box.x * k, y: (vh - box.h * k) / 2 - box.y * k, k }
+  const k = clampZoom(Math.min((vw - pad * 2) / box.w, (vh - pad * 2) / box.h, 1))
+  // Ancorado em cima à esquerda, como o template: o diagrama lê-se a partir
+  // do canto, não flutua no meio de papel vazio.
+  return { x: pad - box.x * k, y: pad - box.y * k, k }
 }
 
 export const ZOOM_MIN = 0.2
