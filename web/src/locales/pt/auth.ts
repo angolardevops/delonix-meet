@@ -1,0 +1,22 @@
+export default {
+  aCompletarSso: 'A concluir a entrada pelo fornecedor de identidade…',
+  mfa: {
+    titulo: 'Verificação em dois passos',
+    activo: 'Activa',
+    inactivo: 'Inactiva',
+    explicacao: 'Além da palavra-passe, a entrada pede um código de 6 dígitos do autenticador do telemóvel.',
+    codigosRestantes_one: 'Resta {{count}} código de recuperação.',
+    codigosRestantes_other: 'Restam {{count}} códigos de recuperação.',
+    activar: 'Activar',
+    desactivar: 'Desactivar',
+    passo1: 'Lê o código QR com o autenticador (ou escreve o segredo à mão).',
+    segredo: 'Segredo',
+    passo2: 'Código de 6 dígitos do autenticador',
+    confirmar: 'Confirmar',
+    guardaOsCodigos: 'Guarda estes códigos num sítio seguro. Cada um entra uma vez se perderes o telemóvel, e não voltam a ser mostrados.',
+    jaGuardei: 'Guardei os códigos de recuperação',
+    concluir: 'Concluir',
+    codigoParaDesactivar: 'Código do autenticador ou de recuperação',
+    codigoInvalido: 'Código inválido.',
+  },
+}

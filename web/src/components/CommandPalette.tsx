@@ -1,152 +1,166 @@
-import { ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+/**
+ * Paleta de comandos (Ctrl/Cmd+K): ir para um ecrã, abrir uma reunião nova,
+ * entrar numa sala colando o código ou o link. Teclado primeiro — setas,
+ * Enter, Esc.
+ */
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { createRoom } from '../api'
-import type { NavKey } from './Shell'
-import { CalendarIcon, ClockIcon, EnterIcon, FilmIcon, HomeIcon, NoteIcon, PeopleIcon, SearchIcon, StageIcon } from '../icons'
+import { apiErrorMessage, createRoom, User } from '../api'
+import { parseRoomCode } from '../roomCode'
+import { Icon, IconName } from '../ui/icons'
+import { cx } from '../ui/kit'
+import type { NavKey } from './shellContext'
 
-// Command palette (Cmd/Ctrl-K) — navegação + ações rápidas, estilo Teams/Slack.
-// Aberto por atalho global ou pelo botão de pesquisa da sidebar (ver Shell).
-
-type Cmd = {
+interface Command {
   id: string
   label: string
-  keywords?: string
-  icon?: ReactNode
-  group: 'nav' | 'action'
-  run: () => void
+  hint?: string
+  icon: IconName
+  run: () => void | Promise<void>
 }
 
-interface Props {
-  open: boolean
+export default function CommandPalette({
+  onClose,
+  onNavigate,
+  onEnterRoom,
+  onLogout,
+  onSettings,
+  onToggleTheme,
+  user,
+  isAdmin,
+}: {
   onClose: () => void
   onNavigate: (k: NavKey) => void
-  onEnterRoom: (code: string, voice?: boolean) => void
+  onEnterRoom: (code: string) => void
   onLogout: () => void
-  username: string
+  onSettings: () => void
+  onToggleTheme: () => void
+  user: User
   isAdmin: boolean
-}
-
-export default function CommandPalette({ open, onClose, onNavigate, onEnterRoom, onLogout, username, isAdmin }: Props) {
+}) {
   const { t } = useTranslation()
-  const [query, setQuery] = useState('')
+  const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
-  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const listRef = useRef<HTMLDivElement>(null)
 
-  const go = (k: NavKey) => { onClose(); onNavigate(k) }
+  useEffect(() => {
+    const prev = document.activeElement as HTMLElement | null
+    inputRef.current?.focus()
+    return () => prev?.focus?.()
+  }, [])
 
-  async function newMeeting() {
-    if (busy) return
-    setBusy(true)
+  const commands = useMemo<Command[]>(() => {
+    const nav = (key: NavKey, label: string, icon: IconName): Command => ({
+      id: `nav-${key}`,
+      label,
+      hint: t('shell.paleta.irPara'),
+      icon,
+      run: () => onNavigate(key),
+    })
+    const list: Command[] = []
+    const code = parseRoomCode(q)
+    if (code) {
+      list.push({ id: 'join', label: t('shell.paleta.entrarEm', { codigo: code }), icon: 'door', run: () => onEnterRoom(code) })
+    }
+    list.push(
+      {
+        id: 'new',
+        label: t('shell.paleta.novaReuniao'),
+        hint: t('shell.paleta.salaPessoal'),
+        icon: 'video',
+        run: async () => {
+          const room = await createRoom(t('shell.paleta.reuniaoDe', { nome: user.username }))
+          onEnterRoom(room.code)
+        },
+      },
+      nav('home', t('shell.nav.inicio'), 'home'),
+      nav('calendar', t('shell.nav.agenda'), 'calendar'),
+      nav('studio', t('shell.nav.estudio'), 'live'),
+      nav('recordings', t('shell.nav.gravacoes'), 'film'),
+      nav('whiteboards', t('shell.nav.quadros'), 'board'),
+      nav('directory', t('shell.nav.contactos'), 'people'),
+    )
+    if (isAdmin) {
+      list.push(
+        nav('integrations', t('shell.nav.integracoes'), 'plug'),
+        nav('analytics', t('shell.nav.analise'), 'chart'),
+        nav('admin', t('shell.nav.administracao'), 'building'),
+      )
+    }
+    list.push(
+      { id: 'settings', label: t('shell.definicoes'), icon: 'sliders', run: onSettings },
+      { id: 'theme', label: t('shell.paleta.alternarTema'), icon: 'moon', run: onToggleTheme },
+      { id: 'logout', label: t('shell.terminarSessao'), icon: 'logout', run: onLogout },
+    )
+    const needle = q.trim().toLowerCase()
+    if (!needle || code) return list
+    return list.filter((c) => c.label.toLowerCase().includes(needle))
+  }, [q, t, isAdmin, user.username, onNavigate, onEnterRoom, onSettings, onToggleTheme, onLogout])
+
+  useEffect(() => setSel(0), [q])
+
+  async function run(c: Command | undefined) {
+    if (!c) return
+    setErr(null)
     try {
-      const room = await createRoom(`${t('home.meetingLabel', 'Reunião')} de ${username}`)
+      await c.run()
       onClose()
-      onEnterRoom(room.code)
-    } finally {
-      setBusy(false)
+    } catch (e) {
+      setErr(apiErrorMessage(e, t('ui.erroGenerico')))
     }
   }
 
-  const commands: Cmd[] = useMemo(() => {
-    const nav: Cmd[] = [
-      { id: 'home', label: t('nav.home'), keywords: 'inicio dashboard painel', icon: <HomeIcon />, group: 'nav', run: () => go('home') },
-      { id: 'calendar', label: t('nav.calendar'), keywords: 'agenda reunioes meetings', icon: <CalendarIcon />, group: 'nav', run: () => go('calendar') },
-      { id: 'directory', label: t('nav.org'), keywords: 'organizacao diretorio contactos equipa', icon: <PeopleIcon />, group: 'nav', run: () => go('directory') },
-      { id: 'recordings', label: t('nav.recordings'), keywords: 'gravacoes atas mom', icon: <FilmIcon />, group: 'nav', run: () => go('recordings') },
-      { id: 'whiteboards', label: t('nav.whiteboards'), keywords: 'quadros whiteboard', icon: <NoteIcon />, group: 'nav', run: () => go('whiteboards') },
-      ...(isAdmin
-        ? [{ id: 'analytics', label: t('nav.analytics'), keywords: 'analises kpis admin', icon: <ClockIcon />, group: 'nav' as const, run: () => go('analytics') }]
-        : []),
-    ]
-    const actions: Cmd[] = [
-      { id: 'new', label: t('cmd.newMeeting', 'Nova reunião'), keywords: 'criar sala reunir agora call', icon: <StageIcon />, group: 'action', run: () => void newMeeting() },
-      { id: 'tour', label: t('tour.replay', 'Ver introdução'), keywords: 'ajuda tour onboarding intro', group: 'action', run: () => { onClose(); window.dispatchEvent(new Event('dx-start-tour')) } },
-      { id: 'logout', label: t('nav.logout'), keywords: 'sair terminar sessao', group: 'action', run: () => { onClose(); onLogout() } },
-    ]
-    return [...nav, ...actions]
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [t, isAdmin, username, busy])
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return commands
-    return commands.filter((c) => c.label.toLowerCase().includes(q) || (c.keywords || '').includes(q))
-  }, [query, commands])
-
-  // Reset ao abrir + foco no input.
-  useEffect(() => {
-    if (open) { setQuery(''); setSel(0); setTimeout(() => inputRef.current?.focus(), 20) }
-  }, [open])
-  useEffect(() => { setSel(0) }, [query])
-
-  // Teclado.
-  useEffect(() => {
-    if (!open) return
-    const on = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); onClose() }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => Math.min(filtered.length - 1, s + 1)) }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => Math.max(0, s - 1)) }
-      else if (e.key === 'Enter') { e.preventDefault(); filtered[sel]?.run() }
-    }
-    window.addEventListener('keydown', on)
-    return () => window.removeEventListener('keydown', on)
-  }, [open, filtered, sel, onClose])
-
-  useEffect(() => {
-    listRef.current?.querySelector('.cmd-item.sel')?.scrollIntoView({ block: 'nearest' })
-  }, [sel])
-
-  if (!open) return null
-
-  let idx = -1
-  const groups: { key: 'nav' | 'action'; label: string }[] = [
-    { key: 'nav', label: t('cmd.navigate', 'Ir para') },
-    { key: 'action', label: t('cmd.actions', 'Ações') },
-  ]
-
   return (
-    <div className="cmd-backdrop" onMouseDown={onClose} role="dialog" aria-modal="true" aria-label={t('cmd.title', 'Comandos')}>
-      <div className="cmd-palette" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="cmd-search">
-          <span className="cmd-search-icon" aria-hidden="true"><SearchIcon /></span>
+    <div className="dx-dialog-scrim palette-scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="palette" role="dialog" aria-modal="true" aria-label={t('shell.paleta.rotulo')}>
+        <div className="palette__search">
+          <Icon name="search" />
           <input
             ref={inputRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('cmd.placeholder', 'Procurar páginas e ações…')}
-            aria-label={t('cmd.placeholder', 'Procurar páginas e ações…')}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t('shell.paleta.placeholder')}
+            aria-label={t('shell.paleta.placeholder')}
+            aria-controls="palette-list"
+            aria-activedescendant={commands[sel] ? `cmd-${commands[sel].id}` : undefined}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                setSel((s) => Math.min(s + 1, commands.length - 1))
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                setSel((s) => Math.max(s - 1, 0))
+              } else if (e.key === 'Enter') {
+                e.preventDefault()
+                void run(commands[sel])
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                onClose()
+              }
+            }}
           />
-          <kbd className="cmd-esc">Esc</kbd>
+          <kbd className="dx-num">Esc</kbd>
         </div>
-        <div className="cmd-list" ref={listRef}>
-          {filtered.length === 0 && <div className="cmd-empty">{t('cmd.empty', 'Sem resultados')}</div>}
-          {groups.map((g) => {
-            const items = filtered.filter((c) => c.group === g.key)
-            if (items.length === 0) return null
-            return (
-              <div className="cmd-group" key={g.key}>
-                <div className="cmd-group-label">{g.label}</div>
-                {items.map((c) => {
-                  idx++
-                  const i = idx
-                  return (
-                    <button
-                      key={c.id}
-                      className={i === sel ? 'cmd-item sel' : 'cmd-item'}
-                      onMouseEnter={() => setSel(i)}
-                      onClick={() => c.run()}
-                    >
-                      <span className="cmd-item-icon">{c.icon ?? <span className="cmd-dot" />}</span>
-                      <span className="cmd-item-label">{c.label}</span>
-                      {i === sel && <span className="cmd-item-enter" aria-hidden="true"><EnterIcon /></span>}
-                    </button>
-                  )
-                })}
-              </div>
-            )
-          })}
-        </div>
+        {err && <div className="palette__err" role="alert">{err}</div>}
+        <ul id="palette-list" className="palette__list" role="listbox">
+          {commands.length === 0 && <li className="palette__empty">{t('shell.paleta.nada')}</li>}
+          {commands.map((c, i) => (
+            <li
+              key={c.id}
+              id={`cmd-${c.id}`}
+              role="option"
+              aria-selected={i === sel}
+              className={cx('palette__item', i === sel && 'palette__item--sel')}
+              onMouseEnter={() => setSel(i)}
+              onClick={() => void run(c)}
+            >
+              <Icon name={c.icon} />
+              <span style={{ flex: 1 }}>{c.label}</span>
+              {c.hint && <span className="dx-muted dx-num">{c.hint}</span>}
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   )

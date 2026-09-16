@@ -1,0 +1,97 @@
+/*
+ * Tokens do Delonix Meet — tirados do «Sistema de design» do template
+ * navegável (ecrã 15). Dois temas e uma regra: o PALCO é sempre escuro.
+ *
+ *   :root / [data-theme=light]  consola (entrada, gestão, estúdio de pós)
+ *   [data-theme=dark]           a mesma consola em escuro
+ *   .dx-stage                   sala, pré-entrada, estúdio de emissão —
+ *                               reafirma o escuro qualquer que seja o tema
+ *
+ * Os contrastes estão medidos no template (text 15.4:1, muted 5.2:1,
+ * accent 7.7:1 no claro; 15.9 / 6.7 / 5.8 no escuro). Um valor novo aqui
+ * mede-se antes de entrar.
+ */
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+  --surface: #f4f4f5;
+  --raised: #ffffff;
+  --stage: #000000;
+  --border: #dedee1;
+  --text: #0b0b0c;
+  --muted: #5c5c63;
+  --accent: #ad1017;
+  --accent-strong: #8a0c12;
+  --accent-pressed: #6e070c;
+  --live: #a85b00;
+  --live-text: #7a4600;
+  --record: #ad1017;
+  --record-text: #8a0c12;
+  --success: #1e7a4a;
+  --warning: #a85b00;
+  --danger: #ad1017;
+  --hover: rgb(11 11 12 / 4%);
+  --scrim: rgb(11 11 12 / 45%);
+  --e-1: 0 1px 2px rgb(11 11 12 / 8%);
+  --e-2: 0 4px 12px rgb(11 11 12 / 12%);
+  --e-3: 0 4px 16px rgb(11 11 12 / 16%);
+}
+
+[data-theme='dark'],
+.dx-stage {
+  color-scheme: dark;
+  --surface: #0d0d0f;
+  --raised: #17171a;
+  --stage: #000000;
+  --border: #2a2a2e;
+  --text: #f2f2f3;
+  --muted: #9a9aa0;
+  --accent: #ff5a60;
+  --accent-strong: #ad1017;
+  --accent-pressed: #8a0c12;
+  --live: #f0a32e;
+  --live-text: #e8bb86;
+  --record: #d41f27;
+  --record-text: #ef9a9a;
+  --success: #2f9e6a;
+  --warning: #f0a32e;
+  --danger: #d41f27;
+  --hover: rgb(255 255 255 / 4%);
+  --scrim: rgb(0 0 0 / 62%);
+  --e-1: 0 1px 2px rgb(0 0 0 / 40%);
+  --e-2: 0 4px 12px rgb(0 0 0 / 50%);
+  --e-3: 0 4px 16px rgb(0 0 0 / 60%);
+}
+
+:root {
+  --font-ui: 'Archivo', system-ui, sans-serif;
+  --font-display: 'Archivo Black', 'Archivo', sans-serif;
+  --font-mono: 'DM Mono', ui-monospace, monospace;
+
+  /* Raios: 2 nos controlos, 3 nas superfícies, 8 na barra de controlos. */
+  --r-2: 2px;
+  --r-3: 3px;
+  --r-8: 8px;
+
+  /* Espaçamento — a escala do template (4 · 8 · 14 · 24). */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 14px;
+  --s-4: 24px;
+
+  /* Tamanhos de texto do template. */
+  --t-xs: 10px;
+  --t-sm: 11px;
+  --t-md: 12.5px;
+  --t-lg: 14px;
+  --t-title: 17px;
+  --t-h1: 26px;
+
+  /* Altura dos controlos e da barra. */
+  --ctl-h: 32px;
+  --ctl-h-lg: 42px;
+  --nav-w: 228px;
+  --top-h: 58px;
+  --controls-h: 66px;
+  --focus: 2px solid var(--accent);
+}

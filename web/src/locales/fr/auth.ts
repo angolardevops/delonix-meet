@@ -1,0 +1,22 @@
+export default {
+  aCompletarSso: "Finalisation de la connexion auprès du fournisseur d'identité…",
+  mfa: {
+    titulo: 'Vérification en deux étapes',
+    activo: 'Activée',
+    inactivo: 'Désactivée',
+    explicacao: "En plus du mot de passe, la connexion demande un code à 6 chiffres de l'authentificateur.",
+    codigosRestantes_one: 'Il reste {{count}} code de récupération.',
+    codigosRestantes_other: 'Il reste {{count}} codes de récupération.',
+    activar: 'Activer',
+    desactivar: 'Désactiver',
+    passo1: "Scannez le code QR avec l'authentificateur (ou saisissez le secret).",
+    segredo: 'Secret',
+    passo2: "Code à 6 chiffres de l'authentificateur",
+    confirmar: 'Confirmer',
+    guardaOsCodigos: 'Gardez ces codes en lieu sûr. Chacun sert une fois si vous perdez le téléphone, et ils ne sont plus affichés.',
+    jaGuardei: "J'ai enregistré les codes",
+    concluir: 'Terminer',
+    codigoParaDesactivar: "Code d'authentificateur ou de récupération",
+    codigoInvalido: 'Code invalide.',
+  },
+}

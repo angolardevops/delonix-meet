@@ -1,188 +1,206 @@
+/**
+ * Segundo factor por TOTP. Três momentos com regras próprias:
+ *  - inscrever: o segredo e o QR aparecem UMA vez;
+ *  - activar: pede um código do autenticador e devolve 10 códigos de
+ *    recuperação, também UMA vez — «Concluir» só fica activo depois de a
+ *    pessoa confirmar que os guardou;
+ *  - desactivar: exige um código válido (uma sessão roubada não chega).
+ */
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CheckIcon } from '../icons'
-import { mfaActivar, mfaDesactivar, mfaEstado, mfaInscrever, MfaEstado } from '../api'
+import { apiErrorMessage, mfaActivar, mfaDesactivar, mfaEstado, MfaEstado, mfaInscrever } from '../api'
+import { Alert, Button, Checkbox, Field, Spinner, StatusBadge, TextInput } from '../ui/kit'
 
-/**
- * Segundo factor (TOTP) nas definições da conta.
- *
- * A inscrição é um caminho de três passos com uma propriedade que a interface
- * tem de respeitar: **o segredo e os códigos de recuperação são mostrados UMA
- * vez**. Depois disso só existe o hash deles no servidor. Por isso não há
- * «voltar atrás» a meio nem se fecha o painel sem um aviso — perder os códigos
- * de recuperação significa perder a conta se o telemóvel se perder.
- */
-type Passo = 'estado' | 'inscricao' | 'codigos'
+type Passo =
+  | { k: 'estado' }
+  | { k: 'inscrever'; secret: string; qr: string | null }
+  | { k: 'codigos'; codes: string[] }
+  | { k: 'desactivar' }
 
 export default function MfaPanel() {
   const { t } = useTranslation()
   const [estado, setEstado] = useState<MfaEstado | null>(null)
-  const [passo, setPasso] = useState<Passo>('estado')
-  const [segredo, setSegredo] = useState('')
-  const [qr, setQr] = useState('')
-  const [codigo, setCodigo] = useState('')
-  const [recuperacao, setRecuperacao] = useState<string[]>([])
-  const [guardados, setGuardados] = useState(false)
-  const [erro, setErro] = useState('')
-  const [ocupado, setOcupado] = useState(false)
+  const [passo, setPasso] = useState<Passo>({ k: 'estado' })
+  const [code, setCode] = useState('')
+  const [erro, setErro] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [guardei, setGuardei] = useState(false)
 
-  const recarregar = () => mfaEstado().then(setEstado).catch(() => {})
-  useEffect(() => { void recarregar() }, [])
+  const carregar = () =>
+    mfaEstado()
+      .then(setEstado)
+      .catch((e) => setErro(apiErrorMessage(e, t('ui.erroCarregar'))))
+
+  useEffect(() => {
+    void carregar()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function inscrever() {
-    setErro(''); setOcupado(true)
+    setErro(null)
+    setBusy(true)
     try {
       const r = await mfaInscrever()
-      setSegredo(r.secret)
-      // O gerador de QR entra por import dinâmico: só é descarregado por quem
-      // abre mesmo a inscrição, e não pesa no bundle de quem nunca lá vai.
-      const { toString } = await import('qrcode')
-      setQr(await toString(r.otpauth_uri, { type: 'svg', margin: 1, width: 220 }))
-      setPasso('inscricao')
+      let qr: string | null = null
+      try {
+        const { toString } = await import('qrcode')
+        qr = await toString(r.otpauth_uri, { type: 'svg', margin: 1, width: 200 })
+      } catch {
+        /* sem QR, o segredo em texto continua a servir */
+      }
+      setPasso({ k: 'inscrever', secret: r.secret, qr })
+      setCode('')
     } catch (e) {
-      setErro((e as Error).message)
-    } finally { setOcupado(false) }
+      setErro(apiErrorMessage(e, t('ui.erroGenerico')))
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function activar() {
-    setErro(''); setOcupado(true)
+    setErro(null)
+    setBusy(true)
     try {
-      const r = await mfaActivar(codigo.trim())
-      setRecuperacao(r.backup_codes)
-      setCodigo('')
-      setPasso('codigos')
-      await recarregar()
-    } catch {
-      setErro(t('mfa.codigoInvalidoHora'))
-    } finally { setOcupado(false) }
+      const r = await mfaActivar(code.trim())
+      setPasso({ k: 'codigos', codes: r.backup_codes })
+      setGuardei(false)
+    } catch (e) {
+      setErro(apiErrorMessage(e, t('auth.mfa.codigoInvalido')))
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function desactivar() {
-    setErro(''); setOcupado(true)
+    setErro(null)
+    setBusy(true)
     try {
-      await mfaDesactivar(codigo.trim())
-      setCodigo('')
-      await recarregar()
-    } catch {
-      setErro(t('mfa.codigoInvalidoRecuperacao'))
-    } finally { setOcupado(false) }
+      await mfaDesactivar(code.trim())
+      setPasso({ k: 'estado' })
+      setCode('')
+      await carregar()
+    } catch (e) {
+      setErro(apiErrorMessage(e, t('auth.mfa.codigoInvalido')))
+    } finally {
+      setBusy(false)
+    }
   }
 
-  if (!estado) return <p className="muted">{t('common.loading')}</p>
+  if (!estado && !erro) return <Spinner label={t('ui.aCarregar')} />
 
-  // --- Passo 3: os códigos de recuperação, vistos uma única vez ---
-  if (passo === 'codigos') {
-    return (
-      <div className="mfa-panel">
-        <h3>{t('mfa.guardaOsCodigos')}</h3>
-        <p className="mfa-warn" role="alert">{t('mfa.soOsVes')}<strong>agora</strong>{t('mfa.cadaUmServe')} <strong>{t('mfa.umaVez')}</strong>  {t('mfa.eEAUnica')}
-        </p>
-        <ul className="mfa-codes">
-          {recuperacao.map((c) => <li key={c}><code>{c}</code></li>)}
-        </ul>
-        <div className="mfa-actions">
-          <button
-            className="btn-sm"
-            onClick={() => void navigator.clipboard?.writeText(recuperacao.join('\n'))}
-          >
-            Copiar
-          </button>
-          <button
-            className="btn-sm"
-            onClick={() => {
-              const blob = new Blob([recuperacao.join('\n')], { type: 'text/plain' })
-              const a = document.createElement('a')
-              a.href = URL.createObjectURL(blob)
-              a.download = 'delonix-codigos-recuperacao.txt'
-              a.click()
-              URL.revokeObjectURL(a.href)
-            }}
-          >
-            Descarregar
-          </button>
-        </div>
-        <label className="mfa-confirm">
-          <input type="checkbox" checked={guardados} onChange={(e) => setGuardados(e.target.checked)} />{t('mfa.guardeiOsCodigos')}</label>
-        <button className="btn-sm primary" disabled={!guardados} onClick={() => { setRecuperacao([]); setPasso('estado') }}>
-          Concluir
-        </button>
-      </div>
-    )
-  }
-
-  // --- Passo 2: ler o QR e provar que o autenticador funciona ---
-  if (passo === 'inscricao') {
-    return (
-      <div className="mfa-panel">
-        <h3>{t('mfa.ligaOAutenticador')}</h3>
-        <p className="muted">
-          {t('mfa.leOCodigoCom')}
-        </p>
-        {qr && <div className="mfa-qr" aria-label={t('mfa.codigoQr')} dangerouslySetInnerHTML={{ __html: qr }} />}
-        <label className="set-label">{t('mfa.chaveSeNaoLeres')}<code className="mfa-secret">{segredo.match(/.{1,4}/g)?.join(' ')}</code>
-        </label>
-        <label className="set-label">{t('mfa.codigoDe6Digitos')}<input
-            value={codigo}
-            onChange={(e) => setCodigo(e.target.value.replace(/\D/g, '').slice(0, 6))}
-            placeholder="000000"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-          />
-        </label>
-        {erro && <p className="auth-error" role="alert">{erro}</p>}
-        <div className="mfa-actions">
-          <button className="btn-sm primary" disabled={ocupado || codigo.length !== 6} onClick={() => void activar()}>
-            {ocupado ? t('mfa.aVerificar') : 'Activar'}
-          </button>
-          <button className="btn-ghost small" onClick={() => { setPasso('estado'); setCodigo(''); setErro('') }}>
-            Cancelar
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  // --- Passo 1: estado ---
   return (
     <div className="mfa-panel">
-      <h3>{t('mfa.titulo')}</h3>
-      {estado.enabled ? (
-        <>
-          <p className="mfa-on"><CheckIcon />{t('mfa.activa')}</p>
-          <p className="muted">
-            Restam <strong>{estado.backup_codes_left}</strong>  {t('mfa.codigosDeRecuperacao')}
-            {estado.backup_codes_left <= 2 && ' Desactiva e volta a activar para gerar códigos novos.'}
-          </p>
-          <label className="set-label">{t('mfa.paraDesactivar')}<input
-              value={codigo}
-              onChange={(e) => setCodigo(e.target.value.replace(/[^0-9A-Za-z-]/g, '').slice(0, 11))}
-              placeholder="000000"
+      {erro && <Alert tone="danger">{erro}</Alert>}
+
+      {passo.k === 'estado' && estado && (
+        <div className="mfa-estado">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <strong style={{ flex: 1 }}>{t('auth.mfa.titulo')}</strong>
+            {estado.enabled ? (
+              <span className="mfa-on">
+                <StatusBadge tone="success" icon="check">{t('auth.mfa.activo')}</StatusBadge>
+              </span>
+            ) : (
+              <StatusBadge tone="neutral">{t('auth.mfa.inactivo')}</StatusBadge>
+            )}
+          </div>
+          <p className="dx-muted" style={{ margin: 0 }}>{t('auth.mfa.explicacao')}</p>
+          {estado.enabled ? (
+            <>
+              <p className="dx-muted" style={{ margin: 0 }}>
+                {t('auth.mfa.codigosRestantes', { count: estado.backup_codes_left })}
+              </p>
+              <div>
+                <Button variant="secondary" onClick={() => { setPasso({ k: 'desactivar' }); setCode('') }}>
+                  {t('auth.mfa.desactivar')}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div>
+              <Button variant="primary" icon="shieldCheck" busy={busy} onClick={inscrever}>
+                {t('auth.mfa.activar')}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {passo.k === 'inscrever' && (
+        <div className="mfa-inscrever">
+          <p style={{ margin: 0 }}>{t('auth.mfa.passo1')}</p>
+          <div className="mfa-qr-row">
+            {passo.qr && <div className="mfa-qr" dangerouslySetInnerHTML={{ __html: passo.qr }} />}
+            <div style={{ minWidth: 0 }}>
+              <div className="dx-eyebrow">{t('auth.mfa.segredo')}</div>
+              <code className="mfa-secret dx-num">{passo.secret}</code>
+            </div>
+          </div>
+          <Field label={t('auth.mfa.passo2')} htmlFor="mfa-code">
+            <TextInput
+              id="mfa-code"
               inputMode="numeric"
               autoComplete="one-time-code"
+              code
+              maxLength={6}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
             />
-          </label>
-          {erro && <p className="auth-error" role="alert">{erro}</p>}
-          {/* Exige-se um código porque, sem ele, uma sessão roubada bastava
-              para desligar o segundo factor — que existe precisamente para o
-              caso de a sessão estar comprometida. */}
-          <button className="btn-sm" disabled={ocupado || codigo.trim().length < 6} onClick={() => void desactivar()}>
-            Desactivar
-          </button>
-        </>
-      ) : (
-        <>
-          <p className="muted">
-            
-            {t('mfa.acrescentaUmCodigoDo')}
-          </p>
-          {estado.pending && (
-            <p className="muted">{t('mfa.inscricaoPorConcluir')}</p>
-          )}
-          {erro && <p className="auth-error" role="alert">{erro}</p>}
-          <button className="btn-sm primary" disabled={ocupado} onClick={() => void inscrever()}>
-            {ocupado ? t('mfa.aPreparar') : estado.pending ? t('mfa.recomecarInscricao') : 'Activar'}
-          </button>
-        </>
+          </Field>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button variant="secondary" onClick={() => setPasso({ k: 'estado' })}>{t('ui.cancelar')}</Button>
+            <Button variant="primary" busy={busy} disabled={code.length !== 6} onClick={activar}>
+              {t('auth.mfa.confirmar')}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {passo.k === 'codigos' && (
+        <div className="mfa-codigos">
+          <Alert tone="warning">{t('auth.mfa.guardaOsCodigos')}</Alert>
+          <ul className="mfa-codes dx-num">
+            {passo.codes.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+          <div className="mfa-confirm">
+            <Checkbox label={t('auth.mfa.jaGuardei')} checked={guardei} onChange={(e) => setGuardei(e.target.checked)} />
+          </div>
+          <div>
+            <Button
+              variant="primary"
+              disabled={!guardei}
+              onClick={() => {
+                setPasso({ k: 'estado' })
+                void carregar()
+              }}
+            >
+              {t('auth.mfa.concluir')}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {passo.k === 'desactivar' && (
+        <div className="mfa-desactivar">
+          <Field label={t('auth.mfa.codigoParaDesactivar')} htmlFor="mfa-off">
+            <TextInput
+              id="mfa-off"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              code
+              value={code}
+              onChange={(e) => setCode(e.target.value.trim())}
+            />
+          </Field>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button variant="secondary" onClick={() => setPasso({ k: 'estado' })}>{t('ui.cancelar')}</Button>
+            <Button variant="danger" busy={busy} disabled={code.length < 6} onClick={desactivar}>
+              {t('auth.mfa.desactivar')}
+            </Button>
+          </div>
+        </div>
       )}
     </div>
   )

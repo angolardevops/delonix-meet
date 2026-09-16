@@ -1,0 +1,22 @@
+export default {
+  aCompletarSso: 'Completing sign-in with the identity provider…',
+  mfa: {
+    titulo: 'Two-step verification',
+    activo: 'On',
+    inactivo: 'Off',
+    explicacao: 'Besides the password, sign-in asks for a 6-digit code from your phone authenticator.',
+    codigosRestantes_one: '{{count}} recovery code left.',
+    codigosRestantes_other: '{{count}} recovery codes left.',
+    activar: 'Turn on',
+    desactivar: 'Turn off',
+    passo1: 'Scan the QR code with your authenticator (or type the secret).',
+    segredo: 'Secret',
+    passo2: '6-digit code from the authenticator',
+    confirmar: 'Confirm',
+    guardaOsCodigos: 'Keep these codes somewhere safe. Each signs you in once if you lose your phone, and they are not shown again.',
+    jaGuardei: 'I saved the recovery codes',
+    concluir: 'Finish',
+    codigoParaDesactivar: 'Authenticator or recovery code',
+    codigoInvalido: 'Invalid code.',
+  },
+}
