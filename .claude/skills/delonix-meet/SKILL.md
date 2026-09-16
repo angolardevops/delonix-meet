@@ -72,9 +72,10 @@ description: Ponto de entrada do Delonix Meet (videoconferência self-hosted —
 - **Segurança fechada neste ramo:** R125 (IDOR 5W2H), R130 (tomada de conta por SSO), R131
   (força bruta MFA), R132, R140–R143 (dial-in de outra org, pool de DIDs, token Odoo,
   arquivados no directório Odoo), R150 (`changeme123`), R151 (ocupação de contas pela v1),
-  R152, R153 (401→403/404). **Continuam abertos** S4 (SSRF no `odoo_url`/WebDAV/OIDC), S5
-  nos segredos HERDADOS (webhooks, SSO, WebDAV — a `SecretBox` existe e só os destinos de
-  emissão a usam), S6 (escopos de chaves), registo sem verificação de email.
+  R152, R153 (401→403/404), R160 (S5: segredos de webhooks, SSO e WebDAV cifrados em
+  repouso, `secrets_at_rest`). **Continuam abertos** S4 (SSRF no `odoo_url`/WebDAV/OIDC),
+  o resto de S5 (`apikeys.rs` ainda grava o `client_secret` do SSO em claro na provisão —
+  a tarefa horária cifra-o), S6 (escopos de chaves), registo sem verificação de email.
 - **Os revisores estão em `.claude/agents/delonix-meet-*.md`.**
 
 ## Três regras que valem em tudo

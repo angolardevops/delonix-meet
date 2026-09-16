@@ -1807,3 +1807,23 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `server/tests/security_voice_odoo.rs::odoo_list_users_excludes_archived_members` (controlo positivo: o mesmo membro aparece antes de ser arquivado; o activo e o admin continuam depois).
 
 **Ficheiros.** `server/src/odoo.rs`, `server/tests/security_voice_odoo.rs`, `docs/reference/openapi/v1.json`.
+
+### R160 — Segredos de integração em claro na base (S5): webhooks, SSO e WebDAV
+
+**Sintoma.** Nenhum visível. Quem lesse um dump, um backup ou uma réplica da base levava, em texto claro, o segredo HMAC de cada webhook (`org_webhooks.secret`), o `client_secret` OIDC de cada organização (`org_sso_configs.client_secret`) e a password do Nextcloud/WebDAV da plataforma (`platform_storage.webdav_password`) — credenciais de terceiros de todos os inquilinos. Auditoria 2026-09-16, S5 (`storage.rs:106`, `org.rs:1144`, `webhooks.rs:268`). A migração 0019 dizia «encriptado em repouso (app-level)» e a 0030 «cifrado se STORAGE_ENCRYPT=1»; nenhuma das duas era verdade.
+
+**Causa raiz.** Os três handlers faziam `bind` do valor recebido directamente na coluna. Não podem ser hash (o servidor volta a usá-los), e a `core::secret_box` — que já cifrava a chave RTMP dos destinos de emissão — não era usada aqui.
+
+**Regra.** Novo `server/src/secrets_at_rest.rs`, único caminho para estas colunas: `seal` na escrita (aad `<tabela>.<coluna>:<id da linha>`; o id do webhook nasce antes do `INSERT`), `open` onde o segredo se usa — assinatura em `webhooks::attempt` (disparo e reenvio), `auth::sso_login`/`sso_callback`, PROPFIND de `storage::test_storage`. Nenhuma resposta devolve o segredo: o `GET /api/orgs/{org_id}/sso` ganha `has_client_secret` (o storage já tinha `webdav_password_set`; o webhook já não serializava `secret`).
+
+**Decisões de compatibilidade — explícitas.**
+- Sem `DATA_ENCRYPTION_KEYS` (produção sem chaves): escrever um segredo NÃO vazio é `422 secrets.encryption_unconfigured`, nada é gravado. Criar um webhook SEM segredo (Slack/Teams/Mattermost, ou `generic` sem assinatura), guardar o SSO sem `client_secret` e o storage sem password continuam a funcionar sem chaves.
+- O herdado em claro lê-se sempre, com ou sem chaves. Um valor `enc:v1:` sem chaves, ou que não abre (chave retirada, valor copiado de outra linha), é erro interno com log `error` — `500` no teste WebDAV e no OIDC; no webhook a entrega fica `failed` e **não** se envia sem assinatura.
+- Migração: `secrets_at_rest::reseal_legacy` corre no arranque e de hora a hora (`lib.rs`). Com chaves, cifra os herdados em lotes de 200 com `UPDATE … WHERE coluna = <valor lido>` (não pisa uma escrita concorrente), idempotente; sem chaves, só avisa quantos continuam em claro.
+- Um texto herdado que por acaso comece por `enc:v1:` seria lido como cifrado e falharia. Não se tratou.
+
+**Portão.** `server/tests/secrets_at_rest.rs` (Postgres real + receptor HTTP em 127.0.0.1): coluna `enc:v1:` sem o texto claro nas três; HMAC recebido válido com o segredo ORIGINAL; `Authorization: Basic` do PROPFIND com a password original; nenhuma resposta traz o segredo nem o cifrado; herdado inserido por SQL serve antes e depois da tarefa, que cifra (1,1,1) e na segunda passagem 0; sem chaves 422 nas três escritas com segredo e 200 sem ele, herdado serve, cifrado sem chave falha fechado; cifrado copiado para outro webhook dá `failed` sem envio, e o `client_secret` da org A não abre com o contexto da org B. Prova de que morde: com `seal` a devolver o texto claro (o comportamento anterior), 4 dos 6 testes falham em «não está cifrado».
+
+**Não validado.** O fluxo OIDC completo contra um IdP (o teste prova o aad que `auth.rs` usa, não um `sso_login` real — a discovery exige `https://`). **Fica aberto:** `apikeys.rs` (provisão de org pela integração, `sso.client_secret`) continua a gravar o `client_secret` em claro — não era ficheiro desta sessão; deve chamar `org::seal_sso_client_secret`. Até lá a leitura funciona e a tarefa horária cifra-o.
+
+**Ficheiros.** `server/src/{secrets_at_rest,webhooks,org,auth,storage,lib}.rs`, `server/tests/secrets_at_rest.rs`, `docs/reference/openapi/{bff,v1}.json`.
