@@ -1,17 +1,43 @@
 /**
- * Pós-gravação: pré-visualizar, cortar as pontas com dois cursores, remover as
- * pausas mortas, descarregar faixas e guardar.
+ * Editor do Estúdio — «Linha de tempo», «Legendas e tradução» e «Exportações».
  *
- * Só o que o `editor.ts` e o `analise.ts` fazem — um corte (um troço) e a
- * remoção de pausas (vários troços). Não há correcção de cor, mistura, legendas
- * nem pistas múltiplas: não há código por trás, e por isso não aparecem.
+ * Um projecto NÃO DESTRUTIVO em IndexedDB (`edit/projecto.ts`, `edit/bd.ts`):
+ * as fontes gravadas ou importadas nunca são alteradas; cortar, mover, mudar a
+ * cor ou a mistura é acrescentar uma edição à lista, e desfazer é voltar um
+ * passo. O ficheiro só nasce na exportação (`edit/render.ts`).
+ *
+ * A página (`pages/Studio.tsx`) continua dona da gravação e do envio para a
+ * biblioteca (grava primeiro no dispositivo, depois no servidor); este painel
+ * recebe a gravação acabada e devolve o ficheiro exportado.
  */
-import { RefObject, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Alert, Button, Empty, Field, TextInput } from '../ui/kit'
-import { AnaliseDeAudio, resumo } from './analise'
+import { apiErrorMessage } from '../api'
+import { getAppName } from '../branding'
+import { useShell } from '../components/shellContext'
+import { DelonixSymbol, Icon } from '../ui/icons'
+import type { IconName } from '../ui/icons'
+import { Alert, Button, cx, Dialog, Empty, IconButton, TextInput } from '../ui/kit'
+import '../ui/editor.css'
+import { analisarPausas } from './analise'
+import CaptionsPanel from './captions/CaptionsPanel'
+import { contarPreenchimento, encontrarPreenchimento, palavrasDasCues, relogio } from './captions/legendas'
 import type { ResultadoDaGravacao } from './compositor'
-import { mmss } from './Cronometro'
+import Bin from './edit/Bin'
+import type { AbaDoBin, ResumoDePausas } from './edit/Bin'
+import Inspector from './edit/Inspector'
+import type { AbaDoInspector } from './edit/Inspector'
+import { ondaDe } from './edit/midia'
+import Preview from './edit/Preview'
+import type { Intervalo } from './edit/projecto'
+import { clipsDaFaixa, duracaoDoProjecto, intervalosDaFonteNaLinha, novoId, normalizarIntervalos } from './edit/projecto'
+import Timeline from './edit/Timeline'
+import type { Ferramenta } from './edit/Timeline'
+import { useLeitor } from './edit/useLeitor'
+import { useProjecto } from './edit/useProjecto'
+import type { FonteEmBruto } from './edit/useProjecto'
+import ExportsPanel from './exports/ExportsPanel'
 
 export interface Gravado {
   faixas: ResultadoDaGravacao
@@ -19,317 +45,434 @@ export interface Gravado {
   duracao: number
 }
 
+export type VistaDoEditor = 'edicao' | 'legendas' | 'exportacoes'
+
+const FERRAMENTAS: { id: Ferramenta; icone: IconName }[] = [
+  { id: 'seleccionar', icone: 'arrow' },
+  { id: 'lamina', icone: 'scissors' },
+  { id: 'aparar', icone: 'columns' },
+  { id: 'deslizar', icone: 'repeat' },
+  { id: 'transicao', icone: 'layers' },
+  { id: 'texto', icone: 'text' },
+  { id: 'mascara', icone: 'square' },
+  { id: 'audio', icone: 'volume' },
+]
+
+function useAgora(ms: number): number {
+  const [agora, setAgora] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setAgora(Date.now()), ms)
+    return () => clearInterval(id)
+  }, [ms])
+  return agora
+}
+
 export default function EditPanel({
+  vista,
+  onVista,
   resultado,
-  previewRef,
-  onDuracao,
   podeCortar,
-  de,
-  ate,
-  onDe,
-  onAte,
-  aCortar,
-  onCortar,
-  analise,
-  aAnalisar,
-  onProcurarPausas,
-  onRemoverPausas,
-  onCancelarPausas,
-  onDescarregar,
   titulo,
   onTitulo,
   aGuardar,
-  onGuardar,
   guardado,
+  onGuardar,
 }: {
+  vista: VistaDoEditor
+  onVista: (v: VistaDoEditor | 'emissao') => void
   resultado: Gravado | null
-  previewRef: RefObject<HTMLVideoElement | null>
-  onDuracao: (d: number) => void
   podeCortar: boolean
-  de: number
-  ate: number
-  onDe: (v: number) => void
-  onAte: (v: number) => void
-  /** 0 = parado; senão a fracção feita. */
-  aCortar: number
-  onCortar: () => void
-  analise: AnaliseDeAudio | null
-  aAnalisar: boolean
-  onProcurarPausas: () => void
-  onRemoverPausas: () => void
-  onCancelarPausas: () => void
-  onDescarregar: (qual: 'completo' | 'video' | 'audio') => void
   titulo: string
+  /** O título do projecto aberto passa a ser o da aula (nome da sala ao emitir). */
   onTitulo: (v: string) => void
   aGuardar: boolean
-  onGuardar: () => void
   guardado: string
+  onGuardar: (blob: Blob, duracao: number, nome: string) => Promise<void>
 }) {
-  const { t } = useTranslation()
-  const [agora, setAgora] = useState(0)
+  const { t, i18n } = useTranslation()
+  const { org } = useShell()
+  const pr = useProjecto()
+  const p = pr.projecto
+  const leitor = useLeitor(p, pr.urls)
+  const [seleccao, setSeleccao] = useState<string | null>(null)
+  const [ferramenta, setFerramenta] = useState<Ferramenta>('seleccionar')
+  const [ripple, setRipple] = useState(true)
+  const [abaBin, setAbaBin] = useState<AbaDoBin>('fontes')
+  const [abaInspector, setAbaInspector] = useState<AbaDoInspector>('corte')
+  const [erro, setErro] = useState('')
+  const [pausas, setPausas] = useState<{ resumo: ResumoDePausas; intervalos: Intervalo[] } | null>(null)
+  const [aProcurar, setAProcurar] = useState(false)
+  const [ondas, setOndas] = useState<Map<string, Float32Array>>(new Map())
+  const [capitulo, setCapitulo] = useState<string | null>(null)
+  const [projectos, setProjectos] = useState(false)
+  const agora = useAgora(1000)
+  const marcaDeAgua = org?.name || getAppName()
+  const ultimoResultado = useRef<Gravado | null>(null)
 
+  // Gravação nova → projecto novo com as faixas como fontes separadas.
   useEffect(() => {
-    const v = previewRef.current
-    if (!v) return
-    const tick = () => setAgora(v.currentTime)
-    v.addEventListener('timeupdate', tick)
-    return () => v.removeEventListener('timeupdate', tick)
-  }, [previewRef, resultado?.url])
+    if (!resultado || ultimoResultado.current === resultado) return
+    ultimoResultado.current = resultado
+    const f = resultado.faixas
+    const nome = titulo.trim() || t('studio.semTitulo')
+    const brutas: FonteEmBruto[] = [{ blob: f.completo, nome: t('editor.bin.nomes.completo'), origem: 'completo' }]
+    if (f.video) brutas.push({ blob: f.video, nome: t('editor.bin.nomes.video'), origem: 'video', tipo: 'video' })
+    if (f.audio) brutas.push({ blob: f.audio, nome: t('editor.bin.nomes.audio'), origem: 'audio', tipo: 'audio' })
+    if (f.camara) brutas.push({ blob: f.camara, nome: t('editor.bin.nomes.camara'), origem: 'camara', tipo: 'video' })
+    if (f.ecra) brutas.push({ blob: f.ecra, nome: t('editor.bin.nomes.ecra'), origem: 'ecra', tipo: 'video' })
+    setPausas(null)
+    setSeleccao(null)
+    pr.criar(nome, brutas).catch((e) => setErro(apiErrorMessage(e, t('editor.erros.criar'))))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultado])
 
-  if (!resultado) {
+  const tituloDoProjecto = p?.titulo
+  useEffect(() => {
+    if (tituloDoProjecto !== undefined) onTitulo(tituloDoProjecto)
+  }, [tituloDoProjecto, onTitulo])
+
+  // Ondas sonoras das fontes com som (uma vez por fonte).
+  useEffect(() => {
+    if (!p) return
+    let vivo = true
+    for (const f of p.fontes) {
+      if (f.tipo === 'video' || ondas.has(f.id) || !pr.urls.has(f.id)) continue
+      pr
+        .lerBlob(f.id)
+        .then((b) => ondaDe(b))
+        .then((o) => {
+          if (vivo) setOndas((m) => new Map(m).set(f.id, o))
+        })
+        .catch(() => undefined)
+    }
+    return () => {
+      vivo = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p?.fontes, pr.urls])
+
+  // Uma edição invalida a análise de pausas feita antes dela.
+  const clipsRef = useRef(p?.clips)
+  useEffect(() => {
+    if (clipsRef.current !== p?.clips) setPausas(null)
+    clipsRef.current = p?.clips
+  }, [p?.clips])
+
+  const preenchimento = useMemo(() => {
+    if (!p?.legendas) return null
+    const ws = palavrasDasCues(p.legendas.cues).map((x) => x.palavra)
+    return contarPreenchimento(encontrarPreenchimento(ws, p.legendas.lingua))
+  }, [p?.legendas])
+
+  const procurarPausas = useCallback(async () => {
+    if (!p) return
+    setAProcurar(true)
+    setErro('')
+    try {
+      const fontesA1 = [...new Set(clipsDaFaixa(p, 'A1').map((c) => c.fonteId))]
+      let intervalos: Intervalo[] = []
+      for (const id of fontesA1) {
+        const a = await analisarPausas(await pr.lerBlob(id))
+        intervalos = intervalos.concat(intervalosDaFonteNaLinha(p, id, 'A1', a.pausas))
+      }
+      intervalos = normalizarIntervalos(intervalos).filter((i) => i.fim - i.inicio > 0.1)
+      setPausas({ intervalos, resumo: { n: intervalos.length, poupanca: intervalos.reduce((n, i) => n + i.fim - i.inicio, 0) } })
+    } catch (e) {
+      setErro(apiErrorMessage(e, t('studio.erros.analise')))
+    } finally {
+      setAProcurar(false)
+    }
+  }, [p, pr, t])
+
+  function teclas(e: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!p) return
+    const alvo = e.target as HTMLElement
+    if (alvo.closest('input, textarea, select, [contenteditable="true"]')) return
+    const mod = e.ctrlKey || e.metaKey
+    if (mod && e.key.toLowerCase() === 'z') {
+      e.preventDefault()
+      if (e.shiftKey) pr.refazer()
+      else pr.desfazer()
+    } else if (mod && e.key.toLowerCase() === 'y') {
+      e.preventDefault()
+      pr.refazer()
+    } else if (e.key === ' ' && !alvo.closest('button')) {
+      e.preventDefault()
+      leitor.tocar(!leitor.aTocar)
+    } else if (!mod && e.key.toLowerCase() === 's' && vista === 'edicao') {
+      pr.aplicar({ tipo: 'dividir', t: leitor.tempoRef.current, ...(seleccao ? { clipIds: [seleccao] } : {}) })
+    } else if (!mod && e.key.toLowerCase() === 'm' && vista === 'edicao') {
+      pr.aplicar({ tipo: 'marcador', marcador: { id: novoId('m'), t: leitor.tempoRef.current, rotulo: relogio(leitor.tempoRef.current), tipo: 'marcador' } })
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      if (alvo.closest('button')) return
+      e.preventDefault()
+      leitor.buscar(leitor.tempoRef.current + (e.key === 'ArrowLeft' ? -1 : 1) / p.fps)
+    }
+  }
+
+  const guardadoHa = pr.gravacao.guardadoEm ? Math.max(0, Math.round((agora - pr.gravacao.guardadoEm) / 1000)) : null
+
+  const topoMarca = (
+    <button type="button" className="ed-top__brand" onClick={() => onVista('emissao')} title={t('editor.topo.voltarEmissao')}>
+      <DelonixSymbol size={22} />
+      <span className="ed-top__studio">{t('editor.topo.studio')}</span>
+    </button>
+  )
+
+  const separadores = (
+    <nav className="ed-top__tabs" aria-label={t('editor.topo.vistas')}>
+      {(['edicao', 'legendas', 'exportacoes'] as const).map((v) => (
+        <button key={v} type="button" aria-current={vista === v ? 'page' : undefined} data-studio-vista={v} onClick={() => onVista(v)}>
+          {t(`editor.topo.${v}`)}
+        </button>
+      ))}
+    </nav>
+  )
+
+  const dialogos = (
+    <>
+      {capitulo !== null && p && (
+        <Dialog
+          title={t('editor.linha.capitulo')}
+          onClose={() => setCapitulo(null)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setCapitulo(null)}>
+                {t('editor.legendas.cancelar')}
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!capitulo.trim()}
+                onClick={() => {
+                  pr.aplicar({ tipo: 'marcador', marcador: { id: novoId('m'), t: leitor.tempoRef.current, rotulo: capitulo.trim(), tipo: 'capitulo' } })
+                  setCapitulo(null)
+                }}
+              >
+                {t('editor.linha.criarCapitulo')}
+              </Button>
+            </>
+          }
+        >
+          <TextInput value={capitulo} maxLength={80} aria-label={t('editor.linha.nomeCapitulo')} placeholder={t('editor.linha.nomeCapitulo')} onChange={(e) => setCapitulo(e.target.value)} />
+          <p className="st-note">{t('editor.linha.capituloNota', { t: relogio(leitor.tempoRef.current) })}</p>
+        </Dialog>
+      )}
+      {projectos && (
+        <Dialog title={t('editor.projectos.titulo')} onClose={() => setProjectos(false)} wide>
+          <p className="st-note">{t('editor.projectos.nota')}</p>
+          <ul className="ed-lib">
+            {pr.lista.map((r) => (
+              <li key={r.id} className="ed-lib__row">
+                <button
+                  type="button"
+                  className={cx('ed-lib__item', r.id === p?.id && 'ed-lib__item--on')}
+                  onClick={() => {
+                    void pr.guardarJa().then(() => pr.abrir(r.id))
+                    setSeleccao(null)
+                    setProjectos(false)
+                  }}
+                >
+                  <span className="ed-lib__name">{r.projecto.titulo}</span>
+                  <span className="dx-num dx-muted">
+                    {r.id.slice(-6)} · {relogio(duracaoDoProjecto(r.projecto))} · {new Date(r.alteradoEm).toLocaleString(i18n.language)}
+                  </span>
+                </button>
+                <IconButton icon="trash" bare label={t('editor.projectos.apagar', { titulo: r.projecto.titulo })} onClick={() => void pr.apagar(r.id)} />
+              </li>
+            ))}
+          </ul>
+          <Button
+            variant="secondary"
+            icon="plus"
+            onClick={() => {
+              setProjectos(false)
+              void pr.criar(t('editor.projectos.novoTitulo'), [])
+            }}
+          >
+            {t('editor.projectos.novo')}
+          </Button>
+        </Dialog>
+      )}
+    </>
+  )
+
+  if (!p) {
     return (
-      <div className="st-edit st-edit--empty">
-        <Empty icon="film" title={t('studio.edicao.take')}>
-          {t('studio.edicao.vazio')}
-        </Empty>
+      <div className="dx-stage ed ed--vazio">
+        <header className="ed-top">
+          {topoMarca}
+          <span className="ed-top__sep" aria-hidden="true" />
+          {separadores}
+        </header>
+        <div className="ed-empty">
+          {pr.aCarregar ? (
+            <p className="st-note">{t('editor.aCarregar')}</p>
+          ) : (
+            <Empty
+              icon="film"
+              title={t('studio.edicao.take')}
+              action={
+                <div className="st-actions st-actions--center">
+                  <Button variant="secondary" icon="record" onClick={() => onVista('emissao')}>
+                    {t('editor.vazio.gravar')}
+                  </Button>
+                  <Button variant="primary" icon="plus" onClick={() => void pr.criar(t('editor.projectos.novoTitulo'), [])} data-studio="novo-projecto">
+                    {t('editor.projectos.novo')}
+                  </Button>
+                  {pr.lista.length > 0 && (
+                    <Button variant="ghost" onClick={() => setProjectos(true)}>
+                      {t('editor.projectos.abrir')}
+                    </Button>
+                  )}
+                </div>
+              }
+            >
+              {t('editor.vazio.texto')}
+            </Empty>
+          )}
+          {erro && <Alert tone="danger">{erro}</Alert>}
+        </div>
+        {dialogos}
       </div>
     )
   }
 
-  const dur = resultado.duracao
-  const temDuracao = dur > 0 && Number.isFinite(dur)
-  const max = Math.floor(dur)
-  const pct = (s: number) => `${temDuracao ? Math.min(100, (s / dur) * 100) : 0}%`
-  const corteInteiro = de === 0 && Math.round(ate) >= max
-  const r = analise ? resumo(analise) : null
-  const aTrabalhar = aCortar > 0
-  const rotuloProgresso = t('studio.edicao.aCortar', { pct: Math.round(aCortar * 100) })
-
-  function lerDuracao(v: HTMLVideoElement) {
-    const d = v.duration
-    // Um WebM de MediaRecorder chega muitas vezes com duração `Infinity` até
-    // se procurar até ao fim: sem isto os cursores de corte nasciam sem escala.
-    if (Number.isFinite(d) && d > 0) onDuracao(d)
-    else v.currentTime = 1e6
-  }
-
-  function buscar(s: number) {
-    if (previewRef.current) previewRef.current.currentTime = s
+  if (vista === 'exportacoes') {
+    return (
+      <div className="ed-page">
+        <ExportsPanel
+          projecto={p}
+          lista={pr.lista}
+          lerBlob={pr.lerBlob}
+          marcaDeAgua={marcaDeAgua}
+          aGuardar={aGuardar}
+          guardado={guardado}
+          onGuardar={onGuardar}
+          antesDeExportar={pr.guardarJa}
+          onEditor={() => onVista('edicao')}
+        />
+      </div>
+    )
   }
 
   return (
-    <div className="st-edit">
-      <aside className="st-col st-col--left" aria-label={t('studio.edicao.take')}>
-        <section className="st-group">
-          <h2 className="st-group__title">{t('studio.edicao.take')}</h2>
-          <div className="st-card st-card--active">
-            <div className="st-card__row">
-              <span className="st-take__thumb" aria-hidden="true" />
-              <div className="st-take__meta">
-                <strong className="st-small">{titulo.trim() || t('studio.semTitulo')}</strong>
-                <span className="dx-num st-small dx-muted">
-                  {temDuracao ? mmss(dur) : '--:--'} · {t('studio.edicao.faixasCompletas')}
-                </span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {resultado.faixas.audio && podeCortar && (
-          <section className="st-group" data-studio="pausas">
-            <h2 className="st-group__title">{t('studio.edicao.pausas.titulo')}</h2>
-            <p className="st-note">{t('studio.edicao.pausas.nota')}</p>
-            {!analise ? (
-              <Button
-                variant="secondary"
-                icon="wand"
-                busy={aAnalisar}
-                disabled={aAnalisar || aTrabalhar}
-                onClick={onProcurarPausas}
-              >
-                {aAnalisar ? t('studio.edicao.pausas.aAnalisar') : t('studio.edicao.pausas.procurar')}
-              </Button>
-            ) : r && r.pausas === 0 ? (
-              <p className="st-note st-note--ok">{t('studio.edicao.pausas.nenhuma')}</p>
-            ) : (
-              r && (
-                <div className="st-card st-card--active">
-                  <p className="dx-num st-small">
-                    {t('studio.edicao.pausas.encontradas', { n: r.pausas, s: r.poupanca, pct: r.pct })}
-                  </p>
-                  <div className="st-actions">
-                    <Button variant="primary" size="sm" icon="scissors" disabled={aTrabalhar} onClick={onRemoverPausas}>
-                      {aTrabalhar ? rotuloProgresso : t('studio.edicao.pausas.remover')}
-                    </Button>
-                    <Button variant="ghost" size="sm" disabled={aTrabalhar} onClick={onCancelarPausas}>
-                      {t('studio.edicao.pausas.cancelar')}
-                    </Button>
-                  </div>
-                </div>
-              )
-            )}
-          </section>
-        )}
-      </aside>
-
-      <div className="st-centre">
-        <div className="st-preview">
-          <video
-            ref={previewRef}
-            className="st-preview__video"
-            src={resultado.url}
-            controls
-            playsInline
-            data-studio="preview"
-            onLoadedMetadata={(e) => lerDuracao(e.currentTarget)}
-            onDurationChange={(e) => {
-              const d = e.currentTarget.duration
-              if (Number.isFinite(d) && d > 0) onDuracao(d)
-            }}
+    <div className="dx-stage ed" onKeyDown={teclas}>
+      {vista === 'edicao' ? (
+        <header className="ed-top">
+          {topoMarca}
+          <span className="ed-top__sep" aria-hidden="true" />
+          <input
+            className="ed-top__title"
+            value={p.titulo}
+            maxLength={80}
+            aria-label={t('studio.edicao.destino.campoTitulo')}
+            onChange={(e) => pr.aplicar({ tipo: 'titulo', titulo: e.target.value }, 'titulo')}
           />
-          <span className="st-overlay st-overlay--tl dx-num" aria-hidden="true">
-            {t('studio.palco.previsualizacao')}
+          <button type="button" className="ed-top__meta dx-num" onClick={() => setProjectos(true)} title={t('editor.projectos.titulo')}>
+            {p.altura}p · {relogio(duracaoDoProjecto(p))} · {t('editor.topo.projecto', { id: p.id.slice(-6) })}
+          </button>
+          <span className="dx-spacer" />
+          <span className={cx('ed-top__saved dx-num', pr.gravacao.erro && 'ed-top__saved--erro')} role="status" data-studio="guardado-auto">
+            {pr.gravacao.aGuardar
+              ? t('editor.topo.aGuardar')
+              : pr.gravacao.erro
+                ? t('editor.topo.naoGuardado')
+                : guardadoHa !== null
+                  ? t('editor.topo.guardadoHa', { s: guardadoHa })
+                  : ''}
           </span>
-        </div>
-        <div className="st-tools" role="toolbar" aria-label={t('studio.edicao.ferramentas')}>
-          {resultado.faixas.audio && (
-            <>
-              <span className="st-small dx-muted">{t('studio.edicao.faixas.titulo')}</span>
-              <Button size="sm" variant="secondary" icon="download" disabled={!resultado.faixas.video} onClick={() => onDescarregar('video')}>
-                {t('studio.edicao.faixas.video')}
-              </Button>
-              <Button size="sm" variant="secondary" icon="download" onClick={() => onDescarregar('audio')}>
-                {t('studio.edicao.faixas.audio')}
-              </Button>
-            </>
-          )}
-        </div>
+          <button type="button" className="ed-top__btn" disabled={!pr.podeDesfazer} onClick={pr.desfazer} data-studio="desfazer">
+            {t('editor.topo.desfazer')}
+          </button>
+          <IconButton icon="repeat" className="ed-top__icon" label={t('editor.topo.refazer')} disabled={!pr.podeRefazer} onClick={pr.refazer} data-studio="refazer" />
+          <button type="button" className="ed-top__btn" onClick={() => leitor.tocar(!leitor.aTocar)} aria-pressed={leitor.aTocar}>
+            {leitor.aTocar ? t('editor.transporte.pausa') : t('editor.topo.previsualizar')}
+          </button>
+          <button type="button" className="ed-top__btn ed-top__btn--primary" onClick={() => onVista('exportacoes')} data-studio="ir-exportar">
+            {t('editor.topo.exportar')}
+          </button>
+        </header>
+      ) : (
+        <header className="ed-top">
+          {topoMarca}
+          <span className="ed-top__sep" aria-hidden="true" />
+          {separadores}
+          <span className="dx-spacer" />
+          <span className="ed-top__local dx-num">{t('editor.topo.modeloLocal')}</span>
+        </header>
+      )}
+
+      <div className="ed-notices">
+        {!podeCortar ? (
+          <Alert tone="warning">{t('studio.edicao.semWebCodecs')}</Alert>
+        ) : null}
+        {erro && <Alert tone="danger">{erro}</Alert>}
+        {pr.gravacao.erro && <Alert tone="warning">{t('editor.erros.autoGuardar')}</Alert>}
       </div>
 
-      <aside className="st-col st-col--right" aria-label={t('studio.edicao.corte')}>
-        <section className="st-group">
-          <h2 className="st-group__title">{t('studio.edicao.corte')}</h2>
-          {!podeCortar ? (
-            <Alert tone="warning">{t('studio.edicao.semWebCodecs')}</Alert>
-          ) : !temDuracao ? (
-            <p className="st-note">--:--</p>
-          ) : (
-            <div className="st-trim" data-studio="corte">
-              <div className="st-trim__io">
-                <div>
-                  <span className="st-label">{t('studio.edicao.entrada')}</span>
-                  <span className="st-timecode dx-num">{mmss(de)}</span>
-                </div>
-                <div>
-                  <span className="st-label">{t('studio.edicao.saida')}</span>
-                  <span className="st-timecode st-timecode--on dx-num">{mmss(ate)}</span>
-                </div>
-              </div>
-              <label className="st-label" htmlFor="st-corte-de">
-                {t('studio.edicao.cursorEntrada')}
-              </label>
-              <input
-                id="st-corte-de"
-                className="st-range"
-                type="range"
-                min={0}
-                max={max}
-                value={Math.min(de, ate)}
-                data-studio="corte-de"
-                onChange={(e) => {
-                  const v = Number(e.target.value)
-                  onDe(v)
-                  buscar(v)
-                }}
-              />
-              <label className="st-label" htmlFor="st-corte-ate">
-                {t('studio.edicao.cursorSaida')}
-              </label>
-              <input
-                id="st-corte-ate"
-                className="st-range"
-                type="range"
-                min={0}
-                max={max}
-                value={ate}
-                data-studio="corte-ate"
-                onChange={(e) => {
-                  const v = Number(e.target.value)
-                  onAte(v)
-                  buscar(v)
-                }}
-              />
-              <Button
-                variant="primary"
-                icon="scissors"
-                data-studio="cortar"
-                disabled={aTrabalhar || ate - de < 1 || corteInteiro}
-                onClick={onCortar}
-              >
-                {aTrabalhar ? rotuloProgresso : `${t('studio.edicao.cortar')} · ${mmss(ate - de)}`}
-              </Button>
-            </div>
-          )}
-        </section>
-
-        <section className="st-group" data-studio="guardar">
-          <h2 className="st-group__title">{t('studio.edicao.destino.titulo')}</h2>
-          <Field label={t('studio.edicao.destino.campoTitulo')} htmlFor="st-titulo">
-            <TextInput
-              id="st-titulo"
-              value={titulo}
-              maxLength={80}
-              placeholder={t('studio.edicao.destino.tituloPh')}
-              onChange={(e) => onTitulo(e.target.value)}
+      {vista === 'edicao' ? (
+        <>
+          <div className="ed-body">
+            <Bin
+              p={p}
+              aba={abaBin}
+              onAba={setAbaBin}
+              aplicar={pr.aplicar}
+              acrescentar={pr.acrescentar}
+              onErro={setErro}
+              pausas={pausas?.resumo ?? null}
+              aProcurarPausas={aProcurar}
+              onProcurarPausas={() => void procurarPausas()}
+              onAplicarPausas={() => {
+                if (pausas) pr.aplicar({ tipo: 'cortar-intervalos', intervalos: pausas.intervalos })
+                setPausas(null)
+              }}
+              onCancelarPausas={() => setPausas(null)}
+              preenchimento={preenchimento}
+              onIrParaLegendas={() => onVista('legendas')}
+              marcaDeAgua={marcaDeAgua}
             />
-          </Field>
-          <div className="st-actions">
-            <Button variant="primary" icon="upload" busy={aGuardar} disabled={aGuardar} data-studio="guardar-biblioteca" onClick={onGuardar}>
-              {aGuardar ? t('studio.edicao.destino.aGuardar') : t('studio.edicao.destino.guardar')}
-            </Button>
-            <Button variant="secondary" icon="download" onClick={() => onDescarregar('completo')}>
-              {t('studio.edicao.destino.descarregar')}
-            </Button>
-          </div>
-          {guardado && (
-            <p className="st-note st-note--ok" role="status" data-studio="guardado">
-              {guardado}
-            </p>
-          )}
-        </section>
-      </aside>
-
-      <section className="st-timeline" aria-label={t('studio.edicao.linhaTempo')}>
-        <div className="st-timeline__head">
-          <span className="dx-num st-timecode">{mmss(agora)}</span>
-          <span className="dx-num st-small dx-muted">/ {temDuracao ? mmss(dur) : '--:--'}</span>
-        </div>
-        <div className="st-timeline__tracks">
-          <span className="st-track__label dx-num">{t('studio.edicao.pistaVideo')}</span>
-          <div
-            className="st-track"
-            onClick={(e) => {
-              if (!temDuracao) return
-              const b = e.currentTarget.getBoundingClientRect()
-              buscar(Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)) * dur)
-            }}
-          >
-            <span className="st-clip" style={{ left: pct(de), width: `calc(${pct(ate)} - ${pct(de)})` }} />
-            <span className="st-playhead" style={{ left: pct(agora) }} aria-hidden="true" />
-          </div>
-          {resultado.faixas.audio && (
-            <>
-              <span className="st-track__label dx-num">{t('studio.edicao.pistaAudio')}</span>
-              <div className="st-track st-track--audio">
-                {analise?.pausas.map((p, i) => (
-                  <span
-                    key={i}
-                    className="st-gap"
-                    style={{
-                      left: `${(p.inicio / analise.duracao) * 100}%`,
-                      width: `${((p.fim - p.inicio) / analise.duracao) * 100}%`,
-                    }}
-                  />
+            <section className="ed-centre" aria-label={t('studio.palco.previsualizacao')}>
+              <Preview projecto={p} leitor={leitor} lingua={p.legendas?.lingua ?? null} marcaDeAgua={marcaDeAgua} forma="edicao" onLegendas={() => onVista('legendas')} />
+              <div className="ed-tools" role="toolbar" aria-label={t('studio.edicao.ferramentas')}>
+                {FERRAMENTAS.map((f) => (
+                  <button key={f.id} type="button" className="ed-tool" aria-pressed={ferramenta === f.id} onClick={() => setFerramenta(f.id)} data-ferramenta={f.id}>
+                    <span className="ed-tool__icon" aria-hidden="true">
+                      <Icon name={f.icone} size={13} />
+                    </span>
+                    {t(`editor.ferramentas.${f.id}`)}
+                  </button>
                 ))}
-                <span className="st-playhead" style={{ left: pct(agora) }} aria-hidden="true" />
+                <span className="dx-spacer" />
+                <label className={cx('ed-ripple', ripple && 'ed-ripple--on')}>
+                  <input type="checkbox" role="switch" checked={ripple} onChange={(e) => setRipple(e.target.checked)} />
+                  {t('editor.ferramentas.ripple')}
+                </label>
               </div>
-            </>
-          )}
-        </div>
-      </section>
-      <span className="dx-sr-only" aria-live="polite">
-        {aTrabalhar ? rotuloProgresso : ''}
-      </span>
+            </section>
+            <Inspector p={p} seleccao={seleccao} aba={abaInspector} onAba={setAbaInspector} aplicar={pr.aplicar} leitor={leitor} ripple={ripple} ferramenta={ferramenta} />
+          </div>
+          <Timeline
+            projecto={p}
+            leitor={leitor}
+            seleccao={seleccao}
+            onSeleccionar={setSeleccao}
+            ferramenta={ferramenta}
+            ripple={ripple}
+            aplicar={pr.aplicar}
+            ondas={ondas}
+            onCapitulo={() => setCapitulo('')}
+            onFerramentaUsada={(f) => {
+              if (f === 'transicao' || f === 'mascara') setAbaInspector('corte')
+              if (f === 'audio') setAbaInspector('audio')
+              if (f === 'texto') setAbaInspector('texto')
+            }}
+          />
+        </>
+      ) : (
+        <CaptionsPanel projecto={p} leitor={leitor} aplicar={pr.aplicar} lerBlob={pr.lerBlob} onErro={setErro} marcaDeAgua={marcaDeAgua} />
+      )}
+      {dialogos}
     </div>
   )
 }

@@ -344,7 +344,7 @@ function SessaoDaSala({
                   <span>{destacada.text}</span>
                 </div>
               )}
-              <ChatPanel chat={chat} isHost={core.isHost} />
+              <ChatPanel chat={chat} isHost={core.isHost} code={codigo} peers={core.peers} tools={ferramentas} onNewPoll={() => setSeparador('sondagens')} />
             </div>
           )}
           {separador === 'perguntas' && (
@@ -354,7 +354,7 @@ function SessaoDaSala({
           )}
           {separador === 'sondagens' && (
             <div className="st-sala__body">
-              <PollsPanel tools={ferramentas} isHost={core.isHost} />
+              <PollsPanel tools={ferramentas} isHost={core.isHost} present={core.peers.length + 1} />
             </div>
           )}
         </>

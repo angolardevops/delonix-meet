@@ -140,7 +140,7 @@ export default {
     vazio: 'Ainda não há gravação. Grava primeiro e a edição abre aqui.',
     take: 'Gravação da sessão',
     faixasCompletas: 'vídeo + áudio',
-    semWebCodecs: 'Este browser não tem WebCodecs: podes guardar e descarregar, mas não cortar nem remover pausas.',
+    semWebCodecs: 'Este browser não tem WebCodecs: podes editar o projecto e as legendas, mas não exportar o vídeo.',
     corte: 'Corte',
     entrada: 'Entrada',
     saida: 'Saída',

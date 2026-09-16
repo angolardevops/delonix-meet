@@ -193,6 +193,20 @@ describe('aparar, deslizar, mover, remover', () => {
   })
 })
 
+describe('ganho num intervalo', () => {
+  it('parte o áudio nas fronteiras e sobe só o trecho', () => {
+    let p = comClip(30)
+    p = editar(p, { tipo: 'ganho-intervalo', faixa: 'A1', inicio: 10, fim: 14, ganhoDb: 6 })
+    expect(clipsDaFaixa(p, 'A1').map((c) => [c.inicio, fimDoClip(c), c.ganhoDb])).toEqual([
+      [0, 10, 0],
+      [10, 14, 6],
+      [14, 30, 0],
+    ])
+    // A imagem não muda o que mostra (parte-se, mas continua contínua).
+    expect(clipsDaFaixa(p, 'V1').every((c) => c.cor.exposicao === 0)).toBe(true)
+  })
+})
+
 describe('velocidade e congelar', () => {
   it('mudar a velocidade encolhe o clipe e puxa os seguintes', () => {
     let p = comClip(10)

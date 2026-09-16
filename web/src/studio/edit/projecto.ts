@@ -383,6 +383,7 @@ export type Edicao =
   | { tipo: 'congelar'; t: number; duracao: number }
   | { tipo: 'cor'; clipId: string; cor: Partial<Cor> }
   | { tipo: 'ganho'; clipId: string; ganhoDb: number }
+  | { tipo: 'ganho-intervalo'; faixa: FaixaDeAudio; inicio: number; fim: number; ganhoDb: number }
   | { tipo: 'transicao'; clipId: string; transicao: Transicao | null }
   | { tipo: 'mascara'; clipId: string; mascara: Mascara | null }
   | { tipo: 'separar-audio'; clipId: string }
@@ -441,6 +442,8 @@ function aplicarEdicao(p: Projecto, e: Edicao): Projecto {
       return mudarClip(p, e.clipId, (c) => ({ ...c, cor: { ...c.cor, ...limitarCor(e.cor) } }), false)
     case 'ganho':
       return mudarClip(p, e.clipId, (c) => ({ ...c, ganhoDb: clamp(e.ganhoDb, -60, 24) }), false)
+    case 'ganho-intervalo':
+      return ganhoNoIntervalo(p, e.faixa, e.inicio, e.fim, e.ganhoDb)
     case 'transicao':
       return mudarClip(
         p,
@@ -676,6 +679,27 @@ function remover(p: Projecto, clipIds: string[], ripple: boolean): Projecto {
   q = { ...q, clips: q.clips.filter((c) => !ids.has(c.id)) }
   for (const r of removidos) q = deslocar(q, fimDoClip(r) - EPS, -duracaoDoClip(r), new Set<FaixaId>([r.faixa]), new Set())
   return q
+}
+
+/**
+ * Sobe (ou desce) o ganho só num intervalo de uma faixa de áudio: parte os
+ * clipes nas fronteiras e soma o ganho aos que ficam dentro. É o «normalizar
+ * o trecho fora do microfone» do assistente, sem tocar no resto.
+ */
+function ganhoNoIntervalo(p: Projecto, faixa: FaixaDeAudio, inicio: number, fim: number, ganhoDb: number): Projecto {
+  if (bloqueado(p, faixa) || fim - inicio < MINIMO) return p
+  let q = p
+  for (const t of [inicio, fim]) {
+    const c = clipEm(q, faixa, t)
+    if (c) q = dividir(q, t, [c.id])
+  }
+  let mudou = q !== p
+  const clips = q.clips.map((c) => {
+    if (c.faixa !== faixa || c.inicio < inicio - EPS || fimDoClip(c) > fim + EPS) return c
+    mudou = true
+    return { ...c, ganhoDb: clamp(c.ganhoDb + ganhoDb, -60, 24) }
+  })
+  return mudou ? { ...q, clips } : p
 }
 
 function mudarVelocidade(p: Projecto, id: string, v: number): Projecto {
