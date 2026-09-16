@@ -116,6 +116,7 @@ pub fn v1() -> utoipa::openapi::OpenApi {
 fn bff_parts() -> Vec<utoipa::openapi::OpenApi> {
     vec![
         PlatformDoc::openapi(),
+        crate::nodes::ApiDoc::openapi(),
         crate::users::ApiDoc::openapi(),
         crate::webhooks::ApiDoc::openapi(),
         crate::stream_destinations::ApiDoc::openapi(),

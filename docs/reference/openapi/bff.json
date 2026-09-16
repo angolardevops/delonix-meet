@@ -1621,6 +1621,116 @@
         ],
         "type": "object"
       },
+      "MediaNode": {
+        "properties": {
+          "edition": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "live_broadcasts": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "load": {
+            "description": "Ocupação 0–1 face à capacidade declarada; ausente sem capacidade.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "node_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "peer_capacity": {
+            "description": "Capacidade declarada (`NODE_PEER_CAPACITY`), se houver.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "peers": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "rooms": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "description": "`serving` | `draining` | `unreachable` — derivado do último batimento.",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "ws_connections": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "node_id",
+          "hostname",
+          "version",
+          "edition",
+          "started_at",
+          "last_seen_at",
+          "status",
+          "rooms",
+          "peers",
+          "ws_connections",
+          "live_broadcasts"
+        ],
+        "type": "object"
+      },
+      "MediaNodeList": {
+        "properties": {
+          "draining": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MediaNode"
+            },
+            "type": "array"
+          },
+          "peers": {
+            "description": "Participantes em nós que respondem.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "serving": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unreachable": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "serving",
+          "draining",
+          "unreachable",
+          "peers"
+        ],
+        "type": "object"
+      },
       "Meeting": {
         "properties": {
           "created_at": {
@@ -6136,6 +6246,62 @@
         "summary": "Marca todas as chamadas perdidas do utilizador como vistas.",
         "tags": [
           "calls"
+        ]
+      }
+    },
+    "/api/operator/v1/nodes": {
+      "get": {
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaNodeList"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é administrador da plataforma."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Edição sem superfície de operador (pessoal)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Nós de media da plataforma e o seu estado.",
+        "tags": [
+          "operator"
         ]
       }
     },

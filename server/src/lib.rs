@@ -20,6 +20,7 @@ mod meetings_v1;
 mod metrics;
 mod mfa;
 mod mls;
+pub mod nodes;
 mod notifications;
 mod odoo;
 mod odoo_sso;
@@ -204,6 +205,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // continuava a mandar-lhe entradas novas, que morriam com ele.
         .route("/ready", get(readiness))
         .route("/api/status", get(status))
+        // ---- Superfície de OPERADOR (ADR-0004 §4): administrador da plataforma ----
+        .route("/api/operator/v1/nodes", get(nodes::list))
         // Contratos OpenAPI gerados do código (ADR-0006 §3).
         .route("/api/openapi.json", get(openapi::bff_json))
         .route("/api/v1/openapi.json", get(openapi::v1_json))
@@ -922,6 +925,31 @@ pub async fn run() {
                     Ok(n) if n > 0 => tracing::info!(deleted = n, "retenção de notificações"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, "retenção de notificações falhou"),
+                }
+            }
+        });
+    }
+
+    // Batimento deste nó para o inventário do operador (G10), e limpeza dos
+    // nós esquecidos. O primeiro batimento sai já: um pod novo aparece antes
+    // de receber a primeira sala.
+    {
+        let state = state.clone();
+        let started_at = chrono::Utc::now();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(
+                delonix_meet_domain::operations::media_node::HEARTBEAT_SECS as u64,
+            ));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut n: u64 = 0;
+            loop {
+                ticker.tick().await;
+                if let Err(e) = nodes::heartbeat(&state, started_at).await {
+                    tracing::warn!(error = %e, "batimento do nó falhou");
+                }
+                n += 1;
+                if n.is_multiple_of(240) {
+                    let _ = nodes::forget_old(&state.db).await;
                 }
             }
         });

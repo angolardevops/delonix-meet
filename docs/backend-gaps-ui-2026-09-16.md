@@ -41,7 +41,7 @@ sua cópia de `server/`.
 | G7 | Registo de entregas de webhooks + reenviar | `integrations/WebhooksCard.tsx` | `webhook_deliveries` + `POST …/deliveries/{id}/redeliver` |
 | G8 | Centro de notificações — **feito** (2026-09-16, `notifications.rs`, migração 0044) | `AppShell.tsx` (o antigo era só cliente) | `GET /api/users/me/notifications` (cursor, `unread_only`, `unread_count`), `PATCH …/{id}` `{"read"}`, `POST …/mark-all-read`, `DELETE …/{id}`; push `{"type":"notification"}` pelo `/rtc`. Falta o lado do web (tipo novo em `presence.ts` e o ecrã) e o produtor na v1 (`meetings_v1.rs` cria convidados sem notificar) |
 | G9 | Retenção de chat (e de auditoria só como exportação — a cadeia é imutável) | `admin/SettingsCard.tsx` | `chat_retention_days` nas definições + varredor |
-| G10 | Inventário de nós de media (capacidade) | `admin/CapacityRow.tsx` | batimento por nó (salas, pares, filas) + `GET /api/operator/v1/nodes` |
+| G10 | Inventário de nós de media (capacidade) — **feito** (`nodes.rs`, migração 0048, `/api/operator/v1/nodes`) | `admin/CapacityRow.tsx` | batimento por nó (salas, pares, filas) + `GET /api/operator/v1/nodes` |
 | G11 | PNG de quadro por URL assinado | `boards/BoardViewer.tsx` | URL assinado de curta duração |
 | G12 | Edição, perfil e capacidades da instalação | todos (esconder o que não existe) | `edition` + `capabilities` em `GET /api/public/settings` (ADR-0006 §2) |
 
