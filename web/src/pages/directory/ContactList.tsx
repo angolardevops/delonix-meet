@@ -11,7 +11,7 @@ import { Icon } from '../../ui/icons'
 import { Avatar, cx, IconButton, Select, Tabs } from '../../ui/kit'
 import { formatAgo, useLocaleTag } from '../admin/orgShared'
 
-export type DirTab = 'people' | 'groups' | 'missed' | 'phone'
+export type DirTab = 'people' | 'groups' | 'missed'
 export type Selection = { kind: 'person'; id: string } | { kind: 'group'; id: string } | { kind: 'org' } | null
 
 export default function ContactList({
@@ -60,7 +60,7 @@ export default function ContactList({
   onNewGroup: () => void
   /** O que mostrar no lugar da lista enquanto carrega ou quando falhou. */
   pending: ReactNode
-  /** Histórico PSTN (só para quem administra; sem ele o separador não aparece). */
+  /** Histórico PSTN (só para quem administra), por baixo das perdidas no separador «Histórico». */
   phoneHistory?: ReactNode
 }) {
   const { t } = useTranslation()
@@ -76,7 +76,7 @@ export default function ContactList({
               type="search"
               value={q}
               onChange={(e) => onQ(e.target.value)}
-              placeholder={tab === 'groups' ? t('org.dir.pesquisarGrupos') : t('org.dir.pesquisar')}
+              placeholder={tab === 'groups' ? t('org.dir.pesquisarGrupos') : t('consola.contactos.pesquisar')}
               aria-label={tab === 'groups' ? t('org.dir.pesquisarGrupos') : t('org.dir.pesquisar')}
             />
           </div>
@@ -98,8 +98,7 @@ export default function ContactList({
           tabs={[
             { value: 'people', label: t('org.dir.pessoas') },
             { value: 'groups', label: t('org.dir.grupos') },
-            { value: 'missed', label: t('org.dir.perdidas'), count: missed.length },
-            ...(phoneHistory ? [{ value: 'phone' as const, label: t('consola.contactos.telefone') }] : []),
+            { value: 'missed', label: t('consola.contactos.historico'), count: missed.length },
           ]}
         />
       </div>
@@ -232,7 +231,7 @@ export default function ContactList({
             </ul>
           </>
         )}
-        {tab === 'phone' && phoneHistory}
+        {tab === 'missed' && phoneHistory}
       </div>
 
       <div className="org-dir__foot">

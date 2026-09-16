@@ -73,10 +73,11 @@ export default {
     maisChamadas_other: 'And {{count}} more calls in the log.',
   },
   contactos: {
-    telefone: 'Phone',
     telefoneTitulo: 'Dial-in calls',
     semTelefone: "No calls have come in through this organisation's dial-in yet.",
     recebidaEm: 'received on {{numero}}',
+    historico: 'History',
+    pesquisar: 'Search contacts…',
   },
   entrar: {
     titulo: 'One room. Meeting, video lesson and public broadcast.',

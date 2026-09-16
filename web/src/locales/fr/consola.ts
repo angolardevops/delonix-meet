@@ -73,10 +73,11 @@ export default {
     maisChamadas_other: 'Et {{count}} appels de plus dans le journal.',
   },
   contactos: {
-    telefone: 'Téléphone',
     telefoneTitulo: "Appels par l'accès RTC",
     semTelefone: "Aucun appel n'est encore arrivé par l'accès RTC de cette organisation.",
     recebidaEm: 'reçu sur {{numero}}',
+    historico: 'Historique',
+    pesquisar: 'Chercher des contacts…',
   },
   entrar: {
     titulo: 'Une salle. Réunion, cours vidéo et diffusion publique.',
