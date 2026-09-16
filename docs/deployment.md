@@ -117,6 +117,7 @@ openssl rand -hex 24   # → password do Postgres
 | `PROVISIONING_SECRET` | Autoriza `POST /api/v1/admin/orgs`. Vazio = endpoint desligado |
 | `PLATFORM_ADMIN_USER_IDS` | UUIDs (separados por vírgula) dos administradores da PLATAFORMA — os únicos que leem e alteram o armazenamento das gravações (`/api/v1/platform/storage*`). Vazio = ninguém (fail-closed). UUID e não email, porque o registo não verifica emails. Obter com `SELECT id FROM users WHERE email = '…'` depois de a conta existir. Um valor que não seja UUID impede o arranque |
 | `PLATFORM_ODOO_URL` / `PLATFORM_ODOO_DB` | Login com conta Odoo ([§7](#7-integração-odoo)). Vazias = desligado |
+| `SECRETS_KEY` | Chave AES-256 (32 bytes em base64 ou hex; `openssl rand -base64 32`) que cifra os segredos guardados na base — hoje as chaves de emissão dos destinos de directo por organização. Ausente = `POST /api/orgs/{id}/stream-destinations` responde `503` com a razão; inválida = o servidor não arranca. Guardar FORA da base e dos backups dela: quem tem a base e não tem a chave não lê nada, e quem perde a chave tem de reintroduzir os destinos. Sem rotação por agora |
 | `WEBHOOK_ALLOW_HOSTS` | Hosts isentos da guarda anti-SSRF dos webhooks, por nome exacto. Necessário para um Odoo on-prem em rede privada |
 | `OLLAMA_URL` | LLM local para atas e legendas. Vazio = MoM por regras (fail-open) |
 | `OLLAMA_MODEL_SUMMARY` / `OLLAMA_MODEL_TRANSLATE` | modelos (ex. `qwen2.5:7b` / `qwen2.5:1.5b`) |

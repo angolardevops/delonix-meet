@@ -331,9 +331,12 @@ pub fn montar_argumentos(destino: &Destino, threads: u32) -> Vec<String> {
 
 const CLUSTER_ID: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
 const TIMESTAMP_ID: u8 = 0xE7;
+/// Elemento CRC-32 (id 0xBF, tamanho 0x84 = 4 bytes). O muxer de Matroska do
+/// ffmpeg põe-no como primeiro filho de cada Cluster; o do Chromium não.
+const CRC32_HEAD: [u8; 2] = [0xBF, 0x84];
 /// Bytes que um início de Cluster ocupa até ao Timestamp: 4 (id) + até 8
-/// (tamanho) + 1 (id do Timestamp).
-const CLUSTER_PROBE: usize = 13;
+/// (tamanho) + 6 (CRC-32 opcional) + 1 (id do Timestamp).
+const CLUSTER_PROBE: usize = 19;
 /// Tecto do cabeçalho guardado. O do MediaRecorder tem centenas de bytes; se
 /// não aparecer um Cluster até aqui, o fluxo não é o que se espera.
 const HEADER_MAX: usize = 1024 * 1024;
@@ -342,15 +345,24 @@ const HEADER_MAX: usize = 1024 * 1024;
 ///
 /// Procurar só os 4 bytes do id daria falsos positivos dentro dos dados de
 /// vídeo (1 em 2³² por posição — a 4,5 Mbit/s, um por hora e pouco). Exige-se
-/// também um tamanho EBML bem formado e, logo a seguir, o elemento Timestamp,
-/// que é o primeiro filho de um Cluster tanto no Chromium como no ffmpeg.
+/// também um tamanho EBML bem formado e, logo a seguir, o elemento Timestamp —
+/// ou um CRC-32 e depois o Timestamp.
+///
+/// MEDIDO (2026-09-16, contra um RTMP a sério): a primeira versão só aceitava
+/// o Timestamp logo a seguir, que é o que o MediaRecorder do Chromium escreve.
+/// Com media gerada pelo ffmpeg (CRC-32 primeiro) nenhum Cluster era
+/// reconhecido, e um destino reiniciado ficava «a ligar» para sempre à espera
+/// de um ponto de entrada que nunca chegava.
 pub fn cluster_start(buf: &[u8]) -> Option<usize> {
     let mut i = 0;
     while i + CLUSTER_ID.len() <= buf.len() {
         let p = i + buf[i..].windows(4).position(|w| w == CLUSTER_ID)?;
         if let Some(&b) = buf.get(p + 4) {
-            let len = b.leading_zeros() as usize + 1;
-            if b != 0 && buf.get(p + 4 + len) == Some(&TIMESTAMP_ID) {
+            let first_child = p + 4 + b.leading_zeros() as usize + 1;
+            let timestamp_now = buf.get(first_child) == Some(&TIMESTAMP_ID);
+            let crc_then_timestamp = buf.get(first_child..first_child + 2) == Some(&CRC32_HEAD[..])
+                && buf.get(first_child + 6) == Some(&TIMESTAMP_ID);
+            if b != 0 && (timestamp_now || crc_then_timestamp) {
                 return Some(p);
             }
         }
@@ -422,6 +434,8 @@ pub struct RetryPolicy {
     /// Quanto se espera, ao parar, que o ffmpeg feche em condições antes de
     /// o matar.
     pub stop_grace: Duration,
+    /// Tempo máximo entre arrancar o processo e sair o primeiro byte.
+    pub connect_timeout: Duration,
 }
 
 impl Default for RetryPolicy {
@@ -435,6 +449,9 @@ impl Default for RetryPolicy {
             // isso é memória do pod à espera de um destino que não volta.
             queue_max_bytes: 8 * 1024 * 1024,
             stop_grace: Duration::from_secs(5),
+            // Maior que o `-rw_timeout` (15 s), para o ffmpeg dizer primeiro
+            // porquê quando a causa é a rede.
+            connect_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -888,13 +905,31 @@ async fn supervise(
             Died(Option<std::process::ExitStatus>),
             Stopped,
         }
-        let exit = tokio::select! {
-            st = child.wait() => Exit::Died(st.ok()),
-            _ = kill.notified() => {
-                let _ = child.start_kill();
-                Exit::Died(child.wait().await.ok())
+        // Vigia de arranque: um processo que não chega ao ar em
+        // `connect_timeout` é dado como caído. Sem isto, um ffmpeg à espera de
+        // media que nunca chega (ou de um servidor que aceita a ligação e não
+        // responde) ficava «a ligar» para sempre e nunca contava como queda.
+        let connect_deadline = tokio::time::sleep(policy.connect_timeout);
+        tokio::pin!(connect_deadline);
+        let mut watching = true;
+        let mut stalled = false;
+        let exit = loop {
+            tokio::select! {
+                st = child.wait() => break Exit::Died(st.ok()),
+                _ = kill.notified() => {
+                    let _ = child.start_kill();
+                    break Exit::Died(child.wait().await.ok());
+                }
+                _ = until_true(&mut end) => break Exit::Stopped,
+                _ = &mut connect_deadline, if watching => {
+                    watching = false;
+                    if lock(&output.status).state != DestinationState::Live {
+                        stalled = true;
+                        let _ = child.start_kill();
+                        break Exit::Died(child.wait().await.ok());
+                    }
+                }
             }
-            _ = until_true(&mut end) => Exit::Stopped,
         };
         let overflowed = detach(&output);
         match exit {
@@ -922,7 +957,13 @@ async fn supervise(
                     .and_then(|r| r.ok())
                     .unwrap_or_default();
                 fold_bytes(&output);
-                let reason = if overflowed {
+                let reason = if stalled {
+                    let causa = classify_failure(&lines, None);
+                    format!(
+                        "o destino não ficou no ar em {} s ({causa})",
+                        policy.connect_timeout.as_secs()
+                    )
+                } else if overflowed {
                     format!(
                         "o destino não acompanhou o débito (fila de {} MB cheia) — a ligação ao \
                          servidor de destino está lenta ou parada",
@@ -1793,6 +1834,8 @@ case "$chave" in
     exec cat > "$D/$chave.bin" ;;
   surdo*)
     exec sleep 30 ;;
+  mudo*)
+    exec cat > /dev/null ;;
   parado*)
     if [ ! -e "$D/$chave.marca" ]; then : > "$D/$chave.marca"; exec sleep 30; fi
     printf 'total_size=1\nprogress=continue\n'
@@ -1840,6 +1883,7 @@ esac
             stable_after: Duration::from_secs(60),
             queue_max_bytes: 8 * 1024 * 1024,
             stop_grace: Duration::from_millis(500),
+            connect_timeout: Duration::from_secs(10),
         }
     }
 
@@ -2117,6 +2161,23 @@ esac
         assert_eq!(cluster_start(&cluster(0)[..8]), None);
     }
 
+    #[test]
+    fn um_cluster_do_ffmpeg_com_crc32_primeiro_tambem_conta() {
+        // O muxer do ffmpeg escreve CRC-32 antes do Timestamp (medido contra
+        // um RTMP a sério: sem isto nenhum reinício reentrava).
+        let c = [
+            0x1F, 0x43, 0xB6, 0x75, 0x10, 0x00, 0x40, 0x00, 0xBF, 0x84, 0x12, 0x34, 0x56, 0x78,
+            0xE7, 0x81, 0x00,
+        ];
+        let mut buf = vec![0x00; 7];
+        buf.extend_from_slice(&c);
+        assert_eq!(cluster_start(&buf), Some(7));
+        // Um CRC sem o Timestamp a seguir não chega.
+        let mut sem = c;
+        sem[14] = 0x00;
+        assert_eq!(cluster_start(&sem), None);
+    }
+
     // ------------------------------------------------------- erros e segredo
 
     #[test]
@@ -2357,6 +2418,33 @@ esac
         assert_eq!(finais[1].motivo, None);
         let recebido = std::fs::read(f.dir.join(format!("{bom}.bin"))).unwrap();
         assert_eq!(recebido, b"antes-depois", "o destino bom recebeu tudo");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn um_destino_que_nunca_chega_ao_ar_conta_como_queda() {
+        // Lê a media mas nunca sai nada para o destino: sem a vigia de
+        // arranque ficava «a ligar» para sempre, sem tentativas nem motivo.
+        let politica = RetryPolicy {
+            connect_timeout: Duration::from_millis(300),
+            initial_backoff: Duration::from_millis(300),
+            ..rapida()
+        };
+        let e = Emissao::arrancar(
+            &[destino("Mudo", &chave("mudo"))],
+            1,
+            prog(&falsos().ffmpeg),
+            politica,
+        )
+        .unwrap();
+        esperar(&e, "a vigia a dar pela falta", |r| {
+            r[0].estado == DestinationState::Error
+                && r[0]
+                    .motivo
+                    .as_deref()
+                    .is_some_and(|m| m.contains("não ficou no ar"))
+        })
+        .await;
+        e.parar().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -49,7 +49,7 @@
 - `recording_meta.rs` — leitor: descrição/etiquetas (`PATCH`), publicação para a organização, miniatura, visualizações, participantes, transcrição com segmentos, comentários com marca temporal; paginação por cursor. Acesso SEMPRE por `recordings::access` (404 a quem não vê)
 - `recording_chapters.rs` — capítulos manuais e automáticos (LLM local via `ai::generate`, a partir dos segmentos; varredura de 5 em 5 min); gerar de novo nunca apaga os manuais
 - `recording_captions.rs` — legendas por língua em WebVTT (validação, rascunho/publicada, gerada da transcrição ou traduzida em segundo plano), servidas ao `<track>`
-- `broadcast.rs` — emissão em directo para RTMP (ADR-0003): o browser compõe e codifica em H.264, o servidor REMULTIPLEXA (`-c:v copy`, `-c:a aac`). Multi-canal tipo StreamYard: um `ffmpeg` com N destinos (`destinos` na query, JSON), tecto próprio `MAX_DESTINOS_POR_DIRECTO` (por emissão) distinto do `MAX_DIRECTOS` (por nó/sala). Recusa E2EE, codec não copiável, chave vazia e acima de qualquer um dos dois tectos. Rota WS `/api/rooms/{code}/broadcast`; registo por sala
+- `broadcast.rs` — emissão em directo para RTMP (ADR-0003): o browser compõe e codifica em H.264, o servidor REMULTIPLEXA (`-c:v copy`, `-c:a aac`). Multi-canal tipo StreamYard: **um `ffmpeg` POR destino** com supervisor (stderr drenado → `motivo`, `-progress` → `kbps`, backoff limitado, reentrada a meio do fluxo com o cabeçalho Matroska guardado; R123), estado por destino no WS (`{"tipo":"destinos",…}`), destinos em JSON na query ou `{id}` de um destino guardado (`stream_destinations.rs`, chave cifrada com `crypto.rs`/`SECRETS_KEY`), webhooks `stream.published`/`stream.ended`, tecto próprio `MAX_DESTINOS_POR_DIRECTO` (por emissão) distinto do `MAX_DIRECTOS` (por nó/sala). Recusa E2EE, codec não copiável, chave vazia, URL que não seja `rtmp(s)://` e acima de qualquer um dos dois tectos. Rota WS `/api/rooms/{code}/broadcast`; registo por sala
 - `webhooks.rs` — CRUD webhooks org, fire() best-effort (Slack/Teams/Mattermost/generic+HMAC), SSRF guard
 - `whiteboards.rs` — CRUD quadro branco persistente
 - `voice.rs` — PSTN: plano de controlo (DIDs, CDR, facturação, IVR por segredo partilhado em `/api/voice/ivr/*`); a media depende do operador SIP. O IVR é máquina-a-máquina e, no destino, sai da árvore pública para gRPC (ADR-0004 §4)
@@ -104,7 +104,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0038 e 0050–0056; 0039–0049 reservadas ao branch da sala) — range total 0001–0056 |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0047) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 
