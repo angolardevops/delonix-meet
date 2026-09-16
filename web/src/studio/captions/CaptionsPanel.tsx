@@ -14,11 +14,12 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { apiErrorMessage, isAbort, translateCaption } from '../../api'
+import { apiErrorMessage, isAbort, recordingTranscript, translateCaption } from '../../api'
 import { useShell } from '../../components/shellContext'
 import { Alert, cx, IconButton, Select, TextArea } from '../../ui/kit'
 import { misturar } from '../edit/mistura'
 import Preview from '../edit/Preview'
+import type { TranscriptSegment } from '../../api'
 import type { Cue, Edicao, Legendas, ModoDeLegenda, Projecto } from '../edit/projecto'
 import { rmsPorJanela, trechosForaDoMicrofone } from '../edit/sinal'
 import type { TrechoFraco } from '../edit/sinal'
@@ -38,6 +39,7 @@ import {
   relogio,
   traduzirCues,
 } from './legendas'
+import { cuesDoServidor, fonteDaBiblioteca } from './servidor'
 import { apagarCacheDoModelo, espacoDoModelo, modeloDisponivel, paraDezasseisK, transcrever } from './transcricao'
 
 type EstadoDaTranscricao =
@@ -94,6 +96,38 @@ export default function CaptionsPanel({
   const [aAnalisar, setAAnalisar] = useState(false)
   const [aAcrescentar, setAAcrescentar] = useState(false)
   const pedidos = useRef(new Map<string, AbortController>())
+  // Transcrição que o servidor já tem da gravação da biblioteca (se a houver).
+  const daBiblioteca = fonteDaBiblioteca(p)
+  const [doServidor, setDoServidor] = useState<{ gravacao: string; segmentos: TranscriptSegment[]; lingua: string | null } | null>(null)
+  useEffect(() => {
+    if (leg || !daBiblioteca) return
+    const ctl = new AbortController()
+    recordingTranscript(daBiblioteca.gravacao, ctl.signal)
+      .then((r) => {
+        if (r.status === 'ready' && r.segments.length) setDoServidor({ gravacao: daBiblioteca.gravacao, segmentos: r.segments, lingua: r.language })
+      })
+      // Sem transcrição no servidor (404, sem acesso, offline) fica o caminho do browser.
+      .catch(() => undefined)
+    return () => ctl.abort()
+  }, [leg, daBiblioteca?.gravacao]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function usarTranscricaoDoServidor() {
+    const origem = fonteDaBiblioteca(pRef.current)
+    if (!doServidor || !origem || origem.gravacao !== doServidor.gravacao) return
+    const lingua = doServidor.lingua?.split('-')[0] || linguaOrigem
+    // Sem orador: quem fala não vem nos segmentos (o texto pode já o trazer), e
+    // pôr o nome de quem abriu o projecto seria atribuir-lhe a fala de outros.
+    const cues = cuesDoServidor(pRef.current, origem.fonteId, doServidor.segmentos)
+    if (!cues.length) {
+      onErro(t('editor.legendas.servidorVazio'))
+      return
+    }
+    setLinguaOrigem(lingua)
+    aplicar({ tipo: 'legendas', legendas: { lingua, cues, estimadas: true, traducoes: {} } })
+    setSeleccao(new Set())
+    setBuracos(new Set())
+    setLinguaVista(null)
+  }
 
   useEffect(() => {
     const ctl = new AbortController()
@@ -405,7 +439,17 @@ export default function CaptionsPanel({
 
         <div className="ed-transcript">
           {!leg ? (
-            <p className="st-note ed-transcript__empty">{t('editor.legendas.semTranscricao')}</p>
+            <div className="ed-transcript__empty">
+              <p className="st-note">{modelo === false && !doServidor ? t('editor.legendas.semTranscricaoSemModelo') : t('editor.legendas.semTranscricao')}</p>
+              {doServidor && (
+                <>
+                  <p className="st-note">{t('editor.legendas.servidorDisponivel', { count: doServidor.segmentos.length })}</p>
+                  <button type="button" className="ed-btn ed-btn--primary" onClick={usarTranscricaoDoServidor} data-studio="usar-transcricao-servidor">
+                    {t('editor.legendas.usarServidor')}
+                  </button>
+                </>
+              )}
+            </div>
           ) : (
             <>
               {leg.estimadas && eOrigem && <Alert tone="warning">{t('editor.legendas.estimadas')}</Alert>}

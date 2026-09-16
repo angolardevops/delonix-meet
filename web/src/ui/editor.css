@@ -1347,6 +1347,13 @@ button.ed-badge {
 }
 .ed-transcript__empty {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ed-transcript__empty .st-note {
+  margin: 0;
 }
 .ed-lines {
   flex: 1;
