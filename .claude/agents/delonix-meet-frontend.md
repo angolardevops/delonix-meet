@@ -2,7 +2,7 @@
 name: delonix-meet-frontend
 description: >-
   Revisor do frontend do Delonix Meet (`web/src/**`): React/TypeScript, a sala e
-  os seus controlos, design system (`ui.tsx`, tokens, temas, camada CONSOLA),
+  os seus controlos, design system (`ui/kit.tsx`, `ui/tokens.css`, temas, `.dx-stage`),
   i18n em três línguas, acessibilidade, ecrã estreito, PWA, e o cliente da API
   (`api.ts`). Usa-o em qualquer diff de `web/src`, `styles/`, `locales/`, ou quando
   o pedido falar em «ecrã», «botão», «tema», «telemóvel», «tradução», «UX». NÃO o
@@ -25,10 +25,10 @@ consegue fazer isto e SAIR da reunião?** A R86 mediu que não conseguia desliga
 
 ## O que verificas
 
-1. **Kit único:** controlos novos saem de `web/src/components/ui.tsx` (`Btn`, `IconBtn`,
-   `Card`, `Field`, `SelectCtl`, `Switch`). Não há `border-radius`/`height` escritos à
-   mão; usam-se os tokens `--radius-*` e `--ctl-h`. Um tema é um mapa em `tokens.scss`
-   (R46, R50, R88, R89).
+1. **Kit único:** controlos novos saem de `web/src/ui/kit.tsx` (`Button`, `IconButton`,
+   `Card`, `Field`, `Select`, `Toggle`, `Dialog`). Sem cor/raio/altura escritos à mão; usam-se os
+   tokens de `web/src/ui/tokens.css` (`--r-*`, `--ctl-h`). A sala e o estúdio vivem em `.dx-stage`.
+   Fidelidade ao template: `docs/reference/design-system.md` §3.
 2. **Dimensões dos tiles inline, nunca `var()`** (R11). Estado alimentado por timer
    compara antes do `setState` (R21).
 3. **i18n:**

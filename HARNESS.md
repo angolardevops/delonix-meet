@@ -168,48 +168,36 @@ O refresh token vive em `dlx_refresh` (`HttpOnly; SameSite=Strict; Path=/api/aut
 
 ## 5. Design system
 
-Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **primitivos → semânticos → componentes**.
+A UI foi **reconstruída de raiz a partir do template navegável** (`Delonix Meet Navegavel2.html`, 23 ecrãs) — nada da UI anterior foi reaproveitado. Referências capturadas e o processo de fidelidade: `docs/reference/design-system.md`.
 
-**Separação AÇÃO / MARCA:** o índigo é a cor de **ação** (botões primários, foco, links, nav ativo); o vermelho + dourado são a **marca** (logo, wordmark «Meet», landing, quadrado da sidebar). Nunca usar o vermelho para navegação nem o índigo para o logo.
+**Onde vive:**
+- `web/src/ui/tokens.css` — tokens claro/escuro do ecrã «Sistema de design». `:root`/`[data-theme=light]` e `[data-theme=dark]`; **`.dx-stage` reafirma o escuro** (sala, pré-entrada, estúdio de emissão) em qualquer tema.
+- `web/src/ui/base.css` + `web/src/ui/kit.tsx` — kit único: `Button`, `IconButton`, `Card`, `SectionHead`, `Tag`, `StatusBadge`, `Field`, `TextInput`, `TextArea`, `Select`, `Checkbox`, `Toggle`, `Segmented`, `Tabs`, `Avatar`/`AvatarStack`, `Meter`, `Empty`, `Alert`, `Spinner`, `Skeleton`, `Dialog`. Classes com prefixo `dx-`.
+- `web/src/ui/icons.tsx` — ícones SVG de traço e o símbolo Delonix (`DelonixSymbol`). Nunca emoji como iconografia.
+- `web/src/ui/shell.css`, `components/Shell.tsx`, `components/PageBar.tsx` — consola: rail de 228 px, barra de página de 58 px, gaveta abaixo de 900 px; paleta Ctrl/Cmd+K.
+- Folhas por área em `web/src/ui/<área>.css`, importadas pela própria página (ficam no chunk lazy).
 
-| Token | Escuro | Claro | Uso |
+| Token | Claro | Escuro | Uso |
 | --- | --- | --- | --- |
-| `--accent` | `#5c6cf2` | `#3947c9` | Ação primária, foco |
-| `--accent-hi` | `#7c88f5` | `#4b5ad9` | Hover da ação |
-| `--accent-text` | `#9aa5ff` | `#3947c9` | Índigo legível como texto/link |
-| `--accent-soft` | `#242b4e` | `#e6e9fb` | Preenchimento de estado ativo/chip |
-| `--bg` | `#14161d` | `#f4f5f7` | Fundo da página |
-| `--surface` | `#1c1f28` | `#ffffff` | Cartões/modais |
-| `--surface-2` | `#1a1d26` | `#f8f9fb` | Hover de linha, superfície aninhada |
-| `--input-bg` | `#171a22` | `#ffffff` | Campos de formulário |
-| `--border` | `#262a34` | `#e2e5eb` | Contorno de superfície |
-| `--border-soft` | `#20242e` | `#eef0f4` | Separadores DENTRO do cartão |
-| `--text` / `--text-2` | `#e8eaf0` / `#8b92a8` | `#1c2333` / `#5f6a82` | Texto primário/secundário |
-| `--sb-bg` / `--sb-text` | `#12141a` / `#aeb4c6` | `#1e2a45` / `#c6cfe4` | **Rail de navegação — escuro nos DOIS temas** |
-| `--hdr-bg` | `#14161d` | `#ffffff` | Barra de aplicação (topo) |
-| `--accent-2` | `#EDA33B` | índigo escuro | Dourado de marca (wordmark) |
-| `--brand` | `#D8352E` | `#C8201D` | Vermelho Delonix (logo, landing) |
+| `--surface` / `--raised` | `#F4F4F5` / `#FFFFFF` | `#0D0D0F` / `#17171A` | Fundo / superfícies |
+| `--stage` | `#000000` | `#000000` | Palco (fixo) |
+| `--border` | `#DEDEE1` | `#2A2A2E` | Contornos |
+| `--text` / `--muted` | `#0B0B0C` / `#5C5C63` | `#F2F2F3` / `#9A9AA0` | Texto (15.4:1 / 5.2:1 claro) |
+| `--accent` / `--accent-strong` | `#AD1017` / `#8A0C12` | `#FF5A60` / `#AD1017` | Acção, foco, activo |
+| `--live` | `#A85B00` | `#F0A32E` | AO VIVO (âmbar) |
+| `--record` · `--danger` | `#AD1017` | `#D41F27` | REC, erro, sair |
+| `--success` | `#1E7A4A` | `#2F9E6A` | Estado bom |
+| `--brand` | `#E8232B` | — | Símbolo Delonix sobre preto (só em `tokens.css`) |
 
-**Regra da sala:** `.room-page` e `.waiting-page` reafirmam tokens dark **com `!important`** no fim de `styles.scss`. A sala é sempre escura independentemente do tema da app. Chrome da sala: fundo `#0d0f14`, barras `#12141a`, palco `linear-gradient(160deg,#1b2030,#12141c)`, painel lateral 320px encostado.
-
-**Rail sempre escuro:** a barra lateral usa os tokens `--sb-*`, que são deliberadamente escuros também no tema claro (navy `#1e2a45`). Não a fazer seguir o tema — é âncora de identidade e evita que a navegação compita com o conteúdo.
-
-**Sistema de controlo único (14/07/2026)** — referência completa em `docs/reference/design-system.md`:
-- Tokens: `--radius-sm: 4px` (controlos) · `--radius-md: 6px` (superfícies) · `--radius-lg: 8px` · `--ctl-h: 30px` (altura única dos controlos). Camada de uniformização no FIM de `styles.scss` (3 tiers: ação / botão-ícone / superfícies) vence os valores históricos hardcoded.
-- **Componentes novos usam o kit `web/src/components/ui.tsx`** (`Btn`/`IconBtn`/`Card`/`Field`/`TextInput`/`SelectCtl`/`Switch`) — nunca `<button className=…>` ad-hoc, nunca `border-radius`/`height` hardcoded na página. Variante nova = classe no CSS + entrada no kit. Migração do código existente é oportunista (referência: painel Ferramentas em `Room.tsx`).
-- **Temas** = mapas de tokens em `styles/tokens.scss` emitidos sob `[data-theme=…]` — nunca overrides espalhados; testar os 4 temas + sala sempre escura (regressão #67).
-
-**Camada CONSOLA (27/07/2026)** — no fim de `styles.scss`, DEPOIS do bloco de controlo único (à mesma especificidade, a última vence):
-
-- Densidade: `html { font-size: 15px }`. A app dimensiona quase toda em `rem`, por isso a raiz é o botão único de densidade — não apertar tamanhos página a página.
-- `.app-bar` (topo do conteúdo, em `Shell.tsx`): data, tema, «Nova reunião» e campo de código. Estas ações **saíram da Home** — não as duplicar lá.
-- Estrutura do Shell: `.shell-main` (flex column, overflow hidden) → `.app-bar` + `.shell-body` (o que faz scroll). Páginas de altura total dentro do Shell usam `height: 100%`, nunca `100vh` (a barra já ocupa ~46px).
-- Superfícies separam-se por **borda de 1px + luminância**, não por sombra: `--shadow` é 1px, `--border-soft` para separadores internos.
-- Sala: controlos quadrados de 38px agrupados em `.ctrl-group` (dispositivos | sessão) + terminar solto. A pill Meet de 50px foi substituída; o chevron de dispositivo é um caret de 15px no canto.
-
-**Fontes:** IBM Plex Sans (títulos e corpo) + IBM Plex Mono (código, horas, códigos de sala) — self-hosted via @fontsource. Família única de propósito: é o que dá a métrica de consola.
-
-**Logo:** Globo vermelho com grelha dourada, anéis segmentados, 5 pinos. SVG em `web/public/logo.svg`. Usar `.brand-logo` para renderizar.
+**Regras (os portões `lote1`/`lote2`/`lote3` e as convenções):**
+- Nenhuma cor, raio (`--r-2`/`--r-3`/`--r-8`) ou altura de controlo (`--ctl-h`) escrita à mão numa página; o vermelho da marca só existe como token.
+- Tipografia: **Archivo** (interface), **Archivo Black** (display), **DM Mono** (horas, códigos, débitos, `tabular-nums`) — self-hosted via @fontsource.
+- Estados: badge = cor + forma/ícone + texto, nunca só cor.
+- Foco: rede global `:where(a, button, input, …):focus-visible { outline: 2px solid }`; inputs sem borda mostram o anel no contentor.
+- `100vh` sempre seguido de `100dvh`; layout funcional a 375 px.
+- i18n por áreas em `web/src/locales/<língua>/<área>.ts`: pt/en/fr com as mesmas chaves, um valor por linha, sem frases fora do `t()`, sem emoji.
+- Dados do servidor em três estados (`components/AsyncSection.tsx`, `useAsync`), pedidos abortáveis.
+- **Não se desenha o que o servidor não faz**: um elemento do template sem backend não aparece como botão inerte nem com números inventados.
 
 ---
 
@@ -328,7 +316,7 @@ Ver `docs/competitive-positioning.md` para análise completa. Resumo:
 | **delonix-meet-security** | Auth, isolamento entre orgs, autoridade de conta (R25), SSRF, segredos, E2EE, MFA, auditoria, BNA/LGPD | `auth.rs`, `org.rs`, `apikeys.rs`, `odoo*.rs`, `storage.rs`, `webhooks.rs`, `mfa.rs`, `e2ee.ts`, rotas novas |
 | **delonix-meet-rust** | Async Tokio, locks através de `.await`, filas limitadas, tarefas de fundo, hot path | `sfu.rs`, `signaling.rs`, `recorder.rs`, `presence.rs`, `redis_state.rs` |
 | **delonix-meet-webrtc** | Negociação/glare, ICE/TURN, simulcast, oradores, gravação, directo | `sfu.rs`, `webrtc.ts`, `e2ee.ts`, `recorder.rs`, `broadcast.rs` |
-| **delonix-meet-frontend** | React/TS, kit `ui.tsx`, temas, i18n, ecrã estreito, acessibilidade | `web/src/**` |
+| **delonix-meet-frontend** | React/TS, kit `ui/kit.tsx`, temas, i18n, ecrã estreito, acessibilidade | `web/src/**` |
 | **delonix-meet-devops** | K8s, imagens, afinidade por sala, coturn, probes/drain, CI | `deploy/`, Dockerfiles, Makefile, `.github/` |
 | **delonix-meet-product** | Posicionamento, roadmap, o que se pode vender | features novas, preços, landing, roadmap |
 
