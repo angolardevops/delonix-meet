@@ -226,6 +226,18 @@ const aChegar = await host
   .catch(() => false)
 console.log('  · depois de fixar, o anfitrião recebe:', JSON.stringify(await recebido(host)))
 ok(aChegar, 'o vídeo do orador em destaque está a chegar ao anfitrião', await host.evaluate(() => { const v = document.querySelector('.rm-stage__main .rm-tile[data-peer="remoto"] > video'); return v ? `${v.videoWidth}×${v.videoHeight}` : 'sem vídeo' }))
+if (!aChegar) {
+  // Sem vídeo a chegar, as asserções da recepção mediriam a rede e não o efeito.
+  // Medido a 2026-09-16: a PC ao SFU cai para `disconnected` segundos depois de
+  // entrar, também na branch base sem este código. A recepção prova-se no banco
+  // de ensaio (`palco-imersivo.mjs`); aqui fica UMA falha, com a causa.
+  console.log('  · a recepção não foi ensaiada contra o servidor: o vídeo remoto não chegou (ver palco-imersivo.mjs)')
+  if (avisos.length) console.log('\n· avisos da consola:', JSON.stringify(avisos, null, 2))
+  console.log('\n· medições:', JSON.stringify(medidas, null, 2))
+  await browser.close()
+  console.log(`\n=== ${falhas} FALHARAM ===`)
+  process.exit(1)
+}
 medidas.cpuBase = await cpuDuring(cdp, 8000)
 const gl2 = await host.evaluate(() => !!document.createElement('canvas').getContext('webgl2'))
 const renderer = await host.evaluate(() => {

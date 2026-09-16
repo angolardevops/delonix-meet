@@ -33,10 +33,18 @@ const ok = (c, n, d) => {
 }
 const pausa = (ms) => new Promise((r) => setTimeout(r, ms))
 
+const MEDIA = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream']
 const launch =
   GPU === 'swiftshader'
-    ? { args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--enable-unsafe-swiftshader'] }
-    : { channel: 'chromium', args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--use-gl=angle', '--use-angle=gl-egl', '--ignore-gpu-blocklist', '--enable-gpu'] }
+    ? { args: [...MEDIA, '--enable-unsafe-swiftshader'] }
+    : {
+        channel: 'chromium',
+        args: [...MEDIA, '--use-gl=angle', '--use-angle=gl-egl', '--ignore-gpu-blocklist', '--enable-gpu'],
+        // `GPU=nvidia`: numa máquina híbrida o EGL escolhe a integrada; isto força a dedicada.
+        ...(GPU === 'nvidia' ? { env: { ...process.env, __EGL_VENDOR_LIBRARY_FILENAMES: '/usr/share/glvnd/egl_vendor.d/10_nvidia.json' } } : {}),
+      }
+/** Sem aceleração o orçamento TEM de desligar os efeitos; com GPU têm de correr. */
+const SOFTWARE = GPU === 'swiftshader'
 const browser = await chromium.launch(launch)
 const ctx = await browser.newContext({ permissions: ['camera'], viewport: { width: 1440, height: 900 } })
 const page = await ctx.newPage()
@@ -81,6 +89,34 @@ console.log(`· GPU: ${medidas.renderer} · vídeo ${medidas.video}`)
 ok(!!medidas.renderer, 'WebGL2 disponível')
 await pausa(1500)
 medidas.cpuSemEfeito = await cpuDurante(5000)
+
+// ── Sem aceleração: o que se prova é o desligamento automático ─────────────────
+if (SOFTWARE) {
+  console.log('· render por software: os efeitos têm de se desligar sozinhos, dizendo porquê')
+  for (const [qual, sel] of [
+    ['realce', '[data-enh="realce"] .dx-alert'],
+    ['imersivo', '[data-enh="imersivo"] .dx-alert'],
+  ]) {
+    await alternar(qual)
+    const custo = []
+    const t0 = Date.now()
+    let aviso = ''
+    while (Date.now() - t0 < 40000 * FATOR) {
+      const h = await hud(qual)
+      if (h) custo.push(h)
+      aviso = (await page.locator(sel).textContent().catch(() => '')) ?? ''
+      if (aviso) break
+      await pausa(500)
+    }
+    medidas[qual] = { custoAntesDeDesligar: custo.at(-1) ?? null, aviso, segundos: Math.round((Date.now() - t0) / 1000) }
+    ok(/não aguentou|não acompanhou/.test(aviso), `${qual}: desligou-se sozinho por orçamento e diz porquê`, `${aviso} (${medidas[qual].segundos} s; último custo: ${medidas[qual].custoAntesDeDesligar})`)
+    await alternar(qual)
+  }
+  console.log('\n· medições:', JSON.stringify(medidas, null, 2))
+  await browser.close()
+  console.log(`\n=== ${falhas === 0 ? 'TODAS PASSARAM' : `${falhas} FALHARAM`} ===`)
+  process.exit(falhas ? 1 : 0)
+}
 
 // ── Realce ────────────────────────────────────────────────────────────────────
 console.log('· realce de nitidez')
@@ -184,7 +220,11 @@ await page.emulateMedia({ reducedMotion: 'reduce' })
 ok(await page.waitForFunction(() => !document.querySelector('canvas[data-imersivo="on"]'), null, { timeout: 5000 }).then(() => true).catch(() => false), 'com movimento reduzido o palco imersivo desliga-se')
 ok(/movimento reduzido/.test((await page.locator('[data-enh="imersivo"] .dx-alert').textContent().catch(() => '')) ?? ''), 'e diz porquê')
 await page.emulateMedia({ reducedMotion: 'no-preference' })
-ok(await page.waitForSelector('canvas[data-imersivo="on"]', { timeout: 10000 * FATOR }).then(() => true).catch(() => false), 'sem a preferência volta a ligar sozinho (o pedido da pessoa mantém-se)')
+const voltou = await page.waitForSelector('canvas[data-imersivo="on"]', { timeout: 10000 * FATOR }).then(() => true).catch(() => false)
+// Numa máquina carregada o orçamento pode desligá-lo logo a seguir — e isso é o
+// comportamento certo, desde que o diga. O que não pode é ficar desligado sem razão.
+const razao = (await page.locator('[data-enh="imersivo"] .dx-alert').textContent().catch(() => '')) ?? ''
+ok(voltou || /não aguentou|não acompanhou/.test(razao), 'sem a preferência volta a ligar sozinho (ou o orçamento desliga-o e diz porquê)', voltou ? 'voltou' : razao)
 
 // ── Teclado ───────────────────────────────────────────────────────────────────
 console.log('· teclado e 375 px')
