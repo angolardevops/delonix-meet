@@ -286,3 +286,39 @@ async fn odoo_integration_routes_refuse_tenant_api_key(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200, "{body}");
 }
+
+/// R143 — `GET /api/v1/integration/odoo/users` devolvia ao Odoo membros
+/// ARQUIVADOS (saídos da empresa) como se ainda lá estivessem.
+#[sqlx::test(migrations = "./migrations")]
+async fn odoo_list_users_excludes_archived_members(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let admin = app.new_org("eta-odoo.ao").await;
+    let gone = app.add_member(&admin, "saiu", "member").await;
+    let stays = app.add_member(&admin, "fica", "member").await;
+    let (st, tok) = app
+        .post(
+            &format!("/api/orgs/{}/integration/odoo/token", admin.org()),
+            Some(&admin.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{tok}");
+    let dlxo = tok["token"].as_str().unwrap();
+
+    // Controlo positivo: antes de sair, está na lista.
+    let (st, body) = app.get("/api/v1/integration/odoo/users", Some(dlxo)).await;
+    assert_eq!(st, 200, "{body}");
+    assert!(body.to_string().contains(&gone.email), "{body}");
+
+    app.archive_member(admin.org(), &gone.user_id).await;
+
+    let (st, body) = app.get("/api/v1/integration/odoo/users", Some(dlxo)).await;
+    assert_eq!(st, 200, "{body}");
+    let text = body.to_string();
+    assert!(
+        !text.contains(&gone.email),
+        "o membro arquivado continua no directório: {body}"
+    );
+    assert!(text.contains(&stays.email), "{body}");
+    assert!(text.contains(&admin.email), "{body}");
+}

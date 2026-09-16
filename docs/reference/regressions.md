@@ -1795,3 +1795,15 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `server/tests/security_voice_odoo.rs::odoo_integration_routes_refuse_tenant_api_key` (controlos positivos: a mesma `dlx_` abre `/api/v1/org`; o `dlxo_` abre as duas rotas). `web/e2e/isolamento.mjs` S2 passa a atacar com o `dlxo_` — com a `dlx_` o ataque já nem chegava ao `upsert_member`.
 
 **Ficheiros.** `server/src/odoo.rs`, `server/tests/{security_voice_odoo,api_v1}.rs` (o `odoo_provision_does_not_capture_accounts` passa a autenticar com `dlxo_`), `web/e2e/isolamento.mjs`, `docs/reference/openapi/v1.json`.
+
+### R143 — O directório do Odoo recebia membros ARQUIVADOS como se ainda estivessem na empresa
+
+**Sintoma.** `GET /api/v1/integration/odoo/users` devolvia todos os registos de `org_members` da organização, incluindo os arquivados (`archived_at` preenchido por `remove_employee`). O Odoo via quem saiu da empresa como membro activo, com o papel que tinha (`admin` incluído). Aberto na skill `delonix-meet-backend` desde o R121. Provado a 2026-09-16 contra Postgres real: `o membro arquivado continua no directório: [… {"email":"saiu@eta-odoo.ao", …}]`.
+
+**Causa raiz.** A regra S3 do R121 («colega e quem pede são membros ACTIVOS») foi aplicada às cópias que decidiam acesso; esta listagem tinha a sua própria query sobre `org_members` e ficou de fora — o padrão que a catraca `pertenca_org_fora_de_org_rs` mede.
+
+**Regra.** O directório entregue a uma integração é o de membros ACTIVOS. O filtro `archived_at IS NULL` entra na query existente (não soma uma ocorrência nova de `org_members` fora de `org.rs`). O destino é um helper em `org.rs` que devolva email/username/`odoo_uid`/papel (ADR-0004 §6 passo 3); não foi criado aqui porque `org.rs` estava a ser editado por outra sessão.
+
+**Portão.** `server/tests/security_voice_odoo.rs::odoo_list_users_excludes_archived_members` (controlo positivo: o mesmo membro aparece antes de ser arquivado; o activo e o admin continuam depois).
+
+**Ficheiros.** `server/src/odoo.rs`, `server/tests/security_voice_odoo.rs`, `docs/reference/openapi/v1.json`.

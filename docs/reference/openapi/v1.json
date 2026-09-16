@@ -1076,7 +1076,7 @@
     },
     "/api/v1/integration/odoo/users": {
       "get": {
-        "description": "Membros da organização do token, por `username`.\n\nAutentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), em `Authorization: Bearer …` ou `X-Integration-Token: …`.",
+        "description": "Membros ACTIVOS da organização do token (os arquivados não saem), por `username`.\n\nAutentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), em `Authorization: Bearer …` ou `X-Integration-Token: …`.",
         "operationId": "list_users",
         "responses": {
           "200": {

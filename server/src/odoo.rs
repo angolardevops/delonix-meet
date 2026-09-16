@@ -466,7 +466,7 @@ pub struct OdooDirectoryUser {
 /// `GET /api/v1/integration/odoo/users` — lista utilizadores para o Odoo
 #[utoipa::path(
     get, path = "/api/v1/integration/odoo/users", tag = "odoo",
-    description = "Membros da organização do token, por `username`.\n\n\
+    description = "Membros ACTIVOS da organização do token (os arquivados não saem), por `username`.\n\n\
 Autentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), \
 em `Authorization: Bearer …` ou `X-Integration-Token: …`.",
     security(("api_key" = [])),
@@ -480,11 +480,15 @@ pub async fn list_users(
     State(state): State<Arc<AppState>>,
     odoo: OdooTokenAuth,
 ) -> Result<Json<Vec<OdooDirectoryUser>>, ApiError> {
+    // Só membros ACTIVOS (R143, a S3 do R121 aplicada ao directório): quem
+    // saiu da empresa não volta ao Odoo como membro. O filtro entra na query
+    // que já existia — um helper em `org.rs` com email/username/odoo_uid é o
+    // destino (ADR-0004 §6 passo 3), não uma segunda cópia aqui.
     let rows = sqlx::query_as::<_, (Uuid, String, String, Option<i32>, String)>(
         "SELECT u.id, u.email, u.username, u.odoo_uid, m.role
          FROM users u
          JOIN org_members m ON m.user_id = u.id
-         WHERE m.org_id = $1
+         WHERE m.org_id = $1 AND m.archived_at IS NULL
          ORDER BY u.username",
     )
     .bind(odoo.org_id)
