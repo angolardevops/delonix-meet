@@ -26,9 +26,12 @@ while read -r rota; do
   # O sufixo depois de `{org_id}` é o que identifica o recurso. Os parâmetros
   # de caminho saem: no teste eles são interpolados com um id a sério.
   sufixo=${rota#/api/orgs/\{org_id\}}
-  alvo=$(echo "$sufixo" | sed 's/{[a-z_]*}//g; s|/$||')
+  # Um parâmetro no FIM sai (o teste interpola o id). Um parâmetro a MEIO
+  # (`/employees/{user_id}/phone`) passa a «qualquer interpolação» — sem isto
+  # o sub-recurso nunca casava e a rota não se podia cobrir.
+  alvo=$(echo "$sufixo" | sed -E 's/\{[a-z_]+\}$//; s|/$||; s/\{[a-z_]+\}/\\$\\{[^}]+\\}/g')
   [ -z "$alvo" ] && continue
-  if ! grep -q "orgId}${alvo}" "$ISO"; then
+  if ! grep -qE "orgId\}${alvo}" "$ISO"; then
     echo "✗ isolamento: $rota não é exercitada por $ISO"
     falta=1
   fi

@@ -59,9 +59,6 @@ pub struct OrgSettingsReq {
     /// Dial-in PSTN: modelo de DID ('shared' | 'dedicated').
     #[serde(default)]
     pub voice_did_model: Option<String>,
-    /// SMS a contactos: `admins` | `members`. Ausente → mantém o actual.
-    #[serde(default)]
-    pub sms_send_policy: Option<String>,
 }
 
 /// Definições da organização (só admin): domínio de produção + retenção.
@@ -97,24 +94,11 @@ pub async fn update_settings(
         .voice_did_model
         .as_deref()
         .and_then(|m| matches!(m, "shared" | "dedicated").then(|| m.to_string()));
-    // Ao contrário dos enums de voz, um valor desconhecido aqui é RECUSADO: é
-    // uma permissão, e ignorá-lo em silêncio deixava o admin a julgar que a
-    // tinha mudado.
-    let sms_policy = match req.sms_send_policy.as_deref().map(str::trim) {
-        None => None,
-        Some(p @ ("admins" | "members")) => Some(p.to_string()),
-        Some(_) => {
-            return Err(ApiError::BadRequest(
-                "sms_send_policy tem de ser admins ou members".into(),
-            ))
-        }
-    };
     sqlx::query(
         "UPDATE organizations SET domain = $1, retention_days = $2,
              max_groups = $3, max_rooms = $4, max_meetings = $5,
              voice_media_backend = COALESCE($7, voice_media_backend),
-             voice_did_model = COALESCE($8, voice_did_model),
-             sms_send_policy = COALESCE($9, sms_send_policy)
+             voice_did_model = COALESCE($8, voice_did_model)
          WHERE id = $6",
     )
     .bind(&domain)
@@ -125,19 +109,8 @@ pub async fn update_settings(
     .bind(org_id)
     .bind(backend)
     .bind(did_model)
-    .bind(&sms_policy)
     .execute(&state.db)
     .await?;
-    if let Some(policy) = &sms_policy {
-        crate::audit::log(
-            &state.db,
-            Some(org_id),
-            auth.user_id,
-            "sms.policy_updated",
-            policy,
-        )
-        .await;
-    }
     crate::audit::log(
         &state.db,
         Some(org_id),
