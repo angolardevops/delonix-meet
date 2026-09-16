@@ -233,8 +233,8 @@ div.rm-only-narrow,
 }
 .is-bottom > .rm-strip > .rm-tile {
   flex: none;
+  width: 179px;
   height: 100%;
-  aspect-ratio: 16 / 10;
 }
 .rm-strip__head {
   flex: none;
@@ -942,6 +942,12 @@ div.rm-only-narrow,
   min-height: 0;
   padding: 12px;
 }
+.rm-wb__viewwrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
 .rm-wb__view {
   position: relative;
   flex: 1;
@@ -975,11 +981,10 @@ div.rm-only-narrow,
   cursor: crosshair;
 }
 .rm-wb__zoom {
-  position: sticky;
+  position: absolute;
   right: 12px;
   bottom: 12px;
-  align-self: flex-end;
-  margin-left: -140px;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -1008,10 +1013,10 @@ div.rm-only-narrow,
   color: var(--text);
 }
 .rm-wb__badge {
-  position: sticky;
+  position: absolute;
   top: 12px;
-  align-self: flex-start;
-  margin-left: -200px;
+  right: 12px;
+  z-index: 2;
   padding: 4px 9px;
   border: 1px solid var(--accent-strong);
   border-radius: var(--r-2);
@@ -1069,7 +1074,7 @@ div.rm-only-narrow,
   border-color: var(--success);
 }
 .rm-wb__center > .rm-wbpeople > .rm-wbperson {
-  flex: 1;
+  flex: 0 0 calc((100% - 36px) / 5);
   min-width: 0;
   height: auto;
 }
@@ -1118,7 +1123,7 @@ div.rm-only-narrow,
   cursor: pointer;
 }
 .rm-wb__center > .rm-wbpeople > .rm-wbpeople__more {
-  flex: 1;
+  flex: 0 0 calc((100% - 36px) / 5);
   min-width: 0;
   height: auto;
 }
@@ -3038,9 +3043,9 @@ div.rm-only-narrow,
     flex-direction: row;
   }
   .rm-stage > .rm-strip > .rm-tile {
-    width: auto;
+    width: 113px;
     height: 100%;
-    aspect-ratio: 16 / 11;
+    aspect-ratio: auto;
   }
   .rm-strip__head {
     display: none;
@@ -3375,8 +3380,8 @@ div.rm-only-narrow,
   aspect-ratio: 16 / 10;
 }
 .is-bottom > .rm-strip > .rm-strip__more {
+  width: 179px;
   height: 100%;
-  aspect-ratio: 16 / 10;
 }
 .rm-stage__talking {
   position: absolute;
@@ -3474,9 +3479,9 @@ div.rm-only-narrow,
 
 @media (max-width: 767px) {
   .rm-stage > .rm-strip > .rm-strip__more {
-    width: auto;
+    width: 113px;
     height: 100%;
-    aspect-ratio: 16 / 11;
+    aspect-ratio: auto;
   }
   .rm-prescam {
     bottom: 48px;
