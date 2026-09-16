@@ -2,6 +2,7 @@ import { lazy, ReactNode, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { completeSsoLogin, currentUser, logout, User } from './api'
 import Shell, { NavKey } from './components/Shell'
+import PaletteHost from './components/PaletteHost'
 import PresenceProvider from './components/PresenceProvider'
 import { Icon } from './ui/icons'
 import { Spinner } from './ui/kit'
@@ -141,6 +142,16 @@ export default function App() {
         </div>
       )}
       <PresenceProvider onEnterRoom={enterRoom}>
+        <PaletteHost
+          user={user}
+          inRoom={route.kind === 'room'}
+          onEnterRoom={enterRoom}
+          onLogout={() => {
+            logout()
+            setUser(null)
+            location.hash = '/'
+          }}
+        >
         {route.kind === 'room' ? (
           <RouteFallback>
             <Room
@@ -181,6 +192,7 @@ export default function App() {
             </RouteFallback>
           </Shell>
         )}
+        </PaletteHost>
       </PresenceProvider>
     </>
   )

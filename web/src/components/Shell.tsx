@@ -21,7 +21,7 @@ import { Avatar, cx } from '../ui/kit'
 import { applyTheme, storedTheme } from '../theme'
 import { Async } from './AsyncSection'
 import { BrandLockup } from './BrandMark'
-import CommandPalette from './CommandPalette'
+import { usePaletteHost } from './PaletteHost'
 import { usePresence } from './PresenceProvider'
 import SettingsDialog, { SettingsTab } from './SettingsDialog'
 import { NavKey, ShellApi, ShellCtx } from './shellContext'
@@ -85,7 +85,6 @@ export default function Shell({
   const [navOpen, setNavOpen] = useState(false)
   const [navCollapsed, setNavCollapsedState] = useState(() => readCollapsed(user.id))
   const [narrow, setNarrow] = useState(isNarrow)
-  const [paletteOpen, setPaletteOpen] = useState(false)
   const [settings, setSettings] = useState<SettingsTab | null>(null)
   const [orgs, setOrgs] = useState<Async<OrgSummary[]>>({ s: 'loading' })
   const [theme, setTheme] = useState(storedTheme())
@@ -130,15 +129,11 @@ export default function Shell({
   const toggleNavRef = useRef(toggleNav)
   toggleNavRef.current = toggleNav
 
-  // Esc fecha a gaveta; Ctrl/Cmd+K abre a paleta em qualquer ecrã da consola;
-  // Ctrl/Cmd+B recolhe/expande o rail (fora de campos de texto).
+  // Esc fecha a gaveta; Ctrl/Cmd+B recolhe/expande o rail (fora de campos de
+  // texto). O Ctrl/Cmd+K vive no `PaletteHost`, acima do Shell e da sala.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && navOpen) setNavOpen(false)
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        setPaletteOpen((o) => !o)
-      }
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b' && !isEditable(e.target)) {
         e.preventDefault()
         toggleNavRef.current()
@@ -158,6 +153,7 @@ export default function Shell({
     return orgs.d.find((o) => o.role === 'admin') ?? orgs.d[0]
   }, [orgs])
   const isAdmin = org?.role === 'admin'
+  const palette = usePaletteHost()
 
   const primary: NavItem[] = [
     { key: 'home', label: t('shell.nav.inicio'), icon: 'home' },
@@ -188,7 +184,7 @@ export default function Shell({
     toggleNav,
     navigate: go,
     enterRoom: onEnterRoom,
-    openPalette: () => setPaletteOpen(true),
+    openPalette: () => palette?.open(),
     openSettings,
   }
 
@@ -197,6 +193,17 @@ export default function Shell({
     applyTheme(next)
     setTheme(next)
   }
+
+  // A paleta vive acima do Shell: diz-lhe quem é admin, como abrir as
+  // definições e como mudar o tema (com o estado do rail em sincronia).
+  const toggleThemeRef = useRef(toggleTheme)
+  toggleThemeRef.current = toggleTheme
+  const register = palette?.register
+  useEffect(() => {
+    if (!register) return
+    register({ isAdmin, onSettings: () => openSettings('account'), onToggleTheme: () => toggleThemeRef.current() })
+    return () => register(null)
+  }, [register, isAdmin, openSettings])
 
   const collapsed = navCollapsed && !narrow
   const railExpanded = narrow ? navOpen : !navCollapsed
@@ -243,7 +250,7 @@ export default function Shell({
           <button
             type="button"
             className="shell-nav__search"
-            onClick={() => setPaletteOpen(true)}
+            onClick={() => palette?.open()}
             title={collapsed ? t('shell.procurar') : undefined}
           >
             <Icon name="search" />
@@ -327,18 +334,6 @@ export default function Shell({
           </main>
         </div>
       </div>
-      {paletteOpen && (
-        <CommandPalette
-          onClose={() => setPaletteOpen(false)}
-          onNavigate={go}
-          onEnterRoom={onEnterRoom}
-          onLogout={onLogout}
-          onSettings={() => openSettings('account')}
-          onToggleTheme={toggleTheme}
-          user={user}
-          isAdmin={isAdmin}
-        />
-      )}
       {settings && (
         <SettingsDialog
           user={user}

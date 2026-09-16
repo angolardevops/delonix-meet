@@ -44,6 +44,7 @@ export default function CommandPalette({
   onNavigate,
   onEnterRoom,
   onLogout,
+  onOpenHash,
   onSettings,
   onToggleTheme,
   user,
@@ -53,10 +54,13 @@ export default function CommandPalette({
   onNavigate: (k: NavKey) => void
   onEnterRoom: (code: string) => void
   onLogout: () => void
-  onSettings: () => void
+  /** Abre uma rota (`/calendar/m/<id>`); dentro de uma reunião, num separador novo. */
+  onOpenHash: (hash: string) => void
+  onSettings?: () => void
   onToggleTheme: () => void
   user: User
   isAdmin: boolean
+  inRoom?: boolean
 }) {
   const { t, i18n } = useTranslation()
   const [q, setQ] = useState('')
@@ -143,7 +147,7 @@ export default function CommandPalette({
       )
     }
     list.push(
-      { id: 'settings', label: t('shell.definicoes'), icon: 'sliders', run: onSettings },
+      ...(onSettings ? [{ id: 'settings', label: t('shell.definicoes'), icon: 'sliders' as IconName, run: onSettings }] : []),
       { id: 'theme', label: t('shell.paleta.alternarTema'), icon: 'moon', run: onToggleTheme },
       { id: 'logout', label: t('shell.terminarSessao'), icon: 'logout', run: onLogout },
     )
@@ -165,7 +169,7 @@ export default function CommandPalette({
         hint: `${day(m.starts_at)} · ${new Date(m.starts_at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`,
         icon: m.kind === 'voice' ? 'phone' : 'calendar',
         run: () => {
-          location.hash = `/calendar/m/${m.id}`
+          onOpenHash(`/calendar/m/${m.id}`)
         },
       }))
     const recordings: Command[] = (data?.recordings ?? [])
@@ -179,7 +183,7 @@ export default function CommandPalette({
         hint: `${day(r.created_at)} · ${r.room_code}`,
         icon: 'film',
         run: () => {
-          location.hash = `/recordings?id=${r.id}`
+          onOpenHash(`/recordings?id=${r.id}`)
         },
       }))
     const persons: Command[] = (people?.q === needle ? people.users : []).slice(0, MAX_PER_GROUP).map((u) => ({
@@ -189,11 +193,11 @@ export default function CommandPalette({
       hint: u.email,
       icon: 'user',
       run: () => {
-        location.hash = `/directory?u=${u.id}`
+        onOpenHash(`/directory?u=${u.id}`)
       },
     }))
     return [...found, ...meetings, ...recordings, ...persons]
-  }, [q, t, isAdmin, user.username, onNavigate, onEnterRoom, onSettings, onToggleTheme, onLogout, searching, data, people, needle, i18n.language])
+  }, [q, t, isAdmin, user.username, onNavigate, onEnterRoom, onSettings, onToggleTheme, onLogout, onOpenHash, searching, data, people, needle, i18n.language])
 
   const loadingResults = searching && (data === null || people?.q !== needle)
 
@@ -234,7 +238,9 @@ export default function CommandPalette({
                 e.preventDefault()
                 void run(commands[sel])
               } else if (e.key === 'Escape') {
+                // A sala e as gavetas também ouvem Esc na janela: fecha-se SÓ a paleta.
                 e.preventDefault()
+                e.stopPropagation()
                 onClose()
               }
             }}
