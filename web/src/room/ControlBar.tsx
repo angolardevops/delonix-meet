@@ -169,12 +169,7 @@ export function ControlBar(p: ControlBarProps) {
             )}
           />
         )}
-        {p.presenterLabel && (
-          <span className="rm-chip rm-hide-narrow">
-            <Icon name="screen" size={12} />
-            {p.presenterLabel}
-          </span>
-        )}
+        {/* «A partilhar · Nome» vive na barra de topo (template DelonixRoomChat). */}
         {recovering && (
           <span className="rm-chip is-warn" role="status">
             <Icon name="refresh" size={12} />

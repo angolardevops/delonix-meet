@@ -105,10 +105,6 @@ export function ChatPanel({
 
   return (
     <div className="rm-chat">
-      <p className="rm-panel__note">
-        <Icon name="info" size={12} />
-        {t('room.chat.guardadas')}
-      </p>
       <div className="rm-chat__list" ref={listRef}>
         {vazio && (
           <div className="rm-panel__empty">
