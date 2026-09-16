@@ -419,10 +419,14 @@ pub struct ChatMessage {
     pub parent_id: Option<Uuid>,
     /// Contagem de reacções por emoji (`{}` sem reacções).
     pub reactions: serde_json::Value,
+    /// Conversa directa: a conta que a recebe e o nome. `None` = pública.
+    pub to_user_id: Option<Uuid>,
+    pub to_username: Option<String>,
 }
 
 /// Últimas 200 mensagens de chat de uma sala, da mais antiga para a mais
-/// recente (requer autenticação + acesso).
+/// recente (requer autenticação + acesso). As conversas directas só voltam a
+/// quem as enviou e a quem as recebeu — o filtro é na consulta, não no cliente.
 pub async fn room_chat(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -451,14 +455,17 @@ pub async fn room_chat(
                               FROM (SELECT emoji, count(*)::int AS n
                                     FROM room_chat_reactions
                                     WHERE message_id = m.id
-                                    GROUP BY emoji) r), '{}'::jsonb) AS reactions
+                                    GROUP BY emoji) r), '{}'::jsonb) AS reactions,
+                    m.to_user_id, m.to_username
              FROM room_chat_messages m
              WHERE m.room_id = $1
+               AND (m.to_user_id IS NULL OR m.user_id = $2 OR m.to_user_id = $2)
              ORDER BY m.created_at DESC
              LIMIT 200
          ) ultimas ORDER BY created_at ASC",
     )
     .bind(room.id)
+    .bind(auth.user_id)
     .fetch_all(&state.db)
     .await?;
 
