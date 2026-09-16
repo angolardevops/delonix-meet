@@ -299,6 +299,57 @@
   overflow-wrap: anywhere;
 }
 
+/* ---------------------------------------------------- frontend/l1-consola */
+.integ-slot {
+  display: contents;
+}
+.integ-used {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-sm);
+}
+.integ-picker__intro {
+  margin: 0 0 10px;
+  font-size: var(--t-sm);
+}
+.integ-picker {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.integ-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--raised);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.integ-picker__item:hover {
+  border-color: var(--muted);
+}
+.integ-picker__item > .dx-icon:first-child {
+  color: var(--accent);
+}
+.integ-picker__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.integ-picker__text small {
+  font-size: var(--t-xs);
+}
+
 @media (max-width: 1180px) {
   .integ-split {
     grid-template-columns: minmax(0, 1fr);
@@ -310,6 +361,9 @@
   }
 }
 @media (max-width: 520px) {
+  .integ-hide-narrow {
+    display: none;
+  }
   .integ-grid2 {
     grid-template-columns: minmax(0, 1fr);
   }

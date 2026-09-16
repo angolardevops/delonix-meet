@@ -386,6 +386,9 @@ button.home-rec:hover {
 }
 
 /* ---------------------------------------------------- frontend/l1-consola */
+.home-section__head > .dx-btn {
+  align-self: center;
+}
 .home-meeting__when {
   margin-top: 2px;
   font-size: var(--t-sm);
@@ -470,6 +473,14 @@ button.home-rec:hover {
     min-height: 0;
     gap: 6px;
     padding: 10px;
+  }
+  .home-actions .quick-actions button.qa-tile {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+  }
+  .home-actions .qa-options > .dx-muted {
+    display: none;
   }
   .home-actions .qa-tile__text small {
     display: none;

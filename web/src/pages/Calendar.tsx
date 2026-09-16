@@ -17,7 +17,9 @@ import '../ui/schedule.css'
 import ListView from './calendar/ListView'
 import MeetingDialog from './calendar/MeetingDialog'
 import { MonthView, YearView } from './calendar/MonthView'
+import { occurrenceOf } from './calendar/occurrence'
 import ScheduleForm from './calendar/ScheduleForm'
+import { useOdooCalendar } from './home/useOdooCalendar'
 import WeekView from './calendar/WeekView'
 import {
   addDays,
@@ -59,6 +61,7 @@ export default function Calendar() {
   const [toDelete, setToDelete] = useState<Meeting | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [formState, setFormState] = useState({ busy: false, blocked: false })
+  const odooCalendar = useOdooCalendar()
 
   useEffect(() => {
     const on = () => setRoute(parseCalendarHash(location.hash))
@@ -137,7 +140,10 @@ export default function Calendar() {
   if (route.kind === 'schedule') {
     return (
       <>
-        <PageBar title={t('schedule.form.tituloPagina')} meta={t('schedule.form.metaPagina')}>
+        <PageBar
+          title={t('schedule.form.tituloPagina')}
+          meta={odooCalendar ? t('consola.agenda.metaOdoo') : t('schedule.form.metaPagina')}
+        >
           <Button variant="secondary" className="cal-hide-narrow" onClick={() => go(calendarHash.browse())}>
             {t('ui.cancelar')}
           </Button>
@@ -287,6 +293,7 @@ export default function Calendar() {
           onChanged={reload}
           onEnter={(m) => void enter(m)}
           entering={entering === route.id}
+          occurrence={detailMeeting && state.s === 'ready' ? occurrenceOf(state.d, detailMeeting) : null}
         />
       )}
 

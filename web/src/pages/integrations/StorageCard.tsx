@@ -4,28 +4,44 @@
  * cartão diz porquê em vez de mostrar um formulário que falharia ao guardar.
  *
  * Os destinos são exactamente os do `StorageConfig` (local, NFS, WebDAV).
+ *
+ * O volume ocupado é o das gravações da ORGANIZAÇÃO (orgStats, só admins da
+ * org): o servidor não soma a plataforma inteira nem conhece um tecto.
  */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  ApiError,
   apiErrorMessage,
   authedBlobUrl,
   getPlatformStorage,
+  orgStats,
   savePlatformStorage,
   StorageConfig,
   testPlatformStorage,
 } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Alert, Button, Card, cx, Field, StatusBadge, TextInput } from '../../ui/kit'
+import { formatBytes } from '../admin/orgShared'
 import { guarded, IntegHead } from './common'
 
 type Backend = StorageConfig['storage_type']
 const BACKENDS: Backend[] = ['local', 'nfs', 'webdav']
 
-export function StorageCard() {
-  const { t } = useTranslation()
+export function StorageCard({ orgId }: { orgId?: string }) {
+  const { t, i18n } = useTranslation()
   const { state, reload } = useAsync(() => guarded(getPlatformStorage()), [])
   const saved = state.s === 'ready' && !state.d.forbidden ? state.d.d : null
+  const used = useAsync(async () => {
+    if (!orgId) return null
+    try {
+      return (await orgStats(orgId)).recordings_bytes
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) return null
+      throw e
+    }
+  }, [orgId])
+  const usedText = used.state.s === 'ready' && used.state.d !== null ? formatBytes(used.state.d, i18n.language) : null
   return (
     <Card className="integ-card">
       <IntegHead
@@ -34,6 +50,12 @@ export function StorageCard() {
         sub={t('integrations.storage.sub')}
         badge={saved && <StatusBadge tone="neutral">{t(`integrations.storage.tipo.${saved.storage_type}`)}</StatusBadge>}
       />
+      {usedText && (
+        <div className="integ-used" data-testid="integ-storage-used">
+          <StatusBadge tone="success">{usedText}</StatusBadge>
+          <span className="dx-muted">{t('consola.integracoes.ocupado')}</span>
+        </div>
+      )}
       <AsyncSection state={state} onRetry={reload}>
         {(g) =>
           g.forbidden ? (
