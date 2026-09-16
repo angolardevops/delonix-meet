@@ -1783,6 +1783,23 @@ button.ed-badge {
   .ed-tl {
     height: 300px;
   }
+  /* 390 px: a cabeça da linha de tempo (transporte, marcador, dividir,
+     capítulo, zoom) e a barra das Exportações não cabem numa linha — sem
+     quebrar, empurravam a PÁGINA 301 px (e 60 px) para o lado. */
+  .ed-tl__head {
+    height: auto;
+    flex-wrap: wrap;
+    padding-block: 6px;
+  }
+  .ed-page .page-bar {
+    height: auto;
+    min-height: var(--top-h);
+    flex-wrap: wrap;
+    padding-block: 8px;
+  }
+  .ed-page .page-bar__actions {
+    flex-wrap: wrap;
+  }
   .ed-caps__centre {
     border-left: 0;
   }
