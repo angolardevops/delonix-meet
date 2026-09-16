@@ -420,8 +420,8 @@ if (chaveA.status >= 200 && chaveA.status < 300 && chaveA.json?.key) {
       company: `Org alfa${marca}`,
       admin_email: A.email,
       users: [
-        { odoo_uid: 900001, name: 'CAPTURADO', email: B.email, is_admin: true },
-        { odoo_uid: 900002, name: 'Novo da A', email: novoEmail },
+        { odoo_uid: 91, name: 'CAPTURADO', email: B.email, is_admin: true },
+        { odoo_uid: 92, name: 'Novo da A', email: novoEmail },
       ],
     },
   })
