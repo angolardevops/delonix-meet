@@ -61,9 +61,9 @@ description: Ponto de entrada do Delonix Meet (videoconferência self-hosted —
   proponhas gRPC entre o browser e o servidor.
 - **S1–S3 fechadas no #76** (R121): administrador da plataforma declarado em
   `PLATFORM_ADMIN_USER_IDS`, sincronização Odoo pela regra R25, membro arquivado sem
-  acesso. **Continuam abertos** `add_employee` por email, S4–S6 e o registo sem
-  verificação de email — ver `delonix-meet-backend` §Segurança. Uma tarefa nesses
-  caminhos fecha-os ou nomeia-os no relatório.
+  acesso; `add_employee` fechado no #78 (R122). **Continuam abertos** S4–S6, o registo
+  sem verificação de email, e `odoo::list_users` com arquivados — ver `delonix-meet-backend`
+  §Segurança. Uma tarefa nesses caminhos fecha-os ou nomeia-os no relatório.
 - **Os revisores estão em `.claude/agents/delonix-meet-*.md`.** A pasta `agents` na raiz, que o
   harness citava, nunca existiu no git.
 
@@ -85,10 +85,9 @@ Propõe um a três pedidos seguintes, por raio de dano. Cada um nomeia o alvo, a
 prova a medir e o que fica de fora. Os três que a auditoria deixou em aberto, por
 ordem (S1–S3 já fechadas no #76):
 
-1. «Fecha a ligação de conta existente por email no `org::add_employee`
-   (`delonix-meet-backend`, revisor `delonix-meet-security`). Prova: caso negativo em
-   `web/e2e/isolamento.mjs`, contra servidor e Postgres reais, com o controlo positivo
-   antes. Fora: verificação de email no registo (decisão de produto).»
+1. «Tira os membros arquivados do `odoo::list_users` (`delonix-meet-backend`, revisor
+   `delonix-meet-security`). Prova: caso em `web/e2e/isolamento.mjs` ou de ataque directo,
+   com controlo positivo. Fora: verificação de email no registo (decisão de produto).»
 2. «ADR-0004 §6 passos 1–2: `src/lib.rs`, `sfu_e2e` para `tests/`, `#[sqlx::test]` em
    org/meetings/recordings, e um job com Postgres no CI. Fora: mover SQL.»
 3. «ADR-0004 §6 passo 5, só a separação da v1 em inquilino/operador/Odoo, com OpenAPI
