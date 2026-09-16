@@ -15,5 +15,6 @@ pub mod crypto;
 pub mod edition;
 pub mod error;
 pub mod page;
+pub mod secret_box;
 
 pub use error::{DomainError, ErrorKind};

@@ -35,6 +35,11 @@ pub struct Config {
     /// Directório da SPA a servir pelo próprio binário (`UI_DIR`). Vazio =>
     /// a UI é servida à parte (nginx/CDN), como antes.
     pub ui_dir: Option<std::path::PathBuf>,
+    /// Cifra de segredos em repouso (`DATA_ENCRYPTION_KEYS="kid:base64,…"`,
+    /// ADR-0005 / S5). Sem a variável: em desenvolvimento uma chave derivada;
+    /// em produção `None`, e as capacidades NOVAS que guardam segredos recusam
+    /// (422) em vez de os escrever em claro.
+    pub secret_box: Option<std::sync::Arc<delonix_meet_core::secret_box::SecretBox>>,
     /// `DELONIX_ALLOW_INSECURE=1`: segredos de dev aceites e CORS permissivo.
     /// Lido UMA vez aqui — nenhum outro módulo lê o ambiente.
     pub allow_insecure: bool,
@@ -263,6 +268,17 @@ impl Config {
             panic!("REGISTRATION_MODE=domain exige REGISTRATION_DOMAINS (csv)");
         }
         let opt = |k: &str| src.var(k).ok().filter(|v| !v.trim().is_empty());
+        let jwt_secret = secret(src, "JWT_SECRET", DEV_JWT, insecure, 32);
+        let secret_box = match opt("DATA_ENCRYPTION_KEYS") {
+            Some(spec) => Some(std::sync::Arc::new(
+                delonix_meet_core::secret_box::SecretBox::from_spec(&spec)
+                    .unwrap_or_else(|e| panic!("DATA_ENCRYPTION_KEYS: {e}")),
+            )),
+            None if insecure => Some(std::sync::Arc::new(
+                delonix_meet_core::secret_box::SecretBox::derived_for_dev(&jwt_secret),
+            )),
+            None => None,
+        };
         Self {
             edition,
             registration_mode,
@@ -281,7 +297,8 @@ impl Config {
             bind_addr: src
                 .var("BIND_ADDR")
                 .unwrap_or_else(|_| "0.0.0.0:8180".into()),
-            jwt_secret: secret(src, "JWT_SECRET", DEV_JWT, insecure, 32),
+            jwt_secret,
+            secret_box,
             turn_host: src
                 .var("TURN_HOST")
                 .unwrap_or_else(|_| "localhost:3478".into()),

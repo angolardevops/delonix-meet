@@ -20,6 +20,11 @@ pub fn sha256_hex(data: impl AsRef<[u8]>) -> String {
     hex::encode(Sha256::digest(data.as_ref()))
 }
 
+/// SHA-256 em bytes (derivação de chaves de desenvolvimento, etc.).
+pub fn sha256(data: impl AsRef<[u8]>) -> [u8; 32] {
+    Sha256::digest(data.as_ref()).into()
+}
+
 /// `N` bytes do gerador do sistema operativo.
 pub fn random_bytes<const N: usize>() -> [u8; N] {
     let mut b = [0u8; N];
