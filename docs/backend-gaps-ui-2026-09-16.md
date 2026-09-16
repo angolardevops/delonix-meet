@@ -27,8 +27,8 @@ sua cópia de `server/`.
 | # | Capacidade | Ecrã que a pede | Recurso de backend |
 |---|---|---|---|
 | G1 | Destinos de emissão guardados por org + estado por destino (saúde, bitrate) | `home/SideColumn.tsx`, `studio/LivePanel.tsx` | `stream_destinations` (CRUD, chave cifrada) + estado vivo do `broadcast::Registo` |
-| G2 | «A minha sala» — link pessoal permanente + dial-in | `home/SideColumn.tsx` | `GET/PUT /api/users/me/room` (sala pessoal, DID opcional) |
-| G3 | Armazenamento da org: usado vs quota | `home/SideColumn.tsx`, `admin/CapacityRow.tsx` | `GET /api/orgs/{org_id}/storage-usage` + `max_storage_bytes` na quota |
+| G2 | ✅ «A minha sala» — link pessoal permanente + dial-in | `home/SideColumn.tsx` | **Feito** (migração 0047): `GET /api/users/me/room` (criada na primeira leitura, idempotente sob concorrência, sala de espera ligada), `PATCH` (`name`, `waiting_room`; campo desconhecido → `422`), `POST …/rotate-code` (o código antigo dá `404`). `dial_in {number, pin}` só leitura, se uma org do dono tiver sala de voz activa com esse código; não acompanha a rotação. Não há flag de convidados — não se inventou |
+| G3 | ✅ Armazenamento da org: usado vs quota | `home/SideColumn.tsx`, `admin/CapacityRow.tsx` | **Feito** (migração 0047): `GET /api/orgs/{org_id}/storage-usage` (admin; `recordings`/`whiteboards` `{count, bytes}`, `used_bytes`, `max_storage_bytes`, `remaining_bytes`) e `GET /api/users/me/storage-usage`; upload de gravação acima da quota → `422 storage.quota_exceeded`, nada escrito. Falta: rota para definir `max_storage_bytes` (hoje só SQL) e a quota nas gravações do servidor (`recorder.rs`) e nos quadros |
 | G4 | Gravações com metadados: duração, resolução, tamanho, estado de processamento, categoria | `recordings/RecordingTable.tsx`, `Recordings.tsx` | colunas + máquina de estados (a 0036 já tem `status`) |
 | G5 | Capítulos e comentários com marca temporal numa gravação | `recordings/RecordingPanel.tsx` | `recording_chapters`, `recording_comments` |
 | G6 | Pesquisa na transcrição | `Recordings.tsx` | `GET /api/recordings?q=` sobre `transcript` (FTS do Postgres) |
@@ -43,6 +43,8 @@ sua cópia de `server/`.
 | G9 | Retenção de chat (e de auditoria só como exportação — a cadeia é imutável) | `admin/SettingsCard.tsx` | `chat_retention_days` nas definições + varredor |
 | G10 | Inventário de nós de media (capacidade) — **feito** (`nodes.rs`, migração 0048, `/api/operator/v1/nodes`) | `admin/CapacityRow.tsx` | batimento por nó (salas, pares, filas) + `GET /api/operator/v1/nodes` |
 | G11 | PNG de quadro por URL assinado | `boards/BoardViewer.tsx` | URL assinado de curta duração |
+| G10 | Inventário de nós de media (capacidade) | `admin/CapacityRow.tsx` | batimento por nó (salas, pares, filas) + `GET /api/operator/v1/nodes` |
+| G11 | ✅ PNG de quadro por URL assinado | `boards/BoardViewer.tsx` | **Feito**: `POST /api/whiteboards/{id}/signed-url` → `{url, expires_at}` (≤15 min, HMAC-SHA256 com subchave do segredo do servidor); o `url` carrega sem sessão; adulterado ou expirado → `404` |
 | G12 | Edição, perfil e capacidades da instalação | todos (esconder o que não existe) | `edition` + `capabilities` em `GET /api/public/settings` (ADR-0006 §2) |
 
 Ficam de fora, por serem só de cliente: a edição multi-faixa do Estúdio, a mistura e as

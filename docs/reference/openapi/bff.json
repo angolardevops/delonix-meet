@@ -1314,6 +1314,24 @@
         ],
         "type": "object"
       },
+      "DialIn": {
+        "description": "Como ligar para uma sala de conferência por telefone.",
+        "properties": {
+          "number": {
+            "description": "Número em +E.164.",
+            "type": "string"
+          },
+          "pin": {
+            "description": "PIN de 6 dígitos.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "pin"
+        ],
+        "type": "object"
+      },
       "Employee": {
         "properties": {
           "branch_id": {
@@ -2571,6 +2589,51 @@
         ],
         "type": "object"
       },
+      "OrgStorageUsage": {
+        "description": "Uso de armazenamento da organização e a sua quota.",
+        "properties": {
+          "max_storage_bytes": {
+            "description": "Tecto em bytes; `null` = ilimitado.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "recordings": {
+            "$ref": "#/components/schemas/UsageBucket",
+            "description": "Gravações (soma de `size_bytes`; as falhadas contam 0)."
+          },
+          "remaining_bytes": {
+            "description": "Quanto ainda cabe (nunca negativo); `null` = ilimitado.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "used_bytes": {
+            "description": "`recordings.bytes + whiteboards.bytes`.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "whiteboards": {
+            "$ref": "#/components/schemas/UsageBucket",
+            "description": "Quadros (bytes do PNG guardado)."
+          }
+        },
+        "required": [
+          "org_id",
+          "recordings",
+          "whiteboards",
+          "used_bytes"
+        ],
+        "type": "object"
+      },
       "OrgSummary": {
         "properties": {
           "domain": {
@@ -2703,6 +2766,37 @@
           "starts_at"
         ],
         "type": "object"
+      },
+      "PersonalRoom": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Room"
+          },
+          {
+            "properties": {
+              "dial_in": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DialIn",
+                    "description": "Número e PIN, se uma organização do dono tiver uma sala de voz ACTIVA\nligada a este código. Só leitura: esta rota não cria DIDs."
+                  }
+                ]
+              },
+              "join_url": {
+                "description": "Link partilhável (`https://<domínio da org>/#/r/<código>`, ou relativo\nse a organização não tem domínio).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "join_url"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "A sala pessoal, o link para a partilhar e o dial-in, se houver."
       },
       "PublicCapabilities": {
         "description": "O que ESTA instalação faz — cada flag lê a configuração que a liga.",
@@ -3946,6 +4040,26 @@
         ],
         "type": "object"
       },
+      "UpdatePersonalRoomReq": {
+        "additionalProperties": false,
+        "description": "Campos alteráveis. Um campo desconhecido é recusado (`422`): um campo que o\ncliente escreve e o servidor ignora é pior do que não existir.",
+        "properties": {
+          "name": {
+            "description": "1–100 caracteres (depois de `trim`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "waiting_room": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "UpdateRecordingReq": {
         "properties": {
           "category": {
@@ -3988,6 +4102,23 @@
         },
         "type": "object"
       },
+      "UsageBucket": {
+        "properties": {
+          "bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "count": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count",
+          "bytes"
+        ],
+        "type": "object"
+      },
       "UserPublic": {
         "properties": {
           "created_at": {
@@ -4013,6 +4144,34 @@
           "email",
           "username",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "UserStorageUsage": {
+        "description": "Uso de armazenamento de quem está autenticado.",
+        "properties": {
+          "recordings": {
+            "$ref": "#/components/schemas/UsageBucket",
+            "description": "Gravações que carregou."
+          },
+          "used_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "whiteboards": {
+            "$ref": "#/components/schemas/UsageBucket",
+            "description": "Quadros de que é dono."
+          }
+        },
+        "required": [
+          "user_id",
+          "recordings",
+          "whiteboards",
+          "used_bytes"
         ],
         "type": "object"
       },
@@ -4517,6 +4676,24 @@
         },
         "required": [
           "public"
+        ],
+        "type": "object"
+      },
+      "WhiteboardSignedUrl": {
+        "description": "URL assinado do PNG.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "url": {
+            "description": "Caminho relativo (`/api/whiteboards/{id}/png?exp=…&sig=…`), carregável sem sessão.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at"
         ],
         "type": "object"
       }
@@ -8942,6 +9119,73 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/storage-usage": {
+      "get": {
+        "operationId": "org_storage_usage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgStorageUsage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de administrador."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro da organização (ou não existe)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Armazenamento da organização. Só administradores; um membro recebe `403` e\nquem não é da organização `404`.",
+        "tags": [
+          "orgs"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/stream-destinations": {
       "get": {
         "operationId": "list",
@@ -12397,6 +12641,16 @@
           },
           "413": {
             "description": "Corpo acima de 512 MiB (rejeitado pelo axum, texto simples)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`storage.quota_exceeded`: a gravação não cabe na quota de armazenamento de uma organização do autor. Nada é escrito."
           }
         },
         "security": [
@@ -13428,6 +13682,178 @@
         ]
       }
     },
+    "/api/users/me/room": {
+      "get": {
+        "operationId": "my_room",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalRoom"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A sala pessoal de quem está autenticado. Na primeira chamada é criada (com\na sala de espera ligada); as seguintes devolvem sempre a mesma.",
+        "tags": [
+          "users"
+        ]
+      },
+      "patch": {
+        "operationId": "update_my_room",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePersonalRoomReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalRoom"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`personal_room.invalid_name`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Corpo que não desserializa, incluindo um campo desconhecido."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Altera o nome e/ou a sala de espera. Valida tudo antes de escrever.",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/me/room/rotate-code": {
+      "post": {
+        "operationId": "rotate_my_room_code",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalRoom"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Método personalizado: dá à sala pessoal um código novo. O link antigo\ndeixa de abrir (`GET /api/rooms/{antigo}` → `404`). Um dial-in ligado ao\ncódigo antigo NÃO acompanha: fica no código antigo e deixa de aparecer.",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/me/storage-usage": {
+      "get": {
+        "operationId": "my_storage_usage",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserStorageUsage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Armazenamento de quem está autenticado: as gravações que carregou e os\nquadros de que é dono. Serve a edição pessoal, onde não há administração de\norganização para consultar.",
+        "tags": [
+          "users"
+        ]
+      }
+    },
     "/api/users/search": {
       "get": {
         "operationId": "search",
@@ -13934,6 +14360,7 @@
     },
     "/api/whiteboards/{id}/png": {
       "get": {
+        "description": "- **Com sessão** (sem `sig`): apenas membros da org dona.\n- **Com `exp` e `sig`** (URL assinado): sem sessão. Assinatura errada, prazo\n  expirado ou quadro inexistente dão todos `404`.",
         "operationId": "png",
         "parameters": [
           {
@@ -13942,6 +14369,24 @@
             "required": true,
             "schema": {
               "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Prazo (segundos Unix) de um URL assinado. Só com `sig`.",
+            "in": "query",
+            "name": "exp",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Assinatura de um URL assinado (ver `POST /api/whiteboards/{id}/signed-url`).",
+            "in": "query",
+            "name": "sig",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -13959,6 +14404,16 @@
             },
             "description": ""
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Com sessão: `id` que não é UUID."
+          },
           "401": {
             "content": {
               "application/json": {
@@ -13967,7 +14422,7 @@
                 }
               }
             },
-            "description": "Sessão inválida."
+            "description": "Sem `sig` e sem sessão válida."
           },
           "404": {
             "content": {
@@ -13977,15 +14432,16 @@
                 }
               }
             },
-            "description": ""
+            "description": "Não existe, é de uma organização de que não és membro, ou o URL assinado é inválido ou expirou."
           }
         },
         "security": [
+          {},
           {
             "session": []
           }
         ],
-        "summary": "Imagem PNG de um quadro — apenas membros da org dona.",
+        "summary": "Imagem PNG de um quadro.",
         "tags": [
           "whiteboards"
         ]
@@ -14063,6 +14519,63 @@
           }
         ],
         "summary": "Ativa/desativa a partilha por link público. Dono ou admin.\nDesativar roda o token: o link antigo deixa de funcionar.",
+        "tags": [
+          "whiteboards"
+        ]
+      }
+    },
+    "/api/whiteboards/{id}/signed-url": {
+      "post": {
+        "operationId": "signed_url",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhiteboardSignedUrl"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não existe, ou é de uma organização de que não és membro."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Método personalizado: emite um URL assinado do PNG, válido 15 minutos, para\nquem JÁ pode ver o quadro. Quem não pode recebe `404`, como no PNG.",
         "tags": [
           "whiteboards"
         ]

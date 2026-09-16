@@ -181,6 +181,9 @@ if (chaveB.status >= 200 && chaveB.status < 300 && chaveB.json?.id) {
   nok('B cria uma chave de API para o teste', `devolveu ${chaveB.status}`)
 }
 
+// Armazenamento usado e quota (G3): volume e quota de outra empresa.
+await recusado('A lê o armazenamento da org B', `/api/orgs/${B.orgId}/storage-usage`, { token: A.token })
+
 // Destinos de emissão guardados (G1): a chave RTMP é credencial de terceiros.
 await recusado('A lista destinos de emissão da org B', `/api/orgs/${B.orgId}/stream-destinations`, { token: A.token })
 const destinoB = await req(`/api/orgs/${B.orgId}/stream-destinations`, {
@@ -376,6 +379,14 @@ const quadroB = await req('/api/whiteboards', {
 if (quadroB.status >= 200 && quadroB.status < 300 && quadroB.json?.id) {
   const q = quadroB.json.id
   await recusado('A descarrega o PNG do quadro da B', `/api/whiteboards/${q}/png`, { token: A.token })
+  // URL assinado (G11): quem não vê o quadro não o emite, e uma assinatura
+  // inventada não abre o PNG — nem com a sessão de A.
+  await recusado('A emite um URL assinado do quadro da B', `/api/whiteboards/${q}/signed-url`, {
+    token: A.token, method: 'POST',
+  })
+  await recusado('A forja um URL assinado do quadro da B', `/api/whiteboards/${q}/png?exp=${Math.floor(Date.now() / 1000) + 600}&sig=${'0'.repeat(64)}`, {
+    token: A.token,
+  })
   await recusado('A PARTILHA o quadro da B por link', `/api/whiteboards/${q}/share`, {
     token: A.token, method: 'POST', body: { public: true },
   })

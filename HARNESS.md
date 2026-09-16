@@ -39,7 +39,7 @@
 - `config.rs` — lê env vars, **fail-closed sem segredos fortes** (panic no arranque)
 - `auth.rs` — registo (cria org+admin), login, refresh, logout, room tokens
 - `org.rs` — multi-tenant: organizations, branches, org_members, employee groups, salas presenciais, quotas, stats, SSO stubs
-- `rooms.rs` — CRUD salas, `can_access_room` (isolamento cross-org), `insert_room` (helper reutilizado)
+- `rooms.rs` — CRUD salas, `can_access_room` (isolamento cross-org), `insert_room` (helper reutilizado); sala pessoal (G2; migração 0047): `ensure_personal_room` cria-a na primeira leitura com `ON CONFLICT` sobre o índice único parcial `rooms_personal_owner_uidx` (idempotente sob concorrência), `update_personal_room`, `rotate_personal_room_code` (o código antigo deixa de existir). A sala pessoal NÃO tem regras de acesso próprias
 - `sfu.rs` — SFU Rust: Hub, Room, Publication, simulcast, PLI, gravação RTP→IVF/OGG
 - `signaling.rs` — WebSocket `/ws` (room token): transporte SFU (offer/answer/ice) + moderação (admit/kick/lock/host-*) + chat/breakout-*/media
 - `room_tools.rs` — contexto de colaboração in-room extraído de `signaling.rs`: sondagens, Q&A, temporizador, quadro branco (`impl SignalingHub::handle_tool_msg`)
@@ -49,7 +49,7 @@
 - `recorder.rs` — gravação server-side: RTP→IVF(VP8)+OGG(Opus), ffmpeg post-stop (VP9+Opus webm), E2EE via decrypt_e2ee(); ao inserir grava `duration_secs` (relógio de parede da sessão, não ffprobe) e `width`/`height` (grelha do xstack, ou cabeçalho IVF no remux)
 - `broadcast.rs` — emissão em directo para RTMP (ADR-0003): o browser compõe e codifica em H.264, o servidor REMULTIPLEXA (`-c:v copy`, `-c:a aac`). Multi-canal tipo StreamYard: um `ffmpeg` com N destinos (`destinos` na query, JSON), tecto próprio `MAX_DESTINOS_POR_DIRECTO` (por emissão) distinto do `MAX_DIRECTOS` (por nó/sala). Recusa E2EE, codec não copiável, chave vazia e acima de qualquer um dos dois tectos. Rota WS `/api/rooms/{code}/broadcast`; registo por sala
 - `webhooks.rs` — CRUD webhooks org, fire() best-effort (Slack/Teams/Mattermost/generic+HMAC), SSRF guard; registo de entregas (G7; migração 0043): cada envio fica em `webhook_deliveries` (`pending` antes, `succeeded`/`failed` com código, tempo e erro limpo de URLs depois; sem segredo nem assinatura), `GET …/webhooks/{hook_id}/deliveries[/{delivery_id}]` paginado e `POST …/redeliver` (método personalizado: `202` + `Location`, mesmo payload ao URL actual com a guarda reaplicada, 10/min por webhook → `429`); varredor horário fecha as `pending` abandonadas e apaga as de mais de 30 dias. Regras em `domain::integration::webhook_delivery`
-- `whiteboards.rs` — CRUD quadro branco persistente
+- `whiteboards.rs` — CRUD quadro branco persistente; URL assinado do PNG (G11): `POST /api/whiteboards/{id}/signed-url` → `{url, expires_at}` (≤15 min, só para quem já vê o quadro); `GET …/png?exp=&sig=` serve SEM sessão (HMAC-SHA256 sobre `(id, exp)` com subchave `core::crypto::derive_key(JWT_SECRET, …)`, tempo constante; adulterado/expirado/inexistente → `404`). Sem `sig`, o PNG com sessão é o de sempre. Regras em `domain::content::whiteboard`. Testes: `server/tests/whiteboard_signed_url.rs`
 - `voice.rs` — PSTN: plano de controlo (DIDs, CDR, facturação, IVR por segredo partilhado em `/api/voice/ivr/*`); a media depende do operador SIP. O IVR é máquina-a-máquina e, no destino, sai da árvore pública para gRPC (ADR-0004 §4)
 - `sms.rs` — gateway de SMS (ADR-0005): consola da org em `/api/orgs/{org_id}/sms/*` (só admin), superfície do agente USB em `/api/sms/agent/*` (token `dlxg_`, extractor `SmsGatewayAuth`), encaminhamento pelo plano de numeração angolano (prefixos **por confirmar**) e worker dos operadores que pára no drain. Entrega no máximo uma vez
 - `sms_codec.rs` — o ÚNICO sítio que codifica SMS: GSM 03.38/UCS-2, segmentação, PDU SMS-SUBMIT para `AT+CMGS`. Puro, sem I/O
@@ -61,7 +61,8 @@
 - `rate_limit.rs` — rate limit por IP/conta (DashMap, lockout login 8/5min)
 - `error.rs` — `AppError` unificado → HTTP status + JSON body
 - `metrics.rs` — contadores atómicos de observabilidade (WS, SFU, saturação das filas) expostos em `/metrics` (Prometheus). Das filas: `delonix_ws_queue_high_water` (marca de água — a folga real face a `WS_QUEUE_CAP`), `delonix_ws_queue_dropped_total` (efémeros perdidos), `delonix_ws_slow_consumer_kills_total` (sockets fechados por transbordo) e `delonix_nego_queue_dropped_total`. Marca de água e não profundidade instantânea: um gauge somado entre sockets vaza quando uma task de escrita morre a meio
-- `users.rs` — perfis de utilizador (perfil público, `me`, update, pesquisa)
+- `users.rs` — perfis de utilizador (perfil público, `me`, update, pesquisa); «a minha sala» (G2): `GET|PATCH /api/users/me/room`, `POST /api/users/me/room/rotate-code` (nasce com sala de espera; o `PATCH` recusa campos desconhecidos; `dial_in` só leitura via `voice::dial_in_for_room`, da org do dono, e não acompanha a rotação do código). Regras em `domain::conferencing::personal_room`. Testes: `server/tests/personal_room.rs`
+- `usage.rs` — armazenamento usado e quota (G3; migração 0047): `GET /api/orgs/{org_id}/storage-usage` (admin; membro `403`, outra org `404`) e `GET /api/users/me/storage-usage`; `enforce_recording_quota` recusa o upload de gravações com `422 storage.quota_exceeded` ANTES de escrever linha ou ficheiro (não é transaccional: uploads simultâneos podem passar o tecto por um ficheiro). Uma gravação conta para a org do autor (activo ou arquivado) — `org::recording_uploader_in_org_sql`, o mesmo predicado das estatísticas. `organizations.max_storage_bytes` NULL = ilimitado; não há rota para o alterar. Regra em `domain::organization::storage_quota`. Testes: `server/tests/storage_usage.rs`
 - `actions.rs` — agenda de reunião (tópicos com execução) + Plano de Ação 5W2H
 - `mfa.rs` — segundo factor por TOTP (RFC 6238) e códigos de recuperação. O algoritmo é implementado aqui em vez de por dependência nova: HMAC-SHA-1, base64 e argon2 já eram dependências, e o RFC traz **vectores de teste oficiais** — uma verificação independente melhor do que confiar numa crate. Um código válido é CONSUMIDO, não só verificado (`last_step`, e `used_at` nos de recuperação): sem isso um TOTP apanhado por cima do ombro servia outra vez durante 30 s. Ver R53. A activação e a desactivação têm travão por conta (`mfa_limiter`, 5 falhas em 5 min, só as falhas contam) que recusa também o código CERTO durante o bloqueio — ver R131; o passo MFA do login usa o `login_limiter`
 - `mls.rs` — rascunho de MLS (key packages, welcome) **NÃO montado**: `#![allow(dead_code)]` e router fora do `main.rs`. Esteve montado sem autenticação (R41); o `check-route-auth.sh` impede que volte assim. Não é capacidade activa
@@ -115,6 +116,7 @@
 | Serviço | Port (dev) | Uso |
 |---|---|---|
 | PostgreSQL | 5435 | Dados principais (migrações 0001–0048) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0047; a 0046 está reservada por outro ramo) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 
