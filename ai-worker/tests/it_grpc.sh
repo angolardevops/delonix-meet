@@ -10,6 +10,8 @@
 #   3. mTLS (certificados openssl): o worker com certificado da CA interna
 #      entrega; um worker com certificado de OUTRA CA é recusado no handshake;
 #      um worker em texto claro contra o listener mTLS também.
+#   4. (se o venv tiver psycopg2) o modo legado DATABASE_URL ainda funciona, avisa
+#      que está deprecado, e escreve o segredo SEM DLP — a razão de sair.
 #
 #  Pré-requisitos:
 #   - venv com grpcio/grpcio-tools/protobuf (requirements.txt/-build.txt):
@@ -202,5 +204,26 @@ rc=$(run_worker DELONIX_GRPC_ADDR="localhost:$GRPC_PORT" GRPC_CLIENT_CERT="$PKI/
 row=$(psql_it -c "SELECT transcribed_at IS NOT NULL, transcript LIKE '%CHAVE API CENSURADA%' FROM recordings WHERE id = '$REC3'")
 [ "$row" = "t|t" ] || die "mTLS: linha inesperada: $row"
 ok "mTLS: certificado da CA interna entrega, com DLP"
+
+stop_server
+
+# ---------------------------------------------------------------- 4. legado (opcional)
+# Só com psycopg2 no venv. Prova que o modo deprecado ainda funciona E porque é
+# que está deprecado: o segredo entra na base tal e qual, sem DLP.
+if "$PY" -c 'import psycopg2' 2>/dev/null; then
+  REC4=$(seed_recording "$EMAIL")
+  printf '\x1a\x45\xdf\xa3' >"$REC_DIR/$REC4.webm"
+  for _ in 1 2 3 4 5; do   # o legado não conhece transcription_failed_at: pode apanhar outras primeiro
+    rc=$(run_worker DELONIX_GRPC_ADDR= DATABASE_URL="$DB_URL")
+    [ "$rc" = 0 ] || break
+  done
+  [ "$rc" = 3 ] || die "legado: esperava esvaziar a fila (3), deu $rc — $(tail -5 "$WORK/worker.log")"
+  grep -q "DEPRECADO" "$WORK/worker.log" || die "legado: falta o aviso de deprecação"
+  row=$(psql_it -c "SELECT transcribed_at IS NOT NULL, transcript LIKE '%$SECRET%' FROM recordings WHERE id = '$REC4'")
+  [ "$row" = "t|t" ] || die "legado: linha inesperada: $row"
+  ok "legado (DATABASE_URL): funciona, avisa que está deprecado, e escreve o sk-… SEM DLP"
+else
+  echo "  · legado (DATABASE_URL) NÃO verificado: psycopg2 não está no venv"
+fi
 
 echo "✓ ai-worker ↔ delonix-server por gRPC: texto claro, falha definitiva e mTLS provados"
