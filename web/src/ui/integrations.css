@@ -265,6 +265,9 @@
   background: var(--surface);
 }
 .integ-table {
+  /* Contém o `dx-sr-only` (absoluto) do cabeçalho de acções: sem isto ele
+     escapa ao recorte do scroll e alarga a página a 375 px. */
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--r-2);
 }
