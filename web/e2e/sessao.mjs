@@ -43,13 +43,14 @@ export async function criarConta(API, prefixo = 'e2e') {
  */
 export async function entrar(page, APP, { email, password }) {
   await page.goto(`${APP}/#/login`, { waitUntil: 'domcontentloaded', timeout: 120_000 })
-  await page.waitForSelector('input[type=email]', { timeout: 120_000 })
+  await page.waitForSelector('[data-testid=auth-email]', { timeout: 120_000 })
   await page.evaluate(() => localStorage.setItem('dx_tour_v1', 'done'))
-  await page.fill('input[type=email]', email)
-  await page.fill('input[type=password]', password)
-  // O cartão tem DOIS «Entrar»: o separador e o botão de submeter. Apanhar o
-  // primeiro troca de aba e não envia nada — falha sem erro visível.
-  await page.locator('form button.primary, .auth-card button[type=submit]').first().click()
-  await page.waitForFunction(() => !document.querySelector('input[type=email]'), null, { timeout: 60_000 })
+  await page.fill('[data-testid=auth-email]', email)
+  await page.fill('[data-testid=auth-password]', password)
+  // Selectores por `data-testid`: o formulário tem vários «Entrar» (o submeter,
+  // a troca para criar organização, a caixa do código de sala) e apanhar o
+  // errado não envia nada — falha sem erro visível.
+  await page.locator('[data-testid=auth-submit]').click()
+  await page.waitForFunction(() => !document.querySelector('[data-testid=auth-email]'), null, { timeout: 60_000 })
   await page.waitForSelector('.shell', { timeout: 60_000 })
 }
