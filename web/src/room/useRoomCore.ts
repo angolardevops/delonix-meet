@@ -2,6 +2,7 @@ import { Dispatch, MutableRefObject, SetStateAction, useCallback, useRef, useSta
 import { useTranslation } from 'react-i18next'
 import type { Call } from '../webrtc'
 import type { BackgroundEffect, Denoiser, HeadTracker, LevelWatcher } from '../media'
+import type { MicMix } from './micMix'
 import { RoomSignal } from './signalBus'
 
 /** Um participante remoto tal como a sala o conhece. */
@@ -74,6 +75,10 @@ export interface RoomCore {
   peersRef: MutableRefObject<RemotePeer[]>
   isHostRef: MutableRefObject<boolean>
   bgModeRef: MutableRefObject<'none' | 'blur' | 'image'>
+  /** Dois microfones misturados (pré-entrada → sala). Dono: quem a parar. */
+  micMixRef: MutableRefObject<MicMix | null>
+  /** Segunda fonte de vídeo escolhida na pré-entrada, à espera de ser publicada. */
+  secondSourceRef: MutableRefObject<MediaStream | null>
 }
 
 /**
@@ -154,5 +159,7 @@ export function useRoomCore(code: string, initialState: RoomState): RoomCore {
     peersRef,
     isHostRef,
     bgModeRef: useRef<'none' | 'blur' | 'image'>('none'),
+    micMixRef: useRef<MicMix | null>(null),
+    secondSourceRef: useRef<MediaStream | null>(null),
   }
 }

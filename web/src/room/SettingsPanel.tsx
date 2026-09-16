@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../ui/icons'
 import { Alert, Button, Field, Select, Toggle, cx } from '../ui/kit'
+import { VolumeSlider } from './Prejoin'
 import type { LocalMedia } from './useLocalMedia'
 import type { Transcription } from './useTranscription'
 
@@ -144,6 +145,7 @@ export function SettingsPanel({
               ))}
           </Select>
         </Field>
+        <VolumeSlider media={media} id="rm-set-vol" />
         <Button size="sm" variant="outline" icon="volume" onClick={media.testSpeaker}>
           {t('room.preEntrada.testarSom')}
         </Button>

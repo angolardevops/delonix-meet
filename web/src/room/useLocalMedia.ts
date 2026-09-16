@@ -42,6 +42,25 @@ export function useLocalMedia(core: RoomCore) {
   const [blurLevel, setBlurLevel] = useState<BlurLevel>('strong')
   const presets = useMemo(() => presetBackgrounds(), [])
 
+  /** Volume do que se OUVE (0–100), só neste dispositivo. */
+  const [outputVolume, setOutputVolumeState] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem('dx_out_vol'))
+      return Number.isFinite(v) && v > 0 && v <= 100 ? v : 100
+    } catch {
+      return 100
+    }
+  })
+  const setOutputVolume = useCallback((v: number) => {
+    const n = Math.max(0, Math.min(100, Math.round(v)))
+    setOutputVolumeState(n)
+    try {
+      localStorage.setItem('dx_out_vol', String(n))
+    } catch {
+      /* sem armazenamento: vale para esta sessão */
+    }
+  }, [])
+
   const [parallax, setParallax] = useState(false)
   const [tilt, setTilt] = useState({ x: 0, y: 0 })
 
@@ -181,6 +200,9 @@ export function useLocalMedia(core: RoomCore) {
 
   async function switchMic(deviceId: string, ns = noiseSuppression) {
     try {
+      // Escolher UM microfone desfaz a mistura de dois da pré-entrada.
+      core.micMixRef.current?.stop()
+      core.micMixRef.current = null
       const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId || undefined) })
       const raw = s.getAudioTracks()[0]
       raw.enabled = micOn
@@ -237,7 +259,27 @@ export function useLocalMedia(core: RoomCore) {
   async function toggleNoiseSuppression() {
     const next = !noiseSuppression
     setNoiseSuppression(next)
-    await switchMic(micId, next)
+    const mix = core.micMixRef.current
+    if (!mix) {
+      await switchMic(micId, next)
+      return
+    }
+    // Com dois microfones misturados, reprocessa-se a MISTURA — voltar a pedir
+    // um só microfone desfazia a escolha da pré-entrada sem aviso.
+    try {
+      const sendTrack = await denoiseMic(mix.freshOutput(), next)
+      sendTrack.enabled = micOn
+      const old = core.localStreamRef.current?.getAudioTracks()[0]
+      if (old) {
+        core.localStreamRef.current?.removeTrack(old)
+        old.stop()
+      }
+      core.localStreamRef.current?.addTrack(sendTrack)
+      await core.callRef.current?.replaceAudioTrack(sendTrack)
+      if (core.localStreamRef.current) core.levelsRef.current?.watch('me', core.localStreamRef.current)
+    } catch {
+      setStatus(t('room.estado.naoMudouMicrofone'))
+    }
   }
 
   /**
@@ -245,11 +287,15 @@ export function useLocalMedia(core: RoomCore) {
    * desfoque e imagem é instantâneo: é o mesmo pipeline.
    */
   async function applyBackground(mode: BgMode, imageUrl?: string, blur: BlurLevel = blurLevel) {
-    if (bgBusy || !core.cameraTrackRef.current) return
+    // Na pré-entrada ainda não há câmara da chamada: o efeito aplica-se à da
+    // pré-visualização e segue com ela para a sala.
+    const cam =
+      core.cameraTrackRef.current ?? (core.roomState === 'prejoin' ? core.previewStreamRef.current?.getVideoTracks()[0] ?? null : null)
+    if (bgBusy || !cam) return
     setBgBusy(true)
     try {
       if (mode === 'none') {
-        const raw = core.effectRef.current?.stop() ?? core.cameraTrackRef.current
+        const raw = core.effectRef.current?.stop() ?? cam
         if (!core.sharing && raw) {
           await core.callRef.current?.replaceVideoTrack(raw)
           if (core.localVideoRef.current) core.localVideoRef.current.srcObject = core.localStreamRef.current
@@ -265,7 +311,7 @@ export function useLocalMedia(core: RoomCore) {
       if (mode === 'image' && imageUrl) await effect.setImage(imageUrl)
       else effect.mode = 'blur'
       if (!effect.started) {
-        const processed = await effect.start(core.cameraTrackRef.current)
+        const processed = await effect.start(cam)
         if (!core.sharing) {
           await core.callRef.current?.replaceVideoTrack(processed)
           if (core.localVideoRef.current) core.localVideoRef.current.srcObject = new MediaStream([processed])
@@ -279,6 +325,13 @@ export function useLocalMedia(core: RoomCore) {
     } finally {
       setBgBusy(false)
     }
+  }
+
+  /** Sem câmara (entrar só com áudio): o efeito pára e o estado volta a «sem fundo». */
+  function clearBackground() {
+    core.effectRef.current?.stop()
+    setBgMode('none')
+    setBgImageUrl('')
   }
 
   function uploadBackground(file: File | null) {
@@ -365,7 +418,10 @@ export function useLocalMedia(core: RoomCore) {
     blurLevel,
     presets,
     applyBackground,
+    clearBackground,
     uploadBackground,
+    outputVolume,
+    setOutputVolume,
     parallax,
     parallaxStyle,
     toggleParallax,

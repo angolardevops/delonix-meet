@@ -5,10 +5,13 @@ import { useTranslation } from 'react-i18next'
  * Medidor do nível REAL do microfone (RMS em dBFS). Escreve no DOM por ref, a
  * ~12 Hz, sem estado: medir o som não pode fazer a página inteira renderizar.
  */
-export function MicLevel({ stream, version }: { stream: MediaStream | null; version: number }) {
+export function MicLevel({ stream, version, muted = false }: { stream: MediaStream | null; version: number; muted?: boolean }) {
   const { t } = useTranslation()
   const barRef = useRef<HTMLSpanElement>(null)
   const dbRef = useRef<HTMLSpanElement>(null)
+  // Numa mistura as entradas estão sempre ligadas; o silêncio é o da saída.
+  const mutedRef = useRef(muted)
+  mutedRef.current = muted
 
   useEffect(() => {
     const track = stream?.getAudioTracks()[0]
@@ -35,7 +38,7 @@ export function MicLevel({ stream, version }: { stream: MediaStream | null; vers
       let sum = 0
       for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i]
       const rms = Math.sqrt(sum / buf.length)
-      const db = track.enabled && rms > 0 ? Math.max(-60, 20 * Math.log10(rms)) : -60
+      const db = track.enabled && !mutedRef.current && rms > 0 ? Math.max(-60, 20 * Math.log10(rms)) : -60
       // −60 dBFS é silêncio; 0 é o máximo. A barra lê-se de forma linear em dB.
       const pct = Math.round(((db + 60) / 60) * 100)
       if (barRef.current) barRef.current.style.width = `${pct}%`

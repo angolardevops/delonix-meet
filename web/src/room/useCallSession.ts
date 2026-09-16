@@ -110,7 +110,9 @@ export function useCallSession(
             stream.addTrack(clean)
           }
         }
-        if (core.localVideoRef.current) core.localVideoRef.current.srcObject = stream
+        // Fundo escolhido na pré-entrada: o que me vejo é o que os outros recebem.
+        const fundo = core.bgModeRef.current !== 'none' ? core.effectRef.current?.output ?? null : null
+        if (core.localVideoRef.current) core.localVideoRef.current.srcObject = fundo ? new MediaStream([fundo]) : stream
 
         core.levelsRef.current?.close()
         const levels = new LevelWatcher(core.updateSpeaking)
@@ -290,7 +292,10 @@ export function useCallSession(
             }
             if (st === 'degraded') setStatus(t('room.estado.mediaInstavel'))
             else if (st === 'reconnecting' || st === 'recovering') setStatus(t('room.estado.aRestabelecer'))
-            else if (st === 'connected') setStatus('')
+            else if (st === 'connected') {
+              setStatus('')
+              publicarFundo()
+            }
             else if (st === 'failed') {
               setStatus(t('room.estado.naoRestabeleceu'))
               sessionStorage.setItem(`dx_rejoin_${code}`, String(Date.now()))
@@ -300,13 +305,26 @@ export function useCallSession(
             }
           },
         }
+        // A chamada nasce com a câmara CRUA (é ela que fica em `cameraTrackRef`
+        // para se poder repor); com fundo, o que se envia é a saída do efeito.
+        // No SFU o emissor existe logo; no mesh só quando há ligação — por isso
+        // repete-se ao ficar `connected` (a troca é idempotente).
+        function publicarFundo() {
+          const fx = core.bgModeRef.current !== 'none' ? core.effectRef.current?.output : null
+          if (fx && !core.sharing) void core.callRef.current?.replaceVideoTrack(fx).catch(() => {})
+        }
         callHolder.start = makeCallHolderStart({
           ref: core.callRef,
           isCancelled: () => cancelled,
-          create: () =>
-            room.topology === 'sfu'
-              ? new SfuCall(s, stream, rtcConfig, callbacks, crypto, undefined, tempos)
-              : new MeshCall(s, stream, rtcConfig, callbacks, crypto),
+          create: () => {
+            const call =
+              room.topology === 'sfu'
+                ? new SfuCall(s, stream, rtcConfig, callbacks, crypto, undefined, tempos)
+                : new MeshCall(s, stream, rtcConfig, callbacks, crypto)
+            const fx = core.bgModeRef.current !== 'none' ? core.effectRef.current?.output : null
+            if (fx) void call.replaceVideoTrack(fx).catch(() => {})
+            return call
+          },
         })
         // Só agora o resto da sala passa a ouvir: os handlers da sessão (acima)
         // correm primeiro em cada mensagem.
@@ -349,6 +367,10 @@ export function useCallSession(
       core.denoiserRef.current = null
       core.rawMicRef.current?.stop()
       core.rawMicRef.current = null
+      core.micMixRef.current?.stop()
+      core.micMixRef.current = null
+      core.secondSourceRef.current?.getTracks().forEach((tr) => tr.stop())
+      core.secondSourceRef.current = null
       core.callRef.current?.hangup()
       core.callRef.current = null
       core.localStreamRef.current?.getTracks().forEach((tr) => tr.stop())
