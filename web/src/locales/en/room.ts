@@ -191,6 +191,8 @@ export default {
     entrar: 'Join meeting',
   },
   fim: {
+    naoExiste: 'This room does not exist',
+    naoExisteTexto: 'The code does not match any room. Check the link with whoever sent it.',
     recusado: 'Entry declined',
     recusadoTexto: 'The host did not admit you to this meeting.',
     removido: 'You were removed from the meeting',

@@ -174,7 +174,7 @@ export default function Room({
     )
   } else if (core.roomState === 'e2ee-pass') {
     content = <PassphraseScreen code={code} onSubmit={session.submitPassphrase} onCancel={onLeave} />
-  } else if (core.roomState === 'denied' || core.roomState === 'kicked') {
+  } else if (core.roomState === 'denied' || core.roomState === 'kicked' || core.roomState === 'notfound') {
     content = <EndedScreen kind={core.roomState} onLeave={onLeave} />
   } else {
     const tabbed = chrome.panel === 'chat' || chrome.panel === 'qa' || chrome.panel === 'polls' || chrome.panel === 'people'

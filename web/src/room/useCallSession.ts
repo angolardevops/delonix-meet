@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { currentUser, iceServers, isAbort, joinRoom, postTimings } from '../api'
+import { ApiError, currentUser, iceServers, isAbort, joinRoom, postTimings } from '../api'
 import { audioConstraints, LevelWatcher, listDevices, videoConstraints } from '../media'
 import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
 import { Signaling } from '../signaling'
@@ -315,6 +315,12 @@ export function useCallSession(
         // Uma falha a montar a sala NÃO é terminal: um corte de seis segundos no
         // servidor deixava toda a gente presa num «Internal Server Error».
         if (cancelled || isAbort(err)) return
+        // Uma sala que não existe não volta a existir por se insistir: dizê-lo
+        // já, em vez de seis tentativas a fingir que é a rede.
+        if (err instanceof ApiError && err.status === 404) {
+          core.setRoomState('notfound')
+          return
+        }
         tentativas += 1
         if (tentativas <= MAX_TENTATIVAS) {
           setStatus(t('room.estado.semLigacaoATentar', { n: tentativas, total: MAX_TENTATIVAS }))
