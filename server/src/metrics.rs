@@ -51,6 +51,9 @@ pub struct Metrics {
     /// Trocas de camada simulcast (cumulativo): sobe quando a sala cresce/encolhe
     /// ou quando a rede de um subscritor degrada.
     pub sfu_layer_switches_total: AtomicU64,
+    /// Trocas de camada que FALHARAM (cumulativo). Cada uma é um subscritor que
+    /// ficou sem o vídeo desse participante (R156). Tem de estar a zero.
+    pub sfu_layer_switch_failures_total: AtomicU64,
     /// Subscritores atualmente a receber uma camada ABAIXO do normal por perda
     /// de pacotes. >0 sustentado = rede dos clientes (ou do relay) em apuros.
     pub sfu_degraded_subscribers: AtomicI64,
@@ -181,6 +184,9 @@ impl Metrics {
              # HELP delonix_sfu_layer_switches_total Trocas de camada simulcast.\n\
              # TYPE delonix_sfu_layer_switches_total counter\n\
              delonix_sfu_layer_switches_total {}\n\
+             # HELP delonix_sfu_layer_switch_failures_total Trocas de camada falhadas (subscritor sem vídeo).\n\
+             # TYPE delonix_sfu_layer_switch_failures_total counter\n\
+             delonix_sfu_layer_switch_failures_total {}\n\
              # HELP delonix_sfu_degraded_subscribers Subscritores a receber camada reduzida por perda.\n\
              # TYPE delonix_sfu_degraded_subscribers gauge\n\
              delonix_sfu_degraded_subscribers {}\n\
@@ -266,6 +272,7 @@ impl Metrics {
             self.sfu_peers_total.load(Relaxed),
             g(self.sfu_subscriptions.load(Relaxed)),
             self.sfu_layer_switches_total.load(Relaxed),
+            self.sfu_layer_switch_failures_total.load(Relaxed),
             g(self.sfu_degraded_subscribers.load(Relaxed)),
             self.sfu_keyframes_requested_total.load(Relaxed),
             self.sfu_renegotiations_failed_total.load(Relaxed),
