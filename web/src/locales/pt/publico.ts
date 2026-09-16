@@ -75,7 +75,7 @@ export default {
     evento: 'Evento',
     evCriada: 'Reunião agendada.',
     evIniciada: 'Reunião iniciada, com o link de entrada.',
-    evAta: 'Ata da reunião disponível.',
+    evAta: 'Acta da reunião disponível.',
     evGravacao: 'Gravação disponível.',
     codigos: 'Códigos de estado',
     codigo: 'Código',
