@@ -9,10 +9,24 @@ const root = join(__dirname, '..', '..')
 const read = (p: string) => readFileSync(join(root, p), 'utf8')
 const sala = () => read('web/src/pages/Room.tsx')
 
+/**
+ * A sala reconstruída tem a raiz dividida em hooks (`room/use*.ts`): todos
+ * correm DENTRO do componente `Room`, por isso um relógio num deles bate na
+ * raiz tanto como bateria na própria página. O portão lê a página e todos os
+ * hooks.
+ */
+const raizDaSala = () =>
+  [
+    sala(),
+    ...readdirSync(join(root, 'web/src/room'))
+      .filter((f) => /^use[A-Z].*\.ts$/.test(f))
+      .map((f) => read(`web/src/room/${f}`)),
+  ].join('\n')
+
 describe('2.1 · nenhum relógio bate na raiz da sala', () => {
-  it('não há setState de tempo no componente Room', () => {
+  it('não há setState de tempo no componente Room nem nos hooks que ele corre', () => {
     for (const proibido of ['setElapsed(', 'setPollNow(', 'setNow(', 'setClock(']) {
-      expect(sala()).not.toContain(proibido)
+      expect(raizDaSala()).not.toContain(proibido)
     }
   })
 
@@ -21,7 +35,11 @@ describe('2.1 · nenhum relógio bate na raiz da sala', () => {
     for (const f of ['export function MeetingElapsed', 'export function Countdown', 'export function WallClock']) {
       expect(c).toContain(f)
     }
-    expect(sala()).toContain("from '../room/Clocks'")
+    // Quem os mostra importa-os — a barra de topo e a de controlos.
+    expect(read('web/src/room/TopBar.tsx')).toContain("from './Clocks'")
+    expect(read('web/src/room/ControlBar.tsx')).toContain("from './Clocks'")
+    expect(read('web/src/room/TopBar.tsx')).toContain('<MeetingElapsed startedAt={joinedAt}')
+    expect(sala()).toContain('joinedAt={core.joinedAtRef.current}')
   })
 
   it('a duração ainda sabe DE ONDE conta', () => {
@@ -32,7 +50,7 @@ describe('2.1 · nenhum relógio bate na raiz da sala', () => {
     // Os testes acima não deram por nada: verificavam que o relógio SAIU da
     // raiz, não que continuava a saber quando a reunião começou. É essa a
     // metade que faltava.
-    expect(sala()).toContain('joinedAtRef.current = Date.now()')
+    expect(read('web/src/room/useRoomCore.ts')).toContain('joinedAtRef.current = Date.now()')
     // E a folha recusa-se a inventar um número quando não lhe dizem a hora.
     expect(read('web/src/room/Clocks.tsx')).toContain('if (!startedAt) return null')
   })
@@ -41,27 +59,47 @@ describe('2.1 · nenhum relógio bate na raiz da sala', () => {
     // Precisa do TIQUE, não de um render: lê o relógio do sistema dentro do
     // próprio intervalo e dispara. Se voltar a depender de estado, a sala
     // volta a reconciliar 86 400 vezes por dia.
-    expect(sala()).toContain('const agora = Math.floor(Date.now() / 1000)')
-    expect(sala()).toContain('pollsRef.current')
+    const t = read('web/src/room/useMeetingTools.ts')
+    const i = t.indexOf('setInterval(() => {\n      const agora')
+    expect(i).toBeGreaterThan(0)
+    const tique = t.slice(i, i + 500)
+    expect(tique).toContain('pollsRef.current')
+    expect(tique).toContain("signal.send({ type: 'poll-close'")
+    // O `ends_at` das sondagens vem em MILISSEGUNDOS (`now_ms()` do servidor).
+    // A versão anterior comparava-o com `Math.floor(Date.now() / 1000)` e o
+    // fecho automático nunca disparava — o portão antigo exigia essa linha.
+    expect(tique).toContain('const agora = Date.now()')
+    expect(read('server/src/room_tools.rs')).toMatch(/\.map\(\|d\| now_ms\(\) \+ \(d\.min\(3600\) as i64\) \* 1000\)/)
   })
 })
 
 describe('2.2 e 2.3 · os mosaicos não voltam a renderizar à toa', () => {
-  const tile = () => read('web/src/room/RemoteTile.tsx')
+  const tile = () => read('web/src/room/ParticipantTile.tsx')
 
   it('o mosaico é memoizado com comparação explícita', () => {
-    expect(tile()).toContain('export const RemoteTile = memo(RemoteTileBase,')
+    expect(tile()).toContain('export const ParticipantTile = memo(ParticipantTileBase,')
     // Igualdade rasa não serve: `peer` é um objecto novo a cada actualização
     // de lista mesmo quando nada mudou.
     expect(tile()).toContain('a.peer.peerId === b.peer.peerId')
     expect(tile()).toContain('a.peer.stream === b.peer.stream')
+    // As dimensões chegam como NÚMEROS: um objecto `style` novo por render
+    // anulava a comparação.
+    expect(tile()).toContain('a.width === b.width')
   })
 
   it('os callbacks passados ao mosaico são estáveis', () => {
     // Uma closure nova por peer e por render anula qualquer memo a jusante.
     expect(sala()).toContain('const onTilePin = useCallback')
-    expect(sala()).toContain('onPin={onTilePin}')
-    expect(sala()).not.toMatch(/onMute=\{\(\) => signalRef/)
+    expect(sala()).toContain('onTilePin={onTilePin}')
+    const palco = read('web/src/room/Stage.tsx')
+    expect(palco).toContain('onPin={onTilePin}')
+    expect(palco).toContain('onMute={onTileMute}')
+    expect(palco).toContain('onKick={onTileKick}')
+    expect(palco).not.toMatch(/on(Pin|Mute|Kick)=\{\(/)
+    // E os de silenciar/remover saem de `useCallback` no hook dos participantes.
+    const p = read('web/src/room/useParticipants.ts')
+    expect(p).toMatch(/const mute = useCallback\(/)
+    expect(p).toMatch(/const kick = useCallback\(/)
   })
 })
 
