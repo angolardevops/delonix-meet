@@ -525,30 +525,53 @@ async fn v1_meeting_with_archived_host_is_refused(db: sqlx::PgPool) {
     assert_eq!(st, 409, "{body}");
 }
 
-/// DÍVIDA: `meetings_v1::resolve_org_user` cria a conta de um `host_email`
-/// (ou convidado) desconhecido SEM verificar o domínio da organização. Uma
-/// chave da org A agenda com `ninguem@beta.test` — domínio registado pela
-/// org B — e a conta nasce como membro da A. Quando essa pessoa chegar à org
-/// B, o `add_employee` da B recusa-a (409, «já pertence a outra organização»).
+/// R151 (fechada): `meetings_v1::resolve_org_user` criava a conta de um
+/// `host_email` (ou convidado) desconhecido SEM verificar o domínio da
+/// organização. Uma chave da org A agendava com `ninguem@beta.test` e a conta
+/// nascia membro da A — e a org B, dona do domínio, já não a conseguia
+/// adicionar (409). Agora: anfitrião fora do domínio → 422; convidado → skipped.
 #[sqlx::test(migrations = "./migrations")]
-async fn v1_meeting_current_behavior_creates_host_in_foreign_domain(db: sqlx::PgPool) {
+async fn v1_meeting_refuses_to_create_accounts_outside_org_domain(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let b = app.new_org("beta.test").await;
     let (_, ka) = app.api_key(&a).await;
+
+    // Controlo positivo: anfitrião novo do PRÓPRIO domínio continua a nascer.
     let (st, m) = v1(
         &app,
         reqwest::Method::POST,
         "/meetings",
         &ka,
-        Some(json!({"title": "x", "starts_at": in_hours(2), "host_email": "ninguem@beta.test"})),
+        Some(
+            json!({"title": "ok", "starts_at": in_hours(2), "host_email": "novo@alfa.test",
+                    "invitees": [{"email": "ninguem@beta.test"}]}),
+        ),
     )
     .await;
     assert_eq!(st, 200, "{m}");
+    assert!(
+        m.to_string().contains("ninguem@beta.test"),
+        "convidado fora do domínio sai em skipped: {m}"
+    );
+
+    // O ataque: anfitrião de um domínio alheio.
+    let (st, body) = v1(
+        &app,
+        reqwest::Method::POST,
+        "/meetings",
+        &ka,
+        Some(json!({"title": "x", "starts_at": in_hours(3), "host_email": "ninguem@beta.test"})),
+    )
+    .await;
+    assert_eq!(st, 422, "{body}");
+    assert_eq!(body["code"], "meeting.host_outside_org_domain");
     let (_, emps) = app
         .get(&format!("/api/orgs/{}/employees", a.org()), Some(&a.token))
         .await;
-    assert!(emps.to_string().contains("ninguem@beta.test"), "{emps}");
+    assert!(!emps.to_string().contains("ninguem@beta.test"), "{emps}");
+
+    // E a org dona do domínio adiciona a pessoa sem conflito.
     let (st, body) = app
         .post(
             &format!("/api/orgs/{}/employees", b.org()),
@@ -556,7 +579,7 @@ async fn v1_meeting_current_behavior_creates_host_in_foreign_domain(db: sqlx::Pg
             json!({"email": "ninguem@beta.test"}),
         )
         .await;
-    assert_eq!(st, 409, "{body}");
+    assert_eq!(st, 200, "{body}");
 }
 
 // ---------------------------------------------------------------------------

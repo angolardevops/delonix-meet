@@ -176,6 +176,11 @@ enum Resolved {
     /// arrastamos para cá: uma chave de API não pode capturar utilizadores de
     /// outro tenant só por saber o endereço.
     ForeignOrg,
+    /// O email é de um domínio que NÃO é o da organização da chave, e a conta
+    /// não existe (ou é órfã). Criá-la aqui era ocupar a identidade de alguém
+    /// de outra empresa: a conta nascia membro desta org, e a empresa dona do
+    /// domínio já não a conseguia adicionar (409, R122) (R151).
+    OutsideDomain,
     Invalid,
 }
 
@@ -267,6 +272,16 @@ async fn resolve_org_user(
     let Some(email) = normalize_email(email) else {
         return Ok(Resolved::Invalid);
     };
+    // Domínio da org da chave. Vazio numa org LEGADA (anterior à 0010): aí não
+    // há regra de domínio a aplicar, e o comportamento mantém-se.
+    let org_domain: String =
+        sqlx::query_scalar("SELECT email_domain FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_optional(&state.db)
+            .await?
+            .unwrap_or_default();
+    let in_org_domain =
+        org_domain.is_empty() || email.split('@').nth(1) == Some(org_domain.as_str());
 
     let existing: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM users WHERE email = $1")
         .bind(&email)
@@ -299,8 +314,14 @@ async fn resolve_org_user(
             if has_any_org {
                 return Ok(Resolved::ForeignOrg);
             }
+            // Conta órfã (sem org nenhuma): só a juntamos se o email for do
+            // domínio desta org — a mesma regra de uma conta nova.
+            if !in_org_domain {
+                return Ok(Resolved::OutsideDomain);
+            }
             uid
         }
+        None if !in_org_domain => return Ok(Resolved::OutsideDomain),
         None => {
             let username = unique_username(
                 &state.db,
@@ -421,6 +442,10 @@ async fn add_invitees(
             Resolved::ForeignOrg => skipped.push(SkippedInvitee {
                 email: inv.email.trim().to_lowercase(),
                 reason: "o utilizador pertence a outra organização".into(),
+            }),
+            Resolved::OutsideDomain => skipped.push(SkippedInvitee {
+                email: inv.email.trim().to_lowercase(),
+                reason: "o email não é do domínio da organização e não tem conta".into(),
             }),
             Resolved::Invalid => skipped.push(SkippedInvitee {
                 email: inv.email.trim().to_lowercase(),
@@ -551,6 +576,13 @@ pub async fn create(
                 return Err(ApiError::Conflict(
                     "o anfitrião pertence a outra organização".into(),
                 ))
+            }
+            Resolved::OutsideDomain => {
+                return Err(delonix_meet_core::DomainError::precondition(
+                    "meeting.host_outside_org_domain",
+                    "o anfitrião não tem conta e o email não é do domínio da organização",
+                )
+                .into())
             }
             Resolved::Invalid => return Err(ApiError::BadRequest("host_email inválido".into())),
         };

@@ -85,6 +85,7 @@ pub struct OrgSettingsReq {
         Organization,
         OrgSummary,
         OrgSettingsReq,
+        AddEmployeeResp,
         OrgSettingsUpdated,
         Branch,
         Employee,
@@ -459,10 +460,13 @@ pub async fn my_orgs(
     let orgs: Vec<OrgSummary> = sqlx::query_as(
         r#"
         SELECT o.id, o.name, o.slug, m.role,
-               (SELECT COUNT(*) FROM org_members mm WHERE mm.org_id = o.id) AS member_count,
+               (SELECT COUNT(*) FROM org_members mm
+                 WHERE mm.org_id = o.id AND mm.archived_at IS NULL) AS member_count,
                o.domain, o.retention_days, o.max_groups, o.max_rooms, o.max_meetings
         FROM organizations o
-        JOIN org_members m ON m.org_id = o.id AND m.user_id = $1
+        -- Só pertenças ACTIVAS: um membro arquivado deixava de alcançar as
+        -- rotas da org (S3) mas continuava a vê-la aqui, com o papel antigo.
+        JOIN org_members m ON m.org_id = o.id AND m.user_id = $1 AND m.archived_at IS NULL
         ORDER BY o.name
         "#,
     )
@@ -570,7 +574,7 @@ pub struct AddEmployeeReq {
     params(("org_id" = Uuid, Path, description = "Organização.")),
     request_body = AddEmployeeReq,
     responses(
-        (status = 200, body = Employee),
+        (status = 200, body = AddEmployeeResp, description = "Sem `password` no pedido e conta nova: `temporary_password` vem preenchida (uma só vez)."),
         (status = 400, description = "Email/password inválidos, email fora do domínio da organização, ou `role` diferente de `admin`/`member`.", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sem sessão, ou membro sem papel de admin (o código devolve 401, não 403).", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
@@ -582,7 +586,7 @@ pub async fn add_employee(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
     Json(req): Json<AddEmployeeReq>,
-) -> Result<Json<Employee>, ApiError> {
+) -> Result<Json<AddEmployeeResp>, ApiError> {
     require_admin(&state, org_id, auth.user_id).await?;
     let email = delonix_meet_domain::identity::validation::normalize_email(&req.email);
     // Antes faltava aqui o limite de 254 caracteres que auth::register já
@@ -636,6 +640,9 @@ pub async fn add_employee(
             )));
         }
     }
+    // Password temporária gerada quando o admin não indica nenhuma. Sai UMA vez,
+    // nesta resposta, para o admin a entregar ao colaborador.
+    let mut temporary_password: Option<String> = None;
     let user_id = match existing {
         Some((id,)) => id,
         None => {
@@ -645,10 +652,21 @@ pub async fn add_employee(
                 .map(|s| s.trim().to_string())
                 .filter(|s| s.len() >= 2)
                 .unwrap_or_else(|| email.split('@').next().unwrap_or("employee").to_string());
-            let password = req.password.as_deref().unwrap_or("changeme123");
-            delonix_meet_domain::identity::validation::validate_password(password)
-                .map_err(ApiError::BadRequest)?;
-            let hash = crate::auth::hash_password(password)?;
+            // Nunca uma password FIXA: `changeme123` abria a conta de qualquer
+            // colaborador recém-adicionado a quem soubesse o email (R150).
+            let password = match req.password.as_deref() {
+                Some(p) => {
+                    delonix_meet_domain::identity::validation::validate_password(p)
+                        .map_err(ApiError::BadRequest)?;
+                    p.to_string()
+                }
+                None => {
+                    let p = delonix_meet_core::crypto::random_hex(12);
+                    temporary_password = Some(p.clone());
+                    p
+                }
+            };
+            let hash = crate::auth::hash_password(&password)?;
             let row: Result<(Uuid,), sqlx::Error> = sqlx::query_as(
                 "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id",
             )
@@ -697,7 +715,20 @@ pub async fn add_employee(
         &emp.email,
     )
     .await;
-    Ok(Json(emp))
+    Ok(Json(AddEmployeeResp {
+        employee: emp,
+        temporary_password,
+    }))
+}
+
+/// O colaborador adicionado e, SÓ quando a conta nasceu sem password
+/// indicada, a password temporária gerada — mostrada uma vez.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct AddEmployeeResp {
+    #[serde(flatten)]
+    pub employee: Employee,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporary_password: Option<String>,
 }
 
 /// Colaboradores activos da organização (membros), com a última actividade.
@@ -885,6 +916,20 @@ pub async fn create_group(
     // RLS (migração 0024): employee_groups corre no contexto de tenant. O limite
     // de quota vive em `organizations` (sem RLS); o COUNT dos grupos existentes
     // corre na MESMA tx (sob RLS) para ser correto. Ver AppState::tenant_tx.
+    // Os membros validam-se ANTES de abrir a transacção: `role_in_org` usa a
+    // pool, e pedir uma segunda ligação com a tx aberta prendia duas ligações
+    // por pedido — com a pool cheia, o pedido esperava por si próprio até ao
+    // timeout e dava 500 (medido nos testes de integração, 2026-09-16).
+    let mut ids = req.member_ids.clone();
+    ids.push(auth.user_id);
+    ids.sort();
+    ids.dedup();
+    let mut members = Vec::with_capacity(ids.len());
+    for uid in ids {
+        if role_in_org(&state, org_id, uid).await?.is_some() {
+            members.push(uid);
+        }
+    }
     let mut tx = state.tenant_tx(auth.user_id).await?;
     let limit: Option<i32> =
         sqlx::query_scalar("SELECT max_groups FROM organizations WHERE id = $1")
@@ -912,17 +957,15 @@ pub async fn create_group(
     .fetch_one(&mut *tx)
     .await?;
 
-    // O criador entra sempre; membros validados como pertencentes à org.
-    let mut ids = req.member_ids.clone();
-    ids.push(auth.user_id);
-    for uid in ids {
-        if role_in_org(&state, org_id, uid).await?.is_some() {
-            sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-                .bind(group_id)
-                .bind(uid)
-                .execute(&mut *tx)
-                .await?;
-        }
+    // O criador entra sempre; membros já validados como pertencentes à org.
+    for uid in members {
+        sqlx::query(
+            "INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(group_id)
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
     }
 
     let group: Group = sqlx::query_as(&format!(

@@ -1675,3 +1675,39 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `server/tests/security.rs::action_item_patch_does_not_leak_to_other_org` (controlo positivo: o dono lê o item pelo mesmo PATCH vazio).
 
 **Ficheiros.** `server/src/actions.rs`, `server/tests/security.rs`.
+
+### R150 — Colaborador adicionado sem password nascia com `changeme123`
+
+**Sintoma.** Nenhum para a vítima. `POST /api/orgs/{org}/employees` sem `password` criava a conta com a password FIXA `changeme123`. Quem soubesse o email de um colaborador recém-adicionado entrava como ele até à primeira mudança de password. Provado a 2026-09-16 contra Postgres real (`login` com `changeme123` → `200` com sessão).
+
+**Causa raiz.** Um valor por omissão escrito como conveniência (`unwrap_or("changeme123")`) numa credencial. A validação de password corria sobre ele e passava — tem 11 caracteres.
+
+**Regra.** Nenhuma credencial tem valor por omissão conhecido. Sem password indicada gera-se uma aleatória (`core::crypto::random_hex`), devolvida UMA vez ao admin em `temporary_password` para a entregar; com password indicada, o campo não aparece.
+
+**Portão.** `server/tests/security.rs::added_employee_without_password_does_not_get_a_known_password`.
+
+**Ficheiros.** `server/src/org.rs`.
+
+### R151 — Uma chave de API ocupava contas de outro domínio pela v1
+
+**Sintoma.** `POST /api/v1/meetings` da org A com `host_email: ninguem@beta.test` (domínio da org B) criava a conta como membro da A. Quando a B tentava adicionar a pessoa, recebia `409` («já pertence a outra organização», R122) — a identidade ficava presa na A. Os convidados desconhecidos tinham o mesmo efeito.
+
+**Causa raiz.** `meetings_v1::resolve_org_user` recusava contas de OUTRA org (`ForeignOrg`) mas criava as que não existiam — e juntava contas órfãs — sem olhar para o domínio da organização, que é a fronteira que o registo e o `add_employee` já impõem.
+
+**Regra.** Criar ou juntar uma conta por email só dentro do domínio da organização (`organizations.email_domain`; numa org legada sem domínio não há regra a aplicar). Anfitrião fora do domínio → `422 meeting.host_outside_org_domain`; convidado → `skipped` com a razão.
+
+**Portão.** `server/tests/api_v1.rs::v1_meeting_refuses_to_create_accounts_outside_org_domain` (controlo positivo: anfitrião novo do próprio domínio continua a nascer; a org dona do domínio adiciona a pessoa sem conflito).
+
+**Ficheiros.** `server/src/meetings_v1.rs`.
+
+### R152 — `GET /api/orgs` mostrava a org a um membro arquivado
+
+**Sintoma.** Um colaborador arquivado deixava de alcançar as rotas da organização (S3) mas continuava a vê-la em `GET /api/orgs`, com o papel antigo, e o `member_count` contava os arquivados.
+
+**Causa raiz.** A 18.ª verificação de pertença escrita à mão sem `archived_at IS NULL` — a mesma classe da S3, num `JOIN` que a auditoria não apanhou por estar dentro de `org.rs`.
+
+**Regra.** A da S3: «membro» é membro ACTIVO, também nas listagens e contagens.
+
+**Portão.** `server/tests/organization.rs::my_orgs_hides_org_from_archived_member`.
+
+**Ficheiros.** `server/src/org.rs`.

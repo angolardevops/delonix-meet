@@ -277,6 +277,25 @@
         ],
         "type": "object"
       },
+      "AddEmployeeResp": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Employee"
+          },
+          {
+            "properties": {
+              "temporary_password": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "description": "O colaborador adicionado e, SÓ quando a conta nasceu sem password\nindicada, a password temporária gerada — mostrada uma vez."
+      },
       "AgendaItem": {
         "properties": {
           "created_at": {
@@ -5493,11 +5512,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Employee"
+                  "$ref": "#/components/schemas/AddEmployeeResp"
                 }
               }
             },
-            "description": ""
+            "description": "Sem `password` no pedido e conta nova: `temporary_password` vem preenchida (uma só vez)."
           },
           "400": {
             "content": {

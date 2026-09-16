@@ -909,22 +909,26 @@ async fn archived_members_lose_org_access(db: sqlx::PgPool) {
     assert_eq!(st, 200);
 }
 
-/// DÍVIDA: `org::my_orgs` não filtra `archived_at` — um membro arquivado
-/// continua a ver a organização (com o papel antigo) em `GET /api/orgs`, e o
-/// `member_count` conta os arquivados. As rotas por org já o recusam (S3).
+/// R152 (fechada): `org::my_orgs` não filtrava `archived_at` — um membro
+/// arquivado continuava a ver a organização (com o papel antigo) e o
+/// `member_count` contava os arquivados.
 #[sqlx::test(migrations = "./migrations")]
-async fn my_orgs_current_behavior_lists_org_for_archived_member(db: sqlx::PgPool) {
+async fn my_orgs_hides_org_from_archived_member(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let c = app.add_member(&a, "carla", "member").await;
+    // Controlo positivo: antes de arquivar, vê a org e conta 2.
+    let (_, orgs) = app.get("/api/orgs", Some(&c.token)).await;
+    assert_eq!(orgs.as_array().unwrap().len(), 1, "{orgs}");
+    let (_, orgs) = app.get("/api/orgs", Some(&a.token)).await;
+    assert_eq!(orgs[0]["member_count"], 2);
+
     app.archive_member(a.org(), &c.user_id).await;
     let (st, orgs) = app.get("/api/orgs", Some(&c.token)).await;
     assert_eq!(st, 200);
-    assert_eq!(orgs.as_array().unwrap().len(), 1, "{orgs}");
-    assert_eq!(orgs[0]["id"], a.org());
-    assert_eq!(orgs[0]["role"], "member");
+    assert_eq!(orgs, serde_json::json!([]), "{orgs}");
     let (_, orgs) = app.get("/api/orgs", Some(&a.token)).await;
-    assert_eq!(orgs[0]["member_count"], 2);
+    assert_eq!(orgs[0]["member_count"], 1);
 }
 
 // ---------------------------------------------------------------------------
