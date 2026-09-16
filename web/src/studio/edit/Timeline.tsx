@@ -16,7 +16,7 @@ import type { Leitor } from './useLeitor'
 
 export type Ferramenta = 'seleccionar' | 'lamina' | 'aparar' | 'deslizar' | 'transicao' | 'texto' | 'mascara' | 'audio'
 
-export const ZOOMS = [0.5, 1, 2, 4, 10, 30, 60, 120] as const
+export const ZOOMS = [1, 2, 4, 10, 30, 60, 120] as const
 const PX_POR_DIVISAO = 80
 
 function Onda({ picos, c, largura, altura }: { picos: Float32Array | undefined; c: Clip; largura: number; altura: number }) {

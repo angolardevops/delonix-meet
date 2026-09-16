@@ -505,7 +505,7 @@ export default function ExportsPanel({
               <span className="dx-field__label">{t('editor.exportar.incluir')}</span>
               <div className={cx('ed-include', !!legendas && 'ed-include--on')}>
                 <Checkbox
-                  label={t('editor.exportar.legendas', { l: legendas || linguas[0] || '' })}
+                  label={linguas.length ? t('editor.exportar.legendas', { l: legendas || linguas[0] }) : t('editor.exportar.legendasSem')}
                   checked={!!legendas}
                   disabled={pr.soAudio || !linguas.length}
                   onChange={(e) => setLegendas(e.target.checked ? linguas[0] ?? '' : '')}

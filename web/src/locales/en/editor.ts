@@ -374,6 +374,7 @@ export default {
     },
     incluir: 'Include',
     legendas: 'Burned captions ({{l}})',
+    legendasSem: 'Burned captions',
     linguaLegendas: 'Caption language',
     semTranscricao: 'No transcript — transcribe in «Captions and translation» to burn them.',
     marcaDeAgua: 'Organisation watermark',

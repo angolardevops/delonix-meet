@@ -374,6 +374,7 @@ export default {
     },
     incluir: 'Incluir',
     legendas: 'Legendas gravadas ({{l}})',
+    legendasSem: 'Legendas gravadas',
     linguaLegendas: 'Língua das legendas',
     semTranscricao: 'Sem transcrição — transcreve em «Legendas e tradução» para as queimar.',
     marcaDeAgua: 'Marca de água da organização',

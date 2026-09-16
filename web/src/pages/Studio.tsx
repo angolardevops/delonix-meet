@@ -85,6 +85,11 @@ export default function Studio() {
     const alvo = v === 'emissao' ? '#/studio' : `#/studio?vista=${v}`
     if (location.hash !== alvo) history.replaceState(null, '', alvo)
   }, [])
+  useEffect(() => {
+    const seguir = () => setVistaEstado(vistaDoEndereco())
+    window.addEventListener('hashchange', seguir)
+    return () => window.removeEventListener('hashchange', seguir)
+  }, [])
   const [pronto, setPronto] = useState(false)
   const [temEcra, setTemEcra] = useState(false)
   const [temCamara, setTemCamara] = useState(false)
