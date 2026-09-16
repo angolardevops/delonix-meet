@@ -32,7 +32,7 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
-.qa-tile {
+.quick-actions .qa-tile {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -42,12 +42,16 @@
   min-height: 96px;
   padding: var(--s-3);
   border-radius: var(--r-3);
-  border: 1px solid var(--border);
-  background: var(--raised);
-  color: var(--text);
   text-align: left;
   white-space: normal;
   cursor: pointer;
+}
+/* As cores ficam na especificidade baixa: na primária ganha o `dx-btn--primary`
+   do kit (a folha do kit carrega depois desta). */
+.qa-tile {
+  border: 1px solid var(--border);
+  background: var(--raised);
+  color: var(--text);
 }
 .qa-tile > .dx-icon {
   color: var(--accent);
@@ -71,7 +75,7 @@ button.qa-tile:hover:not(:disabled) {
   color: var(--muted);
 }
 /* Primária: as cores vêm do `dx-btn--primary` do kit; aqui só a forma. */
-.qa-tile--primary {
+.quick-actions .qa-tile--primary {
   border-color: var(--accent-strong);
 }
 .qa-tile--primary > .dx-icon,

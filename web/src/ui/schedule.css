@@ -113,9 +113,15 @@ button.cal-ev--voice:hover {
 .cal-week__scroller {
   overflow-x: auto;
 }
-.cal-week--multi .cal-week__head,
-.cal-week--multi .cal-week__body {
+.cal-week--multi:not(.cal-week--compact) .cal-week__head,
+.cal-week--multi:not(.cal-week--compact) .cal-week__body {
   min-width: 640px;
+}
+.cal-week--compact .cal-week__day {
+  padding: 4px 1px;
+  font-size: 9.5px;
+  white-space: nowrap;
+  overflow: hidden;
 }
 .cal-week__head {
   display: grid;
@@ -221,7 +227,7 @@ button.cal-week__day:hover {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
-.cal-month__head span {
+.cal-month__head > span {
   padding: 6px;
   font-size: 10.5px;
   font-weight: 600;
@@ -286,7 +292,9 @@ button.cal-week__day:hover {
   font-weight: 600;
   cursor: pointer;
 }
-.cal-month__dots {
+.cal-month__dots,
+.cal-month__wd-short,
+.cal-show-narrow {
   display: none;
 }
 
@@ -842,8 +850,22 @@ button.cal-week__day:hover {
   }
 }
 @media (max-width: 720px) {
-  .cal-hide-narrow {
+  .cal-hide-narrow,
+  .cal-month__wd-long {
     display: none;
+  }
+  .cal-show-narrow,
+  .cal-month__wd-short {
+    display: inline-flex;
+  }
+  .cal-month__head > span {
+    padding: 6px 0;
+  }
+  .cal-list__main {
+    flex: 1 1 calc(100% - 64px);
+  }
+  .cal-list__item > .dx-badge {
+    margin-left: 60px;
   }
   .cal-toolbar__label {
     display: none;

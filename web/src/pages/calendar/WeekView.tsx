@@ -111,7 +111,9 @@ export default function WeekView({
         <div className="cal-week__head" style={cols}>
           <span />
           {days.map((d) => {
-            const label = d.toLocaleDateString(locale, { weekday: 'short', day: 'numeric' })
+            const label = compact
+              ? `${d.toLocaleDateString(locale, { weekday: 'short' }).slice(0, 3)} ${d.getDate()}`
+              : d.toLocaleDateString(locale, { weekday: 'short', day: 'numeric' })
             const isToday = sameDay(d, today)
             return onDay ? (
               <button
