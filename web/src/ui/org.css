@@ -61,56 +61,6 @@
 }
 
 /* Presença: ponto verde (online) ou cinzento, com anel da superfície. */
-.org-av {
-  position: relative;
-  display: inline-grid;
-  place-content: center;
-  flex: none;
-}
-.org-dot {
-  display: inline-block;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--muted);
-  vertical-align: middle;
-}
-.org-av .org-dot {
-  position: absolute;
-  right: -1px;
-  bottom: -1px;
-  box-shadow: 0 0 0 2px var(--raised);
-}
-.org-dot--on {
-  background: var(--success);
-}
-.org-av--group,
-.org-av--missed {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--muted);
-}
-.org-av--missed {
-  color: var(--danger);
-}
-.org-av--xl.org-av--group {
-  width: 88px;
-  height: 88px;
-}
-.org-av--xl .dx-icon {
-  width: 36px;
-  height: 36px;
-}
-.org-av--xl .org-dot {
-  width: 16px;
-  height: 16px;
-  right: 4px;
-  bottom: 4px;
-  box-shadow: 0 0 0 3px var(--raised);
-}
 
 /* Lista simples (filiais, grupos, salas). */
 .org-simple {
@@ -216,206 +166,14 @@
   font-size: var(--t-sm);
 }
 
-/* ------------------------------------------------------------- contactos */
-.org-dir {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: 296px minmax(0, 1fr);
-  overflow: hidden;
-}
-.org-dir__list {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  background: var(--raised);
-  border-right: 1px solid var(--border);
-}
-.org-dir__head {
-  display: grid;
-  gap: 8px;
-  padding: 12px 12px 0;
-}
-.org-dir__scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 4px 6px 8px;
-}
-.org-dir__sub {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  padding: 4px 8px;
-  color: var(--muted);
-}
-.org-dir__empty {
-  margin: 8px;
-  font-size: var(--t-sm);
-}
-.org-dir__loading {
-  display: grid;
-  gap: 8px;
-  padding: 8px;
-}
-.org-rows {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.org-row {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding-right: 4px;
-  border-radius: var(--r-2);
-}
-.org-row:hover {
-  background: var(--hover);
-}
-.org-row--active,
-.org-row--active:hover {
+/* ------------------------------------------------- filiais e salas (Chamadas) */
+.org-row--active {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-.org-row__main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px;
-  border: 0;
-  border-radius: var(--r-2);
-  background: none;
-  color: var(--text);
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
-}
-.org-row__main--static {
-  cursor: default;
-}
-.org-row__text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.org-row__text strong {
-  font-size: var(--t-md);
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.org-row__meta {
-  font-size: var(--t-xs);
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.org-dir__foot {
-  border-top: 1px solid var(--border);
-  padding: 6px;
-}
-.org-dir__orgbtn {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  min-height: var(--ctl-h);
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--r-2);
-  background: none;
-  color: var(--text);
-  font: inherit;
-  font-size: var(--t-md);
-  font-weight: 600;
-  cursor: pointer;
-}
-.org-dir__orgbtn span {
-  flex: 1;
-  text-align: left;
-}
-.org-dir__orgbtn:hover,
-.org-dir__orgbtn--active {
-  background: var(--hover);
-}
-
-.org-dir__detail {
-  min-height: 0;
-  overflow-y: auto;
-  padding: 20px 24px 32px;
-}
-.org-dir__back {
-  display: none;
-}
-
-.org-detail {
-  max-width: 560px;
-  margin: 0 auto;
-  display: grid;
-  gap: 20px;
-}
-.org-detail__hero {
-  display: grid;
-  justify-items: center;
-  gap: 10px;
-  padding: 32px 20px 24px;
-  text-align: center;
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: var(--r-3);
-}
-.org-detail__name {
-  margin: 4px 0 0;
-  font-size: var(--t-title);
-  font-weight: 600;
-}
-.org-detail__tags {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 6px;
-}
-.org-detail__actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-.org-detail__note {
-  margin: 0;
-  max-width: 400px;
-  font-size: var(--t-sm);
-}
-.org-detail__kv {
-  padding: 14px;
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: var(--r-3);
 }
 
 .org-overview {
-  max-width: 760px;
-  margin: 0 auto;
   display: grid;
   gap: 16px;
-}
-.org-overview__head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.org-overview__head h2 {
-  flex: 1;
-  margin: 0;
-  font-size: var(--t-title);
-  font-weight: 600;
 }
 
 /* ------------------------------------------------------- administração */
@@ -425,53 +183,78 @@
   gap: 12px;
 }
 .org-stat {
-  display: grid;
-  gap: 8px;
-  align-content: start;
-  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
   background: var(--raised);
   border: 1px solid var(--border);
   border-radius: var(--r-3);
   min-width: 0;
 }
+.org-stat--warn {
+  border-color: var(--live);
+}
 .org-stat__head {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: var(--t-md);
+  font-size: 11.5px;
   font-weight: 600;
 }
 .org-stat__head span:first-of-type {
   flex: 1;
 }
 .org-stat__head .dx-icon {
-  color: var(--muted);
+  color: var(--success);
+}
+.org-stat--warn .org-stat__head .dx-icon {
+  color: var(--live);
 }
 .org-stat__warn {
   font-family: var(--font-mono);
-  font-size: var(--t-xs);
+  font-size: 9px;
+  font-weight: 600;
   text-transform: uppercase;
   color: var(--live-text);
 }
-.org-stat__value {
-  font-size: var(--t-title);
-  line-height: 1.2;
-}
 .org-stat__sub {
-  font-size: var(--t-xs);
+  font-size: 9px;
+}
+.org-stat .dx-meter {
+  height: 5px;
+}
+.org-stat__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 9.5px;
+  color: var(--muted);
+}
+.org-stat__value {
+  color: var(--text);
 }
 
 .org-admin__grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 392px;
-  gap: 16px;
+  gap: 13px;
   align-items: start;
 }
 .org-admin__main,
 .org-admin__side {
   display: grid;
-  gap: 16px;
+  gap: 13px;
   min-width: 0;
+}
+.page.org-admin {
+  gap: 13px;
+}
+@media (min-width: 901px) {
+  .page.org-admin {
+    padding-top: 16px;
+    padding-inline: 22px;
+  }
 }
 
 .org-toolbar {
@@ -523,35 +306,8 @@
   }
 }
 
-/* Ecrã estreito: a lista ocupa o ecrã, o detalhe abre por cima. */
+/* Ecrã estreito. */
 @media (max-width: 760px) {
-  .org-dir {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .org-dir__list {
-    border-right: 0;
-  }
-  .org-dir__detail {
-    display: none;
-  }
-  .org-dir__detail--open {
-    display: block;
-    position: fixed;
-    inset: 0;
-    z-index: 35;
-    padding: 12px 16px 24px;
-    background: var(--surface);
-  }
-  .org-dir__back {
-    display: flex;
-    margin-bottom: 8px;
-  }
-  .org-detail__hero {
-    padding: 20px 16px;
-  }
-  .org-detail__actions .dx-btn {
-    flex: 1 1 100%;
-  }
   .org-admin__side {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -583,8 +339,8 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: 2px 14px 10px;
-  font-size: var(--t-sm);
+  padding: 0 14px 6px;
+  font-size: 10.5px;
 }
 .org-voice__billing {
   display: grid;
@@ -620,7 +376,15 @@
    tabelas em caixa com cabeçalho cinza, coluna direita de políticas. */
 .org-admin .dx-card__head {
   border-bottom: 0;
-  padding: 14px 14px 6px;
+  padding: 12px 14px 4px;
+}
+.org-admin .dx-card__title {
+  font-size: 12.5px;
+}
+.org-admin .org-select-sm {
+  min-height: 26px;
+  padding-block: 3px;
+  font-size: 10.5px;
 }
 .org-meta {
   font-size: 9.5px;
@@ -630,6 +394,20 @@
   margin: 4px 14px 14px;
   border: 1px solid var(--border);
   border-radius: var(--r-2);
+}
+.org-boxed .dx-table th {
+  padding: 7px 12px;
+  font-size: 9px;
+}
+.org-boxed .dx-table td {
+  padding: 8px 12px;
+  font-size: 10.5px;
+}
+.org-boxed .org-person__text strong {
+  font-size: 11.5px;
+}
+.org-boxed .org-person__text .dx-muted {
+  font-size: 9px;
 }
 .org-admin .dx-table thead th {
   background: var(--surface);
@@ -700,30 +478,60 @@
 .org-plist strong {
   font-size: 11px;
 }
-/* DelonixCall (painel de contactos): separadores em segmento cheio, a
-   vermelho o seleccionado. */
-.org-dir__head .dx-tabs {
+/* ---------------------------------------------------- frontend/l2-consola */
+/* Auditoria em linhas de três colunas (hora · quem · o quê), sem cabeçalho,
+   como no DelonixAdmin. */
+.org-audit__list {
+  margin: 0;
+  padding: 0 14px 12px;
+  list-style: none;
+}
+.org-audit__row {
   display: grid;
-  grid-auto-columns: minmax(0, 1fr);
-  grid-auto-flow: column;
-  gap: 2px;
-  margin-bottom: 8px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-2);
-  background: var(--surface);
+  grid-template-columns: 126px 150px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 10.5px;
 }
-.org-dir__head .dx-tabs button {
-  justify-content: center;
-  min-height: 26px;
-  border-radius: var(--r-2);
-  font-size: 11px;
-  font-weight: 500;
+.org-audit__row > .dx-num {
+  font-size: 10px;
 }
-.org-dir__head .dx-tabs button[aria-selected='true'] {
-  background: var(--accent-strong);
-  color: var(--raised);
+.org-audit__row strong {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.org-dir__head .dx-tabs button[aria-selected='true']::after {
-  display: none;
+.org-audit__what .dx-num {
+  font-size: 10.5px;
+}
+.org-audit__what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.org-linkbtn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.org-linkbtn:disabled {
+  opacity: 0.6;
+}
+@media (max-width: 760px) {
+  .org-audit__row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .org-audit__what {
+    grid-column: 1 / -1;
+    white-space: normal;
+  }
 }

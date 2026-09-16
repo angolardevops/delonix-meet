@@ -2,6 +2,9 @@
 // Contacts, Integrations, Administration and "Intelligence and languages".
 export default {
   admin: {
+    total: 'total',
+    emUso: 'in use',
+    volume: 'volume',
     versao: 'server v{{v}}',
     titulo: 'Administration console',
     armazenamento: 'Storage',

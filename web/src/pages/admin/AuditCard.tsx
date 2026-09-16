@@ -10,7 +10,7 @@ import { useTranslation } from 'react-i18next'
 import { listAudit, verifyAudit } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Icon } from '../../ui/icons'
-import { Button, Card, IconButton, Select, StatusBadge } from '../../ui/kit'
+import { Card, IconButton, Select, StatusBadge } from '../../ui/kit'
 import { formatDateTime, refusalAware, useLocaleTag } from './orgShared'
 
 const LIMITS = [50, 100, 500] as const
@@ -76,39 +76,27 @@ export default function AuditCard({ orgId }: { orgId: string }) {
               : t('consola.auditoria.cadeiaExplica')}
         </span>
         <span className="dx-spacer" />
-        <Button size="sm" variant="ghost" icon="shield" busy={chain.state.s === 'loading'} onClick={chain.reload}>
+        <button type="button" className="org-linkbtn" disabled={chain.state.s === 'loading'} onClick={chain.reload}>
           {t('consola.auditoria.verificar')}
-        </Button>
+        </button>
       </div>
       <AsyncSection state={audit.state} onRetry={audit.reload}>
         {(rows) =>
           rows.length === 0 ? (
             <p className="dx-muted org-card-note">{t('org.auditoria.vazio')}</p>
           ) : (
-            <div className="dx-table-wrap org-table-wrap org-audit__scroll">
-              <table className="dx-table org-table">
-                <thead>
-                  <tr>
-                    <th scope="col">{t('org.coluna.quando')}</th>
-                    <th scope="col">{t('org.coluna.quem')}</th>
-                    <th scope="col">{t('org.coluna.accao')}</th>
-                    <th scope="col">{t('org.coluna.alvo')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((a) => (
-                    <tr key={a.id}>
-                      <td className="dx-num dx-muted org-nowrap">{formatDateTime(a.created_at, locale)}</td>
-                      <td>
-                        <strong>{a.actor}</strong>
-                      </td>
-                      <td className="dx-num">{a.action}</td>
-                      <td className="dx-muted org-break">{a.target || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ul className="org-audit__list org-audit__scroll" role="list" data-testid="audit-rows">
+              {rows.map((a) => (
+                <li key={a.id} className="org-audit__row">
+                  <span className="dx-num dx-muted">{formatDateTime(a.created_at, locale)}</span>
+                  <strong>{a.actor}</strong>
+                  <span className="org-audit__what">
+                    <span className="dx-num">{a.action}</span>
+                    {a.target && <span className="dx-muted"> · {a.target}</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
           )
         }
       </AsyncSection>
