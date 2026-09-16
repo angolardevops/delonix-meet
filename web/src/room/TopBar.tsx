@@ -56,6 +56,9 @@ export function TopBar({
   total,
   viewMode,
   onViewMode,
+  studioAvailable,
+  studioOpen,
+  onStudio,
   locale,
 }: {
   title: string
@@ -77,6 +80,10 @@ export function TopBar({
   total: number
   viewMode: ViewMode
   onViewMode: (v: ViewMode) => void
+  /** Anfitrião com multicâmara disponível: o terceiro modo abre o estúdio da sala. */
+  studioAvailable: boolean
+  studioOpen: boolean
+  onStudio: () => void
   locale: string
 }) {
   const { t } = useTranslation()
@@ -123,13 +130,14 @@ export function TopBar({
         <WallClock locale={locale} className="dx-num" />
       </span>
       <span className="rm-hide-narrow">
-        <Segmented<ViewMode>
+        <Segmented<ViewMode | 'studio'>
           label={t('room.topo.vista')}
-          value={viewMode}
-          onChange={onViewMode}
+          value={studioOpen ? 'studio' : viewMode}
+          onChange={(v) => (v === 'studio' ? onStudio() : onViewMode(v))}
           options={[
             { value: 'grid', label: t('room.topo.grelha') },
             { value: 'stage', label: t('room.topo.orador') },
+            ...(studioAvailable ? [{ value: 'studio' as const, label: t('room.topo.estudio') }] : []),
           ]}
         />
       </span>

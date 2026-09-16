@@ -33,3 +33,20 @@ describe('pré-entrada · o que se mostra vem da fonte, não do template', () =>
     expect(metaCurta({ lines: 720, fps: 0 })).toBe('720p')
   })
 })
+
+import { capacidadeDaFila, repartirFila } from './stripCapacity'
+
+describe('fila de retratos com «+N»', () => {
+  it('cabem os que cabem, e o último lugar é do contador', () => {
+    // 600 px, retratos de 94 px com 8 de intervalo: 5 lugares
+    expect(capacidadeDaFila(600, 94, 8)).toBe(5)
+    expect(repartirFila(13, 5)).toEqual({ mostrar: 4, resto: 9 })
+    expect(repartirFila(5, 5)).toEqual({ mostrar: 5, resto: 0 })
+  })
+  it('sem medida não se esconde ninguém', () => {
+    expect(capacidadeDaFila(0, 94, 8)).toBe(Infinity)
+    expect(capacidadeDaFila(600, 0, 8)).toBe(Infinity)
+    expect(repartirFila(40, Infinity)).toEqual({ mostrar: 40, resto: 0 })
+    expect(repartirFila(3, 1)).toEqual({ mostrar: 0, resto: 3 })
+  })
+})

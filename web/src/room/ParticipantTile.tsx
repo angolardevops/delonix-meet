@@ -105,7 +105,7 @@ export function ParticipantTileBase({
   // Vídeo só com track E câmara ligada: uma track desactivada chega como preto.
   const hasVideo = !!peer.stream?.getVideoTracks().length && peer.camOn
   const hasAudio = !!peer.stream?.getAudioTracks().length && peer.micOn
-  const role = peer.host ? t('room.papel.anfitriao') : peer.canAdmit ? t('room.papel.admiteEntradas') : null
+  const role = peer.host ? t('room.papel.anfitriao') : peer.canAdmit ? t('room.papel.coAnfitriao') : null
   return (
     <TileFrame
       kind="remoto"
@@ -148,7 +148,11 @@ export function ParticipantTileBase({
           )}
           <span className="rm-tile__label">{peer.username}</span>
         </span>
-        {role && <span className="rm-tile__role">{role}</span>}
+        {role && (
+          <span className="rm-tile__role" title={!peer.host && peer.canAdmit ? t('room.papel.coAnfitriaoDica') : undefined}>
+            {role}
+          </span>
+        )}
         {peer.is_pstn && (
           <span className="rm-tile__role">
             <Icon name="phone" size={10} />

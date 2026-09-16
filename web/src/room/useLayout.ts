@@ -59,7 +59,11 @@ function useGridSize(areaRef: RefObject<HTMLDivElement | null>, count: number, a
 export function useLayout(core: RoomCore, conditions: LocalConditions) {
   const { peers, speaking, presentation, signal } = core
   const areaRef = useRef<HTMLDivElement>(null)
-  const [viewMode, setViewMode] = useState<ViewMode>('grid')
+  // No telemóvel a sala abre no ORADOR: um retrato grande de quem fala e a
+  // plateia em fila, em vez de uma grelha de selos ilegíveis.
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)').matches ? 'stage' : 'grid',
+  )
   const [pinnedId, setPinnedId] = useState<string | null>(null)
   const [presLayout, setPresLayout] = useState<PresLayout>('side')
   const [hideSelf, setHideSelf] = useState(false)

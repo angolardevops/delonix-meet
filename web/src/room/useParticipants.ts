@@ -3,6 +3,7 @@ import { postQos } from '../api'
 import type { PeerInfo } from '../signaling'
 import type { QosReport } from '../webrtc'
 import type { LocalConditions } from '../layerPolicy'
+import { chaveFracos, deveActualizarQos, INTERVALO_RELATORIO_MS, intervaloQos } from './qosAmostra'
 import type { RemotePeer, RoomCore } from './useRoomCore'
 
 function toPeer(p: PeerInfo): RemotePeer {
@@ -66,34 +67,22 @@ export function useParticipants(core: RoomCore, peoplePanelOpen: boolean) {
     return () => offs.forEach((off) => off())
   }, [signal, setPeers, core.levelsRef])
 
-  // Telemetria por participante: amostra a cada 2 s com o painel aberto.
-  useEffect(() => {
-    if (!peoplePanelOpen) return
-    const call = core.callRef.current
-    if (!call?.qos) return
-    let alive = true
-    const tick = async () => {
-      const r = await call.qos!().catch(() => null)
-      if (alive && r) setQos(r)
-    }
-    void tick()
-    const id = setInterval(tick, 2000)
-    return () => {
-      alive = false
-      clearInterval(id)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [peoplePanelOpen, core.roomState])
-
-  // Amostra a cada 5 s (a política de camada precisa de reagir em segundos) e
-  // REPORTA a cada sexta (~30 s). 5 s e não 1 s: duas leituras dentro do mesmo
-  // intervalo de estatísticas do Chrome dão delta zero (R37).
+  // Telemetria: UMA amostra de `getStats` serve o retrato («▲ FRACA»), a
+  // política de camada e o relatório ao servidor — com ou sem painel aberto
+  // (ver `qosAmostra.ts`). O painel só encurta o intervalo.
+  const ultimoRelatorio = useRef(0)
+  const chaveFracosRef = useRef<string | null>(null)
   useEffect(() => {
     if (core.roomState !== 'in') return
-    let n = 0
-    const report = async () => {
+    let alive = true
+    const tick = async () => {
       const r = await core.callRef.current?.qos?.().catch(() => null)
-      if (!r) return
+      if (!alive || !r) return
+      const chave = chaveFracos(r.byPeer)
+      if (deveActualizarQos(peoplePanelOpen, chaveFracosRef.current, chave)) {
+        chaveFracosRef.current = chave
+        setQos(r)
+      }
       setConditions({
         backgrounded: document.visibilityState === 'hidden',
         cpuLimited: r.limitedBy === 'cpu',
@@ -103,7 +92,9 @@ export function useParticipants(core: RoomCore, peoplePanelOpen: boolean) {
         downlinkKbps: null,
         dataSaver: Boolean((navigator as { connection?: { saveData?: boolean } }).connection?.saveData),
       })
-      if (n++ % 6 !== 0) return
+      const agora = Date.now()
+      if (agora - ultimoRelatorio.current < INTERVALO_RELATORIO_MS) return
+      ultimoRelatorio.current = agora
       // A amostra COMPLETA: a média escondia o participante inaudível.
       void postQos(code, {
         rtt_ms: r.rttMs,
@@ -123,9 +114,14 @@ export function useParticipants(core: RoomCore, peoplePanelOpen: boolean) {
         limited_by: r.limitedBy,
       }).catch(() => {})
     }
-    const id = setInterval(() => void report(), 5_000)
-    return () => clearInterval(id)
-  }, [core.roomState, code, core.callRef])
+    // Abrir o painel mostra números JÁ, não daqui a dois segundos.
+    if (peoplePanelOpen) void tick()
+    const id = setInterval(() => void tick(), intervaloQos(peoplePanelOpen))
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [peoplePanelOpen, core.roomState, code, core.callRef])
 
   // Fala simultânea: duas ou mais pessoas durante mais de 1,5 s seguidos.
   useEffect(() => {

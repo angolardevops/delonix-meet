@@ -92,5 +92,11 @@ createRoot(document.getElementById('barra')!).render(
     serverRecOn={false}
     onToggleServerRec={nada}
     onLeave={nada}
+    fonte2Label="Elgato CamLink 4K"
+    fonte2On={false}
+    onFonte={nada}
+    canAdmit
+    waitingCount={2}
+    onAdmitAll={nada}
   />,
 )
