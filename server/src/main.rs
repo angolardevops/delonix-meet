@@ -5,6 +5,7 @@ mod audit;
 mod auth;
 mod broadcast;
 mod config;
+mod crypto;
 mod dlp;
 mod error;
 mod meetings;
