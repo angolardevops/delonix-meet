@@ -1,9 +1,7 @@
 export default {
-  seccao: {
-    titulo: 'Sharpness and stage',
-  },
   envio: {
     titulo: 'Sharp class or presentation',
+    interruptor: 'Favour resolution when sending',
     dica: 'For presenters: your camera favours resolution over smoothness (up to 1080p, if the camera supports it).',
     activo: 'Sending with resolution first.',
     aVerificar: 'Measuring what the camera sends…',
@@ -30,6 +28,7 @@ export default {
   },
   rececao: {
     titulo: 'Sharpen received video',
+    interruptor: 'Sharpen the featured video',
     dica: 'Enhances perceived detail in the featured video or the presentation. It does not recover detail lost to compression.',
     soEcra: 'This screen only: it does not change what is recorded or what others see.',
     intensidade: 'Strength',
@@ -47,6 +46,7 @@ export default {
   },
   imersivo: {
     titulo: 'Immersive stage',
+    interruptor: 'Turn on for this screen',
     dica: 'Separates the featured speaker from the background and adds depth that follows your movement. Simulated, computed on this device: nothing is sent.',
     fonte_head: 'Follows your head.',
     fonte_orientation: 'Follows the phone’s tilt.',

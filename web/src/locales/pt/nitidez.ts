@@ -1,9 +1,7 @@
 export default {
-  seccao: {
-    titulo: 'Nitidez e palco',
-  },
   envio: {
     titulo: 'Aula ou apresentação nítida',
+    interruptor: 'Preferir resolução ao enviar',
     dica: 'Para quem apresenta: a tua câmara passa a preferir resolução a fluidez (até 1080p, se a câmara o der).',
     activo: 'A enviar com prioridade à resolução.',
     aVerificar: 'A medir o que a câmara envia…',
@@ -30,6 +28,7 @@ export default {
   },
   rececao: {
     titulo: 'Realce de nitidez ao receber',
+    interruptor: 'Realçar o vídeo em destaque',
     dica: 'Realça o detalhe percebido no vídeo em destaque ou na apresentação. Não recupera detalhe perdido na compressão.',
     soEcra: 'Só neste ecrã: não muda o que é gravado nem o que os outros vêem.',
     intensidade: 'Intensidade',
@@ -47,6 +46,7 @@ export default {
   },
   imersivo: {
     titulo: 'Palco imersivo',
+    interruptor: 'Ligar neste ecrã',
     dica: 'Separa o orador em destaque do fundo e dá-lhe profundidade que segue o teu movimento. Efeito simulado, calculado neste dispositivo: nada é enviado.',
     fonte_head: 'Segue a tua cabeça.',
     fonte_orientation: 'Segue a inclinação do telemóvel.',

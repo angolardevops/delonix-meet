@@ -1,9 +1,7 @@
 export default {
-  seccao: {
-    titulo: 'Netteté et scène',
-  },
   envio: {
     titulo: 'Cours ou présentation nette',
+    interruptor: 'Privilégier la résolution à l’envoi',
     dica: 'Pour qui présente : votre caméra privilégie la résolution plutôt que la fluidité (jusqu’à 1080p si la caméra le permet).',
     activo: 'Envoi avec priorité à la résolution.',
     aVerificar: 'Mesure de ce que la caméra envoie…',
@@ -30,6 +28,7 @@ export default {
   },
   rececao: {
     titulo: 'Accentuer la netteté à la réception',
+    interruptor: 'Accentuer la vidéo mise en avant',
     dica: 'Accentue le détail perçu dans la vidéo mise en avant ou la présentation. Ne récupère pas le détail perdu à la compression.',
     soEcra: 'Sur cet écran uniquement : ne change ni l’enregistrement ni ce que voient les autres.',
     intensidade: 'Intensité',
@@ -47,6 +46,7 @@ export default {
   },
   imersivo: {
     titulo: 'Scène immersive',
+    interruptor: 'Activer sur cet écran',
     dica: 'Sépare l’intervenant mis en avant de l’arrière-plan et ajoute une profondeur qui suit vos mouvements. Effet simulé, calculé sur cet appareil : rien n’est envoyé.',
     fonte_head: 'Suit votre tête.',
     fonte_orientation: 'Suit l’inclinaison du téléphone.',

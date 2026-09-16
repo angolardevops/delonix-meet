@@ -45,7 +45,7 @@ export function EnhancementSettings({
           {t('nitidez.imersivo.titulo')}
         </h3>
         <Toggle
-          label={t('nitidez.imersivo.titulo')}
+          label={t('nitidez.imersivo.interruptor')}
           hint={t('nitidez.imersivo.dica')}
           checked={enh.immersive.wanted}
           onChange={enh.immersive.toggle}
@@ -84,7 +84,7 @@ function SendSection({ enh }: { enh: StageEnhancements }) {
         <Icon name="video" size={13} />
         {t('nitidez.envio.titulo')}
       </h3>
-      <Toggle label={t('nitidez.envio.titulo')} hint={t('nitidez.envio.dica')} checked={send.wanted} onChange={send.toggle} data-enh-toggle="envio" />
+      <Toggle label={t('nitidez.envio.interruptor')} hint={t('nitidez.envio.dica')} checked={send.wanted} onChange={send.toggle} data-enh-toggle="envio" />
       {send.wanted && (
         <>
           {send.refused && <Alert tone="warning">{t('nitidez.envio.recusado')}</Alert>}
@@ -144,7 +144,7 @@ function ReceiveSection({ enh }: { enh: StageEnhancements }) {
         <Icon name="eye" size={13} />
         {t('nitidez.rececao.titulo')}
       </h3>
-      <Toggle label={t('nitidez.rececao.titulo')} hint={t('nitidez.rececao.dica')} checked={receive.wanted} onChange={receive.toggle} data-enh-toggle="realce" />
+      <Toggle label={t('nitidez.rececao.interruptor')} hint={t('nitidez.rececao.dica')} checked={receive.wanted} onChange={receive.toggle} data-enh-toggle="realce" />
       <div className="enh-strength">
         <label htmlFor="enh-rx-strength" className="dx-muted">
           {t('nitidez.rececao.intensidade')}
