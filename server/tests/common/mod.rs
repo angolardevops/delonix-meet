@@ -24,7 +24,35 @@ pub struct TestApp {
     pub http: reqwest::Client,
     pub state: Arc<AppState>,
     pub db: PgPool,
+    /// Vaga no tecto de testes activos em simultâneo (ver `ACTIVE_TESTS`).
+    _slot: tokio::sync::OwnedSemaphorePermit,
 }
+
+/// Tecto de testes ACTIVOS em simultâneo, partilhado por todos os testes do
+/// mesmo binário.
+///
+/// Porquê: as pools do `#[sqlx::test]` são filhas de UMA pool mestre com 20
+/// ligações para o binário inteiro. Com 16+ testes em paralelo, um handler que
+/// segura duas ligações ao mesmo tempo (o `org::create_group` abre a
+/// `tenant_tx` e depois pede outra ligação em `role_in_org`) espera 30 s pelo
+/// `acquire` e responde 500 — medido a 2026-09-16. O tecto não esconde esse
+/// defeito (está no relatório da bateria); impede que ele torne a bateria
+/// intermitente. Ajustável com `DELONIX_IT_CONCURRENCY`. Medido a 2026-09-16
+/// (máquina partilhada, load ~15-40): com 6 ou sem tecto, 2 em 5 corridas de
+/// `organization`+`scheduling` falharam; com 3, 0 em 5. O tecto só cobre o
+/// CORPO do teste — a criação da base e as migrações do `#[sqlx::test]`
+/// correm antes e podem ainda dar `PoolTimedOut` sob carga extrema.
+///
+/// `DELONIX_IT_LOG=<filtro tracing>` (ex.: `delonix_server=error`) mostra os
+/// erros internos que o cliente só vê como `{"error":"internal error"}`.
+static ACTIVE_TESTS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
+    std::sync::LazyLock::new(|| {
+        let n = std::env::var("DELONIX_IT_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3);
+        Arc::new(tokio::sync::Semaphore::new(n))
+    });
 
 /// Configuração de teste: segredos de dev, cookies sem `Secure`, e um tecto
 /// de autenticação alto (os testes registam muitas contas do mesmo IP).
@@ -47,6 +75,17 @@ impl TestApp {
     }
 
     pub async fn spawn_with(db: PgPool, extra: &[(&str, &str)]) -> Self {
+        if let Ok(filter) = std::env::var("DELONIX_IT_LOG") {
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_test_writer()
+                .try_init();
+        }
+        let slot = ACTIVE_TESTS
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("semáforo dos testes fechado");
         let mut config = test_config(extra);
         let dir = std::env::temp_dir().join(format!("delonix-it-{}", uuid::Uuid::new_v4()));
         config.recordings_dir = dir;
@@ -70,6 +109,7 @@ impl TestApp {
                 .unwrap(),
             state,
             db,
+            _slot: slot,
         }
     }
 
