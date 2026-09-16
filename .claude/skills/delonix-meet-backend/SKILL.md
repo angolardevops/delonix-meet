@@ -72,8 +72,10 @@ Uma proposta que comece por apagar código que funciona é recusada na revisão.
 
 **Continuam abertos** — quem tocar nestes caminhos fecha-os ou nomeia-os no relatório:
 
-- **`org::add_employee`** liga uma conta EXISTENTE por email, limitado só pelo domínio
-  da org. O registo não verifica emails, por isso o domínio não prova posse.
+- ~~`org::add_employee`~~ **fechado no #78 (R122)**: recusa (`409`) uma conta que já seja
+  membro activo de outra org, a mesma regra `ForeignOrg`. A guarda só era alcançável numa
+  org legada (`email_domain` vazio); o portão `web/e2e/captura-empregado.mjs` ataca a base
+  directamente para lá chegar.
 - **`odoo::list_users`** devolve membros arquivados ao Odoo.
 - **`meetings_v1::resolve_org_user`** junta à org uma conta existente que não pertença a
   nenhuma org (conta órfã).

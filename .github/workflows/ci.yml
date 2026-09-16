@@ -227,6 +227,13 @@ jobs:
       - name: Auditoria imutável (ataque directo à base de dados)
         run: PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/auditoria.mjs
 
+      # add_employee não pode capturar uma conta de outra org. A guarda só é
+      # alcançável numa org LEGADA (email_domain vazio, que a API não cria), por
+      # isso o teste esvazia o domínio por SQL e tenta a captura — como a
+      # auditoria, ataca a base directamente. Ver S7 / R122.
+      - name: Captura por add_employee (org legada, ataque directo à base)
+        run: PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/captura-empregado.mjs
+
       # O MFA precisa do mesmo servidor a correr. O teste implementa o TOTP em
       # JavaScript de propósito: é uma segunda implementação independente do
       # RFC 6238, e vê-la concordar com a de Rust vale muito mais do que ver a
