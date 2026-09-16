@@ -66,6 +66,10 @@ use crate::signaling::{ClientMsg, ServerMsg};
 
 type Result<T> = std::result::Result<T, webrtc::Error>;
 
+/// Sufixo que torna único o id de cada track local de subscrição (ver
+/// `subscribe_layer`).
+static NEXT_TRACK_SEQ: AtomicU64 = AtomicU64::new(0);
+
 /// Uma track publicada por um participante, com fan-out para subscritores.
 /// Com simulcast, cada camada (rid `q`/`h`/`f`) é uma Publication distinta.
 struct Publication {
@@ -1644,11 +1648,19 @@ async fn subscribe_layer(
     } else {
         publication.publisher.to_string()
     };
+    // O id da track tem de ser ÚNICO por subscrição. O `add_track` do webrtc-rs
+    // reaproveita um transceiver parado cujo id inicial seja igual, e esse
+    // reaproveitamento falha sempre («new track must have the same envelope as
+    // previous»): voltar a uma camada já usada (f → h → f) deixava o
+    // subscritor sem vídeo desse participante até sair da sala.
     let local = Arc::new(TrackLocalStaticRTP::new(
         publication.remote.codec().capability.clone(),
         format!(
-            "{}-{}-{}",
-            publication.publisher, publication.kind, publication.rid
+            "{}-{}-{}-{}",
+            publication.publisher,
+            publication.kind,
+            publication.rid,
+            NEXT_TRACK_SEQ.fetch_add(1, Relaxed)
         ),
         stream_id,
     ));
@@ -1656,6 +1668,11 @@ async fn subscribe_layer(
         .pc
         .add_track(Arc::clone(&local) as Arc<dyn TrackLocal + Send + Sync>)
         .await?;
+    // Numeração contígua através das trocas de camada (`switch_layer` troca a
+    // fonte com `replace_track`, e cada camada tem a sua numeração). Tem de ser
+    // ligado antes do primeiro pacote; se já não der, a troca continua a
+    // funcionar e o receptor recupera com o keyframe pedido a seguir.
+    let _ = sender.enable_seq_transformer();
     {
         let mut subs = publication.subscribers.lock().await;
         subs.insert(sub_id, (local, sender.clone()));
@@ -1685,7 +1702,12 @@ async fn subscribe_layer(
                     if any.downcast_ref::<PictureLossIndication>().is_some()
                         || any.downcast_ref::<FullIntraRequest>().is_some()
                     {
-                        request_keyframe(&publication, &state.metrics).await;
+                        // O sender sobrevive às trocas de camada: o keyframe
+                        // pede-se à camada que o alimenta AGORA.
+                        let source = current_source(&state, room_id, &publication, sub_id)
+                            .await
+                            .unwrap_or_else(|| publication.clone());
+                        request_keyframe(&source, &state.metrics).await;
                     } else if let Some(rr) = any.downcast_ref::<ReceiverReport>() {
                         let worst = rr
                             .reports
@@ -1723,8 +1745,33 @@ async fn subscribe_layer(
     Ok(())
 }
 
-/// Troca a camada que um subscritor recebe de um dado (publicador, tipo):
-/// solta a antiga em todas as publicações do grupo, liga a nova, renegoceia.
+/// Camada que alimenta hoje o subscritor `sub_id` no grupo (publicador, tipo)
+/// de `any_layer` — muda a cada `switch_layer`.
+async fn current_source(
+    state: &Arc<SfuState>,
+    room_id: Uuid,
+    any_layer: &Arc<Publication>,
+    sub_id: Uuid,
+) -> Option<Arc<Publication>> {
+    let room = state.rooms.get(&room_id).map(|r| r.clone())?;
+    let publications = room.publications.lock().await.clone();
+    for p in publications {
+        if p.publisher == any_layer.publisher
+            && p.kind == any_layer.kind
+            && p.subscribers.lock().await.contains_key(&sub_id)
+        {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Troca a camada que um subscritor recebe de um dado (publicador, tipo).
+///
+/// Caminho normal: o MESMO sender passa a ser alimentado pela camada nova
+/// (`replace_track`) — sem renegociação, sem transceiver novo, sem imagem
+/// preta enquanto a oferta vai e vem. Se o `replace_track` recusar, cai no
+/// caminho antigo: remove a track e subscreve de novo (renegociando).
 #[allow(clippy::too_many_arguments)]
 async fn switch_layer(
     state: &Arc<SfuState>,
@@ -1736,15 +1783,57 @@ async fn switch_layer(
     old_sender: &Arc<RTCRtpSender>,
 ) {
     let key = (chosen.publisher, chosen.kind.clone());
-    {
-        let publications = room.publications.lock().await.clone();
-        for p in &publications {
-            if p.publisher == key.0 && p.kind == key.1 && !Arc::ptr_eq(p, chosen) {
-                if p.subscribers.lock().await.remove(&sub_id).is_some() {
-                    p.touch_subs();
-                    crate::metrics::Metrics::dec(&state.metrics.sfu_subscriptions);
+    let publications = room.publications.lock().await.clone();
+    let siblings: Vec<&Arc<Publication>> = publications
+        .iter()
+        .filter(|p| p.publisher == key.0 && p.kind == key.1 && !Arc::ptr_eq(p, chosen))
+        .collect();
+
+    // A track local da camada antiga dá o id e o stream que o cliente já conhece.
+    let mut old_local = None;
+    for p in &siblings {
+        if let Some((local, _)) = p.subscribers.lock().await.get(&sub_id) {
+            old_local = Some(local.clone());
+            break;
+        }
+    }
+    if let Some(old_local) = old_local {
+        let local = Arc::new(TrackLocalStaticRTP::new(
+            chosen.remote.codec().capability.clone(),
+            old_local.id().to_owned(),
+            old_local.stream_id().to_owned(),
+        ));
+        match old_sender
+            .replace_track(Some(Arc::clone(&local) as Arc<dyn TrackLocal + Send + Sync>))
+            .await
+        {
+            Ok(()) => {
+                for p in &siblings {
+                    if p.subscribers.lock().await.remove(&sub_id).is_some() {
+                        p.touch_subs();
+                    }
                 }
+                chosen
+                    .subscribers
+                    .lock()
+                    .await
+                    .insert(sub_id, (local, old_sender.clone()));
+                chosen.touch_subs();
+                if let Some(entry) = sub_peer.subscribed.lock().await.get_mut(&key) {
+                    entry.0 = chosen.rid.clone();
+                }
+                return;
             }
+            Err(e) => {
+                tracing::info!(%room_id, %sub_id, error = %e, "sfu replace_track recusado; troca com renegociação");
+            }
+        }
+    }
+
+    for p in &siblings {
+        if p.subscribers.lock().await.remove(&sub_id).is_some() {
+            p.touch_subs();
+            crate::metrics::Metrics::dec(&state.metrics.sfu_subscriptions);
         }
     }
     let _ = sub_peer.pc.remove_track(old_sender).await;
