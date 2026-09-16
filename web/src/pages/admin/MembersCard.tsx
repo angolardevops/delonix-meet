@@ -98,7 +98,7 @@ export default function MembersCard({
           shown.length === 0 ? (
             <p className="dx-muted org-card-note">{t('ui.semResultados')}</p>
           ) : (
-            <div className="dx-table-wrap">
+            <div className="dx-table-wrap org-table-wrap">
               <table className="dx-table org-table">
                 <thead>
                   <tr>

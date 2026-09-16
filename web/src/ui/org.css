@@ -10,7 +10,6 @@
 }
 .org-select-sm {
   width: auto;
-  padding: 2px 6px;
   font-size: var(--t-sm);
 }
 .org-break {
@@ -488,6 +487,10 @@
 }
 .org-toolbar .org-search {
   max-width: 320px;
+}
+/* O rótulo só para leitor de ecrã é absoluto: sem isto sai do contentor que rola. */
+.org-table-wrap {
+  position: relative;
 }
 .org-table td {
   font-size: var(--t-md);
