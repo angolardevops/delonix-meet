@@ -35,6 +35,18 @@ impl ApiError {
     pub fn internal<E: std::fmt::Display>(e: E) -> Self {
         Self::Internal(e.to_string())
     }
+
+    /// Uma violação de unicidade vira `409` com a mensagem dada; qualquer
+    /// outro erro da base segue o caminho de sempre. É o helper que a skill
+    /// `delonix-meet-backend` pede em vez de mais um `match` à mão.
+    pub fn from_unique(e: sqlx::Error, conflict: &str) -> Self {
+        match &e {
+            sqlx::Error::Database(db) if db.is_unique_violation() => {
+                Self::Conflict(conflict.to_string())
+            }
+            _ => e.into(),
+        }
+    }
 }
 
 impl From<sqlx::Error> for ApiError {

@@ -199,6 +199,85 @@ if (hookB.status >= 200 && hookB.status < 300 && hookB.json?.id) {
   nok('B cria um webhook para o teste', `devolveu ${hookB.status}: ${JSON.stringify(hookB.json).slice(0, 120)}`)
 }
 
+// Destinos de directo guardados (frontend/b1-emissao). A chave de emissão é o
+// segredo mais valioso desta família: com ela, qualquer um emite no canal de
+// YouTube da empresa. Três coisas a provar: A não alcança os destinos da B
+// (ler, alterar, apagar — e o de B sobrevive), a chave nunca volta em claro nem
+// à própria B, e A não consegue EMITIR com um destino da B referindo-o por id.
+console.log('\n--- destinos de directo guardados da org B ---')
+const CHAVE_DESTINO_B = `chave-secreta-da-b-${marca}`
+const destinoB = await req(`/api/orgs/${B.orgId}/stream-destinations`, {
+  token: B.token, method: 'POST',
+  body: { label: 'Canal da B', rtmp_url: 'rtmp://127.0.0.1:1/live', stream_key: CHAVE_DESTINO_B },
+})
+if (destinoB.status === 201 && destinoB.json?.id) {
+  ok('B guarda um destino de directo → 201')
+  const idB = destinoB.json.id
+  const semChave = (j) => !JSON.stringify(j ?? null).includes(CHAVE_DESTINO_B)
+  if (semChave(destinoB.json) && destinoB.json.key_set === true) ok('a resposta da criação NÃO traz a chave (só key_set)')
+  else nok('a resposta da criação NÃO traz a chave', JSON.stringify(destinoB.json).slice(0, 160))
+  const listaB = await req(`/api/orgs/${B.orgId}/stream-destinations`, { token: B.token })
+  const umB = await req(`/api/orgs/${B.orgId}/stream-destinations/${idB}`, { token: B.token })
+  if (listaB.status === 200 && umB.status === 200 && semChave(listaB.json) && semChave(umB.json)) {
+    ok('nem a própria B volta a ver a chave (lista e detalhe)')
+  } else {
+    nok('nem a própria B volta a ver a chave', `${listaB.status}/${umB.status}`)
+  }
+
+  await recusado('A lista os destinos de directo da org B', `/api/orgs/${B.orgId}/stream-destinations`, { token: A.token })
+  await recusado('A lê um destino de directo da org B', `/api/orgs/${B.orgId}/stream-destinations/${idB}`, { token: A.token })
+  await recusado('A cria um destino na org B', `/api/orgs/${B.orgId}/stream-destinations`, {
+    token: A.token, method: 'POST',
+    body: { label: 'intruso', rtmp_url: 'rtmp://127.0.0.1:1/live', stream_key: 'k' },
+  })
+  await recusado('A altera um destino da org B', `/api/orgs/${B.orgId}/stream-destinations/${idB}`, {
+    token: A.token, method: 'PATCH', body: { rtmp_url: 'rtmp://atacante.exemplo/live' },
+  })
+  // Pelo caminho da PRÓPRIA org A, com o id da B: o `WHERE org_id` tem de o esconder.
+  await recusado('A lê o destino da B pelo caminho da org A', `/api/orgs/${A.orgId}/stream-destinations/${idB}`, { token: A.token })
+  await recusado('A apaga o destino da B pelo caminho da org A', `/api/orgs/${A.orgId}/stream-destinations/${idB}`, {
+    token: A.token, method: 'DELETE',
+  })
+  await recusado('A apaga um destino de directo da org B', `/api/orgs/${B.orgId}/stream-destinations/${idB}`, {
+    token: A.token, method: 'DELETE',
+  })
+  const depois = await req(`/api/orgs/${B.orgId}/stream-destinations/${idB}`, { token: B.token })
+  if (depois.status === 200 && depois.json?.rtmp_url === 'rtmp://127.0.0.1:1/live') ok('e o destino da B CONTINUA LÁ, inalterado')
+  else nok('e o destino da B CONTINUA LÁ, inalterado', `${depois.status}: ${JSON.stringify(depois.json).slice(0, 120)}`)
+
+  // Emitir com o destino da B a partir de uma sala da A. A recusa chega numa
+  // trama de texto depois do upgrade (ver `ws_directo`).
+  const recusaDoDirecto = (roomToken, code, destinos) => new Promise((resolve) => {
+    const q = new URLSearchParams({ token: roomToken, destinos: JSON.stringify(destinos), codec: 'video/h264' })
+    const ws = new WebSocket(`${WS}/api/rooms/${code}/broadcast?${q}`)
+    const t = setTimeout(() => { ws.close(); resolve('(sem resposta)') }, 8000)
+    ws.on('message', (d) => {
+      const m = JSON.parse(d.toString())
+      if (m.erro) { clearTimeout(t); ws.close(); resolve(m.erro) }
+      else if (m.tipo === 'destinos') { clearTimeout(t); ws.close(); resolve('(aceite)') }
+    })
+    ws.on('error', () => { clearTimeout(t); resolve('(erro de ligação)') })
+  })
+  const NAO_E_TEU = /não existe ou não pertence/
+  const salaDirectoA = (await req('/api/rooms', { token: A.token, method: 'POST', body: { name: 'directo da A', topology: 'sfu' } })).json
+  const joinDirectoA = await req(`/api/rooms/${salaDirectoA.code}/join`, { token: A.token, method: 'POST' })
+  const vDirA = await recusaDoDirecto(joinDirectoA.json?.room_token, salaDirectoA.code, [{ id: idB }])
+  if (NAO_E_TEU.test(vDirA)) ok('A NÃO emite com o destino guardado da B (recusado no WebSocket)')
+  else nok('A NÃO emite com o destino guardado da B', `o servidor respondeu: ${vDirA}`)
+  // Controlo positivo: a B, com o SEU destino, não leva ESSA recusa (pode levar
+  // outra — sem ffmpeg no runner, por exemplo — e isso não é o que se mede).
+  const salaDirectoB = (await req('/api/rooms', { token: B.token, method: 'POST', body: { name: 'directo da B', topology: 'sfu' } })).json
+  const joinDirectoB = await req(`/api/rooms/${salaDirectoB.code}/join`, { token: B.token, method: 'POST' })
+  const vDirB = await recusaDoDirecto(joinDirectoB.json?.room_token, salaDirectoB.code, [{ id: idB }])
+  if (!NAO_E_TEU.test(vDirB) && !vDirB.startsWith('(erro')) ok(`B emite com o próprio destino guardado (controlo positivo: ${vDirB.slice(0, 60)})`)
+  else nok('B emite com o próprio destino guardado (controlo positivo)', vDirB)
+  if (!vDirA.includes(CHAVE_DESTINO_B) && !vDirB.includes(CHAVE_DESTINO_B)) ok('nenhuma resposta do directo leva a chave')
+  else nok('nenhuma resposta do directo leva a chave', 'a chave apareceu numa trama do WebSocket')
+} else {
+  // 503 = servidor sem SECRETS_KEY. Diz-se, em vez de passar em silêncio.
+  nok('B guarda um destino de directo', `devolveu ${destinoB.status}: ${JSON.stringify(destinoB.json).slice(0, 160)}`)
+}
+
 console.log('\n--- salas da org B: o código é uma CAPABILITY, não um passe ---')
 //
 // Aqui a expectativa ingénua ("A tem de levar 403") está ERRADA, e é preciso

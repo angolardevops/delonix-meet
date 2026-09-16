@@ -127,6 +127,10 @@ pub struct Config {
     /// Um por emissão, não dois: a composição de uma gravação é diferível e
     /// pode gastar mais; um directo corre AO LADO de chamadas vivas.
     pub directo_threads: u32,
+    /// Chave de cifra dos segredos guardados na base (`SECRETS_KEY`, 32 bytes
+    /// em base64 ou hex). `None` = funcionalidades que guardam segredos
+    /// respondem 503. Ver `secrets_key` e `crypto.rs`.
+    pub secrets_key: Option<crate::crypto::SecretsKey>,
     /// Segundos que o servidor espera, depois do SIGTERM, para as salas
     /// esvaziarem antes de fechar (`DRAIN_GRACE_SECS`, default 40).
     ///
@@ -252,6 +256,32 @@ impl Config {
             directo_threads: bounded_env("DIRECTO_THREADS", 1, 1, 16) as u32,
             ffmpeg_bin: env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into()),
             ffprobe_bin: env::var("FFPROBE_BIN").unwrap_or_else(|_| "ffprobe".into()),
+            secrets_key: secrets_key(insecure),
+        }
+    }
+}
+
+/// `SECRETS_KEY`: chave de cifra dos segredos guardados na base (hoje: as
+/// chaves dos destinos de directo). Ver `crypto.rs`.
+///
+/// - Definida e válida → usa-se.
+/// - Definida e INVÁLIDA → panic: uma chave curta aceite em silêncio é pior
+///   do que nenhuma, e é configuração que se corrige antes de arrancar.
+/// - Ausente em dev (`DELONIX_ALLOW_INSECURE=1`) → chave fixa de dev.
+/// - Ausente em produção → `None`: o servidor arranca (não se parte um deploy
+///   que não usa a funcionalidade) e as rotas que precisam dela respondem 503
+///   com a razão. Fail-closed para o segredo, não para o servidor inteiro.
+fn secrets_key(insecure: bool) -> Option<crate::crypto::SecretsKey> {
+    match env::var("SECRETS_KEY") {
+        Ok(v) if !v.trim().is_empty() => {
+            Some(crate::crypto::SecretsKey::parse(&v).unwrap_or_else(|e| panic!("{e}")))
+        }
+        _ if insecure => Some(crate::crypto::SecretsKey::insecure_dev()),
+        _ => {
+            tracing::warn!(
+                "SECRETS_KEY não definida — guardar destinos de directo fica indisponível (503)"
+            );
+            None
         }
     }
 }

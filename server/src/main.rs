@@ -5,6 +5,7 @@ mod audit;
 mod auth;
 mod broadcast;
 mod config;
+mod crypto;
 mod dlp;
 mod error;
 mod media_probe;
@@ -34,6 +35,7 @@ mod sfu;
 mod sfu_e2e;
 mod signaling;
 mod storage;
+mod stream_destinations;
 mod users;
 mod voice;
 mod webhooks;
@@ -339,6 +341,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/orgs/{org_id}/webhooks", get(webhooks::list).post(webhooks::create))
         .route("/api/orgs/{org_id}/webhooks/{hook_id}", axum::routing::delete(webhooks::delete))
+        // Destinos de directo guardados pela organização (chave cifrada; nunca
+        // volta ao cliente). Ver stream_destinations.rs.
+        .route(
+            "/api/orgs/{org_id}/stream-destinations",
+            get(stream_destinations::list).post(stream_destinations::create),
+        )
+        .route(
+            "/api/orgs/{org_id}/stream-destinations/{destination_id}",
+            get(stream_destinations::get_one)
+                .patch(stream_destinations::update)
+                .delete(stream_destinations::delete),
+        )
         // ---- Dial-in PSTN (control plane) ----
         .route("/api/voice/rooms", post(voice::create_room))
         .route("/api/voice/rooms/{id}", get(voice::get_room))
