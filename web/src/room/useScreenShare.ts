@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { videoConstraints } from '../media'
 import { SCREEN_CONSTRAINTS } from '../webrtc'
 import type { LocalMedia } from './useLocalMedia'
 import type { RoomCore } from './useRoomCore'
@@ -20,6 +21,15 @@ export function useScreenShare(core: RoomCore, media: LocalMedia) {
   const [sharePerms, setSharePerms] = useState<Set<string>>(() => new Set())
   /** Pedido feito: a partilha arranca sozinha quando a autorização chegar. */
   const pendingShareRef = useRef(false)
+  /**
+   * Uma CÂMARA a partilhar em vez do ecrã (segunda fonte: captura HDMI, câmara
+   * de documentos). Viaja pelo mesmo caminho da partilha — mesma permissão,
+   * mesma paragem — e por isso também só existe em SFU.
+   */
+  const pendingSourceRef = useRef<MediaStream | null>(null)
+  /** O dispositivo da fonte partilhada agora, se a partilha é uma câmara. */
+  const [sourceDeviceId, setSourceDeviceId] = useState('')
+  const ownShareRef = useRef<MediaStream | null>(null)
   // Os handlers registam-se uma vez: este ref aponta sempre ao `toggleShare`
   // do render actual (sem closure obsoleta de `sharing`/`topology`).
   const toggleShareRef = useRef<() => void>(() => {})
@@ -38,6 +48,7 @@ export function useScreenShare(core: RoomCore, media: LocalMedia) {
           return
         }
         if (!m.allowed && wasPending) {
+          largarFontePendente()
           setStatus(t('room.estado.partilhaRecusada'))
           return
         }
@@ -58,6 +69,11 @@ export function useScreenShare(core: RoomCore, media: LocalMedia) {
     () => () => {
       core.displayStreamRef.current?.getTracks().forEach((tr) => tr.stop())
       core.displayStreamRef.current = null
+      // SFU: a apresentação própria (ecrã ou segunda câmara) também se pára.
+      ownShareRef.current?.getTracks().forEach((tr) => tr.stop())
+      ownShareRef.current = null
+      pendingSourceRef.current?.getTracks().forEach((tr) => tr.stop())
+      pendingSourceRef.current = null
     },
     [core.displayStreamRef],
   )
@@ -86,15 +102,19 @@ export function useScreenShare(core: RoomCore, media: LocalMedia) {
         }
       }
       setSharing(false)
+      setSourceDeviceId('')
       return
     }
     try {
-      const display = await navigator.mediaDevices.getDisplayMedia(SCREEN_CONSTRAINTS)
+      const fonte = pendingSourceRef.current
+      pendingSourceRef.current = null
+      const display = fonte ?? (await navigator.mediaDevices.getDisplayMedia(SCREEN_CONSTRAINTS))
       const screenTrack = display.getVideoTracks()[0]
       screenTrack.contentHint = 'detail' // nitidez de texto antes de fluidez
       if (isSfu) {
         // Track separada: a câmara continua; todos recebem o ecrã à parte.
         await callRef.current?.startScreen(screenTrack, display)
+        ownShareRef.current = display
         setPresentation({ peerId: 'me', stream: display })
       } else {
         displayStreamRef.current = display
@@ -110,16 +130,23 @@ export function useScreenShare(core: RoomCore, media: LocalMedia) {
         }
       }
       screenTrack.onended = () => toggleShareRef.current()
+      setSourceDeviceId(fonte ? screenTrack.getSettings().deviceId ?? 'fonte' : '')
       setSharing(true)
     } catch {
       /* a pessoa cancelou o selector */
     }
   }
 
+  function largarFontePendente() {
+    pendingSourceRef.current?.getTracks().forEach((tr) => tr.stop())
+    pendingSourceRef.current = null
+  }
+
   /** O botão: sem autorização pede-a ao anfitrião; com ela, partilha. */
   function requestOrToggleShare() {
     if (!sharing && !core.isHost && !shareAllowed) {
       if (hostShareOnly) {
+        largarFontePendente()
         setStatus(t('room.estado.soAnfitriaoPartilha'))
         return
       }
@@ -129,6 +156,27 @@ export function useScreenShare(core: RoomCore, media: LocalMedia) {
       return
     }
     void toggleShare()
+  }
+
+  /**
+   * Publica uma segunda fonte de vídeo como apresentação. Recebe o stream já
+   * aberto (pré-entrada) ou abre o dispositivo pedido (barra da sala).
+   */
+  async function shareSource(source: MediaStream | string) {
+    if (sharing || core.topology !== 'sfu') {
+      if (typeof source !== 'string') source.getTracks().forEach((tr) => tr.stop())
+      return
+    }
+    try {
+      const stream =
+        typeof source === 'string' ? await navigator.mediaDevices.getUserMedia({ video: videoConstraints(source) }) : source
+      stream.getVideoTracks().forEach((tr) => (tr.contentHint = 'detail'))
+      largarFontePendente()
+      pendingSourceRef.current = stream
+      requestOrToggleShare()
+    } catch {
+      setStatus(t('room.estado.naoMudouCamara'))
+    }
   }
 
   function grantShare(peerId: string, allowed: boolean) {
@@ -156,6 +204,8 @@ export function useScreenShare(core: RoomCore, media: LocalMedia) {
     shareAsk,
     sharePerms,
     requestOrToggleShare,
+    shareSource,
+    sourceDeviceId,
     grantShare,
     answerShareRequest,
   }

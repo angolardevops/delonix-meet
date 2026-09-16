@@ -35,7 +35,8 @@ describe('R114 · a segunda sessão da mesma conta entra sem áudio', () => {
     expect(sessao.slice(i, i + 400)).toMatch(/setMicOn\(false\)/)
     // O `companion` que silencia o áudio é o MESMO que a sessão liga.
     expect(room).toMatch(/const \{ companion \} = session/)
-    expect(room).toMatch(/<AudioSink peers=\{peers\} sinkId=\{speakerId\} mudo=\{companion\} \/>/)
+    // (o `volume` é o do deslizador deste dispositivo; o silêncio do companion ganha-lhe)
+    expect(room).toMatch(/<AudioSink peers=\{peers\} sinkId=\{speakerId\} mudo=\{companion\} volume=\{media\.outputVolume\} \/>/)
   })
 
   it('o áudio é silenciado, não desmontado', () => {

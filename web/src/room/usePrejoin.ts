@@ -1,22 +1,73 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { currentUser, getRoom, isAbort, listMeetings } from '../api'
 import { audioConstraints, listDevices, videoConstraints } from '../media'
+import { MicMix } from './micMix'
+import { reuniaoMaisProxima } from './salaInfo'
 import type { LocalMedia } from './useLocalMedia'
 import type { RoomCore } from './useRoomCore'
+
+/** O que a pré-entrada sabe da sessão ANTES de entrar — só por REST, nunca por sinalização (R2). */
+export interface PrejoinInfo {
+  name: string
+  /** Sou o dono da sala: entro como anfitrião. */
+  owner: boolean
+  topology: string
+  /** Hora marcada (ISO) da reunião agendada nesta sala, se houver. */
+  startsAt: string | null
+}
 
 /**
  * Pré-entrada: SÓ media local para a pré-visualização. Não cria Signaling nem
  * chamada (R2: nada de ofertas antes de entrar). O stream fica em
  * `core.previewStreamRef` e é ENTREGUE ao efeito de entrada no clique em
  * «Entrar» — não se readquire a câmara (sem piscar, sem «câmara ocupada»).
+ *
+ * O mesmo vale para o que se escolhe aqui e continua na sala: o fundo (efeito
+ * em `core.effectRef`), a segunda fonte de vídeo (`core.secondSourceRef`) e a
+ * mistura de dois microfones (`core.micMixRef`).
  */
 export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { current: boolean }) {
   const { t } = useTranslation()
-  const { setStatus } = core
+  const { setStatus, code } = core
   /** O stream mudou de track: quem mede o nível tem de voltar a ligar-se. */
   const [previewVersion, setPreviewVersion] = useState(0)
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null)
+  const [info, setInfo] = useState<PrejoinInfo | null>(null)
+  const [second, setSecond] = useState<{ deviceId: string; stream: MediaStream } | null>(null)
+  const [mix, setMix] = useState<{ deviceId: string; mix: MicMix } | null>(null)
   const active = core.roomState === 'prejoin'
+
+  // A sessão: nome, dono, topologia e hora marcada. Melhor esforço — sem isto
+  // a pré-entrada continua a servir, só com menos contexto.
+  useEffect(() => {
+    if (!active) return
+    const ctrl = new AbortController()
+    let cancelled = false
+    void getRoom(code)
+      .then(async (room) => {
+        if (cancelled) return
+        const base: PrejoinInfo = {
+          name: room.name,
+          owner: room.owner_id === currentUser()?.id,
+          topology: room.topology,
+          startsAt: null,
+        }
+        setInfo(base)
+        const meetings = await listMeetings(ctrl.signal).catch((e) => {
+          if (!isAbort(e)) console.warn('[prejoin] reuniões indisponíveis', e)
+          return []
+        })
+        if (cancelled) return
+        const m = reuniaoMaisProxima(meetings, code, Date.now())
+        if (m) setInfo({ ...base, startsAt: m.starts_at })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+      ctrl.abort()
+    }
+  }, [active, code])
 
   useEffect(() => {
     if (!active) return
@@ -65,18 +116,38 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
       if (!joinIntentRef.current) {
         core.previewStreamRef.current?.getTracks().forEach((tr) => tr.stop())
         core.previewStreamRef.current = null
+        core.micMixRef.current?.stop()
+        core.micMixRef.current = null
+        core.secondSourceRef.current?.getTracks().forEach((tr) => tr.stop())
+        core.secondSourceRef.current = null
+        core.effectRef.current?.stop()
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active])
 
+  // O <video> mostra o que os outros vão receber: com fundo, a saída do efeito.
+  const shownRef = useRef<{ key: string; stream: MediaStream | null }>({ key: '', stream: null })
   const attachPreview = useCallback(
     (node: HTMLVideoElement | null) => {
-      if (node && node.srcObject !== core.previewStreamRef.current) node.srcObject = core.previewStreamRef.current
+      if (!node) return
+      const fx = media.bgMode !== 'none' ? core.effectRef.current?.output ?? null : null
+      const key = fx ? `fx:${fx.id}` : `raw:${previewVersion}`
+      if (shownRef.current.key !== key) {
+        shownRef.current = { key, stream: fx ? new MediaStream([fx]) : core.previewStreamRef.current }
+      }
+      if (node.srcObject !== shownRef.current.stream) node.srcObject = shownRef.current.stream
     },
-    // O `previewVersion` religa o <video> quando a track muda.
+    // O `previewVersion` religa o <video> quando a track muda; o fundo, quando o efeito arranca.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [previewStream, previewVersion],
+    [previewStream, previewVersion, media.bgMode, media.bgImageUrl, media.bgBusy],
+  )
+
+  const attachSecond = useCallback(
+    (node: HTMLVideoElement | null) => {
+      if (node && node.srcObject !== (second?.stream ?? null)) node.srcObject = second?.stream ?? null
+    },
+    [second],
   )
 
   function toggle(kind: 'mic' | 'cam') {
@@ -88,9 +159,33 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
     else media.setCamOn(tr.enabled)
   }
 
+  function stopSecond() {
+    core.secondSourceRef.current?.getTracks().forEach((tr) => tr.stop())
+    core.secondSourceRef.current = null
+    setSecond(null)
+  }
+
+  /** Desfaz a mistura: o primeiro microfone volta a ser a track do stream. */
+  function unmix() {
+    const s = core.previewStreamRef.current
+    const cur = core.micMixRef.current
+    if (!s || !cur) return
+    const primary = cur.inputs[0].clone()
+    primary.enabled = cur.output.enabled
+    s.removeTrack(cur.output)
+    cur.stop()
+    core.micMixRef.current = null
+    s.addTrack(primary)
+    setMix(null)
+    setPreviewVersion((n) => n + 1)
+  }
+
   async function switchDevice(kind: 'mic' | 'cam', deviceId: string) {
     const s = core.previewStreamRef.current
     if (!s || !deviceId) return
+    if (kind === 'mic' && core.micMixRef.current) unmix()
+    // A câmara escolhida como principal deixa de poder ser a segunda fonte.
+    if (kind === 'cam' && second?.deviceId === deviceId) stopSecond()
     try {
       const ns = await navigator.mediaDevices.getUserMedia(
         kind === 'mic' ? { audio: audioConstraints(deviceId) } : { video: videoConstraints(deviceId) },
@@ -111,12 +206,69 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
         media.setCamId(deviceId)
         media.setHasLocalVideo(true)
         media.setCamOn(nt.enabled)
+        // O fundo segue a câmara nova.
+        const fx = core.effectRef.current
+        if (fx?.started && media.bgMode !== 'none') {
+          fx.stop()
+          await fx.start(nt)
+        }
       }
       setPreviewVersion((n) => n + 1)
     } catch {
       setStatus(t('room.estado.naoTrocouDispositivo'))
     }
   }
+
+  /** Segunda fonte de vídeo (ex.: captura HDMI dos diapositivos). Entra na sala como apresentação. */
+  async function toggleSecondCam(deviceId: string) {
+    if (second?.deviceId === deviceId) {
+      stopSecond()
+      return
+    }
+    if (!deviceId || deviceId === media.camId) return
+    stopSecond()
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: videoConstraints(deviceId) })
+      // Diapositivos e quadros: nitidez antes de fluidez, como numa partilha de ecrã.
+      s.getVideoTracks().forEach((tr) => (tr.contentHint = 'detail'))
+      core.secondSourceRef.current = s
+      setSecond({ deviceId, stream: s })
+    } catch {
+      setStatus(t('room.estado.naoTrocouDispositivo'))
+    }
+  }
+
+  /** Segundo microfone activo ao mesmo tempo que o primeiro, misturado localmente. */
+  async function toggleSecondMic(deviceId: string) {
+    if (mix?.deviceId === deviceId) {
+      unmix()
+      return
+    }
+    if (core.micMixRef.current) unmix()
+    const s = core.previewStreamRef.current
+    const primary = s?.getAudioTracks()[0]
+    if (!s || !primary || !deviceId || deviceId === media.micId) return
+    try {
+      const ns = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId) })
+      const extra = ns.getAudioTracks()[0]
+      const m = new MicMix([primary, extra])
+      m.output.enabled = primary.enabled
+      primary.enabled = true
+      s.removeTrack(primary)
+      s.addTrack(m.output)
+      core.micMixRef.current = m
+      setMix({ deviceId, mix: m })
+      setPreviewVersion((n) => n + 1)
+    } catch {
+      setStatus(t('room.estado.naoTrocouDispositivo'))
+    }
+  }
+
+  /** Streams só para medir o nível de CADA microfone da mistura. */
+  const mixLevels = useMemo(
+    () => (mix ? [new MediaStream([mix.mix.inputs[0]]), new MediaStream([mix.mix.inputs[1]])] : null),
+    [mix],
+  )
 
   /** Entrar só com áudio: a câmara é libertada ANTES de entrar, não escondida. */
   function dropVideo() {
@@ -125,10 +277,28 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
       tr.stop()
       s.removeTrack(tr)
     })
+    stopSecond()
+    media.clearBackground()
     media.setHasLocalVideo(false)
     media.setCamOn(false)
     setPreviewVersion((n) => n + 1)
   }
 
-  return { previewStream, previewVersion, attachPreview, toggle, switchDevice, dropVideo }
+  return {
+    info,
+    previewStream,
+    previewVersion,
+    attachPreview,
+    toggle,
+    switchDevice,
+    dropVideo,
+    second,
+    attachSecond,
+    toggleSecondCam,
+    mixDeviceId: mix?.deviceId ?? '',
+    mixLevels,
+    toggleSecondMic,
+  }
 }
+
+export type Prejoin = ReturnType<typeof usePrejoin>

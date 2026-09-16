@@ -11,17 +11,28 @@ import type { RemotePeer } from './useRoomCore'
  * `mudo` (companion, R114) silencia sem desmontar: o elemento continua ligado
  * ao stream, e ligar o som aqui é instantâneo.
  */
-export function AudioSink({ peers, sinkId, mudo }: { peers: RemotePeer[]; sinkId: string; mudo: boolean }) {
+export function AudioSink({
+  peers,
+  sinkId,
+  mudo,
+  volume = 100,
+}: {
+  peers: RemotePeer[]
+  sinkId: string
+  mudo: boolean
+  /** 0–100: volume escolhido neste dispositivo (pré-entrada ou definições). */
+  volume?: number
+}) {
   return (
     <div className="rm-audio-sink" aria-hidden="true" hidden>
       {peers.map((p) => (
-        <PeerAudio key={p.peerId} stream={p.stream} sinkId={sinkId} mudo={mudo} />
+        <PeerAudio key={p.peerId} stream={p.stream} sinkId={sinkId} mudo={mudo} volume={volume} />
       ))}
     </div>
   )
 }
 
-function PeerAudio({ stream, sinkId, mudo }: { stream: MediaStream | null; sinkId: string; mudo: boolean }) {
+function PeerAudio({ stream, sinkId, mudo, volume }: { stream: MediaStream | null; sinkId: string; mudo: boolean; volume: number }) {
   const ref = useRef<HTMLAudioElement>(null)
   useEffect(() => {
     const el = ref.current
@@ -34,5 +45,8 @@ function PeerAudio({ stream, sinkId, mudo }: { stream: MediaStream | null; sinkI
     const el = ref.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null
     if (el?.setSinkId) void el.setSinkId(sinkId || '').catch(() => {})
   }, [sinkId, stream])
+  useEffect(() => {
+    if (ref.current) ref.current.volume = Math.max(0, Math.min(1, volume / 100))
+  }, [volume, stream])
   return <audio ref={ref} autoPlay muted={mudo} />
 }

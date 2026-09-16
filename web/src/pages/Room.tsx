@@ -121,6 +121,18 @@ export default function Room({
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
+  // A segunda fonte escolhida na pré-entrada entra como apresentação assim que
+  // a media liga — pelo caminho da partilha, com as mesmas permissões.
+  const shareSource = share.shareSource
+  useEffect(() => {
+    if (session.callState !== 'connected') return
+    const fonte = core.secondSourceRef.current
+    if (!fonte) return
+    core.secondSourceRef.current = null
+    void shareSource(fonte)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.callState])
+
   const talkOverNames = useMemo(() => {
     if (!participants.talkOver) return null
     const nomes = participants.talkOverIds
@@ -345,7 +357,7 @@ export default function Room({
         </div>
 
         {/* O áudio de TODOS, fora do palco: o que se ouve não depende do layout. */}
-        <AudioSink peers={peers} sinkId={speakerId} mudo={companion} />
+        <AudioSink peers={peers} sinkId={speakerId} mudo={companion} volume={media.outputVolume} />
 
         <ControlBar
           isHost={isHost}
