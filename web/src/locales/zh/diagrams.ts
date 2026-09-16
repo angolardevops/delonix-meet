@@ -34,7 +34,7 @@ export default {
     png: '图片（.png）',
     json: '可编辑模型（.json）',
     feito: '已下载 {{ficheiro}}',
-    erro: '无法为此画板生成文件。',
+    erro: '无法为此白板生成文件。',
     botao: {
       xmi: '导出 XMI',
       bpmn: '导出 .bpmn',

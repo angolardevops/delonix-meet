@@ -2,6 +2,9 @@
 // Contactos, Integrações, Administração e «Inteligência e idiomas».
 export default {
   admin: {
+    total: '总数',
+    emUso: '已使用',
+    volume: '占用空间',
     versao: '服务器 v{{v}}',
     titulo: '管理控制台',
     armazenamento: '存储',
@@ -71,6 +74,26 @@ export default {
     anonimo: '匿名',
     maisChamadas_one: '记录中还有 {{count}} 条通话。',
     maisChamadas_other: '记录中还有 {{count}} 条通话。',
+  },
+  chamadas: {
+    titulo: '通话',
+    contactos: '通讯录',
+    disponivel: '空闲',
+    accoes: '通话操作',
+    agendar: '预约会议',
+    seteDias: '7 天',
+    semHistorico: '暂无通话记录。',
+    semHistoricoDias_one: '过去一天内暂无通话记录。',
+    semHistoricoDias_other: '过去 {{count}} 天内暂无通话记录。',
+    perdida: '未接',
+    recebidaDialIn: '已接听 · 电话拨入',
+    ontem: '昨天 {{hora}}',
+    dialIn: 'PSTN 电话拨入',
+    semNumeros: '号码库中暂无号码',
+    soEntrada: '仅限呼入 · 未桥接到会议室',
+    activo: '{{quando}}活跃',
+    offline: '离线',
+    semFilial: '无分支机构',
   },
   contactos: {
     telefoneTitulo: '电话拨入通话',

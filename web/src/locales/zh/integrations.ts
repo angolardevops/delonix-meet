@@ -38,6 +38,10 @@ export default {
     emVigorDica: '登录页面只有一个：只要有一个启用 Odoo 的组织要求隐藏即可生效。',
     rodarTitulo: '要轮换 Odoo 令牌吗？',
     rodarAviso: '当前令牌将立即失效。在收到新令牌之前，Odoo 将无法访问。',
+    semTokenCurto: '无令牌',
+    rodarCurto: '轮换',
+    gerarCurto: '生成',
+    visibilidadeCurta: '登录页面',
   },
   storage: {
     titulo: '存储',
@@ -73,6 +77,7 @@ export default {
     testaGravado: '测试使用已保存的配置：请先保存，再测试新的存储位置。',
   },
   webhooks: {
+    destinos: '已配置的目标地址',
     titulo: 'Webhook',
     sub: '向其他系统推送会议和录制通知',
     contagem_one: '{{count}} 个目标地址',

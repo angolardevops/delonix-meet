@@ -1,4 +1,5 @@
 export default {
+  semDado: '服务器暂未返回此数据',
   titulo: '录制内容',
   meta_zero: '暂无项目',
   meta_one: '{{count}} 项 · {{size}}',
@@ -18,6 +19,13 @@ export default {
     grelha: '网格',
   },
   filtros: {
+    videoaulas: '课程',
+    emissoes: '直播',
+    reunioes: '会议',
+    quatroK: '4K',
+    aProcessar: '处理中',
+    contagem_one: '{{count}} 条录制内容',
+    contagem_other: '{{count}} 条录制内容',
     rotulo: '筛选录制内容',
     todas: '全部',
     minhas: '我的',
@@ -25,6 +33,9 @@ export default {
     falhadas: '失败',
   },
   colunas: {
+    duracao: '时长',
+    resolucao: '分辨率',
+    armazenamento: '存储空间',
     sessao: '会议',
     sala: '会议室',
     data: '日期',
@@ -32,6 +43,13 @@ export default {
     estado: '状态',
   },
   estado: {
+    aProcessar: '处理中',
+    aProcessarPct: '处理中 {{pct}}%',
+    aTranscrever: '转写中',
+    aTranscreverPct: '转写中 {{pct}}%',
+    publicada: '已发布',
+    retida_one: '保留 {{count}} 天',
+    retida_other: '保留 {{count}} 天',
     pronta: '就绪',
     falhada: '失败',
     semCausa: '录制失败，未生成文件。',
@@ -41,6 +59,9 @@ export default {
     texto: '录制会议后，录制内容会连同转写和会议纪要显示在这里。',
   },
   leitor: {
+    progresso: '视频播放位置',
+    participantes_one: '{{count}} 位参会者',
+    participantes_other: '{{count}} 位参会者',
     rotulo: '播放器',
     fechar: '关闭播放器',
     reproduzir: '播放 {{name}}',
@@ -59,6 +80,7 @@ export default {
     erroDescarregar: '无法下载录制内容。',
   },
   notas: {
+    daSala: '会议室笔记',
     rotulo: '会议笔记',
     transcricao: '转写',
     acta: '会议纪要',
@@ -67,6 +89,23 @@ export default {
     semActa: '此会议没有已保存的会议纪要。',
     semTarefas: '此会议的纪要中没有待办事项。',
     erroTarefa: '无法保存待办事项。',
+  },
+  categoria: {
+    training: '课程',
+    hybrid: '混合式课程',
+    broadcast: '直播',
+    meeting: '会议',
+  },
+  capitulos: {
+    titulo: '章节',
+    automaticos: '自动章节',
+    detectados_one: '检测到 {{count}} 个',
+    detectados_other: '检测到 {{count}} 个',
+    saltar: '跳转到{{title}}（{{time}}）',
+  },
+  transcricao: {
+    gerada: '自动生成 · {{lang}}',
+    saltar: '跳转到 {{time}}',
   },
   partilha: {
     titulo: '分享“{{name}}”',
