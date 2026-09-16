@@ -63,7 +63,13 @@ deploy/ansible/.env.*
 deploy/ansible/vault/
 
 # Configuração local de ferramentas de agente (fica na máquina, não no repo).
-.claude/
+# EXCEPTO os agentes e as skills: são o painel de revisores e os playbooks do
+# harness, e têm de viajar com o código que descrevem. Ignorá-los foi o que
+# deixou o HARNESS.md a mandar invocar seis revisores em `agents/` que nunca
+# existiram no git (auditoria 2026-09-16 §2.5).
+.claude/*
+!.claude/agents/
+!.claude/skills/
 CLAUDE.md
 
 # CSS compilado pelo portão da barra (web/e2e/bar-responsivo.mjs)

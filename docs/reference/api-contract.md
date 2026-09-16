@@ -18,8 +18,8 @@
 - **O que é:** o contrato estável para consumidores **externos** — SDK público
   (roadmap), app mobile Flutter (roadmap), integrações headless, bots.
 - **Contrato:** **estável dentro de `v1`.** Mudanças incompatíveis exigem `v2`.
-- **Auth:** **API key** por org (hash + scopes, `apikeys.rs`), com rate-limit
-  (`rate_limit::v1_rate_limit`, por IP).
+- **Auth:** **API key** por org (hash, **sem escopos nem expiração** — `apikeys.rs`), com rate-limit
+  (`rate_limit::v1_rate_limit`, por IP, não por chave).
 - **Endpoints atuais:** `GET /api/v1/org`, `POST /api/v1/rooms`,
   `GET /api/v1/rooms/{code}`, `POST /api/v1/rooms/{code}/join-bot`,
   `GET /api/v1/recordings`, e o recurso **`meetings`** (`server/src/meetings_v1.rs`):
@@ -34,6 +34,15 @@
   chamadas ad-hoc.
 - **Marcador no código:** a fronteira está anotada em `server/src/main.rs` (bloco
   "FRONTEIRA DE CONTRATO DE API"), imediatamente antes do `.nest("/api/v1", ...)`.
+
+> **Drift medido a 2026-09-16** (auditoria §2.4): a v1 contém também
+> `POST /meetings/{id}/ring`, `POST /admin/orgs` (segredo de plataforma — é do
+> OPERADOR), `/integration/odoo/{provision,users}` (token `dlxo_` — é da
+> INTEGRAÇÃO) e `/platform/storage*` (sessão JWT — é do OPERADOR). São três
+> públicos e quatro autenticações na mesma superfície. A separação está no
+> [ADR-0004 §4](../adr/0004-organizacao-alvo-do-backend.md); até lá, **nenhuma
+> rota nova de operador ou de integração entra em `/api/v1`** (catraca
+> `rotas_v1_com_sessao`). A checklist de rota nova é a skill `delonix-meet-api`.
 
 ## Regras
 
