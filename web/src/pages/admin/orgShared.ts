@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
+import { intlLocale } from '../../i18n'
 import { ApiError, apiErrorMessage, myOrgs, OrgSummary } from '../../api'
 import { useAsync } from '../../components/AsyncSection'
 import { useShell } from '../../components/shellContext'
@@ -34,8 +35,7 @@ export function refusalAware<T>(p: Promise<T>, t: TFunction): Promise<T> {
 
 export function useLocaleTag(): string {
   const { i18n } = useTranslation()
-  const l = i18n.language ?? 'pt'
-  return l.startsWith('en') ? 'en-GB' : l.startsWith('fr') ? 'fr-FR' : 'pt-PT'
+  return intlLocale(i18n.language)
 }
 
 /**

@@ -73,7 +73,7 @@ export default function Timeline({
   onCapitulo: () => void
   onFerramentaUsada: (f: Ferramenta, clipId: string | null) => void
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const dur = p.clips.reduce((a, c) => Math.max(a, fimDoClip(c)), 0)
   const [zoom, setZoom] = useState<number>(() => ZOOMS.find((z) => (dur / z) * PX_POR_DIVISAO < 1100) ?? 120)
   const pps = PX_POR_DIVISAO / zoom
@@ -367,7 +367,7 @@ export default function Timeline({
                         {w > 120 && (
                           <span className="ed-clip__time dx-num">
                             {relogio(c.inicio)} — {relogio(fimDoClip(c))}
-                            {c.velocidade !== 1 ? ` · ${c.velocidade.toLocaleString()}×` : ''}
+                            {c.velocidade !== 1 ? ` · ${c.velocidade.toLocaleString(i18n.language)}×` : ''}
                           </span>
                         )}
                       </button>

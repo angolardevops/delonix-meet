@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { intlLocale } from '../i18n'
 import type { TFunction } from 'i18next'
 import { accessTokenValue, currentUser, saveMinutesByRoom, translateCaption } from '../api'
 import { Transcriber } from '../media'
@@ -32,7 +33,7 @@ export function buildMoM(lines: string[], t: TFunction, locale: string): string 
 export function useTranscription(core: RoomCore) {
   const { t, i18n } = useTranslation()
   const { signal, code, setStatus } = core
-  const locale = i18n.language === 'en' ? 'en-GB' : i18n.language === 'fr' ? 'fr-FR' : 'pt-PT'
+  const locale = intlLocale(i18n.language)
   const me = currentUser()?.username ?? ''
 
   const [ccOn, setCcOn] = useState(false)

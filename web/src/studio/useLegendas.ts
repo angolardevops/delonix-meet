@@ -26,7 +26,8 @@ export function useLegendas(compRef: MutableRefObject<CompositorDeAula | null>, 
   const { i18n } = useTranslation()
   const [estado, setEstado] = useState<EstadoDasLegendas>('desligadas')
   const limpar = useRef<number | null>(null)
-  const lingua = i18n.language === 'en' ? 'en' : i18n.language === 'fr' ? 'fr' : 'pt'
+  // O motor quer só a língua de base: pt, en, fr, zh.
+  const lingua = (i18n.language || 'pt').split('-')[0]
 
   useEffect(() => {
     const c = compRef.current

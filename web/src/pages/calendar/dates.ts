@@ -3,6 +3,7 @@
  * do browser. Os nomes de dias e meses vêm do `Intl` no idioma escolhido —
  * nunca de uma lista escrita à mão.
  */
+import { intlLocale } from '../../i18n'
 import type { Meeting } from '../../api'
 
 export const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
@@ -27,9 +28,7 @@ export function parseYmd(s: string): Date | null {
 }
 
 export function localeOf(lang: string): string {
-  if (lang.startsWith('en')) return 'en-GB'
-  if (lang.startsWith('fr')) return 'fr-FR'
-  return 'pt-PT'
+  return intlLocale(lang)
 }
 
 export const meetingStart = (m: Meeting) => new Date(m.starts_at)

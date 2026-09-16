@@ -1,5 +1,6 @@
 import { ReactNode, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { intlLocale } from '../i18n'
 import { currentUser } from '../api'
 import { DelonixSymbol, Icon } from '../ui/icons'
 import { Alert, Button, Checkbox, IconButton, cx } from '../ui/kit'
@@ -75,7 +76,7 @@ export function Prejoin({
   const uploadRef = useRef<HTMLInputElement>(null)
   const showVideo = media.hasLocalVideo && media.camOn
   const semMedia = !prejoin.previewStream?.getTracks().length
-  const locale = i18n.language === 'en' ? 'en-GB' : i18n.language === 'fr' ? 'fr-FR' : 'pt-PT'
+  const locale = intlLocale(i18n.language)
 
   // Os números vêm das tracks (o que a câmara ENTREGA), não do que se pediu.
   const camMeta = videoMeta(prejoin.previewStream?.getVideoTracks()[0])

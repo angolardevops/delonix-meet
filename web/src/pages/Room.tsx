@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { intlLocale } from '../i18n'
 import { currentUser } from '../api'
 import { Button, Dialog, IconButton, Tabs } from '../ui/kit'
 import '../ui/room.css'
@@ -58,7 +59,7 @@ export default function Room({
   onSwitch?: (code: string) => void
 }) {
   const { t, i18n } = useTranslation()
-  const locale = i18n.language === 'en' ? 'en-GB' : i18n.language === 'fr' ? 'fr-FR' : 'pt-PT'
+  const locale = intlLocale(i18n.language)
   const [initial] = useState(() => (entradaDirecta(code, voiceOnly) ? 'connecting' : 'prejoin') as 'connecting' | 'prejoin')
 
   const core = useRoomCore(code, initial)

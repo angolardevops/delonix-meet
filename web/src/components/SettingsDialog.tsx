@@ -7,14 +7,12 @@ import { FormEvent, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, updateMe, User } from '../api'
 import { getAppName, getLoginBg, setAppName, setLoginBg } from '../branding'
-import { Lang, LANGS, setLanguage } from '../i18n'
+import { currentLang, Lang, LANG_NAMES, LANGS, serverLocale, setLanguage } from '../i18n'
 import { applyTheme, storedTheme, Theme } from '../theme'
 import { Alert, Button, Dialog, Field, Segmented, Tabs, TextInput } from '../ui/kit'
 import MfaPanel from './MfaPanel'
 
 export type SettingsTab = 'account' | 'appearance' | 'security' | 'brand'
-
-const LANG_LABEL: Record<Lang, string> = { pt: 'Português', en: 'English', fr: 'Français' }
 
 export default function SettingsDialog({
   user,
@@ -27,7 +25,7 @@ export default function SettingsDialog({
   onClose: () => void
   onThemeChange: (t: Theme) => void
 }) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const [tab, setTab] = useState<SettingsTab>(initialTab)
 
   return (
@@ -65,12 +63,14 @@ export default function SettingsDialog({
               <Field label={t('shell.def.lingua')}>
                 <Segmented<Lang>
                   label={t('shell.def.lingua')}
-                  value={(i18n.language as Lang) ?? 'pt'}
+                  value={currentLang()}
                   onChange={(v) => {
                     void setLanguage(v)
-                    void updateMe({ locale: v }).catch(() => {})
+                    // O servidor só guarda pt/en/fr; o chinês fica só neste browser.
+                    const server = serverLocale(v)
+                    if (server) void updateMe({ locale: server }).catch(() => {})
                   }}
-                  options={LANGS.map((l) => ({ value: l, label: LANG_LABEL[l] }))}
+                  options={LANGS.map((l) => ({ value: l, label: <span lang={l}>{LANG_NAMES[l]}</span> }))}
                 />
               </Field>
               <p className="dx-muted" style={{ margin: 0 }}>{t('shell.def.salaSempreEscura')}</p>
