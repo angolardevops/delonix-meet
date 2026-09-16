@@ -460,17 +460,41 @@ pub async fn billing_summary(
 // ============================================================
 
 fn check_media_secret(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
-    let cfg = state.config.voice_internal_secret.as_bytes();
-    if cfg.is_empty() {
-        return Err(ApiError::NotFound); // feature desativada => não revela nada
+    authorize_media_secret(
+        &state.config.voice_internal_secret,
+        state.config.voice_secret_refusal,
+        headers,
+    )
+}
+
+/// A decisão de `check_media_secret`, sem `AppState`, para se poder testar.
+///
+/// Ordem deliberada (R154): primeiro o SEGREDO CONFIGURADO, depois o cabeçalho.
+/// Um segredo ausente, curto ou publicado dá `503` com a razão, venha o
+/// cabeçalho que vier — incluindo o valor certo, porque «certo» contra um
+/// valor que está no GitHub não autentica ninguém. Antes, vazio dava `404` e
+/// um valor publicado passava.
+fn authorize_media_secret(
+    configured: &str,
+    refusal: Option<&'static str>,
+    headers: &HeaderMap,
+) -> Result<(), ApiError> {
+    if let Some(reason) = refusal {
+        return Err(ApiError::ServiceUnavailable(format!(
+            "API interna de IVR desligada: {reason}"
+        )));
+    }
+    if configured.is_empty() {
+        // Defesa em profundidade: `voice_secret_refusal` já recusa o vazio.
+        return Err(ApiError::ServiceUnavailable(
+            "API interna de IVR desligada: VOICE_INTERNAL_SECRET não está definido".into(),
+        ));
     }
     let got = headers
         .get("x-voice-secret")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .as_bytes();
-    // Comparação de comprimento-constante simples (segredo de alta entropia).
-    if got.len() == cfg.len() && got.iter().zip(cfg).fold(0u8, |a, (x, y)| a | (x ^ y)) == 0 {
+        .unwrap_or("");
+    if crate::apikeys::ct_eq(got.as_bytes(), configured.as_bytes()) {
         Ok(())
     } else {
         Err(ApiError::Unauthorized)
@@ -589,6 +613,142 @@ mod tests {
         assert_eq!(estimate_cost(60, 10.0), 10.0);
         assert_eq!(estimate_cost(61, 10.0), 20.0); // 61s → 2 min
         assert_eq!(estimate_cost(600, 2.5), 25.0);
+    }
+
+    fn with_secret(v: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("x-voice-secret", v.parse().unwrap());
+        h
+    }
+
+    fn status(r: Result<(), ApiError>) -> u16 {
+        match r {
+            Ok(()) => 200,
+            Err(e) => axum::response::IntoResponse::into_response(e)
+                .status()
+                .as_u16(),
+        }
+    }
+
+    const STRONG: &str = "3f9c1a7e0b5d4c2a8e6f1b3d5a7c9e0f2b4d6a8c";
+
+    /// R154 — sem segredo, ou com o segredo publicado no repositório, as rotas
+    /// de IVR dão 503 com razão. Mesmo quem manda o valor «certo».
+    #[test]
+    fn ivr_refuses_missing_short_or_burned_secret_with_503() {
+        use crate::config::voice_secret_refusal;
+        for configured in [
+            "",
+            "curto-demais",
+            "voice-internal-secret-for-pstn",
+            "dev-voice-secret-abc123",
+        ] {
+            let refusal = voice_secret_refusal(configured, false);
+            assert!(refusal.is_some(), "«{configured}» devia ser recusado");
+            let r = authorize_media_secret(
+                configured,
+                refusal,
+                &with_secret(if configured.is_empty() {
+                    "x"
+                } else {
+                    configured
+                }),
+            );
+            assert_eq!(
+                status(r),
+                503,
+                "«{configured}» com o próprio valor no cabeçalho"
+            );
+            assert_eq!(
+                status(authorize_media_secret(
+                    configured,
+                    refusal,
+                    &HeaderMap::new()
+                )),
+                503
+            );
+        }
+        // Todos os valores queimados são recusados, e a razão é a lista e não
+        // o comprimento (ver a razão devolvida): um valor publicado futuro com
+        // 32+ caracteres também não pode passar.
+        for burned in crate::config::BURNED_VOICE_SECRETS {
+            let r = voice_secret_refusal(burned, false).unwrap_or_default();
+            assert!(r.contains("publicado"), "«{burned}»: {r}");
+        }
+        // Defesa em profundidade: vazio sem razão calculada também é 503.
+        assert_eq!(
+            status(authorize_media_secret("", None, &with_secret(""))),
+            503
+        );
+    }
+
+    #[test]
+    fn ivr_rejects_wrong_or_absent_header_with_401() {
+        let refusal = crate::config::voice_secret_refusal(STRONG, false);
+        assert_eq!(refusal, None);
+        assert_eq!(
+            status(authorize_media_secret(STRONG, refusal, &HeaderMap::new())),
+            401
+        );
+        assert_eq!(
+            status(authorize_media_secret(
+                STRONG,
+                refusal,
+                &with_secret("errado")
+            )),
+            401
+        );
+        // Prefixo do certo: o comprimento conta.
+        assert_eq!(
+            status(authorize_media_secret(
+                STRONG,
+                refusal,
+                &with_secret(&STRONG[..31])
+            )),
+            401
+        );
+        let mut quase = STRONG.to_string();
+        quase.replace_range(39..40, "1");
+        assert_eq!(
+            status(authorize_media_secret(
+                STRONG,
+                refusal,
+                &with_secret(&quase)
+            )),
+            401
+        );
+    }
+
+    #[test]
+    fn ivr_accepts_the_right_strong_secret() {
+        let refusal = crate::config::voice_secret_refusal(STRONG, false);
+        assert_eq!(
+            status(authorize_media_secret(
+                STRONG,
+                refusal,
+                &with_secret(STRONG)
+            )),
+            200
+        );
+    }
+
+    /// `DELONIX_ALLOW_INSECURE=1` mantém o valor de dev do Makefile a funcionar,
+    /// mas nunca um segredo vazio.
+    #[test]
+    fn insecure_dev_keeps_the_dev_value_but_not_empty() {
+        use crate::config::voice_secret_refusal;
+        let dev = "dev-voice-secret-abc123";
+        let refusal = voice_secret_refusal(dev, true);
+        assert_eq!(refusal, None);
+        assert_eq!(
+            status(authorize_media_secret(dev, refusal, &with_secret(dev))),
+            200
+        );
+        assert_eq!(
+            status(authorize_media_secret(dev, refusal, &with_secret("outro"))),
+            401
+        );
+        assert!(voice_secret_refusal("", true).is_some());
     }
 
     #[test]
