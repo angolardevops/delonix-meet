@@ -178,6 +178,9 @@
 .org-inline--rooms {
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 72px auto;
 }
+.org-inline--pair {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
 
 /* Seleccionar pessoas para um grupo. */
 .org-pick {
@@ -562,7 +565,8 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .org-inline,
-  .org-inline--rooms {
+  .org-inline--rooms,
+  .org-inline--pair {
     grid-template-columns: minmax(0, 1fr);
   }
   .org-toolbar .org-search {
@@ -726,4 +730,95 @@
 }
 .org-dir__head .dx-tabs button[aria-selected='true']::after {
   display: none;
+}
+
+/* ------------------------------------------------------- gateway de SMS */
+.org-sms__secret {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 8%, var(--raised));
+  font-size: var(--t-sm);
+  min-width: 0;
+}
+.org-sms__secret-title {
+  color: var(--live-text);
+}
+.org-sms__code {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 4px 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+.org-sms__code code {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--t-sm);
+  word-break: break-all;
+  user-select: all;
+}
+.org-sms__plain {
+  margin: 0;
+}
+.org-sms__list li {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.org-sms__list .org-simple__main {
+  flex: 1 1 220px;
+}
+.org-simple li.org-sms__row--selected {
+  margin: 0 -14px;
+  padding-inline: 14px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.org-sms__side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-left: auto;
+}
+.org-sms__reason {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: var(--t-sm);
+  color: var(--live-text);
+  overflow-wrap: anywhere;
+}
+.org-sms__reason .dx-icon {
+  flex: none;
+  margin-top: 2px;
+}
+.org-sms__body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.org-sms__error {
+  font-size: var(--t-sm);
+  color: var(--record-text);
+  overflow-wrap: anywhere;
+}
+.org-sms__form {
+  padding-top: 6px;
+}
+.org-sms__counter {
+  display: grid;
+  gap: 4px;
+  margin-top: -6px;
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+.org-sms__route {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
 }

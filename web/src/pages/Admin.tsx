@@ -9,7 +9,8 @@
  * A versão na barra é a que o servidor declara em `/api/status`; a tabela de
  * organizações tem só as colunas que `/api/orgs` devolve; o selo «imutável» da
  * auditoria é a verificação da cadeia de hashes; o cartão de voz é o plano de
- * controlo do dial-in (DIDs, facturação, CDR).
+ * controlo do dial-in (DIDs, facturação, CDR); o de SMS é o gateway por USB e
+ * os operadores (ADR-0005).
  *
  * Fica de fora por falta de backend: nós de media/SIP/gravação/transcodificação,
  * licenças e planos, armazenamento por tipo, residência de dados, retenção de
@@ -30,6 +31,7 @@ import OrgsCard from './admin/OrgsCard'
 import { RetentionCard, StorageCard } from './admin/PolicyCards'
 import { refusalAware, useOrgSelection } from './admin/orgShared'
 import SettingsCard from './admin/SettingsCard'
+import SmsCard from './admin/SmsCard'
 import { BranchesCard, GroupsCard, RoomsCard } from './admin/StructureCards'
 import VoiceCard from './admin/VoiceCard'
 import type { OrgSummary } from '../api'
@@ -145,6 +147,7 @@ function AdminBody({
           <AuditCard orgId={org.id} />
           <MembersCard orgId={org.id} meId={user.id} state={people.state} reload={reloadMembers} branches={branchList} />
           <VoiceCard orgId={org.id} />
+          <SmsCard orgId={org.id} />
         </div>
         <div className="org-admin__side">
           <StorageCard stats={stats.state} />

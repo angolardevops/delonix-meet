@@ -1614,5 +1614,113 @@ export const listVoiceCdr = (orgId: string, signal?: AbortSignal) =>
 export const voiceBilling = (orgId: string, period: VoicePeriod = 'month', signal?: AbortSignal) =>
   request<VoiceBilling>(`/api/orgs/${orgId}/voice/billing?period=${period}`, { signal })
 
+// ---------- Gateway de SMS (ADR-0005) — só administrador da org ----------
+//
+// O servidor não vê USB: o telefone está ligado a outra máquina, onde corre o
+// agente `delonix-sms-gateway`. Estas rotas são a vista da organização sobre
+// isso. «Capaz», «online», a rota e os segmentos cobrados decide-os o servidor.
+
+export interface SmsGateway {
+  id: string
+  name: string
+  prefix: string
+  created_at: string
+  last_seen_at: string | null
+  online: boolean
+}
+
+export type SmsDeviceKind = 'modem' | 'android_adb' | 'android_mtp' | 'mass_storage_modem' | 'unknown'
+export type SmsTransport = 'at_serial' | 'modemmanager' | 'none'
+
+export interface SmsDevice {
+  id: string
+  gateway_id: string
+  gateway_name: string
+  device_key: string
+  vendor_id: string
+  product_id: string
+  manufacturer: string | null
+  product: string | null
+  serial: string | null
+  kind: SmsDeviceKind
+  transport: SmsTransport
+  port: string | null
+  capable: boolean
+  reason: string | null
+  operator_name: string | null
+  signal_percent: number | null
+  last_seen_at: string | null
+  online: boolean
+  selected: boolean
+}
+
+export interface SmsOperatorInfo {
+  operator: string
+  label: string
+  prefixes: string[]
+  configured: boolean
+}
+
+export interface SmsRoute {
+  device_id: string | null
+  operators: SmsOperatorInfo[]
+}
+
+export type SmsStatus = 'queued' | 'claimed' | 'sent' | 'failed'
+export type SmsRouteChoice = 'auto' | 'usb' | 'operator'
+
+export interface SmsMessage {
+  id: string
+  to: string
+  body: string
+  encoding: string
+  segments: number
+  route: string
+  operator: string | null
+  device_id: string | null
+  status: SmsStatus
+  error: string | null
+  provider_ref: string | null
+  created_at: string
+  sent_at: string | null
+}
+
+export const listSmsGateways = (orgId: string, signal?: AbortSignal) =>
+  request<SmsGateway[]>(`/api/orgs/${orgId}/sms/gateways`, { signal })
+/** `201` — o `token` só existe nesta resposta. */
+export const createSmsGateway = (orgId: string, name: string) =>
+  request<{ id: string; name: string; prefix: string; token: string }>(`/api/orgs/${orgId}/sms/gateways`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+/** `204` sem corpo — por isso `requestEmpty`: o `request` faria `res.json()` a nada. */
+export const revokeSmsGateway = (orgId: string, gatewayId: string) =>
+  requestEmpty(`/api/orgs/${orgId}/sms/gateways/${gatewayId}`, { method: 'DELETE' })
+export const listSmsDevices = (orgId: string, signal?: AbortSignal) =>
+  request<SmsDevice[]>(`/api/orgs/${orgId}/sms/devices`, { signal })
+export const getSmsRoute = (orgId: string, signal?: AbortSignal) =>
+  request<SmsRoute>(`/api/orgs/${orgId}/sms/route`, { signal })
+/** `422` se o dispositivo não for capaz (a razão vem em `error`); `null` deixa de usar. */
+export const setSmsRoute = (orgId: string, deviceId: string | null) =>
+  request<SmsRoute>(`/api/orgs/${orgId}/sms/route`, {
+    method: 'PUT',
+    body: JSON.stringify({ device_id: deviceId }),
+  })
+export const listSmsMessages = (orgId: string, pageSize?: number, signal?: AbortSignal) =>
+  request<Page<SmsMessage>>(`/api/orgs/${orgId}/sms/messages${pageSize ? `?page_size=${pageSize}` : ''}`, { signal })
+/**
+ * Enfileira um SMS (`202`). A `idempotencyKey` é gerada por SUBMISSÃO: um
+ * reenvio da mesma submissão devolve a mesma mensagem em vez de cobrar dois SMS.
+ * `422` quando não há rota — a razão, em português, vem em `error`.
+ */
+export const sendSms = (orgId: string, body: { to: string; body: string; route: SmsRouteChoice }, idempotencyKey: string) =>
+  request<SmsMessage>(`/api/orgs/${orgId}/sms/messages`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(body),
+  })
+export const getSmsMessage = (orgId: string, messageId: string, signal?: AbortSignal) =>
+  request<SmsMessage>(`/api/orgs/${orgId}/sms/messages/${messageId}`, { signal })
+
 /** Tecto de upload de uma gravação no servidor (recordings.rs MAX_RECORDING_BYTES). */
 export const MAX_RECORDING_UPLOAD_BYTES = 512 * 1024 * 1024
