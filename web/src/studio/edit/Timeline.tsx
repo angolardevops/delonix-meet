@@ -127,8 +127,10 @@ export default function Timeline({
   }, [T, pps, leitor.aTocar])
 
   const regua = useMemo(() => {
+    // Uma marca encostada ao fim teria o rótulo a sair da área e dava scroll
+    // horizontal à linha ajustada: só entram as que têm espaço para o rótulo.
     const n = Math.ceil(largura / (zoom * pps))
-    return Array.from({ length: n }, (_, i) => i * zoom)
+    return Array.from({ length: n }, (_, i) => i * zoom).filter((s) => s * pps <= largura - 40)
   }, [largura, zoom, pps])
 
   function tempoDoPonteiro(e: { clientX: number }): number {

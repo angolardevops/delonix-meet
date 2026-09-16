@@ -1,5 +1,5 @@
 node_modules
-.sessao.json
+.sessao*.json
 app/
 lado-a-lado/
 *.webm
