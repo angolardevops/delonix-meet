@@ -1,6 +1,6 @@
 export default {
   comum: {
-    voltar: 'Voltar à entrada',
+    voltar: 'Voltar ao início',
     navegacao: 'Páginas públicas',
     estado: 'Estado do serviço',
     api: 'API',

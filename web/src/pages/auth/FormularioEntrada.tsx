@@ -131,7 +131,7 @@ export default function FormularioEntrada({
     <div className="auth-form">
       <header className="auth-form__head">
         <h1>{registo ? t('auth.registo.titulo') : t('auth.entrar.titulo')}</h1>
-        <p className="dx-muted dx-num">{t('auth.entrar.instancia', { host: location.host })}</p>
+        <p className="dx-muted">{t('auth.entrar.instancia', { host: location.host })}</p>
       </header>
 
       {registo && <p className="auth-form__nota">{t('auth.registo.explicacao', { app: getAppName() })}</p>}

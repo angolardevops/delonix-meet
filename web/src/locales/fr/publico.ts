@@ -1,6 +1,6 @@
 export default {
   comum: {
-    voltar: 'Retour à la connexion',
+    voltar: "Retour à l'accueil",
     navegacao: 'Pages publiques',
     estado: 'État du service',
     api: 'API',

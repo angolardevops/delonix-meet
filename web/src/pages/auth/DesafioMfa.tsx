@@ -75,7 +75,6 @@ export default function DesafioMfa({
           inputMode={totp ? 'numeric' : 'text'}
           autoCapitalize="characters"
           spellCheck={false}
-          maxLength={totp ? 6 : 11}
           placeholder={totp ? '000000' : 'XXXXX-XXXXX'}
           value={code}
           onChange={(e) => setCode(normalizarCodigo(e.target.value, tipo))}
