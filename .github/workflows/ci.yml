@@ -76,6 +76,11 @@ jobs:
       - name: Build de release
         run: cargo build --manifest-path server/Cargo.toml --release
 
+      # Aqui e não no job de fitness: gerar o spec corre o binário, e este job
+      # já o compilou.
+      - name: Contrato OpenAPI (spec gerado = commitado; catraca da cobertura)
+        run: mkdir -p ~/.cache && bash scripts/check-openapi.sh
+
   frontend:
     name: Frontend (TypeScript/React)
     runs-on: ubuntu-latest

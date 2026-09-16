@@ -1639,3 +1639,15 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `web/e2e/captura-empregado.mjs` (ataque directo à base, no job `isolamento` do CI).
 
 **Ficheiros.** `server/src/org.rs` (`add_employee`), `web/e2e/captura-empregado.mjs`, `.github/workflows/ci.yml`.
+
+### R123 — O portão de autorização não via o segundo handler de uma rota
+
+**Sintoma.** Nenhum visível, e é isso o problema. `scripts/check-route-auth.sh` dava verde com uma rota como `.route("/api/users/me", get(users::me).patch(<handler sem autenticação>))`. Medido a 2026-09-16 com o controlo negativo: trocar `update_me` por um handler público → portão antigo **verde**, portão corrigido **vermelho**.
+
+**Causa raiz.** O corpo de cada `.route(…)` lia-se com uma regex preguiçosa, `\.route\(\s*"…"\s*,(.*?)\)\s*(?=[,.\n])`, que pára no primeiro `)` seguido de `.`. Em `get(a).patch(b)` o corpo capturado era só `get(a`: o `b` encadeado nunca era inspeccionado. Eram **26 handlers** fora do portão — todos os `PATCH`/`PUT`/`DELETE`/`POST` escritos a seguir a um `get(…)` (`update_me`, `webhooks::create`, `sso` PUT/DELETE, `recordings` link, …). Nenhum estava de facto sem autenticação; nenhum estava provado.
+
+**Regra.** Um portão que lê código lê-o por estrutura, não por regex preguiçosa: o corpo de `.route(` é o texto entre parêntesis EQUILIBRADOS. E um portão novo nasce com o controlo negativo do caso que o originou (R51/R94) — aqui, o handler público encadeado.
+
+**Portão.** `scripts/check-route-auth.sh` (parser equilibrado); o `scripts/check-openapi.sh` usa o mesmo, e foi ao contar operações que a diferença apareceu (94 contadas pela regex vs 120 montadas).
+
+**Ficheiros.** `scripts/check-route-auth.sh`, `scripts/check-openapi.sh`.

@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{auth::AuthUser, error::ApiError, AppState};
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct UserPublic {
     pub id: Uuid,
     pub email: String,
@@ -36,6 +36,23 @@ pub async fn fetch_public(db: &PgPool, user_id: Uuid) -> Result<UserPublic, ApiE
     .await?)
 }
 
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(me, update_me, search),
+    components(schemas(UserPublic, UpdateMeReq))
+)]
+pub struct ApiDoc;
+
+/// O perfil de quem está autenticado.
+#[utoipa::path(
+    get, path = "/api/users/me", tag = "users",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = UserPublic),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn me(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -43,7 +60,7 @@ pub async fn me(
     Ok(Json(fetch_public(&state.db, auth.user_id).await?))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateMeReq {
     pub username: Option<String>,
     pub password: Option<String>,
@@ -51,6 +68,16 @@ pub struct UpdateMeReq {
 }
 
 /// Atualiza os próprios dados: username e/ou password (cada campo é opcional).
+#[utoipa::path(
+    patch, path = "/api/users/me", tag = "users",
+    security(("session" = [])),
+    request_body = UpdateMeReq,
+    responses(
+        (status = 200, body = UserPublic),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn update_me(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -95,13 +122,24 @@ pub async fn update_me(
     Ok(Json(fetch_public(&state.db, auth.user_id).await?))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct SearchQuery {
+    /// Termo (email ou username), 2+ caracteres.
     pub q: String,
 }
 
 /// Pesquisa utilizadores por email/username (para convidar/partilhar).
 /// Devolve no máximo 10; exclui o próprio.
+#[utoipa::path(
+    get, path = "/api/users/search", tag = "users",
+    security(("session" = [])),
+    params(SearchQuery),
+    responses(
+        (status = 200, body = Vec<UserPublic>),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn search(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

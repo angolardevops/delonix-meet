@@ -111,14 +111,17 @@ async fn validate_public_url(raw: &str, allow_hosts: &[String]) -> Result<(), Ap
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Webhook {
     pub id: Uuid,
     pub org_id: Uuid,
+    /// `slack` | `teams` | `mattermost` | `generic`.
     pub kind: String,
     pub url: String,
     #[serde(skip_serializing)]
+    #[schema(ignore)]
     pub secret: String,
+    /// Eventos subscritos, separados por vírgula (ver `KNOWN_EVENTS`).
     pub events: String,
     pub active: bool,
 }
@@ -212,7 +215,7 @@ async fn deliver(client: &reqwest::Client, hook: &Webhook, event: &Event) -> any
 
 // ---------- CRUD (admin da organização) ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct WebhookReq {
     pub kind: String,
     pub url: String,
@@ -222,6 +225,22 @@ pub struct WebhookReq {
     pub events: Option<String>,
 }
 
+/// Documentação OpenAPI das rotas deste módulo.
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(list, create, delete), components(schemas(Webhook, WebhookReq)))]
+pub struct ApiDoc;
+
+/// Webhooks da organização. Só administradores.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/webhooks", tag = "webhooks",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Vec<Webhook>),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     auth: crate::auth::AuthUser,
@@ -237,6 +256,18 @@ pub async fn list(
     Ok(axum::Json(hooks))
 }
 
+/// Cria um webhook. O URL passa pela guarda anti-SSRF.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/webhooks", tag = "webhooks",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    request_body = WebhookReq,
+    responses(
+        (status = 200, body = Webhook),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     auth: crate::auth::AuthUser,
@@ -381,6 +412,16 @@ mod tests {
     }
 }
 
+/// Apaga um webhook.
+#[utoipa::path(
+    delete, path = "/api/orgs/{org_id}/webhooks/{hook_id}", tag = "webhooks",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path), ("hook_id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 403, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn delete(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     auth: crate::auth::AuthUser,

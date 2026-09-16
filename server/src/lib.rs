@@ -21,6 +21,7 @@ mod mfa;
 mod mls;
 mod odoo;
 mod odoo_sso;
+pub mod openapi;
 mod org;
 mod presence;
 mod pubsub;
@@ -191,6 +192,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // continuava a mandar-lhe entradas novas, que morriam com ele.
         .route("/ready", get(readiness))
         .route("/api/status", get(status))
+        // Contratos OpenAPI gerados do código (ADR-0005 §3).
+        .route("/api/openapi.json", get(openapi::bff_json))
+        .route("/api/v1/openapi.json", get(openapi::v1_json))
         .nest("/api/auth", auth_routes)
         .route("/api/users/me", get(users::me).patch(users::update_me))
         // MFA (TOTP, RFC 6238) — ver mfa.rs.
@@ -640,6 +644,17 @@ fn init_tracing(json: bool) {
 /// Arranca o servidor: configuração, base, estado partilhado, tarefas de
 /// fundo e o listener HTTP, até ao fim do drain.
 pub async fn run() {
+    // `delonix-server openapi bff|v1`: imprime o spec e sai. Não precisa de
+    // configuração nem de base — é o que o portão e o gerador do cliente usam.
+    let mut args = std::env::args().skip(1);
+    if args.next().as_deref() == Some("openapi") {
+        let doc = match args.next().as_deref() {
+            Some("v1") => openapi::v1(),
+            _ => openapi::bff(),
+        };
+        print!("{}", openapi::to_pretty(&doc));
+        return;
+    }
     let config = Config::from_env();
     init_tracing(config.log_json);
     // Avisado DEPOIS de os logs existirem — antes perdia-se sem ninguém ver.

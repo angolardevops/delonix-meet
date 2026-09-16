@@ -1,0 +1,76 @@
+{
+  "components": {
+    "schemas": {
+      "ErrorBody": {
+        "description": "Envelope de erro de todas as superfícies (ver `error.rs`).",
+        "properties": {
+          "code": {
+            "description": "Código estável (contrato), p.ex. `registration.domain_taken`.",
+            "type": "string"
+          },
+          "details": {
+            "items": {
+              "$ref": "#/components/schemas/FieldViolation"
+            },
+            "type": "array"
+          },
+          "error": {
+            "description": "Mensagem para pessoas. Pode mudar.",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "Igual ao cabeçalho `X-Request-Id`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "error",
+          "code",
+          "details"
+        ],
+        "type": "object"
+      },
+      "FieldViolation": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "description"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "api_key": {
+        "description": "Chave de API da organização (`dlx_…`).",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "session": {
+        "bearerFormat": "JWT",
+        "description": "Access token da sessão (15 min), renovado por /api/auth/refresh.",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Superfície estável para SDK, mobile e integrações. Autentica por chave `dlx_`. Muda só com v2.",
+    "license": {
+      "name": ""
+    },
+    "title": "Delonix Meet — API pública v1",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {}
+}
