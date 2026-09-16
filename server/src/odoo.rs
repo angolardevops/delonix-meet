@@ -229,6 +229,13 @@ pub struct OdooUserEntry {
     pub email: String,
     #[serde(default)]
     pub is_admin: bool,
+    /// `hr.employee.mobile_phone` / `work_phone`. Aditivos à v1: ausentes não
+    /// mexem no número; `false`/`""` apagam o que veio do Odoo; um número
+    /// editado à mão no Delonix nunca é sobrescrito (migração 0040).
+    #[serde(default)]
+    pub mobile_phone: Option<serde_json::Value>,
+    #[serde(default)]
+    pub work_phone: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -251,6 +258,9 @@ pub struct ProvisionResult {
     /// v1: um integrador antigo ignora o campo, e continua a receber `created`
     /// e `updated` com o mesmo significado.
     pub skipped: Vec<SkippedUser>,
+    /// Membros sincronizados cujo telefone do Odoo NÃO foi gravado (ex.: número
+    /// fora de Angola, que o encaminhamento de SMS não serve). Aditivo à v1.
+    pub phones_rejected: Vec<SkippedUser>,
 }
 
 #[derive(Serialize)]
@@ -282,6 +292,7 @@ pub async fn provision(
     let mut created = 0usize;
     let mut updated = 0usize;
     let mut skipped = Vec::new();
+    let mut phones_rejected = Vec::new();
     let admin_email = req.admin_email.trim().to_lowercase();
 
     // Actualizar nome da org para o nome da empresa Odoo
@@ -322,6 +333,22 @@ pub async fn provision(
             }
             Err(e) => return Err(e),
         };
+
+        let phone = crate::sms::phone_from_directory(
+            &crate::sms::DirectoryField::from_json(u.mobile_phone.as_ref()),
+            &crate::sms::DirectoryField::from_json(u.work_phone.as_ref()),
+        );
+        match phone {
+            crate::sms::DirectoryPhone::Untouched => {}
+            crate::sms::DirectoryPhone::Set(p) => {
+                crate::org::sync_member_phone_from_directory(&state, org_id, user_id, p.as_deref())
+                    .await?;
+            }
+            crate::sms::DirectoryPhone::Rejected(reason) => phones_rejected.push(SkippedUser {
+                email: email.clone(),
+                reason,
+            }),
+        }
 
         if existed {
             // O nome acompanha o Odoo, mas só numa conta que ESTA org gere (o
@@ -365,6 +392,7 @@ pub async fn provision(
         created,
         updated,
         skipped,
+        phones_rejected,
     }))
 }
 
