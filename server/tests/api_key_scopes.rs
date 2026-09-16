@@ -85,20 +85,21 @@ fn routes(
 ) -> Vec<(reqwest::Method, String, Option<Value>, &'static str)> {
     use reqwest::Method as M;
     vec![
-        (M::GET, "/org".into(), None, "org:read"),
+        (M::GET, "/organization".into(), None, "org:read"),
         (M::POST, "/rooms".into(), Some(json!({})), "rooms:write"),
         (M::GET, format!("/rooms/{code}"), None, "rooms:read"),
         (
             M::POST,
-            format!("/rooms/{code}/join-bot"),
+            format!("/rooms/{code}/bots"),
             Some(json!({"bot_name": "b"})),
             "bots:join",
         ),
         (M::GET, "/recordings".into(), None, "recordings:read"),
         (M::GET, "/meetings".into(), None, "meetings:read"),
+        (M::GET, format!("/meetings/{mid}"), None, "meetings:read"),
         (
             M::GET,
-            format!("/meetings/{mid}/notes"),
+            format!("/meetings/{mid}/minutes"),
             None,
             "meetings:read",
         ),
@@ -281,7 +282,7 @@ async fn chave_expirada_e_401_api_key_expired(db: sqlx::PgPool) {
     .await;
     assert_eq!(st, 200, "{k}");
     let key = k["key"].as_str().unwrap();
-    let (st, _) = v1(&app, reqwest::Method::GET, "/org", key, None).await;
+    let (st, _) = v1(&app, reqwest::Method::GET, "/organization", key, None).await;
     assert_eq!(st, 200, "antes de expirar serve");
 
     sqlx::query("UPDATE org_api_keys SET expires_at = now() - interval '1 second' WHERE id = $1")
@@ -289,11 +290,11 @@ async fn chave_expirada_e_401_api_key_expired(db: sqlx::PgPool) {
         .execute(&app.db)
         .await
         .unwrap();
-    let (st, err) = v1(&app, reqwest::Method::GET, "/org", key, None).await;
+    let (st, err) = v1(&app, reqwest::Method::GET, "/organization", key, None).await;
     assert_eq!(st, 401, "{err}");
     assert_eq!(err["code"], "api_key.expired");
     // Desconhecida e revogada continuam a ser o 401 de sempre.
-    let (st, err) = v1(&app, reqwest::Method::GET, "/org", "dlx_nao_existe", None).await;
+    let (st, err) = v1(&app, reqwest::Method::GET, "/organization", "dlx_nao_existe", None).await;
     assert_eq!(
         (st, err["code"].as_str()),
         (401, Some("auth.unauthenticated"))
@@ -316,9 +317,9 @@ async fn last_used_at_no_maximo_uma_escrita_por_minuto(db: sqlx::PgPool) {
         .unwrap()
     };
     assert!(last().await.is_none());
-    v1(&app, reqwest::Method::GET, "/org", &key, None).await;
+    v1(&app, reqwest::Method::GET, "/organization", &key, None).await;
     let t1 = last().await.expect("o primeiro uso fica registado");
-    v1(&app, reqwest::Method::GET, "/org", &key, None).await;
+    v1(&app, reqwest::Method::GET, "/organization", &key, None).await;
     assert_eq!(last().await, Some(t1), "dentro do minuto não se escreve");
 
     sqlx::query(
@@ -329,7 +330,7 @@ async fn last_used_at_no_maximo_uma_escrita_por_minuto(db: sqlx::PgPool) {
     .await
     .unwrap();
     let antigo = last().await.unwrap();
-    v1(&app, reqwest::Method::GET, "/org", &key, None).await;
+    v1(&app, reqwest::Method::GET, "/organization", &key, None).await;
     assert!(
         last().await.unwrap() > antigo,
         "passado o minuto volta a registar"
@@ -448,14 +449,15 @@ async fn chave_provisionada_serve_os_fluxos_do_odoo(db: sqlx::PgPool) {
     assert_eq!(st, 200, "{list}");
     assert_eq!(list["meetings"][0]["id"], mid);
     for (method, path, body) in [
-        (M::GET, format!("/meetings/{mid}/notes"), None),
+        (M::GET, format!("/meetings/{mid}"), None),
+        (M::GET, format!("/meetings/{mid}/minutes"), None),
         (
             M::PATCH,
             format!("/meetings/{mid}"),
             Some(json!({"title": "Outro"})),
         ),
         (M::POST, format!("/meetings/{mid}/ring"), None),
-        (M::GET, "/org".to_string(), None),
+        (M::GET, "/organization".to_string(), None),
         (M::DELETE, format!("/meetings/{mid}"), None),
     ] {
         let (st, res) = v1(&app, method.clone(), &path, &key, body).await;
@@ -506,7 +508,7 @@ async fn limite_por_chave_isola_duas_chaves_do_mesmo_ip(db: sqlx::PgPool) {
     let (_, k2) = app.api_key(&a).await;
 
     for i in 0..120 {
-        let (st, _) = v1(&app, reqwest::Method::GET, "/org", &k1, None).await;
+        let (st, _) = v1(&app, reqwest::Method::GET, "/organization", &k1, None).await;
         assert_eq!(st, 200, "pedido {i} da chave 1");
     }
     let auth = format!("Bearer {k1}");
@@ -524,10 +526,10 @@ async fn limite_por_chave_isola_duas_chaves_do_mesmo_ip(db: sqlx::PgPool) {
     assert!((1..=60).contains(&retry), "Retry-After = {retry}");
 
     // A chave 2, mesmo IP: intacta.
-    let (st, _) = v1(&app, reqwest::Method::GET, "/org", &k2, None).await;
+    let (st, _) = v1(&app, reqwest::Method::GET, "/organization", &k2, None).await;
     assert_eq!(st, 200, "a chave 2 não paga pela chave 1");
     // Sem chave válida conta o IP, que também está intacto.
-    let (st, _) = v1(&app, reqwest::Method::GET, "/org", "dlx_inventada", None).await;
+    let (st, _) = v1(&app, reqwest::Method::GET, "/organization", "dlx_inventada", None).await;
     assert_eq!(st, 401);
 }
 
@@ -563,7 +565,7 @@ async fn revogar_204_e_404_para_inexistente_ou_de_outra_org(db: sqlx::PgPool) {
     // …e pelo caminho da B: 404 (não é membro).
     let r = delete(path(&b, &kb_id), a.token.clone()).await;
     assert_eq!(r.status, 404, "{}", r.text);
-    let (st, _) = v1(&app, reqwest::Method::GET, "/org", &kb, None).await;
+    let (st, _) = v1(&app, reqwest::Method::GET, "/organization", &kb, None).await;
     assert_eq!(st, 200, "a chave da B continua a servir");
 
     // Inexistente: 404.
@@ -574,7 +576,7 @@ async fn revogar_204_e_404_para_inexistente_ou_de_outra_org(db: sqlx::PgPool) {
     let r = delete(path(&a, &ka_id), a.token.clone()).await;
     assert_eq!(r.status, 204);
     assert!(r.text.is_empty(), "{}", r.text);
-    let (st, _) = v1(&app, reqwest::Method::GET, "/org", &ka, None).await;
+    let (st, _) = v1(&app, reqwest::Method::GET, "/organization", &ka, None).await;
     assert_eq!(st, 401);
     // Revogar outra vez: já não existe.
     let r = delete(path(&a, &ka_id), a.token.clone()).await;
