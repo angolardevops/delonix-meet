@@ -101,6 +101,7 @@ export default function Shell({
     { key: 'integrations', label: t('shell.nav.integracoes'), icon: 'plug' },
     { key: 'analytics', label: t('shell.nav.analise'), icon: 'chart' },
     { key: 'admin', label: t('shell.nav.administracao'), icon: 'building' },
+    { key: 'ai', label: t('consola.nav.ia'), icon: 'sparkles' },
   ]
 
   const openSettings = useCallback((tab: SettingsTab = 'account') => setSettings(tab), [])

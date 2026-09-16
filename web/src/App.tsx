@@ -24,6 +24,7 @@ const Whiteboards = lazy(() => import('./pages/Whiteboards'))
 const Studio = lazy(() => import('./pages/Studio'))
 const Integrations = lazy(() => import('./pages/Integrations'))
 const Admin = lazy(() => import('./pages/Admin'))
+const Intelligence = lazy(() => import('./pages/Intelligence'))
 const Status = lazy(() => import('./pages/Status'))
 const ApiDocs = lazy(() => import('./pages/ApiDocs'))
 const Legal = lazy(() => import('./pages/Legal'))
@@ -43,7 +44,7 @@ type Route =
   | { kind: 'lobby'; code: string }
   | { kind: 'share'; token: string }
 
-const PAGES: NavKey[] = ['calendar', 'studio', 'recordings', 'whiteboards', 'directory', 'integrations', 'analytics', 'admin']
+const PAGES: NavKey[] = ['calendar', 'studio', 'recordings', 'whiteboards', 'directory', 'integrations', 'analytics', 'admin', 'ai']
 
 function parseHash(): Route {
   const h = location.hash
@@ -168,6 +169,7 @@ export default function App() {
               {route.kind === 'integrations' && <Integrations />}
               {route.kind === 'analytics' && <Analytics />}
               {route.kind === 'admin' && <Admin />}
+              {route.kind === 'ai' && <Intelligence />}
             </RouteFallback>
           </Shell>
         )}

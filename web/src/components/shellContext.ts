@@ -12,6 +12,7 @@ export type NavKey =
   | 'integrations'
   | 'analytics'
   | 'admin'
+  | 'ai'
 
 export interface ShellApi {
   user: User
