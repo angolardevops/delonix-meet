@@ -1,7 +1,3 @@
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2,
-};
 use axum::{
     extract::{FromRequestParts, State},
     http::{header, request::Parts, HeaderMap},
@@ -10,9 +6,7 @@ use axum::{
 };
 use chrono::Utc;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -92,34 +86,22 @@ pub fn access_token(state: &AppState, user_id: Uuid) -> Result<String, ApiError>
 // ---------- Passwords ----------
 
 pub fn hash_password(password: &str) -> Result<String, ApiError> {
-    let salt = SaltString::generate(&mut OsRng);
-    Ok(Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map_err(ApiError::internal)?
-        .to_string())
+    delonix_meet_core::crypto::hash_password(password).map_err(ApiError::internal)
 }
 
 pub fn verify_password(password: &str, hash: &str) -> bool {
-    PasswordHash::new(hash)
-        .map(|parsed| {
-            Argon2::default()
-                .verify_password(password.as_bytes(), &parsed)
-                .is_ok()
-        })
-        .unwrap_or(false)
+    delonix_meet_core::crypto::verify_password(password, hash)
 }
 
 // ---------- Refresh tokens ----------
 
 pub fn new_refresh_token() -> (String, String) {
-    let mut bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut bytes);
-    let token = hex::encode(bytes);
+    let token = delonix_meet_core::crypto::random_hex(32);
     (token.clone(), hash_refresh_token(&token))
 }
 
 pub fn hash_refresh_token(token: &str) -> String {
-    hex::encode(Sha256::digest(token.as_bytes()))
+    delonix_meet_core::crypto::sha256_hex(token)
 }
 
 // ---------- Extractor ----------

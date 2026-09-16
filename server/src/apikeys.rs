@@ -10,17 +10,13 @@ use axum::{
     http::{request::Parts, HeaderMap},
     Json,
 };
-use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{auth::AuthUser, error::ApiError, AppState};
 
-fn sha256_hex(s: &str) -> String {
-    hex::encode(Sha256::digest(s.as_bytes()))
-}
+use delonix_meet_core::crypto::{ct_eq, sha256_hex};
 
 // ---------- Autenticação por chave de API (extractor) ----------
 
@@ -120,9 +116,7 @@ pub async fn create(
     Json(req): Json<CreateKeyReq>,
 ) -> Result<Json<CreatedKey>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-    let mut bytes = [0u8; 32]; // 256 bits de entropia
-    OsRng.fill_bytes(&mut bytes);
-    let key = format!("dlx_{}", hex::encode(bytes));
+    let key = delonix_meet_core::crypto::prefixed_token("dlx_"); // 256 bits de entropia
     let prefix = key.chars().take(12).collect::<String>();
     let hash = sha256_hex(&key);
     let name = req.name.trim().chars().take(60).collect::<String>();
@@ -527,19 +521,6 @@ pub struct ProvisionedOrg {
     pub odoo_token: Option<String>,
 }
 
-/// Comparação em tempo constante para não abrir um oráculo de temporização
-/// sobre o segredo de provisão.
-pub(crate) fn ct_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
 /// Ver `ensure_provisioning_user`. Exposto para o login por conta Odoo, que
 /// também precisa de um dono técnico para a org que acabou de nascer.
 pub async fn ensure_provisioning_user_pub(state: &AppState) -> Result<Uuid, ApiError> {
@@ -559,9 +540,7 @@ async fn ensure_provisioning_user(state: &AppState) -> Result<Uuid, ApiError> {
     {
         return Ok(id);
     }
-    let mut pw = [0u8; 24];
-    OsRng.fill_bytes(&mut pw);
-    let hash = crate::auth::hash_password(&hex::encode(pw))?;
+    let hash = crate::auth::hash_password(&delonix_meet_core::crypto::random_hex(24))?;
     let res: Result<(Uuid,), sqlx::Error> = sqlx::query_as(
         "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id",
     )
@@ -721,9 +700,7 @@ pub async fn v1_provision_org(
     .await?;
 
     // Chave de API da org (mesma geração que apikeys::create).
-    let mut bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut bytes);
-    let key = format!("dlx_{}", hex::encode(bytes));
+    let key = delonix_meet_core::crypto::prefixed_token("dlx_");
     let prefix = key.chars().take(12).collect::<String>();
     let hash = sha256_hex(&key);
     let key_name: String = req
@@ -787,8 +764,8 @@ pub async fn v1_provision_org(
 
     // Integração Odoo — activar e gerar dlxo_ token num só passo.
     let odoo_token = if req.setup_odoo {
-        let raw = crate::odoo::gen_token_pub();
-        let hash = crate::odoo::sha256_hex_pub(&raw);
+        let raw = delonix_meet_core::crypto::prefixed_token("dlxo_");
+        let hash = sha256_hex(&raw);
         let prefix: String = raw.chars().take(12).collect();
         let url = req.odoo_url.as_deref().unwrap_or("").trim();
         let db = req.odoo_db.as_deref().unwrap_or("").trim();

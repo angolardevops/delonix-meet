@@ -13,7 +13,6 @@
 
 use axum::{extract::State, Json};
 use hmac::{Hmac, Mac};
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use std::sync::Arc;
@@ -152,21 +151,12 @@ pub fn passo_do_codigo(segredo: &[u8], codigo: &str, agora: u64) -> Option<i64> 
 }
 
 pub fn igual_em_tempo_constante(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diferenca = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diferenca |= x ^ y;
-    }
-    diferenca == 0
+    delonix_meet_core::crypto::ct_eq(a, b)
 }
 
 /// Segredo novo de 160 bits — o tamanho que o RFC 4226 §4 recomenda para SHA-1.
 pub fn segredo_novo() -> Vec<u8> {
-    let mut s = vec![0u8; 20];
-    rand::thread_rng().fill(&mut s[..]);
-    s
+    delonix_meet_core::crypto::random_bytes::<20>().to_vec()
 }
 
 /// URI `otpauth://` que os autenticadores lêem de um código QR.
@@ -203,8 +193,8 @@ fn percent(s: &str) -> String {
 pub fn codigos_de_recuperacao() -> Vec<String> {
     (0..10)
         .map(|_| {
-            let mut b = [0u8; 7]; // 7 bytes ⇒ 12 chars base32; corta-se a 10
-            rand::thread_rng().fill(&mut b[..]);
+            // 7 bytes ⇒ 12 chars base32; corta-se a 10
+            let b = delonix_meet_core::crypto::random_bytes::<7>();
             let s = base32_encode(&b);
             format!("{}-{}", &s[..5], &s[5..10])
         })

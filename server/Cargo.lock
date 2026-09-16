@@ -747,6 +747,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 
 [[package]]
+name = "delonix-meet-core"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "base64 0.22.1",
+ "chrono",
+ "hex",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
 name = "delonix-server"
 version = "0.1.0"
 dependencies = [
@@ -757,6 +773,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dashmap",
+ "delonix-meet-core",
  "futures-util",
  "hex",
  "hmac",

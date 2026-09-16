@@ -196,6 +196,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-docs-drift.sh
 	@bash scripts/check-room-affinity.sh
 	@bash scripts/check-arquitectura-catraca.sh
+	@bash scripts/check-crate-deps.sh
 	@bash scripts/check-clippy-ratchet.sh
 	@bash scripts/check-dep-audit.sh
 	@bash scripts/check-tenant-rls.sh

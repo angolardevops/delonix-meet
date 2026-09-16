@@ -33,7 +33,6 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Utc};
-use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -218,9 +217,7 @@ async fn unique_username(db: &sqlx::PgPool, base: &str) -> String {
     }
     // Último recurso: sufixo aleatório (colisão é praticamente impossível e o
     // INSERT trata a corrida na mesma).
-    let mut b = [0u8; 4];
-    OsRng.fill_bytes(&mut b);
-    format!("{base} {}", hex::encode(b))
+    format!("{base} {}", delonix_meet_core::crypto::random_hex(4))
 }
 
 /// Resolve um email para um utilizador membro de `org_id`, criando-o se ainda

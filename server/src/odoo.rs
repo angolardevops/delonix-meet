@@ -16,9 +16,7 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Utc};
-use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -26,22 +24,11 @@ use crate::{auth::AuthUser, error::ApiError, AppState};
 
 // ---------- helpers ----------
 
-pub fn sha256_hex_pub(s: &str) -> String {
-    hex::encode(Sha256::digest(s.as_bytes()))
-}
+use delonix_meet_core::crypto::sha256_hex;
 
-fn sha256_hex(s: &str) -> String {
-    sha256_hex_pub(s)
-}
-
-pub fn gen_token_pub() -> String {
-    gen_token()
-}
-
+/// Token de integração Odoo: `dlxo_` + 256 bits.
 fn gen_token() -> String {
-    let mut b = [0u8; 32];
-    OsRng.fill_bytes(&mut b);
-    format!("dlxo_{}", hex::encode(b))
+    delonix_meet_core::crypto::prefixed_token("dlxo_")
 }
 
 // ---------- extractor — token de integração Odoo ----------

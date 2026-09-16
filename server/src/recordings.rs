@@ -6,10 +6,6 @@
 //! (`room_participants`), quem fez o upload, ou com quem foi partilhada
 //! (`recording_shares`). Partilha é sempre só-leitura (download).
 
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2,
-};
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
@@ -390,8 +386,10 @@ pub struct CreateLinkReq {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
+/// 128 bits do SO, em hexadecimal (32 caracteres — a mesma forma do UUID sem
+/// hífens que se usava antes, por isso os links já emitidos continuam válidos).
 fn gen_token() -> String {
-    Uuid::new_v4().to_string().replace('-', "")
+    delonix_meet_core::crypto::random_hex(16)
 }
 
 /// Cria (ou substitui) um link público de partilha.
@@ -415,12 +413,7 @@ pub async fn create_link(
         if pw.is_empty() {
             None
         } else {
-            let salt = SaltString::generate(&mut OsRng);
-            let hash = Argon2::default()
-                .hash_password(pw.as_bytes(), &salt)
-                .map_err(ApiError::internal)?
-                .to_string();
-            Some(hash)
+            Some(crate::auth::hash_password(pw)?)
         }
     } else {
         None
@@ -554,11 +547,11 @@ pub async fn public_share(
 
     // Verificar password.
     if let Some(ref hash) = password_hash {
+        // Um hash ilegível na base conta como password errada (falha fechado).
         let pw = q.password.as_deref().unwrap_or("");
-        let parsed = PasswordHash::new(hash).map_err(ApiError::internal)?;
-        Argon2::default()
-            .verify_password(pw.as_bytes(), &parsed)
-            .map_err(|_| ApiError::Unauthorized)?;
+        if !crate::auth::verify_password(pw, hash) {
+            return Err(ApiError::Unauthorized);
+        }
     }
 
     Ok(Json(serde_json::json!({
@@ -594,11 +587,11 @@ pub async fn public_share_download(
         }
     }
     if let Some(ref hash) = password_hash {
+        // Um hash ilegível na base conta como password errada (falha fechado).
         let pw = q.password.as_deref().unwrap_or("");
-        let parsed = PasswordHash::new(hash).map_err(ApiError::internal)?;
-        Argon2::default()
-            .verify_password(pw.as_bytes(), &parsed)
-            .map_err(|_| ApiError::Unauthorized)?;
+        if !crate::auth::verify_password(pw, hash) {
+            return Err(ApiError::Unauthorized);
+        }
     }
 
     let path = recordings_dir().join(format!("{rec_id}.webm"));

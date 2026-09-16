@@ -4,7 +4,7 @@
 pertenca_org_fora_de_org_rs=26
 authorization_lido_a_mao=3
 clientes_reqwest=4
-primitivas_cripto_espalhadas=17
-funcoes_sufixo_pub=7
+primitivas_cripto_espalhadas=0
+funcoes_sufixo_pub=5
 respostas_ok_true=28
 rotas_v1_com_sessao=4

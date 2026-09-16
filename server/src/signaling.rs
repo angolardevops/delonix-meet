@@ -781,10 +781,7 @@ pub struct ReclaimedSeat {
 /// de ser lido por ninguém, não transporta afirmações, e um valor opaco não
 /// tenta ninguém a decidir coisas a partir do que lá está dentro.
 fn novo_segredo_de_reclamacao() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut b);
-    hex::encode(b)
+    delonix_meet_core::crypto::random_hex(32)
 }
 
 struct WaitingPeer {
@@ -1056,7 +1053,10 @@ impl SignalingHub {
                 return None;
             }
             // Comparação em tempo constante: o segredo é uma credencial.
-            if !crate::apikeys::ct_eq(p.reconnect_secret.expose().as_bytes(), segredo.as_bytes()) {
+            if !delonix_meet_core::crypto::ct_eq(
+                p.reconnect_secret.expose().as_bytes(),
+                segredo.as_bytes(),
+            ) {
                 return None;
             }
             Some((
