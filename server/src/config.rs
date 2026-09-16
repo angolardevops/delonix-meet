@@ -6,6 +6,9 @@ const DEV_DB: &str = "postgres://delonix:delonix_dev@localhost:5435/delonix_meet
 
 #[derive(Clone)]
 pub struct Config {
+    /// `DELONIX_ALLOW_INSECURE=1`: segredos de dev aceites e CORS permissivo.
+    /// Lido UMA vez aqui — nenhum outro módulo lê o ambiente.
+    pub allow_insecure: bool,
     pub database_url: String,
     pub bind_addr: String,
     pub jwt_secret: String,
@@ -176,78 +179,111 @@ pub struct Config {
     pub nego_queue_cap: usize,
 }
 
+/// De onde a configuração se lê. Em produção é o ambiente do processo; nos
+/// testes é um mapa, para que dois testes em paralelo não disputem
+/// `std::env` (que é global ao processo).
+pub struct Source<'a>(pub &'a dyn Fn(&str) -> Option<String>);
+
+impl Source<'_> {
+    fn var(&self, name: &str) -> Result<String, ()> {
+        (self.0)(name).ok_or(())
+    }
+}
+
 impl Config {
     pub fn from_env() -> Self {
+        Self::from_source(&Source(&|k| env::var(k).ok()))
+    }
+
+    /// Constrói a configuração a partir de um mapa (testes de integração).
+    /// As mesmas regras de `from_env`: fail-closed sem segredos fortes.
+    pub fn from_map(vars: &std::collections::HashMap<&str, &str>) -> Self {
+        Self::from_source(&Source(&|k| vars.get(k).map(|v| v.to_string())))
+    }
+
+    pub fn from_source(src: &Source) -> Self {
         // Fail-closed: por omissão exige-se segredos fortes. Só se
         // DELONIX_ALLOW_INSECURE=1 (dev) é que se aceitam os defaults.
-        let insecure = env::var("DELONIX_ALLOW_INSECURE").ok().as_deref() == Some("1");
+        let insecure = src.var("DELONIX_ALLOW_INSECURE").ok().as_deref() == Some("1");
         if insecure {
             tracing::warn!(
                 "DELONIX_ALLOW_INSECURE=1 — a usar segredos de desenvolvimento. NÃO usar em produção."
             );
         }
-        let cors_origins = csv_env("CORS_ORIGINS");
+        let cors_origins = csv_env(src, "CORS_ORIGINS");
         Self {
-            database_url: secret("DATABASE_URL", DEV_DB, insecure, 0),
-            bind_addr: env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8180".into()),
-            jwt_secret: secret("JWT_SECRET", DEV_JWT, insecure, 32),
-            turn_host: env::var("TURN_HOST").unwrap_or_else(|_| "localhost:3478".into()),
-            turn_secret: secret("TURN_SECRET", DEV_TURN, insecure, 16),
+            allow_insecure: insecure,
+            database_url: secret(src, "DATABASE_URL", DEV_DB, insecure, 0),
+            bind_addr: src
+                .var("BIND_ADDR")
+                .unwrap_or_else(|_| "0.0.0.0:8180".into()),
+            jwt_secret: secret(src, "JWT_SECRET", DEV_JWT, insecure, 32),
+            turn_host: src
+                .var("TURN_HOST")
+                .unwrap_or_else(|_| "localhost:3478".into()),
+            turn_secret: secret(src, "TURN_SECRET", DEV_TURN, insecure, 16),
             access_ttl_secs: 15 * 60,
             refresh_ttl_secs: 30 * 24 * 3600,
             room_token_ttl_secs: 5 * 60,
             cors_origins,
-            platform_odoo_url: env::var("PLATFORM_ODOO_URL")
+            platform_odoo_url: src
+                .var("PLATFORM_ODOO_URL")
                 .ok()
                 .map(|u| u.trim_end_matches('/').to_string())
                 .filter(|u| !u.is_empty()),
-            platform_odoo_db: env::var("PLATFORM_ODOO_DB").ok().filter(|d| !d.is_empty()),
-            webhook_allow_hosts: csv_env("WEBHOOK_ALLOW_HOSTS"),
-            cookie_secure: env::var("COOKIE_INSECURE").ok().as_deref() != Some("1"),
-            voice_internal_secret: env::var("VOICE_INTERNAL_SECRET").unwrap_or_default(),
-            provisioning_secret: env::var("PROVISIONING_SECRET").unwrap_or_default(),
-            platform_admin_user_ids: uuid_list("PLATFORM_ADMIN_USER_IDS"),
-            voice_tariff_inbound: env::var("VOICE_TARIFF_INBOUND")
+            platform_odoo_db: src.var("PLATFORM_ODOO_DB").ok().filter(|d| !d.is_empty()),
+            webhook_allow_hosts: csv_env(src, "WEBHOOK_ALLOW_HOSTS"),
+            cookie_secure: src.var("COOKIE_INSECURE").ok().as_deref() != Some("1"),
+            voice_internal_secret: src.var("VOICE_INTERNAL_SECRET").unwrap_or_default(),
+            provisioning_secret: src.var("PROVISIONING_SECRET").unwrap_or_default(),
+            platform_admin_user_ids: uuid_list(src, "PLATFORM_ADMIN_USER_IDS"),
+            voice_tariff_inbound: src
+                .var("VOICE_TARIFF_INBOUND")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
-            recordings_dir: env::var("RECORDINGS_DIR")
+            recordings_dir: src
+                .var("RECORDINGS_DIR")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| std::path::PathBuf::from("recordings")),
-            redis_url: env::var("REDIS_URL").ok().filter(|s| !s.is_empty()),
-            sfu_external_ip: env::var("SFU_EXTERNAL_IP").ok().filter(|s| !s.is_empty()),
+            redis_url: src.var("REDIS_URL").ok().filter(|s| !s.is_empty()),
+            sfu_external_ip: src.var("SFU_EXTERNAL_IP").ok().filter(|s| !s.is_empty()),
             sfu_udp_min: bounded_env(
+                src,
                 "SFU_UDP_MIN",
                 crate::sfu::SFU_UDP_MIN as usize,
                 1_024,
                 65_534,
             ) as u16,
             sfu_udp_max: bounded_env(
+                src,
                 "SFU_UDP_MAX",
                 crate::sfu::SFU_UDP_MAX as usize,
                 1_025,
                 65_535,
             ) as u16,
-            force_turn_relay: env::var("FORCE_TURN_RELAY").ok().as_deref() == Some("1"),
-            ollama_url: env::var("OLLAMA_URL").ok().filter(|s| !s.is_empty()),
-            ollama_model_translate: env::var("OLLAMA_MODEL_TRANSLATE")
+            force_turn_relay: src.var("FORCE_TURN_RELAY").ok().as_deref() == Some("1"),
+            ollama_url: src.var("OLLAMA_URL").ok().filter(|s| !s.is_empty()),
+            ollama_model_translate: src
+                .var("OLLAMA_MODEL_TRANSLATE")
                 .unwrap_or_else(|_| "qwen2.5:1.5b".into()),
-            ollama_model_summary: env::var("OLLAMA_MODEL_SUMMARY")
+            ollama_model_summary: src
+                .var("OLLAMA_MODEL_SUMMARY")
                 .unwrap_or_else(|_| "qwen2.5:1.5b".into()),
-            ws_queue_cap: bounded_env("WS_QUEUE_CAP", 512, 32, 65_536),
-            nego_queue_cap: bounded_env("NEGO_QUEUE_CAP", 64, 4, 4_096),
-            rec_queue_cap: bounded_env("REC_QUEUE_CAP", 2_048, 64, 65_536),
-            auth_rate_per_min: bounded_env("AUTH_RATE_PER_MIN", 20, 5, 10_000),
-            drain_grace_secs: bounded_env("DRAIN_GRACE_SECS", 40, 1, 3_600) as u64,
-            reconnect_grace_secs: bounded_env("RECONNECT_GRACE_SECS", 45, 5, 300) as u64,
-            drain_readiness_secs: bounded_env("DRAIN_READINESS_SECS", 12, 0, 300) as u64,
-            drain_reconnect_ms: bounded_env("DRAIN_RECONNECT_MS", 2_000, 100, 60_000) as u64,
-            ffmpeg_timeout_secs: bounded_env("FFMPEG_TIMEOUT_SECS", 3_600, 30, 86_400) as u64,
-            ffmpeg_threads: bounded_env("FFMPEG_THREADS", 2, 1, 64) as u32,
-            max_directos: bounded_env("MAX_DIRECTOS", 2, 0, 32),
-            max_destinos_por_directo: bounded_env("MAX_DESTINOS_POR_DIRECTO", 4, 1, 8),
-            directo_threads: bounded_env("DIRECTO_THREADS", 1, 1, 16) as u32,
-            ffmpeg_bin: env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into()),
+            ws_queue_cap: bounded_env(src, "WS_QUEUE_CAP", 512, 32, 65_536),
+            nego_queue_cap: bounded_env(src, "NEGO_QUEUE_CAP", 64, 4, 4_096),
+            rec_queue_cap: bounded_env(src, "REC_QUEUE_CAP", 2_048, 64, 65_536),
+            auth_rate_per_min: bounded_env(src, "AUTH_RATE_PER_MIN", 20, 5, 10_000),
+            drain_grace_secs: bounded_env(src, "DRAIN_GRACE_SECS", 40, 1, 3_600) as u64,
+            reconnect_grace_secs: bounded_env(src, "RECONNECT_GRACE_SECS", 45, 5, 300) as u64,
+            drain_readiness_secs: bounded_env(src, "DRAIN_READINESS_SECS", 12, 0, 300) as u64,
+            drain_reconnect_ms: bounded_env(src, "DRAIN_RECONNECT_MS", 2_000, 100, 60_000) as u64,
+            ffmpeg_timeout_secs: bounded_env(src, "FFMPEG_TIMEOUT_SECS", 3_600, 30, 86_400) as u64,
+            ffmpeg_threads: bounded_env(src, "FFMPEG_THREADS", 2, 1, 64) as u32,
+            max_directos: bounded_env(src, "MAX_DIRECTOS", 2, 0, 32),
+            max_destinos_por_directo: bounded_env(src, "MAX_DESTINOS_POR_DIRECTO", 4, 1, 8),
+            directo_threads: bounded_env(src, "DIRECTO_THREADS", 1, 1, 16) as u32,
+            ffmpeg_bin: src.var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into()),
         }
     }
 }
@@ -256,8 +292,8 @@ impl Config {
 /// inválido ou fora do intervalo cai no default com um aviso em vez de fazer
 /// panic: uma fila mal configurada não deve impedir o servidor de arrancar,
 /// mas também não pode virar «ilimitada por engano» com um 0 ou um u32 inteiro.
-fn bounded_env(var: &str, default: usize, min: usize, max: usize) -> usize {
-    match env::var(var) {
+fn bounded_env(src: &Source, var: &str, default: usize, min: usize, max: usize) -> usize {
+    match src.var(var) {
         Err(_) => default,
         Ok(v) => match v.trim().parse::<usize>() {
             Ok(n) if (min..=max).contains(&n) => n,
@@ -275,8 +311,8 @@ fn bounded_env(var: &str, default: usize, min: usize, max: usize) -> usize {
 /// Lista de UUIDs separados por vírgula. Um valor mal escrito faz panic no
 /// arranque: ignorá-lo em silêncio deixava o operador convencido de que
 /// declarou um administrador que o servidor nunca reconheceu.
-fn uuid_list(var: &str) -> Vec<uuid::Uuid> {
-    csv_env(var)
+fn uuid_list(src: &Source, var: &str) -> Vec<uuid::Uuid> {
+    csv_env(src, var)
         .iter()
         .map(|v| {
             v.parse().unwrap_or_else(|_| {
@@ -286,8 +322,8 @@ fn uuid_list(var: &str) -> Vec<uuid::Uuid> {
         .collect()
 }
 
-fn csv_env(var: &str) -> Vec<String> {
-    env::var(var)
+fn csv_env(src: &Source, var: &str) -> Vec<String> {
+    src.var(var)
         .ok()
         .map(|s| {
             s.split(',')
@@ -300,8 +336,8 @@ fn csv_env(var: &str) -> Vec<String> {
 
 /// Lê um segredo do ambiente. Em produção (insecure=false) faz panic se estiver
 /// ausente, igual ao default de dev, ou abaixo do comprimento mínimo.
-fn secret(var: &str, dev_default: &str, insecure: bool, min_len: usize) -> String {
-    match env::var(var) {
+fn secret(src: &Source, var: &str, dev_default: &str, insecure: bool, min_len: usize) -> String {
+    match src.var(var) {
         Ok(v) if v == dev_default => {
             if insecure {
                 v

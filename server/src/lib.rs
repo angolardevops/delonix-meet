@@ -10,7 +10,7 @@ mod apikeys;
 mod audit;
 mod auth;
 mod broadcast;
-mod config;
+pub mod config;
 mod dlp;
 mod domain;
 mod error;
@@ -404,7 +404,7 @@ fn build_cors(state: &Arc<AppState>) -> CorsLayer {
             .allow_origin(origins)
             .allow_methods(Any)
             .allow_headers(Any)
-    } else if std::env::var("DELONIX_ALLOW_INSECURE").ok().as_deref() == Some("1") {
+    } else if state.config.allow_insecure {
         CorsLayer::permissive()
     } else {
         CorsLayer::new() // same-origin: o Nginx serve app e API no mesmo host
@@ -442,30 +442,12 @@ async fn status(
     }))
 }
 
-/// Arranca o servidor: configuração, base, estado partilhado, tarefas de
-/// fundo e o listener HTTP, até ao fim do drain.
-pub async fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "delonix_server=info,tower_http=info".into()),
-        )
-        .init();
-
-    let config = Config::from_env();
-
-    let db = PgPoolOptions::new()
-        .max_connections(10)
-        .acquire_timeout(Duration::from_secs(5))
-        .connect(&config.database_url)
-        .await
-        .expect("failed to connect to Postgres — is `docker compose up -d postgres` running?");
-
-    sqlx::migrate!("./migrations")
-        .run(&db)
-        .await
-        .expect("migrations failed");
-
+/// Monta o estado partilhado a partir da configuração e de uma pool já
+/// migrada: clientes de saída, barramento Redis (opcional), hubs de
+/// sinalização e presença, e os subscritores entre nós. Não arranca
+/// listeners nem tarefas de fundo — é o que os testes de integração usam
+/// para montar o router sobre uma base real.
+pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
     let webhook_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
         .redirect(reqwest::redirect::Policy::none())
@@ -563,6 +545,35 @@ pub async fn run() {
             }
         });
     }
+
+    state
+}
+
+/// Arranca o servidor: configuração, base, estado partilhado, tarefas de
+/// fundo e o listener HTTP, até ao fim do drain.
+pub async fn run() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "delonix_server=info,tower_http=info".into()),
+        )
+        .init();
+
+    let config = Config::from_env();
+
+    let db = PgPoolOptions::new()
+        .max_connections(10)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect(&config.database_url)
+        .await
+        .expect("failed to connect to Postgres — is `docker compose up -d postgres` running?");
+
+    sqlx::migrate!("./migrations")
+        .run(&db)
+        .await
+        .expect("migrations failed");
+
+    let state = build_state(config.clone(), db).await;
 
     // Cron: lugares reservados que passaram da janela viram saídas a sério
     // (R91). O intervalo é uma fracção da janela para o atraso máximo ser
