@@ -11,6 +11,11 @@ pub enum ApiError {
     BadRequest(String),
     #[error("unauthorized")]
     Unauthorized,
+    /// Autenticado, mas sem o papel que a operação exige. Distinto de
+    /// `Unauthorized` (401), que o cliente web lê como «a sessão não serve» e
+    /// tenta renovar: uma falta de PERMISSÃO não se resolve renovando a sessão.
+    #[error("forbidden")]
+    Forbidden,
     #[error("{0}")]
     Conflict(String),
     #[error("not found")]
@@ -46,6 +51,7 @@ impl IntoResponse for ApiError {
         let (status, msg) = match &self {
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m.clone()),
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized".into()),
+            ApiError::Forbidden => (StatusCode::FORBIDDEN, "forbidden".into()),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not found".into()),
             ApiError::TooManyRequests => {

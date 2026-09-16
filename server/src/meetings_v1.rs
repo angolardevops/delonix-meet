@@ -250,8 +250,14 @@ async fn resolve_org_user(
 
     let user_id = match existing {
         Some((uid,)) => {
+            // Membro ACTIVO. Um membro arquivado desta org cai no ramo seguinte
+            // (tem pertença, ainda que arquivada) e sai como `ForeignOrg`: a
+            // integração de calendário não pode pôr como anfitrião, nem
+            // convidar com entrada directa, quem a empresa arquivou — e também
+            // não o desarquiva por efeito lateral (auditoria 2026-09-16, S3).
             let is_member: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2)",
+                "SELECT EXISTS(SELECT 1 FROM org_members
+                               WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL)",
             )
             .bind(org_id)
             .bind(uid)

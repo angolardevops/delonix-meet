@@ -198,7 +198,8 @@ pub async fn library(
                (r.uploader_id = $1 OR EXISTS(
                   SELECT 1 FROM org_members me
                   JOIN org_members o ON o.org_id = me.org_id
-                  WHERE me.user_id = $1 AND me.role = 'admin' AND o.user_id = r.uploader_id
+                  WHERE me.user_id = $1 AND me.role = 'admin' AND me.archived_at IS NULL
+                    AND o.user_id = r.uploader_id
                )) AS can_download
         FROM recordings r
         JOIN rooms rm ON rm.id = r.room_id
@@ -232,11 +233,19 @@ async fn can_download(state: &AppState, rec: &Recording, user_id: Uuid) -> Resul
     if rec.uploader_id == user_id {
         return Ok(true);
     }
+    // O admin que PEDE tem de ser membro activo — um admin arquivado continuava
+    // a descarregar as gravações da ex-empresa (auditoria 2026-09-16, S3).
+    //
+    // O `uploader` NÃO se filtra, de propósito: a gravação de um funcionário que
+    // saiu continua a ser da organização, e o admin dela tem de a poder
+    // descarregar (retenção, eDiscovery). A mesma lista (`library`) aplica as
+    // duas metades desta regra.
     let is_admin: bool = sqlx::query_scalar(
         r#"SELECT EXISTS(
              SELECT 1 FROM org_members me
              JOIN org_members o ON o.org_id = me.org_id
-             WHERE me.user_id = $1 AND me.role = 'admin' AND o.user_id = $2
+             WHERE me.user_id = $1 AND me.role = 'admin' AND me.archived_at IS NULL
+               AND o.user_id = $2
            )"#,
     )
     .bind(user_id)
@@ -624,7 +633,9 @@ pub async fn shares(
         None => return Err(ApiError::NotFound),
     }
     let users = sqlx::query_as::<_, UserPublic>(
-        "SELECT u.id, u.email, u.username, u.created_at FROM recording_shares s
+        // `locale` é campo de `UserPublic` — sem ele, sempre 500 (ver users::search).
+        "SELECT u.id, u.email, u.username, u.created_at, COALESCE(u.locale, 'pt') AS locale
+         FROM recording_shares s
          JOIN users u ON u.id = s.user_id
          WHERE s.recording_id = $1 ORDER BY u.username",
     )

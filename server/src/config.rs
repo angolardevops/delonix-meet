@@ -39,6 +39,19 @@ pub struct Config {
     /// recebe a chave de API). Vazio => endpoint de provisão DESATIVADO
     /// (fail-closed). Não é uma chave de org — é anterior a qualquer org.
     pub provisioning_secret: String,
+    /// Administradores da PLATAFORMA (`PLATFORM_ADMIN_USER_IDS`, UUIDs de
+    /// utilizador separados por vírgula). Vazio (omissão) => ninguém administra
+    /// a plataforma pela API (fail-closed).
+    ///
+    /// Porquê uma lista explícita e não «admin de uma org»: o registo público
+    /// cria SEMPRE o autor como admin da org nova, por isso «admin de alguma
+    /// org» era qualquer pessoa na Internet (auditoria 2026-09-16, S1).
+    ///
+    /// Porquê UUIDs e não emails: não há verificação de email no registo. Um
+    /// email declarado antes de a conta existir podia ser registado primeiro
+    /// por quem o soubesse — e herdava a plataforma. Um UUID só existe depois
+    /// de a conta nascer, e é o operador que o vai buscar.
+    pub platform_admin_user_ids: Vec<uuid::Uuid>,
     /// Tarifa estimada por minuto (inbound) para o cálculo de custo no CDR.
     pub voice_tariff_inbound: f64,
     /// Diretório onde as gravações são armazenadas (lido uma vez no arranque).
@@ -193,6 +206,7 @@ impl Config {
             cookie_secure: env::var("COOKIE_INSECURE").ok().as_deref() != Some("1"),
             voice_internal_secret: env::var("VOICE_INTERNAL_SECRET").unwrap_or_default(),
             provisioning_secret: env::var("PROVISIONING_SECRET").unwrap_or_default(),
+            platform_admin_user_ids: uuid_list("PLATFORM_ADMIN_USER_IDS"),
             voice_tariff_inbound: env::var("VOICE_TARIFF_INBOUND")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -258,6 +272,20 @@ fn bounded_env(var: &str, default: usize, min: usize, max: usize) -> usize {
 }
 
 /// Lê uma variável de ambiente com valores separados por vírgula.
+/// Lista de UUIDs separados por vírgula. Um valor mal escrito faz panic no
+/// arranque: ignorá-lo em silêncio deixava o operador convencido de que
+/// declarou um administrador que o servidor nunca reconheceu.
+fn uuid_list(var: &str) -> Vec<uuid::Uuid> {
+    csv_env(var)
+        .iter()
+        .map(|v| {
+            v.parse().unwrap_or_else(|_| {
+                panic!("{var}: «{v}» não é um UUID de utilizador (SELECT id FROM users WHERE email = …)")
+            })
+        })
+        .collect()
+}
+
 fn csv_env(var: &str) -> Vec<String> {
     env::var(var)
         .ok()

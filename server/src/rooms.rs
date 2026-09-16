@@ -179,10 +179,16 @@ pub async fn room_access(
     // Uma única consulta devolve os sinais: colega de org (→ authorized),
     // convidado na agenda desta sala (→ direct) e co-anfitrião persistido
     // (→ direct + admitter, entra sem esperar e pode admitir outros).
+    //
+    // «Colega» é membro ACTIVO dos dois lados — a mesma regra de
+    // `org::org_co_members`. Sem o filtro, um funcionário arquivado continuava
+    // a ler chat, notas e gravações das salas da ex-empresa (auditoria
+    // 2026-09-16, S3, provado ao vivo antes desta correcção).
     let (org_mate, invitee, admitter): (bool, bool, bool) = sqlx::query_as(
         r#"SELECT
              EXISTS(SELECT 1 FROM org_members a JOIN org_members b ON a.org_id = b.org_id
-                    WHERE a.user_id = $1 AND b.user_id = $2),
+                    WHERE a.user_id = $1 AND b.user_id = $2
+                      AND a.archived_at IS NULL AND b.archived_at IS NULL),
              EXISTS(SELECT 1 FROM meeting_invitees mi JOIN meetings m ON m.id = mi.meeting_id
                     WHERE m.room_code = $3 AND mi.user_id = $1),
              EXISTS(SELECT 1 FROM room_admitters WHERE room_id = $4 AND user_id = $1)"#,

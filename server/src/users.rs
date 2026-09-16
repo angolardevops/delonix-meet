@@ -107,11 +107,17 @@ pub async fn search(
     let pattern = format!("%{}%", term.to_lowercase());
     // Isolamento multi-tenant: só encontra utilizadores que partilham uma
     // organização com quem pesquisa (não vaza o diretório de outras empresas).
+    // Membros ACTIVOS dos dois lados, como em `org::org_co_members` (S3).
     let users = sqlx::query_as::<_, UserPublic>(
-        "SELECT u.id, u.email, u.username, u.created_at FROM users u
+        // `locale` é campo de `UserPublic`: sem ele esta rota devolvia SEMPRE 500
+        // («no column found for name: locale») — o SQL de runtime não o apanha
+        // na compilação. Encontrado pelo controlo positivo do teste S3.
+        "SELECT u.id, u.email, u.username, u.created_at, COALESCE(u.locale, 'pt') AS locale
+         FROM users u
          WHERE u.id <> $1 AND (lower(u.username) LIKE $2 OR lower(u.email) LIKE $2)
            AND EXISTS (SELECT 1 FROM org_members a JOIN org_members b ON a.org_id = b.org_id
-                       WHERE a.user_id = $1 AND b.user_id = u.id)
+                       WHERE a.user_id = $1 AND b.user_id = u.id
+                         AND a.archived_at IS NULL AND b.archived_at IS NULL)
          ORDER BY u.username LIMIT 10",
     )
     .bind(auth.user_id)
