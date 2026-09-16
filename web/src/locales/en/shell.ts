@@ -7,6 +7,10 @@ export default {
   temaClaro: 'Light theme',
   temaEscuro: 'Dark theme',
   abrirNavegacao: 'Open navigation',
+  fecharNavegacao: 'Close navigation',
+  recolherMenu: 'Collapse menu',
+  expandirMenu: 'Expand menu',
+  atalhoMenu: 'Ctrl B',
   inseguro: 'Insecure HTTP connection: the browser blocks camera, microphone and calls. Open https://{{host}}.',
   nav: {
     rotulo: 'Main navigation',

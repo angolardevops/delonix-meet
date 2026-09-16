@@ -67,9 +67,33 @@ describe('3.1.1 · a navegação tem comportamento em ecrã estreito', () => {
     expect(s).toContain("e.key === 'Escape'")
     expect(s).toContain('id="shell-nav"')
     // O botão que abre a gaveta vive na barra de cada página.
+    // Com o rail recolhível, o mesmo botão também expande o rail em ecrã
+    // largo: o `aria-expanded` passa a vir do Shell, que o deriva da GAVETA
+    // em ecrã estreito — o comportamento protegido mantém-se.
     const bar = read('web/src/components/PageBar.tsx')
-    expect(bar).toContain('aria-expanded={navOpen}')
+    expect(bar).toContain('aria-expanded={navExpanded}')
     expect(bar).toContain('aria-controls="shell-nav"')
+    expect(s).toContain('navExpanded: narrow ? navOpen : !navCollapsed')
+  })
+
+  it('acima de 900px o rail recolhe a ícones, com estado por utilizador e sem tocar na gaveta', () => {
+    const s = read('web/src/components/Shell.tsx')
+    // Hambúrguer no topo do rail, anunciado e ligado ao rail.
+    expect(s).toMatch(/className="dx-iconbtn dx-iconbtn--bare shell-nav__toggle"[\s\S]*?aria-expanded=\{railExpanded\}[\s\S]*?aria-controls="shell-nav"/)
+    // Persistido por utilizador, e um localStorage bloqueado não parte a consola.
+    expect(s).toContain('dx_nav_collapsed:${userId}')
+    expect(s).toMatch(/function readCollapsed[\s\S]*?try \{[\s\S]*?\} catch/)
+    expect(s).toMatch(/function writeCollapsed[\s\S]*?try \{[\s\S]*?\} catch/)
+    // O atalho não colide com o Ctrl+K nem rouba o Ctrl+B a quem escreve.
+    expect(s).toMatch(/e\.key\.toLowerCase\(\) === 'b' && !isEditable\(e\.target\)/)
+    // O texto sai da vista mas não do nome acessível: nada de display:none no rótulo.
+    const recolhido = css().match(/@media \(min-width: 901px\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+    expect(recolhido).toMatch(/\.shell\.nav-collapsed \.shell-nav \{[^}]*width:\s*var\(--nav-w-collapsed\)/)
+    expect(recolhido).toMatch(/\.shell\.nav-collapsed \.nav-item__label \{[^}]*clip:/)
+    expect(recolhido).not.toMatch(/nav-item__label[^{]*\{[^}]*display:\s*none/)
+    // A gaveta não herda o recolhido: a regra vive só no bloco de ecrã largo.
+    const estreito = css().match(/@media \(max-width: 900px\) \{[\s\S]*?\n\}/g)?.join('\n') ?? ''
+    expect(estreito).not.toContain('nav-collapsed')
   })
 
   it('escolher um destino fecha a gaveta', () => {

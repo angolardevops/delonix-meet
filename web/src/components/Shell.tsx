@@ -8,8 +8,12 @@
  * que fecha, Esc que fecha, e escolher um destino fecha (lote2 3.1.1). O
  * estado da gaveta NÃO se persiste — abrir a app com a gaveta aberta tapava
  * o conteúdo.
+ *
+ * Acima de 900 px o rail recolhe para só ícones (64 px) pelo botão do topo,
+ * pelo da PageBar ou por Ctrl/Cmd+B. Esse estado SIM persiste, por
+ * utilizador neste browser — é uma preferência de espaço, não um overlay.
  */
-import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { isAbort, myOrgs, OrgSummary, User } from '../api'
 import { Icon, IconName } from '../ui/icons'
@@ -23,6 +27,37 @@ import SettingsDialog, { SettingsTab } from './SettingsDialog'
 import { NavKey, ShellApi, ShellCtx } from './shellContext'
 
 export type { NavKey } from './shellContext'
+
+/** Abaixo disto o rail é gaveta — o mesmo limiar do `@media` em shell.css. */
+const NARROW_QUERY = '(max-width: 900px)'
+
+const collapsedKey = (userId: string | number) => `dx_nav_collapsed:${userId}`
+
+function readCollapsed(userId: string | number): boolean {
+  try {
+    return localStorage.getItem(collapsedKey(userId)) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeCollapsed(userId: string | number, v: boolean) {
+  try {
+    localStorage.setItem(collapsedKey(userId), v ? '1' : '0')
+  } catch {
+    /* sem armazenamento: vale para esta sessão */
+  }
+}
+
+function isNarrow(): boolean {
+  return typeof window !== 'undefined' && !!window.matchMedia?.(NARROW_QUERY).matches
+}
+
+/** Atalhos de teclado não roubam teclas a quem está a escrever. */
+function isEditable(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null
+  return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))
+}
 
 interface NavItem {
   key: NavKey
@@ -48,6 +83,8 @@ export default function Shell({
   const { t } = useTranslation()
   const presence = usePresence()
   const [navOpen, setNavOpen] = useState(false)
+  const [navCollapsed, setNavCollapsedState] = useState(() => readCollapsed(user.id))
+  const [narrow, setNarrow] = useState(isNarrow)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [settings, setSettings] = useState<SettingsTab | null>(null)
   const [orgs, setOrgs] = useState<Async<OrgSummary[]>>({ s: 'loading' })
@@ -65,13 +102,46 @@ export default function Shell({
     return () => ctrl.abort()
   }, [t, orgsNonce])
 
-  // Esc fecha a gaveta; Ctrl/Cmd+K abre a paleta em qualquer ecrã da consola.
+  useEffect(() => {
+    const mq = window.matchMedia?.(NARROW_QUERY)
+    if (!mq) return
+    const onChange = () => {
+      setNarrow(mq.matches)
+      // Passar a largo com a gaveta aberta deixava o backdrop por cima de tudo.
+      if (!mq.matches) setNavOpen(false)
+    }
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
+  const setNavCollapsed = useCallback(
+    (v: boolean) => {
+      setNavCollapsedState(v)
+      writeCollapsed(user.id, v)
+    },
+    [user.id],
+  )
+
+  /** O hambúrguer: gaveta em ecrã estreito, recolher/expandir em ecrã largo. */
+  const toggleNav = useCallback(() => {
+    if (isNarrow()) setNavOpen((o) => !o)
+    else setNavCollapsed(!navCollapsed)
+  }, [navCollapsed, setNavCollapsed])
+  const toggleNavRef = useRef(toggleNav)
+  toggleNavRef.current = toggleNav
+
+  // Esc fecha a gaveta; Ctrl/Cmd+K abre a paleta em qualquer ecrã da consola;
+  // Ctrl/Cmd+B recolhe/expande o rail (fora de campos de texto).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && navOpen) setNavOpen(false)
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         setPaletteOpen((o) => !o)
+      }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b' && !isEditable(e.target)) {
+        e.preventDefault()
+        toggleNavRef.current()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -113,6 +183,9 @@ export default function Shell({
     reloadOrgs: () => setOrgsNonce((n) => n + 1),
     navOpen,
     setNavOpen,
+    navCollapsed: navCollapsed && !narrow,
+    navExpanded: narrow ? navOpen : !navCollapsed,
+    toggleNav,
     navigate: go,
     enterRoom: onEnterRoom,
     openPalette: () => setPaletteOpen(true),
@@ -125,6 +198,10 @@ export default function Shell({
     setTheme(next)
   }
 
+  const collapsed = navCollapsed && !narrow
+  const railExpanded = narrow ? navOpen : !navCollapsed
+  const railToggleLabel = narrow ? t('shell.fecharNavegacao') : navCollapsed ? t('shell.expandirMenu') : t('shell.recolherMenu')
+
   const renderItem = (n: NavItem) => (
     <li key={n.key}>
       <button
@@ -132,39 +209,60 @@ export default function Shell({
         className={cx('nav-item', n.key === active && 'nav-item--active')}
         aria-current={n.key === active ? 'page' : undefined}
         onClick={() => go(n.key)}
+        title={collapsed ? n.label : undefined}
       >
         <Icon name={n.icon} />
-        <span>{n.label}</span>
+        <span className="nav-item__label">{n.label}</span>
       </button>
     </li>
   )
 
   return (
     <ShellCtx.Provider value={api}>
-      <div className={cx('shell', navOpen && 'nav-open')}>
+      <div className={cx('shell', navOpen && 'nav-open', collapsed && 'nav-collapsed')}>
         <a className="skip-link" href="#conteudo">
           {t('shell.saltarParaConteudo')}
         </a>
         <nav id="shell-nav" className="shell-nav" aria-label={t('shell.nav.rotulo')}>
           <div className="shell-nav__brand">
-            <BrandLockup size={24} />
+            <button
+              type="button"
+              className="dx-iconbtn dx-iconbtn--bare shell-nav__toggle"
+              aria-label={railToggleLabel}
+              title={`${railToggleLabel} (${t('shell.atalhoMenu')})`}
+              aria-expanded={railExpanded}
+              aria-controls="shell-nav"
+              onClick={() => (narrow ? setNavOpen(false) : setNavCollapsed(!navCollapsed))}
+            >
+              <Icon name="menu" />
+            </button>
+            <span className="shell-nav__lockup">
+              <BrandLockup size={24} />
+            </span>
           </div>
-          <button type="button" className="shell-nav__search" onClick={() => setPaletteOpen(true)}>
+          <button
+            type="button"
+            className="shell-nav__search"
+            onClick={() => setPaletteOpen(true)}
+            title={collapsed ? t('shell.procurar') : undefined}
+          >
             <Icon name="search" />
-            <span>{t('shell.procurar')}</span>
+            <span className="nav-item__label">{t('shell.procurar')}</span>
             <kbd className="dx-num">{t('shell.atalhoPaleta')}</kbd>
           </button>
           <div className="shell-nav__scroll">
             <ul className="nav-list">{primary.map(renderItem)}</ul>
             {isAdmin && (
               <>
-                <div className="nav-section dx-eyebrow">{t('shell.nav.gestao')}</div>
+                <div className="nav-section dx-eyebrow">
+                  <span className="nav-item__label">{t('shell.nav.gestao')}</span>
+                </div>
                 <ul className="nav-list">{management.map(renderItem)}</ul>
               </>
             )}
           </div>
           {presence.missed.length > 0 && (
-            <div className="shell-nav__missed" role="status">
+            <div className="shell-nav__missed" role="status" title={collapsed ? t('shell.chamada.perdidas', { count: presence.missed.length }) : undefined}>
               <Icon name="phone" />
               <span style={{ flex: 1, minWidth: 0 }}>
                 {t('shell.chamada.perdidas', { count: presence.missed.length })}
@@ -178,7 +276,13 @@ export default function Shell({
             </div>
           )}
           <div className="shell-nav__foot">
-            <button type="button" className="shell-user" onClick={() => openSettings('account')}>
+            <button
+              type="button"
+              className="shell-user"
+              onClick={() => openSettings('account')}
+              title={collapsed ? user.username : undefined}
+              aria-label={collapsed ? `${user.username} · ${t('shell.definicoes')}` : undefined}
+            >
               <Avatar name={user.username || user.email} size={30} />
               <span className="shell-user__id">
                 <strong>{user.username}</strong>

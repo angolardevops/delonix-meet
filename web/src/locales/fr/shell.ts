@@ -7,6 +7,10 @@ export default {
   temaClaro: 'Thème clair',
   temaEscuro: 'Thème sombre',
   abrirNavegacao: 'Ouvrir la navigation',
+  fecharNavegacao: 'Fermer la navigation',
+  recolherMenu: 'Réduire le menu',
+  expandirMenu: 'Développer le menu',
+  atalhoMenu: 'Ctrl B',
   inseguro: 'Connexion HTTP non sécurisée : le navigateur bloque caméra, micro et appels. Ouvrez https://{{host}}.',
   nav: {
     rotulo: 'Navigation principale',
