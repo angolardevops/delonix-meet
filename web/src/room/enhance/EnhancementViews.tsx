@@ -68,6 +68,7 @@ function SendSection({ enh }: { enh: StageEnhancements }) {
       <Toggle label={t('nitidez.envio.titulo')} hint={t('nitidez.envio.dica')} checked={send.wanted} onChange={send.toggle} data-enh-toggle="envio" />
       {send.wanted && (
         <>
+          {send.refused && <Alert tone="warning">{t('nitidez.envio.recusado')}</Alert>}
           {send.reason ? (
             <Alert tone="warning">{t('nitidez.envio.pausa', { motivo: t(`nitidez.envio.motivo_${send.reason}`) })}</Alert>
           ) : (

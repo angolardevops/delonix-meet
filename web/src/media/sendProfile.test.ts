@@ -14,6 +14,7 @@ import {
   RESTORE_BASE_MS,
   RESTORE_MAX_MS,
   SHARP_TOP_BITRATE,
+  UPLINK_WARMUP_MS,
   topLayerIndex,
   type ProfileState,
 } from './sendProfile'
@@ -65,11 +66,28 @@ describe('decideProfile — histerese nos dois sentidos', () => {
   })
   it('condição má sustentada: volta ao normal', () => {
     let s = pedir(INITIAL_PROFILE_STATE, null, 0)
-    s = pedir(s, 'uplink', 1000)
-    s = pedir(s, 'uplink', 1000 + DEGRADE_AFTER_MS)
+    s = pedir(s, 'loss', 1000)
+    s = pedir(s, 'loss', 1000 + DEGRADE_AFTER_MS)
+    expect(s.active).toBe('normal')
+    expect(s.reason).toBe('loss')
+    expect(s.downgrades).toBe(1)
+  })
+  it('banda estimada baixa não impede a entrada (encoder app-limited nunca a deixa subir)', () => {
+    const s = pedir(INITIAL_PROFILE_STATE, 'uplink', 0)
+    expect(s.active).toBe('sharp')
+    expect(s.activeSince).toBe(0)
+  })
+  it('banda baixa só conta depois do aquecimento, e depois conta como as outras', () => {
+    let s = pedir(INITIAL_PROFILE_STATE, null, 0)
+    s = pedir(s, 'uplink', 5000)
+    s = pedir(s, 'uplink', UPLINK_WARMUP_MS - 1)
+    expect(s.active).toBe('sharp')
+    expect(s.badSince).toBeNull()
+    s = pedir(s, 'uplink', UPLINK_WARMUP_MS)
+    s = pedir(s, 'uplink', UPLINK_WARMUP_MS + DEGRADE_AFTER_MS)
     expect(s.active).toBe('normal')
     expect(s.reason).toBe('uplink')
-    expect(s.downgrades).toBe(1)
+    expect(s.activeSince).toBeNull()
   })
   it('só regressa depois do período bom, e a espera cresce a cada desistência', () => {
     let s: ProfileState = { ...INITIAL_PROFILE_STATE, reason: 'cpu', downgrades: 1 }
@@ -152,8 +170,11 @@ describe('parseSendStats — o que está MESMO a sair', () => {
     expect(s.availableUpKbps).toBe(3400)
     expect(bestLayer(s)?.rid).toBe('f')
   })
-  it('camada que o encoder desligou não aparece como 0×0', () => {
-    const s = parseSendStats([{ ...base, id: 'o', type: 'outbound-rtp', kind: 'video', rid: 'f', framesPerSecond: 0 }])
+  it('camada parada não conta, mesmo com o frameWidth do último frame', () => {
+    const s = parseSendStats([
+      { ...base, id: 'o', type: 'outbound-rtp', kind: 'video', rid: 'f', framesPerSecond: 0 },
+      { ...base, id: 'p', type: 'outbound-rtp', kind: 'video', rid: 'f', frameWidth: 3840, frameHeight: 2160 },
+    ])
     expect(s.layers).toEqual([])
     expect(bestLayer(s)).toBeNull()
   })

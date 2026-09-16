@@ -13,7 +13,9 @@
 //   · `contentHint: 'detail'` e `degradationPreference: 'maintain-resolution'` —
 //     sob pressão perde-se fps, não pixels;
 //   · a camada ALTA do simulcast que já existe (`f`) ganha tecto de bitrate
-//     maior e prioridade de rede alta, e fica limitada a 30 fps. As camadas `q`
+//     maior e fica limitada a 30 fps. (Prioridade de rede por camada NÃO: o
+//     Chrome recusa `priority`/`networkPriority` diferentes entre encodings —
+//     «unimplemented parameter», medido a 2026-09-16.) As camadas `q`
 //     e `h` não se tocam: quem está numa rede fraca continua a receber a
 //     camada leve, e é o SFU que decide qual (ver `layerPolicy.ts`).
 //
@@ -43,6 +45,17 @@ export const DEGRADE_AFTER_MS = 4000
 /** Espera base antes de voltar a tentar; duplica a cada desistência. */
 export const RESTORE_BASE_MS = 15_000
 export const RESTORE_MAX_MS = 120_000
+/**
+ * Depois de passar a nítido, a banda disponível só conta passado este tempo.
+ *
+ * Medido contra o servidor a sério (2026-09-16): a `availableOutgoingBitrate`
+ * é a estimativa do controlo de congestão, e um encoder que envia pouco
+ * («app-limited») nunca a deixa subir — a câmara falsa a 4K mandava só a camada
+ * `q` e a estimativa ficava abaixo de 2,5 Mbps para sempre. Usá-la como
+ * condição de ENTRADA fazia o perfil nunca ligar; usá-la logo à saída fazia-o
+ * desistir durante a subida de banda que ele próprio provoca.
+ */
+export const UPLINK_WARMUP_MS = 15_000
 
 /**
  * Porque é que o perfil nítido não se aguenta AGORA. `null` = pode.
@@ -68,6 +81,8 @@ export interface ProfileState {
   goodSince: number | null
   /** Quantas vezes desistiu nesta sessão — alonga a espera para voltar. */
   downgrades: number
+  /** Quando passou a nítido (para o aquecimento da estimativa de banda). */
+  activeSince: number | null
 }
 
 export const INITIAL_PROFILE_STATE: ProfileState = {
@@ -76,6 +91,7 @@ export const INITIAL_PROFILE_STATE: ProfileState = {
   badSince: null,
   goodSince: null,
   downgrades: 0,
+  activeSince: null,
 }
 
 export function restoreDelayMs(downgrades: number): number {
@@ -96,17 +112,22 @@ export function decideProfile(wanted: boolean, prev: ProfileState, reason: Downg
   if (!wanted) return { ...INITIAL_PROFILE_STATE, downgrades: prev.downgrades }
 
   if (prev.active === 'sharp') {
-    if (!reason) return { ...prev, badSince: null, reason: null }
+    const warming = prev.activeSince != null && now - prev.activeSince < UPLINK_WARMUP_MS
+    const r = reason === 'uplink' && warming ? null : reason
+    if (!r) return { ...prev, badSince: null, reason: null }
     const badSince = prev.badSince ?? now
     if (now - badSince < DEGRADE_AFTER_MS) return { ...prev, badSince }
-    return { active: 'normal', reason, badSince: null, goodSince: null, downgrades: prev.downgrades + 1 }
+    return { active: 'normal', reason: r, badSince: null, goodSince: null, downgrades: prev.downgrades + 1, activeSince: null }
   }
 
   // Em `normal` com o perfil pedido: ou acabou de ser pedido, ou desistiu.
-  if (reason) return { ...prev, reason, goodSince: null, badSince: null }
+  // A banda estimada não impede a ENTRADA (ver `UPLINK_WARMUP_MS`): depois de
+  // uma desistência por banda, a nova tentativa espera `restoreDelayMs`.
+  const blocking = reason === 'uplink' ? null : reason
+  if (blocking) return { ...prev, reason: blocking, goodSince: null, badSince: null }
   const goodSince = prev.goodSince ?? now
   if (now - goodSince >= restoreDelayMs(prev.downgrades)) {
-    return { active: 'sharp', reason: null, badSince: null, goodSince: null, downgrades: prev.downgrades }
+    return { active: 'sharp', reason: null, badSince: null, goodSince: null, downgrades: prev.downgrades, activeSince: now }
   }
   return { ...prev, goodSince }
 }
@@ -130,23 +151,21 @@ export function topLayerIndex(encodings: readonly RTCRtpEncodingParameters[]): n
   return best
 }
 
-type Priority = 'very-low' | 'low' | 'medium' | 'high'
-type EncodingWithPriority = RTCRtpEncodingParameters & { priority?: Priority; networkPriority?: Priority }
+/** Os campos de cada encoding que o perfil muda — e só estes. */
+export const TUNED_FIELDS = ['maxBitrate', 'maxFramerate'] as const
 
 /**
  * Encodings do perfil, derivados do instantâneo. O número e a ordem das
  * encodings e os `rid` nunca mudam — o `setParameters` recusa-o.
  */
 export function encodingsFor(profile: SendProfile, snapshot: readonly RTCRtpEncodingParameters[]): RTCRtpEncodingParameters[] {
-  const out = snapshot.map((e) => ({ ...e }) as EncodingWithPriority)
+  const out = snapshot.map((e) => ({ ...e }))
   if (profile === 'normal') return out
   const top = out[topLayerIndex(out)]
   if (!top) return out
   top.maxBitrate = Math.max(top.maxBitrate ?? 0, SHARP_TOP_BITRATE)
   // 30 fps chegam para uma aula; os bits que sobram vão para detalhe.
   top.maxFramerate = 30
-  top.priority = 'high'
-  top.networkPriority = 'high'
   return out
 }
 
@@ -188,9 +207,9 @@ const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ?
  * Extrai do `getStats()` de UM sender de vídeo o que ele está a enviar.
  * Pura, sobre um array simples — o mesmo contrato de `extractQuality`.
  *
- * Camadas sem `frameWidth` ficam de fora: são as que o encoder desligou (o
- * Chrome desliga `h`/`f` quando a banda não chega) e mostrar 0×0 como se fosse
- * uma resolução seria mentir sobre o que se envia.
+ * Camadas sem `frameWidth` ou sem fps ficam de fora: são as que o encoder
+ * desligou (o Chrome desliga `h`/`f` quando a banda não chega) e mostrá-las como
+ * resolução enviada seria mentir sobre o que sai.
  */
 export function parseSendStats(entries: StatEntry[]): SendStats {
   const layers: SentLayer[] = []
@@ -199,7 +218,10 @@ export function parseSendStats(entries: StatEntry[]): SendStats {
     if (s.type === 'outbound-rtp' && (s.kind === 'video' || s.mediaType === 'video')) {
       const width = n(s.frameWidth)
       const height = n(s.frameHeight)
-      if (!width || !height) continue
+      // Uma camada PARADA mantém o `frameWidth` do último frame: sem fps, não
+      // está a sair nada — medido com a câmara falsa a 4K, em que a `f` ficava
+      // em 3840×2160 a 0 fps e parecia a melhor camada.
+      if (!width || !height || n(s.framesPerSecond) <= 0) continue
       layers.push({
         rid: typeof s.rid === 'string' ? s.rid : '',
         width,

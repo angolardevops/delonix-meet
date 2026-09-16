@@ -14,6 +14,7 @@ export default {
     motivo_rtt: 'high latency',
     motivo_cpu: 'processor at its limit',
     motivo_uplink: 'not enough upload bandwidth',
+    recusado: 'The browser refused the send parameters: only the camera and the detail hint were adjusted.',
     semEnvio: 'No camera sending: turn the camera on to measure.',
     antes: 'Before',
     agora: 'Now',

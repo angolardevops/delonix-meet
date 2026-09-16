@@ -14,6 +14,7 @@ export default {
     motivo_rtt: 'latence élevée',
     motivo_cpu: 'processeur à la limite',
     motivo_uplink: 'débit montant insuffisant',
+    recusado: 'Le navigateur a refusé les paramètres d’envoi : seules la caméra et l’indication de détail ont été ajustées.',
     semEnvio: 'Aucune caméra en envoi : activez la caméra pour mesurer.',
     antes: 'Avant',
     agora: 'Maintenant',

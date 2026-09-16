@@ -14,6 +14,7 @@ export default {
     motivo_rtt: 'latência alta',
     motivo_cpu: 'processador no limite',
     motivo_uplink: 'banda de envio insuficiente',
+    recusado: 'O browser recusou os parâmetros de envio: só a câmara e a indicação de detalhe foram ajustadas.',
     semEnvio: 'Sem câmara a enviar: liga a câmara para medir.',
     antes: 'Antes',
     agora: 'Agora',
