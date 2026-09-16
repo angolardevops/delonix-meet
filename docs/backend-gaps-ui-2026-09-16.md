@@ -32,7 +32,7 @@ sua cópia de `server/`.
 | G4 | Gravações com metadados: duração, resolução, tamanho, estado de processamento, categoria | `recordings/RecordingTable.tsx`, `Recordings.tsx` | colunas + máquina de estados (a 0036 já tem `status`) |
 | G5 | Capítulos e comentários com marca temporal numa gravação | `recordings/RecordingPanel.tsx` | `recording_chapters`, `recording_comments` |
 | G6 | Pesquisa na transcrição | `Recordings.tsx` | `GET /api/recordings?q=` sobre `transcript` (FTS do Postgres) |
-| G7 | Registo de entregas de webhooks + reenviar | `integrations/WebhooksCard.tsx` | `webhook_deliveries` + `POST …/deliveries/{id}/redeliver` |
+| G7 | Registo de entregas de webhooks + reenviar — **feito** (migração 0042) | `integrations/WebhooksCard.tsx` | `webhook_deliveries` + `GET /api/orgs/{org_id}/webhooks/{hook_id}/deliveries[/{delivery_id}]` (paginado, `?status=`) + `POST …/deliveries/{delivery_id}/redeliver` (`202` + `Location`, 10/min por webhook) |
 | G8 | Centro de notificações | `AppShell.tsx` (o antigo era só cliente) | `GET /api/notifications`, marcar como lida, e envio em tempo real pelo `/rtc` |
 | G9 | Retenção de chat (e de auditoria só como exportação — a cadeia é imutável) | `admin/SettingsCard.tsx` | `chat_retention_days` nas definições + varredor |
 | G10 | Inventário de nós de media (capacidade) | `admin/CapacityRow.tsx` | batimento por nó (salas, pares, filas) + `GET /api/operator/v1/nodes` |

@@ -48,7 +48,7 @@
 - `recordings.rs` — biblioteca de gravações, partilha read-only, sweep de retenção
 - `recorder.rs` — gravação server-side: RTP→IVF(VP8)+OGG(Opus), ffmpeg post-stop (VP9+Opus webm), E2EE via decrypt_e2ee()
 - `broadcast.rs` — emissão em directo para RTMP (ADR-0003): o browser compõe e codifica em H.264, o servidor REMULTIPLEXA (`-c:v copy`, `-c:a aac`). Multi-canal tipo StreamYard: um `ffmpeg` com N destinos (`destinos` na query, JSON), tecto próprio `MAX_DESTINOS_POR_DIRECTO` (por emissão) distinto do `MAX_DIRECTOS` (por nó/sala). Recusa E2EE, codec não copiável, chave vazia e acima de qualquer um dos dois tectos. Rota WS `/api/rooms/{code}/broadcast`; registo por sala
-- `webhooks.rs` — CRUD webhooks org, fire() best-effort (Slack/Teams/Mattermost/generic+HMAC), SSRF guard
+- `webhooks.rs` — CRUD webhooks org, fire() best-effort (Slack/Teams/Mattermost/generic+HMAC), SSRF guard; registo de entregas (G7; migração 0042): cada envio fica em `webhook_deliveries` (`pending` antes, `succeeded`/`failed` com código, tempo e erro limpo de URLs depois; sem segredo nem assinatura), `GET …/webhooks/{hook_id}/deliveries[/{delivery_id}]` paginado e `POST …/redeliver` (método personalizado: `202` + `Location`, mesmo payload ao URL actual com a guarda reaplicada, 10/min por webhook → `429`); varredor horário fecha as `pending` abandonadas e apaga as de mais de 30 dias. Regras em `domain::integration::webhook_delivery`
 - `whiteboards.rs` — CRUD quadro branco persistente
 - `voice.rs` — PSTN: plano de controlo (DIDs, CDR, facturação, IVR por segredo partilhado em `/api/voice/ivr/*`); a media depende do operador SIP. O IVR é máquina-a-máquina e, no destino, sai da árvore pública para gRPC (ADR-0004 §4)
 - `apikeys.rs` — chaves de API por org (hash, **sem escopos nem expiração** — auditoria 2026-09-16 S6) **e** os handlers `v1_*` da API pública, apesar do nome (ADR-0004 §3 separa-os)
@@ -107,7 +107,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0041) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0042) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 

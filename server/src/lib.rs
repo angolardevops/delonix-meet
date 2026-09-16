@@ -314,7 +314,23 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(org::delete_sso_config),
         )
         .route("/api/orgs/{org_id}/webhooks", get(webhooks::list).post(webhooks::create))
-        .route("/api/orgs/{org_id}/webhooks/{hook_id}", axum::routing::delete(webhooks::delete))
+        .route(
+            "/api/orgs/{org_id}/webhooks/{hook_id}",
+            get(webhooks::get_one).delete(webhooks::delete),
+        )
+        // ---- Registo de entregas de webhooks e reenvio (G7) ----
+        .route(
+            "/api/orgs/{org_id}/webhooks/{hook_id}/deliveries",
+            get(webhooks::list_deliveries),
+        )
+        .route(
+            "/api/orgs/{org_id}/webhooks/{hook_id}/deliveries/{delivery_id}",
+            get(webhooks::get_delivery),
+        )
+        .route(
+            "/api/orgs/{org_id}/webhooks/{hook_id}/deliveries/{delivery_id}/redeliver",
+            post(webhooks::redeliver),
+        )
         // ---- Destinos de emissão em directo (G1) ----
         .route(
             "/api/orgs/{org_id}/stream-destinations",
@@ -815,6 +831,27 @@ pub async fn run() {
             loop {
                 ticker.tick().await;
                 meetings::ring_upcoming_meetings(&state).await;
+            }
+        });
+    }
+
+    // Cron: registo de entregas de webhooks (G7) a cada hora — fecha as
+    // `pending` abandonadas por um processo que morreu e apaga as que passaram
+    // da retenção (30 dias).
+    {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                match webhooks::sweep_deliveries(&db).await {
+                    Ok((0, 0)) => {}
+                    Ok((abandoned, deleted)) => {
+                        tracing::info!(abandoned, deleted, "webhook deliveries sweep")
+                    }
+                    Err(e) => tracing::warn!(error = %e, "webhook deliveries sweep failed"),
+                }
             }
         });
     }

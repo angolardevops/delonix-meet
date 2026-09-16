@@ -209,6 +209,33 @@ if (hookB.status >= 200 && hookB.status < 300 && hookB.json?.id) {
   await recusado('A apaga um webhook da org B', `/api/orgs/${B.orgId}/webhooks/${hookB.json.id}`, {
     token: A.token, method: 'DELETE',
   })
+  // Registo de entregas e reenvio (G7): o payload traz dados de reuniões da B.
+  await recusado('A lê um webhook da org B', `/api/orgs/${B.orgId}/webhooks/${hookB.json.id}`, { token: A.token })
+  await recusado('A lista as entregas de um webhook da org B', `/api/orgs/${B.orgId}/webhooks/${hookB.json.id}/deliveries`, { token: A.token })
+  // Uma entrega A SÉRIO da B: uma reunião dispara `meeting.created`, e a linha
+  // fica registada mesmo que o envio a example.com falhe. Sem ela, um 404 só
+  // provaria que a linha não existe, não que a org é recusada.
+  await req('/api/meetings', {
+    token: B.token, method: 'POST',
+    body: { title: 'Dispara o webhook da B', kind: 'video', starts_at: new Date(Date.now() + 3600e3).toISOString(), duration_min: 30, invitee_ids: [] },
+  })
+  let entregaB = null
+  for (let i = 0; i < 50 && !entregaB; i++) {
+    const l = await req(`/api/orgs/${B.orgId}/webhooks/${hookB.json.id}/deliveries`, { token: B.token })
+    entregaB = l.json?.items?.[0]?.id ?? null
+    if (!entregaB) await new Promise((r) => setTimeout(r, 100))
+  }
+  if (entregaB) ok('B vê a entrega do seu webhook')
+  else nok('B vê a entrega do seu webhook', 'nenhuma entrega registada em 5 s')
+  for (const entregaId of [entregaB, '00000000-0000-4000-8000-000000000000'].filter(Boolean)) {
+    await recusado('A lê uma entrega de webhook da org B', `/api/orgs/${B.orgId}/webhooks/${hookB.json.id}/deliveries/${entregaId}`, { token: A.token })
+    await recusado('A reenvia uma entrega de webhook da org B', `/api/orgs/${B.orgId}/webhooks/${hookB.json.id}/deliveries/${entregaId}/redeliver`, {
+      token: A.token, method: 'POST',
+    })
+  }
+  const entregas = await req(`/api/orgs/${B.orgId}/webhooks/${hookB.json.id}/deliveries`, { token: B.token })
+  if (Array.isArray(entregas.json?.items) && entregas.json.items.every((d) => d.redelivery_of == null)) ok('e nenhum reenvio da A chegou a criar entrega na B')
+  else nok('e nenhum reenvio da A chegou a criar entrega na B', `devolveu ${entregas.status}: ${JSON.stringify(entregas.json).slice(0, 160)}`)
   const depois = await req(`/api/orgs/${B.orgId}/webhooks`, { token: B.token })
   const sobreviveu = Array.isArray(depois.json) && depois.json.some((h) => h.id === hookB.json.id)
   if (sobreviveu) ok('e o webhook da B CONTINUA LÁ')
