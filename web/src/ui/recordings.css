@@ -67,7 +67,7 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  min-width: 220px;
+  min-width: 180px;
 }
 .rec-row__thumb {
   flex: none;
@@ -99,7 +99,7 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 360px;
+  max-width: 280px;
 }
 .rec-row__open {
   padding: 0;
@@ -119,10 +119,12 @@
   color: var(--muted);
 }
 .rec-row__room,
-.rec-row__date,
 .rec-row__size {
   font-size: var(--t-sm);
   white-space: nowrap;
+}
+.rec-row__date {
+  font-size: var(--t-sm);
 }
 .rec-row__room,
 .rec-row__size {
@@ -139,7 +141,7 @@
 }
 .rec-failure__reason {
   margin: 0;
-  max-width: 300px;
+  max-width: 260px;
   font-size: var(--t-sm);
   line-height: 1.4;
   color: var(--record-text);
@@ -253,6 +255,8 @@
 }
 .rec-player {
   position: relative;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
   border-radius: var(--r-3);
   background: var(--stage);
@@ -262,7 +266,9 @@
 .rec-player__video {
   display: block;
   width: 100%;
+  max-width: 100%;
   height: 100%;
+  object-fit: contain;
   background: var(--stage);
 }
 .rec-player__poster {
@@ -570,7 +576,6 @@
     border: 0;
   }
   .rec-table .rec-row__session {
-    display: flex;
     grid-column: 1 / -1;
     min-width: 0;
   }
@@ -586,8 +591,13 @@
     color: var(--muted);
     align-self: center;
   }
-  .rec-table .rec-row__state > * {
+  .rec-table .rec-row__state > *,
+  .rec-table .rec-row__room,
+  .rec-table td {
     min-width: 0;
+  }
+  .rec-table .rec-row__state > * {
+    justify-self: start;
   }
   .rec-row[data-status='failed'] td {
     background: none;

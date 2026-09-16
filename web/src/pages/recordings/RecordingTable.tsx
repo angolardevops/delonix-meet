@@ -10,7 +10,7 @@ import { useTranslation } from 'react-i18next'
 import type { RecordingItem } from '../../api'
 import { Icon } from '../../ui/icons'
 import { cx, StatusBadge, Tag } from '../../ui/kit'
-import { formatBytes, formatDateTime, isFailed, recordingName, thumbBackground } from './format'
+import { formatBytes, formatDateTimeShort, isFailed, recordingName, thumbBackground } from './format'
 
 export default function RecordingTable({
   items,
@@ -46,41 +46,43 @@ export default function RecordingTable({
                 data-selected={selectedId === r.id || undefined}
                 onClick={failed ? undefined : () => onOpen(r)}
               >
-                <td className="rec-row__session">
-                  <span
-                    className={cx('rec-row__thumb', failed && 'is-failed')}
-                    style={failed ? undefined : { background: thumbBackground(r.filename) }}
-                    aria-hidden="true"
-                  >
-                    <Icon name={failed ? 'alert' : 'film'} size={13} />
-                  </span>
-                  <span className="rec-row__id">
-                    {failed ? (
-                      <span className="rec-row__name">{name}</span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="rec-row__name rec-row__open"
-                        aria-label={t('recordings.abrir', { name })}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onOpen(r)
-                        }}
-                      >
-                        {name}
-                      </button>
-                    )}
-                    <span className="rec-row__meta">
-                      {r.uploader_name}
-                      {!r.owned && <Tag plain>{t('recordings.partilhadaComigo')}</Tag>}
+                <td>
+                  <div className="rec-row__session">
+                    <span
+                      className={cx('rec-row__thumb', failed && 'is-failed')}
+                      style={failed ? undefined : { background: thumbBackground(r.filename) }}
+                      aria-hidden="true"
+                    >
+                      <Icon name={failed ? 'alert' : 'film'} size={13} />
                     </span>
-                  </span>
+                    <span className="rec-row__id">
+                      {failed ? (
+                        <span className="rec-row__name">{name}</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="rec-row__name rec-row__open"
+                          aria-label={t('recordings.abrir', { name })}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onOpen(r)
+                          }}
+                        >
+                          {name}
+                        </button>
+                      )}
+                      <span className="rec-row__meta">
+                        {r.uploader_name}
+                        {!r.owned && <Tag plain>{t('recordings.partilhadaComigo')}</Tag>}
+                      </span>
+                    </span>
+                  </div>
                 </td>
                 <td className="dx-num rec-row__room" data-label={t('recordings.colunas.sala')}>
                   {r.room_code}
                 </td>
                 <td className="dx-num rec-row__date" data-label={t('recordings.colunas.data')}>
-                  {formatDateTime(r.created_at, i18n.language)}
+                  {formatDateTimeShort(r.created_at, i18n.language)}
                 </td>
                 <td className="dx-num rec-row__size" data-label={t('recordings.colunas.tamanho')}>
                   {/* Uma falhada não tem tamanho: «0 MB» leria-se como ficheiro vazio. */}

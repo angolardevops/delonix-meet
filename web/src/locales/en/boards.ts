@@ -1,5 +1,6 @@
 export default {
   titulo: 'Boards',
+  meta_zero: 'No boards',
   meta_one: '{{count}} board · {{publicos}} with link',
   meta_other: '{{count}} boards · {{publicos}} with link',
   semTitulo: 'Untitled board',

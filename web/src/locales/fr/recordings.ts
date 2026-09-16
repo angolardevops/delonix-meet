@@ -1,5 +1,6 @@
 export default {
   titulo: 'Enregistrements',
+  meta_zero: 'Aucun élément',
   meta_one: '{{count}} élément · {{size}}',
   meta_other: '{{count}} éléments · {{size}}',
   abrir: 'Ouvrir {{name}}',

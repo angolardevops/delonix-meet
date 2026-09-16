@@ -1,5 +1,6 @@
 export default {
   titulo: 'Tableaux',
+  meta_zero: 'Aucun tableau',
   meta_one: '{{count}} tableau · {{publicos}} avec lien',
   meta_other: '{{count}} tableaux · {{publicos}} avec lien',
   semTitulo: 'Tableau sans titre',

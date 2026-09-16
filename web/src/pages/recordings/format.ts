@@ -21,6 +21,13 @@ export function formatDateTime(iso: string, lang: string): string {
   return d.toLocaleString(lang, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
+/** Data e hora curtas, para colunas de tabela. */
+export function formatDateTimeShort(iso: string, lang: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString(lang, { dateStyle: 'short', timeStyle: 'short' })
+}
+
 export function formatDate(iso: string, lang: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
