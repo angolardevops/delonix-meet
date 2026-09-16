@@ -1,14 +1,15 @@
 /**
- * Regras de apresentação da biblioteca com metadados (`frontend/b1-gravacoes`):
- * estado visível, resolução, categoria, capítulo activo, orador de um segmento.
- * Tudo puro e testado — os componentes só desenham o que isto decide.
+ * Regras de apresentação da biblioteca e do leitor: estado visível,
+ * resolução, categoria, capítulo activo, orador de um segmento. Tudo puro e
+ * testado, e só sobre `RecordingView` — nenhum campo da API é lido aqui (isso
+ * é da `recordingView.ts`).
  *
- * Nada aqui inventa números: um campo que o servidor devolve `null` (duração
- * ou resolução que o ffprobe não mediu) dá `null`, e o ecrã mostra «—».
+ * Nada aqui inventa números: um campo `null` dá `null`, e o ecrã mostra «—»
+ * ou esconde o elemento.
  */
-import type { RecordingChapter, RecordingLibraryItem, SessionKind } from '../../api'
+import type { RecordingView, SessionCategory } from './recordingView'
 
-export type LibraryFilter = 'all' | 'training' | 'broadcast' | 'meeting' | '4k' | 'processing' | 'failed'
+export type LibraryFilter = 'all' | 'mine' | 'shared' | 'training' | 'broadcast' | 'meeting' | '4k' | 'processing' | 'failed'
 
 /** Estado visível de uma gravação, pela ordem em que manda. */
 export type VisibleState =
@@ -21,25 +22,22 @@ export type VisibleState =
 
 const DAY_MS = 24 * 3600 * 1000
 
+type StateInput = Pick<RecordingView, 'pipeline' | 'progressPct' | 'transcriptRunning' | 'createdAt'>
+
 /**
  * `retentionDays` é a política da organização (`organizations.retention_days`,
  * 0 = sem retenção). Uma gravação pronta e NÃO publicada numa organização com
  * retenção mostra quantos dias faltam até a varredura a apagar
  * (`recorder.rs::retention_sweep`), arredondado para cima.
  */
-export function visibleState(
-  r: Pick<RecordingLibraryItem, 'status' | 'state' | 'progress_pct' | 'transcript_status' | 'created_at'>,
-  retentionDays = 0,
-  now = Date.now(),
-): VisibleState {
-  if (r.status === 'failed' || r.state === 'failed') return { kind: 'failed' }
-  if (r.state === 'processing') return { kind: 'processing', pct: r.progress_pct ?? null }
-  if (r.state === 'transcribing' || (r.state === 'ready' && r.transcript_status === 'transcribing')) {
-    return { kind: 'transcribing', pct: r.state === 'transcribing' ? (r.progress_pct ?? null) : null }
-  }
-  if (r.state === 'published') return { kind: 'published' }
+export function visibleState(r: StateInput, retentionDays = 0, now = Date.now()): VisibleState {
+  if (r.pipeline === 'failed') return { kind: 'failed' }
+  if (r.pipeline === 'processing') return { kind: 'processing', pct: r.progressPct }
+  if (r.pipeline === 'transcribing') return { kind: 'transcribing', pct: r.progressPct }
+  if (r.pipeline === 'ready' && r.transcriptRunning) return { kind: 'transcribing', pct: null }
+  if (r.pipeline === 'published') return { kind: 'published' }
   if (retentionDays > 0) {
-    const created = new Date(r.created_at).getTime()
+    const created = new Date(r.createdAt).getTime()
     if (Number.isFinite(created)) {
       const left = Math.ceil((created + retentionDays * DAY_MS - now) / DAY_MS)
       return { kind: 'retained', days: Math.max(0, left) }
@@ -48,50 +46,72 @@ export function visibleState(
   return { kind: 'ready' }
 }
 
-/** Rótulo curto da resolução medida: «4K», «1080p», «720p»… ou `null`. */
-export function resolutionLabel(r: Pick<RecordingLibraryItem, 'width' | 'height'>): string | null {
-  const h = r.height ?? 0
-  const w = r.width ?? 0
+/** Rótulo curto de uma resolução: «4K», «1080p», «720p»… ou `null`. */
+export function resolutionLabel(size: { width: number | null; height: number | null } | null): string | null {
+  const h = size?.height ?? 0
+  const w = size?.width ?? 0
   if (!h || !w) return null
   if (h >= 2160 || w >= 3840) return '4K'
   return `${Math.min(h, w)}p`
 }
 
-export const is4k = (r: Pick<RecordingLibraryItem, 'width' | 'height'>) => resolutionLabel(r) === '4K'
+export const is4k = (r: Pick<RecordingView, 'width' | 'height'>) => resolutionLabel(r) === '4K'
 
-export const isInProgress = (r: Pick<RecordingLibraryItem, 'state' | 'status' | 'transcript_status'>) => {
-  const k = visibleState({ ...r, progress_pct: null, created_at: '' }).kind
+export function isInProgress(r: StateInput): boolean {
+  const k = visibleState(r).kind
   return k === 'processing' || k === 'transcribing'
 }
 
 /**
  * Categoria do template: Videoaulas (formação; a híbrida é uma videoaula com
- * público presencial), Emissões, Reuniões.
+ * público presencial), Emissões, Reuniões. `null` sem dado.
  */
-export function kindGroup(kind: SessionKind | string): 'training' | 'broadcast' | 'meeting' {
+export function kindGroup(kind: SessionCategory | null): 'training' | 'broadcast' | 'meeting' | null {
   if (kind === 'training' || kind === 'hybrid') return 'training'
   if (kind === 'broadcast') return 'broadcast'
-  return 'meeting'
+  if (kind === 'meeting') return 'meeting'
+  return null
 }
 
-export function matchesFilter(r: RecordingLibraryItem, f: LibraryFilter): boolean {
+export function matchesFilter(r: RecordingView, f: LibraryFilter): boolean {
   switch (f) {
     case 'all':
       return true
+    case 'mine':
+      return r.owned
+    case 'shared':
+      return !r.owned
     case 'failed':
-      return visibleState(r).kind === 'failed'
+      return r.failed
     case 'processing':
       return isInProgress(r)
     case '4k':
       return is4k(r)
     default:
-      return visibleState(r).kind !== 'failed' && kindGroup(r.kind) === f
+      return !r.failed && kindGroup(r.category) === f
   }
 }
 
-export function filterCounts(items: RecordingLibraryItem[]): Record<LibraryFilter, number> {
-  const out: Record<LibraryFilter, number> = { all: 0, training: 0, broadcast: 0, meeting: 0, '4k': 0, processing: 0, failed: 0 }
+export function filterCounts(items: RecordingView[]): Record<LibraryFilter, number> {
+  const out: Record<LibraryFilter, number> = { all: 0, mine: 0, shared: 0, training: 0, broadcast: 0, meeting: 0, '4k': 0, processing: 0, failed: 0 }
   for (const r of items) for (const f of Object.keys(out) as LibraryFilter[]) if (matchesFilter(r, f)) out[f]++
+  return out
+}
+
+/**
+ * Chips que a biblioteca mostra. Um chip só aparece se o dado por trás existe:
+ * sem categoria no servidor, «Videoaulas» filtraria sempre para zero — seria
+ * um botão inerte. Enquanto não há categorias ficam os filtros que os dados de
+ * hoje sustentam (minhas / partilhadas comigo), no mesmo sítio.
+ */
+export function visibleFilters(items: RecordingView[]): LibraryFilter[] {
+  const counts = filterCounts(items)
+  const out: LibraryFilter[] = ['all']
+  if (items.some((r) => r.category !== null)) out.push('training', 'broadcast', 'meeting')
+  else out.push('mine', 'shared')
+  if (counts['4k'] > 0) out.push('4k')
+  if (counts.processing > 0) out.push('processing')
+  if (counts.failed > 0) out.push('failed')
   return out
 }
 
@@ -109,26 +129,23 @@ export function formatClock(ms: number | null | undefined): string {
 }
 
 /** Índice do capítulo em curso no instante `tMs` (o último que já começou), ou -1. */
-export function chapterAt(chapters: Pick<RecordingChapter, 't_ms'>[], tMs: number): number {
+export function chapterAt(chapters: { tMs: number }[], tMs: number): number {
   let idx = -1
-  for (let i = 0; i < chapters.length; i++) if (chapters[i].t_ms <= tMs) idx = i
+  for (let i = 0; i < chapters.length; i++) if (chapters[i].tMs <= tMs) idx = i
   return idx
 }
 
 /** Índice do segmento que contém `tMs` (ou o último que já começou), ou -1. */
-export function segmentAt(segments: { start_ms: number; end_ms: number }[], tMs: number): number {
+export function segmentAt(segments: { startMs: number }[], tMs: number): number {
   let idx = -1
   for (let i = 0; i < segments.length; i++) {
-    if (segments[i].start_ms <= tMs) idx = i
+    if (segments[i].startMs <= tMs) idx = i
     else break
   }
   return idx
 }
 
-/**
- * «Ana Mbala: O failover…» → orador e texto. A transcrição do ai-worker põe o
- * orador à frente quando o sabe; sem ele devolve só o texto.
- */
+/** «Ana Mbala: O failover…» → orador e texto. Sem orador reconhecível devolve só o texto. */
 export function splitSpeaker(text: string): { speaker: string | null; text: string } {
   const m = /^([^:\n]{1,48}):\s+(.+)$/s.exec(text.trim())
   if (!m || /\d{1,2}$/.test(m[1])) return { speaker: null, text: text.trim() }

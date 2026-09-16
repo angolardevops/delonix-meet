@@ -1,5 +1,6 @@
 export default {
-  titulo: 'Enregistrements',
+  semDado: 'Le serveur ne renvoie pas encore cette donnée',
+  titulo: 'Enregistrements et cours',
   meta_zero: 'Aucun élément',
   meta_one: '{{count}} élément · {{size}}',
   meta_other: '{{count}} éléments · {{size}}',
@@ -18,6 +19,13 @@ export default {
     grelha: 'Grille',
   },
   filtros: {
+    videoaulas: 'Cours',
+    emissoes: 'Diffusions',
+    reunioes: 'Réunions',
+    quatroK: '4K',
+    aProcessar: 'En traitement',
+    contagem_one: '{{count}} enregistrement',
+    contagem_other: '{{count}} enregistrements',
     rotulo: 'Filtrer les enregistrements',
     todas: 'Tous',
     minhas: 'Les miens',
@@ -25,6 +33,9 @@ export default {
     falhadas: 'Échoués',
   },
   colunas: {
+    duracao: 'Durée',
+    resolucao: 'Résolution',
+    armazenamento: 'Stockage',
     sessao: 'Session',
     sala: 'Salle',
     data: 'Date',
@@ -32,6 +43,13 @@ export default {
     estado: 'État',
   },
   estado: {
+    aProcessar: 'En traitement',
+    aProcessarPct: 'En traitement {{pct}} %',
+    aTranscrever: 'Transcription',
+    aTranscreverPct: 'Transcription {{pct}} %',
+    publicada: 'Publié',
+    retida_one: 'Conservé {{count}} jour',
+    retida_other: 'Conservé {{count}} jours',
     pronta: 'Prêt',
     falhada: 'Échec',
     semCausa: "L'enregistrement a échoué et aucun fichier n'a été conservé.",
@@ -41,6 +59,9 @@ export default {
     texto: 'Enregistrez une réunion : elle apparaît ici, avec la transcription et le compte rendu.',
   },
   leitor: {
+    progresso: 'Position dans la vidéo',
+    participantes_one: '{{count}} participant',
+    participantes_other: '{{count}} participants',
     rotulo: 'Lecteur',
     fechar: 'Fermer le lecteur',
     reproduzir: 'Lire {{name}}',
@@ -59,6 +80,7 @@ export default {
     erroDescarregar: "Impossible de télécharger l'enregistrement.",
   },
   notas: {
+    daSala: 'notes de la salle',
     rotulo: 'Notes de réunion',
     transcricao: 'Transcription',
     acta: 'Compte rendu',
@@ -67,6 +89,23 @@ export default {
     semActa: 'Aucun compte rendu enregistré pour cette réunion.',
     semTarefas: 'Aucune tâche dans le compte rendu de cette réunion.',
     erroTarefa: "Impossible d'enregistrer la tâche.",
+  },
+  categoria: {
+    training: 'cours',
+    hybrid: 'cours hybride',
+    broadcast: 'diffusion',
+    meeting: 'réunion',
+  },
+  capitulos: {
+    titulo: 'Chapitres',
+    automaticos: 'Chapitres automatiques',
+    detectados_one: '{{count}} détecté',
+    detectados_other: '{{count}} détectés',
+    saltar: 'Aller à {{title}} ({{time}})',
+  },
+  transcricao: {
+    gerada: 'générée · {{lang}}',
+    saltar: 'Aller à {{time}}',
   },
   partilha: {
     titulo: 'Partager « {{name}} »',

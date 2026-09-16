@@ -1,57 +1,30 @@
 /**
- * Media das gravações no browser: miniatura do servidor, o ficheiro de vídeo,
- * a legenda VTT e fotogramas tirados do próprio ficheiro.
+ * Media das gravações no browser: o ficheiro de vídeo e fotogramas tirados
+ * dele. O `<video>` não envia o Bearer, por isso o ficheiro chega por URL de
+ * objecto, revogado quando o componente sai.
  *
- * Os elementos `<img>`, `<video>` e `<track>` não enviam o Bearer, por isso
- * tudo passa por URLs de objecto. As miniaturas ficam em memória durante a
- * sessão (são JPEG de poucos KB e aparecem na tabela, no painel e no leitor);
- * o vídeo e o VTT são revogados quando o componente sai.
+ * A miniatura e as legendas do servidor ficam para quando o contrato de
+ * metadados chegar à `main` (ver `recordingView.ts`).
  */
 import { useEffect, useState } from 'react'
-import { RecordingItem, recordingCaptionVttUrl, recordingObjectUrl, recordingThumbnailUrl } from '../../api'
-
-const thumbs = new Map<string, Promise<string | null>>()
-
-/** URL da miniatura medida pelo servidor, ou `null` (sem miniatura ou erro). */
-export function useThumbnail(id: string, has: boolean): string | null {
-  const [url, setUrl] = useState<string | null>(null)
-  useEffect(() => {
-    if (!has) {
-      setUrl(null)
-      return
-    }
-    let live = true
-    let p = thumbs.get(id)
-    if (!p) {
-      p = recordingThumbnailUrl(id).catch(() => {
-        thumbs.delete(id)
-        return null
-      })
-      thumbs.set(id, p)
-    }
-    void p.then((u) => live && setUrl(u))
-    return () => {
-      live = false
-    }
-  }, [id, has])
-  return url
-}
+import { recordingObjectUrl } from '../../api'
+import type { RecordingView } from './recordingView'
 
 export type VideoLoad = { s: 'idle' } | { s: 'loading' } | { s: 'ready'; url: string } | { s: 'error' }
 
 /** Descarrega o ficheiro só quando `want` fica verdadeiro. `retry()` volta a tentar. */
-export function useRecordingVideo(rec: RecordingItem, want: boolean): [VideoLoad, () => void] {
+export function useRecordingVideo(rec: RecordingView, want: boolean): [VideoLoad, () => void] {
   const [video, setVideo] = useState<VideoLoad>({ s: 'idle' })
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
-    if (!want || rec.status === 'failed') {
+    if (!want || rec.failed) {
       setVideo({ s: 'idle' })
       return
     }
     let live = true
     let made = ''
     setVideo({ s: 'loading' })
-    recordingObjectUrl(rec)
+    recordingObjectUrl(rec.source)
       .then((u) => {
         if (live) {
           made = u
@@ -65,32 +38,8 @@ export function useRecordingVideo(rec: RecordingItem, want: boolean): [VideoLoad
     }
     // O objecto `rec` muda a cada recarga da biblioteca; o ficheiro é o mesmo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rec.id, rec.status, want, attempt])
+  }, [rec.id, rec.failed, want, attempt])
   return [video, () => setAttempt((n) => n + 1)]
-}
-
-/** URL do VTT publicado numa língua, ou `null`. */
-export function useCaptionTrack(id: string, lang: string | null): string | null {
-  const [url, setUrl] = useState<string | null>(null)
-  useEffect(() => {
-    setUrl(null)
-    if (!lang) return
-    let live = true
-    let made = ''
-    recordingCaptionVttUrl(id, lang)
-      .then((u) => {
-        if (live) {
-          made = u
-          setUrl(u)
-        } else URL.revokeObjectURL(u)
-      })
-      .catch(() => undefined)
-    return () => {
-      live = false
-      if (made) URL.revokeObjectURL(made)
-    }
-  }, [id, lang])
-  return url
 }
 
 /**

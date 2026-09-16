@@ -55,3 +55,10 @@ export const isFailed = (r: Pick<RecordingItem, 'status'>) => r.status === 'fail
 export function thumbBackground(seed: string): string {
   return ['linear-gradient(140deg, ', avatarTone(seed), ', var(--stage))'].join('')
 }
+
+/** «04 set.» — dia e mês, para listas compactas. */
+export function formatDayMonth(iso: string, lang: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleDateString(lang, { day: '2-digit', month: 'short' })
+}
