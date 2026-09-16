@@ -4,6 +4,7 @@
  * não precisam de voltar a desenhar-se por causa de um número.
  */
 import { useEffect, useState } from 'react'
+import { hhmmss } from './palco'
 
 export function mmss(s: number): string {
   const total = Math.max(0, Math.floor(s))
@@ -35,7 +36,7 @@ export default function Cronometro({
   }, [activo, ler])
   return (
     <span className={className} role="timer" aria-live="off" aria-label={label} {...rest}>
-      {mmss(s)}
+      {hhmmss(s)}
     </span>
   )
 }
