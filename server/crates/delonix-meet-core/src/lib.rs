@@ -7,6 +7,8 @@
 //! - [`crypto`] — hashes, tokens aleatórios, comparação em tempo constante e
 //!   argon2, com UM dono (antes havia cópias em seis módulos);
 //! - [`page`] — paginação por cursor opaco, com limite obrigatório;
+//! - [`query`] — pesquisa de lista estilo Odoo: domínio de filtro contra lista
+//!   branca, ordenação, agrupamento e keyset (ADR-0007);
 //! - [`edition`] — os perfis de instalação (SaaS, enterprise, pessoal);
 //! - [`egress`] — para que endereços o servidor pode abrir ligações (anti-SSRF).
 //!
@@ -17,6 +19,7 @@ pub mod edition;
 pub mod egress;
 pub mod error;
 pub mod page;
+pub mod query;
 pub mod secret_box;
 
 pub use error::{DomainError, ErrorKind};
