@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import type { CallState } from '../callRecovery'
 import { DelonixSymbol, Icon } from '../ui/icons'
-import { Segmented, StatusBadge, Tag, cx } from '../ui/kit'
+import { Button, Segmented, StatusBadge, Tag, cx } from '../ui/kit'
 import { MeetingElapsed, WallClock } from './Clocks'
 import type { ViewMode } from './useLayout'
 
@@ -59,6 +59,7 @@ export function TopBar({
   studioAvailable,
   studioOpen,
   onStudio,
+  board,
   locale,
 }: {
   title: string
@@ -84,6 +85,8 @@ export function TopBar({
   studioAvailable: boolean
   studioOpen: boolean
   onStudio: () => void
+  /** Quadro aberto: a barra passa a ser a do quadro (template DelonixWhiteboard). */
+  board: { sharedBy: string | null; saving: boolean; canSave: boolean; onSave: () => void; onClose: () => void; pen: { on: boolean; pressao: boolean } } | null
   locale: string
 }) {
   const { t } = useTranslation()
@@ -92,7 +95,13 @@ export function TopBar({
       <span className="rm-top__mark" aria-hidden="true">
         <DelonixSymbol size={18} />
       </span>
-      <h1 className="rm-top__title">{title || code}</h1>
+      <h1 className="rm-top__title">
+        {board
+          ? board.sharedBy
+            ? t('room.quadro.tituloPartilhado', { nome: title || code })
+            : t('room.quadro.tituloBarra', { nome: title || code })
+          : title || code}
+      </h1>
       {inRoom && <MeetingElapsed startedAt={joinedAt} className="rm-top__elapsed dx-num" />}
       {recordingLabel && (
         <span title={recordingLabel} role="status">
@@ -113,7 +122,7 @@ export function TopBar({
           {secCode}
         </span>
       )}
-      <span className="rm-hide-narrow rm-top__tags">
+      <span className={cx('rm-hide-narrow rm-top__tags', board && 'is-hidden')}>
         {isInstant && <Tag>{t('room.topo.instantanea')}</Tag>}
         {isTraining && <Tag>{t('room.topo.formacao')}</Tag>}
         <span className="rm-top__meta dx-num">{code}</span>
@@ -125,11 +134,31 @@ export function TopBar({
           {t('room.topo.aEspera', { count: waitingCount })}
         </button>
       )}
-      <span className={cx('rm-hide-narrow', 'rm-top__conn')}>
+      {board && (
+        <>
+          {board.sharedBy && <span className="rm-top__meta rm-hide-narrow">{t('room.quadro.abertoPor', { nome: board.sharedBy })}</span>}
+          {board.pen.on && (
+            <span className="rm-top__pen rm-hide-narrow">
+              <span className="rm-top__penchip">
+                <Icon name="pen" size={11} />
+                {t('room.quadro.caneta')}
+              </span>
+              {board.pen.pressao && <span className="rm-top__meta dx-num">{t('room.quadro.pressaoActiva')}</span>}
+            </span>
+          )}
+          <Button size="sm" variant="outline" icon="download" busy={board.saving} disabled={!board.canSave} onClick={board.onSave}>
+            <span className="rm-hide-narrow">{t('room.quadro.guardar')}</span>
+          </Button>
+          <Button size="sm" variant="primary" icon="x" onClick={board.onClose}>
+            <span className="rm-hide-narrow">{t('room.quadro.fechar')}</span>
+          </Button>
+        </>
+      )}
+      <span className={cx('rm-hide-narrow', 'rm-top__conn', board && 'is-hidden')}>
         <ConnectionChip state={callState} />
         <WallClock locale={locale} className="dx-num" />
       </span>
-      <span className="rm-hide-narrow">
+      <span className={cx('rm-hide-narrow', board && 'is-hidden')}>
         <Segmented<ViewMode | 'studio'>
           label={t('room.topo.vista')}
           value={studioOpen ? 'studio' : viewMode}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { saveWhiteboard } from '../api'
 import type { WbStroke } from '../signaling'
@@ -16,6 +16,18 @@ export function useWhiteboard(core: RoomCore) {
   const { signal, code, setStatus } = core
   const [open, setOpen] = useState(false)
   const [strokes, setStrokes] = useState<WbStroke[]>([])
+  /** Quem abriu o quadro para todos (`wb-open { by }`). */
+  const [openedBy, setOpenedBy] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  /** Quantos traços havia no último «guardar» — fechar só volta a guardar se mudou. */
+  const [savedCount, setSavedCount] = useState(0)
+  /** Caneta detectada neste dispositivo, e se ela reporta pressão (para o cabeçalho). */
+  const [pen, setPen] = useState({ on: false, pressao: false })
+  /** A vista regista aqui como tirar o PNG (o canvas é dela). */
+  const snapshotRef = useRef<(() => string | null) | null>(null)
+  const registerSnapshot = useCallback((fn: (() => string | null) | null) => {
+    snapshotRef.current = fn
+  }, [])
 
   useEffect(() => {
     const offs = [
@@ -27,9 +39,13 @@ export function useWhiteboard(core: RoomCore) {
         setOpen(true)
       }),
       signal.on('wb-clear', () => setStrokes([])),
-      signal.on('wb-close', () => setOpen(false)),
+      signal.on('wb-close', () => {
+        setOpen(false)
+        setOpenedBy(null)
+      }),
       signal.on('wb-open', (m) => {
         setOpen(true)
+        setOpenedBy(m.by)
         setStatus(t('room.estado.quadroAbertoPor', { nome: m.by }))
       }),
     ]
@@ -42,11 +58,15 @@ export function useWhiteboard(core: RoomCore) {
     const next = !open
     setOpen(next)
     if (next && (core.sharing || core.isHost)) signal.send({ type: 'wb-open' })
-    if (!next) signal.send({ type: 'wb-close' })
+    if (!next) {
+      signal.send({ type: 'wb-close' })
+      setOpenedBy(null)
+    }
   }
 
   function close() {
     setOpen(false)
+    setOpenedBy(null)
     signal.send({ type: 'wb-close' })
   }
 
@@ -60,16 +80,22 @@ export function useWhiteboard(core: RoomCore) {
     signal.send({ type: 'wb-clear' })
   }
 
-  async function save(pngBase64: string) {
+  async function save(pngBase64?: string) {
+    const png = pngBase64 ?? snapshotRef.current?.() ?? null
+    if (!png) return
+    setSaving(true)
     try {
-      await saveWhiteboard(t('room.quadro.nomeNaBiblioteca', { code }), code, pngBase64)
+      await saveWhiteboard(t('room.quadro.nomeNaBiblioteca', { code }), code, png)
+      setSavedCount(strokes.length)
       setStatus(t('room.estado.quadroGuardado'))
     } catch {
       setStatus(t('room.estado.quadroNaoGuardado'))
+    } finally {
+      setSaving(false)
     }
   }
 
-  return { open, strokes, toggle, close, addStroke, clear, save }
+  return { open, strokes, unsaved: strokes.length > 0 && strokes.length !== savedCount, openedBy, saving, pen, setPen, registerSnapshot, toggle, close, addStroke, clear, save }
 }
 
 export type WhiteboardState = ReturnType<typeof useWhiteboard>
