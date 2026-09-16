@@ -87,7 +87,7 @@ describe('3.1.1 · a navegação tem comportamento em ecrã estreito', () => {
     // O atalho não colide com o Ctrl+K nem rouba o Ctrl+B a quem escreve.
     expect(s).toMatch(/e\.key\.toLowerCase\(\) === 'b' && !isEditable\(e\.target\)/)
     // O texto sai da vista mas não do nome acessível: nada de display:none no rótulo.
-    const recolhido = css().match(/@media \(min-width: 901px\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+    const recolhido = css().match(/@media \(min-width: 901px\) \{[\s\S]*?\n\}/g)?.join('\n') ?? ''
     expect(recolhido).toMatch(/\.shell\.nav-collapsed \.shell-nav \{[^}]*width:\s*var\(--nav-w-collapsed\)/)
     expect(recolhido).toMatch(/\.shell\.nav-collapsed \.nav-item__label \{[^}]*clip:/)
     expect(recolhido).not.toMatch(/nav-item__label[^{]*\{[^}]*display:\s*none/)
