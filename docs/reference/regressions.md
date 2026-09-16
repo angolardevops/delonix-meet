@@ -1744,3 +1744,15 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `server/tests/security_identity.rs::{mfa_activate_locks_after_five_failures, mfa_disable_locks_after_five_failures}` (controlo positivo: noutra conta, 4 falhas não bloqueiam e o código certo activa; o código de recuperação desactiva), `mfa_login_step_is_limited_per_account` (guarda do travão que já existia), e `rate_limit::tests::is_blocked_*`. O limitador é em memória por pod: com N réplicas o orçamento é N×5 — o mesmo limite dos outros travões (`rate_limit.rs`).
 
 **Ficheiros.** `server/src/{mfa,rate_limit,lib}.rs`, `server/tests/security_identity.rs`, `HARNESS.md`.
+
+### R132 — Contas de domínio com SSO exclusivo não tinham travão por conta no login
+
+**Sintoma.** Nenhum visível. `POST /api/auth/login` para uma conta cujo domínio exige SSO respondia sempre `400` («exige login via SSO») — antes do travão por conta, por isso nunca `429`. Provado a 2026-09-16 contra Postgres real: dez tentativas seguidas davam `left: 400, right: 429`.
+
+**Causa raiz.** A ordem das verificações no `auth::login`: o `is_sso_enforced` corria primeiro e respondia sem passar pelo `login_limiter`. O risco medido é baixo — a recusa depende do DOMÍNIO, não da conta, e o `/api/auth/sso/check` já diz publicamente que o domínio exige SSO; não há password a adivinhar por aqui. Mas é uma resposta sem travão num endpoint de credenciais, e a próxima verificação específica que alguém lá puser herdava o mesmo defeito.
+
+**Regra.** No login, o travão por conta é a PRIMEIRA coisa que responde; nenhuma resposta dependente da conta ou do domínio sai antes dele.
+
+**Portão.** `server/tests/security_identity.rs::login_rate_limit_applies_to_sso_enforced_accounts` (controlo positivo: a recusa `400` do SSO exclusivo continua a ser dita até ao limite).
+
+**Ficheiros.** `server/src/auth.rs`, `server/tests/security_identity.rs`.

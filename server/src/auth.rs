@@ -444,17 +444,19 @@ pub async fn login(
 ) -> Result<Response, ApiError> {
     let email = req.email.trim().to_lowercase();
 
+    // Anti-brute-force por conta (complementa o limite por IP): trava após
+    // demasiadas tentativas na mesma conta, mesmo vindas de vários IPs. É a
+    // PRIMEIRA coisa que responde (R132): nenhuma resposta específica da conta
+    // ou do domínio sai antes dele, senão essas respostas ficam sem travão.
+    if !state.login_limiter.check(&format!("acct:{email}")) {
+        return Err(ApiError::TooManyRequests);
+    }
+
     // Bloquear login por password se a organização exige SSO exclusivo.
     if is_sso_enforced(&state.db, &email).await {
         return Err(ApiError::BadRequest(
             "Esta organização exige login via SSO — usa o botão «Entrar com SSO»".into(),
         ));
-    }
-
-    // Anti-brute-force por conta (complementa o limite por IP): trava após
-    // demasiadas tentativas na mesma conta, mesmo vindas de vários IPs.
-    if !state.login_limiter.check(&format!("acct:{email}")) {
-        return Err(ApiError::TooManyRequests);
     }
     let row: Option<(Uuid, String, String, String, chrono::DateTime<Utc>)> = sqlx::query_as(
         "SELECT id, email, username, password_hash, created_at FROM users WHERE email = $1",

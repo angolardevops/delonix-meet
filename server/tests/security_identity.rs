@@ -596,3 +596,54 @@ async fn mfa_login_step_is_limited_per_account(db: sqlx::PgPool) {
         "um código VÁLIDO passou durante o bloqueio: {body}"
     );
 }
+
+// ---------------------------------------------------------------------------
+//  Login — SSO exclusivo antes do travão por conta
+// ---------------------------------------------------------------------------
+
+/// R132 — Num domínio com SSO exclusivo, o login por password respondia 400
+/// ANTES do travão por conta: essas contas não tinham limite nenhum, e a
+/// resposta não passava pelo mesmo caminho das outras.
+#[sqlx::test(migrations = "./migrations")]
+async fn login_rate_limit_applies_to_sso_enforced_accounts(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let admin = app.new_org("zeta.test").await; // gasta 1 login da conta
+    let (st, body) = app
+        .put(
+            &format!("/api/orgs/{}/sso", admin.org()),
+            Some(&admin.token),
+            json!({"issuer_url": "https://idp.zeta.test", "client_id": "cid",
+                   "client_secret": "s", "enforce_sso": true}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+
+    // Controlo positivo: a recusa do SSO exclusivo continua a ser dita.
+    let (st, body) = app
+        .post(
+            "/api/auth/login",
+            None,
+            json!({"email": admin.email, "password": PASSWORD}),
+        )
+        .await;
+    assert_eq!(st, 400, "{body}");
+
+    let mut ultimo = 0;
+    for _ in 0..10 {
+        let (st, _) = app
+            .post(
+                "/api/auth/login",
+                None,
+                json!({"email": admin.email, "password": "errada-123456"}),
+            )
+            .await;
+        ultimo = st;
+        if st == 429 {
+            break;
+        }
+    }
+    assert_eq!(
+        ultimo, 429,
+        "conta de domínio com SSO exclusivo sem travão por conta"
+    );
+}
