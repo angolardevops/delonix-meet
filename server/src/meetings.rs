@@ -398,6 +398,7 @@ pub async fn create(
     }
 
     fire_meeting_webhook(&state, &meeting, auth.user_id, "meeting.created").await;
+    crate::notifications::meeting_invited(&state, &meeting, auth.user_id, &req.invitee_ids).await;
 
     Ok(Json(CreateMeetingResp { meeting, conflicts }))
 }
@@ -592,6 +593,7 @@ pub async fn delete(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let audience = crate::notifications::meeting_audience(&state, id, auth.user_id).await;
     let res = sqlx::query("DELETE FROM meetings WHERE id = $1 AND owner_id = $2")
         .bind(id)
         .bind(auth.user_id)
@@ -600,6 +602,7 @@ pub async fn delete(
     if res.rows_affected() == 0 {
         return Err(ApiError::NotFound);
     }
+    crate::notifications::meeting_cancelled(&state, audience).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -1403,6 +1406,8 @@ pub async fn ring_upcoming_meetings(state: &Arc<AppState>) {
         if targets.is_empty() {
             continue;
         }
+        crate::notifications::meeting_starting(state, meeting_id, &title, &room_code, &targets)
+            .await;
         let (ringing, offline) = register_and_ring(
             state,
             &room_code,

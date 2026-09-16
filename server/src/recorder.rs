@@ -707,6 +707,7 @@ async fn finalize_inner(
         Err(e) => return Err(e.into()),
     }
     tracing::info!(%room_id, %rec_id, size, "server recording pronta na biblioteca");
+    crate::notifications::recording_ready(state, session.by_user, rec_id, &filename, &code).await;
 
     // Webhook recording.ready para as organizações de quem gravou.
     let orgs = crate::org::orgs_of_user(state, session.by_user).await;

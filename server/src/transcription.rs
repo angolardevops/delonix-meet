@@ -123,6 +123,7 @@ pub async fn complete(
     }
     tx.commit().await?;
     tracing::info!(%recording_id, chars = transcript.len(), "transcrição entregue");
+    crate::notifications::transcription_ready(state, recording_id).await;
     Ok(())
 }
 

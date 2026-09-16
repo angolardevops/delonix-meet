@@ -19,6 +19,7 @@ mod meetings_v1;
 mod metrics;
 mod mfa;
 mod mls;
+mod notifications;
 mod odoo;
 mod odoo_sso;
 pub mod openapi;
@@ -202,6 +203,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .nest("/api/auth", auth_routes)
         .route("/api/users/me", get(users::me).patch(users::update_me))
         // MFA (TOTP, RFC 6238) — ver mfa.rs.
+        // Centro de notificações pessoal (G8) — ver notifications.rs.
+        .route("/api/users/me/notifications", get(notifications::list))
+        .route(
+            "/api/users/me/notifications/mark-all-read",
+            post(notifications::mark_all_read),
+        )
+        .route(
+            "/api/users/me/notifications/{notification_id}",
+            get(notifications::get_one)
+                .patch(notifications::update)
+                .delete(notifications::delete),
+        )
         .route("/api/users/me/mfa", get(mfa::estado))
         .route("/api/users/me/mfa/enrol", post(mfa::inscrever))
         .route("/api/users/me/mfa/activate", post(mfa::activar))
@@ -851,6 +864,19 @@ pub async fn run() {
                         tracing::info!(abandoned, deleted, "webhook deliveries sweep")
                     }
                     Err(e) => tracing::warn!(error = %e, "webhook deliveries sweep failed"),
+    // Cron: retenção das notificações (G8) a cada 6 h — lidas com mais de 90
+    // dias, todas com mais de 180 (regra em `domain::notification`).
+    {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(6 * 3600));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                match notifications::retention_sweep(&db).await {
+                    Ok(n) if n > 0 => tracing::info!(deleted = n, "retenção de notificações"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "retenção de notificações falhou"),
                 }
             }
         });
