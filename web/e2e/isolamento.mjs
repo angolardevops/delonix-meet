@@ -581,8 +581,14 @@ if (gravacaoA) {
   await permitido('D (admin activo) descarrega a gravação da A', `/api/recordings/${gravacaoA}?dl=1`, { token: D.token })
   await permitido('D (admin activo) lê os comentários da gravação da A', `/api/recordings/${gravacaoA}/comments`, { token: D.token })
 }
+// Chave de API `dlx_` da A, própria destes casos. A `chaveA` de cima passou a
+// ser o token Odoo (`dlxo_`, R142), que a v1 de reuniões não aceita — sem esta,
+// o controlo dava 401 e a recusa do caso ARQUIVADO passava por engano.
+const chaveApiA = await req(`/api/orgs/${A.orgId}/api-keys`, {
+  token: A.token, method: 'POST', body: { name: 's3-arquivo' },
+})
 await permitido('controlo: a chave da A cria reunião com C como anfitriã', '/api/v1/meetings', {
-  token: chaveA.json?.key, method: 'POST',
+  token: chaveApiA.json?.key, method: 'POST',
   body: { title: 's3 antes', starts_at: new Date(Date.now() + 7200_000).toISOString(), host_email: C.email },
 })
 
@@ -599,7 +605,7 @@ if (gravacaoA) {
   await recusado('D ARQUIVADO lê os comentários da gravação da A', `/api/recordings/${gravacaoA}/comments`, { token: D.token })
 }
 await recusado('a chave da A cria reunião com C ARQUIVADA como anfitriã', '/api/v1/meetings', {
-  token: chaveA.json?.key, method: 'POST',
+  token: chaveApiA.json?.key, method: 'POST',
   body: { title: 's3 depois', starts_at: new Date(Date.now() + 9000_000).toISOString(), host_email: C.email },
 })
 
