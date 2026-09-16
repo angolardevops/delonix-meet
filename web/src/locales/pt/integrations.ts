@@ -93,7 +93,7 @@ export default {
     evento: {
       meeting_created: 'reunião agendada',
       meeting_started: 'reunião começou',
-      meeting_mom_ready: 'ata pronta',
+      meeting_mom_ready: 'acta pronta',
       recording_ready: 'gravação pronta',
     },
     escolheEvento: 'Escolhe pelo menos um evento.',

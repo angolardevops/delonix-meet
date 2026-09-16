@@ -57,7 +57,7 @@ export default {
     respostas: 'Respostas dos convidados',
     semConvidados: 'Sem convidados.',
     motivo: 'Motivo: {{motivo}}',
-    ata: 'Ata da reunião',
+    ata: 'Acta da reunião',
     ics: 'Adicionar ao calendário',
     confirmarEliminar: 'Eliminar esta reunião para todos os convidados?',
     eliminarTitulo: 'Eliminar reunião',
