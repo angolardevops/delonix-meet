@@ -74,13 +74,15 @@ dentro de `/api/v1` — a catraca conta `rotas_v1_com_sessao`.
    | Não autenticado / sem permissão | `401` / `403`. Um recurso de outra org é `404` — não se confirma que existe |
    | Rate-limit | `429` + `Retry-After` |
 
-7. **Erro** — o destino na v1 é:
+7. **Erro** — envelope PLANO em todas as superfícies (ADR-0005 §3):
    ```json
-   {"error": {"code": "meeting.host_not_found", "message": "…", "details": [], "request_id": "…"}}
+   {"error": "…", "code": "meeting.host_not_found", "details": [], "request_id": "…"}
    ```
-   O `code` é estável e é parte do contrato; a `message` é para humanos e pode mudar.
-   Hoje `ApiError` (`server/src/error.rs`) só produz `{"error": "<texto>"}`. **Não
-   inventes um segundo formato num handler**: o envelope nasce em `error.rs`, uma vez.
+   O `code` é estável e é parte do contrato; o `error` é a mensagem para humanos e pode
+   mudar (fica plano porque o web e o Odoo lêem `body.error` como texto). Código novo
+   devolve `ApiError::Domain(DomainError::…("contexto.razao", …))`; as variantes
+   genéricas de `ApiError` ficam para o código herdado. **Não inventes um segundo
+   formato num handler.**
 8. **Listagens:** `page_size` (por omissão 50, máximo 100) + `page_token` opaco →
    `next_page_token`. **Nenhuma listagem nova sem limite, e nenhum limite silencioso.**
    Numa sincronização (`since`), o cursor é obrigatório: um corte aos 500 perde registos.

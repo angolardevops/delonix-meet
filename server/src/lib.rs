@@ -383,10 +383,47 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // vão em ?token= nas ligações WebSocket).
         .layer(TraceLayer::new_for_http().make_span_with(
             |req: &axum::http::Request<axum::body::Body>| {
-                tracing::info_span!("http", method = %req.method(), path = %req.uri().path())
+                let request_id = req
+                    .headers()
+                    .get(REQUEST_ID_HEADER)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                tracing::info_span!("http", method = %req.method(), path = %req.uri().path(), request_id)
             },
         ))
+        // Por DENTRO do request_id (o envelope leva o id) e por fora de tudo o
+        // resto: apanha também as recusas dos extractores do axum.
+        .layer(middleware::from_fn(error::normalize_error_body))
+        // Por FORA do trace: o id tem de existir quando o span nasce.
+        .layer(middleware::from_fn(request_id))
         .with_state(state)
+}
+
+const REQUEST_ID_HEADER: &str = "x-request-id";
+
+/// Dá a cada pedido um identificador: aceita o `X-Request-Id` do proxy (se for
+/// curto e só com caracteres seguros — vai parar aos logs) ou gera um. O mesmo
+/// id sai no cabeçalho da resposta, no span de log e no envelope de erro.
+async fn request_id(mut req: axum::extract::Request, next: middleware::Next) -> Response {
+    let id = req
+        .headers()
+        .get(REQUEST_ID_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| {
+            !v.is_empty()
+                && v.len() <= 64
+                && v.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        })
+        .map(str::to_string)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+    if let Ok(v) = HeaderValue::from_str(&id) {
+        req.headers_mut().insert(REQUEST_ID_HEADER, v.clone());
+        let mut res = error::REQUEST_ID.scope(id, next.run(req)).await;
+        res.headers_mut().insert(REQUEST_ID_HEADER, v);
+        return res;
+    }
+    next.run(req).await
 }
 
 /// CORS por allowlist (`CORS_ORIGINS`). Sem origens configuradas: só same-origin

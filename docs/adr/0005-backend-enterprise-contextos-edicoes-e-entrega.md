@@ -127,11 +127,17 @@ Mantém-se o ADR-0004 §4. Acrescenta-se:
     spec gerado = spec commitado;
   - o cliente TypeScript do web **gera-se** a partir deste spec. É assim que a UI nova
     deixa de escrever tipos à mão.
-- **Envelope de erro com código estável**, em todas as superfícies (também na BFF):
-  `{"error":{"code","message","details","request_id"}}`.
-  - Durante a transição, o campo `error` mantém uma leitura compatível para o
-    `web/src/api.ts` actual.
-  - Nasce UMA vez em `delonix-meet-api`, a partir do `DomainError` do `core`.
+- **Envelope de erro com código estável**, em todas as superfícies (também na BFF),
+  **plano**:
+  `{"error": "<mensagem>", "code": "meeting.host_not_found", "details": [...], "request_id": "…"}`.
+  - Porquê plano e não `{"error": {"code": …}}` (a forma do ADR-0004 §4): o
+    `web/src/api.ts` e o módulo Odoo lêem `body.error` como texto, e a v1 só
+    quebra com v2. O plano acrescenta sem remover.
+  - Nasce uma só vez (`ApiError` a partir do `DomainError` do `core`). As
+    recusas dos extractores do axum e o 404/405 de rota passam pelo mesmo
+    envelope (`error::normalize_error_body`).
+  - `request_id` é o `X-Request-Id` (aceite do proxy se for seguro, gerado
+    se não), igual no cabeçalho, no span de log e no corpo.
 - **Compatibilidade da BFF.** Uma rota da BFF que muda de forma (por exemplo,
   `POST /orgs/{id}/settings` → `PATCH`):
   - ganha a forma nova;
