@@ -88,8 +88,9 @@ export function TopBar({
       <h1 className="rm-top__title">{title || code}</h1>
       {inRoom && <MeetingElapsed startedAt={joinedAt} className="rm-top__elapsed dx-num" />}
       {recordingLabel && (
-        <span title={recordingLabel}>
+        <span title={recordingLabel} role="status">
           <StatusBadge tone="record">{t('room.topo.rec')}</StatusBadge>
+          <span className="dx-sr-only">{recordingLabel}</span>
         </span>
       )}
       {live && <StatusBadge tone="live">{t('room.topo.aoVivo')}</StatusBadge>}
