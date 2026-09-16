@@ -88,3 +88,143 @@ async fn voice_room_for_another_orgs_room_code_is_refused(db: sqlx::PgPool) {
     let (st, own_a) = voice_room(&app, &a, room_a["code"].as_str().unwrap()).await;
     assert_eq!(st, 200, "{own_a}");
 }
+
+/// R141 — qualquer membro encerrava a sala de voz de outro colega.
+#[sqlx::test(migrations = "./migrations")]
+async fn voice_room_close_requires_creator_or_org_admin(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("VOICE_INTERNAL_SECRET", VOICE_SECRET)]).await;
+    let admin = app.new_org("gama-voz.ao").await;
+    let creator = app.add_member(&admin, "criadora", "member").await;
+    let other = app.add_member(&admin, "outro", "member").await;
+    seed_did(&app, admin.org(), "+244222300003").await;
+
+    let room = app.new_room(&creator, "Sala da criadora").await;
+    let code = room["code"].as_str().unwrap();
+    let (st, vr1) = voice_room(&app, &creator, code).await;
+    assert_eq!(st, 200, "{vr1}");
+    let id1 = vr1["id"].as_str().unwrap();
+
+    // O ataque: um colega que não criou a sala nem é admin.
+    let (st, body) = app
+        .post(
+            &format!("/api/voice/rooms/{id1}/close"),
+            Some(&other.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 403, "um membro qualquer encerrou a sala de voz: {body}");
+    assert_eq!(body["code"], "voice.room_close_forbidden", "{body}");
+    let status: String = sqlx::query_scalar("SELECT status FROM voice_room WHERE id = $1::uuid")
+        .bind(id1)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(status, "active", "a recusa não pode ter encerrado a sala");
+
+    // Controlo positivo 1: a criadora encerra a sua.
+    let (st, body) = app
+        .post(
+            &format!("/api/voice/rooms/{id1}/close"),
+            Some(&creator.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+
+    // Controlo positivo 2: o admin da org encerra a de outra pessoa.
+    let (st, vr2) = voice_room(&app, &creator, code).await;
+    assert_eq!(st, 200, "{vr2}");
+    let id2 = vr2["id"].as_str().unwrap();
+    let (st, body) = app
+        .post(
+            &format!("/api/voice/rooms/{id2}/close"),
+            Some(&admin.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+
+    // Outra org continua a receber 404 (não revela a existência).
+    let foreign = app.new_org("delta-voz.ao").await;
+    let (st, body) = app
+        .post(
+            &format!("/api/voice/rooms/{id2}/close"),
+            Some(&foreign.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 404, "{body}");
+}
+
+/// R141 — um admin de org punha números no pool PARTILHADO (`org_id NULL`),
+/// que todas as organizações passam a usar no dial-in.
+#[sqlx::test(migrations = "./migrations")]
+async fn shared_did_pool_requires_platform_admin(db: sqlx::PgPool) {
+    // O administrador da plataforma é declarado por UUID no arranque; a conta
+    // só nasce depois. Regista-se com um servidor, e o teste corre num segundo
+    // servidor, sobre a mesma base, que já a declara. O primeiro larga a vaga
+    // do semáforo antes de o segundo a pedir.
+    let boot = TestApp::spawn(db.clone()).await;
+    let operator = boot.new_org("operador-voz.ao").await;
+    drop(boot);
+    let app = TestApp::spawn_with(db, &[("PLATFORM_ADMIN_USER_IDS", &operator.user_id)]).await;
+    let tenant = app.new_org("epsilon-voz.ao").await;
+    let dids = format!("/api/orgs/{}/voice/dids", tenant.org());
+
+    // O ataque: admin de org, modelo partilhado, sem `org_scoped` → pool.
+    let (st, body) = app
+        .post(&dids, Some(&tenant.token), json!({"e164": "+244222400004"}))
+        .await;
+    assert_eq!(
+        st, 403,
+        "um admin de org escreveu no pool partilhado: {body}"
+    );
+    assert_eq!(
+        body["code"], "voice.shared_did_requires_platform_admin",
+        "{body}"
+    );
+    let (st, body) = app
+        .post(
+            &dids,
+            Some(&tenant.token),
+            json!({"e164": "+244222400005", "model": "shared", "org_scoped": false}),
+        )
+        .await;
+    assert_eq!(st, 403, "{body}");
+    let pool: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM voice_did WHERE org_id IS NULL")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(pool, 0, "a recusa não pode ter gravado no pool");
+
+    // Controlo positivo: o admin de org cria DIDs da SUA org.
+    let (st, body) = app
+        .post(
+            &dids,
+            Some(&tenant.token),
+            json!({"e164": "+244222400006", "org_scoped": true}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["org_id"], tenant.org());
+    let (st, body) = app
+        .post(
+            &dids,
+            Some(&tenant.token),
+            json!({"e164": "+244222400007", "model": "dedicated"}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["org_id"], tenant.org());
+
+    // Controlo positivo: o administrador da plataforma escreve no pool.
+    let (st, body) = app
+        .post(
+            &format!("/api/orgs/{}/voice/dids", operator.org()),
+            Some(&operator.token),
+            json!({"e164": "+244222400008"}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["org_id"], Value::Null, "{body}");
+}

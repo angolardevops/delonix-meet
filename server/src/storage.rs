@@ -381,7 +381,10 @@ fn is_platform_admin(declared: &[uuid::Uuid], user_id: uuid::Uuid) -> bool {
     declared.contains(&user_id)
 }
 
-fn require_platform_admin(state: &AppState, user_id: uuid::Uuid) -> Result<(), ApiError> {
+pub(crate) fn require_platform_admin(
+    state: &AppState,
+    user_id: uuid::Uuid,
+) -> Result<(), ApiError> {
     if is_platform_admin(&state.config.platform_admin_user_ids, user_id) {
         Ok(())
     } else {

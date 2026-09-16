@@ -1767,3 +1767,17 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `server/tests/security_voice_odoo.rs::voice_room_for_another_orgs_room_code_is_refused` (controlo positivo: B liga a sua sala e o IVR HTTP devolve-a; A continua a ligar a sua). O caminho gRPC não é testado de novo: a correcção está na criação, a montante das duas validações. Não verificado com FreeSWITCH nem chamada PSTN real.
 
 **Ficheiros.** `server/src/voice.rs`, `server/tests/security_voice_odoo.rs`, `docs/reference/openapi/bff.json`.
+
+### R141 — Qualquer membro encerrava a sala de voz de outro, e um admin de org escrevia no pool partilhado de DIDs
+
+**Sintoma.** (1) `POST /api/voice/rooms/{id}/close` dava `200` a qualquer membro da org dona: um colega cortava a chamada PSTN de todos os participantes da sala de voz de outra pessoa. (2) `POST /api/orgs/{org}/voice/dids` com `{"e164": …}` (modelo `shared` por omissão, sem `org_scoped`) gravava o número com `org_id = NULL` — o POOL PARTILHADO que `create_room` usa para o dial-in de TODAS as organizações. Qualquer conta que se registe é admin da sua org, portanto qualquer pessoa injectava números no dial-in dos outros. Provado a 2026-09-16 contra Postgres real: `um membro qualquer encerrou a sala de voz: {"ok":true}` e `um admin de org escreveu no pool partilhado: {…,"org_id":null,…}`.
+
+**Causa raiz.** O fecho só perguntava «é membro da org?» (a documentação do handler dizia-o por escrito), e o inventário de DIDs confundia «admin da org» com «dono da plataforma» — a mesma confusão que a S1 do R121 fechou no armazenamento.
+
+**Regra.** Encerrar uma sala de voz é do CRIADOR ou de um admin da org dona (`org::role_in_org`); outro membro recebe `403` `voice.room_close_forbidden`, e quem não é membro continua a receber `404`. Escrever no pool partilhado exige o administrador da PLATAFORMA (`storage::require_platform_admin`, agora `pub(crate)` em vez de copiado); o admin de org recebe `403` `voice.shared_did_requires_platform_admin` e cria DIDs só da sua org (`org_scoped: true` ou `model: dedicated`). A recusa corre antes de escrever. Sem consumidor no web (nenhum ecrã chama estas rotas), por isso a mudança do omisso não parte nada visível.
+
+**Não fechado.** Um admin de org continua a poder registar QUALQUER número +E.164 para a sua org — não há prova de posse do número (exigiria o fornecedor SIP). O efeito fica confinado à sua org, mas ocupa o número (índice único) e o `409` revela que um número já está no inventário.
+
+**Portão.** `server/tests/security_voice_odoo.rs::{voice_room_close_requires_creator_or_org_admin, shared_did_pool_requires_platform_admin}` (controlos positivos: a criadora e o admin encerram; o admin de org cria DIDs da sua org; o administrador da plataforma escreve no pool).
+
+**Ficheiros.** `server/src/{voice,storage}.rs`, `server/tests/security_voice_odoo.rs`, `docs/reference/openapi/bff.json`.

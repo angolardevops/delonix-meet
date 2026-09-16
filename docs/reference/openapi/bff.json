@@ -7605,7 +7605,7 @@
         ]
       },
       "post": {
-        "description": "Com `model = shared` e `org_scoped` falso/ausente o DID vai para o pool\nPARTILHADO (`org_id = null`), visível a todas as organizações.",
+        "description": "Com `model = shared` e `org_scoped` falso/ausente o DID vai para o pool\nPARTILHADO (`org_id = null`), visível a todas as organizações — e isso só o\nadministrador da PLATAFORMA (`PLATFORM_ADMIN_USER_IDS`) pode fazer; um admin\nde org recebe `403` (`voice.shared_did_requires_platform_admin`) e cria DIDs\nsó da sua org (`org_scoped: true` ou `model: dedicated`).",
         "operationId": "create_did",
         "parameters": [
           {
@@ -7658,6 +7658,16 @@
               }
             },
             "description": "Sessão inválida OU membro sem papel de admin."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`voice.shared_did_requires_platform_admin`: o pool partilhado é da plataforma."
           },
           "404": {
             "content": {
@@ -9882,6 +9892,16 @@
             },
             "description": ""
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`voice.room_close_forbidden`: membro da org, mas nem criador da sala de voz nem admin."
+          },
           "404": {
             "content": {
               "application/json": {
@@ -9898,7 +9918,7 @@
             "session": []
           }
         ],
-        "summary": "Encerra uma sala de voz (o PIN deixa de ser válido). Basta ser membro da\norg dona (não exige admin nem ser o criador). Idempotente.",
+        "summary": "Encerra uma sala de voz (o PIN deixa de ser válido). Só quem a CRIOU ou um\nadmin da org dona; outro membro recebe `403` (`voice.room_close_forbidden`).\nIdempotente.",
         "tags": [
           "voice"
         ]

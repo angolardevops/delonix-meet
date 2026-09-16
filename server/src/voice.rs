@@ -386,8 +386,9 @@ pub async fn list_participants(
     Ok(Json(parts))
 }
 
-/// Encerra uma sala de voz (o PIN deixa de ser válido). Basta ser membro da
-/// org dona (não exige admin nem ser o criador). Idempotente.
+/// Encerra uma sala de voz (o PIN deixa de ser válido). Só quem a CRIOU ou um
+/// admin da org dona; outro membro recebe `403` (`voice.room_close_forbidden`).
+/// Idempotente.
 #[utoipa::path(
     post, path = "/api/voice/rooms/{id}/close", tag = "voice",
     security(("session" = [])),
@@ -395,6 +396,7 @@ pub async fn list_participants(
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
         (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "`voice.room_close_forbidden`: membro da org, mas nem criador da sala de voz nem admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "Inexistente ou de outra organização.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -403,15 +405,20 @@ pub async fn close_room(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let owner_org: Uuid = sqlx::query_scalar("SELECT org_id FROM voice_room WHERE id = $1")
-        .bind(id)
-        .fetch_one(&state.db)
-        .await?;
-    if !orgs_of_user(&state, auth.user_id)
-        .await
-        .contains(&owner_org)
-    {
-        return Err(ApiError::NotFound);
+    let (owner_org, created_by): (Uuid, Uuid) =
+        sqlx::query_as("SELECT org_id, created_by FROM voice_room WHERE id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?;
+    // Quem não é membro activo da org dona não sabe que a sala existe (404).
+    // Dentro da org, encerrar corta a chamada de TODOS os participantes PSTN:
+    // é do criador ou de um admin, não de qualquer colega (R141).
+    match role_in_org(&state, owner_org, auth.user_id).await? {
+        None => return Err(ApiError::NotFound),
+        Some(role) if role != "admin" && created_by != auth.user_id => {
+            return Err(DomainError::forbidden("voice.room_close_forbidden").into());
+        }
+        Some(_) => {}
     }
     sqlx::query("UPDATE voice_room SET status = 'closed', closed_at = now() WHERE id = $1 AND status = 'active'")
         .bind(id)
@@ -454,7 +461,10 @@ fn default_model() -> String {
 /// Adiciona um DID ao inventário de uma org (admin).
 ///
 /// Com `model = shared` e `org_scoped` falso/ausente o DID vai para o pool
-/// PARTILHADO (`org_id = null`), visível a todas as organizações.
+/// PARTILHADO (`org_id = null`), visível a todas as organizações — e isso só o
+/// administrador da PLATAFORMA (`PLATFORM_ADMIN_USER_IDS`) pode fazer; um admin
+/// de org recebe `403` (`voice.shared_did_requires_platform_admin`) e cria DIDs
+/// só da sua org (`org_scoped: true` ou `model: dedicated`).
 #[utoipa::path(
     post, path = "/api/orgs/{org_id}/voice/dids", tag = "voice",
     security(("session" = [])),
@@ -464,6 +474,7 @@ fn default_model() -> String {
         (status = 200, body = VoiceDid),
         (status = 400, description = "Número fora do formato +E.164.", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`voice.shared_did_requires_platform_admin`: o pool partilhado é da plataforma.", body = crate::openapi::ErrorBody),
         (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
         (status = 409, description = "Número já existe no inventário.", body = crate::openapi::ErrorBody),
     )
@@ -488,6 +499,16 @@ pub async fn create_did(
     };
     // shared + org_scoped=false => pool partilhado (org_id NULL).
     let scoped = req.org_scoped.unwrap_or(model == "dedicated");
+    // O pool partilhado serve o dial-in de TODAS as organizações: um número
+    // lá posto por um inquilino passava a atender chamadas de outros. Só a
+    // plataforma o gere (R141). A recusa vem antes de escrever.
+    if !scoped {
+        crate::storage::require_platform_admin(&state, auth.user_id).map_err(|_| {
+            ApiError::from(DomainError::forbidden(
+                "voice.shared_did_requires_platform_admin",
+            ))
+        })?;
+    }
     let did: VoiceDid = sqlx::query_as(&format!(
         "INSERT INTO voice_did (org_id, e164, market, model, provider)
          VALUES ($1, $2, $3, $4, $5)
