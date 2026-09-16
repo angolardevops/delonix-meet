@@ -39,6 +39,8 @@ import { useRoomCore, type RemotePeer } from '../room/useRoomCore'
 import { useScreenShare } from '../room/useScreenShare'
 import { useTranscription } from '../room/useTranscription'
 import { useWhiteboard } from '../room/useWhiteboard'
+import { EnhancementSettings, StageEnhancementsLayer } from '../room/enhance/EnhancementViews'
+import { useStageEnhancements } from '../room/enhance/useStageEnhancements'
 
 type Confirmacao = { kind: 'transfer'; peer: RemotePeer } | { kind: 'server-rec-e2ee' } | null
 
@@ -84,6 +86,7 @@ export default function Room({
   const remote = useRemoteControl(core)
   const invite = useInvite(code)
   const multicam = useMulticam(core)
+  const enhancements = useStageEnhancements(core, media, layout, participants.conditions)
 
   const [secOpen, setSecOpen] = useState(false)
   /** O painel de sondagens abriu pelo atalho do chat: foca o compositor. */
@@ -289,6 +292,7 @@ export default function Room({
               {transcription.ccOn && transcription.caption && <CaptionOverlay caption={transcription.caption} />}
               {tools.winnerFx && <WinnerOverlay />}
               {core.roomState === 'waiting' && <WaitingOverlay />}
+              <StageEnhancementsLayer enh={enhancements} suggestImmersive={isHost && session.isTraining && !core.presentation} roomCode={code} />
             </Stage>
 
             {whiteboard.open && (
@@ -402,7 +406,9 @@ export default function Room({
                 />
               )}
               {chrome.panel === 'settings' && (
-                <SettingsPanel media={media} transcription={transcription} localVideo={core.localVideoRef.current} />
+                <SettingsPanel media={media} transcription={transcription} localVideo={core.localVideoRef.current}>
+                  <EnhancementSettings enh={enhancements} viewMode={layout.effectiveViewMode} onSpeakerView={() => layout.setViewMode('stage')} />
+                </SettingsPanel>
               )}
               {chrome.panel === 'notes' && <NotesPanel transcription={transcription} isHost={isHost} />}
               {chrome.panel === 'multicam' && <MulticamPanel multicam={multicam} peers={peers} roomTitle={session.roomName || code} />}

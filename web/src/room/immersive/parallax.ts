@@ -154,10 +154,9 @@ export interface ImmersiveEnv {
   saveData: boolean
   batteryLow: boolean
   webgl2: boolean
-  cpuLimited?: boolean
 }
 
-export type ImmersiveBlock = 'reducedMotion' | 'saveData' | 'battery' | 'noWebgl' | 'cpu'
+export type ImmersiveBlock = 'reducedMotion' | 'saveData' | 'battery' | 'noWebgl'
 
 /**
  * Pode correr? Pura. Movimento reduzido primeiro: é uma preferência de
@@ -168,7 +167,10 @@ export function immersiveBlock(env: ImmersiveEnv): ImmersiveBlock | null {
   if (!env.webgl2) return 'noWebgl'
   if (env.saveData) return 'saveData'
   if (env.batteryLow) return 'battery'
-  if (env.cpuLimited) return 'cpu'
+  // O processador ocupado NÃO entra aqui: o sinal que há (`cpuLimited`) é do
+  // encoder e oscila a cada amostra, o que ligava e desligava o efeito. O que
+  // decide se o dispositivo aguenta é o custo MEDIDO do próprio efeito
+  // (`IMMERSIVE_BUDGET`, em `videoOverlay.ts`).
   return null
 }
 

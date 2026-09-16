@@ -117,7 +117,6 @@ describe('immersiveBlock — acessibilidade e bateria antes do efeito', () => {
     expect(immersiveBlock({ ...ok, webgl2: false })).toBe('noWebgl')
     expect(immersiveBlock({ ...ok, saveData: true })).toBe('saveData')
     expect(immersiveBlock({ ...ok, batteryLow: true })).toBe('battery')
-    expect(immersiveBlock({ ...ok, cpuLimited: true })).toBe('cpu')
   })
 })
 
