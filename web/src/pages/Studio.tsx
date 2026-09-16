@@ -10,26 +10,50 @@
  * A página é dona do estado e fala com os objectos imperativos (compositor,
  * directo, arquivo). Os painéis em `studio/*.tsx` só desenham.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, createRoom, joinRoom, uploadRecording } from '../api'
+import type { Fonte } from '../room/compositor'
 import { BrandMark } from '../components/BrandMark'
 import { useShell } from '../components/shellContext'
 import { BackgroundEffect } from '../media'
-import { Alert, Button, cx, IconButton, StatusBadge } from '../ui/kit'
+import { Alert, Button, cx, IconButton, Spinner, StatusBadge } from '../ui/kit'
 import { analisarPausas, AnaliseDeAudio, trocosSemPausas } from '../studio/analise'
 import * as arquivo from '../studio/arquivo'
+import AudioPanel from '../studio/AudioPanel'
+import CenasPanel from '../studio/CenasPanel'
 import { AVATAR_INICIAL, CompositorDeAula, EstadoDoAvatar, Recorte, RECORTE_INTEIRO } from '../studio/compositor'
 import Cronometro from '../studio/Cronometro'
+import { useDebito } from '../studio/debito'
+import type { SondagemNoPalco } from '../studio/desenho'
 import { Destino, Directo, directoSuportado, EstadoDoDirecto } from '../studio/directo'
 import EditPanel, { Gravado } from '../studio/EditPanel'
 import { cortar, cortarVarios, cortesSuportados } from '../studio/editor'
+import LayoutsPanel from '../studio/LayoutsPanel'
 import LivePanel from '../studio/LivePanel'
 import LocalPanel from '../studio/LocalPanel'
+import { eh4k, plataformaDoUrl, rotuloDaQualidade } from '../studio/palco'
+import QuadroLocal from '../studio/QuadroLocal'
 import RegionPicker from '../studio/RegionPicker'
+import Relogio from '../studio/Relogio'
+import SobreposicoesPanel from '../studio/SobreposicoesPanel'
 import SourcesPanel from '../studio/SourcesPanel'
+import { useLegendas } from '../studio/useLegendas'
+import { usePalco } from '../studio/usePalco'
 import '../ui/studio.css'
+import '../ui/studio-palco.css'
+
+/**
+ * A sala (convidados, chat, perguntas, sondagens) entra por `lazy`, e só
+ * quando se abre: é o único sítio do Estúdio que fala `signaling`/`webrtc`, e
+ * uma aula gravada offline não pode arrastar esse caminho — nem para o
+ * precache do PWA (ver `studio.invariantes.test.ts`).
+ */
+const SalaDoEstudio = lazy(() => import('./studio/SalaDoEstudio'))
+
+/** O ecrã é de telemóvel: a emissão arruma-se para o polegar e a sala abre no chat. */
+const ecraDeTelemovel = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 720px)').matches
 
 /**
  * O tecto por omissão do servidor (`MAX_DESTINOS_POR_DIRECTO` em
@@ -42,7 +66,7 @@ type Vista = 'emissao' | 'edicao'
 
 export default function Studio() {
   const { t } = useTranslation()
-  const { navOpen, setNavOpen } = useShell()
+  const { navOpen, setNavOpen, org } = useShell()
   const compRef = useRef<CompositorDeAula | null>(null)
   const canvasHostRef = useRef<HTMLDivElement>(null)
   const efeitoRef = useRef<BackgroundEffect | null>(null)
@@ -78,6 +102,12 @@ export default function Studio() {
   const [ocupacao, setOcupacao] = useState(0)
 
   const [directo, setDirecto] = useState<EstadoDoDirecto>({ fase: 'parado' })
+  const kbps = useDebito(directo)
+  // A sala ligada ao Estúdio: pedida pela pessoa, carregada por `lazy`.
+  const [salaAberta, setSalaAberta] = useState(false)
+  const [salaLigada, setSalaLigada] = useState<{ codigo: string; token: string } | null>(null)
+  const [haSondagem, setHaSondagem] = useState(false)
+  const [convidadosNoPalco, setConvidadosNoPalco] = useState(0)
   const [destinos, setDestinos] = useState<Destino[]>([
     { url: 'rtmp://a.rtmp.youtube.com/live2', chave: '', rotulo: 'YouTube' },
   ])
@@ -109,6 +139,37 @@ export default function Studio() {
       compRef.current = null
     }
   }, [t])
+
+  const aGravarOuPausa = estado !== 'parado'
+  const palco = usePalco({
+    compRef,
+    pronto,
+    bloqueado: aGravarOuPausa || directo.fase === 'no-ar' || directo.fase === 'a-ligar',
+    titulo,
+    organizacao: org?.name ?? '',
+    avatar,
+    aplicarAvatar: setAvatar,
+  })
+  const estadoLegendas = useLegendas(
+    compRef,
+    palco.sobreposicoes.legendas,
+    aGravarOuPausa || directo.fase === 'no-ar',
+  )
+  // A resolução mostrada segue o canvas REAL (a qualidade pode ter sido recusada).
+  useEffect(() => {
+    const c = compRef.current
+    if (c) setResolucao(`${c.canvas.width}×${c.canvas.height}`)
+  }, [pronto, palco.qualidade])
+
+  const aoPalco = useCallback((fontes: Fonte[]) => {
+    compRef.current?.definirConvidados(fontes)
+    setConvidadosNoPalco(fontes.length)
+  }, [])
+  const aSondagem = useCallback((s: SondagemNoPalco | null) => {
+    if (compRef.current) compRef.current.sondagem = s
+    setHaSondagem(!!s)
+  }, [])
+  const obterCamara = useCallback(() => compRef.current?.trackDaCamara ?? null, [])
 
   // Estado da rede: o aviso «sem rede» e o esvaziar da fila dependem disto.
   useEffect(() => {
@@ -152,6 +213,7 @@ export default function Studio() {
   }, [recorte])
 
   const lerSegundos = useCallback(() => compRef.current?.segundos ?? 0, [])
+  const lerBytes = useCallback(() => compRef.current?.bytesGravados ?? 0, [])
   const mudarAvatar = useCallback((patch: Partial<EstadoDoAvatar>) => setAvatar((a) => ({ ...a, ...patch })), [])
   const fecharRecorte = useCallback(() => setARecortar(false), [])
 
@@ -228,6 +290,8 @@ export default function Studio() {
    */
   function arrastarBolha(e: ReactPointerEvent<HTMLDivElement>) {
     if (!temCamara || aRecortar) return
+    // No quadro, arrastar é escrever — a bolha move-se pelos cantos.
+    if (palco.conteudo === 'quadro') return
     if ((e.target as HTMLElement).closest('button, input, a')) return
     const alvo = e.currentTarget
     const cv = alvo.querySelector('canvas')
@@ -414,12 +478,19 @@ export default function Studio() {
     setDirecto({ fase: 'a-ligar' })
     try {
       const fluxo = await c.montarFluxo()
-      const sala = await createRoom(titulo.trim() || t('studio.semTitulo'), 'sfu', false, false, 'normal')
-      const { room_token } = await joinRoom(sala.code)
+      // Com uma sala ligada (convidados), emite-se por ELA; sem sala, cria-se
+      // uma para a sessão de directo, como sempre.
+      let codigo = salaLigada?.codigo ?? ''
+      let token = salaLigada?.token ?? ''
+      if (!codigo) {
+        const sala = await createRoom(titulo.trim() || t('studio.semTitulo'), 'sfu', false, false, 'normal')
+        codigo = sala.code
+        token = (await joinRoom(sala.code)).room_token
+      }
       const d = new Directo()
       d.aoMudar = setDirecto
       directoRef.current = d
-      await d.comecar(fluxo, sala.code, room_token, destinos.filter((dest) => dest.chave.trim()))
+      await d.comecar(fluxo, codigo, token, destinos.filter((dest) => dest.chave.trim()))
     } catch (e) {
       // A razão vem do servidor («esta sala tem cifra ponta-a-ponta…») e
       // mostra-se tal como foi escrita, no PAINEL, ao pé do botão que a causou.
@@ -512,8 +583,13 @@ export default function Studio() {
   const aGravar = estado === 'a-gravar'
   const emPausa = estado === 'pausa'
   const noAr = directo.fase === 'no-ar'
-  const temFonte = temEcra || temCamara
-  const arrastavel = temCamara && !aRecortar
+  // Há imagem para gravar: uma fonte, o quadro, o cartão de intervalo ou um convidado.
+  const temFonte = temEcra || temCamara || palco.conteudo !== 'fontes' || convidadosNoPalco > 0
+  const arrastavel = temCamara && !aRecortar && palco.conteudo !== 'quadro'
+  const noArDesde = directo.fase === 'no-ar' ? directo.desde : 0
+  const lerNoAr = useCallback(() => (noArDesde ? (Date.now() - noArDesde) / 1000 : 0), [noArDesde])
+  const destinosComChave = destinos.filter((d) => d.chave.trim())
+  const rotuloQualidade = rotuloDaQualidade(palco.qualidade)
 
   return (
     <div className="dx-stage st">
@@ -534,7 +610,8 @@ export default function Studio() {
         </h1>
         {(aGravar || emPausa) && (
           <StatusBadge tone={aGravar ? 'record' : 'warning'}>
-            {aGravar ? t('studio.topo.rec') : t('studio.topo.pausa')}{' '}
+            {aGravar ? t('studio.topo.rec') : t('studio.topo.pausa')}
+            {eh4k(palco.qualidade) && ' 4K'}{' '}
             <Cronometro
               activo={aGravar}
               ler={lerSegundos}
@@ -544,7 +621,11 @@ export default function Studio() {
             />
           </StatusBadge>
         )}
-        {noAr && <StatusBadge tone="live">{t('studio.topo.aoVivo')}</StatusBadge>}
+        {noAr && (
+          <StatusBadge tone="live">
+            {t('studio.topo.aoVivoDestinos', { count: destinosComChave.length })}
+          </StatusBadge>
+        )}
 
         <div className="dx-seg st-views" role="group" aria-label={t('studio.vistas.rotulo')}>
           <button type="button" aria-pressed={vista === 'emissao'} data-studio-vista="emissao" onClick={() => setVista('emissao')}>
@@ -562,6 +643,11 @@ export default function Studio() {
         </div>
 
         <span className="dx-spacer" />
+
+        <span className="st-top__meta dx-num" data-studio="topo-meta">
+          {noAr && <span>{t('studio.topo.enc', { kbps: kbps.toLocaleString() })} · </span>}
+          <Relogio />
+        </span>
 
         <div className="st-top__actions" data-studio="acoes">
           {!aGravar && !emPausa ? (
@@ -600,6 +686,23 @@ export default function Studio() {
 
       <div className="st-body" hidden={vista !== 'emissao'}>
         <aside className="st-col st-col--left">
+          <LayoutsPanel
+            layout={palco.layout}
+            conteudo={palco.conteudo}
+            qualidade={palco.qualidade}
+            qualidadeBloqueada={aGravar || emPausa || noAr || directo.fase === 'a-ligar'}
+            onLayout={palco.escolherLayout}
+            onConteudo={palco.escolherConteudo}
+            onQualidade={palco.escolherQualidade}
+          />
+          <CenasPanel
+            cenas={palco.cenas}
+            activa={palco.cenaActiva}
+            indisponivel={palco.bancoIndisponivel}
+            onAplicar={palco.aplicarCena}
+            onNova={palco.novaCena}
+            onApagar={(id) => void palco.apagarCena(id)}
+          />
           <SourcesPanel
             temEcra={temEcra}
             temCamara={temCamara}
@@ -616,9 +719,38 @@ export default function Studio() {
             onAvatar={mudarAvatar}
             onFundo={(semFundo) => (semFundo ? void ligarRecorteDeFundo() : pararRecorteDeFundo())}
           />
+          <AudioPanel
+            mistura={palco.mistura}
+            microfones={palco.microfones}
+            microfone={palco.microfone}
+            musica={palco.musica}
+            musicaATocar={palco.musicaATocar}
+            onMistura={palco.mudarMistura}
+            onMicrofone={palco.escolherMicrofone}
+            onMusica={palco.carregarMusica}
+            onAlternarMusica={palco.alternarMusica}
+          />
         </aside>
 
         <section className="st-centre" aria-label={t('studio.palco.rotulo')}>
+          {/* O estado do palco fica POR CIMA da imagem e não sobre ela: o
+              logótipo e o cronómetro queimados vivem nos cantos do programa, e
+              uma ficha da interface por cima deles escondia o que vai para o ar. */}
+          <div className="st-stage-meta">
+            <span className="dx-num st-small dx-muted">
+              {t('studio.palco.previsualizacao')} · {resolucao}
+            </span>
+            <span className="dx-spacer" />
+            {noAr && (
+              <StatusBadge tone="live">
+                {t('studio.palco.noAr')} · <Cronometro activo ler={lerNoAr} className="dx-num" data-studio="no-ar-tempo" />
+              </StatusBadge>
+            )}
+            {aGravar && <StatusBadge tone="record">{t('studio.topo.rec')}</StatusBadge>}
+            <span className="st-overlay__chip dx-num" data-studio="palco-qualidade">
+              {rotuloQualidade}
+            </span>
+          </div>
           <div className="st-stage-fit">
             <div
               className={cx(
@@ -631,14 +763,11 @@ export default function Studio() {
               onPointerDown={arrastarBolha}
             >
               <div ref={canvasHostRef} className="st-stage__canvas" />
-              <span className="st-overlay st-overlay--tl dx-num" aria-hidden="true">
-                {t('studio.palco.previsualizacao')} · {resolucao}
-              </span>
-              {(noAr || aGravar) && (
-                <span className="st-overlay st-overlay--tr" aria-hidden="true">
-                  {noAr && <StatusBadge tone="live">{t('studio.topo.aoVivo')}</StatusBadge>}
-                  {aGravar && <StatusBadge tone="record">{t('studio.topo.rec')}</StatusBadge>}
-                </span>
+              {palco.conteudo === 'quadro' && (
+                <QuadroLocal
+                  onRiscar={(de, ate, cor, esp) => compRef.current?.riscarNoQuadro(de, ate, cor, esp)}
+                  onLimpar={() => compRef.current?.limparQuadro()}
+                />
               )}
               {!temFonte && pronto && (
                 <div className="st-stage__empty">
@@ -664,6 +793,66 @@ export default function Studio() {
               )}
             </div>
           </div>
+
+          {/* Telemóvel: os destinos em fichas por baixo do palco (etiqueta e
+              fase — a audiência por plataforma não existe no servidor). */}
+          {destinosComChave.length > 0 && (
+            <ul className="st-chips" aria-label={t('studio.directo.titulo')}>
+              {destinosComChave.map((d, i) => (
+                <li key={i} className={cx('st-chip', noAr && 'is-live')}>
+                  <span className="dx-num">{plataformaDoUrl(d.url, location.host)}</span>
+                  <span className="st-chip__state">
+                    {noAr ? t('studio.directo.estados.noAr') : t('studio.directo.estados.pronto')}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="st-under">
+            {salaAberta ? (
+              <Suspense fallback={<Spinner label={t('studio.sala.aCarregar')} />}>
+                <SalaDoEstudio
+                  titulo={titulo}
+                  micId={palco.microfone}
+                  obterCamara={obterCamara}
+                  onLigacao={setSalaLigada}
+                  onPalco={aoPalco}
+                  onSondagem={aSondagem}
+                  separadorInicial={ecraDeTelemovel() ? 'chat' : 'convidados'}
+                />
+              </Suspense>
+            ) : (
+              <section className="st-group st-panel" data-studio="sala-fechada" aria-labelledby="st-sala-fechada-h">
+                <h2 id="st-sala-fechada-h" className="st-group__title">
+                  {t('studio.sala.fila')}
+                </h2>
+                <p className="st-note">{t('studio.sala.explicacao')}</p>
+                <div className="st-actions">
+                  <Button size="sm" variant="secondary" icon="userPlus" data-studio="sala-abrir" disabled={!online} onClick={() => setSalaAberta(true)}>
+                    {t('studio.sala.abrir')}
+                  </Button>
+                </div>
+                {!online && <p className="st-note">{t('studio.sala.semRede')}</p>}
+              </section>
+            )}
+            <SobreposicoesPanel
+              valor={palco.sobreposicoes}
+              temLogotipo={palco.temLogotipo}
+              temSondagem={haSondagem}
+              legendas={
+                estadoLegendas === 'a-preparar'
+                  ? t('studio.legendas.aPreparar')
+                  : estadoLegendas === 'sem-modelo'
+                    ? t('studio.legendas.semModelo')
+                    : estadoLegendas === 'activas'
+                      ? t('studio.legendas.activas')
+                      : ''
+              }
+              onMudar={palco.mudarSobreposicoes}
+              onLogotipo={(f) => void palco.carregarLogotipo(f)}
+            />
+          </div>
         </section>
 
         <aside className="st-col st-col--right">
@@ -688,9 +877,32 @@ export default function Studio() {
             ocupacaoBytes={ocupacao}
             online={online}
             resolucao={resolucao}
+            qualidade={rotuloQualidade}
+            lerBytes={lerBytes}
             onEnviar={() => void enviarFila()}
           />
         </aside>
+
+        {/* Alcance do polegar: no telemóvel, as acções da emissão ficam em baixo. */}
+        <div className="st-thumb" data-studio="barra-polegar">
+          {noAr ? (
+            <Button variant="live" size="lg" block icon="x" onClick={() => void sairDoAr()}>
+              {t('studio.directo.parar')}
+            </Button>
+          ) : (
+            <Button
+              variant="live"
+              size="lg"
+              block
+              icon="live"
+              busy={directo.fase === 'a-ligar'}
+              disabled={directo.fase === 'a-ligar' || destinosComChave.length === 0 || !temFonte || !directoSuportado()}
+              onClick={() => void irParaOAr()}
+            >
+              {t('studio.directo.irParaOAr')}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="st-body st-body--edit" hidden={vista !== 'edicao'}>
