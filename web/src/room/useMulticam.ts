@@ -64,6 +64,9 @@ export function useMulticam(core: RoomCore) {
       const c = new RoomCompositor()
       c.cena = cena
       c.focoIds = focoIds
+      // A pré-visualização desenha JÁ: antes só arrancava com o directo, e o
+      // painel mostrava um quadro vazio precisamente quando se escolhe a cena.
+      c.iniciarPreVisualizacao()
       compositorRef.current = c
     }
     setOpen(true)

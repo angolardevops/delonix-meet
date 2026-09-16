@@ -101,21 +101,21 @@ export default function Room({
 
   // Atalhos Ctrl+D (microfone) e Ctrl+E (câmara). Chamam a acção DIRECTAMENTE:
   // procurar o botão pelo `aria-label` partia-se em inglês e em francês.
-  const mediaRef = useRef(media)
-  mediaRef.current = media
+  // Na pré-entrada os mesmos atalhos actuam sobre a pré-visualização.
+  const atalhosRef = useRef({ media, prejoin, prejoinAtivo: core.roomState === 'prejoin' })
+  atalhosRef.current = { media, prejoin, prejoinAtivo: core.roomState === 'prejoin' }
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       if (!(e.ctrlKey || e.metaKey)) return
       const k = e.key.toLowerCase()
-      if (k === 'd') {
-        e.preventDefault()
-        void mediaRef.current.toggleMic()
-      } else if (k === 'e') {
-        e.preventDefault()
-        void mediaRef.current.toggleCam()
-      }
+      if (k !== 'd' && k !== 'e') return
+      e.preventDefault()
+      const { media: m, prejoin: pj, prejoinAtivo } = atalhosRef.current
+      if (prejoinAtivo) pj.toggle(k === 'd' ? 'mic' : 'cam')
+      else if (k === 'd') void m.toggleMic()
+      else void m.toggleCam()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
