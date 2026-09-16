@@ -371,6 +371,10 @@ export function Dialog({
   const { t } = useTranslation()
   const ref = useRef<HTMLDivElement>(null)
   const titleId = useId()
+  // O fecho vive numa ref: um `onClose` novo a cada render do pai não pode
+  // voltar a correr o efeito (roubava o foco ao campo onde se está a escrever).
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null
     const el = ref.current
@@ -379,7 +383,7 @@ export function Dialog({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation()
-        onClose()
+        closeRef.current()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -387,7 +391,7 @@ export function Dialog({
       window.removeEventListener('keydown', onKey)
       prev?.focus?.()
     }
-  }, [onClose])
+  }, [])
   return (
     <div className="dx-dialog-scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
