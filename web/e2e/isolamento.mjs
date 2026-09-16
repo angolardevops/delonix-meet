@@ -653,6 +653,119 @@ await recusado('a chave da A cria reunião com C ARQUIVADA como anfitriã', '/ap
   body: { title: 's3 depois', starts_at: new Date(Date.now() + 9000_000).toISOString(), host_email: C.email },
 })
 
+// ---------------------------------------------------------------------------
+// Gateway de SMS (ADR-0005). Um SMS custa dinheiro a quem o envia: a pergunta
+// não é só «A lê o que é de B», é também «o gateway de A consegue gastar o
+// telefone de B, ou mentir sobre o resultado de uma mensagem de B».
+// Tudo com recursos REAIS de B, e com o controlo positivo no fim: o agente de B
+// reclama e confirma a sua própria mensagem.
+// ---------------------------------------------------------------------------
+console.log('\n--- gateway de SMS ---')
+const modemFalso = (sufixo) => ({
+  device_key: `1e0e:9001:TESTE-${sufixo}`,
+  vendor_id: '1e0e',
+  product_id: '9001',
+  manufacturer: 'SIMCOM',
+  product: 'SIM7600',
+  serial: `TESTE-${sufixo}`,
+  kind: 'modem',
+  transport: 'at_serial',
+  port: '/dev/ttyUSB2',
+  capable: true,
+  reason: null,
+  operator_name: 'UNITEL',
+  signal_percent: 70,
+})
+const gwB = await req(`/api/orgs/${B.orgId}/sms/gateways`, { token: B.token, method: 'POST', body: { name: 'gw-B' } })
+const gwA = await req(`/api/orgs/${A.orgId}/sms/gateways`, { token: A.token, method: 'POST', body: { name: 'gw-A' } })
+if (gwB.status !== 201 || !gwB.json?.token?.startsWith('dlxg_') || gwA.status !== 201) {
+  nok('B e A criam gateways (201 com token dlxg_)', `B=${gwB.status} A=${gwA.status}`)
+} else {
+  ok('B e A criam gateways (201 com token dlxg_)')
+  await permitido('o agente de B reporta um modem', '/api/sms/agent/devices', {
+    token: gwB.json.token, method: 'PUT', body: { devices: [modemFalso('B')] },
+  })
+  await permitido('o agente de A reporta um modem', '/api/sms/agent/devices', {
+    token: gwA.json.token, method: 'PUT', body: { devices: [modemFalso('A')] },
+  })
+  const devB = (await req(`/api/orgs/${B.orgId}/sms/devices`, { token: B.token })).json?.[0]
+  await permitido('B escolhe o seu modem como ponto de envio', `/api/orgs/${B.orgId}/sms/route`, {
+    token: B.token, method: 'PUT', body: { device_id: devB?.id },
+  })
+  const msgB = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: B.token, method: 'POST', body: { to: '923 000 001', body: 'teste de isolamento', route: 'usb' },
+  })
+  if (msgB.status === 202 && msgB.json?.route === 'usb' && msgB.json?.to === '+244923000001') {
+    ok('B põe um SMS em fila pela rota USB (202)')
+  } else nok('B põe um SMS em fila pela rota USB (202)', `${msgB.status} ${JSON.stringify(msgB.json)}`)
+
+  // Leitura cross-tenant — as rotas da consola.
+  await recusado('A lista os gateways de SMS da org B', `/api/orgs/${B.orgId}/sms/gateways`, { token: A.token })
+  await recusado('A lista os dispositivos USB da org B', `/api/orgs/${B.orgId}/sms/devices`, { token: A.token })
+  await recusado('A lê a rota de SMS da org B', `/api/orgs/${B.orgId}/sms/route`, { token: A.token })
+  await recusado('A lista as mensagens SMS da org B', `/api/orgs/${B.orgId}/sms/messages`, { token: A.token })
+  await recusado('A lê uma mensagem SMS da org B', `/api/orgs/${B.orgId}/sms/messages/${msgB.json?.id}`, {
+    token: A.token,
+  })
+  await recusado('A lê a mensagem de B pelo caminho da SUA org', `/api/orgs/${A.orgId}/sms/messages/${msgB.json?.id}`, {
+    token: A.token,
+  })
+
+  // Escrita cross-tenant.
+  await recusado('A envia SMS pela org B', `/api/orgs/${B.orgId}/sms/messages`, {
+    token: A.token, method: 'POST', body: { to: '923000002', body: 'fraude' },
+  })
+  await recusado('A muda a rota da org B', `/api/orgs/${B.orgId}/sms/route`, {
+    token: A.token, method: 'PUT', body: { device_id: null },
+  })
+  await recusado('A selecciona o telefone de B como rota da SUA org', `/api/orgs/${A.orgId}/sms/route`, {
+    token: A.token, method: 'PUT', body: { device_id: devB?.id },
+  })
+  await recusado('A revoga o gateway da org B', `/api/orgs/${B.orgId}/sms/gateways/${gwB.json.id}`, {
+    token: A.token, method: 'DELETE',
+  })
+  const aindaLa = (await req(`/api/orgs/${B.orgId}/sms/gateways`, { token: B.token })).json ?? []
+  if (aindaLa.some((g) => g.id === gwB.json.id)) ok('o gateway de B sobreviveu à tentativa de A')
+  else nok('o gateway de B sobreviveu à tentativa de A', JSON.stringify(aindaLa))
+  const rotaB = (await req(`/api/orgs/${B.orgId}/sms/route`, { token: B.token })).json
+  if (rotaB?.device_id && rotaB.device_id === devB?.id) ok('a rota de B continua no telefone de B')
+  else nok('a rota de B continua no telefone de B', JSON.stringify(rotaB))
+
+  // O agente de A contra a fila de B.
+  const claimA = await req('/api/sms/agent/claim', { token: gwA.json.token, method: 'POST' })
+  if (claimA.status === 200 && (claimA.json?.messages ?? []).every((m) => m.id !== msgB.json?.id)) {
+    ok('o gateway de A não reclama a mensagem de B')
+  } else nok('o gateway de A não reclama a mensagem de B', `${claimA.status} ${JSON.stringify(claimA.json)}`)
+  await recusado('o gateway de A reporta resultado da mensagem de B', `/api/sms/agent/messages/${msgB.json?.id}/result`, {
+    token: gwA.json.token, method: 'POST', body: { ok: true },
+  })
+
+  // Credenciais que NÃO são de gateway.
+  await recusado('sessão de B na superfície do agente', '/api/sms/agent/claim', { token: B.token, method: 'POST' })
+  await recusado('chave dlx_ na superfície do agente', '/api/sms/agent/claim', { token: chaveA.json?.key, method: 'POST' })
+  await recusado('anónimo na superfície do agente', '/api/sms/agent/claim', { method: 'POST' })
+  await recusado('token dlxg_ inventado', '/api/sms/agent/claim', { token: `dlxg_${'0'.repeat(64)}`, method: 'POST' })
+
+  // Controlo positivo: o agente de B reclama e confirma a SUA mensagem.
+  const claimB = await req('/api/sms/agent/claim', { token: gwB.json.token, method: 'POST' })
+  const reclamada = (claimB.json?.messages ?? []).find((m) => m.id === msgB.json?.id)
+  if (reclamada?.pdus?.length === 1 && reclamada.device_key === modemFalso('B').device_key) {
+    ok('controlo: o gateway de B reclama a sua mensagem, com o PDU feito')
+  } else nok('controlo: o gateway de B reclama a sua mensagem, com o PDU feito', JSON.stringify(claimB.json))
+  const res = await req(`/api/sms/agent/messages/${msgB.json?.id}/result`, {
+    token: gwB.json.token, method: 'POST', body: { ok: true, provider_ref: '42' },
+  })
+  const final = (await req(`/api/orgs/${B.orgId}/sms/messages/${msgB.json?.id}`, { token: B.token })).json
+  if (res.status === 204 && final?.status === 'sent') ok('controlo: o resultado de B fica gravado (sent)')
+  else nok('controlo: o resultado de B fica gravado (sent)', `${res.status} ${JSON.stringify(final)}`)
+
+  // Revogar corta o agente.
+  await permitido('B revoga o seu gateway', `/api/orgs/${B.orgId}/sms/gateways/${gwB.json.id}`, {
+    token: B.token, method: 'DELETE',
+  })
+  await recusado('o token revogado de B deixa de servir', '/api/sms/agent/claim', { token: gwB.json.token, method: 'POST' })
+}
+
 console.log('\n--- sem autenticação nenhuma ---')
 await recusado('anónimo lê stats da org B', `/api/orgs/${B.orgId}/stats`, {})
 await recusado('anónimo lista as suas orgs', '/api/orgs', {})
