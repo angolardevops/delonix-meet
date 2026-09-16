@@ -216,6 +216,18 @@ Estende o ADR-0004 §6. Cada linha é um PR que deixa a `main` verde:
 | F | Capacidades novas pedidas pela UI nova (ver `docs/backend-gaps-ui-2026-09-16.md`) | e2e por capacidade |
 | G | `media` e `realtime` em crates, sem tocar na lógica (as regressões R1…R40 mandam) | `sfu_e2e` + `reuniao.mjs` |
 
+### Estado da ordem a 2026-09-16 (ramo `integra/backend-enterprise`)
+
+| # | Estado | O que falta |
+|---|---|---|
+| A | **feito** — `lib.rs`, testes HTTP/gRPC contra Postgres (22 binários), CI com Postgres, workspace, `check-crate-deps.sh` | — |
+| B | **parcial** — `core::crypto` (primitivas espalhadas 17→0), envelope de erro, `request_id` | `auth::extract`, `org::membership` como crate, `net_guard`, `protocol` WS |
+| C | **parcial** — OpenAPI 158/158 com catraca a zero; paginação/201/204 nas rotas novas | separar `/api/operator/v1` e `/api/integrations/odoo/v1` com aliases; paginar as listagens herdadas |
+| D | **iniciado** — `domain` com `identity`, `content`, `integration`, `notification` | `store` por contexto; tirar o SQL dos handlers herdados |
+| E | **feito** — edições, `UI_DIR`, gRPC interno mTLS, overlays K8s, manifestos `delonix-runtime`/PaaS | validar num cluster real; `env.from_secret` no PaaS |
+| F | **G1, G4–G8 feitos** | G2 sala pessoal, G3 uso de armazenamento, G9 retenção de chat, G10 nós de media, G11 PNG assinado |
+| G | por fazer | `media` e `realtime` em crates |
+
 ## Consequências
 
 - **+** Uma regra tem um sítio. A BFF, a v1 e o gRPC chamam o mesmo caso de uso.

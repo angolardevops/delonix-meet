@@ -8,23 +8,24 @@ description: Contrato de API do Delonix Meet — as superfícies (BFF `/api`, p�
 **Autoridade:** [ADR-0004 §4](../../../docs/adr/0004-organizacao-alvo-do-backend.md) (Proposto) e [`docs/reference/api-contract.md`](../../../docs/reference/api-contract.md).
 **Evidência:** [auditoria de 2026-09-16 §2.4](../../../docs/auditoria-2026-09-16-backend.md).
 
-## O estado real (2026-09-16)
+## O estado real (2026-09-16, ramo `integra/backend-enterprise`)
 
-- **105 `.route(`**, todas em `server/src/main.rs`. O router de `mls.rs` não está montado.
+- **As rotas estão em `server/src/lib.rs`** (`build_router`, `internal_routes`). O router de
+  `mls.rs` não está montado.
 - **O que está bem:**
-  - A fronteira BFF (`/api/…`, instável) vs pública (`/api/v1`, estável) está escrita no
-    `main.rs` e no `api-contract.md`.
-  - O `check-route-auth.sh` garante que cada rota tem autenticação ou está em
-    `scripts/rotas-publicas.txt` com razão.
-  - O `check-isolamento-cobertura.sh` garante que cada rota de org é exercitada por
-    `web/e2e/isolamento.mjs`.
+  - BFF (`/api/…`) vs pública (`/api/v1`) escrita e medida; `check-route-auth.sh` (que desde
+    o R123 também vê os handlers encadeados) e `check-isolamento-cobertura.sh`.
+  - **OpenAPI gerado**, 158/158, catraca a zero: rota nova sem `#[utoipa::path]` falha.
+  - **Envelope de erro** plano com `code` estável e `request_id` (ADR-0006 §3), também nas
+    recusas do axum.
+  - Rotas novas já seguem o contrato: `201`+`Location`, `204`, `202`, paginação por cursor
+    (`delonix_meet_core::page`) — ver `stream_destinations.rs` como referência.
+  - **gRPC interno** (`server/proto`, `buf lint`/`breaking` em `check-proto.sh`).
 - **O que falta:**
-  - Não há OpenAPI, testes de contrato da v1, `201`/`204`/`202`, código de erro estável,
-    paginação nem `Idempotency-Key`.
-  - Não há **gRPC em lado nenhum**.
-- **A v1 mistura três públicos:** o inquilino (`dlx_`), o Odoo (`dlxo_`, em
-  `/integration/odoo/*`) e o operador (`/admin/orgs` com segredo de plataforma,
-  `/platform/storage*` com sessão).
+  - As rotas HERDADAS mantêm `200`/`{"ok":true}` (22) e listagens sem limite.
+  - `Idempotency-Key` só no SMS; nada de `ETag`.
+- **A v1 continua a misturar o operador** (`/admin/orgs`, `/platform/storage*` com sessão);
+  a separação em `/api/operator/v1` está por fazer.
 
 ## Superfícies — um público e uma autenticação cada
 
