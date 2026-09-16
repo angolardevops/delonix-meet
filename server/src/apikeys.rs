@@ -529,6 +529,42 @@ pub(crate) fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
+/// A decisão de autenticação de `v1_provision_org`, sem `AppState`, para se
+/// poder testar.
+///
+/// Ordem deliberada (R155, o mesmo desenho do R154): primeiro o SEGREDO
+/// CONFIGURADO, depois o cabeçalho. Vazio, curto ou publicado no repositório dá
+/// `503` com a razão, venha o cabeçalho que vier — incluindo o valor «certo»,
+/// porque certo contra um valor que está no GitHub não autentica ninguém. Antes,
+/// o valor publicado autenticava e o vazio dava `401` sem dizer porquê.
+fn authorize_provisioning(
+    configured: &str,
+    refusal: Option<&'static str>,
+    headers: &HeaderMap,
+) -> Result<(), ApiError> {
+    if let Some(reason) = refusal {
+        return Err(ApiError::ServiceUnavailable(format!(
+            "provisionamento de organizações desligado: {reason}"
+        )));
+    }
+    if configured.is_empty() {
+        // Defesa em profundidade: `provisioning_secret_refusal` já recusa o vazio.
+        return Err(ApiError::ServiceUnavailable(
+            "provisionamento de organizações desligado: PROVISIONING_SECRET não está definido"
+                .into(),
+        ));
+    }
+    let provided = headers
+        .get("x-provisioning-secret")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if ct_eq(provided.as_bytes(), configured.as_bytes()) {
+        Ok(())
+    } else {
+        Err(ApiError::Unauthorized)
+    }
+}
+
 /// Ver `ensure_provisioning_user`. Exposto para o login por conta Odoo, que
 /// também precisa de um dono técnico para a org que acabou de nascer.
 pub async fn ensure_provisioning_user_pub(state: &AppState) -> Result<Uuid, ApiError> {
@@ -578,23 +614,18 @@ async fn ensure_provisioning_user(state: &AppState) -> Result<Uuid, ApiError> {
 /// não por chave de org (que ainda não existe). Pensado para o Odoo criar a org
 /// de cada empresa e receber a chave para depois criar salas via `/api/v1/rooms`.
 ///
-/// Fail-closed: com `PROVISIONING_SECRET` vazio o endpoint recusa sempre.
+/// Fail-closed: com `PROVISIONING_SECRET` vazio, curto ou publicado o endpoint
+/// responde 503 com a razão (R155).
 pub async fn v1_provision_org(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(req): Json<ProvisionOrgReq>,
 ) -> Result<Json<ProvisionedOrg>, ApiError> {
-    let configured = state.config.provisioning_secret.as_bytes();
-    if configured.is_empty() {
-        return Err(ApiError::Unauthorized);
-    }
-    let provided = headers
-        .get("x-provisioning-secret")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if !ct_eq(provided.as_bytes(), configured) {
-        return Err(ApiError::Unauthorized);
-    }
+    authorize_provisioning(
+        &state.config.provisioning_secret,
+        state.config.provisioning_secret_refusal,
+        &headers,
+    )?;
 
     let name = req.name.trim();
     if name.is_empty() || name.len() > 120 {
@@ -817,7 +848,111 @@ pub async fn v1_provision_org(
 
 #[cfg(test)]
 mod tests {
-    use super::ct_eq;
+    use super::{authorize_provisioning, ct_eq};
+    use crate::config::{provisioning_secret_refusal, BURNED_PROVISIONING_SECRETS};
+    use axum::http::HeaderMap;
+
+    fn status(r: Result<(), crate::error::ApiError>) -> u16 {
+        match r {
+            Ok(()) => 200,
+            Err(e) => axum::response::IntoResponse::into_response(e)
+                .status()
+                .as_u16(),
+        }
+    }
+
+    fn with_secret(v: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("x-provisioning-secret", v.parse().unwrap());
+        h
+    }
+
+    const STRONG: &str = "7c1e9a3f5b0d2e4a6c8f0b1d3e5a7c9f2b4d6e8a";
+
+    /// R155 — sem segredo, curto, de demo ou PUBLICADO, a rota de provisionamento
+    /// dá 503. Mesmo a quem manda exactamente o valor configurado.
+    #[test]
+    fn provisioning_refuses_missing_short_or_published_secret_with_503() {
+        let mut casos: Vec<&str> = vec!["", "curto-demais", "kaeso_demo_provisioning_secret"];
+        casos.extend(BURNED_PROVISIONING_SECRETS);
+        for configured in casos {
+            let refusal = provisioning_secret_refusal(configured, false);
+            assert!(refusal.is_some(), "«{configured}» devia ser recusado");
+            let header = if configured.is_empty() {
+                "x"
+            } else {
+                configured
+            };
+            assert_eq!(
+                status(authorize_provisioning(
+                    configured,
+                    refusal,
+                    &with_secret(header)
+                )),
+                503,
+                "«{configured}» com o próprio valor no cabeçalho"
+            );
+            assert_eq!(
+                status(authorize_provisioning(
+                    configured,
+                    refusal,
+                    &HeaderMap::new()
+                )),
+                503
+            );
+        }
+        // O publicado também com DELONIX_ALLOW_INSECURE=1.
+        for v in BURNED_PROVISIONING_SECRETS {
+            let refusal = provisioning_secret_refusal(v, true);
+            assert_eq!(
+                status(authorize_provisioning(v, refusal, &with_secret(v))),
+                503
+            );
+        }
+        assert_eq!(
+            status(authorize_provisioning("", None, &with_secret(""))),
+            503
+        );
+    }
+
+    #[test]
+    fn provisioning_rejects_wrong_or_absent_header_with_401() {
+        let refusal = provisioning_secret_refusal(STRONG, false);
+        assert_eq!(refusal, None);
+        assert_eq!(
+            status(authorize_provisioning(STRONG, refusal, &HeaderMap::new())),
+            401
+        );
+        assert_eq!(
+            status(authorize_provisioning(
+                STRONG,
+                refusal,
+                &with_secret(&STRONG[..39])
+            )),
+            401
+        );
+        assert_eq!(
+            status(authorize_provisioning(
+                STRONG,
+                refusal,
+                &with_secret("errado")
+            )),
+            401
+        );
+    }
+
+    #[test]
+    fn provisioning_accepts_the_right_strong_secret() {
+        let refusal = provisioning_secret_refusal(STRONG, false);
+        assert_eq!(
+            status(authorize_provisioning(
+                STRONG,
+                refusal,
+                &with_secret(STRONG)
+            )),
+            200
+        );
+    }
 
     #[test]
     fn ct_eq_matches_only_identical() {

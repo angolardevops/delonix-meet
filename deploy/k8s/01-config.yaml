@@ -22,28 +22,22 @@ data:
   OLLAMA_MODEL_SUMMARY: qwen2.5:7b
   # URL interno para a app interagir com Redis Sentinel (HA)
   REDIS_URL: "redis://delonix-redis-master.delonix-meet.svc.cluster.local:6379"
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: delonix-secrets
-  namespace: delonix-meet
-type: Opaque
-stringData:
-  # Segredo de plataforma: autoriza POST /api/v1/admin/orgs (provisão de orgs
-  # pelo Odoo/nk_delonix_meet, header X-Provisioning-Secret). Vazio = endpoint
-  # desativado (fail-closed). Em prod: gestor de segredos, NUNCA este ficheiro.
-  PROVISIONING_SECRET: "dlxprov_bcdc13c52115d2b67942298b6d548b65f47980470090a2e0"
-  # Stage: bitnami/postgresql single-node (svc: delonix-postgres-postgresql).
-  # Prod: bitnami/postgresql-ha → delonix-postgres-primary (ver 10-config-secret.yaml).
-  DATABASE_URL: "postgres://delonix:delonix_dev_pass@delonix-postgres-postgresql.delonix-meet.svc.cluster.local:5432/delonix_meet"
-  JWT_SECRET: "stage-jwt-secret-min-32-chars-abcdef123456"
-  TURN_SECRET: "stage-turn-secret-key"
-  # VOICE_INTERNAL_SECRET NÃO vive aqui (R154). Esteve escrito neste ficheiro
-  # e o repositório é público: o valor está queimado e o servidor recusa-o.
-  # Vem do Secret `delonix-voice`, gerado FORA do repo (`make stage`/`make prod`
-  # criam-no aleatório se não existir; ver docs/deployment.md §6) e referenciado
-  # por secretKeyRef em 02-server.yaml.
-  POSTGRES_PASSWORD: "delonix_dev_pass"
-  POSTGRES_USER: "delonix"
-  POSTGRES_DB: "delonix_meet"
+# ------------------------------------------------------------------------------
+# NÃO HÁ Secret neste ficheiro (R154, R155).
+#
+# O Secret `delonix-secrets` (PROVISIONING_SECRET, DATABASE_URL, JWT_SECRET,
+# TURN_SECRET, POSTGRES_PASSWORD/USER/DB) esteve escrito aqui, com valores, num
+# repositório PÚBLICO. Esses valores estão queimados — o servidor recusa-os e o
+# `scripts/check-repo-hygiene.sh` impede-os de voltar (ver
+# scripts/leaked-secrets-accepted.txt). O `VOICE_INTERNAL_SECRET` vive no Secret
+# `delonix-voice`.
+#
+# Os dois nascem FORA do repositório, aleatórios, no próprio cluster:
+#   make secrets-k8s        # delonix-secrets — só gera o que falta
+#   make voice-secret-k8s   # delonix-voice
+# (o `make stage`/`make prod` chamam-nos; o Ansible `k8s_app` cria-os a partir
+# de deploy/ansible/.secrets/). Com `kubectl apply -k deploy/k8s` corre-se
+# `make secrets-k8s` ANTES. Rotação por segredo: docs/deployment.md §6.
+#
+# Atenção a um cluster antigo: tirar o Secret deste ficheiro NÃO o apaga do
+# cluster — continua lá com os valores publicados até ser rodado.

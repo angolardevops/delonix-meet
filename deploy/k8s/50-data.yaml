@@ -8,15 +8,13 @@ metadata:
   labels:
     pod-security.kubernetes.io/enforce: baseline
 ---
-apiVersion: v1
-kind: Secret
-metadata:
-  name: postgres-auth
-  namespace: delonix-data
-type: Opaque
-stringData:
-  # DEVE ser a MESMA password usada no DATABASE_URL do Secret da app (delonix).
-  POSTGRES_PASSWORD: "CHANGE_ME_same_as_app_DATABASE_URL"
+# Secret `postgres-auth` — NÃO está neste ficheiro (R155): um manifesto com a
+# password escrita acaba aplicado tal como está. Cria-se a partir do Secret da
+# app, para a password ser a MESMA do DATABASE_URL:
+#   make secrets-k8s PG_HOST=postgres.delonix-data.svc.cluster.local
+#   kubectl -n delonix-data create secret generic postgres-auth \
+#     --from-literal=POSTGRES_PASSWORD="$(kubectl -n delonix-meet get secret \
+#       delonix-secrets -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 -d)"
 ---
 apiVersion: apps/v1
 kind: StatefulSet

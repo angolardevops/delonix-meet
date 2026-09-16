@@ -104,7 +104,10 @@ if [ -f "$CAT" ]; then
            --exclude-dir=node_modules --exclude-dir=target . 2>/dev/null \
          | grep -oE '[0-9]+' | sort -n -u)
   for r in $refs; do
-    echo "$rnums" | grep -qx "$r" || {
+    # Here-string e não `echo | grep -q`: com `pipefail`, o `grep -q` sai ao
+    # primeiro acerto, o `echo` leva SIGPIPE e o pipeline dá 141 — uma
+    # referência que EXISTE era dada como perdida, ao acaso (visto em R155).
+    grep -qx "$r" <<<"$rnums" || {
       echo "✗ higiene: referência a R$r sem entrada no catálogo (renumeração perdida?)"
       fail=1
     }
@@ -171,11 +174,13 @@ for p in $hist_keys; do
   fi
 done
 
-# 7. Segredos PARTILHADOS queimados não voltam a ficheiros de deploy (R154).
+# 7. Segredos PARTILHADOS queimados não voltam a ficheiros de deploy (R154, R155).
 #
 #    O ponto 6 vê chaves por caminho. Um segredo partilhado não tem caminho: o
-#    `VOICE_INTERNAL_SECRET` esteve numa linha do deploy/k8s/01-config.yaml,
-#    num repositório público, e quem o lesse validava PINs e injectava CDRs.
+#    `VOICE_INTERNAL_SECRET`, o `JWT_SECRET`, o `TURN_SECRET`, o
+#    `PROVISIONING_SECRET` e as passwords do Postgres estiveram em linhas do
+#    deploy/k8s/01-config.yaml e dos helm-values, num repositório público —
+#    quem os lesse forjava sessões, criava organizações e lia a base.
 #    Cada valor de scripts/leaked-secrets-accepted.txt está queimado e tem a
 #    decisão escrita lá; o que este ponto impede é que volte a entrar num
 #    ficheiro seguido — o «copia do exemplo antigo» que o reintroduz.

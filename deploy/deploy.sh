@@ -108,6 +108,15 @@ set -a; source "$ENV_FILE"; set +a
 [ "${TURN_SECRET:-}" != "delonix_turn_dev_secret" ] || die "TURN_SECRET ainda é o default de dev"
 case "${DATABASE_URL:-}" in *delonix_dev*) die "DATABASE_URL ainda usa a password de dev";; esac
 [ "${DELONIX_ALLOW_INSECURE:-}" != "1" ] || die "DELONIX_ALLOW_INSECURE=1 em produção — remover de $ENV_FILE"
+# R154/R155 — valores que já estiveram publicados no repositório. O servidor
+# recusa-os; falhar aqui poupa um build e diz qual é.
+while IFS= read -r v; do
+  case "$v" in ''|'#'*) continue;; esac
+  for k in JWT_SECRET TURN_SECRET PROVISIONING_SECRET VOICE_INTERNAL_SECRET; do
+    [ "${!k:-}" != "$v" ] || die "$k usa um valor PUBLICADO no repositório — gera um novo (docs/deployment.md §6)"
+  done
+  case "${DATABASE_URL:-}" in *":$v@"*) die "DATABASE_URL usa uma password PUBLICADA no repositório (docs/deployment.md §6)";; esac
+done < "$ROOT/scripts/leaked-secrets-accepted.txt"
 ok "segredos presentes e não-default"
 
 # ---- 1) Infraestrutura ---------------------------------------------------

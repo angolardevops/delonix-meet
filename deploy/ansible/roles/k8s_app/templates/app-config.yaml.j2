@@ -21,6 +21,7 @@ stringData:
   DATABASE_URL: "postgres://delonix:{{ postgres_password }}@{{ _pg_host }}.delonix-meet.svc.cluster.local:5432/delonix_meet"
   JWT_SECRET: "{{ jwt_secret }}"
   TURN_SECRET: "{{ turn_secret }}"
+  PROVISIONING_SECRET: "{{ provisioning_secret }}"
   POSTGRES_PASSWORD: "{{ postgres_password }}"
   POSTGRES_USER: "delonix"
   POSTGRES_DB: "delonix_meet"

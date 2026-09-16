@@ -386,8 +386,12 @@ stage: image-push ## Build + kind load + deploy k8s completo no cluster kind loc
 	@# postgresql-repmgr) removeu as imagens do Docker Hub em 2024; o chart
 	@# simples continua acessível via registry-1.docker.io. Para prod usa-se
 	@# postgresql-ha (make prod) com acesso ao OCI registry da Bitnami.
+	@# R155 — a password NÃO está no values: vem do Secret delonix-secrets
+	@# (criado fora do repo por `make secrets-k8s`), a MESMA do DATABASE_URL.
+	@$(MAKE) --no-print-directory secrets-k8s
 	@helm upgrade --install delonix-postgres bitnami/postgresql \
-	  -f deploy/k8s/helm-values/postgres-stage-values.yaml -n delonix-meet
+	  -f deploy/k8s/helm-values/postgres-stage-values.yaml -n delonix-meet \
+	  --set auth.password="$$($(PG_PASSWORD_FROM_SECRET))"
 	@helm upgrade --install delonix-redis bitnami/redis \
 	  -f deploy/k8s/helm-values/redis-stage-values.yaml -n delonix-meet
 	@printf "$(C)▶ Aplicação Delonix (config + server + web + ingress + coturn)...$(Z)\n"
@@ -418,6 +422,18 @@ stage: image-push ## Build + kind load + deploy k8s completo no cluster kind loc
 
 DOMAIN ?= meet.delonix.local
 
+# R155 — JWT_SECRET, TURN_SECRET, PROVISIONING_SECRET, POSTGRES_PASSWORD e
+# DATABASE_URL nascem aleatórios no Secret delonix-secrets, nunca num ficheiro
+# do repositório. Idempotente: só gera o que falta; nunca sobrescreve; FALHA se
+# encontrar um valor publicado (scripts/leaked-secrets-accepted.txt). Rodar:
+# `ROTATE="JWT_SECRET TURN_SECRET PROVISIONING_SECRET" make secrets-k8s`.
+# A password do Postgres roda-se com ALTER ROLE — docs/deployment.md §6.
+PG_HOST ?= delonix-postgres-postgresql
+PG_PASSWORD_FROM_SECRET = kubectl -n delonix-meet get secret delonix-secrets -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 -d
+.PHONY: secrets-k8s
+secrets-k8s: ## Cria/completa o Secret delonix-secrets com segredos aleatórios (nunca sobrescreve)
+	@PG_HOST=$(PG_HOST) ROTATE="$(ROTATE)" bash deploy/k8s-secrets.sh
+
 # R154 — o segredo da API interna de IVR nasce aleatório no cluster e nunca
 # num ficheiro do repositório. Idempotente: se o Secret já existe, não o toca
 # (rodar = apagar o Secret e voltar a correr, e actualizar o FreeSWITCH).
@@ -443,7 +459,9 @@ prod: ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
 	@kubectl apply -f deploy/k8s/00-namespace.yaml
 	@helm repo add bitnami https://charts.bitnami.com/bitnami
 	@helm repo update
-	@helm upgrade --install delonix-postgres bitnami/postgresql-ha -f deploy/k8s/helm-values/postgres-values.yaml -n delonix-meet
+	@$(MAKE) --no-print-directory secrets-k8s PG_HOST=delonix-postgres-postgresql-ha-pgpool
+	@helm upgrade --install delonix-postgres bitnami/postgresql-ha -f deploy/k8s/helm-values/postgres-values.yaml -n delonix-meet \
+	  --set postgresql.password="$$($(PG_PASSWORD_FROM_SECRET))"
 	@helm upgrade --install delonix-redis bitnami/redis -f deploy/k8s/helm-values/redis-values.yaml -n delonix-meet
 	@printf "$(C)▶ Compilando e gerando Docker Image (Distroless Security)...$(Z)\n"
 	@docker build -t delonix-meet-server:latest -f Dockerfile.server .

@@ -92,6 +92,10 @@ jwt_secret: "{{ lookup('ansible.builtin.password', _secrets_dir + '/jwt_secret c
 turn_secret: "{{ lookup('ansible.builtin.password', _secrets_dir + '/turn_secret chars=hexdigits length=48') }}"
 postgres_password: "{{ lookup('ansible.builtin.password', _secrets_dir + '/postgres_password chars=ascii_letters,digits length=32') }}"
 voice_secret: "{{ lookup('ansible.builtin.password', _secrets_dir + '/voice_secret chars=hexdigits length=32') }}"
+# R155 — autoriza POST /api/v1/admin/orgs (o Odoo provisiona organizações). Esteve
+# escrito em deploy/k8s/01-config.yaml; agora nasce aqui, como os outros. O
+# Odoo (nk_delonix_meet) recebe o valor deste ficheiro.
+provisioning_secret: "{{ lookup('ansible.builtin.password', _secrets_dir + '/provisioning_secret chars=hexdigits length=64') }}"
 
 # DATABASE_URL derivada (single-host: Postgres local no loopback).
 database_url: "postgres://delonix:{{ postgres_password }}@127.0.0.1:5435/delonix_meet"

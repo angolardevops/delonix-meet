@@ -46,6 +46,11 @@ pub struct Config {
     /// recebe a chave de API). Vazio => endpoint de provisão DESATIVADO
     /// (fail-closed). Não é uma chave de org — é anterior a qualquer org.
     pub provisioning_secret: String,
+    /// Porque é que o `provisioning_secret` NÃO serve, decidido uma vez no
+    /// arranque (`provisioning_secret_refusal`). `Some` => `POST
+    /// /api/v1/admin/orgs` responde 503 com esta razão. R155: o manifesto K8s
+    /// trazia um valor escrito no repositório público.
+    pub provisioning_secret_refusal: Option<&'static str>,
     /// Administradores da PLATAFORMA (`PLATFORM_ADMIN_USER_IDS`, UUIDs de
     /// utilizador separados por vírgula). Vazio (omissão) => ninguém administra
     /// a plataforma pela API (fail-closed).
@@ -203,11 +208,11 @@ impl Config {
         }
         let cors_origins = csv_env("CORS_ORIGINS");
         Self {
-            database_url: secret("DATABASE_URL", DEV_DB, insecure, 0),
+            database_url: secret("DATABASE_URL", &DB_RULE, insecure),
             bind_addr: env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8180".into()),
-            jwt_secret: secret("JWT_SECRET", DEV_JWT, insecure, 32),
+            jwt_secret: secret("JWT_SECRET", &JWT_RULE, insecure),
             turn_host: env::var("TURN_HOST").unwrap_or_else(|_| "localhost:3478".into()),
-            turn_secret: secret("TURN_SECRET", DEV_TURN, insecure, 16),
+            turn_secret: secret("TURN_SECRET", &TURN_RULE, insecure),
             access_ttl_secs: 15 * 60,
             refresh_ttl_secs: 30 * 24 * 3600,
             room_token_ttl_secs: 5 * 60,
@@ -229,6 +234,16 @@ impl Config {
                 refusal
             },
             provisioning_secret: env::var("PROVISIONING_SECRET").unwrap_or_default(),
+            provisioning_secret_refusal: {
+                let v = env::var("PROVISIONING_SECRET").unwrap_or_default();
+                let refusal = provisioning_secret_refusal(&v, insecure);
+                if let Some(r) = refusal {
+                    tracing::warn!(
+                        "Provisionamento de organizações (/api/v1/admin/orgs) DESLIGADO: {r}"
+                    );
+                }
+                refusal
+            },
             platform_admin_user_ids: uuid_list("PLATFORM_ADMIN_USER_IDS"),
             sms_unitel_smpp: env::var("SMS_UNITEL_SMPP").ok().filter(|v| !v.is_empty()),
             sms_movicel_smpp: env::var("SMS_MOVICEL_SMPP").ok().filter(|v| !v.is_empty()),
@@ -328,32 +343,86 @@ fn csv_env(var: &str) -> Vec<String> {
 /// Ansible gera 32 hexadecimais (128 bits); `openssl rand -hex 32` dá 64.
 pub const VOICE_SECRET_MIN_LEN: usize = 32;
 
-/// Valores de `VOICE_INTERNAL_SECRET` que já estiveram escritos em ficheiros
-/// versionados deste repositório PÚBLICO. Estão queimados: qualquer clone os
-/// tem, e o histórico do git não se reescreve (ver
-/// `scripts/leaked-secrets-accepted.txt`). Um deploy que ainda os use é
-/// recusado, e não aceite por ter comprimento suficiente.
-pub const BURNED_VOICE_SECRETS: &[&str] = &[
-    // deploy/k8s/01-config.yaml, de 98f5b28 (2026-07-10) até R154.
-    "voice-internal-secret-for-pstn",
-    // Makefile, `VOICE_SECRET ?=` — valor de dev.
-    "dev-voice-secret-abc123",
+// ============================================================
+//  Segredos QUEIMADOS (R154, R155).
+//
+//  Duas listas por segredo, e a diferença entre elas é o que deixa o dev
+//  continuar a funcionar sem abrir a porta em produção:
+//
+//  - `BURNED_*` — valores que estiveram em ficheiros de DEPLOY versionados
+//    deste repositório PÚBLICO (`deploy/k8s/01-config.yaml`, helm-values).
+//    Nunca foram de dev: foram aplicados a clusters. Recusados em QUALQUER
+//    modo, incluindo `DELONIX_ALLOW_INSECURE=1` — um valor que está no GitHub
+//    não é «um segredo de dev», é um segredo de outra pessoa.
+//  - `DEV_*` — valores de desenvolvimento conhecidos (docker-compose, Makefile,
+//    scripts de demo, marcadores `CHANGE_ME`). Aceites com
+//    `DELONIX_ALLOW_INSECURE=1`, recusados em produção.
+//
+//  Cada `BURNED_*` tem a decisão escrita em `scripts/leaked-secrets-accepted.txt`
+//  (um teste garante-o) e o `check-repo-hygiene.sh` impede-o de voltar a um
+//  ficheiro seguido. O histórico do git não se reescreve.
+// ============================================================
+
+/// `VOICE_INTERNAL_SECRET` publicado. De 98f5b28 (2026-07-10) até R154.
+pub const BURNED_VOICE_SECRETS: &[&str] = &["voice-internal-secret-for-pstn"];
+/// `VOICE_INTERNAL_SECRET` de dev: `Makefile`, `VOICE_SECRET ?=`.
+pub const DEV_VOICE_SECRETS: &[&str] = &["dev-voice-secret-abc123"];
+
+/// `JWT_SECRET` publicado em `deploy/k8s/01-config.yaml` (98f5b28 → R155).
+/// Quem o tem assina tokens de sessão para QUALQUER utilizador.
+pub const BURNED_JWT_SECRETS: &[&str] = &["stage-jwt-secret-min-32-chars-abcdef123456"];
+/// `TURN_SECRET` publicado em `deploy/k8s/01-config.yaml` (98f5b28 → R155).
+/// Quem o tem gera credenciais TURN válidas e usa o coturn como relay aberto.
+pub const BURNED_TURN_SECRETS: &[&str] = &["stage-turn-secret-key"];
+/// Passwords do Postgres publicadas: `01-config.yaml` e
+/// `helm-values/postgres-stage-values.yaml` (`delonix_dev_pass`),
+/// `helm-values/postgres-values.yaml` (`delonix_prod_pass`). Verificadas na
+/// password embutida no `DATABASE_URL`, seja qual for o host.
+pub const BURNED_DB_PASSWORDS: &[&str] = &["delonix_dev_pass", "delonix_prod_pass"];
+/// Passwords de dev e marcadores por trocar (`docker-compose.yml`, CI,
+/// `deploy/delonix.env.example`, `50-data.yaml`).
+pub const DEV_DB_PASSWORDS: &[&str] = &[
+    "delonix_dev",
+    "CHANGE_ME",
+    "CHANGE_ME_same_as_app_DATABASE_URL",
+    "TROCAR_PASSWORD_FORTE",
 ];
+/// `PROVISIONING_SECRET` publicado em `deploy/k8s/01-config.yaml`
+/// (8fdaab8, 2026-07-14 → R155). Quem o tem cria organizações e recebe a
+/// chave de API de cada uma.
+pub const BURNED_PROVISIONING_SECRETS: &[&str] =
+    &["dlxprov_bcdc13c52115d2b67942298b6d548b65f47980470090a2e0"];
+/// `PROVISIONING_SECRET` de dev: `deploy/demo-kaeso.sh` (com
+/// `DELONIX_ALLOW_INSECURE=1`).
+pub const DEV_PROVISIONING_SECRETS: &[&str] = &["kaeso_demo_provisioning_secret"];
+/// Chão do `PROVISIONING_SECRET`: o mesmo do `JWT_SECRET`.
+pub const PROVISIONING_SECRET_MIN_LEN: usize = 32;
+
+/// `value` é um dos `list`? Comparação em tempo constante e SEM sair ao
+/// primeiro acerto: o tempo não diz qual nem se algum.
+pub(crate) fn is_one_of(value: &str, list: &[&str]) -> bool {
+    list.iter().fold(false, |hit, known| {
+        hit | crate::apikeys::ct_eq(value.as_bytes(), known.as_bytes())
+    })
+}
 
 /// `None` se o segredo de voz serve; `Some(razão)` se não. Com
-/// `DELONIX_ALLOW_INSECURE=1` aceita-se qualquer valor não vazio — é o que
-/// deixa o `make dev` continuar a usar o valor de dev do Makefile.
+/// `DELONIX_ALLOW_INSECURE=1` aceita-se o valor de dev do Makefile (e qualquer
+/// outro não vazio), mas NUNCA um valor publicado.
 pub fn voice_secret_refusal(secret: &str, insecure: bool) -> Option<&'static str> {
     if secret.is_empty() {
         return Some("VOICE_INTERNAL_SECRET não está definido");
     }
-    if insecure {
-        return None;
-    }
-    if BURNED_VOICE_SECRETS.contains(&secret) {
+    if is_one_of(secret, BURNED_VOICE_SECRETS) {
         return Some(
             "VOICE_INTERNAL_SECRET é um valor de exemplo publicado no repositório — gera um novo",
         );
+    }
+    if insecure {
+        return None;
+    }
+    if is_one_of(secret, DEV_VOICE_SECRETS) {
+        return Some("VOICE_INTERNAL_SECRET é o valor de desenvolvimento do Makefile");
     }
     if secret.len() < VOICE_SECRET_MIN_LEN {
         return Some("VOICE_INTERNAL_SECRET tem menos de 32 caracteres");
@@ -361,31 +430,122 @@ pub fn voice_secret_refusal(secret: &str, insecure: bool) -> Option<&'static str
     None
 }
 
-/// Lê um segredo do ambiente. Em produção (insecure=false) faz panic se estiver
-/// ausente, igual ao default de dev, ou abaixo do comprimento mínimo.
-fn secret(var: &str, dev_default: &str, insecure: bool, min_len: usize) -> String {
-    match env::var(var) {
-        Ok(v) if v == dev_default => {
-            if insecure {
-                v
-            } else {
-                panic!(
-                    "{var} está com o valor default de dev — define um segredo forte em produção"
-                )
-            }
-        }
-        Ok(v) if v.len() < min_len => {
-            panic!("{var} tem de ter pelo menos {min_len} caracteres")
-        }
-        Ok(v) => v,
-        Err(_) => {
-            if insecure {
-                dev_default.to_string()
-            } else {
-                panic!("{var} tem de estar definido em produção (ou define DELONIX_ALLOW_INSECURE=1 em dev)")
-            }
-        }
+/// `None` se o `PROVISIONING_SECRET` serve; `Some(razão)` se não — e então
+/// `POST /api/v1/admin/orgs` responde 503 com a razão (R155). Não faz panic:
+/// quem não provisiona organizações pelo Odoo não perde o servidor.
+pub fn provisioning_secret_refusal(secret: &str, insecure: bool) -> Option<&'static str> {
+    if secret.is_empty() {
+        return Some("PROVISIONING_SECRET não está definido");
     }
+    if is_one_of(secret, BURNED_PROVISIONING_SECRETS) {
+        return Some("PROVISIONING_SECRET é um valor publicado no repositório — gera um novo");
+    }
+    if insecure {
+        return None;
+    }
+    if is_one_of(secret, DEV_PROVISIONING_SECRETS) {
+        return Some("PROVISIONING_SECRET é um valor de demonstração");
+    }
+    if secret.len() < PROVISIONING_SECRET_MIN_LEN {
+        return Some("PROVISIONING_SECRET tem menos de 32 caracteres");
+    }
+    None
+}
+
+/// A password embutida num `DATABASE_URL` (`postgres://user:PASS@host/db`),
+/// tal como está escrita. `None` se o URL não tiver password ou não for um URL.
+fn db_url_password(url: &str) -> Option<String> {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.password().map(str::to_string))
+}
+
+/// Lê um segredo do ambiente. Em produção (insecure=false) faz panic se estiver
+/// ausente, igual ao default de dev, abaixo do comprimento mínimo, ou — em
+/// qualquer modo — igual a um valor publicado no repositório.
+fn secret(var: &str, rule: &SecretRule, insecure: bool) -> String {
+    match check_secret(var, env::var(var).ok().as_deref(), rule, insecure) {
+        Ok(v) => v,
+        Err(why) => panic!("{why}"),
+    }
+}
+
+/// O que torna um segredo lido por `secret` aceitável.
+struct SecretRule {
+    /// Usado quando a variável falta e `DELONIX_ALLOW_INSECURE=1`.
+    dev_default: &'static str,
+    min_len: usize,
+    /// Valores publicados: recusados em qualquer modo.
+    burned: &'static [&'static str],
+    /// Valores de dev conhecidos: recusados só em produção.
+    dev_known: &'static [&'static str],
+    /// Compara as listas com a password do URL e não com o valor inteiro.
+    is_db_url: bool,
+}
+
+const JWT_RULE: SecretRule = SecretRule {
+    dev_default: DEV_JWT,
+    min_len: 32,
+    burned: BURNED_JWT_SECRETS,
+    dev_known: &[],
+    is_db_url: false,
+};
+const TURN_RULE: SecretRule = SecretRule {
+    dev_default: DEV_TURN,
+    min_len: 16,
+    burned: BURNED_TURN_SECRETS,
+    dev_known: &[],
+    is_db_url: false,
+};
+const DB_RULE: SecretRule = SecretRule {
+    dev_default: DEV_DB,
+    min_len: 0,
+    burned: BURNED_DB_PASSWORDS,
+    dev_known: DEV_DB_PASSWORDS,
+    is_db_url: true,
+};
+
+/// A decisão de `secret`, sem ambiente nem panic, para se poder testar.
+fn check_secret(
+    var: &str,
+    value: Option<&str>,
+    rule: &SecretRule,
+    insecure: bool,
+) -> Result<String, String> {
+    let Some(v) = value else {
+        return if insecure {
+            Ok(rule.dev_default.to_string())
+        } else {
+            Err(format!(
+                "{var} tem de estar definido em produção (ou define DELONIX_ALLOW_INSECURE=1 em dev)"
+            ))
+        };
+    };
+    let compared = if rule.is_db_url {
+        db_url_password(v).unwrap_or_default()
+    } else {
+        v.to_string()
+    };
+    if !compared.is_empty() && is_one_of(&compared, rule.burned) {
+        return Err(format!(
+            "{var} usa um valor PUBLICADO no repositório (scripts/leaked-secrets-accepted.txt) — \
+             gera um novo e roda-o (docs/deployment.md §6)"
+        ));
+    }
+    let dev =
+        v == rule.dev_default || (!compared.is_empty() && is_one_of(&compared, rule.dev_known));
+    if dev && !insecure {
+        return Err(format!(
+            "{var} está com um valor de desenvolvimento — define um segredo forte em produção"
+        ));
+    }
+    if v.len() < rule.min_len {
+        return Err(format!(
+            "{var} tem de ter pelo menos {} caracteres",
+            rule.min_len
+        ));
+    }
+    Ok(v.to_string())
 }
 
 impl Config {
@@ -394,5 +554,149 @@ impl Config {
     /// janela de 45 ms e a reclamação nunca aconteceria.
     pub fn reconnect_grace(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.reconnect_grace_secs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const STRONG_JWT: &str = "9f1c3e5a7b9d0f2a4c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d";
+    const STRONG_DB: &str =
+        "postgres://delonix:Q7vX2mR9kL4pZ8wN3bT6yH1cF5jD0sG@db.interno:5432/delonix_meet";
+
+    /// R155 — um `JWT_SECRET`/`TURN_SECRET` publicado no repositório NÃO
+    /// arranca o servidor, nem em produção nem com `DELONIX_ALLOW_INSECURE=1`.
+    /// O JWT publicado tem 42 caracteres: é a lista que o recusa, não o chão.
+    #[test]
+    fn published_jwt_and_turn_are_refused_in_every_mode() {
+        for insecure in [false, true] {
+            for v in BURNED_JWT_SECRETS {
+                let e = check_secret("JWT_SECRET", Some(v), &JWT_RULE, insecure).unwrap_err();
+                assert!(e.contains("PUBLICADO"), "insecure={insecure}: {e}");
+            }
+            for v in BURNED_TURN_SECRETS {
+                let e = check_secret("TURN_SECRET", Some(v), &TURN_RULE, insecure).unwrap_err();
+                assert!(e.contains("PUBLICADO"), "insecure={insecure}: {e}");
+            }
+        }
+    }
+
+    /// A password publicada é recusada DENTRO do URL, seja qual for o host,
+    /// o utilizador ou a base — mudar só o host não a torna segura.
+    #[test]
+    fn published_db_password_is_refused_whatever_the_host() {
+        for pass in BURNED_DB_PASSWORDS {
+            for host in [
+                "delonix-postgres-postgresql.delonix-meet.svc.cluster.local:5432",
+                "10.0.0.5:5432",
+                "localhost",
+            ] {
+                let url = format!("postgres://outro:{pass}@{host}/qualquer");
+                for insecure in [false, true] {
+                    let e =
+                        check_secret("DATABASE_URL", Some(&url), &DB_RULE, insecure).unwrap_err();
+                    assert!(e.contains("PUBLICADO"), "{url}: {e}");
+                }
+            }
+        }
+    }
+
+    /// «Dev conhecido» não é «publicado»: o `make dev`, o docker-compose e o CI
+    /// usam `DELONIX_ALLOW_INSECURE=1` com estes valores e têm de continuar a
+    /// arrancar; em produção os mesmos valores param o arranque.
+    #[test]
+    fn dev_values_start_only_with_allow_insecure() {
+        let dev_url = "postgres://delonix:delonix_dev@dlxmeet-db:5432/delonix_meet";
+        assert!(check_secret("DATABASE_URL", Some(dev_url), &DB_RULE, true).is_ok());
+        assert!(check_secret("DATABASE_URL", Some(dev_url), &DB_RULE, false).is_err());
+        assert!(check_secret("DATABASE_URL", Some(DEV_DB), &DB_RULE, false).is_err());
+        let placeholder = "postgres://delonix:CHANGE_ME@postgres:5432/delonix_meet";
+        assert!(check_secret("DATABASE_URL", Some(placeholder), &DB_RULE, false).is_err());
+        assert!(check_secret("JWT_SECRET", Some(DEV_JWT), &JWT_RULE, true).is_ok());
+        assert!(check_secret("JWT_SECRET", Some(DEV_JWT), &JWT_RULE, false).is_err());
+        assert!(check_secret("TURN_SECRET", Some(DEV_TURN), &TURN_RULE, false).is_err());
+        // Ausente: dev cai no default, produção recusa.
+        assert_eq!(
+            check_secret("JWT_SECRET", None, &JWT_RULE, true).as_deref(),
+            Ok(DEV_JWT)
+        );
+        assert!(check_secret("JWT_SECRET", None, &JWT_RULE, false).is_err());
+    }
+
+    /// A metade que tem de continuar a passar: um segredo forte e novo arranca.
+    #[test]
+    fn strong_fresh_secrets_are_accepted() {
+        assert!(check_secret("JWT_SECRET", Some(STRONG_JWT), &JWT_RULE, false).is_ok());
+        assert!(check_secret("TURN_SECRET", Some(&STRONG_JWT[..32]), &TURN_RULE, false).is_ok());
+        assert!(check_secret("DATABASE_URL", Some(STRONG_DB), &DB_RULE, false).is_ok());
+        // Curto continua a ser recusado, como antes.
+        assert!(check_secret("JWT_SECRET", Some("curto"), &JWT_RULE, true).is_err());
+        // Uma password que só CONTÉM a publicada não é a publicada.
+        let parecida = "postgres://delonix:delonix_dev_pass_mas_nova_9Xk2@db:5432/d";
+        assert!(check_secret("DATABASE_URL", Some(parecida), &DB_RULE, false).is_ok());
+    }
+
+    /// R155 — o `PROVISIONING_SECRET` fecha sem panic: vazio, publicado, de
+    /// demo ou curto dá razão (→ 503); forte passa. O publicado é recusado
+    /// também com `DELONIX_ALLOW_INSECURE=1`; o de demo não.
+    #[test]
+    fn provisioning_secret_refusal_by_value() {
+        assert!(provisioning_secret_refusal("", false).is_some());
+        assert!(provisioning_secret_refusal("", true).is_some());
+        for v in BURNED_PROVISIONING_SECRETS {
+            for insecure in [false, true] {
+                let r = provisioning_secret_refusal(v, insecure).unwrap_or_default();
+                assert!(r.contains("publicado"), "insecure={insecure}: {r}");
+            }
+        }
+        for v in DEV_PROVISIONING_SECRETS {
+            assert!(provisioning_secret_refusal(v, false).is_some());
+            assert_eq!(provisioning_secret_refusal(v, true), None);
+        }
+        assert!(provisioning_secret_refusal("0123456789abcdef0123456789abcde", false).is_some());
+        assert_eq!(provisioning_secret_refusal(STRONG_JWT, false), None);
+    }
+
+    /// O valor de voz publicado deixa de passar com `DELONIX_ALLOW_INSECURE=1`
+    /// (em R154 passava); o de dev do Makefile continua a passar.
+    #[test]
+    fn published_voice_secret_is_refused_even_in_dev() {
+        for v in BURNED_VOICE_SECRETS {
+            assert!(voice_secret_refusal(v, true).is_some());
+        }
+        for v in DEV_VOICE_SECRETS {
+            assert_eq!(voice_secret_refusal(v, true), None);
+            assert!(voice_secret_refusal(v, false).is_some());
+        }
+    }
+
+    #[test]
+    fn is_one_of_matches_whole_values_only() {
+        assert!(is_one_of("abc", &["x", "abc"]));
+        assert!(!is_one_of("ab", &["abc"]));
+        assert!(!is_one_of("abcd", &["abc"]));
+        assert!(!is_one_of("abc", &[]));
+    }
+
+    /// Cada valor recusado por estar PUBLICADO tem a decisão escrita no livro
+    /// que o `check-repo-hygiene.sh` usa. Sem isto, o servidor e o portão
+    /// divergiam em silêncio.
+    #[test]
+    fn every_burned_value_is_in_the_ledger() {
+        let ledger = include_str!("../../scripts/leaked-secrets-accepted.txt");
+        let lines: Vec<&str> = ledger
+            .lines()
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect();
+        for v in BURNED_VOICE_SECRETS
+            .iter()
+            .chain(BURNED_JWT_SECRETS)
+            .chain(BURNED_TURN_SECRETS)
+            .chain(BURNED_DB_PASSWORDS)
+            .chain(BURNED_PROVISIONING_SECRETS)
+        {
+            assert!(lines.contains(v), "«{v}» não está no livro");
+        }
     }
 }

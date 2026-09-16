@@ -5,7 +5,7 @@ Este diretório contém os manifestos e configurações para realizar o deploy d
 ## Estrutura dos Manifestos
 
 *   `00-namespace.yaml`: Define o namespace isolado `delonix-meet`.
-*   `01-config.yaml`: Contém o `ConfigMap` e o `Secret` para injetar configurações de ambiente (ex: credenciais da base de dados, REDIS_URL).
+*   `01-config.yaml`: Contém só o `ConfigMap` (ex: REDIS_URL, TURN_HOST). Os Secrets (`delonix-secrets`, `delonix-voice`) NÃO estão no repositório: `make secrets-k8s` e `make voice-secret-k8s` criam-nos aleatórios no cluster (R154, R155; rotação em `docs/deployment.md` §6).
 *   `02-server.yaml`: Deployment do backend Rust (`delonix-server`) com 3 réplicas, health checks e limites de recursos bem definidos.
 *   `03-web.yaml`: Deployment do frontend React (servido via Nginx) com 3 réplicas e alocação leve de recursos.
 *   `04-ingress.yaml`: Configuração do Nginx Ingress Controller, com anotações específicas para suportar a atualização para WebSockets (`/ws`, `/rtc`).

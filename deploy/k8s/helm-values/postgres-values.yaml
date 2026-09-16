@@ -1,9 +1,11 @@
+# SEM passwords (R155): `auth.password` e `auth.replicationPassword` estiveram
+# aqui escritos, num repositório público, e estão queimados. A password da app
+# vem do Secret `delonix-secrets` (`make prod` → `make secrets-k8s`; Ansible →
+# deploy/ansible/.secrets/) por `--set`; a de replicação é gerada pelo chart.
 architecture: replication
 auth:
   username: delonix
-  password: delonix_prod_pass
   database: delonix_meet
-  replicationPassword: repl_prod_pass
 primary:
   extendedConfiguration: |
     max_connections = 500

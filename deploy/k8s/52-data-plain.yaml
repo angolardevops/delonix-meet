@@ -43,6 +43,9 @@ spec:
           image: postgres:16-alpine
           envFrom:
             - configMapRef: { name: delonix-config }
+            # POSTGRES_PASSWORD/USER/DB — o MESMO Secret de onde vem o
+            # DATABASE_URL da app (`make secrets-k8s`, R155).
+            - secretRef: { name: delonix-secrets }
           env:
             # O `postgres` oficial escreve em /var/lib/postgresql/data; com um
             # volume montado nesse caminho o initdb falha por causa do
