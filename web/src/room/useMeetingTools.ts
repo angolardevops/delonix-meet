@@ -17,6 +17,8 @@ export interface PollDraft {
 export function useMeetingTools(core: RoomCore) {
   const { signal, code, isHost } = core
   const [polls, setPolls] = useState<PollView[]>([])
+  /** Quando cada sondagem apareceu NESTE dispositivo — para a pôr no fio do chat. */
+  const [pollSeenAt, setPollSeenAt] = useState<Record<string, number>>({})
   const [questions, setQuestions] = useState<QaView[]>([])
   /** Fim do temporizador, em SEGUNDOS epoch (`room_tools.rs`). */
   const [timerEndsAt, setTimerEndsAt] = useState<number | null>(null)
@@ -37,7 +39,15 @@ export function useMeetingTools(core: RoomCore) {
 
   useEffect(() => {
     const offs = [
-      signal.on('polls', (m) => setPolls(m.polls)),
+      signal.on('polls', (m) => {
+        setPolls(m.polls)
+        setPollSeenAt((seen) => {
+          const novas = m.polls.filter((p) => seen[p.id] == null)
+          if (novas.length === 0) return seen
+          const agora = Date.now()
+          return { ...seen, ...Object.fromEntries(novas.map((p) => [p.id, agora])) }
+        })
+      }),
       signal.on('qa', (m) => setQuestions(m.questions)),
       signal.on('timer', (m) => setTimerEndsAt(m.ends_at)),
     ]
@@ -132,6 +142,7 @@ export function useMeetingTools(core: RoomCore) {
 
   return {
     polls,
+    pollSeenAt,
     questions,
     timerEndsAt,
     myVotes,

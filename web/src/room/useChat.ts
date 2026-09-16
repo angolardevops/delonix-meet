@@ -9,6 +9,14 @@ export interface ChatMsg {
   text: string
   own: boolean
   historical?: boolean
+  /**
+   * Quando chegou (ms). O histórico traz `created_at` do servidor; uma mensagem
+   * ao vivo NÃO traz hora (`ServerMsg::Chat`), por isso é a hora de chegada a
+   * este dispositivo — que numa sala ao vivo difere de milissegundos.
+   */
+  at: number
+  /** peer_id de quem enviou (ao vivo) — para o papel na mensagem. */
+  from?: string
 }
 
 /** Emojis para inserir numa mensagem (diferentes das reacções flutuantes). */
@@ -38,7 +46,7 @@ export function useChat(core: RoomCore, chatOpen: boolean) {
   useEffect(() => {
     const offs = [
       signal.on('chat', (m) => {
-        setMessages((c) => [...c, { id: ++seq, username: m.username, text: m.text, own: false }])
+        setMessages((c) => [...c, { id: ++seq, username: m.username, text: m.text, own: false, at: Date.now(), from: m.from }])
         if (!openRef.current) setUnread((n) => n + 1)
       }),
       // Histórico ao entrar: melhor esforço, não bloqueia a sala.
@@ -52,6 +60,7 @@ export function useChat(core: RoomCore, chatOpen: boolean) {
                 text: h.message,
                 own: h.user_id === currentUser()?.id,
                 historical: true,
+                at: Date.parse(h.created_at) || Date.now(),
               })),
               ...live.filter((m) => !m.historical),
             ]),
@@ -95,7 +104,7 @@ export function useChat(core: RoomCore, chatOpen: boolean) {
       return
     }
     signal.send({ type: 'chat', text })
-    setMessages((c) => [...c, { id: ++seq, username: currentUser()?.username ?? '', text, own: true }])
+    setMessages((c) => [...c, { id: ++seq, username: currentUser()?.username ?? '', text, own: true, at: Date.now() }])
     setInput('')
     setMentionQuery(null)
   }

@@ -10,7 +10,7 @@ const TIMER_PRESETS = [5, 10, 15, 30, 60]
 const POLL_DURATIONS = [0, 30, 60, 120, 300]
 
 /** Composição de uma sondagem ou quiz (anfitrião). */
-function PollComposer({ tools }: { tools: MeetingTools }) {
+function PollComposer({ tools, autoFocus }: { tools: MeetingTools; autoFocus?: boolean }) {
   const { t } = useTranslation()
   const [question, setQuestion] = useState('')
   const [options, setOptions] = useState<string[]>(['', ''])
@@ -31,7 +31,7 @@ function PollComposer({ tools }: { tools: MeetingTools }) {
       }}
     >
       <Field label={t('room.sondagens.pergunta')} htmlFor="rm-poll-q">
-        <TextInput id="rm-poll-q" maxLength={200} value={question} onChange={(e) => setQuestion(e.target.value)} />
+        <TextInput id="rm-poll-q" autoFocus={autoFocus} maxLength={200} value={question} onChange={(e) => setQuestion(e.target.value)} />
       </Field>
       <fieldset className="rm-compose__opts">
         <legend className="dx-field__label">{t('room.sondagens.opcoes')}</legend>
@@ -92,7 +92,19 @@ function PollComposer({ tools }: { tools: MeetingTools }) {
   )
 }
 
-export function PollsPanel({ tools, isHost }: { tools: MeetingTools; isHost: boolean }) {
+export function PollsPanel({
+  tools,
+  isHost,
+  present,
+  focusComposer,
+}: {
+  tools: MeetingTools
+  isHost: boolean
+  /** Quantos estão na sala («11 de 13»). */
+  present: number
+  /** Veio do atalho «Nova sondagem» do chat: o cursor vai para a pergunta. */
+  focusComposer?: boolean
+}) {
   const { t } = useTranslation()
   return (
     <div className="rm-scroll">
@@ -129,7 +141,7 @@ export function PollsPanel({ tools, isHost }: { tools: MeetingTools; isHost: boo
             <Icon name="plus" size={13} />
             {t('room.sondagens.nova')}
           </h3>
-          <PollComposer tools={tools} />
+          <PollComposer tools={tools} autoFocus={focusComposer} />
         </section>
       )}
 
@@ -147,6 +159,7 @@ export function PollsPanel({ tools, isHost }: { tools: MeetingTools; isHost: boo
             isHost={isHost}
             onVote={(i) => tools.vote(p.id, i)}
             onClose={() => tools.closePoll(p.id)}
+            present={present}
           />
         ))}
       </section>

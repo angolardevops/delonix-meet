@@ -86,6 +86,8 @@ export default function Room({
   const multicam = useMulticam(core)
 
   const [secOpen, setSecOpen] = useState(false)
+  /** O painel de sondagens abriu pelo atalho do chat: foca o compositor. */
+  const [pollFromChat, setPollFromChat] = useState(false)
   const [confirmacao, setConfirmacao] = useState<Confirmacao>(null)
 
   const { peers, isHost } = core
@@ -162,6 +164,11 @@ export default function Room({
     multicam.openPanel()
     chrome.setPanel('multicam')
   }
+
+  // O foco pedido pelo atalho vale uma vez.
+  useEffect(() => {
+    if (chrome.panel !== 'polls') setPollFromChat(false)
+  }, [chrome.panel])
 
   function closePanel() {
     if (chrome.panel === 'multicam') void multicam.close()
@@ -333,9 +340,21 @@ export default function Room({
                 )}
                 <IconButton icon="x" bare label={t('room.painel.fechar')} onClick={closePanel} />
               </header>
-              {chrome.panel === 'chat' && <ChatPanel chat={chat} isHost={isHost} />}
+              {chrome.panel === 'chat' && (
+                <ChatPanel
+                  chat={chat}
+                  isHost={isHost}
+                  code={code}
+                  peers={peers}
+                  tools={tools}
+                  onNewPoll={() => {
+                    setPollFromChat(true)
+                    chrome.setPanel('polls')
+                  }}
+                />
+              )}
               {chrome.panel === 'qa' && <QaPanel tools={tools} isHost={isHost} />}
-              {chrome.panel === 'polls' && <PollsPanel tools={tools} isHost={isHost} />}
+              {chrome.panel === 'polls' && <PollsPanel tools={tools} isHost={isHost} present={peers.length + 1} focusComposer={pollFromChat} />}
               {chrome.panel === 'people' && (
                 <PeoplePanel
                   code={code}
