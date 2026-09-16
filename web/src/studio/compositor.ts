@@ -14,6 +14,20 @@
  * solavancos. Aqui pede-se 30.
  */
 
+import type { Fonte } from '../room/compositor'
+import {
+  type ConteudoDoPalco,
+  type LayoutDoPalco,
+  MISTURA_INICIAL,
+  type Mistura,
+  type PerfilDeQualidade,
+  QUALIDADES,
+  rectsDoLayout,
+  SOBREPOSICOES_INICIAIS,
+  type Sobreposicoes,
+} from './palco'
+import { desenharCartaoDeMarca, desenharSobreposicoes, type MarcaDoPalco, type SondagemNoPalco } from './desenho'
+
 /** Onde fica a bolha da câmara. `livre` = posição arrastada pelo utilizador. */
 export type CantoDoAvatar = 'inferior-direito' | 'inferior-esquerdo' | 'superior-direito' | 'superior-esquerdo' | 'livre'
 
@@ -71,6 +85,22 @@ export const ECRA_PARA_GRAVACAO: DisplayMediaStreamOptions = {
   audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
 }
 
+/**
+ * As mesmas constraints, para um perfil de qualidade (2160p, 50 fps). O de
+ * omissão continua a ser o `ECRA_PARA_GRAVACAO` acima: 1080p a 30.
+ */
+export function ecraParaGravacao(perfil: PerfilDeQualidade): DisplayMediaStreamOptions {
+  if (perfil.altura === 1080 && perfil.fps === 30) return ECRA_PARA_GRAVACAO
+  return {
+    ...ECRA_PARA_GRAVACAO,
+    video: {
+      width: { ideal: perfil.largura, max: perfil.largura },
+      height: { ideal: perfil.altura, max: perfil.altura },
+      frameRate: { ideal: perfil.fps, max: perfil.fps },
+    },
+  }
+}
+
 const MARGEM = 0.03 // fracção da largura, entre a bolha e a borda
 
 /** O que sai de uma gravação: o ficheiro pronto e as duas faixas isoladas. */
@@ -85,6 +115,14 @@ export interface OpcoesDoCompositor {
   altura?: number
   fps?: number
   bitrate?: number
+}
+
+/** Um convidado no palco: o vídeo que se desenha e a fonte que entra na mistura. */
+interface ConvidadoNoPalco {
+  nome: string
+  stream: MediaStream | null
+  video: HTMLVideoElement
+  audio: MediaStreamAudioSourceNode | null
 }
 
 /**
@@ -112,6 +150,45 @@ export class CompositorDeAula {
   private fontesAudio: MediaStreamAudioSourceNode[] = []
 
   /**
+   * Os três barramentos da mistura. Cada fonte liga-se a UM ganho, e é o
+   * ganho que vai ao destino — mexer num fader não reconstrói o grafo nem
+   * interrompe a gravação.
+   */
+  private ganhoPalco: GainNode | null = null
+  private ganhoMusica: GainNode | null = null
+  private ganhoVideo: GainNode | null = null
+  private mistura: Mistura = { ...MISTURA_INICIAL }
+  private micStream: MediaStream | null = null
+  private micFonte: MediaStreamAudioSourceNode | null = null
+  private ecraFonte: MediaStreamAudioSourceNode | null = null
+  /** Microfone escolhido; vazio = o de omissão do sistema. */
+  microfoneId = ''
+
+  private musicaUrl: string | null = null
+  private musicaEl: HTMLAudioElement | null = null
+  private musicaFonte: MediaElementAudioSourceNode | null = null
+  private musicaNoGrafo = false
+  /** Chamado quando a música começa ou pára (fim, erro, troca). */
+  aoMudarMusica: ((aTocar: boolean) => void) | null = null
+
+  private convidados = new Map<string, ConvidadoNoPalco>()
+
+  /** O que enche o palco e como se arruma. Lidos a cada frame. */
+  layout: LayoutDoPalco = 'solo'
+  conteudo: ConteudoDoPalco = 'fontes'
+  sobreposicoes: Sobreposicoes = { ...SOBREPOSICOES_INICIAIS }
+  /** Momento em que o rodapé foi ligado — dá a animação de entrada. */
+  rodapeDesde = 0
+  /** Momento em que o cronómetro foi ligado. */
+  cronometroDesde = 0
+  /** A última frase das legendas ao vivo; vazia = nada no ecrã. */
+  legenda = ''
+  sondagem: SondagemNoPalco | null = null
+  marca: MarcaDoPalco = { nome: '', titulo: '', aviso: '', deOrigem: true, logo: null }
+  /** O quadro local: um canvas branco onde se escreve com o rato ou o dedo. */
+  readonly quadro = document.createElement('canvas')
+
+  /**
    * DOIS gravadores, não um (pedido: «separar o áudio do vídeo e depois
    * juntar»). Separar depois obrigava a desmultiplexar um WebM já fechado;
    * gravar separado desde o início faz da separação uma propriedade do
@@ -125,6 +202,7 @@ export class CompositorDeAula {
   private pedacos: Blob[] = []
   private pedacosVideo: Blob[] = []
   private pedacosAudio: Blob[] = []
+  private bytesCompleto = 0
   private raf = 0
   private vivo = true
 
@@ -153,6 +231,9 @@ export class CompositorDeAula {
     const ctx = this.canvas.getContext('2d', { alpha: false })
     if (!ctx) throw new Error('canvas 2d indisponível')
     this.ctx = ctx
+    this.quadro.width = this.canvas.width
+    this.quadro.height = this.canvas.height
+    this.limparQuadro()
     for (const v of [this.ecraVideo, this.camaraVideo]) {
       v.muted = true
       v.playsInline = true
@@ -163,11 +244,15 @@ export class CompositorDeAula {
 
   /** Abre o seletor do browser (ecrã inteiro / janela / separador). */
   async escolherEcra(): Promise<void> {
-    const s = await navigator.mediaDevices.getDisplayMedia(ECRA_PARA_GRAVACAO)
+    const s = await navigator.mediaDevices.getDisplayMedia(ecraParaGravacao(this.perfil))
     this.pararEcra()
     this.ecraStream = s
     this.ecraVideo.srcObject = s
     await this.ecraVideo.play().catch(() => {})
+    // Com a mistura já montada (a gravar ou no ar), o som do ecrã novo entra
+    // já — antes só entrava no próximo arranque, e trocar de separador a meio
+    // de uma aula emudecia o vídeo sem aviso.
+    this.ligarSomDoEcra()
     // O utilizador pode parar a partilha pelo aviso do browser: isso é um fim
     // de fonte, não um erro — quem usa o compositor decide o que fazer.
     s.getVideoTracks()[0]?.addEventListener('ended', () => this.aoPerderEcra?.())
@@ -178,7 +263,11 @@ export class CompositorDeAula {
 
   async ligarCamara(deviceId?: string): Promise<void> {
     const s = await navigator.mediaDevices.getUserMedia({
-      video: { deviceId: deviceId ? { exact: deviceId } : undefined, width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+        width: { ideal: this.perfil.altura > 1080 ? 1920 : 1280 },
+        height: { ideal: this.perfil.altura > 1080 ? 1080 : 720 },
+      },
       audio: false,
     })
     this.pararCamara()
@@ -207,6 +296,119 @@ export class CompositorDeAula {
     return { w: this.ecraVideo.videoWidth, h: this.ecraVideo.videoHeight }
   }
 
+  // ---------------------------------------------------------------- qualidade
+
+  /** O perfil em uso (tamanho do canvas, fps e débito da gravação). */
+  get perfil(): PerfilDeQualidade {
+    return {
+      largura: this.canvas.width,
+      altura: this.canvas.height,
+      fps: this.opcoes.fps ?? 30,
+      bitrate: this.opcoes.bitrate ?? QUALIDADES['1080p30'].bitrate,
+    }
+  }
+
+  /**
+   * Muda a qualidade. RECUSA a meio de uma gravação ou de um directo: o fluxo
+   * já foi capturado com o tamanho e os fps antigos, e trocar o canvas por
+   * baixo dele dava um ficheiro com duas resoluções. Devolve se mudou.
+   */
+  definirQualidade(p: PerfilDeQualidade): boolean {
+    if (this.consumidores > 0) return false
+    this.opcoes = { ...this.opcoes, largura: p.largura, altura: p.altura, fps: p.fps, bitrate: p.bitrate }
+    if (this.canvas.width !== p.largura || this.canvas.height !== p.altura) {
+      // O quadro acompanha, com o que já tinha escrito esticado para o novo tamanho.
+      const antigo = document.createElement('canvas')
+      antigo.width = this.quadro.width
+      antigo.height = this.quadro.height
+      antigo.getContext('2d')?.drawImage(this.quadro, 0, 0)
+      this.canvas.width = p.largura
+      this.canvas.height = p.altura
+      this.quadro.width = p.largura
+      this.quadro.height = p.altura
+      this.limparQuadro()
+      this.quadro.getContext('2d')?.drawImage(antigo, 0, 0, p.largura, p.altura)
+    }
+    return true
+  }
+
+  /** Bytes do ficheiro completo gravados até agora (a gravação em curso). */
+  get bytesGravados(): number {
+    return this.bytesCompleto
+  }
+
+  // ---------------------------------------------------------------- convidados
+
+  /**
+   * Os convidados que estão NO PALCO (vêm da sala ligada ao Estúdio). Segue a
+   * lista de forma incremental, como o `RoomCompositor`: quem entra ganha um
+   * vídeo e uma fonte na mistura, quem sai larga os dois — sem recriar o
+   * `AudioContext`, que emudeceria a gravação.
+   */
+  definirConvidados(fontes: Fonte[]): void {
+    const ids = new Set(fontes.map((f) => f.id))
+    for (const [id, c] of this.convidados) {
+      if (ids.has(id)) continue
+      c.video.pause()
+      c.video.srcObject = null
+      c.audio?.disconnect()
+      this.convidados.delete(id)
+    }
+    for (const f of fontes) {
+      let c = this.convidados.get(f.id)
+      if (!c) {
+        const video = document.createElement('video')
+        video.muted = true
+        video.playsInline = true
+        c = { nome: f.nome, stream: null, video, audio: null }
+        this.convidados.set(f.id, c)
+      }
+      c.nome = f.nome
+      if (c.stream !== f.stream) {
+        c.audio?.disconnect()
+        c.audio = null
+        c.stream = f.stream
+        c.video.srcObject = f.stream
+        void c.video.play().catch(() => {})
+      }
+      this.ligarConvidadoAoGrafo(c)
+    }
+  }
+
+  get quantosConvidados(): number {
+    return this.convidados.size
+  }
+
+  private ligarConvidadoAoGrafo(c: ConvidadoNoPalco): void {
+    if (c.audio || !this.audioCtx || !this.ganhoPalco || !c.stream?.getAudioTracks().length) return
+    c.audio = this.audioCtx.createMediaStreamSource(new MediaStream(c.stream.getAudioTracks()))
+    c.audio.connect(this.ganhoPalco)
+  }
+
+  // ---------------------------------------------------------------- quadro
+
+  limparQuadro(): void {
+    const g = this.quadro.getContext('2d')
+    if (!g) return
+    g.fillStyle = '#ffffff'
+    g.fillRect(0, 0, this.quadro.width, this.quadro.height)
+  }
+
+  /** Um traço em fracções (0–1) do quadro. A espessura é em fracção da altura. */
+  riscarNoQuadro(de: [number, number], ate: [number, number], cor: string, espessura: number): void {
+    const g = this.quadro.getContext('2d')
+    if (!g) return
+    const { width: W, height: H } = this.quadro
+    g.strokeStyle = cor
+    g.lineWidth = Math.max(1, espessura * H)
+    g.lineCap = 'round'
+    g.lineJoin = 'round'
+    g.beginPath()
+    g.moveTo(de[0] * W, de[1] * H)
+    g.lineTo(ate[0] * W, ate[1] * H)
+    g.stroke()
+  }
+
   // ---------------------------------------------------------------- desenho
 
   /** Arranca o ciclo de desenho (pré-visualização), sem gravar. */
@@ -225,23 +427,113 @@ export class CompositorDeAula {
     this.ctx.fillStyle = '#0d1117'
     this.ctx.fillRect(0, 0, W, H)
 
-    if (this.temEcra) {
-      const vw = this.ecraVideo.videoWidth
-      const vh = this.ecraVideo.videoHeight
-      const sx = this.recorte.x * vw
-      const sy = this.recorte.y * vh
-      const sw = Math.max(1, this.recorte.w * vw)
-      const sh = Math.max(1, this.recorte.h * vh)
-      // `contain`: a região escolhida cabe inteira, com barras se o rácio
-      // não bater certo. Cortar aqui seria recortar duas vezes — o utilizador
-      // já escolheu o que quer ver.
-      const escala = Math.min(W / sw, H / sh)
-      const dw = sw * escala
-      const dh = sh * escala
-      this.ctx.drawImage(this.ecraVideo, sx, sy, sw, sh, (W - dw) / 2, (H - dh) / 2, dw, dh)
+    if (this.conteudo === 'marca') {
+      desenharCartaoDeMarca(this.ctx, this.marca, W, H)
+    } else if (this.layout === 'solo') {
+      // O conteúdo a ecrã inteiro e a bolha por cima — o Estúdio de sempre.
+      const todo = { x: 0, y: 0, w: W, h: H }
+      if (this.conteudo === 'quadro') this.desenharConteudo(this.quadro, todo, 'contain')
+      else if (this.temEcra) this.desenharEcraEm(todo)
+      else {
+        const primeiro = [...this.convidados.values()][0]
+        if (primeiro) this.desenharConvidado(primeiro, todo)
+      }
+      if (this.avatar.visivel && this.temCamara) this.desenharAvatar(W, H)
+    } else {
+      this.desenharMosaico(W, H)
     }
 
-    if (this.avatar.visivel && this.temCamara) this.desenharAvatar(W, H)
+    desenharSobreposicoes(this.ctx, {
+      sobreposicoes: this.sobreposicoes,
+      rodapeDesde: this.rodapeDesde,
+      cronometroDesde: this.cronometroDesde,
+      legenda: this.legenda,
+      sondagem: this.sondagem,
+      marca: this.marca,
+    }, W, H)
+  }
+
+  /** As fontes pela ordem em que ocupam os lugares: conteúdo, tu, convidados. */
+  private desenharMosaico(W: number, H: number): void {
+    const pecas: ((r: { x: number; y: number; w: number; h: number }) => void)[] = []
+    if (this.conteudo === 'quadro') pecas.push((r) => this.desenharConteudo(this.quadro, r, 'contain'))
+    else if (this.temEcra) pecas.push((r) => this.desenharEcraEm(r))
+    if (this.avatar.visivel && this.temCamara) pecas.push((r) => this.desenharCamaraEm(r))
+    for (const c of this.convidados.values()) pecas.push((r) => this.desenharConvidado(c, r))
+    const rects = rectsDoLayout(this.layout, pecas.length, W, H)
+    const pad = rects.length > 1 ? Math.round(H * 0.004) : 0
+    rects.forEach((r, i) => {
+      const dentro = { x: r.x + pad, y: r.y + pad, w: r.w - pad * 2, h: r.h - pad * 2 }
+      pecas[i](dentro)
+    })
+  }
+
+  private desenharEcraEm(r: { x: number; y: number; w: number; h: number }): void {
+    const vw = this.ecraVideo.videoWidth
+    const vh = this.ecraVideo.videoHeight
+    const sx = this.recorte.x * vw
+    const sy = this.recorte.y * vh
+    const sw = Math.max(1, this.recorte.w * vw)
+    const sh = Math.max(1, this.recorte.h * vh)
+    // `contain`: a região escolhida cabe inteira, com barras se o rácio
+    // não bater certo. Cortar aqui seria recortar duas vezes — o utilizador
+    // já escolheu o que quer ver.
+    const escala = Math.min(r.w / sw, r.h / sh)
+    const dw = sw * escala
+    const dh = sh * escala
+    this.ctx.drawImage(this.ecraVideo, sx, sy, sw, sh, r.x + (r.w - dw) / 2, r.y + (r.h - dh) / 2, dw, dh)
+  }
+
+  /** Uma imagem num rectângulo: `contain` (conteúdo) ou `cover` (pessoas). */
+  private desenharConteudo(
+    fonte: CanvasImageSource & { width?: number; height?: number; videoWidth?: number; videoHeight?: number },
+    r: { x: number; y: number; w: number; h: number },
+    modo: 'contain' | 'cover',
+    espelhar = false,
+  ): void {
+    const fw = (fonte.videoWidth ?? fonte.width) as number
+    const fh = (fonte.videoHeight ?? fonte.height) as number
+    if (!fw || !fh) {
+      this.ctx.fillStyle = '#1a1d24'
+      this.ctx.fillRect(r.x, r.y, r.w, r.h)
+      return
+    }
+    const escala = modo === 'contain' ? Math.min(r.w / fw, r.h / fh) : Math.max(r.w / fw, r.h / fh)
+    const dw = fw * escala
+    const dh = fh * escala
+    this.ctx.save()
+    this.ctx.beginPath()
+    this.ctx.rect(r.x, r.y, r.w, r.h)
+    this.ctx.clip()
+    if (espelhar) {
+      this.ctx.translate(r.x + r.w / 2 + dw / 2, r.y + (r.h - dh) / 2)
+      this.ctx.scale(-1, 1)
+      this.ctx.drawImage(fonte, 0, 0, dw, dh)
+    } else {
+      this.ctx.drawImage(fonte, r.x + (r.w - dw) / 2, r.y + (r.h - dh) / 2, dw, dh)
+    }
+    this.ctx.restore()
+  }
+
+  private desenharCamaraEm(r: { x: number; y: number; w: number; h: number }): void {
+    this.desenharConteudo(this.camaraVideo, r, 'cover', true)
+  }
+
+  private desenharConvidado(c: ConvidadoNoPalco, r: { x: number; y: number; w: number; h: number }): void {
+    if (c.video.readyState >= 2 && c.video.videoWidth > 0) this.desenharConteudo(c.video, r, 'cover')
+    else {
+      this.ctx.fillStyle = '#1a1d24'
+      this.ctx.fillRect(r.x, r.y, r.w, r.h)
+    }
+    if (!c.nome) return
+    const H = this.canvas.height
+    const tam = Math.max(14, Math.round(H * 0.022))
+    this.ctx.font = `600 ${tam}px Archivo, system-ui, sans-serif`
+    const largura = Math.min(r.w - tam, this.ctx.measureText(c.nome).width + tam)
+    this.ctx.fillStyle = 'rgba(0,0,0,0.6)'
+    this.ctx.fillRect(r.x + tam * 0.5, r.y + r.h - tam * 2.1, largura, tam * 1.6)
+    this.ctx.fillStyle = '#ffffff'
+    this.ctx.fillText(c.nome, r.x + tam, r.y + r.h - tam * 0.9, Math.max(0, largura - tam))
   }
 
   private desenharAvatar(W: number, H: number): void {
@@ -362,22 +654,144 @@ export class CompositorDeAula {
     silencio.connect(this.destino)
     silencio.start()
 
-    try {
-      const mic = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: micDeviceId ? { exact: micDeviceId } : undefined, echoCancellation: true, noiseSuppression: true },
-        video: false,
-      })
-      this.ligarAudio(mic)
-    } catch {
-      // Sem microfone grava-se na mesma — só com o som do ecrã, se houver.
-    }
-    if (this.ecraStream && this.ecraStream.getAudioTracks().length) {
-      this.ligarAudio(new MediaStream(this.ecraStream.getAudioTracks()))
-    }
+    this.ganhoPalco = this.audioCtx.createGain()
+    this.ganhoMusica = this.audioCtx.createGain()
+    this.ganhoVideo = this.audioCtx.createGain()
+    this.ganhoPalco.gain.value = this.mistura.palco
+    this.ganhoMusica.gain.value = this.mistura.musica
+    this.ganhoVideo.gain.value = this.mistura.video
+    for (const g of [this.ganhoPalco, this.ganhoMusica, this.ganhoVideo]) g.connect(this.destino)
+
+    if (micDeviceId !== undefined) this.microfoneId = micDeviceId
+    await this.ligarMicrofone()
+    this.ligarSomDoEcra()
+    for (const c of this.convidados.values()) this.ligarConvidadoAoGrafo(c)
+    this.ligarMusicaAoGrafo()
     for (const t of this.destino.stream.getAudioTracks()) stream.addTrack(t)
     this.fluxoComposto = stream
     this.iniciarPreVisualizacao()
     return stream
+  }
+
+  // ---------------------------------------------------------------- mistura
+
+  /** Muda um fader. Aplica-se já ao grafo, se existir, com uma rampa curta (sem estalidos). */
+  definirMistura(m: Mistura): void {
+    this.mistura = { ...m }
+    const agora = this.audioCtx?.currentTime ?? 0
+    this.ganhoPalco?.gain.setTargetAtTime(m.palco, agora, 0.02)
+    this.ganhoMusica?.gain.setTargetAtTime(m.musica, agora, 0.02)
+    this.ganhoVideo?.gain.setTargetAtTime(m.video, agora, 0.02)
+    // Sem grafo, a música ouve-se na pré-escuta ao volume do fader.
+    if (this.musicaEl && !this.musicaNoGrafo) this.musicaEl.volume = Math.min(1, m.musica)
+  }
+
+  /** O fluxo do microfone que entra na mistura — as legendas ouvem este. */
+  get fluxoDoMicrofone(): MediaStream | null {
+    return this.micStream
+  }
+
+  /** Troca o microfone. A meio de uma gravação troca a fonte, não o grafo. */
+  async trocarMicrofone(deviceId: string): Promise<void> {
+    this.microfoneId = deviceId
+    if (this.audioCtx) await this.ligarMicrofone()
+  }
+
+  private async ligarMicrofone(): Promise<void> {
+    if (!this.audioCtx || !this.ganhoPalco) return
+    try {
+      const mic = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: this.microfoneId ? { exact: this.microfoneId } : undefined,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+        video: false,
+      })
+      if (!this.audioCtx || !this.ganhoPalco) {
+        mic.getTracks().forEach((t) => t.stop())
+        return
+      }
+      this.micFonte?.disconnect()
+      this.micStream?.getTracks().forEach((t) => t.stop())
+      this.micStream = mic
+      this.micFonte = this.audioCtx.createMediaStreamSource(mic)
+      this.micFonte.connect(this.ganhoPalco)
+    } catch {
+      // Sem microfone grava-se na mesma — só com o som do ecrã, se houver.
+    }
+  }
+
+  private ligarSomDoEcra(): void {
+    if (!this.audioCtx || !this.ganhoVideo) return
+    this.ecraFonte?.disconnect()
+    this.ecraFonte = null
+    if (this.ecraStream && this.ecraStream.getAudioTracks().length) {
+      this.ecraFonte = this.audioCtx.createMediaStreamSource(new MediaStream(this.ecraStream.getAudioTracks()))
+      this.ecraFonte.connect(this.ganhoVideo)
+    }
+  }
+
+  /** A música de fundo: um ficheiro do dispositivo, em ciclo. `null` tira-a. */
+  definirMusica(ficheiro: Blob | null): void {
+    this.pararMusica()
+    this.musicaFonte?.disconnect()
+    this.musicaFonte = null
+    this.musicaEl = null
+    this.musicaNoGrafo = false
+    if (this.musicaUrl) URL.revokeObjectURL(this.musicaUrl)
+    this.musicaUrl = ficheiro ? URL.createObjectURL(ficheiro) : null
+  }
+
+  get temMusica(): boolean {
+    return !!this.musicaUrl
+  }
+  get musicaATocar(): boolean {
+    return !!this.musicaEl && !this.musicaEl.paused
+  }
+
+  async tocarMusica(): Promise<void> {
+    if (!this.musicaUrl) return
+    if (!this.musicaEl) this.criarElementoDeMusica(0)
+    this.ligarMusicaAoGrafo()
+    await this.musicaEl?.play().catch(() => this.aoMudarMusica?.(false))
+  }
+
+  pararMusica(): void {
+    this.musicaEl?.pause()
+  }
+
+  private criarElementoDeMusica(desde: number): void {
+    if (!this.musicaUrl) return
+    const el = new Audio(this.musicaUrl)
+    el.loop = true
+    el.currentTime = desde
+    el.volume = Math.min(1, this.mistura.musica)
+    el.onplay = () => this.aoMudarMusica?.(true)
+    el.onpause = () => this.aoMudarMusica?.(false)
+    this.musicaEl = el
+    this.musicaNoGrafo = false
+  }
+
+  /**
+   * Um `<audio>` só pode alimentar UM `MediaElementAudioSourceNode` na vida
+   * inteira, e o grafo é recriado a cada gravação. Por isso, ao entrar num
+   * grafo novo, a música muda para um elemento novo no mesmo ponto — em vez de
+   * rebentar com `InvalidStateError` à segunda gravação.
+   */
+  private ligarMusicaAoGrafo(): void {
+    if (!this.audioCtx || !this.ganhoMusica || !this.musicaUrl || !this.musicaEl || this.musicaNoGrafo) return
+    const aTocar = !this.musicaEl.paused
+    const ponto = this.musicaEl.currentTime
+    this.musicaEl.onpause = null
+    this.musicaEl.pause()
+    this.criarElementoDeMusica(ponto)
+    const el = this.musicaEl as HTMLAudioElement
+    el.volume = 1
+    this.musicaFonte = this.audioCtx.createMediaElementSource(el)
+    this.musicaFonte.connect(this.ganhoMusica)
+    this.musicaNoGrafo = true
+    if (aTocar) void el.play().catch(() => {})
   }
 
   async iniciarGravacao(micDeviceId?: string): Promise<void> {
@@ -392,9 +806,14 @@ export class CompositorDeAula {
     this.pedacos = []
     this.pedacosVideo = []
     this.pedacosAudio = []
+    this.bytesCompleto = 0
     const bitrate = this.opcoes.bitrate ?? 6_000_000
     this.gravador = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate })
-    this.gravador.ondataavailable = (e) => e.data.size && this.pedacos.push(e.data)
+    this.gravador.ondataavailable = (e) => {
+      if (!e.data.size) return
+      this.pedacos.push(e.data)
+      this.bytesCompleto += e.data.size
+    }
     this.gravador.start(1000)
 
     // Faixas isoladas. Partilham as MESMAS tracks do combinado, por isso não
@@ -415,13 +834,6 @@ export class CompositorDeAula {
     }
     this.inicioMs = Date.now()
     this.iniciarPreVisualizacao()
-  }
-
-  private ligarAudio(s: MediaStream): void {
-    if (!this.audioCtx || !this.destino) return
-    const n = this.audioCtx.createMediaStreamSource(s)
-    n.connect(this.destino)
-    this.fontesAudio.push(n)
   }
 
   private get todos(): MediaRecorder[] {
@@ -475,10 +887,38 @@ export class CompositorDeAula {
     if (this.consumidores > 0) return
     for (const n of this.fontesAudio) n.disconnect()
     this.fontesAudio = []
+    this.desmontarMistura()
     await this.audioCtx?.close().catch(() => {})
     this.audioCtx = null
     this.destino = null
     this.fluxoComposto = null
+  }
+
+  /** Larga as fontes do grafo que vai fechar; a música volta à pré-escuta. */
+  private desmontarMistura(): void {
+    this.micFonte?.disconnect()
+    this.micFonte = null
+    this.micStream?.getTracks().forEach((t) => t.stop())
+    this.micStream = null
+    this.ecraFonte?.disconnect()
+    this.ecraFonte = null
+    for (const c of this.convidados.values()) {
+      c.audio?.disconnect()
+      c.audio = null
+    }
+    if (this.musicaNoGrafo && this.musicaEl) {
+      const aTocar = !this.musicaEl.paused
+      const ponto = this.musicaEl.currentTime
+      this.musicaEl.onpause = null
+      this.musicaEl.pause()
+      this.musicaFonte?.disconnect()
+      this.musicaFonte = null
+      this.criarElementoDeMusica(ponto)
+      if (aTocar) void this.musicaEl?.play().catch(() => {})
+    }
+    this.ganhoPalco = null
+    this.ganhoMusica = null
+    this.ganhoVideo = null
   }
 
   // ---------------------------------------------------------------- limpeza
@@ -510,6 +950,12 @@ export class CompositorDeAula {
     this.pararCamara()
     for (const n of this.fontesAudio) n.disconnect()
     this.fontesAudio = []
+    this.desmontarMistura()
+    this.musicaEl?.pause()
+    this.musicaEl = null
+    if (this.musicaUrl) URL.revokeObjectURL(this.musicaUrl)
+    this.musicaUrl = null
+    this.definirConvidados([])
     void this.audioCtx?.close().catch(() => {})
     this.audioCtx = null
   }
