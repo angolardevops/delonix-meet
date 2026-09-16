@@ -177,6 +177,26 @@ impl LayerRewriter {
     }
 }
 
+/// Cópia do pacote de vídeo SEM as extensões de cabeçalho do publicador.
+///
+/// Os ids das extensões (`a=extmap`) valem só na negociação onde foram
+/// acordados. O publicador e cada subscritor negociam em separado, e os ids não
+/// coincidem: reencaminhados crus, o `rid` do publicador chegava ao subscritor
+/// no id que ESTE usa para `transport-cc`; o interceptor TWCC do receptor não o
+/// conseguia ler («buffer too small»), a primeira leitura da track falhava e o
+/// `on_track` nunca disparava — subscrição negociada, RTP a sair, e nenhum
+/// vídeo (R156). No vídeo todas as extensões que o SFU aceita (mid, rid,
+/// repaired-rid, transport-cc) são por salto: o sender do subscritor volta a
+/// pôr as suas, com os ids certos.
+fn strip_hop_extensions(packet: &webrtc::rtp::packet::Packet) -> webrtc::rtp::packet::Packet {
+    let mut out = packet.clone();
+    out.header.extension = false;
+    out.header.extension_profile = 0;
+    out.header.extensions.clear();
+    out.header.extensions_padding = 0;
+    out
+}
+
 fn source_id(publication: &Arc<Publication>) -> usize {
     Arc::as_ptr(publication) as usize
 }
@@ -1140,8 +1160,9 @@ impl SfuState {
                             }
                         } else {
                             let source = source_id(&publication);
+                            let hop = strip_hop_extensions(&packet);
                             for (track, rw) in &targets {
-                                let mut out = packet.clone();
+                                let mut out = hop.clone();
                                 if rw.rewrite(
                                     source,
                                     &mut out.header.sequence_number,
