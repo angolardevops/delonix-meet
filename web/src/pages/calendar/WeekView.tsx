@@ -87,7 +87,7 @@ export default function WeekView({
 }) {
   const { t, i18n } = useTranslation()
   const locale = localeOf(i18n.language)
-  const hourH = compact ? 36 : 52
+  const hourH = compact ? 62 : 52
   const scrollRef = useRef<HTMLDivElement>(null)
   const today = new Date()
 

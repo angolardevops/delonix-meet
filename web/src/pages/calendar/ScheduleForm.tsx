@@ -189,7 +189,10 @@ export default function ScheduleForm({
 
   // ---- semana do lado direito ----
   const weekStart = mondayOf(start ?? parseYmd(date) ?? new Date())
-  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
+  // Segunda a sexta, como no template; o fim-de-semana só aparece quando a
+  // sessão a marcar cai nele.
+  const draftDay = start ? (start.getDay() + 6) % 7 : 0
+  const weekDays = Array.from({ length: draftDay >= 5 ? 7 : 5 }, (_, i) => addDays(weekStart, i))
   const byDay = useMemo(() => groupByDay(meetings), [meetings])
 
   return (
@@ -213,18 +216,16 @@ export default function ScheduleForm({
           />
         </Field>
 
-        <Field label={t('schedule.form.descricao')} htmlFor={`${uid}-desc`}>
-          <TextArea id={`${uid}-desc`} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t('schedule.form.descricaoPh')} />
-        </Field>
-
         <fieldset className="sched__fieldset">
           <legend className="dx-field__label">{t('schedule.form.tipo')}</legend>
           <div className="sched__kinds">
             {(['video', 'voice'] as const).map((k) => (
               <button key={k} type="button" className="sched__kind" aria-pressed={kind === k} onClick={() => setKind(k)}>
-                <Icon name={k === 'voice' ? 'phone' : 'video'} size={16} />
                 <span>
-                  <strong>{k === 'voice' ? t('schedule.form.voz') : t('schedule.form.video')}</strong>
+                  <strong>
+                    {kind === k && <Icon name="check" size={11} />}
+                    {k === 'voice' ? t('schedule.form.voz') : t('schedule.form.video')}
+                  </strong>
                   <small>{k === 'voice' ? t('schedule.form.vozSub') : t('schedule.form.videoSub')}</small>
                 </span>
               </button>
@@ -232,48 +233,64 @@ export default function ScheduleForm({
           </div>
         </fieldset>
 
-        <div className="sched__row">
-          <Field label={t('schedule.form.data')} htmlFor={`${uid}-date`}>
-            <TextInput id={`${uid}-date`} type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-          </Field>
-          <Field label={t('schedule.form.hora', { fuso: tzShort(locale) })} htmlFor={`${uid}-time`}>
-            <TextInput id={`${uid}-time`} type="time" step={300} value={time} onChange={(e) => setTime(e.target.value)} required />
-          </Field>
-          <Field label={t('schedule.form.duracao')} htmlFor={`${uid}-dur`}>
-            <Select id={`${uid}-dur`} value={duration} onChange={(e) => setDuration(Number(e.target.value))}>
-              {DURATIONS.map((d) => (
-                <option key={d} value={d}>
-                  {t('schedule.evento.duracao', { n: d })}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        </div>
-
-        <fieldset className="sched__fieldset sched__recur">
-          <legend className="dx-field__label">{t('schedule.recorrencia.titulo')}</legend>
-          <div className="sched__row">
-            <Select value={freq} onChange={(e) => setFreq(e.target.value as RecurrenceFreq | '')} aria-label={t('schedule.recorrencia.titulo')}>
+        <div className="sched__pair">
+          <fieldset className="sched__fieldset">
+            <legend className="dx-field__label">{t('consola.agenda.dataHora', { fuso: tzShort(locale) })}</legend>
+            <div className="sched__when">
+              <TextInput
+                id={`${uid}-date`}
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                required
+                aria-label={t('schedule.form.data')}
+                className="dx-num"
+              />
+              <TextInput
+                id={`${uid}-time`}
+                type="time"
+                step={300}
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                required
+                aria-label={t('schedule.form.hora', { fuso: tzShort(locale) })}
+                className="dx-num"
+              />
+              <Select id={`${uid}-dur`} value={duration} onChange={(e) => setDuration(Number(e.target.value))} aria-label={t('schedule.form.duracao')}>
+                {DURATIONS.map((d) => (
+                  <option key={d} value={d}>
+                    {t('schedule.evento.duracao', { n: d })}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </fieldset>
+          <Field label={t('schedule.recorrencia.titulo')} htmlFor={`${uid}-freq`}>
+            <Select id={`${uid}-freq`} value={freq} onChange={(e) => setFreq(e.target.value as RecurrenceFreq | '')}>
               <option value="">{t('schedule.recorrencia.nao')}</option>
               <option value="daily">{t('schedule.recorrencia.diaria')}</option>
               <option value="weekly">{t('schedule.recorrencia.semanal')}</option>
               <option value="monthly">{t('schedule.recorrencia.mensal')}</option>
               <option value="yearly">{t('schedule.recorrencia.anual')}</option>
             </Select>
-            {freq && (
-              <label className="sched__every">
-                <span>{t('schedule.recorrencia.aCada')}</span>
-                <TextInput
-                  type="number"
-                  min={1}
-                  max={99}
-                  value={interval}
-                  onChange={(e) => setInterval_(Math.max(1, Math.min(99, Number(e.target.value) || 1)))}
-                  className="sched__num"
-                />
-                <span>{unitLabel}</span>
-              </label>
-            )}
+          </Field>
+        </div>
+
+        {freq && (
+        <div className="sched__recur" role="group" aria-label={t('schedule.recorrencia.titulo')}>
+          <div className="sched__row">
+            <label className="sched__every">
+              <span>{t('schedule.recorrencia.aCada')}</span>
+              <TextInput
+                type="number"
+                min={1}
+                max={99}
+                value={interval}
+                onChange={(e) => setInterval_(Math.max(1, Math.min(99, Number(e.target.value) || 1)))}
+                className="sched__num"
+              />
+              <span>{unitLabel}</span>
+            </label>
           </div>
           {freq === 'weekly' && (
             <div className="dx-chips" role="group" aria-label={t('schedule.recorrencia.diasSemana')}>
@@ -332,10 +349,12 @@ export default function ScheduleForm({
               )}
             </div>
           )}
-        </fieldset>
+        </div>
+        )}
 
         <Guests invitees={invitees} onChange={setInvitees} />
 
+        <div className="sched__pair">
         {(rooms.length > 0 || roomsFailed.length > 0) && (
           <Field
             label={t('schedule.form.sala')}
@@ -352,6 +371,11 @@ export default function ScheduleForm({
             </Select>
           </Field>
         )}
+        </div>
+
+        <Field label={t('schedule.form.descricao')} htmlFor={`${uid}-desc`}>
+          <TextArea id={`${uid}-desc`} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t('schedule.form.descricaoPh')} />
+        </Field>
       </form>
 
       <aside className="sched__side" aria-label={t('schedule.form.semanaRotulo')}>
@@ -496,8 +520,11 @@ function Guests({ invitees, onChange }: { invitees: User[]; onChange: (u: User[]
   return (
     <div className="dx-field">
       <label className="dx-field__label" htmlFor={`${uid}-q`}>
-        <span>{t('schedule.convidados.titulo')}</span>
-        {invitees.length > 0 && <span className="dx-muted dx-num">{invitees.length}</span>}
+        <span>
+          {t('consola.agenda.participantes')}
+          {invitees.length > 0 && <span className="dx-muted dx-num"> · {invitees.length}</span>}
+        </span>
+        <span className="dx-muted dx-num sched__aside">{t('consola.agenda.autocompletar')}</span>
       </label>
       <div className="sched__guests">
         {invitees.map((u) => (

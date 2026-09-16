@@ -10,11 +10,11 @@
  */
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { apiErrorMessage, downloadMeetingIcs, InviteeResponse, listMeetings, Meeting, meetingInvitees, startMeeting } from '../../api'
+import { apiErrorMessage, InviteeResponse, listMeetings, Meeting, meetingInvitees, startMeeting } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { useShell } from '../../components/shellContext'
 import { Icon } from '../../ui/icons'
-import { Alert, Avatar, AvatarStack, Button, cx, Empty, IconButton, Skeleton, Tag } from '../../ui/kit'
+import { Alert, Avatar, AvatarStack, Button, cx, Empty, Skeleton } from '../../ui/kit'
 import { calendarHash, fmtTime, localeOf, meetingEnd, meetingStart, sameDay } from '../calendar/dates'
 import Respond, { InviteStatus } from '../calendar/Respond'
 import DeviceCheck from './DeviceCheck'
@@ -43,7 +43,7 @@ function useNow(ms = 30_000): number {
   return now
 }
 
-export default function Upcoming() {
+export default function Upcoming({ odooCalendar = false }: { odooCalendar?: boolean }) {
   const { t, i18n } = useTranslation()
   const { enterRoom } = useShell()
   const locale = localeOf(i18n.language)
@@ -85,15 +85,6 @@ export default function Upcoming() {
     }
   }
 
-  async function ics(m: Meeting) {
-    setErr('')
-    try {
-      await downloadMeetingIcs(m.id, m.title)
-    } catch (e) {
-      setErr(apiErrorMessage(e, t('home.proximas.erroIcs')))
-    }
-  }
-
   const skeleton = (
     <div className="home-meetings" aria-busy="true">
       {[0, 1, 2].map((i) => (
@@ -112,6 +103,7 @@ export default function Upcoming() {
     <section className="home-section" aria-labelledby="home-proximas">
       <div className="home-section__head">
         <h2 id="home-proximas">{t('home.proximas.titulo')}</h2>
+        {odooCalendar && <span className="home-chip dx-num">{t('consola.inicio.odooCalendario')}</span>}
         <span className="dx-spacer" />
         <a className="home-link" href={`#${calendarHash.browse()}`}>
           {t('home.proximas.verAgenda')}
@@ -155,7 +147,7 @@ export default function Upcoming() {
                     <div className="home-meeting__main">
                       <div className="home-meeting__title">
                         <strong>{m.title}</strong>
-                        <Tag plain>{m.kind === 'voice' ? t('home.proximas.voz') : t('home.proximas.video')}</Tag>
+                        <span className="home-kind dx-num">{m.kind === 'voice' ? t('home.proximas.voz') : t('home.proximas.video')}</span>
                         {m.recurrence_freq && <Icon name="repeat" size={12} aria-label={t('home.proximas.recorrente')} role="img" />}
                       </div>
                       {soon && (
@@ -164,21 +156,27 @@ export default function Upcoming() {
                         </div>
                       )}
                       <div className="home-meeting__meta">
-                        <span>{m.is_owner ? t('home.proximas.organizasTu') : m.owner_name}</span>
+                        <span>{m.owner_name}</span>
                         {going && (
                           <span data-testid="home-participantes">{t('consola.inicio.participantes', { count: going.length + 1 })}</span>
                         )}
                         {m.room_code && (
                           <span>
-                            {t('consola.inicio.sala')} <span className="dx-num">{m.room_code}</span>
+                            {t('consola.inicio.sala')}{' '}
+                            <button
+                              type="button"
+                              className="home-code dx-num"
+                              title={copied === m.room_code ? t('consola.inicio.copiada') : t('consola.inicio.copiarLigacao')}
+                              aria-label={t('consola.inicio.copiarLigacaoDe', { codigo: m.room_code })}
+                              onClick={() => void copyLink(m.room_code!)}
+                            >
+                              {m.room_code}
+                              <Icon name={copied === m.room_code ? 'check' : 'copy'} size={10} />
+                            </button>
                           </span>
                         )}
                         {!sameDay(start, new Date()) && <span>{t('home.proximas.duracao', { n: m.duration_min })}</span>}
-                        {m.room_name && (
-                          <span>
-                            <Icon name="door" size={11} /> {m.room_name}
-                          </span>
-                        )}
+                        {m.room_name && <span>{m.room_name}</span>}
                         {!m.is_owner && <InviteStatus status={m.my_status} />}
                       </div>
                     </div>
@@ -190,36 +188,35 @@ export default function Upcoming() {
                     <div className="home-meeting__actions">
                       {pending ? (
                         <Respond meeting={m} compact onDone={() => reload()} />
-                      ) : (
+                      ) : soon ? (
                         <>
-                          {m.room_code && (
-                            <IconButton
-                              icon={copied === m.room_code ? 'check' : 'link'}
-                              label={copied === m.room_code ? t('consola.inicio.copiada') : t('consola.inicio.copiarLigacao')}
-                              onClick={() => void copyLink(m.room_code!)}
-                            />
-                          )}
-                          <IconButton icon="download" label={t('home.proximas.ics')} onClick={() => void ics(m)} />
-                          <Button size="sm" variant="secondary" onClick={() => (location.hash = calendarHash.meeting(m.id))}>
-                            {t('home.proximas.detalhes')}
-                          </Button>
-                          {soon && m.kind !== 'voice' && (
-                            <Button size="sm" variant="outline" icon="mic" busy={entering === `${m.id}:audio`} onClick={() => void enter(m, true)}>
+                          {m.kind !== 'voice' && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              icon="mic"
+                              className="home-mobile-only"
+                              busy={entering === `${m.id}:audio`}
+                              onClick={() => void enter(m, true)}
+                            >
                               {t('consola.inicio.soAudio')}
                             </Button>
                           )}
-                          <Button
-                            size="sm"
-                            variant={soon ? 'primary' : 'outline'}
-                            busy={entering === m.id}
-                            onClick={() => void enter(m)}
-                          >
-                            {m.is_owner ? t('home.proximas.iniciar') : t('home.proximas.entrar')}
+                          <Button size="sm" variant="primary" busy={entering === m.id} onClick={() => void enter(m)}>
+                            {t('home.proximas.entrar')}
                           </Button>
                         </>
+                      ) : (
+                        <Button size="sm" variant="secondary" onClick={() => (location.hash = calendarHash.meeting(m.id))}>
+                          {t('home.proximas.detalhes')}
+                        </Button>
                       )}
                     </div>
-                    {soon && !pending && m.kind !== 'voice' && <DeviceCheck />}
+                    {soon && !pending && m.kind !== 'voice' && (
+                      <div className="home-mobile-only home-dev-wrap">
+                        <DeviceCheck />
+                      </div>
+                    )}
                   </li>
                 )
               })}
