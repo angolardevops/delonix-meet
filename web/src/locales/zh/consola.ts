@@ -103,7 +103,7 @@ export default {
     importarErro: '无法导入录制内容。',
     destino: '推流目标：{{destino}}',
     agendarOdoo: '已发送到 Odoo 日历',
-    pesquisar: '搜索会话、录制内容、人员…',
+    pesquisar: '搜索会议、录制内容、人员…',
     iniciarSub: '即时会议',
     novoEstudio: '新建演播室',
     novoEstudioSub: '多平台直播',
