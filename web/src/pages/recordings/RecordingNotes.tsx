@@ -18,7 +18,11 @@ type Tab = 'transcript' | 'minutes' | 'tasks'
 
 const EMPTY: RoomNotes = { title: '', minutes: '', transcript: '' }
 
-export default function RecordingNotes({ roomCode }: { roomCode: string }) {
+/**
+ * `compact`: só a transcrição, com o cabeçalho e a caixa do template (painel
+ * da biblioteca). A acta e as tarefas ficam no leitor em página inteira.
+ */
+export default function RecordingNotes({ roomCode, compact = false }: { roomCode: string; compact?: boolean }) {
   const { t } = useTranslation()
   const [tab, setTab] = useState<Tab>('transcript')
   const [saving, setSaving] = useState(false)
@@ -61,6 +65,45 @@ export default function RecordingNotes({ roomCode }: { roomCode: string }) {
     }
   }
 
+  const transcriptList =
+    lines.length === 0 ? (
+      <p className="rec-notes__empty">{t('recordings.notas.semTranscricao')}</p>
+    ) : (
+      <ol className={cx('rec-transcript', compact && 'rec-transcript--box')}>
+        {lines.map((l, i) => {
+          const m = /^\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*([^:]+):\s*(.*)$/.exec(l)
+          return (
+            <li key={i} className={cx('rec-transcript__line', !m && 'is-plain')}>
+              {m ? (
+                <>
+                  <span className="rec-transcript__time dx-num">{m[1]}</span>
+                  <span>
+                    <strong>{m[2]}:</strong> {m[3]}
+                  </span>
+                </>
+              ) : (
+                <span>{l}</span>
+              )}
+            </li>
+          )
+        })}
+      </ol>
+    )
+
+  if (compact) {
+    return (
+      <section className="rec-section" aria-labelledby="rec-notes-compact">
+        <div className="rec-section__head">
+          <h3 id="rec-notes-compact">{t('recordings.notas.transcricao')}</h3>
+          <span className="rec-section__aside dx-num">{t('recordings.notas.daSala')}</span>
+        </div>
+        <AsyncSection state={state} onRetry={reload}>
+          {() => transcriptList}
+        </AsyncSection>
+      </section>
+    )
+  }
+
   return (
     <section className="rec-notes" aria-label={t('recordings.notas.rotulo')}>
       <Tabs<Tab>
@@ -78,30 +121,7 @@ export default function RecordingNotes({ roomCode }: { roomCode: string }) {
           {() => (
             <>
               {err && <Alert tone="danger">{err}</Alert>}
-              {tab === 'transcript' &&
-                (lines.length === 0 ? (
-                  <p className="rec-notes__empty">{t('recordings.notas.semTranscricao')}</p>
-                ) : (
-                  <ol className="rec-transcript">
-                    {lines.map((l, i) => {
-                      const m = /^\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*([^:]+):\s*(.*)$/.exec(l)
-                      return (
-                        <li key={i} className={cx('rec-transcript__line', !m && 'is-plain')}>
-                          {m ? (
-                            <>
-                              <span className="rec-transcript__time dx-num">{m[1]}</span>
-                              <span>
-                                <strong>{m[2]}</strong> {m[3]}
-                              </span>
-                            </>
-                          ) : (
-                            <span>{l}</span>
-                          )}
-                        </li>
-                      )
-                    })}
-                  </ol>
-                ))}
+              {tab === 'transcript' && transcriptList}
               {tab === 'minutes' &&
                 (notes.minutes ? (
                   <pre className="rec-minutes">{notes.minutes}</pre>

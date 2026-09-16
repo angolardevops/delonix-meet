@@ -58,11 +58,16 @@ for (const doc of want) {
   if (!r) { console.log('sem rota', doc); continue }
   let hash = r.hash
   if (r.player) {
-    const lib = await p.evaluate(async () => (await fetch('/api/recordings', { headers: { Authorization: `Bearer ${localStorage.getItem('dx_access')}` } })).json())
-    // A gravação real com mais capítulos (a «sessão 3» do seed-v2), como no template.
-    const rec = Array.isArray(lib) ? lib.filter((x) => x.status !== 'failed').sort((a, b) => (b.chapter_count ?? 0) - (a.chapter_count ?? 0))[0] : null
-    if (!rec) { console.log('sem gravações na biblioteca', JSON.stringify(lib).slice(0, 200)); continue }
-    hash = `/recordings/${rec.id}`
+    // A gravação real equivalente à do template (a «sessão 3» do seed-v2),
+    // aberta pela própria biblioteca: o token guardado pode ter expirado, e a
+    // app renova-o sozinha.
+    await p.goto(`${APP}/#/recordings`)
+    await p.waitForSelector('.rec-row__open', { timeout: 30000 })
+    const alvo = p.locator('.rec-row__open', { hasText: /sessão 3/ })
+    await ((await alvo.count()) ? alvo.first() : p.locator('.rec-row__open').first()).click()
+    await p.getByRole('button', { name: /página inteira/i }).first().click()
+    await p.waitForURL(/#\/recordings\/[0-9a-f-]{36}$/)
+    hash = new URL(p.url()).hash.slice(1)
   }
   await p.goto(`${APP}/#${hash}`)
   await p.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {})
