@@ -314,6 +314,10 @@ export default {
     emojis: 'Emojis',
     placeholder: 'Message aux participants…',
     enviar: 'Envoyer',
+    exportTitulo: 'Discussion de la salle {{code}}',
+    novaSondagem: 'Nouveau sondage',
+    guardarChat: 'Enregistrer la discussion',
+    guardarChatDica: 'Télécharge les messages reçus par cet appareil',
   },
   perguntas: {
     placeholder: 'Posez une question…',
@@ -356,6 +360,7 @@ export default {
     lancar: 'Lancer le sondage',
     lancarQuiz: 'Lancer le quiz',
     vazio: 'Aucun sondage pour le moment.',
+    votosDe: '{{votos}} sur {{presentes}}',
   },
   temporizador: {
     titulo: 'Minuteur',

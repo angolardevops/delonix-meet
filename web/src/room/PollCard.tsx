@@ -15,6 +15,7 @@ export function PollCard({
   onVote,
   onClose,
   compact,
+  present,
 }: {
   poll: PollView
   myVote: number | undefined
@@ -22,6 +23,8 @@ export function PollCard({
   onVote: (option: number) => void
   onClose?: () => void
   compact?: boolean
+  /** Quantos estão na sala: mostra «11 de 13» em vez de «11 votos». */
+  present?: number
 }) {
   const { t } = useTranslation()
   const total = poll.counts.reduce((a, b) => a + b, 0)
@@ -48,7 +51,9 @@ export function PollCard({
             )}
           />
         )}
-        <span className="dx-num dx-muted">{t('room.sondagens.votos', { count: total })}</span>
+        <span className="dx-num dx-muted" title={t('room.sondagens.votos', { count: total })}>
+          {present ? t('room.sondagens.votosDe', { votos: total, presentes: present }) : t('room.sondagens.votos', { count: total })}
+        </span>
       </div>
       <strong className="rm-poll__q">{poll.question}</strong>
       <span className="dx-muted rm-poll__by">{t('room.sondagens.por', { nome: poll.by })}</span>

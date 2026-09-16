@@ -314,6 +314,10 @@ export default {
     emojis: 'Emojis',
     placeholder: 'Message participants…',
     enviar: 'Send',
+    exportTitulo: 'Chat for room {{code}}',
+    novaSondagem: 'New poll',
+    guardarChat: 'Save chat',
+    guardarChatDica: 'Downloads the messages this device received',
   },
   perguntas: {
     placeholder: 'Ask a question…',
@@ -356,6 +360,7 @@ export default {
     lancar: 'Launch poll',
     lancarQuiz: 'Launch quiz',
     vazio: 'No polls yet.',
+    votosDe: '{{votos}} of {{presentes}}',
   },
   temporizador: {
     titulo: 'Timer',
