@@ -1651,3 +1651,15 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `scripts/check-route-auth.sh` (parser equilibrado); o `scripts/check-openapi.sh` usa o mesmo, e foi ao contar operações que a diferença apareceu (94 contadas pela regex vs 120 montadas).
 
 **Ficheiros.** `scripts/check-route-auth.sh`, `scripts/check-openapi.sh`.
+
+### R124 — «Permitir admissão» enviava uma mensagem que o servidor recusava
+
+**Sintoma.** O anfitrião carregava no escudo ao lado de um participante («permitir admissão»), o crachá não mudava e o participante nunca via a sala de espera. No socket do anfitrião chegava `{"type":"error","message":"invalid message"}`.
+
+**Causa raiz.** Uma funcionalidade a meio, nas duas pontas. O web enviava `promote-admit` e esperava `admit-role`/`peer-role` (`web/src/signaling.ts`), mas o `ClientMsg` do servidor não tinha a variante: a desserialização falhava. Do lado de dentro também faltava metade: a tabela `room_admitters` (0017) era LIDA no token (`adm` → `can_admit`) mas nunca ESCRITA (`rooms::set_room_admitter` sem chamadores), e o `can_admit` não autorizava nada — `decide_waiting` só aceitava o anfitrião e a sala de espera só ia para anfitriões.
+
+**Regra.** Uma mensagem do protocolo tem as duas pontas no mesmo commit, e um teste de formato (`promote_admit_wire_format`) prova que a forma que o web envia desserializa. O papel muda em memória no hub (síncrono, sob o lock); a persistência é IO e corre FORA do lock, no loop do socket. A sala de espera vai para quem PODE admitir (`broadcast_admitters`, com evento Redis próprio), e quem volta com o papel persistido é avisado (`admit-role`) — o cliente só assume esse poder para o anfitrião.
+
+**Portão.** `signaling::tests::{host_promotes_co_admitter_who_can_then_admit, persisted_co_admitter_is_told_its_role_on_join, promote_admit_wire_format}`. Não verificado em browser nem a persistência ponta-a-ponta por WebSocket.
+
+**Ficheiros.** `server/src/{signaling,pubsub,lib}.rs`.

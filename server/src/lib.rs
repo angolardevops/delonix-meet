@@ -618,6 +618,11 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
                             s.hub.broadcast_hosts_local(room_id, msg);
                         }
                     }
+                    pubsub::RedisRoomEvent::BroadcastAdmitters { node_id, msg } => {
+                        if node_id != *pubsub::NODE_ID {
+                            s.hub.broadcast_admitters_local(room_id, msg);
+                        }
+                    }
                 }
             }
         });

@@ -43,9 +43,14 @@ Ficam de fora, por serem só de cliente: a edição multi-faixa do Estúdio, a m
 legendas queimadas. O teclado PSTN, a transferência e o DTMF ficam também de fora, porque
 dependem de um tronco SIP com media — ver `docs/voice-rfi-sip-trunk.md`.
 
-## 3. Defeito de protocolo existente (não vem da UI nova)
+## 3. Defeito de protocolo existente (não vem da UI nova) — **fechado** (R124)
 
 O cliente envia `promote-admit` e espera receber `admit-role` e `peer-role`
 (`web/src/signaling.ts:77,78,120`, `Room.tsx:3236`). O `ClientMsg`/`ServerMsg` de
 `server/src/signaling.rs` não tem nenhum dos três. A mensagem é recusada na
 desserialização e a promoção a admissor nunca chega ao servidor.
+
+**Fechado a 2026-09-16 (R124):** `ClientMsg::PromoteAdmit`, `ServerMsg::{AdmitRole, PeerRole}`,
+`PeerInfo.can_admit`; o co-anfitrião de admissões recebe a sala de espera e decide sobre
+ela, e o papel persiste em `room_admitters` (`rooms::set_room_admitter`, até aqui sem
+chamadores).
