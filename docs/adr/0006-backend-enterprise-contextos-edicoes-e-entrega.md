@@ -1,4 +1,4 @@
-# ADR-0005 — Backend enterprise: contextos de domínio, edições, gRPC interno e entrega
+# ADR-0006 — Backend enterprise: contextos de domínio, edições, gRPC interno e entrega
 
 **Estado:** Aceite · **Data:** 2026-09-16 · **Sucede:** [ADR-0004](0004-organizacao-alvo-do-backend.md) §3 (só a lista de crates); o resto do ADR-0004 mantém-se.
 **Pedido que o origina:** reestruturação do backend pedida pelo dono do produto a 2026-09-16:

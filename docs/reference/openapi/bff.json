@@ -452,6 +452,24 @@
         ],
         "type": "object"
       },
+      "AtPdu": {
+        "description": "Um PDU pronto para `AT+CMGS=<tpdu_len>` seguido de `<hex>` e Ctrl-Z.",
+        "properties": {
+          "hex": {
+            "type": "string"
+          },
+          "tpdu_len": {
+            "description": "Octetos do TPDU, SEM o octeto do SMSC — é o número que o `AT+CMGS` pede.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "hex",
+          "tpdu_len"
+        ],
+        "type": "object"
+      },
       "AuditEntry": {
         "properties": {
           "action": {
@@ -587,6 +605,51 @@
         ],
         "type": "object"
       },
+      "ClaimResp": {
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ClaimedMessage"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "messages"
+        ],
+        "type": "object"
+      },
+      "ClaimedMessage": {
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "device_key": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "pdus": {
+            "items": {
+              "$ref": "#/components/schemas/AtPdu"
+            },
+            "type": "array"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "device_key",
+          "to",
+          "body",
+          "pdus"
+        ],
+        "type": "object"
+      },
       "CodigoReq": {
         "properties": {
           "code": {
@@ -709,6 +772,14 @@
         "required": [
           "e164"
         ],
+        "type": "object"
+      },
+      "CreateGatewayReq": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "CreateGroupReq": {
@@ -941,6 +1012,31 @@
         ],
         "type": "object"
       },
+      "CreatedGateway": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "token": {
+            "description": "Só devolvido AGORA; guarda-se o SHA-256.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "token"
+        ],
+        "type": "object"
+      },
       "CreatedKey": {
         "properties": {
           "id": {
@@ -963,6 +1059,208 @@
           "name",
           "prefix",
           "key"
+        ],
+        "type": "object"
+      },
+      "DeviceInfo": {
+        "properties": {
+          "capable": {
+            "type": "boolean"
+          },
+          "device_key": {
+            "type": "string"
+          },
+          "gateway_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "gateway_name": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "manufacturer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "operator_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "product": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "selected": {
+            "type": "boolean"
+          },
+          "serial": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "signal_percent": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "transport": {
+            "type": "string"
+          },
+          "vendor_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "gateway_id",
+          "gateway_name",
+          "device_key",
+          "vendor_id",
+          "product_id",
+          "kind",
+          "transport",
+          "capable",
+          "last_seen_at",
+          "online",
+          "selected"
+        ],
+        "type": "object"
+      },
+      "DeviceReport": {
+        "properties": {
+          "capable": {
+            "type": "boolean"
+          },
+          "device_key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "manufacturer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "operator_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "product": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "serial": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "signal_percent": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "transport": {
+            "type": "string"
+          },
+          "vendor_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_key",
+          "vendor_id",
+          "product_id",
+          "kind",
+          "transport",
+          "capable"
+        ],
+        "type": "object"
+      },
+      "DevicesReq": {
+        "properties": {
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceReport"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "devices"
+        ],
+        "type": "object"
+      },
+      "DevicesResp": {
+        "properties": {
+          "poll_interval_secs": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "poll_interval_secs"
         ],
         "type": "object"
       },
@@ -1080,6 +1378,42 @@
         "required": [
           "field",
           "description"
+        ],
+        "type": "object"
+      },
+      "GatewayInfo": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "prefix": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "created_at",
+          "online"
         ],
         "type": "object"
       },
@@ -1513,6 +1847,101 @@
         ],
         "type": "object"
       },
+      "Message": {
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "device_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "encoding": {
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "operator": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "route": {
+            "type": "string"
+          },
+          "segments": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "sent_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "to",
+          "body",
+          "encoding",
+          "segments",
+          "route",
+          "status",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "MessagePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "description": "Sempre `null` por agora: só se servem as mais recentes. O campo existe\npara o contrato não mudar quando o cursor chegar.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "MfaChallenge": {
         "description": "Desafio do segundo factor: a password foi aceite mas a conta tem MFA\nactivo, por isso ainda não há sessão. O `mfa_token` troca-se em\n`/api/auth/mfa`.",
         "properties": {
@@ -1741,6 +2170,32 @@
         "required": [
           "token",
           "prefix"
+        ],
+        "type": "object"
+      },
+      "OperatorInfo": {
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "operator": {
+            "type": "string"
+          },
+          "prefixes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "operator",
+          "label",
+          "prefixes",
+          "configured"
         ],
         "type": "object"
       },
@@ -2196,6 +2651,18 @@
           "download_url",
           "has_password"
         ],
+        "type": "object"
+      },
+      "PutRouteReq": {
+        "properties": {
+          "device_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "QosSample": {
@@ -2797,6 +3264,29 @@
         ],
         "type": "object"
       },
+      "ResultReq": {
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "provider_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "type": "object"
+      },
       "Room": {
         "description": "Sala de conferência. O `code` (`abc-defg-hij`) é a credencial de acesso\npor link, estilo Meet.",
         "properties": {
@@ -2894,6 +3384,45 @@
         },
         "required": [
           "stream_key"
+        ],
+        "type": "object"
+      },
+      "RouteInfo": {
+        "properties": {
+          "device_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "operators": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorInfo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "operators"
+        ],
+        "type": "object"
+      },
+      "SendReq": {
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "body"
         ],
         "type": "object"
       },
@@ -4269,7 +4798,7 @@
             "description": "Limite de pedidos de autenticação por IP."
           }
         },
-        "summary": "Registo de conta. O QUE acontece decide-o a política da instalação\n(`delonix_meet_domain::identity::registration`, ADR-0005 §2); aqui só se lê\no retrato da instalação e se executa o plano.",
+        "summary": "Registo de conta. O QUE acontece decide-o a política da instalação\n(`delonix_meet_domain::identity::registration`, ADR-0006 §2); aqui só se lê\no retrato da instalação e se executa o plano.",
         "tags": [
           "auth"
         ]
@@ -7156,6 +7685,732 @@
         "summary": "Definições da organização (só admin): domínio de produção + retenção.\nO domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a\nretenção (>0) apaga gravações mais antigas que N dias. Quotas negativas ou\nomissas ficam ilimitadas; valores de voz fora do enum são ignorados.",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/sms/devices": {
+      "get": {
+        "operationId": "list_devices",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceInfo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "sms"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/sms/gateways": {
+      "get": {
+        "operationId": "list_gateways",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GatewayInfo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "sms"
+        ]
+      },
+      "post": {
+        "operationId": "create_gateway",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGatewayReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedGateway"
+                }
+              }
+            },
+            "description": "O token `dlxg_` sai UMA vez."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "sms"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/sms/gateways/{gateway_id}": {
+      "delete": {
+        "operationId": "revoke_gateway",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "gateway_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revogado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "sms"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/sms/messages": {
+      "get": {
+        "operationId": "list_messages",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagePage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "sms"
+        ]
+      },
+      "post": {
+        "operationId": "send_message",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repetir com a mesma chave devolve a mesma mensagem.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            },
+            "description": "Aceite na fila."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem rota ou dispositivo."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "sms"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/sms/messages/{message_id}": {
+      "get": {
+        "operationId": "get_message",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "sms"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/sms/route": {
+      "get": {
+        "operationId": "get_route",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteInfo"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "sms"
+        ]
+      },
+      "put": {
+        "operationId": "put_route",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutRouteReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteInfo"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "sms"
         ]
       }
     },
@@ -11101,6 +12356,156 @@
         "summary": "Download via link público (sem autenticação — token é a credencial).",
         "tags": [
           "recordings"
+        ]
+      }
+    },
+    "/api/sms/agent/claim": {
+      "post": {
+        "operationId": "agent_claim",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Token `dlxg_` inválido ou revogado."
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "tags": [
+          "sms"
+        ]
+      }
+    },
+    "/api/sms/agent/devices": {
+      "put": {
+        "operationId": "agent_put_devices",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DevicesReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DevicesResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Token `dlxg_` inválido ou revogado."
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Substitui o inventário deste gateway. Um dispositivo que deixa de aparecer\nNÃO é apagado — fica desligado (`online: false`) e mantém a selecção, para\nque tirar e voltar a ligar o cabo não obrigue a escolher outra vez.",
+        "tags": [
+          "sms"
+        ]
+      }
+    },
+    "/api/sms/agent/messages/{message_id}/result": {
+      "post": {
+        "operationId": "agent_result",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResultReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Registado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Token `dlxg_` inválido ou revogado."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "tags": [
+          "sms"
         ]
       }
     },

@@ -1668,7 +1668,7 @@ portão existe para impedir, cometida ao escrevê-lo.
 
 **Sintoma.** Nenhum para a vítima. Uma conta autenticada de OUTRA organização que soubesse o id de um item do plano de acção (5W2H) fazia `PATCH /api/action-items/{id}` com `{}` e recebia `200` com o item inteiro: o quê, porquê, quem, recursos. Provado ao vivo a 2026-09-16 contra Postgres real (`tests/security.rs`, que falhou com `200` antes da correcção).
 
-**Causa raiz.** A autorização dependia do CONTEÚDO do pedido: os campos de edição exigiam o anfitrião, e o `status` exigia ser membro — mas um pedido sem nenhum dos dois não passava por verificação nenhuma e seguia para o `SELECT` final, que devolve o item. Encontrado ao documentar o handler para o OpenAPI (ADR-0005 §3), não por teste.
+**Causa raiz.** A autorização dependia do CONTEÚDO do pedido: os campos de edição exigiam o anfitrião, e o `status` exigia ser membro — mas um pedido sem nenhum dos dois não passava por verificação nenhuma e seguia para o `SELECT` final, que devolve o item. Encontrado ao documentar o handler para o OpenAPI (ADR-0006 §3), não por teste.
 
 **Regra.** A verificação de acesso ao RECURSO vem primeiro e é incondicional; o que o pedido quer alterar só pode ACRESCENTAR exigências (anfitrião para editar), nunca decidir se há verificação. E valida-se antes de escrever: no `patch_agenda_item` vizinho, um tópico inválido dava `400` depois de o `done` já estar gravado.
 

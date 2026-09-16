@@ -1,6 +1,6 @@
 # ============================================================
 #  Delonix Meet — edição ENTERPRISE num só host, sobre o delonix-runtime.
-#  ADR-0005 §4: alvo `delonix-runtime (um host)`. Edição pessoal: ver
+#  ADR-0006 §4: alvo `delonix-runtime (um host)`. Edição pessoal: ver
 #  meet-stack-personal.yaml.
 #
 #  Preparar (uma vez):
@@ -46,7 +46,7 @@ spec:
       spec: { driver: local }
     - name: meet-redisdata
       spec: { driver: local }
-    # Gravações: o ÚNICO estado local do servidor (ADR-0005 §4). Entra nos backups.
+    # Gravações: o ÚNICO estado local do servidor (ADR-0006 §4). Entra nos backups.
     - name: meet-recordings
       spec: { driver: local }
 
@@ -74,7 +74,7 @@ spec:
         memory: 1G
         cpus: "1.0"
 
-    # Opcional nesta edição (ADR-0005 §2). Com UMA réplica o servidor não
+    # Opcional nesta edição (ADR-0006 §2). Com UMA réplica o servidor não
     # precisa dele; retirar este item e o REDIS_URL do meet-server.secrets.env.
     - name: meet-redis
       spec:
@@ -132,7 +132,7 @@ spec:
           - "LOG_FORMAT=json"
           - "BIND_ADDR=0.0.0.0:8180"
           - "INTERNAL_BIND_ADDR=0.0.0.0:8181"
-          # gRPC DESLIGADO por omissão (ADR-0005 §3). Para o ligar: montar os
+          # gRPC DESLIGADO por omissão (ADR-0006 §3). Para o ligar: montar os
           # certificados e definir GRPC_BIND_ADDR, GRPC_TLS_CERT, GRPC_TLS_KEY e
           # GRPC_CLIENT_CA — ver deploy/delonix/README.md.
           - "SFU_UDP_MIN=50000"

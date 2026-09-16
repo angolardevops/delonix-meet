@@ -35,7 +35,7 @@ BASELINE = 'scripts/arquitectura-baseline.txt'
 BLESS = os.environ.get('BLESS') == '1'
 
 def fontes(excluir=()):
-    # O monólito em transição E os crates do workspace (ADR-0005 §1): uma cópia
+    # O monólito em transição E os crates do workspace (ADR-0006 §1): uma cópia
     # que saia do monólito para um crate novo continua a contar.
     caminhos = glob.glob(f'{SRC}/*.rs') + glob.glob('server/crates/*/src/**/*.rs', recursive=True)
     for path in sorted(caminhos):

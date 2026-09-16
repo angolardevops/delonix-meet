@@ -31,7 +31,7 @@ USER nonroot:nonroot
 # 8180 — HTTP público (/api, /ws, /rtc, /health, /ready). BIND_ADDR.
 EXPOSE 8180
 # 8181 — listener INTERNO (/api/voice/ivr/*, /metrics). Só com INTERNAL_BIND_ADDR;
-#        nunca atrás de um ingress (ADR-0005 §3).
+#        nunca atrás de um ingress (ADR-0006 §3).
 # 9180 — gRPC entre máquinas, mTLS. Só com GRPC_BIND_ADDR (+ GRPC_TLS_CERT,
 #        GRPC_TLS_KEY, GRPC_CLIENT_CA). Desligadas por omissão: o EXPOSE é
 #        documentação, não abre nada.

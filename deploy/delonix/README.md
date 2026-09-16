@@ -1,6 +1,6 @@
 # Delonix Meet sobre o `delonix-runtime` e o PaaS NgolaCloud
 
-Manifestos das edições que **não** correm em Kubernetes (ADR-0005 §4). Para
+Manifestos das edições que **não** correm em Kubernetes (ADR-0006 §4). Para
 Kubernetes: `deploy/k8s/` (base) e `deploy/k8s-overlays/{saas,enterprise}`.
 
 | Ficheiro | Edição | Alvo | Aplica-se com |
@@ -70,7 +70,7 @@ o WebRTC exige HTTPS. Abrir no firewall 3478 (TCP/UDP), 49160-49200/UDP
 | Listener interno `:8181` | publicado em `127.0.0.1` (FreeSWITCH do host) | desligado |
 | gRPC `:9180` | desligado | desligado |
 
-**Ligar o gRPC** (ADR-0005 §3, mTLS obrigatório): colocar `tls.crt`, `tls.key`
+**Ligar o gRPC** (ADR-0006 §3, mTLS obrigatório): colocar `tls.crt`, `tls.key`
 e `ca.crt` numa pasta do host, montá-la só-de-leitura no `meet-server`
 (`"/etc/delonix-meet/grpc-tls:/etc/delonix/grpc-tls:ro"`), e acrescentar ao
 `env` `GRPC_BIND_ADDR=0.0.0.0:9180`, `GRPC_TLS_CERT=/etc/delonix/grpc-tls/tls.crt`,

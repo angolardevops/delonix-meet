@@ -1,4 +1,4 @@
-//! Regras da fila de transcrição (ADR-0005 §3). Puras: o adaptador Postgres
+//! Regras da fila de transcrição (ADR-0006 §3). Puras: o adaptador Postgres
 //! aplica-as numa só instrução com `FOR UPDATE SKIP LOCKED`.
 
 use std::time::Duration;

@@ -21,7 +21,7 @@ MAIN = 'server/src/lib.rs'  # o router vive na biblioteca (ADR-0004 §6 passo 1)
 PUBLICAS = 'scripts/rotas-publicas.txt'
 
 # Autenticação por EXTRACTOR na assinatura.
-EXTRACTORES = ('AuthUser', 'ApiKey', 'OdooTokenAuth')
+EXTRACTORES = ('AuthUser', 'ApiKey', 'OdooTokenAuth', 'SmsGatewayAuth')
 # Autenticação por GUARDA chamada no corpo. Nem tudo pode ser um extractor: a
 # API interna da voz autentica por segredo partilhado em header, e isso lê-se
 # do `HeaderMap`, não de um tipo.

@@ -74,7 +74,7 @@ dentro de `/api/v1` — a catraca conta `rotas_v1_com_sessao`.
    | Não autenticado / sem permissão | `401` / `403`. Um recurso de outra org é `404` — não se confirma que existe |
    | Rate-limit | `429` + `Retry-After` |
 
-7. **Erro** — envelope PLANO em todas as superfícies (ADR-0005 §3):
+7. **Erro** — envelope PLANO em todas as superfícies (ADR-0006 §3):
    ```json
    {"error": "…", "code": "meeting.host_not_found", "details": [], "request_id": "…"}
    ```

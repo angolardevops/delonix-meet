@@ -1,4 +1,4 @@
-//! Quem pode criar conta, e o que acontece quando cria (ADR-0005 §2).
+//! Quem pode criar conta, e o que acontece quando cria (ADR-0006 §2).
 //!
 //! A regra é PURA: recebe a política da instalação, o pedido e um retrato do
 //! que a instalação já tem (lido pelo adaptador dentro de uma transação com

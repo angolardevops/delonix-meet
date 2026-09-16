@@ -1,4 +1,4 @@
-//! gRPC interno (ADR-0005 §3) contra Postgres real: IVR, fila de transcrição
+//! gRPC interno (ADR-0006 §3) contra Postgres real: IVR, fila de transcrição
 //! com reserva, DLP na entrega, e mTLS que recusa um cliente sem certificado.
 mod common;
 

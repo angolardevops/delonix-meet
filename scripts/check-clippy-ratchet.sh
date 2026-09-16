@@ -23,7 +23,7 @@ baseline=$(cat "$BASELINE_FILE" 2>/dev/null || echo 0)
 # vinha a zero e a catraca aprovava tudo. Limpa-se SÓ a nossa crate — as
 # dependências ficam compiladas e o custo é de segundos, não de minutos.
 cargo clean -p delonix-server --manifest-path server/Cargo.toml 2>/dev/null || true
-# Os crates do workspace (ADR-0005) contam também: a dívida não se esconde
+# Os crates do workspace (ADR-0006) contam também: a dívida não se esconde
 # por mudar de crate.
 for c in server/crates/*/Cargo.toml; do
   n=$(sed -n 's/^name = "\(.*\)"/\1/p' "$c" | head -1)

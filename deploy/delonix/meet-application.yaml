@@ -1,5 +1,5 @@
 # ============================================================
-#  Delonix Meet — edição SAAS no PaaS NgolaCloud (ADR-0005 §4).
+#  Delonix Meet — edição SAAS no PaaS NgolaCloud (ADR-0006 §4).
 #  Carga ACIMA do PaaS: aplica-se pela API, nunca por Ansible nem por SSH ao
 #  host (CLAUDE.md do workspace, §1).
 #
@@ -71,7 +71,7 @@ spec:
     - { name: meet-pg, type: postgres, version: "17" }
     - { name: meet-redis, type: redis }
   volumes:
-    # O único estado local do servidor (ADR-0005 §4).
+    # O único estado local do servidor (ADR-0006 §4).
     - { name: recordings, mount: /var/lib/delonix/recordings }
   # A media do SFU é UDP e o ingress L7 não a transporta (MANIFEST.md, `publish`).
   publish:

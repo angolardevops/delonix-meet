@@ -11,6 +11,7 @@ mod audit;
 mod auth;
 mod broadcast;
 pub mod config;
+mod crypto;
 mod dlp;
 mod error;
 pub mod grpc;
@@ -36,6 +37,9 @@ mod sfu;
 #[cfg(test)]
 mod sfu_e2e;
 mod signaling;
+mod sms;
+mod sms_codec;
+mod sms_smpp;
 mod storage;
 mod stream_destinations;
 mod transcription;
@@ -109,6 +113,9 @@ pub struct AppState {
     pub v1_limiter: RateLimiter,
     /// Anti-brute-force de PIN no dial-in PSTN (por DID). Só conta falhas.
     pub voice_pin_limiter: RateLimiter,
+    /// Envios de SMS por organização (ADR-0005). Um SMS custa dinheiro: é o
+    /// travão contra um admin comprometido ou um script descontrolado.
+    pub sms_send_limiter: RateLimiter,
     /// Anti-força-bruta do código MFA na activação e na desactivação (por
     /// conta). Só conta falhas; trava também o código certo (R131).
     pub mfa_limiter: RateLimiter,
@@ -145,7 +152,7 @@ impl AppState {
 }
 
 /// Rotas de máquina e de observação. Com `INTERNAL_BIND_ADDR` vivem SÓ no
-/// listener interno (porta que nenhum ingress publica, ADR-0005 §3); sem ele
+/// listener interno (porta que nenhum ingress publica, ADR-0006 §3); sem ele
 /// ficam no público, como sempre estiveram — uma instalação existente não perde
 /// o IVR por actualizar o binário.
 fn internal_routes() -> Router<Arc<AppState>> {
@@ -197,7 +204,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // continuava a mandar-lhe entradas novas, que morriam com ele.
         .route("/ready", get(readiness))
         .route("/api/status", get(status))
-        // Contratos OpenAPI gerados do código (ADR-0005 §3).
+        // Contratos OpenAPI gerados do código (ADR-0006 §3).
         .route("/api/openapi.json", get(openapi::bff_json))
         .route("/api/v1/openapi.json", get(openapi::v1_json))
         .nest("/api/auth", auth_routes)
@@ -390,6 +397,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/orgs/{org_id}/voice/cdr", get(voice::list_cdr))
         .route("/api/orgs/{org_id}/voice/billing", get(voice::billing_summary))
         // Gestão de chaves de API (admin da org, sessão)
+        // Gateway de SMS (ADR-0005): consola da org (sessão, admin) e agente USB (token dlxg_).
+        .route("/api/orgs/{org_id}/sms/gateways", get(sms::list_gateways).post(sms::create_gateway))
+        .route("/api/orgs/{org_id}/sms/gateways/{gateway_id}", axum::routing::delete(sms::revoke_gateway))
+        .route("/api/orgs/{org_id}/sms/devices", get(sms::list_devices))
+        .route("/api/orgs/{org_id}/sms/route", get(sms::get_route).put(sms::put_route))
+        .route("/api/orgs/{org_id}/sms/messages", get(sms::list_messages).post(sms::send_message))
+        .route("/api/orgs/{org_id}/sms/messages/{message_id}", get(sms::get_message))
+        .route("/api/sms/agent/devices", axum::routing::put(sms::agent_put_devices))
+        .route("/api/sms/agent/claim", post(sms::agent_claim))
+        .route("/api/sms/agent/messages/{message_id}/result", post(sms::agent_result))
         .route("/api/orgs/{org_id}/api-keys", get(apikeys::list).post(apikeys::create))
         .route("/api/orgs/{org_id}/api-keys/{key_id}", axum::routing::delete(apikeys::revoke))
         // ---- Integração Odoo (nk_delonix_meet) ----
@@ -664,6 +681,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         login_limiter: RateLimiter::new(8, Duration::from_secs(300)),
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
+        sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
         mfa_limiter: RateLimiter::new(5, Duration::from_secs(300)),
         webhook_client,
         config: config.clone(),
@@ -762,7 +780,7 @@ pub async fn run() {
     );
 
     // `delonix-server migrate`: corre as migrações e sai. É o que o Job de
-    // migração do SaaS executa antes do rollout (ADR-0005 §4).
+    // migração do SaaS executa antes do rollout (ADR-0006 §4).
     let migrate_only = std::env::args().nth(1).as_deref() == Some("migrate");
 
     let db = PgPoolOptions::new()
@@ -908,6 +926,9 @@ pub async fn run() {
             }
         });
     }
+
+    // Gateway de SMS: envio pelos operadores e varrimento das mensagens paradas.
+    sms::spawn_worker(state.clone());
 
     if let Some(addr) = config.internal_bind_addr.clone() {
         let internal = build_internal_router(state.clone());

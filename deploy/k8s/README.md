@@ -14,7 +14,7 @@ Este diretório contém os manifestos e configurações para realizar o deploy d
 ## Edições (saas, enterprise) — overlays
 
 Esta pasta é a **base** e continua a ser o que `make stage`/`make prod` aplicam,
-sem alteração. As edições do ADR-0005 são overlays kustomize **ao lado**, em
+sem alteração. As edições do ADR-0006 são overlays kustomize **ao lado**, em
 [`../k8s-overlays/`](../k8s-overlays/):
 
 *   `k8s-overlays/saas`: `DELONIX_EDITION=saas`, Job de migração (`args: [migrate]`), Redis obrigatório, HPA.

@@ -4,6 +4,6 @@ faster-whisper==1.0.3
 # runtime mais antigo do que o gerador.
 grpcio==1.66.2
 protobuf==5.27.5
-# Só o modo legado (DATABASE_URL, DEPRECADO — ADR-0005 §3). Importado apenas
+# Só o modo legado (DATABASE_URL, DEPRECADO — ADR-0006 §3). Importado apenas
 # nesse modo; sai quando o modo sair.
 psycopg2-binary==2.9.9

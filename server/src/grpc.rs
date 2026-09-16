@@ -1,4 +1,4 @@
-//! gRPC INTERNO (ADR-0004 §4, ADR-0005 §3): máquina-a-máquina, numa porta sem
+//! gRPC INTERNO (ADR-0004 §4, ADR-0006 §3): máquina-a-máquina, numa porta sem
 //! ingress (`GRPC_BIND_ADDR`), com mTLS.
 //!
 //! Os serviços são adaptadores finos: convertem mensagens e chamam as MESMAS
@@ -33,6 +33,7 @@ pub fn status_from(e: ApiError) -> Status {
         ApiError::Unauthorized => (tonic::Code::Unauthenticated, "unauthenticated".into()),
         ApiError::Forbidden => (tonic::Code::PermissionDenied, "permission denied".into()),
         ApiError::Conflict(m) => (tonic::Code::AlreadyExists, m.clone()),
+        ApiError::Unprocessable(m) => (tonic::Code::FailedPrecondition, m.clone()),
         ApiError::NotFound => (tonic::Code::NotFound, "not found".into()),
         ApiError::TooManyRequests => (tonic::Code::ResourceExhausted, "too many requests".into()),
         ApiError::ServiceUnavailable(m) => (tonic::Code::Unavailable, m.clone()),

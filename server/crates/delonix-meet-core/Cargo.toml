@@ -4,7 +4,7 @@ description = "Núcleo partilhado do Delonix Meet: erros de domínio com código
 version.workspace = true
 edition.workspace = true
 
-# Regra (ADR-0005 §1): nada de IO aqui — nem sqlx, nem axum, nem tonic, nem
+# Regra (ADR-0006 §1): nada de IO aqui — nem sqlx, nem axum, nem tonic, nem
 # reqwest, nem redis, nem webrtc. Medido por scripts/check-crate-deps.sh.
 [dependencies]
 serde.workspace = true

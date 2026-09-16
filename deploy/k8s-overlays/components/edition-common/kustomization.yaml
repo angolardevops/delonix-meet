@@ -2,10 +2,10 @@ apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 # ============================================================
 #  O que as edições saas e enterprise têm em comum no Kubernetes
-#  (ADR-0005 §3 e §4). Usado por deploy/k8s-overlays/{saas,enterprise}.
+#  (ADR-0006 §3 e §4). Usado por deploy/k8s-overlays/{saas,enterprise}.
 #
 #  PORQUE `deploy/k8s-overlays/` e não `deploy/k8s/overlays/` (o caminho do
-#  ADR-0005 §4): a base É `deploy/k8s/`, e o kustomize recusa um overlay DENTRO
+#  ADR-0006 §4): a base É `deploy/k8s/`, e o kustomize recusa um overlay DENTRO
 #  da sua própria base («cycle detected: candidate root … contains visited
 #  root»). Pô-los lá dentro obrigava a mover os manifestos da base para
 #  `deploy/k8s/base/`, o que parte ~60 referências (Makefile, docs,

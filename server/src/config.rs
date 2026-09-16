@@ -8,7 +8,7 @@ const DEV_DB: &str = "postgres://delonix:delonix_dev@localhost:5435/delonix_meet
 pub struct Config {
     /// Perfil da instalação (`DELONIX_EDITION`, por omissão `saas` — o
     /// comportamento histórico). Fixa os valores por omissão das políticas
-    /// abaixo; cada uma pode ser sobreposta (ADR-0005 §2).
+    /// abaixo; cada uma pode ser sobreposta (ADR-0006 §2).
     pub edition: delonix_meet_core::edition::Edition,
     /// Quem pode criar conta (`REGISTRATION_MODE`).
     pub registration_mode: delonix_meet_core::edition::RegistrationMode,
@@ -36,7 +36,7 @@ pub struct Config {
     /// a UI é servida à parte (nginx/CDN), como antes.
     pub ui_dir: Option<std::path::PathBuf>,
     /// Cifra de segredos em repouso (`DATA_ENCRYPTION_KEYS="kid:base64,…"`,
-    /// ADR-0005 / S5). Sem a variável: em desenvolvimento uma chave derivada;
+    /// ADR-0006 / S5). Sem a variável: em desenvolvimento uma chave derivada;
     /// em produção `None`, e as capacidades NOVAS que guardam segredos recusam
     /// (422) em vez de os escrever em claro.
     pub secret_box: Option<std::sync::Arc<delonix_meet_core::secret_box::SecretBox>>,
@@ -89,6 +89,14 @@ pub struct Config {
     /// por quem o soubesse — e herdava a plataforma. Um UUID só existe depois
     /// de a conta nascer, e é o operador que o vai buscar.
     pub platform_admin_user_ids: Vec<uuid::Uuid>,
+    /// Ligações SMPP aos operadores móveis (ADR-0005):
+    /// `smpp://system_id:password@host:2775?source_addr=DELONIX`. Ausente =>
+    /// operador por contratar, e o encaminhamento não o escolhe. São da
+    /// PLATAFORMA (o contrato é da Delonix), por isso vêm do ambiente e não de
+    /// uma tabela — não há cifra de segredos em repouso (S5).
+    pub sms_unitel_smpp: Option<String>,
+    pub sms_movicel_smpp: Option<String>,
+    pub sms_africell_smpp: Option<String>,
     /// Tarifa estimada por minuto (inbound) para o cálculo de custo no CDR.
     pub voice_tariff_inbound: f64,
     /// Diretório onde as gravações são armazenadas (lido uma vez no arranque).
@@ -318,6 +326,9 @@ impl Config {
             voice_internal_secret: src.var("VOICE_INTERNAL_SECRET").unwrap_or_default(),
             provisioning_secret: src.var("PROVISIONING_SECRET").unwrap_or_default(),
             platform_admin_user_ids: uuid_list(src, "PLATFORM_ADMIN_USER_IDS"),
+            sms_unitel_smpp: opt("SMS_UNITEL_SMPP"),
+            sms_movicel_smpp: opt("SMS_MOVICEL_SMPP"),
+            sms_africell_smpp: opt("SMS_AFRICELL_SMPP"),
             voice_tariff_inbound: src
                 .var("VOICE_TARIFF_INBOUND")
                 .ok()

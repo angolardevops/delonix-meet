@@ -1,5 +1,5 @@
 //! Fila de transcrição das gravações — o adaptador Postgres do
-//! `TranscriptionService` gRPC (ADR-0005 §3). As regras (prazo da reserva,
+//! `TranscriptionService` gRPC (ADR-0006 §3). As regras (prazo da reserva,
 //! tentativas) estão em `delonix_meet_domain::content::transcription`.
 //!
 //! O servidor é o dono do estado: o ai-worker reserva, transcreve e entrega, e

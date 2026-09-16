@@ -3,7 +3,7 @@
 Delonix Meet — worker de transcrição em GPU.
 
 Reserva gravações no servidor pelo gRPC interno
-(`delonix.meet.transcription.v1.TranscriptionService`, ADR-0005 §3), transcreve-as
+(`delonix.meet.transcription.v1.TranscriptionService`, ADR-0006 §3), transcreve-as
 com faster-whisper (GPU quando disponível), gera a ATA (MoM) e entrega. O servidor
 é o dono do estado: aplica o DLP antes de gravar, controla a reserva (lease) e as
 tentativas (máx. 5). O worker não toca na base.
@@ -93,7 +93,7 @@ def build_source(env):
     if env.get("DATABASE_URL"):
         log("AVISO: modo legado DATABASE_URL está DEPRECADO — escreve directamente no "
             "Postgres e CONTORNA o DLP, as reservas e o limite de tentativas do servidor "
-            "(ADR-0005 §3). Definir DELONIX_GRPC_ADDR e os certificados mTLS.")
+            "(ADR-0006 §3). Definir DELONIX_GRPC_ADDR e os certificados mTLS.")
         return LegacyDbJobSource(env["DATABASE_URL"])
     raise ConfigError("falta DELONIX_GRPC_ADDR (ou, deprecado, DATABASE_URL)")
 

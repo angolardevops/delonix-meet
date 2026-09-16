@@ -1,4 +1,4 @@
-//! Especificação OpenAPI 3.1 gerada a partir do código (ADR-0005 §3).
+//! Especificação OpenAPI 3.1 gerada a partir do código (ADR-0006 §3).
 //!
 //! Dois documentos, um por superfície e por regime de compatibilidade:
 //! - **BFF** (`/api/openapi.json`): o contrato do web Delonix. Instável — muda
@@ -119,6 +119,7 @@ fn bff_parts() -> Vec<utoipa::openapi::OpenApi> {
         crate::users::ApiDoc::openapi(),
         crate::webhooks::ApiDoc::openapi(),
         crate::stream_destinations::ApiDoc::openapi(),
+        crate::sms::ApiDoc::openapi(),
         crate::notifications::ApiDoc::openapi(),
         crate::meetings::ApiDoc::openapi(),
         crate::actions::ApiDoc::openapi(),

@@ -52,14 +52,7 @@ impl FromRequestParts<Arc<AppState>> for OdooTokenAuth {
             .get("x-integration-token")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
-            .or_else(|| {
-                parts
-                    .headers
-                    .get(axum::http::header::AUTHORIZATION)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|h| h.strip_prefix("Bearer "))
-                    .map(|s| s.to_string())
-            })
+            .or_else(|| crate::auth::bearer_token(&parts.headers).map(str::to_string))
             .ok_or(ApiError::Unauthorized)?;
 
         // Só o token de integração `dlxo_`. A chave `dlx_` do inquilino também

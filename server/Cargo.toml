@@ -1,4 +1,4 @@
-# Workspace do backend (ADR-0005 §1). O pacote na raiz (`delonix-server`) é o
+# Workspace do backend (ADR-0006 §1). O pacote na raiz (`delonix-server`) é o
 # monólito em transição: o código sai dele para os crates em `crates/`, fatia a
 # fatia, e nenhuma fatia nova volta a entrar nele. A regra da dependência entre
 # crates é medida por `scripts/check-crate-deps.sh`.
@@ -31,12 +31,12 @@ edition = "2021"
 delonix-meet-core = { path = "crates/delonix-meet-core" }
 delonix-meet-domain = { path = "crates/delonix-meet-domain" }
 delonix-meet-protocol = { path = "crates/delonix-meet-protocol" }
-# gRPC interno (ADR-0005 §3): mTLS com rustls/ring, health e reflection.
+# gRPC interno (ADR-0006 §3): mTLS com rustls/ring, health e reflection.
 tonic = { version = "0.14", features = ["tls-ring"] }
 tonic-health = "0.14"
 tonic-reflection = "0.14"
 tokio-stream = { version = "0.1", features = ["net"] }
-# OpenAPI 3.1 gerado do código (ADR-0005 §3): o cliente TS do web gera-se daqui.
+# OpenAPI 3.1 gerado do código (ADR-0006 §3): o cliente TS do web gera-se daqui.
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 axum = { version = "0.8", features = ["ws", "macros"] }
 tokio = { version = "1", features = ["full"] }

@@ -30,7 +30,7 @@ spec:
               name: grpc
               protocol: TCP
           env:
-            # Logs estruturados em stdout (doze factores, ADR-0005 §4).
+            # Logs estruturados em stdout (doze factores, ADR-0006 §4).
             - name: LOG_FORMAT
               value: json
             # Listener interno: /api/voice/ivr/* (FreeSWITCH) e /metrics.

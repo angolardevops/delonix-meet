@@ -1,4 +1,4 @@
-//! A UI servida pelo próprio binário (`UI_DIR`, ADR-0005 §4).
+//! A UI servida pelo próprio binário (`UI_DIR`, ADR-0006 §4).
 //!
 //! Para a edição pessoal e o enterprise pequeno: um processo, sem nginx à
 //! frente. Em SaaS a UI continua servida à parte (nginx/CDN) e este módulo não

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 #  Fitness function: os manifestos Kubernetes RENDERIZAM, e o que sai deles
-#  respeita as fronteiras do ADR-0001 e do ADR-0005 §3/§4.
+#  respeita as fronteiras do ADR-0001 e do ADR-0006 §3/§4.
 #
 #  Porquê: um overlay que não renderiza só se descobre no `kubectl apply` do
 #  dia do deploy, e uma porta interna exposta por engano num Ingress não dá
@@ -109,7 +109,7 @@ for nome in ("base", "saas", "enterprise"):
             svc, port = svc_ref(b)
             if svc == INTERNAL_SVC or port in INTERNAL_PORTS:
                 erros.append(f"[{nome}] Ingress {ing['metadata']['name']} {path} → {svc}:{port} — "
-                             "porta interna (8181/9180) exposta por ingress (ADR-0005 §3)")
+                             "porta interna (8181/9180) exposta por ingress (ADR-0006 §3)")
 
     if nome == "base":
         continue
@@ -185,7 +185,7 @@ for nome in ("base", "saas", "enterprise"):
                 erros.append(f"[saas] Job migra com {jc['image']} e o Deployment arranca com {c['image']}")
         cm = um(docs, "ConfigMap", "delonix-config")
         if not (cm and (cm.get("data") or {}).get("REDIS_URL")):
-            erros.append("[saas] REDIS_URL vazio ou ausente no delonix-config — obrigatório em SaaS (ADR-0005 §2)")
+            erros.append("[saas] REDIS_URL vazio ou ausente no delonix-config — obrigatório em SaaS (ADR-0006 §2)")
         hpa = um(docs, "HorizontalPodAutoscaler", "delonix-server")
         with open(os.environ["HPA_SRC"]) as f:
             fonte = [d for d in yaml.safe_load_all(f) if d][0]

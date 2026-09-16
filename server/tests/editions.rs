@@ -1,4 +1,4 @@
-//! Edições (ADR-0005 §2): SaaS, enterprise on-premise e pessoal, contra um
+//! Edições (ADR-0006 §2): SaaS, enterprise on-premise e pessoal, contra um
 //! servidor e um Postgres reais. Cada teste prova um perfil de ponta a ponta:
 //! registo, organização criada, definições públicas e o que fica recusado.
 mod common;

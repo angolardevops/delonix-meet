@@ -4,7 +4,7 @@ description = "Domínio do Delonix Meet: contextos delimitados (identity, organi
 version.workspace = true
 edition.workspace = true
 
-# Regra (ADR-0005 §1): o domínio não conhece sqlx, axum, tonic, reqwest, redis
+# Regra (ADR-0006 §1): o domínio não conhece sqlx, axum, tonic, reqwest, redis
 # nem webrtc. Fala com o mundo por portos (traits) que os adaptadores implementam.
 [dependencies]
 delonix-meet-core = { path = "../delonix-meet-core" }

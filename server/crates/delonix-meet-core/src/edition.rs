@@ -1,4 +1,4 @@
-//! Perfis de instalação (ADR-0005 §2).
+//! Perfis de instalação (ADR-0006 §2).
 //!
 //! Uma edição fixa **valores por omissão**; cada política pode ser sobreposta
 //! à parte. Não é licenciamento: nenhuma capacidade fica fechada no código por

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Fitness function: a regra da dependência entre crates (ADR-0005 §1).
+#  Fitness function: a regra da dependência entre crates (ADR-0006 §1).
 #
 #  Porquê: o domínio que conhece o sqlx ou o axum deixa de ser testável sem
 #  base nem servidor, e a regra de negócio volta a escorregar para o handler —
@@ -66,7 +66,7 @@ for path in sorted(glob.glob('server/crates/*/Cargo.toml')):
                 print(f'✗ crate-deps: {nome} (camada {camada}) depende de {dep} (camada {REGRAS[dep][0]}) — só se depende para baixo')
                 falha = True
         elif dep in proibidas:
-            print(f'✗ crate-deps: {nome} depende de {dep}, proibido nesta camada (ADR-0005 §1)')
+            print(f'✗ crate-deps: {nome} depende de {dep}, proibido nesta camada (ADR-0006 §1)')
             falha = True
 
 if vistos == 0:

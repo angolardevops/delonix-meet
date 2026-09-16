@@ -9,7 +9,7 @@
 //! O envio é best-effort e assíncrono (não bloqueia o pedido do utilizador).
 //!
 //! **Registo de entregas (G7).** Cada envio a um webhook fica numa linha de
-//! `webhook_deliveries` (migração 0042): inserida `pending` com o corpo exacto
+//! `webhook_deliveries` (migração 0043): inserida `pending` com o corpo exacto
 //! ANTES do envio e fechada `succeeded`/`failed` com o código HTTP, o tempo e
 //! um erro curto e limpo DEPOIS. Nem o segredo nem a assinatura se guardam.
 //! As regras puras (estados, limpeza do erro, ritmo de reenvio, retenção) estão

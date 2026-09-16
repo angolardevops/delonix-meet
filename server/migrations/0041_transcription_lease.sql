@@ -1,4 +1,4 @@
--- Reserva de trabalho de transcrição (gRPC TranscriptionService, ADR-0005 §3).
+-- Reserva de trabalho de transcrição (gRPC TranscriptionService, ADR-0006 §3).
 --
 -- Antes, o ai-worker fazia polling a `transcribed_at IS NULL` directamente no
 -- Postgres e escrevia por baixo do servidor: dois workers apanhavam a mesma

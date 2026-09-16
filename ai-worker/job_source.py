@@ -2,7 +2,7 @@
 
 Duas implementações do mesmo contrato (`JobSource`):
 
-- `GrpcJobSource` — o caminho suportado (ADR-0005 §3). O servidor é o dono do
+- `GrpcJobSource` — o caminho suportado (ADR-0006 §3). O servidor é o dono do
   estado: reserva com prazo (lease), no máximo 5 tentativas, DLP aplicado ANTES
   de gravar, auditoria. O worker não toca na base.
 - `LegacyDbJobSource` — o worker antigo a escrever directamente no Postgres.
@@ -152,7 +152,7 @@ class GrpcJobSource:
 
 class LegacyDbJobSource:
     """DEPRECADO: escreve no Postgres por baixo do servidor — sem DLP, sem
-    reserva, sem limite de tentativas (ADR-0005 §3). Comportamento igual ao do
+    reserva, sem limite de tentativas (ADR-0006 §3). Comportamento igual ao do
     worker antigo, para não mudar nada a quem ainda depende dele."""
 
     def __init__(self, database_url: str):

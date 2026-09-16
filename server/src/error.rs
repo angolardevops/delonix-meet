@@ -11,7 +11,7 @@
 //! - Porquê plano e não `{"error": {"code": …}}` (a forma que o ADR-0004 §4
 //!   previa): o `web/src/api.ts` e o módulo Odoo `nk_delonix_meet` lêem
 //!   `body.error` como texto. Aninhar partia os dois — e a v1 só quebra com v2.
-//!   O plano acrescenta sem remover (ADR-0005 §3).
+//!   O plano acrescenta sem remover (ADR-0006 §3).
 //! - `request_id` é o mesmo do cabeçalho `X-Request-Id` e dos logs: é o que se
 //!   pede a quem reporta um erro.
 
@@ -46,6 +46,11 @@ pub enum ApiError {
     Forbidden,
     #[error("{0}")]
     Conflict(String),
+    /// Bem formado, mas não pode ser cumprido tal como pedido (ex.: um SMS sem
+    /// rota). Distinto de `BadRequest`: repetir o mesmo pedido não o corrige,
+    /// mudar o estado (seleccionar um dispositivo, contratar o operador) sim.
+    #[error("{0}")]
+    Unprocessable(String),
     #[error("not found")]
     NotFound,
     #[error("too many requests")]
@@ -83,6 +88,11 @@ impl ApiError {
                 "forbidden".into(),
             ),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, "conflict", m.clone()),
+            ApiError::Unprocessable(m) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "failed_precondition",
+                m.clone(),
+            ),
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not_found", "not found".into()),
             ApiError::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS,

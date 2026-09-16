@@ -26,7 +26,7 @@ const MAX_TERM_CHARS: usize = 64;
 // ---------------------------------------------------------------------------
 
 /// Estado derivado que a UI mostra. Não é uma coluna: deriva de `status`
-/// (0036) e das marcas da fila de transcrição (0016, 0040).
+/// (0036) e das marcas da fila de transcrição (0016, 0041).
 ///
 /// Não há `processing` (ffmpeg a compor): o `recorder` só insere a linha
 /// DEPOIS de o ffmpeg acabar — ou a falha, com `status = failed`. Um estado

@@ -1,7 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # ============================================================
-#  Edição Enterprise on-premise (ADR-0005 §2): uma organização, registo por
+#  Edição Enterprise on-premise (ADR-0006 §2): uma organização, registo por
 #  convite, uma réplica chega.
 #
 #    kubectl kustomize deploy/k8s-overlays/enterprise
@@ -10,7 +10,7 @@ kind: Kustomization
 #  Diferenças para a base:
 #   - DELONIX_EDITION=enterprise, REGISTRATION_MODE=invite, TENANCY_MODE=single;
 #   - replicas: 1 e migrações no arranque (DELONIX_MIGRATE=1, sem Job);
-#   - sem HPA. Para mais de uma réplica: Redis obrigatório (ADR-0005 §2) e a
+#   - sem HPA. Para mais de uma réplica: Redis obrigatório (ADR-0006 §2) e a
 #     afinidade do ADR-0001, que já vem da base;
 #   - tudo o que vem de components/edition-common.
 #

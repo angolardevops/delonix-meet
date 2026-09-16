@@ -106,6 +106,16 @@ pub fn hash_refresh_token(token: &str) -> String {
 
 // ---------- Extractor ----------
 
+/// O token de `Authorization: Bearer <token>`, se o cabeçalho existir e tiver
+/// esse esquema. Os extractores chamam isto em vez de lerem o cabeçalho à mão
+/// (ADR-0004 §5, regra 2).
+pub(crate) fn bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+}
+
 /// Authenticated user, extracted from `Authorization: Bearer <access token>`.
 pub struct AuthUser {
     pub user_id: Uuid,
@@ -118,14 +128,7 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
         parts: &mut Parts,
         state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
-        let header = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .ok_or(ApiError::Unauthorized)?;
-        let token = header
-            .strip_prefix("Bearer ")
-            .ok_or(ApiError::Unauthorized)?;
+        let token = bearer_token(&parts.headers).ok_or(ApiError::Unauthorized)?;
         let claims = verify_jwt(&state.config.jwt_secret, token, "access")?;
         Ok(AuthUser {
             user_id: claims.sub,
@@ -273,7 +276,7 @@ async fn issue_tokens(
 pub struct ApiDoc;
 
 /// Registo de conta. O QUE acontece decide-o a política da instalação
-/// (`delonix_meet_domain::identity::registration`, ADR-0005 §2); aqui só se lê
+/// (`delonix_meet_domain::identity::registration`, ADR-0006 §2); aqui só se lê
 /// o retrato da instalação e se executa o plano.
 ///
 /// No perfil histórico (`saas` + `open` + `multi`) o registo cria uma

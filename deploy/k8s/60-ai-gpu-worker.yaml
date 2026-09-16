@@ -3,7 +3,7 @@
 # CONTEXTO: a IA em tempo real (matting RVM, segmentação, transcrição ao vivo)
 # corre no CLIENTE (WebGPU/WASM no browser) — o backend NÃO precisa de GPU para
 # isso. Este worker faz IA em LOTE no servidor: reserva gravações pelo gRPC
-# interno (TranscriptionService, ADR-0005 §3), transcreve-as com faster-whisper
+# interno (TranscriptionService, ADR-0006 §3), transcreve-as com faster-whisper
 # na GPU e entrega a transcrição + a ATA (MoM) ao servidor, que aplica o DLP e
 # grava. O worker NÃO tem credenciais da base. Implementação: ai-worker/ (Python).
 #
@@ -78,7 +78,7 @@ spec:
       containers:
         - name: worker
           image: ghcr.io/OWNER/delonix-ai-worker:latest
-          # Sem envFrom de delonix-secrets: o worker não tem DATABASE_URL (ADR-0005 §3).
+          # Sem envFrom de delonix-secrets: o worker não tem DATABASE_URL (ADR-0006 §3).
           env:
             - { name: DELONIX_GRPC_ADDR, value: "delonix-server-internal:9180" }
             - { name: GRPC_CLIENT_CERT, value: /etc/delonix/grpc-tls/tls.crt }

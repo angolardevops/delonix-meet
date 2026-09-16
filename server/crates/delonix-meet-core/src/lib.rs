@@ -9,7 +9,7 @@
 //! - [`page`] — paginação por cursor opaco, com limite obrigatório;
 //! - [`edition`] — os perfis de instalação (SaaS, enterprise, pessoal).
 //!
-//! Ver `docs/adr/0005-backend-enterprise-contextos-edicoes-e-entrega.md`.
+//! Ver `docs/adr/0006-backend-enterprise-contextos-edicoes-e-entrega.md`.
 
 pub mod crypto;
 pub mod edition;

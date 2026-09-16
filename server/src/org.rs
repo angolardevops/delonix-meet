@@ -384,7 +384,7 @@ pub async fn create_org(
     auth: AuthUser,
     Json(req): Json<CreateOrgReq>,
 ) -> Result<Json<Organization>, ApiError> {
-    // Tenancy `single` (ADR-0005 §2): a instalação tem UMA organização, criada
+    // Tenancy `single` (ADR-0006 §2): a instalação tem UMA organização, criada
     // pelo primeiro registo. Criar outra partia a premissa de que toda a gente
     // se encontra no mesmo directório.
     if state.config.tenancy_mode == delonix_meet_core::edition::TenancyMode::Single {

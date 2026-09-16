@@ -37,7 +37,7 @@ Se hesitas: **zero-touch**. Faz o que as secções 5 e 6 fazem à mão.
 
 ### Edições e alvos de entrega
 
-Um só binário, três perfis ([ADR-0005 §2](adr/0005-backend-enterprise-contextos-edicoes-e-entrega.md)).
+Um só binário, três perfis ([ADR-0006 §2](adr/0006-backend-enterprise-contextos-edicoes-e-entrega.md)).
 A edição fixa os defaults (`DELONIX_EDITION`, `REGISTRATION_MODE`, `TENANCY_MODE`);
 o alvo decide o manifesto.
 

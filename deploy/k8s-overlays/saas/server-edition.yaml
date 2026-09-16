@@ -20,7 +20,7 @@ spec:
             # tempo, cada uma a migrar era uma corrida pelo lock.
             - name: DELONIX_MIGRATE
               value: "0"
-            # Redis OBRIGATÓRIO em SaaS (ADR-0005 §2: «obrigatório com mais de
+            # Redis OBRIGATÓRIO em SaaS (ADR-0006 §2: «obrigatório com mais de
             # 1 réplica»). `optional: false` impede o pod de arrancar se a chave
             # faltar no ConfigMap; o valor vazio é apanhado pelo
             # scripts/check-k8s-render.sh.

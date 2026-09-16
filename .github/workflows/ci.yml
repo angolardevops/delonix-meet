@@ -143,13 +143,13 @@ jobs:
       - name: Afinidade por sala (ADR-0001 / regressão R3)
         run: bash scripts/check-room-affinity.sh
 
-      - name: Manifestos K8s renderizam; portas internas fora do ingress (ADR-0005 §4)
+      - name: Manifestos K8s renderizam; portas internas fora do ingress (ADR-0006 §4)
         run: bash scripts/check-k8s-render.sh
 
       - name: Catraca da arquitectura (ADR-0004 — nenhuma cópia nova)
         run: bash scripts/check-arquitectura-catraca.sh
 
-      - name: Regra da dependência entre crates (ADR-0005 §1)
+      - name: Regra da dependência entre crates (ADR-0006 §1)
         run: bash scripts/check-crate-deps.sh
 
       - uses: bufbuild/buf-action@v1

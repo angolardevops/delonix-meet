@@ -1,7 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # ============================================================
-#  Edição SaaS (ADR-0005 §2): multi-inquilino, registo aberto, várias réplicas.
+#  Edição SaaS (ADR-0006 §2): multi-inquilino, registo aberto, várias réplicas.
 #
 #    kubectl kustomize deploy/k8s-overlays/saas        # ver o que sai
 #    kubectl apply -k deploy/k8s-overlays/saas

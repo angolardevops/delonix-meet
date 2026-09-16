@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Fitness function: o contrato OpenAPI (ADR-0005 §3).
+#  Fitness function: o contrato OpenAPI (ADR-0006 §3).
 #
 #  1. SPEC GERADO = SPEC COMMITADO. `docs/reference/openapi/{bff,v1}.json` é o
 #     que o cliente TypeScript do web e o SDK consomem. Um handler que muda de

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Fitness function: contratos gRPC internos (ADR-0005 §3).
+#  Fitness function: contratos gRPC internos (ADR-0006 §3).
 #
 #  1. `buf lint` — nomes, pacotes versionados, Request/Response por RPC.
 #  2. `buf breaking` contra a origin/main — um campo removido ou renumerado

@@ -1,6 +1,6 @@
 # ============================================================
 #  Delonix Meet — edição PESSOAL num só host, sobre o delonix-runtime.
-#  ADR-0005 §2/§4: sem Redis, sem nginx à frente — o próprio binário serve a
+#  ADR-0006 §2/§4: sem Redis, sem nginx à frente — o próprio binário serve a
 #  SPA a partir de UI_DIR. Usa os MESMOS *.secrets.env do meet-stack.yaml.
 #
 #    # a SPA construída (web/dist) numa pasta do host:
