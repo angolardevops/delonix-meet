@@ -129,8 +129,10 @@
   color: var(--muted);
 }
 .board-viewer__stage {
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
   min-height: 200px;
   padding: 8px;
   border: 1px solid var(--border);
@@ -141,6 +143,9 @@
 }
 .board-viewer__stage img {
   display: block;
+  width: auto;
+  height: auto;
+  min-width: 0;
   max-width: 100%;
   max-height: 60vh;
   max-height: 60dvh;
@@ -179,6 +184,9 @@
 .board-viewer__url .dx-input {
   flex: 1;
   min-width: 0;
+}
+.dx-dialog:has(.board-viewer__stage) .dx-dialog__foot {
+  flex-wrap: wrap;
 }
 .board-delete__text {
   margin: 0;

@@ -1,5 +1,6 @@
 export default {
   titulo: 'Quadros',
+  meta_zero: 'Sem quadros',
   meta_one: '{{count}} quadro · {{publicos}} com link',
   meta_other: '{{count}} quadros · {{publicos}} com link',
   semTitulo: 'Quadro sem título',

@@ -1,5 +1,6 @@
 export default {
   titulo: 'Gravações',
+  meta_zero: 'Sem itens',
   meta_one: '{{count}} item · {{size}}',
   meta_other: '{{count}} itens · {{size}}',
   abrir: 'Abrir {{name}}',
