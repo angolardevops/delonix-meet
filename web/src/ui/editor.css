@@ -10,6 +10,7 @@
 }
 
 .ed {
+  container: ed / inline-size;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -56,6 +57,9 @@
 }
 .ed-top__title {
   min-width: 80px;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
   max-width: 52ch;
   field-sizing: content;
   padding: 2px 4px;
@@ -125,6 +129,7 @@
 .ed-top__tabs {
   display: flex;
   gap: 4px;
+  flex: none;
 }
 .ed-top__tabs button {
   height: 24px;
@@ -1858,5 +1863,21 @@ button.ed-badge {
   }
   .ed-ripple {
     font-size: 10px;
+  }
+}
+
+/* Topo da Linha de tempo com os três separadores: abaixo de ~1180 px de largura
+   útil (1280×800 com o rail aberto) sai o que é só informativo — a palavra
+   STUDIO ao lado do símbolo e a linha «720p · 04:00 · projecto» — antes de
+   empurrar o «Exportar» para fora do ecrã. */
+@container ed (max-width: 1180px) {
+  .ed-top__studio,
+  .ed-top__meta {
+    display: none;
+  }
+}
+@container ed (max-width: 940px) {
+  .ed-top__saved {
+    display: none;
   }
 }

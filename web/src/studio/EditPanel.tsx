@@ -455,6 +455,11 @@ export default function EditPanel({
         <header className="ed-top">
           {topoMarca}
           <span className="ed-top__sep" aria-hidden="true" />
+          {/* Os três separadores também aqui: sem eles, a Linha de tempo só
+              chegava às Legendas pelo selo da pré-visualização ou pelo cartão
+              das palavras de preenchimento. */}
+          {separadores}
+          <span className="ed-top__sep" aria-hidden="true" />
           <input
             className="ed-top__title"
             value={p.titulo}
