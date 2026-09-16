@@ -19,15 +19,18 @@ Africell, para mostrar a ferramenta a estes operadores»
    mostram só MTP (ficheiros) e, com depuração activa, ADB. Não há forma suportada e
    sem root de enviar SMS por ADB. O agente tem de o **dizer** ao utilizador em vez de
    fingir que o telefone está pronto.
-3. **O `ModemManager` agarra os modems.** Medido nesta máquina a 2026-09-16: está
+3. **Medido a 2026-09-16, com o telefone do pedido ligado:** um Samsung (`04e8:6860`)
+   com uma só interface, `06/01/01 "MTP"`, e nenhuma porta série. É exactamente o caso
+   acima — este telefone, tal como está, **não envia SMS por USB**.
+4. **O `ModemManager` agarra os modems.** Medido nesta máquina a 2026-09-16: está
    activo. Se está, as portas série do modem já estão ocupadas por ele e o AT directo
    entra em conflito. Por isso há dois transportes: `modemmanager` (via `mmcli`)
    quando ele gere o modem, e `at_serial` quando não.
-4. **Os operadores falam SMPP.** A interface normal de SMS em volume com um operador
+5. **Os operadores falam SMPP.** A interface normal de SMS em volume com um operador
    é SMPP 3.4 (`bind_transmitter`, `submit_sm`). **Nenhum contrato existe hoje** —
    host, porta, `system_id` e *sender ID* só chegam com o contrato. O que se prepara é
    o cliente e o encaminhamento, provados contra um SMSC falso.
-5. **Não há cifra de segredos em repouso** (S5 aberto). Uma credencial SMPP numa
+6. **Não há cifra de segredos em repouso** (S5 aberto). Uma credencial SMPP numa
    tabela seria mais um segredo em claro. Ela vem do ambiente.
 
 ## Decisão
@@ -47,9 +50,11 @@ Africell, para mostrar a ferramenta a estes operadores»
   candidatos com AT ou `mmcli`, reporta o inventário a cada 5 s, pede mensagens e envia.
   **Liga-se para fora**: não abre portas, funciona atrás de NAT.
 - **`server/src/sms.rs`** — fila, encaminhamento, gestão e as duas superfícies HTTP.
-- **`server/src/sms_codec.rs`** — GSM 03.38 / UCS-2, segmentação, PDU SMS-SUBMIT, e PDU
-  SMPP. **É o único sítio que codifica SMS**: o agente recebe os PDUs feitos e não
-  reimplementa a regra.
+- **`server/src/sms_codec.rs`** — GSM 03.38 / UCS-2, segmentação e PDU SMS-SUBMIT
+  (`sms_smpp.rs` usa as mesmas partes). **É o único sítio nosso que codifica SMS**: no
+  transporte `at_serial` o agente escreve os PDUs feitos. No transporte `modemmanager`
+  quem codifica e divide é o ModemManager, a partir do texto — e o número de partes
+  cobradas pode diferir do que a consola estimou.
 
 ### Posse
 
@@ -67,7 +72,9 @@ Africell, para mostrar a ferramenta a estes operadores»
    configurada → `operator`.
 4. Senão, se `route` é `"usb"` ou `"auto"` **e** a org tem um dispositivo seleccionado,
    capaz e visto há menos de 30 s → `usb`.
-5. Senão → `422 sms.no_route` com a razão. **Nunca** se aceita e fica parado.
+5. Senão → `422` com a razão por extenso. **Nunca** se aceita e fica parado. (O código
+   estável `sms.no_route` entra quando o envelope de erro da v1 nascer em `error.rs` —
+   `delonix-meet-api` §7; não se inventa um segundo formato num handler.)
 
 #### Plano de numeração — A CONFIRMAR
 
@@ -125,8 +132,10 @@ agente corre fora do cluster e hoje não há porta gRPC.
 `Device` (reportado pelo agente) =
 `{device_key, vendor_id, product_id, manufacturer, product, serial, kind, transport, port, capable, reason, operator_name, signal_percent}` com
 `kind ∈ {modem, android_adb, android_mtp, mass_storage_modem, unknown}` e
-`transport ∈ {at_serial, modemmanager, none}`. `device_key` é estável entre ligações:
-`serial` se existir, senão `vendor:product@caminho-usb`.
+`transport ∈ {at_serial, modemmanager, none}`. Campos opcionais vão a `null`, nunca `""`.
+`device_key` é estável entre ligações: `vendor:product:série` quando a série identifica
+alguma coisa, senão `vendor:product@caminho-usb`. Medido a 2026-09-16: há aparelhos com
+séries como `000000000` e `SN0001`, que colidiriam entre dois aparelhos iguais.
 
 ### Configuração dos operadores (plataforma)
 
