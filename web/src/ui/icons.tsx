@@ -96,6 +96,9 @@ const P: Record<string, string> = {
   wifi: 'M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01',
   // auth-publico
   eyeOff: 'M2 12s3.5-7 10-7c1.6 0 3 .4 4.2 1M22 12s-3.5 7-10 7c-1.6 0-3-.4-4.2-1M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18',
+  // home-agenda
+  repeat: 'M4 11V9a3 3 0 0 1 3-3h12M16 3l3 3-3 3M20 13v2a3 3 0 0 1-3 3H5M8 21l-3-3 3-3',
+  list: 'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01',
 }
 
 export type IconName = keyof typeof P

@@ -1,0 +1,381 @@
+/*
+ * Início. Importada por `pages/Home.tsx`. Só tokens: cor, raio e altura de
+ * controlo vêm de `tokens.css`.
+ */
+
+.home-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+  align-items: start;
+}
+.home-grid:has(> .home-side:empty) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.home-main,
+.home-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.home-link {
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------- acções rápidas */
+.quick-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.qa-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  min-height: 96px;
+  padding: var(--s-3);
+  border-radius: var(--r-3);
+  border: 1px solid var(--border);
+  background: var(--raised);
+  color: var(--text);
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+.qa-tile > .dx-icon {
+  color: var(--accent);
+}
+button.qa-tile:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+.qa-tile__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.qa-tile__text strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.qa-tile__text small {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--muted);
+}
+/* Primária: as cores vêm do `dx-btn--primary` do kit; aqui só a forma. */
+.qa-tile--primary {
+  border-color: var(--accent-strong);
+}
+.qa-tile--primary > .dx-icon,
+.qa-tile--primary .qa-tile__text small {
+  color: inherit;
+}
+.qa-tile--primary .qa-tile__text small {
+  opacity: 0.82;
+}
+.qa-tile--live {
+  border-color: var(--live);
+}
+.qa-tile--live > .dx-icon {
+  color: var(--live);
+}
+.qa-tile--join {
+  cursor: default;
+  gap: 8px;
+}
+.qa-tile--join:focus-within {
+  border-color: var(--accent);
+}
+.qa-tile--error {
+  border-color: var(--danger);
+}
+.qa-join {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+.qa-join .dx-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+}
+
+.qa-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: var(--t-sm);
+}
+.qa-errors {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+/* ------------------------------------------------------------- secções */
+.home-section {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+.home-section__head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.home-section__head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.home-panel,
+.home-meetings {
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  overflow: hidden;
+}
+.home-meetings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* -------------------------------------------------- próximas reuniões */
+.home-meeting {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px var(--s-3);
+  border-bottom: 1px solid var(--border);
+}
+.home-meeting:last-child {
+  border-bottom: 0;
+}
+.home-meeting--soon {
+  background: color-mix(in srgb, var(--accent) 6%, var(--raised));
+}
+.home-meeting__time {
+  width: 60px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+}
+.home-meeting__time .dx-num {
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+.home-meeting__time small {
+  font-size: 9.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.home-meeting__main {
+  flex: 1;
+  min-width: 0;
+}
+.home-meeting__title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.home-meeting__title strong {
+  font-size: var(--t-md);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.home-meeting__title .dx-icon {
+  flex: none;
+  color: var(--muted);
+}
+.home-meeting__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.home-meeting__meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.home-meeting__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+/* ------------------------------------------------ gravações recentes */
+.home-recs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.home-rec {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--raised);
+  color: var(--text);
+  text-align: left;
+  overflow: hidden;
+}
+button.home-rec {
+  cursor: pointer;
+}
+button.home-rec:hover {
+  border-color: var(--muted);
+}
+.home-rec__thumb {
+  position: relative;
+  height: 74px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(150deg, color-mix(in srgb, var(--accent-strong) 55%, var(--stage)), var(--stage));
+  color: var(--raised);
+}
+[data-theme='dark'] .home-rec__thumb {
+  color: var(--text);
+}
+.home-rec--failed .home-rec__thumb {
+  background: var(--surface);
+  border-bottom: 1px dashed var(--border);
+}
+.home-rec__chip {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 2px 5px;
+  border-radius: var(--r-2);
+  background: var(--scrim);
+  font-size: 9px;
+}
+.home-rec__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 9px;
+  min-width: 0;
+}
+.home-rec__body strong {
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.home-rec__body small {
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+
+/* ----------------------------------------------------- coluna direita */
+.home-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.home-list__row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px;
+  border-radius: var(--r-2);
+  color: var(--text);
+}
+.home-list__row:hover {
+  background: var(--hover);
+  text-decoration: none;
+}
+.home-list__row > .dx-icon {
+  color: var(--accent);
+  flex: none;
+}
+.home-list__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.home-list__text strong {
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.home-list__text small {
+  font-size: 9.5px;
+  color: var(--muted);
+}
+.home-storage {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 10.5px;
+}
+.home-storage__big {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.home-storage__big .dx-num {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------- ecrã estreito */
+@media (max-width: 1100px) {
+  .home-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .home-recs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 720px) {
+  .quick-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .home-meeting {
+    flex-wrap: wrap;
+  }
+  .home-meeting > .dx-avatar {
+    display: none;
+  }
+  .home-meeting__actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+}
