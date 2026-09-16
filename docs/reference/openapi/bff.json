@@ -9722,7 +9722,7 @@
     },
     "/api/voice/rooms": {
       "post": {
-        "description": "A sala de voz pertence à primeira organização do utilizador. O `room_code`\né normalizado para minúsculas mas NÃO é verificado contra as salas.",
+        "description": "A sala de voz pertence à primeira organização do utilizador. O `room_code`\né normalizado para minúsculas e tem de ser de uma sala cujo DONO é membro\nACTIVO dessa organização; senão `404` (`voice.room_not_found`), a mesma\nresposta de um código inexistente.",
         "operationId": "create_room",
         "requestBody": {
           "content": {
@@ -9764,6 +9764,16 @@
               }
             },
             "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`voice.room_not_found`: a sala não existe, ou o dono não é membro activo da organização de quem pede."
           },
           "409": {
             "content": {

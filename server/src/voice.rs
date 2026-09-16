@@ -20,7 +20,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{auth::AuthUser, error::ApiError, org::orgs_of_user, AppState};
+use delonix_meet_core::DomainError;
+
+use crate::{
+    auth::AuthUser,
+    error::ApiError,
+    org::{orgs_of_user, role_in_org},
+    AppState,
+};
 
 // ---------- Enums (persistidos como TEXT) ----------
 
@@ -156,6 +163,32 @@ async fn caller_org(state: &AppState, user_id: Uuid) -> Result<Uuid, ApiError> {
         .ok_or_else(|| ApiError::BadRequest("utilizador sem organização".into()))
 }
 
+/// A sala de conferência `room_code` é da organização `org_id`: o DONO da sala
+/// é membro ACTIVO dela.
+///
+/// Sem isto, o admin de uma org ligava um DID+PIN seu ao código da sala de
+/// OUTRA org, e o IVR (HTTP e gRPC partilham `validate_pin`) punha chamadores
+/// PSTN dentro dessa reunião (R140). Regra escolhida por ser a mais restritiva
+/// das que o `rooms::room_access` conhece: «colega do dono». O convite na
+/// agenda e o co-anfitrião NÃO contam — dão acesso a uma pessoa, não fazem da
+/// sala um recurso da org. Inexistente e alheia dão a mesma resposta.
+async fn ensure_room_in_org(
+    state: &AppState,
+    org_id: Uuid,
+    room_code: &str,
+) -> Result<(), ApiError> {
+    let not_found = || ApiError::Domain(DomainError::not_found("voice.room_not_found"));
+    let owner: Option<Uuid> = sqlx::query_scalar("SELECT owner_id FROM rooms WHERE code = $1")
+        .bind(room_code)
+        .fetch_optional(&state.db)
+        .await?;
+    let owner = owner.ok_or_else(not_found)?;
+    match role_in_org(state, org_id, owner).await? {
+        Some(_) => Ok(()),
+        None => Err(not_found()),
+    }
+}
+
 // ============================================================
 //  API do utilizador (autenticada por sessão, escopada à org)
 // ============================================================
@@ -181,7 +214,9 @@ pub struct VoiceRoomResp {
 /// Cria uma sala de voz (dial-in) para uma sala de conferência existente.
 ///
 /// A sala de voz pertence à primeira organização do utilizador. O `room_code`
-/// é normalizado para minúsculas mas NÃO é verificado contra as salas.
+/// é normalizado para minúsculas e tem de ser de uma sala cujo DONO é membro
+/// ACTIVO dessa organização; senão `404` (`voice.room_not_found`), a mesma
+/// resposta de um código inexistente.
 #[utoipa::path(
     post, path = "/api/voice/rooms", tag = "voice",
     security(("session" = [])),
@@ -190,6 +225,7 @@ pub struct VoiceRoomResp {
         (status = 200, body = VoiceRoomResp),
         (status = 400, description = "Utilizador sem organização ou `room_code` vazio.", body = crate::openapi::ErrorBody),
         (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "`voice.room_not_found`: a sala não existe, ou o dono não é membro activo da organização de quem pede.", body = crate::openapi::ErrorBody),
         (status = 409, description = "Sem DID disponível para dial-in nesta organização.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -203,6 +239,7 @@ pub async fn create_room(
     if room_code.is_empty() {
         return Err(ApiError::BadRequest("room_code em falta".into()));
     }
+    ensure_room_in_org(&state, org_id, &room_code).await?;
 
     // Backend de media e modelo de DID vêm da configuração da org.
     let (backend, did_model): (String, String) = sqlx::query_as(

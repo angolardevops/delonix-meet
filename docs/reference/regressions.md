@@ -1756,3 +1756,14 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `server/tests/security_identity.rs::login_rate_limit_applies_to_sso_enforced_accounts` (controlo positivo: a recusa `400` do SSO exclusivo continua a ser dita até ao limite).
 
 **Ficheiros.** `server/src/auth.rs`, `server/tests/security_identity.rs`.
+### R140 — Dial-in PSTN ligado à sala de conferência de OUTRA organização
+
+**Sintoma.** Nenhum para a vítima. O admin (ou qualquer membro) da org A fazia `POST /api/voice/rooms` com o `room_code` de uma sala da org B e recebia `200` com um PIN e um número de dial-in da SUA org. Quem ligasse para esse número com esse PIN era validado pelo IVR (`/api/voice/ivr/validate` e o gRPC `IvrService.ValidatePin`, que partilham `voice::validate_pin`) e posto dentro da reunião de B. Provado a 2026-09-16 contra Postgres real: `tests/security_voice_odoo.rs` falhou com `devolveu 200: {"dial_in_number":"+244222100001",…,"pin":"197966","room_code":"ifa-mrjw-nei"}` antes da correcção.
+
+**Causa raiz.** `create_room` normalizava o código e gravava-o sem o procurar em `rooms` — a própria documentação do handler dizia «NÃO é verificado contra as salas». A fronteira multi-tenant do módulo era o par (DID, PIN), mas o ALVO desse par era texto livre escolhido por quem pede.
+
+**Regra.** A sala de voz só se liga a uma sala cujo DONO é membro ACTIVO da organização de quem pede (`org::role_in_org`, sem `org_members` novo em `voice.rs`). Das regras do `rooms::room_access` é a mais restritiva: convite na agenda e co-anfitrião dão acesso a uma PESSOA, não tornam a sala num recurso da org. Inexistente e alheia dão a mesma resposta, `404` `voice.room_not_found` — não se revela que o código existe.
+
+**Portão.** `server/tests/security_voice_odoo.rs::voice_room_for_another_orgs_room_code_is_refused` (controlo positivo: B liga a sua sala e o IVR HTTP devolve-a; A continua a ligar a sua). O caminho gRPC não é testado de novo: a correcção está na criação, a montante das duas validações. Não verificado com FreeSWITCH nem chamada PSTN real.
+
+**Ficheiros.** `server/src/voice.rs`, `server/tests/security_voice_odoo.rs`, `docs/reference/openapi/bff.json`.
