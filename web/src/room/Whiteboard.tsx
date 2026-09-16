@@ -444,6 +444,7 @@ export function Whiteboard({
       </div>
 
       <div className="rm-wb__center">
+        <div className="rm-wb__viewwrap">
         <div className={cx('rm-wb__view', stage?.onStage && 'is-onstage')} ref={viewRef}>
           <div className="rm-wb__sheet" data-theme="light" ref={sheetRef} style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}>
             <canvas ref={canvasRef} />
@@ -455,6 +456,7 @@ export function Whiteboard({
               onPointerUp={onUp}
               onPointerCancel={onUp}
             />
+          </div>
           </div>
           {stage?.onStage && <span className="rm-wb__badge rm-wb__badge--stage dx-num">{t('room.quadro.noPalcoDestinos', { count: stage.destinos })}</span>}
           <div className="rm-wb__zoom" role="group" aria-label={t('room.quadro.zoom')}>
