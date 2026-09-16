@@ -15,5 +15,7 @@ import analytics from './analytics'
 import integrations from './integrations'
 import publico from './publico'
 import consola from './consola'
+import diagrams from './diagrams'
+import player from './player'
 
-export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico, consola }
+export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico, consola, diagrams, player }

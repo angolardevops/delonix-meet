@@ -1,0 +1,59 @@
+/*
+ * Lista dos diagramas guardados neste browser, na página Quadros — importada
+ * por `pages/diagrams/LocalDiagrams.tsx`. Só tokens.
+ */
+.board-local {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.board-local__head h2 {
+  margin: 0;
+  font-size: var(--t-md);
+  font-weight: 600;
+}
+.board-local__head p {
+  margin: 2px 0 0;
+  font-size: var(--t-xs);
+}
+.board-local__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.board-local__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  padding-right: 4px;
+}
+.board-local__open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 12px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: var(--t-sm);
+}
+.board-local__open:hover .board-local__title {
+  color: var(--accent);
+}
+.board-local__open .dx-icon {
+  color: var(--accent);
+}
+.board-local__title {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -22,6 +22,7 @@ import { Icon } from '../../ui/icons'
 import { Alert, Button, IconButton, Spinner, Tag } from '../../ui/kit'
 import { formatBytes, formatDateTime, formatDuration, isFailed, recordingName, thumbBackground } from './format'
 import RecordingNotes from './RecordingNotes'
+import { playerHash } from './studioLink'
 
 type Video = { s: 'idle' } | { s: 'loading' } | { s: 'ready'; url: string } | { s: 'error' }
 
@@ -216,6 +217,9 @@ export default function RecordingPanel({
               {t('recordings.accoes.descarregar')}
             </Button>
           )}
+          <Button size="sm" variant="ghost" icon="maximize" onClick={() => (location.hash = playerHash(rec.id).slice(1))}>
+            {t('player.paginaInteira')}
+          </Button>
           {pipAvailable && video.s === 'ready' && (
             <Button size="sm" variant="ghost" icon="pip" onClick={() => void pip()}>
               {t('recordings.leitor.pip')}
