@@ -78,3 +78,7 @@ tokio-tungstenite = "0.24"
 sqlx = { version = "0.8", features = ["macros"] }
 # Certificados de teste para o mTLS do gRPC interno (tests/grpc.rs).
 rcgen = "0.13"
+# IdP OIDC falso dos testes de segurança (`tests/security_identity.rs`): gera a
+# chave RS256 em memória, a cada corrida — nenhuma chave privada no repositório.
+# Já vinha no Cargo.lock pelo `openidconnect`.
+rsa = "0.9"

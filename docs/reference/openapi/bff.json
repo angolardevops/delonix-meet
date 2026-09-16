@@ -3811,6 +3811,16 @@
             },
             "description": "State desconhecido, já consumido ou expirado."
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Regra de pertença (R130): `sso.account_not_in_org` — a conta existe mas não é membro activo desta organização; `sso.email_domain_mismatch` — conta nova de um domínio que não é o da organização."
+          },
           "404": {
             "content": {
               "application/json": {

@@ -902,6 +902,7 @@ pub async fn sso_login(
         (status = 302, description = "Redirecção para o frontend com o access token no fragmento. Define o cookie `dlx_refresh`."),
         (status = 400, description = "`code`/`state` em falta, ou o IdP não devolveu email.", body = crate::openapi::ErrorBody),
         (status = 401, description = "State desconhecido, já consumido ou expirado.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Regra de pertença (R130): `sso.account_not_in_org` — a conta existe mas não é membro activo desta organização; `sso.email_domain_mismatch` — conta nova de um domínio que não é o da organização.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A configuração SSO da organização foi removida entretanto.", body = crate::openapi::ErrorBody),
         (status = 409, description = "Provisionamento JIT colidiu com email/username existente.", body = crate::openapi::ErrorBody),
         (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
@@ -1008,7 +1009,9 @@ pub async fn sso_callback(
     let sso_provider = claims.issuer().to_string();
     let sso_subject = claims.subject().to_string();
 
-    // Just-in-Time Provisioning: procurar ou criar o utilizador.
+    // Just-in-Time Provisioning: procurar ou criar o utilizador — mas só dentro
+    // da regra de pertença (R130). O IdP é escolhido pelo administrador da org
+    // e pode afirmar o email que quiser: o email não é prova de pertença.
     let existing: Option<crate::users::UserPublic> = sqlx::query_as(&format!(
         "SELECT {} FROM users WHERE email = $1",
         crate::users::USER_PUBLIC_COLUMNS
@@ -1016,6 +1019,47 @@ pub async fn sso_callback(
     .bind(&email)
     .fetch_optional(&state.db)
     .await?;
+
+    let account = match &existing {
+        Some(u) => {
+            // Pertença decide-se em org.rs (catraca, regra 1): `role_in_org`
+            // já filtra `archived_at`.
+            let active = crate::org::role_in_org(&state, entry.org_id, u.id)
+                .await?
+                .is_some();
+            Some(active)
+        }
+        None => None,
+    };
+    let org_domain: String =
+        sqlx::query_scalar("SELECT email_domain FROM organizations WHERE id = $1")
+            .bind(entry.org_id)
+            .fetch_one(&state.db)
+            .await?;
+
+    match sso_login_decision(&email, &org_domain, account) {
+        SsoLoginDecision::LogIn | SsoLoginDecision::Provision => {}
+        SsoLoginDecision::Refuse(code) => {
+            tracing::warn!(%email, org_id = %entry.org_id, code, "SSO recusado: fora da regra de pertença");
+            crate::audit::log(
+                &state.db,
+                Some(entry.org_id),
+                existing.as_ref().map(|u| u.id).unwrap_or(Uuid::nil()),
+                "auth.sso_refused",
+                &email,
+            )
+            .await;
+            let message = match code {
+                SSO_ACCOUNT_NOT_IN_ORG => {
+                    "Esta conta não é membro activo desta organização — o SSO dela não a abre."
+                }
+                _ => "O email devolvido pelo IdP não é do domínio desta organização.",
+            };
+            return Err(ApiError::Domain(
+                delonix_meet_core::DomainError::forbidden(code).with_message(message),
+            ));
+        }
+    }
 
     let user = match existing {
         Some(u) => {
@@ -1108,6 +1152,56 @@ pub async fn sso_callback(
         .into_response())
 }
 
+/// Código estável: a conta existe mas não é membro ACTIVO da org do IdP.
+pub(crate) const SSO_ACCOUNT_NOT_IN_ORG: &str = "sso.account_not_in_org";
+/// Código estável: conta nova de um domínio que não é o da org do IdP.
+pub(crate) const SSO_EMAIL_DOMAIN_MISMATCH: &str = "sso.email_domain_mismatch";
+
+/// O que o callback SSO pode fazer com o email que o IdP afirmou.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SsoLoginDecision {
+    /// Conta existente e membro activo da org: abre sessão.
+    LogIn,
+    /// Sem conta, email do domínio da org: cria a conta como membro.
+    Provision,
+    /// Recusa, com o código estável.
+    Refuse(&'static str),
+}
+
+/// Regra de pertença do SSO (R130, família R25/R122) — a mais restritiva.
+///
+/// O IdP de uma organização é configurado pelo administrador DELA, por isso o
+/// email que devolve só vale dentro da organização:
+/// - conta existente → só se for membro ACTIVO desta org (`account =
+///   Some(true)`). Membro de outra org, arquivado, ou órfã: recusa. Nunca se
+///   junta à org pelo SSO — isso seria o próprio ataque.
+/// - conta nova → só se o domínio do email for o `email_domain` da org, e a
+///   org tiver domínio (uma org sem domínio não cria contas por SSO).
+///
+/// `account`: `None` = não há conta com este email; `Some(activo)`.
+pub(crate) fn sso_login_decision(
+    email: &str,
+    org_domain: &str,
+    account: Option<bool>,
+) -> SsoLoginDecision {
+    match account {
+        Some(true) => SsoLoginDecision::LogIn,
+        Some(false) => SsoLoginDecision::Refuse(SSO_ACCOUNT_NOT_IN_ORG),
+        None => {
+            let org_domain = org_domain.trim().to_lowercase();
+            let email_domain = match email.rsplit_once('@') {
+                Some((local, domain)) if !local.is_empty() => domain.to_lowercase(),
+                _ => String::new(),
+            };
+            if !org_domain.is_empty() && email_domain == org_domain {
+                SsoLoginDecision::Provision
+            } else {
+                SsoLoginDecision::Refuse(SSO_EMAIL_DOMAIN_MISMATCH)
+            }
+        }
+    }
+}
+
 /// `GET /api/auth/sso/enforce?domain=...`
 /// O handler de login local consulta isto para bloquear password quando
 /// a org exige SSO exclusivo.
@@ -1131,6 +1225,49 @@ pub async fn is_sso_enforced(db: &sqlx::PgPool, email: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// R130 — a regra de pertença do SSO, caso a caso.
+    #[test]
+    fn sso_login_decision_is_the_most_restrictive_rule() {
+        use SsoLoginDecision::*;
+        // Membro activo entra; qualquer outra conta existente é recusada,
+        // mesmo com o email no domínio da org.
+        assert_eq!(
+            sso_login_decision("ana@alfa.ao", "alfa.ao", Some(true)),
+            LogIn
+        );
+        assert_eq!(
+            sso_login_decision("ana@alfa.ao", "alfa.ao", Some(false)),
+            Refuse(SSO_ACCOUNT_NOT_IN_ORG)
+        );
+        assert_eq!(
+            sso_login_decision("admin@beta.ao", "alfa.ao", Some(false)),
+            Refuse(SSO_ACCOUNT_NOT_IN_ORG)
+        );
+        // Conta nova: só do domínio da org, e só se a org tiver domínio.
+        assert_eq!(
+            sso_login_decision("nova@alfa.ao", "alfa.ao", None),
+            Provision
+        );
+        assert_eq!(
+            sso_login_decision("nova@alfa.ao", "Alfa.AO ", None),
+            Provision
+        );
+        for (email, dom) in [
+            ("nova@beta.ao", "alfa.ao"),
+            ("nova@sub.alfa.ao", "alfa.ao"),
+            ("nova@alfa.ao", ""),
+            ("@alfa.ao", "alfa.ao"),
+            ("sem-arroba", "alfa.ao"),
+            ("x@evil.ao@alfa.ao", "evil.ao"),
+        ] {
+            assert_eq!(
+                sso_login_decision(email, dom, None),
+                Refuse(SSO_EMAIL_DOMAIN_MISMATCH),
+                "{email} em {dom:?}"
+            );
+        }
+    }
 
     /// As respostas de login passaram de `json!` a tipos (OpenAPI): o JSON
     /// tem de continuar igual ao que o web já lê.

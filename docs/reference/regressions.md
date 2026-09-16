@@ -1721,3 +1721,14 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Regra.** `401` é só «não sei quem és». Sem o papel: `403`. Recurso de outra organização ou reunião de que não és membro: `404` — não se confirma que existe. 22 asserções dos testes de caracterização mudaram com intenção (18× `401→403`, 3× `401→404`), e o OpenAPI descreve os três casos em separado.
 
 **Ficheiros.** `server/src/{org,rooms,whiteboards,actions}.rs`, `server/tests/{content,organization,scheduling}.rs`. Por fazer: as mesmas guardas em `meetings.rs` e `recordings.rs` (esta última foi reescrita no G4–G6 com 403/404).
+### R130 — O SSO de uma organização abria sessão em contas de OUTRA organização
+
+**Sintoma.** Nenhum para a vítima. O administrador de uma organização configura o IdP OIDC dela (`PUT /api/orgs/{id}/sso`) — e portanto controla o email que esse IdP afirma. Bastava o IdP devolver `admin@outra-org` para o `/api/auth/sso/callback` responder `302` com uma sessão da vítima. O mesmo callback criava contas de QUALQUER domínio e juntava-as à org, e reabria a porta a membros arquivados. Provado a 2026-09-16 contra Postgres real e um IdP OIDC falso (discovery, JWKS, id_token RS256): antes da correcção, `left: (302, Some("<id da vítima>"))`.
+
+**Causa raiz.** O callback tratava o email do id_token como prova de pertença: `SELECT … FROM users WHERE email = $1` e, se existisse, abria sessão; se não, criava e juntava. A assinatura do id_token prova só que o IdP da org o disse — e esse IdP é escolhido por quem administra a org.
+
+**Regra.** Família R25/R122, na forma mais restritiva (`auth::sso_login_decision`): o SSO da org X só (a) abre sessão numa conta que seja membro ACTIVO de X, ou (b) cria conta nova se o domínio do email for o `email_domain` (não vazio) de X. Conta existente fora de X → `403 sso.account_not_in_org`; conta nova de outro domínio → `403 sso.email_domain_mismatch`. Nunca se junta uma conta existente à org pelo SSO. A recusa fica na auditoria (`auth.sso_refused`).
+
+**Portão.** `server/tests/security_identity.rs::{sso_callback_refuses_account_of_another_org, sso_jit_only_creates_accounts_of_the_org_domain, sso_refuses_archived_member}` (controlo positivo em cada: o membro activo entra, o JIT do próprio domínio cria), e `auth::tests::sso_login_decision_is_the_most_restrictive_rule`. Não validado contra um IdP real (Google, Entra, Okta); o `email_verified` do id_token continua sem ser lido.
+
+**Ficheiros.** `server/src/auth.rs`, `server/tests/security_identity.rs`, `server/Cargo.toml` (`rsa` em dev-dependencies, para a chave do IdP falso gerada em memória).
