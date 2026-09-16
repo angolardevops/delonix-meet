@@ -86,7 +86,26 @@ impl TestApp {
             .acquire_owned()
             .await
             .expect("semáforo dos testes fechado");
-        let mut config = test_config(extra);
+        let config = test_config(extra);
+        Self::spawn_with_config_inner(db, config, slot).await
+    }
+
+    /// Como `spawn_with`, mas com uma `Config` já montada e ajustada pelo teste
+    /// (p.ex. sem `secret_box`, para provar a recusa sem chaves de cifra).
+    pub async fn spawn_with_config(db: PgPool, config: Config) -> Self {
+        let slot = ACTIVE_TESTS
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("semáforo dos testes fechado");
+        Self::spawn_with_config_inner(db, config, slot).await
+    }
+
+    async fn spawn_with_config_inner(
+        db: PgPool,
+        mut config: Config,
+        slot: tokio::sync::OwnedSemaphorePermit,
+    ) -> Self {
         let dir = std::env::temp_dir().join(format!("delonix-it-{}", uuid::Uuid::new_v4()));
         config.recordings_dir = dir;
         let state = build_state(config, db.clone()).await;

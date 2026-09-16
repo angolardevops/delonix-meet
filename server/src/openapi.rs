@@ -118,6 +118,7 @@ fn bff_parts() -> Vec<utoipa::openapi::OpenApi> {
         PlatformDoc::openapi(),
         crate::users::ApiDoc::openapi(),
         crate::webhooks::ApiDoc::openapi(),
+        crate::stream_destinations::ApiDoc::openapi(),
         crate::meetings::ApiDoc::openapi(),
         crate::actions::ApiDoc::openapi(),
         crate::presence::ApiDoc::openapi(),

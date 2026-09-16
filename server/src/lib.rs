@@ -36,6 +36,7 @@ mod sfu;
 mod sfu_e2e;
 mod signaling;
 mod storage;
+mod stream_destinations;
 mod transcription;
 mod ui;
 mod users;
@@ -311,6 +312,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/orgs/{org_id}/webhooks", get(webhooks::list).post(webhooks::create))
         .route("/api/orgs/{org_id}/webhooks/{hook_id}", axum::routing::delete(webhooks::delete))
+        // ---- Destinos de emissão em directo (G1) ----
+        .route(
+            "/api/orgs/{org_id}/stream-destinations",
+            get(stream_destinations::list).post(stream_destinations::create),
+        )
+        .route(
+            "/api/orgs/{org_id}/stream-destinations/{dest_id}",
+            get(stream_destinations::get_one)
+                .patch(stream_destinations::update)
+                .delete(stream_destinations::delete),
+        )
+        .route(
+            "/api/orgs/{org_id}/stream-destinations/{dest_id}/rotate-key",
+            post(stream_destinations::rotate_key),
+        )
         // ---- Dial-in PSTN (control plane) ----
         .route("/api/voice/rooms", post(voice::create_room))
         .route("/api/voice/rooms/{id}", get(voice::get_room))

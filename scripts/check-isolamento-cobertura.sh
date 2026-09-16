@@ -28,7 +28,11 @@ while read -r rota; do
   sufixo=${rota#/api/orgs/\{org_id\}}
   alvo=$(echo "$sufixo" | sed 's/{[a-z_]*}//g; s|/$||')
   [ -z "$alvo" ] && continue
-  if ! grep -q "orgId}${alvo}" "$ISO"; then
+  # Um parâmetro a MEIO do caminho (`/x/{id}/rotate-key`) é interpolado no
+  # teste (`/x/${id}/rotate-key`): o padrão aceita qualquer `${…}` no sítio de
+  # cada `{param}`. Sem isto, só rotas com o parâmetro no FIM eram verificáveis.
+  padrao=$(echo "$sufixo" | sed -E 's/[.[\*^$]/\\&/g; s/\{[a-z_]+\}/\\$\\{[^}]+\\}/g')
+  if ! grep -q "orgId}${alvo}" "$ISO" && ! grep -qE "orgId\}${padrao}" "$ISO"; then
     echo "✗ isolamento: $rota não é exercitada por $ISO"
     falta=1
   fi

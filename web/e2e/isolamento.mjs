@@ -181,6 +181,26 @@ if (chaveB.status >= 200 && chaveB.status < 300 && chaveB.json?.id) {
   nok('B cria uma chave de API para o teste', `devolveu ${chaveB.status}`)
 }
 
+// Destinos de emissão guardados (G1): a chave RTMP é credencial de terceiros.
+await recusado('A lista destinos de emissão da org B', `/api/orgs/${B.orgId}/stream-destinations`, { token: A.token })
+const destinoB = await req(`/api/orgs/${B.orgId}/stream-destinations`, {
+  token: B.token, method: 'POST',
+  body: { kind: 'rtmp', label: 'Destino da B', url: 'rtmp://10.0.0.9/live', stream_key: 'chave-da-b' },
+})
+if (destinoB.status === 201 && destinoB.json?.id) {
+  const d = `/api/orgs/${B.orgId}/stream-destinations/${destinoB.json.id}`
+  await recusado('A lê um destino da org B', d, { token: A.token })
+  await recusado('A roda a chave de um destino da org B', `/api/orgs/${B.orgId}/stream-destinations/${destinoB.json.id}/rotate-key`, {
+    token: A.token, method: 'POST', body: { stream_key: 'roubada' },
+  })
+  await recusado('A apaga um destino da org B', d, { token: A.token, method: 'DELETE' })
+  const ainda = await req(d, { token: B.token })
+  if (ainda.status === 200 && ainda.json?.key_prefix === 'chav') ok('e o destino da B CONTINUA LÁ, com a chave dela')
+  else nok('e o destino da B CONTINUA LÁ, com a chave dela', `devolveu ${ainda.status}: ${JSON.stringify(ainda.json).slice(0, 120)}`)
+} else {
+  nok('B cria um destino de emissão para o teste', `devolveu ${destinoB.status}: ${JSON.stringify(destinoB.json).slice(0, 120)}`)
+}
+
 const hookB = await req(`/api/orgs/${B.orgId}/webhooks`, {
   token: B.token, method: 'POST',
   body: { kind: 'generic', url: 'https://example.com/hook', secret: 's3cr3t-de-teste' },

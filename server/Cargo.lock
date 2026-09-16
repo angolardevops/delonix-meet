@@ -770,6 +770,7 @@ dependencies = [
  "chrono",
  "delonix-meet-core",
  "serde",
+ "url",
  "uuid",
 ]
 
