@@ -117,6 +117,9 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true)
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw new ApiError(res.status, body, body?.error ?? res.statusText ?? 'request failed')
   }
+  // 204 não tem corpo: `res.json()` rejeitava com SyntaxError e um DELETE bem
+  // sucedido chegava a quem chama como falha.
+  if (res.status === 204) return undefined as T
   return res.json()
 }
 
@@ -618,7 +621,8 @@ export interface Branch {
   name: string
   location: string
 }
-export interface Employee {
+/** `phone`/`phone_source`/`can_sms` vêm da extensão de SMS (ADR-0005 §Contactos). */
+export interface Employee extends Partial<EmployeeSmsFields> {
   user_id: string
   username: string
   email: string
@@ -1661,3 +1665,129 @@ export const voiceBilling = (orgId: string, period: VoicePeriod = 'month', signa
 
 /** Tecto de upload de uma gravação no servidor (recordings.rs MAX_RECORDING_BYTES). */
 export const MAX_RECORDING_UPLOAD_BYTES = 512 * 1024 * 1024
+
+// ---------- delonix-meet-backend/sms-contactos ----------
+// SMS a contactos e de reunião (ADR-0005 §Contactos). Só o cliente de API: os
+// ecrãs são da UI nova (`frontend/ui-template-rebuild`). O número de um
+// contacto NUNCA sai daqui — manda-se o `user_id` e o servidor resolve-o.
+
+export type SmsPurpose = 'direct' | 'contact' | 'meeting_invite' | 'meeting_reminder'
+export type SmsStatus = 'queued' | 'claimed' | 'sent' | 'failed'
+
+export interface SmsMessage {
+  id: string
+  /** E.164 para admin; mascarado (`+244*******00`) para um membro. */
+  to: string
+  body: string
+  encoding: 'gsm7' | 'ucs2'
+  segments: number
+  route: 'usb' | 'operator'
+  operator: string | null
+  device_id: string | null
+  status: SmsStatus
+  error: string | null
+  provider_ref: string | null
+  created_at: string
+  sent_at: string | null
+  purpose: SmsPurpose
+  recipient_user_id: string | null
+  meeting_id: string | null
+  created_by: string | null
+}
+
+/** Campos que `GET /api/orgs/{id}/employees` acrescenta a cada `Employee`. */
+export interface EmployeeSmsFields {
+  /** Só para admin ou o próprio; `null` para colegas. */
+  phone: string | null
+  phone_source: 'odoo' | 'manual' | null
+  /** Tem número e não desligou SMS de contactos. */
+  can_sms: boolean
+}
+
+export type SmsSendPolicy = 'admins' | 'members'
+
+/** Códigos estáveis no início de `error` (ver `smsErrorCode`). */
+export type SmsErrorCode =
+  | 'sms.recipient_opted_out'
+  | 'sms.recipient_no_phone'
+  | 'sms.target_ambiguous'
+  | 'sms.target_missing'
+  | 'sms.idempotency_key_in_use'
+  | 'sms.reminder_recurring_unsupported'
+  | 'sms.no_org'
+
+/** Extrai o código `sms.*` do texto de erro do servidor, se houver. */
+export function smsErrorCode(message: string): SmsErrorCode | null {
+  const m = /^(sms\.[a-z_]+)(?::|$)/.exec(message.trim())
+  return (m?.[1] as SmsErrorCode | undefined) ?? null
+}
+
+/** Envia a um contacto da org. `idempotencyKey`: uma por intenção de envio (repetir não duplica). */
+export const sendSmsToContact = (
+  orgId: string,
+  body: { user_id: string; body: string; route?: 'auto' | 'usb' | 'operator' },
+  idempotencyKey?: string,
+) =>
+  request<SmsMessage>(`/api/orgs/${orgId}/sms/messages`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {},
+  })
+
+/** Admin vê todas as mensagens da org; membro vê só as que enviou. */
+export const listSmsMessages = (orgId: string, pageSize = 50) =>
+  request<{ items: SmsMessage[]; next_page_token: string | null }>(
+    `/api/orgs/${orgId}/sms/messages?page_size=${pageSize}`,
+  )
+
+export const getSmsMessage = (orgId: string, messageId: string) =>
+  request<SmsMessage>(`/api/orgs/${orgId}/sms/messages/${messageId}`)
+
+export const getSmsPolicy = (orgId: string) =>
+  request<{ send_policy: SmsSendPolicy }>(`/api/orgs/${orgId}/sms/policy`)
+
+export const setSmsPolicy = (orgId: string, sendPolicy: SmsSendPolicy) =>
+  request<{ send_policy: SmsSendPolicy }>(`/api/orgs/${orgId}/sms/policy`, {
+    method: 'PUT',
+    body: JSON.stringify({ send_policy: sendPolicy }),
+  })
+
+/** O próprio ou um admin. `phone: null` apaga (fica `manual`); `follow_directory` devolve o campo ao Odoo. */
+export const setMemberPhone = (
+  orgId: string,
+  userId: string,
+  change: { phone: string | null } | { follow_directory: true },
+) =>
+  request<{ user_id: string; phone: string | null; phone_source: 'manual' | null }>(
+    `/api/orgs/${orgId}/employees/${userId}/phone`,
+    { method: 'PUT', body: JSON.stringify(change) },
+  )
+
+export interface SmsPreferences {
+  contact_opt_out: boolean
+  meeting_opt_out: boolean
+  phones: { org_id: string; org_name: string; phone: string | null; phone_source: 'odoo' | 'manual' | null }[]
+}
+
+export const getSmsPreferences = () => request<SmsPreferences>('/api/users/me/sms-preferences')
+
+export const setSmsPreferences = (prefs: { contact_opt_out?: boolean; meeting_opt_out?: boolean }) =>
+  request<SmsPreferences>('/api/users/me/sms-preferences', { method: 'PUT', body: JSON.stringify(prefs) })
+
+export interface MeetingSmsOptions {
+  sms_invite?: boolean
+  /** 5–1440; recusado (422) com recorrência. */
+  sms_reminder_min?: number | null
+}
+
+export interface MeetingSmsReport {
+  invite: { queued: number; skipped: { user_id: string; reason: string }[] } | null
+  reminder_min: number | null
+}
+
+/** `createMeeting` com as opções de SMS; `sms` só vem quando foram pedidas. */
+export const createMeetingWithSms = (m: Parameters<typeof createMeeting>[0] & MeetingSmsOptions) =>
+  request<Meeting & { conflicts: Conflicts; sms?: MeetingSmsReport }>('/api/meetings', {
+    method: 'POST',
+    body: JSON.stringify(m),
+  })

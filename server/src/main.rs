@@ -35,6 +35,10 @@ mod sfu;
 #[cfg(test)]
 mod sfu_e2e;
 mod signaling;
+mod sms;
+mod sms_codec;
+mod sms_notify;
+mod sms_smpp;
 mod storage;
 mod stream_destinations;
 mod users;
@@ -106,6 +110,12 @@ pub struct AppState {
     pub v1_limiter: RateLimiter,
     /// Anti-brute-force de PIN no dial-in PSTN (por DID). Só conta falhas.
     pub voice_pin_limiter: RateLimiter,
+    /// Envios de SMS por organização (ADR-0005). Um SMS custa dinheiro: é o
+    /// travão contra um admin comprometido ou um script descontrolado.
+    pub sms_send_limiter: RateLimiter,
+    /// Envios de SMS por utilizador dentro de uma org (chave `org:user`). Com a
+    /// política `members`, um membro não esgota sozinho a quota da org.
+    pub sms_user_limiter: RateLimiter,
     /// Salas de grupo ativas: sala principal -> conjunto de salas filhas.
     pub breakouts: dashmap::DashMap<uuid::Uuid, signaling::BreakoutSet>,
     /// Cliente HTTP partilhado para envio de webhooks (sem redirects, timeout 8s).
@@ -175,6 +185,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/users/me/mfa/enrol", post(mfa::inscrever))
         .route("/api/users/me/mfa/activate", post(mfa::activar))
         .route("/api/users/me/mfa/disable", post(mfa::desactivar))
+        // Consentimento de SMS da pessoa (contactos / reuniões) e os seus telefones.
+        .route("/api/users/me/sms-preferences", get(sms::get_preferences).put(sms::put_preferences))
         // /api/mls NÃO está registado — de propósito. O `mls.rs` descreve a
         // interface MLS pretendida (RFC 9420) mas os handlers são stubs: não
         // guardam nada, não verificam nada, e devolviam 201/200/202 com
@@ -327,6 +339,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/orgs/{org_id}/branches", get(org::list_branches).post(org::create_branch))
         .route("/api/orgs/{org_id}/employees", get(org::list_employees).post(org::add_employee))
         .route("/api/orgs/{org_id}/employees/{user_id}", axum::routing::delete(org::remove_employee).patch(org::update_employee))
+        // Telefone do membro (o próprio ou admin) — ver sms::put_member_phone.
+        .route("/api/orgs/{org_id}/employees/{user_id}/phone", axum::routing::put(sms::put_member_phone))
         .route("/api/orgs/{org_id}/groups", get(org::list_groups).post(org::create_group))
         .route("/api/orgs/{org_id}/meeting-rooms", get(org::list_meeting_rooms).post(org::create_meeting_room))
         .route("/api/orgs/{org_id}/stats", get(org::org_stats))
@@ -370,6 +384,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/voice/ivr/validate", post(voice::ivr_validate_pin))
         .route("/api/voice/ivr/cdr", post(voice::ivr_record_cdr))
         // Gestão de chaves de API (admin da org, sessão)
+        // Gateway de SMS (ADR-0005): consola da org (sessão, admin) e agente USB (token dlxg_).
+        .route("/api/orgs/{org_id}/sms/gateways", get(sms::list_gateways).post(sms::create_gateway))
+        .route("/api/orgs/{org_id}/sms/gateways/{gateway_id}", axum::routing::delete(sms::revoke_gateway))
+        .route("/api/orgs/{org_id}/sms/devices", get(sms::list_devices))
+        .route("/api/orgs/{org_id}/sms/route", get(sms::get_route).put(sms::put_route))
+        .route("/api/orgs/{org_id}/sms/policy", get(sms::get_policy).put(sms::put_policy))
+        .route("/api/orgs/{org_id}/sms/messages", get(sms::list_messages).post(sms::send_message))
+        .route("/api/orgs/{org_id}/sms/messages/{message_id}", get(sms::get_message))
+        .route("/api/sms/agent/devices", axum::routing::put(sms::agent_put_devices))
+        .route("/api/sms/agent/claim", post(sms::agent_claim))
+        .route("/api/sms/agent/messages/{message_id}/result", post(sms::agent_result))
         .route("/api/orgs/{org_id}/api-keys", get(apikeys::list).post(apikeys::create))
         .route("/api/orgs/{org_id}/api-keys/{key_id}", axum::routing::delete(apikeys::revoke))
         // ---- Integração Odoo (nk_delonix_meet) ----
@@ -592,6 +617,11 @@ async fn main() {
         login_limiter: RateLimiter::new(8, Duration::from_secs(300)),
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
+        sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
+        sms_user_limiter: RateLimiter::new(
+            sms::USER_SENDS_PER_WINDOW,
+            Duration::from_secs(sms::USER_SEND_WINDOW_SECS),
+        ),
         webhook_client,
         config: config.clone(),
         redis_bus: redis_bus.clone(),
@@ -762,6 +792,9 @@ async fn main() {
             }
         });
     }
+
+    // Gateway de SMS: envio pelos operadores e varrimento das mensagens paradas.
+    sms::spawn_worker(state.clone());
 
     let app = build_router(state.clone());
     let listener = tokio::net::TcpListener::bind(&config.bind_addr)

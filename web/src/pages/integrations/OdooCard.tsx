@@ -109,7 +109,52 @@ function OdooForm({ orgId, initial, onSaved }: { orgId: string; initial: OdooCon
 
   return (
     <div className="integ-stack">
-      <Toggle label={t('integrations.odoo.activar')} checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+      {/* Os quatro mosaicos do template: o que se liga e desliga nesta
+          integração, e o token — o que o servidor guarda, nada mais. */}
+      <div className="integ-tiles">
+        <div className="integ-tile">
+          <Toggle label={t('integrations.odoo.activar')} hint={t('integrations.odoo.sub')} checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        </div>
+        <section className="integ-tile integ-tile--token" aria-labelledby="odoo-token-h">
+          <span className="integ-tile__text">
+            <strong id="odoo-token-h">{t('integrations.odoo.token')}</strong>
+            <small className="dx-num">{prefix ? t('integrations.prefixo', { prefixo: prefix }) : t('integrations.odoo.semTokenCurto')}</small>
+          </span>
+          <button
+            type="button"
+            className="integ-inline-link"
+            disabled={rotating}
+            aria-busy={rotating || undefined}
+            onClick={() => (prefix ? setConfirmRotate(true) : void generate())}
+          >
+            {prefix ? t('integrations.odoo.rodarCurto') : t('integrations.odoo.gerarCurto')}
+          </button>
+        </section>
+        <div className="integ-tile">
+          <Toggle label={t('integrations.odoo.ocultarCriarOrg')} hint={t('integrations.odoo.visibilidadeCurta')} checked={hideOrg} onChange={(e) => setHideOrg(e.target.checked)} />
+        </div>
+        <div className="integ-tile">
+          <Toggle label={t('integrations.odoo.ocultarSso')} hint={t('integrations.odoo.visibilidadeCurta')} checked={hideSso} onChange={(e) => setHideSso(e.target.checked)} />
+        </div>
+      </div>
+      {!prefix && <span className="dx-muted integ-small">{t('integrations.odoo.semToken')}</span>}
+      {token && <SecretOnce value={token} note={t('integrations.odoo.tokenUmaVez')} />}
+
+      <div className="integ-panel">
+        <div className="dx-eyebrow">{t('integrations.odoo.ultimaSync')}</div>
+        <div className="integ-sync">
+          <span className="dx-num dx-muted">
+            {initial.odoo_synced_at ? fmt(initial.odoo_synced_at) : t('integrations.odoo.nuncaSincronizou')}
+          </span>
+          {pub.state.s === 'ready' && (
+            <span className="dx-chips" title={t('integrations.odoo.emVigorDica')}>
+              <span className="dx-muted">{t('integrations.odoo.emVigor')}</span>
+              <Tag>{pub.state.d.hide_org_creation ? t('integrations.odoo.criarContaOculto') : t('integrations.odoo.criarContaVisivel')}</Tag>
+              <Tag>{pub.state.d.hide_sso_button ? t('integrations.odoo.ssoOculto') : t('integrations.odoo.ssoVisivel')}</Tag>
+            </span>
+          )}
+        </div>
+      </div>
 
       <div className="integ-grid2">
         <Field label={t('integrations.odoo.url')} htmlFor="odoo-url">
@@ -120,69 +165,10 @@ function OdooForm({ orgId, initial, onSaved }: { orgId: string; initial: OdooCon
         </Field>
       </div>
 
-      <section className="integ-panel" aria-labelledby="odoo-token-h">
-        <div className="integ-panel__head">
-          <h3 id="odoo-token-h" className="dx-eyebrow">
-            {t('integrations.odoo.token')}
-          </h3>
-          <span className="dx-spacer" />
-          {prefix ? (
-            <Button size="sm" icon="refresh" busy={rotating} onClick={() => setConfirmRotate(true)}>
-              {t('integrations.odoo.rodarToken')}
-            </Button>
-          ) : (
-            <Button size="sm" variant="outline" icon="key" busy={rotating} onClick={() => void generate()}>
-              {t('integrations.odoo.gerarToken')}
-            </Button>
-          )}
-        </div>
-        {prefix ? (
-          <code className="dx-num integ-prefix">{t('integrations.prefixo', { prefixo: prefix })}</code>
-        ) : (
-          <span className="dx-muted integ-small">{t('integrations.odoo.semToken')}</span>
-        )}
-        {token && <SecretOnce value={token} note={t('integrations.odoo.tokenUmaVez')} />}
-      </section>
-
-      <div className="integ-panel">
-        <div className="dx-eyebrow">{t('integrations.odoo.ultimaSync')}</div>
-        <span className="dx-num integ-small">
-          {initial.odoo_synced_at ? fmt(initial.odoo_synced_at) : t('integrations.odoo.nuncaSincronizou')}
-        </span>
-      </div>
-
-      <section className="integ-stack" aria-labelledby="odoo-vis-h">
-        <h3 id="odoo-vis-h" className="dx-eyebrow">
-          {t('integrations.odoo.visibilidade')}
-        </h3>
-        <Toggle
-          label={t('integrations.odoo.ocultarCriarOrg')}
-          hint={t('integrations.odoo.ocultarCriarOrgDica')}
-          checked={hideOrg}
-          onChange={(e) => setHideOrg(e.target.checked)}
-        />
-        <Toggle
-          label={t('integrations.odoo.ocultarSso')}
-          hint={t('integrations.odoo.ocultarSsoDica')}
-          checked={hideSso}
-          onChange={(e) => setHideSso(e.target.checked)}
-        />
-        {pub.state.s === 'ready' && (
-          <div className="integ-effective">
-            <span className="dx-muted">{t('integrations.odoo.emVigor')}</span>
-            <span className="dx-chips">
-              <Tag>{pub.state.d.hide_org_creation ? t('integrations.odoo.criarContaOculto') : t('integrations.odoo.criarContaVisivel')}</Tag>
-              <Tag>{pub.state.d.hide_sso_button ? t('integrations.odoo.ssoOculto') : t('integrations.odoo.ssoVisivel')}</Tag>
-            </span>
-            <span className="dx-muted integ-small">{t('integrations.odoo.emVigorDica')}</span>
-          </div>
-        )}
-      </section>
-
       {err && <Alert tone="danger">{err}</Alert>}
       {ok && <Alert tone="success">{t('integrations.guardado')}</Alert>}
       <div className="integ-actions">
-        <Button variant="primary" busy={busy} onClick={() => void save()}>
+        <Button variant="primary" size="sm" busy={busy} onClick={() => void save()}>
           {t('ui.guardar')}
         </Button>
       </div>

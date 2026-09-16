@@ -12,14 +12,13 @@ use axum::{
 };
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{auth::AuthUser, error::ApiError, AppState};
 
 fn sha256_hex(s: &str) -> String {
-    hex::encode(Sha256::digest(s.as_bytes()))
+    crate::crypto::sha256_hex(s)
 }
 
 // ---------- Autenticação por chave de API (extractor) ----------
@@ -43,14 +42,7 @@ impl FromRequestParts<Arc<AppState>> for ApiKeyAuth {
             .get("x-api-key")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
-            .or_else(|| {
-                parts
-                    .headers
-                    .get(axum::http::header::AUTHORIZATION)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|h| h.strip_prefix("Bearer "))
-                    .map(|s| s.to_string())
-            })
+            .or_else(|| crate::auth::bearer_token(&parts.headers).map(str::to_string))
             .ok_or(ApiError::Unauthorized)?;
         if !raw.starts_with("dlx_") {
             return Err(ApiError::Unauthorized);
@@ -120,9 +112,7 @@ pub async fn create(
     Json(req): Json<CreateKeyReq>,
 ) -> Result<Json<CreatedKey>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-    let mut bytes = [0u8; 32]; // 256 bits de entropia
-    OsRng.fill_bytes(&mut bytes);
-    let key = format!("dlx_{}", hex::encode(bytes));
+    let key = crate::crypto::random_token("dlx_"); // 256 bits de entropia
     let prefix = key.chars().take(12).collect::<String>();
     let hash = sha256_hex(&key);
     let name = req.name.trim().chars().take(60).collect::<String>();
@@ -724,9 +714,7 @@ pub async fn v1_provision_org(
     .await?;
 
     // Chave de API da org (mesma geração que apikeys::create).
-    let mut bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut bytes);
-    let key = format!("dlx_{}", hex::encode(bytes));
+    let key = crate::crypto::random_token("dlx_");
     let prefix = key.chars().take(12).collect::<String>();
     let hash = sha256_hex(&key);
     let key_name: String = req

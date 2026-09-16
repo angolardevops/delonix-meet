@@ -2,9 +2,9 @@
 #   BLESS=1 bash scripts/check-arquitectura-catraca.sh
 # Só se baixa. Subir um número é aceitar uma cópia nova — não se faz aqui.
 pertenca_org_fora_de_org_rs=22
-authorization_lido_a_mao=3
+authorization_lido_a_mao=1
 clientes_reqwest=3
-primitivas_cripto_espalhadas=17
+primitivas_cripto_espalhadas=12
 funcoes_sufixo_pub=7
 respostas_ok_true=28
 rotas_v1_com_sessao=4

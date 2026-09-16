@@ -32,8 +32,7 @@ vivo antes de fechadas (R121):
 | S3 | Um membro arquivado mantinha acesso | `archived_at IS NULL` em quem PEDE | verificar pertença à mão fora de `org.rs` |
 
 **Ainda abertos** — quem tocar nestes caminhos fecha-os ou nomeia-os:
-- `org::add_employee` liga uma conta EXISTENTE por email, limitado só pelo domínio da
-  org — e o registo não verifica emails, por isso o domínio não prova nada;
+- ~~`org::add_employee`~~ fechado no #78 (R122): recusa uma conta já membro de outra org;
 - `odoo::list_users` devolve membros arquivados ao Odoo;
 - S4 (SSRF no `odoo_url`, WebDAV, OIDC), S5 (segredos em claro), S6 (chaves sem escopos).
 

@@ -15,6 +15,7 @@ function Stat({
   icon,
   label,
   value,
+  row,
   sub,
   used,
   max,
@@ -22,24 +23,28 @@ function Stat({
   icon: IconName
   label: string
   value: string | null
+  /** Rótulo da linha mono do valor (o «Sessões 41 / 80» do template). */
+  row: string
   sub?: string | null
   used?: number
   max?: number | null
 }) {
   const { t } = useTranslation()
   const pct = max != null && max > 0 && used != null ? Math.round((used / max) * 100) : null
+  const warn = pct != null && pct >= 90
   return (
-    <div className="org-stat">
+    <div className={warn ? 'org-stat org-stat--warn' : 'org-stat'}>
       <div className="org-stat__head">
-        <Icon name={icon} />
+        <Icon name={icon} size={12} />
         <span>{label}</span>
-        {pct != null && pct >= 90 && (
-          <span className="org-stat__warn">{pct >= 100 ? t('org.quota.atingida') : t('org.quota.perto')}</span>
-        )}
+        {warn && <span className="org-stat__warn">{pct >= 100 ? t('org.quota.atingida') : t('org.quota.perto')}</span>}
       </div>
-      <div className="org-stat__value dx-num">{value ?? <Skeleton h={20} w="50%" />}</div>
-      {max != null && used != null && <Meter value={max === 0 ? 100 : (used / max) * 100} tone={pct != null && pct >= 90 ? 'live' : 'success'} />}
-      {sub && <div className="org-stat__sub dx-muted dx-num">{sub}</div>}
+      <div className="org-stat__sub dx-muted dx-num">{sub ?? '\u00a0'}</div>
+      {max != null && used != null && <Meter value={max === 0 ? 100 : (used / max) * 100} tone={warn ? 'live' : 'success'} />}
+      <div className="org-stat__row dx-num">
+        <span>{row}</span>
+        <span className="org-stat__value">{value ?? <Skeleton h={10} w={40} />}</span>
+      </div>
     </div>
   )
 }
@@ -71,12 +76,14 @@ export default function CapacityRow({
       <Stat
         icon="people"
         label={t('org.capacidade.pessoas')}
+        row={t('consola.admin.total')}
         value={s ? String(s.members_total) : dash}
         sub={s ? t('org.capacidade.activas30', { count: s.active_users_30d }) : failed ? stats.msg : null}
       />
       <Stat
         icon="people"
         label={t('org.capacidade.grupos')}
+        row={t('consola.admin.emUso')}
         value={of(groups, maxGroups)}
         used={groups ?? undefined}
         max={maxGroups}
@@ -85,6 +92,7 @@ export default function CapacityRow({
       <Stat
         icon="door"
         label={t('org.capacidade.salas')}
+        row={t('consola.admin.emUso')}
         value={of(rooms, maxRooms)}
         used={rooms ?? undefined}
         max={maxRooms}
@@ -93,6 +101,7 @@ export default function CapacityRow({
       <Stat
         icon="film"
         label={t('org.capacidade.gravacoes')}
+        row={t('consola.admin.volume')}
         value={s ? formatBytes(s.recordings_bytes, locale) : dash}
         sub={s ? t('org.capacidade.ficheiros', { count: s.recordings_total }) : null}
       />

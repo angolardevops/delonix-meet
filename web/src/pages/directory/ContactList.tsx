@@ -1,17 +1,22 @@
 /**
- * Coluna de contactos: pesquisa, filtros, separadores Pessoas · Grupos ·
- * Perdidas, e a lista com presença. Ligar de uma linha é o atalho; o detalhe
- * tem as duas opções (vídeo e voz).
+ * Coluna de contactos das Chamadas (296 px, como no DelonixCall): marca e
+ * título, pesquisa, separadores Contactos · Grupos · Histórico e a lista com
+ * presença. Cada linha tem os atalhos voz, vídeo e — quando o servidor diz que
+ * a pessoa recebe e a org deixa enviar — SMS; o centro tem as mesmas três.
+ *
+ * O separador «Teclado» e a marcação PSTN do template não existem aqui: não há
+ * chamadas de saída no servidor. No lugar do teclado ficam os grupos, que
+ * existem e se ligam (a quem estiver online).
  */
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Branch, Employee, Group } from '../../api'
 import type { MissedCall } from '../../presence'
-import { Icon } from '../../ui/icons'
-import { Avatar, cx, IconButton, Select, Tabs } from '../../ui/kit'
-import { formatAgo, useLocaleTag } from '../admin/orgShared'
+import { DelonixSymbol, Icon } from '../../ui/icons'
+import { Avatar, cx, IconButton, Select } from '../../ui/kit'
+import CallHistory from './CallHistory'
 
-export type DirTab = 'people' | 'groups' | 'missed'
+export type DirTab = 'people' | 'groups' | 'history'
 export type Selection = { kind: 'person'; id: string } | { kind: 'group'; id: string } | { kind: 'org' } | null
 
 export default function ContactList({
@@ -27,16 +32,18 @@ export default function ContactList({
   missed,
   meId,
   isOnline,
-  onlineCount,
-  selection,
+  focus,
   onSelect,
   onCallPerson,
+  smsFor,
   onCallGroup,
   onCallBack,
   onAckMissed,
   onNewGroup,
+  orgId,
+  isAdmin,
+  orgPicker,
   pending,
-  phoneHistory,
 }: {
   tab: DirTab
   onTab: (t: DirTab) => void
@@ -50,28 +57,53 @@ export default function ContactList({
   missed: MissedCall[]
   meId: string
   isOnline: (id: string) => boolean
-  onlineCount: number
-  selection: Selection
+  /** O que está em foco no centro (escolhido ou o primeiro da lista). */
+  focus: Selection
   onSelect: (s: Selection) => void
   onCallPerson: (p: Employee, kind: 'video' | 'voice') => void
+  /** Abre o SMS a esta pessoa; `undefined` quando não se pode (sem número, recusou, política). */
+  smsFor: (p: Employee) => (() => void) | undefined
   onCallGroup: (g: Group, kind: 'video' | 'voice') => void
   onCallBack: (m: MissedCall) => void
   onAckMissed: () => void
   onNewGroup: () => void
+  orgId: string
+  isAdmin: boolean
+  orgPicker: ReactNode
   /** O que mostrar no lugar da lista enquanto carrega ou quando falhou. */
   pending: ReactNode
-  /** Histórico PSTN (só para quem administra), por baixo das perdidas no separador «Histórico». */
-  phoneHistory?: ReactNode
 }) {
   const { t } = useTranslation()
-  const locale = useLocaleTag()
+  const tabs: { value: DirTab; label: string; count?: number }[] = [
+    { value: 'people', label: t('consola.chamadas.contactos') },
+    { value: 'groups', label: t('org.dir.grupos') },
+    { value: 'history', label: t('consola.contactos.historico'), count: missed.length },
+  ]
 
   return (
-    <aside className="org-dir__list" aria-label={t('org.dir.lista')}>
-      <div className="org-dir__head">
-        {(tab === 'people' || tab === 'groups') && (
-          <div className="org-search">
-            <Icon name="search" />
+    <aside className="call-list" aria-label={t('org.dir.lista')}>
+      <div className="call-list__head">
+        <div className="call-brand">
+          <span className="call-brand__mark" aria-hidden="true">
+            <DelonixSymbol size={18} />
+          </span>
+          <h2>{t('consola.chamadas.titulo')}</h2>
+          <span className="dx-spacer" />
+          <button
+            type="button"
+            className={cx('call-sq', focus?.kind === 'org' && 'call-sq--on')}
+            aria-label={t('org.dir.filiaisESalas')}
+            title={t('org.dir.filiaisESalas')}
+            aria-pressed={focus?.kind === 'org'}
+            onClick={() => onSelect({ kind: 'org' })}
+          >
+            <Icon name="building" size={13} />
+          </button>
+        </div>
+        {orgPicker}
+        {tab !== 'history' && (
+          <label className="call-search">
+            <Icon name="search" size={12} />
             <input
               type="search"
               value={q}
@@ -79,9 +111,24 @@ export default function ContactList({
               placeholder={tab === 'groups' ? t('org.dir.pesquisarGrupos') : t('consola.contactos.pesquisar')}
               aria-label={tab === 'groups' ? t('org.dir.pesquisarGrupos') : t('org.dir.pesquisar')}
             />
-          </div>
+          </label>
         )}
-        {tab === 'people' && branches.length > 0 && (
+        <div className="call-tabs" role="tablist" aria-label={t('org.dir.separadores')}>
+          {tabs.map((x) => (
+            <button
+              key={x.value}
+              type="button"
+              role="tab"
+              aria-selected={tab === x.value}
+              className={cx('call-tab', tab === x.value && 'call-tab--on')}
+              onClick={() => onTab(x.value)}
+            >
+              {x.label}
+              {!!x.count && <span className="call-tab__count dx-num">{x.count}</span>}
+            </button>
+          ))}
+        </div>
+        {tab === 'people' && branches.length > 1 && (
           <Select value={branchFilter} onChange={(e) => onBranchFilter(e.target.value)} aria-label={t('org.dir.filtrarFilial')}>
             <option value="">{t('org.dir.todasFiliais')}</option>
             {branches.map((b) => (
@@ -91,64 +138,47 @@ export default function ContactList({
             ))}
           </Select>
         )}
-        <Tabs
-          label={t('org.dir.separadores')}
-          value={tab}
-          onChange={onTab}
-          tabs={[
-            { value: 'people', label: t('org.dir.pessoas') },
-            { value: 'groups', label: t('org.dir.grupos') },
-            { value: 'missed', label: t('consola.contactos.historico'), count: missed.length },
-          ]}
-        />
       </div>
 
-      <div className="org-dir__scroll">
+      <div className="call-list__scroll">
         {tab === 'people' && (
           <>
-            <div className="org-dir__sub dx-eyebrow">
-              <span>{people ? t('org.dir.pessoasContagem', { count: people.length }) : ''}</span>
-              <span className="dx-spacer" />
-              <span>
-                <span className="org-dot org-dot--on" aria-hidden="true" /> {t('org.dir.onlineContagem', { count: onlineCount })}
-              </span>
-            </div>
             {people === null && pending}
-            {people && people.length === 0 && <p className="org-dir__empty dx-muted">{t('ui.semResultados')}</p>}
-            <ul className="org-rows">
+            {people && people.length === 0 && <p className="call-empty">{t('ui.semResultados')}</p>}
+            <ul className="call-rows" role="list">
               {people?.map((p) => {
                 const on = isOnline(p.user_id)
                 const me = p.user_id === meId
-                const active = selection?.kind === 'person' && selection.id === p.user_id
+                const active = focus?.kind === 'person' && focus.id === p.user_id
+                const sms = me ? undefined : smsFor(p)
                 return (
-                  <li key={p.user_id} className={cx('org-row', active && 'org-row--active')}>
+                  <li key={p.user_id} className={cx('call-row', active && 'call-row--active')}>
                     <button
                       type="button"
-                      className="org-row__main"
+                      className="call-row__main"
                       aria-current={active || undefined}
                       onClick={() => onSelect({ kind: 'person', id: p.user_id })}
                     >
-                      <span className="org-av">
-                        <Avatar name={p.username} size={32} />
-                        <span className={cx('org-dot', on && 'org-dot--on')} aria-hidden="true" />
+                      <span className="call-av">
+                        <Avatar name={p.username} size={30} />
+                        <span className={cx('call-dot', on && 'call-dot--on')} aria-hidden="true" />
                       </span>
-                      <span className="org-row__text">
+                      <span className="call-row__text">
                         <strong>
                           {p.username}
-                          {me && <span className="dx-muted"> {t('org.dir.tu')}</span>}
+                          {me && <span className="call-muted"> {t('org.dir.tu')}</span>}
                         </strong>
-                        <span className="org-row__meta dx-num">
-                          {[p.title, on ? t('org.presenca.online') : t('org.presenca.offline')].filter(Boolean).join(' · ')}
+                        <span className="call-row__meta dx-num">
+                          {[p.title, on ? t('consola.chamadas.disponivel') : t('consola.chamadas.offline')].filter(Boolean).join(' · ')}
                         </span>
                       </span>
                     </button>
                     {!me && (
-                      <IconButton
-                        icon="phone"
-                        bare
-                        label={t('org.dir.ligarVozA', { nome: p.username })}
-                        onClick={() => onCallPerson(p, 'voice')}
-                      />
+                      <span className="call-rowbtns">
+                        <IconButton icon="phone" bare className="call-rowbtn" label={t('org.dir.ligarVozA', { nome: p.username })} onClick={() => onCallPerson(p, 'voice')} />
+                        <IconButton icon="video" bare className="call-rowbtn" label={t('org.dir.ligarVideoA', { nome: p.username })} onClick={() => onCallPerson(p, 'video')} />
+                        {sms && <IconButton icon="sms" bare className="call-rowbtn" label={t('org.sms.enviarA', { nome: p.username })} onClick={sms} />}
+                      </span>
                     )}
                   </li>
                 )
@@ -159,91 +189,54 @@ export default function ContactList({
 
         {tab === 'groups' && (
           <>
-            <div className="org-dir__sub">
-              <span className="dx-eyebrow">{groups ? t('org.dir.gruposContagem', { count: groups.length }) : ''}</span>
-              <span className="dx-spacer" />
-              <button type="button" className="dx-btn dx-btn--ghost dx-btn--sm" onClick={onNewGroup}>
-                <Icon name="plus" />
-                {t('org.grupo.novo')}
-              </button>
-            </div>
             {groups === null && pending}
-            {groups && groups.length === 0 && <p className="org-dir__empty dx-muted">{t('org.dir.semGrupos')}</p>}
-            <ul className="org-rows">
+            {groups && groups.length === 0 && <p className="call-empty">{t('org.dir.semGrupos')}</p>}
+            <ul className="call-rows" role="list">
               {groups?.map((g) => {
-                const active = selection?.kind === 'group' && selection.id === g.id
+                const active = focus?.kind === 'group' && focus.id === g.id
                 return (
-                  <li key={g.id} className={cx('org-row', active && 'org-row--active')}>
+                  <li key={g.id} className={cx('call-row', active && 'call-row--active')}>
                     <button
                       type="button"
-                      className="org-row__main"
+                      className="call-row__main"
                       aria-current={active || undefined}
                       onClick={() => onSelect({ kind: 'group', id: g.id })}
                     >
-                      <span className="org-av org-av--group" aria-hidden="true">
-                        <Icon name="people" />
+                      <span className="call-av call-av--icon" aria-hidden="true">
+                        <Icon name="people" size={14} />
                       </span>
-                      <span className="org-row__text">
+                      <span className="call-row__text">
                         <strong>{g.name}</strong>
-                        <span className="org-row__meta dx-num">{t('org.membrosContagem', { count: g.member_count })}</span>
+                        <span className="call-row__meta dx-num">{t('org.membrosContagem', { count: g.member_count })}</span>
                       </span>
                     </button>
-                    <IconButton icon="video" bare label={t('org.dir.ligarGrupoVideo', { nome: g.name })} onClick={() => onCallGroup(g, 'video')} />
+                    <IconButton icon="video" bare className="call-rowbtn" label={t('org.dir.ligarGrupoVideo', { nome: g.name })} onClick={() => onCallGroup(g, 'video')} />
                   </li>
                 )
               })}
             </ul>
+            <button type="button" className="call-addrow" onClick={onNewGroup}>
+              <Icon name="plus" size={12} />
+              {t('org.grupo.novo')}
+            </button>
           </>
         )}
 
-        {tab === 'missed' && (
+        {tab === 'history' && (
           <>
-            <div className="org-dir__sub">
-              <span className="dx-eyebrow">{t('org.dir.perdidasTitulo')}</span>
+            <div className="call-sub">
+              <span className="call-eyebrow">{t('org.dir.perdidasTitulo')}</span>
               <span className="dx-spacer" />
               {missed.length > 0 && (
-                <button type="button" className="dx-btn dx-btn--ghost dx-btn--sm" onClick={onAckMissed}>
-                  <Icon name="check" />
+                <button type="button" className="call-link" onClick={onAckMissed}>
+                  <Icon name="check" size={11} />
                   {t('org.dir.marcarVistas')}
                 </button>
               )}
             </div>
-            {missed.length === 0 && <p className="org-dir__empty dx-muted">{t('org.dir.semPerdidas')}</p>}
-            <ul className="org-rows">
-              {missed.map((m) => (
-                <li key={m.id} className="org-row">
-                  <div className="org-row__main org-row__main--static">
-                    <span className="org-av org-av--missed" aria-hidden="true">
-                      <Icon name={m.kind === 'voice' ? 'phone' : 'video'} />
-                    </span>
-                    <span className="org-row__text">
-                      <strong>{m.caller_name}</strong>
-                      <span className="org-row__meta dx-num">
-                        {[m.kind === 'voice' ? t('org.dir.perdidaVoz') : t('org.dir.perdidaVideo'), formatAgo(m.created_at, locale)]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </span>
-                    </span>
-                  </div>
-                  <IconButton icon="refresh" bare label={t('org.dir.devolverA', { nome: m.caller_name })} onClick={() => onCallBack(m)} />
-                </li>
-              ))}
-            </ul>
+            <CallHistory orgId={orgId} isAdmin={isAdmin} missed={missed} onCallBack={onCallBack} />
           </>
         )}
-        {tab === 'missed' && phoneHistory}
-      </div>
-
-      <div className="org-dir__foot">
-        <button
-          type="button"
-          className={cx('org-dir__orgbtn', selection?.kind === 'org' && 'org-dir__orgbtn--active')}
-          onClick={() => onSelect({ kind: 'org' })}
-        >
-          <Icon name="building" />
-          <span>{t('org.dir.filiaisESalas')}</span>
-          <Icon name="chevronRight" />
-        </button>
       </div>
     </aside>
   )

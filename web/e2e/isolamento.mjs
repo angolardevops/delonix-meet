@@ -668,6 +668,329 @@ await recusado('a chave da A cria reunião com C ARQUIVADA como anfitriã', '/ap
   body: { title: 's3 depois', starts_at: new Date(Date.now() + 9000_000).toISOString(), host_email: C.email },
 })
 
+// ---------------------------------------------------------------------------
+// Gateway de SMS (ADR-0005). Um SMS custa dinheiro a quem o envia: a pergunta
+// não é só «A lê o que é de B», é também «o gateway de A consegue gastar o
+// telefone de B, ou mentir sobre o resultado de uma mensagem de B».
+// Tudo com recursos REAIS de B, e com o controlo positivo no fim: o agente de B
+// reclama e confirma a sua própria mensagem.
+// ---------------------------------------------------------------------------
+console.log('\n--- gateway de SMS ---')
+const modemFalso = (sufixo) => ({
+  device_key: `1e0e:9001:TESTE-${sufixo}`,
+  vendor_id: '1e0e',
+  product_id: '9001',
+  manufacturer: 'SIMCOM',
+  product: 'SIM7600',
+  serial: `TESTE-${sufixo}`,
+  kind: 'modem',
+  transport: 'at_serial',
+  port: '/dev/ttyUSB2',
+  capable: true,
+  reason: null,
+  operator_name: 'UNITEL',
+  signal_percent: 70,
+})
+const gwB = await req(`/api/orgs/${B.orgId}/sms/gateways`, { token: B.token, method: 'POST', body: { name: 'gw-B' } })
+const gwA = await req(`/api/orgs/${A.orgId}/sms/gateways`, { token: A.token, method: 'POST', body: { name: 'gw-A' } })
+if (gwB.status !== 201 || !gwB.json?.token?.startsWith('dlxg_') || gwA.status !== 201) {
+  nok('B e A criam gateways (201 com token dlxg_)', `B=${gwB.status} A=${gwA.status}`)
+} else {
+  ok('B e A criam gateways (201 com token dlxg_)')
+  await permitido('o agente de B reporta um modem', '/api/sms/agent/devices', {
+    token: gwB.json.token, method: 'PUT', body: { devices: [modemFalso('B')] },
+  })
+  await permitido('o agente de A reporta um modem', '/api/sms/agent/devices', {
+    token: gwA.json.token, method: 'PUT', body: { devices: [modemFalso('A')] },
+  })
+  const devB = (await req(`/api/orgs/${B.orgId}/sms/devices`, { token: B.token })).json?.[0]
+  await permitido('B escolhe o seu modem como ponto de envio', `/api/orgs/${B.orgId}/sms/route`, {
+    token: B.token, method: 'PUT', body: { device_id: devB?.id },
+  })
+  const msgB = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: B.token, method: 'POST', body: { to: '923 000 001', body: 'teste de isolamento', route: 'usb' },
+  })
+  if (msgB.status === 202 && msgB.json?.route === 'usb' && msgB.json?.to === '+244923000001') {
+    ok('B põe um SMS em fila pela rota USB (202)')
+  } else nok('B põe um SMS em fila pela rota USB (202)', `${msgB.status} ${JSON.stringify(msgB.json)}`)
+
+  // Leitura cross-tenant — as rotas da consola.
+  await recusado('A lista os gateways de SMS da org B', `/api/orgs/${B.orgId}/sms/gateways`, { token: A.token })
+  await recusado('A lista os dispositivos USB da org B', `/api/orgs/${B.orgId}/sms/devices`, { token: A.token })
+  await recusado('A lê a rota de SMS da org B', `/api/orgs/${B.orgId}/sms/route`, { token: A.token })
+  await recusado('A lista as mensagens SMS da org B', `/api/orgs/${B.orgId}/sms/messages`, { token: A.token })
+  await recusado('A lê uma mensagem SMS da org B', `/api/orgs/${B.orgId}/sms/messages/${msgB.json?.id}`, {
+    token: A.token,
+  })
+  await recusado('A lê a mensagem de B pelo caminho da SUA org', `/api/orgs/${A.orgId}/sms/messages/${msgB.json?.id}`, {
+    token: A.token,
+  })
+
+  // Escrita cross-tenant.
+  await recusado('A envia SMS pela org B', `/api/orgs/${B.orgId}/sms/messages`, {
+    token: A.token, method: 'POST', body: { to: '923000002', body: 'fraude' },
+  })
+  await recusado('A muda a rota da org B', `/api/orgs/${B.orgId}/sms/route`, {
+    token: A.token, method: 'PUT', body: { device_id: null },
+  })
+  await recusado('A selecciona o telefone de B como rota da SUA org', `/api/orgs/${A.orgId}/sms/route`, {
+    token: A.token, method: 'PUT', body: { device_id: devB?.id },
+  })
+  await recusado('A revoga o gateway da org B', `/api/orgs/${B.orgId}/sms/gateways/${gwB.json.id}`, {
+    token: A.token, method: 'DELETE',
+  })
+  const aindaLa = (await req(`/api/orgs/${B.orgId}/sms/gateways`, { token: B.token })).json ?? []
+  if (aindaLa.some((g) => g.id === gwB.json.id)) ok('o gateway de B sobreviveu à tentativa de A')
+  else nok('o gateway de B sobreviveu à tentativa de A', JSON.stringify(aindaLa))
+  const rotaB = (await req(`/api/orgs/${B.orgId}/sms/route`, { token: B.token })).json
+  if (rotaB?.device_id && rotaB.device_id === devB?.id) ok('a rota de B continua no telefone de B')
+  else nok('a rota de B continua no telefone de B', JSON.stringify(rotaB))
+
+  // O agente de A contra a fila de B.
+  const claimA = await req('/api/sms/agent/claim', { token: gwA.json.token, method: 'POST' })
+  if (claimA.status === 200 && (claimA.json?.messages ?? []).every((m) => m.id !== msgB.json?.id)) {
+    ok('o gateway de A não reclama a mensagem de B')
+  } else nok('o gateway de A não reclama a mensagem de B', `${claimA.status} ${JSON.stringify(claimA.json)}`)
+  await recusado('o gateway de A reporta resultado da mensagem de B', `/api/sms/agent/messages/${msgB.json?.id}/result`, {
+    token: gwA.json.token, method: 'POST', body: { ok: true },
+  })
+
+  // Credenciais que NÃO são de gateway.
+  await recusado('sessão de B na superfície do agente', '/api/sms/agent/claim', { token: B.token, method: 'POST' })
+  await recusado('chave dlx_ na superfície do agente', '/api/sms/agent/claim', { token: chaveA.json?.key, method: 'POST' })
+  await recusado('anónimo na superfície do agente', '/api/sms/agent/claim', { method: 'POST' })
+  await recusado('token dlxg_ inventado', '/api/sms/agent/claim', { token: `dlxg_${'0'.repeat(64)}`, method: 'POST' })
+
+  // Controlo positivo: o agente de B reclama e confirma a SUA mensagem.
+  const claimB = await req('/api/sms/agent/claim', { token: gwB.json.token, method: 'POST' })
+  const reclamada = (claimB.json?.messages ?? []).find((m) => m.id === msgB.json?.id)
+  if (reclamada?.pdus?.length === 1 && reclamada.device_key === modemFalso('B').device_key) {
+    ok('controlo: o gateway de B reclama a sua mensagem, com o PDU feito')
+  } else nok('controlo: o gateway de B reclama a sua mensagem, com o PDU feito', JSON.stringify(claimB.json))
+  const res = await req(`/api/sms/agent/messages/${msgB.json?.id}/result`, {
+    token: gwB.json.token, method: 'POST', body: { ok: true, provider_ref: '42' },
+  })
+  const final = (await req(`/api/orgs/${B.orgId}/sms/messages/${msgB.json?.id}`, { token: B.token })).json
+  if (res.status === 204 && final?.status === 'sent') ok('controlo: o resultado de B fica gravado (sent)')
+  else nok('controlo: o resultado de B fica gravado (sent)', `${res.status} ${JSON.stringify(final)}`)
+
+  // -------------------------------------------------------------------------
+  // SMS a CONTACTOS (extensão do ADR-0005). O número vem sempre do servidor; o
+  // cliente só diz a QUEM. A pergunta de isolamento passa a ter três metades:
+  // «A alcança o contacto de B», «um membro sem permissão envia», e «o membro
+  // escolhe o número por baixo do `user_id`».
+  // A rota é o modem falso de B (USB) — o CI não tem operador configurado.
+  // -------------------------------------------------------------------------
+  console.log('\n--- SMS a contactos: telefone, política, consentimento, limites ---')
+  await req('/api/sms/agent/devices', { token: gwB.json.token, method: 'PUT', body: { devices: [modemFalso('B')] } })
+  const dominioB = B.email.split('@')[1]
+  async function membroB(nome, role) {
+    const email = `${nome}-${marca}@${dominioB}`
+    const r = await req(`/api/orgs/${B.orgId}/employees`, {
+      token: B.token, method: 'POST',
+      body: { email, username: `${nome}-${marca}`, password: PW, role, title: nome },
+    })
+    if (!(r.status >= 200 && r.status < 300)) throw new Error(`não criei ${email}: ${r.status} ${JSON.stringify(r.json)}`)
+    const l = await req('/api/auth/login', { method: 'POST', body: { email, password: PW } })
+    return { email, token: l.json?.access_token, userId: r.json.user_id }
+  }
+  const M = await membroB('marta', 'member') // quem envia
+  const N = await membroB('nuno', 'member') // contacto com telefone
+  const O = await membroB('olga', 'member') // contacto SEM telefone
+  const P = await membroB('paulo', 'member') // contacto que vai ser arquivado
+
+  // Telefone: o próprio e o admin escrevem; mais ninguém.
+  const telM = await permitido('M regista o próprio telefone', `/api/orgs/${B.orgId}/employees/${M.userId}/phone`, {
+    token: M.token, method: 'PUT', body: { phone: '923 100 200' },
+  })
+  if (telM?.phone === '+244923100200' && telM?.phone_source === 'manual') ok('o número fica normalizado e marcado manual')
+  else nok('o número fica normalizado e marcado manual', JSON.stringify(telM))
+  await permitido('o admin de B regista o telefone de N', `/api/orgs/${B.orgId}/employees/${N.userId}/phone`, {
+    token: B.token, method: 'PUT', body: { phone: '+244 923 300 400' },
+  })
+  await permitido('o admin de B regista o telefone de P', `/api/orgs/${B.orgId}/employees/${P.userId}/phone`, {
+    token: B.token, method: 'PUT', body: { phone: '923500600' },
+  })
+  const telOutro = await req(`/api/orgs/${B.orgId}/employees/${N.userId}/phone`, {
+    token: M.token, method: 'PUT', body: { phone: '923999999' },
+  })
+  if (telOutro.status === 403) ok('M (membro) muda o telefone de N → 403')
+  else nok('M (membro) muda o telefone de N → 403', `${telOutro.status} ${JSON.stringify(telOutro.json)}`)
+  await recusadoNaPorta('A muda o telefone de um membro da org B', `/api/orgs/${B.orgId}/employees/${N.userId}/phone`, {
+    token: A.token, method: 'PUT', body: { phone: '923999999' },
+  })
+  await recusadoNaPorta('A escreve o telefone de N pelo caminho da SUA org', `/api/orgs/${A.orgId}/employees/${N.userId}/phone`, {
+    token: A.token, method: 'PUT', body: { phone: '923999999' },
+  })
+  const telPt = await req(`/api/orgs/${B.orgId}/employees/${M.userId}/phone`, {
+    token: M.token, method: 'PUT', body: { phone: '+351 912 345 678' },
+  })
+  if (telPt.status === 422) ok('número fora de Angola não é guardado (422) — o encaminhamento não o serve')
+  else nok('número fora de Angola não é guardado (422)', `${telPt.status} ${JSON.stringify(telPt.json)}`)
+
+  // Visibilidade: o colega sabe QUE há número, não QUAL.
+  const dirM = (await req(`/api/orgs/${B.orgId}/employees`, { token: M.token })).json ?? []
+  const nVistoPorM = dirM.find((e) => e.user_id === N.userId)
+  const mVistoPorM = dirM.find((e) => e.user_id === M.userId)
+  if (nVistoPorM && nVistoPorM.phone === null && nVistoPorM.can_sms === true && mVistoPorM?.phone === '+244923100200') {
+    ok('o membro vê can_sms do colega mas não o número; vê o seu')
+  } else nok('o membro não vê o número do colega', JSON.stringify({ nVistoPorM, mVistoPorM }))
+  const dirB = (await req(`/api/orgs/${B.orgId}/employees`, { token: B.token })).json ?? []
+  if (dirB.find((e) => e.user_id === N.userId)?.phone === '+244923300400') ok('controlo: o admin vê o número de N')
+  else nok('controlo: o admin vê o número de N', JSON.stringify(dirB))
+
+  // Política: por omissão só admins.
+  const pol0 = await permitido('M lê a política de SMS da sua org', `/api/orgs/${B.orgId}/sms/policy`, { token: M.token })
+  if (pol0?.send_policy === 'admins') ok('a política por omissão é admins')
+  else nok('a política por omissão é admins', JSON.stringify(pol0))
+  await recusado('A lê a política de SMS da org B', `/api/orgs/${B.orgId}/sms/policy`, { token: A.token })
+  await recusado('A abre o envio da org B a membros', `/api/orgs/${B.orgId}/sms/policy`, {
+    token: A.token, method: 'PUT', body: { send_policy: 'members' },
+  })
+  const polM = await req(`/api/orgs/${B.orgId}/sms/policy`, { token: M.token, method: 'PUT', body: { send_policy: 'members' } })
+  if (polM.status === 403) ok('M (membro) muda a política → 403')
+  else nok('M (membro) muda a política → 403', `${polM.status}`)
+  const antesDaPolitica = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: N.userId, body: 'ola' },
+  })
+  if (antesDaPolitica.status === 403) ok('M envia SMS a N com a política admins → 403')
+  else nok('M envia SMS a N com a política admins → 403', `${antesDaPolitica.status} ${JSON.stringify(antesDaPolitica.json)}`)
+  const polLixo = await req(`/api/orgs/${B.orgId}/sms/policy`, { token: B.token, method: 'PUT', body: { send_policy: 'everyone' } })
+  if (polLixo.status === 400) ok('política desconhecida é recusada (400), não ignorada')
+  else nok('política desconhecida é recusada (400)', `${polLixo.status}`)
+  await permitido('o admin de B abre o envio a membros', `/api/orgs/${B.orgId}/sms/policy`, {
+    token: B.token, method: 'PUT', body: { send_policy: 'members' },
+  })
+
+  // O modo `to` continua só de admin, com qualquer política.
+  const toMembro = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { to: '923000777', body: 'fraude' },
+  })
+  if (toMembro.status === 403) ok('M envia para um número escrito (modo to) → 403')
+  else nok('M envia para um número escrito (modo to) → 403', `${toMembro.status} ${JSON.stringify(toMembro.json)}`)
+  // O número nunca vem do cliente no modo contacto.
+  const ambos = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: N.userId, to: '923000777', body: 'desvio' },
+  })
+  if (ambos.status === 400 && /sms\.target_ambiguous/.test(ambos.json?.error ?? '')) ok('user_id + to no mesmo pedido → 400 sms.target_ambiguous')
+  else nok('user_id + to no mesmo pedido → 400', `${ambos.status} ${JSON.stringify(ambos.json)}`)
+
+  // Controlo positivo: M envia a N.
+  const paraN = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: N.userId, body: 'reuniao adiada', route: 'usb' },
+  })
+  if (paraN.status === 202 && paraN.json?.purpose === 'contact' && paraN.json?.recipient_user_id === N.userId
+      && paraN.json?.to === '+244*******00' && /^marta-\w+ \(Delonix Meet\): reuniao adiada$/.test(paraN.json?.body ?? '')) {
+    ok('M envia a N pelo user_id (202), com o nome de M no texto e o número mascarado para M')
+  } else nok('M envia a N pelo user_id (202)', `${paraN.status} ${JSON.stringify(paraN.json)}`)
+  const vistaAdmin = (await req(`/api/orgs/${B.orgId}/sms/messages/${paraN.json?.id}`, { token: B.token })).json
+  if (vistaAdmin?.to === '+244923300400') ok('o número resolvido foi o de N (visto pelo admin)')
+  else nok('o número resolvido foi o de N', JSON.stringify(vistaAdmin))
+
+  // Destinatário fora do alcance: 404, sem confirmar qual é o caso.
+  await recusadoNaPorta('M envia SMS a um membro da org A', `/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: A.userId, body: 'x' },
+  })
+  await recusadoNaPorta('A envia SMS a N pelo caminho da SUA org', `/api/orgs/${A.orgId}/sms/messages`, {
+    token: A.token, method: 'POST', body: { user_id: N.userId, body: 'x' },
+  })
+  await permitido('o admin de B arquiva P', `/api/orgs/${B.orgId}/employees/${P.userId}`, { token: B.token, method: 'DELETE' })
+  await recusadoNaPorta('M envia SMS a P ARQUIVADO (tinha telefone)', `/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: P.userId, body: 'x' },
+  })
+  const semTel = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: O.userId, body: 'x' },
+  })
+  if (semTel.status === 422 && /^sms\.recipient_no_phone/.test(semTel.json?.error ?? '')) ok('contacto sem telefone → 422 sms.recipient_no_phone')
+  else nok('contacto sem telefone → 422', `${semTel.status} ${JSON.stringify(semTel.json)}`)
+
+  // Consentimento: N desliga os SMS de contactos.
+  const prefN = await permitido('N desliga os SMS de contactos', '/api/users/me/sms-preferences', {
+    token: N.token, method: 'PUT', body: { contact_opt_out: true },
+  })
+  if (prefN?.contact_opt_out === true && prefN?.meeting_opt_out === false && prefN?.phones?.[0]?.phone === '+244923300400') {
+    ok('as preferências de N ficam gravadas e trazem o telefone dele')
+  } else nok('as preferências de N', JSON.stringify(prefN))
+  const optOut = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: N.userId, body: 'insisto' },
+  })
+  if (optOut.status === 409 && /^sms\.recipient_opted_out/.test(optOut.json?.error ?? '')) ok('N com opt-out → 409 sms.recipient_opted_out')
+  else nok('N com opt-out → 409', `${optOut.status} ${JSON.stringify(optOut.json)}`)
+  const dirDepois = (await req(`/api/orgs/${B.orgId}/employees`, { token: M.token })).json ?? []
+  if (dirDepois.find((e) => e.user_id === N.userId)?.can_sms === false) ok('o directório deixa de oferecer SMS a N (can_sms false)')
+  else nok('o directório deixa de oferecer SMS a N', JSON.stringify(dirDepois.find((e) => e.user_id === N.userId)))
+
+  // O membro vê o estado do que ENVIOU, e só isso.
+  const listaM = (await req(`/api/orgs/${B.orgId}/sms/messages`, { token: M.token })).json?.items ?? []
+  if (listaM.length === 1 && listaM[0].id === paraN.json?.id && listaM[0].to.includes('*') && ['queued', 'claimed', 'sent', 'failed'].includes(listaM[0].status)) {
+    ok(`M lista só a sua mensagem, mascarada, com estado «${listaM[0].status}»`)
+  } else nok('M lista só a sua mensagem', JSON.stringify(listaM).slice(0, 300))
+  await recusado('M lê uma mensagem do admin de B', `/api/orgs/${B.orgId}/sms/messages/${msgB.json?.id}`, { token: M.token })
+  const trilha = JSON.stringify((await req(`/api/orgs/${B.orgId}/audit?limit=200`, { token: B.token })).json ?? [])
+  if (trilha.includes('sms.contact_queued') && !trilha.includes('923300400') && !trilha.includes('923100200')) {
+    ok('a auditoria regista o envio a contacto sem nenhum número em claro')
+  } else nok('a auditoria sem números', trilha.slice(0, 300))
+
+  // Limite por utilizador: 5 por minuto. As recusas acima NÃO gastaram quota.
+  await req('/api/users/me/sms-preferences', { token: N.token, method: 'PUT', body: { contact_opt_out: false } })
+  const estados = []
+  for (let i = 0; i < 5; i++) {
+    const r = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+      token: M.token, method: 'POST', body: { user_id: N.userId, body: `rajada ${i}`, route: 'usb' },
+    })
+    estados.push(r.status)
+  }
+  if (estados.slice(0, 4).every((s) => s === 202) && estados[4] === 429) {
+    ok('limite por utilizador: 4 aceites depois do primeiro, o 6.º → 429 (as recusas não contaram)')
+  } else nok('limite por utilizador', JSON.stringify(estados))
+  const colega = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: N.token, method: 'POST', body: { user_id: M.userId, body: 'e eu?', route: 'usb' },
+  })
+  if (colega.status === 202) ok('controlo: o limite de M não trava N (202)')
+  else nok('controlo: o limite de M não trava N', `${colega.status} ${JSON.stringify(colega.json)}`)
+
+  // SMS de reunião: a permissão vê-se ANTES de criar a reunião.
+  await permitido('o admin de B fecha outra vez o envio a admins', `/api/orgs/${B.orgId}/sms/policy`, {
+    token: B.token, method: 'PUT', body: { send_policy: 'admins' },
+  })
+  const inicio = new Date(Date.now() + 3 * 3600_000).toISOString()
+  const reuniaoM = await req('/api/meetings', {
+    token: M.token, method: 'POST',
+    body: { title: 'sem permissao', starts_at: inicio, duration_min: 30, invitee_ids: [N.userId], sms_invite: true },
+  })
+  const reunioesM = (await req('/api/meetings', { token: M.token })).json ?? []
+  if (reuniaoM.status === 403 && !reunioesM.some((m) => m.title === 'sem permissao')) {
+    ok('M agenda com sms_invite sem permissão → 403, e a reunião não é criada')
+  } else nok('agendar com SMS sem permissão', `${reuniaoM.status} ${JSON.stringify(reuniaoM.json).slice(0, 200)}`)
+  const recorrente = await req('/api/meetings', {
+    token: B.token, method: 'POST',
+    body: { title: 'semanal', starts_at: inicio, duration_min: 30, invitee_ids: [N.userId], sms_reminder_min: 15, recurrence_freq: 'weekly' },
+  })
+  if (recorrente.status === 422) ok('lembrete por SMS numa série recorrente → 422 (não se promete o que não se envia)')
+  else nok('lembrete em série recorrente → 422', `${recorrente.status}`)
+  await req('/api/sms/agent/devices', { token: gwB.json.token, method: 'PUT', body: { devices: [modemFalso('B')] } })
+  const reuniaoB = await req('/api/meetings', {
+    token: B.token, method: 'POST',
+    body: { title: 'com SMS', starts_at: inicio, duration_min: 30, invitee_ids: [N.userId, O.userId, A.userId], sms_invite: true, sms_reminder_min: 30 },
+  })
+  const saltos = Object.fromEntries((reuniaoB.json?.sms?.invite?.skipped ?? []).map((s) => [s.user_id, s.reason]))
+  if (reuniaoB.status === 200 && reuniaoB.json?.sms?.invite?.queued === 1 && reuniaoB.json.sms.reminder_min === 30
+      && saltos[O.userId] === 'sms.recipient_no_phone' && saltos[A.userId] === 'sms.recipient_not_member') {
+    ok('o admin agenda com convite por SMS: 1 enfileirado, O sem telefone e o de outra org saltados com código')
+  } else nok('agendar com convite por SMS', `${reuniaoB.status} ${JSON.stringify(reuniaoB.json?.sms)}`)
+  const convites = ((await req(`/api/orgs/${B.orgId}/sms/messages`, { token: B.token })).json?.items ?? [])
+    .filter((m) => m.purpose === 'meeting_invite' && m.meeting_id === reuniaoB.json?.id)
+  if (convites.length === 1 && convites[0].recipient_user_id === N.userId && convites[0].to === '+244923300400') {
+    ok('o convite foi para N, pelo número de N')
+  } else nok('o convite foi para N', JSON.stringify(convites))
+
+  // Revogar corta o agente.
+  await permitido('B revoga o seu gateway', `/api/orgs/${B.orgId}/sms/gateways/${gwB.json.id}`, {
+    token: B.token, method: 'DELETE',
+  })
+  await recusado('o token revogado de B deixa de servir', '/api/sms/agent/claim', { token: gwB.json.token, method: 'POST' })
+}
+
 console.log('\n--- sem autenticação nenhuma ---')
 await recusado('anónimo lê stats da org B', `/api/orgs/${B.orgId}/stats`, {})
 await recusado('anónimo lista as suas orgs', '/api/orgs', {})

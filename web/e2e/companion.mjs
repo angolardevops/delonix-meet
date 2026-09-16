@@ -44,7 +44,7 @@ const ctx = () => browser.newContext({ ignoreHTTPSErrors: true, permissions: ['c
 // ── Dispositivo 1: o portátil ────────────────────────────────────────────────
 const portatil = await (await ctx()).newPage()
 await entrar(portatil, APP, conta)
-await portatil.getByRole('button', { name: /nova reuni/i }).first().click()
+await portatil.getByRole('button', { name: /iniciar agora/i }).first().click()
 await portatil.waitForFunction(() => /^#\/r\/[a-z-]+$/.test(location.hash), null, { timeout: 60000 })
 const codigo = (await portatil.evaluate(() => location.hash)).replace('#/r/', '')
 await portatil.getByRole('button', { name: /entrar na sessão/i }).first().click({ timeout: 60000 })

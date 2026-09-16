@@ -2,6 +2,9 @@
 // Contacts, Integrations, Administration and "Intelligence and languages".
 export default {
   admin: {
+    total: 'total',
+    emUso: 'in use',
+    volume: 'volume',
     versao: 'server v{{v}}',
     titulo: 'Administration console',
     armazenamento: 'Storage',
@@ -71,6 +74,26 @@ export default {
     anonimo: 'anonymous',
     maisChamadas_one: 'And {{count}} more call in the log.',
     maisChamadas_other: 'And {{count}} more calls in the log.',
+  },
+  chamadas: {
+    titulo: 'Calls',
+    contactos: 'Contacts',
+    disponivel: 'available',
+    accoes: 'Call actions',
+    agendar: 'Schedule meeting',
+    seteDias: '7 days',
+    semHistorico: 'No calls recorded.',
+    semHistoricoDias_one: 'No calls recorded in the last day.',
+    semHistoricoDias_other: 'No calls recorded in the last {{count}} days.',
+    perdida: 'missed',
+    recebidaDialIn: 'received · dial-in',
+    ontem: 'yesterday {{hora}}',
+    dialIn: 'PSTN dial-in',
+    semNumeros: 'no numbers in the inventory',
+    soEntrada: 'inbound only · no bridge to the room',
+    activo: 'active {{quando}}',
+    offline: 'offline',
+    semFilial: 'No branch',
   },
   contactos: {
     telefoneTitulo: 'Dial-in calls',

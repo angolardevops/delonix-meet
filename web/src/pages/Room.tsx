@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { intlLocale } from '../i18n'
 import { currentUser } from '../api'
 import { Icon } from '../ui/icons'
+import { usePresence } from '../components/PresenceProvider'
 import { Button, Dialog, IconButton, Tabs } from '../ui/kit'
 import '../ui/room.css'
 import { AudioSink } from '../room/AudioSink'
@@ -21,6 +22,7 @@ import { Stage } from '../room/Stage'
 import { CaptionOverlay, ReactionsLayer, ReadyCard, SpotlightQuestion, WaitingOverlay, WinnerOverlay } from '../room/StageOverlays'
 import { EndedScreen, PassphraseScreen } from '../room/StateScreens'
 import { TopBar } from '../room/TopBar'
+import { VoiceCall } from '../room/VoiceCall'
 import { Whiteboard } from '../room/Whiteboard'
 import { useBreakouts } from '../room/useBreakouts'
 import { entradaDirecta, useCallSession } from '../room/useCallSession'
@@ -103,6 +105,14 @@ export default function Room({
   /** O painel de sondagens abriu pelo atalho do chat: foca o compositor. */
   const [pollFromChat, setPollFromChat] = useState(false)
   const [confirmacao, setConfirmacao] = useState<Confirmacao>(null)
+  /**
+   * Vista da chamada. Uma chamada de VOZ abre no ecrã de voz (sem câmara nem
+   * grelha); «passar a vídeo» ou «ver vídeo» mudam para a sala na MESMA
+   * sessão — a ligação ao SFU não se refaz.
+   */
+  const [view, setView] = useState<'voice' | 'video'>(voiceOnly ? 'voice' : 'video')
+  const presence = usePresence()
+  const directCall = presence.directCall(code)
 
   const { peers, isHost } = core
   const { speakerId } = media
@@ -161,6 +171,13 @@ export default function Room({
     void session.leave(transcription.saveOnLeave)
   }
 
+  /** Liga a câmara nesta sessão; só muda de vista se a câmara ligou mesmo. */
+  async function goVideo() {
+    if (!media.hasLocalVideo || !media.camOn) await media.toggleCam()
+    if (core.localStreamRef.current?.getVideoTracks().length) setView('video')
+  }
+
+
   function toggleServerRecording() {
     if (recording.serverRec) {
       recording.setServerRecording(false)
@@ -210,6 +227,27 @@ export default function Room({
     content = <PassphraseScreen code={code} onSubmit={session.submitPassphrase} onCancel={onLeave} />
   } else if (core.roomState === 'denied' || core.roomState === 'kicked' || core.roomState === 'notfound') {
     content = <EndedScreen kind={core.roomState} onLeave={onLeave} />
+  } else if (view === 'voice') {
+    content = (
+      <div className="rm-shell">
+        <VoiceCall
+          roomState={core.roomState}
+          callState={session.callState}
+          status={core.status}
+          peers={peers}
+          speaking={core.speaking}
+          media={media}
+          call={directCall}
+          roomName={session.roomName}
+          companion={companion}
+          onUseAudioHere={session.dismissCompanion}
+          onGoVideo={goVideo}
+          onViewVideo={() => setView('video')}
+          onHangup={leave}
+        />
+        <AudioSink peers={peers} sinkId={speakerId} mudo={companion} volume={media.outputVolume} />
+      </div>
+    )
   } else {
     // Três separadores, como no template; as sondagens aparecem no fio do chat e
     // o compositor abre como painel próprio («Nova sondagem»).

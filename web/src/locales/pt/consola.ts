@@ -2,6 +2,9 @@
 // Contactos, Integrações, Administração e «Inteligência e idiomas».
 export default {
   admin: {
+    total: 'total',
+    emUso: 'em uso',
+    volume: 'volume',
     versao: 'servidor v{{v}}',
     titulo: 'Consola de administração',
     armazenamento: 'Armazenamento',
@@ -71,6 +74,26 @@ export default {
     anonimo: 'anónimo',
     maisChamadas_one: 'E mais {{count}} chamada no registo.',
     maisChamadas_other: 'E mais {{count}} chamadas no registo.',
+  },
+  chamadas: {
+    titulo: 'Chamadas',
+    contactos: 'Contactos',
+    disponivel: 'disponível',
+    accoes: 'Acções de chamada',
+    agendar: 'Agendar reunião',
+    seteDias: '7 dias',
+    semHistorico: 'Sem chamadas registadas.',
+    semHistoricoDias_one: 'Sem chamadas registadas no último dia.',
+    semHistoricoDias_other: 'Sem chamadas registadas nos últimos {{count}} dias.',
+    perdida: 'perdida',
+    recebidaDialIn: 'recebida · dial-in',
+    ontem: 'ontem {{hora}}',
+    dialIn: 'Dial-in PSTN',
+    semNumeros: 'sem números no inventário',
+    soEntrada: 'só entrada · sem ponte para a sala',
+    activo: 'activo {{quando}}',
+    offline: 'offline',
+    semFilial: 'Sem filial',
   },
   contactos: {
     telefoneTitulo: 'Chamadas pelo dial-in',

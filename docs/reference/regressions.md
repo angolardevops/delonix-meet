@@ -1693,3 +1693,17 @@ partido entre pedaços, mudo); `web/e2e/directo-destinos.mjs` contra um RTMP rea
 
 **Ficheiros.** `server/src/broadcast.rs`, `docs/adr/0003-directo-para-plataformas.md`,
 `web/e2e/directo-destinos.mjs`.
+
+### R124 — `add_employee` capturava uma conta de outra organização (a 4.ª cópia da mesma regra)
+
+**Sintoma.** Nenhum para a vítima. O admin de uma organização **legada** (com `email_domain` vazio) chamava `POST /api/orgs/{org}/employees` com o email de alguém de outra empresa e, com `role: "admin"`, tornava-se colega dessa pessoa: via as salas dela (`room_access` conta `org_mate`), encontrava-a na pesquisa, e podia ligar-lhe. Provado ao vivo a 2026-09-16 — a vítima entrava na org do atacante com `role=admin`.
+
+**Causa raiz.** A regra «tornar-me colega de alguém» estava escrita em quatro sítios, e a auditoria de 2026-09-16 (R121) só fechou três. `add_employee` liga uma conta EXISTENTE por email e tinha a sua própria noção de fronteira: o `email_domain` da org. Mas o `email_domain` é `''` nas organizações anteriores à migração 0010 (e nunca é editável pela API), e nesse caso a verificação de domínio é **saltada por inteiro** — não havia segunda barreira. É a mesma classe da S2: saber o email de alguém não pode puxá-lo para o nosso inquilino.
+
+**Regra.** A mesma `ForeignOrg` do `meetings_v1::resolve_org_user` e da R25: `add_employee` recusa (`409`) uma conta que já seja membro ACTIVO de outra org. Re-adicionar alguém que já é membro DESTA org continua a funcionar (mudar papel/filial) — a guarda é só o *outro* org. Ligar uma conta a uma segunda organização é acto do dono, não efeito de um admin escrever o email dela.
+
+**Porque não foi apanhado por um teste black-box.** Os domínios são únicos por org (índice de 0010), por isso, num sistema novo, A nunca pode adicionar um email do domínio de B — a verificação de domínio trata disso, com ou sem esta correcção. Um teste ao nível da API passaria nos dois estados, e um teste que passa com e sem a correcção é um falso portão (R51/R94). A guarda nova só é alcançável na org legada, que a API não cria: o teste ataca a base directamente (esvazia o `email_domain` por SQL), como a auditoria. Verificado a falhar no binário SEM a correcção e a passar COM ela.
+
+**Portão.** `web/e2e/captura-empregado.mjs` (ataque directo à base, no job `isolamento` do CI).
+
+**Ficheiros.** `server/src/org.rs` (`add_employee`), `web/e2e/captura-empregado.mjs`, `.github/workflows/ci.yml`.

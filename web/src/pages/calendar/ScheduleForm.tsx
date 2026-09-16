@@ -28,7 +28,7 @@ import { useShell } from '../../components/shellContext'
 import { Icon } from '../../ui/icons'
 import { Alert, Avatar, cx, Field, IconButton, Segmented, Select, Spinner, TextArea, TextInput } from '../../ui/kit'
 import WeekView from './WeekView'
-import { addDays, fmtTime, groupByDay, hhmm, localeOf, mondayOf, parseYmd, tzShort, weekdayNames, ymd } from './dates'
+import { addDays, fmtDayMonth, fmtTime, groupByDay, hhmm, localeOf, mondayOf, parseYmd, tzShort, weekdayNames, ymd } from './dates'
 
 const DURATIONS = [15, 30, 45, 60, 90, 120, 180]
 const BYDAY = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'] as const
@@ -380,7 +380,7 @@ export default function ScheduleForm({
 
       <aside className="sched__side" aria-label={t('schedule.form.semanaRotulo')}>
         <div className="sched__side-head">
-          <h2>{t('schedule.form.semanaDe', { data: weekStart.toLocaleDateString(locale, { day: 'numeric', month: 'short' }) })}</h2>
+          <h2>{t('schedule.form.semanaDe', { data: fmtDayMonth(weekStart, locale) })}</h2>
           <span className="dx-spacer" />
           <span className="dx-num dx-muted">{tzShort(locale)}</span>
         </div>

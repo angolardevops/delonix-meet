@@ -21,7 +21,7 @@
 
 .home-link {
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--accent);
 }
 
@@ -29,7 +29,7 @@
 .home-search {
   display: flex;
   align-items: center;
-  width: 304px;
+  width: 280px;
   max-width: 34vw;
   height: 30px;
   padding: 0 11px;
@@ -45,8 +45,8 @@
   border-color: var(--muted);
 }
 .home-gear {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
 }
 
 /* ------------------------------------------------------- acções rápidas */
@@ -266,7 +266,7 @@ button.qa-tile:hover {
   border-radius: var(--r-2);
   background: var(--raised);
   color: var(--muted);
-  font-size: 9.5px;
+  font-size: 10px;
 }
 
 /* -------------------------------------------------- próximas reuniões */
@@ -285,7 +285,7 @@ button.qa-tile:hover {
   align-items: center;
   gap: 12px;
   min-height: 57px;
-  padding: 10px 14px 10px 20px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--border);
 }
 .home-meeting:last-child {
@@ -295,7 +295,7 @@ button.qa-tile:hover {
   background: color-mix(in srgb, var(--accent) 6%, var(--raised));
 }
 .home-meeting__time {
-  width: 58px;
+  width: 64px;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -304,11 +304,11 @@ button.qa-tile:hover {
   border-right: 1px solid var(--border);
 }
 .home-meeting__time .dx-num {
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
 }
 .home-meeting__time small {
-  font-size: 9px;
+  font-size: 9.5px;
   color: var(--muted);
   white-space: nowrap;
 }
@@ -335,11 +335,12 @@ button.qa-tile:hover {
 }
 .home-kind {
   flex: none;
-  padding: 1px 4px;
+  padding: 1.5px 5px;
   border: 1px solid var(--border);
   border-radius: var(--r-2);
+  background: var(--surface);
   color: var(--muted);
-  font-size: 8.5px;
+  font-size: 9px;
   letter-spacing: 0.02em;
   text-transform: uppercase;
 }
@@ -428,7 +429,7 @@ button.home-rec:hover {
 }
 .home-rec__thumb {
   position: relative;
-  height: 86px;
+  height: 74px;
   display: flex;
   align-items: center;
   justify-content: center;

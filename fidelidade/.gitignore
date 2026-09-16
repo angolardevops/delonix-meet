@@ -5,3 +5,5 @@ lado-a-lado/
 *.webm
 *.png
 .tokens-*.json
+.sessao-*.json
+*.log

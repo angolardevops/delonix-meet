@@ -55,6 +55,11 @@
 - `webhooks.rs` — CRUD webhooks org, fire() best-effort (Slack/Teams/Mattermost/generic+HMAC), SSRF guard
 - `whiteboards.rs` — CRUD quadro branco persistente
 - `voice.rs` — PSTN: plano de controlo (DIDs, CDR, facturação, IVR por segredo partilhado em `/api/voice/ivr/*`); a media depende do operador SIP. O IVR é máquina-a-máquina e, no destino, sai da árvore pública para gRPC (ADR-0004 §4)
+- `sms.rs` — gateway de SMS (ADR-0005): consola da org em `/api/orgs/{org_id}/sms/*` (só admin), superfície do agente USB em `/api/sms/agent/*` (token `dlxg_`, extractor `SmsGatewayAuth`), encaminhamento pelo plano de numeração angolano (prefixos **por confirmar**) e worker dos operadores que pára no drain. Envio a CONTACTO por `{user_id}` (número resolvido no servidor, membro activo, política `sms_send_policy`, opt-out da pessoa, limite por utilizador); `{to}` só de admin. Telefone por membro em `org_members` (`phone_source` odoo|manual). Entrega no máximo uma vez
+- `sms_notify.rs` — SMS de reunião (ADR-0005 §Contactos): convite ao agendar e lembrete N minutos antes, pelos mesmos `org::sms_recipients`/`sms::recipient_phone`/`sms::plan`+`insert` do envio a contacto. O lembrete é um passo do worker de SMS (sem daemon novo), reivindicado com `FOR UPDATE SKIP LOCKED` — no máximo uma vez entre pods
+- `sms_codec.rs` — o ÚNICO sítio que codifica SMS: GSM 03.38/UCS-2, segmentação, PDU SMS-SUBMIT para `AT+CMGS`. Puro, sem I/O
+- `sms_smpp.rs` — cliente SMPP 3.4 de saída (`bind_transmitter`/`submit_sm`/`unbind`) para Unitel/Movicel/Africell; credenciais em `SMS_*_SMPP`. Provado contra SMSC falso, **nunca contra um operador**; sem recibos nem TLS
+- `crypto.rs` — sha256 de token e token aleatório (`random_token`). Código novo chama isto; a catraca conta as cópias fora dele
 - `apikeys.rs` — chaves de API por org (hash, **sem escopos nem expiração** — auditoria 2026-09-16 S6) **e** os handlers `v1_*` da API pública, apesar do nome (ADR-0004 §3 separa-os)
 - `audit.rs` — auditoria IMUTÁVEL e verificável: cada linha inclui o hash da anterior, numa cadeia por organização (migração 0037). Editar ou apagar uma linha parte a cadeia e é detectável em `/api/orgs/{id}/audit/verify` — mesmo por quem não confia em quem administra a base de dados, que é o adversário que interessa. Gatilhos recusam UPDATE/DELETE; a cadeia é a defesa que sobrevive a quem os possa remover. Ver R61
 - `rate_limit.rs` — rate limit por IP/conta (DashMap, lockout login 8/5min)
@@ -106,7 +111,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0047) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0050) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 

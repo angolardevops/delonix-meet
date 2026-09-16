@@ -596,7 +596,7 @@ button.cal-week__day:hover {
 }
 .sched {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 442px;
+  grid-template-columns: minmax(0, 1fr) 460px;
   align-items: stretch;
   min-height: calc(100vh - var(--top-h));
   min-height: calc(100dvh - var(--top-h));
@@ -606,7 +606,7 @@ button.cal-week__day:hover {
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-  padding: 20px 24px 32px;
+  padding: 16px 22px 32px;
 }
 .sched__pair {
   display: grid;

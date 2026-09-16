@@ -15,11 +15,12 @@ import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { useShell } from '../../components/shellContext'
 import { Icon } from '../../ui/icons'
 import { Alert, Avatar, AvatarStack, Button, cx, Empty, Skeleton } from '../../ui/kit'
-import { calendarHash, fmtTime, localeOf, meetingEnd, meetingStart, sameDay } from '../calendar/dates'
+import { calendarHash, fmtDayMonth, fmtTime, localeOf, meetingEnd, meetingStart, sameDay } from '../calendar/dates'
 import Respond, { InviteStatus } from '../calendar/Respond'
 import DeviceCheck from './DeviceCheck'
 
-const MAX = 5
+/** Três linhas, como no template; o resto está a um clique em «Ver agenda». */
+const MAX = 3
 /** Uma reunião que começa dentro deste intervalo (ou já começou) é «a próxima». */
 const SOON_MS = 15 * 60_000
 
@@ -138,11 +139,7 @@ export default function Upcoming({ odooCalendar = false }: { odooCalendar?: bool
                   <li key={m.id} className={cx('home-meeting', soon && 'home-meeting--soon')}>
                     <div className="home-meeting__time">
                       <span className="dx-num">{fmtTime(start, locale)}</span>
-                      <small>
-                        {sameDay(start, new Date())
-                          ? t('home.proximas.duracao', { n: m.duration_min })
-                          : start.toLocaleDateString(locale, { day: 'numeric', month: 'short' })}
-                      </small>
+                      <small>{t('home.proximas.duracao', { n: m.duration_min })}</small>
                     </div>
                     <div className="home-meeting__main">
                       <div className="home-meeting__title">
@@ -156,6 +153,9 @@ export default function Upcoming({ odooCalendar = false }: { odooCalendar?: bool
                         </div>
                       )}
                       <div className="home-meeting__meta">
+                        {!sameDay(start, new Date()) && (
+                          <span className="dx-num">{fmtDayMonth(start, locale)}</span>
+                        )}
                         <span>{m.owner_name}</span>
                         {going && (
                           <span data-testid="home-participantes">{t('consola.inicio.participantes', { count: going.length + 1 })}</span>
@@ -175,7 +175,6 @@ export default function Upcoming({ odooCalendar = false }: { odooCalendar?: bool
                             </button>
                           </span>
                         )}
-                        {!sameDay(start, new Date()) && <span>{t('home.proximas.duracao', { n: m.duration_min })}</span>}
                         {m.room_name && <span>{m.room_name}</span>}
                         {!m.is_owner && <InviteStatus status={m.my_status} />}
                       </div>

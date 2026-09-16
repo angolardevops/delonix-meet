@@ -41,7 +41,7 @@ await entrar(page, APP, conta)
 // devolve: a sala nunca era criada, a rota ficava `#/r/undefined`, e o vídeo
 // LOCAL fazia a asserção passar na mesma. Zero retratos remotos numa sala que
 // não existe não prova nada.
-await page.getByRole('button', { name: /nova reuni/i }).first().click()
+await page.getByRole('button', { name: /iniciar agora/i }).first().click()
 await page.waitForFunction(() => /^#\/r\/[a-z-]+$/.test(location.hash), null, { timeout: 60000 })
 const rota = await page.evaluate(() => location.hash)
 

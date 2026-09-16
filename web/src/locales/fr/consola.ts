@@ -2,6 +2,9 @@
 // Contacts, Intégrations, Administration et « Intelligence et langues ».
 export default {
   admin: {
+    total: 'total',
+    emUso: 'utilisés',
+    volume: 'volume',
     versao: 'serveur v{{v}}',
     titulo: "Console d'administration",
     armazenamento: 'Stockage',
@@ -71,6 +74,26 @@ export default {
     anonimo: 'anonyme',
     maisChamadas_one: 'Et {{count}} appel de plus dans le journal.',
     maisChamadas_other: 'Et {{count}} appels de plus dans le journal.',
+  },
+  chamadas: {
+    titulo: 'Appels',
+    contactos: 'Contacts',
+    disponivel: 'disponible',
+    accoes: "Actions d'appel",
+    agendar: 'Planifier une réunion',
+    seteDias: '7 jours',
+    semHistorico: 'Aucun appel enregistré.',
+    semHistoricoDias_one: 'Aucun appel enregistré le dernier jour.',
+    semHistoricoDias_other: 'Aucun appel enregistré ces {{count}} derniers jours.',
+    perdida: 'manqué',
+    recebidaDialIn: 'reçu · dial-in',
+    ontem: 'hier {{hora}}',
+    dialIn: 'Dial-in RTC',
+    semNumeros: "aucun numéro dans l'inventaire",
+    soEntrada: 'entrant seulement · sans pont vers la salle',
+    activo: 'actif {{quando}}',
+    offline: 'hors ligne',
+    semFilial: 'Aucune filiale',
   },
   contactos: {
     telefoneTitulo: "Appels par l'accès RTC",
