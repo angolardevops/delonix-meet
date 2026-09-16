@@ -123,3 +123,16 @@ describe('guardar é local PRIMEIRO', () => {
     expect(s).toContain("setGuardado(t('studio.guardadoLocal'")
   })
 })
+
+describe('o aviso de «sem rede» é do Estúdio', () => {
+  it('aparece quando a rede cai e promete o que é verdade', () => {
+    // O e2e `offline.mjs` procura-o por `data-studio="offline"`. Se o atributo
+    // ou a condição saírem, o aviso some-se sem nada ficar vermelho aqui.
+    const s = semComentarios('web/src/pages/Studio.tsx')
+    expect(s).toMatch(/\{!online && \(\s*<div[^>]*data-studio="offline"[^>]*>\s*\{t\('studio\.offline'\)\}/)
+    expect(s).toContain("window.addEventListener('offline', desce)")
+    for (const loc of ['pt', 'en', 'fr']) {
+      expect(read(`web/src/locales/${loc}/studio.ts`)).toMatch(/^  offline: /m)
+    }
+  })
+})
