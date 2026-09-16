@@ -18,8 +18,11 @@ export default function ListView({
   onDelete,
   entering,
   onSchedule,
+  all,
 }: {
   meetings: Meeting[]
+  /** Mostra todas as que recebe (a pesquisa já escolheu), não só de hoje em diante. */
+  all?: boolean
   onOpen: (m: Meeting) => void
   onEnter: (m: Meeting) => void
   onDelete: (m: Meeting) => void
@@ -33,13 +36,13 @@ export default function ListView({
     const map = new Map<string, Meeting[]>()
     for (const m of [...meetings].sort((a, b) => a.starts_at.localeCompare(b.starts_at))) {
       const k = ymd(meetingStart(m))
-      if (k < from) continue
+      if (!all && k < from) continue
       const list = map.get(k)
       if (list) list.push(m)
       else map.set(k, [m])
     }
     return [...map.entries()]
-  }, [meetings])
+  }, [meetings, all])
 
   if (groups.length === 0) {
     return (

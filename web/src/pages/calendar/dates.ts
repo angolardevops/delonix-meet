@@ -92,7 +92,7 @@ export type CalendarRoute =
 export function parseCalendarHash(hash: string): CalendarRoute {
   const s = hash.match(/^#\/calendar\/new(?:\?d=(\d{4}-\d{2}-\d{2})(?:&t=(\d{4}))?)?$/)
   if (s) return { kind: 'schedule', date: s[1] ?? null, time: s[2] ? `${s[2].slice(0, 2)}:${s[2].slice(2)}` : null }
-  const m = hash.match(/^#\/calendar\/m\/([A-Za-z0-9-]+)$/)
+  const m = hash.match(/^#\/calendar\/m\/([A-Za-z0-9-]+)(?:\?.*)?$/)
   if (m) return { kind: 'meeting', id: m[1] }
   return { kind: 'browse' }
 }

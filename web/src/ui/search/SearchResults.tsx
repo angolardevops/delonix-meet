@@ -18,11 +18,14 @@ export function SearchBar<T>({
   placeholder,
   className,
   children,
+  pager = true,
 }: {
   rs: ResourceSearch<T>
   label: string
   placeholder?: string
   className?: string
+  /** Sem paginador (a grelha da Agenda mostra o intervalo inteiro). */
+  pager?: boolean
   /** Controlos da lista à direita do paginador (vista Lista/Grelha…). */
   children?: ReactNode
 }) {
@@ -60,7 +63,7 @@ export function SearchBar<T>({
                 <Icon name="info" size={12} /> {t('search.estado.local')}
               </span>
             )}
-            <Pager list={rs.list} />
+            {pager && <Pager list={rs.list} />}
             {children}
           </>
         }
