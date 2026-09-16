@@ -632,3 +632,31 @@ async fn ciphertext_copied_to_another_row_does_not_open(db: sqlx::PgPool) {
     assert_eq!(open_sso(&app, &sealed_a, a.org()).unwrap(), SSO_SECRET);
     assert!(open_sso(&app, &sealed_a, b.org()).is_err());
 }
+
+/// O provisionamento de org (módulo Odoo) também grava o `client_secret` do
+/// SSO: era a última escrita em claro depois do R160.
+#[sqlx::test(migrations = "./migrations")]
+async fn provisioning_seals_the_sso_client_secret(db: sqlx::PgPool) {
+    let secret = "segredo-de-plataforma-de-teste";
+    let app = TestApp::spawn_with(db, &[("PROVISIONING_SECRET", secret)]).await;
+    let r = app
+        .raw(
+            reqwest::Method::POST,
+            "/api/v1/admin/orgs",
+            &[("X-Provisioning-Secret", secret)],
+            Some(serde_json::json!({
+                "name": "Delta SA", "email_domain": "delta.test",
+                "sso": {"issuer_url": "https://idp.delta.test", "client_id": "meet",
+                        "client_secret": "segredo-oidc-da-delta", "enforce_sso": false}
+            })),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert!(!r.text.contains("segredo-oidc-da-delta"));
+    let stored: String = sqlx::query_scalar("SELECT client_secret FROM org_sso_configs")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert!(stored.starts_with("enc:v1:"), "{stored}");
+    assert!(!stored.contains("segredo-oidc"));
+}

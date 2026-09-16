@@ -1154,12 +1154,19 @@ pub async fn v1_provision_org(
             .await;
     }
 
-    // Config OIDC (fecha o SSO no mesmo passo — sem SQL manual). Mesmo
-    // armazenamento que upsert_sso_config (client_secret em claro).
+    // Config OIDC (fecha o SSO no mesmo passo — sem SQL manual). O
+    // client_secret é cifrado como em `org::upsert_sso_config` (S5, R160): esta
+    // era a última escrita em claro.
     let mut sso_configured = false;
     if let Some(sso) = &req.sso {
         let issuer = sso.issuer_url.trim();
         if !issuer.is_empty() && !sso.client_id.trim().is_empty() {
+            let plain = sso.client_secret.trim();
+            let sealed = if plain.is_empty() {
+                String::new()
+            } else {
+                crate::org::seal_sso_client_secret(&state.config, org_id, plain)?
+            };
             sqlx::query(
                 "INSERT INTO org_sso_configs (org_id, issuer_url, client_id, client_secret, enforce_sso)
                  VALUES ($1, $2, $3, $4, $5)
@@ -1171,7 +1178,7 @@ pub async fn v1_provision_org(
             .bind(org_id)
             .bind(issuer)
             .bind(sso.client_id.trim())
-            .bind(sso.client_secret.trim())
+            .bind(&sealed)
             .bind(sso.enforce_sso)
             .execute(&state.db)
             .await?;
