@@ -1,30 +1,36 @@
 /**
- * Painel direito do template: leitor, título, acções e notas.
+ * Painel direito da biblioteca (DelonixRecordings): leitor de 200 px com selos
+ * e barra de progresso, título e metadados, acções, capítulos e transcrição.
  *
  * O vídeo NÃO se descarrega sozinho ao abrir a página: `recordingObjectUrl`
  * traz o ficheiro inteiro (o `<video>` não envia Bearer), e uma gravação de
  * uma hora são centenas de MB. Carrega quando a pessoa escolhe uma gravação
- * ou carrega em reproduzir.
+ * ou carrega em reproduzir. A duração e a resolução, enquanto a biblioteca não
+ * as traz, são as MEDIDAS no ficheiro depois de carregado.
  *
- * Os controlos são os do próprio `<video controls>`. Do template ficam os que
- * têm dado real: duração e resolução lidas do ficheiro (não da API, que não
- * as tem), janela flutuante onde o browser a suporta. Capítulos, comentários
- * com marca temporal, «Publicar», «Exportar» e o cartão de armazenamento não
- * existem no servidor e não aparecem.
+ * Só aparece o que tem dado ou acção real: Partilhar (dono), Descarregar
+ * (quem pode), página inteira. «Publicar», «Exportar», «Guardar em…» e o
+ * cartão de armazenamento não têm servidor e não se desenham. A secção de
+ * capítulos aparece quando `loadChapters` devolver capítulos.
  *
  * Este painel nunca recebe uma gravação falhada (R59) — a página não a deixa
- * seleccionar. A guarda de baixo é a segunda linha, não a primeira.
+ * seleccionar.
  */
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { apiErrorMessage, downloadRecording, RecordingItem, recordingObjectUrl } from '../../api'
+import { apiErrorMessage, downloadRecording } from '../../api'
+import { useAsync } from '../../components/AsyncSection'
 import { Icon } from '../../ui/icons'
 import { Alert, Button, IconButton, Spinner, Tag } from '../../ui/kit'
-import { formatBytes, formatDateTime, formatDuration, isFailed, recordingName, thumbBackground } from './format'
+import ChapterList from './ChapterList'
+import { formatDateTime, thumbBackground } from './format'
+import { chapterAt, formatClock, resolutionLabel } from './libraryData'
+import { clockPair, ProgressBar, usePlayback } from './playback'
+import { useRecordingVideo } from './recordingMedia'
 import RecordingNotes from './RecordingNotes'
+import { loadChapters, loadSegments, RecordingView } from './recordingView'
 import { playerHash } from './studioLink'
-
-type Video = { s: 'idle' } | { s: 'loading' } | { s: 'ready'; url: string } | { s: 'error' }
+import Transcript from './Transcript'
 
 export default function RecordingPanel({
   rec,
@@ -32,23 +38,25 @@ export default function RecordingPanel({
   onShare,
   onClose,
 }: {
-  rec: RecordingItem
+  rec: RecordingView
   autoLoad: boolean
-  onShare: (r: RecordingItem) => void
+  onShare: (r: RecordingView) => void
   onClose: () => void
 }) {
   const { t, i18n } = useTranslation()
   const videoRef = useRef<HTMLVideoElement>(null)
-  const [video, setVideo] = useState<Video>({ s: 'idle' })
   const [want, setWant] = useState(autoLoad)
-  const [attempt, setAttempt] = useState(0)
-  const [duration, setDuration] = useState<number | null>(null)
-  const [size, setSize] = useState<{ w: number; h: number } | null>(null)
+  const [video, retry] = useRecordingVideo(rec, want)
+  const src = video.s === 'ready' ? video.url : null
+  const pb = usePlayback(videoRef, src)
   const [actionErr, setActionErr] = useState('')
   const [downloading, setDownloading] = useState(false)
-  const pipAvailable = typeof document !== 'undefined' && document.pictureInPictureEnabled === true
-  const failed = isFailed(rec)
-  const name = recordingName(rec)
+  const extra = useAsync(async (signal) => {
+    const [chapters, segments] = await Promise.all([loadChapters(rec, signal), loadSegments(rec, signal)])
+    return { chapters, segments }
+  }, [rec.id])
+  const chapters = extra.state.s === 'ready' ? extra.state.d.chapters : null
+  const segments = extra.state.s === 'ready' ? extra.state.d.segments : null
 
   // Escolher de novo a gravação que já estava seleccionada por omissão conta
   // como pedido para a ver.
@@ -56,55 +64,14 @@ export default function RecordingPanel({
     if (autoLoad) setWant(true)
   }, [autoLoad])
 
-  useEffect(() => {
-    if (!want || failed) return
-    let live = true
-    let made = ''
-    setVideo({ s: 'loading' })
-    recordingObjectUrl(rec)
-      .then((u) => {
-        if (live) {
-          made = u
-          setVideo({ s: 'ready', url: u })
-        } else URL.revokeObjectURL(u)
-      })
-      .catch(() => {
-        if (live) setVideo({ s: 'error' })
-      })
-    return () => {
-      live = false
-      if (made) URL.revokeObjectURL(made)
-    }
-  }, [rec, want, failed, attempt])
+  const durationMs = rec.durationMs ?? pb.durationMs
+  const res = resolutionLabel(rec.height !== null ? rec : pb.size)
 
-  function onMetadata() {
-    const v = videoRef.current
-    if (!v) return
-    if (v.videoWidth && v.videoHeight) setSize({ w: v.videoWidth, h: v.videoHeight })
-    if (Number.isFinite(v.duration)) {
-      setDuration(v.duration)
-    } else {
-      // WebM do MediaRecorder chega sem duração no cabeçalho: saltar para o
-      // fim obriga o browser a medi-la, e volta-se ao início logo a seguir.
-      const onChange = () => {
-        if (!Number.isFinite(v.duration)) return
-        v.removeEventListener('durationchange', onChange)
-        setDuration(v.duration)
-        v.currentTime = 0
-      }
-      v.addEventListener('durationchange', onChange)
-      v.currentTime = Number.MAX_SAFE_INTEGER
-    }
-  }
-
-  async function pip() {
-    const v = videoRef.current
-    if (!v) return
-    setActionErr('')
-    try {
-      await v.requestPictureInPicture()
-    } catch {
-      setActionErr(t('recordings.leitor.pipRecusada'))
+  function seek(ms: number) {
+    if (src) pb.seek(ms, true)
+    else {
+      pb.queueSeek(ms)
+      setWant(true)
     }
   }
 
@@ -112,13 +79,20 @@ export default function RecordingPanel({
     setDownloading(true)
     setActionErr('')
     try {
-      await downloadRecording(rec)
+      await downloadRecording(rec.source)
     } catch (e) {
       setActionErr(apiErrorMessage(e, t('recordings.accoes.erroDescarregar')))
     } finally {
       setDownloading(false)
     }
   }
+
+  const meta = [
+    formatDateTime(rec.createdAt, i18n.language),
+    rec.uploaderName,
+    t('recordings.salaCodigo', { code: rec.roomCode }),
+    rec.participantCount !== null ? t('recordings.leitor.participantes', { count: rec.participantCount }) : null,
+  ].filter(Boolean)
 
   return (
     <div className="rec-panel__inner">
@@ -128,108 +102,114 @@ export default function RecordingPanel({
         <IconButton icon="x" bare label={t('recordings.leitor.fechar')} className="rec-panel__close" onClick={onClose} />
       </header>
 
-      {failed ? (
-        <Alert tone="danger" icon="alert">
-          {rec.failure_reason || t('recordings.estado.semCausa')}
-        </Alert>
-      ) : (
-        <div className="rec-player">
-          {video.s === 'ready' ? (
-            <video
-              ref={videoRef}
-              className="rec-player__video"
-              src={video.url}
-              controls
-              autoPlay
-              playsInline
-              onLoadedMetadata={onMetadata}
-            />
-          ) : (
-            <div className="rec-player__poster" style={{ background: thumbBackground(rec.filename) }}>
-              {video.s === 'loading' ? (
-                <Spinner label={t('recordings.leitor.aCarregar')} />
-              ) : video.s === 'error' ? (
-                <div className="rec-player__error" role="alert">
-                  <Icon name="alert" />
-                  <span>{t('recordings.leitor.erroVideo')}</span>
-                  <Button size="sm" variant="secondary" icon="refresh" onClick={() => setAttempt((n) => n + 1)}>
-                    {t('ui.tentarDeNovo')}
-                  </Button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="rec-player__play"
-                  aria-label={t('recordings.leitor.reproduzir', { name })}
-                  onClick={() => setWant(true)}
-                >
-                  <Icon name="play" size={20} />
-                </button>
-              )}
+      <div className="rec-player">
+        {src ? (
+          <video ref={videoRef} className="rec-player__video" src={src} autoPlay playsInline onClick={pb.toggle} />
+        ) : (
+          <div className="rec-player__poster" style={{ background: thumbBackground(rec.name) }} />
+        )}
+        {video.s === 'loading' ? (
+          <div className="rec-player__center">
+            <Spinner label={t('recordings.leitor.aCarregar')} />
+          </div>
+        ) : video.s === 'error' ? (
+          <div className="rec-player__center rec-player__error" role="alert">
+            <Icon name="alert" />
+            <span>{t('recordings.leitor.erroVideo')}</span>
+            <Button size="sm" variant="secondary" icon="refresh" onClick={retry}>
+              {t('ui.tentarDeNovo')}
+            </Button>
+          </div>
+        ) : (
+          !pb.playing && (
+            <div className="rec-player__center">
+              <button
+                type="button"
+                className="rec-player__play"
+                aria-label={t('recordings.leitor.reproduzir', { name: rec.name })}
+                onClick={() => (src ? pb.toggle() : setWant(true))}
+              >
+                <Icon name="play" size={18} />
+              </button>
             </div>
-          )}
-          {(size || duration !== null) && (
-            <div className="rec-player__badges">
-              {size && (
-                <span className="rec-player__badge dx-num" title={t('recordings.leitor.resolucao')}>
-                  {size.w}×{size.h}
-                </span>
-              )}
-              {duration !== null && (
-                <span className="rec-player__badge dx-num" title={t('recordings.leitor.duracao')}>
-                  {formatDuration(duration)}
-                </span>
-              )}
-            </div>
-          )}
+          )
+        )}
+        {(res || rec.category) && (
+          <div className="rec-player__badges">
+            {res && (
+              <span className="rec-badge" title={t('recordings.leitor.resolucao')}>
+                {res}
+              </span>
+            )}
+            {rec.category && <span className="rec-badge is-soft">{t(`recordings.categoria.${rec.category}`)}</span>}
+          </div>
+        )}
+        <div className="rec-player__foot">
+          <ProgressBar
+            nowMs={pb.nowMs}
+            durationMs={durationMs}
+            ticksMs={chapters?.map((c) => c.tMs) ?? []}
+            onSeek={seek}
+            label={t('recordings.leitor.progresso')}
+            valueText={clockPair(pb.nowMs, durationMs)}
+          />
+          <div className="rec-player__times dx-num">
+            <span>{formatClock(pb.nowMs)}</span>
+            <span title={t('recordings.leitor.duracao')}>{formatClock(durationMs)}</span>
+          </div>
         </div>
-      )}
+      </div>
 
       <div className="rec-panel__title">
-        <h2>{name}</h2>
+        <h2>{rec.name}</h2>
         <p className="rec-panel__meta">
-          <span className="dx-num">{formatDateTime(rec.created_at, i18n.language)}</span>
-          <span aria-hidden="true">·</span>
-          <span>{rec.uploader_name}</span>
-          <span aria-hidden="true">·</span>
-          <span>{t('recordings.salaCodigo', { code: rec.room_code })}</span>
-          {!failed && (
-            <>
-              <span aria-hidden="true">·</span>
-              <span className="dx-num">{formatBytes(rec.size_bytes, i18n.language)}</span>
-            </>
-          )}
+          {meta.join(' · ')}
           {!rec.owned && <Tag plain>{t('recordings.partilhadaComigo')}</Tag>}
         </p>
       </div>
 
-      {!failed && (
-        <div className="rec-panel__actions">
-          {rec.owned && (
-            <Button variant="primary" size="sm" icon="share" onClick={() => onShare(rec)}>
-              {rec.share_count > 0
-                ? t('recordings.accoes.partilharN', { count: rec.share_count })
-                : t('recordings.accoes.partilhar')}
-            </Button>
-          )}
-          {rec.can_download && (
-            <Button size="sm" icon="download" busy={downloading} onClick={() => void download()}>
-              {t('recordings.accoes.descarregar')}
-            </Button>
-          )}
-          <Button size="sm" variant="ghost" icon="maximize" onClick={() => (location.hash = playerHash(rec.id).slice(1))}>
-            {t('player.paginaInteira')}
+      <div className="rec-panel__actions">
+        {rec.owned && (
+          <Button variant="primary" size="sm" onClick={() => onShare(rec)}>
+            {rec.shareCount > 0 ? t('recordings.accoes.partilharN', { count: rec.shareCount }) : t('recordings.accoes.partilhar')}
           </Button>
-          {pipAvailable && video.s === 'ready' && (
-            <Button size="sm" variant="ghost" icon="pip" onClick={() => void pip()}>
-              {t('recordings.leitor.pip')}
-            </Button>
-          )}
-        </div>
-      )}
+        )}
+        {rec.canDownload && (
+          <Button size="sm" variant={rec.owned ? 'secondary' : 'primary'} busy={downloading} onClick={() => void download()}>
+            {t('recordings.accoes.descarregar')}
+          </Button>
+        )}
+        <Button size="sm" variant="secondary" onClick={() => (location.hash = playerHash(rec.id).slice(1))}>
+          {t('player.paginaInteira')}
+        </Button>
+      </div>
       {actionErr && <Alert tone="danger">{actionErr}</Alert>}
 
-      <RecordingNotes roomCode={rec.room_code} />
+      {chapters && chapters.length > 0 && (
+        <section className="rec-section" aria-labelledby="rec-chapters-title">
+          <div className="rec-section__head">
+            <h3 id="rec-chapters-title">{chapters.every((c) => c.auto) ? t('recordings.capitulos.automaticos') : t('recordings.capitulos.titulo')}</h3>
+            <span className="rec-section__aside dx-num">{t('recordings.capitulos.detectados', { count: chapters.length })}</span>
+          </div>
+          <ChapterList chapters={chapters} active={chapterAt(chapters, pb.nowMs)} onSeek={seek} variant="rows" />
+        </section>
+      )}
+
+      {segments ? (
+        <section className="rec-section" aria-labelledby="rec-transcript-title">
+          <div className="rec-section__head">
+            <h3 id="rec-transcript-title">{t('recordings.notas.transcricao')}</h3>
+            {rec.transcriptLanguage && (
+              <span className="rec-section__aside is-ok dx-num">
+                <Icon name="check" size={10} /> {t('recordings.transcricao.gerada', { lang: rec.transcriptLanguage })}
+              </span>
+            )}
+          </div>
+          <Transcript segments={segments} nowMs={pb.nowMs} onSeek={seek} />
+        </section>
+      ) : (
+        <RecordingNotes roomCode={rec.roomCode} compact />
+      )}
     </div>
   )
 }

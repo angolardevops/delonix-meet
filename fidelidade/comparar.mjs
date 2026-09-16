@@ -1,4 +1,4 @@
-// Cópia do notas-ui-template/comparar.mjs para o ramo frontend/l1-diagramas:
+// Cópia do notas-ui-template/comparar.mjs para o ramo frontend/l2-gravacoes:
 // escreve em fidelidade/{app,lado-a-lado} (não nas pastas partilhadas), entra
 // UMA vez e reutiliza a sessão (o servidor de validação limita logins), e tem
 // as rotas reais deste ramo.
@@ -18,6 +18,7 @@ const PASS = process.env.DX_PASS ?? 'demo12345'
 const STATE = `${DIR}.sessao.json`
 
 const ROTAS = {
+  DelonixRecordings: { hash: '/recordings' },
   DelonixCanvasUML: { hash: '/whiteboards/diagram?tipo=uml&exemplo=1' },
   DelonixCanvasBPMN: { hash: '/whiteboards/diagram?tipo=bpmn&exemplo=1' },
   DelonixPlayer: { player: true },
@@ -57,13 +58,25 @@ for (const doc of want) {
   if (!r) { console.log('sem rota', doc); continue }
   let hash = r.hash
   if (r.player) {
-    const lib = await p.evaluate(async () => (await fetch('/api/recordings', { headers: { Authorization: `Bearer ${localStorage.getItem('dx_access')}` } })).json())
-    const rec = Array.isArray(lib) ? lib.find((x) => x.status !== 'failed') : null
-    if (!rec) { console.log('sem gravações na biblioteca', JSON.stringify(lib).slice(0, 200)); continue }
-    hash = `/recordings/${rec.id}`
+    // A gravação real equivalente à do template (a «sessão 3» do seed-v2),
+    // aberta pela própria biblioteca: o token guardado pode ter expirado, e a
+    // app renova-o sozinha.
+    await p.goto(`${APP}/#/recordings`)
+    await p.waitForSelector('.rec-row__open', { timeout: 30000 })
+    const alvo = p.locator('.rec-row__open', { hasText: /sessão 3/ })
+    await ((await alvo.count()) ? alvo.first() : p.locator('.rec-row__open').first()).click()
+    await p.getByRole('button', { name: /página inteira/i }).first().click()
+    await p.waitForURL(/#\/recordings\/[0-9a-f-]{36}$/)
+    hash = new URL(p.url()).hash.slice(1)
   }
   await p.goto(`${APP}/#${hash}`)
-  await p.waitForTimeout(r.player ? 6000 : 2500)
+  await p.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {})
+  await p.waitForTimeout(r.player ? 6000 : 3000)
+  if (r.player && process.env.SEEK) {
+    // Põe o leitor a meio de um capítulo, como no template (18:22 de 48:12).
+    await p.evaluate((f) => { const v = document.querySelector('video'); if (v) { v.pause(); v.currentTime = (v.duration || 0) * f } }, Number(process.env.SEEK))
+    await p.waitForTimeout(1200)
+  }
   const suf = MOBILE ? '-390' : ''
   await p.screenshot({ path: `${DIR}app/${doc}${suf}.png` })
   const ref = `${REF}${doc}.png`

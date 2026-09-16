@@ -1,5 +1,6 @@
 export default {
-  titulo: 'Gravações',
+  semDado: 'O servidor ainda não devolve este dado',
+  titulo: 'Gravações e videoaulas',
   meta_zero: 'Sem itens',
   meta_one: '{{count}} item · {{size}}',
   meta_other: '{{count}} itens · {{size}}',
@@ -18,6 +19,13 @@ export default {
     grelha: 'Grelha',
   },
   filtros: {
+    videoaulas: 'Videoaulas',
+    emissoes: 'Emissões',
+    reunioes: 'Reuniões',
+    quatroK: '4K',
+    aProcessar: 'A processar',
+    contagem_one: '{{count}} gravação',
+    contagem_other: '{{count}} gravações',
     rotulo: 'Filtrar gravações',
     todas: 'Todas',
     minhas: 'Minhas',
@@ -25,6 +33,9 @@ export default {
     falhadas: 'Falhadas',
   },
   colunas: {
+    duracao: 'Duração',
+    resolucao: 'Resolução',
+    armazenamento: 'Armazenamento',
     sessao: 'Sessão',
     sala: 'Sala',
     data: 'Data',
@@ -32,6 +43,13 @@ export default {
     estado: 'Estado',
   },
   estado: {
+    aProcessar: 'A processar',
+    aProcessarPct: 'A processar {{pct}}%',
+    aTranscrever: 'A transcrever',
+    aTranscreverPct: 'A transcrever {{pct}}%',
+    publicada: 'Publicada',
+    retida_one: 'Retida {{count}} dia',
+    retida_other: 'Retida {{count}} dias',
     pronta: 'Pronta',
     falhada: 'Falhada',
     semCausa: 'A gravação falhou e não ficou ficheiro.',
@@ -41,6 +59,9 @@ export default {
     texto: 'Grava uma reunião e ela aparece aqui, com a transcrição e a acta.',
   },
   leitor: {
+    progresso: 'Posição no vídeo',
+    participantes_one: '{{count}} participante',
+    participantes_other: '{{count}} participantes',
     rotulo: 'Leitor',
     fechar: 'Fechar leitor',
     reproduzir: 'Reproduzir {{name}}',
@@ -59,6 +80,7 @@ export default {
     erroDescarregar: 'Não foi possível descarregar a gravação.',
   },
   notas: {
+    daSala: 'notas da sala',
     rotulo: 'Notas da reunião',
     transcricao: 'Transcrição',
     acta: 'Acta',
@@ -67,6 +89,23 @@ export default {
     semActa: 'Sem acta guardada para esta reunião.',
     semTarefas: 'Sem tarefas na acta desta reunião.',
     erroTarefa: 'Não foi possível guardar a tarefa.',
+  },
+  categoria: {
+    training: 'videoaula',
+    hybrid: 'videoaula híbrida',
+    broadcast: 'emissão',
+    meeting: 'reunião',
+  },
+  capitulos: {
+    titulo: 'Capítulos',
+    automaticos: 'Capítulos automáticos',
+    detectados_one: '{{count}} detectado',
+    detectados_other: '{{count}} detectados',
+    saltar: 'Saltar para {{title}} ({{time}})',
+  },
+  transcricao: {
+    gerada: 'gerada · {{lang}}',
+    saltar: 'Saltar para {{time}}',
   },
   partilha: {
     titulo: 'Partilhar «{{name}}»',

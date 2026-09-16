@@ -1,5 +1,6 @@
 export default {
-  titulo: 'Recordings',
+  semDado: 'The server does not return this yet',
+  titulo: 'Recordings and lessons',
   meta_zero: 'No items',
   meta_one: '{{count}} item · {{size}}',
   meta_other: '{{count}} items · {{size}}',
@@ -18,6 +19,13 @@ export default {
     grelha: 'Grid',
   },
   filtros: {
+    videoaulas: 'Lessons',
+    emissoes: 'Broadcasts',
+    reunioes: 'Meetings',
+    quatroK: '4K',
+    aProcessar: 'Processing',
+    contagem_one: '{{count}} recording',
+    contagem_other: '{{count}} recordings',
     rotulo: 'Filter recordings',
     todas: 'All',
     minhas: 'Mine',
@@ -25,6 +33,9 @@ export default {
     falhadas: 'Failed',
   },
   colunas: {
+    duracao: 'Duration',
+    resolucao: 'Resolution',
+    armazenamento: 'Storage',
     sessao: 'Session',
     sala: 'Room',
     data: 'Date',
@@ -32,6 +43,13 @@ export default {
     estado: 'Status',
   },
   estado: {
+    aProcessar: 'Processing',
+    aProcessarPct: 'Processing {{pct}}%',
+    aTranscrever: 'Transcribing',
+    aTranscreverPct: 'Transcribing {{pct}}%',
+    publicada: 'Published',
+    retida_one: 'Kept {{count}} day',
+    retida_other: 'Kept {{count}} days',
     pronta: 'Ready',
     falhada: 'Failed',
     semCausa: 'The recording failed and no file was kept.',
@@ -41,6 +59,9 @@ export default {
     texto: 'Record a meeting and it shows up here, with its transcript and minutes.',
   },
   leitor: {
+    progresso: 'Position in the video',
+    participantes_one: '{{count}} participant',
+    participantes_other: '{{count}} participants',
     rotulo: 'Player',
     fechar: 'Close player',
     reproduzir: 'Play {{name}}',
@@ -59,6 +80,7 @@ export default {
     erroDescarregar: 'Could not download the recording.',
   },
   notas: {
+    daSala: 'room notes',
     rotulo: 'Meeting notes',
     transcricao: 'Transcript',
     acta: 'Minutes',
@@ -67,6 +89,23 @@ export default {
     semActa: 'No minutes saved for this meeting.',
     semTarefas: 'No tasks in this meeting’s minutes.',
     erroTarefa: 'Could not save the task.',
+  },
+  categoria: {
+    training: 'lesson',
+    hybrid: 'hybrid lesson',
+    broadcast: 'broadcast',
+    meeting: 'meeting',
+  },
+  capitulos: {
+    titulo: 'Chapters',
+    automaticos: 'Automatic chapters',
+    detectados_one: '{{count}} detected',
+    detectados_other: '{{count}} detected',
+    saltar: 'Jump to {{title}} ({{time}})',
+  },
+  transcricao: {
+    gerada: 'generated · {{lang}}',
+    saltar: 'Jump to {{time}}',
   },
   partilha: {
     titulo: 'Share “{{name}}”',
