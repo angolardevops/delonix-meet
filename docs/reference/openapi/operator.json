@@ -5532,50 +5532,28 @@
     }
   },
   "info": {
-    "description": "Superfície estável do inquilino para SDK, mobile e integrações. Chave `dlx_` com escopos. Muda só com v2.",
+    "description": "Superfície de quem opera a plataforma (ADR-0004 §4): provisionamento de organizações, armazenamento e nós. Fora do SDK do inquilino.",
     "license": {
       "name": ""
     },
-    "title": "Delonix Meet — API pública v1",
+    "title": "Delonix Meet — Operador",
     "version": "0.1.0"
   },
   "openapi": "3.1.0",
   "paths": {
-    "/api/v1/meetings": {
+    "/api/operator/v1/nodes": {
       "get": {
-        "operationId": "v1_meetings",
-        "parameters": [
-          {
-            "description": "Cursor incremental: devolve reuniões criadas, com ata AI atualizada ou\ncom início desde este instante. Omisso => tudo (limitado a 500).",
-            "in": "query",
-            "name": "since",
-            "required": false,
-            "schema": {
-              "format": "date-time",
-              "type": "string"
-            }
-          }
-        ],
+        "operationId": "list",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/V1MeetingList"
+                  "$ref": "#/components/schemas/MediaNodeList"
                 }
               }
             },
             "description": ""
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "`since` não é RFC 3339."
           },
           "401": {
             "content": {
@@ -5585,7 +5563,7 @@
                 }
               }
             },
-            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
+            "description": ""
           },
           "403": {
             "content": {
@@ -5595,9 +5573,9 @@
                 }
               }
             },
-            "description": "A chave não tem o escopo `meetings:read` (`api_key.scope_missing`, escopo em `details`)."
+            "description": "Não é administrador da plataforma."
           },
-          "429": {
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5605,28 +5583,40 @@
                 }
               }
             },
-            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
+            "description": "Edição sem superfície de operador (pessoal)."
           }
         },
         "security": [
           {
-            "api_key": [
-              "meetings:read"
-            ]
+            "session": []
           }
         ],
-        "summary": "`GET /api/v1/meetings?since=<rfc3339>` — reuniões da organização (dono é\nmembro), incremental para o cron de sync do Odoo (idempotente no cliente).\nNo máximo 500, por `starts_at`.",
+        "summary": "Nós de media da plataforma e o seu estado.",
         "tags": [
-          "v1"
+          "operator"
         ]
-      },
+      }
+    },
+    "/api/operator/v1/organizations": {
       "post": {
-        "operationId": "create",
+        "description": "Fail-closed: com `PROVISIONING_SECRET` vazio o endpoint recusa sempre.\n\nIdempotente por empresa Odoo (`odoo_db` + `odoo_company_id`): reprovisionar\nreutiliza a organização, mas emite SEMPRE uma chave de API nova.",
+        "operationId": "v1_provision_org",
+        "parameters": [
+          {
+            "description": "Segredo de plataforma (`PROVISIONING_SECRET`).",
+            "in": "header",
+            "name": "X-Provisioning-Secret",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateMeetingReq"
+                "$ref": "#/components/schemas/ProvisionOrgReq"
               }
             }
           },
@@ -5637,264 +5627,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MeetingResp"
-                }
-              }
-            },
-            "description": "Criada, ou reencontrada pela `external_ref` (`existing: true`)"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "`title` vazio, `kind`, `duration_min`, `host_email` inválidos ou mais de 200 convidados"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "a `external_ref` aponta para uma reunião que já não se resolve na organização"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "o anfitrião pertence a outra organização"
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"
-          }
-        },
-        "security": [
-          {
-            "api_key": [
-              "meetings:write"
-            ]
-          }
-        ],
-        "summary": "`POST /api/v1/meetings` — cria (ou reencontra) uma reunião agendada com\nsala, anfitrião e convidados.",
-        "tags": [
-          "meetings"
-        ]
-      }
-    },
-    "/api/v1/meetings/{meeting_id}": {
-      "delete": {
-        "description": "A sala só é apagada se não tiver gravações: a reunião pode ter acontecido\ne sido cancelada no calendário depois, e uma gravação é um artefacto que o\nutilizador espera manter (a FK `recordings.room_id` é ON DELETE CASCADE —\napagar a sala apagaria o registo da gravação).",
-        "operationId": "delete",
-        "parameters": [
-          {
-            "description": "Id da reunião",
-            "in": "path",
-            "name": "meeting_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeleteMeetingResp"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "a reunião não existe ou o dono não é membro da organização da chave"
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"
-          }
-        },
-        "security": [
-          {
-            "api_key": [
-              "meetings:write"
-            ]
-          }
-        ],
-        "summary": "`DELETE /api/v1/meetings/{id}` — cancela a reunião e liberta a sala.",
-        "tags": [
-          "meetings"
-        ]
-      },
-      "get": {
-        "operationId": "get_one",
-        "parameters": [
-          {
-            "description": "Id da reunião",
-            "in": "path",
-            "name": "meeting_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MeetingResp"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": ""
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "a chave não tem o escopo `meetings:read`"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "não existe ou é de outra organização"
-          }
-        },
-        "security": [
-          {
-            "api_key": [
-              "meetings:read"
-            ]
-          }
-        ],
-        "summary": "`GET /api/v1/meetings/{meeting_id}` — uma reunião da organização da chave,\nna mesma forma que a criação devolve.",
-        "tags": [
-          "meetings"
-        ]
-      },
-      "patch": {
-        "operationId": "patch",
-        "parameters": [
-          {
-            "description": "Id da reunião",
-            "in": "path",
-            "name": "meeting_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchMeetingReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MeetingResp"
+                  "$ref": "#/components/schemas/ProvisionedOrg"
                 }
               }
             },
@@ -5908,7 +5641,7 @@
                 }
               }
             },
-            "description": "`title` vazio, `duration_min` fora de 1-1440 ou mais de 200 convidados"
+            "description": "Nome vazio/longo, `odoo_db` sem `odoo_company_id`, ou `scopes` inválidos (`api_key.scopes_empty`, `api_key.unknown_scope`)."
           },
           "401": {
             "content": {
@@ -5918,27 +5651,7 @@
                 }
               }
             },
-            "description": "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "a reunião não existe ou o dono não é membro da organização da chave"
+            "description": "Segredo ausente, errado, ou provisionamento desactivado."
           },
           "429": {
             "content": {
@@ -5948,118 +5661,82 @@
                 }
               }
             },
-            "description": "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"
+            "description": "Limite de pedidos da superfície v1 por IP."
           }
         },
-        "security": [
-          {
-            "api_key": [
-              "meetings:write"
-            ]
-          }
-        ],
-        "summary": "`PATCH /api/v1/meetings/{id}` — reagendar / renomear / actualizar convidados.",
-        "tags": [
-          "meetings"
-        ]
-      }
-    },
-    "/api/v1/meetings/{meeting_id}/minutes": {
-      "get": {
-        "operationId": "v1_meeting_notes",
-        "parameters": [
-          {
-            "description": "Reunião.",
-            "in": "path",
-            "name": "meeting_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/V1MeetingNotes"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "A chave não tem o escopo `meetings:read` (`api_key.scope_missing`, escopo em `details`)."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "A reunião não existe ou o dono não é membro da organização da chave."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
-          }
-        },
-        "security": [
-          {
-            "api_key": [
-              "meetings:read"
-            ]
-          }
-        ],
-        "summary": "`GET /api/v1/meetings/{id}/minutes` — ata (MoM) + transcrição (ata bruta).\n`minutes_ai_at` presente => o MoM já é a versão final do LLM local.",
+        "summary": "`POST /api/operator/v1/organizations` — provisiona uma organização + emite a sua chave\nde API. Autenticado pelo **segredo de plataforma** (`X-Provisioning-Secret`),\nnão por chave de org (que ainda não existe). Pensado para o Odoo criar a org\nde cada empresa e receber a chave para depois criar salas via `/api/v1/rooms`.",
         "tags": [
           "v1"
         ]
       }
     },
-    "/api/v1/meetings/{meeting_id}/ring": {
-      "post": {
-        "description": "É o \"começar agora\" a partir de um sistema externo: o anfitrião carrega em\niniciar no ERP e o Delonix faz aparecer a chamada no ecrã de cada convidado,\ncomo uma chamada de telefone — não uma notificação que se perde no meio de\noutras.\n\nJá existia auto-ring por cron um minuto antes da hora marcada\n(`meetings::ring_upcoming_meetings`); o que faltava era **sob comando**.\nReutiliza a mesma mecânica para o comportamento ser idêntico nos dois\ncasos, incluindo o `register_call` — sem ele, quem atende cairia na sala\nde espera em vez de entrar directo.",
-        "operationId": "ring",
-        "parameters": [
+    "/api/operator/v1/storage": {
+      "get": {
+        "operationId": "get_storage",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageConfigView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão válida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos da superfície v1 por IP."
+          }
+        },
+        "security": [
           {
-            "description": "Id da reunião",
-            "in": "path",
-            "name": "meeting_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
+            "session": []
           }
         ],
+        "summary": "`GET /api/operator/v1/storage` — lê a config actual (admin plataforma).\nA password WebDAV nunca é devolvida: `webdav_password_set` diz se existe.",
+        "tags": [
+          "platform"
+        ]
+      },
+      "put": {
+        "operationId": "save_storage",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageConfigReq"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -6067,7 +5744,7 @@
                 "schema": {}
               }
             },
-            "description": "Com alvos: `{ringing: [uuid], offline: [uuid], room_code, join_url}`. Sem convidados por chamar: `{ringing: [], offline: [], reason, join_url}` (sem `room_code`)."
+            "description": "{\"ok\": true} (forma herdada)"
           },
           "400": {
             "content": {
@@ -6077,7 +5754,7 @@
                 }
               }
             },
-            "description": "a reunião ainda não tem sala"
+            "description": "`storage_type` fora de `local`/`nfs`/`webdav`."
           },
           "401": {
             "content": {
@@ -6087,7 +5764,7 @@
                 }
               }
             },
-            "description": "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"
+            "description": "Sem sessão válida."
           },
           "403": {
             "content": {
@@ -6097,9 +5774,9 @@
                 }
               }
             },
-            "description": "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"
+            "description": "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`)."
           },
-          "404": {
+          "422": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6107,7 +5784,7 @@
                 }
               }
             },
-            "description": "a reunião não existe ou o dono não é membro da organização da chave"
+            "description": "`webdav_password` não vazia sem DATA_ENCRYPTION_KEYS (`secrets.encryption_unconfigured`)."
           },
           "429": {
             "content": {
@@ -6117,35 +5794,33 @@
                 }
               }
             },
-            "description": "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"
+            "description": "Limite de pedidos da superfície v1 por IP."
           }
         },
         "security": [
           {
-            "api_key": [
-              "meetings:write"
-            ]
+            "session": []
           }
         ],
-        "summary": "`POST /api/v1/meetings/{id}/ring` — toca nos dispositivos dos convidados.",
+        "summary": "`PUT /api/operator/v1/storage` — actualiza a config (admin plataforma).\n`webdav_password` vazia ou omissa mantém a guardada.",
         "tags": [
-          "meetings"
+          "platform"
         ]
       }
     },
-    "/api/v1/organization": {
+    "/api/operator/v1/storage/pvc-manifest": {
       "get": {
-        "operationId": "v1_org",
+        "operationId": "pvc_manifest",
         "responses": {
           "200": {
             "content": {
-              "application/json": {
+              "text/plain": {
                 "schema": {
-                  "$ref": "#/components/schemas/V1Org"
+                  "type": "string"
                 }
               }
             },
-            "description": ""
+            "description": "Manifesto YAML (PV + PVC para NFS, ou um comentário para `local`), servido como anexo `delonix-recordings-pv.yaml`."
           },
           "401": {
             "content": {
@@ -6155,7 +5830,7 @@
                 }
               }
             },
-            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
+            "description": "Sem sessão válida."
           },
           "403": {
             "content": {
@@ -6165,7 +5840,7 @@
                 }
               }
             },
-            "description": "A chave não tem o escopo `org:read` (`api_key.scope_missing`, escopo em `details`)."
+            "description": "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`)."
           },
           "429": {
             "content": {
@@ -6175,103 +5850,44 @@
                 }
               }
             },
-            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
+            "description": "Limite de pedidos da superfície v1 por IP."
           }
         },
         "security": [
           {
-            "api_key": [
-              "org:read"
-            ]
+            "session": []
           }
         ],
-        "summary": "`GET /api/v1/organization` — dados da organização da chave.",
+        "summary": "Gera o manifesto K8s do PVC para o tipo de storage configurado.\n`GET /api/operator/v1/storage/pvc-manifest` — devolve YAML para kubectl apply.",
         "tags": [
-          "v1"
+          "platform"
         ]
       }
     },
-    "/api/v1/recordings": {
-      "get": {
-        "operationId": "v1_recordings",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/V1RecordingList"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "A chave não tem o escopo `recordings:read` (`api_key.scope_missing`, escopo em `details`)."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
-          }
-        },
-        "security": [
-          {
-            "api_key": [
-              "recordings:read"
-            ]
-          }
-        ],
-        "summary": "`GET /api/v1/recordings` — gravações da organização (membros), as 200 mais\nrecentes.",
-        "tags": [
-          "v1"
-        ]
-      }
-    },
-    "/api/v1/rooms": {
+    "/api/operator/v1/storage/test": {
       "post": {
-        "operationId": "v1_create_room",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ApiCreateRoomReq"
-              }
-            }
-          },
-          "required": true
-        },
+        "description": "`local` e `nfs` só confirmam a configuração; `webdav` faz um `PROPFIND` real.\nUma falha do destino remoto responde 400, não 502.",
+        "operationId": "test_storage",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/V1RoomInfo"
+                  "$ref": "#/components/schemas/StorageTestResult"
                 }
               }
             },
             "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Configuração incompleta, tipo desconhecido, ou o WebDAV falhou/respondeu não-2xx."
           },
           "401": {
             "content": {
@@ -6281,7 +5897,7 @@
                 }
               }
             },
-            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
+            "description": "Sem sessão válida."
           },
           "403": {
             "content": {
@@ -6291,7 +5907,7 @@
                 }
               }
             },
-            "description": "A chave não tem o escopo `rooms:write` (`api_key.scope_missing`, escopo em `details`)."
+            "description": "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`)."
           },
           "429": {
             "content": {
@@ -6301,187 +5917,17 @@
                 }
               }
             },
-            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
+            "description": "Limite de pedidos da superfície v1 por IP."
           }
         },
         "security": [
           {
-            "api_key": [
-              "rooms:write"
-            ]
+            "session": []
           }
         ],
-        "summary": "`POST /api/v1/rooms` — cria uma sala e devolve o código + link de entrada.\nO dono da sala é o utilizador que criou a chave.",
+        "summary": "`POST /api/operator/v1/storage/test` — testa a ligação ao storage configurado.",
         "tags": [
-          "v1"
-        ]
-      }
-    },
-    "/api/v1/rooms/{room_code}": {
-      "get": {
-        "operationId": "v1_get_room",
-        "parameters": [
-          {
-            "description": "Código da sala (sensível a maiúsculas aqui).",
-            "in": "path",
-            "name": "room_code",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/V1RoomInfo"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "A chave não tem o escopo `rooms:read` (`api_key.scope_missing`, escopo em `details`)."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "A sala não existe ou o dono não é membro activo da organização da chave."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
-          }
-        },
-        "security": [
-          {
-            "api_key": [
-              "rooms:read"
-            ]
-          }
-        ],
-        "summary": "`GET /api/v1/rooms/{code}` — metadados de uma sala da organização da chave.",
-        "tags": [
-          "v1"
-        ]
-      }
-    },
-    "/api/v1/rooms/{room_code}/bots": {
-      "post": {
-        "operationId": "v1_join_bot_room",
-        "parameters": [
-          {
-            "description": "Código da sala (normalizado para minúsculas).",
-            "in": "path",
-            "name": "room_code",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/JoinBotReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/V1BotJoin"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "A chave não tem o escopo `bots:join` (`api_key.scope_missing`, escopo em `details`)."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "A sala não existe ou o dono não é membro activo da organização da chave."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela)."
-          }
-        },
-        "security": [
-          {
-            "api_key": [
-              "bots:join"
-            ]
-          }
-        ],
-        "summary": "`POST /api/v1/rooms/{code}/bots` — gera um room_token para um bot headless.\nO token contorna a sala de espera.",
-        "tags": [
-          "v1"
+          "platform"
         ]
       }
     }

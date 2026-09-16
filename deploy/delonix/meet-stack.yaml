@@ -25,7 +25,7 @@
 #                                           └─▶ delonix-server:8180 (rede meet-net)
 #    media ──UDP──▶ coturn (rede do host, 3478 + 49160-49200)
 #               └─▶ SFU UDP 50000-50200 publicado no host
-#    FreeSWITCH do host ─▶ 127.0.0.1:8181 (/api/voice/ivr/*, /metrics)
+#    FreeSWITCH do host ─▶ 127.0.0.1:8181 (/internal/v1/voice/ivr/*, /metrics)
 #
 #  Uma réplica do servidor: a afinidade por sala do ADR-0001 é trivialmente
 #  verdadeira (só há um SFU). Para mais de um servidor, é Kubernetes.

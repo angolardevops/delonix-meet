@@ -59,7 +59,7 @@ async fn api_key_authenticates_org_endpoint(db: sqlx::PgPool) {
     let r = app
         .raw(
             reqwest::Method::GET,
-            "/api/v1/org",
+            "/api/v1/organization",
             &[("X-API-Key", &key)],
             None,
         )
@@ -73,7 +73,7 @@ async fn api_key_authenticates_org_endpoint(db: sqlx::PgPool) {
 
     // Recusas: sem chave, JWT de sessão, prefixo errado, chave inventada.
     let r = app
-        .raw(reqwest::Method::GET, "/api/v1/org", &[], None)
+        .raw(reqwest::Method::GET, "/api/v1/organization", &[], None)
         .await;
     assert_eq!(r.status, 401);
     for bad in [a.token.as_str(), "abc_123", "dlx_0000"] {
@@ -292,7 +292,7 @@ async fn v1_meetings_create_idempotent_patch_ring_notes_delete(db: sqlx::PgPool)
     );
     // A conta nova ficou membro da org A.
     let (_, emps) = app
-        .get(&format!("/api/orgs/{}/employees", a.org()), Some(&a.token))
+        .get(&format!("/api/orgs/{}/members", a.org()), Some(&a.token))
         .await;
     assert!(emps.to_string().contains("novo@alfa.test"));
 
@@ -568,14 +568,14 @@ async fn v1_meeting_refuses_to_create_accounts_outside_org_domain(db: sqlx::PgPo
     assert_eq!(st, 422, "{body}");
     assert_eq!(body["code"], "meeting.host_outside_org_domain");
     let (_, emps) = app
-        .get(&format!("/api/orgs/{}/employees", a.org()), Some(&a.token))
+        .get(&format!("/api/orgs/{}/members", a.org()), Some(&a.token))
         .await;
     assert!(!emps.to_string().contains("ninguem@beta.test"), "{emps}");
 
     // E a org dona do domínio adiciona a pessoa sem conflito.
     let (st, body) = app
         .post(
-            &format!("/api/orgs/{}/employees", b.org()),
+            &format!("/api/orgs/{}/members", b.org()),
             Some(&b.token),
             json!({"email": "ninguem@beta.test"}),
         )
@@ -596,7 +596,7 @@ async fn odoo_provision_does_not_capture_accounts(db: sqlx::PgPool) {
     // 401 desde o R142 (`tests/security_voice_odoo.rs`).
     let (st, tok) = app
         .post(
-            &format!("/api/orgs/{}/integration/odoo/token", a.org()),
+            &format!("/api/orgs/{}/integrations/odoo/rotate-token", a.org()),
             Some(&a.token),
             json!({}),
         )
@@ -630,7 +630,7 @@ async fn odoo_provision_does_not_capture_accounts(db: sqlx::PgPool) {
         .contains("conta local"));
 
     let (_, emps) = app
-        .get(&format!("/api/orgs/{}/employees", a.org()), Some(&a.token))
+        .get(&format!("/api/orgs/{}/members", a.org()), Some(&a.token))
         .await;
     let s = emps.to_string();
     assert!(!s.contains(&b.email), "o admin da B entrou na A: {s}");
@@ -673,7 +673,7 @@ async fn admin_orgs_without_configured_secret_is_401(db: sqlx::PgPool) {
     let r = app
         .raw(
             reqwest::Method::POST,
-            "/api/v1/admin/orgs",
+            "/api/operator/v1/organizations",
             &[("X-Provisioning-Secret", "")],
             Some(json!({"name": "Org"})),
         )
@@ -690,7 +690,7 @@ async fn admin_orgs_provisioning_with_secret(db: sqlx::PgPool) {
         async move {
             app.raw(
                 reqwest::Method::POST,
-                "/api/v1/admin/orgs",
+                "/api/operator/v1/organizations",
                 &[("X-Provisioning-Secret", hdr)],
                 Some(body),
             )
@@ -702,7 +702,7 @@ async fn admin_orgs_provisioning_with_secret(db: sqlx::PgPool) {
     let r = app
         .raw(
             reqwest::Method::POST,
-            "/api/v1/admin/orgs",
+            "/api/operator/v1/organizations",
             &[],
             Some(json!({"name": "Org"})),
         )
@@ -803,7 +803,7 @@ async fn platform_storage_requires_declared_platform_admin(db: sqlx::PgPool) {
         assert_eq!(st, 401);
     }
     let r = app
-        .raw(reqwest::Method::GET, "/api/v1/platform/storage", &[], None)
+        .raw(reqwest::Method::GET, "/api/operator/v1/storage", &[], None)
         .await;
     assert_eq!(r.status, 401);
 

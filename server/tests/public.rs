@@ -63,7 +63,7 @@ async fn openapi_specs_are_served_and_match_the_router(db: sqlx::PgPool) {
 async fn closed_without_session(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     for path in [
-        "/api/ice",
+        "/api/ice-servers",
         "/api/orgs",
         "/api/meetings",
         "/api/recordings",
@@ -73,11 +73,13 @@ async fn closed_without_session(db: sqlx::PgPool) {
         assert_eq!(st, 401, "{path}: {v}");
         assert_eq!(v["code"], "auth.unauthenticated", "{path}");
     }
-    let (st, _) = app.get("/api/v1/org", None).await;
+    let (st, _) = app.get("/api/v1/organization", None).await;
     assert_eq!(st, 401);
     // Um token de partilha inventado não revela nada.
-    let (st, _) = app.get("/api/share/nao-existe", None).await;
+    let (st, _) = app.get("/api/public/recordings/nao-existe", None).await;
     assert_eq!(st, 404);
-    let (st, _) = app.get("/api/whiteboards/shared/nao-existe", None).await;
+    let (st, _) = app
+        .get("/api/public/whiteboards/nao-existe/image", None)
+        .await;
     assert_eq!(st, 404);
 }

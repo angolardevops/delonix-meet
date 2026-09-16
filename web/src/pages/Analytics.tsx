@@ -615,7 +615,7 @@ function PlatformStoragePanel() {
 
   function downloadPvc() {
     const a = document.createElement('a')
-    a.href = '/api/v1/platform/storage/pvc-manifest'
+    a.href = '/api/operator/v1/storage/pvc-manifest'
     a.download = 'delonix-recordings-pv.yaml'
     a.click()
   }

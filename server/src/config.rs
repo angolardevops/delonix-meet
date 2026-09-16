@@ -76,7 +76,7 @@ pub struct Config {
     /// chamar a API interna de IVR. Vazio => API interna de voz DESATIVADA.
     pub voice_internal_secret: String,
     /// Segredo de plataforma que autoriza o provisionamento de organizações via
-    /// `POST /api/v1/admin/orgs` (ex.: o Odoo cria a org de cada empresa e
+    /// `POST /api/operator/v1/organizations` (ex.: o Odoo cria a org de cada empresa e
     /// recebe a chave de API). Vazio => endpoint de provisão DESATIVADO
     /// (fail-closed). Não é uma chave de org — é anterior a qualquer org.
     pub provisioning_secret: String,

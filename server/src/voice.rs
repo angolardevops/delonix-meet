@@ -61,7 +61,7 @@ pub fn estimate_cost(duration_secs: i64, tariff_per_min: f64) -> f64 {
 // ---------- Tipos de saída ----------
 
 /// Documentação OpenAPI do control plane de voz (`openapi.rs` junta-a). A API
-/// interna de IVR (`/api/voice/ivr/*`) fica de fora: o contrato dela é o
+/// interna de IVR (`/internal/v1/voice/ivr/*`) fica de fora: o contrato dela é o
 /// `.proto`.
 #[derive(utoipa::OpenApi)]
 #[openapi(
@@ -251,8 +251,9 @@ pub struct VoiceRoomResp {
 /// ACTIVO dessa organização; senão `404` (`voice.room_not_found`), a mesma
 /// resposta de um código inexistente.
 #[utoipa::path(
-    post, path = "/api/voice/rooms", tag = "voice",
+    post, path = "/api/orgs/{org_id}/voice/rooms", tag = "voice",
     security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
     request_body = CreateVoiceRoomReq,
     responses(
         (status = 200, body = VoiceRoomResp),
@@ -265,9 +266,14 @@ pub struct VoiceRoomResp {
 pub async fn create_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
+    Path(org_id): Path<Uuid>,
     Json(req): Json<CreateVoiceRoomReq>,
 ) -> Result<Json<VoiceRoomResp>, ApiError> {
-    let org_id = caller_org(&state, auth.user_id).await?;
+    // A org vem do caminho e quem pede tem de ser membro activo dela (404 se
+    // não). Antes era «a primeira org do utilizador», escolhida às cegas.
+    if role_in_org(&state, org_id, auth.user_id).await?.is_none() {
+        return Err(ApiError::NotFound);
+    }
     let room_code = req.room_code.trim().to_lowercase();
     if room_code.is_empty() {
         return Err(ApiError::BadRequest("room_code em falta".into()));
@@ -354,9 +360,9 @@ pub async fn create_room(
 
 /// Detalhes de uma sala de voz (membro da org dona). Inclui o PIN.
 #[utoipa::path(
-    get, path = "/api/voice/rooms/{id}", tag = "voice",
+    get, path = "/api/orgs/{org_id}/voice/rooms/{voice_room_id}", tag = "voice",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("org_id" = Uuid, Path), ("voice_room_id" = Uuid, Path)),
     responses(
         (status = 200, body = VoiceRoom),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -366,28 +372,27 @@ pub async fn create_room(
 pub async fn get_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-    Path(id): Path<Uuid>,
+    Path((org_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<VoiceRoom>, ApiError> {
-    let vr: VoiceRoom = sqlx::query_as(&format!(
-        "SELECT {VOICE_ROOM_COLUMNS} FROM voice_room WHERE id = $1"
-    ))
-    .bind(id)
-    .fetch_one(&state.db)
-    .await?;
-    if !orgs_of_user(&state, auth.user_id)
-        .await
-        .contains(&vr.org_id)
-    {
+    if role_in_org(&state, org_id, auth.user_id).await?.is_none() {
         return Err(ApiError::NotFound);
     }
+    let vr: VoiceRoom = sqlx::query_as(&format!(
+        "SELECT {VOICE_ROOM_COLUMNS} FROM voice_room WHERE id = $1 AND org_id = $2"
+    ))
+    .bind(id)
+    .bind(org_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)?;
     Ok(Json(vr))
 }
 
 /// Participantes de uma sala de voz (membro da org dona).
 #[utoipa::path(
-    get, path = "/api/voice/rooms/{id}/participants", tag = "voice",
+    get, path = "/api/orgs/{org_id}/voice/rooms/{voice_room_id}/participants", tag = "voice",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("org_id" = Uuid, Path), ("voice_room_id" = Uuid, Path)),
     responses(
         (status = 200, body = Vec<VoiceParticipant>),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -397,18 +402,18 @@ pub async fn get_room(
 pub async fn list_participants(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-    Path(id): Path<Uuid>,
+    Path((org_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Vec<VoiceParticipant>>, ApiError> {
-    let owner_org: Uuid = sqlx::query_scalar("SELECT org_id FROM voice_room WHERE id = $1")
-        .bind(id)
-        .fetch_one(&state.db)
-        .await?;
-    if !orgs_of_user(&state, auth.user_id)
-        .await
-        .contains(&owner_org)
-    {
+    if role_in_org(&state, org_id, auth.user_id).await?.is_none() {
         return Err(ApiError::NotFound);
     }
+    let exists: Option<(i32,)> =
+        sqlx::query_as("SELECT 1 FROM voice_room WHERE id = $1 AND org_id = $2")
+            .bind(id)
+            .bind(org_id)
+            .fetch_optional(&state.db)
+            .await?;
+    exists.ok_or(ApiError::NotFound)?;
     let parts: Vec<VoiceParticipant> = sqlx::query_as(
         "SELECT id, channel, caller_number, joined_at, left_at
          FROM voice_participant WHERE voice_room_id = $1 ORDER BY joined_at",
@@ -423,11 +428,11 @@ pub async fn list_participants(
 /// admin da org dona; outro membro recebe `403` (`voice.room_close_forbidden`).
 /// Idempotente.
 #[utoipa::path(
-    post, path = "/api/voice/rooms/{id}/close", tag = "voice",
+    post, path = "/api/orgs/{org_id}/voice/rooms/{voice_room_id}/close", tag = "voice",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("org_id" = Uuid, Path), ("voice_room_id" = Uuid, Path)),
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 204, description = "Encerrada."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, description = "`voice.room_close_forbidden`: membro da org, mas nem criador da sala de voz nem admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "Inexistente ou de outra organização.", body = crate::openapi::ErrorBody),
@@ -436,13 +441,15 @@ pub async fn list_participants(
 pub async fn close_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-    Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+    Path((org_id, id)): Path<(Uuid, Uuid)>,
+) -> Result<axum::http::StatusCode, ApiError> {
     let (owner_org, created_by): (Uuid, Uuid) =
-        sqlx::query_as("SELECT org_id, created_by FROM voice_room WHERE id = $1")
+        sqlx::query_as("SELECT org_id, created_by FROM voice_room WHERE id = $1 AND org_id = $2")
             .bind(id)
-            .fetch_one(&state.db)
-            .await?;
+            .bind(org_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or(ApiError::NotFound)?;
     // Quem não é membro activo da org dona não sabe que a sala existe (404).
     // Dentro da org, encerrar corta a chamada de TODOS os participantes PSTN:
     // é do criador ou de um admin, não de qualquer colega (R141).
@@ -463,7 +470,7 @@ pub async fn close_room(
     .bind(id)
     .execute(&state.db)
     .await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 // ---------- Inventário de DIDs (admin) ----------
@@ -591,7 +598,7 @@ pub async fn list_dids(
 
 /// CDRs da org para billing/auditoria (admin). Os 500 mais recentes.
 #[utoipa::path(
-    get, path = "/api/orgs/{org_id}/voice/cdr", tag = "voice",
+    get, path = "/api/orgs/{org_id}/voice/call-records", tag = "voice",
     security(("session" = [])),
     params(("org_id" = Uuid, Path)),
     responses(
@@ -730,7 +737,7 @@ pub async fn ivr_validate_pin(
         .map(Json)
 }
 
-/// A regra do IVR, partilhada pelo HTTP (`/api/voice/ivr/validate`) e pelo gRPC
+/// A regra do IVR, partilhada pelo HTTP (`/internal/v1/voice/ivr/validate`) e pelo gRPC
 /// (`IvrService.ValidatePin`). Fronteira de isolamento: só encontra salas
 /// ATIVAS cujo DID corresponde.
 pub(crate) async fn validate_pin(

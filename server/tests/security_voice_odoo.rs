@@ -24,7 +24,7 @@ async fn ivr_validate(app: &TestApp, did: &str, pin: &str) -> (u16, Value) {
     let r = app
         .raw(
             reqwest::Method::POST,
-            "/api/voice/ivr/validate",
+            "/internal/v1/voice/ivr/validate",
             &[("x-voice-secret", VOICE_SECRET)],
             Some(json!({"did_e164": did, "pin": pin})),
         )
@@ -239,17 +239,17 @@ async fn odoo_integration_routes_refuse_tenant_api_key(db: sqlx::PgPool) {
     assert!(dlx.starts_with("dlx_"), "{dlx}");
 
     // A chave está boa: abre a SUA superfície (controlo positivo da chave).
-    let (st, body) = app.get("/api/v1/org", Some(&dlx)).await;
+    let (st, body) = app.get("/api/v1/organization", Some(&dlx)).await;
     assert_eq!(st, 200, "{body}");
 
     // O ataque: a mesma chave nas rotas da integração.
-    let (st, body) = app.get("/api/v1/integration/odoo/users", Some(&dlx)).await;
+    let (st, body) = app.get("/api/integrations/odoo/v1/users", Some(&dlx)).await;
     assert_denied("dlx_ lista o directório Odoo", st, &body, &admin.email);
     assert_eq!(st, 401, "{body}");
     let r = app
         .raw(
             reqwest::Method::GET,
-            "/api/v1/integration/odoo/users",
+            "/api/integrations/odoo/v1/users",
             &[("x-integration-token", &dlx)],
             None,
         )
@@ -257,7 +257,7 @@ async fn odoo_integration_routes_refuse_tenant_api_key(db: sqlx::PgPool) {
     assert_eq!(r.status, 401, "{}", r.text);
     let (st, body) = app
         .post(
-            "/api/v1/integration/odoo/provision",
+            "/api/integrations/odoo/v1/provision",
             Some(&dlx),
             json!({"company": "Capturada", "admin_email": admin.email, "users": []}),
         )
@@ -267,19 +267,19 @@ async fn odoo_integration_routes_refuse_tenant_api_key(db: sqlx::PgPool) {
     // Controlo positivo: o token de integração `dlxo_` abre as duas.
     let (st, tok) = app
         .post(
-            &format!("/api/orgs/{}/integration/odoo/token", admin.org()),
+            &format!("/api/orgs/{}/integrations/odoo/rotate-token", admin.org()),
             Some(&admin.token),
             json!({}),
         )
         .await;
     assert_eq!(st, 200, "{tok}");
     let dlxo = tok["token"].as_str().unwrap();
-    let (st, body) = app.get("/api/v1/integration/odoo/users", Some(dlxo)).await;
+    let (st, body) = app.get("/api/integrations/odoo/v1/users", Some(dlxo)).await;
     assert_eq!(st, 200, "{body}");
     assert!(body.to_string().contains(&admin.email), "{body}");
     let (st, body) = app
         .post(
-            "/api/v1/integration/odoo/provision",
+            "/api/integrations/odoo/v1/provision",
             Some(dlxo),
             json!({"company": "Org zeta-odoo.ao", "admin_email": admin.email, "users": []}),
         )
@@ -287,7 +287,7 @@ async fn odoo_integration_routes_refuse_tenant_api_key(db: sqlx::PgPool) {
     assert_eq!(st, 200, "{body}");
 }
 
-/// R143 — `GET /api/v1/integration/odoo/users` devolvia ao Odoo membros
+/// R143 — `GET /api/integrations/odoo/v1/users` devolvia ao Odoo membros
 /// ARQUIVADOS (saídos da empresa) como se ainda lá estivessem.
 #[sqlx::test(migrations = "./migrations")]
 async fn odoo_list_users_excludes_archived_members(db: sqlx::PgPool) {
@@ -297,7 +297,7 @@ async fn odoo_list_users_excludes_archived_members(db: sqlx::PgPool) {
     let stays = app.add_member(&admin, "fica", "member").await;
     let (st, tok) = app
         .post(
-            &format!("/api/orgs/{}/integration/odoo/token", admin.org()),
+            &format!("/api/orgs/{}/integrations/odoo/rotate-token", admin.org()),
             Some(&admin.token),
             json!({}),
         )
@@ -306,13 +306,13 @@ async fn odoo_list_users_excludes_archived_members(db: sqlx::PgPool) {
     let dlxo = tok["token"].as_str().unwrap();
 
     // Controlo positivo: antes de sair, está na lista.
-    let (st, body) = app.get("/api/v1/integration/odoo/users", Some(dlxo)).await;
+    let (st, body) = app.get("/api/integrations/odoo/v1/users", Some(dlxo)).await;
     assert_eq!(st, 200, "{body}");
     assert!(body.to_string().contains(&gone.email), "{body}");
 
     app.archive_member(admin.org(), &gone.user_id).await;
 
-    let (st, body) = app.get("/api/v1/integration/odoo/users", Some(dlxo)).await;
+    let (st, body) = app.get("/api/integrations/odoo/v1/users", Some(dlxo)).await;
     assert_eq!(st, 200, "{body}");
     let text = body.to_string();
     assert!(

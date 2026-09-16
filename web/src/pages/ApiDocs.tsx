@@ -82,10 +82,10 @@ X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
 
         <Endpoint
           method="GET"
-          path="/api/v1/org"
+          path="/api/v1/organization"
           desc={t('api.infoOrg')}
           resp={`{ "id": "…", "name": "Acme", "email_domain": "acme.com", "domain": "meet.acme.com", "members": 42 }`}
-          curl={`curl ${base}/api/v1/org -H "Authorization: Bearer dlx_..."`}
+          curl={`curl ${base}/api/v1/organization -H "Authorization: Bearer dlx_..."`}
         />
 
         <Section title={t('api.webhooks')}>

@@ -145,8 +145,8 @@ openssl rand -hex 24   # → password do Postgres
 
 | Variável | Descrição |
 |---|---|
-| `PROVISIONING_SECRET` | Autoriza `POST /api/v1/admin/orgs`. Vazio = endpoint desligado |
-| `PLATFORM_ADMIN_USER_IDS` | UUIDs (separados por vírgula) dos administradores da PLATAFORMA — os únicos que leem e alteram o armazenamento das gravações (`/api/v1/platform/storage*`). Vazio = ninguém (fail-closed). UUID e não email, porque o registo não verifica emails. Obter com `SELECT id FROM users WHERE email = '…'` depois de a conta existir. Um valor que não seja UUID impede o arranque |
+| `PROVISIONING_SECRET` | Autoriza `POST /api/operator/v1/organizations`. Vazio = endpoint desligado |
+| `PLATFORM_ADMIN_USER_IDS` | UUIDs (separados por vírgula) dos administradores da PLATAFORMA — os únicos que leem e alteram o armazenamento das gravações (`/api/operator/v1/storage*`). Vazio = ninguém (fail-closed). UUID e não email, porque o registo não verifica emails. Obter com `SELECT id FROM users WHERE email = '…'` depois de a conta existir. Um valor que não seja UUID impede o arranque |
 | `PLATFORM_ODOO_URL` / `PLATFORM_ODOO_DB` | Login com conta Odoo ([§7](#7-integração-odoo)). Vazias = desligado |
 | `WEBHOOK_ALLOW_HOSTS` | Hosts isentos da guarda anti-SSRF dos webhooks, por nome exacto. Necessário para um Odoo on-prem em rede privada |
 | `OLLAMA_URL` | LLM local para atas e legendas. Vazio = MoM por regras (fail-open) |

@@ -34,9 +34,9 @@ description: Contrato de API do Delonix Meet — as superfícies (BFF `/api`, p�
 | BFF do web | `/api/…` | igual | sessão |
 | Pública do inquilino | `/api/v1/…` | igual, **só** chave `dlx_` com escopos | `ApiKeyAuth` |
 | Operador | misturado na v1 | `/api/operator/v1/…` | identidade de operador explícita na config |
-| Integração Odoo | `/api/v1/integration/odoo/*` | `/api/integrations/odoo/v1/…` | `OdooTokenAuth` |
-| Tempo real | `/ws`, `/rtc`, `/api/rooms/{code}/broadcast` | igual | token de sala / access token |
-| Máquina-a-máquina | `/api/voice/ivr/*` (HTTP público com segredo) | **gRPC**, porta sem ingress, mTLS | mTLS |
+| Integração Odoo | `/api/integrations/odoo/v1/*` | `/api/integrations/odoo/v1/…` | `OdooTokenAuth` |
+| Tempo real | `/ws`, `/rtc`, `/api/rooms/{code}/live` | igual | token de sala / access token |
+| Máquina-a-máquina | `/internal/v1/voice/ivr/*` (HTTP público com segredo) | **gRPC**, porta sem ingress, mTLS | mTLS |
 
 **Um endpoint novo é da BFF por omissão.** Só entra na v1 por promoção consciente, com
 um consumidor externo real. **Nunca** se monta uma rota de operador ou de integração
@@ -102,7 +102,7 @@ dentro de `/api/v1` — a catraca conta `rotas_v1_com_sessao`.
 
 | Fronteira | Porquê gRPC |
 |---|---|
-| FreeSWITCH/IVR ↔ servidor (hoje `/api/voice/ivr/{validate,cdr}`) | contrato tipado, baixa latência, sai da árvore pública |
+| FreeSWITCH/IVR ↔ servidor (hoje `/internal/v1/voice/ivr/{validate,cdr}`) | contrato tipado, baixa latência, sai da árvore pública |
 | `ai-worker`/`whisper-server` ↔ servidor | streaming bidireccional de áudio e texto, com contra-pressão e prazos |
 | Nó ↔ nó | **só** com evidência escrita do que o Redis pub/sub do ADR-0001 não resolve |
 
@@ -131,9 +131,9 @@ Quem propuser «gRPC completo em todo o backend» leva esta tabela como resposta
 - **Semântica das rotas da BFF:**
   - `POST /api/orgs/{id}/settings` a fazer update;
   - `POST /api/meetings/{id}/minutes` a fazer upsert;
-  - `/api/recordings/{id}/share` no singular para uma colecção;
-  - `/api/whiteboards/{id}/share` e `/api/whiteboards/shared/{token}` para a mesma coisa;
-  - `/api/action-items/{id}`, `/api/quarantine/analytics` e `/api/missed-calls/ack` fora
+  - `/api/recordings/{id}/shares` no singular para uma colecção;
+  - `/api/whiteboards/{id}/public-link` e `/api/public/whiteboards/{token}/image` para a mesma coisa;
+  - `/api/action-items/{id}`, `/api/quarantine/analytics` e `/api/users/me/missed-calls/acknowledge` fora
     da hierarquia;
   - `/api/rooms/{code}/minutes` duplica `/api/meetings/{id}/minutes`.
 - **Na v1:**

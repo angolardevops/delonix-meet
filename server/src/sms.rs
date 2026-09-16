@@ -2,7 +2,7 @@
 //!
 //! - **Consola (BFF)**: `/api/orgs/{org_id}/sms/*`, sessão, só administrador da
 //!   org. Enviar SMS custa dinheiro — é superfície de fraude, como o dial-in.
-//! - **Agente USB**: `/api/sms/agent/*`, token `dlxg_` do gateway. O agente corre
+//! - **Agente USB**: `/api/integrations/sms-agent/v1/*`, token `dlxg_` do gateway. O agente corre
 //!   na máquina onde o telefone está ligado e liga para fora; o servidor nunca
 //!   vê USB (imagem distroless, pod K8s).
 //! - **Operadores**: um worker reclama as mensagens `operator` e envia-as por
@@ -167,7 +167,7 @@ pub struct GatewayInfo {
     online: bool,
 }
 
-/// Documentação OpenAPI do gateway de SMS (ADR-0005). As rotas `/api/sms/agent/*`
+/// Documentação OpenAPI do gateway de SMS (ADR-0005). As rotas `/api/integrations/sms-agent/v1/*`
 /// autenticam com o token de gateway `dlxg_` (esquema `api_key`, com esse prefixo).
 #[derive(utoipa::OpenApi)]
 #[openapi(
@@ -890,7 +890,7 @@ fn clip(s: Option<String>) -> Option<String> {
 /// NÃO é apagado — fica desligado (`online: false`) e mantém a selecção, para
 /// que tirar e voltar a ligar o cabo não obrigue a escolher outra vez.
 #[utoipa::path(
-    put, path = "/api/sms/agent/devices", tag = "sms",
+    put, path = "/api/integrations/sms-agent/v1/devices", tag = "sms",
     security(("api_key" = [])),
     request_body = DevicesReq,
     responses(
@@ -993,7 +993,7 @@ fn concat_reference(id: Uuid) -> u8 {
 }
 
 #[utoipa::path(
-    post, path = "/api/sms/agent/claim", tag = "sms",
+    post, path = "/api/integrations/sms-agent/v1/claim", tag = "sms",
     security(("api_key" = [])),
     responses(
         (status = 200, body = ClaimResp),
@@ -1049,7 +1049,7 @@ pub struct ResultReq {
 }
 
 #[utoipa::path(
-    post, path = "/api/sms/agent/messages/{message_id}/result", tag = "sms",
+    post, path = "/api/integrations/sms-agent/v1/messages/{message_id}/result", tag = "sms",
     security(("api_key" = [])),
     params(("message_id" = Uuid, Path)),
     request_body = ResultReq,

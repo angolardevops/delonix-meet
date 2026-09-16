@@ -202,8 +202,8 @@ pub async fn v1_rate_limit(
     Ok(next.run(request).await)
 }
 
-/// Applied to /api/ice — limite por IP, partilhando o orçamento do
-/// `v1_limiter`. Separado do `v1_rate_limit` de propósito: a `/api/ice`
+/// Applied to /api/ice-servers — limite por IP, partilhando o orçamento do
+/// `v1_limiter`. Separado do `v1_rate_limit` de propósito: a `/api/ice-servers`
 /// autentica por sessão, e escolher o balde por uma chave `dlx_` que a rota
 /// nem lê deixava contornar o limite com várias chaves.
 pub async fn ip_rate_limit(

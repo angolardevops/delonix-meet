@@ -212,7 +212,7 @@ async fn conflicts_for_participants_and_physical_room(db: sqlx::PgPool) {
     let probe = (start + Duration::minutes(30)).to_rfc3339();
     let (st, cf) = app
         .post(
-            "/api/meetings/conflicts",
+            "/api/meetings/check-conflicts",
             Some(&c.token),
             json!({"starts_at": probe, "duration_min": 15, "room_ref": room["id"]}),
         )
@@ -226,7 +226,7 @@ async fn conflicts_for_participants_and_physical_room(db: sqlx::PgPool) {
     let after = (start + Duration::minutes(60)).to_rfc3339();
     let (_, cf) = app
         .post(
-            "/api/meetings/conflicts",
+            "/api/meetings/check-conflicts",
             t,
             json!({"starts_at": after, "room_ref": room["id"]}),
         )
@@ -328,7 +328,11 @@ async fn start_meeting_creates_room_once(db: sqlx::PgPool) {
     .unwrap();
     assert_eq!(missed, 1);
     let (st, body) = app
-        .post("/api/missed-calls/ack", Some(&c.token), json!({}))
+        .post(
+            "/api/users/me/missed-calls/acknowledge",
+            Some(&c.token),
+            json!({}),
+        )
         .await;
     assert_eq!(st, 200);
     assert_eq!(body, json!({"ok": true}));
@@ -361,7 +365,7 @@ async fn ics_export(db: sqlx::PgPool) {
         let r = app
             .raw(
                 reqwest::Method::GET,
-                &format!("/api/meetings/{id}/ics"),
+                &format!("/api/meetings/{id}/calendar.ics"),
                 &[("Authorization", &format!("Bearer {tok}"))],
                 None,
             )
@@ -386,11 +390,14 @@ async fn ics_export(db: sqlx::PgPool) {
         );
     }
     let (st, _) = app
-        .get(&format!("/api/meetings/{id}/ics"), Some(&d.token))
+        .get(&format!("/api/meetings/{id}/calendar.ics"), Some(&d.token))
         .await;
     assert_eq!(st, 401);
     let (st, _) = app
-        .get(&format!("/api/meetings/{INVENTED_ID}/ics"), Some(&a.token))
+        .get(
+            &format!("/api/meetings/{INVENTED_ID}/calendar.ics"),
+            Some(&a.token),
+        )
         .await;
     assert_eq!(st, 404);
 }
@@ -410,7 +417,7 @@ async fn invitees_and_respond(db: sqlx::PgPool) {
         .await;
     let id = m["id"].as_str().unwrap();
     let inv = format!("/api/meetings/{id}/invitees");
-    let resp = format!("/api/meetings/{id}/respond");
+    let resp = format!("/api/meetings/{id}/invitees/me");
 
     let (st, list) = app.get(&inv, Some(&a.token)).await;
     assert_eq!(st, 200);
@@ -536,7 +543,7 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
 
     // Notas: só quem PARTICIPOU (join) na sala.
     let (st, _) = app
-        .get(&format!("/api/rooms/{code}/notes"), Some(&a.token))
+        .get(&format!("/api/rooms/{code}/minutes"), Some(&a.token))
         .await;
     assert_eq!(st, 401, "arrancar não é participar");
     let (st, _) = app
@@ -548,7 +555,7 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200);
     let (st, notes) = app
-        .get(&format!("/api/rooms/{code}/notes"), Some(&a.token))
+        .get(&format!("/api/rooms/{code}/minutes"), Some(&a.token))
         .await;
     assert_eq!(st, 200);
     assert_eq!(
@@ -568,7 +575,7 @@ async fn agenda_crud_and_permissions(db: sqlx::PgPool) {
     let c = app.add_member(&a, "carla", "member").await;
     let d = app.add_member(&a, "dario", "member").await;
     let m = app.new_meeting(&a, "Agenda", &[&c.user_id]).await;
-    let base = format!("/api/meetings/{}/agenda", m["id"].as_str().unwrap());
+    let base = format!("/api/meetings/{}/agenda-items", m["id"].as_str().unwrap());
 
     let (st, list) = app.get(&base, Some(&c.token)).await;
     assert_eq!(st, 200);
@@ -763,12 +770,15 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
 
     let (_, ag) = app
         .post(
-            &format!("/api/meetings/{id}/agenda"),
+            &format!("/api/meetings/{id}/agenda-items"),
             Some(&b.token),
             json!({"topic": "tópico da B"}),
         )
         .await;
-    let ag_item = format!("/api/meetings/{id}/agenda/{}", ag["id"].as_str().unwrap());
+    let ag_item = format!(
+        "/api/meetings/{id}/agenda-items/{}",
+        ag["id"].as_str().unwrap()
+    );
 
     let checks: Vec<(u16, Value, &str)> = vec![
         {
@@ -786,13 +796,15 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
             (s, v, "minutes")
         },
         {
-            let (s, v) = app.get(&format!("/api/meetings/{id}/agenda"), t).await;
+            let (s, v) = app
+                .get(&format!("/api/meetings/{id}/agenda-items"), t)
+                .await;
             (s, v, "agenda")
         },
         {
             let (s, v) = app
                 .post(
-                    &format!("/api/meetings/{id}/agenda"),
+                    &format!("/api/meetings/{id}/agenda-items"),
                     t,
                     json!({"topic": "forjado"}),
                 )
@@ -836,13 +848,15 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
             (s, v, "action-plan items")
         },
         {
-            let (s, v) = app.get(&format!("/api/meetings/{id}/ics"), t).await;
+            let (s, v) = app
+                .get(&format!("/api/meetings/{id}/calendar.ics"), t)
+                .await;
             (s, v, "ics")
         },
         {
             let (s, v) = app
                 .post(
-                    &format!("/api/meetings/{id}/respond"),
+                    &format!("/api/meetings/{id}/invitees/me"),
                     t,
                     json!({"status": "accepted"}),
                 )
@@ -866,7 +880,7 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
     assert_eq!(list[0]["minutes"], "");
     assert!(list[0]["room_code"].is_null(), "A não arrancou a reunião");
     let (_, agenda) = app
-        .get(&format!("/api/meetings/{id}/agenda"), Some(&b.token))
+        .get(&format!("/api/meetings/{id}/agenda-items"), Some(&b.token))
         .await;
     assert_eq!(agenda[0]["done"], false);
     let (_, plan) = app
@@ -925,7 +939,7 @@ async fn create_meeting_current_behavior_accepts_foreign_org_invitee(db: sqlx::P
     assert_eq!(ids(&list), vec![id]);
     assert_eq!(list[0]["title"], "convite atravessado");
     let (st, _) = app
-        .get(&format!("/api/meetings/{id}/agenda"), Some(&b.token))
+        .get(&format!("/api/meetings/{id}/agenda-items"), Some(&b.token))
         .await;
     assert_eq!(st, 200);
 }

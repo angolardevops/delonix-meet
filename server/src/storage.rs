@@ -78,10 +78,10 @@ pub struct StorageConfigReq {
     pub webdav_path: Option<String>,
 }
 
-/// `GET /api/v1/platform/storage` — lê a config actual (admin plataforma).
+/// `GET /api/operator/v1/storage` — lê a config actual (admin plataforma).
 /// A password WebDAV nunca é devolvida: `webdav_password_set` diz se existe.
 #[utoipa::path(
-    get, path = "/api/v1/platform/storage", tag = "platform",
+    get, path = "/api/operator/v1/storage", tag = "platform",
     security(("session" = [])),
     responses(
         (status = 200, body = StorageConfigView),
@@ -137,10 +137,10 @@ pub async fn get_storage(
     }))
 }
 
-/// `PUT /api/v1/platform/storage` — actualiza a config (admin plataforma).
+/// `PUT /api/operator/v1/storage` — actualiza a config (admin plataforma).
 /// `webdav_password` vazia ou omissa mantém a guardada.
 #[utoipa::path(
-    put, path = "/api/v1/platform/storage", tag = "platform",
+    put, path = "/api/operator/v1/storage", tag = "platform",
     security(("session" = [])),
     request_body = StorageConfigReq,
     responses(
@@ -206,12 +206,12 @@ pub async fn save_storage(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// `POST /api/v1/platform/storage/test` — testa a ligação ao storage configurado.
+/// `POST /api/operator/v1/storage/test` — testa a ligação ao storage configurado.
 ///
 /// `local` e `nfs` só confirmam a configuração; `webdav` faz um `PROPFIND` real.
 /// Uma falha do destino remoto responde 400, não 502.
 #[utoipa::path(
-    post, path = "/api/v1/platform/storage/test", tag = "platform",
+    post, path = "/api/operator/v1/storage/test", tag = "platform",
     security(("session" = [])),
     responses(
         (status = 200, body = StorageTestResult),
@@ -307,9 +307,9 @@ pub async fn test_storage(
 }
 
 /// Gera o manifesto K8s do PVC para o tipo de storage configurado.
-/// `GET /api/v1/platform/storage/pvc-manifest` — devolve YAML para kubectl apply.
+/// `GET /api/operator/v1/storage/pvc-manifest` — devolve YAML para kubectl apply.
 #[utoipa::path(
-    get, path = "/api/v1/platform/storage/pvc-manifest", tag = "platform",
+    get, path = "/api/operator/v1/storage/pvc-manifest", tag = "platform",
     security(("session" = [])),
     responses(
         (status = 200, description = "Manifesto YAML (PV + PVC para NFS, ou um comentário para `local`), servido como anexo `delonix-recordings-pv.yaml`.", body = String, content_type = "text/plain"),

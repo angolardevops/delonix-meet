@@ -12,7 +12,7 @@ kind: Component
 #  check-room-affinity.sh, role kind_host). Medido a 2026-09-16 com kubectl
 #  v1.36.4 / kustomize v5.8.1.
 #
-#  - listener interno :8181 (/api/voice/ivr/*, /metrics) e gRPC :9180
+#  - listener interno :8181 (/internal/v1/voice/ivr/*, /metrics) e gRPC :9180
 #    num Service PRÓPRIO (delonix-server-internal), que nenhum Ingress
 #    referencia — guardado por scripts/check-k8s-render.sh;
 #  - NetworkPolicy que só deixa chegar ao :8181/:9180 quem precisa;

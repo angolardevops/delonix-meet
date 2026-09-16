@@ -411,7 +411,7 @@ async fn chave_provisionada_serve_os_fluxos_do_odoo(db: sqlx::PgPool) {
         async move {
             app.raw(
                 reqwest::Method::POST,
-                "/api/v1/admin/orgs",
+                "/api/operator/v1/organizations",
                 &[("X-Provisioning-Secret", secret)],
                 Some(body),
             )
@@ -513,7 +513,7 @@ async fn limite_por_chave_isola_duas_chaves_do_mesmo_ip(db: sqlx::PgPool) {
     let r = app
         .raw(
             reqwest::Method::GET,
-            "/api/v1/org",
+            "/api/v1/organization",
             &[("Authorization", &auth)],
             None,
         )

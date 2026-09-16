@@ -1,6 +1,6 @@
 # Service INTERNO — os mesmos pods do delonix-server, mas só as portas que
 # nunca podem sair do cluster:
-#   8181 internal  → /api/voice/ivr/* (FreeSWITCH, por HTTP a partir de Lua)
+#   8181 internal  → /internal/v1/voice/ivr/* (FreeSWITCH, por HTTP a partir de Lua)
 #                    e /metrics
 #   9180 grpc      → IvrService, TranscriptionService, grpc.health.v1 (mTLS)
 #

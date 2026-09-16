@@ -189,21 +189,23 @@ async fn room_chat_invite_qos_timings_access(db: sqlx::PgPool) {
 
     // Chat
     for tok in [&a.token, &c.token] {
-        let (st, body) = app.get(&format!("/api/rooms/{code}/chat"), Some(tok)).await;
+        let (st, body) = app
+            .get(&format!("/api/rooms/{code}/messages"), Some(tok))
+            .await;
         assert_eq!(st, 200);
         assert_eq!(body, json!([]));
     }
     let (st, _) = app
-        .get(&format!("/api/rooms/{code}/chat"), Some(&b.token))
+        .get(&format!("/api/rooms/{code}/messages"), Some(&b.token))
         .await;
     assert_eq!(st, 403);
     let (st, _) = app
-        .get("/api/rooms/aaa-bbbb-ccc/chat", Some(&a.token))
+        .get("/api/rooms/aaa-bbbb-ccc/messages", Some(&a.token))
         .await;
     assert_eq!(st, 404);
 
     // Convite
-    let inv = format!("/api/rooms/{code}/invite");
+    let inv = format!("/api/rooms/{code}/invitations");
     let (st, _) = app
         .post(&inv, Some(&b.token), json!({"targets": [a.user_id]}))
         .await;
@@ -238,7 +240,7 @@ async fn room_chat_invite_qos_timings_access(db: sqlx::PgPool) {
     assert_eq!(body, json!({"ringing": [], "offline": [c.user_id]}));
 
     // QoS e tempos
-    let qos = format!("/api/rooms/{code}/qos");
+    let qos = format!("/api/rooms/{code}/quality-samples");
     let sample = json!({"rtt_ms": 40, "loss_pct": 1.5, "up_kbps": 900, "score": 250,
                         "turn_relay": true, "limited_by": "cpu", "candidate_pair": "relay/srflx"});
     let (st, _) = app.post(&qos, Some(&b.token), sample.clone()).await;
@@ -246,7 +248,7 @@ async fn room_chat_invite_qos_timings_access(db: sqlx::PgPool) {
     let (st, body) = app.post(&qos, Some(&c.token), sample).await;
     assert_eq!(st, 200);
     assert_eq!(body, json!({"ok": true}));
-    let timings = format!("/api/rooms/{code}/timings");
+    let timings = format!("/api/rooms/{code}/join-timings");
     let (st, _) = app
         .post(&timings, Some(&b.token), json!({"join_ms": 1}))
         .await;
@@ -441,7 +443,7 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
     assert_eq!(shares, json!([]));
     let (st, _) = app
         .delete(
-            &format!("/api/recordings/{INVENTED_ID}/share/{INVENTED_ID}"),
+            &format!("/api/recordings/{INVENTED_ID}/shares/{INVENTED_ID}"),
             Some(&a.token),
         )
         .await;
@@ -464,22 +466,36 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
     let (_, got) = app.get(&link, Some(&a.token)).await;
     assert_eq!(got["token"], token.as_str());
 
-    let (st, _) = app.get(&format!("/api/share/{token}"), None).await;
+    let (st, _) = app
+        .get(&format!("/api/public/recordings/{token}"), None)
+        .await;
     assert_eq!(st, 401, "sem password");
     let (st, _) = app
-        .get(&format!("/api/share/{token}?password=errada"), None)
+        .get(
+            &format!("/api/public/recordings/{token}?password=errada"),
+            None,
+        )
         .await;
     assert_eq!(st, 401);
     let (st, pubv) = app
-        .get(&format!("/api/share/{token}?password=abrir"), None)
+        .get(
+            &format!("/api/public/recordings/{token}?password=abrir"),
+            None,
+        )
         .await;
     assert_eq!(st, 200, "{pubv}");
     assert_eq!(pubv["recording_id"], rec.as_str());
     assert_eq!(pubv["filename"], "teste.webm");
     assert_eq!(pubv["has_password"], true);
-    assert_eq!(pubv["download_url"], format!("/api/share/{token}/download"));
+    assert_eq!(
+        pubv["download_url"],
+        format!("/api/public/recordings/{token}/content")
+    );
     let (st, _) = app
-        .get(&format!("/api/share/{token}/download?password=abrir"), None)
+        .get(
+            &format!("/api/public/recordings/{token}/content?password=abrir"),
+            None,
+        )
         .await;
     assert_eq!(st, 404, "autorizado; sem ficheiro");
 
@@ -487,9 +503,13 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
     let (_, l2) = app.post(&link, Some(&a.token), json!({})).await;
     let token2 = l2["token"].as_str().unwrap().to_string();
     assert_ne!(token, token2);
-    let (st, _) = app.get(&format!("/api/share/{token}"), None).await;
+    let (st, _) = app
+        .get(&format!("/api/public/recordings/{token}"), None)
+        .await;
     assert_eq!(st, 404);
-    let (st, pubv) = app.get(&format!("/api/share/{token2}"), None).await;
+    let (st, pubv) = app
+        .get(&format!("/api/public/recordings/{token2}"), None)
+        .await;
     assert_eq!(st, 200);
     assert_eq!(pubv["has_password"], false);
 
@@ -498,7 +518,9 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
         .execute(&app.db)
         .await
         .unwrap();
-    let (st, _) = app.get(&format!("/api/share/{token2}"), None).await;
+    let (st, _) = app
+        .get(&format!("/api/public/recordings/{token2}"), None)
+        .await;
     assert_eq!(st, 404);
 
     let (st, _) = app.delete(&link, Some(&b.token)).await;
@@ -510,7 +532,7 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
     assert!(got.is_null());
     let (st, _) = app
         .post(
-            &format!("/api/recordings/{INVENTED_ID}/link"),
+            &format!("/api/recordings/{INVENTED_ID}/public-link"),
             Some(&a.token),
             json!({}),
         )
@@ -522,9 +544,9 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
 async fn public_share_garbage_token_is_404(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     for p in [
-        "/api/share/lixo",
-        "/api/share/lixo/download",
-        "/api/whiteboards/shared/lixo",
+        "/api/public/recordings/lixo",
+        "/api/public/recordings/lixo/content",
+        "/api/public/whiteboards/lixo/image",
     ] {
         let (st, _) = app.get(p, None).await;
         assert_eq!(st, 404, "{p}");
@@ -546,7 +568,7 @@ async fn recording_share_current_behavior_allows_foreign_org_user(db: sqlx::PgPo
         .await;
     let (st, _) = app
         .post(
-            &format!("/api/recordings/{rec}/share"),
+            &format!("/api/recordings/{rec}/shares"),
             Some(&a.token),
             json!({"user_id": b.user_id}),
         )
@@ -604,7 +626,7 @@ async fn whiteboards_save_list_png_share_delete(db: sqlx::PgPool) {
     let r = app
         .raw(
             reqwest::Method::GET,
-            &format!("/api/whiteboards/{id}/png"),
+            &format!("/api/whiteboards/{id}/image"),
             &[("Authorization", &format!("Bearer {}", a.token))],
             None,
         )
@@ -612,19 +634,19 @@ async fn whiteboards_save_list_png_share_delete(db: sqlx::PgPool) {
     assert_eq!(r.status, 200);
     assert_eq!(r.header("content-type").as_deref(), Some("image/png"));
     let (st, body) = app
-        .get(&format!("/api/whiteboards/{id}/png"), Some(&b.token))
+        .get(&format!("/api/whiteboards/{id}/image"), Some(&b.token))
         .await;
     assert_denied("PNG do quadro da A", st, &body, &id);
     let (st, _) = app
         .get(
-            &format!("/api/whiteboards/{INVENTED_ID}/png"),
+            &format!("/api/whiteboards/{INVENTED_ID}/image"),
             Some(&a.token),
         )
         .await;
     assert_eq!(st, 404);
 
     // Partilha: a org B não partilha; o dono (C) sim.
-    let share = format!("/api/whiteboards/{id}/share");
+    let share = format!("/api/whiteboards/{id}/public-link");
     let (st, _) = app
         .post(&share, Some(&b.token), json!({"public": true}))
         .await;
@@ -639,7 +661,7 @@ async fn whiteboards_save_list_png_share_delete(db: sqlx::PgPool) {
     let r = app
         .raw(
             reqwest::Method::GET,
-            &format!("/api/whiteboards/shared/{token}"),
+            &format!("/api/public/whiteboards/{token}/image"),
             &[],
             None,
         )
@@ -652,7 +674,7 @@ async fn whiteboards_save_list_png_share_delete(db: sqlx::PgPool) {
         .await;
     assert_eq!(priv_wb["share_token"], "");
     let (st, _) = app
-        .get(&format!("/api/whiteboards/shared/{token}"), None)
+        .get(&format!("/api/public/whiteboards/{token}/image"), None)
         .await;
     assert_eq!(st, 404);
 

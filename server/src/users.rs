@@ -132,7 +132,7 @@ pub struct SearchQuery {
 /// Pesquisa utilizadores por email/username (para convidar/partilhar).
 /// Devolve no máximo 10; exclui o próprio.
 #[utoipa::path(
-    get, path = "/api/users/search", tag = "users",
+    get, path = "/api/users", tag = "users",
     security(("session" = [])),
     params(SearchQuery),
     responses(

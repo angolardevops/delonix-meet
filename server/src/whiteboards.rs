@@ -37,7 +37,7 @@ pub struct PngBytes(Vec<u8>);
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(list, save, delete, png, signed_url, set_share, shared_png),
+    paths(list, get_one, save, delete, png, signed_url, set_share, shared_png),
     components(schemas(WhiteboardMeta, SaveReq, ShareReq, SignedUrl))
 )]
 pub struct ApiDoc;
@@ -172,6 +172,34 @@ pub async fn list(
     Ok(Json(items.into_iter().map(mask_token).collect()))
 }
 
+/// Metadados de um quadro (sem a imagem).
+#[utoipa::path(
+    get, path = "/api/whiteboards/{whiteboard_id}", tag = "whiteboards",
+    security(("session" = [])),
+    params(("whiteboard_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = WhiteboardMeta),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou é de uma organização de que não és membro"),
+    )
+)]
+pub async fn get_one(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<WhiteboardMeta>, ApiError> {
+    let orgs = orgs_of_user(&state, auth.user_id).await;
+    let item: Option<WhiteboardMeta> = sqlx::query_as(
+        "SELECT id, title, room_code, is_public, share_token, created_at
+         FROM whiteboards WHERE id = $1 AND org_id = ANY($2)",
+    )
+    .bind(id)
+    .bind(&orgs)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(Json(mask_token(item.ok_or(ApiError::NotFound)?)))
+}
+
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct PngQuery {
@@ -208,9 +236,9 @@ async fn viewable_png(state: &AppState, id: Uuid, user_id: Uuid) -> Result<Vec<u
 /// - **Com `exp` e `sig`** (URL assinado): sem sessão. Assinatura errada, prazo
 ///   expirado ou quadro inexistente dão todos `404`.
 #[utoipa::path(
-    get, path = "/api/whiteboards/{id}/png", tag = "whiteboards",
+    get, path = "/api/whiteboards/{whiteboard_id}/image", tag = "whiteboards",
     security((), ("session" = [])),
-    params(("id" = Uuid, Path), PngQuery),
+    params(("whiteboard_id" = Uuid, Path), PngQuery),
     responses(
         (status = 200, body = inline(PngBytes), content_type = "image/png"),
         (status = 400, description = "Com sessão: `id` que não é UUID.", body = crate::openapi::ErrorBody),
@@ -265,7 +293,7 @@ pub async fn png(
 #[derive(Serialize, utoipa::ToSchema)]
 #[schema(as = WhiteboardSignedUrl)]
 pub struct SignedUrl {
-    /// Caminho relativo (`/api/whiteboards/{id}/png?exp=…&sig=…`), carregável sem sessão.
+    /// Caminho relativo (`/api/whiteboards/{id}/image?exp=…&sig=…`), carregável sem sessão.
     pub url: String,
     pub expires_at: DateTime<Utc>,
 }
@@ -273,9 +301,9 @@ pub struct SignedUrl {
 /// Método personalizado: emite um URL assinado do PNG, válido 15 minutos, para
 /// quem JÁ pode ver o quadro. Quem não pode recebe `404`, como no PNG.
 #[utoipa::path(
-    post, path = "/api/whiteboards/{id}/signed-url", tag = "whiteboards",
+    post, path = "/api/whiteboards/{whiteboard_id}/signed-url", tag = "whiteboards",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("whiteboard_id" = Uuid, Path)),
     responses(
         (status = 200, body = SignedUrl),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -304,9 +332,9 @@ pub async fn signed_url(
 
 /// Apaga um quadro — dono ou admin da org.
 #[utoipa::path(
-    delete, path = "/api/whiteboards/{id}", tag = "whiteboards",
+    delete, path = "/api/whiteboards/{whiteboard_id}", tag = "whiteboards",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("whiteboard_id" = Uuid, Path)),
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
@@ -347,9 +375,9 @@ pub struct ShareReq {
 /// Ativa/desativa a partilha por link público. Dono ou admin.
 /// Desativar roda o token: o link antigo deixa de funcionar.
 #[utoipa::path(
-    post, path = "/api/whiteboards/{id}/share", tag = "whiteboards",
+    put, path = "/api/whiteboards/{whiteboard_id}/public-link", tag = "whiteboards",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("whiteboard_id" = Uuid, Path)),
     request_body = ShareReq,
     responses(
         (status = 200, body = WhiteboardMeta),
@@ -392,7 +420,7 @@ pub async fn set_share(
 
 /// Vista pública só-leitura por token — sem autenticação, se `is_public`.
 #[utoipa::path(
-    get, path = "/api/whiteboards/shared/{token}", tag = "whiteboards",
+    get, path = "/api/public/whiteboards/{token}/image", tag = "whiteboards",
     params(("token" = String, Path, description = "`share_token` do quadro.")),
     responses(
         (status = 200, body = inline(PngBytes), content_type = "image/png"),

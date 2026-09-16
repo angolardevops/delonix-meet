@@ -155,7 +155,7 @@ pub struct DeleteMeetingResp {
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as à v1).
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(create, patch, ring, delete),
+    paths(get_one, create, patch, ring, delete),
     components(schemas(
         InviteeReq,
         CreateMeetingReq,
@@ -493,6 +493,32 @@ async fn email_of(state: &AppState, user_id: Uuid) -> String {
 
 // ---------- handlers ----------
 
+/// `GET /api/v1/meetings/{meeting_id}` — uma reunião da organização da chave,
+/// na mesma forma que a criação devolve.
+#[utoipa::path(
+    get, path = "/api/v1/meetings/{meeting_id}", tag = "meetings",
+    security(("api_key" = ["meetings:read"])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = MeetingResp),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:read`"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe ou é de outra organização"),
+    )
+)]
+pub async fn get_one(
+    State(state): State<Arc<AppState>>,
+    key: ApiKeyAuth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<MeetingResp>, ApiError> {
+    key.require(Scope::MeetingsRead)?;
+    let meeting = meeting_in_org(&state, key.org_id, id).await?;
+    let host_email = email_of(&state, meeting.owner_id).await;
+    Ok(Json(
+        build_resp(&state, key.org_id, &meeting, host_email, Vec::new(), false).await?,
+    ))
+}
+
 /// `POST /api/v1/meetings` — cria (ou reencontra) uma reunião agendada com
 /// sala, anfitrião e convidados.
 #[utoipa::path(
@@ -678,9 +704,9 @@ pub async fn create(
 
 /// `PATCH /api/v1/meetings/{id}` — reagendar / renomear / actualizar convidados.
 #[utoipa::path(
-    patch, path = "/api/v1/meetings/{id}", tag = "meetings",
+    patch, path = "/api/v1/meetings/{meeting_id}", tag = "meetings",
     security(("api_key" = ["meetings:write"])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     request_body = PatchMeetingReq,
     responses(
         (status = 200, body = MeetingResp),
@@ -808,9 +834,9 @@ pub async fn patch(
 /// casos, incluindo o `register_call` — sem ele, quem atende cairia na sala
 /// de espera em vez de entrar directo.
 #[utoipa::path(
-    post, path = "/api/v1/meetings/{id}/ring", tag = "meetings",
+    post, path = "/api/v1/meetings/{meeting_id}/ring", tag = "meetings",
     security(("api_key" = ["meetings:write"])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = serde_json::Value, description = "Com alvos: `{ringing: [uuid], offline: [uuid], room_code, join_url}`. Sem convidados por chamar: `{ringing: [], offline: [], reason, join_url}` (sem `room_code`)."),
         (status = 400, body = crate::openapi::ErrorBody, description = "a reunião ainda não tem sala"),
@@ -881,9 +907,9 @@ pub async fn ring(
 /// utilizador espera manter (a FK `recordings.room_id` é ON DELETE CASCADE —
 /// apagar a sala apagaria o registo da gravação).
 #[utoipa::path(
-    delete, path = "/api/v1/meetings/{id}", tag = "meetings",
+    delete, path = "/api/v1/meetings/{meeting_id}", tag = "meetings",
     security(("api_key" = ["meetings:write"])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = DeleteMeetingResp),
         (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),

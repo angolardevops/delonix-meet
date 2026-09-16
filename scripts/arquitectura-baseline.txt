@@ -6,5 +6,5 @@ authorization_lido_a_mao=1
 clientes_reqwest=4
 primitivas_cripto_espalhadas=0
 funcoes_sufixo_pub=4
-respostas_ok_true=21
-rotas_v1_com_sessao=4
+respostas_ok_true=19
+rotas_v1_com_sessao=0

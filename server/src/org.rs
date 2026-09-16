@@ -66,6 +66,7 @@ pub struct OrgSettingsReq {
         update_settings,
         create_org,
         my_orgs,
+        get_org,
         create_branch,
         list_branches,
         add_employee,
@@ -121,7 +122,7 @@ pub struct OrgSettingsUpdated {
 /// retenção (>0) apaga gravações mais antigas que N dias. Quotas negativas ou
 /// omissas ficam ilimitadas; valores de voz fora do enum são ignorados.
 #[utoipa::path(
-    post, path = "/api/orgs/{org_id}/settings", tag = "orgs",
+    patch, path = "/api/orgs/{org_id}", tag = "orgs",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização.")),
     request_body = OrgSettingsReq,
@@ -447,6 +448,20 @@ pub async fn create_org(
     Ok(Json(org))
 }
 
+/// Consulta das organizações de um utilizador, com o seu papel. Só pertenças
+/// ACTIVAS: um membro arquivado deixava de alcançar as rotas da org (S3) mas
+/// continuava a vê-la na lista, com o papel antigo (R152).
+const MY_ORGS_SQL: &str = r#"
+    SELECT o.id, o.name, o.slug, m.role,
+           (SELECT COUNT(*) FROM org_members mm
+             WHERE mm.org_id = o.id AND mm.archived_at IS NULL) AS member_count,
+           o.domain, o.retention_days, o.max_groups, o.max_rooms, o.max_meetings
+    FROM organizations o
+    JOIN org_members m ON m.org_id = o.id AND m.user_id = $1 AND m.archived_at IS NULL
+    WHERE ($2::uuid IS NULL OR o.id = $2)
+    ORDER BY o.name
+"#;
+
 /// Organizações de quem está autenticado, com o seu papel em cada uma.
 #[utoipa::path(
     get, path = "/api/orgs", tag = "orgs",
@@ -460,23 +475,36 @@ pub async fn my_orgs(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<Vec<OrgSummary>>, ApiError> {
-    let orgs: Vec<OrgSummary> = sqlx::query_as(
-        r#"
-        SELECT o.id, o.name, o.slug, m.role,
-               (SELECT COUNT(*) FROM org_members mm
-                 WHERE mm.org_id = o.id AND mm.archived_at IS NULL) AS member_count,
-               o.domain, o.retention_days, o.max_groups, o.max_rooms, o.max_meetings
-        FROM organizations o
-        -- Só pertenças ACTIVAS: um membro arquivado deixava de alcançar as
-        -- rotas da org (S3) mas continuava a vê-la aqui, com o papel antigo.
-        JOIN org_members m ON m.org_id = o.id AND m.user_id = $1 AND m.archived_at IS NULL
-        ORDER BY o.name
-        "#,
-    )
-    .bind(auth.user_id)
-    .fetch_all(&state.db)
-    .await?;
+    let orgs: Vec<OrgSummary> = sqlx::query_as(MY_ORGS_SQL)
+        .bind(auth.user_id)
+        .bind(None::<Uuid>)
+        .fetch_all(&state.db)
+        .await?;
     Ok(Json(orgs))
+}
+
+/// Uma organização de que se é membro activo, com o papel.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = OrgSummary),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe ou não és membro activo"),
+    )
+)]
+pub async fn get_org(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<OrgSummary>, ApiError> {
+    let org: Option<OrgSummary> = sqlx::query_as(MY_ORGS_SQL)
+        .bind(auth.user_id)
+        .bind(Some(org_id))
+        .fetch_optional(&state.db)
+        .await?;
+    Ok(Json(org.ok_or(ApiError::NotFound)?))
 }
 
 // ---------- branches ----------
@@ -573,7 +601,7 @@ pub struct AddEmployeeReq {
 /// criada (password por omissão quando omitida); se já for membro, actualiza
 /// papel, cargo e filial.
 #[utoipa::path(
-    post, path = "/api/orgs/{org_id}/employees", tag = "orgs",
+    post, path = "/api/orgs/{org_id}/members", tag = "orgs",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização.")),
     request_body = AddEmployeeReq,
@@ -738,7 +766,7 @@ pub struct AddEmployeeResp {
 
 /// Colaboradores activos da organização (membros), com a última actividade.
 #[utoipa::path(
-    get, path = "/api/orgs/{org_id}/employees", tag = "orgs",
+    get, path = "/api/orgs/{org_id}/members", tag = "orgs",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização.")),
     responses(
@@ -775,7 +803,7 @@ pub struct UpdateEmployeeReq {
 
 /// Altera papel, cargo e/ou filial de um membro (só admin).
 #[utoipa::path(
-    patch, path = "/api/orgs/{org_id}/employees/{user_id}", tag = "orgs",
+    patch, path = "/api/orgs/{org_id}/members/{user_id}", tag = "orgs",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização."), ("user_id" = Uuid, Path, description = "Utilizador membro.")),
     request_body = UpdateEmployeeReq,
@@ -842,7 +870,7 @@ pub async fn update_employee(
 /// Arquiva o acesso de um membro (soft delete, só admin). Idempotente: um
 /// utilizador que não é membro também devolve `ok`.
 #[utoipa::path(
-    delete, path = "/api/orgs/{org_id}/employees/{user_id}", tag = "orgs",
+    delete, path = "/api/orgs/{org_id}/members/{user_id}", tag = "orgs",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização."), ("user_id" = Uuid, Path, description = "Utilizador membro.")),
     responses(

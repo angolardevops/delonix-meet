@@ -289,9 +289,9 @@ pub async fn create_room(
 /// o conheça lê os metadados (o controlo de entrada faz-se no `join`). O código
 /// é normalizado para minúsculas.
 #[utoipa::path(
-    get, path = "/api/rooms/{code}", tag = "rooms",
+    get, path = "/api/rooms/{room_code}", tag = "rooms",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala (`abc-defg-hij`).")),
+    params(("room_code" = String, Path, description = "Código da sala (`abc-defg-hij`).")),
     responses(
         (status = 200, body = Room),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -433,9 +433,9 @@ pub struct JoinRoomResp {
 /// não é dono, convidado na agenda nem co-anfitrião recebe um token com
 /// `wait = true` (sala de espera). O código é normalizado para minúsculas.
 #[utoipa::path(
-    post, path = "/api/rooms/{code}/join", tag = "rooms",
+    post, path = "/api/rooms/{room_code}/join", tag = "rooms",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala.")),
+    params(("room_code" = String, Path, description = "Código da sala.")),
     responses(
         (status = 200, body = JoinRoomResp),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -518,7 +518,7 @@ pub async fn join_room(
 /// Configuração ICE para o `RTCPeerConnection`: STUN + TURN com credenciais
 /// válidas por 1 hora. Rate-limit por IP (partilha o limitador da v1).
 #[utoipa::path(
-    get, path = "/api/ice", tag = "rooms",
+    get, path = "/api/ice-servers", tag = "rooms",
     security(("session" = [])),
     responses(
         (status = 200, body = serde_json::Value,
@@ -577,9 +577,9 @@ pub struct ChatMessage {
 /// Últimas 200 mensagens de chat de uma sala (requer autenticação + acesso).
 /// Sem acesso à sala devolve **403**. O código NÃO é normalizado.
 #[utoipa::path(
-    get, path = "/api/rooms/{code}/chat", tag = "rooms",
+    get, path = "/api/rooms/{room_code}/messages", tag = "rooms",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
     responses(
         (status = 200, body = Vec<ChatMessage>, description = "Ordem cronológica ascendente."),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
@@ -639,9 +639,9 @@ pub struct InviteResp {
 /// Faz tocar os dispositivos de colegas de organização para a sala em curso.
 /// Sem acesso à sala devolve **403**. O código NÃO é normalizado.
 #[utoipa::path(
-    post, path = "/api/rooms/{code}/invite", tag = "rooms",
+    post, path = "/api/rooms/{room_code}/invitations", tag = "rooms",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
     request_body = InviteReq,
     responses(
         (status = 200, body = InviteResp),
@@ -816,14 +816,14 @@ pub struct TimingsReq {
     pub reconnects: Option<i32>,
 }
 
-/// `POST /api/rooms/{code}/timings` — uma vez por sessão.
+/// `POST /api/rooms/{code}/join-timings` — uma vez por sessão.
 ///
 /// Valores limitados a 10 minutos (`ice_restarts`/`reconnects` a 1000) antes
 /// de gravar. Sem acesso à sala devolve **401**, não 403.
 #[utoipa::path(
-    post, path = "/api/rooms/{code}/timings", tag = "rooms",
+    post, path = "/api/rooms/{room_code}/join-timings", tag = "rooms",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
     request_body = TimingsReq,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
@@ -889,9 +889,9 @@ pub async fn post_timings(
 /// clampados; autorização igual à do resto da sala (can_access_room).
 /// Sem acesso à sala devolve **401**, não 403.
 #[utoipa::path(
-    post, path = "/api/rooms/{code}/qos", tag = "rooms",
+    post, path = "/api/rooms/{room_code}/quality-samples", tag = "rooms",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
     request_body = QosSample,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),

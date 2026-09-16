@@ -88,7 +88,7 @@ export default function SharePage({ token }: { token: string }) {
 
   const sizeMb = (info.size_bytes / 1_048_576).toFixed(1)
   const date = new Date(info.created_at).toLocaleString('pt-PT')
-  const downloadUrl = `/api/share/${token}/download${password ? `?password=${encodeURIComponent(password)}` : ''}`
+  const downloadUrl = `/api/public/recordings/${token}/content${password ? `?password=${encodeURIComponent(password)}` : ''}`
 
   return (
     <div className="share-page">

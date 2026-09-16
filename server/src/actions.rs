@@ -138,11 +138,11 @@ pub struct AgendaPatchReq {
     pub position: Option<i16>,
 }
 
-/// `GET /api/meetings/:id/agenda`
+/// `GET /api/meetings/:id/agenda-items`
 #[utoipa::path(
-    get, path = "/api/meetings/{id}/agenda", tag = "meeting-actions",
+    get, path = "/api/meetings/{meeting_id}/agenda-items", tag = "meeting-actions",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = Vec<AgendaItem>),
         (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
@@ -164,11 +164,11 @@ pub async fn list_agenda(
     Ok(Json(items))
 }
 
-/// `POST /api/meetings/:id/agenda` — adiciona tópico (só anfitrião).
+/// `POST /api/meetings/:id/agenda-items` — adiciona tópico (só anfitrião).
 #[utoipa::path(
-    post, path = "/api/meetings/{id}/agenda", tag = "meeting-actions",
+    post, path = "/api/meetings/{meeting_id}/agenda-items", tag = "meeting-actions",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     request_body = AgendaItemReq,
     responses(
         (status = 200, body = AgendaItem),
@@ -219,12 +219,12 @@ pub async fn add_agenda_item(
     Ok(Json(item))
 }
 
-/// `PATCH /api/meetings/:id/agenda/:item_id` — editar ou marcar como feito.
+/// `PATCH /api/meetings/:id/agenda-items/:item_id` — editar ou marcar como feito.
 /// Qualquer membro pode marcar como feito; só o anfitrião pode editar os campos.
 #[utoipa::path(
-    patch, path = "/api/meetings/{id}/agenda/{item_id}", tag = "meeting-actions",
+    patch, path = "/api/meetings/{meeting_id}/agenda-items/{item_id}", tag = "meeting-actions",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião"), ("item_id" = Uuid, Path, description = "Id do item")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião"), ("item_id" = Uuid, Path, description = "Id do item")),
     request_body = AgendaPatchReq,
     responses(
         (status = 200, body = AgendaItem, description = "Qualquer membro muda `done`; só o anfitrião edita os restantes campos"),
@@ -329,11 +329,11 @@ pub async fn patch_agenda_item(
     Ok(Json(item))
 }
 
-/// `DELETE /api/meetings/:id/agenda/:item_id` — só anfitrião.
+/// `DELETE /api/meetings/:id/agenda-items/:item_id` — só anfitrião.
 #[utoipa::path(
-    delete, path = "/api/meetings/{id}/agenda/{item_id}", tag = "meeting-actions",
+    delete, path = "/api/meetings/{meeting_id}/agenda-items/{item_id}", tag = "meeting-actions",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião"), ("item_id" = Uuid, Path, description = "Id do item")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião"), ("item_id" = Uuid, Path, description = "Id do item")),
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada); também quando o tópico não existe"),
         (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
@@ -480,9 +480,9 @@ async fn load_plan_with_items(
 
 /// `GET /api/meetings/:id/action-plan`
 #[utoipa::path(
-    get, path = "/api/meetings/{id}/action-plan", tag = "meeting-actions",
+    get, path = "/api/meetings/{meeting_id}/action-plan", tag = "meeting-actions",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = Option<ActionPlan>, description = "`null` se a reunião ainda não tem plano"),
         (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
@@ -500,9 +500,9 @@ pub async fn get_action_plan(
 
 /// `PUT /api/meetings/:id/action-plan` — cria ou atualiza a META do plano.
 #[utoipa::path(
-    put, path = "/api/meetings/{id}/action-plan", tag = "meeting-actions",
+    put, path = "/api/meetings/{meeting_id}/action-plan", tag = "meeting-actions",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     request_body = ActionPlanGoalReq,
     responses(
         (status = 200, body = ActionPlan),
@@ -535,9 +535,9 @@ pub async fn upsert_action_plan(
 
 /// `POST /api/meetings/:id/action-plan/items` — adiciona linha 5W2H.
 #[utoipa::path(
-    post, path = "/api/meetings/{id}/action-plan/items", tag = "meeting-actions",
+    post, path = "/api/meetings/{meeting_id}/action-plan/items", tag = "meeting-actions",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     request_body = ActionItemReq,
     responses(
         (status = 200, body = ActionItem, description = "Cria o plano (sem meta) se ainda não existir"),
@@ -623,7 +623,7 @@ pub async fn add_action_item(
 /// `PATCH /api/action-items/:item_id` — atualiza campos ou status.
 /// Qualquer membro pode mudar o status; só o anfitrião pode editar campos.
 #[utoipa::path(
-    patch, path = "/api/action-items/{item_id}", tag = "meeting-actions",
+    patch, path = "/api/meetings/{meeting_id}/action-plan/items/{item_id}", tag = "meeting-actions",
     security(("session" = [])),
     params(("item_id" = Uuid, Path, description = "Id do item")),
     request_body = ActionItemPatch,
@@ -639,19 +639,21 @@ pub async fn add_action_item(
 pub async fn patch_action_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-    Path(item_id): Path<Uuid>,
+    Path((meeting_id, item_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<ActionItemPatch>,
 ) -> Result<Json<ActionItem>, ApiError> {
     // Obter meeting_id pelo plano.
     let row: Option<(Uuid,)> = sqlx::query_as(
         "SELECT ap.meeting_id FROM action_items ai
          JOIN action_plans ap ON ap.id = ai.plan_id
-         WHERE ai.id = $1",
+         WHERE ai.id = $1 AND ap.meeting_id = $2",
     )
     .bind(item_id)
+    .bind(meeting_id)
     .fetch_optional(&state.db)
     .await?;
-    let (meeting_id,) = row.ok_or(ApiError::NotFound)?;
+    // O item tem de ser DESTA reunião: um id de item de outra reunião é 404.
+    let (_,) = row.ok_or(ApiError::NotFound)?;
 
     // Primeiro: quem pede tem de ser membro da reunião (convidado ou dono),
     // SEMPRE. Esta verificação só corria quando o pedido trazia `status`, e um
@@ -770,7 +772,7 @@ pub async fn patch_action_item(
 
 /// `DELETE /api/action-items/:item_id` — só anfitrião.
 #[utoipa::path(
-    delete, path = "/api/action-items/{item_id}", tag = "meeting-actions",
+    delete, path = "/api/meetings/{meeting_id}/action-plan/items/{item_id}", tag = "meeting-actions",
     security(("session" = [])),
     params(("item_id" = Uuid, Path, description = "Id do item")),
     responses(
@@ -783,21 +785,23 @@ pub async fn patch_action_item(
 pub async fn delete_action_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-    Path(item_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+    Path((meeting_id, item_id)): Path<(Uuid, Uuid)>,
+) -> Result<axum::http::StatusCode, ApiError> {
     let row: Option<(Uuid,)> = sqlx::query_as(
         "SELECT ap.meeting_id FROM action_items ai
          JOIN action_plans ap ON ap.id = ai.plan_id
-         WHERE ai.id = $1",
+         WHERE ai.id = $1 AND ap.meeting_id = $2",
     )
     .bind(item_id)
+    .bind(meeting_id)
     .fetch_optional(&state.db)
     .await?;
-    let (meeting_id,) = row.ok_or(ApiError::NotFound)?;
+    // O item tem de ser DESTA reunião: um id de item de outra reunião é 404.
+    let (_,) = row.ok_or(ApiError::NotFound)?;
     require_owner(&state.db, meeting_id, auth.user_id).await?;
     sqlx::query("DELETE FROM action_items WHERE id = $1")
         .bind(item_id)
         .execute(&state.db)
         .await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }

@@ -57,7 +57,7 @@ async fn signed_url_loads_without_session(db: sqlx::PgPool) {
     assert_eq!(st, 200, "{s}");
     let url = s["url"].as_str().unwrap().to_string();
     assert!(
-        url.starts_with(&format!("/api/whiteboards/{id}/png?exp=")),
+        url.starts_with(&format!("/api/whiteboards/{id}/image?exp=")),
         "{url}"
     );
     let expires = chrono::DateTime::parse_from_rfc3339(s["expires_at"].as_str().unwrap()).unwrap();
@@ -108,13 +108,13 @@ async fn tampered_expired_or_foreign_signatures_are_404(db: sqlx::PgPool) {
     let exp_n: i64 = exp.parse().unwrap();
 
     let cases = [
-        format!("/api/whiteboards/{id}/png?exp={exp}&sig={flipped}"),
-        format!("/api/whiteboards/{id}/png?exp={}&sig={sig}", exp_n + 1),
-        format!("/api/whiteboards/{other}/png?exp={exp}&sig={sig}"),
-        format!("/api/whiteboards/{id}/png?exp={exp}"),
-        format!("/api/whiteboards/{id}/png?sig={sig}"),
-        format!("/api/whiteboards/{id}/png?exp=amanha&sig={sig}"),
-        format!("/api/whiteboards/nao-e-uuid/png?exp={exp}&sig={sig}"),
+        format!("/api/whiteboards/{id}/image?exp={exp}&sig={flipped}"),
+        format!("/api/whiteboards/{id}/image?exp={}&sig={sig}", exp_n + 1),
+        format!("/api/whiteboards/{other}/image?exp={exp}&sig={sig}"),
+        format!("/api/whiteboards/{id}/image?exp={exp}"),
+        format!("/api/whiteboards/{id}/image?sig={sig}"),
+        format!("/api/whiteboards/{id}/image?exp=amanha&sig={sig}"),
+        format!("/api/whiteboards/nao-e-uuid/image?exp={exp}&sig={sig}"),
     ];
     for path in &cases {
         let (st, _, body) = get_raw(&app, path, None).await;
@@ -190,7 +190,7 @@ async fn only_who_can_view_mints_and_session_png_is_unchanged(db: sqlx::PgPool) 
     assert_eq!(st, 200, "colega da org vê, e por isso emite: {v}");
 
     // PNG com sessão: como sempre.
-    let png = format!("/api/whiteboards/{id}/png");
+    let png = format!("/api/whiteboards/{id}/image");
     let (st, ct, body) = get_raw(&app, &png, Some(&a.token)).await;
     assert_eq!((st, ct.as_deref()), (200, Some("image/png")));
     assert_eq!(body, png_bytes());
@@ -200,7 +200,7 @@ async fn only_who_can_view_mints_and_session_png_is_unchanged(db: sqlx::PgPool) 
     assert_eq!(st, 401, "sem sessão e sem assinatura");
     let (st, _, _) = get_raw(
         &app,
-        &format!("/api/whiteboards/{INVENTED_ID}/png"),
+        &format!("/api/whiteboards/{INVENTED_ID}/image"),
         Some(&a.token),
     )
     .await;

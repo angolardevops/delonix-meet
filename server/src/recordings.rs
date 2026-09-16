@@ -348,9 +348,9 @@ pub struct UploadQuery {
 /// multipart); o `Content-Type` não é verificado. Máximo 512 MiB. Só quem
 /// participou na sala pode carregar — senão **401**, não 403.
 #[utoipa::path(
-    post, path = "/api/rooms/{code}/recordings", tag = "recordings",
+    post, path = "/api/rooms/{room_code}/recordings", tag = "recordings",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala."), UploadQuery),
+    params(("room_code" = String, Path, description = "Código da sala."), UploadQuery),
     request_body(content = inline(WebmBytes), content_type = "video/webm", description = "Ficheiro webm em bruto."),
     responses(
         (status = 200, body = Recording),
@@ -415,9 +415,9 @@ pub async fn upload(
 /// Gravações de uma sala específica (painel dentro da reunião).
 /// Só para participantes da sala — senão **401**, não 403.
 #[utoipa::path(
-    get, path = "/api/rooms/{code}/recordings", tag = "recordings",
+    get, path = "/api/rooms/{room_code}/recordings", tag = "recordings",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala.")),
+    params(("room_code" = String, Path, description = "Código da sala.")),
     responses(
         (status = 200, body = Vec<Recording>, description = "Mais recentes primeiro."),
         (status = 401, description = "Sessão inválida OU não participou na sala.", body = crate::openapi::ErrorBody),
@@ -597,9 +597,9 @@ pub struct DownloadQuery {
 /// caminho é o `src` do leitor de vídeo e o link de download do web, e não
 /// muda de representação.
 #[utoipa::path(
-    get, path = "/api/recordings/{id}", tag = "recordings",
+    get, path = "/api/recordings/{recording_id}/content", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path), DownloadQuery),
+    params(("recording_id" = Uuid, Path), DownloadQuery),
     responses(
         (status = 200, body = inline(WebmBytes), content_type = "video/webm",
          description = "`Content-Disposition: inline`, ou `attachment` com `dl=1`."),
@@ -668,9 +668,9 @@ pub struct ShareReq {
 /// Partilha só-leitura de uma gravação com outro utilizador.
 /// Apenas quem fez o upload (o "dono") pode partilhar. Idempotente.
 #[utoipa::path(
-    post, path = "/api/recordings/{id}/share", tag = "recordings",
+    post, path = "/api/recordings/{recording_id}/shares", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path)),
     request_body = ShareReq,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
@@ -711,9 +711,9 @@ pub async fn share(
 
 /// Remove a partilha com um utilizador (só o dono). Idempotente.
 #[utoipa::path(
-    delete, path = "/api/recordings/{id}/share/{user_id}", tag = "recordings",
+    delete, path = "/api/recordings/{recording_id}/shares/{user_id}", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path), ("user_id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path), ("user_id" = Uuid, Path)),
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
         (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
@@ -774,9 +774,9 @@ fn gen_token() -> String {
 /// Cria (ou substitui) um link público de partilha. Substituir roda o token:
 /// o link anterior deixa de funcionar.
 #[utoipa::path(
-    post, path = "/api/recordings/{id}/link", tag = "recordings",
+    put, path = "/api/recordings/{recording_id}/public-link", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path)),
     request_body = CreateLinkReq,
     responses(
         (status = 200, body = ShareLink),
@@ -843,9 +843,9 @@ pub async fn create_link(
 
 /// Devolve o link público existente de uma gravação (sem expor password_hash).
 #[utoipa::path(
-    get, path = "/api/recordings/{id}/link", tag = "recordings",
+    get, path = "/api/recordings/{recording_id}/public-link", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path)),
     responses(
         (status = 200, body = Option<ShareLink>, description = "`null` se não houver link."),
         (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
@@ -878,9 +878,9 @@ pub async fn get_link(
 
 /// Revoga o link público de partilha. Idempotente.
 #[utoipa::path(
-    delete, path = "/api/recordings/{id}/link", tag = "recordings",
+    delete, path = "/api/recordings/{recording_id}/public-link", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path)),
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
         (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
@@ -940,7 +940,7 @@ pub struct PublicShareResp {
 ///
 /// Link expirado responde como inexistente (404).
 #[utoipa::path(
-    get, path = "/api/share/{token}", tag = "recordings",
+    get, path = "/api/public/recordings/{token}", tag = "recordings",
     params(("token" = String, Path, description = "Token do link público."), PublicShareQuery),
     responses(
         (status = 200, body = PublicShareResp),
@@ -995,14 +995,14 @@ pub async fn public_share(
         filename,
         size_bytes,
         created_at,
-        download_url: format!("/api/share/{token}/download"),
+        download_url: format!("/api/public/recordings/{token}/content"),
         has_password: password_hash.is_some(),
     }))
 }
 
 /// Download via link público (sem autenticação — token é a credencial).
 #[utoipa::path(
-    get, path = "/api/share/{token}/download", tag = "recordings",
+    get, path = "/api/public/recordings/{token}/content", tag = "recordings",
     params(("token" = String, Path, description = "Token do link público."), PublicShareQuery),
     responses(
         (status = 200, body = inline(WebmBytes), content_type = "video/webm", description = "Sempre `Content-Disposition: attachment`."),
@@ -1058,9 +1058,9 @@ pub async fn public_share_download(
 
 /// Lista com quem uma gravação está partilhada (só o dono).
 #[utoipa::path(
-    get, path = "/api/recordings/{id}/share", tag = "recordings",
+    get, path = "/api/recordings/{recording_id}/shares", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path)),
     responses(
         (status = 200, body = Vec<crate::users::UserPublic>),
         (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
@@ -1098,9 +1098,9 @@ pub async fn shares(
 
 /// Metadados de uma gravação — o mesmo item da biblioteca.
 #[utoipa::path(
-    get, path = "/api/recordings/{id}/metadata", tag = "recordings",
+    get, path = "/api/recordings/{recording_id}", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path)),
     responses(
         (status = 200, body = RecordingItem),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -1127,9 +1127,9 @@ pub struct UpdateRecordingReq {
 
 /// Altera título e categoria. Só o dono ou um admin activo da org do dono.
 #[utoipa::path(
-    patch, path = "/api/recordings/{id}", tag = "recordings",
+    patch, path = "/api/recordings/{recording_id}", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path)),
     request_body = UpdateRecordingReq,
     responses(
         (status = 200, body = RecordingItem),
@@ -1230,9 +1230,9 @@ struct ChapterCursor {
 
 /// Capítulos, por marca temporal. Quem vê a gravação.
 #[utoipa::path(
-    get, path = "/api/recordings/{id}/chapters", tag = "recordings",
+    get, path = "/api/recordings/{recording_id}/chapters", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path), PageQuery),
+    params(("recording_id" = Uuid, Path), PageQuery),
     responses(
         (status = 200, body = ChapterPage),
         (status = 400, body = crate::openapi::ErrorBody, description = "page_token inválido"),
@@ -1278,9 +1278,9 @@ pub async fn list_chapters(
 
 /// Cria um capítulo. Só o dono ou um admin activo da org do dono.
 #[utoipa::path(
-    post, path = "/api/recordings/{id}/chapters", tag = "recordings",
+    post, path = "/api/recordings/{recording_id}/chapters", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path)),
     request_body = CreateChapterReq,
     responses(
         (status = 201, body = Chapter, headers(("Location" = String))),
@@ -1342,9 +1342,9 @@ pub async fn create_chapter(
 
 /// Um capítulo. Quem vê a gravação.
 #[utoipa::path(
-    get, path = "/api/recordings/{id}/chapters/{chapter_id}", tag = "recordings",
+    get, path = "/api/recordings/{recording_id}/chapters/{chapter_id}", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path), ("chapter_id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path), ("chapter_id" = Uuid, Path)),
     responses(
         (status = 200, body = Chapter),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -1369,9 +1369,9 @@ pub async fn get_chapter(
 
 /// Apaga um capítulo. Só o dono ou um admin activo da org do dono.
 #[utoipa::path(
-    delete, path = "/api/recordings/{id}/chapters/{chapter_id}", tag = "recordings",
+    delete, path = "/api/recordings/{recording_id}/chapters/{chapter_id}", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path), ("chapter_id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path), ("chapter_id" = Uuid, Path)),
     responses(
         (status = 204, description = "Apagado."),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -1466,9 +1466,9 @@ struct CommentCursor {
 /// Comentários, por marca temporal (os sem marca no fim) e depois por criação.
 /// Quem vê ou descarrega a gravação.
 #[utoipa::path(
-    get, path = "/api/recordings/{id}/comments", tag = "recordings",
+    get, path = "/api/recordings/{recording_id}/comments", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path), PageQuery),
+    params(("recording_id" = Uuid, Path), PageQuery),
     responses(
         (status = 200, body = CommentPage),
         (status = 400, body = crate::openapi::ErrorBody, description = "page_token inválido"),
@@ -1542,9 +1542,9 @@ fn require_author(comment: &Comment, user_id: Uuid) -> Result<(), ApiError> {
 
 /// Comenta a gravação, com ou sem marca temporal. O texto passa pelo DLP.
 #[utoipa::path(
-    post, path = "/api/recordings/{id}/comments", tag = "recordings",
+    post, path = "/api/recordings/{recording_id}/comments", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path)),
     request_body = CreateCommentReq,
     responses(
         (status = 201, body = Comment, headers(("Location" = String))),
@@ -1590,9 +1590,9 @@ pub async fn create_comment(
 
 /// Um comentário. Quem vê ou descarrega a gravação.
 #[utoipa::path(
-    get, path = "/api/recordings/{id}/comments/{comment_id}", tag = "recordings",
+    get, path = "/api/recordings/{recording_id}/comments/{comment_id}", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path), ("comment_id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path), ("comment_id" = Uuid, Path)),
     responses(
         (status = 200, body = Comment),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -1610,9 +1610,9 @@ pub async fn get_comment(
 
 /// Altera o texto ou a marca temporal. Só o autor.
 #[utoipa::path(
-    patch, path = "/api/recordings/{id}/comments/{comment_id}", tag = "recordings",
+    patch, path = "/api/recordings/{recording_id}/comments/{comment_id}", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path), ("comment_id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path), ("comment_id" = Uuid, Path)),
     request_body = UpdateCommentReq,
     responses(
         (status = 200, body = Comment),
@@ -1657,9 +1657,9 @@ pub async fn update_comment(
 
 /// Apaga (logicamente) um comentário. Só o autor. Apagar outra vez dá `404`.
 #[utoipa::path(
-    delete, path = "/api/recordings/{id}/comments/{comment_id}", tag = "recordings",
+    delete, path = "/api/recordings/{recording_id}/comments/{comment_id}", tag = "recordings",
     security(("session" = [])),
-    params(("id" = Uuid, Path), ("comment_id" = Uuid, Path)),
+    params(("recording_id" = Uuid, Path), ("comment_id" = Uuid, Path)),
     responses(
         (status = 204, description = "Apagado (deixa de aparecer)."),
         (status = 401, body = crate::openapi::ErrorBody),

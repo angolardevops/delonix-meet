@@ -458,9 +458,9 @@ pub async fn v1_create_room(
 
 /// `GET /api/v1/rooms/{code}` — metadados de uma sala da organização da chave.
 #[utoipa::path(
-    get, path = "/api/v1/rooms/{code}", tag = "v1",
+    get, path = "/api/v1/rooms/{room_code}", tag = "v1",
     security(("api_key" = ["rooms:read"])),
-    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas aqui).")),
+    params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas aqui).")),
     responses(
         (status = 200, body = V1RoomInfo),
         (status = 401, description = "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`).", body = crate::openapi::ErrorBody),
@@ -515,12 +515,12 @@ pub struct V1BotJoin {
     pub ws_path: String,
 }
 
-/// `POST /api/v1/rooms/{code}/join-bot` — gera um room_token para um bot headless.
+/// `POST /api/v1/rooms/{code}/bots` — gera um room_token para um bot headless.
 /// O token contorna a sala de espera.
 #[utoipa::path(
-    post, path = "/api/v1/rooms/{code}/join-bot", tag = "v1",
+    post, path = "/api/v1/rooms/{room_code}/bots", tag = "v1",
     security(("api_key" = ["bots:join"])),
-    params(("code" = String, Path, description = "Código da sala (normalizado para minúsculas).")),
+    params(("room_code" = String, Path, description = "Código da sala (normalizado para minúsculas).")),
     request_body = JoinBotReq,
     responses(
         (status = 200, body = V1BotJoin),
@@ -758,12 +758,12 @@ pub struct V1MeetingNotes {
     pub minutes_ai_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// `GET /api/v1/meetings/{id}/notes` — ata (MoM) + transcrição (ata bruta).
+/// `GET /api/v1/meetings/{id}/minutes` — ata (MoM) + transcrição (ata bruta).
 /// `minutes_ai_at` presente => o MoM já é a versão final do LLM local.
 #[utoipa::path(
-    get, path = "/api/v1/meetings/{id}/notes", tag = "v1",
+    get, path = "/api/v1/meetings/{meeting_id}/minutes", tag = "v1",
     security(("api_key" = ["meetings:read"])),
-    params(("id" = Uuid, Path, description = "Reunião.")),
+    params(("meeting_id" = Uuid, Path, description = "Reunião.")),
     responses(
         (status = 200, body = V1MeetingNotes),
         (status = 401, description = "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`).", body = crate::openapi::ErrorBody),
@@ -819,9 +819,9 @@ pub struct V1Org {
     pub members: i64,
 }
 
-/// `GET /api/v1/org` — dados da organização da chave.
+/// `GET /api/v1/organization` — dados da organização da chave.
 #[utoipa::path(
-    get, path = "/api/v1/org", tag = "v1",
+    get, path = "/api/v1/organization", tag = "v1",
     security(("api_key" = ["org:read"])),
     responses(
         (status = 200, body = V1Org),
@@ -878,7 +878,7 @@ pub struct ProvisionOrgReq {
     /// catálogo inteiro** — é o que o módulo Odoo recebe hoje.
     #[serde(default)]
     pub scopes: Option<Vec<String>>,
-    /// Domínio de email da org — necessário para o ``/api/auth/sso/login?domain=``
+    /// Domínio de email da org — necessário para o ``/api/auth/sso/authorize?domain=``
     /// resolver esta org. Opcional.
     #[serde(default)]
     pub email_domain: Option<String>,
@@ -964,7 +964,7 @@ async fn ensure_provisioning_user(state: &AppState) -> Result<Uuid, ApiError> {
     }
 }
 
-/// `POST /api/v1/admin/orgs` — provisiona uma organização + emite a sua chave
+/// `POST /api/operator/v1/organizations` — provisiona uma organização + emite a sua chave
 /// de API. Autenticado pelo **segredo de plataforma** (`X-Provisioning-Secret`),
 /// não por chave de org (que ainda não existe). Pensado para o Odoo criar a org
 /// de cada empresa e receber a chave para depois criar salas via `/api/v1/rooms`.
@@ -974,7 +974,7 @@ async fn ensure_provisioning_user(state: &AppState) -> Result<Uuid, ApiError> {
 /// Idempotente por empresa Odoo (`odoo_db` + `odoo_company_id`): reprovisionar
 /// reutiliza a organização, mas emite SEMPRE uma chave de API nova.
 #[utoipa::path(
-    post, path = "/api/v1/admin/orgs", tag = "v1",
+    post, path = "/api/operator/v1/organizations", tag = "v1",
     params(("X-Provisioning-Secret" = String, Header, description = "Segredo de plataforma (`PROVISIONING_SECRET`).")),
     request_body = ProvisionOrgReq,
     responses(

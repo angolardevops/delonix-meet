@@ -113,7 +113,7 @@ pub struct AppState {
     /// Anti-brute-force por conta (email) no login.
     pub login_limiter: RateLimiter,
     /// Rate-limit da API pública v1: balde por chave `dlx_` válida, por IP
-    /// sem ela (`rate_limit::v1_bucket`). Partilhado com `/api/ice` (por IP).
+    /// sem ela (`rate_limit::v1_bucket`). Partilhado com `/api/ice-servers` (por IP).
     pub v1_limiter: RateLimiter,
     /// Anti-brute-force de PIN no dial-in PSTN (por DID). Só conta falhas.
     pub voice_pin_limiter: RateLimiter,
@@ -165,8 +165,11 @@ fn internal_routes() -> Router<Arc<AppState>> {
         // dado de inquilino.
         .route("/metrics", get(metrics_handler))
         // API interna de IVR (autenticada por segredo partilhado, usada pela media)
-        .route("/api/voice/ivr/validate", post(voice::ivr_validate_pin))
-        .route("/api/voice/ivr/cdr", post(voice::ivr_record_cdr))
+        .route(
+            "/internal/v1/voice/ivr/validate",
+            post(voice::ivr_validate_pin),
+        )
+        .route("/internal/v1/voice/ivr/cdr", post(voice::ivr_record_cdr))
 }
 
 /// Router do listener INTERNO (`INTERNAL_BIND_ADDR`).
@@ -180,42 +183,119 @@ pub fn build_internal_router(state: Arc<AppState>) -> Router {
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
+    // O mapa destas rotas (e de onde vieram) está em docs/reference/api-routes.md.
+    // Uma superfície por público (ADR-0004 §4): BFF (sessão), v1 do inquilino
+    // (chave `dlx_`), operador, integrações (Odoo `dlxo_`, agente SMS `dlxg_`) e
+    // interna (listener interno).
+
+    // ---- BFF: autenticação (com rate-limit por IP) ----
     let auth_routes = Router::new()
         .route("/register", post(auth::register))
         .route("/login", post(auth::login))
-        .route("/refresh", post(auth::refresh))
-        .route("/logout", post(auth::logout))
         // Segunda metade do login quando o MFA está activo: troca o desafio
         // de curta duração + o código pelos tokens de sessão.
-        .route("/mfa", post(auth::mfa_login))
+        .route("/login/mfa", post(auth::mfa_login))
+        .route("/refresh", post(auth::refresh))
+        .route("/logout", post(auth::logout))
         // SSO / OIDC
-        .route("/sso/check", get(auth::sso_check))
-        .route("/sso/login", get(auth::sso_login))
+        .route("/sso/discovery", get(auth::sso_check))
+        .route("/sso/authorize", get(auth::sso_login))
         .route("/sso/callback", get(auth::sso_callback))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             rate_limit::auth_rate_limit,
         ));
 
+    // ---- Pública do inquilino: /api/v1 (chave `dlx_` com escopos) ----
+    let v1_routes = Router::new()
+        .route("/organization", get(apikeys::v1_org))
+        .route("/rooms", post(apikeys::v1_create_room))
+        .route("/rooms/{room_code}", get(apikeys::v1_get_room))
+        .route("/rooms/{room_code}/bots", post(apikeys::v1_join_bot_room))
+        .route("/recordings", get(apikeys::v1_recordings))
+        // O POST/PATCH/DELETE vive em `meetings_v1.rs`: cria a REUNIÃO (com
+        // anfitrião humano e convidados), não só uma sala solta.
+        .route(
+            "/meetings",
+            get(apikeys::v1_meetings).post(meetings_v1::create),
+        )
+        .route(
+            "/meetings/{meeting_id}",
+            get(meetings_v1::get_one)
+                .patch(meetings_v1::patch)
+                .delete(meetings_v1::delete),
+        )
+        // "Começar agora": faz tocar nos dispositivos dos convidados.
+        .route("/meetings/{meeting_id}/ring", post(meetings_v1::ring))
+        .route(
+            "/meetings/{meeting_id}/minutes",
+            get(apikeys::v1_meeting_notes),
+        )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::v1_rate_limit,
+        ));
+
+    // ---- Operador: quem opera a plataforma (fora do SDK do inquilino) ----
+    let operator_routes = Router::new()
+        // Provisão de org — segredo de plataforma (a org ainda não existe).
+        .route("/organizations", post(apikeys::v1_provision_org))
+        // Armazenamento remoto da plataforma: TrueNAS NFS / Nextcloud WebDAV.
+        .route(
+            "/storage",
+            get(storage::get_storage).put(storage::save_storage),
+        )
+        .route("/storage/test", post(storage::test_storage))
+        .route("/storage/pvc-manifest", get(storage::pvc_manifest))
+        // Inventário de nós de media (G10).
+        .route("/nodes", get(nodes::list))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::ip_rate_limit,
+        ));
+
+    // ---- Integração Odoo (módulo nk_delonix_meet, token `dlxo_`) ----
+    let odoo_integration_routes = Router::new()
+        .route("/provision", post(odoo::provision))
+        .route("/users", get(odoo::list_users))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::ip_rate_limit,
+        ));
+
+    // ---- Agente de SMS por USB (token `dlxg_`, ADR-0005) ----
+    let sms_agent_routes = Router::new()
+        .route("/devices", axum::routing::put(sms::agent_put_devices))
+        .route("/claim", post(sms::agent_claim))
+        .route("/messages/{message_id}/result", post(sms::agent_result));
+
     Router::new()
         // LIVENESS: o processo está vivo? Responde `ok` mesmo a drenar — um
         // pod a drenar não deve ser REINICIADO, deve ser deixado terminar.
         .route("/health", get(|| async { "ok" }))
         // READINESS: pode receber tráfego NOVO? Enquanto drena, NÃO.
-        //
-        // Antes, a readiness apontava para o `/health`, que devolve sempre
-        // `ok` — o K8s mantinha o pod nos endpoints durante o encerramento e
-        // continuava a mandar-lhe entradas novas, que morriam com ele.
         .route("/ready", get(readiness))
         .route("/api/status", get(status))
-        // ---- Superfície de OPERADOR (ADR-0004 §4): administrador da plataforma ----
-        .route("/api/operator/v1/nodes", get(nodes::list))
+        .route("/api/public/settings", get(odoo::public_settings))
         // Contratos OpenAPI gerados do código (ADR-0006 §3).
         .route("/api/openapi.json", get(openapi::bff_json))
         .route("/api/v1/openapi.json", get(openapi::v1_json))
+        .route("/api/operator/v1/openapi.json", get(openapi::operator_json))
+        .route("/api/integrations/openapi.json", get(openapi::integrations_json))
         .nest("/api/auth", auth_routes)
+        .nest("/api/v1", v1_routes)
+        .nest("/api/operator/v1", operator_routes)
+        .nest("/api/integrations/odoo/v1", odoo_integration_routes)
+        .nest("/api/integrations/sms-agent/v1", sms_agent_routes)
+        // ══════════════════════════════════════════════════════════════════
+        //  BFF — o web Delonix (sessão). Contrato instável, OpenAPI em
+        //  /api/openapi.json. /api/mls NÃO está registado de propósito: os
+        //  handlers eram stubs que respondiam «feito» a qualquer pessoa (R41).
+        // ══════════════════════════════════════════════════════════════════
+        // ---- Utilizador ----
+        .route("/api/users", get(users::search))
         .route("/api/users/me", get(users::me).patch(users::update_me))
-        // «A minha sala» (G2) — ver users.rs.
+        // «A minha sala» (G2).
         .route(
             "/api/users/me/room",
             get(users::my_room).patch(users::update_my_room),
@@ -224,10 +304,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/users/me/room/rotate-code",
             post(users::rotate_my_room_code),
         )
-        // Armazenamento usado (G3) — ver usage.rs.
         .route("/api/users/me/storage-usage", get(usage::my_storage_usage))
-        // MFA (TOTP, RFC 6238) — ver mfa.rs.
-        // Centro de notificações pessoal (G8) — ver notifications.rs.
+        // MFA (TOTP, RFC 6238).
+        .route("/api/users/me/mfa", get(mfa::estado))
+        .route("/api/users/me/mfa/enroll", post(mfa::inscrever))
+        .route("/api/users/me/mfa/activate", post(mfa::activar))
+        .route("/api/users/me/mfa/disable", post(mfa::desactivar))
+        // Centro de notificações pessoal (G8).
         .route("/api/users/me/notifications", get(notifications::list))
         .route(
             "/api/users/me/notifications/mark-all-read",
@@ -239,150 +322,189 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .patch(notifications::update)
                 .delete(notifications::delete),
         )
-        .route("/api/users/me/mfa", get(mfa::estado))
-        .route("/api/users/me/mfa/enrol", post(mfa::inscrever))
-        .route("/api/users/me/mfa/activate", post(mfa::activar))
-        .route("/api/users/me/mfa/disable", post(mfa::desactivar))
-        // /api/mls NÃO está registado — de propósito. O `mls.rs` descreve a
-        // interface MLS pretendida (RFC 9420) mas os handlers são stubs: não
-        // guardam nada, não verificam nada, e devolviam 201/200/202 com
-        // `"status": "delivered"` a QUALQUER pessoa, sem sessão e sem
-        // verificação de pertença à sala. Medido a 2026-08-25 contra o
-        // servidor a correr.
-        //
-        // Uma superfície que responde «feito» sem fazer nada é pior do que não
-        // existir: um integrador constrói contra ela, e um auditor conta-a como
-        // capacidade. Volta quando houver MLS a sério — com `AuthUser` e com
-        // verificação de acesso à sala, que é o que falta a estes handlers.
-        .route("/api/users/search", get(users::search))
-        .route("/api/rooms", post(rooms::create_room))
-        .route("/api/rooms/{code}", get(rooms::get_room))
-        .route("/api/rooms/{code}/join", post(rooms::join_room))
-        .route("/api/rooms/{code}/chat", get(rooms::room_chat))
-        .route("/api/rooms/{code}/qos", post(rooms::post_qos))
-        // Tempos de estabelecimento (um por sessão) — ver callTimings.ts.
-        .route("/api/rooms/{code}/timings", post(rooms::post_timings))
-        // Tradução de legendas em tempo real via LLM local (ai.rs / Ollama).
-        .route("/api/translate", post(ai::translate_caption))
-        .route("/api/rooms/{code}/invite", post(rooms::invite_to_room))
         .route(
-            "/api/rooms/{code}/recordings",
+            "/api/users/me/missed-calls/acknowledge",
+            post(presence::ack_missed_calls),
+        )
+        // ---- Salas ----
+        .route("/api/rooms", post(rooms::create_room))
+        .route("/api/rooms/{room_code}", get(rooms::get_room))
+        .route("/api/rooms/{room_code}/join", post(rooms::join_room))
+        .route("/api/rooms/{room_code}/messages", get(rooms::room_chat))
+        .route("/api/rooms/{room_code}/invitations", post(rooms::invite_to_room))
+        .route("/api/rooms/{room_code}/quality-samples", post(rooms::post_qos))
+        // Tempos de estabelecimento (um por sessão) — ver callTimings.ts.
+        .route("/api/rooms/{room_code}/join-timings", post(rooms::post_timings))
+        .route(
+            "/api/rooms/{room_code}/minutes",
+            get(meetings::notes_by_room).put(meetings::save_minutes_by_room),
+        )
+        .route(
+            "/api/rooms/{room_code}/recordings",
             get(recordings::list)
                 .post(recordings::upload)
                 // Só o upload de gravações pode ser grande.
                 .layer(DefaultBodyLimit::max(recordings::MAX_RECORDING_BYTES)),
         )
+        // /api/ice-servers devolve credenciais TURN de curta duração —
+        // rate-limit só por IP, para uma conta não esgotar o relay do coturn.
+        .route(
+            "/api/ice-servers",
+            get(rooms::ice_servers).layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::ip_rate_limit,
+            )),
+        )
+        // Tradução de legendas em tempo real via LLM local (ai.rs / Ollama).
+        .route("/api/ai/translations", post(ai::translate_caption))
+        // ---- Reuniões, agenda e plano de acção 5W2H ----
+        .route("/api/meetings", get(meetings::list).post(meetings::create))
+        .route("/api/meetings/check-conflicts", post(meetings::check_conflicts))
+        .route(
+            "/api/meetings/{meeting_id}",
+            get(meetings::get_one).delete(meetings::delete),
+        )
+        .route("/api/meetings/{meeting_id}/start", post(meetings::start))
+        .route("/api/meetings/{meeting_id}/calendar.ics", get(meetings::ics))
+        .route("/api/meetings/{meeting_id}/minutes", axum::routing::put(meetings::save_minutes))
+        .route("/api/meetings/{meeting_id}/invitees", get(meetings::invitees))
+        .route("/api/meetings/{meeting_id}/invitees/me", axum::routing::put(meetings::respond))
+        .route(
+            "/api/meetings/{meeting_id}/agenda-items",
+            get(actions::list_agenda).post(actions::add_agenda_item),
+        )
+        .route(
+            "/api/meetings/{meeting_id}/agenda-items/{item_id}",
+            axum::routing::patch(actions::patch_agenda_item)
+                .delete(actions::delete_agenda_item),
+        )
+        .route(
+            "/api/meetings/{meeting_id}/action-plan",
+            get(actions::get_action_plan).put(actions::upsert_action_plan),
+        )
+        .route(
+            "/api/meetings/{meeting_id}/action-plan/items",
+            post(actions::add_action_item),
+        )
+        .route(
+            "/api/meetings/{meeting_id}/action-plan/items/{item_id}",
+            axum::routing::patch(actions::patch_action_item)
+                .delete(actions::delete_action_item),
+        )
+        // ---- Gravações ----
         .route("/api/recordings", get(recordings::library))
+        .route(
+            "/api/recordings/{recording_id}",
+            get(recordings::get_metadata).patch(recordings::update),
+        )
+        .route("/api/recordings/{recording_id}/content", get(recordings::download))
+        .route(
+            "/api/recordings/{recording_id}/chapters",
+            get(recordings::list_chapters).post(recordings::create_chapter),
+        )
+        .route(
+            "/api/recordings/{recording_id}/chapters/{chapter_id}",
+            get(recordings::get_chapter).delete(recordings::delete_chapter),
+        )
+        .route(
+            "/api/recordings/{recording_id}/comments",
+            get(recordings::list_comments).post(recordings::create_comment),
+        )
+        .route(
+            "/api/recordings/{recording_id}/comments/{comment_id}",
+            get(recordings::get_comment)
+                .patch(recordings::update_comment)
+                .delete(recordings::delete_comment),
+        )
+        .route(
+            "/api/recordings/{recording_id}/shares",
+            get(recordings::shares).post(recordings::share),
+        )
+        .route(
+            "/api/recordings/{recording_id}/shares/{user_id}",
+            axum::routing::delete(recordings::unshare),
+        )
+        .route(
+            "/api/recordings/{recording_id}/public-link",
+            get(recordings::get_link)
+                .put(recordings::create_link)
+                .delete(recordings::revoke_link),
+        )
+        .route("/api/public/recordings/{token}", get(recordings::public_share))
+        .route(
+            "/api/public/recordings/{token}/content",
+            get(recordings::public_share_download),
+        )
+        // ---- Quadros ----
         .route(
             "/api/whiteboards",
             get(whiteboards::list)
                 .post(whiteboards::save)
                 .layer(DefaultBodyLimit::max(WHITEBOARD_BODY_LIMIT)),
         )
-        .route("/api/whiteboards/{id}", axum::routing::delete(whiteboards::delete))
-        .route("/api/whiteboards/{id}/png", get(whiteboards::png))
-        // URL assinado do PNG (G11): o `<img>` carrega-o sem sessão.
         .route(
-            "/api/whiteboards/{id}/signed-url",
+            "/api/whiteboards/{whiteboard_id}",
+            get(whiteboards::get_one).delete(whiteboards::delete),
+        )
+        .route("/api/whiteboards/{whiteboard_id}/image", get(whiteboards::png))
+        // URL assinado da imagem (G11): o `<img>` carrega-o sem sessão.
+        .route(
+            "/api/whiteboards/{whiteboard_id}/signed-url",
             post(whiteboards::signed_url),
         )
-        .route("/api/whiteboards/{id}/share", post(whiteboards::set_share))
-        .route("/api/whiteboards/shared/{token}", get(whiteboards::shared_png))
         .route(
-            "/api/recordings/{id}",
-            get(recordings::download).patch(recordings::update),
-        )
-        .route("/api/recordings/{id}/metadata", get(recordings::get_metadata))
-        .route(
-            "/api/recordings/{id}/chapters",
-            get(recordings::list_chapters).post(recordings::create_chapter),
+            "/api/whiteboards/{whiteboard_id}/public-link",
+            axum::routing::put(whiteboards::set_share),
         )
         .route(
-            "/api/recordings/{id}/chapters/{chapter_id}",
-            get(recordings::get_chapter).delete(recordings::delete_chapter),
+            "/api/public/whiteboards/{token}/image",
+            get(whiteboards::shared_png),
         )
-        .route(
-            "/api/recordings/{id}/comments",
-            get(recordings::list_comments).post(recordings::create_comment),
-        )
-        .route(
-            "/api/recordings/{id}/comments/{comment_id}",
-            get(recordings::get_comment)
-                .patch(recordings::update_comment)
-                .delete(recordings::delete_comment),
-        )
-        .route(
-            "/api/recordings/{id}/share",
-            post(recordings::share).get(recordings::shares),
-        )
-        .route("/api/recordings/{id}/share/{user_id}", axum::routing::delete(recordings::unshare))
-        .route(
-            "/api/recordings/{id}/link",
-            get(recordings::get_link)
-                .post(recordings::create_link)
-                .delete(recordings::revoke_link),
-        )
-        .route("/api/share/{token}", get(recordings::public_share))
-        .route("/api/share/{token}/download", get(recordings::public_share_download))
-        .route("/api/meetings", get(meetings::list).post(meetings::create))
-        .route("/api/meetings/conflicts", post(meetings::check_conflicts))
-        .route("/api/meetings/{id}", axum::routing::delete(meetings::delete))
-        .route("/api/meetings/{id}/start", post(meetings::start))
-        .route("/api/meetings/{id}/ics", get(meetings::ics))
-        .route("/api/meetings/{id}/minutes", post(meetings::save_minutes))
-        .route("/api/meetings/{id}/invitees", get(meetings::invitees))
-        .route("/api/meetings/{id}/respond", post(meetings::respond))
-        .route("/api/quarantine/analytics", get(meetings::quarantine_analytics))
-        .route("/api/missed-calls/ack", post(presence::ack_missed_calls))
-        .route("/api/rooms/{code}/minutes", post(meetings::save_minutes_by_room))
-        .route("/api/rooms/{code}/notes", get(meetings::notes_by_room))
-        // ---- Agenda de reunião + Plano de Ação 5W2H ----
-        .route(
-            "/api/meetings/{id}/agenda",
-            get(actions::list_agenda).post(actions::add_agenda_item),
-        )
-        .route(
-            "/api/meetings/{id}/agenda/{item_id}",
-            axum::routing::patch(actions::patch_agenda_item)
-                .delete(actions::delete_agenda_item),
-        )
-        .route(
-            "/api/meetings/{id}/action-plan",
-            get(actions::get_action_plan).put(actions::upsert_action_plan),
-        )
-        .route(
-            "/api/meetings/{id}/action-plan/items",
-            post(actions::add_action_item),
-        )
-        .route(
-            "/api/action-items/{item_id}",
-            axum::routing::patch(actions::patch_action_item)
-                .delete(actions::delete_action_item),
-        )
-        // ---- Enterprise: organizações / diretório ----
+        // ---- Organizações ----
         .route("/api/orgs", get(org::my_orgs).post(org::create_org))
-        .route("/api/orgs/{org_id}/branches", get(org::list_branches).post(org::create_branch))
-        .route("/api/orgs/{org_id}/employees", get(org::list_employees).post(org::add_employee))
-        .route("/api/orgs/{org_id}/employees/{user_id}", axum::routing::delete(org::remove_employee).patch(org::update_employee))
-        .route("/api/orgs/{org_id}/groups", get(org::list_groups).post(org::create_group))
-        .route("/api/orgs/{org_id}/meeting-rooms", get(org::list_meeting_rooms).post(org::create_meeting_room))
+        .route(
+            "/api/orgs/{org_id}",
+            get(org::get_org).patch(org::update_settings),
+        )
         .route("/api/orgs/{org_id}/stats", get(org::org_stats))
-        .route("/api/orgs/{org_id}/audit", get(audit::list))
+        .route(
+            "/api/orgs/{org_id}/analytics/quarantine",
+            get(meetings::quarantine_analytics),
+        )
+        .route("/api/orgs/{org_id}/branches", get(org::list_branches).post(org::create_branch))
+        .route("/api/orgs/{org_id}/members", get(org::list_employees).post(org::add_employee))
+        .route(
+            "/api/orgs/{org_id}/members/{user_id}",
+            axum::routing::patch(org::update_employee).delete(org::remove_employee),
+        )
+        .route("/api/orgs/{org_id}/groups", get(org::list_groups).post(org::create_group))
+        .route(
+            "/api/orgs/{org_id}/meeting-rooms",
+            get(org::list_meeting_rooms).post(org::create_meeting_room),
+        )
+        .route("/api/orgs/{org_id}/audit-events", get(audit::list))
         // Verificação da cadeia de hash: diz se alguém mexeu na trilha.
-        .route("/api/orgs/{org_id}/audit/verify", get(audit::verify))
-        .route("/api/orgs/{org_id}/settings", post(org::update_settings))
+        .route(
+            "/api/orgs/{org_id}/audit-events/verification",
+            get(audit::verify),
+        )
         .route(
             "/api/orgs/{org_id}/sso",
             get(org::get_sso_config)
                 .put(org::upsert_sso_config)
                 .delete(org::delete_sso_config),
         )
+        .route("/api/orgs/{org_id}/storage-usage", get(usage::org_storage_usage))
+        .route("/api/orgs/{org_id}/api-keys", get(apikeys::list).post(apikeys::create))
+        .route(
+            "/api/orgs/{org_id}/api-keys/{key_id}",
+            axum::routing::delete(apikeys::revoke),
+        )
         .route("/api/orgs/{org_id}/webhooks", get(webhooks::list).post(webhooks::create))
         .route(
             "/api/orgs/{org_id}/webhooks/{hook_id}",
             get(webhooks::get_one).delete(webhooks::delete),
         )
-        // ---- Registo de entregas de webhooks e reenvio (G7) ----
         .route(
             "/api/orgs/{org_id}/webhooks/{hook_id}/deliveries",
             get(webhooks::list_deliveries),
@@ -395,12 +517,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/webhooks/{hook_id}/deliveries/{delivery_id}/redeliver",
             post(webhooks::redeliver),
         )
-        // ---- Armazenamento usado e quota (G3) — ver usage.rs ----
-        .route(
-            "/api/orgs/{org_id}/storage-usage",
-            get(usage::org_storage_usage),
-        )
-        // ---- Destinos de emissão em directo (G1) ----
         .route(
             "/api/orgs/{org_id}/stream-destinations",
             get(stream_destinations::list).post(stream_destinations::create),
@@ -415,106 +531,50 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/stream-destinations/{dest_id}/rotate-key",
             post(stream_destinations::rotate_key),
         )
-        // ---- Dial-in PSTN (control plane) ----
-        .route("/api/voice/rooms", post(voice::create_room))
-        .route("/api/voice/rooms/{id}", get(voice::get_room))
-        .route("/api/voice/rooms/{id}/participants", get(voice::list_participants))
-        .route("/api/voice/rooms/{id}/close", post(voice::close_room))
-        .route("/api/orgs/{org_id}/voice/dids", get(voice::list_dids).post(voice::create_did))
-        .route("/api/orgs/{org_id}/voice/cdr", get(voice::list_cdr))
-        .route("/api/orgs/{org_id}/voice/billing", get(voice::billing_summary))
-        // Gestão de chaves de API (admin da org, sessão)
-        // Gateway de SMS (ADR-0005): consola da org (sessão, admin) e agente USB (token dlxg_).
-        .route("/api/orgs/{org_id}/sms/gateways", get(sms::list_gateways).post(sms::create_gateway))
-        .route("/api/orgs/{org_id}/sms/gateways/{gateway_id}", axum::routing::delete(sms::revoke_gateway))
-        .route("/api/orgs/{org_id}/sms/devices", get(sms::list_devices))
-        .route("/api/orgs/{org_id}/sms/route", get(sms::get_route).put(sms::put_route))
-        .route("/api/orgs/{org_id}/sms/messages", get(sms::list_messages).post(sms::send_message))
-        .route("/api/orgs/{org_id}/sms/messages/{message_id}", get(sms::get_message))
-        .route("/api/sms/agent/devices", axum::routing::put(sms::agent_put_devices))
-        .route("/api/sms/agent/claim", post(sms::agent_claim))
-        .route("/api/sms/agent/messages/{message_id}/result", post(sms::agent_result))
-        .route("/api/orgs/{org_id}/api-keys", get(apikeys::list).post(apikeys::create))
-        .route("/api/orgs/{org_id}/api-keys/{key_id}", axum::routing::delete(apikeys::revoke))
-        // ---- Integração Odoo (nk_delonix_meet) ----
         .route(
-            "/api/orgs/{org_id}/integration/odoo",
+            "/api/orgs/{org_id}/integrations/odoo",
             get(odoo::get_config).put(odoo::save_config),
         )
         .route(
-            "/api/orgs/{org_id}/integration/odoo/token",
+            "/api/orgs/{org_id}/integrations/odoo/rotate-token",
             post(odoo::rotate_token),
         )
-        // Configurações públicas da plataforma (sem autenticação — usado na login page)
-        .route("/api/public/settings", get(odoo::public_settings))
-        // ══════════════════════════════════════════════════════════════════
-        //  FRONTEIRA DE CONTRATO DE API (ver docs/reference/api-contract.md)
-        //  Tudo ACIMA (`/api/...` sem versão) é a **BFF interna** do próprio web
-        //  Delonix — contrato NÃO estável, pode mudar com o frontend a par.
-        //  Tudo em `/api/v1` ABAIXO é a **superfície pública versionada** —
-        //  contrato estável (SDK, mobile, integrações), autenticada por API key,
-        //  com rate-limit e (a caminho) testes de contrato. Não misturar: um
-        //  endpoint novo é interno até ser promovido conscientemente a v1.
-        // ══════════════════════════════════════════════════════════════════
-        // ---- API pública v1 (chave de API com escopos, rate-limit por chave) ----
-        .nest(
-            "/api/v1",
-            Router::new()
-                .route("/org", get(apikeys::v1_org))
-                // Provisão de org — auth por segredo de plataforma (não por
-                // chave de org, que ainda não existe). Ver apikeys::v1_provision_org.
-                .route("/admin/orgs", post(apikeys::v1_provision_org))
-                .route("/rooms", post(apikeys::v1_create_room))
-                .route("/rooms/{code}", get(apikeys::v1_get_room))
-                .route("/rooms/{code}/join-bot", post(apikeys::v1_join_bot_room))
-                .route("/recordings", get(apikeys::v1_recordings))
-                // Sync de calendário + MoM (integração Odoo nk_delonix_meet —
-                // ver docs/nk-delonix-meet-integration.md).
-                //
-                // O POST/PATCH/DELETE vive em `meetings_v1.rs`: cria a REUNIÃO
-                // (com anfitrião humano e convidados), não só uma sala solta —
-                // ver o cabeçalho desse módulo para o porquê.
-                .route(
-                    "/meetings",
-                    get(apikeys::v1_meetings).post(meetings_v1::create),
-                )
-                .route(
-                    "/meetings/{id}",
-                    axum::routing::patch(meetings_v1::patch).delete(meetings_v1::delete),
-                )
-                // "Começar agora": faz tocar nos dispositivos dos convidados.
-                .route("/meetings/{id}/ring", post(meetings_v1::ring))
-                .route("/meetings/{id}/notes", get(apikeys::v1_meeting_notes))
-                // Integração Odoo: provisioning e listagem de utilizadores
-                .route("/integration/odoo/provision", post(odoo::provision))
-                .route("/integration/odoo/users", get(odoo::list_users))
-                // Storage remoto: TrueNAS NFS / Nextcloud WebDAV
-                .route("/platform/storage", get(storage::get_storage).put(storage::save_storage))
-                .route("/platform/storage/test", post(storage::test_storage))
-                .route("/platform/storage/pvc-manifest", get(storage::pvc_manifest))
-                .layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    rate_limit::v1_rate_limit,
-                )),
-        )
-        // /api/ice devolve credenciais TURN de curta duração — rate-limit por IP
-        // (partilha o v1_limiter) para uma conta não esgotar o pool de relay do
-        // coturn (DoS cross-tenant). Ver security review + coturn --total-quota.
+        // Dial-in PSTN (plano de controlo).
+        .route("/api/orgs/{org_id}/voice/rooms", post(voice::create_room))
         .route(
-            "/api/ice",
-            get(rooms::ice_servers).layer(middleware::from_fn_with_state(
-                state.clone(),
-                rate_limit::ip_rate_limit,
-            )),
+            "/api/orgs/{org_id}/voice/rooms/{voice_room_id}",
+            get(voice::get_room),
         )
+        .route(
+            "/api/orgs/{org_id}/voice/rooms/{voice_room_id}/participants",
+            get(voice::list_participants),
+        )
+        .route(
+            "/api/orgs/{org_id}/voice/rooms/{voice_room_id}/close",
+            post(voice::close_room),
+        )
+        .route("/api/orgs/{org_id}/voice/dids", get(voice::list_dids).post(voice::create_did))
+        .route("/api/orgs/{org_id}/voice/call-records", get(voice::list_cdr))
+        .route("/api/orgs/{org_id}/voice/billing", get(voice::billing_summary))
+        // Gateway de SMS (ADR-0005): consola da org (sessão, admin).
+        .route("/api/orgs/{org_id}/sms/gateways", get(sms::list_gateways).post(sms::create_gateway))
+        .route(
+            "/api/orgs/{org_id}/sms/gateways/{gateway_id}",
+            axum::routing::delete(sms::revoke_gateway),
+        )
+        .route("/api/orgs/{org_id}/sms/devices", get(sms::list_devices))
+        .route("/api/orgs/{org_id}/sms/route", get(sms::get_route).put(sms::put_route))
+        .route("/api/orgs/{org_id}/sms/messages", get(sms::list_messages).post(sms::send_message))
+        .route(
+            "/api/orgs/{org_id}/sms/messages/{message_id}",
+            get(sms::get_message),
+        )
+        // ---- Tempo real (WebSocket) ----
         .route("/ws", get(signaling::ws_handler))
         // Directo: o browser empurra a emissão já composta e codificada, e o
         // servidor remultiplexa para RTMP (ADR-0003). Autenticada pelo token de
         // sala na query, como o /ws — um WebSocket não leva cabeçalhos nossos.
-        .route(
-            "/api/rooms/{code}/broadcast",
-            get(broadcast::ws_directo),
-        )
+        .route("/api/rooms/{room_code}/live", get(broadcast::ws_directo))
         .route("/rtc", get(presence::rtc_handler))
         .merge(if state.config.internal_bind_addr.is_none() {
             internal_routes()
@@ -786,6 +846,8 @@ pub async fn run() {
     if args.next().as_deref() == Some("openapi") {
         let doc = match args.next().as_deref() {
             Some("v1") => openapi::v1(),
+            Some("operator") => openapi::operator(),
+            Some("integrations") => openapi::integrations(),
             _ => openapi::bff(),
         };
         print!("{}", openapi::to_pretty(&doc));

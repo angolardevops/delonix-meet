@@ -393,11 +393,13 @@ async fn admin_sso_config_crud(db: sqlx::PgPool) {
     assert_eq!(body["enforce_sso"], false);
     assert!(body.get("client_secret").is_none(), "{body}");
 
-    // /api/auth/sso/check reflecte a configuração.
-    let (st, body) = app.get("/api/auth/sso/check?domain=ALFA.test", None).await;
+    // /api/auth/sso/discovery reflecte a configuração.
+    let (st, body) = app
+        .get("/api/auth/sso/discovery?domain=ALFA.test", None)
+        .await;
     assert_eq!(st, 200);
     assert_eq!(body, json!({"sso_enabled": true, "enforce_sso": false}));
-    let (_, body) = app.get("/api/auth/sso/check", None).await;
+    let (_, body) = app.get("/api/auth/sso/discovery", None).await;
     assert_eq!(body, json!({"sso_enabled": false, "enforce_sso": false}));
 
     let (st, body) = app.delete(&org_path(&org, "sso"), t).await;
@@ -582,7 +584,7 @@ async fn admin_api_keys_voice_and_odoo(db: sqlx::PgPool) {
     let r = app
         .raw(
             reqwest::Method::GET,
-            "/api/v1/integration/odoo/users",
+            "/api/integrations/odoo/v1/users",
             &[("X-Integration-Token", token)],
             None,
         )
@@ -859,12 +861,10 @@ async fn archived_members_lose_org_access(db: sqlx::PgPool) {
 
     // ANTES (controlo positivo)
     let (st, _) = app
-        .get(&format!("/api/rooms/{code}/chat"), Some(&c.token))
+        .get(&format!("/api/rooms/{code}/messages"), Some(&c.token))
         .await;
     assert_eq!(st, 200);
-    let (_, found) = app
-        .get("/api/users/search?q=admin-alfa", Some(&c.token))
-        .await;
+    let (_, found) = app.get("/api/users?q=admin-alfa", Some(&c.token)).await;
     assert!(found.to_string().contains(&a.user_id));
     let (st, _) = app.get(&org_path(&org, "stats"), Some(&d.token)).await;
     assert_eq!(st, 200);
@@ -884,12 +884,10 @@ async fn archived_members_lose_org_access(db: sqlx::PgPool) {
 
     // DEPOIS
     let (st, _) = app
-        .get(&format!("/api/rooms/{code}/chat"), Some(&c.token))
+        .get(&format!("/api/rooms/{code}/messages"), Some(&c.token))
         .await;
     assert_eq!(st, 403);
-    let (_, found) = app
-        .get("/api/users/search?q=admin-alfa", Some(&c.token))
-        .await;
+    let (_, found) = app.get("/api/users?q=admin-alfa", Some(&c.token)).await;
     assert_eq!(found, json!([]));
     for p in ["employees", "branches", "groups"] {
         let (st, _) = app.get(&org_path(&org, p), Some(&c.token)).await;

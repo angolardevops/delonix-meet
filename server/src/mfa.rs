@@ -274,7 +274,7 @@ pub struct Inscricao {
 /// confirmado, recusa: trocar o segredo de uma conta com MFA activo sem provar
 /// posse do actual seria uma forma de o desligar sem o saber.
 #[utoipa::path(
-    post, path = "/api/users/me/mfa/enrol", tag = "mfa",
+    post, path = "/api/users/me/mfa/enroll", tag = "mfa",
     security(("session" = [])),
     responses(
         (status = 200, description = "Segredo novo (mostrado uma vez) e URI `otpauth://` para o QR.", body = Inscricao),

@@ -1,4 +1,4 @@
-//! Cliente HTTP da superfície do agente (`/api/sms/agent/*`, ADR-0005).
+//! Cliente HTTP da superfície do agente (`/api/integrations/sms-agent/v1/*`, ADR-0005).
 //!
 //! O token (`dlxg_…`) nunca aparece em log: vive num `Secret` com `Debug`
 //! redigido e só é lido para montar o cabeçalho `Authorization`.
@@ -120,11 +120,11 @@ impl Client {
         bail!("{what}: HTTP {status}: {body}");
     }
 
-    /// `PUT /api/sms/agent/devices` → `poll_interval_secs` sugerido.
+    /// `PUT /api/integrations/sms-agent/v1/devices` → `poll_interval_secs` sugerido.
     pub async fn put_devices(&self, devices: &[Device]) -> Result<Option<u64>> {
         let resp = self
             .http
-            .put(self.url("/api/sms/agent/devices"))
+            .put(self.url("/api/integrations/sms-agent/v1/devices"))
             .bearer_auth(self.token.expose())
             .json(&DevicesBody { devices })
             .send()
@@ -135,11 +135,11 @@ impl Client {
         Ok(parsed.poll_interval_secs)
     }
 
-    /// `POST /api/sms/agent/claim`.
+    /// `POST /api/integrations/sms-agent/v1/claim`.
     pub async fn claim(&self) -> Result<Vec<ClaimedMessage>> {
         let resp = self
             .http
-            .post(self.url("/api/sms/agent/claim"))
+            .post(self.url("/api/integrations/sms-agent/v1/claim"))
             .bearer_auth(self.token.expose())
             .send()
             .await
@@ -149,7 +149,7 @@ impl Client {
         Ok(parsed.messages)
     }
 
-    /// `POST /api/sms/agent/messages/{id}/result`.
+    /// `POST /api/integrations/sms-agent/v1/messages/{id}/result`.
     pub async fn report_result(&self, message_id: &str, result: &SendResult) -> Result<()> {
         if message_id.is_empty()
             || !message_id
@@ -160,7 +160,7 @@ impl Client {
         }
         let resp = self
             .http
-            .post(self.url(&format!("/api/sms/agent/messages/{message_id}/result")))
+            .post(self.url(&format!("/api/integrations/sms-agent/v1/messages/{message_id}/result")))
             .bearer_auth(self.token.expose())
             .json(result)
             .send()

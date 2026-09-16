@@ -51,7 +51,7 @@ async fn action_item_patch_does_not_leak_to_other_org(db: sqlx::PgPool) {
     );
 }
 
-/// R150 — `POST /api/orgs/{org}/employees` sem `password` criava a conta com
+/// R150 — `POST /api/orgs/{org}/members` sem `password` criava a conta com
 /// a password FIXA `changeme123`: quem soubesse o email de um colaborador
 /// recém-adicionado (e que ainda não tivesse mudado a password) entrava como
 /// ele.
@@ -61,7 +61,7 @@ async fn added_employee_without_password_does_not_get_a_known_password(db: sqlx:
     let admin = app.new_org("alfa.ao").await;
     let (st, emp) = app
         .post(
-            &format!("/api/orgs/{}/employees", admin.org()),
+            &format!("/api/orgs/{}/members", admin.org()),
             Some(&admin.token),
             json!({"email": "novo@alfa.ao", "title": "Analista"}),
         )
@@ -96,7 +96,7 @@ async fn added_employee_without_password_does_not_get_a_known_password(db: sqlx:
     // Com password indicada pelo admin, nada de temporária.
     let (st, emp2) = app
         .post(
-            &format!("/api/orgs/{}/employees", admin.org()),
+            &format!("/api/orgs/{}/members", admin.org()),
             Some(&admin.token),
             json!({"email": "outro@alfa.ao", "password": "UmaPasswordForte123!"}),
         )

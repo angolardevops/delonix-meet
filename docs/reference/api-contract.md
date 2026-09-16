@@ -12,7 +12,7 @@
   mude em conjunto (mesmo repositório, deploy acoplado). Não há promessa a terceiros.
 - **Auth:** sessão (JWT access no header + refresh em cookie HttpOnly).
 - **Exemplos:** `/api/auth/*`, `/api/rooms`, `/api/orgs/{id}/...`, `/api/meetings/*`,
-  `/api/recordings/*`, `/api/ice`, `/api/status`, `/health`.
+  `/api/recordings/*`, `/api/ice-servers`, `/api/status`, `/health`.
 
 ### 2. Superfície pública versionada — `/api/v1/...`
 - **O que é:** o contrato estável para consumidores **externos** — SDK público
@@ -36,18 +36,18 @@
 
   Sem o escopo → `403 api_key.scope_missing` (escopo em `details`). Expirada → `401
   api_key.expired`. Desconhecida ou revogada → `401 auth.unauthenticated`.
-  **Omisso na criação** (`POST /api/orgs/{id}/api-keys` ou `POST /api/v1/admin/orgs`) ⇒ o
+  **Omisso na criação** (`POST /api/orgs/{id}/api-keys` ou `POST /api/operator/v1/organizations`) ⇒ o
   catálogo inteiro, e as chaves anteriores à migração 0046 também o receberam: é o que
   mantém o web e o módulo Odoo a funcionar sem mudança. A lista fica guardada explícita — um
   escopo novo no catálogo não chega às chaves existentes. `scopes: []` é recusado;
   `expires_at` tem de ser futuro e ≤ 2 anos. A listagem mostra `scopes`, `expires_at` e
   `last_used_at` (escrito no máximo uma vez por minuto), nunca a chave nem o hash. Revogar
   dá `204`, ou `404 api_key.not_found` se a chave não existe nesta organização.
-- **Endpoints atuais:** `GET /api/v1/org`, `POST /api/v1/rooms`,
-  `GET /api/v1/rooms/{code}`, `POST /api/v1/rooms/{code}/join-bot`,
+- **Endpoints atuais:** `GET /api/v1/organization`, `POST /api/v1/rooms`,
+  `GET /api/v1/rooms/{code}`, `POST /api/v1/rooms/{code}/bots`,
   `GET /api/v1/recordings`, e o recurso **`meetings`** (`server/src/meetings_v1.rs`):
   `GET/POST /api/v1/meetings`, `PATCH/DELETE /api/v1/meetings/{id}`,
-  `GET /api/v1/meetings/{id}/notes`.
+  `GET /api/v1/meetings/{id}/minutes`.
 - **Salas vs reuniões (não confundir):** `POST /api/v1/rooms` cria uma sala
   solta — sem horário, sem convidados, e cujo dono é quem emitiu a chave (no
   provisionamento, um utilizador de serviço que nunca faz login). Um link assim

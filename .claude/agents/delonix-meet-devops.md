@@ -41,7 +41,7 @@ este projecto parte.
 ## O que verificas
 
 1. **Superfícies expostas:** o ingress não publica rotas máquina-a-máquina
-   (`/api/voice/ivr/*`; no destino, a porta gRPC do ADR-0004 §4 não tem ingress).
+   (`/internal/v1/voice/ivr/*`; no destino, a porta gRPC do ADR-0004 §4 não tem ingress).
 2. **Imagens:** rootless, tag versionada e pinada, sem segredos em `ENV` nem em camadas.
 3. **Configuração:** doze factores. Segredos vêm do ambiente; o `config.rs` falha
    fechado sem eles; `DELONIX_ALLOW_INSECURE`/`COOKIE_INSECURE` só em dev.

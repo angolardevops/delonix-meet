@@ -195,11 +195,11 @@ async fn put_storage(
     if let Some(p) = password {
         body["webdav_password"] = json!(p);
     }
-    app.put("/api/v1/platform/storage", Some(token), body).await
+    app.put("/api/operator/v1/storage", Some(token), body).await
 }
 
 async fn test_storage(app: &TestApp, token: &str) -> (u16, Value) {
-    app.post("/api/v1/platform/storage/test", Some(token), json!({}))
+    app.post("/api/operator/v1/storage/test", Some(token), json!({}))
         .await
 }
 
@@ -317,7 +317,7 @@ async fn webdav_password_is_sealed_and_the_test_uses_the_original(db: sqlx::PgPo
     let sealed = dav_password(&app).await;
     assert_sealed(&sealed, DAV_PASSWORD);
 
-    let (st, cfg) = app.get("/api/v1/platform/storage", Some(&tok)).await;
+    let (st, cfg) = app.get("/api/operator/v1/storage", Some(&tok)).await;
     assert_eq!(st, 200);
     assert_eq!(cfg["webdav_password_set"], true);
     let s = cfg.to_string();
@@ -642,7 +642,7 @@ async fn provisioning_seals_the_sso_client_secret(db: sqlx::PgPool) {
     let r = app
         .raw(
             reqwest::Method::POST,
-            "/api/v1/admin/orgs",
+            "/api/operator/v1/organizations",
             &[("X-Provisioning-Secret", secret)],
             Some(serde_json::json!({
                 "name": "Delta SA", "email_domain": "delta.test",

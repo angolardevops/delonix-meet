@@ -43,6 +43,7 @@ pub struct Meeting {
 #[openapi(
     paths(
         list,
+        get_one,
         create,
         check_conflicts,
         delete,
@@ -579,9 +580,9 @@ pub async fn list(
 }
 
 #[utoipa::path(
-    delete, path = "/api/meetings/{id}", tag = "meetings",
+    delete, path = "/api/meetings/{meeting_id}", tag = "meetings",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -619,9 +620,9 @@ pub struct MinutesReq {
 
 /// Guarda as MoM (notas AI) numa reunião. Dono ou convidado podem guardar.
 #[utoipa::path(
-    post, path = "/api/meetings/{id}/minutes", tag = "meetings",
+    put, path = "/api/meetings/{meeting_id}/minutes", tag = "meetings",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     request_body = MinutesReq,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada). O resumo AI é gerado em segundo plano."),
@@ -672,9 +673,9 @@ pub async fn save_minutes(
 /// certo (reuniões iniciadas a partir do calendário). Usado quando se grava
 /// a partir de dentro da chamada.
 #[utoipa::path(
-    post, path = "/api/rooms/{code}/minutes", tag = "meetings",
+    put, path = "/api/rooms/{room_code}/minutes", tag = "meetings",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala")),
+    params(("room_code" = String, Path, description = "Código da sala")),
     request_body = MinutesReq,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
@@ -726,9 +727,9 @@ pub struct RoomNotes {
 /// Ata e transcrição da reunião associada a uma sala — para o leitor da
 /// biblioteca de gravações. Só participantes da sala têm acesso.
 #[utoipa::path(
-    get, path = "/api/rooms/{code}/notes", tag = "meetings",
+    get, path = "/api/rooms/{room_code}/minutes", tag = "meetings",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala")),
+    params(("room_code" = String, Path, description = "Código da sala")),
     responses(
         (status = 200, body = RoomNotes, description = "Ata da reunião mais recente da sala; campos vazios se a sala não tiver reunião"),
         (status = 401, body = crate::openapi::ErrorBody, description = "não participou na sala"),
@@ -777,9 +778,9 @@ pub struct StartResp {
 /// Arranca a reunião: cria a sala (se ainda não existe) e devolve o código.
 /// Reuniões de voz criam na mesma uma sala — o cliente entra sem vídeo.
 #[utoipa::path(
-    post, path = "/api/meetings/{id}/start", tag = "meetings",
+    post, path = "/api/meetings/{meeting_id}/start", tag = "meetings",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = StartResp),
         (status = 400, body = crate::openapi::ErrorBody, description = "um convidado tentou arrancar antes do anfitrião"),
@@ -874,12 +875,41 @@ pub async fn start(
     }))
 }
 
+/// Uma reunião (dono ou convidado). Recurso completo: existe `DELETE`, existe `GET`.
+#[utoipa::path(
+    get, path = "/api/meetings/{meeting_id}", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = Meeting),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não és dono nem convidado"),
+    )
+)]
+pub async fn get_one(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Meeting>, ApiError> {
+    let meeting: Option<Meeting> = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let meeting = meeting.ok_or(ApiError::NotFound)?;
+    if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(meeting))
+}
+
 /// Exportação iCalendar (roadmap "Google e Outlook Calendar"): um .ics por
 /// reunião — importa/abre no Google Calendar, Outlook, Apple Calendar, etc.
 #[utoipa::path(
-    get, path = "/api/meetings/{id}/ics", tag = "meetings",
+    get, path = "/api/meetings/{meeting_id}/calendar.ics", tag = "meetings",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = String, content_type = "text/calendar", description = "Um VEVENT iCalendar, como anexo `reuniao.ics`"),
         (status = 401, body = crate::openapi::ErrorBody, description = "não é dono nem convidado"),
@@ -898,7 +928,8 @@ pub async fn ics(
     .fetch_one(&state.db)
     .await?;
     if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
-        return Err(ApiError::Unauthorized);
+        // Quem não é dono nem convidado não fica a saber que a reunião existe.
+        return Err(ApiError::NotFound);
     }
 
     let esc = |s: &str| {
@@ -949,7 +980,7 @@ pub struct ConflictCheckReq {
 }
 
 #[utoipa::path(
-    post, path = "/api/meetings/conflicts", tag = "meetings",
+    post, path = "/api/meetings/check-conflicts", tag = "meetings",
     security(("session" = [])),
     request_body = ConflictCheckReq,
     responses(
@@ -995,9 +1026,9 @@ pub struct InviteeResponse {
 
 /// Lista as respostas dos convidados (só o anfitrião vê tudo).
 #[utoipa::path(
-    get, path = "/api/meetings/{id}/invitees", tag = "meetings",
+    get, path = "/api/meetings/{meeting_id}/invitees", tag = "meetings",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = Vec<InviteeResponse>),
         (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
@@ -1041,9 +1072,9 @@ pub struct RespondReq {
 /// O convidado aceita ou recusa (recusar exige motivo). Ao recusar, o
 /// anfitrião é notificado em tempo real (se online) com o motivo.
 #[utoipa::path(
-    post, path = "/api/meetings/{id}/respond", tag = "meetings",
+    put, path = "/api/meetings/{meeting_id}/invitees/me", tag = "meetings",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     request_body = RespondReq,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
@@ -1131,44 +1162,33 @@ pub struct AnalyticsQuery {
     #[serde(default = "default_period")]
     #[param(default = "month")]
     pub period: String,
-    /// Se dado, restringe a membros dessa organização (o pedinte tem de ser membro).
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
 }
 fn default_period() -> String {
     "month".into()
 }
 
-/// Ranking de quem mais fica em quarentena, no período pedido. Opcionalmente
-/// filtrado a uma organização (só membros dessa org).
+/// Ranking de quem mais fica em quarentena na organização, no período pedido.
+/// Só administradores da org.
 #[utoipa::path(
-    get, path = "/api/quarantine/analytics", tag = "meetings",
+    get, path = "/api/orgs/{org_id}/analytics/quarantine", tag = "meetings",
     security(("session" = [])),
-    params(AnalyticsQuery),
+    params(("org_id" = Uuid, Path), AnalyticsQuery),
     responses(
-        (status = 200, body = Vec<QuarantineRow>, description = "Até 100 linhas; vazio se o utilizador não administra nenhuma organização"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "com `org_id`: membro mas não administrador"),
-        (status = 404, body = crate::openapi::ErrorBody, description = "com `org_id`: não é membro"),
+        (status = 200, body = Vec<QuarantineRow>, description = "Até 100 linhas"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "membro sem papel de admin"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não é membro da organização"),
     )
 )]
 pub async fn quarantine_analytics(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
+    Path(org_id): Path<Uuid>,
     axum::extract::Query(q): axum::extract::Query<AnalyticsQuery>,
 ) -> Result<Json<Vec<QuarantineRow>>, ApiError> {
     quarantine_sweep(&state.db).await?;
-    // Admin-only e escopado às orgs que o pedinte administra (nunca global
-    // cross-tenant): "todas" = todas as MINHAS orgs de admin.
-    let admin_orgs: Vec<Uuid> = match q.org_id {
-        Some(org_id) => {
-            crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-            vec![org_id]
-        }
-        None => crate::org::admin_orgs_of_user(&state, auth.user_id).await,
-    };
-    if admin_orgs.is_empty() {
-        return Ok(Json(vec![]));
-    }
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    let admin_orgs: Vec<Uuid> = vec![org_id];
     let days: i64 = match q.period.as_str() {
         "week" => 7,
         "month" => 30,

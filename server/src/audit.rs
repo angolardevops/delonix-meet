@@ -14,8 +14,8 @@
 //! `delonix_audit_write_failures_total`, para uma trilha partida ser alertável
 //! em vez de ficar num aviso que ninguém lê.
 //!
-//! Leitura: `GET /api/orgs/{org_id}/audit` (admins da org).
-//! Verificação: `GET /api/orgs/{org_id}/audit/verify`.
+//! Leitura: `GET /api/orgs/{org_id}/audit-events` (admins da org).
+//! Verificação: `GET /api/orgs/{org_id}/audit-events/verification`.
 
 use axum::{
     extract::{Path, Query, State},
@@ -193,12 +193,12 @@ pub async fn verificar_cadeia(db: &PgPool, org_id: Uuid) -> Result<VerificacaoCa
     })
 }
 
-/// `GET /api/orgs/{org_id}/audit/verify` — só admins da org.
+/// `GET /api/orgs/{org_id}/audit-events/verification` — só admins da org.
 ///
 /// Uma cadeia partida NÃO é erro HTTP: responde 200 com `intact: false` e o
 /// `seq` onde a quebra começa.
 #[utoipa::path(
-    get, path = "/api/orgs/{org_id}/audit/verify", tag = "audit",
+    get, path = "/api/orgs/{org_id}/audit-events/verification", tag = "audit",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização.")),
     responses(
@@ -237,7 +237,7 @@ pub struct AuditQuery {
 /// Últimos eventos de auditoria da org (só admins), mais recentes primeiro.
 /// Inclui os eventos sem org cujo actor é membro da organização.
 #[utoipa::path(
-    get, path = "/api/orgs/{org_id}/audit", tag = "audit",
+    get, path = "/api/orgs/{org_id}/audit-events", tag = "audit",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização."), AuditQuery),
     responses(

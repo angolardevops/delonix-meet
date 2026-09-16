@@ -175,7 +175,7 @@ pub struct AuthOk {
 
 /// Desafio do segundo factor: a password foi aceite mas a conta tem MFA
 /// activo, por isso ainda não há sessão. O `mfa_token` troca-se em
-/// `/api/auth/mfa`.
+/// `/api/auth/login/mfa`.
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct MfaChallenge {
     /// Sempre `true`.
@@ -429,7 +429,7 @@ where
 /// Login por email e password.
 ///
 /// Sem MFA, abre sessão: O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo. Com MFA activo devolve só o desafio
-/// (`MfaChallenge`) e nenhum cookie; os tokens saem em `/api/auth/mfa`. Sem
+/// (`MfaChallenge`) e nenhum cookie; os tokens saem em `/api/auth/login/mfa`. Sem
 /// conta local, tenta o primeiro login pelo Odoo da plataforma.
 #[utoipa::path(
     post, path = "/api/auth/login", tag = "auth",
@@ -554,7 +554,7 @@ pub async fn login(
         };
         // Segundo factor: com MFA activo, a password sozinha NÃO produz sessão.
         // Devolve-se um desafio de curta duração, e os tokens só saem no
-        // `/api/auth/mfa`. É o ponto todo do segundo factor — se a password
+        // `/api/auth/login/mfa`. É o ponto todo do segundo factor — se a password
         // bastasse para obter o access token, o resto era teatro.
         if crate::mfa::activo(&state.db, user.id).await? {
             crate::audit::log(&state.db, None, user.id, "auth.mfa_challenge", &user.email).await;
@@ -606,7 +606,7 @@ pub struct MfaReq {
 ///
 /// O código pode ser TOTP ou de recuperação. O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo.
 #[utoipa::path(
-    post, path = "/api/auth/mfa", tag = "auth",
+    post, path = "/api/auth/login/mfa", tag = "auth",
     request_body = MfaReq,
     responses(
         (status = 200, description = "Sessão aberta. Define o cookie de refresh `dlx_refresh`.", body = AuthOk),
@@ -737,11 +737,11 @@ pub struct SsoCheck {
     pub enforce_sso: bool,
 }
 
-/// `GET /api/auth/sso/check?domain=example.com`
+/// `GET /api/auth/sso/discovery?domain=example.com`
 /// O frontend chama isto ao preencher o email para decidir se mostra o campo
 /// de password ou redireciona para o IdP.
 #[utoipa::path(
-    get, path = "/api/auth/sso/check", tag = "auth",
+    get, path = "/api/auth/sso/discovery", tag = "auth",
     params(("domain" = Option<String>, Query, description = "Domínio de email (ex.: `example.com`). Vazio ou omisso ⇒ tudo `false`.")),
     responses(
         (status = 200, body = SsoCheck),
@@ -784,11 +784,11 @@ pub async fn sso_check(
     }
 }
 
-/// `GET /api/auth/sso/login?domain=example.com`
+/// `GET /api/auth/sso/authorize?domain=example.com`
 /// Descobre o IdP OIDC da organização, gera state+PKCE e redireciona (302)
 /// o browser do utilizador para o IdP (Google/Microsoft/Okta).
 #[utoipa::path(
-    get, path = "/api/auth/sso/login", tag = "auth",
+    get, path = "/api/auth/sso/authorize", tag = "auth",
     params(("domain" = String, Query, description = "Domínio de email da organização.")),
     responses(
         (status = 302, description = "Redirecção (`Location`) para o endpoint de autorização do IdP, com state + PKCE."),
@@ -907,7 +907,7 @@ pub async fn sso_login(
     get, path = "/api/auth/sso/callback", tag = "auth",
     params(
         ("code" = String, Query, description = "Código de autorização do IdP."),
-        ("state" = String, Query, description = "State anti-CSRF emitido por `/api/auth/sso/login` (uso único, 10 min)."),
+        ("state" = String, Query, description = "State anti-CSRF emitido por `/api/auth/sso/authorize` (uso único, 10 min)."),
     ),
     responses(
         (status = 302, description = "Redirecção para o frontend com o access token no fragmento. Define o cookie `dlx_refresh`."),
