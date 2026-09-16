@@ -77,6 +77,13 @@ pub struct Config {
     /// Segredo partilhado que a camada de media (FreeSWITCH/provider) usa para
     /// chamar a API interna de IVR. Vazio => API interna de voz DESATIVADA.
     pub voice_internal_secret: String,
+    /// Porque é que o `voice_internal_secret` NÃO serve, decidido uma vez no
+    /// arranque (`voice_secret_refusal`). `Some` => as rotas de IVR respondem
+    /// 503 com esta razão, sem sequer ler o cabeçalho. R154: o manifesto K8s
+    /// trazia um valor escrito no repositório público, e quem o lesse validava
+    /// PINs e injectava CDRs. Não faz panic — quem não usa voz não perde o
+    /// servidor inteiro por causa disto.
+    pub voice_secret_refusal: Option<&'static str>,
     /// Segredo de plataforma que autoriza o provisionamento de organizações via
     /// `POST /api/operator/v1/organizations` (ex.: o Odoo cria a org de cada empresa e
     /// recebe a chave de API). Vazio => endpoint de provisão DESATIVADO
@@ -388,6 +395,14 @@ impl Config {
             outbound_allow_hosts: csv_env(src, "OUTBOUND_ALLOW_HOSTS"),
             cookie_secure: src.var("COOKIE_INSECURE").ok().as_deref() != Some("1"),
             voice_internal_secret: src.var("VOICE_INTERNAL_SECRET").unwrap_or_default(),
+            voice_secret_refusal: {
+                let v = src.var("VOICE_INTERNAL_SECRET").unwrap_or_default();
+                let refusal = voice_secret_refusal(&v, insecure);
+                if let Some(r) = refusal {
+                    tracing::warn!("API interna de IVR (/api/voice/ivr/*) DESLIGADA: {r}");
+                }
+                refusal
+            },
             provisioning_secret: src.var("PROVISIONING_SECRET").unwrap_or_default(),
             platform_admin_user_ids: uuid_list(src, "PLATFORM_ADMIN_USER_IDS"),
             sms_unitel_smpp: opt("SMS_UNITEL_SMPP"),
@@ -525,6 +540,43 @@ fn csv_env(src: &Source, var: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Segredo de voz mínimo: 32 caracteres, o mesmo chão do `JWT_SECRET`. O
+/// Ansible gera 32 hexadecimais (128 bits); `openssl rand -hex 32` dá 64.
+pub const VOICE_SECRET_MIN_LEN: usize = 32;
+
+/// Valores de `VOICE_INTERNAL_SECRET` que já estiveram escritos em ficheiros
+/// versionados deste repositório PÚBLICO. Estão queimados: qualquer clone os
+/// tem, e o histórico do git não se reescreve (ver
+/// `scripts/leaked-secrets-accepted.txt`). Um deploy que ainda os use é
+/// recusado, e não aceite por ter comprimento suficiente.
+pub const BURNED_VOICE_SECRETS: &[&str] = &[
+    // deploy/k8s/01-config.yaml, de 98f5b28 (2026-07-10) até R154.
+    "voice-internal-secret-for-pstn",
+    // Makefile, `VOICE_SECRET ?=` — valor de dev.
+    "dev-voice-secret-abc123",
+];
+
+/// `None` se o segredo de voz serve; `Some(razão)` se não. Com
+/// `DELONIX_ALLOW_INSECURE=1` aceita-se qualquer valor não vazio — é o que
+/// deixa o `make dev` continuar a usar o valor de dev do Makefile.
+pub fn voice_secret_refusal(secret: &str, insecure: bool) -> Option<&'static str> {
+    if secret.is_empty() {
+        return Some("VOICE_INTERNAL_SECRET não está definido");
+    }
+    if insecure {
+        return None;
+    }
+    if BURNED_VOICE_SECRETS.contains(&secret) {
+        return Some(
+            "VOICE_INTERNAL_SECRET é um valor de exemplo publicado no repositório — gera um novo",
+        );
+    }
+    if secret.len() < VOICE_SECRET_MIN_LEN {
+        return Some("VOICE_INTERNAL_SECRET tem menos de 32 caracteres");
+    }
+    None
 }
 
 /// Lê um segredo do ambiente. Em produção (insecure=false) faz panic se estiver
