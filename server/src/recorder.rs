@@ -568,7 +568,21 @@ fn spawn_progress_writer(
 
 /// Gravações presas em `processing` há mais do que o tecto do ffmpeg (com
 /// folga) passam a `failed`: o pod que as compunha morreu a meio.
+///
+/// E as presas em `transcribing` sem sinal de vida há 6 h voltam a `ready`
+/// (há ficheiro; a transcrição simplesmente não acabou): sem ai-worker vivo
+/// que as reclame, ficavam a dizer «a transcrever» para sempre.
 pub async fn fail_stale_processing(state: &Arc<AppState>) -> u64 {
+    if let Err(e) = sqlx::query(
+        "UPDATE recordings SET status = 'ready', progress_pct = NULL, progress_at = NULL
+         WHERE status = 'transcribing' AND transcribed_at IS NULL
+           AND COALESCE(progress_at, created_at) < now() - interval '6 hours'",
+    )
+    .execute(&state.db)
+    .await
+    {
+        tracing::warn!(error = %e, "varredura de transcrições paradas falhou");
+    }
     let limit = state.config.ffmpeg_timeout_secs as i64 + 600;
     match sqlx::query(
         "UPDATE recordings SET status = 'failed', progress_pct = NULL,
@@ -1022,6 +1036,8 @@ pub async fn retention_sweep(state: &Arc<AppState>) -> usize {
     for (id, _fname) in rows {
         let path = state.config.recordings_dir.join(format!("{id}.webm"));
         let _ = tokio::fs::remove_file(&path).await;
+        // A miniatura é da gravação: sai com ela (media_probe::thumbnail_path).
+        let _ = tokio::fs::remove_file(crate::media_probe::thumbnail_path(state, id)).await;
         if sqlx::query("DELETE FROM recordings WHERE id = $1")
             .bind(id)
             .execute(&state.db)
