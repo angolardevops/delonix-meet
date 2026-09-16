@@ -26,9 +26,6 @@ export default function Login({ pendingRoom, onLogin }: { pendingRoom: string | 
     <div className="auth">
       <PainelValor />
       <main className="auth-main">
-        <div className="auth-main__topo">
-          <SeletorLingua />
-        </div>
         <div className="auth-card">
           {pendingRoom && (
             <div className="auth-pendente" role="status" data-testid="auth-pendente">
@@ -43,6 +40,10 @@ export default function Login({ pendingRoom, onLogin }: { pendingRoom: string | 
               </div>
             </div>
           )}
+
+          <div className="auth-topo">
+            <SeletorLingua />
+          </div>
 
           {mfaToken ? (
             <DesafioMfa mfaToken={mfaToken} onLogin={onLogin} onRecomecar={() => setMfaToken(null)} />

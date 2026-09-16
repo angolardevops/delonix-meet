@@ -22,13 +22,13 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getLoginBg } from '../../branding'
 import { BrandLockup } from '../../components/BrandMark'
-import { Icon, IconName } from '../../ui/icons'
+import { Icon } from '../../ui/icons'
 
-const CAPACIDADES: { chave: string; icon: IconName }[] = [
-  { chave: 'auth.painel.e2ee', icon: 'lock' },
-  { chave: 'auth.painel.gravacao', icon: 'record' },
-  { chave: 'consola.entrar.multidestino', icon: 'live' },
-  { chave: 'auth.painel.mfa', icon: 'shieldCheck' },
+/** Três fichas numa linha, como no template: ponto, triângulo e visto de cor. */
+const CAPACIDADES: { chave: string; marca: 'ponto' | 'play' | 'visto' }[] = [
+  { chave: 'auth.painel.gravacao', marca: 'ponto' },
+  { chave: 'consola.entrar.multidestino', marca: 'play' },
+  { chave: 'auth.painel.e2ee', marca: 'visto' },
 ]
 
 /** O fundo personalizado muda nas definições de marca; ouve-se o mesmo evento. */
@@ -61,7 +61,11 @@ export default function PainelValor() {
         <ul className="auth-chips">
           {CAPACIDADES.map((c) => (
             <li key={c.chave} className="auth-chip">
-              <Icon name={c.icon} size={12} />
+              {c.marca === 'visto' ? (
+                <Icon name="check" size={11} />
+              ) : (
+                <span className={`auth-chip__marca auth-chip__marca--${c.marca}`} aria-hidden="true" />
+              )}
               {t(c.chave)}
             </li>
           ))}

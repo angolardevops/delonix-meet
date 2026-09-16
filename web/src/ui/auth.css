@@ -40,13 +40,13 @@
 .auth-aside > :not(.auth-aside__bg) {
   position: relative;
 }
-.auth-aside__marca .brand-name {
-  font-size: 15px;
-}
 .auth-aside__proposta {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  max-width: 680px;
+}
+.auth-aside__proposta > p {
   max-width: 520px;
 }
 .auth-aside__titulo {
@@ -87,6 +87,31 @@
 .auth-chip .dx-icon {
   color: var(--accent);
 }
+.auth-chip__marca {
+  flex: none;
+}
+.auth-chip__marca--ponto {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--record);
+}
+.auth-chip__marca--play {
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--live);
+}
+.auth-aside__marca .brand-name {
+  font-size: 15px;
+  color: var(--text);
+  font-weight: 600;
+}
+.auth-aside__marca .brand-name__accent {
+  margin-left: 0.28em;
+  color: inherit;
+}
 .auth-aside__rodape {
   display: flex;
   flex-wrap: wrap;
@@ -110,10 +135,6 @@
   background: var(--raised);
   border-left: 1px solid var(--border);
 }
-.auth-main__topo {
-  display: flex;
-  justify-content: flex-end;
-}
 .auth-lingua {
   display: inline-flex;
   align-items: center;
@@ -125,6 +146,18 @@
   min-height: 28px;
   padding-block: 3px;
   font-size: var(--t-sm);
+}
+.auth-topo {
+  display: flex;
+  margin-bottom: -8px;
+}
+.auth-topo .auth-lingua .dx-select {
+  min-height: 22px;
+  padding: 1px 22px 1px 8px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  background-color: var(--surface);
 }
 .auth-card {
   flex: 1;
@@ -144,14 +177,14 @@
   gap: 18px;
 }
 .auth-form__head h1 {
-  margin: 0 0 5px;
+  margin: 0 0 2px;
   font-size: var(--t-h1);
   font-weight: 700;
   letter-spacing: -0.6px;
 }
 .auth-form__head p {
   margin: 0;
-  font-size: var(--t-md);
+  font-size: 11.5px;
 }
 .auth-form__nota {
   margin: 0;
@@ -243,11 +276,27 @@
 .auth-join {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 8px;
   padding: 15px;
   border-radius: var(--r-2);
   border: 1px dashed var(--border);
   background: var(--surface);
+}
+.auth-join__cabeca {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.auth-join__cabeca .dx-muted {
+  font-size: 10.5px;
+}
+.auth-join .dx-field__label {
+  position: absolute;
+}
+.auth-join .dx-input--code {
+  font-size: 14px;
+  letter-spacing: 0.12em;
 }
 .auth-join__titulo {
   margin: 0;

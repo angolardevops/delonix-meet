@@ -74,8 +74,8 @@ export default {
     titulo: 'Uma sala. Reunião, videoaula e emissão pública.',
     texto: 'Identidade e contactos podem vir do Odoo da organização. Encriptação ponta-a-ponta quando a reunião o pede e verificação em dois passos.',
     multidestino: 'Emissão para vários destinos',
-    odoo: 'Se a organização usa Odoo, entra com o email e a palavra-passe do Odoo.',
-  },
+
+    codigoTitulo: 'Entrar com código',  },
   inicio: {
     erroCopiar: 'Não foi possível copiar a ligação.',
     comecaEm_one: 'Começa dentro de {{count}} minuto',
@@ -94,7 +94,15 @@ export default {
     importarErro: 'Não foi possível importar a gravação.',
     destino: 'Destino: {{destino}}',
     agendarOdoo: 'Enviada ao calendário do Odoo',
-  },
+
+    pesquisar: 'Procurar sessões, gravações, pessoas…',
+    iniciarSub: 'Reunião instantânea',
+    novoEstudio: 'Novo estúdio',
+    novoEstudioSub: 'Emissão multicanal',
+    odooCalendario: 'Odoo Calendário',
+    copiarLigacaoDe: 'Copiar a ligação da sala {{codigo}}',
+    importarLimite: 'MP4 até 512 MB',
+    semRetencao: 'Retenção sem limite',  },
   dispositivos: {
     titulo: 'Dispositivos',
     testar: 'Testar câmara e microfone',

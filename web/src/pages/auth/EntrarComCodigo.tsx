@@ -26,13 +26,17 @@ export default function EntrarComCodigo() {
 
   return (
     <form className="auth-join" onSubmit={submeter} data-testid="auth-join">
-      <h2 className="auth-join__titulo">{t('auth.sala.titulo')}</h2>
-      <Field label={t('auth.sala.rotulo')} htmlFor="auth-join-code" error={erro || undefined} hint={t('auth.sala.dica')}>
+      <div className="auth-join__cabeca">
+        <h2 className="auth-join__titulo">{t('consola.entrar.codigoTitulo')}</h2>
+        <span className="dx-muted">{t('auth.sala.dica')}</span>
+      </div>
+      <Field label={<span className="dx-sr-only">{t('consola.entrar.codigoTitulo')}</span>} htmlFor="auth-join-code" error={erro || undefined} hint={t('auth.sala.rotulo')}>
         <div className="auth-join__linha">
           <TextInput
             id="auth-join-code"
             name="room"
             code
+            large
             spellCheck={false}
             autoCapitalize="none"
             placeholder="abc-defg-hij"

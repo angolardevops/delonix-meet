@@ -74,8 +74,8 @@ export default {
     titulo: 'Une salle. Réunion, cours vidéo et diffusion publique.',
     texto: "L'identité et les contacts peuvent venir de l'Odoo de l'organisation. Chiffrement de bout en bout quand la réunion le demande, et vérification en deux étapes.",
     multidestino: 'Diffusion vers plusieurs destinations',
-    odoo: "Si l'organisation utilise Odoo, connectez-vous avec l'e-mail et le mot de passe Odoo.",
-  },
+
+    codigoTitulo: 'Rejoindre avec un code',  },
   inicio: {
     erroCopiar: 'Impossible de copier le lien.',
     comecaEm_one: 'Commence dans {{count}} minute',
@@ -94,7 +94,15 @@ export default {
     importarErro: "Impossible d'importer l'enregistrement.",
     destino: 'Destination : {{destino}}',
     agendarOdoo: 'Envoyée au calendrier Odoo',
-  },
+
+    pesquisar: 'Chercher sessions, enregistrements, personnes…',
+    iniciarSub: 'Réunion instantanée',
+    novoEstudio: 'Nouveau studio',
+    novoEstudioSub: 'Diffusion multicanal',
+    odooCalendario: 'Calendrier Odoo',
+    copiarLigacaoDe: 'Copier le lien de la salle {{codigo}}',
+    importarLimite: "MP4 jusqu'à 512 Mo",
+    semRetencao: 'Conservation sans limite',  },
   dispositivos: {
     titulo: 'Appareils',
     testar: 'Tester caméra et micro',
