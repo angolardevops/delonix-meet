@@ -878,13 +878,11 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
     assert_eq!(list, json!([]));
 }
 
-/// DÍVIDA: `actions::patch_action_item` só verifica permissões quando o
-/// corpo EDITA campos ou traz `status`. Um PATCH com corpo vazio (ou só com
-/// campos desconhecidos, como o `{"done": true}` do e2e) salta as duas
-/// verificações e devolve o item inteiro — qualquer sessão de qualquer org
-/// que conheça o id lê o plano de acção de outra empresa.
+/// R125 (fechada): um PATCH com corpo vazio, ou só com campos desconhecidos
+/// (o `{"done": true}` do e2e), saltava as verificações e devolvia o item a
+/// qualquer sessão. Agora a pertença à reunião verifica-se sempre primeiro.
 #[sqlx::test(migrations = "./migrations")]
-async fn patch_action_item_current_behavior_leaks_item_to_any_session(db: sqlx::PgPool) {
+async fn patch_action_item_refuses_session_from_other_org(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let b = app.new_org("beta.test").await;
@@ -906,9 +904,8 @@ async fn patch_action_item_current_behavior_leaks_item_to_any_session(db: sqlx::
             json!({"done": true}),
         )
         .await;
-    // DÍVIDA: devia ser 401/404.
-    assert_eq!(st, 200, "{body}");
-    assert_eq!(body["what"], "segredo comercial da B");
+    assert!(!(200..300).contains(&st), "{st} {body}");
+    assert!(!body.to_string().contains("segredo comercial"), "{body}");
 }
 
 /// DÍVIDA: `meetings::create` aceita `invitee_ids` de QUALQUER utilizador,

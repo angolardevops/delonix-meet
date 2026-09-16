@@ -71,7 +71,10 @@ jobs:
           # migra a sua própria base neste servidor. Sem a variável falham —
           # não passam a verde por não terem corrido.
           DATABASE_URL: postgres://delonix:delonix_dev@localhost:5435/delonix_meet
-        run: cargo test --manifest-path server/Cargo.toml --release --workspace
+        # --test-threads=4: cada binário de testes partilha uma pool de ligações;
+        # sem tecto, os testes esperam ligações e falham por PoolTimedOut num
+        # runner de 2 vCPU, não por o produto estar partido.
+        run: cargo test --manifest-path server/Cargo.toml --release --workspace -- --test-threads=4
 
       - name: Build de release
         run: cargo build --manifest-path server/Cargo.toml --release

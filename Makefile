@@ -172,7 +172,7 @@ build: ## Compila backend (release) + frontend (produção)
 .PHONY: test
 test: fitness web-deps ## Corre os testes (fitness functions + cargo test + typecheck do frontend)
 	@printf "$(C)▶ testes$(Z)\n"
-	@cd server && DATABASE_URL=$${DATABASE_URL:-postgres://delonix:delonix_dev@localhost:5435/delonix_meet} cargo test --release --workspace
+	@cd server && DATABASE_URL=$${DATABASE_URL:-postgres://delonix:delonix_dev@localhost:5435/delonix_meet} cargo test --release --workspace -- --test-threads=4
 	@cd web && node_modules/.bin/tsc -p tsconfig.json --noEmit && printf "$(G)  ✓ tsc limpo$(Z)\n"
 	@cd web && node_modules/.bin/vitest run && printf "$(G)  ✓ vitest (R1/R2)$(Z)\n"
 	@cd web && npm run build >/dev/null && printf "$(G)  ✓ build do frontend (compila SCSS — R54)$(Z)\n"
