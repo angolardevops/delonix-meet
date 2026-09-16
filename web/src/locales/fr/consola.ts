@@ -105,4 +105,15 @@ export default {
     negado: "Le navigateur n'a pas donné accès à la caméra et au micro.",
     erro: "Impossible d'ouvrir la caméra ou le micro.",
   },
+  agenda: {
+    ocorrencia: 'occurrence {{n}} sur {{total}}',
+    metaOdoo: "les invités reçoivent l'invitation · envoyée au calendrier Odoo",
+  },
+  integracoes: {
+    instancia: 'instance {{host}}',
+    registo: 'Journal des événements',
+    nova: 'Nouvelle intégration',
+    novaExplica: 'Voici les intégrations prises en charge par le serveur. Choisissez-en une pour la configurer dans sa carte.',
+    ocupado: "utilisés par les enregistrements de l'organisation",
+  },
 }

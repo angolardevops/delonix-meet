@@ -105,4 +105,15 @@ export default {
     negado: 'The browser did not grant camera and microphone access.',
     erro: 'Could not open the camera or microphone.',
   },
+  agenda: {
+    ocorrencia: 'occurrence {{n}} of {{total}}',
+    metaOdoo: 'guests get the invitation · sent to the Odoo calendar',
+  },
+  integracoes: {
+    instancia: 'instance {{host}}',
+    registo: 'Event log',
+    nova: 'New integration',
+    novaExplica: 'These are the integrations the server supports. Pick one to set it up in its card.',
+    ocupado: "used by the organisation's recordings",
+  },
 }

@@ -105,4 +105,15 @@ export default {
     negado: 'O browser não deu acesso à câmara e ao microfone.',
     erro: 'Não foi possível abrir a câmara ou o microfone.',
   },
+  agenda: {
+    ocorrencia: 'ocorrência {{n}} de {{total}}',
+    metaOdoo: 'convidados recebem o convite · enviada ao calendário do Odoo',
+  },
+  integracoes: {
+    instancia: 'instância {{host}}',
+    registo: 'Registo de eventos',
+    nova: 'Nova integração',
+    novaExplica: 'Estas são as integrações que o servidor suporta. Escolhe uma para a configurar no cartão dela.',
+    ocupado: 'ocupados pelas gravações da organização',
+  },
 }

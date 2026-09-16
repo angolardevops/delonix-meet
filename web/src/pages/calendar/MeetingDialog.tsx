@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, deleteMeeting, downloadMeetingIcs, Meeting, meetingInvitees } from '../../api'
+import type { Occurrence } from './occurrence'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Icon } from '../../ui/icons'
 import { Alert, Avatar, Button, Dialog, Empty, StatusBadge, Tabs } from '../../ui/kit'
@@ -54,12 +55,15 @@ export default function MeetingDialog({
   onChanged,
   onEnter,
   entering,
+  occurrence,
 }: {
   meeting: Meeting | null
   onClose: () => void
   onChanged: () => void
   onEnter: (m: Meeting) => void
   entering: boolean
+  /** Posição na série recorrente, contada na lista que a agenda já tem. */
+  occurrence?: Occurrence | null
 }) {
   const { t, i18n } = useTranslation()
   const locale = localeOf(i18n.language)
@@ -154,6 +158,7 @@ export default function MeetingDialog({
             {m.recurrence_freq && (
               <StatusBadge tone="neutral" icon="repeat">
                 {freqLabel[m.recurrence_freq] ?? m.recurrence_freq}
+                {occurrence && ` · ${t('consola.agenda.ocorrencia', { n: occurrence.index, total: occurrence.total })}`}
               </StatusBadge>
             )}
             {m.room_name && (
