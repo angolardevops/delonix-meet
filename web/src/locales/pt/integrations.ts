@@ -38,6 +38,10 @@ export default {
     emVigorDica: 'A página de entrada é uma só: basta uma organização com Odoo activo pedir para ocultar.',
     rodarTitulo: 'Rodar o token do Odoo?',
     rodarAviso: 'O token actual deixa de funcionar de imediato. O Odoo fica sem acesso até receber o novo.',
+    semTokenCurto: 'sem token',
+    rodarCurto: 'rodar',
+    gerarCurto: 'gerar',
+    visibilidadeCurta: 'página de entrada',
   },
   storage: {
     titulo: 'Armazenamento',
@@ -73,6 +77,7 @@ export default {
     testaGravado: 'O teste usa a configuração gravada: guarda antes de testar o destino novo.',
   },
   webhooks: {
+    destinos: 'Destinos configurados',
     titulo: 'Webhooks',
     sub: 'avisos de reuniões e gravações para outros sistemas',
     contagem_one: '{{count}} destino',

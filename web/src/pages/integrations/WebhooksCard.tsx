@@ -44,6 +44,10 @@ export function WebhooksCard({ orgId }: { orgId: string }) {
             <div className="integ-split">
               <WebhookForm orgId={orgId} onCreated={(h) => mutate((d) => (d.forbidden ? d : { ...d, d: [...d.d, h] }))} />
               <div className="integ-split__list">
+                <div className="integ-list-head">
+                  <h3>{t('integrations.webhooks.destinos')}</h3>
+                  <span className="dx-num dx-muted">{t('integrations.webhooks.contagem', { count: g.d.length })}</span>
+                </div>
                 {g.d.length === 0 ? (
                   <Empty icon="share" title={t('integrations.webhooks.vazio')}>
                     {t('integrations.webhooks.vazioDica')}
@@ -173,13 +177,12 @@ function WebhookForm({ orgId, onCreated }: { orgId: string; onCreated: (h: Webho
       <fieldset className="integ-events-pick">
         <legend className="dx-field__label">{t('integrations.webhooks.eventos')}</legend>
         {EVENTS.map((ev) => (
-          <div key={ev} className="integ-event-row">
+          <div key={ev} className={events.includes(ev) ? 'integ-event-row' : 'integ-event-row integ-event-row--off'} title={t(`integrations.webhooks.evento.${ev.replace('.', '_')}`)}>
             <Checkbox
               label={<code className="dx-num">{ev}</code>}
               checked={events.includes(ev)}
               onChange={(e) => toggle(ev, e.target.checked)}
             />
-            <span className="dx-muted integ-small">{t(`integrations.webhooks.evento.${ev.replace('.', '_')}`)}</span>
           </div>
         ))}
         {events.length === 0 && <span className="dx-field__error">{t('integrations.webhooks.escolheEvento')}</span>}

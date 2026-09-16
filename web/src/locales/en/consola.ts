@@ -89,6 +89,7 @@ export default {
     semNumeros: 'no numbers in the inventory',
     soEntrada: 'inbound only · no bridge to the room',
     activo: 'active {{quando}}',
+    offline: 'offline',
     semFilial: 'No branch',
   },
   contactos: {

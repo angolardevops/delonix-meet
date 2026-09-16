@@ -38,6 +38,10 @@ export default {
     emVigorDica: "La page de connexion est unique : il suffit qu'une organisation avec Odoo actif demande à masquer.",
     rodarTitulo: 'Renouveler le jeton Odoo ?',
     rodarAviso: "Le jeton actuel cesse de fonctionner immédiatement. Odoo perd l'accès jusqu'à recevoir le nouveau.",
+    semTokenCurto: 'aucun jeton',
+    rodarCurto: 'renouveler',
+    gerarCurto: 'générer',
+    visibilidadeCurta: 'page de connexion',
   },
   storage: {
     titulo: 'Stockage',
@@ -73,6 +77,7 @@ export default {
     testaGravado: 'Le test utilise la configuration enregistrée : enregistrez avant de tester la nouvelle destination.',
   },
   webhooks: {
+    destinos: 'Destinations configurées',
     titulo: 'Webhooks',
     sub: "avis de réunions et d'enregistrements vers d'autres systèmes",
     contagem_one: '{{count}} destination',

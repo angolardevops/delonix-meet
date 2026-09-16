@@ -89,6 +89,7 @@ export default {
     semNumeros: 'sem números no inventário',
     soEntrada: 'só entrada · sem ponte para a sala',
     activo: 'activo {{quando}}',
+    offline: 'offline',
     semFilial: 'Sem filial',
   },
   contactos: {

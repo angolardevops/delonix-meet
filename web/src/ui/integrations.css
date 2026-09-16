@@ -7,7 +7,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--s-3);
-  align-items: start;
+  align-items: stretch;
 }
 .integ-card--wide {
   grid-column: 1 / -1;
@@ -381,4 +381,106 @@
     text-align: left;
     margin-bottom: 6px;
   }
+}
+
+/* ---------------------------------------------------- frontend/l2-consola */
+/* Mosaicos 2×2 do cartão Odoo (DelonixIntegrations): caixa de superfície com
+   o interruptor, título 11 px e sub em mono 9 px. */
+.integ-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+.integ-tile {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+.integ-tile .dx-toggle {
+  gap: 9px;
+  font-size: 11px;
+  min-width: 0;
+}
+.integ-tile .dx-toggle input {
+  width: 28px;
+  border-radius: var(--r-2);
+}
+.integ-tile .dx-toggle input::after {
+  border-radius: 50%;
+}
+.integ-tile .dx-toggle .dx-muted {
+  font-family: var(--font-mono);
+  font-size: 9px !important;
+}
+.integ-tile__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.integ-tile__text strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+.integ-tile__text small {
+  font-size: 9px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.integ-inline-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.integ-inline-link:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.integ-sync {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+}
+.integ-sync .dx-chips {
+  align-items: center;
+}
+@media (max-width: 520px) {
+  .integ-tiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.integ-list-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin-bottom: 9px;
+}
+.integ-list-head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.integ-list-head .dx-num {
+  font-size: 9.5px;
+}
+.integ-event-row--off {
+  border-style: dashed;
+  background: transparent;
+}
+.integ-event-row--off code {
+  color: var(--muted);
 }

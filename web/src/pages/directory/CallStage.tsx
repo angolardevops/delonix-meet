@@ -138,7 +138,7 @@ export default function CallStage({
   const locale = useLocaleTag()
   const ago = formatAgo(person.last_active, locale)
   const tone = { '--call-tone': avatarTone(person.username) } as CSSProperties
-  const presence = online ? t('consola.chamadas.disponivel') : t('org.presenca.offline')
+  const presence = online ? t('consola.chamadas.disponivel') : t('consola.chamadas.offline')
   return (
     <>
       <TopBar

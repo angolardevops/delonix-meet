@@ -164,7 +164,7 @@ export default function ContactList({
                           {me && <span className="call-muted"> {t('org.dir.tu')}</span>}
                         </strong>
                         <span className="call-row__meta dx-num">
-                          {[p.title, on ? t('consola.chamadas.disponivel') : t('org.presenca.offline')].filter(Boolean).join(' · ')}
+                          {[p.title, on ? t('consola.chamadas.disponivel') : t('consola.chamadas.offline')].filter(Boolean).join(' · ')}
                         </span>
                       </span>
                     </button>

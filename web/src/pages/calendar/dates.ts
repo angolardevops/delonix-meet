@@ -32,6 +32,16 @@ export function localeOf(lang: string): string {
   return 'pt-PT'
 }
 
+/**
+ * «14 Set» — dia e mês abreviado, como no template. O `toLocaleDateString`
+ * com `month: 'short'` dá «14/09» em pt-PT; aqui o mês vem por extenso
+ * abreviado, sem o ponto final e com maiúscula.
+ */
+export function fmtDayMonth(d: Date, locale: string): string {
+  const month = new Intl.DateTimeFormat(locale, { month: 'short' }).format(d).replace(/\.$/, '')
+  return [d.getDate(), month.charAt(0).toLocaleUpperCase(locale) + month.slice(1)].join(' ')
+}
+
 export const meetingStart = (m: Meeting) => new Date(m.starts_at)
 export const meetingEnd = (m: Meeting) => new Date(new Date(m.starts_at).getTime() + m.duration_min * 60_000)
 

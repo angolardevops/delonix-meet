@@ -38,6 +38,10 @@ export default {
     emVigorDica: 'There is a single sign-in page: one organisation with Odoo enabled asking to hide is enough.',
     rodarTitulo: 'Rotate the Odoo token?',
     rodarAviso: 'The current token stops working immediately. Odoo loses access until it gets the new one.',
+    semTokenCurto: 'no token',
+    rodarCurto: 'rotate',
+    gerarCurto: 'generate',
+    visibilidadeCurta: 'sign-in page',
   },
   storage: {
     titulo: 'Storage',
@@ -73,6 +77,7 @@ export default {
     testaGravado: 'The test uses the saved configuration: save before testing the new destination.',
   },
   webhooks: {
+    destinos: 'Configured destinations',
     titulo: 'Webhooks',
     sub: 'meeting and recording notices for other systems',
     contagem_one: '{{count}} destination',

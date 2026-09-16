@@ -89,6 +89,7 @@ export default {
     semNumeros: "aucun numéro dans l'inventaire",
     soEntrada: 'entrant seulement · sans pont vers la salle',
     activo: 'actif {{quando}}',
+    offline: 'hors ligne',
     semFilial: 'Aucune filiale',
   },
   contactos: {
