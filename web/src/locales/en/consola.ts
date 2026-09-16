@@ -74,8 +74,8 @@ export default {
     titulo: 'One room. Meeting, video lesson and public broadcast.',
     texto: "Identity and contacts can come from your organisation's Odoo. End-to-end encryption when the meeting asks for it, and two-step verification.",
     multidestino: 'Broadcast to several destinations',
-
-    codigoTitulo: 'Join with a code',  },
+    codigoTitulo: 'Join with a code',
+  },
   inicio: {
     erroCopiar: 'Could not copy the link.',
     comecaEm_one: 'Starts in {{count}} minute',
@@ -94,7 +94,6 @@ export default {
     importarErro: 'Could not import the recording.',
     destino: 'Destination: {{destino}}',
     agendarOdoo: 'Sent to the Odoo calendar',
-
     pesquisar: 'Search sessions, recordings, people…',
     iniciarSub: 'Instant meeting',
     novoEstudio: 'New studio',
@@ -102,7 +101,8 @@ export default {
     odooCalendario: 'Odoo Calendar',
     copiarLigacaoDe: 'Copy the link for room {{codigo}}',
     importarLimite: 'MP4 up to 512 MB',
-    semRetencao: 'No retention limit',  },
+    semRetencao: 'No retention limit',
+  },
   dispositivos: {
     titulo: 'Devices',
     testar: 'Test camera and microphone',
@@ -115,11 +115,11 @@ export default {
   },
   agenda: {
     ocorrencia: 'occurrence {{n}} of {{total}}',
-
     dataHora: 'Date and time · {{fuso}}',
     participantes: 'Participants',
     autocompletar: 'autocomplete · organisation contacts',
-    metaOdooCurta: 'syncs with Odoo Calendar',  },
+    metaOdooCurta: 'syncs with Odoo Calendar',
+  },
   integracoes: {
     instancia: 'instance {{host}}',
     registo: 'Event log',
@@ -151,7 +151,6 @@ export default {
     wasm: 'Whisper in the browser',
     wasmOnde: 'whisper-tiny in WASM · model served by this installation · transcription and captions',
     aMedir: 'measuring…',
-    instalado: 'model installed · {{tamanho}}',
     naoInstalado: 'model not installed here',
     emCache: 'model already cached in this browser',
     semCache: 'model not yet downloaded in this browser',
@@ -171,7 +170,6 @@ export default {
     fraseTeste: 'Good morning, everyone.',
     llmOk: 'Answered: "{{texto}}"',
     llmFalhou: 'The language model did not answer.',
-    externo: "No external AI provider on the server. The only exit is the browser's speech recognition, above.",
     idiomas: 'Languages',
     idiomasContagem_one: '{{count}} language',
     idiomasContagem_other: '{{count}} languages',
@@ -203,8 +201,17 @@ export default {
     pOllama: 'Translation and summaries go only to the cluster language model.',
     pActa: 'The raw transcript is always kept alongside the summarised minutes.',
     semCusto: "No per-minute cost: inference runs in the browser or on the installation's servers.",
-
     activoServer: 'In this browser, the room transcribes with the server Whisper.',
     activoWebspeech: "In this browser, the room transcribes with the browser's speech recognition.",
-    activoWasm: 'In this browser, the room transcribes with local Whisper.',  },
+    activoWasm: 'In this browser, the room transcribes with local Whisper.',
+    instaladoCurto: 'installed',
+    modeloTamanho: 'whisper-tiny · {{tamanho}}',
+    modeloNome: 'whisper-tiny',
+    externoTitulo: 'External provider',
+    externoOnde: 'no external AI provider on the server',
+    externoEstado: 'none',
+    colChat: 'Chat',
+    pGoogleCurto: 'Chrome and Edge speech recognition sends audio to Google.',
+    semCustoTitulo: 'Cost',
+  },
 }

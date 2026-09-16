@@ -74,8 +74,8 @@ export default {
     titulo: 'Uma sala. Reunião, videoaula e emissão pública.',
     texto: 'Identidade e contactos podem vir do Odoo da organização. Encriptação ponta-a-ponta quando a reunião o pede e verificação em dois passos.',
     multidestino: 'Emissão para vários destinos',
-
-    codigoTitulo: 'Entrar com código',  },
+    codigoTitulo: 'Entrar com código',
+  },
   inicio: {
     erroCopiar: 'Não foi possível copiar a ligação.',
     comecaEm_one: 'Começa dentro de {{count}} minuto',
@@ -94,7 +94,6 @@ export default {
     importarErro: 'Não foi possível importar a gravação.',
     destino: 'Destino: {{destino}}',
     agendarOdoo: 'Enviada ao calendário do Odoo',
-
     pesquisar: 'Procurar sessões, gravações, pessoas…',
     iniciarSub: 'Reunião instantânea',
     novoEstudio: 'Novo estúdio',
@@ -102,7 +101,8 @@ export default {
     odooCalendario: 'Odoo Calendário',
     copiarLigacaoDe: 'Copiar a ligação da sala {{codigo}}',
     importarLimite: 'MP4 até 512 MB',
-    semRetencao: 'Retenção sem limite',  },
+    semRetencao: 'Retenção sem limite',
+  },
   dispositivos: {
     titulo: 'Dispositivos',
     testar: 'Testar câmara e microfone',
@@ -115,11 +115,11 @@ export default {
   },
   agenda: {
     ocorrencia: 'ocorrência {{n}} de {{total}}',
-
     dataHora: 'Data e hora · {{fuso}}',
     participantes: 'Participantes',
     autocompletar: 'autocompletar · contactos da organização',
-    metaOdooCurta: 'sincroniza com Odoo Calendário',  },
+    metaOdooCurta: 'sincroniza com Odoo Calendário',
+  },
   integracoes: {
     instancia: 'instância {{host}}',
     registo: 'Registo de eventos',
@@ -151,7 +151,6 @@ export default {
     wasm: 'Whisper no browser',
     wasmOnde: 'whisper-tiny em WASM · modelo servido por esta instalação · transcrição e legendas',
     aMedir: 'a medir…',
-    instalado: 'modelo instalado · {{tamanho}}',
     naoInstalado: 'modelo não instalado nesta instalação',
     emCache: 'modelo já em cache neste browser',
     semCache: 'modelo ainda não descarregado neste browser',
@@ -171,7 +170,6 @@ export default {
     fraseTeste: 'Bom dia a todos.',
     llmOk: 'Respondeu: «{{texto}}»',
     llmFalhou: 'O modelo de linguagem não respondeu.',
-    externo: 'Nenhum fornecedor de IA externo no servidor. A única saída é o reconhecimento de voz do browser, acima.',
     idiomas: 'Idiomas',
     idiomasContagem_one: '{{count}} idioma',
     idiomasContagem_other: '{{count}} idiomas',
@@ -203,8 +201,17 @@ export default {
     pOllama: 'Tradução e resumo vão só ao modelo de linguagem do cluster.',
     pActa: 'A transcrição bruta fica sempre guardada junto da acta resumida.',
     semCusto: 'Sem custo por minuto: a inferência corre no browser ou nos servidores da instalação.',
-
     activoServer: 'Neste browser, a sala transcreve com o Whisper do servidor.',
     activoWebspeech: 'Neste browser, a sala transcreve com o reconhecimento de voz do browser.',
-    activoWasm: 'Neste browser, a sala transcreve com o Whisper local.',  },
+    activoWasm: 'Neste browser, a sala transcreve com o Whisper local.',
+    instaladoCurto: 'instalado',
+    modeloTamanho: 'whisper-tiny · {{tamanho}}',
+    modeloNome: 'whisper-tiny',
+    externoTitulo: 'Fornecedor externo',
+    externoOnde: 'nenhum fornecedor de IA externo no servidor',
+    externoEstado: 'não existe',
+    colChat: 'Chat',
+    pGoogleCurto: 'O reconhecimento de voz do Chrome e do Edge envia o áudio à Google.',
+    semCustoTitulo: 'Custo',
+  },
 }

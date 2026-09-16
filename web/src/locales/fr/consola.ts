@@ -74,8 +74,8 @@ export default {
     titulo: 'Une salle. Réunion, cours vidéo et diffusion publique.',
     texto: "L'identité et les contacts peuvent venir de l'Odoo de l'organisation. Chiffrement de bout en bout quand la réunion le demande, et vérification en deux étapes.",
     multidestino: 'Diffusion vers plusieurs destinations',
-
-    codigoTitulo: 'Rejoindre avec un code',  },
+    codigoTitulo: 'Rejoindre avec un code',
+  },
   inicio: {
     erroCopiar: 'Impossible de copier le lien.',
     comecaEm_one: 'Commence dans {{count}} minute',
@@ -94,7 +94,6 @@ export default {
     importarErro: "Impossible d'importer l'enregistrement.",
     destino: 'Destination : {{destino}}',
     agendarOdoo: 'Envoyée au calendrier Odoo',
-
     pesquisar: 'Chercher sessions, enregistrements, personnes…',
     iniciarSub: 'Réunion instantanée',
     novoEstudio: 'Nouveau studio',
@@ -102,7 +101,8 @@ export default {
     odooCalendario: 'Calendrier Odoo',
     copiarLigacaoDe: 'Copier le lien de la salle {{codigo}}',
     importarLimite: "MP4 jusqu'à 512 Mo",
-    semRetencao: 'Conservation sans limite',  },
+    semRetencao: 'Conservation sans limite',
+  },
   dispositivos: {
     titulo: 'Appareils',
     testar: 'Tester caméra et micro',
@@ -115,11 +115,11 @@ export default {
   },
   agenda: {
     ocorrencia: 'occurrence {{n}} sur {{total}}',
-
     dataHora: 'Date et heure · {{fuso}}',
     participantes: 'Participants',
     autocompletar: "saisie auto · contacts de l'organisation",
-    metaOdooCurta: 'synchronisé avec le calendrier Odoo',  },
+    metaOdooCurta: 'synchronisé avec le calendrier Odoo',
+  },
   integracoes: {
     instancia: 'instance {{host}}',
     registo: 'Journal des événements',
@@ -151,7 +151,6 @@ export default {
     wasm: 'Whisper dans le navigateur',
     wasmOnde: 'whisper-tiny en WASM · modèle servi par cette installation · transcription et sous-titres',
     aMedir: 'mesure…',
-    instalado: 'modèle installé · {{tamanho}}',
     naoInstalado: 'modèle non installé ici',
     emCache: 'modèle déjà en cache dans ce navigateur',
     semCache: 'modèle pas encore téléchargé dans ce navigateur',
@@ -171,7 +170,6 @@ export default {
     fraseTeste: 'Bonjour à tous.',
     llmOk: 'A répondu : « {{texto}} »',
     llmFalhou: "Le modèle de langage n'a pas répondu.",
-    externo: "Aucun fournisseur d'IA externe sur le serveur. La seule sortie est la reconnaissance vocale du navigateur, ci-dessus.",
     idiomas: 'Langues',
     idiomasContagem_one: '{{count}} langue',
     idiomasContagem_other: '{{count}} langues',
@@ -203,8 +201,17 @@ export default {
     pOllama: 'Traduction et résumés vont uniquement au modèle de langage du cluster.',
     pActa: 'La transcription brute est toujours conservée avec le compte rendu résumé.',
     semCusto: "Pas de coût à la minute : l'inférence tourne dans le navigateur ou sur les serveurs de l'installation.",
-
     activoServer: 'Dans ce navigateur, la salle transcrit avec le Whisper du serveur.',
     activoWebspeech: 'Dans ce navigateur, la salle transcrit avec la reconnaissance vocale du navigateur.',
-    activoWasm: 'Dans ce navigateur, la salle transcrit avec Whisper en local.',  },
+    activoWasm: 'Dans ce navigateur, la salle transcrit avec Whisper en local.',
+    instaladoCurto: 'installé',
+    modeloTamanho: 'whisper-tiny · {{tamanho}}',
+    modeloNome: 'whisper-tiny',
+    externoTitulo: 'Fournisseur externe',
+    externoOnde: "aucun fournisseur d'IA externe sur le serveur",
+    externoEstado: 'aucun',
+    colChat: 'Chat',
+    pGoogleCurto: "La reconnaissance vocale de Chrome et Edge envoie l'audio à Google.",
+    semCustoTitulo: 'Coût',
+  },
 }

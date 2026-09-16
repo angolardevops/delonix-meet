@@ -25,8 +25,8 @@ import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, translateCaption } from '../api'
 import { useAsync } from '../components/AsyncSection'
 import PageBar from '../components/PageBar'
-import { Icon, IconName } from '../ui/icons'
-import { Button, Card, StatusBadge, Toggle } from '../ui/kit'
+import { Icon } from '../ui/icons'
+import { Button, Toggle } from '../ui/kit'
 import '../ui/ai.css'
 
 const MODEL_BASE = '/models/Xenova/whisper-tiny'
@@ -107,29 +107,31 @@ export function fmtMb(bytes: number, locale: string): string {
 }
 
 function EngineRow({
-  icon,
   title,
   where,
   children,
   badge,
+  active,
+  dashed,
 }: {
-  icon: IconName
   title: string
   where: string
   children?: ReactNode
   badge: ReactNode
+  active?: boolean
+  dashed?: boolean
 }) {
   return (
-    <li className="ai-engine">
-      <span className="ai-engine__icon" aria-hidden="true">
-        <Icon name={icon} />
-      </span>
+    <li className={`ai-engine${active ? ' ai-engine--on' : ''}${dashed ? ' ai-engine--dashed' : ''}`} aria-current={active || undefined}>
+      <span className="ai-engine__ring" aria-hidden="true" />
       <div className="ai-engine__main">
         <div className="ai-engine__head">
-          <strong>{title}</strong>
+          <span className="ai-engine__title">
+            <strong>{title}</strong>
+            <small className="dx-num">{where}</small>
+          </span>
           {badge}
         </div>
-        <div className="dx-muted ai-engine__where">{where}</div>
         {children}
       </div>
     </li>
@@ -202,113 +204,115 @@ export default function Intelligence() {
       <PageBar
         title={t('consola.ia.titulo')}
         meta={
-          <span data-testid="ai-meta">
+          <span className={local ? 'ai-metachip ai-metachip--ok' : 'ai-metachip ai-metachip--warn'} data-testid="ai-meta">
             {local ? t('consola.ia.metaLocal') : t('consola.ia.metaGoogle')}
           </span>
         }
       />
       <div className="page ai-page">
-        <div className="ai-grid">
-          <Card title={t('consola.ia.ondeCorre')} eyebrow={t('consola.ia.motores', { count: 4 })} className="ai-card">
-            <p className="dx-muted ai-note" data-testid="ai-active">
-              {active === 'server' ? t('consola.ia.activoServer') : active === 'webspeech' ? t('consola.ia.activoWebspeech') : t('consola.ia.activoWasm')}
-            </p>
-            <ul className="ai-engines" role="list">
+        <div className="ai-top">
+          <section className="ai-card" aria-labelledby="ai-onde">
+            <header className="ai-card__head">
+              <h2 id="ai-onde">{t('consola.ia.ondeCorre')}</h2>
+              <span className="dx-num dx-muted">{t('consola.ia.motores', { count: 4 })}</span>
+            </header>
+            <ul className="ai-engines" role="list" data-testid="ai-active" aria-label={active === 'server' ? t('consola.ia.activoServer') : active === 'webspeech' ? t('consola.ia.activoWebspeech') : t('consola.ia.activoWasm')}>
               <EngineRow
-                icon="globe"
-                title={t('consola.ia.webspeech')}
-                where={t('consola.ia.webspeechOnde')}
-                badge={
-                  hasWebSpeech ? (
-                    <StatusBadge tone="warning" icon="alert">
-                      {t('consola.ia.enviaGoogle')}
-                    </StatusBadge>
-                  ) : (
-                    <StatusBadge tone="neutral">{t('consola.ia.naoExisteBrowser')}</StatusBadge>
-                  )
-                }
-              />
-              <EngineRow
-                icon="cpu"
+                active={active === 'wasm'}
                 title={t('consola.ia.wasm')}
                 where={t('consola.ia.wasmOnde')}
                 badge={
                   model.state.s === 'loading' ? (
-                    <StatusBadge tone="neutral">{t('consola.ia.aMedir')}</StatusBadge>
+                    <span className="ai-tag">{t('consola.ia.aMedir')}</span>
                   ) : m?.installed ? (
-                    <StatusBadge tone="success">{t('consola.ia.instalado', { tamanho: fmtMb(m.bytes, locale) })}</StatusBadge>
+                    <span className="ai-tag ai-tag--ok">{t('consola.ia.instaladoCurto')}</span>
                   ) : (
-                    <StatusBadge tone="warning">{t('consola.ia.naoInstalado')}</StatusBadge>
+                    <span className="ai-tag ai-tag--warn">{t('consola.ia.naoInstalado')}</span>
                   )
                 }
               >
                 {m && (
-                  <div className="dx-muted ai-engine__detail" data-testid="ai-cache">
-                    {m.cached ? t('consola.ia.emCache') : t('consola.ia.semCache')}
-                    {m.originUsage !== null && ` · ${t('consola.ia.usoOrigem', { tamanho: fmtMb(m.originUsage, locale) })}`}
+                  <div className="ai-engine__models">
+                    <span className="ai-model dx-num">
+                      {m.installed ? t('consola.ia.modeloTamanho', { tamanho: fmtMb(m.bytes, locale) }) : t('consola.ia.modeloNome')}
+                    </span>
+                    <span className="dx-spacer" />
+                    <span className="dx-num dx-muted ai-engine__cache" data-testid="ai-cache">
+                      {m.cached ? t('consola.ia.emCache') : t('consola.ia.semCache')}
+                      {m.originUsage !== null && ` · ${t('consola.ia.usoOrigem', { tamanho: fmtMb(m.originUsage, locale) })}`}
+                    </span>
                   </div>
                 )}
               </EngineRow>
               <EngineRow
-                icon="server"
-                title={t('consola.ia.whisperServer')}
-                where={t('consola.ia.whisperServerOnde')}
+                active={active === 'webspeech'}
+                title={t('consola.ia.webspeech')}
+                where={t('consola.ia.webspeechOnde')}
                 badge={
-                  serverAsr ? (
-                    <StatusBadge tone="success">{t('consola.ia.preferido')}</StatusBadge>
+                  hasWebSpeech ? (
+                    <span className="ai-tag ai-tag--warn">{t('consola.ia.enviaGoogle')}</span>
                   ) : (
-                    <StatusBadge tone="neutral">{t('consola.ia.desligadoAqui')}</StatusBadge>
+                    <span className="ai-tag">{t('consola.ia.naoExisteBrowser')}</span>
                   )
                 }
+              />
+              <EngineRow
+                active={active === 'server'}
+                title={t('consola.ia.whisperServer')}
+                where={t('consola.ia.whisperServerOnde')}
+                badge={<span className="ai-tag">{serverAsr ? t('consola.ia.preferido') : t('consola.ia.desligadoAqui')}</span>}
               >
                 <div className="ai-engine__actions">
-                  <Toggle
-                    label={t('consola.ia.usarServidor')}
-                    hint={t('consola.ia.usarServidorDica')}
-                    checked={serverAsr}
-                    onChange={(e) => chooseServerAsr(e.target.checked)}
-                  />
-                  <Button size="sm" variant="secondary" icon="signal" busy={asrProbe.s === 'busy'} onClick={() => void testAsr()}>
+                  <Toggle label={t('consola.ia.usarServidor')} checked={serverAsr} onChange={(e) => chooseServerAsr(e.target.checked)} />
+                  <span className="dx-spacer" />
+                  <ProbeResult probe={asrProbe} />
+                  <Button size="sm" variant="secondary" busy={asrProbe.s === 'busy'} onClick={() => void testAsr()}>
                     {t('consola.ia.testar')}
                   </Button>
-                  <ProbeResult probe={asrProbe} />
+                </div>
+              </EngineRow>
+              <EngineRow title={t('consola.ia.ollama')} where={t('consola.ia.ollamaOnde')} badge={<span className="ai-tag">{t('consola.ia.noServidor')}</span>}>
+                <div className="ai-engine__actions">
+                  <span className="dx-spacer" />
+                  <ProbeResult probe={llmProbe} />
+                  <Button size="sm" variant="secondary" busy={llmProbe.s === 'busy'} onClick={() => void testLlm()}>
+                    {t('consola.ia.testar')}
+                  </Button>
                 </div>
               </EngineRow>
               <EngineRow
-                icon="sparkles"
-                title={t('consola.ia.ollama')}
-                where={t('consola.ia.ollamaOnde')}
-                badge={<StatusBadge tone="neutral">{t('consola.ia.noServidor')}</StatusBadge>}
-              >
-                <div className="ai-engine__actions">
-                  <Button size="sm" variant="secondary" icon="signal" busy={llmProbe.s === 'busy'} onClick={() => void testLlm()}>
-                    {t('consola.ia.testar')}
-                  </Button>
-                  <ProbeResult probe={llmProbe} />
-                </div>
-              </EngineRow>
+                dashed
+                title={t('consola.ia.externoTitulo')}
+                where={t('consola.ia.externoOnde')}
+                badge={<span className="ai-tag ai-tag--bad">{t('consola.ia.externoEstado')}</span>}
+              />
             </ul>
-            <p className="ai-external">
-              <Icon name="ban" size={14} />
-              <span>{t('consola.ia.externo')}</span>
+            <p className="ai-warning">
+              <Icon name="alert" size={13} />
+              <span>{t('consola.ia.pGoogle')}</span>
             </p>
-          </Card>
+          </section>
 
-          <Card title={t('consola.ia.idiomas')} eyebrow={t('consola.ia.idiomasContagem', { count: STT_LANGS.length })} flush className="ai-card">
-            <div className="dx-table-wrap">
-              <table className="dx-table ai-langs" data-testid="ai-langs">
+          <section className="ai-card" aria-labelledby="ai-idiomas">
+            <header className="ai-card__head">
+              <h2 id="ai-idiomas">{t('consola.ia.idiomas')}</h2>
+              <span className="dx-num dx-muted">{t('consola.ia.idiomasContagem', { count: STT_LANGS.length })}</span>
+            </header>
+            <div className="dx-table-wrap ai-box">
+              <table className="ai-langs" data-testid="ai-langs">
                 <thead>
                   <tr>
                     <th scope="col">{t('consola.ia.colIdioma')}</th>
                     <th scope="col">{t('consola.ia.colTranscricao')}</th>
                     <th scope="col">{t('consola.ia.colLegendas')}</th>
+                    <th scope="col">{t('consola.ia.colChat')}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {STT_LANGS.map((code) => (
                     <tr key={code}>
                       <td>
-                        <span className="dx-num ai-code">{code}</span> {langName(code)}
+                        <span className="dx-num ai-code">{code}</span> <strong>{langName(code)}</strong>
                       </td>
                       <td>
                         <Mark on label={t('consola.ia.sim')} />
@@ -316,50 +320,70 @@ export default function Intelligence() {
                       <td>
                         <Mark on={TRANSLATE_TARGETS.has(code)} label={TRANSLATE_TARGETS.has(code) ? t('consola.ia.sim') : t('consola.ia.nao')} />
                       </td>
+                      <td>
+                        <Mark on={false} label={t('consola.ia.fChatEstado')} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <dl className="dx-kv ai-kv">
-              <dt>{t('consola.ia.origem')}</dt>
-              <dd>{t('consola.ia.origemValor', { lingua: sttLang })}</dd>
-              <dt>{t('consola.ia.legendasAqui')}</dt>
-              <dd>{ccLang ? langName(ccLang) : t('consola.ia.semTraducao')}</dd>
-            </dl>
-          </Card>
+            <div className="ai-origin">
+              <span className="dx-num dx-muted">{t('consola.ia.origem')}</span>
+              <strong>{t('consola.ia.origemValor', { lingua: sttLang })}</strong>
+            </div>
+            <div className="ai-origin">
+              <span className="dx-num dx-muted">{t('consola.ia.legendasAqui')}</span>
+              <strong>{ccLang ? langName(ccLang) : t('consola.ia.semTraducao')}</strong>
+            </div>
+          </section>
+        </div>
 
-          <Card title={t('consola.ia.funcionalidades')} className="ai-card">
+        <div className="ai-bottom">
+          <section className="ai-card" aria-labelledby="ai-func">
+            <header className="ai-card__head">
+              <h2 id="ai-func">{t('consola.ia.funcionalidades')}</h2>
+            </header>
             <ul className="ai-features" role="list">
-              <Feature icon="captions" title={t('consola.ia.fLegendas')} state={t('consola.ia.fLegendasEstado')} on />
-              <Feature icon="globe" title={t('consola.ia.fTraducaoLegendas')} state={t('consola.ia.fTraducaoLegendasEstado')} on />
-              <Feature icon="notes" title={t('consola.ia.fResumo')} state={t('consola.ia.fResumoEstado')} on />
-              <Feature icon="scissors" title={t('consola.ia.fSilencios')} state={t('consola.ia.fSilenciosEstado')} on />
-              <Feature icon="chat" title={t('consola.ia.fChat')} state={t('consola.ia.fChatEstado')} on={false} />
+              <Feature title={t('consola.ia.fLegendas')} state={t('consola.ia.fLegendasEstado')} on />
+              <Feature title={t('consola.ia.fTraducaoLegendas')} state={t('consola.ia.fTraducaoLegendasEstado')} on />
+              <Feature title={t('consola.ia.fResumo')} state={t('consola.ia.fResumoEstado')} on />
+              <Feature title={t('consola.ia.fSilencios')} state={t('consola.ia.fSilenciosEstado')} on />
+              <Feature title={t('consola.ia.fChat')} state={t('consola.ia.fChatEstado')} on={false} />
             </ul>
-          </Card>
+          </section>
 
-          <Card title={t('consola.ia.privacidade')} className="ai-card">
+          <section className="ai-card ai-card--grow" aria-labelledby="ai-priv">
+            <header className="ai-card__head">
+              <h2 id="ai-priv">{t('consola.ia.privacidade')}</h2>
+            </header>
             <ul className="ai-privacy" role="list">
-              <li>
-                <Icon name="alert" size={14} />
-                <span>{t('consola.ia.pGoogle')}</span>
+              <li className="ai-privacy--warn">
+                <Icon name="alert" size={12} />
+                <span>{t('consola.ia.pGoogleCurto')}</span>
               </li>
               <li>
-                <Icon name="check" size={14} />
+                <Icon name="check" size={12} />
                 <span>{t('consola.ia.pLocal')}</span>
               </li>
               <li>
-                <Icon name="check" size={14} />
+                <Icon name="check" size={12} />
                 <span>{t('consola.ia.pOllama')}</span>
               </li>
               <li>
-                <Icon name="check" size={14} />
+                <Icon name="check" size={12} />
                 <span>{t('consola.ia.pActa')}</span>
               </li>
             </ul>
-            <p className="dx-muted ai-note">{t('consola.ia.semCusto')}</p>
-          </Card>
+            <div className="ai-box ai-note-box">
+              <strong>{t('consola.ia.semCustoTitulo')}</strong>
+              <span className="dx-num dx-muted">{t('consola.ia.semCusto')}</span>
+            </div>
+          </section>
+          {/* A terceira coluna do template é «Consumo esta semana»: não há
+              medição de consumo de IA no servidor, e o espaço fica vazio em
+              vez de um gráfico inventado. */}
+          <div aria-hidden="true" />
         </div>
       </div>
     </>
@@ -375,16 +399,15 @@ function Mark({ on, label }: { on: boolean; label: string }) {
   )
 }
 
-function Feature({ icon, title, state, on }: { icon: IconName; title: string; state: string; on: boolean }) {
+function Feature({ title, state, on }: { title: string; state: string; on: boolean }) {
   const { t } = useTranslation()
   return (
     <li className="ai-feature">
-      <Icon name={icon} size={16} />
       <span className="ai-feature__text">
         <strong>{title}</strong>
-        <small className="dx-muted">{state}</small>
+        <small className="dx-num dx-muted">{state}</small>
       </span>
-      <StatusBadge tone={on ? 'success' : 'neutral'}>{on ? t('consola.ia.existe') : t('consola.ia.porLigar')}</StatusBadge>
+      <span className={on ? 'ai-tag ai-tag--ok' : 'ai-tag'}>{on ? t('consola.ia.existe') : t('consola.ia.porLigar')}</span>
     </li>
   )
 }
