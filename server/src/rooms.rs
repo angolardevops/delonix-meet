@@ -29,6 +29,9 @@ pub struct Room {
     pub e2ee: bool,
     /// 'normal' (por defeito) ou 'training' — só treino permite salas de grupo.
     pub format: String,
+    /// A sala aceita convidados SEM conta (`POST /api/rooms/{code}/guest-join`).
+    /// Mesmo aceitando, um convidado passa SEMPRE pela sala de espera.
+    pub allow_guests: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -57,6 +60,9 @@ pub struct CreateRoomReq {
     /// 'normal' (por defeito) ou 'training' (ativa salas de grupo).
     #[serde(default)]
     pub format: Option<String>,
+    /// Aceitar convidados sem conta. Ausente = sim (ver migração 0040).
+    #[serde(default)]
+    pub allow_guests: Option<bool>,
 }
 
 /// Cria uma sala (com retry em colisão de código). Reutilizado pelo endpoint
@@ -74,7 +80,7 @@ pub async fn insert_room(
         let code = generate_room_code();
         let res: Result<Room, sqlx::Error> = sqlx::query_as(
             "INSERT INTO rooms (code, name, owner_id, topology, waiting_room, e2ee, format) VALUES ($1, $2, $3, $4, $5, $6, $7)
-             RETURNING id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at",
+             RETURNING id, code, name, owner_id, topology, waiting_room, e2ee, format, allow_guests, created_at",
         )
         .bind(&code)
         .bind(name)
@@ -125,7 +131,62 @@ pub async fn create_room(
         format,
     )
     .await?;
+    let room = match req.allow_guests {
+        Some(allow) if allow != room.allow_guests => {
+            set_allow_guests(&state.db, room.id, allow).await?
+        }
+        _ => room,
+    };
     Ok(Json(room))
+}
+
+/// Liga/desliga a entrada de convidados sem conta. Devolve a sala actualizada.
+async fn set_allow_guests(db: &sqlx::PgPool, room_id: Uuid, allow: bool) -> Result<Room, ApiError> {
+    Ok(sqlx::query_as(
+        "UPDATE rooms SET allow_guests = $1 WHERE id = $2
+         RETURNING id, code, name, owner_id, topology, waiting_room, e2ee, format, allow_guests, created_at",
+    )
+    .bind(allow)
+    .bind(room_id)
+    .fetch_one(db)
+    .await?)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PatchRoomReq {
+    /// Único campo alterável hoje. `deny_unknown_fields`: um campo que o
+    /// cliente escreve e o servidor ignora é pior do que um que não existe.
+    pub allow_guests: bool,
+}
+
+/// `PATCH /api/rooms/{code}` — só o DONO da sala. Um colega ou um co-anfitrião
+/// não muda a política de convidados: é a decisão de quem a criou.
+pub async fn patch_room(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(code): Path<String>,
+    Json(req): Json<PatchRoomReq>,
+) -> Result<Json<Room>, ApiError> {
+    let room = find_room(&state.db, &code)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if room.owner_id != auth.user_id {
+        return Err(ApiError::Forbidden);
+    }
+    let room = set_allow_guests(&state.db, room.id, req.allow_guests).await?;
+    Ok(Json(room))
+}
+
+/// A sala com este código, se existir. O código é normalizado para minúsculas.
+pub(crate) async fn find_room(db: &sqlx::PgPool, code: &str) -> Result<Option<Room>, ApiError> {
+    Ok(sqlx::query_as(
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, allow_guests, created_at
+         FROM rooms WHERE code = $1",
+    )
+    .bind(code.to_lowercase())
+    .fetch_optional(db)
+    .await?)
 }
 
 pub async fn get_room(
@@ -134,7 +195,7 @@ pub async fn get_room(
     Path(code): Path<String>,
 ) -> Result<Json<Room>, ApiError> {
     let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at FROM rooms WHERE code = $1",
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, allow_guests, created_at FROM rooms WHERE code = $1",
     )
     .bind(code.to_lowercase())
     .fetch_one(&state.db)
@@ -253,7 +314,7 @@ pub async fn join_room(
     Path(code): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at FROM rooms WHERE code = $1",
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, allow_guests, created_at FROM rooms WHERE code = $1",
     )
     .bind(code.to_lowercase())
     .fetch_one(&state.db)
@@ -299,6 +360,7 @@ pub async fn join_room(
             wait: room.waiting_room || !access.direct, // sem entrada direta → sala de espera
             adm: access.admitter, // anfitrião ou co-anfitrião persistido pode admitir
             is_bot: false,        // join normal de utilizador humano
+            origin: None,
         },
     )?;
 
@@ -325,6 +387,12 @@ pub async fn ice_servers(
     State(state): State<Arc<AppState>>,
     _auth: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(ice_config(&state)?))
+}
+
+/// A configuração ICE (STUN + TURN com credenciais de 1 h). Partilhada pelo
+/// `/api/ice` e pela entrada de convidado, que não tem sessão para o chamar.
+pub(crate) fn ice_config(state: &AppState) -> Result<serde_json::Value, ApiError> {
     let expiry = Utc::now().timestamp() + 3600;
     let username = expiry.to_string();
     let mut mac = Hmac::<Sha1>::new_from_slice(state.config.turn_secret.as_bytes())
@@ -354,7 +422,7 @@ pub async fn ice_servers(
     if state.config.force_turn_relay {
         cfg["iceTransportPolicy"] = json!("relay");
     }
-    Ok(Json(cfg))
+    Ok(cfg)
 }
 
 // ---------- Chat persistente ----------
@@ -375,7 +443,7 @@ pub async fn room_chat(
     Path(code): Path<String>,
 ) -> Result<Json<Vec<ChatMessage>>, ApiError> {
     let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, allow_guests, created_at
          FROM rooms WHERE code = $1",
     )
     .bind(&code)
@@ -417,7 +485,7 @@ pub async fn invite_to_room(
     Json(req): Json<InviteReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, allow_guests, created_at
          FROM rooms WHERE code = $1",
     )
     .bind(&code)
@@ -589,7 +657,7 @@ pub async fn post_timings(
     Json(t): Json<TimingsReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, allow_guests, created_at
          FROM rooms WHERE code = $1",
     )
     .bind(&code)
@@ -647,7 +715,7 @@ pub async fn post_qos(
     Json(s): Json<QosSample>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, allow_guests, created_at
          FROM rooms WHERE code = $1",
     )
     .bind(&code)

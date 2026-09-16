@@ -1,0 +1,13 @@
+-- Convidados SEM conta (`POST /api/rooms/{code}/guest-join`).
+--
+-- Por omissão LIGADO, nas salas novas e nas que já existem. A razão: um
+-- convidado sem conta entra SEMPRE pela sala de espera e só passa quando o
+-- anfitrião o admite um a um — ligar a flag não abre a reunião a ninguém, só
+-- deixa bater à porta. Desligada por omissão, a funcionalidade não existiria
+-- na prática (ninguém muda um default), e o bloqueio n.º 1 à adopção ficava
+-- onde estava. Quem não quer externos desliga-a por sala
+-- (`PATCH /api/rooms/{code}` com `{"allow_guests": false}`).
+--
+-- NOTA DE INTEGRAÇÃO: 0040 é o próximo número livre na `origin/main`; colide
+-- com a linha de migrações do ADR-0004 (ramo da UI) e terá de ser renumerada.
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS allow_guests BOOLEAN NOT NULL DEFAULT TRUE;

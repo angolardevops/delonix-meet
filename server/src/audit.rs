@@ -48,18 +48,10 @@ pub async fn log_com_metricas(
     // — precisamente os que mais interessam numa auditoria — caíam numa cadeia
     // sem org, que a verificação por organização não cobre: um administrador
     // podia verificar a sua trilha e receber «intacta» sem que os logins lá
-    // estivessem sequer. `ORDER BY` fixo para a escolha ser determinista.
+    // estivessem sequer.
     let org_id = match org_id {
         Some(o) => Some(o),
-        None => sqlx::query_scalar::<_, Uuid>(
-            "SELECT org_id FROM org_members WHERE user_id = $1 AND archived_at IS NULL
-             ORDER BY created_at, org_id LIMIT 1",
-        )
-        .bind(actor_id)
-        .fetch_optional(db)
-        .await
-        .ok()
-        .flatten(),
+        None => org_of_user(db, actor_id).await,
     };
 
     // O nome do actor é gravado NO MOMENTO. É o que mantém a linha legível
@@ -73,13 +65,59 @@ pub async fn log_com_metricas(
         .flatten()
         .unwrap_or_else(|| "(desconhecido)".into());
 
+    insert_row(db, metrics, org_id, actor_id, &nome, action, target).await
+}
+
+/// Org de um utilizador para efeitos de auditoria. `ORDER BY` fixo para a
+/// escolha ser determinista quando há mais de uma.
+async fn org_of_user(db: &PgPool, user_id: Uuid) -> Option<Uuid> {
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT org_id FROM org_members WHERE user_id = $1 AND archived_at IS NULL
+         ORDER BY created_at, org_id LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Evento de um CONVIDADO SEM CONTA. O actor não existe em `users`: o nome
+/// grava-se tal como ele o escreveu, marcado como convidado, e a linha vai para
+/// a cadeia da org do DONO da sala — é esse administrador que tem de a ver.
+///
+/// Não se grava mais nada sobre a pessoa (nem IP, nem agente): o nome é o único
+/// dado pessoal que o convidado entregou, e é o que basta para a trilha.
+pub async fn log_guest(
+    db: &PgPool,
+    metrics: Option<&crate::metrics::Metrics>,
+    room_owner: Uuid,
+    guest_id: Uuid,
+    guest_name: &str,
+    action: &str,
+    target: &str,
+) {
+    let org_id = org_of_user(db, room_owner).await;
+    let nome = format!("{guest_name} (convidado)");
+    insert_row(db, metrics, org_id, guest_id, &nome, action, target).await
+}
+
+async fn insert_row(
+    db: &PgPool,
+    metrics: Option<&crate::metrics::Metrics>,
+    org_id: Option<Uuid>,
+    actor_id: Uuid,
+    actor_name: &str,
+    action: &str,
+    target: &str,
+) {
     let res = sqlx::query(
         "INSERT INTO audit_logs (org_id, actor_id, actor_name, action, target)
          VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(org_id)
     .bind(actor_id)
-    .bind(&nome)
+    .bind(actor_name)
     .bind(action)
     .bind(target)
     .execute(db)

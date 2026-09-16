@@ -1639,3 +1639,23 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `web/e2e/captura-empregado.mjs` (ataque directo à base, no job `isolamento` do CI).
 
 **Ficheiros.** `server/src/org.rs` (`add_employee`), `web/e2e/captura-empregado.mjs`, `.github/workflows/ci.yml`.
+
+### R155 — Um convidado sem conta entra pela porta, e a porta não abre mais nada
+
+**Sintoma (antes).** Um externo sem conta não conseguia entrar numa reunião: o `join_room` exige `AuthUser`, e o link levava ao ecrã de login. Era o bloqueio n.º 1 à adopção face ao Zoom e ao Meet (`notas-ui-template/adopcao-vs-meet-teams-zoom.md`, alavanca 1).
+
+**O risco que a correcção cria.** É a primeira rota PÚBLICA que dá acesso a uma reunião. As quatro formas óbvias de a errar: (1) o token do convidado abrir alguma rota `/api/*` (gravações, chat guardado, actas, quadros, convites); (2) o convidado entrar sem ser admitido — basta um `wait: false` mal emitido; (3) o convidado ganhar o papel de anfitrião (`transfer-host`) ou reclamá-lo por reconexão; (4) a rota servir para esgotar o TURN ou inundar a sala de espera de alguém.
+
+**Regra.**
+- O token é `typ: "room"` com `origin: "guest"` e um `sub` gerado que não existe em `users`. Nenhum extractor da API aceita `typ: "room"` — a exclusão é por construção, não por lista.
+- O `/ws` decide o lugar em `signaling::seat_policy` a partir da ORIGEM: convidado espera sempre e não tem papel, seja o que for que venha nos outros campos do token. `Hub::join_seat` volta a impô-lo, e o lugar reclamado guarda a origem (`ReclaimedSeat::is_guest`).
+- `TransferHost` para um convidado é recusado; o directo (`/api/rooms/{code}/broadcast`) recusa tokens de convidado com `403`.
+- `rooms.allow_guests` (0040, por omissão `true`, `PATCH /api/rooms/{code}` só pelo dono) → `403` antes de emitir seja o que for.
+- Travão por IP (`GUEST_JOIN_PER_IP_PER_MIN`, 10) antes de ler a base e por sala (`GUEST_JOIN_PER_ROOM_PER_MIN`, 30) depois de a sala existir, com `429` + `Retry-After` (`ApiError::RateLimited`).
+- `room.guest_join` na auditoria da org do dono, com o código da sala e o nome marcado «(convidado)». Nem IP nem agente.
+
+**Portão.** Unidade: `guests::tests` (nome, admissão, forma do token, token ≠ acesso, travão) e `signaling::tests::convidado_*` (espera forçada, não admite, não é promovido, reclama o lugar e continua convidado) — os dois de promoção/admissão verificados a FALHAR com as guardas retiradas. Servidor real: `web/e2e/isolamento.mjs` (secção «convidado sem conta»: 14 rotas autenticadas recusadas com o token de convidado, sala de espera, directo, `allow_guests`, 400/404/422, travões por IP e por sala, auditoria) e `web/e2e/convidado.mjs` (admissão, recusa, reentrada no mesmo lugar, expulsão), os dois no job `isolamento` do CI.
+
+**Fora.** Media do convidado (não há e2e com `RTCPeerConnection` para convidados), salas de grupo (a troca de sala chama `/join`, que exige conta: um convidado não vai para um grupo), e os travões são por pod (memória), como os restantes.
+
+**Ficheiros.** `server/src/guests.rs`, `server/src/signaling.rs`, `server/src/auth.rs`, `server/src/rooms.rs`, `server/src/audit.rs`, `server/src/error.rs`, `server/src/broadcast.rs`, `server/migrations/0040_room_allow_guests.sql`, `scripts/rotas-publicas.txt`, `web/e2e/isolamento.mjs`, `web/e2e/convidado.mjs`, `web/src/api.ts`, `.github/workflows/ci.yml`.

@@ -24,3 +24,4 @@
 /api/whiteboards/shared/{token}  PNG de um quadro partilhado por link. A credencial É o token no caminho.
 /api/auth/mfa                Segunda metade do login. A credencial É o token de desafio no corpo (JWT `typ: "mfa"`, 5 min, que não abre mais nenhum endpoint) mais o código do segundo factor.
 /ready                       Sonda de readiness. Devolve "ready" ou "draining" e mais nada — nem dados de inquilino, nem contagens. O K8s tem de a poder ler sem credenciais, tal como a de liveness.
+/api/rooms/{code}/guest-join  Entrada de convidado SEM conta (alavanca 1 da adopção). É pública por ser o ponto: quem entra não tem conta. Só emite um ROOM TOKEN (`typ: "room"`, `origin: "guest"`, minutos) que nenhum extractor da API aceita e que o /ws força a passar pela SALA DE ESPERA; a sala pode recusar (`allow_guests = false` → 403). Travão por IP e por sala com 429 + Retry-After; auditado como `room.guest_join`. Ver server/src/guests.rs.

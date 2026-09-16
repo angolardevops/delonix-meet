@@ -38,6 +38,7 @@
 - `auth.rs` — registo (cria org+admin), login, refresh, logout, room tokens
 - `org.rs` — multi-tenant: organizations, branches, org_members, employee groups, salas presenciais, quotas, stats, SSO stubs
 - `rooms.rs` — CRUD salas, `can_access_room` (isolamento cross-org), `insert_room` (helper reutilizado)
+- `guests.rs` — convidado SEM conta: `POST /api/rooms/{code}/guest-join` (pública, travão por IP e por sala, `429`+`Retry-After`) emite um token de sala `origin: "guest"` que o `/ws` força a passar pela sala de espera (`signaling::seat_policy`), nunca promovido a anfitrião; `rooms.allow_guests` (migração 0040, `PATCH /api/rooms/{code}`, só o dono) fecha a porta; auditado como `room.guest_join`. Ver R155
 - `sfu.rs` — SFU Rust: Hub, Room, Publication, simulcast, PLI, gravação RTP→IVF/OGG
 - `signaling.rs` — WebSocket `/ws` (room token): transporte SFU (offer/answer/ice) + moderação (admit/kick/lock/host-*) + chat/breakout-*/media
 - `room_tools.rs` — contexto de colaboração in-room extraído de `signaling.rs`: sondagens, Q&A, temporizador, quadro branco (`impl SignalingHub::handle_tool_msg`)
@@ -104,7 +105,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0039) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0040) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 

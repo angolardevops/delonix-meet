@@ -564,6 +564,11 @@ pub struct PeerInfo {
     pub is_bot: bool,
     #[serde(default)]
     pub is_pstn: bool,
+    /// Convidado SEM conta (entrou por `guest-join`). O anfitrião tem de o
+    /// ver assim na sala de espera e na lista — um nome escrito à mão não é
+    /// uma identidade verificada.
+    #[serde(default)]
+    pub is_guest: bool,
 }
 
 /// O que o `Hub::join` devolve.
@@ -748,6 +753,8 @@ struct Peer {
     mic_on: bool,
     is_bot: bool,
     is_pstn: bool,
+    /// Convidado sem conta: nunca anfitrião, nunca admite (ver `guests.rs`).
+    is_guest: bool,
     tx: PeerTx,
     /// Travão das legendas parciais deste peer (ver `allow_interim`).
     interim: crate::rate_limit::TokenBucket,
@@ -775,6 +782,9 @@ pub struct ReclaimedSeat {
     pub user_id: Uuid,
     pub is_host: bool,
     pub can_admit: bool,
+    /// A origem do LUGAR, não a do token com que se volta: um convidado que
+    /// reclama o lugar continua convidado.
+    pub is_guest: bool,
 }
 
 /// 32 bytes de `OsRng` em hexadecimal. Não é um JWT de propósito: não precisa
@@ -789,6 +799,7 @@ fn novo_segredo_de_reclamacao() -> String {
 
 struct WaitingPeer {
     username: String,
+    is_guest: bool,
     admit_tx: oneshot::Sender<bool>,
 }
 
@@ -897,6 +908,7 @@ impl SignalingHub {
         room.host_share_only = host_share_only;
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn join(
         &self,
         room_id: Uuid,
@@ -908,6 +920,32 @@ impl SignalingHub {
         is_bot: bool,
         tx: PeerTx,
     ) -> Entrada {
+        self.join_seat(
+            room_id, peer_id, user_id, username, is_host, can_admit, is_bot, false, tx,
+        )
+    }
+
+    /// `join` com a origem do lugar. Um convidado entra SEM papel nenhum, seja
+    /// o que for que venha nos outros argumentos: a regra vive aqui, e não em
+    /// quem chama.
+    #[allow(clippy::too_many_arguments)]
+    pub fn join_seat(
+        &self,
+        room_id: Uuid,
+        peer_id: Uuid,
+        user_id: Uuid,
+        username: String,
+        is_host: bool,
+        can_admit: bool,
+        is_bot: bool,
+        is_guest: bool,
+        tx: PeerTx,
+    ) -> Entrada {
+        let (is_host, can_admit) = if is_guest {
+            (false, false)
+        } else {
+            (is_host, can_admit)
+        };
         // O segredo de reclamação nasce aqui e é a ÚNICA coisa que sai deste
         // método além do roster: quem entra leva-o, ninguém mais o vê.
         let segredo = novo_segredo_de_reclamacao();
@@ -941,6 +979,7 @@ impl SignalingHub {
                     mic: p.mic_on,
                     is_bot: p.is_bot,
                     is_pstn: p.is_pstn,
+                    is_guest: p.is_guest,
                 })
                 .collect();
             let announce = ServerMsg::PeerJoined {
@@ -953,6 +992,7 @@ impl SignalingHub {
                     mic: true,
                     is_bot,
                     is_pstn: false,
+                    is_guest,
                 },
             };
             let waiting_msgs: Vec<ServerMsg> = if is_host {
@@ -968,6 +1008,7 @@ impl SignalingHub {
                             mic: true,
                             is_bot: false,
                             is_pstn: false,
+                            is_guest: w.is_guest,
                         },
                     })
                     .collect()
@@ -986,6 +1027,7 @@ impl SignalingHub {
                     mic_on: true,
                     is_bot,
                     is_pstn: false,
+                    is_guest,
                     tx: tx.clone(),
                     interim: crate::rate_limit::TokenBucket::new(INTERIM_BURST, INTERIM_PER_SEC),
                     reconnect_secret: Secret::new(segredo.clone()),
@@ -1067,6 +1109,7 @@ impl SignalingHub {
                     user_id: p.user_id,
                     is_host: p.is_host,
                     can_admit: p.can_admit,
+                    is_guest: p.is_guest,
                 },
             ))
         })?;
@@ -1103,6 +1146,7 @@ impl SignalingHub {
         room_id: Uuid,
         peer_id: Uuid,
         username: String,
+        is_guest: bool,
         admit_tx: oneshot::Sender<bool>,
     ) {
         let info = PeerInfo {
@@ -1114,12 +1158,19 @@ impl SignalingHub {
             mic: true,
             is_bot: false,
             is_pstn: false,
+            is_guest,
         };
         // Insert under lock, broadcast after lock is released.
         {
             let mut room = self.rooms.entry(room_id).or_default();
-            room.waiting
-                .insert(peer_id, WaitingPeer { username, admit_tx });
+            room.waiting.insert(
+                peer_id,
+                WaitingPeer {
+                    username,
+                    is_guest,
+                    admit_tx,
+                },
+            );
         }
         self.broadcast_hosts(room_id, ServerMsg::WaitingJoin { peer: info });
     }
@@ -1903,8 +1954,12 @@ impl SignalingHub {
                     .rooms
                     .get_mut(&room_id)
                     .map(|mut r| {
-                        if !r.peers.contains_key(&to) {
-                            return false;
+                        // Um convidado sem conta NUNCA recebe o papel: não há
+                        // conta por trás que responda pelo que ele fizer com
+                        // ele (fechar a sala, gravar, expulsar os outros).
+                        match r.peers.get(&to) {
+                            Some(alvo) if !alvo.is_guest => {}
+                            _ => return false,
                         }
                         if let Some(novo) = r.peers.get_mut(&to) {
                             novo.is_host = true;
@@ -1961,6 +2016,41 @@ pub struct WsQuery {
     reconnect: Option<String>,
 }
 
+/// O papel com que um token de sala se senta. Separado do handler para a regra
+/// ser testada sem socket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SeatPolicy {
+    pub is_host: bool,
+    pub can_admit: bool,
+    pub must_wait: bool,
+    pub is_bot: bool,
+    pub is_guest: bool,
+}
+
+/// Decide o lugar a partir dos claims. Um CONVIDADO espera sempre e não manda
+/// em nada, **seja o que for que o token diga** nos outros campos: a origem é
+/// a regra, os booleanos são detalhe. Assim um erro futuro na emissão (um
+/// `wait: false` por engano) não abre a porta.
+pub fn seat_policy(claims: &crate::auth::Claims) -> SeatPolicy {
+    if claims.is_guest() {
+        return SeatPolicy {
+            is_host: false,
+            can_admit: false,
+            must_wait: true,
+            is_bot: false,
+            is_guest: true,
+        };
+    }
+    SeatPolicy {
+        is_host: claims.owner,
+        // O anfitrião admite por omissão; os outros só se promovidos.
+        can_admit: claims.owner,
+        must_wait: claims.wait && !claims.owner,
+        is_bot: claims.is_bot,
+        is_guest: false,
+    }
+}
+
 pub async fn ws_handler(
     State(state): State<Arc<AppState>>,
     Query(query): Query<WsQuery>,
@@ -1983,19 +2073,14 @@ pub async fn ws_handler(
             "Este nó está a encerrar. A tentar noutro…".into(),
         ));
     }
+    let seat = seat_policy(&claims);
     let username = claims.name.unwrap_or_else(|| "anonymous".into());
     let sfu_mode = claims.topo.as_deref() == Some("sfu");
-    let is_host = claims.owner;
-    let must_wait = claims.wait && !claims.owner;
     let user_id = claims.sub;
-    let is_bot = claims.is_bot;
-    // can_admit depends on role. Let's say host can admit by default.
-    let can_admit = is_host;
     let reconnect = query.reconnect.clone();
     Ok(ws.on_upgrade(move |socket| {
         handle_socket(
-            state, socket, room_id, user_id, username, sfu_mode, is_host, must_wait, can_admit,
-            is_bot, reconnect,
+            state, socket, room_id, user_id, username, sfu_mode, seat, reconnect,
         )
     }))
 }
@@ -2322,12 +2407,16 @@ async fn handle_socket(
     user_id: Uuid,
     username: String,
     sfu_mode: bool,
-    is_host: bool,
-    must_wait: bool,
-    can_admit: bool,
-    is_bot: bool,
+    seat: SeatPolicy,
     reconnect: Option<String>,
 ) {
+    let SeatPolicy {
+        is_host,
+        can_admit,
+        must_wait,
+        is_bot,
+        is_guest,
+    } = seat;
     // Gauge de ligações /ws ativas (dec automático no fim do handler).
     let _ws_guard = crate::metrics::WsGuard::signaling(state.metrics.clone());
 
@@ -2343,7 +2432,7 @@ async fn handle_socket(
             .hub
             .reclaim(room_id, seg, state.config.reconnect_grace())
     });
-    let (peer_id, is_host, can_admit, must_wait, username) = match reclamado {
+    let (peer_id, is_host, can_admit, must_wait, username, is_guest) = match reclamado {
         Some(lugar) => {
             tracing::info!(%room_id, peer_id = %lugar.peer_id, "seat reclaimed");
             state
@@ -2358,9 +2447,17 @@ async fn handle_socket(
                 lugar.can_admit,
                 false,
                 lugar.username,
+                lugar.is_guest,
             )
         }
-        None => (Uuid::new_v4(), is_host, can_admit, must_wait, username),
+        None => (
+            Uuid::new_v4(),
+            is_host,
+            can_admit,
+            must_wait,
+            username,
+            is_guest,
+        ),
     };
     let (mut sink, mut stream) = socket.split();
     // Fila de saída LIMITADA (ver `PeerTx`): um consumidor lento passa a
@@ -2402,7 +2499,7 @@ async fn handle_socket(
         let (admit_tx, admit_rx) = oneshot::channel::<bool>();
         state
             .hub
-            .add_waiting(room_id, peer_id, username.clone(), admit_tx);
+            .add_waiting(room_id, peer_id, username.clone(), is_guest, admit_tx);
         let _ = tx.send(ServerMsg::Waiting);
         tracing::info!(%room_id, %peer_id, %username, "guest waiting for admission");
 
@@ -2438,7 +2535,7 @@ async fn handle_socket(
             .apply_redis_state(room_id, polls, qa, wb, timer, locked, host_share);
     }
 
-    let entrada = state.hub.join(
+    let entrada = state.hub.join_seat(
         room_id,
         peer_id,
         user_id,
@@ -2446,6 +2543,7 @@ async fn handle_socket(
         is_host,
         can_admit,
         is_bot,
+        is_guest,
         tx.clone(),
     );
     let _ = tx.send(ServerMsg::Joined {
@@ -3196,7 +3294,7 @@ mod tests {
 
         let guest = Uuid::new_v4();
         let (admit_tx, mut admit_rx) = oneshot::channel();
-        hub.add_waiting(room, guest, "guest".into(), admit_tx);
+        hub.add_waiting(room, guest, "guest".into(), false, admit_tx);
 
         // Anfitrião é notificado.
         match rx_h.recv().await.unwrap() {
@@ -3223,7 +3321,7 @@ mod tests {
 
         let guest = Uuid::new_v4();
         let (admit_tx, admit_rx) = oneshot::channel();
-        hub.add_waiting(room, guest, "guest".into(), admit_tx);
+        hub.add_waiting(room, guest, "guest".into(), false, admit_tx);
 
         hub.handle(room, host, ClientMsg::Deny { to: guest }, None);
         assert_eq!(admit_rx.await, Ok(false));
@@ -3235,7 +3333,7 @@ mod tests {
         let room = Uuid::new_v4();
         let guest = Uuid::new_v4();
         let (admit_tx, _admit_rx) = oneshot::channel();
-        hub.add_waiting(room, guest, "guest".into(), admit_tx);
+        hub.add_waiting(room, guest, "guest".into(), false, admit_tx);
 
         let (host, tx_h, mut rx_h) = peer();
         hub.join(room, host, host, "host".into(), true, true, false, tx_h);
@@ -3990,5 +4088,194 @@ mod tests {
             hub.close_poll(room, b, poll_id).is_none(),
             "só o anfitrião fecha uma sondagem"
         );
+    }
+
+    // ---------------------------------------------------------------
+    //  Convidado SEM conta (guests.rs). A metade negativa: o convidado
+    //  não passa a espera sozinho, não admite, não recebe o papel, e
+    //  não o ganha por reclamar um lugar.
+    // ---------------------------------------------------------------
+
+    fn claims_de_sala(owner: bool, wait: bool, origin: Option<&str>) -> crate::auth::Claims {
+        crate::auth::Claims {
+            sub: Uuid::new_v4(),
+            typ: "room".into(),
+            iat: 0,
+            exp: 1,
+            room: Some(Uuid::new_v4()),
+            name: Some("x".into()),
+            topo: None,
+            owner,
+            wait,
+            adm: owner,
+            is_bot: false,
+            origin: origin.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn convidado_espera_sempre_mesmo_com_um_token_mal_emitido() {
+        // Um token de convidado com `owner`/`wait: false` por erro de emissão
+        // continua a esperar e continua sem papel: a ORIGEM manda.
+        let p = seat_policy(&claims_de_sala(
+            true,
+            false,
+            Some(crate::auth::ORIGIN_GUEST),
+        ));
+        assert!(p.is_guest);
+        assert!(p.must_wait, "um convidado nunca entra directo");
+        assert!(!p.is_host && !p.can_admit, "nem manda em nada");
+
+        // Controlo: o dono (membro) entra directo e admite.
+        let dono = seat_policy(&claims_de_sala(true, false, None));
+        assert!(dono.is_host && dono.can_admit && !dono.must_wait && !dono.is_guest);
+        // E um membro com `wait` espera, como sempre.
+        let membro = seat_policy(&claims_de_sala(false, true, None));
+        assert!(membro.must_wait && !membro.is_host && !membro.is_guest);
+    }
+
+    #[tokio::test]
+    async fn o_anfitriao_ve_o_convidado_como_convidado_na_espera_e_na_sala() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (host, tx_h, mut rx_h) = peer();
+        hub.join(room, host, host, "host".into(), true, true, false, tx_h);
+        drain(&mut rx_h);
+
+        let guest = Uuid::new_v4();
+        let (admit_tx, _admit_rx) = oneshot::channel();
+        hub.add_waiting(room, guest, "Ana".into(), true, admit_tx);
+        match rx_h.recv().await.unwrap() {
+            ServerMsg::WaitingJoin { peer } => {
+                assert_eq!(peer.peer_id, guest);
+                assert!(
+                    peer.is_guest,
+                    "a origem tem de chegar ao anfitrião na sala de espera"
+                );
+            }
+            other => panic!("inesperado: {other:?}"),
+        }
+
+        // Admitido, entra na sala marcado — no anúncio e no roster de quem chega depois.
+        let (g, tx_g, _rx_g) = peer();
+        hub.join_seat(
+            room,
+            g,
+            Uuid::new_v4(),
+            "Ana".into(),
+            false,
+            false,
+            false,
+            true,
+            tx_g,
+        );
+        let anuncio = recolher(&mut rx_h).into_iter().find_map(|m| match m {
+            ServerMsg::PeerJoined { peer } if peer.peer_id == g => Some(peer),
+            _ => None,
+        });
+        assert!(anuncio.expect("o anfitrião vê a entrada").is_guest);
+        let (m, tx_m, _rx_m) = peer();
+        let e = hub.join(room, m, m, "membro".into(), false, false, false, tx_m);
+        let visto = e.roster.iter().find(|p| p.peer_id == g).expect("no roster");
+        assert!(visto.is_guest && !visto.host);
+    }
+
+    #[tokio::test]
+    async fn convidado_nao_admite_ninguem() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (host, tx_h, _rx_h) = peer();
+        let (g, tx_g, _rx_g) = peer();
+        hub.join(room, host, host, "host".into(), true, true, false, tx_h);
+        // Mesmo que alguém chame `join_seat` com papel, um convidado não o leva.
+        hub.join_seat(
+            room,
+            g,
+            Uuid::new_v4(),
+            "Ana".into(),
+            true,
+            true,
+            false,
+            true,
+            tx_g,
+        );
+        assert!(
+            !hub.is_host(room, g),
+            "um convidado nunca entra como anfitrião"
+        );
+
+        let outro = Uuid::new_v4();
+        let (admit_tx, mut admit_rx) = oneshot::channel();
+        hub.add_waiting(room, outro, "Bruno".into(), true, admit_tx);
+        hub.handle(room, g, ClientMsg::Admit { to: outro }, None);
+        assert!(
+            admit_rx.try_recv().is_err(),
+            "um convidado não abre a porta a outro"
+        );
+        // Controlo positivo: o anfitrião abre.
+        hub.handle(room, host, ClientMsg::Admit { to: outro }, None);
+        assert_eq!(admit_rx.await, Ok(true));
+    }
+
+    #[tokio::test]
+    async fn convidado_nao_e_promovido_a_anfitriao() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx_a) = peer();
+        let (g, tx_g, _rx_g) = peer();
+        let (b, tx_b, _rx_b) = peer();
+        hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        hub.join_seat(
+            room,
+            g,
+            Uuid::new_v4(),
+            "Ana".into(),
+            false,
+            false,
+            false,
+            true,
+            tx_g,
+        );
+        hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+
+        hub.handle(room, a, ClientMsg::TransferHost { to: g }, None);
+        assert!(!hub.is_host(room, g), "o papel não passa para um convidado");
+        assert!(
+            hub.is_host(room, a),
+            "e o anfitrião não o perde pelo caminho"
+        );
+
+        // Controlo positivo: a MESMA chamada para um membro passa. Sem isto, a
+        // asserção de cima passaria com a transferência simplesmente partida.
+        hub.handle(room, a, ClientMsg::TransferHost { to: b }, None);
+        assert!(hub.is_host(room, b) && !hub.is_host(room, a));
+    }
+
+    #[tokio::test]
+    async fn convidado_que_reclama_o_lugar_continua_convidado() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx_a) = peer();
+        let (g, tx_g, _rx_g) = peer();
+        hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        let segredo = hub
+            .join_seat(
+                room,
+                g,
+                Uuid::new_v4(),
+                "Ana".into(),
+                false,
+                false,
+                false,
+                true,
+                tx_g,
+            )
+            .reconnect_secret;
+        assert!(hub.disconnect(room, g));
+        let lugar = hub
+            .reclaim(room, &segredo, std::time::Duration::from_secs(45))
+            .expect("reclama o próprio lugar");
+        assert!(lugar.is_guest, "a origem é do LUGAR: voltar não a apaga");
+        assert!(!lugar.is_host && !lugar.can_admit);
     }
 }

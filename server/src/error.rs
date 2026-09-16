@@ -27,6 +27,11 @@ pub enum ApiError {
     NotFound,
     #[error("too many requests")]
     TooManyRequests,
+    /// Igual a `TooManyRequests`, mas diz ao cliente QUANDO voltar
+    /// (`Retry-After`, em segundos). É o que se usa em rotas novas: sem o
+    /// cabeçalho, o cliente só pode adivinhar, e adivinhar é tentar já outra vez.
+    #[error("too many requests")]
+    RateLimited { retry_after_secs: u64 },
     /// Este nó não pode servir AGORA, mas outro pode — é o caso do drain. É
     /// diferente de `Unauthorized` (nunca pode) e de `Internal` (avariou): diz
     /// ao cliente para voltar a tentar, e o balanceador manda-o para outro pod.
@@ -63,6 +68,18 @@ impl IntoResponse for ApiError {
             ApiError::TooManyRequests => {
                 (StatusCode::TOO_MANY_REQUESTS, "too many requests".into())
             }
+            ApiError::RateLimited { retry_after_secs } => {
+                let mut res = (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json!({ "error": "too many requests" })),
+                )
+                    .into_response();
+                res.headers_mut().insert(
+                    axum::http::header::RETRY_AFTER,
+                    axum::http::HeaderValue::from(*retry_after_secs),
+                );
+                return res;
+            }
             ApiError::ServiceUnavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m.clone()),
             ApiError::Internal(e) => {
                 tracing::error!(error = %e, "internal error");
@@ -71,5 +88,25 @@ impl IntoResponse for ApiError {
             }
         };
         (status, Json(json!({ "error": msg }))).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_limited_leva_retry_after_e_o_mesmo_corpo() {
+        let res = ApiError::RateLimited {
+            retry_after_secs: 60,
+        }
+        .into_response();
+        assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            res.headers()
+                .get(axum::http::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok()),
+            Some("60")
+        );
     }
 }

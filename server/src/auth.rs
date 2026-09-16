@@ -45,6 +45,22 @@ pub struct Claims {
     /// Room token: indica que este participante é um bot headless.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_bot: bool,
+    /// Room token: de onde vem a identidade de quem entra. Ausente = conta
+    /// desta plataforma (o `sub` é um `users.id`). `"guest"` = convidado SEM
+    /// conta: o `sub` é um identificador gerado para esta entrada, que não
+    /// existe em `users` e não abre nenhuma rota `/api/*` (ver `guests.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+}
+
+/// Valor de `Claims::origin` de um convidado sem conta.
+pub const ORIGIN_GUEST: &str = "guest";
+
+impl Claims {
+    /// Este token é de um convidado sem conta?
+    pub fn is_guest(&self) -> bool {
+        self.origin.as_deref() == Some(ORIGIN_GUEST)
+    }
 }
 
 pub fn sign_jwt(secret: &str, claims: &Claims) -> Result<String, ApiError> {
@@ -85,6 +101,7 @@ pub fn access_token(state: &AppState, user_id: Uuid) -> Result<String, ApiError>
             wait: false,
             adm: false,
             is_bot: false,
+            origin: None,
         },
     )
 }
@@ -484,6 +501,7 @@ fn mfa_challenge_token(state: &AppState, user_id: Uuid) -> Result<String, ApiErr
             wait: false,
             adm: false,
             is_bot: false,
+            origin: None,
         },
     )
 }
@@ -979,6 +997,7 @@ mod tests {
                 wait: false,
                 adm: false,
                 is_bot: false,
+                origin: None,
             },
         )
         .unwrap();
@@ -1008,6 +1027,7 @@ mod tests {
                 wait: false,
                 adm: false,
                 is_bot: false,
+                origin: None,
             },
         )
         .unwrap();

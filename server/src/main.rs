@@ -8,6 +8,7 @@ mod config;
 mod crypto;
 mod dlp;
 mod error;
+mod guests;
 mod meetings;
 mod meetings_v1;
 mod metrics;
@@ -104,6 +105,9 @@ pub struct AppState {
     /// Envios de SMS por organização (ADR-0005). Um SMS custa dinheiro: é o
     /// travão contra um admin comprometido ou um script descontrolado.
     pub sms_send_limiter: RateLimiter,
+    /// Entradas de convidado sem conta, por IP e por sala (ver `guests.rs`).
+    pub guest_ip_limiter: RateLimiter,
+    pub guest_room_limiter: RateLimiter,
     /// Salas de grupo ativas: sala principal -> conjunto de salas filhas.
     pub breakouts: dashmap::DashMap<uuid::Uuid, signaling::BreakoutSet>,
     /// Cliente HTTP partilhado para envio de webhooks (sem redirects, timeout 8s).
@@ -186,7 +190,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // verificação de acesso à sala, que é o que falta a estes handlers.
         .route("/api/users/search", get(users::search))
         .route("/api/rooms", post(rooms::create_room))
-        .route("/api/rooms/{code}", get(rooms::get_room))
+        .route("/api/rooms/{code}", get(rooms::get_room).patch(rooms::patch_room))
+        // Convidado SEM conta (público por desenho — ver guests.rs e
+        // scripts/rotas-publicas.txt): só produz um token de sala que passa
+        // SEMPRE pela sala de espera.
+        .route("/api/rooms/{code}/guest-join", post(guests::guest_join))
         .route("/api/rooms/{code}/join", post(rooms::join_room))
         .route("/api/rooms/{code}/chat", get(rooms::room_chat))
         .route("/api/rooms/{code}/qos", post(rooms::post_qos))
@@ -530,6 +538,14 @@ async fn main() {
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
         sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
+        guest_ip_limiter: RateLimiter::new(
+            config.guest_join_per_ip_per_min as u32,
+            Duration::from_secs(60),
+        ),
+        guest_room_limiter: RateLimiter::new(
+            config.guest_join_per_room_per_min as u32,
+            Duration::from_secs(60),
+        ),
         webhook_client,
         config: config.clone(),
         redis_bus: redis_bus.clone(),
