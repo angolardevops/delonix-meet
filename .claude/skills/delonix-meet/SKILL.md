@@ -14,9 +14,14 @@ description: Ponto de entrada do Delonix Meet (videoconferência self-hosted —
 
 1. **Mede contra a `origin/main`, nunca contra a árvore local.** A árvore partilhada já
    esteve 133 commits atrás. Mede com `git show origin/main:<path>` ou abre um worktree.
-2. **Um worktree por tarefa**, a partir de `origin/main`: `git worktree add -b <skill>/<tarefa> /tmp/wt-<tarefa> origin/main`.
+2. **Um worktree por tarefa**, a partir de `origin/main`, em
+   `<workspace>/.worktrees/delonix-meet/<tarefa>` — **nunca em `/tmp`**, que esta máquina
+   esvazia a cada arranque (a 2026-09-16 levou um commit a meio e um build de cinco
+   minutos). Da raiz do workspace:
+   `git -C delonix-meet worktree add -b <skill>/<tarefa> "$PWD/.worktrees/delonix-meet/<tarefa>" origin/main`.
    `git add <ficheiro>`, nunca `-A`. Confirma `git branch --show-current` antes de cada commit.
-   Faz commit assim que um lote passar — `/tmp` não sobrevive a um reboot.
+   Faz commit assim que um lote passar, e o `cargo target` fica dentro do worktree ou em
+   `~/.cache` — o que não estiver em commit, um reinício leva.
 3. **Encaminha** pela tabela abaixo. Um pedido que toque em duas áreas começa pela de cima.
 4. **Antes de dizer «feito»**, corre o portão da área (tabela abaixo) na árvore de
    integração limpa. «Compila» não fecha nada.
