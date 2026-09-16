@@ -111,7 +111,7 @@ Os três primeiros foram confirmados lendo o código, mas **nenhum foi explorado
 
 ### 2.5 O próprio harness
 
-- Os seis revisores de `agents/` que `HARNESS.md` e `AGENTS.md` mandavam invocar
+- Os seis revisores da pasta `agents` na raiz que `HARNESS.md` e `AGENTS.md` mandavam invocar
   **nunca existiram no git** (`git log --all -- agents` vazio).
 - `.cursorrules` e `.github/copilot-instructions.md` apontam para `docs/architecture/`,
   que não existe neste repo.

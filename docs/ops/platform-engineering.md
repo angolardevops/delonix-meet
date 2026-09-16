@@ -324,7 +324,7 @@ Antes do go-live, correr a checklist de [DEPLOYMENT.md §Checklist de segurança
 Verificação de RLS ativa em qualquer ambiente: `bash scripts/check-tenant-rls.sh`.
 
 Detalhe de compliance (BNA/LGPD, eDiscovery, DLP, SCIM, audit) →
-[docs/reference/architecture.md](../reference/architecture.md) e o agente `delonix-security-compliance`.
+[docs/reference/architecture.md](../reference/architecture.md) e o agente `delonix-meet-security` (`.claude/agents/`).
 
 ---
 

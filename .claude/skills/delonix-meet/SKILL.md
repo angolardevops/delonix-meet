@@ -61,8 +61,8 @@ description: Ponto de entrada do Delonix Meet (videoconferência self-hosted —
 
   Enquanto não estiverem fechadas, **nenhuma tarefa nesses caminhos está pronta sem as
   corrigir ou as nomear no relatório**.
-- **Os revisores estão em `.claude/agents/delonix-meet-*.md`.** O antigo `agents/`
-  citado no harness nunca existiu no git.
+- **Os revisores estão em `.claude/agents/delonix-meet-*.md`.** A pasta `agents` na raiz, que o
+  harness citava, nunca existiu no git.
 
 ## Três regras que valem em tudo
 

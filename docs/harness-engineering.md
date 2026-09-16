@@ -11,8 +11,10 @@ Este documento explica como o harness de desenvolvimento AI está estruturado e 
 | `GEMINI.md` | Gemini CLI / Gemini API | Contexto equivalente ao HARNESS.md em inglês |
 | `.github/copilot-instructions.md` | GitHub Copilot (VS Code) | Instruções inline carregadas automaticamente pelo Copilot |
 | `.cursorrules` | Cursor | Padrões de código + contexto para autocompleção |
-| `agents/*.md` | agentes de IA (subagentes) | Revisores autónomos invocáveis (rust-perf, webrtc-sfu, k8s-scale, security, competitive) |
-| `agents/commands/*.md` | agentes de IA (slash) | Comandos de revisão em linha (`/review-rust`, `/review-webrtc`, …) |
+| `.claude/agents/delonix-meet-*.md` | agentes de IA (subagentes) | Oito revisores versionados: architecture, api, security, rust, webrtc, frontend, devops, product |
+| `.claude/skills/delonix-meet*/SKILL.md` | agentes de IA (skills) | `delonix-meet` (entrada), `delonix-meet-backend`, `delonix-meet-api` |
+| `docs/adr/0004-organizacao-alvo-do-backend.md` | Todos | Organização-alvo do backend e regras para código novo |
+| `scripts/check-arquitectura-catraca.sh` | CI + `make fitness` | Catraca: nenhuma cópia nova de regra (ADR-0004 §5) |
 | `docs/reference/architecture.md` | Todos | **Referência estável** do sistema — base de conhecimento para o crescimento |
 | `docs/competitive-positioning.md` | Todos | Análise Zoom/Teams/Meet — o que copiamos, o que superamos |
 | `docs/ai-reviewers.md` | Todos | Painel de revisores especializados com personas de expertise |
@@ -122,4 +124,5 @@ Os ficheiros de harness no repositório devem ser atualizados manualmente ou por
 - [ ] `web/HARNESS.md` específico do frontend com exemplos de componentes e hooks
 - [ ] Testes automáticos que validam que HARNESS.md não está desatualizado (lint das features marcadas ✅)
 - [ ] Integration com GitHub Actions: comentário automático de revisão usando personas do painel
-- [ ] Prompt templates em `agents/commands/` para operações comuns (ex: `/review-security`, `/add-feature`)
+- [ ] Prompt templates como skills em `.claude/skills/` para operações comuns (ex.: `/review-security`, `/add-feature`)
+- [x] Revisores e skills versionados em `.claude/` e verificados pelo `check-docs-drift.sh` (2026-09-16)

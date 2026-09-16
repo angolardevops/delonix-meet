@@ -48,8 +48,8 @@
 - `broadcast.rs` — emissão em directo para RTMP (ADR-0003): o browser compõe e codifica em H.264, o servidor REMULTIPLEXA (`-c:v copy`, `-c:a aac`). Multi-canal tipo StreamYard: um `ffmpeg` com N destinos (`destinos` na query, JSON), tecto próprio `MAX_DESTINOS_POR_DIRECTO` (por emissão) distinto do `MAX_DIRECTOS` (por nó/sala). Recusa E2EE, codec não copiável, chave vazia e acima de qualquer um dos dois tectos. Rota WS `/api/rooms/{code}/broadcast`; registo por sala
 - `webhooks.rs` — CRUD webhooks org, fire() best-effort (Slack/Teams/Mattermost/generic+HMAC), SSRF guard
 - `whiteboards.rs` — CRUD quadro branco persistente
-- `voice.rs` — PSTN (stub, aguarda operador)
-- `apikeys.rs` — API keys por org (hash + scopes)
+- `voice.rs` — PSTN: plano de controlo (DIDs, CDR, facturação, IVR por segredo partilhado em `/api/voice/ivr/*`); a media depende do operador SIP. O IVR é máquina-a-máquina e, no destino, sai da árvore pública para gRPC (ADR-0004 §4)
+- `apikeys.rs` — chaves de API por org (hash, **sem escopos nem expiração** — auditoria 2026-09-16 S6) **e** os handlers `v1_*` da API pública, apesar do nome (ADR-0004 §3 separa-os)
 - `audit.rs` — auditoria IMUTÁVEL e verificável: cada linha inclui o hash da anterior, numa cadeia por organização (migração 0037). Editar ou apagar uma linha parte a cadeia e é detectável em `/api/orgs/{id}/audit/verify` — mesmo por quem não confia em quem administra a base de dados, que é o adversário que interessa. Gatilhos recusam UPDATE/DELETE; a cadeia é a defesa que sobrevive a quem os possa remover. Ver R61
 - `rate_limit.rs` — rate limit por IP/conta (DashMap, lockout login 8/5min)
 - `error.rs` — `AppError` unificado → HTTP status + JSON body
@@ -57,7 +57,7 @@
 - `users.rs` — perfis de utilizador (perfil público, `me`, update, pesquisa)
 - `actions.rs` — agenda de reunião (tópicos com execução) + Plano de Ação 5W2H
 - `mfa.rs` — segundo factor por TOTP (RFC 6238) e códigos de recuperação. O algoritmo é implementado aqui em vez de por dependência nova: HMAC-SHA-1, base64 e argon2 já eram dependências, e o RFC traz **vectores de teste oficiais** — uma verificação independente melhor do que confiar numa crate. Um código válido é CONSUMIDO, não só verificado (`last_step`, e `used_at` nos de recuperação): sem isso um TOTP apanhado por cima do ombro servia outra vez durante 30 s. Ver R53
-- `mls.rs` — MLS key agreement para E2EE em grupo (key packages, welcome)
+- `mls.rs` — rascunho de MLS (key packages, welcome) **NÃO montado**: `#![allow(dead_code)]` e router fora do `main.rs`. Esteve montado sem autenticação (R41); o `check-route-auth.sh` impede que volte assim. Não é capacidade activa
 - `dlp.rs` — DLP (censura/redação de conteúdo sensível)
 - `pubsub.rs` — Redis pub/sub para entrega cross-nó (presença/sinalização)
 - `redis_state.rs` — estado in-room em Redis (whiteboard, timer, sondagens, settings) partilhado entre pods
@@ -66,7 +66,14 @@
 - `odoo_sso.rs` — **login com conta Odoo**: autentica em `/web/session/authenticate`, cria a organização a partir da EMPRESA do utilizador (chave `(odoo_db, company_id)`) e sincroniza em segundo plano todos os utilizadores internos activos. Fail-closed sem `PLATFORM_ODOO_URL`/`PLATFORM_ODOO_DB`
 - `meetings_v1.rs` — recurso `meetings` da API pública v1 (POST/PATCH/DELETE): cria REUNIÃO + sala com anfitrião humano (`host_email`) e convidados por email, idempotente por `external_ref`. É o que a integração de calendário usa — `/api/v1/rooms` cria salas sem anfitrião nem convidados, e ninguém consegue ser admitido nelas
 - `sfu_e2e.rs` — testes ponta-a-ponta do SFU com `RTCPeerConnection`s reais no papel de browser (media a fluir nos dois sentidos + R13/glare). Só compila em `#[cfg(test)]`
-- `storage.rs` — armazenamento remoto da plataforma (TrueNAS NFS / Nextcloud WebDAV); registo único em `platform_storage`, gerido pelo admin global
+- `storage.rs` — armazenamento remoto da plataforma (TrueNAS NFS / Nextcloud WebDAV); registo único em `platform_storage`. ⚠ «Admin global» é hoje `require_platform_admin` = admin de QUALQUER org, e o registo público cria sempre um admin (auditoria 2026-09-16 **S1**, aberta)
+
+### Organização do backend — estado e destino
+
+- **Estado (2026-09-16):** UM crate (`delonix-server`), 34 módulos planos, um **ciclo de 18 módulos**, handlers com SQL dentro (302 queries de runtime), regras copiadas entre BFF e v1 que já divergiram. **Não há gRPC nem OpenAPI.** Evidência: [`docs/auditoria-2026-09-16-backend.md`](docs/auditoria-2026-09-16-backend.md).
+- **Destino:** [ADR-0004](docs/adr/0004-organizacao-alvo-do-backend.md) (**Proposto**) — camadas http→service→store, workspace `delonix-meet-{core,protocol,store,identity,integrations,media,realtime,api,server}`, uma superfície de API por público, gRPC só máquina-a-máquina. A ordem de migração (§6) não se salta: segurança → `lib.rs` → testes com Postgres → partir o ciclo → serviços → v1/OpenAPI → crates → gRPC.
+- **Já vale para código novo** (ADR-0004 §5), contado por `scripts/check-arquitectura-catraca.sh`: nada de `org_members` fora de `org.rs`, `Authorization` lido à mão, cliente `reqwest` novo, cripto copiada, funções `*_pub`, `{"ok": true}`, nem sessão dentro de `/api/v1`.
+- **Skills:** `.claude/skills/delonix-meet` (entrada), `delonix-meet-backend`, `delonix-meet-api`.
 
 ### Frontend — `web/src/` (React + TypeScript + Vite)
 | Ficheiro/pasta | Função |
@@ -103,7 +110,7 @@
 
 ### ✅ Feito e funcional
 - Auth org-first: registo cria org+admin; login; refresh cookie HttpOnly; logout revoga
-- Multi-tenant: isolamento cross-org em todos os endpoints (rooms, presence, search, analytics)
+- Multi-tenant: isolamento cross-org por handler (rooms, presence, search, analytics), provado por `web/e2e/isolamento.mjs` nas rotas de org. ⚠ Não é «todos os endpoints»: 17 verificações de pertença esquecem `archived_at` (membro arquivado mantém acesso — **S3**) e o `odoo::provision` liga contas de outra org por email (**S2**). RLS só em `employee_groups` (ADR-0002)
 - SFU Rust: simulcast (q/h/f), screen share como track separada, E2EE server-side (decrypt), gravação server-side (VP9+Opus webm, ffmpeg composite multi-publicador)
 - Sala de reunião: grelha Meet-style, palco com speaker detection, controles estilo Google Meet (pill dividida mic/câmara), whiteboard, breakouts (rename/add/move/timer/return-all), host controls (lock, share-only), CC (legendas partilhadas), reações, mão levantada, gravação
 - Ferramentas in-room: timer, sondagens anónimas, Q&A com upvote
@@ -114,7 +121,7 @@
 - Recordings: biblioteca, viewer (player+transcrição+MoM+tarefas), toggle cards/tabela, partilha read-only
 - Analytics admin: KPIs 30d, série semanal, top organizadores, kind split, duração média, postura SSO/SCIM (stubs)
 - Webhooks: Slack/Teams/Mattermost/generic+HMAC, SSRF guard, events: meeting.created/started/recording.ready
-- API keys por org (hash + scopes)
+- API keys por org (hash; sem escopos nem expiração)
 - PWA: manifest + service worker
 - Temas: Delonix (dark), NgolaCloud (claro quente), NgolaCloud-dark, Kaeso (corporativo flat)
 - i18n PT/EN (Landing, Shell, Login, Home, Analytics, Roadmap — Room/Calendar/Recordings/Directory por traduzir)
@@ -205,7 +212,7 @@ Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **
 ## 6. Invariantes de segurança (nunca quebrar)
 
 1. **Segredos fail-closed:** `config.rs` faz panic sem `JWT_SECRET`/`TURN_SECRET`/`DATABASE_URL` fortes. `DELONIX_ALLOW_INSECURE=1` só em dev.
-2. **Isolamento multi-tenant:** `rooms::can_access_room` e `org::org_co_members`/`admin_orgs_of_user` escopam TUDO à(s) org(s) do utilizador. Nunca devolver dados cross-org.
+2. **Isolamento multi-tenant:** `rooms::can_access_room` e `org::role_in_org`/`org_co_members`/`admin_orgs_of_user` escopam TUDO à(s) org(s) do utilizador. Nunca devolver dados cross-org. **A pertença decide-se em `org.rs`, que filtra `archived_at IS NULL`** — uma verificação escrita à mão noutro módulo foi exactamente como um membro arquivado manteve acesso (auditoria S3). **«Admin de alguma org» nunca é admin da plataforma** (S1).
 3. **Room tokens de curta duração:** JWT separado, âmbito = 1 sala, expira em 5 min. Sem room token válido → WS recusado.
 4. **SSRF em webhooks:** validar host (bloquear IPs privados/loopback/link-local/metadata) na criação E na entrega. Sem redirects.
 5. **Rate limit:** lockout por conta no login (8/5min); rate limit por IP em `/api/v1`; WS com rate limit por socket.
@@ -251,9 +258,9 @@ cargo build --release    # depois de migração nova, SEMPRE rebuild antes de re
 
 ### Rust
 - `AppError` para todos os erros de handler — nunca `unwrap()` em código de produção
-- Pool Postgres via `Extension<PgPool>` injetado pelo axum
+- Estado via `State(state): State<Arc<AppState>>` (pool em `state.db`); não há `Extension<PgPool>`
 - `sqlx::query` / `sqlx::query_as::<_, T>` — **API de runtime**, sem verificação
-  em compile time. É o estado real: 118 chamadas, zero macros `query!`. A
+  em compile time. É o estado real: 302 chamadas (2026-09-16), zero macros `query!`. A
   consequência tem de ser dita: um nome de coluna errado passa a compilação e
   só falha em execução, por isso qualquer alteração de esquema exige o teste
   que percorre o caminho. A alternativa (`query!` + `cargo sqlx prepare`)
@@ -262,6 +269,9 @@ cargo build --release    # depois de migração nova, SEMPRE rebuild antes de re
 - Handlers async retornam `Result<impl IntoResponse, AppError>`
 - Migrações em `server/migrations/` com prefixo numérico sequencial (`0001_`, `0002_`, …)
 - Novos módulos: declarar em `main.rs` (`mod novo_modulo;`) + registar rotas no router
+- **Código novo chama a regra, não a copia** (ADR-0004 §5): pertença → `org::`; autenticação → um extractor de `auth.rs`/`apikeys.rs`/`odoo.rs`; pedidos de saída → `state.webhook_client` (+ `validate_public_url` se o URL vem do cliente); cripto → a função que existe; exportar → `pub(crate)`, nunca `*_pub`. A catraca da arquitectura falha se alguma contagem subir
+- **Rota nova:** checklist da skill `delonix-meet-api` — `201`/`204` em vez de `{"ok": true}`, listagem com limite e cursor, recurso completo, uma autenticação por superfície
+- **Língua:** identificadores NOVOS em inglês; comentários, documentação e mensagens ao utilizador em português (regra de fronteira de 2026-09-03). O código existente não se renomeia por isso — renomeia-se quando mudar de crate
 
 ### TypeScript/React
 - Componentes funcionais + hooks
@@ -305,18 +315,20 @@ Ver `docs/competitive-positioning.md` para análise completa. Resumo:
 
 ## 10. Painel de revisores especializados
 
-**Subagentes autónomos** em `agents/` (invocar via Agent/`@nome`) — especialistas Delonix, cada um com o catálogo de regressões (`docs/reference/regressions.md`) no radar. Usar PROACTIVAMENTE nas áreas respetivas:
+**Subagentes em `.claude/agents/delonix-meet-*.md`** (versionados com o código; invocar via Agent/`@nome`). Prefixo `delonix-meet-` porque no workspace `delonix-*` sem `-meet` é o MOTOR. Cada um tem a pergunta que faz a tudo, o radar de regressões (`docs/reference/regressions.md`) e um relatório com as duas metades — o provado e o não validado. Usar PROACTIVAMENTE nas áreas respectivas:
 
-| Agente | Especialidade | Invocar para (ficheiros) |
+| Agente | Especialidade | Invocar para |
 |---|---|---|
-| **delonix-code** | Rust supremo (nível criador): safety, ownership/lifetimes, async Tokio, unsafe, perf hot-path RTP | `server/src/*.rs` (sobretudo `sfu.rs`, `recorder.rs`, `signaling.rs`) |
-| **delonix-devops** | Platform engineering: K8s, Docker, Ansible, Terraform, coturn/rede WebRTC, ingress, metallb, afinidade, media | `deploy/`, `deploy/k8s/`, Dockerfiles, Makefile, TURN |
-| **delonix-frontend** | Frontend supremo: React/TS/CSS4/HTML5/JS + UX Meet/Teams/Zoom | `web/src/**` (`Room.tsx`, `webrtc.ts`, `presence.ts`, `styles/`) |
-| **delonix-security-compliance** | Segurança (cripto/E2EE/TLS/DTLS/JWT/SSRF/rate-limit/cross-org) + compliance (eDiscovery/DLP/SCIM/audit/BNA/LGPD) | `auth.rs`, `e2ee.ts`, `webhooks.rs`, `config.rs`, `org.rs`, endpoints novos |
-| **webrtc-sfu-reviewer** | WebRTC/SFU (Justin Uberti): ICE, simulcast, codecs, media num-só-sentido | `sfu.rs`, `webrtc.ts`, `e2ee.ts`, `recorder.rs` |
-| **competitive-strategist** | Posicionamento vs Zoom/Teams/Meet, priorização de roadmap | features novas, decisões de produto |
+| **delonix-meet-architecture** | Organização do backend: cópias, camadas, ciclo de módulos, nomes, ADR-0004 | qualquer ficheiro novo ou movido em `server/src/`, refactor, crates |
+| **delonix-meet-api** | Contrato: superfícies, rota nova, estado HTTP, erro, paginação, idempotência, OpenAPI, gRPC | `main.rs` (router), `/api/v1`, SDK/mobile/integrações |
+| **delonix-meet-security** | Auth, isolamento entre orgs, autoridade de conta (R25), SSRF, segredos, E2EE, MFA, auditoria, BNA/LGPD | `auth.rs`, `org.rs`, `apikeys.rs`, `odoo*.rs`, `storage.rs`, `webhooks.rs`, `mfa.rs`, `e2ee.ts`, rotas novas |
+| **delonix-meet-rust** | Async Tokio, locks através de `.await`, filas limitadas, tarefas de fundo, hot path | `sfu.rs`, `signaling.rs`, `recorder.rs`, `presence.rs`, `redis_state.rs` |
+| **delonix-meet-webrtc** | Negociação/glare, ICE/TURN, simulcast, oradores, gravação, directo | `sfu.rs`, `webrtc.ts`, `e2ee.ts`, `recorder.rs`, `broadcast.rs` |
+| **delonix-meet-frontend** | React/TS, kit `ui.tsx`, temas, i18n, ecrã estreito, acessibilidade | `web/src/**` |
+| **delonix-meet-devops** | K8s, imagens, afinidade por sala, coturn, probes/drain, CI | `deploy/`, Dockerfiles, Makefile, `.github/` |
+| **delonix-meet-product** | Posicionamento, roadmap, o que se pode vender | features novas, preços, landing, roadmap |
 
-Personas adicionais (invocar em prompt, perfis em `docs/ai-reviewers.md`): **Lars Bak** (WASM/Worker), **Lea Verou** (CSS/a11y), **Zoom Reliability Architect** (fallback/TURN/redes degradadas).
+Personas de inspiração (Graydon Hoare, Justin Uberti, Adam Langley, …) continuam em `docs/ai-reviewers.md` como template para prompts em ferramentas sem subagentes.
 
 ---
 
@@ -356,4 +368,4 @@ Personas adicionais (invocar em prompt, perfis em `docs/ai-reviewers.md`): **Lar
 - **Seleção de oradores (top-N):** o SFU só reencaminha os 3 microfones mais ativos. Três armadilhas que silenciam gente: renumerar SEMPRE o áudio (`AudioMeter::next_seq` — sem isso a supressão parece perda e baixa o vídeo), decair a energia por TEMPO e não por pacote (com DTX quem se cala não envia nada e ficaria preso no top-N), e NUNCA suprimir microfones sem a extensão RFC 6464 negociada. Gravação, PSTN e áudio de ecrã recebem sempre tudo. Ver R22.
 - **`video-interest` é enviado SEMPRE que o conjunto muda** — a página visível quando pagina, TODOS os peers quando não pagina. "Deixar de enviar" não significa "todos": o servidor ficaria com a última página. Ver R23.
 - **Desligar a câmara liberta-a mesmo** (`disableVideo` → `replaceTrack(null)` + `track.stop()`), reutilizando o `videoSender` guardado — criar transceiver novo por religação faz crescer a SDP e perde o simulcast. Ver R24.
-- **Harness:** manter `HARNESS.md`, `AGENTS.md`, `GEMINI.md` coerentes; a referência estável está em `docs/reference/architecture.md` (+ `docs/reference/regressions.md` = regressões a não reintroduzir); revisores autónomos em `agents/`.
+- **Harness:** manter `HARNESS.md`, `AGENTS.md`, `GEMINI.md` coerentes; a referência estável está em `docs/reference/architecture.md` (+ `docs/reference/regressions.md` = regressões a não reintroduzir); revisores em `.claude/agents/delonix-meet-*.md` e skills em `.claude/skills/delonix-meet*/`; a arquitectura-alvo em `docs/adr/0004-organizacao-alvo-do-backend.md`.

@@ -1,6 +1,6 @@
 # Regressões conhecidas — NÃO reintroduzir
 
-> Cada entrada aqui já quebrou produção/demos pelo menos uma vez. São armadilhas onde a "correção óbvia" reintroduz o bug. Antes de mexer no código relacionado, lê a entrada. Revisores (`agents/*`) devem verificar estas explicitamente no diff.
+> Cada entrada aqui já quebrou produção/demos pelo menos uma vez. São armadilhas onde a "correção óbvia" reintroduz o bug. Antes de mexer no código relacionado, lê a entrada. Revisores (`.claude/agents/delonix-meet-*`) devem verificar estas explicitamente no diff.
 
 Formato: **Sintoma** → **Causa raiz** → **Regra** (o que nunca fazer) → ficheiros.
 
