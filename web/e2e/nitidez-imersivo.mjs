@@ -203,7 +203,17 @@ console.log('  · depois:', JSON.stringify(depois.melhores), JSON.stringify(depo
 medidas.envio = { antesPx: antes.px, depoisPx: depois.px, antes: antes.melhores.at(-1), depois: depois.melhores.at(-1), camAntes: antes.ultima.cam, camDepois: depois.ultima.cam }
 const p = depois.ultima.params[0]
 ok(p?.hint === 'detail' && p?.deg === 'maintain-resolution', 'o sender passou a detail + maintain-resolution', JSON.stringify(p))
-ok(depois.px > antes.px, 'a resolução ENVIADA subiu (getStats, média de 4 amostras)', `${antes.px} px → ${depois.px} px`)
+// Duas afirmações e não uma, porque a medição de 2026-09-16 mostrou as duas
+// faces: com a máquina carregada, o perfil NORMAL chegou a mandar a camada f a
+// 3840×2160 a 1 fps (a câmara falsa dá 4K e o encoder asfixia) — aí o nítido
+// manda MENOS píxeis (1080p) e mais fps. Com carga moderada, o normal mandava só
+// a q (960×540) e o nítido passou a 1920×1080. O que o perfil promete é o alvo:
+// a camada alta a sair a 1080p quando a câmara o dá.
+const fmt = (m) => (m ? `${m.w}×${m.h}@${m.fps}` : 'nada')
+const alvo = depois.melhores.filter((m) => m.w >= 1920 && m.h >= 1080).length
+ok(alvo >= Math.ceil(depois.melhores.length / 2) && depois.melhores.length > 0, 'com o perfil, a camada alta sai a 1080p (maioria das amostras)', depois.melhores.map(fmt).join(' '))
+ok(depois.px > antes.px || antes.px > 1920 * 1080, 'a resolução enviada sobe — ou já estava acima do alvo de 1080p', `${antes.melhores.map(fmt).join(' ')} → ${depois.melhores.map(fmt).join(' ')}`)
+medidas.envio.subiu = depois.px > antes.px
 const perfil = await guest.locator('[data-enh="envio"]').getAttribute('data-perfil')
 ok(perfil === 'sharp', 'a interface diz que o perfil está activo', perfil)
 const ui = await guest.locator('[data-enh="envio"] dd').allTextContents()
