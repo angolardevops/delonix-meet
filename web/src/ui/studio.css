@@ -26,12 +26,19 @@
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
+.st-top .dx-badge {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
 .st-top__burger {
   display: none;
 }
 .st-top__title {
   margin: 0;
-  font-size: var(--t-md);
+  font-size: var(--t-lg);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -72,7 +79,7 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr) 304px;
+  grid-template-columns: 176px minmax(0, 1fr) 318px;
 }
 .st-body[hidden] {
   display: none;
@@ -84,10 +91,10 @@
 
 .st-col {
   background: var(--surface);
-  padding: 12px;
+  padding: 12px 10px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   overflow-y: auto;
   min-width: 0;
 }
@@ -388,8 +395,8 @@
   gap: 8px;
 }
 .st-dest__tag {
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -397,8 +404,9 @@
   border-radius: var(--r-2);
   background: var(--stage);
   border: 1px solid var(--border);
-  font-size: var(--t-xs);
-  color: var(--muted);
+  font-size: 8.5px;
+  font-weight: 600;
+  color: var(--text);
 }
 .st-dest__name {
   font-size: var(--t-md);

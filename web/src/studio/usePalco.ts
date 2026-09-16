@@ -266,14 +266,21 @@ export function usePalco({
   )
 
   const novaCena = useCallback(
-    async (nome: string) => {
+    async (nome: string, conteudoDaCena: ConteudoDoPalco) => {
       const c = compRef.current
+      // A cena nova já mostra o que vai guardar: o compositor muda JÁ e a
+      // miniatura espera dois frames para sair com o conteúdo certo.
+      setConteudo(conteudoDaCena)
+      if (c) {
+        c.conteudo = conteudoDaCena
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+      }
       const miniatura = c ? await banco.miniaturaDe(c.canvas).catch(() => null) : null
-      const cena = await banco.guardarCena({ nome, layout, conteudo, avatar, sobreposicoes, miniatura })
+      const cena = await banco.guardarCena({ nome, layout, conteudo: conteudoDaCena, avatar, sobreposicoes, miniatura })
       recarregarCenas()
       setCenaActiva(cena.id)
     },
-    [avatar, compRef, conteudo, layout, recarregarCenas, sobreposicoes],
+    [avatar, compRef, layout, recarregarCenas, sobreposicoes],
   )
 
   const apagarCena = useCallback(

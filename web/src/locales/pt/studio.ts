@@ -20,6 +20,9 @@ export default {
     aoVivoDestinos_other: 'Ao vivo · {{count}} destinos',
     enc: 'enc. {{kbps}} kbps',
     relogio: 'Hora local',
+    tempoNoAr: 'Tempo no ar',
+    semChave: 'Cola a chave de um destino para emitir.',
+    emitirParaTodos: 'Emitir para todos',
   },
   acoes: {
     gravar: 'Gravar',
@@ -88,7 +91,7 @@ export default {
     intervalo: 'Voltamos já',
   },
   directo: {
-    titulo: 'Destinos em directo',
+    titulo: 'Destinos simultâneos',
     indisponivel: 'Este browser não codifica H.264, que é o que as plataformas de directo aceitam. O directo não está disponível aqui.',
     nota: 'A imagem vai como está no palco. Salas com cifra ponta-a-ponta não podem emitir.',
     destino: 'Destino {{n}}',
@@ -118,6 +121,8 @@ export default {
       erro: 'Erro',
     },
     tagDica: 'Plataforma lida do endereço do servidor',
+    editar: 'Editar o destino {{rotulo}}',
+    noArN: '{{n}} no ar',
   },
   local: {
     titulo: 'Gravação local',
@@ -301,5 +306,7 @@ export default {
       naoExiste: 'Essa sala não existe.',
       e2ee: 'Salas com cifra ponta-a-ponta não podem ligar ao estúdio.',
     },
+    semSala: 'sem sala',
+    explicacaoCurta: 'Convidados, chat e perguntas.',
   },
 }

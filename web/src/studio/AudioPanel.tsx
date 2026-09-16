@@ -40,20 +40,6 @@ export default function AudioPanel({
         {t('studio.audio.titulo')}
       </h2>
 
-      <label className="st-label" htmlFor="st-mic">
-        {t('studio.audio.microfone')}
-      </label>
-      <Select id="st-mic" value={microfone} data-studio="microfone" onChange={(e) => onMicrofone(e.target.value)}>
-        <option value="">{t('studio.audio.microfoneOmissao')}</option>
-        {microfones
-          .filter((m) => m.id && m.id !== 'default')
-          .map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.nome}
-            </option>
-          ))}
-      </Select>
-
       <div className="st-faders">
         {FADERS.map((f) => (
           <label key={f} className="st-fader">
@@ -73,6 +59,20 @@ export default function AudioPanel({
           </label>
         ))}
       </div>
+
+      <label className="st-label" htmlFor="st-mic">
+        {t('studio.audio.microfone')}
+      </label>
+      <Select id="st-mic" value={microfone} data-studio="microfone" onChange={(e) => onMicrofone(e.target.value)}>
+        <option value="">{t('studio.audio.microfoneOmissao')}</option>
+        {microfones
+          .filter((m) => m.id && m.id !== 'default')
+          .map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.nome}
+            </option>
+          ))}
+      </Select>
 
       <input
         ref={ficheiro}
@@ -101,11 +101,10 @@ export default function AudioPanel({
           </div>
         </div>
       ) : (
-        <Button size="sm" variant="outline" icon="upload" onClick={() => ficheiro.current?.click()}>
+        <Button size="sm" variant="ghost" icon="upload" title={t('studio.audio.nota')} onClick={() => ficheiro.current?.click()}>
           {t('studio.audio.carregarMusica')}
         </Button>
       )}
-      <p className="st-note">{t('studio.audio.nota')}</p>
     </section>
   )
 }

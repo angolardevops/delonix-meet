@@ -33,7 +33,7 @@ import { cortar, cortarVarios, cortesSuportados } from '../studio/editor'
 import LayoutsPanel from '../studio/LayoutsPanel'
 import LivePanel from '../studio/LivePanel'
 import LocalPanel from '../studio/LocalPanel'
-import { eh4k, plataformaDoUrl, rotuloDaQualidade } from '../studio/palco'
+import { eh4k, plataformaDoUrl, type Qualidade, QUALIDADES, rotuloDaQualidade } from '../studio/palco'
 import QuadroLocal from '../studio/QuadroLocal'
 import RegionPicker from '../studio/RegionPicker'
 import Relogio from '../studio/Relogio'
@@ -77,7 +77,6 @@ export default function Studio() {
 
   const [vista, setVista] = useState<Vista>('emissao')
   const [pronto, setPronto] = useState(false)
-  const [resolucao, setResolucao] = useState('')
   const [temEcra, setTemEcra] = useState(false)
   const [temCamara, setTemCamara] = useState(false)
   const [avatar, setAvatar] = useState<EstadoDoAvatar>({ ...AVATAR_INICIAL })
@@ -126,7 +125,6 @@ export default function Studio() {
     c.canvas.setAttribute('data-studio', 'canvas')
     canvasHostRef.current?.appendChild(c.canvas)
     c.iniciarPreVisualizacao()
-    setResolucao(`${c.canvas.width}×${c.canvas.height}`)
     setPronto(true)
     return () => {
       efeitoRef.current?.stop()
@@ -155,12 +153,6 @@ export default function Studio() {
     palco.sobreposicoes.legendas,
     aGravarOuPausa || directo.fase === 'no-ar',
   )
-  // A resolução mostrada segue o canvas REAL (a qualidade pode ter sido recusada).
-  useEffect(() => {
-    const c = compRef.current
-    if (c) setResolucao(`${c.canvas.width}×${c.canvas.height}`)
-  }, [pronto, palco.qualidade])
-
   const aoPalco = useCallback((fontes: Fonte[]) => {
     compRef.current?.definirConvidados(fontes)
     setConvidadosNoPalco(fontes.length)
@@ -591,6 +583,9 @@ export default function Studio() {
   const destinosComChave = destinos.filter((d) => d.chave.trim())
   const rotuloQualidade = rotuloDaQualidade(palco.qualidade)
 
+  const quadroOuAr = noAr || aGravar || emPausa
+  const podeIrParaOAr = directo.fase !== 'a-ligar' && !noAr && destinosComChave.length > 0 && temFonte && directoSuportado()
+
   return (
     <div className="dx-stage st">
       <header className="st-top">
@@ -603,26 +598,31 @@ export default function Studio() {
           aria-controls="shell-nav"
           onClick={() => setNavOpen(!navOpen)}
         />
-        <BrandMark size={22} />
+        <span className="st-top__mark">
+          <BrandMark size={22} tone="tile" />
+        </span>
         <h1 className="st-top__title">
           {t('studio.titulo')}
-          {titulo.trim() && <span className="st-top__sub"> · {titulo.trim()}</span>}
+          {titulo.trim() && <span> · {titulo.trim()}</span>}
         </h1>
+        {quadroOuAr && (
+          <span className="st-top__clock dx-num">
+            {aGravar || emPausa ? (
+              <Cronometro activo={aGravar} ler={lerSegundos} label={t('studio.topo.cronometro')} data-studio="tempo" />
+            ) : (
+              <Cronometro activo ler={lerNoAr} label={t('studio.topo.tempoNoAr')} />
+            )}
+          </span>
+        )}
         {(aGravar || emPausa) && (
           <StatusBadge tone={aGravar ? 'record' : 'warning'}>
             {aGravar ? t('studio.topo.rec') : t('studio.topo.pausa')}
-            {eh4k(palco.qualidade) && ' 4K'}{' '}
-            <Cronometro
-              activo={aGravar}
-              ler={lerSegundos}
-              className="dx-num"
-              label={t('studio.topo.cronometro')}
-              data-studio="tempo"
-            />
+            {eh4k(palco.qualidade) && ' 4K'}
           </StatusBadge>
         )}
         {noAr && (
           <StatusBadge tone="live">
+            <span className="dx-badge__tri" aria-hidden="true" />
             {t('studio.topo.aoVivoDestinos', { count: destinosComChave.length })}
           </StatusBadge>
         )}
@@ -652,7 +652,7 @@ export default function Studio() {
         <div className="st-top__actions" data-studio="acoes">
           {!aGravar && !emPausa ? (
             <Button
-              variant="primary"
+              variant="outline"
               icon="record"
               data-studio="gravar"
               disabled={!temFonte}
@@ -671,6 +671,18 @@ export default function Studio() {
               </Button>
             </>
           )}
+          {/* «Emitir para todos»: vai para o ar em TODOS os destinos com chave
+              de uma vez (é uma só ligação — ver LivePanel). */}
+          <Button
+            variant="live"
+            className="st-top__emit"
+            busy={directo.fase === 'a-ligar'}
+            disabled={!podeIrParaOAr}
+            title={noAr ? t('studio.directo.estados.noAr') : destinosComChave.length ? undefined : t('studio.topo.semChave')}
+            onClick={() => void irParaOAr()}
+          >
+            {t('studio.topo.emitirParaTodos')}
+          </Button>
         </div>
       </header>
 
@@ -686,15 +698,7 @@ export default function Studio() {
 
       <div className="st-body" hidden={vista !== 'emissao'}>
         <aside className="st-col st-col--left">
-          <LayoutsPanel
-            layout={palco.layout}
-            conteudo={palco.conteudo}
-            qualidade={palco.qualidade}
-            qualidadeBloqueada={aGravar || emPausa || noAr || directo.fase === 'a-ligar'}
-            onLayout={palco.escolherLayout}
-            onConteudo={palco.escolherConteudo}
-            onQualidade={palco.escolherQualidade}
-          />
+          <LayoutsPanel layout={palco.layout} onLayout={palco.escolherLayout} />
           <CenasPanel
             cenas={palco.cenas}
             activa={palco.cenaActiva}
@@ -733,24 +737,6 @@ export default function Studio() {
         </aside>
 
         <section className="st-centre" aria-label={t('studio.palco.rotulo')}>
-          {/* O estado do palco fica POR CIMA da imagem e não sobre ela: o
-              logótipo e o cronómetro queimados vivem nos cantos do programa, e
-              uma ficha da interface por cima deles escondia o que vai para o ar. */}
-          <div className="st-stage-meta">
-            <span className="dx-num st-small dx-muted">
-              {t('studio.palco.previsualizacao')} · {resolucao}
-            </span>
-            <span className="dx-spacer" />
-            {noAr && (
-              <StatusBadge tone="live">
-                {t('studio.palco.noAr')} · <Cronometro activo ler={lerNoAr} className="dx-num" data-studio="no-ar-tempo" />
-              </StatusBadge>
-            )}
-            {aGravar && <StatusBadge tone="record">{t('studio.topo.rec')}</StatusBadge>}
-            <span className="st-overlay__chip dx-num" data-studio="palco-qualidade">
-              {rotuloQualidade}
-            </span>
-          </div>
           <div className="st-stage-fit">
             <div
               className={cx(
@@ -763,6 +749,19 @@ export default function Studio() {
               onPointerDown={arrastarBolha}
             >
               <div ref={canvasHostRef} className="st-stage__canvas" />
+              {/* Estado da INTERFACE sobre o programa, como no template. As
+                  sobreposições queimadas evitam este canto (o cronómetro vai
+                  ao centro), para nada do que vai para o ar ficar tapado. */}
+              <span className="st-overlay st-overlay--tr" aria-hidden="true">
+                {noAr && (
+                  <span className="st-overlay__chip dx-num">
+                    {t('studio.palco.noAr')} · <Cronometro activo ler={lerNoAr} data-studio="no-ar-tempo" />
+                  </span>
+                )}
+                <span className="st-overlay__chip dx-num" data-studio="palco-qualidade">
+                  {rotuloQualidade}
+                </span>
+              </span>
               {palco.conteudo === 'quadro' && (
                 <QuadroLocal
                   onRiscar={(de, ate, cor, esp) => compRef.current?.riscarNoQuadro(de, ate, cor, esp)}
@@ -795,19 +794,25 @@ export default function Studio() {
           </div>
 
           {/* Telemóvel: os destinos em fichas por baixo do palco (etiqueta e
-              fase — a audiência por plataforma não existe no servidor). */}
-          {destinosComChave.length > 0 && (
-            <ul className="st-chips" aria-label={t('studio.directo.titulo')}>
-              {destinosComChave.map((d, i) => (
-                <li key={i} className={cx('st-chip', noAr && 'is-live')}>
+              fase — a audiência por plataforma não existe no servidor, por isso
+              a ficha diz a fase e não um número inventado). */}
+          <ul className="st-chips" aria-label={t('studio.directo.titulo')}>
+            {destinos.map((d, i) => {
+              const temChave = !!d.chave.trim()
+              return (
+                <li key={i} className={cx('st-chip', noAr && temChave && 'is-live', !temChave && 'is-off')}>
                   <span className="dx-num">{plataformaDoUrl(d.url, location.host)}</span>
-                  <span className="st-chip__state">
-                    {noAr ? t('studio.directo.estados.noAr') : t('studio.directo.estados.pronto')}
+                  <span className="st-chip__state dx-num">
+                    {!temChave
+                      ? t('studio.directo.estados.semChave')
+                      : noAr
+                        ? t('studio.directo.estados.noAr')
+                        : t('studio.directo.estados.pronto')}
                   </span>
                 </li>
-              ))}
-            </ul>
-          )}
+              )
+            })}
+          </ul>
 
           <div className="st-under">
             {salaAberta ? (
@@ -824,16 +829,24 @@ export default function Studio() {
               </Suspense>
             ) : (
               <section className="st-group st-panel" data-studio="sala-fechada" aria-labelledby="st-sala-fechada-h">
-                <h2 id="st-sala-fechada-h" className="st-group__title">
-                  {t('studio.sala.fila')}
-                </h2>
-                <p className="st-note">{t('studio.sala.explicacao')}</p>
-                <div className="st-actions">
-                  <Button size="sm" variant="secondary" icon="userPlus" data-studio="sala-abrir" disabled={!online} onClick={() => setSalaAberta(true)}>
+                <header className="st-group__head">
+                  <h2 id="st-sala-fechada-h" className="st-group__title">
+                    {t('studio.sala.fila')}
+                  </h2>
+                  <span className="dx-spacer" />
+                  <span className="dx-num dx-muted st-small">{t('studio.sala.semSala')}</span>
+                </header>
+                <div className="st-guests st-guests--empty" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <div className="st-guests__actions">
+                  <Button size="sm" variant="primary" icon="userPlus" data-studio="sala-abrir" disabled={!online} onClick={() => setSalaAberta(true)}>
                     {t('studio.sala.abrir')}
                   </Button>
+                  <span className="st-note">{online ? t('studio.sala.explicacaoCurta') : t('studio.sala.semRede')}</span>
                 </div>
-                {!online && <p className="st-note">{t('studio.sala.semRede')}</p>}
               </section>
             )}
             <SobreposicoesPanel
@@ -869,36 +882,32 @@ export default function Studio() {
             onRemover={(i) => setDestinos((ds) => ds.filter((_, j) => j !== i))}
             onIrParaOAr={() => void irParaOAr()}
             onParar={() => void sairDoAr()}
-          />
-          <LocalPanel
-            estado={estado}
-            lerSegundos={lerSegundos}
-            porEnviar={porEnviar}
-            ocupacaoBytes={ocupacao}
-            online={online}
-            resolucao={resolucao}
-            qualidade={rotuloQualidade}
-            lerBytes={lerBytes}
-            onEnviar={() => void enviarFila()}
-          />
+          >
+            <LocalPanel
+              estado={estado}
+              lerSegundos={lerSegundos}
+              porEnviar={porEnviar}
+              ocupacaoBytes={ocupacao}
+              online={online}
+              resolucao={rotuloQualidade}
+              qualidade={palco.qualidade}
+              qualidades={(Object.keys(QUALIDADES) as Qualidade[]).map((q) => ({ valor: q, rotulo: rotuloDaQualidade(q) }))}
+              qualidadeBloqueada={aGravar || emPausa || noAr || directo.fase === 'a-ligar'}
+              onQualidade={(q) => palco.escolherQualidade(q as Qualidade)}
+              lerBytes={lerBytes}
+              onEnviar={() => void enviarFila()}
+            />
+          </LivePanel>
         </aside>
 
         {/* Alcance do polegar: no telemóvel, as acções da emissão ficam em baixo. */}
         <div className="st-thumb" data-studio="barra-polegar">
           {noAr ? (
-            <Button variant="live" size="lg" block icon="x" onClick={() => void sairDoAr()}>
+            <Button variant="live" size="lg" block onClick={() => void sairDoAr()}>
               {t('studio.directo.parar')}
             </Button>
           ) : (
-            <Button
-              variant="live"
-              size="lg"
-              block
-              icon="live"
-              busy={directo.fase === 'a-ligar'}
-              disabled={directo.fase === 'a-ligar' || destinosComChave.length === 0 || !temFonte || !directoSuportado()}
-              onClick={() => void irParaOAr()}
-            >
+            <Button variant="live" size="lg" block busy={directo.fase === 'a-ligar'} disabled={!podeIrParaOAr} onClick={() => void irParaOAr()}>
               {t('studio.directo.irParaOAr')}
             </Button>
           )}

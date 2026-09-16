@@ -20,6 +20,9 @@ export default {
     aoVivoDestinos_other: 'Live · {{count}} destinations',
     enc: 'enc. {{kbps}} kbps',
     relogio: 'Local time',
+    tempoNoAr: 'Time on air',
+    semChave: 'Paste a destination key to go live.',
+    emitirParaTodos: 'Go live everywhere',
   },
   acoes: {
     gravar: 'Record',
@@ -88,7 +91,7 @@ export default {
     intervalo: 'Back soon',
   },
   directo: {
-    titulo: 'Live destinations',
+    titulo: 'Simultaneous destinations',
     indisponivel: 'This browser cannot encode H.264, which is what live platforms accept. Live is not available here.',
     nota: 'The picture goes out as shown on stage. Rooms with end-to-end encryption cannot broadcast.',
     destino: 'Destination {{n}}',
@@ -118,6 +121,8 @@ export default {
       erro: 'Error',
     },
     tagDica: 'Platform read from the server address',
+    editar: 'Edit destination {{rotulo}}',
+    noArN: '{{n}} on air',
   },
   local: {
     titulo: 'Local recording',
@@ -301,5 +306,7 @@ export default {
       naoExiste: 'That room does not exist.',
       e2ee: 'End-to-end encrypted rooms cannot link to the studio.',
     },
+    semSala: 'no room',
+    explicacaoCurta: 'Guests, chat and questions.',
   },
 }

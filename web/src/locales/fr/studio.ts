@@ -20,6 +20,9 @@ export default {
     aoVivoDestinos_other: 'En direct · {{count}} destinations',
     enc: 'enc. {{kbps}} kbps',
     relogio: 'Heure locale',
+    tempoNoAr: "Temps à l'antenne",
+    semChave: "Colle la clé d'une destination pour diffuser.",
+    emitirParaTodos: 'Diffuser partout',
   },
   acoes: {
     gravar: 'Enregistrer',
@@ -88,7 +91,7 @@ export default {
     intervalo: 'On revient vite',
   },
   directo: {
-    titulo: 'Destinations en direct',
+    titulo: 'Destinations simultanées',
     indisponivel: "Ce navigateur n'encode pas le H.264, le format accepté par les plateformes. Le direct n'est pas disponible ici.",
     nota: "L'image part telle qu'elle est sur la scène. Les salles chiffrées de bout en bout ne peuvent pas diffuser.",
     destino: 'Destination {{n}}',
@@ -118,6 +121,8 @@ export default {
       erro: 'Erreur',
     },
     tagDica: "Plateforme lue dans l'adresse du serveur",
+    editar: 'Modifier la destination {{rotulo}}',
+    noArN: "{{n}} à l'antenne",
   },
   local: {
     titulo: 'Enregistrement local',
@@ -301,5 +306,7 @@ export default {
       naoExiste: "Cette salle n'existe pas.",
       e2ee: 'Les salles chiffrées de bout en bout ne peuvent pas se relier au studio.',
     },
+    semSala: 'sans salle',
+    explicacaoCurta: 'Invités, chat et questions.',
   },
 }
