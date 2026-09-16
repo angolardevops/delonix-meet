@@ -116,4 +116,11 @@ export default {
     novaExplica: 'Estas são as integrações que o servidor suporta. Escolhe uma para a configurar no cartão dela.',
     ocupado: 'ocupados pelas gravações da organização',
   },
+  pesquisa: {
+    placeholder: 'Procurar reuniões, gravações, pessoas, ou colar um código',
+    aProcurar: 'A procurar…',
+    meetings: 'Reuniões',
+    recordings: 'Gravações',
+    people: 'Pessoas',
+  },
 }

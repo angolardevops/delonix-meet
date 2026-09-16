@@ -116,4 +116,11 @@ export default {
     novaExplica: 'Voici les intégrations prises en charge par le serveur. Choisissez-en une pour la configurer dans sa carte.',
     ocupado: "utilisés par les enregistrements de l'organisation",
   },
+  pesquisa: {
+    placeholder: 'Chercher réunions, enregistrements, personnes, ou coller un code',
+    aProcurar: 'Recherche…',
+    meetings: 'Réunions',
+    recordings: 'Enregistrements',
+    people: 'Personnes',
+  },
 }

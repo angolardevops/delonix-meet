@@ -110,7 +110,12 @@ function DirectoryBody({ orgId, orgName, isAdmin, meId }: { orgId: string; orgNa
   const [tab, setTab] = useState<DirTab>('people')
   const [q, setQ] = useState('')
   const [branchFilter, setBranchFilter] = useState('')
-  const [selection, setSelection] = useState<Selection>(null)
+  // `#/directory?u=<id>` (pesquisa global) abre já o detalhe dessa pessoa.
+  const [selection, setSelection] = useState<Selection>(() => {
+    const i = location.hash.indexOf('?')
+    const u = i < 0 ? null : new URLSearchParams(location.hash.slice(i + 1)).get('u')
+    return u ? { kind: 'person', id: u } : null
+  })
   const [creatingGroup, setCreatingGroup] = useState(false)
 
   const branches = places.state.s === 'ready' ? places.state.d[0] : []

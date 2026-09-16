@@ -116,4 +116,11 @@ export default {
     novaExplica: 'These are the integrations the server supports. Pick one to set it up in its card.',
     ocupado: "used by the organisation's recordings",
   },
+  pesquisa: {
+    placeholder: 'Search meetings, recordings, people, or paste a code',
+    aProcurar: 'Searching…',
+    meetings: 'Meetings',
+    recordings: 'Recordings',
+    people: 'People',
+  },
 }
