@@ -1,7 +1,10 @@
 //! Gateway de SMS (ADR-0005) — fila, encaminhamento e as duas superfícies.
 //!
-//! - **Consola (BFF)**: `/api/orgs/{org_id}/sms/*`, sessão, só administrador da
-//!   org. Enviar SMS custa dinheiro — é superfície de fraude, como o dial-in.
+//! - **Consola (BFF)**: `/api/orgs/{org_id}/sms/*`, sessão. Gateways, rota e o
+//!   envio para um número escrito (`{to}`) são só do administrador da org:
+//!   enviar SMS custa dinheiro — é superfície de fraude, como o dial-in. O envio
+//!   a um CONTACTO (`{user_id}`) resolve o número no servidor e segue a política
+//!   da org (`/sms/policy`) e o consentimento da pessoa (ADR-0005 §Contactos).
 //! - **Agente USB**: `/api/sms/agent/*`, token `dlxg_` do gateway. O agente corre
 //!   na máquina onde o telefone está ligado e liga para fora; o servidor nunca
 //!   vê USB (imagem distroless, pod K8s).
