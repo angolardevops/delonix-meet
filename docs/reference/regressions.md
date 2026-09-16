@@ -1655,7 +1655,7 @@ portão existe para impedir, cometida ao escrevê-lo.
 
 **Portão.** `voice::tests` — `ivr_refuses_missing_short_or_burned_secret_with_503`, `ivr_rejects_wrong_or_absent_header_with_401`, `ivr_accepts_the_right_strong_secret`, `insecure_dev_keeps_the_dev_value_but_not_empty` (verificado a falhar com a guarda do segredo desligada); `scripts/check-repo-hygiene.sh` ponto 7 (verificado a falhar com o valor reposto no `01-config.yaml`). Não há teste contra servidor real nem contra um cluster: a camada de media (FreeSWITCH) nunca correu (ver `voice/README.md`).
 
-**Fora deste passo.** O mesmo `01-config.yaml` continua a versionar `PROVISIONING_SECRET`, `JWT_SECRET`, `TURN_SECRET` e a password do Postgres de stage — mesma classe, não tratada aqui. Na linha ADR-0004 (`delonix-meet-backend/backend-enterprise`), o `grpc.rs` e o `odoo.rs` testam só `voice_internal_secret.is_empty()`: ao juntar, têm de passar a respeitar `voice_secret_refusal`.
+**Fora deste passo.** O mesmo `01-config.yaml` continua a versionar `PROVISIONING_SECRET`, `JWT_SECRET`, `TURN_SECRET` e a password do Postgres de stage — mesma classe, não tratada aqui (tratada em R155, que também deixa de aceitar o valor de voz publicado com `DELONIX_ALLOW_INSECURE=1`). Na linha ADR-0004 (`delonix-meet-backend/backend-enterprise`), o `grpc.rs` e o `odoo.rs` testam só `voice_internal_secret.is_empty()`: ao juntar, têm de passar a respeitar `voice_secret_refusal`.
 
 **Ficheiros.** `server/src/{config,voice}.rs`, `deploy/k8s/{01-config,02-server}.yaml`, `deploy/ansible/roles/k8s_app/templates/app-config.yaml.j2`, `Makefile` (`voice-secret-k8s`), `scripts/{check-repo-hygiene.sh,leaked-secrets-accepted.txt}`, `docs/deployment.md`, `voice/README.md`.
 

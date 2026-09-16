@@ -49,7 +49,9 @@ uma versão nova**.
 **Os segredos são gerados uma vez** e persistidos em
 `deploy/ansible/.secrets/` (gitignored). Correr `make deploy` de novo reutiliza
 — não desloga ninguém. Para rodar um segredo, apaga a linha respectiva e
-volta a correr; trocar o `JWT_SECRET` desliga **todas** as sessões.
+volta a correr. Trocar o `JWT_SECRET` invalida os access tokens (≤ 15 min), mas as
+sessões com cookie de refresh renovam sozinhas; para forçar novo login de todos,
+`UPDATE refresh_tokens SET revoked = TRUE` (ver `docs/deployment.md` §6).
 
 ## Integração com o Odoo
 

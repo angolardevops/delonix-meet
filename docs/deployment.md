@@ -93,10 +93,10 @@ openssl rand -hex 24   # → password do Postgres
 
 | Variável | Descrição |
 |---|---|
-| `DATABASE_URL` | `postgres://delonix:<password>@localhost:5435/delonix_meet` |
-| `JWT_SECRET` | ≥ 32 bytes. **Trocá-la invalida todas as sessões.** |
+| `DATABASE_URL` | `postgres://delonix:<password>@localhost:5435/delonix_meet`. Uma password que já esteve publicada no repositório (`BURNED_DB_PASSWORDS`) impede o arranque em qualquer modo; a de dev (`delonix_dev`) só arranca com `DELONIX_ALLOW_INSECURE=1` (R155) |
+| `JWT_SECRET` | ≥ 32 bytes. Um valor publicado no repositório (`BURNED_JWT_SECRETS`) impede o arranque em qualquer modo (R155). **Rodá-lo** invalida access/room tokens (≤ 15 min); as sessões com cookie de refresh renovam sozinhas — ver [§6](#6-cenário-b--kubernetes) |
 | `TURN_HOST` | `turn.meet.example.com:3478` — host **alcançável pelos clientes** |
-| `TURN_SECRET` | ≥ 16 bytes, **idêntico** ao `--static-auth-secret` do coturn |
+| `TURN_SECRET` | ≥ 16 bytes, **idêntico** ao `--static-auth-secret` do coturn. Um valor publicado (`BURNED_TURN_SECRETS`) impede o arranque (R155) |
 
 ### Rede e serviço
 
@@ -114,13 +114,13 @@ openssl rand -hex 24   # → password do Postgres
 
 | Variável | Descrição |
 |---|---|
-| `PROVISIONING_SECRET` | Autoriza `POST /api/v1/admin/orgs`. Vazio = endpoint desligado |
+| `PROVISIONING_SECRET` | Autoriza `POST /api/v1/admin/orgs` (cabeçalho `X-Provisioning-Secret`). Vazio, com menos de 32 caracteres, de demonstração ou já publicado no repositório (`BURNED_PROVISIONING_SECRETS`) = a rota responde **503** com a razão e o arranque avisa; o resto do servidor corre. O publicado é recusado também com `DELONIX_ALLOW_INSECURE=1`. Gerar com `openssl rand -hex 32`; o mesmo valor vai para o Odoo (`nk_delonix_meet`). Em Kubernetes vem do Secret `delonix-secrets` (`make secrets-k8s`, R155) |
 | `PLATFORM_ADMIN_USER_IDS` | UUIDs (separados por vírgula) dos administradores da PLATAFORMA — os únicos que leem e alteram o armazenamento das gravações (`/api/v1/platform/storage*`). Vazio = ninguém (fail-closed). UUID e não email, porque o registo não verifica emails. Obter com `SELECT id FROM users WHERE email = '…'` depois de a conta existir. Um valor que não seja UUID impede o arranque |
 | `PLATFORM_ODOO_URL` / `PLATFORM_ODOO_DB` | Login com conta Odoo ([§7](#7-integração-odoo)). Vazias = desligado |
 | `WEBHOOK_ALLOW_HOSTS` | Hosts isentos da guarda anti-SSRF dos webhooks, por nome exacto. Necessário para um Odoo on-prem em rede privada |
 | `OLLAMA_URL` | LLM local para atas e legendas. Vazio = MoM por regras (fail-open) |
 | `OLLAMA_MODEL_SUMMARY` / `OLLAMA_MODEL_TRANSLATE` | modelos (ex. `qwen2.5:7b` / `qwen2.5:1.5b`) |
-| `VOICE_INTERNAL_SECRET` | Segredo da API interna de IVR (PSTN), cabeçalho `X-Voice-Secret`. Vazio, com menos de 32 caracteres, ou igual a um valor que já esteve no repositório (`BURNED_VOICE_SECRETS` em `server/src/config.rs`) = `/api/voice/ivr/*` responde **503** com a razão e o arranque avisa; o resto do servidor corre. Com `DELONIX_ALLOW_INSECURE=1` aceita-se qualquer valor não vazio. Gerar com `openssl rand -hex 32`. Em Kubernetes vem do Secret `delonix-voice` ([§6](#6-cenário-b--kubernetes)), nunca de `01-config.yaml` (R154) |
+| `VOICE_INTERNAL_SECRET` | Segredo da API interna de IVR (PSTN), cabeçalho `X-Voice-Secret`. Vazio, com menos de 32 caracteres, ou igual a um valor que já esteve no repositório (`BURNED_VOICE_SECRETS` em `server/src/config.rs`) = `/api/voice/ivr/*` responde **503** com a razão e o arranque avisa; o resto do servidor corre. Com `DELONIX_ALLOW_INSECURE=1` aceita-se qualquer valor não vazio, excepto o publicado (R155). Gerar com `openssl rand -hex 32`. Em Kubernetes vem do Secret `delonix-voice` ([§6](#6-cenário-b--kubernetes)), nunca de `01-config.yaml` (R154) |
 
 ---
 
@@ -231,6 +231,91 @@ make image-push                        # build versionado + load + pin da tag
 > (`git describe`) e fixa-as nos Deployments. Um `kubectl apply -f 02-server.yaml`
 > avulso repõe `:latest` — que pode estar obsoleto no nó — e reintroduz a versão
 > antiga em silêncio. A seguir a um apply manual, correr sempre `make pin`.
+
+**Segredos da aplicação (R155).** Nenhum manifesto do repositório tem valores de
+segredo. O Secret `delonix-secrets` (`JWT_SECRET`, `TURN_SECRET`,
+`PROVISIONING_SECRET`, `POSTGRES_PASSWORD`/`USER`/`DB` e `DATABASE_URL`) é criado
+**no cluster** por `make secrets-k8s` (`deploy/k8s-secrets.sh`), que o `make stage`
+e o `make prod` chamam antes do helm:
+
+- gera com `openssl rand` só as chaves que **faltam** e **nunca sobrescreve** uma que
+  exista — correr outra vez não desloga ninguém nem parte a base;
+- constrói o `DATABASE_URL` com o `POSTGRES_PASSWORD` do próprio Secret, e o `make`
+  passa **esse** valor ao helm do Postgres (`--set auth.password=` em stage,
+  `postgresql.password=` em prod) — as duas pontas ficam coerentes;
+- **falha** se encontrar um valor de `scripts/leaked-secrets-accepted.txt`, com os
+  comandos de rotação abaixo. O servidor recusaria arrancar de qualquer forma.
+
+`PG_HOST` escolhe o Service do `DATABASE_URL` (o `make prod` usa
+`delonix-postgres-postgresql-ha-pgpool`). O Ansible (`k8s_app`, `kind_host`)
+cria o mesmo Secret a partir de `deploy/ansible/.secrets/`. Quem aplica por
+kustomize (`kubectl apply -k deploy/k8s`) corre `make secrets-k8s` e
+`make voice-secret-k8s` **antes**.
+
+**Rotação obrigatória num cluster instalado com o `01-config.yaml` ou os
+helm-values antigos.** Tirar os valores dos ficheiros não os tira do cluster: o
+`kubectl apply` já não toca num Secret que saiu dos manifestos, e ele continua lá
+com os valores publicados. **Atenção ao `make prod` antigo:** corria o Ansible (que
+gera segredos próprios) e **a seguir** aplicava o `01-config.yaml`, que os
+substituía pelos publicados — um cluster de produção instalado assim está exposto.
+Verificar primeiro (não imprime valores; diz só quais estão queimados):
+
+```bash
+make secrets-k8s          # ✗ … tem valores PUBLICADOS no repositório: <chaves>
+```
+
+Depois, por segredo, só os que aparecerem:
+
+| Segredo | Comandos | Efeito |
+|---|---|---|
+| `JWT_SECRET` | `ROTATE=JWT_SECRET make secrets-k8s` · `kubectl -n delonix-meet rollout restart deploy/delonix-server` | Access tokens, room tokens e desafios MFA emitidos com o valor antigo — **incluindo os forjados** — deixam de valer já. Os refresh tokens são opacos na base e **não** dependem do JWT: quem tem sessão renova sozinho, sem novo login. Por isso rodar o JWT **não apaga o que um atacante tenha criado** com um token forjado — ver a auditoria abaixo. Para forçar novo login de todos: `UPDATE refresh_tokens SET revoked = TRUE WHERE NOT revoked;` |
+| `TURN_SECRET` | `ROTATE=TURN_SECRET make secrets-k8s` · `kubectl -n delonix-meet rollout restart deploy/delonix-server deploy/coturn` | Servidor e coturn **ao mesmo tempo** (o coturn lê-o do mesmo Secret). As credenciais TURN já emitidas (validade 1 h) deixam de autenticar: em K8s a media é relay-only, e uma chamada em curso perde a media quando a alocação tiver de ser renovada (minutos) até o cliente pedir credenciais novas. Fazer numa janela sem chamadas |
+| `PROVISIONING_SECRET` | `ROTATE=PROVISIONING_SECRET make secrets-k8s` · `kubectl -n delonix-meet rollout restart deploy/delonix-server` · valor novo no Odoo (`kubectl -n delonix-meet get secret delonix-secrets -o jsonpath='{.data.PROVISIONING_SECRET}' \| base64 -d`) | O Odoo deixa de provisionar até ter o valor novo (`401`). **As chaves `dlx_` já emitidas continuam válidas** — rever as que o provisionamento criou (consulta abaixo) e apagar as que não se reconheçam |
+| `POSTGRES_PASSWORD` + `DATABASE_URL` | bloco abaixo | Downtime curto: as ligações abertas continuam, as novas falham entre o `ALTER ROLE` e o fim do `rollout restart` |
+
+Os três primeiros juntos: `ROTATE="JWT_SECRET TURN_SECRET PROVISIONING_SECRET" make secrets-k8s`.
+
+Password do Postgres (stage, `bitnami/postgresql`; o utilizador `delonix` pode mudar
+a própria password, não é preciso o superutilizador):
+
+```bash
+NS=delonix-meet; POD=delonix-postgres-postgresql-0   # prod HA: delonix-postgres-postgresql-ha-postgresql-0
+OLD=$(kubectl -n $NS get secret delonix-secrets -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 -d)
+NEW=$(openssl rand -hex 24)
+printf "ALTER ROLE delonix PASSWORD '%s';\n" "$NEW" \
+  | kubectl -n $NS exec -i $POD -- env PGPASSWORD="$OLD" psql -U delonix -d delonix_meet -v ON_ERROR_STOP=1
+URL=$(kubectl -n $NS get secret delonix-secrets -o jsonpath='{.data.DATABASE_URL}' | base64 -d)
+kubectl -n $NS patch secret delonix-secrets --type=merge --patch-file=/dev/stdin <<JSON
+{"data":{"POSTGRES_PASSWORD":"$(printf %s "$NEW" | base64 -w0)",
+         "DATABASE_URL":"$(printf %s "${URL/:$OLD@/:$NEW@}" | base64 -w0)"}}
+JSON
+kubectl -n $NS rollout restart deploy/delonix-server   # e deploy/delonix-ai-worker, se existir
+make secrets-k8s                                        # tem de dizer «mantido»
+```
+
+O próximo `make stage`/`make prod` passa a password nova ao helm, e o Secret do
+chart fica coerente. **Prod com `postgresql-ha`:** o pgpool guarda a sua cópia da
+password — correr `make prod` logo a seguir ao `ALTER ROLE` (não validado contra
+um cluster HA). **Replicação (`repl_prod_pass`):** só esteve em uso onde o chart
+`bitnami/postgresql` com `architecture: replication` o aplicou (Ansible com
+`postgres_ha: false`); confirmar com `SELECT rolname FROM pg_roles WHERE
+rolreplication;` e, se o `repl_user` existir, `ALTER ROLE repl_user PASSWORD …` e
+`helm upgrade … --set auth.replicationPassword=<novo>`.
+
+Chaves de API emitidas pelo provisionamento (a rever depois de rodar o
+`PROVISIONING_SECRET`, e também depois do `JWT_SECRET` — com uma sessão forjada
+cria-se uma chave pela consola):
+
+```sql
+SELECT k.id, k.prefix, k.name, o.name AS org, u.email AS criada_por, k.created_at, k.last_used_at
+  FROM org_api_keys k JOIN organizations o ON o.id = k.org_id JOIN users u ON u.id = k.created_by
+ WHERE k.created_at >= '2026-07-10'
+ ORDER BY k.created_at;
+-- apagar uma que não se reconheça:  DELETE FROM org_api_keys WHERE id = '<id>';
+```
+
+Os valores queimados, com a data e a consequência de cada um, estão em
+`scripts/leaked-secrets-accepted.txt`; o `check-repo-hygiene.sh` impede-os de voltar.
 
 **Segredo da voz (R154).** O `VOICE_INTERNAL_SECRET` vive num Secret próprio,
 `delonix-voice`, que o `02-server.yaml` lê por `secretKeyRef` e que **não está em
@@ -345,6 +430,7 @@ outro, confirmar vídeo **e** áudio nos dois sentidos, partilhar ecrã, gravar.
 ### Checklist de segurança
 
 - [ ] `JWT_SECRET`/`TURN_SECRET`/`DATABASE_URL` fortes; `DELONIX_ALLOW_INSECURE` **ausente**
+- [ ] K8s: `make secrets-k8s` diz «mantido» e não «valores PUBLICADOS» (R155); nenhum Secret com valores num ficheiro versionado
 - [ ] `TURN_SECRET` do backend == `--static-auth-secret` do coturn
 - [ ] Se há dial-in PSTN: `VOICE_INTERNAL_SECRET` aleatório (≥32), fora do repositório, igual no FreeSWITCH; `POST /api/voice/ivr/validate` sem cabeçalho dá `401` e não `503` (R154)
 - [ ] `nginx -t` OK; HSTS/CSP/X-Frame-Options/nosniff/Referrer-Policy presentes
@@ -382,8 +468,9 @@ acompanhar `journalctl --user -u delonix-server -f` na primeira hora.
 | Migrações | Automáticas no arranque. Depois de uma migração nova, **rebuild antes do restart** |
 | Backup | `pg_dump "$DATABASE_URL" \| gzip > /var/backups/delonix-$(date +%F).sql.gz` + `RECORDINGS_DIR` |
 | Rollback | Guardar a build anterior (`target/release` + `dist/`); `git checkout <tag>` + `deploy.sh`. **As migrações são aditivas — reverter esquema é manual** |
-| Rotação de `JWT_SECRET` | Invalida **todas** as sessões (toda a gente re-login) |
+| Rotação de `JWT_SECRET` | Invalida access/room tokens (≤ 15 min); os refresh tokens continuam — forçar novo login com `UPDATE refresh_tokens SET revoked = TRUE`. K8s: [§6](#6-cenário-b--kubernetes) |
 | Rotação de `TURN_SECRET` | Tem de mudar no backend **e** no coturn ao mesmo tempo |
+| Rotação de `PROVISIONING_SECRET` / password do Postgres | [§6](#6-cenário-b--kubernetes) — a do Postgres tem downtime curto |
 
 ---
 

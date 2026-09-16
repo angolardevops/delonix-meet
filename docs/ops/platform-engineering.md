@@ -184,7 +184,7 @@ Passo-a-passo completo em [DEPLOYMENT.md](../../DEPLOYMENT.md). Resumo operacion
 | Ficheiro | Papel |
 |---|---|
 | [00-namespace.yaml](../../deploy/k8s/00-namespace.yaml) | namespace isolado |
-| [01-config.yaml](../../deploy/k8s/01-config.yaml) | ConfigMap + Secret (`TURN_HOST`, `FORCE_TURN_RELAY`, `DATABASE_URL`, `JWT_SECRET`…) |
+| [01-config.yaml](../../deploy/k8s/01-config.yaml) | ConfigMap (`TURN_HOST`, `FORCE_TURN_RELAY`, `REDIS_URL`…). Os Secrets **não** estão no repositório: `make secrets-k8s` / `make voice-secret-k8s` (R155, [deployment.md §6](../deployment.md#6-cenário-b--kubernetes)) |
 | [02-server.yaml](../../deploy/k8s/02-server.yaml) | Deployment server (3×) + Service + **Service dedicado `-ws`** (R3) + PDB + securityContext |
 | [03-web.yaml](../../deploy/k8s/03-web.yaml) | Deployment web (3×) + Service |
 | [04-ingress.yaml](../../deploy/k8s/04-ingress.yaml) | Ingress `/api /rtc` + Ingress `/ws` com `upstream-hash-by:$arg_room` (R3) |

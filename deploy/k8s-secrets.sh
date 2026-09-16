@@ -72,11 +72,17 @@ while IFS= read -r v; do
   done
   case "${cur[DATABASE_URL]:-}" in *":$v@"*) burned_in_use="$burned_in_use DATABASE_URL";; esac
 done < "$LEDGER"
-if [ -n "$burned_in_use" ]; then
+report_burned() {
   printf '\033[1;31m   ✗ %s/%s tem valores PUBLICADOS no repositório:%s\033[0m\n' "$NS" "$SECRET" "$burned_in_use" >&2
   say "O servidor recusa-os. Rodar ANTES de continuar (docs/deployment.md §6):" >&2
   say "  ROTATE=\"JWT_SECRET TURN_SECRET PROVISIONING_SECRET\" make secrets-k8s   # só os que aparecem acima" >&2
   say "  POSTGRES_PASSWORD / DATABASE_URL: ALTER ROLE + patch do Secret (§6)" >&2
+}
+# Sem ROTATE, um valor queimado pára tudo. Com ROTATE, roda-se o que foi pedido
+# e só no fim se falha pelo que sobrar — senão rodar o JWT dependia de a
+# password do Postgres (que precisa de ALTER ROLE) já estar resolvida.
+if [ -n "$burned_in_use" ] && [ -z "$ROTATE" ]; then
+  report_burned
   exit 1
 fi
 
@@ -128,4 +134,9 @@ else
   printf '{"data":{%s}}' "${body%,}" > "$tmp"
   "$KUBECTL" -n "$NS" patch secret "$SECRET" --type=merge --patch-file="$tmp" >/dev/null
   say "✓ $SECRET completado/rodado: $(printf '%s ' "${!new[@]}" | xargs -n1 | sort | xargs)"
+fi
+
+if [ -n "$burned_in_use" ]; then
+  report_burned
+  exit 1
 fi
