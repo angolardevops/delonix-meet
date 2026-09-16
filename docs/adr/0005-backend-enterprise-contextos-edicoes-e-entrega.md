@@ -174,7 +174,7 @@ Mantém-se o ADR-0004 §4. Acrescenta-se:
 
 | Alvo | Artefacto | Edições |
 |---|---|---|
-| Kubernetes | `deploy/k8s/` com overlays `overlays/saas` e `overlays/enterprise`: porta gRPC num `Service` ClusterIP sem ingress, `NetworkPolicy`, `PodDisruptionBudget`, `startupProbe` | saas, enterprise |
+| Kubernetes | base `deploy/k8s/` (inalterada) + overlays `deploy/k8s-overlays/{saas,enterprise}` — fora da base porque o Kustomize recusa um overlay dentro da própria base («cycle detected»): portas interna e gRPC num `Service` ClusterIP sem ingress, `NetworkPolicy`, mTLS por cert-manager, `startupProbe`; portão `scripts/check-k8s-render.sh` | saas, enterprise |
 | `delonix-runtime` (um host) | `deploy/delonix/meet-stack.yaml` (`kind: Stack`), aplicado com `delonix apply -f` | enterprise, personal |
 | PaaS NgolaCloud | `deploy/delonix/meet-application.yaml` (`kind: Application`), aplicado com `delonixctl apply -f` (CLAUDE.md §1: carga acima do PaaS, nunca Ansible) | saas |
 | Binário único | feature `embedded-ui` (a UI de `web/dist` embebida), ou `UI_DIR` em runtime | personal, enterprise pequeno |
