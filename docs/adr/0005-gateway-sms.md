@@ -148,6 +148,84 @@ SMS_AFRICELL_SMPP=...
 Ausente → operador `configured: false`, e o encaminhamento não o escolhe. A password
 nunca aparece em log (`Secret`) nem em resposta.
 
+## Contactos e reuniões (extensão de 2026-09-16, `delonix-meet-backend/sms-contactos`)
+
+Pedido: «enviar SMS a qualquer contacto directo, e convites/lembretes de reunião por SMS».
+Não muda nada do que está acima; acrescenta quem pode enviar a QUEM.
+
+### Onde vive o número, e porquê
+
+| Dado | Tabela | Porquê |
+|---|---|---|
+| Telefone (E.164) | `org_members.phone_e164` + `phone_source` | é o contacto da pessoa **nesta** org (o que o Odoo da empresa conhece); um membro arquivado deixa de ser alcançável no mesmo instante; a sincronização do directório é por org |
+| Consentimento | `users.sms_contact_opt_out`, `users.sms_meeting_opt_out` | é vontade de quem recebe, e não muda com a org que envia |
+| Quem pode enviar a contactos | `organizations.sms_send_policy` (`admins` por omissão \| `members`) | um SMS custa dinheiro: abrir a membros é decisão explícita |
+
+Validação do número = a do envio (`normalize_msisdn`): só `+244 9…`. Não se guarda um
+número que o encaminhamento não sabe usar — internacional entra quando houver rota.
+
+**Regra de sincronização com o Odoo** (provision `dlxo_` e pull do directório no login):
+`mobile_phone` primeiro, `work_phone` depois. `phone_source = 'manual'` (escrito pelo
+próprio ou por um admin) **nunca** é sobrescrito; `'odoo'` acompanha o directório, incluindo
+ser apagado quando o Odoo manda `false`/`""`. Campo **ausente** não mexe no número (um
+integrador antigo não apaga telefones). Número inutilizável (fora de Angola) não grava nem
+apaga, e sai em `phones_rejected` na resposta do provision. Voltar a seguir o directório é
+explícito: `PUT …/phone {"follow_directory": true}`.
+
+### Contrato HTTP (BFF, sessão)
+
+| Método e caminho | Quem | Resposta |
+|---|---|---|
+| `PUT /api/orgs/{org_id}/employees/{user_id}/phone` `{phone\|null}` ou `{follow_directory:true}` | o próprio ou admin | `200` `{user_id, phone, phone_source}`; `403` outro membro; `404` não-membro/arquivado/outra org; `422` número fora do plano |
+| `GET /api/orgs/{org_id}/employees` | membro | cada linha ganha `phone` (só para admin ou o próprio; senão `null`), `phone_source`, `can_sms` (tem número e não desligou contactos) |
+| `GET /api/orgs/{org_id}/sms/policy` | membro | `{send_policy}` |
+| `PUT /api/orgs/{org_id}/sms/policy` `{send_policy}` | admin | `200`; `403` membro; `400` valor desconhecido |
+| `GET/PUT /api/users/me/sms-preferences` `{contact_opt_out?, meeting_opt_out?}` | o próprio | `{contact_opt_out, meeting_opt_out, phones:[{org_id, org_name, phone, phone_source}]}` |
+| `POST /api/orgs/{org_id}/sms/messages` `{user_id, body, route?}` | membro se a política for `members`; admin sempre | `202` `Message` com `purpose:"contact"`, corpo prefixado `«<remetente> (Delonix Meet): »`. `403` sem permissão; `404` destinatário não é membro ACTIVO desta org; `409 sms.recipient_opted_out`; `422 sms.recipient_no_phone`; `400 sms.target_ambiguous` (`user_id` **e** `to`); `429` limite |
+| `POST /api/orgs/{org_id}/sms/messages` `{to, body, route?}` | **só admin**, com qualquer política | como antes; um membro leva `403` |
+| `GET /api/orgs/{org_id}/sms/messages[/{id}]` | membro | admin vê tudo; membro vê só as que **criou**, com `to` mascarado (`+244*******00`) |
+| `POST /api/meetings` `{…, sms_invite?, sms_reminder_min?}` | quem agenda | `403` antes de criar a reunião se quem agenda não puder enviar a contactos; `422 sms.reminder_recurring_unsupported` com `recurrence_freq`; resposta ganha `sms:{invite:{queued, skipped:[{user_id, reason}]}\|null, reminder_min}` |
+
+`Message` ganha `purpose` (`direct|contact|meeting_invite|meeting_reminder`),
+`recipient_user_id`, `meeting_id`, `created_by`.
+
+Os códigos (`sms.recipient_opted_out`, `sms.recipient_no_phone`, `sms.target_ambiguous`,
+`sms.recipient_not_member`, `sms.no_route`, `sms.too_many_recipients`, `sms.invalid_body`,
+`sms.no_org`, `sms.idempotency_key_in_use`) vão no **início** do texto de `error` — o
+envelope `{error:{code,…}}` nasce em `error.rs` com a v1 (`delonix-meet-api` §7), não aqui.
+
+### Limites
+
+- Por org: 30/min (como antes). Por utilizador na org: 5/min (`sms::USER_SENDS_PER_WINDOW`).
+- **Ordem:** permissão, destinatário, corpo e rota são verificados ANTES de gastar quota —
+  um pedido recusado já não consome o limite (antes, sim).
+- SMS de reunião não passam pelos limites por minuto: o tecto é 50 convidados por reunião
+  (`sms_notify::MAX_RECIPIENTS_PER_MEETING`); os restantes saem com `sms.too_many_recipients`.
+- Os limitadores são em memória **por pod**: com N pods o tecto efectivo é N×. Igual ao de org.
+
+### Reuniões
+
+- **Convite:** ao agendar, um SMS por convidado membro activo da org do anfitrião, com
+  telefone e sem `meeting_opt_out`. Idempotência `meeting-invite:{meeting}:{user}:{início}`.
+- **Lembrete:** `sms_reminder_min` (5–1440). Um passo do worker de SMS existente (a cada
+  20 s) reivindica as reuniões vencidas marcando `sms_reminder_done_at` com
+  `FOR UPDATE SKIP LOCKED` **antes** de enfileirar — no máximo uma vez entre pods. Volta a
+  ver a permissão do anfitrião; salta quem recusou o convite; não lembra depois da hora.
+  Remarcar pela v1 (`PATCH /api/v1/meetings/{id}` com `starts_at`) rearma o lembrete.
+- **Texto:** PT, letras sem equivalente GSM trocadas pela simples («Reuniao») para ficar em
+  GSM-7, título encurtado até caber num segmento, hora em WAT (UTC+1 fixo), link
+  `https://<domínio da org>/#/calendar` só quando a org tem domínio.
+- **Recorrência:** lembrete recusado (`422`) — as instâncias da série nascem sem ele.
+
+### O que esta extensão NÃO faz
+
+- **«STOP» por SMS** — não há SMS recebidos (MO). O opt-out é só no perfil.
+- **Recibos de entrega** — `sent` continua a ser «o SMSC/modem aceitou».
+- **SMS pela v1** (`dlx_`) nem a partir do `meetings_v1::create` — só a BFF.
+- **Lembrete em séries recorrentes**, e convite reenviado quando se acrescenta um convidado
+  pela v1.
+- **Quota/custo por SMS** e histórico por destinatário.
+
 ## O que fica de fora (e é dito)
 
 - **Recibos de entrega** (`deliver_sm`, `bind_transceiver` de longa duração). Sem eles,
