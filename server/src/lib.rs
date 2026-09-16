@@ -505,18 +505,33 @@ async fn metrics_handler(
     )
 }
 
+/// Estado público da instalação.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct StatusResp {
+    /// `ok` | `degraded` (base inacessível).
+    pub status: &'static str,
+    pub api: bool,
+    pub db: bool,
+    pub uptime_secs: u64,
+    pub version: &'static str,
+}
+
 /// Sem autenticação — não expõe dados, só disponibilidade.
-async fn status(
+#[utoipa::path(
+    get, path = "/api/status", tag = "platform",
+    responses((status = 200, body = StatusResp))
+)]
+pub(crate) async fn status(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-) -> axum::Json<serde_json::Value> {
+) -> axum::Json<StatusResp> {
     let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
-    axum::Json(serde_json::json!({
-        "status": if db_ok { "ok" } else { "degraded" },
-        "api": true,
-        "db": db_ok,
-        "uptime_secs": state.started.elapsed().as_secs(),
-        "version": env!("CARGO_PKG_VERSION"),
-    }))
+    axum::Json(StatusResp {
+        status: if db_ok { "ok" } else { "degraded" },
+        api: true,
+        db: db_ok,
+        uptime_secs: state.started.elapsed().as_secs(),
+        version: env!("CARGO_PKG_VERSION"),
+    })
 }
 
 /// Monta o estado partilhado a partir da configuração e de uma pool já

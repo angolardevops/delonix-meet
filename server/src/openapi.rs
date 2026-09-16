@@ -67,6 +67,10 @@ impl Modify for Security {
 }
 
 #[derive(OpenApi)]
+#[openapi(paths(crate::status), components(schemas(crate::StatusResp)))]
+struct PlatformDoc;
+
+#[derive(OpenApi)]
 #[openapi(
     info(
         title = "Delonix Meet — BFF",
@@ -111,6 +115,7 @@ pub fn v1() -> utoipa::openapi::OpenApi {
 /// Os módulos que já documentam as suas rotas da BFF. Um módulo novo entra aqui.
 fn bff_parts() -> Vec<utoipa::openapi::OpenApi> {
     vec![
+        PlatformDoc::openapi(),
         crate::users::ApiDoc::openapi(),
         crate::webhooks::ApiDoc::openapi(),
         crate::meetings::ApiDoc::openapi(),

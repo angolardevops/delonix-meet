@@ -1,2 +1,2 @@
 # Operações HTTP montadas sem OpenAPI (scripts/check-openapi.sh). Só desce.
-rotas_sem_openapi=87
+rotas_sem_openapi=0

@@ -45,5 +45,8 @@ async fn action_item_patch_does_not_leak_to_other_org(db: sqlx::PgPool) {
     let (st, leaked) = app.patch(&path, Some(&b.token), json!({})).await;
     assert!(!(200..300).contains(&st), "fuga: {st} {leaked}");
     let text = leaked.to_string();
-    assert!(!text.contains("confidencial") && !text.contains("segredo"), "{text}");
+    assert!(
+        !text.contains("confidencial") && !text.contains("segredo"),
+        "{text}"
+    );
 }
