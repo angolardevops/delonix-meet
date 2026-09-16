@@ -78,3 +78,6 @@ web/e2e/room.css
 
 # Stubs gRPC do ai-worker — gerados de server/proto por ai-worker/gen_protos.sh
 ai-worker/gen/
+
+# Estado de trabalho local dos testes (ai-worker/tests/it_grpc.sh)
+.cache/
