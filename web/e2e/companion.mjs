@@ -31,7 +31,7 @@ const ok = (c, n, d) => {
 }
 const abriuASala = (p) =>
   p
-    .waitForFunction(() => !/Pronto para entrar/i.test(document.body.innerText || ''), null, { timeout: 90000 })
+    .waitForFunction(() => !document.querySelector('.rm-prejoin'), null, { timeout: 90000 })
     .then(() => true)
     .catch(() => false)
 
@@ -47,14 +47,14 @@ await entrar(portatil, APP, conta)
 await portatil.getByRole('button', { name: /nova reuni/i }).first().click()
 await portatil.waitForFunction(() => /^#\/r\/[a-z-]+$/.test(location.hash), null, { timeout: 60000 })
 const codigo = (await portatil.evaluate(() => location.hash)).replace('#/r/', '')
-await portatil.getByRole('button', { name: /entrar agora/i }).first().click({ timeout: 60000 })
+await portatil.getByRole('button', { name: /entrar na sessão/i }).first().click({ timeout: 60000 })
 ok(await abriuASala(portatil), 'o portátil entrou na sala', `código ${codigo}`)
 
 // A primeira sessão NÃO é companion. Sem esta metade, um bug que pusesse toda a
 // gente em modo companion passaria despercebido — e deixaria a reunião inteira
 // muda.
 const audioDoPortatil = await portatil.evaluate(
-  () => [...document.querySelectorAll('.audio-sink audio')].every((a) => !a.muted),
+  () => [...document.querySelectorAll('.rm-audio-sink audio')].every((a) => !a.muted),
 )
 ok(audioDoPortatil !== false, 'a primeira sessão ouve — não é companion')
 ok(
@@ -66,12 +66,12 @@ ok(
 const telemovel = await (await ctx()).newPage()
 await entrar(telemovel, APP, conta)
 await telemovel.goto(`${APP}/#/r/${codigo}`, { waitUntil: 'domcontentloaded' })
-await telemovel.getByRole('button', { name: /entrar agora/i }).first().click({ timeout: 60000 })
+await telemovel.getByRole('button', { name: /entrar na sessão/i }).first().click({ timeout: 60000 })
 ok(await abriuASala(telemovel), 'o telemóvel entrou na MESMA sala, com a MESMA conta')
 await telemovel.waitForTimeout(4000)
 
 const estado = await telemovel.evaluate(() => {
-  const audios = [...document.querySelectorAll('.audio-sink audio')]
+  const audios = [...document.querySelectorAll('.rm-audio-sink audio')]
   return {
     aviso: /noutro dispositivo/i.test(document.body.innerText || ''),
     audios: audios.length,
@@ -92,7 +92,7 @@ ok(estado.todosMudos, 'e está TODO silenciado — o altifalante não realimenta
 // desligado. É a prova de que não é só o `<audio>` local — a track saiu mesmo.
 await portatil.waitForTimeout(2000)
 const comoOPortatilOVe = await portatil.evaluate(
-  () => document.querySelectorAll('.tile[data-peer="remoto"]').length,
+  () => document.querySelectorAll('.rm-tile[data-peer="remoto"]').length,
 )
 ok(comoOPortatilOVe === 1, 'o portátil vê o telemóvel na sala', `${comoOPortatilOVe} remotos`)
 

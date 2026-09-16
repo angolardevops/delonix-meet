@@ -2357,6 +2357,21 @@ div.rm-only-narrow,
   }
 }
 
+/* Ecrãs muito estreitos (320 px): seis botões de 44 px ainda cabem, e 44 é o
+   mínimo de um alvo de toque — nunca menos. */
+@media (max-width: 359px) {
+  .rm-controls__center,
+  .rm-controls__group {
+    gap: 5px;
+  }
+  .rm-controls .rm-ctrl,
+  .rm-controls .rm-ctrl--hangup {
+    flex: none;
+    width: 44px;
+    height: 44px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .rm-bars i,
   .rm-reaction,
@@ -2480,6 +2495,7 @@ div.rm-only-narrow,
     background: var(--raised);
   }
   .rm-ctrl--hangup {
+    flex: none;
     background: var(--danger);
   }
   .rm-pop {
