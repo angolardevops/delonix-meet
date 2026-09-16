@@ -17,6 +17,14 @@ import { contactBody, countSms, SMS_MAX_SEGMENTS } from './smsCount'
 /** Resultado de uma recusa que muda o que o diretório sabe da pessoa. */
 export type SmsRefusal = 'opted-out' | 'no-phone' | 'not-member'
 
+/** Chave de idempotência. `randomUUID` só existe em contexto seguro; fora dele
+ *  (HTTP num IP da LAN) a chave continua única o suficiente para um envio. */
+function newKey(): string {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `sms-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
 export default function SmsDialog({
   orgId,
   person,
@@ -38,7 +46,7 @@ export default function SmsDialog({
   const [sent, setSent] = useState<SmsMessage | null>(null)
   // Uma chave por INTENÇÃO de envio: um duplo clique ou uma repetição depois de
   // um corte de rede não manda dois SMS. Muda quando o texto muda.
-  const key = useRef(crypto.randomUUID())
+  const key = useRef(newKey())
 
   const count = useMemo(() => countSms(body.trim() ? contactBody(senderName, body) : ''), [body, senderName])
   const tooLong = count.segments > SMS_MAX_SEGMENTS
@@ -125,7 +133,7 @@ export default function SmsDialog({
               autoFocus
               onChange={(e) => {
                 setBody(e.target.value)
-                key.current = crypto.randomUUID()
+                key.current = newKey()
                 setError('')
               }}
               onKeyDown={(e) => {
