@@ -18,5 +18,6 @@ import consola from './consola'
 import diagrams from './diagrams'
 import editor from './editor'
 import player from './player'
+import nitidez from './nitidez'
 
-export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico, consola, diagrams, editor, player }
+export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico, consola, diagrams, editor, player, nitidez }

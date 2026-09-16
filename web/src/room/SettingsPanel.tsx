@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { ReactNode, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../ui/icons'
 import { Alert, Button, Field, Select, Toggle, cx } from '../ui/kit'
@@ -13,10 +13,13 @@ export function SettingsPanel({
   media,
   transcription,
   localVideo,
+  children,
 }: {
   media: LocalMedia
   transcription: Transcription
   localVideo: HTMLVideoElement | null
+  /** Secções extra no fim (nitidez e palco imersivo — `room/enhance`). */
+  children?: ReactNode
 }) {
   const { t } = useTranslation()
   const previewRef = useRef<HTMLVideoElement>(null)
@@ -178,6 +181,7 @@ export function SettingsPanel({
           onChange={(e) => transcription.setServerAsr(e.target.checked)}
         />
       </section>
+      {children}
     </div>
   )
 }
