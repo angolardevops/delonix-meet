@@ -15,7 +15,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-MAIN=server/src/main.rs
+MAIN=server/src/lib.rs  # o router vive na biblioteca (ADR-0004 §6 passo 1)
 ISO=web/e2e/isolamento.mjs
 [ -f "$MAIN" ] && [ -f "$ISO" ] || { echo "✗ ficheiros em falta"; exit 1; }
 

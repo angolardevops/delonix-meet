@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 exec python3 - <<'PYEOF'
 import re, os, sys, glob
 
-MAIN = 'server/src/main.rs'
+MAIN = 'server/src/lib.rs'  # o router vive na biblioteca (ADR-0004 §6 passo 1)
 PUBLICAS = 'scripts/rotas-publicas.txt'
 
 # Autenticação por EXTRACTOR na assinatura.

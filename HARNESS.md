@@ -33,7 +33,7 @@
 | tower-http | CORS + tracing (features `cors`, `trace`). Os cabeçalhos de segurança NÃO vêm daqui — são postos à mão em `main.rs` (`nosniff`, `DENY`, HSTS) e no nginx; e não há camada de compressão. |
 
 **Ficheiros principais:**
-- `main.rs` — bootstrap, router, estado global (`AppState`), cron jobs (retention sweep)
+- `lib.rs` — bootstrap (`run`), router, estado global (`AppState`), cron jobs (retention sweep). `main.rs` só chama `delonix_server::run()` (ADR-0004 §6 passo 1)
 - `config.rs` — lê env vars, **fail-closed sem segredos fortes** (panic no arranque)
 - `auth.rs` — registo (cria org+admin), login, refresh, logout, room tokens
 - `org.rs` — multi-tenant: organizations, branches, org_members, employee groups, salas presenciais, quotas, stats, SSO stubs
