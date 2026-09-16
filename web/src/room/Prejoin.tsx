@@ -128,7 +128,7 @@ export function Prejoin({
             <span className="dx-num dx-muted">{fontes > 0 ? t('room.preEntrada.fontesActivas', { count: fontes }) : t('room.preEntrada.semVideo')}</span>
           </div>
 
-          <div className={cx('rm-prejoin__stage', prejoin.second && 'has-second')}>
+          <div className={cx('rm-prejoin__stage', media.hasLocalVideo && 'has-second')}>
             <div className="rm-prejoin__preview" style={{ ['--tone' as string]: 'var(--accent-strong)' }}>
               {media.hasLocalVideo && (
                 <video
@@ -192,34 +192,10 @@ export function Prejoin({
                     </button>
                   </div>
                 )}
-                <div className="rm-prejoin__toggles">
-                  <button
-                    type="button"
-                    className={cx('rm-round', !media.micOn && 'is-off')}
-                    onClick={() => prejoin.toggle('mic')}
-                    disabled={!prejoin.previewStream?.getAudioTracks().length}
-                    aria-pressed={!media.micOn}
-                    aria-label={media.micOn ? t('room.controlos.desligarMicrofone') : t('room.controlos.ligarMicrofone')}
-                    title={media.micOn ? t('room.controlos.desligarMicrofone') : t('room.controlos.ligarMicrofone')}
-                  >
-                    <Icon name={media.micOn ? 'mic' : 'micOff'} />
-                  </button>
-                  <button
-                    type="button"
-                    className={cx('rm-round', !showVideo && 'is-off')}
-                    onClick={() => prejoin.toggle('cam')}
-                    disabled={!prejoin.previewStream?.getVideoTracks().length}
-                    aria-pressed={!media.camOn}
-                    aria-label={media.camOn ? t('room.controlos.desligarCamara') : t('room.controlos.ligarCamara')}
-                    title={media.camOn ? t('room.controlos.desligarCamara') : t('room.controlos.ligarCamara')}
-                  >
-                    <Icon name={showVideo ? 'video' : 'videoOff'} />
-                  </button>
-                </div>
               </div>
             </div>
 
-            {prejoin.second && (
+            {prejoin.second ? (
               <div className="rm-prejoin__preview rm-prejoin__preview--second">
                 <video ref={prejoin.attachSecond} autoPlay playsInline muted className="rm-prejoin__video is-plain" />
                 <div className="rm-prejoin__tags">
@@ -231,7 +207,54 @@ export function Prejoin({
                   <span className="rm-flag rm-flag--meta">{t('room.preEntrada.entraComoApresentacao')}</span>
                 </div>
               </div>
+            ) : (
+              media.hasLocalVideo && (
+                // O lugar da fonte 2 existe mesmo vazio: diz o que se pode pôr lá e porque não está.
+                <div className="rm-prejoin__preview rm-prejoin__preview--empty">
+                  <div className="rm-prejoin__tags">
+                    <span className="rm-flag">{t('room.preEntrada.fonte2')}</span>
+                  </div>
+                  <div className="rm-prejoin__placeholder">
+                    <Icon name="screen" size={22} />
+                    <span>
+                      {info && info.topology !== 'sfu'
+                        ? t('room.preEntrada.fonte2SoSfu')
+                        : devices.cams.length > 1
+                          ? t('room.preEntrada.fonte2Escolher')
+                          : t('room.preEntrada.fonte2Ligar')}
+                    </span>
+                  </div>
+                </div>
+              )
             )}
+          </div>
+
+          {/* Antes de entrar só há microfone e câmara — a barra da sala nasce na sala. */}
+          <div className="rm-prejoin__controls">
+            <div className="rm-controls__group">
+              <button
+                type="button"
+                className={cx('rm-ctrl', !media.micOn && 'is-off')}
+                onClick={() => prejoin.toggle('mic')}
+                disabled={!prejoin.previewStream?.getAudioTracks().length}
+                aria-pressed={!media.micOn}
+                aria-label={media.micOn ? t('room.controlos.desligarMicrofone') : t('room.controlos.ligarMicrofone')}
+                title={media.micOn ? t('room.controlos.desligarMicrofone') : t('room.controlos.ligarMicrofone')}
+              >
+                <Icon name={media.micOn ? 'mic' : 'micOff'} />
+              </button>
+              <button
+                type="button"
+                className={cx('rm-ctrl', !showVideo && 'is-off')}
+                onClick={() => prejoin.toggle('cam')}
+                disabled={!prejoin.previewStream?.getVideoTracks().length}
+                aria-pressed={!media.camOn}
+                aria-label={media.camOn ? t('room.controlos.desligarCamara') : t('room.controlos.ligarCamara')}
+                title={media.camOn ? t('room.controlos.desligarCamara') : t('room.controlos.ligarCamara')}
+              >
+                <Icon name={showVideo ? 'video' : 'videoOff'} />
+              </button>
+            </div>
           </div>
 
           {picker && media.bgMode === 'image' && (
@@ -382,37 +405,37 @@ export function Prejoin({
             <h3 id="rm-pj-out" className="rm-prejoin__label">
               {t('room.preEntrada.saidaAudio')}
             </h3>
-            <div role="radiogroup" aria-labelledby="rm-pj-out" className="rm-prejoin__list">
-              <DeviceOption
-                selected={media.speakerId === ''}
-                label={t('room.preEntrada.predefinidoSistema')}
-                onSelect={() => media.setSpeakerId('')}
-              />
-              {devices.speakers
-                .filter((d) => d.deviceId && d.deviceId !== 'default')
-                .map((d, i) => (
-                  <DeviceOption
-                    key={d.deviceId}
-                    selected={d.deviceId === media.speakerId}
-                    label={d.label || t('room.preEntrada.altifalanteN', { n: i + 1 })}
-                    onSelect={() => media.setSpeakerId(d.deviceId)}
-                  />
-                ))}
+            <div className="rm-devrow">
+              <select
+                className="rm-devrow__select"
+                aria-labelledby="rm-pj-out"
+                value={media.speakerId}
+                onChange={(e) => media.setSpeakerId(e.target.value)}
+              >
+                <option value="">{t('room.preEntrada.predefinidoSistema')}</option>
+                {devices.speakers
+                  .filter((d) => d.deviceId && d.deviceId !== 'default')
+                  .map((d, i) => (
+                    <option key={d.deviceId} value={d.deviceId}>
+                      {d.label || t('room.preEntrada.altifalanteN', { n: i + 1 })}
+                    </option>
+                  ))}
+              </select>
+              <button type="button" className="rm-devrow__test" onClick={media.testSpeaker}>
+                {t('room.preEntrada.testar')}
+              </button>
             </div>
             <VolumeSlider media={media} id="rm-pj-vol" />
-            <Button size="sm" variant="outline" icon="volume" onClick={media.testSpeaker}>
-              {t('room.preEntrada.testarSom')}
-            </Button>
           </section>
 
           <div className="rm-prejoin__cta">
-            <Button variant="primary" size="lg" block icon="video" onClick={() => onJoin(false)}>
+            <Button variant="primary" size="lg" block onClick={() => onJoin(false)}>
               {t('room.preEntrada.entrar')}
             </Button>
             {media.hasLocalVideo && (
-              <Button variant="ghost" size="sm" block icon="mic" onClick={() => onJoin(true)}>
-                {t('room.preEntrada.entrarSoAudio')}
-              </Button>
+              <button type="button" className="rm-prejoin__alt" onClick={() => onJoin(true)}>
+                {t('room.preEntrada.entrarApenasAudio')}
+              </button>
             )}
           </div>
         </aside>
@@ -436,6 +459,7 @@ export function VolumeSlider({ media, id }: { media: LocalMedia; id: string }) {
         max={100}
         step={1}
         value={media.outputVolume}
+        style={{ ['--v' as string]: `${media.outputVolume}%` }}
         aria-valuetext={t('room.preEntrada.volumeValor', { n: media.outputVolume })}
         title={t('room.preEntrada.volume')}
         onChange={(e) => media.setOutputVolume(Number(e.target.value))}

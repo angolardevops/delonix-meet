@@ -22,7 +22,7 @@ function useGridSize(areaRef: RefObject<HTMLDivElement | null>, count: number, a
   useEffect(() => {
     const el = areaRef.current
     if (!el || !active) return
-    const GAP = 8
+    const GAP = 10
     const compute = () => {
       const w = el.clientWidth
       const h = el.clientHeight

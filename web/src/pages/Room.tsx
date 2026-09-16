@@ -239,8 +239,6 @@ export default function Room({
           secOpen={secOpen}
           secCode={session.secCode}
           onToggleSec={() => setSecOpen((v) => !v)}
-          isInstant={session.isInstant}
-          isTraining={session.isTraining}
           waitingCount={session.canAdmit ? participants.waitingQueue.length : 0}
           onOpenPeople={() => chrome.togglePanel('people')}
           total={peers.length + 1}
@@ -253,6 +251,7 @@ export default function Room({
           studioAvailable={isHost && multicam.supported}
           studioOpen={chrome.panel === 'multicam'}
           onStudio={openMulticam}
+          presenterLabel={presenterLabel}
           board={
             whiteboard.open
               ? {
