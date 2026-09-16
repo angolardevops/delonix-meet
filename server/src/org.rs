@@ -437,6 +437,30 @@ pub async fn add_employee(
         .bind(&email)
         .fetch_optional(&state.db)
         .await?;
+    // Uma conta que já pertença a OUTRA organização não é reclamada por email —
+    // a mesma regra `ForeignOrg` de `meetings_v1::resolve_org_user` e da R25.
+    // O domínio da org é a primeira barreira, mas não a única que interessa:
+    // uma org LEGADA com `email_domain` vazio salta a verificação acima, e sem
+    // isto o seu admin puxava qualquer conta existente (de qualquer domínio)
+    // para dentro da org, como admin, tornando-se colega dela em `room_access`
+    // — provado ao vivo a 2026-09-16. Re-adicionar alguém que já é membro DESTA
+    // org continua a funcionar (mudar papel/filial): a guarda é só o outro org.
+    if let Some((id,)) = existing {
+        let noutra_org: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM org_members
+                           WHERE user_id = $1 AND org_id <> $2 AND archived_at IS NULL)",
+        )
+        .bind(id)
+        .bind(org_id)
+        .fetch_one(&state.db)
+        .await?;
+        if noutra_org {
+            return Err(ApiError::Conflict(format!(
+                "a conta {email} já pertence a outra organização; \
+                 a entrada numa segunda organização tem de ser feita pelo dono da conta"
+            )));
+        }
+    }
     let user_id = match existing {
         Some((id,)) => id,
         None => {
