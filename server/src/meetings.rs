@@ -277,21 +277,23 @@ pub async fn quarantine_sweep(db: &sqlx::PgPool) -> Result<u64, ApiError> {
 /// A mesma marcação, limitada ao que `quarantine_analytics` lê: membros da
 /// organização e reuniões começadas nos últimos `days` dias. Deixa a
 /// analítica exacta sem esperar pela tarefa de fundo, a um custo que depende
-/// da organização e não da base inteira (4-13 ms na org de 501 membros).
+/// da organização e não da base inteira (5-26 ms nas orgs maiores da base
+/// semeada).
 async fn quarantine_sweep_org(db: &sqlx::PgPool, org_id: Uuid, days: i32) -> Result<u64, ApiError> {
-    let res = sqlx::query(
+    let in_org = crate::org::quarantine_subject_in_org_sql("$1", "i.user_id");
+    let res = sqlx::query(&format!(
         "INSERT INTO meet_quarantine (user_id, meeting_id)
-         SELECT i.user_id, i.meeting_id FROM org_members om
-         JOIN meeting_invitees i ON i.user_id = om.user_id AND i.status = 'pending'
+         SELECT i.user_id, i.meeting_id FROM meeting_invitees i
          JOIN meetings m ON m.id = i.meeting_id
-         WHERE om.org_id = $1
+         WHERE i.status = 'pending'
            AND m.starts_at >= now() - make_interval(days => $2)
            AND m.starts_at < now()
+           AND {in_org}
            AND NOT EXISTS (
                  SELECT 1 FROM meet_quarantine q
                  WHERE q.user_id = i.user_id AND q.meeting_id = i.meeting_id)
-         ON CONFLICT DO NOTHING",
-    )
+         ON CONFLICT DO NOTHING"
+    ))
     .bind(org_id)
     .bind(days)
     .execute(db)
@@ -1248,7 +1250,6 @@ pub async fn quarantine_analytics(
     axum::extract::Query(q): axum::extract::Query<AnalyticsQuery>,
 ) -> Result<Json<Vec<QuarantineRow>>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-    let admin_orgs: Vec<Uuid> = vec![org_id];
     let days: i32 = match q.period.as_str() {
         "week" => 7,
         "month" => 30,
@@ -1258,21 +1259,20 @@ pub async fn quarantine_analytics(
     };
     // Depois da autorização: quem não é admin da org não põe a base a escrever.
     quarantine_sweep_org(&state.db, org_id, days).await?;
-    let rows: Vec<QuarantineRow> = sqlx::query_as(
+    let in_org = crate::org::quarantine_subject_in_org_sql("$2", "u.id");
+    let rows: Vec<QuarantineRow> = sqlx::query_as(&format!(
         "SELECT u.id AS user_id, u.username, COUNT(*) AS count
          FROM meet_quarantine mq
          JOIN users u ON u.id = mq.user_id
          JOIN meetings m ON m.id = mq.meeting_id
          WHERE m.starts_at >= now() - make_interval(days => $1::int)
-           AND EXISTS (
-                 SELECT 1 FROM org_members om
-                 WHERE om.org_id = ANY($2) AND om.user_id = u.id)
+           AND {in_org}
          GROUP BY u.id, u.username
          ORDER BY count DESC, u.username
-         LIMIT 100",
-    )
+         LIMIT 100"
+    ))
     .bind(days)
-    .bind(&admin_orgs)
+    .bind(org_id)
     .fetch_all(&state.db)
     .await?;
     Ok(Json(rows))
