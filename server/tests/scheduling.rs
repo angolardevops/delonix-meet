@@ -126,6 +126,70 @@ async fn list_meetings_for_owner_and_invitee(db: sqlx::PgPool) {
     assert_eq!(list, json!([]));
 }
 
+/// A lista junta as reuniões de que se é dono com aquelas para que se foi
+/// convidado, por `starts_at`. Um dono que também está em `meeting_invitees`
+/// (a API filtra-o ao criar, mas a base não o impede) aparece UMA vez, como
+/// `owner` — nunca com o estado do convite.
+#[sqlx::test(migrations = "./migrations")]
+async fn list_meetings_merges_owned_and_invited_without_duplicates(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let c = app.add_member(&a, "carla", "member").await;
+    let d = app.add_member(&a, "dario", "member").await;
+    let mut ids_by_title = std::collections::HashMap::new();
+    for (owner, title, hours, invitees) in [
+        (&a, "da-alfa", 3, vec![c.user_id.as_str()]),
+        (&c, "da-carla", 1, vec![a.user_id.as_str()]),
+        (&d, "do-dario", 2, vec![]),
+    ] {
+        let (st, m) = app
+            .post(
+                "/api/meetings",
+                Some(&owner.token),
+                json!({"title": title, "starts_at": in_hours(hours), "invitee_ids": invitees}),
+            )
+            .await;
+        assert_eq!(st, 200, "{m}");
+        ids_by_title.insert(title, m["id"].as_str().unwrap().to_string());
+    }
+    let own = &ids_by_title["da-alfa"];
+    let theirs = &ids_by_title["da-carla"];
+    sqlx::query(
+        "INSERT INTO meeting_invitees (meeting_id, user_id, status) VALUES ($1::uuid, $2::uuid, 'declined')",
+    )
+    .bind(own)
+    .bind(&a.user_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE meeting_invitees SET status = 'accepted' WHERE meeting_id = $1::uuid AND user_id = $2::uuid",
+    )
+    .bind(own)
+    .bind(&c.user_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    let (st, list) = app.get("/api/meetings", Some(&a.token)).await;
+    assert_eq!(st, 200, "{list}");
+    assert_eq!(ids(&list), vec![theirs.clone(), own.clone()]);
+    assert_eq!(list[0]["is_owner"], false);
+    assert_eq!(list[0]["my_status"], "pending");
+    assert_eq!(list[0]["owner_name"], "carla-alfa.test");
+    assert_eq!(list[1]["is_owner"], true);
+    assert_eq!(list[1]["my_status"], "owner");
+
+    let (_, list) = app.get("/api/meetings", Some(&c.token)).await;
+    assert_eq!(ids(&list), vec![theirs.clone(), own.clone()]);
+    assert_eq!(list[0]["my_status"], "owner");
+    assert_eq!(list[1]["my_status"], "accepted");
+
+    // Só a de que é dono: não foi convidado para nenhuma.
+    let (_, list) = app.get("/api/meetings", Some(&d.token)).await;
+    assert_eq!(ids(&list), vec![ids_by_title["do-dario"].clone()]);
+}
+
 /// DÍVIDA: `meetings::generate_instances` tem um erro de um em
 /// `recurrence_count`. Com `count = 3` gera o pai + TRÊS filhas (4 ocorrências):
 /// o ramo `occurs.len() >= max - 1` só dispara depois de já ter empurrado
