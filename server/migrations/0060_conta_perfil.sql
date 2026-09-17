@@ -1,7 +1,6 @@
 -- «A minha conta» (Navegavel3, DelonixProfile + DelonixTour) — frente B.
 --
--- NUMERAÇÃO: número de trabalho da frente B (backend-v3-comum.md); renumera-se
--- para o próximo livre na integração.
+-- NUMERAÇÃO: 0070 na frente B (número de trabalho), 0060 na integração.
 
 -- 1. Perfil. `username` continua a ser o identificador único que o resto do
 --    produto já usa; `display_name` é o nome que aparece na sala e nas

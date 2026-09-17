@@ -30,13 +30,13 @@ Medido a 2026-09-17 contra `origin/seg/ssrf-saida` (`2f830bc`) e `notas-ui-templ
 
 | Tabela (migração) | O quê |
 |---|---|
-| `telephony_trunks` (0065) | tronco SIP por org: nome, sigla, âmbito, host/porta, transporte, SRTP, registo, utilizador, password **cifrada** (`secret_box`, aad `telephony_trunks.password:<id>`), prefixos, canais máximos, **posição** (ordem de encaminhamento), activo |
-| `telephony_trunk_prices` (0065) | preço/minuto **com histórico** (append-only, `valid_from`, AOA/USD em décimas-milésimas) |
-| `telephony_exchange_rates` (0065) | Kz por USD com histórico |
-| `telephony_dial_plans` + `telephony_dial_rules` (0066) | plano ordenado, com `CHECK` de emergência na base |
-| `telephony_sip_settings` (0067) | domínio, SBC, transporte, SRTP, codecs, conta SIP cifrada |
-| `telephony_call_records` + `telephony_outbound_calls` (0068) | CDRs ingeridos com custo congelado; chamadas de saída pedidas pela plataforma |
-| `sms_device.battery_percent/balance_*` (0069) | bateria e saldo **só quando o agente os reporta** |
+| `telephony_trunks` (0064) | tronco SIP por org: nome, sigla, âmbito, host/porta, transporte, SRTP, registo, utilizador, password **cifrada** (`secret_box`, aad `telephony_trunks.password:<id>`), prefixos, canais máximos, **posição** (ordem de encaminhamento), activo |
+| `telephony_trunk_prices` (0064) | preço/minuto **com histórico** (append-only, `valid_from`, AOA/USD em décimas-milésimas) |
+| `telephony_exchange_rates` (0064) | Kz por USD com histórico |
+| `telephony_dial_plans` + `telephony_dial_rules` (0065) | plano ordenado, com `CHECK` de emergência na base |
+| `telephony_sip_settings` (0066) | domínio, SBC, transporte, SRTP, codecs, conta SIP cifrada |
+| `telephony_call_records` + `telephony_outbound_calls` (0067) | CDRs ingeridos com custo congelado; chamadas de saída pedidas pela plataforma |
+| `sms_device.battery_percent/balance_*` (0068) | bateria e saldo **só quando o agente os reporta** |
 
 Unitel, Africell, Movicel e «internacional» não aparecem em nenhum `match`: são linhas.
 A tabela `voice_cdr` herdada fica (o IVR continua a escrevê-la e `/voice/billing` lê-a); o

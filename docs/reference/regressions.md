@@ -1990,11 +1990,11 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Regra.** As opções vivem na reunião e passam à sala quando ela nasce (`start` da BFF; criação na v1, que já devolve o link) e nos `PATCH`. Forma validada UMA vez, em `domain::conferencing::session_options` (`400 meeting.invalid_format`, `400 meeting.invalid_record_quality`), chamada pela BFF e pela v1; a alteração é `meetings::patch_session_options` para os dois `PATCH` (ADR-0004 §5, regra 8). `auto_record` numa sala E2EE é `422 meeting.auto_record_e2ee` — recusado, não aceite e ignorado. O `PATCH /api/meetings/{meeting_id}` só aceita as opções e recusa campos desconhecidos. `external_source` é DERIVADO de `meeting_external_refs` (prefixo antes de `:` com forma de identificador, `api` sem prefixo, `null` sem referência) — sem coluna nova, e a referência inteira não sai pela BFF. A gravação automática arranca na entrada do anfitrião numa sala SFU, nunca em E2EE e só se a sala ainda não tiver gravação. `record_quality` é cumprida pelo gravador: tela da grelha, redução de um só orador acima da qualidade (nunca ampliação) e `audio` sem vídeo; salas criadas fora de reunião agendada (`record_quality` NULL) compõem como sempre.
 
-**Adaptações nesta linha.** A 0046 da UI passa a 0055. O «só orador» mede a altura pelo cabeçalho IVF (`ivf_dims`) em vez do `media_probe`, que esta linha não tem. O estado `processing` e o progresso da composição da UI NÃO foram portados.
+**Adaptações nesta linha.** A 0046 da UI passa a 0069 (a 0055 é da frente A). O «só orador» mede a altura pelo cabeçalho IVF (`ivf_dims`) em vez do `media_probe`, que esta linha não tem. O estado `processing` e o progresso da composição da UI NÃO foram portados.
 
 **Portão.** `server/tests/meeting_session_options.rs` contra Postgres real (7): omissões e opções nas duas superfícies com a mesma resposta, códigos de recusa iguais, lista/GET, `tentative`, sala criada com as opções e convidado na espera (e o controlo sem ela), `PATCH` das duas superfícies com a sala a acompanhar, isolamento (`404`), e a entrada do anfitrião pelo `/ws` a arrancar o gravador (controlos: sem `auto_record`, E2EE, sala já gravada). Mutações feitas: sem o gatilho em `signaling`, sem passar as opções à sala no `start` — os testes falham. Unitários da grelha e da redução em `recorder`.
 
-**Ficheiros.** `server/migrations/0055_meeting_session_options.sql`, `server/crates/delonix-meet-domain/src/conferencing/session_options.rs`, `server/src/{meetings,meetings_v1,rooms,recorder,signaling,lib}.rs`, `server/tests/meeting_session_options.rs`.
+**Ficheiros.** `server/migrations/0069_meeting_session_options.sql`, `server/crates/delonix-meet-domain/src/conferencing/session_options.rs`, `server/src/{meetings,meetings_v1,rooms,recorder,signaling,lib}.rs`, `server/tests/meeting_session_options.rs`.
 
 ### R189 — Um merge com dois blocos de conflito foi empurrado com o segundo por resolver
 
@@ -2012,7 +2012,7 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Prova.** `dial_plan::tests::emergency_*`, `tests/telephony.rs::dial_plan_first_match_emergency_invariants_and_test` (inclui o `UPDATE` directo recusado pela base), e contra o FreeSWITCH real (`web/e2e/telefonia-freeswitch.mjs`): com o tronco a 1/1 canais a chamada normal é recusada e a de emergência passa.
 
-**Ficheiros.** `server/crates/delonix-meet-domain/src/telephony/dial_plan.rs`, `server/src/telephony_fs_xml.rs`, `server/src/telephony_cdr.rs`, `server/migrations/0066_telephony_dial_plan.sql`, `0068_telephony_call_records.sql`.
+**Ficheiros.** `server/crates/delonix-meet-domain/src/telephony/dial_plan.rs`, `server/src/telephony_fs_xml.rs`, `server/src/telephony_cdr.rs`, `server/migrations/0065_telephony_dial_plan.sql`, `0067_telephony_call_records.sql`.
 
 ### R211 — Um CDR reenviado cobrava a chamada duas vezes
 
@@ -2022,7 +2022,7 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Prova.** `tests/telephony.rs::cdr_ingestion_idempotent_priced_at_time_of_call_listed_and_summed`; contra o FreeSWITCH real, o mesmo ficheiro do `log-dir` reenviado dá `200 duplicate` e a lista não cresce.
 
-**Ficheiros.** `server/src/telephony_cdr.rs`, `server/migrations/0068_telephony_call_records.sql`.
+**Ficheiros.** `server/src/telephony_cdr.rs`, `server/migrations/0067_telephony_call_records.sql`.
 
 ### R212 — O custo de uma chamada mudava quando se mudava o preço
 
@@ -2042,7 +2042,7 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Prova.** `tests/telephony.rs::trunks_crud_order_prices_secrets_and_isolation` (host `10.0.0.5` recusado); `web/e2e/telefonia-freeswitch.mjs` (domínio próprio por org, a chamada do PBX sai pelos troncos certos).
 
-**Ficheiros.** `server/src/telephony_trunks.rs`, `server/src/telephony_sip.rs`, `server/migrations/0067_telephony_sip_settings.sql`.
+**Ficheiros.** `server/src/telephony_trunks.rs`, `server/src/telephony_sip.rs`, `server/migrations/0066_telephony_sip_settings.sql`.
 
 ### R214 — Credenciais SIP e de operadora legíveis sem reautenticação
 

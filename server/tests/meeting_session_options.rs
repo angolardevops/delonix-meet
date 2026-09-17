@@ -378,7 +378,7 @@ async fn tentative_rsvp_needs_no_reason_and_is_listed(db: sqlx::PgPool) {
         .bind(&c.user_id)
         .execute(&app.db)
         .await;
-    assert!(r.is_err(), "CHECK da 0055");
+    assert!(r.is_err(), "CHECK da 0069");
 }
 
 // ---------------------------------------------------------------------------
