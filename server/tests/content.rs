@@ -245,19 +245,17 @@ async fn room_chat_invite_qos_timings_access(db: sqlx::PgPool) {
                         "turn_relay": true, "limited_by": "cpu", "candidate_pair": "relay/srflx"});
     let (st, _) = app.post(&qos, Some(&b.token), sample.clone()).await;
     assert_eq!(st, 403);
-    let (st, body) = app.post(&qos, Some(&c.token), sample).await;
-    assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    let (st, _) = app.post(&qos, Some(&c.token), sample).await;
+    assert_eq!(st, 204);
     let timings = format!("/api/rooms/{code}/join-timings");
     let (st, _) = app
         .post(&timings, Some(&b.token), json!({"join_ms": 1}))
         .await;
     assert_eq!(st, 403);
-    let (st, body) = app
+    let (st, _) = app
         .post(&timings, Some(&a.token), json!({"join_ms": 900_000}))
         .await;
-    assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    assert_eq!(st, 204);
     let join_ms: Option<i32> = sqlx::query_scalar("SELECT join_ms FROM call_timings LIMIT 1")
         .fetch_one(&app.db)
         .await
@@ -310,8 +308,12 @@ async fn recordings_library_and_room_list(db: sqlx::PgPool) {
 
     // Lista por sala: só participantes (o dono que nunca entrou também não).
     let path = format!("/api/rooms/{code}/recordings");
-    let (st, _) = app.get(&path, Some(&a.token)).await;
-    assert_eq!(st, 401);
+    let (st, body) = app.get(&path, Some(&a.token)).await;
+    assert_eq!(
+        st, 403,
+        "não participou: falta de permissão, não sessão (R153)"
+    );
+    assert_eq!(body["code"], "room.not_participant");
     app.post(
         &format!("/api/rooms/{code}/join"),
         Some(&a.token),
@@ -324,7 +326,7 @@ async fn recordings_library_and_room_list(db: sqlx::PgPool) {
     let (st, body) = app.get(&path, Some(&b.token)).await;
     assert_denied("lista de gravações da sala da A", st, &body, &rec);
 
-    // Upload: corpo vazio 400; não-participante 401. (O caminho feliz não se
+    // Upload: corpo vazio 400; não-participante 403. (O caminho feliz não se
     // exercita aqui: escreveria em `./recordings` — ver DÍVIDA no relatório.)
     let r = app
         .http
@@ -343,7 +345,7 @@ async fn recordings_library_and_room_list(db: sqlx::PgPool) {
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status(), 401);
+    assert_eq!(r.status(), 403);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -375,14 +377,16 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
     assert_eq!(st, 404);
     let (st, _) = app.get(&format!("{content}?dl=1"), Some(&d.token)).await;
     assert_eq!(st, 404);
+    // Membro da org sem partilha nem participação, e a org B: não chegam à
+    // gravação — o mesmo 404 de «não existe» (R153).
     let (st, _) = app.get(&format!("{content}?dl=1"), Some(&c.token)).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404);
     let (st, _) = app.get(&content, Some(&c.token)).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404);
     let (st, _) = app.get(&content, Some(&b.token)).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404);
     let (st, _) = app.get(&format!("{content}?dl=1"), Some(&b.token)).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404);
     let (st, _) = app
         .get(
             &format!("/api/recordings/{INVENTED_ID}/content"),
@@ -390,13 +394,17 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 404);
-    // Gravação falhada: 400 com o motivo, antes da autorização.
+    // Gravação falhada: 400 com o motivo — só para quem chega à gravação. A org
+    // B recebe 404 e não lê o motivo (antes lia: o 400 vinha antes do acesso).
     sqlx::query("UPDATE recordings SET status = 'failed', failure_reason = 'sem espaço' WHERE id = $1::uuid")
         .bind(&rec)
         .execute(&app.db)
         .await
         .unwrap();
     let (st, body) = app.get(&content, Some(&b.token)).await;
+    assert_eq!(st, 404);
+    assert_denied("motivo da falha da gravação da A", st, &body, "sem espaço");
+    let (st, body) = app.get(&content, Some(&a.token)).await;
     assert_eq!(st, 400);
     assert_eq!(body["error"], "sem espaço");
     sqlx::query(
@@ -415,7 +423,7 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
             json!({"user_id": b.user_id}),
         )
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404, "a org B não chega à gravação");
     let (st, _) = app
         .post(
             &format!("{base}/shares"),
@@ -431,27 +439,62 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
             json!({"user_id": c.user_id}),
         )
         .await;
-    assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    assert_eq!(st, 201);
+    assert_eq!(body["id"], c.user_id.as_str());
+    let (st, _) = app
+        .post(
+            &format!("{base}/shares"),
+            Some(&a.token),
+            json!({"user_id": c.user_id}),
+        )
+        .await;
+    assert_eq!(st, 200, "repetir é idempotente");
+    // O admin da org gere a gravação, mas não decide a quem é mostrada.
+    let (st, body) = app
+        .post(
+            &format!("{base}/shares"),
+            Some(&d.token),
+            json!({"user_id": c.user_id}),
+        )
+        .await;
+    assert_eq!(st, 403, "{body}");
+    assert_eq!(body["code"], "recording.not_owner");
+    let (st, _) = app
+        .post(
+            &format!("{base}/shares"),
+            Some(&a.token),
+            json!({"user_id": INVENTED_ID}),
+        )
+        .await;
+    assert_eq!(
+        st, 404,
+        "destino inexistente (antes: 500 de chave estrangeira)"
+    );
     let (_, shares) = app.get(&format!("{base}/shares"), Some(&a.token)).await;
     assert_eq!(shares[0]["id"], c.user_id.as_str());
-    let (st, _) = app.get(&format!("{base}/shares"), Some(&c.token)).await;
-    assert_eq!(st, 401);
+    let (st, body) = app.get(&format!("{base}/shares"), Some(&c.token)).await;
+    assert_eq!(st, 403, "vê (partilhada) mas não é o dono");
+    assert_eq!(body["code"], "recording.not_owner");
     // Com partilha, C vê inline (404 = autorizada) mas não descarrega.
     let (st, _) = app.get(&content, Some(&c.token)).await;
     assert_eq!(st, 404);
-    let (st, _) = app.get(&format!("{content}?dl=1"), Some(&c.token)).await;
-    assert_eq!(st, 401);
+    let (st, body) = app.get(&format!("{content}?dl=1"), Some(&c.token)).await;
+    assert_eq!(st, 403);
+    assert_eq!(body["code"], "recording.download_forbidden");
     let (_, lib) = app.get("/api/recordings", Some(&c.token)).await;
     assert_eq!(lib[0]["can_download"], false);
     let (st, _) = app
         .delete(&format!("{base}/shares/{}", c.user_id), Some(&b.token))
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404);
     let (st, _) = app
         .delete(&format!("{base}/shares/{}", c.user_id), Some(&a.token))
         .await;
-    assert_eq!(st, 200);
+    assert_eq!(st, 204);
+    let (st, _) = app
+        .delete(&format!("{base}/shares/{}", c.user_id), Some(&a.token))
+        .await;
+    assert_eq!(st, 404, "já não estava partilhada");
     let (_, shares) = app.get(&format!("{base}/shares"), Some(&a.token)).await;
     assert_eq!(shares, json!([]));
     let (st, _) = app
@@ -465,7 +508,7 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
     // Link público com password.
     let link = format!("{base}/public-link");
     let (st, _) = app.put(&link, Some(&b.token), json!({})).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404);
     let (st, body) = app.get(&link, Some(&a.token)).await;
     assert_eq!(st, 200);
     assert!(body.is_null());
@@ -537,10 +580,11 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
     assert_eq!(st, 404);
 
     let (st, _) = app.delete(&link, Some(&b.token)).await;
-    assert_eq!(st, 401);
-    let (st, body) = app.delete(&link, Some(&a.token)).await;
-    assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    assert_eq!(st, 404);
+    let (st, _) = app.delete(&link, Some(&a.token)).await;
+    assert_eq!(st, 204);
+    let (st, _) = app.delete(&link, Some(&a.token)).await;
+    assert_eq!(st, 404, "já não havia link");
     let (_, got) = app.get(&link, Some(&a.token)).await;
     assert!(got.is_null());
     let (st, _) = app
@@ -586,7 +630,7 @@ async fn recording_share_current_behavior_allows_foreign_org_user(db: sqlx::PgPo
             json!({"user_id": b.user_id}),
         )
         .await;
-    assert_eq!(st, 200);
+    assert_eq!(st, 201);
     let (_, lib) = app.get("/api/recordings", Some(&b.token)).await;
     assert_eq!(lib[0]["id"], rec.as_str());
     let (st, _) = app
@@ -708,14 +752,14 @@ async fn whiteboards_save_list_png_share_delete(db: sqlx::PgPool) {
     let d = app.add_member(&a, "dario", "member").await;
     let del = format!("/api/whiteboards/{id}");
     let (st, _) = app.delete(&del, Some(&b.token)).await;
+    assert_eq!(st, 404, "a org B não chega ao quadro");
+    let (st, body) = app.delete(&del, Some(&d.token)).await;
     assert_eq!(st, 403);
-    let (st, _) = app.delete(&del, Some(&d.token)).await;
-    assert_eq!(st, 403);
+    assert_eq!(body["code"], "whiteboard.not_manager");
     let (_, list) = app.get("/api/whiteboards", Some(&a.token)).await;
     assert_eq!(list.as_array().unwrap().len(), 1, "o quadro continua lá");
-    let (st, body) = app.delete(&del, Some(&a.token)).await;
-    assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    let (st, _) = app.delete(&del, Some(&a.token)).await;
+    assert_eq!(st, 204);
     let (st, _) = app.delete(&del, Some(&a.token)).await;
     assert_eq!(st, 404);
     let (st, _) = app.get("/api/whiteboards", None).await;

@@ -2321,6 +2321,21 @@
         },
         "type": "object"
       },
+      "MissedCallsAck": {
+        "description": "Resposta do acknowledge (a mesma forma do `mark-all-read` das notificações).",
+        "properties": {
+          "updated": {
+            "description": "Quantas passaram de não vistas a vistas.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated"
+        ],
+        "type": "object"
+      },
       "Notification": {
         "properties": {
           "body": {
@@ -5741,10 +5756,12 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/StorageConfigView"
+                }
               }
             },
-            "description": "{\"ok\": true} (forma herdada)"
+            "description": "A configuração como ficou gravada (a mesma forma do `GET`, sem a password)."
           },
           "400": {
             "content": {

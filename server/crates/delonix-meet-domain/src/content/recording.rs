@@ -273,6 +273,13 @@ impl AccessFacts {
     pub fn can_see(&self) -> bool {
         self.can_view() || self.can_download()
     }
+
+    /// Partilhar com pessoas e gerir o link público: só o DONO, e activo. Um
+    /// admin da organização gere metadados mas não decide a quem a gravação de
+    /// outra pessoa é mostrada; e quem saiu da empresa já não a partilha (S3).
+    pub fn can_share(&self) -> bool {
+        !self.departed() && self.is_uploader
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -304,6 +311,34 @@ pub fn search_query(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn so_o_dono_activo_partilha() {
+        let dono = AccessFacts {
+            is_uploader: true,
+            active_member: true,
+            ..Default::default()
+        };
+        assert!(dono.can_share());
+        let admin = AccessFacts {
+            org_admin: true,
+            active_member: true,
+            ..Default::default()
+        };
+        assert!(admin.can_manage() && !admin.can_share());
+        let saiu = AccessFacts {
+            is_uploader: true,
+            archived_member: true,
+            ..Default::default()
+        };
+        assert!(!saiu.can_share());
+        let partilhado = AccessFacts {
+            shared: true,
+            active_member: true,
+            ..Default::default()
+        };
+        assert!(partilhado.can_see() && !partilhado.can_share());
+    }
 
     fn facts(status: &str) -> ProcessingFacts<'_> {
         ProcessingFacts {

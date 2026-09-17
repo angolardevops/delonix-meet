@@ -376,9 +376,9 @@ async fn start_meeting_creates_room_once(db: sqlx::PgPool) {
     // O convidado não arranca antes do anfitrião.
     let (st, body) = app.post(&path, Some(&c.token), json!({})).await;
     assert_eq!(st, 400, "{body}");
-    // Um colega não convidado: 401.
+    // Um colega não convidado: para ele a reunião não existe (R153).
     let (st, _) = app.post(&path, Some(&d.token), json!({})).await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404);
     // Id inventado: 404.
     let (st, _) = app
         .post(
@@ -423,7 +423,7 @@ async fn start_meeting_creates_room_once(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    assert_eq!(body, json!({"updated": 1}));
     let missed: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM missed_calls WHERE user_id = $1::uuid AND NOT seen",
     )
@@ -517,9 +517,13 @@ async fn invitees_and_respond(db: sqlx::PgPool) {
         .unwrap()
         .iter()
         .all(|i| i["status"] == "pending" && i["responded_at"].is_null()));
-    // Só o anfitrião lista.
-    let (st, _) = app.get(&inv, Some(&c.token)).await;
-    assert_eq!(st, 401);
+    // Só o anfitrião lista: o convidado vê a reunião (403), um estranho não (404).
+    let (st, body) = app.get(&inv, Some(&c.token)).await;
+    assert_eq!(st, 403);
+    assert_eq!(body["code"], "meeting.not_host");
+    let outsider = app.new_org("fora.test").await;
+    let (st, _) = app.get(&inv, Some(&outsider.token)).await;
+    assert_eq!(st, 404);
     let (st, _) = app
         .get(
             &format!("/api/meetings/{INVENTED_ID}/invitees"),
@@ -540,7 +544,9 @@ async fn invitees_and_respond(db: sqlx::PgPool) {
         .put(&resp, Some(&c.token), json!({"status": "accepted"}))
         .await;
     assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    assert_eq!(body["user_id"], c.user_id.as_str());
+    assert_eq!(body["status"], "accepted");
+    assert!(body["responded_at"].is_string());
     let (st, _) = app
         .put(
             &resp,
@@ -588,7 +594,7 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
             json!({"minutes": "  decisões  ", "transcript": "t"}),
         )
         .await;
-    assert_eq!(st, 200, "o convidado escreve a acta: {body}");
+    assert_eq!(st, 204, "o convidado escreve a acta: {body}");
     let (st, _) = app
         .put(
             &format!("/api/meetings/{id}/minutes"),
@@ -596,7 +602,10 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
             json!({"minutes": "forjada"}),
         )
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(
+        st, 404,
+        "nem dono nem convidado: a reunião não existe para ele"
+    );
     let (_, list) = app.get("/api/meetings", Some(&a.token)).await;
     assert_eq!(list[0]["minutes"], "decisões");
 
@@ -616,7 +625,7 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
             json!({"minutes": "pela sala", "transcript": "tx"}),
         )
         .await;
-    assert_eq!(st, 200);
+    assert_eq!(st, 204);
     let (st, _) = app
         .put(
             &format!("/api/rooms/{code}/minutes"),
@@ -639,7 +648,7 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
     let (st, _) = app
         .get(&format!("/api/rooms/{code}/minutes"), Some(&a.token))
         .await;
-    assert_eq!(st, 401, "arrancar não é participar");
+    assert_eq!(st, 404, "arrancar não é participar");
     let (st, _) = app
         .post(
             &format!("/api/rooms/{code}/join"),
@@ -741,9 +750,10 @@ async fn agenda_crud_and_permissions(db: sqlx::PgPool) {
 
     let (st, _) = app.delete(&item, Some(&c.token)).await;
     assert_eq!(st, 403);
-    let (st, body) = app.delete(&item, Some(&a.token)).await;
-    assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    let (st, _) = app.delete(&item, Some(&a.token)).await;
+    assert_eq!(st, 204);
+    let (st, _) = app.delete(&item, Some(&a.token)).await;
+    assert_eq!(st, 404, "já não existe nesta reunião");
     let (_, list) = app.get(&base, Some(&a.token)).await;
     assert_eq!(ids(&list), vec![i2["id"].as_str().unwrap()]);
 }

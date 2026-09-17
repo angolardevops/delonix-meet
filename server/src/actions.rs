@@ -335,24 +335,27 @@ pub async fn patch_agenda_item(
     security(("session" = [])),
     params(("meeting_id" = Uuid, Path, description = "Id da reunião"), ("item_id" = Uuid, Path, description = "Id do item")),
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada); também quando o tópico não existe"),
+        (status = 204, description = "Tópico apagado."),
         (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
         (status = 403, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
-        (status = 404, body = crate::openapi::ErrorBody, description = "reunião não existe"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe, ou o tópico não é desta reunião"),
     )
 )]
 pub async fn delete_agenda_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path((meeting_id, item_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     require_owner(&state.db, meeting_id, auth.user_id).await?;
-    sqlx::query("DELETE FROM meeting_agenda_items WHERE id=$1 AND meeting_id=$2")
+    let res = sqlx::query("DELETE FROM meeting_agenda_items WHERE id=$1 AND meeting_id=$2")
         .bind(item_id)
         .bind(meeting_id)
         .execute(&state.db)
         .await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    if res.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 // ─── Plano de Ação 5W2H ────────────────────────────────────────────────────
@@ -770,16 +773,16 @@ pub async fn patch_action_item(
     Ok(Json(item))
 }
 
-/// `DELETE /api/action-items/:item_id` — só anfitrião.
+/// `DELETE /api/meetings/{meeting_id}/action-plan/items/{item_id}` — só anfitrião.
 #[utoipa::path(
     delete, path = "/api/meetings/{meeting_id}/action-plan/items/{item_id}", tag = "meeting-actions",
     security(("session" = [])),
-    params(("item_id" = Uuid, Path, description = "Id do item")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião"), ("item_id" = Uuid, Path, description = "Id do item")),
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 204, description = "Item apagado."),
         (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
         (status = 403, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
-        (status = 404, body = crate::openapi::ErrorBody, description = "item não existe"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "o item não existe nesta reunião"),
     )
 )]
 pub async fn delete_action_item(

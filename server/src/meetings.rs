@@ -4,6 +4,7 @@
 
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     Json,
 };
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, NaiveDate, Utc};
@@ -697,8 +698,9 @@ pub struct MinutesReq {
     params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     request_body = MinutesReq,
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada). O resumo AI é gerado em segundo plano."),
-        (status = 401, body = crate::openapi::ErrorBody, description = "não é dono nem convidado — também quando a reunião não existe"),
+        (status = 204, description = "Guardada. O resumo AI é gerado em segundo plano e substitui `minutes`."),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe, ou não é dono nem convidado"),
     )
 )]
 pub async fn save_minutes(
@@ -706,7 +708,7 @@ pub async fn save_minutes(
     auth: AuthUser,
     Path(id): Path<Uuid>,
     Json(req): Json<MinutesReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<StatusCode, ApiError> {
     let allowed = {
         let row: Option<(i32,)> = sqlx::query_as(
             "SELECT 1 FROM meetings m
@@ -720,7 +722,7 @@ pub async fn save_minutes(
         row.is_some()
     };
     if !allowed {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::NotFound);
     }
     sqlx::query("UPDATE meetings SET minutes = $1, transcript = $2 WHERE id = $3")
         .bind(req.minutes.trim().chars().take(200_000).collect::<String>())
@@ -738,7 +740,7 @@ pub async fn save_minutes(
     // local gera o resumo elegante e substitui `minutes` (ai.rs — no-op sem
     // OLLAMA_URL; se falhar, fica a ata por regras enviada pelo cliente).
     crate::ai::spawn_mom_summary(state.clone(), id);
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Guarda MoM associando pela sala: encontra a reunião cuja `room_code` bate
@@ -750,7 +752,7 @@ pub async fn save_minutes(
     params(("room_code" = String, Path, description = "Código da sala")),
     request_body = MinutesReq,
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 204, description = "Guardada. O resumo AI é gerado em segundo plano."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody, description = "sem reunião nesta sala de que seja dono ou convidado (os dois casos não se distinguem)"),
     )
@@ -760,7 +762,7 @@ pub async fn save_minutes_by_room(
     auth: AuthUser,
     Path(code): Path<String>,
     Json(req): Json<MinutesReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<StatusCode, ApiError> {
     // A AUTORIZAÇÃO VEM PRIMEIRO (R96). Antes, a consulta corria para toda a
     // gente e a resposta dizia se a sala tinha reunião agendada — a quem
     // apenas soubesse o código, e de outra organização. O código da sala é uma
@@ -804,7 +806,8 @@ pub struct RoomNotes {
     params(("room_code" = String, Path, description = "Código da sala")),
     responses(
         (status = 200, body = RoomNotes, description = "Ata da reunião mais recente da sala; campos vazios se a sala não tiver reunião"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "não participou na sala"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a sala não existe, ou não participou nela"),
     )
 )]
 pub async fn notes_by_room(
@@ -821,7 +824,7 @@ pub async fn notes_by_room(
     .fetch_optional(&state.db)
     .await?;
     if participated.is_none() {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::NotFound);
     }
     let row: Option<(String, String, String)> = sqlx::query_as(
         "SELECT title, minutes, transcript FROM meetings WHERE room_code = $1
@@ -872,9 +875,9 @@ pub async fn start(
     .fetch_one(&state.db)
     .await?;
 
-    // Só dono ou convidado pode arrancar/entrar.
+    // Só dono ou convidado pode arrancar/entrar; para os outros não existe.
     if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::NotFound);
     }
 
     // Se já foi arrancada, reutiliza a sala.
@@ -1103,8 +1106,9 @@ pub struct InviteeResponse {
     params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = Vec<InviteeResponse>),
-        (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
-        (status = 404, body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`meeting.not_host`: é convidado, não anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não é dono nem convidado"),
     )
 )]
 pub async fn invitees(
@@ -1118,8 +1122,14 @@ pub async fn invitees(
         .await?;
     match owner {
         Some((o,)) if o == auth.user_id => {}
-        Some(_) => return Err(ApiError::Unauthorized),
-        None => return Err(ApiError::NotFound),
+        Some((o,)) if is_owner_or_invitee(&state, id, o, auth.user_id).await? => {
+            return Err(
+                delonix_meet_core::DomainError::forbidden("meeting.not_host")
+                    .with_message("só o anfitrião vê as respostas dos convidados")
+                    .into(),
+            );
+        }
+        _ => return Err(ApiError::NotFound),
     }
     let rows: Vec<InviteeResponse> = sqlx::query_as(
         "SELECT i.user_id, u.username, i.status, i.decline_reason, i.responded_at
@@ -1149,7 +1159,7 @@ pub struct RespondReq {
     params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     request_body = RespondReq,
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 200, body = InviteeResponse, description = "A resposta de quem pede, como ficou gravada."),
         (status = 400, body = crate::openapi::ErrorBody, description = "`status` inválido, ou recusa sem motivo"),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody, description = "não é convidado desta reunião"),
@@ -1160,7 +1170,7 @@ pub async fn respond(
     auth: AuthUser,
     Path(id): Path<Uuid>,
     Json(req): Json<RespondReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<InviteeResponse>, ApiError> {
     if !matches!(req.status.as_str(), "accepted" | "declined") {
         return Err(ApiError::BadRequest("status inválido".into()));
     }
@@ -1215,7 +1225,16 @@ pub async fn respond(
         }
     }
 
-    Ok(Json(serde_json::json!({ "ok": true })))
+    let me: InviteeResponse = sqlx::query_as(
+        "SELECT i.user_id, u.username, i.status, i.decline_reason, i.responded_at
+         FROM meeting_invitees i JOIN users u ON u.id = i.user_id
+         WHERE i.meeting_id = $1 AND i.user_id = $2",
+    )
+    .bind(id)
+    .bind(auth.user_id)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(me))
 }
 
 // ---------- analytics de quarentena ----------

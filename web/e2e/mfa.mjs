@@ -143,7 +143,7 @@ const dMau = await req('/api/users/me/mfa/disable', { token: tok2, method: 'POST
 dMau.status === 401 ? ok('não se desactiva sem código válido → 401') : nok('desactivar sem código', `HTTP ${dMau.status}`)
 
 const dOk = await req('/api/users/me/mfa/disable', { token: tok2, method: 'POST', body: { code: backup[1] } })
-dOk.json?.ok ? ok('desactiva com código de recuperação') : nok('desactivar', JSON.stringify(dOk.json))
+dOk.status === 204 ? ok('desactiva com código de recuperação → 204') : nok('desactivar', `HTTP ${dOk.status} ${JSON.stringify(dOk.json)}`)
 
 l = await req('/api/auth/login', { method: 'POST', body: { email, password: PW } })
 l.json?.access_token ? ok('depois de desactivar, a password volta a bastar') : nok('login pós-desactivação', JSON.stringify(l.json))

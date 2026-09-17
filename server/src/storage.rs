@@ -144,7 +144,7 @@ pub async fn get_storage(
     security(("session" = [])),
     request_body = StorageConfigReq,
     responses(
-        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 200, body = StorageConfigView, description = "A configuração como ficou gravada (a mesma forma do `GET`, sem a password)."),
         (status = 400, description = "`storage_type` fora de `local`/`nfs`/`webdav`.", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sem sessão válida.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`).", body = crate::openapi::ErrorBody),
@@ -156,7 +156,7 @@ pub async fn save_storage(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Json(req): Json<StorageConfigReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<StorageConfigView>, ApiError> {
     require_platform_admin(&state, auth.user_id)?;
 
     let valid = ["local", "nfs", "webdav"];
@@ -206,7 +206,7 @@ pub async fn save_storage(
     .execute(&state.db)
     .await?;
 
-    Ok(Json(serde_json::json!({ "ok": true })))
+    get_storage(State(state), auth).await
 }
 
 /// `POST /api/operator/v1/storage/test` — testa a ligação ao storage configurado.

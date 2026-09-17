@@ -537,7 +537,7 @@ async fn mfa_disable_locks_after_five_failures(db: sqlx::PgPool) {
             json!({"code": backup[0]}),
         )
         .await;
-    assert_eq!(st, 200, "{body}");
+    assert_eq!(st, 204, "{body}");
 }
 
 /// O passo MFA do login (`/api/auth/login/mfa`) JÁ tinha travão por conta (8 em

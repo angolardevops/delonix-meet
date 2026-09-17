@@ -643,14 +643,14 @@ async fn archived_member_cannot_read_comments_nor_see_library(db: sqlx::PgPool) 
             Some(&f.carla.token),
         )
         .await;
-    assert_eq!(st, 401, "reproduzir também");
+    assert_eq!(st, 404, "reproduzir também: quem saiu não chega à gravação");
     let (st, _) = app
         .get(
             &format!("/api/recordings/{}/content?dl=1", f.rec),
             Some(&f.eva.token),
         )
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404);
     let (st, _) = app.get(&base, Some(&f.eva.token)).await;
     assert_eq!(st, 404);
 

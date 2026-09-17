@@ -2321,6 +2321,21 @@
         },
         "type": "object"
       },
+      "MissedCallsAck": {
+        "description": "Resposta do acknowledge (a mesma forma do `mark-all-read` das notificações).",
+        "properties": {
+          "updated": {
+            "description": "Quantas passaram de não vistas a vistas.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated"
+        ],
+        "type": "object"
+      },
       "Notification": {
         "properties": {
           "body": {

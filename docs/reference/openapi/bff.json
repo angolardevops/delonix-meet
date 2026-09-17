@@ -2321,6 +2321,21 @@
         },
         "type": "object"
       },
+      "MissedCallsAck": {
+        "description": "Resposta do acknowledge (a mesma forma do `mark-all-read` das notificações).",
+        "properties": {
+          "updated": {
+            "description": "Quantas passaram de não vistas a vistas.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated"
+        ],
+        "type": "object"
+      },
       "Notification": {
         "properties": {
           "body": {
@@ -5726,13 +5741,8 @@
         "description": "Responde sempre 200, com ou sem cookie; o `Set-Cookie` devolvido expira o\n`dlx_refresh` (`Max-Age=0`).",
         "operationId": "logout",
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "{\"ok\": true} (forma herdada). Limpa o cookie `dlx_refresh`."
+          "204": {
+            "description": "Sessão terminada. Limpa o cookie `dlx_refresh` (e revoga-o, se vier)."
           },
           "429": {
             "content": {
@@ -6619,6 +6629,16 @@
         "operationId": "delete_action_item",
         "parameters": [
           {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
             "description": "Id do item",
             "in": "path",
             "name": "item_id",
@@ -6627,20 +6647,11 @@
               "format": "uuid",
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "meeting_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
           }
         ],
         "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+          "204": {
+            "description": "Item apagado."
           },
           "401": {
             "content": {
@@ -6670,7 +6681,7 @@
                 }
               }
             },
-            "description": "item não existe"
+            "description": "o item não existe nesta reunião"
           }
         },
         "security": [
@@ -6678,7 +6689,7 @@
             "session": []
           }
         ],
-        "summary": "`DELETE /api/action-items/:item_id` — só anfitrião.",
+        "summary": "`DELETE /api/meetings/{meeting_id}/action-plan/items/{item_id}` — só anfitrião.",
         "tags": [
           "meeting-actions"
         ]
@@ -6952,8 +6963,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada); também quando o tópico não existe"
+          "204": {
+            "description": "Tópico apagado."
           },
           "401": {
             "content": {
@@ -6983,7 +6994,7 @@
                 }
               }
             },
-            "description": "reunião não existe"
+            "description": "a reunião não existe, ou o tópico não é desta reunião"
           }
         },
         "security": [
@@ -7188,7 +7199,17 @@
                 }
               }
             },
-            "description": "não é o anfitrião"
+            "description": "sessão inválida"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`meeting.not_host`: é convidado, não anfitrião"
           },
           "404": {
             "content": {
@@ -7198,7 +7219,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "não existe, ou não é dono nem convidado"
           }
         },
         "security": [
@@ -7239,7 +7260,14 @@
         },
         "responses": {
           "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteeResponse"
+                }
+              }
+            },
+            "description": "A resposta de quem pede, como ficou gravada."
           },
           "400": {
             "content": {
@@ -7309,8 +7337,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada). O resumo AI é gerado em segundo plano."
+          "204": {
+            "description": "Guardada. O resumo AI é gerado em segundo plano e substitui `minutes`."
           },
           "401": {
             "content": {
@@ -7320,7 +7348,17 @@
                 }
               }
             },
-            "description": "não é dono nem convidado — também quando a reunião não existe"
+            "description": "sessão inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a reunião não existe, ou não é dono nem convidado"
           }
         },
         "security": [
@@ -8503,7 +8541,14 @@
         },
         "responses": {
           "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OdooConfig"
+                }
+              }
+            },
+            "description": "A configuração como ficou gravada (a mesma forma do `GET`)."
           },
           "400": {
             "content": {
@@ -8945,13 +8990,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "{\"ok\": true} (forma herdada)"
+          "204": {
+            "description": "Acesso arquivado."
           },
           "400": {
             "content": {
@@ -8991,7 +9031,7 @@
                 }
               }
             },
-            "description": "A organização não existe ou quem pede não é membro activo."
+            "description": "A organização não existe, quem pede não é membro activo, ou o utilizador não é membro activo desta organização."
           }
         },
         "security": [
@@ -8999,7 +9039,7 @@
             "session": []
           }
         ],
-        "summary": "Arquiva o acesso de um membro (soft delete, só admin). Idempotente: um\nutilizador que não é membro também devolve `ok`.",
+        "summary": "Arquiva o acesso de um membro (soft delete, só admin). Um utilizador que\nnão é membro activo desta organização dá `404`.",
         "tags": [
           "orgs"
         ]
@@ -9843,13 +9883,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "{\"ok\": true} (forma herdada)"
+          "204": {
+            "description": "SSO desligado."
           },
           "401": {
             "content": {
@@ -9879,7 +9914,7 @@
                 }
               }
             },
-            "description": "A organização não existe ou quem pede não é membro activo."
+            "description": "A organização não existe, quem pede não é membro activo, ou não havia SSO configurado."
           }
         },
         "security": [
@@ -9887,7 +9922,7 @@
             "session": []
           }
         ],
-        "summary": "`DELETE /api/orgs/:org_id/sso` — remove a config OIDC (desativa SSO). Só\nadmin; idempotente.",
+        "summary": "`DELETE /api/orgs/:org_id/sso` — remove a config OIDC (desativa SSO). Só\nadmin.",
         "tags": [
           "orgs"
         ]
@@ -9993,10 +10028,12 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SsoConfigPublic"
+                }
               }
             },
-            "description": "{\"ok\": true} (forma herdada)"
+            "description": "A configuração como ficou gravada (a mesma forma do `GET`, sem o segredo)."
           },
           "400": {
             "content": {
@@ -11409,8 +11446,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+          "204": {
+            "description": "Webhook apagado."
           },
           "403": {
             "content": {
@@ -13000,7 +13037,7 @@
                 }
               }
             },
-            "description": "A gravação falhou e não tem ficheiro (mensagem = causa)."
+            "description": "A gravação falhou e não tem ficheiro (mensagem = causa). Só para quem chega à gravação."
           },
           "401": {
             "content": {
@@ -13010,7 +13047,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU sem acesso/permissão de download (inclui membro arquivado)."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.download_forbidden`: chega à gravação mas não pode descarregar (`dl=1`)."
           },
           "404": {
             "content": {
@@ -13020,7 +13067,7 @@
                 }
               }
             },
-            "description": "Gravação inexistente ou ficheiro em falta no disco."
+            "description": "Gravação inexistente, sem acesso (inclui membro arquivado), ou ficheiro em falta no disco."
           }
         },
         "security": [
@@ -13049,8 +13096,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+          "204": {
+            "description": "Link revogado."
           },
           "401": {
             "content": {
@@ -13060,7 +13107,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU não é o dono."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_owner`."
           },
           "404": {
             "content": {
@@ -13070,7 +13127,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "A gravação não existe/não lhe chega, ou não tinha link."
           }
         },
         "security": [
@@ -13122,7 +13179,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU não é o dono."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_owner`: vê a gravação mas não é o dono activo."
           },
           "404": {
             "content": {
@@ -13187,7 +13254,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU não é o dono (401, não 403)."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_owner`: vê a gravação mas não é o dono activo."
           },
           "404": {
             "content": {
@@ -13247,7 +13324,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU não é o dono."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_owner`: vê a gravação mas não é o dono activo."
           },
           "404": {
             "content": {
@@ -13295,7 +13382,24 @@
         },
         "responses": {
           "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            },
+            "description": "Já estava partilhada com essa pessoa (idempotente)."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            },
+            "description": "Partilha criada. `Location: /api/recordings/{recording_id}/shares/{user_id}`."
           },
           "400": {
             "content": {
@@ -13315,7 +13419,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU não é o dono."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_owner`: vê a gravação mas não é o dono activo."
           },
           "404": {
             "content": {
@@ -13325,7 +13439,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "A gravação não existe ou não lhe chega; ou o utilizador destino não existe."
           }
         },
         "security": [
@@ -13363,8 +13477,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+          "204": {
+            "description": "Partilha removida."
           },
           "401": {
             "content": {
@@ -13374,7 +13488,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU não é o dono."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_owner`."
           },
           "404": {
             "content": {
@@ -13384,7 +13508,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "A gravação não existe/não lhe chega, ou não estava partilhada com essa pessoa."
           }
         },
         "security": [
@@ -13392,7 +13516,7 @@
             "session": []
           }
         ],
-        "summary": "Remove a partilha com um utilizador (só o dono). Idempotente.",
+        "summary": "Remove a partilha com um utilizador (só o dono).",
         "tags": [
           "recordings"
         ]
@@ -13682,8 +13806,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+          "204": {
+            "description": "Amostra aceite."
           },
           "401": {
             "content": {
@@ -13830,7 +13954,17 @@
                 }
               }
             },
-            "description": "não participou na sala"
+            "description": "sessão inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a sala não existe, ou não participou nela"
           }
         },
         "security": [
@@ -13867,8 +14001,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+          "204": {
+            "description": "Guardada. O resumo AI é gerado em segundo plano."
           },
           "401": {
             "content": {
@@ -13927,8 +14061,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+          "204": {
+            "description": "Amostra aceite."
           },
           "401": {
             "content": {
@@ -14008,7 +14142,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU não participou na sala."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`room.not_participant`: não participou na sala."
           },
           "404": {
             "content": {
@@ -14026,7 +14170,7 @@
             "session": []
           }
         ],
-        "summary": "Gravações de uma sala específica (painel dentro da reunião).\nSó para participantes da sala — senão **401**, não 403.",
+        "summary": "Gravações de uma sala específica (painel dentro da reunião).\nSó para participantes da sala — senão `403 room.not_participant`.",
         "tags": [
           "recordings"
         ]
@@ -14095,7 +14239,17 @@
                 }
               }
             },
-            "description": "Sessão inválida OU não participou na sala."
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`room.not_participant`: não participou na sala."
           },
           "404": {
             "content": {
@@ -14409,13 +14563,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "{\"ok\": true} (forma herdada)"
+          "204": {
+            "description": "MFA desactivado."
           },
           "401": {
             "content": {
@@ -14511,7 +14660,14 @@
         "operationId": "ack_missed_calls",
         "responses": {
           "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MissedCallsAck"
+                }
+              }
+            },
+            "description": "Quantas chamadas perdidas passaram a vistas."
           },
           "401": {
             "content": {
@@ -15110,8 +15266,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+          "204": {
+            "description": "Quadro apagado."
           },
           "401": {
             "content": {
@@ -15131,7 +15287,7 @@
                 }
               }
             },
-            "description": "Nem dono nem admin."
+            "description": "`whiteboard.not_manager`: membro da organização, mas nem dono nem admin."
           },
           "404": {
             "content": {
@@ -15141,7 +15297,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "Não existe, ou não é membro activo da organização do quadro."
           }
         },
         "security": [
