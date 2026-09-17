@@ -1919,3 +1919,26 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Regra.** `respostas_ok_true=0` na catraca. Apagar → `204`, e `404` quando não havia linha NESTA organização/recurso. `PUT` de configuração (Odoo, SSO, armazenamento) devolve o recurso como o `GET`; `PUT` do RSVP devolve o convidado; acta → `204`; telemetria (`join-timings`, `quality-samples`) → `204`; logout e desactivar MFA → `204`; acknowledge de chamadas perdidas → `{"updated": n}`; partilhar → `201` + `Location` (ou `200` se já estava). Acesso a gravação: `seen_item` primeiro (404 a quem não chega, antes de qualquer outra resposta), depois `403 recording.not_owner` / `recording.download_forbidden`; partilhar e links são do dono ACTIVO (`AccessFacts::can_share`). Reuniões: `404` a quem não é dono nem convidado, `403 meeting.not_host` ao convidado. Quadros: `404` fora da organização, `403 whiteboard.not_manager` dentro. Mantêm `401` só as credenciais que não são a sessão (password do link público, token de sala do directo).
 
 **Ficheiros.** `server/src/{actions,auth,meetings,mfa,odoo,org,presence,recordings,rooms,storage,webhooks,whiteboards}.rs`, `server/crates/delonix-meet-domain/src/content/recording.rs` (`can_share`), `server/tests/{content,identity,organization,recordings_metadata,scheduling,security_identity}.rs` (asserções mudadas com intenção, cada uma com o controlo), `web/src/api.ts`, `web/e2e/mfa.mjs`, `scripts/arquitectura-baseline.txt`.
+
+### R182 — O chat da sala nunca era gravado, a mensagem «privada» ia para a sala toda, e o protocolo da UI nova era descartado em silêncio
+
+**Sintoma.** Três coisas, medidas no levantamento UI↔API de 2026-09-17:
+1. `GET /api/rooms/{room_code}/messages` devolvia sempre `[]`. A tabela `room_chat_messages` existia desde a 0018 e nenhum código a escrevia; e a leitura, com `ORDER BY created_at ASC LIMIT 200`, devolvia as primeiras 200 mensagens, não as últimas.
+2. A UI nova enviava `chat{to}` para uma conversa privada. `ClientMsg::Chat` só tinha `text`, o `to` era ignorado pelo serde, e a mensagem era difundida à sala toda. É exposição de dados.
+3. Cerca de 20 mensagens que a UI nova envia pelo `/ws` existiam só no `server/` da branch da UI e eram descartadas pelo `signaling.rs` desta linha sem erro: fios e reacções, `set-role`, `spotlight`, `admit-all`, sala de espera em runtime, `qa-hide`/`qa-spotlight`, `breakouts-broadcast`, e as páginas, cursores e permissões do quadro. A moderação e o quadro pareciam funcionar e não faziam nada.
+
+Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; commits `c153b7a`, `cd8458a`, `0c87e62`), mas essa linha tem o seu próprio servidor.
+
+**Regra 1 — a escrita do chat não entra no caminho quente.** O handler corre com o lock da sala (R16). A mensagem vai para uma fila LIMITADA (`room_chat::ChatStore`, `try_send`), consumida por uma tarefa própria e por ordem. Fila cheia descarta e conta (`delonix_chat_persist_dropped_total`); a sala recebe a mensagem na mesma. A retenção prometida na 0018 é cumprida por `room_chat::retention_sweep`, num cron horário (G9).
+
+**Regra 2 — uma privada só existe para o par.** Vai só ao destinatário (`send_to`) e o `chat-sent` volta a quem envia. Responder a uma privada continua privado. Um terceiro não lhe responde nem reage, e recebe o mesmo erro de uma mensagem inexistente. O histórico filtra na CONSULTA (`to_user_id IS NULL OR user_id = me OR to_user_id = me`): nem o anfitrião lê privadas alheias.
+
+**Regra 3 — o que se esconde a um público não lhe é enviado.** Uma pergunta de Q&A escondida não sai para quem não é anfitrião. As duas vistas vão por difusões SEM sobreposição (`broadcast_hosts` + `broadcast_non_hosts`, com o evento Redis `BroadcastNonHosts`), para a ordem de chegada não decidir qual das vistas o anfitrião fica a ver.
+
+**Regra 4 — desligar a sala de espera não abre a porta a quem não tem entrada directa.** O token de sala separa `lobby` (sem entrada directa: espera sempre) de `wr` (a configuração da sala); só o segundo é substituível em runtime. Origem e cargo decidem-se no servidor e viajam assinados no token.
+
+**Adaptações nesta linha.** Router e crons em `lib.rs`. As migrações 0039 e 0048 da UI passam a 0049 e 0050. O `PeerRole` do R124 funde-se com o da UI (`role` + `can_admit` EFECTIVO: um co-anfitrião por papel continua a admitir).
+
+**Portão.** `signaling` + `room_chat` (91 testes do hub, com a metade negativa de cada controlo e os 6 da conversa directa); `tests/room_chat.rs` contra Postgres real (a privada não volta a um terceiro; fios e reacções no histórico).
+
+**Ficheiros.** `server/src/{signaling,room_tools,room_chat,rooms,auth,org,users,pubsub,metrics,lib}.rs`, `server/migrations/0049_room_chat_threads_reactions.sql`, `server/migrations/0050_room_chat_direct.sql`, `server/tests/room_chat.rs`.
