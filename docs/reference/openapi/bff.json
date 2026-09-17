@@ -11789,6 +11789,9 @@
       "V1MeetingSummary": {
         "description": "Reunião vista pelo sync de calendário v1.",
         "properties": {
+          "auto_record": {
+            "type": "boolean"
+          },
           "created_at": {
             "format": "date-time",
             "type": "string"
@@ -11799,6 +11802,10 @@
           "duration_min": {
             "format": "int32",
             "type": "integer"
+          },
+          "format": {
+            "description": "Opções de sessão (R184): `meeting|training|broadcast|hybrid`.",
+            "type": "string"
           },
           "id": {
             "format": "uuid",
@@ -11816,6 +11823,10 @@
               "null"
             ]
           },
+          "record_quality": {
+            "description": "`2160p|1080p|720p|audio`.",
+            "type": "string"
+          },
           "room_code": {
             "type": [
               "string",
@@ -11828,6 +11839,9 @@
           },
           "title": {
             "type": "string"
+          },
+          "waiting_room": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -11837,7 +11851,11 @@
           "kind",
           "starts_at",
           "duration_min",
-          "created_at"
+          "created_at",
+          "format",
+          "waiting_room",
+          "auto_record",
+          "record_quality"
         ],
         "type": "object"
       },
