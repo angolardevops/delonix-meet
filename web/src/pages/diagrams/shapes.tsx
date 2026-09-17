@@ -7,7 +7,7 @@
  * puxadores) leva `data-ui` e sai da exportação.
  */
 import { memo, ReactNode } from 'react'
-import { CLASS, classifierHeight, LANE_HEADER, poolHeight, Pt, POOL_HEADER } from './geometry'
+import { CLASS, classifierHeight, LANE_HEADER, objectHeight, poolHeight, Pt, POOL_HEADER } from './geometry'
 import { DEdge, DNode, parseMember } from './model'
 import { FILLS, INK, MONO } from './paint'
 
@@ -161,6 +161,21 @@ function TaskMarker({ kind }: { kind: string | undefined }) {
   }
 }
 
+/** Nome por baixo de uma forma pequena (pseudo-estados, portos, interfaces). */
+function Below({ n }: { n: DNode }) {
+  if (!n.name) return null
+  return <Lines lines={wrapText(n.name, 110, 8.5, 2)} x={n.w / 2} y={n.h + 11} size={8.5} color={INK.muted} />
+}
+
+function Stereo({ n, y, x, anchor = 'middle' }: { n: DNode; y: number; x?: number; anchor?: 'start' | 'middle' }) {
+  if (!n.props.stereotype) return null
+  return (
+    <text x={x ?? n.w / 2} y={y} fontSize={8.5} fill={INK.muted} textAnchor={anchor} fontFamily={MONO}>
+      {`«${n.props.stereotype}»`}
+    </text>
+  )
+}
+
 function NodeBody({ n, sub }: { n: DNode; sub?: string }): ReactNode {
   const stroke = strokeOf(n)
   const surface = fillOf(n, INK.surface)
@@ -247,6 +262,201 @@ function NodeBody({ n, sub }: { n: DNode; sub?: string }): ReactNode {
           </text>
         </>
       )
+    case 'activation':
+      return <rect width={n.w} height={n.h} fill={fillOf(n, INK.surface)} stroke={stroke} strokeWidth={1.3} />
+    case 'initialNode':
+    case 'stateInitial':
+      return (
+        <>
+          <circle cx={n.w / 2} cy={n.h / 2} r={n.w / 2} fill={n.props.emphasis ? INK.accent : INK.ink} />
+          <Below n={n} />
+        </>
+      )
+    case 'activityFinal':
+    case 'stateFinal':
+      return (
+        <>
+          <circle cx={n.w / 2} cy={n.h / 2} r={n.w / 2 - 0.75} fill={INK.surface} stroke={stroke} strokeWidth={SW} />
+          <circle cx={n.w / 2} cy={n.h / 2} r={n.w / 2 - 5.5} fill={stroke} />
+          <Below n={n} />
+        </>
+      )
+    case 'flowFinal': {
+      const r = n.w / 2
+      const k = r * 0.7
+      return (
+        <>
+          <circle cx={r} cy={r} r={r - 0.75} fill={INK.surface} stroke={stroke} strokeWidth={SW} />
+          <path d={`M${r - k} ${r - k}L${r + k} ${r + k}M${r + k} ${r - k}L${r - k} ${r + k}`} stroke={stroke} strokeWidth={SW} />
+          <Below n={n} />
+        </>
+      )
+    }
+    case 'action':
+      return (
+        <>
+          <rect width={n.w} height={n.h} rx={12} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <Lines lines={wrapText(n.name, n.w - 20, 10.5, 3)} x={n.w / 2} y={n.h / 2} size={10.5} />
+        </>
+      )
+    case 'decisionNode':
+    case 'choice':
+      return (
+        <>
+          <path d={`M${n.w / 2} 0L${n.w} ${n.h / 2}L${n.w / 2} ${n.h}L0 ${n.h / 2}Z`} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <Below n={n} />
+        </>
+      )
+    case 'forkNode':
+      return (
+        <>
+          <rect width={n.w} height={n.h} rx={1.5} fill={n.props.emphasis ? INK.accent : INK.ink} />
+          {n.name && (
+            <text x={n.w >= n.h ? n.w + 6 : n.w / 2} y={n.w >= n.h ? n.h / 2 : n.h + 12} fontSize={8.5} fill={INK.muted} dominantBaseline="middle" textAnchor={n.w >= n.h ? 'start' : 'middle'}>
+              {n.name}
+            </text>
+          )}
+        </>
+      )
+    case 'partition':
+      return (
+        <>
+          <rect width={n.w} height={n.h} fill={fillOf(n, INK.surface)} fillOpacity={0.5} stroke={stroke} strokeWidth={SW} />
+          <rect x={0.75} y={0.75} width={n.w - 1.5} height={24} fill={INK.header} />
+          <line x1={0} y1={25} x2={n.w} y2={25} stroke={stroke} strokeWidth={SW} />
+          <text x={n.w / 2} y={16} fontSize={10.5} fontWeight={700} fill={INK.ink} textAnchor="middle">
+            {n.name}
+          </text>
+        </>
+      )
+    case 'objectNode':
+      return (
+        <>
+          <rect width={n.w} height={n.h} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <Lines lines={wrapText(n.name, n.w - 16, 10.5, 2)} x={n.w / 2} y={n.h / 2} size={10.5} />
+        </>
+      )
+    case 'state': {
+      const acts = n.props.attributes ?? []
+      return (
+        <>
+          <rect width={n.w} height={n.h} rx={12} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <text x={n.w / 2} y={acts.length ? 17 : n.h / 2} fontSize={11} fontWeight={700} fill={INK.ink} textAnchor="middle" dominantBaseline="middle">
+            {n.name}
+          </text>
+          {acts.length > 0 && (
+            <>
+              <line x1={0} y1={28} x2={n.w} y2={28} stroke={stroke} strokeWidth={1} />
+              {acts.slice(0, Math.max(1, Math.floor((n.h - 34) / 13))).map((a, i) => (
+                <text key={i} x={9} y={42 + i * 13} fontSize={9} fill={INK.ink} fontFamily={MONO}>
+                  {a}
+                </text>
+              ))}
+            </>
+          )}
+        </>
+      )
+    }
+    case 'compositeState':
+      return (
+        <>
+          <rect width={n.w} height={n.h} rx={14} fill={fillOf(n, INK.surface)} fillOpacity={0.55} stroke={stroke} strokeWidth={SW} />
+          <text x={12} y={17} fontSize={11} fontWeight={700} fill={INK.ink}>
+            {n.name}
+          </text>
+          <line x1={0} y1={26} x2={n.w} y2={26} stroke={stroke} strokeWidth={1} />
+        </>
+      )
+    case 'history':
+      return (
+        <>
+          <circle cx={n.w / 2} cy={n.h / 2} r={n.w / 2 - 0.75} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <text x={n.w / 2} y={n.h / 2 + 0.5} fontSize={12} fontWeight={700} fill={INK.ink} textAnchor="middle" dominantBaseline="middle">
+            {n.props.deep ? 'H*' : 'H'}
+          </text>
+          <Below n={n} />
+        </>
+      )
+    case 'component':
+      return (
+        <>
+          <rect width={n.w} height={n.h} rx={2} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <g transform={`translate(${n.w - 24} 7)`} stroke={stroke} strokeWidth={1.1} fill={INK.surface}>
+            <rect x={3} y={0} width={13} height={16} />
+            <rect x={0} y={3} width={7} height={3.5} />
+            <rect x={0} y={9.5} width={7} height={3.5} />
+          </g>
+          <Stereo n={n} y={n.h / 2 - 8} />
+          <Lines lines={wrapText(n.name, n.w - 40, 11, 2)} x={n.w / 2} y={n.h / 2 + 6} size={11} weight={700} />
+        </>
+      )
+    case 'port':
+      return (
+        <>
+          <rect width={n.w} height={n.h} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <Below n={n} />
+        </>
+      )
+    case 'providedInterface':
+      return (
+        <>
+          <circle cx={n.w / 2} cy={n.h / 2} r={n.w / 2 - 0.75} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <Below n={n} />
+        </>
+      )
+    case 'requiredInterface':
+      return (
+        <>
+          <rect width={n.w} height={n.h} fill="transparent" />
+          <path d={`M${n.w / 2} 0.75A${n.w / 2 - 0.75} ${n.h / 2 - 0.75} 0 0 0 ${n.w / 2} ${n.h - 0.75}`} fill="none" stroke={stroke} strokeWidth={SW} />
+          <Below n={n} />
+        </>
+      )
+    case 'deviceNode': {
+      const d = 12
+      return (
+        <>
+          <path d={`M0 ${d}L${d} 0H${n.w}V${n.h - d}L${n.w - d} ${n.h}`} fill={INK.header} stroke={stroke} strokeWidth={SW} strokeLinejoin="round" />
+          <path d={`M${n.w - d} ${d}L${n.w} 0`} stroke={stroke} strokeWidth={SW} />
+          <rect y={d} width={n.w - d} height={n.h - d} fill={fillOf(n, INK.surface)} fillOpacity={0.6} stroke={stroke} strokeWidth={SW} />
+          <Stereo n={n} y={d + 14} x={10} anchor="start" />
+          <text x={10} y={d + (n.props.stereotype ? 30 : 18)} fontSize={11} fontWeight={700} fill={INK.ink}>
+            {n.name}
+          </text>
+        </>
+      )
+    }
+    case 'artifact':
+      return (
+        <>
+          <rect width={n.w} height={n.h} rx={2} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <path d={`M${n.w - 22} 6H${n.w - 12}L${n.w - 8} 10V22H${n.w - 22}ZM${n.w - 12} 6V10H${n.w - 8}`} fill="none" stroke={stroke} strokeWidth={1.1} />
+          <Stereo n={n} y={n.h / 2 - 8} />
+          <Lines lines={wrapText(n.name, n.w - 40, 10.5, 2)} x={n.w / 2} y={n.h / 2 + 6} size={10.5} weight={700} />
+        </>
+      )
+    case 'object': {
+      const h = objectHeight(n)
+      const headH = CLASS.pad * 2 + CLASS.name
+      const slots = n.props.attributes ?? []
+      const title = `${n.name}${n.props.instanceOf?.trim() ? `: ${n.props.instanceOf.trim()}` : ''}`
+      const tw = Math.min(n.w - 16, title.length * 6.6)
+      return (
+        <>
+          <rect width={n.w} height={h} rx={2} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <text x={n.w / 2} y={CLASS.pad + 14} fontSize={11.5} fontWeight={700} fill={INK.ink} textAnchor="middle">
+            {title}
+          </text>
+          <line x1={n.w / 2 - tw / 2} y1={CLASS.pad + 17} x2={n.w / 2 + tw / 2} y2={CLASS.pad + 17} stroke={INK.ink} strokeWidth={1} />
+          {slots.length > 0 && <line x1={0} y1={headH} x2={n.w} y2={headH} stroke={stroke} strokeWidth={SW} />}
+          {slots.map((a, i) => (
+            <text key={i} x={9} y={headH + CLASS.pad + 10 + i * CLASS.line} fontSize={9.5} fill={INK.ink} fontFamily={MONO}>
+              {a}
+            </text>
+          ))}
+        </>
+      )
+    }
     case 'startEvent':
     case 'intermediateEvent':
     case 'endEvent': {
@@ -476,7 +686,7 @@ export const NodeShape = memo(function NodeShape({ n, sub }: { n: DNode; sub?: s
 //  Arestas
 // ---------------------------------------------------------------------------
 
-type Head = 'filled' | 'open' | 'hollow' | 'diamondFilled' | 'diamondHollow' | 'circle' | 'slash' | 'smallDiamond' | null
+type Head = 'filled' | 'open' | 'hollow' | 'diamondFilled' | 'diamondHollow' | 'circle' | 'slash' | 'smallDiamond' | 'dot' | null
 
 function headPath(tip: Pt, from: Pt, head: Head, color: string): ReactNode {
   if (!head) return null
@@ -505,6 +715,8 @@ function headPath(tip: Pt, from: Pt, head: Head, color: string): ReactNode {
       const c = rot(-4, 0)
       return <circle cx={c.x} cy={c.y} r={4} fill={INK.surface} stroke={color} strokeWidth={1.2} />
     }
+    case 'dot':
+      return <circle cx={tip.x} cy={tip.y} r={4.5} fill={color} />
     case 'slash': {
       const a = rot(-14, -6)
       const b = rot(-8, 6)
@@ -546,6 +758,21 @@ export function edgeStyle(e: DEdge, sourceType?: DNode['type']): EdgeStyle {
       return { dash: '6 4', start: null, end: 'open', color: ink, keyword: '«include»' }
     case 'extend':
       return { dash: '6 4', start: null, end: 'open', color: ink, keyword: '«extend»' }
+    case 'lostMessage':
+      return { start: null, end: 'dot', color: ink }
+    case 'foundMessage':
+      return { start: 'dot', end: 'filled', color: ink }
+    case 'controlFlow':
+    case 'transition':
+      return { start: null, end: 'open', color: ink }
+    case 'usage':
+      return { dash: '6 4', start: null, end: 'open', color: ink, keyword: '«use»' }
+    case 'deploy':
+      return { dash: '6 4', start: null, end: 'open', color: ink, keyword: '«deploy»' }
+    case 'manifest':
+      return { dash: '6 4', start: null, end: 'open', color: ink, keyword: '«manifest»' }
+    case 'link':
+      return { start: null, end: null, color: ink }
     case 'sequenceFlow': {
       const fromGateway = sourceType === 'gateway'
       const start: Head = e.isDefault ? 'slash' : e.condition?.trim() && !fromGateway ? 'smallDiamond' : null
@@ -596,7 +823,8 @@ export const EdgeShape = memo(function EdgeShape({ e, a, b, sourceType, selfLoop
   const uy = (b.y - a.y) / len
   const nearA = { x: a.x + ux * 18 - uy * 9, y: a.y + uy * 18 + ux * 9 }
   const nearB = { x: b.x - ux * 18 - uy * 9, y: b.y - uy * 18 + ux * 9 }
-  const labelAt = { x: mid.x - uy * 9, y: mid.y + ux * 9 - (e.type === 'message' || e.type === 'reply' ? 16 : 0) }
+  const horizontalMsg = e.type === 'message' || e.type === 'reply' || e.type === 'lostMessage' || e.type === 'foundMessage'
+  const labelAt = { x: mid.x - uy * 9, y: mid.y + ux * 9 - (horizontalMsg ? 16 : 0) }
   const text = [st.keyword, e.label.trim(), e.condition?.trim() ? `[${e.condition.trim()}]` : ''].filter(Boolean).join(' ')
   return (
     <>

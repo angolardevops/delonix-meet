@@ -11,7 +11,7 @@ import { Icon } from '../../ui/icons'
 import { cx, TextInput } from '../../ui/kit'
 import type { Tool } from './Canvas'
 import { PALETTE_MIME } from './Canvas'
-import { DiagramDoc, DNode, Notation, PALETTES, PaletteItem } from './model'
+import { DiagramDoc, DNode, Notation, PaletteGroup, PALETTES, PaletteItem } from './model'
 import { PENS } from './paint'
 
 /** Glifos da paleta, desenhados como no template (viewBox 22×18). */
@@ -66,15 +66,82 @@ const GLYPH: Record<string, string> = {
   pen: 'M4 16l3-1 9-9-2-2-9 9zM12 6l2 2',
   eraser: 'M8 16h10M4 12l7-7 5 5-5 5H7z',
   text: 'M4 4h14M11 4v12M8 16h6',
+  // UML — mais ligações
+  aggregation: 'M2 9l3-3 3 3-3 3zM8 9h12',
+  realization: 'M11 16V7M11 2 6 8h10z',
+  dependency: 'M2 9h16M14 5l4 4-4 4',
+  activation: 'M11 1v3M8 4h6v10H8zM11 14v3',
+  selfMessage: 'M5 3v12M5 5h10v6H7M9 9l-2 2 2 2',
+  lostMessage: 'M2 9h13M17 9a2 2 0 1 0 0 .1',
+  foundMessage: 'M5 9a2 2 0 1 0 0 .1M7 9h13M16 5l4 4-4 4',
+  extend: 'M2 9h16M14 6l4 3-4 3',
+  ucGeneralization: 'M2 9h13M20 9l-6-4v8z',
+  // UML — actividade
+  initialNode: 'M11 4a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z',
+  activityFinal: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 6a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
+  flowFinal: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM6.5 4.5l9 9M15.5 4.5l-9 9',
+  action: 'M6 3h10a4 4 0 0 1 4 4v4a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4Z',
+  decisionNode: 'M11 3 17 9l-6 6-6-6z',
+  forkNode: 'M2 8h18v2H2zM6 3v5M16 3v5M11 10v5',
+  partition: 'M3 2h16v14H3zM3 6h16M11 2v14',
+  objectNode: 'M3 4h16v10H3z',
+  controlFlow: 'M2 9h16M14 5l4 4-4 4',
+  // UML — estados
+  state: 'M6 3h10a4 4 0 0 1 4 4v4a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4ZM2 8h18',
+  compositeState: 'M5 2h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V5a3 3 0 0 1 3-3ZM2 6h18M6 9h5v4H6z',
+  stateInitial: 'M11 4a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z',
+  stateFinal: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 6a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
+  choice: 'M11 3 17 9l-6 6-6-6z',
+  history: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM8.5 5.5v7M13.5 5.5v7M8.5 9h5',
+  transition: 'M2 12c4-8 12-8 16-2M15 6l3 4-4 1',
+  // UML — componentes e implantação
+  component: 'M4 3h15v12H4zM2 6h5v2.5H2zM2 10h5v2.5H2z',
+  port: 'M8 6h6v6H8zM2 9h6M14 9h6',
+  providedInterface: 'M2 9h9M15 5a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z',
+  requiredInterface: 'M2 9h9M17 4a5 5 0 0 0 0 10',
+  deviceNode: 'M2 6l4-4h14v11l-4 4M2 6h14v11H2zM16 6l4-4',
+  artifact: 'M4 2h10l4 4v10H4zM14 2v4h4',
+  usage: 'M2 9h16M14 5l4 4-4 4',
+  deploy: 'M2 9h16M14 5l4 4-4 4',
+  manifest: 'M2 9h16M14 5l4 4-4 4',
+  // UML — objectos
+  object: 'M2 3h18v12H2zM2 8h18M6 6h10',
+  link: 'M2 9h18',
 }
 
-const DASHED = new Set(['boundary', 'external', 'zone'])
+const DASHED = new Set(['boundary', 'external', 'zone', 'partition', 'reply', 'realization', 'dependency', 'usage', 'deploy', 'manifest', 'extend'])
+
+const CLOSED_KEY = 'dx-diagram-palette-closed'
+
+function readClosed(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(CLOSED_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, boolean>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeClosed(v: Record<string, boolean>) {
+  try {
+    localStorage.setItem(CLOSED_KEY, JSON.stringify(v))
+  } catch {
+    /* sem armazenamento: o estado dura só esta visita */
+  }
+}
+
+/** Texto em que «Procurar elemento» procura dentro de um elemento do quadro. */
+export function searchableText(n: DNode, typeLabel: string): string[] {
+  const p = n.props
+  return [n.name, typeLabel, p.text ?? '', p.stereotype ?? '', p.instanceOf ?? '', p.implementation ?? '', ...(p.attributes ?? []), ...(p.operations ?? [])]
+}
 
 export default function Palette({
   notation,
   doc,
   tool,
   penColor,
+  typeLabel,
   onPenColor,
   onPick,
   onFind,
@@ -83,24 +150,39 @@ export default function Palette({
   doc: DiagramDoc
   tool: Tool
   penColor: string
+  typeLabel: (n: DNode) => string
   onPenColor: (c: string) => void
   onPick: (item: PaletteItem) => void
   onFind: (n: DNode) => void
 }) {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
+  const [closed, setClosed] = useState<Record<string, boolean>>(readClosed)
+  const q = query.trim().toLowerCase()
   const results = useMemo(() => {
-    const q = query.trim().toLowerCase()
     if (!q) return []
-    return doc.nodes
-      .filter((n) =>
-        [n.name, n.props.text ?? '', n.props.stereotype ?? '', ...(n.props.attributes ?? []), ...(n.props.operations ?? [])].some((s) => s.toLowerCase().includes(q)),
-      )
-      .slice(0, 12)
-  }, [doc.nodes, query])
+    return doc.nodes.filter((n) => searchableText(n, typeLabel(n)).some((s) => s.toLowerCase().includes(q))).slice(0, 12)
+  }, [doc.nodes, q, typeLabel])
+
+  const groups = PALETTES[notation]
+  const itemLabel = (it: PaletteItem) => t(`diagrams.paleta.itens.${it.key}`)
+  const itemMatches = (g: PaletteGroup, it: PaletteItem) => {
+    if (!q) return true
+    const words = [itemLabel(it), t(`diagrams.paleta.grupos.${g.key}`)]
+    if (it.kind === 'node') words.push(t(`diagrams.tipos.${it.type}`))
+    if (it.kind === 'edge') words.push(t(`diagrams.arestas.${it.edge}`))
+    return words.some((w) => w.toLowerCase().includes(q))
+  }
+  const visible = groups.map((g) => ({ g, items: g.items.filter((it) => itemMatches(g, it)) })).filter((x) => x.items.length > 0)
+  const isClosed = (g: PaletteGroup) => (q ? false : closed[`${notation}:${g.key}`] ?? !!g.closed)
+  const toggle = (g: PaletteGroup) => {
+    const next = { ...closed, [`${notation}:${g.key}`]: !isClosed(g) }
+    setClosed(next)
+    writeClosed(next)
+  }
 
   const isActive = (it: PaletteItem) =>
-    (it.kind === 'edge' && tool.kind === 'edge' && tool.edge === it.edge) ||
+    (it.kind === 'edge' && tool.kind === 'edge' && (tool.key ? tool.key === it.key : tool.edge === it.edge)) ||
     (it.kind === 'pen' && tool.kind === 'pen') ||
     (it.kind === 'eraser' && tool.kind === 'eraser')
 
@@ -118,19 +200,20 @@ export default function Palette({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && results[0]) onFind(results[0])
+              else if (e.key === 'Enter' && visible[0]) onPick(visible[0].items[0])
               if (e.key === 'Escape') setQuery('')
             }}
           />
         </label>
-        {query.trim() && (
-          <ul className="dg-find__results" aria-live="polite">
+        {q && (
+          <ul className="dg-find__results" aria-live="polite" aria-label={t('diagrams.paleta.noQuadro')}>
             {results.length === 0 ? (
-              <li className="dg-find__none">{t('diagrams.paleta.semResultados')}</li>
+              <li className="dg-find__none">{visible.length === 0 ? t('diagrams.paleta.semResultados') : t('diagrams.paleta.soNaPaleta')}</li>
             ) : (
               results.map((n) => (
                 <li key={n.id}>
                   <button type="button" onClick={() => onFind(n)}>
-                    <span className="dg-find__type">{t(`diagrams.tipos.${n.type}`)}</span>
+                    <span className="dg-find__type">{typeLabel(n)}</span>
                     <span className="dg-find__name">{n.name || n.props.text || t('diagrams.semNome')}</span>
                   </button>
                 </li>
@@ -140,32 +223,43 @@ export default function Palette({
         )}
       </div>
 
-      {PALETTES[notation].map((g) => (
-        <section key={g.key} className="dg-group" aria-label={t(`diagrams.paleta.grupos.${g.key}`)}>
-          <h3 className="dg-group__title">{t(`diagrams.paleta.grupos.${g.key}`)}</h3>
-          <div className="dg-group__grid">
-            {g.items.map((it) => (
-              <button
-                key={it.key}
-                type="button"
-                className={cx('dg-item', isActive(it) && 'is-active')}
-                aria-pressed={it.kind === 'edge' || it.kind === 'pen' || it.kind === 'eraser' ? isActive(it) : undefined}
-                draggable={it.kind === 'node'}
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(PALETTE_MIME, `${notation}:${g.key}:${it.key}`)
-                  e.dataTransfer.effectAllowed = 'copy'
-                }}
-                onClick={() => onPick(it)}
-              >
-                <svg viewBox="0 0 22 18" width={17} height={15} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={DASHED.has(it.key) ? '3 2' : undefined} aria-hidden="true">
-                  <path d={GLYPH[it.key] ?? GLYPH.process} />
-                </svg>
-                <span>{t(`diagrams.paleta.itens.${it.key}`)}</span>
+      {visible.map(({ g, items }) => {
+        const shut = isClosed(g)
+        const title = t(`diagrams.paleta.grupos.${g.key}`)
+        return (
+          <section key={g.key} className="dg-group" aria-label={title} data-palette-group={g.key}>
+            <h3 className="dg-group__title">
+              <button type="button" className="dg-group__toggle" aria-expanded={!shut} onClick={() => toggle(g)} disabled={!!q}>
+                <Icon name={shut ? 'chevronRight' : 'chevronDown'} size={11} />
+                <span>{title}</span>
+                <span className="dg-group__count dx-num">{items.length}</span>
               </button>
-            ))}
-          </div>
-        </section>
-      ))}
+            </h3>
+            {!shut && (
+              <div className="dg-group__grid">
+                {items.map((it) => (
+                  <button
+                    key={it.key}
+                    type="button"
+                    className={cx('dg-item', isActive(it) && 'is-active')}
+                    data-palette-item={it.key}
+                    aria-pressed={it.kind === 'edge' || it.kind === 'pen' || it.kind === 'eraser' ? isActive(it) : undefined}
+                    draggable={it.kind === 'node'}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData(PALETTE_MIME, `${notation}:${g.key}:${it.key}`)
+                      e.dataTransfer.effectAllowed = 'copy'
+                    }}
+                    onClick={() => onPick(it)}
+                  >
+                    <PaletteGlyph it={it} />
+                    <span>{itemLabel(it)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )
+      })}
 
       {tool.kind === 'edge' && <p className="dg-help">{t('diagrams.paleta.ajudaAresta')}</p>}
       {tool.kind === 'select' && notation !== 'free' && <p className="dg-help">{t('diagrams.paleta.ajuda')}</p>}
@@ -189,6 +283,14 @@ export default function Palette({
         </div>
       )}
     </div>
+  )
+}
+
+function PaletteGlyph({ it }: { it: PaletteItem }) {
+  return (
+    <svg viewBox="0 0 22 18" width={17} height={15} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={DASHED.has(it.key) ? '3 2' : undefined} aria-hidden="true">
+      <path d={GLYPH[it.key] ?? GLYPH.process} />
+    </svg>
   )
 }
 

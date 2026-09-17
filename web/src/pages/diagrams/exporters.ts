@@ -8,6 +8,7 @@
  */
 import { center, contentBox, edgeSegment, laneOf, nodeBox, poolHeight, poolOf } from './geometry'
 import {
+  ACTIVITY_NODES,
   BPMN_FLOW_NODES,
   CLASSIFIERS,
   DEdge,
@@ -16,6 +17,7 @@ import {
   EDGE_NOTATION,
   NODE_NOTATION,
   parseMember,
+  STATE_NODES,
 } from './model'
 import { FONT, INK } from './paint'
 
@@ -173,6 +175,7 @@ export function toXmi(doc: DiagramDoc): string {
     if (e.type !== 'association' && e.type !== 'aggregation' && e.type !== 'composition') continue
     const a = byId.get(e.from)!
     const b = byId.get(e.to)!
+    if (!refOf(a) || !refOf(b) || a.type === 'deviceNode' || b.type === 'deviceNode') continue
     const id = xmlId('as', e.id)
     const agg = e.type === 'composition' ? ' aggregation="composite"' : e.type === 'aggregation' ? ' aggregation="shared"' : ''
     const typeA = refOf(a)
@@ -184,9 +187,14 @@ export function toXmi(doc: DiagramDoc): string {
     out.push('    </packagedElement>')
   }
   for (const e of edges) {
-    if (e.type !== 'dependency') continue
-    out.push(`    <packagedElement xmi:type="uml:Dependency" xmi:id="${xmlId('d', e.id)}" client="${refOf(byId.get(e.from)!)}" supplier="${refOf(byId.get(e.to)!)}"/>`)
+    if (e.type !== 'dependency' && e.type !== 'usage') continue
+    const kind = e.type === 'usage' ? 'uml:Usage' : 'uml:Dependency'
+    out.push(`    <packagedElement xmi:type="${kind}" xmi:id="${xmlId('d', e.id)}" client="${refOf(byId.get(e.from)!)}" supplier="${refOf(byId.get(e.to)!)}"/>`)
   }
+
+  out.push(...structureXmi(doc, nodes, edges, byId))
+  out.push(...activityXmi(doc, nodes, edges))
+  out.push(...stateMachineXmi(doc, nodes, edges))
 
   // Casos de uso.
   for (const n of nodes) {
@@ -218,8 +226,17 @@ export function toXmi(doc: DiagramDoc): string {
     const msgs = sequenceMessages(doc)
     for (const e of msgs) {
       const m = xmlId('msg', e.id)
-      out.push(`      <fragment xmi:type="uml:MessageOccurrenceSpecification" xmi:id="${m}_s" covered="${xmlId('ll', e.from)}" message="${m}"/>`)
-      out.push(`      <fragment xmi:type="uml:MessageOccurrenceSpecification" xmi:id="${m}_r" covered="${xmlId('ll', e.to)}" message="${m}"/>`)
+      if (e.type !== 'foundMessage') out.push(`      <fragment xmi:type="uml:MessageOccurrenceSpecification" xmi:id="${m}_s" covered="${xmlId('ll', e.from)}" message="${m}"/>`)
+      if (e.type !== 'lostMessage') out.push(`      <fragment xmi:type="uml:MessageOccurrenceSpecification" xmi:id="${m}_r" covered="${xmlId('ll', e.to)}" message="${m}"/>`)
+    }
+    for (const a of nodes.filter((n) => n.type === 'activation')) {
+      const line = lifelines.find((l) => overlapsX(a, l))
+      if (!line) continue
+      const id = xmlId('ex', a.id)
+      const ll = xmlId('ll', line.id)
+      out.push(`      <fragment xmi:type="uml:ExecutionOccurrenceSpecification" xmi:id="${id}_start" covered="${ll}" execution="${id}"/>`)
+      out.push(`      <fragment xmi:type="uml:BehaviorExecutionSpecification" xmi:id="${id}" covered="${ll}" start="${id}_start" finish="${id}_finish"/>`)
+      out.push(`      <fragment xmi:type="uml:ExecutionOccurrenceSpecification" xmi:id="${id}_finish" covered="${ll}" execution="${id}"/>`)
     }
     for (const f of nodes.filter((n) => n.type === 'fragment')) {
       const covered = lifelines.filter((l) => overlapsX(l, f)).map((l) => xmlId('ll', l.id))
@@ -229,9 +246,10 @@ export function toXmi(doc: DiagramDoc): string {
     }
     for (const e of msgs) {
       const m = xmlId('msg', e.id)
-      out.push(
-        `      <message xmi:type="uml:Message" xmi:id="${m}" name="${escapeXml(e.label.trim())}" messageSort="${e.type === 'reply' ? 'reply' : 'synchCall'}" sendEvent="${m}_s" receiveEvent="${m}_r"/>`,
-      )
+      const sort = e.type === 'reply' ? 'reply' : e.type === 'message' ? 'synchCall' : 'asynchSignal'
+      const kind = e.type === 'lostMessage' ? ' messageKind="lost"' : e.type === 'foundMessage' ? ' messageKind="found"' : ''
+      const ends = `${e.type !== 'foundMessage' ? ` sendEvent="${m}_s"` : ''}${e.type !== 'lostMessage' ? ` receiveEvent="${m}_r"` : ''}`
+      out.push(`      <message xmi:type="uml:Message" xmi:id="${m}" name="${escapeXml(e.label.trim())}" messageSort="${sort}"${kind}${ends}/>`)
     }
     out.push('    </packagedElement>')
   }
@@ -261,7 +279,201 @@ function refOf(n: DNode): string {
   if (n.type === 'package') return xmlId('pk', n.id)
   if (n.type === 'actor' || n.type === 'usecase' || n.type === 'boundary') return xmlId('u', n.id)
   if (n.type === 'lifeline') return xmlId('ll', n.id)
+  if (n.type === 'component' || n.type === 'providedInterface' || n.type === 'requiredInterface' || n.type === 'deviceNode' || n.type === 'artifact' || n.type === 'port') return xmlId('k', n.id)
+  if (n.type === 'object') return xmlId('o', n.id)
+  if (ACTIVITY_NODES.has(n.type)) return xmlId('an', n.id)
+  if (STATE_NODES.has(n.type)) return xmlId('sv', n.id)
   return ''
+}
+
+/** Componentes, interfaces fornecidas/requeridas, portos, nós, artefactos e objectos. */
+function structureXmi(doc: DiagramDoc, nodes: DNode[], edges: DEdge[], byId: Map<string, DNode>): string[] {
+  const out: string[] = []
+  const name = (n: DNode) => escapeXml(n.name.trim())
+  const comps = nodes.filter((n) => n.type === 'component')
+  const ports = nodes.filter((n) => n.type === 'port')
+  const portOwner = (p: DNode) => comps.find((c) => {
+    const b = nodeBox(c)
+    const q = center(nodeBox(p))
+    return q.x >= b.x - 10 && q.x <= b.x + b.w + 10 && q.y >= b.y - 10 && q.y <= b.y + b.h + 10
+  })
+  for (const n of nodes.filter((x) => x.type === 'providedInterface' || x.type === 'requiredInterface')) {
+    out.push(`    <packagedElement xmi:type="uml:Interface" xmi:id="${xmlId('k', n.id)}" name="${name(n)}"/>`)
+  }
+  for (const c of comps) {
+    const id = xmlId('k', c.id)
+    const inner: string[] = []
+    for (const p of ports.filter((x) => portOwner(x)?.id === c.id)) inner.push(`<ownedAttribute xmi:type="uml:Port" xmi:id="${xmlId('k', p.id)}" name="${name(p)}"/>`)
+    for (const e of edges) {
+      if (e.type !== 'realization') continue
+      const src = byId.get(e.from)!
+      const owner = src.type === 'port' ? portOwner(src) : src
+      if (owner?.id !== c.id) continue
+      const target = byId.get(e.to)!
+      const ref = target.type === 'interface' ? xmlId('c', target.id) : xmlId('k', target.id)
+      inner.push(`<interfaceRealization xmi:type="uml:InterfaceRealization" xmi:id="${xmlId('r', e.id)}" client="${id}" supplier="${ref}" contract="${ref}"/>`)
+    }
+    out.push(`    <packagedElement xmi:type="uml:Component" xmi:id="${id}" name="${name(c)}">${inner.join('')}</packagedElement>`)
+  }
+  // Um porto fora de qualquer componente não tem dono no metamodelo: fica só no desenho.
+  for (const a of nodes.filter((x) => x.type === 'artifact')) {
+    const id = xmlId('k', a.id)
+    const inner = edges
+      .filter((e) => e.type === 'manifest' && e.from === a.id)
+      .map((e) => {
+        const target = byId.get(e.to)!
+        return `<manifestation xmi:type="uml:Manifestation" xmi:id="${xmlId('mf', e.id)}" client="${id}" supplier="${refOf(target)}" utilizedElement="${refOf(target)}"/>`
+      })
+    out.push(`    <packagedElement xmi:type="uml:Artifact" xmi:id="${id}" name="${name(a)}" fileName="${name(a)}">${inner.join('')}</packagedElement>`)
+  }
+  for (const d of nodes.filter((x) => x.type === 'deviceNode')) {
+    const id = xmlId('k', d.id)
+    const inner = edges
+      .filter((e) => e.type === 'deploy' && e.to === d.id)
+      .map((e) => `<deployment xmi:type="uml:Deployment" xmi:id="${xmlId('dp', e.id)}" client="${id}" supplier="${xmlId('k', e.from)}" deployedArtifact="${xmlId('k', e.from)}"/>`)
+    const kind = d.props.stereotype === 'executionEnvironment' ? 'uml:ExecutionEnvironment' : d.props.stereotype === 'device' ? 'uml:Device' : 'uml:Node'
+    out.push(`    <packagedElement xmi:type="${kind}" xmi:id="${id}" name="${name(d)}">${inner.join('')}</packagedElement>`)
+  }
+  for (const e of edges) {
+    if (e.type !== 'association') continue
+    const a = byId.get(e.from)!
+    const b = byId.get(e.to)!
+    if (a.type !== 'deviceNode' || b.type !== 'deviceNode') continue
+    const id = xmlId('cp', e.id)
+    out.push(`    <packagedElement xmi:type="uml:CommunicationPath" xmi:id="${id}"${e.label.trim() ? ` name="${escapeXml(e.label.trim())}"` : ''} memberEnd="${id}_a ${id}_b"><ownedEnd xmi:type="uml:Property" xmi:id="${id}_a" type="${xmlId('k', a.id)}" association="${id}"/><ownedEnd xmi:type="uml:Property" xmi:id="${id}_b" type="${xmlId('k', b.id)}" association="${id}"/></packagedElement>`)
+  }
+  const classByName = new Map(nodes.filter((n) => CLASSIFIERS.has(n.type) && n.name.trim()).map((n) => [n.name.trim(), n]))
+  for (const o of nodes.filter((x) => x.type === 'object')) {
+    const id = xmlId('o', o.id)
+    const cls = classByName.get((o.props.instanceOf ?? '').trim())
+    const slots = (o.props.attributes ?? []).map((raw, i) => {
+      const [k, ...v] = raw.split('=')
+      const feature = cls ? (cls.props.attributes ?? []).findIndex((a) => parseMember(a).name === k.trim()) : -1
+      const def = cls && feature >= 0 ? ` definingFeature="${xmlId('c', cls.id)}_a${feature}"` : ''
+      return `<slot xmi:type="uml:Slot" xmi:id="${id}_s${i}"${def}><value xmi:type="uml:LiteralString" xmi:id="${id}_s${i}_v" name="${escapeXml(k.trim())}" value="${escapeXml(v.join('=').trim())}"/></slot>`
+    })
+    out.push(`    <packagedElement xmi:type="uml:InstanceSpecification" xmi:id="${id}" name="${name(o)}"${cls ? ` classifier="${xmlId('c', cls.id)}"` : ''}>${slots.join('')}</packagedElement>`)
+  }
+  void doc
+  return out
+}
+
+/** Diagramas de actividade: uma `uml:Activity` com nós, fluxos e partições. */
+function activityXmi(doc: DiagramDoc, nodes: DNode[], edges: DEdge[]): string[] {
+  const act = nodes.filter((n) => ACTIVITY_NODES.has(n.type))
+  if (act.length === 0) return []
+  const flows = edges.filter((e) => e.type === 'controlFlow')
+  const parts = nodes.filter((n) => n.type === 'partition')
+  const partOf = (n: DNode) => parts.find((p) => insideBox(n, p))
+  const kind = (n: DNode): string => {
+    const outs = flows.filter((e) => e.from === n.id).length
+    const ins = flows.filter((e) => e.to === n.id).length
+    switch (n.type) {
+      case 'initialNode':
+        return 'uml:InitialNode'
+      case 'activityFinal':
+        return 'uml:ActivityFinalNode'
+      case 'flowFinal':
+        return 'uml:FlowFinalNode'
+      case 'decisionNode':
+        return ins >= 2 && outs <= 1 ? 'uml:MergeNode' : 'uml:DecisionNode'
+      case 'forkNode':
+        return ins >= 2 && outs <= 1 ? 'uml:JoinNode' : 'uml:ForkNode'
+      case 'objectNode':
+        return 'uml:CentralBufferNode'
+      default:
+        return 'uml:OpaqueAction'
+    }
+  }
+  const out: string[] = [`    <packagedElement xmi:type="uml:Activity" xmi:id="${xmlId('act', doc.id)}" name="${escapeXml(doc.title)}">`]
+  for (const p of parts) {
+    const members = act.filter((n) => partOf(n)?.id === p.id).map((n) => xmlId('an', n.id))
+    out.push(`      <group xmi:type="uml:ActivityPartition" xmi:id="${xmlId('ap', p.id)}" name="${escapeXml(p.name.trim())}"${members.length ? ` node="${members.join(' ')}"` : ''}/>`)
+  }
+  for (const n of act) {
+    const p = partOf(n)
+    const ins = flows.filter((e) => e.to === n.id).map((e) => xmlId('cf', e.id))
+    const outs = flows.filter((e) => e.from === n.id).map((e) => xmlId('cf', e.id))
+    out.push(
+      `      <node xmi:type="${kind(n)}" xmi:id="${xmlId('an', n.id)}"${n.name.trim() ? ` name="${escapeXml(n.name.trim())}"` : ''}${p ? ` inPartition="${xmlId('ap', p.id)}"` : ''}${ins.length ? ` incoming="${ins.join(' ')}"` : ''}${outs.length ? ` outgoing="${outs.join(' ')}"` : ''}/>`,
+    )
+  }
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  for (const e of flows) {
+    const objectEnd = byId.get(e.from)?.type === 'objectNode' || byId.get(e.to)?.type === 'objectNode'
+    const guard = e.condition?.trim()
+      ? `<guard xmi:type="uml:LiteralString" xmi:id="${xmlId('cf', e.id)}_g" value="${escapeXml(e.condition.trim())}"/>`
+      : ''
+    out.push(
+      `      <edge xmi:type="${objectEnd ? 'uml:ObjectFlow' : 'uml:ControlFlow'}" xmi:id="${xmlId('cf', e.id)}"${e.label.trim() ? ` name="${escapeXml(e.label.trim())}"` : ''} source="${xmlId('an', e.from)}" target="${xmlId('an', e.to)}">${guard}</edge>`,
+    )
+  }
+  out.push('    </packagedElement>')
+  return out
+}
+
+/** `evento [guarda] / efeito` de uma transição. */
+export function parseTransition(label: string): { trigger: string; guard: string; effect: string } {
+  const m = /^\s*([^[/]*?)\s*(?:\[([^\]]*)\])?\s*(?:\/\s*(.*))?$/.exec(label)
+  return { trigger: (m?.[1] ?? '').trim(), guard: (m?.[2] ?? '').trim(), effect: (m?.[3] ?? '').trim() }
+}
+
+/** Máquina de estados: uma região de topo e regiões aninhadas nos estados compostos. */
+function stateMachineXmi(doc: DiagramDoc, nodes: DNode[], edges: DEdge[]): string[] {
+  const states = nodes.filter((n) => STATE_NODES.has(n.type))
+  if (states.length === 0) return []
+  const trans = edges.filter((e) => e.type === 'transition')
+  const composites = states.filter((n) => n.type === 'compositeState')
+  // Dono directo: o composto mais pequeno que contém o centro.
+  const parentOf = (n: DNode): DNode | undefined =>
+    composites
+      .filter((c) => c.id !== n.id && insideBox(n, c))
+      .sort((a, b) => a.w * a.h - b.w * b.h)[0]
+  const vertex = (n: DNode, ind: string): string => {
+    const id = xmlId('sv', n.id)
+    const nm = n.name.trim() ? ` name="${escapeXml(n.name.trim())}"` : ''
+    switch (n.type) {
+      case 'stateInitial':
+        return `${ind}<subvertex xmi:type="uml:Pseudostate" xmi:id="${id}"${nm} kind="initial"/>`
+      case 'choice':
+        return `${ind}<subvertex xmi:type="uml:Pseudostate" xmi:id="${id}"${nm} kind="choice"/>`
+      case 'history':
+        return `${ind}<subvertex xmi:type="uml:Pseudostate" xmi:id="${id}"${nm} kind="${n.props.deep ? 'deepHistory' : 'shallowHistory'}"/>`
+      case 'stateFinal':
+        return `${ind}<subvertex xmi:type="uml:FinalState" xmi:id="${id}"${nm}/>`
+      default: {
+        const acts = (n.props.attributes ?? [])
+          .map((raw, i) => {
+            const m = /^\s*(entry|do|exit)\s*\/\s*(.*)$/.exec(raw)
+            if (!m) return ''
+            const tag = m[1] === 'do' ? 'doActivity' : m[1]
+            return `<${tag} xmi:type="uml:OpaqueBehavior" xmi:id="${id}_b${i}" name="${escapeXml(m[2].trim())}"/>`
+          })
+          .join('')
+        const children = states.filter((c) => parentOf(c)?.id === n.id)
+        const region = n.type === 'compositeState'
+          ? `\n${ind}  <region xmi:type="uml:Region" xmi:id="${id}_r">\n${children.map((c) => vertex(c, `${ind}    `)).join('\n')}${children.length ? '\n' : ''}${ind}  </region>\n${ind}`
+          : ''
+        return `${ind}<subvertex xmi:type="uml:State" xmi:id="${id}"${nm}>${acts}${region}</subvertex>`
+      }
+    }
+  }
+  const out: string[] = [`    <packagedElement xmi:type="uml:StateMachine" xmi:id="${xmlId('sm', doc.id)}" name="${escapeXml(doc.title)}">`]
+  out.push(`      <region xmi:type="uml:Region" xmi:id="${xmlId('sm', doc.id)}_r">`)
+  for (const n of states.filter((x) => !parentOf(x))) out.push(vertex(n, '        '))
+  for (const e of trans) {
+    const id = xmlId('tr', e.id)
+    const { trigger, guard, effect } = parseTransition(e.label)
+    const inner = [
+      trigger ? `<trigger xmi:type="uml:Trigger" xmi:id="${id}_t" name="${escapeXml(trigger)}"/>` : '',
+      guard ? `<guard xmi:type="uml:Constraint" xmi:id="${id}_g"><specification xmi:type="uml:OpaqueExpression" xmi:id="${id}_gs"><body>${escapeXml(guard)}</body></specification></guard>` : '',
+      effect ? `<effect xmi:type="uml:OpaqueBehavior" xmi:id="${id}_e" name="${escapeXml(effect)}"/>` : '',
+    ].join('')
+    out.push(`        <transition xmi:type="uml:Transition" xmi:id="${id}" kind="external" source="${xmlId('sv', e.from)}" target="${xmlId('sv', e.to)}">${inner}</transition>`)
+  }
+  out.push('      </region>')
+  out.push('    </packagedElement>')
+  return out
 }
 
 function insideBox(n: DNode, container: DNode): boolean {
@@ -278,7 +490,7 @@ function overlapsX(a: DNode, b: DNode): boolean {
 /** Mensagens por ordem vertical (a ordem do diagrama de sequência). */
 export function sequenceMessages(doc: DiagramDoc): DEdge[] {
   return umlEdges(doc)
-    .filter((e) => e.type === 'message' || e.type === 'reply')
+    .filter((e) => e.type === 'message' || e.type === 'reply' || e.type === 'lostMessage' || e.type === 'foundMessage')
     .map((e) => ({ e, y: edgeSegment(doc, e)?.a.y ?? 0 }))
     .sort((p, q) => p.y - q.y)
     .map((p) => p.e)
@@ -300,8 +512,12 @@ export function toPlantUml(doc: DiagramDoc): string {
   const header = (suffix: string) => [`@startuml ${fileBase(doc.title)}${suffix}`, `title ${doc.title.replace(/\n/g, ' ')}`]
 
   const classNodes = nodes.filter((n) => CLASSIFIERS.has(n.type) || n.type === 'package' || n.type === 'note')
-  const classEdges = edges.filter((e) =>
-    ['association', 'aggregation', 'composition', 'generalization', 'realization', 'dependency', 'anchor'].includes(e.type),
+  const inClassBlock = new Set(classNodes.map((n) => n.id))
+  const classEdges = edges.filter(
+    (e) =>
+      ['association', 'aggregation', 'composition', 'generalization', 'realization', 'dependency', 'anchor'].includes(e.type) &&
+      inClassBlock.has(e.from) &&
+      inClassBlock.has(e.to),
   )
   if (nodes.some((n) => CLASSIFIERS.has(n.type))) {
     const lines = header('')
@@ -386,8 +602,10 @@ export function toPlantUml(doc: DiagramDoc): string {
           lines.push(`${fr.f.props.operator ?? 'alt'}${fr.f.name.trim() ? ` ${fr.f.name.trim()}` : ''}`)
         }
       }
-      const arrow = e.type === 'reply' ? '-->' : '->'
-      lines.push(`${alias.get(e.from)} ${arrow} ${alias.get(e.to)}${e.label.trim() ? ` : ${e.label.trim().replace(/\n/g, ' ')}` : ''}`)
+      const text = e.label.trim() ? ` : ${e.label.trim().replace(/\n/g, ' ')}` : ''
+      if (e.type === 'lostMessage') lines.push(`${alias.get(e.from)} ->x]${text}`)
+      else if (e.type === 'foundMessage') lines.push(`[o-> ${alias.get(e.to)}${text}`)
+      else lines.push(`${alias.get(e.from)} ${e.type === 'reply' ? '-->' : '->'} ${alias.get(e.to)}${text}`)
     }
     while (open.pop()) lines.push('end')
     lines.push('@enduml')
@@ -413,6 +631,7 @@ export function toPlantUml(doc: DiagramDoc): string {
     }
     for (const e of edges) {
       if (!['association', 'include', 'extend', 'generalization'].includes(e.type)) continue
+      if (!byId.has(e.to) || !(byId.get(e.to)!.type === 'actor' || byId.get(e.to)!.type === 'usecase')) continue
       const a = byId.get(e.from)!
       if (!(a.type === 'actor' || a.type === 'usecase')) continue
       const arrow = e.type === 'include' || e.type === 'extend' ? `..> ` : e.type === 'generalization' ? '--|> ' : '--> '
@@ -422,7 +641,114 @@ export function toPlantUml(doc: DiagramDoc): string {
     lines.push('@enduml')
     blocks.push(lines.join('\n'))
   }
+  blocks.push(...behaviourPlantUml(doc, nodes, edges, alias, header))
   return blocks.join('\n\n') + '\n'
+}
+
+/** Actividade e estados (sintaxe de estados, que aceita um grafo qualquer), componentes/implantação e objectos. */
+function behaviourPlantUml(doc: DiagramDoc, nodes: DNode[], edges: DEdge[], alias: Map<string, string>, header: (s: string) => string[]): string[] {
+  const blocks: string[] = []
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const nm = (n: DNode) => puQuote(n.name.trim() || alias.get(n.id)!)
+  const graph = (kinds: ReadonlySet<DNode['type']>, edgeType: DEdge['type'], suffix: string, partitionType?: DNode['type']) => {
+    const members = nodes.filter((n) => kinds.has(n.type))
+    if (members.length === 0) return
+    const lines = header(suffix)
+    const containers = nodes.filter((n) => n.type === 'compositeState' || n.type === partitionType)
+    const parentOf = (n: DNode) =>
+      containers.filter((c) => c.id !== n.id && insideBox(n, c)).sort((a, b) => a.w * a.h - b.w * b.h)[0]
+    const pseudo = (n: DNode) => ['initialNode', 'stateInitial', 'activityFinal', 'flowFinal', 'stateFinal'].includes(n.type)
+    const declare = (n: DNode, ind: string) => {
+      if (pseudo(n)) return
+      const a = alias.get(n.id)
+      const children = [...members, ...containers].filter((c) => c.id !== n.id && parentOf(c)?.id === n.id)
+      if (n.type === 'decisionNode' || n.type === 'choice') lines.push(`${ind}state ${a} <<choice>>`)
+      else if (n.type === 'forkNode') {
+        const ins = edges.filter((e) => e.type === edgeType && e.to === n.id).length
+        lines.push(`${ind}state ${a} <<${ins >= 2 ? 'join' : 'fork'}>>`)
+      } else if (n.type === 'history') lines.push(`${ind}state ${a} <<${n.props.deep ? 'history*' : 'history'}>>`)
+      else if (children.length) {
+        lines.push(`${ind}state ${nm(n)} as ${a} {`)
+        for (const c of children) declare(c, `${ind}  `)
+        lines.push(`${ind}}`)
+      } else {
+        lines.push(`${ind}state ${nm(n)} as ${a}${n.type === 'objectNode' ? ' <<object>>' : ''}`)
+        for (const act of n.props.attributes ?? []) lines.push(`${ind}${a} : ${act.replace(/\n/g, ' ')}`)
+      }
+    }
+    for (const n of [...containers, ...members].filter((x) => !parentOf(x))) declare(n, '')
+    const end = (id: string) => (pseudo(byId.get(id)!) ? '[*]' : alias.get(id)!)
+    for (const e of edges) {
+      if (e.type !== edgeType) continue
+      const guard = e.condition?.trim() ? ` [${e.condition.trim()}]` : ''
+      const text = `${e.label.trim()}${guard}`.trim()
+      lines.push(`${end(e.from)} --> ${end(e.to)}${text ? ` : ${text.replace(/\n/g, ' ')}` : ''}`)
+    }
+    lines.push('@enduml')
+    blocks.push(lines.join('\n'))
+  }
+  graph(ACTIVITY_NODES, 'controlFlow', '_actividade', 'partition')
+  graph(STATE_NODES, 'transition', '_estados')
+
+  const structural = nodes.filter((n) => ['component', 'port', 'providedInterface', 'requiredInterface', 'deviceNode', 'artifact'].includes(n.type))
+  if (structural.length > 0) {
+    const lines = header('_componentes')
+    const hosts = nodes.filter((n) => n.type === 'deviceNode' || n.type === 'component')
+    const hostOf = (n: DNode) =>
+      hosts
+        .filter((h) => h.id !== n.id && (insideBox(n, h) || (n.type === 'port' && h.type === 'component' && nearBox(n, h))))
+        .sort((a, b) => a.w * a.h - b.w * b.h)[0]
+    const decl = (n: DNode, ind: string) => {
+      const a = alias.get(n.id)
+      const kids = structural.filter((c) => hostOf(c)?.id === n.id)
+      const kw = { component: 'component', port: 'port', providedInterface: 'interface', requiredInterface: 'interface', deviceNode: 'node', artifact: 'artifact' }[n.type as 'component']
+      const st = n.props.stereotype && !['component', 'artifact'].includes(n.props.stereotype) ? ` <<${n.props.stereotype}>>` : ''
+      if (kids.length) {
+        lines.push(`${ind}${kw} ${nm(n)} as ${a}${st} {`)
+        for (const k of kids) decl(k, `${ind}  `)
+        lines.push(`${ind}}`)
+      } else lines.push(`${ind}${kw} ${nm(n)} as ${a}${st}`)
+    }
+    for (const n of structural.filter((x) => !hostOf(x))) decl(n, '')
+    const ids = new Set(structural.map((n) => n.id))
+    for (const e of edges) {
+      if (!ids.has(e.from) || !ids.has(e.to)) continue
+      const text = e.label.trim() ? ` : ${e.label.trim().replace(/\n/g, ' ')}` : ''
+      if (e.type === 'realization') lines.push(`${alias.get(e.from)} - ${alias.get(e.to)}${text}`)
+      else if (e.type === 'usage') lines.push(`${alias.get(e.from)} ..> ${alias.get(e.to)} : <<use>>`)
+      else if (e.type === 'deploy') lines.push(`${alias.get(e.from)} ..> ${alias.get(e.to)} : <<deploy>>`)
+      else if (e.type === 'manifest') lines.push(`${alias.get(e.from)} ..> ${alias.get(e.to)} : <<manifest>>`)
+      else if (e.type === 'dependency') lines.push(`${alias.get(e.from)} ..> ${alias.get(e.to)}${text}`)
+      else if (e.type === 'association') lines.push(`${alias.get(e.from)} -- ${alias.get(e.to)}${text}`)
+    }
+    lines.push('@enduml')
+    blocks.push(lines.join('\n'))
+  }
+
+  const objects = nodes.filter((n) => n.type === 'object')
+  if (objects.length > 0) {
+    const lines = header('_objectos')
+    for (const o of objects) {
+      const title = `${o.name.trim() || alias.get(o.id)}${o.props.instanceOf?.trim() ? ` : ${o.props.instanceOf.trim()}` : ''}`
+      const slots = o.props.attributes ?? []
+      if (slots.length) {
+        lines.push(`object ${puQuote(title)} as ${alias.get(o.id)} {`)
+        for (const sl of slots) lines.push(`  ${sl.replace(/\n/g, ' ')}`)
+        lines.push('}')
+      } else lines.push(`object ${puQuote(title)} as ${alias.get(o.id)}`)
+    }
+    for (const e of edges) if (e.type === 'link') lines.push(`${alias.get(e.from)} -- ${alias.get(e.to)}${e.label.trim() ? ` : ${e.label.trim()}` : ''}`)
+    lines.push('@enduml')
+    blocks.push(lines.join('\n'))
+  }
+  void doc
+  return blocks
+}
+
+function nearBox(n: DNode, host: DNode): boolean {
+  const c = center(nodeBox(n))
+  const b = nodeBox(host)
+  return c.x >= b.x - 10 && c.x <= b.x + b.w + 10 && c.y >= b.y - 10 && c.y <= b.y + b.h + 10
 }
 
 // ---------------------------------------------------------------------------

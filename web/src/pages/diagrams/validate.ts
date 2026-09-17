@@ -8,8 +8,9 @@
  * escolha (nomear uma classe, desfazer um ciclo de herança, decidir para onde
  * vai uma tarefa sem saída), a regra avisa e não mexe.
  */
-import { center, nodeBox, poolOf } from './geometry'
+import { center, contains, nodeBox, poolOf } from './geometry'
 import {
+  ACTIVITY_NODES,
   BPMN_FLOW_NODES,
   canConnect,
   CLASSIFIERS,
@@ -24,6 +25,7 @@ import {
   normalizeMultiplicity,
   Notation,
   parseMember,
+  STATE_NODES,
 } from './model'
 
 export type Severity = 'error' | 'warning'
@@ -42,6 +44,14 @@ export type RuleCode =
   | 'umlArestaDuplicada'
   | 'umlActorIsolado'
   | 'umlMensagemSemNome'
+  | 'umlActividadeSemInicio'
+  | 'umlInicialComEntrada'
+  | 'umlFinalComSaida'
+  | 'umlDecisaoSaidas'
+  | 'umlDecisaoGuarda'
+  | 'umlEstadosSemInicial'
+  | 'umlEscolhaSaidas'
+  | 'umlEstadoInalcancavel'
   | 'bpmnSemInicio'
   | 'bpmnSemFim'
   | 'bpmnInicioComEntrada'
@@ -82,6 +92,21 @@ function issue(code: RuleCode, severity: Severity, elements: string[], params: R
 
 const label = (n: DNode | undefined) => (n ? n.name.trim() || n.props.text?.trim() || n.id : '')
 
+/**
+ * Valores da frase de um problema, com os ids de elementos sem nome trocados
+ * pelo nome do TIPO («Decisão», «Nó inicial») — um id interno não diz nada a
+ * quem lê.
+ */
+export function issueParams(doc: Pick<DiagramDoc, 'nodes'>, is: Issue, typeLabel: (n: DNode) => string): Record<string, string> {
+  const byId = new Map(doc.nodes.map((n) => [n.id, n]))
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(is.params)) {
+    const n = byId.get(v)
+    out[k] = n ? typeLabel(n) : v
+  }
+  return out
+}
+
 /** Todas as regras da notação pedida (por omissão, a do separador activo). */
 export function validate(doc: DiagramDoc, notation: Notation = doc.notation): Issue[] {
   const byId = new Map(doc.nodes.map((n) => [n.id, n]))
@@ -112,7 +137,7 @@ function validateUml(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
   const nodes = doc.nodes.filter((n) => NODE_NOTATION[n.type] === 'uml')
   const edges = doc.edges.filter((e) => EDGE_NOTATION[e.type] === 'uml' && byId.has(e.from) && byId.has(e.to))
 
-  const named = new Set(['class', 'interface', 'enum', 'lifeline', 'actor', 'usecase'])
+  const named = new Set(['class', 'interface', 'enum', 'lifeline', 'actor', 'usecase', 'action', 'state', 'component', 'object', 'artifact', 'deviceNode'])
   for (const n of nodes) if (named.has(n.type) && !n.name.trim()) out.push(issue('umlNomeVazio', 'error', [n.id]))
 
   const seen = new Map<string, DNode>()
@@ -184,7 +209,7 @@ function validateUml(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
   }
   const dup = new Map<string, DEdge>()
   for (const e of edges) {
-    if (e.type === 'message' || e.type === 'reply') continue
+    if (e.type === 'message' || e.type === 'reply' || e.type === 'lostMessage' || e.type === 'foundMessage') continue
     const key = `${e.type}|${e.from}|${e.to}`
     const first = dup.get(key)
     if (first) out.push(issue('umlArestaDuplicada', 'warning', [e.id, first.id], { from: label(byId.get(e.from)), to: label(byId.get(e.to)) }, true))
@@ -193,6 +218,55 @@ function validateUml(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
   for (const n of nodes) {
     if (n.type !== 'actor') continue
     if (!edges.some((e) => e.from === n.id || e.to === n.id)) out.push(issue('umlActorIsolado', 'warning', [n.id], { name: label(n) }))
+  }
+  out.push(...validateBehaviour(nodes, edges))
+  return out
+}
+
+/** Actividades e máquinas de estados: pontos de entrada, saídas e alcance. */
+function validateBehaviour(nodes: DNode[], edges: DEdge[]): Issue[] {
+  const out: Issue[] = []
+  const flows = edges.filter((e) => e.type === 'controlFlow')
+  const trans = edges.filter((e) => e.type === 'transition')
+  const act = nodes.filter((n) => ACTIVITY_NODES.has(n.type))
+  const initials = act.filter((n) => n.type === 'initialNode')
+  if (act.some((n) => n.type === 'action') && initials.length === 0) out.push(issue('umlActividadeSemInicio', 'warning', [act.find((n) => n.type === 'action')!.id]))
+  const states = nodes.filter((n) => STATE_NODES.has(n.type))
+  const sInit = states.filter((n) => n.type === 'stateInitial')
+  if (states.some((n) => n.type === 'state' || n.type === 'compositeState') && sInit.length === 0) {
+    out.push(issue('umlEstadosSemInicial', 'warning', [states.find((n) => n.type === 'state' || n.type === 'compositeState')!.id]))
+  }
+  for (const [list, pool] of [[flows, act], [trans, states]] as const) {
+    for (const n of pool) {
+      const inc = list.filter((e) => e.to === n.id)
+      const outs = list.filter((e) => e.from === n.id)
+      if ((n.type === 'initialNode' || n.type === 'stateInitial') && inc.length > 0) out.push(issue('umlInicialComEntrada', 'error', [n.id], { name: label(n) }, true))
+      if ((n.type === 'activityFinal' || n.type === 'flowFinal' || n.type === 'stateFinal') && outs.length > 0) out.push(issue('umlFinalComSaida', 'error', [n.id], { name: label(n) }, true))
+      if (n.type === 'decisionNode') {
+        // Junção (várias entradas, uma saída) é válida; decisão pede ≥ 2 saídas.
+        const isMerge = inc.length >= 2 && outs.length === 1
+        if (!isMerge && outs.length < 2) out.push(issue('umlDecisaoSaidas', 'warning', [n.id], { name: label(n) }))
+        if (outs.length >= 2) for (const e of outs) if (!e.condition?.trim()) out.push(issue('umlDecisaoGuarda', 'warning', [e.id], { name: label(n) }))
+      }
+      if (n.type === 'choice' && outs.length < 2) out.push(issue('umlEscolhaSaidas', 'warning', [n.id], { name: label(n) }))
+    }
+  }
+  if (sInit.length > 0) {
+    const seen = new Set(sInit.map((n) => n.id))
+    const queue = [...seen]
+    while (queue.length) {
+      const id = queue.shift()!
+      for (const e of trans) if (e.from === id && !seen.has(e.to)) {
+        seen.add(e.to)
+        queue.push(e.to)
+      }
+    }
+    // Um estado dentro de um composto alcançado conta como alcançado pelo composto.
+    for (const n of states) {
+      if (seen.has(n.id) || n.type === 'stateInitial' || n.type === 'compositeState') continue
+      const inside = states.some((c) => c.type === 'compositeState' && seen.has(c.id) && contains(nodeBox(c), center(nodeBox(n))))
+      if (!inside) out.push(issue('umlEstadoInalcancavel', 'warning', [n.id], { name: label(n) }))
+    }
   }
   return out
 }
@@ -368,6 +442,10 @@ export function applyFix(doc: DiagramDoc, is: Issue, names: { start: string; end
     }
     case 'umlArestaDuplicada':
       return removeEdges(doc, new Set([first]))
+    case 'umlInicialComEntrada':
+      return { ...doc, edges: doc.edges.filter((e) => !((e.type === 'controlFlow' || e.type === 'transition') && e.to === first)) }
+    case 'umlFinalComSaida':
+      return { ...doc, edges: doc.edges.filter((e) => !((e.type === 'controlFlow' || e.type === 'transition') && e.from === first)) }
     case 'bpmnInicioComEntrada':
       return { ...doc, edges: doc.edges.filter((e) => !(e.type === 'sequenceFlow' && e.to === first)) }
     case 'bpmnFimComSaida':

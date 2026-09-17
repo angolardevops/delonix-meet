@@ -10,12 +10,12 @@ import { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent,
 import { useTranslation } from 'react-i18next'
 import { cx } from '../../ui/kit'
 import { center, clampZoom, contains, edgeSegment, nodeBox, Pt } from './geometry'
-import { CONTAINERS, DiagramDoc, DNode, EdgeType, Stroke, uid } from './model'
+import { CONTAINERS, DiagramDoc, DNode, EdgeType, FIXED_SIZE, Stroke, uid } from './model'
 import { EdgeShape, NodeShape, strokePath } from './shapes'
 import { FONT } from './paint'
 
 export type Sel = { kind: 'node' | 'edge' | 'stroke'; id: string }
-export type Tool = { kind: 'select' } | { kind: 'edge'; edge: EdgeType } | { kind: 'pen' } | { kind: 'eraser' }
+export type Tool = { kind: 'select' } | { kind: 'edge'; edge: EdgeType; key?: string } | { kind: 'pen' } | { kind: 'eraser' }
 export interface View {
   x: number
   y: number
@@ -24,7 +24,24 @@ export interface View {
 
 export const PALETTE_MIME = 'application/x-delonix-diagram'
 
-const NO_RESIZE = new Set<DNode['type']>(['startEvent', 'intermediateEvent', 'endEvent', 'gateway', 'actor', 'dataObject'])
+const NO_RESIZE = new Set<DNode['type']>(['startEvent', 'intermediateEvent', 'endEvent', 'gateway', 'dataObject', ...FIXED_SIZE])
+
+/** Mensagens que se arrastam na vertical ao longo das linhas de vida. */
+const SEQ_MESSAGES = new Set<EdgeType>(['message', 'reply', 'lostMessage', 'foundMessage'])
+
+/**
+ * Elementos que viajam com outro sem ele ser contentor: portos na borda de um
+ * componente, barras de activação na linha de vida, eventos de fronteira na
+ * actividade.
+ */
+function carries(host: DNode, m: DNode): boolean {
+  const c = center(nodeBox(m))
+  const b = nodeBox(host)
+  const grown = { x: b.x - 10, y: b.y - 10, w: b.w + 20, h: b.h + 20 }
+  if (host.type === 'component') return m.type === 'port' && contains(grown, c)
+  if (host.type === 'lifeline') return m.type === 'activation' && contains(grown, c)
+  return false
+}
 const WIDTH_ONLY = new Set<DNode['type']>(['class', 'interface', 'enum'])
 
 type Gesture =
@@ -137,6 +154,9 @@ export default function Canvas({
         if (m.id !== n.id && contains(box, center(nodeBox(m))) && !(m.type === 'pool' && n.type !== 'pool')) orig.set(m.id, { x: m.x, y: m.y })
       }
     }
+    for (const host of [...docRef.current.nodes.filter((x) => orig.has(x.id))]) {
+      for (const m of docRef.current.nodes) if (!orig.has(m.id) && carries(host, m)) orig.set(m.id, { x: m.x, y: m.y })
+    }
     gesture.current = { t: 'drag', start: p, orig, before: docRef.current, moved: false }
     capture(e)
   }
@@ -167,7 +187,7 @@ export default function Canvas({
     e.stopPropagation()
     onSelect({ kind: 'edge', id })
     const edge = docRef.current.edges.find((x) => x.id === id)
-    if (edge && (edge.type === 'message' || edge.type === 'reply')) {
+    if (edge && SEQ_MESSAGES.has(edge.type)) {
       gesture.current = { t: 'offset', id, start: toWorld(e.clientX, e.clientY), orig: edge.offset ?? 40, before: docRef.current, moved: false }
       capture(e)
     }
@@ -383,7 +403,7 @@ export default function Canvas({
               <g key={e.id} data-edge-id={e.id} className={cx('dg-edge', selected && 'is-selected')} onPointerDown={(ev) => startEdge(ev, e.id)}>
                 <path data-ui d={`M${seg.a.x} ${seg.a.y}L${seg.b.x} ${seg.b.y}`} className="dg-edge__hit" />
                 {selected && <path data-ui d={`M${seg.a.x} ${seg.a.y}L${seg.b.x} ${seg.b.y}`} className="dg-edge__sel" />}
-                <EdgeShape e={e} a={seg.a} b={seg.b} sourceType={byId.get(e.from)?.type} selfLoop={e.from === e.to && e.type !== 'message' && e.type !== 'reply'} />
+                <EdgeShape e={e} a={seg.a} b={seg.b} sourceType={byId.get(e.from)?.type} selfLoop={e.from === e.to && !SEQ_MESSAGES.has(e.type)} />
               </g>
             )
           })}

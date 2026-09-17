@@ -1115,3 +1115,29 @@ button.dg-chip {
   padding-block: 3px;
   font-size: 10.5px;
 }
+
+/* Grupos da paleta recolhíveis (quadros-formas) */
+.dg-group__title .dg-group__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dg-group__title .dg-group__toggle:disabled {
+  cursor: default;
+}
+.dg-group__title .dg-group__toggle:hover:not(:disabled) {
+  color: var(--text);
+}
+.dg-group__count {
+  margin-left: auto;
+  opacity: 0.7;
+}

@@ -20,6 +20,7 @@ import {
   edgeTypesFor,
   EdgeType,
   EventTrigger,
+  FRAGMENT_OPERATORS,
   FragmentOperator,
   GatewayKind,
   Lane,
@@ -30,7 +31,7 @@ import {
   uid,
 } from './model'
 import { FILLS } from './paint'
-import type { Issue } from './validate'
+import { Issue, issueParams } from './validate'
 
 export type InspectorTab = 'element' | 'style' | 'layers' | 'lanes' | 'validation'
 
@@ -66,6 +67,7 @@ export default function Inspector({
   selection,
   tab,
   issues,
+  typeLabel,
   showValidation = false,
   onTab,
   onChange,
@@ -81,6 +83,7 @@ export default function Inspector({
   selection: Sel | null
   tab: InspectorTab
   issues: Issue[]
+  typeLabel: (n: DNode) => string
   showValidation?: boolean
   onTab: (t: InspectorTab) => void
   onChange: Change
@@ -125,12 +128,12 @@ export default function Inspector({
             <p className="dg-empty">{t('diagrams.inspector.nada')}</p>
           ))}
         {current === 'element' && notation !== 'free' && (issues.length > 0 || (showValidation && notation !== 'bpmn')) && (
-          <ValidationPanel doc={doc} issues={issues} onSelect={onSelect} onFix={onFix} onFixAll={onFixAll} />
+          <ValidationPanel doc={doc} issues={issues} typeLabel={typeLabel} onSelect={onSelect} onFix={onFix} onFixAll={onFixAll} />
         )}
         {current === 'style' && <StylePanel doc={doc} n={node} onChange={onChange} />}
         {current === 'layers' && <LayersPanel doc={doc} notation={notation} selection={selection} onChange={onChange} onSelect={onSelect} />}
         {current === 'lanes' && <LanesPanel doc={doc} selected={node} onChange={onChange} onSelect={onSelect} />}
-        {current === 'validation' && <ValidationPanel doc={doc} issues={issues} onSelect={onSelect} onFix={onFix} onFixAll={onFixAll} />}
+        {current === 'validation' && <ValidationPanel doc={doc} issues={issues} typeLabel={typeLabel} onSelect={onSelect} onFix={onFix} onFixAll={onFixAll} />}
       </div>
       {footer}
     </div>
@@ -227,13 +230,54 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
         {n.type === 'fragment' && (
           <Field label={t('diagrams.inspector.operador')}>
             <Select value={n.props.operator ?? 'alt'} onChange={(e) => setProps({ operator: e.target.value as FragmentOperator })}>
-              {(['alt', 'opt', 'loop', 'par', 'break', 'critical'] as const).map((o) => (
+              {FRAGMENT_OPERATORS.map((o) => (
                 <option key={o} value={o}>
                   {o}
                 </option>
               ))}
             </Select>
           </Field>
+        )}
+        {n.type === 'object' && (
+          <>
+            <Field label={t('diagrams.inspector.instanciaDe')}>
+              <TextInput code list="dg-classes" value={n.props.instanceOf ?? ''} onChange={(e) => setProps({ instanceOf: e.target.value }, 'inst')} />
+            </Field>
+            <datalist id="dg-classes">
+              {doc.nodes.filter((x) => CLASSIFIERS.has(x.type) && x.name.trim()).map((x) => (
+                <option key={x.id} value={x.name.trim()} />
+              ))}
+            </datalist>
+            <MemberList
+              label={t('diagrams.inspector.slots')}
+              items={n.props.attributes ?? []}
+              placeholder={t('diagrams.inspector.novoSlot')}
+              addLabel={t('diagrams.inspector.acrescentarSlot')}
+              onItems={(v, k) => setProps({ attributes: v }, k)}
+            />
+          </>
+        )}
+        {n.type === 'state' && (
+          <MemberList
+            label={t('diagrams.inspector.actividadesInternas')}
+            items={n.props.attributes ?? []}
+            placeholder={t('diagrams.inspector.novaActividade')}
+            addLabel={t('diagrams.inspector.acrescentarActividade')}
+            onItems={(v, k) => setProps({ attributes: v }, k)}
+          />
+        )}
+        {n.type === 'history' && <Toggle label={t('diagrams.inspector.historicoProfundo')} checked={!!n.props.deep} onChange={(e) => setProps({ deep: e.target.checked })} />}
+        {(n.type === 'component' || n.type === 'deviceNode' || n.type === 'artifact') && (
+          <>
+            <Field label={t('diagrams.inspector.estereotipo')}>
+              <TextInput code list={`dg-st-${n.type}`} value={n.props.stereotype ?? ''} onChange={(e) => setProps({ stereotype: e.target.value.replace(/[«»<>]/g, '') }, 'st')} />
+            </Field>
+            <datalist id={`dg-st-${n.type}`}>
+              {(n.type === 'component' ? ['component', 'subsystem', 'service'] : n.type === 'deviceNode' ? ['device', 'executionEnvironment', 'container'] : ['artifact', 'file', 'library', 'executable']).map((x) => (
+                <option key={x} value={x} />
+              ))}
+            </datalist>
+          </>
         )}
         {n.type === 'lifeline' && (
           <Field label={t('diagrams.inspector.comprimento')}>
@@ -587,7 +631,7 @@ function EdgePanel({ doc, e, onChange, onDelete }: { doc: DiagramDoc; e: DEdge; 
   const types = a && b ? edgeTypesFor(a, b) : [e.type]
   const assoc = e.type === 'association' || e.type === 'aggregation' || e.type === 'composition'
   const src = a?.type
-  const canCondition = e.type === 'sequenceFlow' && src !== 'startEvent' && !(src === 'gateway' && (a?.props.gatewayKind === 'parallel' || a?.props.gatewayKind === 'eventBased'))
+  const canCondition = e.type === 'controlFlow' || (e.type === 'sequenceFlow' && src !== 'startEvent') && !(src === 'gateway' && (a?.props.gatewayKind === 'parallel' || a?.props.gatewayKind === 'eventBased'))
   const canDefault = e.type === 'sequenceFlow' && (src === 'task' || src === 'subProcess' || (src === 'gateway' && (a?.props.gatewayKind ?? 'exclusive') !== 'parallel' && a?.props.gatewayKind !== 'eventBased'))
 
   return (
@@ -611,7 +655,7 @@ function EdgePanel({ doc, e, onChange, onDelete }: { doc: DiagramDoc; e: DEdge; 
       </Field>
       {e.type !== 'anchor' && (
         <Field label={t('diagrams.inspector.etiqueta')}>
-          <TextInput value={e.label} onChange={(ev) => set({ label: ev.target.value }, 'label')} />
+          <TextInput value={e.label} placeholder={e.type === 'transition' ? t('diagrams.inspector.transicaoAjuda') : undefined} onChange={(ev) => set({ label: ev.target.value }, 'label')} />
         </Field>
       )}
       {assoc && (
@@ -630,7 +674,7 @@ function EdgePanel({ doc, e, onChange, onDelete }: { doc: DiagramDoc; e: DEdge; 
         </div>
       )}
       {canCondition && (
-        <Field label={t('diagrams.inspector.condicao')}>
+        <Field label={t(e.type === 'controlFlow' ? 'diagrams.inspector.guarda' : 'diagrams.inspector.condicao')}>
           <TextInput code value={e.condition ?? ''} disabled={!!e.isDefault} onChange={(ev) => set({ condition: ev.target.value }, 'cond')} />
         </Field>
       )}
@@ -783,7 +827,7 @@ function LanesPanel({ doc, selected, onChange, onSelect }: { doc: DiagramDoc; se
   )
 }
 
-function ValidationPanel({ doc, issues, onSelect, onFix, onFixAll }: { doc: DiagramDoc; issues: Issue[]; onSelect: (s: Sel | null) => void; onFix: (i: Issue) => void; onFixAll: () => void }) {
+function ValidationPanel({ doc, issues, typeLabel, onSelect, onFix, onFixAll }: { doc: DiagramDoc; issues: Issue[]; typeLabel: (n: DNode) => string; onSelect: (s: Sel | null) => void; onFix: (i: Issue) => void; onFixAll: () => void }) {
   const { t } = useTranslation()
   const fixable = issues.filter((i) => i.fixable).length
   const selectFor = (i: Issue) => {
@@ -808,7 +852,7 @@ function ValidationPanel({ doc, issues, onSelect, onFix, onFixAll }: { doc: Diag
           <li key={i.id} className={cx('dg-issue', i.severity === 'error' && 'is-error')}>
             <Icon name="alert" size={13} />
             <span className="dg-sr">{t(`diagrams.validacao.${i.severity === 'error' ? 'erro' : 'aviso'}`)}</span>
-            <span className="dg-issue__text">{t(`diagrams.regras.${i.code}`, i.params)}</span>
+            <span className="dg-issue__text">{t(`diagrams.regras.${i.code}`, issueParams(doc, i, typeLabel))}</span>
             <span className="dg-issue__actions">
               <button type="button" className="dg-link" onClick={() => selectFor(i)}>
                 {t('diagrams.validacao.ver')}

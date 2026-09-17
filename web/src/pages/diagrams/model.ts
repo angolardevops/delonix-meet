@@ -30,6 +30,33 @@ export type NodeType =
   | 'actor'
   | 'usecase'
   | 'boundary'
+  // UML — sequência (execução)
+  | 'activation'
+  // UML — actividade
+  | 'initialNode'
+  | 'activityFinal'
+  | 'flowFinal'
+  | 'action'
+  | 'decisionNode'
+  | 'forkNode'
+  | 'partition'
+  | 'objectNode'
+  // UML — estados
+  | 'state'
+  | 'compositeState'
+  | 'stateInitial'
+  | 'stateFinal'
+  | 'choice'
+  | 'history'
+  // UML — componentes e implantação
+  | 'component'
+  | 'port'
+  | 'providedInterface'
+  | 'requiredInterface'
+  | 'deviceNode'
+  | 'artifact'
+  // UML — objectos
+  | 'object'
   // BPMN
   | 'startEvent'
   | 'intermediateEvent'
@@ -69,6 +96,14 @@ export type EdgeType =
   | 'reply'
   | 'include'
   | 'extend'
+  | 'lostMessage'
+  | 'foundMessage'
+  | 'controlFlow'
+  | 'transition'
+  | 'usage'
+  | 'deploy'
+  | 'manifest'
+  | 'link'
   // BPMN
   | 'sequenceFlow'
   | 'messageFlow'
@@ -84,7 +119,9 @@ export type TaskKind = 'none' | 'user' | 'service' | 'script' | 'manual' | 'send
 export type EventTrigger = 'none' | 'message' | 'timer' | 'signal'
 export type GatewayKind = 'exclusive' | 'parallel' | 'inclusive' | 'eventBased'
 export type MultiInstance = 'none' | 'parallel' | 'sequential'
-export type FragmentOperator = 'alt' | 'opt' | 'loop' | 'par' | 'break' | 'critical'
+export type FragmentOperator = 'alt' | 'opt' | 'loop' | 'par' | 'break' | 'critical' | 'neg' | 'strict' | 'seq' | 'ignore' | 'consider' | 'assert' | 'ref'
+
+export const FRAGMENT_OPERATORS: FragmentOperator[] = ['alt', 'opt', 'loop', 'par', 'break', 'critical', 'neg', 'strict', 'seq', 'ignore', 'consider', 'assert', 'ref']
 
 export interface Lane {
   id: string
@@ -110,6 +147,10 @@ export interface NodeProps {
   trigger?: EventTrigger
   gatewayKind?: GatewayKind
   lanes?: Lane[]
+  /** Objecto UML: a classe de que é instância (`s1: Session`). */
+  instanceOf?: string
+  /** Histórico profundo (`H*`) em vez de superficial (`H`). */
+  deep?: boolean
   /** Pôr em evidência (borda da cor de acção), como a classe seleccionada do template. */
   emphasis?: boolean
 }
@@ -179,6 +220,28 @@ export const NODE_NOTATION: Record<NodeType, Notation> = {
   actor: 'uml',
   usecase: 'uml',
   boundary: 'uml',
+  activation: 'uml',
+  initialNode: 'uml',
+  activityFinal: 'uml',
+  flowFinal: 'uml',
+  action: 'uml',
+  decisionNode: 'uml',
+  forkNode: 'uml',
+  partition: 'uml',
+  objectNode: 'uml',
+  state: 'uml',
+  compositeState: 'uml',
+  stateInitial: 'uml',
+  stateFinal: 'uml',
+  choice: 'uml',
+  history: 'uml',
+  component: 'uml',
+  port: 'uml',
+  providedInterface: 'uml',
+  requiredInterface: 'uml',
+  deviceNode: 'uml',
+  artifact: 'uml',
+  object: 'uml',
   startEvent: 'bpmn',
   intermediateEvent: 'bpmn',
   endEvent: 'bpmn',
@@ -214,6 +277,14 @@ export const EDGE_NOTATION: Record<EdgeType, Notation> = {
   reply: 'uml',
   include: 'uml',
   extend: 'uml',
+  lostMessage: 'uml',
+  foundMessage: 'uml',
+  controlFlow: 'uml',
+  transition: 'uml',
+  usage: 'uml',
+  deploy: 'uml',
+  manifest: 'uml',
+  link: 'uml',
   sequenceFlow: 'bpmn',
   messageFlow: 'bpmn',
   dataAssociation: 'bpmn',
@@ -224,7 +295,45 @@ export const EDGE_NOTATION: Record<EdgeType, Notation> = {
 }
 
 /** Contentores: desenham-se por baixo e não se ligam por setas de fluxo. */
-export const CONTAINERS: ReadonlySet<NodeType> = new Set(['package', 'fragment', 'boundary', 'pool', 'zone'])
+export const CONTAINERS: ReadonlySet<NodeType> = new Set(['package', 'fragment', 'boundary', 'pool', 'zone', 'partition', 'compositeState', 'deviceNode'])
+
+/** Nós de actividade UML (ligam-se por fluxo de controlo). */
+export const ACTIVITY_NODES: ReadonlySet<NodeType> = new Set(['initialNode', 'activityFinal', 'flowFinal', 'action', 'decisionNode', 'forkNode', 'objectNode'])
+
+/** Vértices de máquina de estados UML (ligam-se por transição). */
+export const STATE_NODES: ReadonlySet<NodeType> = new Set(['state', 'compositeState', 'stateInitial', 'stateFinal', 'choice', 'history'])
+
+/** Elementos de tamanho fixo: o nome vai por baixo e não se redimensionam. */
+export const FIXED_SIZE: ReadonlySet<NodeType> = new Set([
+  'actor',
+  'initialNode',
+  'activityFinal',
+  'flowFinal',
+  'decisionNode',
+  'stateInitial',
+  'stateFinal',
+  'choice',
+  'history',
+  'port',
+  'providedInterface',
+  'requiredInterface',
+])
+
+/** Elementos cujo nome se escreve por BAIXO da forma (conta para o enquadramento). */
+export const LABEL_BELOW: ReadonlySet<NodeType> = new Set([
+  'actor',
+  'decisionNode',
+  'choice',
+  'history',
+  'port',
+  'providedInterface',
+  'requiredInterface',
+  'initialNode',
+  'activityFinal',
+  'flowFinal',
+  'stateInitial',
+  'stateFinal',
+])
 
 export const CLASSIFIERS: ReadonlySet<NodeType> = new Set(['class', 'interface', 'enum'])
 
@@ -251,6 +360,8 @@ export type PaletteItem =
 export interface PaletteGroup {
   key: string
   items: PaletteItem[]
+  /** Recolhido por omissão (a pessoa pode abri-lo; a escolha fica no browser). */
+  closed?: boolean
 }
 
 export const PALETTES: Record<Notation, PaletteGroup[]> = {
@@ -266,6 +377,9 @@ export const PALETTES: Record<Notation, PaletteGroup[]> = {
         { kind: 'edge', key: 'generalization', edge: 'generalization' },
         { kind: 'edge', key: 'association', edge: 'association' },
         { kind: 'edge', key: 'composition', edge: 'composition' },
+        { kind: 'edge', key: 'aggregation', edge: 'aggregation' },
+        { kind: 'edge', key: 'realization', edge: 'realization' },
+        { kind: 'edge', key: 'dependency', edge: 'dependency' },
       ],
     },
     {
@@ -275,6 +389,10 @@ export const PALETTES: Record<Notation, PaletteGroup[]> = {
         { kind: 'edge', key: 'message', edge: 'message' },
         { kind: 'edge', key: 'reply', edge: 'reply' },
         { kind: 'node', key: 'fragment', type: 'fragment' },
+        { kind: 'node', key: 'activation', type: 'activation' },
+        { kind: 'edge', key: 'selfMessage', edge: 'message' },
+        { kind: 'edge', key: 'lostMessage', edge: 'lostMessage' },
+        { kind: 'edge', key: 'foundMessage', edge: 'foundMessage' },
       ],
     },
     {
@@ -284,6 +402,59 @@ export const PALETTES: Record<Notation, PaletteGroup[]> = {
         { kind: 'node', key: 'usecase', type: 'usecase' },
         { kind: 'edge', key: 'include', edge: 'include' },
         { kind: 'node', key: 'boundary', type: 'boundary' },
+        { kind: 'edge', key: 'extend', edge: 'extend' },
+        { kind: 'edge', key: 'ucGeneralization', edge: 'generalization' },
+      ],
+    },
+    {
+      key: 'activity',
+      closed: true,
+      items: [
+        { kind: 'node', key: 'initialNode', type: 'initialNode' },
+        { kind: 'node', key: 'activityFinal', type: 'activityFinal' },
+        { kind: 'node', key: 'flowFinal', type: 'flowFinal' },
+        { kind: 'node', key: 'action', type: 'action' },
+        { kind: 'node', key: 'decisionNode', type: 'decisionNode' },
+        { kind: 'node', key: 'forkNode', type: 'forkNode' },
+        { kind: 'node', key: 'partition', type: 'partition' },
+        { kind: 'node', key: 'objectNode', type: 'objectNode' },
+        { kind: 'edge', key: 'controlFlow', edge: 'controlFlow' },
+      ],
+    },
+    {
+      key: 'states',
+      closed: true,
+      items: [
+        { kind: 'node', key: 'state', type: 'state' },
+        { kind: 'node', key: 'compositeState', type: 'compositeState' },
+        { kind: 'node', key: 'stateInitial', type: 'stateInitial' },
+        { kind: 'node', key: 'stateFinal', type: 'stateFinal' },
+        { kind: 'node', key: 'choice', type: 'choice' },
+        { kind: 'node', key: 'history', type: 'history' },
+        { kind: 'edge', key: 'transition', edge: 'transition' },
+      ],
+    },
+    {
+      key: 'components',
+      closed: true,
+      items: [
+        { kind: 'node', key: 'component', type: 'component' },
+        { kind: 'node', key: 'port', type: 'port' },
+        { kind: 'node', key: 'providedInterface', type: 'providedInterface' },
+        { kind: 'node', key: 'requiredInterface', type: 'requiredInterface' },
+        { kind: 'node', key: 'deviceNode', type: 'deviceNode' },
+        { kind: 'node', key: 'artifact', type: 'artifact' },
+        { kind: 'edge', key: 'usage', edge: 'usage' },
+        { kind: 'edge', key: 'deploy', edge: 'deploy' },
+        { kind: 'edge', key: 'manifest', edge: 'manifest' },
+      ],
+    },
+    {
+      key: 'objects',
+      closed: true,
+      items: [
+        { kind: 'node', key: 'object', type: 'object' },
+        { kind: 'edge', key: 'link', edge: 'link' },
       ],
     },
   ],
@@ -388,6 +559,28 @@ const SIZES: Record<NodeType, [number, number]> = {
   actor: [60, 86],
   usecase: [180, 44],
   boundary: [300, 240],
+  activation: [14, 70],
+  initialNode: [26, 26],
+  activityFinal: [28, 28],
+  flowFinal: [28, 28],
+  action: [150, 52],
+  decisionNode: [40, 40],
+  forkNode: [120, 8],
+  partition: [220, 360],
+  objectNode: [130, 44],
+  state: [160, 56],
+  compositeState: [340, 220],
+  stateInitial: [26, 26],
+  stateFinal: [28, 28],
+  choice: [36, 36],
+  history: [30, 30],
+  component: [180, 70],
+  port: [14, 14],
+  providedInterface: [20, 20],
+  requiredInterface: [22, 22],
+  deviceNode: [320, 200],
+  artifact: [160, 56],
+  object: [180, 0],
   startEvent: [36, 36],
   intermediateEvent: [36, 36],
   endEvent: [36, 36],
@@ -427,6 +620,12 @@ export function makeNode(type: NodeType, x: number, y: number, name: string, pro
   if (type === 'interface') Object.assign(base, { stereotype: 'interface', attributes: [], operations: [] })
   if (type === 'enum') Object.assign(base, { stereotype: 'enumeration', attributes: [], operations: [] })
   if (type === 'lifeline') Object.assign(base, { length: 240 })
+  if (type === 'object') Object.assign(base, { instanceOf: '', attributes: [] })
+  if (type === 'state') Object.assign(base, { attributes: [] })
+  if (type === 'history') Object.assign(base, { deep: false })
+  if (type === 'component') Object.assign(base, { stereotype: 'component' })
+  if (type === 'deviceNode') Object.assign(base, { stereotype: 'device' })
+  if (type === 'artifact') Object.assign(base, { stereotype: 'artifact' })
   if (type === 'fragment') Object.assign(base, { operator: 'alt' })
   if (type === 'task') Object.assign(base, { taskKind: 'none', multiInstance: 'none' })
   if (type === 'startEvent' || type === 'intermediateEvent' || type === 'endEvent') Object.assign(base, { trigger: 'none' })
@@ -451,12 +650,34 @@ const USECASE_SIDE: ReadonlySet<NodeType> = new Set(['actor', 'usecase'])
 const ARCH_NODES: ReadonlySet<NodeType> = new Set(['service', 'database', 'queue', 'client', 'external'])
 const FLOW_NODES: ReadonlySet<NodeType> = new Set(['terminator', 'process', 'decision', 'io', 'document'])
 
+const PROVIDERS: ReadonlySet<NodeType> = new Set(['class', 'component', 'port'])
+const DEPENDS: ReadonlySet<NodeType> = new Set(['class', 'interface', 'enum', 'package', 'component', 'deviceNode', 'artifact', 'providedInterface', 'requiredInterface'])
+
 /** `true` se uma aresta deste tipo pode ligar estes dois elementos. */
 export function canConnect(type: EdgeType, a: DNode, b: DNode): boolean {
   if (type === 'anchor') return (a.type === 'note') !== (b.type === 'note')
   switch (type) {
     case 'association':
-      return (CLASSIFIERS.has(a.type) && CLASSIFIERS.has(b.type)) || (USECASE_SIDE.has(a.type) && USECASE_SIDE.has(b.type) && a.type !== b.type)
+      return (
+        (CLASSIFIERS.has(a.type) && CLASSIFIERS.has(b.type)) ||
+        (USECASE_SIDE.has(a.type) && USECASE_SIDE.has(b.type) && a.type !== b.type) ||
+        (a.type === 'deviceNode' && b.type === 'deviceNode' && a.id !== b.id)
+      )
+    case 'link':
+      return a.type === 'object' && b.type === 'object'
+    case 'lostMessage':
+    case 'foundMessage':
+      return a.type === 'lifeline' && a.id === b.id
+    case 'controlFlow':
+      return ACTIVITY_NODES.has(a.type) && ACTIVITY_NODES.has(b.type) && a.id !== b.id && a.type !== 'activityFinal' && a.type !== 'flowFinal' && b.type !== 'initialNode'
+    case 'transition':
+      return STATE_NODES.has(a.type) && STATE_NODES.has(b.type) && a.type !== 'stateFinal' && b.type !== 'stateInitial' && (a.id !== b.id || a.type === 'state' || a.type === 'compositeState')
+    case 'usage':
+      return PROVIDERS.has(a.type) && (b.type === 'requiredInterface' || b.type === 'interface')
+    case 'deploy':
+      return a.type === 'artifact' && b.type === 'deviceNode'
+    case 'manifest':
+      return a.type === 'artifact' && (b.type === 'component' || CLASSIFIERS.has(b.type))
     case 'aggregation':
     case 'composition':
       return CLASSIFIERS.has(a.type) && CLASSIFIERS.has(b.type)
@@ -467,9 +688,9 @@ export function canConnect(type: EdgeType, a: DNode, b: DNode): boolean {
         (a.type === 'usecase' && b.type === 'usecase')
       )
     case 'realization':
-      return CLASSIFIERS.has(a.type) && CLASSIFIERS.has(b.type)
+      return (CLASSIFIERS.has(a.type) && CLASSIFIERS.has(b.type)) || (PROVIDERS.has(a.type) && (b.type === 'providedInterface' || b.type === 'interface'))
     case 'dependency':
-      return (CLASSIFIERS.has(a.type) || a.type === 'package') && (CLASSIFIERS.has(b.type) || b.type === 'package')
+      return DEPENDS.has(a.type) && DEPENDS.has(b.type)
     case 'message':
     case 'reply':
       return a.type === 'lifeline' && b.type === 'lifeline'
@@ -510,6 +731,13 @@ export function defaultEdgeType(a: DNode, b: DNode): EdgeType | null {
     'include',
     'association',
     'anchor',
+    'controlFlow',
+    'transition',
+    'link',
+    'realization',
+    'usage',
+    'deploy',
+    'manifest',
     'sequenceFlow',
     'dataAssociation',
     'messageFlow',

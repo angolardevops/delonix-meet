@@ -33,6 +33,7 @@ import Inspector, { InspectorTab, tabsFor } from './diagrams/Inspector'
 import {
   canConnect,
   CLASSIFIERS,
+  CONTAINERS,
   DEdge,
   defaultEdgeType,
   DiagramDoc,
@@ -51,7 +52,7 @@ import Palette, { paletteItemByKey } from './diagrams/Palette'
 import SaveDialog from './diagrams/SaveDialog'
 import { downloadBlob, downloadText, pngFromSvg, svgFromCanvas } from './diagrams/snapshot'
 import { getDiagram, putDiagram } from './diagrams/store'
-import { applyFix, fixAll, Issue, validate } from './diagrams/validate'
+import { applyFix, fixAll, Issue, issueParams, validate } from './diagrams/validate'
 import { example, hasExample } from './diagrams/examples'
 
 type Load = { s: 'loading' } | { s: 'ready' } | { s: 'missing' } | { s: 'error' }
@@ -259,6 +260,7 @@ export default function Diagram({ id }: { id: string | null }) {
   // ---------------------------------------------------------------- criar
   function defaultName(d: DiagramDoc, type: DNode['type'], key: string): string {
     const base = t(`diagrams.novos.${key}`)
+    if (!base) return ''
     const tight = CLASSIFIERS.has(type) || type === 'lifeline'
     const taken = new Set(d.nodes.map((n) => n.name))
     if (!taken.has(base)) return base
@@ -287,7 +289,7 @@ export default function Diagram({ id }: { id: string | null }) {
     }
     const n = makeNode(item.type, Math.round(pos.x / 4) * 4, Math.round(pos.y / 4) * 4, name, props)
     // Contentores entram por baixo de tudo; o resto por cima.
-    const nodes = item.type === 'pool' || item.type === 'zone' || item.type === 'boundary' || item.type === 'package' ? [n, ...doc.nodes] : [...doc.nodes, n]
+    const nodes = CONTAINERS.has(item.type) ? [n, ...doc.nodes] : [...doc.nodes, n]
     commit({ ...doc, nodes })
     setSelection({ kind: 'node', id: n.id })
     setTab('element')
@@ -315,15 +317,18 @@ export default function Diagram({ id }: { id: string | null }) {
     if (item.kind === 'node') addNode(item)
     else if (item.kind === 'lane') addLane()
     else if (item.kind === 'edge') {
-      setTool((cur) => (cur.kind === 'edge' && cur.edge === item.edge ? { kind: 'select' } : { kind: 'edge', edge: item.edge }))
+      setTool((cur) => (cur.kind === 'edge' && cur.key === item.key ? { kind: 'select' } : { kind: 'edge', edge: item.edge, key: item.key }))
       setDrawer(null)
     } else if (item.kind === 'pen') setTool((cur) => (cur.kind === 'pen' ? { kind: 'select' } : { kind: 'pen' }))
     else if (item.kind === 'eraser') setTool((cur) => (cur.kind === 'eraser' ? { kind: 'select' } : { kind: 'eraser' }))
   }
 
-  function connect(from: DNode, to: DNode, offset: number) {
+  function connect(from: DNode, toNode: DNode, offset: number) {
+    let to = toNode
     if (!doc) return
     let type = tool.kind === 'edge' ? tool.edge : defaultEdgeType(from, to)
+    // Perdida e encontrada só têm uma linha de vida: a de onde se arrasta.
+    if (type === 'lostMessage' || type === 'foundMessage') to = from
     if (type === 'sequenceFlow') {
       const pa = laneOf(doc, from)?.pool.id
       const pb = laneOf(doc, to)?.pool.id
@@ -338,11 +343,11 @@ export default function Diagram({ id }: { id: string | null }) {
       })
       return
     }
-    if (from.id === to.id && type !== 'generalization' && type !== 'association' && type !== 'message') {
+    if (from.id === to.id && !['generalization', 'association', 'message', 'lostMessage', 'foundMessage', 'transition'].includes(type)) {
       return
     }
     const e: DEdge = { id: uid('e'), type, from: from.id, to: to.id, label: '' }
-    if (type === 'message' || type === 'reply') e.offset = offset
+    if (type === 'message' || type === 'reply' || type === 'lostMessage' || type === 'foundMessage') e.offset = offset
     commit({ ...doc, edges: [...doc.edges, e] })
     setSelection({ kind: 'edge', id: e.id })
     setNotice(null)
@@ -652,6 +657,7 @@ export default function Diagram({ id }: { id: string | null }) {
             doc={d}
             tool={tool}
             penColor={penColor}
+            typeLabel={typeLabel}
             onPenColor={setPenColor}
             onPick={pick}
             onFind={(n) => {
@@ -729,7 +735,7 @@ export default function Diagram({ id }: { id: string | null }) {
                 onClick={openValidation}
               >
                 <Icon name={issues.length === 0 ? 'check' : 'alert'} size={12} />
-                {issues.length === 0 ? t('diagrams.estado.valido') : t('diagrams.estado.problemaPrimeiro', { count: issues.length, primeiro: t(`diagrams.regras.${first.code}`, first.params) })}
+                {issues.length === 0 ? t('diagrams.estado.valido') : t('diagrams.estado.problemaPrimeiro', { count: issues.length, primeiro: t(`diagrams.regras.${first.code}`, issueParams(d, first, typeLabel)) })}
               </button>
             )}
           </div>
@@ -750,6 +756,7 @@ export default function Diagram({ id }: { id: string | null }) {
             selection={selection}
             tab={tab}
             issues={issues}
+            typeLabel={typeLabel}
             showValidation={showValidation}
             onTab={setTab}
             onChange={(next, key) => commit(next, undefined, key)}
