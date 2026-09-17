@@ -36,6 +36,7 @@ tonic = { version = "0.14", features = ["tls-ring"] }
 tonic-health = "0.14"
 tonic-reflection = "0.14"
 tokio-stream = { version = "0.1", features = ["net"] }
+tokio-util = "0.7"
 # OpenAPI 3.1 gerado do código (ADR-0006 §3): o cliente TS do web gera-se daqui.
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 axum = { version = "0.8", features = ["ws", "macros"] }
