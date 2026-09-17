@@ -73,6 +73,9 @@ async fn client_api() -> webrtc::api::API {
     // As extensões que um browser negoceia sempre. Sem `sdes:mid`, o webrtc-rs
     // do SFU desiste da sonda de media não declarada ANTES de fechar o stream,
     // e a R172 ficava invisível aos testes — com um browser (ou o loadgen) não.
+    // Atenção: `ssrc-audio-level` fica negociado mas o `TrackLocalStaticSample`
+    // não o escreve — energia sempre 0. Um teste com ≥5 peers que verifique
+    // áudio veria o top-N (R22) escolher ao acaso, e isso não é um bug do SFU.
     for (uri, kind) in [
         (
             "urn:ietf:params:rtp-hdrext:ssrc-audio-level",
@@ -799,11 +802,11 @@ async fn entradas_concorrentes_todos_recebem_todos() {
 
     // E FICA: a avaria era uma publicação a desaparecer depois de nascer, e um
     // `eventually` que olhasse só para o primeiro pacote deixava-a passar.
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(prazo(1)).await;
     for c in clientes.iter() {
         c.rtp_por_tipo.lock().await.clear();
     }
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(prazo(1)).await;
     let depois = em_falta().await;
     assert!(depois.is_empty(), "media deixou de chegar: {depois:?}");
     assert_eq!(
