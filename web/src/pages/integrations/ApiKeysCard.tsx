@@ -7,7 +7,9 @@ import { useTranslation } from 'react-i18next'
 import { ApiKeyInfo, apiErrorMessage, createApiKey, listApiKeys, revokeApiKey } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Alert, Button, Card, Empty, Field, IconButton, TextInput } from '../../ui/kit'
+import ListSearch from '../../ui/search/ListSearch'
 import { ConfirmDialog } from './ConfirmDialog'
+import { apiKeysSource } from './search'
 import { guarded, IntegHead, SecretOnce, useDateFmt } from './common'
 
 export function ApiKeysCard({ orgId }: { orgId: string }) {
@@ -58,6 +60,15 @@ export function ApiKeysCard({ orgId }: { orgId: string }) {
               {g.d.length === 0 ? (
                 <Empty icon="key" title={t('integrations.apiKeys.vazio')} />
               ) : (
+                <ListSearch
+                  rows={g.d}
+                  source={apiKeysSource}
+                  ns="keys."
+                  label={t('search.rotulos.api_keys')}
+                  emptyIcon="key"
+                  emptyTitle={t('integrations.apiKeys.vazio')}
+                  className="integ-search"
+                  renderItems={(rows) => (
                 <div className="dx-table-wrap integ-table">
                   <table className="dx-table">
                     <thead>
@@ -72,7 +83,7 @@ export function ApiKeysCard({ orgId }: { orgId: string }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {g.d.map((k) => (
+                      {rows.map((k) => (
                         <tr key={k.id}>
                           <td>{k.name || <span className="dx-muted">{t('integrations.apiKeys.semNome')}</span>}</td>
                           <td className="dx-num">{t('integrations.prefixo', { prefixo: k.prefix })}</td>
@@ -86,6 +97,8 @@ export function ApiKeysCard({ orgId }: { orgId: string }) {
                     </tbody>
                   </table>
                 </div>
+                  )}
+                />
               )}
               <form className="integ-inline-form" onSubmit={(e) => void create(e)}>
                 <Field label={t('integrations.apiKeys.nome')} htmlFor="apikey-name">

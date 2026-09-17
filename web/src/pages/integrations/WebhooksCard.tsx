@@ -9,7 +9,9 @@ import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, createWebhook, deleteWebhook, listWebhooks, Webhook } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Alert, Button, Card, Checkbox, Empty, Field, IconButton, Select, StatusBadge, TextInput } from '../../ui/kit'
+import ListSearch from '../../ui/search/ListSearch'
 import { ConfirmDialog } from './ConfirmDialog'
+import { webhooksSource } from './search'
 import { guarded, IntegHead } from './common'
 
 type Kind = Webhook['kind']
@@ -53,6 +55,17 @@ export function WebhooksCard({ orgId }: { orgId: string }) {
                     {t('integrations.webhooks.vazioDica')}
                   </Empty>
                 ) : (
+                  <ListSearch
+                    rows={g.d}
+                    source={webhooksSource}
+                    resource="webhooks"
+                    orgId={orgId}
+                    ns="webhooks."
+                    label={t('search.rotulos.webhooks')}
+                    emptyIcon="share"
+                    emptyTitle={t('integrations.webhooks.vazio')}
+                    className="integ-search"
+                    renderItems={(rows) => (
                   <div className="dx-table-wrap integ-table">
                     <table className="dx-table">
                       <thead>
@@ -67,7 +80,7 @@ export function WebhooksCard({ orgId }: { orgId: string }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {g.d.map((h) => (
+                        {rows.map((h) => (
                           <tr key={h.id}>
                             <td>{t(`integrations.webhooks.tipo.${h.kind}`)}</td>
                             <td className="integ-url dx-num" title={h.url}>
@@ -97,6 +110,8 @@ export function WebhooksCard({ orgId }: { orgId: string }) {
                       </tbody>
                     </table>
                   </div>
+                    )}
+                  />
                 )}
               </div>
             </div>
