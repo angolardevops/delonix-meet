@@ -40,7 +40,7 @@ pub struct Claims {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_bot: bool,
     /// Sessão de onde o token vem (`user_sessions.id`). Os access e room
-    /// tokens emitidos desde a migração 0071 levam-no, e é o que permite
+    /// tokens emitidos desde a migração das sessões (`sessoes`) levam-no, e é o que permite
     /// terminar uma sessão de imediato. Ausente num token anterior (expira
     /// sozinho em minutos) e nos tokens de bot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -129,7 +129,7 @@ pub(crate) fn bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
 /// (`DELETE /api/users/me/sessions/{id}`) corta-a já, não quando o JWT expirar.
 pub struct AuthUser {
     pub user_id: Uuid,
-    /// A sessão do pedido. `None` num access token anterior à migração 0071.
+    /// A sessão do pedido. `None` num access token anterior à migração das sessões.
     pub session_id: Option<Uuid>,
     /// Última prova de identidade NESTA sessão (login ou reautenticação).
     pub reauthenticated_at: Option<chrono::DateTime<Utc>>,
@@ -799,7 +799,7 @@ pub async fn refresh(
     }
 
     let user = crate::users::fetch_public(&state.db, user_id).await?;
-    // Um token sem sessão (emitido entre a migração 0071 e este código) passa a
+    // Um token sem sessão (emitido entre a migração das sessões e este código) passa a
     // ter uma, sem dispositivo conhecido.
     let sid = match session_id {
         Some(sid) => sid,

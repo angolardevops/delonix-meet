@@ -1,14 +1,14 @@
 -- «A minha conta» (Navegavel3, DelonixProfile + DelonixTour) — frente B.
 --
--- NUMERAÇÃO: 0070–0074 são da frente B (backend-v3-comum.md). O buraco entre
--- 0048 e 0070 é esperado até à integração.
+-- NUMERAÇÃO: número de trabalho da frente B (backend-v3-comum.md); renumera-se
+-- para o próximo livre na integração.
 
 -- 1. Perfil. `username` continua a ser o identificador único que o resto do
 --    produto já usa; `display_name` é o nome que aparece na sala e nas
 --    legendas (NULL = usa o `username`). `legal_name` é da autoridade Odoo
 --    numa conta gerida — escrito pela sincronização, nunca pela rota do perfil.
 --    O CARGO reutiliza `org_members.title` (0005) e o DEPARTAMENTO é o da
---    frente A (`org_members.department_id`, migração 0061 dela): nenhum dos
+--    frente A (`org_members.department_id`, migração `departments_seats_last_access` dela): nenhum dos
 --    dois ganha uma segunda coluna aqui.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT
     CHECK (display_name IS NULL OR char_length(display_name) BETWEEN 1 AND 80);
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS user_avatars (
 );
 
 -- 3. Telefone do MEMBRO — MESMAS colunas e regra da branch
---    `delonix-meet-backend/sms-contactos` (migração 0040 dela), com
+--    `delonix-meet-backend/sms-contactos` (migração `sms_contactos` dela), com
 --    `IF NOT EXISTS`: quando as duas se juntarem, a segunda a correr não faz
 --    nada. `phone_source = 'manual'` quando é a própria pessoa a escrever.
 ALTER TABLE org_members ADD COLUMN IF NOT EXISTS phone_e164 TEXT;
