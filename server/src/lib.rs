@@ -608,6 +608,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(recording_chapters::generate),
         )
         .route(
+            "/api/recordings/{recording_id}/chapters/generation",
+            get(recording_chapters::generation),
+        )
+        .route(
             "/api/recordings/{recording_id}/comments",
             get(recordings::list_comments).post(recordings::create_comment),
         )

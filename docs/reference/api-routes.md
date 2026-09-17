@@ -139,6 +139,7 @@
 | `DELETE /api/recordings/{id}/share/{user_id}` | `DELETE /api/recordings/{recording_id}/shares/{user_id}` |
 | `GET/POST/DELETE /api/recordings/{id}/link` | `GET/PUT/DELETE /api/recordings/{recording_id}/public-link` |
 | `…/chapters`, `…/comments` | iguais (com `{recording_id}`) |
+| — | `GET /api/recordings/{recording_id}/chapters/generation` (**novo**) — estado da última geração de capítulos: `idle`, `running`, `succeeded`, `failed` com `error_code` |
 | `GET /api/share/{token}` | `GET /api/public/recordings/{token}` |
 | `GET /api/share/{token}/download` | `GET /api/public/recordings/{token}/content` |
 

@@ -9,6 +9,13 @@
 //!
 //! Gerar outra vez substitui só os automáticos: um capítulo escrito ou
 //! corrigido à mão nunca é apagado por uma máquina.
+//!
+//! O ESTADO da última geração (a correr, bem sucedida, falhada e porquê) vive
+//! em `recording_chapter_generations` (migração 0087) e lê-se em
+//! `GET …/chapters/generation`. `recordings.chapters_generated_at` só diz que
+//! houve uma geração BEM SUCEDIDA: uma resposta do modelo sem capítulos
+//! utilizáveis fica `failed`, não apaga os automáticos que havia nem marca a
+//! gravação como gerada.
 
 use axum::{
     extract::{Path, State},
@@ -33,6 +40,15 @@ pub const MAX_CHAPTER_TITLE_CHARS: usize = 200;
 const MAX_AUTO_CHAPTERS: usize = 30;
 /// Texto da transcrição que se envia ao LLM (janela de contexto do modelo pequeno).
 const PROMPT_BUDGET_CHARS: usize = 24_000;
+/// Tecto da chamada ao modelo numa geração de capítulos.
+const GENERATE_TIMEOUT: Duration = Duration::from_secs(300);
+/// Uma geração `running` sem sinal há mais do que o tecto da chamada mais esta
+/// folga lê-se como interrompida (o pod morreu a meio), sem varredor.
+const STALE_MARGIN_SECS: u64 = 60;
+
+fn stale_after_secs() -> f64 {
+    (GENERATE_TIMEOUT.as_secs() + STALE_MARGIN_SECS) as f64
+}
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct Chapter {
@@ -260,13 +276,125 @@ pub(crate) enum GenerateOutcome {
     NoTranscript,
     /// Sem LLM configurado, ou não respondeu.
     LlmUnavailable,
+    /// O modelo respondeu, mas sem um único capítulo utilizável.
+    BadResponse,
+    /// Já há uma geração a decorrer para esta gravação.
+    AlreadyRunning,
+}
+
+/// O estado da última geração de capítulos de uma gravação.
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = RecordingChapterGeneration)]
+pub struct ChapterGeneration {
+    pub recording_id: Uuid,
+    /// `idle` (nunca pedida) | `running` | `succeeded` | `failed`.
+    pub status: String,
+    /// Só com `failed`: `ai.unavailable`, `ai.bad_response`, `ai.interrupted`
+    /// ou `internal`.
+    pub error_code: Option<String>,
+    pub error: Option<String>,
+    /// Capítulos automáticos gravados. Só com `succeeded`.
+    pub chapter_count: Option<i32>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+/// A linha, com um `running` sem sinal há tempo demais lido como interrompido.
+async fn load_generation(
+    state: &AppState,
+    recording_id: Uuid,
+) -> Result<ChapterGeneration, ApiError> {
+    let row: Option<ChapterGeneration> = sqlx::query_as(
+        "SELECT recording_id,
+                CASE WHEN status = 'running' AND updated_at < now() - make_interval(secs => $2)
+                     THEN 'failed' ELSE status END AS status,
+                CASE WHEN status = 'running' AND updated_at < now() - make_interval(secs => $2)
+                     THEN 'ai.interrupted' ELSE error_code END AS error_code,
+                CASE WHEN status = 'running' AND updated_at < now() - make_interval(secs => $2)
+                     THEN 'a geração foi interrompida antes de acabar; pode pedir-se outra vez'
+                     ELSE error END AS error,
+                chapter_count, started_at, finished_at
+           FROM recording_chapter_generations WHERE recording_id = $1",
+    )
+    .bind(recording_id)
+    .bind(stale_after_secs())
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(row.unwrap_or(ChapterGeneration {
+        recording_id,
+        status: "idle".into(),
+        error_code: None,
+        error: None,
+        chapter_count: None,
+        started_at: None,
+        finished_at: None,
+    }))
+}
+
+/// `GET /api/recordings/{id}/chapters/generation` — o estado da última
+/// geração de capítulos. Só quem gere a gravação.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/chapters/generation", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação.")),
+    responses(
+        (status = 200, body = ChapterGeneration),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn generation(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ChapterGeneration>, ApiError> {
+    let a = access(&state, id, auth.user_id).await?;
+    a.require_manage()?;
+    load_generation(&state, id).await.map(Json)
+}
+
+/// Fecha a linha do estado. Só fecha uma geração que ainda está `running`.
+async fn finish_generation(state: &AppState, rec_id: Uuid, result: Result<usize, (&str, &str)>) {
+    let r = match result {
+        Ok(n) => {
+            sqlx::query(
+                "UPDATE recording_chapter_generations
+                    SET status = 'succeeded', chapter_count = $2,
+                        updated_at = now(), finished_at = now()
+                  WHERE recording_id = $1 AND status = 'running'",
+            )
+            .bind(rec_id)
+            .bind(n as i32)
+            .execute(&state.db)
+            .await
+        }
+        Err((code, msg)) => {
+            sqlx::query(
+                "UPDATE recording_chapter_generations
+                    SET status = 'failed', error_code = $2, error = $3,
+                        updated_at = now(), finished_at = now()
+                  WHERE recording_id = $1 AND status = 'running'",
+            )
+            .bind(rec_id)
+            .bind(code)
+            .bind(msg)
+            .execute(&state.db)
+            .await
+        }
+    };
+    if let Err(e) = r {
+        tracing::error!(recording = %rec_id, error = %e, "capítulos: estado não gravado");
+    }
 }
 
 /// Gera os capítulos automáticos de uma gravação e substitui os anteriores
-/// automáticos (os manuais ficam).
+/// automáticos (os manuais ficam). `requested_by` é quem pediu (`None` na
+/// varredura). O resultado fica também em `recording_chapter_generations`.
 pub(crate) async fn generate_for(
     state: &AppState,
     rec_id: Uuid,
+    requested_by: Option<Uuid>,
 ) -> Result<GenerateOutcome, ApiError> {
     let t = load_transcript(state, rec_id).await?;
     if t.segments.is_empty() {
@@ -275,13 +403,53 @@ pub(crate) async fn generate_for(
     if state.config.ollama_url.is_none() {
         return Ok(GenerateOutcome::LlmUnavailable);
     }
+    // Condicional: dois pedidos ao mesmo tempo não arrancam duas gerações.
+    let accepted: Option<(Uuid,)> = sqlx::query_as(
+        "INSERT INTO recording_chapter_generations (recording_id, status, requested_by)
+         VALUES ($1, 'running', $2)
+         ON CONFLICT (recording_id) DO UPDATE SET
+             status = 'running', error_code = NULL, error = NULL, chapter_count = NULL,
+             requested_by = EXCLUDED.requested_by, started_at = now(), updated_at = now(),
+             finished_at = NULL
+          WHERE recording_chapter_generations.status <> 'running'
+             OR recording_chapter_generations.updated_at < now() - make_interval(secs => $3)
+         RETURNING recording_id",
+    )
+    .bind(rec_id)
+    .bind(requested_by)
+    .bind(stale_after_secs())
+    .fetch_optional(&state.db)
+    .await?;
+    if accepted.is_none() {
+        return Ok(GenerateOutcome::AlreadyRunning);
+    }
+    let outcome = run_generation(state, rec_id, t.segments).await;
+    let result = match &outcome {
+        Ok(GenerateOutcome::Generated(n)) => Ok(*n),
+        Ok(GenerateOutcome::BadResponse) => Err((
+            "ai.bad_response",
+            "o modelo devolveu uma resposta sem capítulos utilizáveis",
+        )),
+        Ok(_) => Err(("ai.unavailable", "IA local não configurada ou sem resposta")),
+        Err(_) => Err(("internal", "erro interno ao gerar os capítulos")),
+    };
+    finish_generation(state, rec_id, result).await;
+    outcome
+}
+
+/// O trabalho em si: prompt, chamada, leitura da resposta e só depois a escrita.
+async fn run_generation(
+    state: &AppState,
+    rec_id: Uuid,
+    segments: Vec<Segment>,
+) -> Result<GenerateOutcome, ApiError> {
     let duration: Option<i64> =
         sqlx::query_scalar("SELECT duration_ms FROM recordings WHERE id = $1")
             .bind(rec_id)
             .fetch_one(&state.db)
             .await?;
-    let end = duration.unwrap_or_else(|| t.segments.iter().map(|s| s.end_ms).max().unwrap_or(0));
-    let digest = transcript_digest(&t.segments, PROMPT_BUDGET_CHARS);
+    let end = duration.unwrap_or_else(|| segments.iter().map(|s| s.end_ms).max().unwrap_or(0));
+    let digest = transcript_digest(&segments, PROMPT_BUDGET_CHARS);
     let prompt = format!(
         "You split a recorded session into chapters. Below is its transcript; each line \
          starts with the time [hh:mm:ss] when that passage begins.\n\
@@ -295,13 +463,18 @@ pub(crate) async fn generate_for(
         state,
         &state.config.ollama_model_summary,
         prompt,
-        Duration::from_secs(300),
+        GENERATE_TIMEOUT,
     )
     .await
     else {
         return Ok(GenerateOutcome::LlmUnavailable);
     };
     let chapters = parse_llm_chapters(&answer, end);
+    // Sem um único capítulo utilizável não se toca em nada: os automáticos que
+    // havia ficam e a gravação NÃO fica marcada como gerada.
+    if chapters.is_empty() {
+        return Ok(GenerateOutcome::BadResponse);
+    }
     let manual: Vec<(i64,)> = sqlx::query_as(
         "SELECT t_ms FROM recording_chapters WHERE recording_id = $1 AND source = 'manual'",
     )
@@ -341,15 +514,17 @@ pub(crate) async fn generate_for(
 /// capítulos automáticos e devolve a lista completa.
 ///
 /// Síncrono com tecto de 300 s: é o LLM local, e o resultado é o que o ecrã
-/// mostra a seguir. Sem transcrição → `409`; sem LLM → `503`.
+/// mostra a seguir. Sem transcrição, ou com outra geração a decorrer → `409`;
+/// sem LLM, ou com uma resposta sem capítulos utilizáveis → `503`. O estado da
+/// última geração lê-se em `GET …/chapters/generation`.
 #[utoipa::path(
     post, path = "/api/recordings/{recording_id}/chapters/generate", tag = "recordings",
     security(("session" = [])),
     params(("recording_id" = Uuid, Path, description = "Gravação.")),
     responses(
         (status = 200, body = Vec<serde_json::Value>, description = "Os capítulos depois de gerar; os manuais nunca se apagam."),
-        (status = 409, body = crate::openapi::ErrorBody, description = "Sem transcrição."),
-        (status = 503, body = crate::openapi::ErrorBody, description = "IA local indisponível."),
+        (status = 409, body = crate::openapi::ErrorBody, description = "Sem transcrição, ou já há uma geração a decorrer."),
+        (status = 503, body = crate::openapi::ErrorBody, description = "IA local indisponível, ou resposta do modelo sem capítulos utilizáveis."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
@@ -362,8 +537,14 @@ pub async fn generate(
 ) -> Result<Json<Vec<Chapter>>, ApiError> {
     let a = access(&state, id, auth.user_id).await?;
     a.require_manage()?;
-    match generate_for(&state, id).await? {
+    match generate_for(&state, id, Some(auth.user_id)).await? {
         GenerateOutcome::Generated(_) => list_of(&state, id).await.map(Json),
+        GenerateOutcome::AlreadyRunning => Err(ApiError::Conflict(
+            "já há uma geração de capítulos a decorrer para esta gravação".into(),
+        )),
+        GenerateOutcome::BadResponse => Err(ApiError::ServiceUnavailable(
+            "o modelo devolveu uma resposta sem capítulos utilizáveis".into(),
+        )),
         GenerateOutcome::NoTranscript => Err(ApiError::Conflict(
             "a gravação ainda não tem transcrição com tempos".into(),
         )),
@@ -384,6 +565,9 @@ pub async fn auto_chapters_sweep(state: &Arc<AppState>) {
          WHERE transcribed_at IS NOT NULL AND transcript_error IS NULL
            AND chapters_generated_at IS NULL AND status = 'ready'
            AND jsonb_array_length(transcript_segments) > 0
+           AND NOT EXISTS (SELECT 1 FROM recording_chapter_generations g
+                            WHERE g.recording_id = recordings.id
+                              AND g.status = 'failed' AND g.error_code = 'ai.bad_response')
          ORDER BY transcribed_at LIMIT 2",
     )
     .fetch_all(&state.db)
@@ -395,8 +579,11 @@ pub async fn auto_chapters_sweep(state: &Arc<AppState>) {
             return;
         }
     };
+    // (O `NOT EXISTS` acima: uma resposta inutilizável não se repete sozinha a
+    // cada volta — a gravação ficava à frente da fila para sempre. Volta-se a
+    // pedir à mão.)
     for (id,) in pending {
-        match generate_for(state, id).await {
+        match generate_for(state, id, None).await {
             Ok(GenerateOutcome::Generated(n)) => {
                 tracing::info!(recording = %id, chapters = n, "capítulos automáticos gerados")
             }
@@ -404,7 +591,10 @@ pub async fn auto_chapters_sweep(state: &Arc<AppState>) {
                 tracing::warn!(recording = %id, "capítulos: LLM sem resposta — fica para a próxima volta");
                 return;
             }
-            Ok(GenerateOutcome::NoTranscript) => {}
+            Ok(GenerateOutcome::BadResponse) => {
+                tracing::warn!(recording = %id, "capítulos: resposta do modelo sem capítulos utilizáveis")
+            }
+            Ok(GenerateOutcome::NoTranscript | GenerateOutcome::AlreadyRunning) => {}
             Err(e) => tracing::warn!(recording = %id, error = %e, "capítulos: falhou"),
         }
     }
@@ -474,5 +664,8 @@ mod tests {
 
 /// Documentação OpenAPI da edição e geração de capítulos (`openapi.rs` junta-a).
 #[derive(utoipa::OpenApi)]
-#[openapi(paths(patch, generate), components(schemas(PatchChapterReq)))]
+#[openapi(
+    paths(patch, generate, generation),
+    components(schemas(PatchChapterReq, ChapterGeneration))
+)]
 pub struct ApiDoc;
