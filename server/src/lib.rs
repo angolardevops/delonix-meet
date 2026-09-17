@@ -59,6 +59,14 @@ mod sms_codec;
 mod sms_smpp;
 mod storage;
 mod stream_destinations;
+mod telephony_calls;
+mod telephony_cdr;
+mod telephony_dial_plan;
+pub mod telephony_esl;
+mod telephony_fs_xml;
+mod telephony_service;
+mod telephony_sip;
+mod telephony_trunks;
 mod transcription;
 mod ui;
 mod usage;
@@ -147,6 +155,13 @@ pub struct AppState {
     /// Vagas do LLM local por organização (`AI_STUDIO_CONCURRENCY_PER_ORG`):
     /// sugestões do Estúdio, capítulos e legendas traduzidas contam juntos.
     pub ai_slots: ai_assist::OrgSlots,
+    /// Chamadas de saída pela plataforma, por organização (ADR-0009): uma
+    /// chamada custa dinheiro e ocupa canais da operadora.
+    pub telephony_call_limiter: RateLimiter,
+    /// «Ver credenciais» SIP: só conta FALHAS de reautenticação, por conta.
+    pub telephony_reveal_limiter: RateLimiter,
+    /// Portas da telefonia (FreeSWITCH ESL, Kamailio) montadas da configuração.
+    pub telephony: telephony_service::Adapters,
     /// Salas de grupo ativas: sala principal -> conjunto de salas filhas.
     pub breakouts: dashmap::DashMap<uuid::Uuid, signaling::BreakoutSet>,
     /// Clientes HTTP de saída, com a guarda anti-SSRF (ver `net_guard`). Os
@@ -199,6 +214,16 @@ fn internal_routes() -> Router<Arc<AppState>> {
             post(voice::ivr_validate_pin),
         )
         .route("/internal/v1/voice/ivr/cdr", post(voice::ivr_record_cdr))
+        // Telefonia (ADR-0009): CDRs do `mod_json_cdr` e configuração do
+        // `mod_xml_curl`. Mesmo segredo interno do IVR.
+        .route(
+            "/internal/v1/telephony/call-records",
+            post(telephony_cdr::ingest_handler),
+        )
+        .route(
+            "/internal/v1/telephony/freeswitch-config",
+            post(telephony_fs_xml::handler),
+        )
 }
 
 /// Router do listener INTERNO (`INTERNAL_BIND_ADDR`).
@@ -846,6 +871,67 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/orgs/{org_id}/voice/dids", get(voice::list_dids).post(voice::create_did))
         .route("/api/orgs/{org_id}/voice/call-records", get(voice::list_cdr))
         .route("/api/orgs/{org_id}/voice/billing", get(voice::billing_summary))
+        // Telefonia, SIP e SMS (ADR-0009): consola da org (sessão, admin).
+        .route(
+            "/api/orgs/{org_id}/telephony/trunks",
+            get(telephony_trunks::list).post(telephony_trunks::create),
+        )
+        .route(
+            "/api/orgs/{org_id}/telephony/trunks/{trunk_id}",
+            get(telephony_trunks::get_one)
+                .patch(telephony_trunks::update)
+                .delete(telephony_trunks::delete),
+        )
+        .route(
+            "/api/orgs/{org_id}/telephony/trunks/{trunk_id}/prices",
+            get(telephony_trunks::list_prices).post(telephony_trunks::create_price),
+        )
+        .route(
+            "/api/orgs/{org_id}/telephony/trunk-order",
+            axum::routing::put(telephony_trunks::put_order),
+        )
+        .route(
+            "/api/orgs/{org_id}/telephony/exchange-rates",
+            get(telephony_trunks::list_rates).post(telephony_trunks::create_rate),
+        )
+        .route(
+            "/api/orgs/{org_id}/telephony/dial-plan",
+            get(telephony_dial_plan::get_plan).put(telephony_dial_plan::put_plan),
+        )
+        .route(
+            "/api/orgs/{org_id}/telephony/dial-plan/test",
+            post(telephony_dial_plan::test_number),
+        )
+        .route(
+            "/api/orgs/{org_id}/telephony/sip-settings",
+            get(telephony_sip::get_settings).put(telephony_sip::put_settings),
+        )
+        .route(
+            "/api/orgs/{org_id}/telephony/sip-settings/reveal-credentials",
+            post(telephony_sip::reveal_credentials),
+        )
+        .route(
+            "/api/orgs/{org_id}/telephony/sip-registration",
+            get(telephony_sip::registration),
+        )
+        .route(
+            "/api/orgs/{org_id}/telephony/sip-registration/restart",
+            post(telephony_sip::restart_registration),
+        )
+        .route(
+            "/api/orgs/{org_id}/telephony/test-calls",
+            get(telephony_calls::list_test_calls).post(telephony_calls::create_test_call),
+        )
+        .route(
+            "/api/orgs/{org_id}/telephony/test-calls/{test_call_id}",
+            get(telephony_calls::get_test_call),
+        )
+        .route(
+            "/api/orgs/{org_id}/telephony/call-records",
+            get(telephony_calls::list_call_records),
+        )
+        .route("/api/orgs/{org_id}/telephony/usage", get(telephony_calls::usage))
+        .route("/api/orgs/{org_id}/sms/overview", get(sms::overview))
         // Gateway de SMS (ADR-0005): consola da org (sessão, admin).
         .route("/api/orgs/{org_id}/sms/gateways", get(sms::list_gateways).post(sms::create_gateway))
         .route(
@@ -1076,6 +1162,9 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
             Duration::from_secs(60),
         ),
         ai_slots: ai_assist::OrgSlots::new(config.ai_studio_concurrency_per_org),
+        telephony_call_limiter: RateLimiter::new(10, Duration::from_secs(600)),
+        telephony_reveal_limiter: RateLimiter::new(5, Duration::from_secs(300)),
+        telephony: telephony_service::Adapters::from_config(&config, &outbound),
         outbound,
         config: config.clone(),
         redis_bus: redis_bus.clone(),

@@ -53,6 +53,9 @@ for sup, path in gerado.items():
 lib = open('server/src/lib.rs', encoding='utf-8').read()
 EXCLUIDAS = {'/ws', '/rtc', '/api/rooms/{room_code}/live', '/health', '/ready', '/metrics',
              '/internal/v1/voice/ivr/validate', '/internal/v1/voice/ivr/cdr',
+             # Telefonia máquina-a-máquina: o contrato é o do FreeSWITCH
+             # (mod_json_cdr, mod_xml_curl), escrito no ADR-0009.
+             '/internal/v1/telephony/call-records', '/internal/v1/telephony/freeswitch-config',
              '/api/openapi.json', '/api/v1/openapi.json', '/api/operator/v1/openapi.json',
              '/api/integrations/openapi.json'}
 

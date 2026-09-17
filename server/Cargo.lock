@@ -835,12 +835,14 @@ dependencies = [
 name = "delonix-meet-domain"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "chrono-tz",
  "delonix-meet-core",
  "hex",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "url",
  "uuid",
 ]
@@ -863,6 +865,7 @@ dependencies = [
  "aes-gcm 0.11.0",
  "anyhow",
  "argon2",
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "chrono",

@@ -17,3 +17,6 @@ hex.workspace = true
 url = "2"
 # Base de fusos IANA compilada (validação do fuso do perfil). Pura: sem IO.
 chrono-tz = "0.10"
+# Portas assíncronas da telefonia (ADR-0009): traits com `dyn` — sem IO.
+async-trait = "0.1"
+thiserror.workspace = true

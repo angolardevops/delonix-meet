@@ -728,21 +728,36 @@ pub async fn billing_summary(
 //  Autenticada por segredo partilhado (X-Voice-Secret).
 // ============================================================
 
-fn check_media_secret(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+pub(crate) fn check_media_secret(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
     let cfg = state.config.voice_internal_secret.as_bytes();
     if cfg.is_empty() {
         return Err(ApiError::NotFound); // feature desativada => não revela nada
     }
-    let got = headers
+    // Duas formas do MESMO segredo: o cabeçalho `X-Voice-Secret` (Lua do IVR)
+    // e HTTP Basic com o segredo como password — que é o que o `mod_json_cdr`
+    // (`cred`) e o `mod_xml_curl` (`gateway-credentials`) do FreeSWITCH sabem
+    // enviar (ADR-0009). O utilizador do Basic não conta.
+    let header = headers
         .get("x-voice-secret")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .as_bytes();
-    // Comparação de comprimento-constante simples (segredo de alta entropia).
-    if got.len() == cfg.len() && got.iter().zip(cfg).fold(0u8, |a, (x, y)| a | (x ^ y)) == 0 {
-        Ok(())
-    } else {
-        Err(ApiError::Unauthorized)
+        .map(|v| v.as_bytes().to_vec());
+    let basic = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Basic "))
+        .and_then(|b64| {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD
+                .decode(b64.trim())
+                .ok()
+        })
+        .and_then(|raw| {
+            let pos = raw.iter().position(|b| *b == b':')?;
+            Some(raw[pos + 1..].to_vec())
+        });
+    match header.or(basic) {
+        Some(got) if delonix_meet_core::crypto::ct_eq(&got, cfg) => Ok(()),
+        _ => Err(ApiError::Unauthorized),
     }
 }
 
