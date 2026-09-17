@@ -81,6 +81,27 @@ async fn creator_is_owner_and_legacy_role_is_derived(db: sqlx::PgPool) {
     assert_eq!(org["role"], "admin");
     assert_eq!(org["role_key"], "owner");
     assert_eq!(org["owner_missing"], false);
+    create_role(&app, &a, json!({"name": "Formador"})).await;
+    let (_, roles) = app
+        .get(&format!("/api/orgs/{}/roles", a.org()), Some(&a.token))
+        .await;
+    let order: Vec<&str> = roles["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            "Proprietário",
+            "Administrador",
+            "Formador",
+            "Membro",
+            "Convidado externo"
+        ],
+        "a ordem do ecrã"
+    );
     let m = app.add_member(&a, "membro", "member").await;
     let (_, org) = app
         .get(&format!("/api/orgs/{}", a.org()), Some(&m.token))

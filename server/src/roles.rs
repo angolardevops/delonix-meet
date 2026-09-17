@@ -80,9 +80,9 @@ where
 {
     Ok(sqlx::query_as(&format!(
         "SELECT {ROLE_COLUMNS} FROM {ROLE_FROM} WHERE r.org_id = $1
-          ORDER BY CASE r.system_key WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
-                   (r.system_key IS NOT NULL AND r.system_key <> 'member' AND r.system_key <> 'external_guest'),
-                   r.system_key NULLS FIRST, lower(r.name), r.id"
+          ORDER BY CASE r.system_key WHEN 'owner' THEN 0 WHEN 'admin' THEN 1
+                                     WHEN 'member' THEN 3 WHEN 'external_guest' THEN 4 ELSE 2 END,
+                   lower(r.name), r.id"
     ))
     .bind(org_id)
     .fetch_all(db)
