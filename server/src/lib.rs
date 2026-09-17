@@ -335,6 +335,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // ---- Salas ----
         .route("/api/rooms", post(rooms::create_room))
         .route("/api/rooms/{room_code}", get(rooms::get_room))
+        // Estado vivo da emissão (G1) — rótulos, bytes, débito. Ver o /live
+        // (WebSocket) mais abaixo, que é o que a alimenta.
+        .route(
+            "/api/rooms/{room_code}/live/status",
+            get(broadcast::estado_directo),
+        )
         .route("/api/rooms/{room_code}/join", post(rooms::join_room))
         .route("/api/rooms/{room_code}/messages", get(rooms::room_chat))
         .route("/api/rooms/{room_code}/invitations", post(rooms::invite_to_room))

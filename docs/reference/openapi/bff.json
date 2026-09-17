@@ -1394,6 +1394,44 @@
         ],
         "type": "object"
       },
+      "EmissaoEstado": {
+        "description": "Retrato do estado vivo de uma emissão (G1) — o que `GET\n/api/rooms/{room_code}/live/status` devolve.",
+        "properties": {
+          "bitrate_bps": {
+            "description": "Débito binário médio desde a última consulta (ou desde o arranque, na\nprimeira). `0` numa emissão recém-arrancada ou sem tráfego novo desde\na última amostra — não é sinal de falha por si só.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "bytes_enviados": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "desde": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "rotulos": {
+            "description": "Rótulos dos destinos desta emissão — não o estado de cada um: ver a\nnota em `Emissao::bytes`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "viva": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "rotulos",
+          "viva",
+          "bytes_enviados",
+          "bitrate_bps",
+          "desde"
+        ],
+        "type": "object"
+      },
       "Employee": {
         "properties": {
           "branch_id": {
@@ -13872,6 +13910,64 @@
           }
         ],
         "summary": "`POST /api/rooms/{code}/join-timings` — uma vez por sessão.",
+        "tags": [
+          "rooms"
+        ]
+      }
+    },
+    "/api/rooms/{room_code}/live/status": {
+      "get": {
+        "description": "Sem controlo de acesso além da sessão: o código da sala já é a\ncredencial (a mesma nota de `get_room`, em `rooms.rs`) — quem o conhece\nvê os metadados, não só quem entra na chamada.",
+        "operationId": "estado_directo",
+        "parameters": [
+          {
+            "description": "Código da sala (`abc-defg-hij`).",
+            "in": "path",
+            "name": "room_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmissaoEstado"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A sala não existe, ou não está em directo agora."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/rooms/{room_code}/live/status` — estado vivo da emissão desta\nsala: rótulos dos destinos, bytes enviados, débito binário recente.\n`404` se a sala não existe ou não está em directo agora.",
         "tags": [
           "rooms"
         ]
