@@ -3,13 +3,16 @@
  * «GRAVAÇÃO DA SESSÃO» (o bin) e, em baixo, a «IA NO BROWSER» — pausas e
  * palavras de preenchimento.
  */
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { apiErrorMessage, isAbort, recordingObjectUrl, recordingsLibrary } from '../../api'
+import { apiErrorMessage, recordingObjectUrl } from '../../api'
 import type { RecordingItem } from '../../api'
-import { cx, Dialog, Empty, IconButton, Select, Spinner } from '../../ui/kit'
+import { cx, Dialog, IconButton, Select, Spinner } from '../../ui/kit'
+import { recordingsFallback } from '../../pages/recordings/search'
+import { SearchBar, SearchResults } from '../../ui/search/SearchResults'
+import { useResourceSearch } from '../../ui/search/useResourceSearch'
 import { relogio } from '../captions/legendas'
 import { tamanhoLegivel } from '../exports/predefinicoes'
 import { CartaoDeMistura } from './Inspector'
@@ -29,50 +32,49 @@ function etiqueta(f: Fonte): string {
 
 export function Biblioteca({ onFechar, onEscolher }: { onFechar: () => void; onEscolher: (r: RecordingItem) => Promise<void> }) {
   const { t, i18n } = useTranslation()
-  const [estado, setEstado] = useState<{ fase: 'a-carregar' } | { fase: 'erro'; msg: string } | { fase: 'ok'; lista: RecordingItem[] }>({ fase: 'a-carregar' })
   const [aImportar, setAImportar] = useState<string | null>(null)
-  useEffect(() => {
-    const ctl = new AbortController()
-    recordingsLibrary(ctl.signal)
-      .then((lista) => setEstado({ fase: 'ok', lista }))
-      .catch((e) => {
-        if (!isAbort(e)) setEstado({ fase: 'erro', msg: apiErrorMessage(e, t('editor.bin.bibliotecaErro')) })
-      })
-    return () => ctl.abort()
-  }, [t])
+  // Pesquisa estilo Odoo sobre a biblioteca (recurso `recordings`, ou a lista
+  // inteira no browser); o estado fica no diálogo, não na URL do Estúdio.
+  const rs = useResourceSearch<RecordingItem>({ resource: 'recordings', ns: null, fallback: recordingsFallback })
   return (
     <Dialog title={t('editor.bin.biblioteca')} onClose={onFechar} wide>
-      {estado.fase === 'a-carregar' && <Spinner label={t('editor.bin.aCarregar')} />}
-      {estado.fase === 'erro' && <p className="st-note st-note--warn">{estado.msg}</p>}
-      {estado.fase === 'ok' && !estado.lista.length && <Empty icon="film" title={t('editor.bin.bibliotecaVazia')} />}
-      {estado.fase === 'ok' && estado.lista.length > 0 && (
-        <ul className="ed-lib" data-studio="biblioteca">
-          {estado.lista.map((r) => (
-            <li key={r.id}>
-              <button
-                type="button"
-                className="ed-lib__item"
-                disabled={!!aImportar}
-                onClick={async () => {
-                  setAImportar(r.id)
-                  try {
-                    await onEscolher(r)
-                    onFechar()
-                  } finally {
-                    setAImportar(null)
-                  }
-                }}
-              >
-                <span className="ed-lib__name">{r.filename}</span>
-                <span className="dx-num dx-muted">
-                  {new Date(r.created_at).toLocaleString(i18n.language)} · {tamanhoLegivel(r.size_bytes, i18n.language)}
-                </span>
-                {aImportar === r.id && <Spinner label={t('editor.bin.aImportar')} />}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <div className="ed-lib-search">
+        <SearchBar rs={rs} label={t('search.rotulos.recordings')} />
+        <SearchResults
+          rs={rs}
+          emptyIcon="film"
+          emptyTitle={t('editor.bin.bibliotecaVazia')}
+          skeleton={<Spinner label={t('editor.bin.aCarregar')} />}
+          renderItems={(lista) => (
+            <ul className="ed-lib" data-studio="biblioteca">
+              {lista.map((r) => (
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    className="ed-lib__item"
+                    disabled={!!aImportar}
+                    onClick={async () => {
+                      setAImportar(r.id)
+                      try {
+                        await onEscolher(r)
+                        onFechar()
+                      } finally {
+                        setAImportar(null)
+                      }
+                    }}
+                  >
+                    <span className="ed-lib__name">{r.filename}</span>
+                    <span className="dx-num dx-muted">
+                      {new Date(r.created_at).toLocaleString(i18n.language)} · {tamanhoLegivel(r.size_bytes, i18n.language)}
+                    </span>
+                    {aImportar === r.id && <Spinner label={t('editor.bin.aImportar')} />}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        />
+      </div>
     </Dialog>
   )
 }

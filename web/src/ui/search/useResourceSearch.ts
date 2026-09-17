@@ -11,12 +11,12 @@
  * Nunca se cai para local quando o servidor devolve outro erro: um 500 é um
  * erro para mostrar, não um motivo para trocar de fonte em silêncio.
  */
-import { useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError, isAbort, searchSchema, SearchSchema } from '../../api'
 import { useAsync } from '../../components/AsyncSection'
 import type { LocalSource } from './local'
-import type { SearchState } from './model'
+import { EMPTY_SEARCH, SearchState } from './model'
 import {
   Favorites,
   ListFetcher,
@@ -62,12 +62,17 @@ export function useResourceSearch<T>({
   /** `null` quando o recurso não existe no servidor (fase 2): vai direito ao local. */
   resource: string | null
   orgId?: string | null
-  ns?: string
+  /** Prefixo do estado na URL; `null` = estado só em memória (um diálogo). */
+  ns?: string | null
   fallback: LocalFallback<T> | null
   deps?: unknown[]
 }): ResourceSearch<T> {
   const { t } = useTranslation()
-  const [search, setSearch] = useSearchUrl(ns)
+  const [urlSearch, setUrlSearch] = useSearchUrl(ns ?? '')
+  const [memSearch, setMemSearch] = useState<SearchState>(EMPTY_SEARCH)
+  const setMem = useCallback((st: SearchState) => setMemSearch(st), [])
+  const search = ns === null ? memSearch : urlSearch
+  const setSearch = ns === null ? setMem : setUrlSearch
 
   const src = useAsync<Source<T>>(
     async (signal) => {

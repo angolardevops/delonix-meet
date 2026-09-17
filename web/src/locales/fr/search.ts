@@ -324,4 +324,130 @@ export default {
     exports: 'Rechercher des exports',
     rank: 'Rechercher dans ce tableau',
   },
+  orgs: {
+    fields: {
+      name: 'Nom',
+      domain: 'Domaine',
+      role: 'Mon rôle',
+      member_count: 'Personnes',
+      retention_days: 'Rétention (jours)',
+    },
+    filters: {
+      admin: "J'administre",
+      member: 'Je suis membre',
+    },
+    options: {
+      role: {
+        admin: 'Administrateur',
+        member: 'Membre',
+      },
+    },
+  },
+  groups: {
+    fields: {
+      name: 'Nom',
+      member_count: 'Membres',
+    },
+    filters: {
+    },
+  },
+  call_history: {
+    fields: {
+      kind: 'Type',
+      who: 'Qui',
+      media: 'Média',
+      at: 'Quand',
+      duration_secs: 'Durée (s)',
+    },
+    filters: {
+      missed: 'Manqués',
+      pstn: 'Appels entrants',
+      today: "Aujourd'hui",
+      yesterday: 'Hier',
+    },
+    options: {
+      kind: {
+        missed: 'Manqué',
+        pstn: 'Entrant',
+      },
+      media: {
+        voice: 'Voix',
+        video: 'Vidéo',
+      },
+    },
+  },
+  webhooks: {
+    fields: {
+      kind: 'Type',
+      url: 'Destination',
+      events: 'Événements',
+      active: 'Actif',
+    },
+    filters: {
+      active: 'Actifs',
+      inactive: 'Inactifs',
+    },
+    options: {
+      kind: {
+        slack: 'Slack',
+        mattermost: 'Mattermost',
+        teams: 'Teams',
+        generic: 'Générique',
+      },
+    },
+  },
+  api_keys: {
+    fields: {
+      name: 'Nom',
+      prefix: 'Préfixe',
+      created_at: 'Créée le',
+      last_used_at: 'Dernière utilisation',
+    },
+    filters: {
+      never_used: 'Jamais utilisées',
+      used_30_days: 'Utilisées ces 30 derniers jours',
+    },
+  },
+  exports: {
+    fields: {
+      titulo: 'Export',
+      predefinicao: 'Préréglage',
+      formato: 'Format',
+      bytes: 'Taille',
+      estado: 'État',
+      destino: 'Destination',
+      criadaEm: 'Date',
+    },
+    filters: {
+      concluida: 'Terminés',
+      falhou: 'En échec',
+      today: "Aujourd'hui",
+      last_7_days: '7 derniers jours',
+    },
+    options: {
+      predefinicao: {
+        web1080: 'Web 1080p',
+        web720: 'Web 720p',
+        vertical: 'Vertical 9:16',
+        podcast: 'Podcast',
+      },
+      estado: {
+        concluida: 'Terminé',
+        falhou: 'Échec',
+        cancelada: 'Annulé',
+      },
+      destino: {
+        descarregado: 'Téléchargé',
+        biblioteca: 'Bibliothèque',
+      },
+    },
+  },
+  rank: {
+    fields: {
+      name: 'Nom',
+      count: 'Nombre',
+    },
+    filters: {
+    },
+  },
 }

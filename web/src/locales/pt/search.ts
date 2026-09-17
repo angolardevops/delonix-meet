@@ -324,4 +324,130 @@ export default {
     exports: 'Pesquisar exportações',
     rank: 'Pesquisar nesta tabela',
   },
+  orgs: {
+    fields: {
+      name: 'Nome',
+      domain: 'Domínio',
+      role: 'O meu papel',
+      member_count: 'Pessoas',
+      retention_days: 'Retenção (dias)',
+    },
+    filters: {
+      admin: 'Administro',
+      member: 'Sou membro',
+    },
+    options: {
+      role: {
+        admin: 'Administrador',
+        member: 'Membro',
+      },
+    },
+  },
+  groups: {
+    fields: {
+      name: 'Nome',
+      member_count: 'Membros',
+    },
+    filters: {
+    },
+  },
+  call_history: {
+    fields: {
+      kind: 'Tipo',
+      who: 'Quem',
+      media: 'Meio',
+      at: 'Quando',
+      duration_secs: 'Duração (s)',
+    },
+    filters: {
+      missed: 'Perdidas',
+      pstn: 'Dial-in telefónico',
+      today: 'Hoje',
+      yesterday: 'Ontem',
+    },
+    options: {
+      kind: {
+        missed: 'Perdida',
+        pstn: 'Dial-in',
+      },
+      media: {
+        voice: 'Voz',
+        video: 'Vídeo',
+      },
+    },
+  },
+  webhooks: {
+    fields: {
+      kind: 'Tipo',
+      url: 'Destino',
+      events: 'Eventos',
+      active: 'Activo',
+    },
+    filters: {
+      active: 'Activos',
+      inactive: 'Inactivos',
+    },
+    options: {
+      kind: {
+        slack: 'Slack',
+        mattermost: 'Mattermost',
+        teams: 'Teams',
+        generic: 'Genérico',
+      },
+    },
+  },
+  api_keys: {
+    fields: {
+      name: 'Nome',
+      prefix: 'Prefixo',
+      created_at: 'Criada em',
+      last_used_at: 'Último uso',
+    },
+    filters: {
+      never_used: 'Nunca usadas',
+      used_30_days: 'Usadas nos últimos 30 dias',
+    },
+  },
+  exports: {
+    fields: {
+      titulo: 'Exportação',
+      predefinicao: 'Predefinição',
+      formato: 'Formato',
+      bytes: 'Tamanho',
+      estado: 'Estado',
+      destino: 'Destino',
+      criadaEm: 'Data',
+    },
+    filters: {
+      concluida: 'Concluídas',
+      falhou: 'Falhadas',
+      today: 'Hoje',
+      last_7_days: 'Últimos 7 dias',
+    },
+    options: {
+      predefinicao: {
+        web1080: 'Web 1080p',
+        web720: 'Web 720p',
+        vertical: 'Vertical 9:16',
+        podcast: 'Podcast',
+      },
+      estado: {
+        concluida: 'Concluída',
+        falhou: 'Falhou',
+        cancelada: 'Cancelada',
+      },
+      destino: {
+        descarregado: 'Descarregado',
+        biblioteca: 'Biblioteca',
+      },
+    },
+  },
+  rank: {
+    fields: {
+      name: 'Nome',
+      count: 'Contagem',
+    },
+    filters: {
+    },
+  },
 }

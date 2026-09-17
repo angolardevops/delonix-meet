@@ -324,4 +324,130 @@ export default {
     exports: '搜索导出',
     rank: '在此表中搜索',
   },
+  orgs: {
+    fields: {
+      name: '名称',
+      domain: '域名',
+      role: '我的角色',
+      member_count: '人数',
+      retention_days: '保留期（天）',
+    },
+    filters: {
+      admin: '我管理的',
+      member: '我是成员',
+    },
+    options: {
+      role: {
+        admin: '管理员',
+        member: '成员',
+      },
+    },
+  },
+  groups: {
+    fields: {
+      name: '名称',
+      member_count: '成员数',
+    },
+    filters: {
+    },
+  },
+  call_history: {
+    fields: {
+      kind: '类型',
+      who: '对方',
+      media: '方式',
+      at: '时间',
+      duration_secs: '时长（秒）',
+    },
+    filters: {
+      missed: '未接',
+      pstn: '电话拨入',
+      today: '今天',
+      yesterday: '昨天',
+    },
+    options: {
+      kind: {
+        missed: '未接',
+        pstn: '拨入',
+      },
+      media: {
+        voice: '语音',
+        video: '视频',
+      },
+    },
+  },
+  webhooks: {
+    fields: {
+      kind: '类型',
+      url: '目标地址',
+      events: '事件',
+      active: '启用',
+    },
+    filters: {
+      active: '已启用',
+      inactive: '未启用',
+    },
+    options: {
+      kind: {
+        slack: 'Slack',
+        mattermost: 'Mattermost',
+        teams: 'Teams',
+        generic: '通用',
+      },
+    },
+  },
+  api_keys: {
+    fields: {
+      name: '名称',
+      prefix: '前缀',
+      created_at: '创建时间',
+      last_used_at: '最近使用',
+    },
+    filters: {
+      never_used: '从未使用',
+      used_30_days: '最近 30 天使用过',
+    },
+  },
+  exports: {
+    fields: {
+      titulo: '导出',
+      predefinicao: '预设',
+      formato: '格式',
+      bytes: '大小',
+      estado: '状态',
+      destino: '去向',
+      criadaEm: '日期',
+    },
+    filters: {
+      concluida: '已完成',
+      falhou: '失败',
+      today: '今天',
+      last_7_days: '最近 7 天',
+    },
+    options: {
+      predefinicao: {
+        web1080: 'Web 1080p',
+        web720: 'Web 720p',
+        vertical: '竖屏 9:16',
+        podcast: '播客',
+      },
+      estado: {
+        concluida: '已完成',
+        falhou: '失败',
+        cancelada: '已取消',
+      },
+      destino: {
+        descarregado: '已下载',
+        biblioteca: '媒体库',
+      },
+    },
+  },
+  rank: {
+    fields: {
+      name: '名称',
+      count: '数量',
+    },
+    filters: {
+    },
+  },
 }
