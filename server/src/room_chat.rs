@@ -33,6 +33,9 @@ pub enum ChatWrite {
         parent_id: Option<Uuid>,
         /// Epoch ms.
         at: i64,
+        /// Conversa directa: a conta que a recebe (e o nome, para o histórico).
+        to_user_id: Option<Uuid>,
+        to_username: Option<String>,
     },
     Reaction {
         message_id: Uuid,
@@ -103,15 +106,17 @@ pub async fn apply(db: &PgPool, w: &ChatWrite) -> Result<(), sqlx::Error> {
             text,
             parent_id,
             at,
+            to_user_id,
+            to_username,
         } => {
             // O `parent_id` só é aceite se for da MESMA sala: a validação em
             // memória já o garante, e a subconsulta garante-o também aqui, para
             // um fio nunca atravessar salas nem que a memória esteja errada.
             sqlx::query(
-                "INSERT INTO room_chat_messages (id, room_id, user_id, username, message, parent_id, created_at)
+                "INSERT INTO room_chat_messages (id, room_id, user_id, username, message, parent_id, created_at, to_user_id, to_username)
                  VALUES ($1, $2, $3, $4, $5,
                          (SELECT p.id FROM room_chat_messages p WHERE p.id = $6 AND p.room_id = $2),
-                         to_timestamp($7::double precision / 1000.0))
+                         to_timestamp($7::double precision / 1000.0), $8, $9)
                  ON CONFLICT (id) DO NOTHING",
             )
             .bind(id)
@@ -121,6 +126,8 @@ pub async fn apply(db: &PgPool, w: &ChatWrite) -> Result<(), sqlx::Error> {
             .bind(text)
             .bind(parent_id)
             .bind(*at)
+            .bind(to_user_id)
+            .bind(to_username)
             .execute(db)
             .await?;
         }
