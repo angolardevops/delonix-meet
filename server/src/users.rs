@@ -39,7 +39,15 @@ pub async fn fetch_public(db: &PgPool, user_id: Uuid) -> Result<UserPublic, ApiE
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(me, update_me, search, my_room, update_my_room, rotate_my_room_code),
+    paths(
+        me,
+        update_me,
+        search,
+        my_room,
+        update_my_room,
+        rotate_my_room_code,
+        rotate_my_room_pin
+    ),
     components(schemas(UserPublic, UpdateMeReq, PersonalRoom, UpdatePersonalRoomReq))
 )]
 pub struct ApiDoc;
@@ -74,8 +82,9 @@ pub struct UpdateMeReq {
     request_body = UpdateMeReq,
     responses(
         (status = 200, body = UserPublic),
-        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 400, description = "username/password fora da regra, ou `profile.invalid_locale`.", body = crate::openapi::ErrorBody),
         (status = 401, body = crate::openapi::ErrorBody),
+        (status = 409, description = "Password de uma conta gerida pelo Odoo (`profile.field_managed_by_odoo`).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn update_me(
@@ -97,27 +106,40 @@ pub async fn update_me(
             .await?;
     }
     if let Some(password) = req.password.as_deref() {
+        // Numa conta gerida pelo Odoo a password é a do Odoo: um hash local
+        // novo seria sobrescrito no próximo login, e até lá abria a conta
+        // com uma password que o Odoo não conhece.
+        if crate::account::is_odoo_managed(&state, auth.user_id).await? {
+            return Err(delonix_meet_core::DomainError::conflict(
+                delonix_meet_domain::identity::profile::FIELD_MANAGED_BY_ODOO,
+                "a password desta conta é a do Odoo: altere-a no Odoo",
+            )
+            .into());
+        }
         // Antes desta chamada faltava aqui o tecto de 128 que auth::register
         // já impunha — a mesma política de password, agora num só sítio
         // (ADR-0004, Fase 2).
         delonix_meet_domain::identity::validation::validate_password(password)
             .map_err(ApiError::BadRequest)?;
         let hash = crate::auth::hash_password(password)?;
-        sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
-            .bind(hash)
+        sqlx::query(
+            "UPDATE users SET password_hash = $1, password_changed_at = now() WHERE id = $2",
+        )
+        .bind(hash)
+        .bind(auth.user_id)
+        .execute(&state.db)
+        .await?;
+    }
+    if let Some(locale) = req.locale.as_deref() {
+        // Catálogo do domínio: os novos (`pt-AO`, `fr-FR`, `zh-CN`) e os antigos
+        // (`pt`, `en`, `fr`). Um idioma fora dele era IGNORADO em silêncio; agora
+        // é `400 profile.invalid_locale`.
+        let locale = delonix_meet_domain::identity::profile::canonical_locale(locale)?;
+        sqlx::query("UPDATE users SET locale = $1 WHERE id = $2")
+            .bind(locale)
             .bind(auth.user_id)
             .execute(&state.db)
             .await?;
-    }
-    if let Some(locale) = req.locale.as_deref() {
-        let locale = locale.trim();
-        if matches!(locale, "pt" | "en" | "fr") {
-            sqlx::query("UPDATE users SET locale = $1 WHERE id = $2")
-                .bind(locale)
-                .bind(auth.user_id)
-                .execute(&state.db)
-                .await?;
-        }
     }
     Ok(Json(fetch_public(&state.db, auth.user_id).await?))
 }
@@ -304,6 +326,42 @@ pub async fn rotate_my_room_code(
         auth.user_id,
         "personal_room.code_rotated",
         &old.id.to_string(),
+    )
+    .await;
+    Ok(Json(personal_room_view(&state, auth.user_id, room).await?))
+}
+
+/// Método personalizado: «Novo PIN» do dial-in da sala pessoal. O PIN antigo
+/// deixa de abrir a sala pelo telefone no mesmo instante. Auditado.
+#[utoipa::path(
+    post, path = "/api/users/me/room/rotate-pin", tag = "users",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = PersonalRoom),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 409, description = "A sala pessoal não tem dial-in activo (`personal_room.no_dial_in`).", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn rotate_my_room_pin(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> Result<Json<PersonalRoom>, ApiError> {
+    let room = ensure_my_room(&state, auth.user_id).await?;
+    let orgs = crate::org::orgs_of_user(&state, auth.user_id).await;
+    let Some((org_id, _)) = crate::voice::rotate_dial_in_pin(&state, &orgs, &room.code).await?
+    else {
+        return Err(delonix_meet_core::DomainError::conflict(
+            "personal_room.no_dial_in",
+            "a sua sala pessoal não tem número de dial-in: peça a um administrador que o ligue",
+        )
+        .into());
+    };
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "personal_room.pin_rotated",
+        &room.id.to_string(),
     )
     .await;
     Ok(Json(personal_room_view(&state, auth.user_id, room).await?))

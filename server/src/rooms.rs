@@ -423,6 +423,10 @@ pub struct JoinRoomResp {
     pub ws_path: String,
     /// Existe uma reunião agendada para esta sala (senão é chamada instantânea).
     pub scheduled: bool,
+    /// «Como entro nas sessões» de quem entra: o cliente aplica-as (som,
+    /// câmara, desfoque, ruído, legendas); `warn_before_recording` é imposto
+    /// pelo servidor no início da gravação.
+    pub join_preferences: crate::account::JoinPreferencesBody,
 }
 
 /// Exchange an access token for a short-lived, signed **room token** — the
@@ -506,11 +510,15 @@ pub async fn join_room(
             .fetch_one(&state.db)
             .await?;
 
+    let join_preferences = crate::account::load_join_preferences(&state.db, auth.user_id)
+        .await?
+        .into();
     Ok(Json(JoinRoomResp {
         room,
         ws_path: format!("/ws?token={room_token}"),
         room_token,
         scheduled,
+        join_preferences,
     }))
 }
 

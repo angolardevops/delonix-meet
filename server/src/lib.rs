@@ -4,6 +4,7 @@
 //! testes de integração em `tests/` possam montar o router e o estado sem
 //! arrancar um processo (ADR-0004 §6, passo 1).
 
+mod account;
 mod actions;
 mod ai;
 mod apikeys;
@@ -309,6 +310,43 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/users/me/room/rotate-code",
             post(users::rotate_my_room_code),
         )
+        // «Novo PIN» do dial-in da sala pessoal.
+        .route(
+            "/api/users/me/room/rotate-pin",
+            post(users::rotate_my_room_pin),
+        )
+        // «A minha conta» (Navegavel3): perfil, fotografia, preferências, guia.
+        .route(
+            "/api/users/me/profile",
+            get(account::get_profile).patch(account::update_profile),
+        )
+        .route(
+            "/api/users/me/avatar",
+            get(account::get_my_avatar)
+                .put(account::put_avatar)
+                .delete(account::delete_avatar)
+                .layer(DefaultBodyLimit::max(account::AVATAR_BODY_LIMIT)),
+        )
+        .route("/api/users/{user_id}/avatar", get(account::get_avatar))
+        .route(
+            "/api/users/me/join-preferences",
+            get(account::get_join_preferences).put(account::put_join_preferences),
+        )
+        .route(
+            "/api/users/me/notification-preferences",
+            get(account::get_notification_preferences)
+                .put(account::put_notification_preferences),
+        )
+        .route(
+            "/api/users/me/tour",
+            get(account::get_tour).patch(account::update_tour),
+        )
+        .route(
+            "/api/users/me/tour/steps/{step_id}",
+            axum::routing::put(account::put_tour_step),
+        )
+        .route("/api/users/me/tour/skip", post(account::skip_tour))
+        .route("/api/users/me/tour/restart", post(account::restart_tour))
         .route("/api/users/me/storage-usage", get(usage::my_storage_usage))
         // Sessões da conta e reautenticação (Navegavel3, «Dispositivos e sessões»).
         .route("/api/users/me/sessions", get(sessions::list))

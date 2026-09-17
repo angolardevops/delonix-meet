@@ -5,23 +5,23 @@
 
 -- 1. Perfil. `username` continua a ser o identificador único que o resto do
 --    produto já usa; `display_name` é o nome que aparece na sala e nas
---    legendas (NULL = usa o `username`). `legal_name` e `department` são da
---    autoridade Odoo numa conta gerida — escritos pela sincronização, nunca
---    pela rota do perfil.
+--    legendas (NULL = usa o `username`). `legal_name` é da autoridade Odoo
+--    numa conta gerida — escrito pela sincronização, nunca pela rota do perfil.
+--    O CARGO reutiliza `org_members.title` (0005) e o DEPARTAMENTO é o da
+--    frente A (`org_members.department_id`, migração 0061 dela): nenhum dos
+--    dois ganha uma segunda coluna aqui.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT
     CHECK (display_name IS NULL OR char_length(display_name) BETWEEN 1 AND 80);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS legal_name TEXT
     CHECK (legal_name IS NULL OR char_length(legal_name) <= 200);
-ALTER TABLE users ADD COLUMN IF NOT EXISTS department TEXT
-    CHECK (department IS NULL OR char_length(department) <= 200);
-ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title TEXT NOT NULL DEFAULT ''
-    CHECK (char_length(job_title) <= 100);
 -- Nome IANA; validado no domínio contra a base `tz` compilada.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'Africa/Luanda'
     CHECK (char_length(timezone) <= 64);
 -- Última alteração LOCAL da password (NULL = desconhecida: contas antigas e
 -- contas geridas pelo Odoo, onde a password muda lá).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ;
+-- «alterações guardadas há 2 min».
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_updated_at TIMESTAMPTZ;
 -- `pt-AO`, `fr-FR`, `zh-CN` cabem nos 8 de `locale` (0023).
 
 -- 2. Fotografia. Na base (como os PNG dos quadros): é pequena (≤ 1 MiB,
