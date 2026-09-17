@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ROTAS_POR_PORTAR } from '../capabilities'
 import { ApiError, currentUser, getRoom, isAbort, listMeetings, netProbe, roomWaiting, type WaitingPeer } from '../api'
 import { SONDAGENS, type AmostraRede } from './qualidadePrevista'
 import { audioConstraints, listDevices, videoConstraints } from '../media'
@@ -45,7 +46,7 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
   const [waiting, setWaiting] = useState<WaitingPeer[] | null>(null)
 
   useEffect(() => {
-    if (!active) return
+    if (!active || !ROTAS_POR_PORTAR.netProbe) return
     const ctrl = new AbortController()
     let cancelado = false
     setRede({ amostras: [], estado: 'a-medir' })
@@ -72,7 +73,7 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
   }, [active, medicao])
 
   useEffect(() => {
-    if (!active) return
+    if (!active || !ROTAS_POR_PORTAR.roomWaiting) return
     let parar = false
     let id = 0
     const espreitar = () => {

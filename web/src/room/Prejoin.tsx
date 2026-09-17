@@ -2,6 +2,7 @@ import { ReactNode, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { intlLocale } from '../i18n'
 import { currentUser } from '../api'
+import { ROTAS_POR_PORTAR } from '../capabilities'
 import { DelonixSymbol, Icon } from '../ui/icons'
 import { Alert, AvatarStack, Button, Checkbox, cx } from '../ui/kit'
 import { metaCurta, metaLonga, videoMeta } from './mediaMeta'
@@ -213,7 +214,7 @@ export function Prejoin({
                   </div>
                 )
               )}
-              <QualidadePrevista prejoin={prejoin} locale={locale} />
+              {ROTAS_POR_PORTAR.netProbe && <QualidadePrevista prejoin={prejoin} locale={locale} />}
             </div>
           </div>
 

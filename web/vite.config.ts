@@ -160,7 +160,7 @@ export default defineConfig(({ command }) => {
       // comportamento é o de sempre.
       proxy: {
         // `ws: true` no /api: a rota do DIRECTO
-        // (`/api/rooms/{code}/broadcast`) é um WebSocket debaixo do prefixo
+        // (`/api/rooms/{room_code}/live`) é um WebSocket debaixo do prefixo
         // /api. Sem isto o vite responde ao upgrade com HTTP e o pedido nunca
         // chega ao servidor — sem erro em lado nenhum, nem no browser nem no
         // log do backend. Foi assim que o directo pareceu recusado quando na

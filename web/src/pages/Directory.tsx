@@ -24,6 +24,7 @@
  */
 import { ReactNode, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ROTAS_POR_PORTAR } from '../capabilities'
 import { Employee, getSmsPolicy, Group, listBranches, listEmployees, listGroups, listMeetingRooms } from '../api'
 import { Async, AsyncSection, useAsync } from '../components/AsyncSection'
 import PageBar from '../components/PageBar'
@@ -160,8 +161,11 @@ function DirectoryBody({
   const [smsTo, setSmsTo] = useState<Employee | null>(null)
   // Quem pode mandar SMS a contactos é decisão da org (`sms_send_policy`); o
   // servidor volta a decidir no envio. Sem política lida, o botão não aparece.
-  const smsPolicy = useAsync(() => getSmsPolicy(orgId), [orgId])
-  const canSendSms = smsPolicy.state.s === 'ready' && (isAdmin || smsPolicy.state.d.send_policy === 'members')
+  // Enquanto a rota não existir no backend novo, não se pergunta: o botão fica
+  // escondido pela mesma regra, sem um 404 por cada visita (ver capabilities.ts).
+  const smsPolicy = useAsync(() => (ROTAS_POR_PORTAR.smsPolicy ? getSmsPolicy(orgId) : Promise.resolve(null)), [orgId])
+  const canSendSms =
+    smsPolicy.state.s === 'ready' && smsPolicy.state.d !== null && (isAdmin || smsPolicy.state.d.send_policy === 'members')
   const smsFor = (p: Employee) => (canSendSms && p.can_sms === true && p.user_id !== meId ? () => setSmsTo(p) : undefined)
 
   const allPeople = useMemo(() => (people.state.s === 'ready' ? people.state.d : []), [people.state])

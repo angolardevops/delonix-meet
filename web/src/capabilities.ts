@@ -39,3 +39,30 @@
  * abrir um diálogo que pede um consentimento sem efeito.
  */
 export const AGENTE_CONTROLO_REMOTO = false
+
+/**
+ * Rotas que a UI sabe usar e que a linha de backend nova (ADR-0004/0006, #90 e
+ * #92) AINDA NÃO serve. Existiam no `server/` antigo desta branch e perderam-se
+ * na reorganização; o porte é de outras frentes (BW2 e seguintes).
+ *
+ * Enquanto uma estiver a `false`, a UI não a chama e esconde o que dependia
+ * dela — em vez de mostrar «erro», uma lista vazia ou um botão que some sem
+ * razão. Ligar de novo é mudar a linha para `true` quando a rota fundir; o
+ * código que a usa ficou intacto.
+ */
+export const ROTAS_POR_PORTAR = {
+  /** `GET/POST /api/net-probe` — «qualidade prevista» na pré-entrada. Sai quando o porte do net-probe fundir. */
+  netProbe: false,
+  /**
+   * `GET /api/rooms/{room_code}/waiting` — quem espera, visto ANTES de entrar.
+   * Dentro da sala a fila chega pelo `/ws` (`waiting-join`/`waiting-left`),
+   * que existe. Sai quando o BW2 trouxer a rota REST.
+   */
+  roomWaiting: false,
+  /** `GET /api/orgs/{org_id}/ai/status` e `POST …/ai/suggestions` — assistente do Estúdio. Sai com o porte do Ollama. */
+  studioAi: false,
+  /** `GET /api/recordings/{recording_id}/transcript` — transcrição do servidor nas legendas. Sai com o BW2 (gravações). */
+  recordingTranscript: false,
+  /** `GET /api/orgs/{org_id}/sms/policy` — quem pode mandar SMS a contactos. Sai quando a `sms-contactos` fundir. */
+  smsPolicy: false,
+} as const

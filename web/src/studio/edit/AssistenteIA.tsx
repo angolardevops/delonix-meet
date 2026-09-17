@@ -13,6 +13,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ROTAS_POR_PORTAR } from '../../capabilities'
 import { ApiError, apiErrorMessage, isAbort, studioAi, studioAiStatus, updateRecording } from '../../api'
 import type { StudioAiFillers, StudioAiPublication, StudioAiStatus, StudioAiSummary, StudioAiTask } from '../../api'
 import { useShell } from '../../components/shellContext'
@@ -31,7 +32,15 @@ type Estado = { fase: 'a-ver' } | { fase: 'pronto'; s: StudioAiStatus } | { fase
 
 const TAREFAS: StudioAiTask[] = ['summary', 'publication', 'fillers']
 
-export default function AssistenteIA({
+/**
+ * Sem as rotas `ai/status`/`ai/suggestions` no backend (ver `ROTAS_POR_PORTAR`)
+ * o cartão não aparece: um «a ver…» que acaba sempre em erro não diz nada útil.
+ */
+export default function AssistenteIA(props: Parameters<typeof AssistenteIAServidor>[0]) {
+  return ROTAS_POR_PORTAR.studioAi ? <AssistenteIAServidor {...props} /> : null
+}
+
+function AssistenteIAServidor({
   p,
   aplicar,
   onIrParaLegendas,
