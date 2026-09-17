@@ -741,24 +741,24 @@ const upload = await fetch(`${API}/api/rooms/${salaA.code}/recordings?name=s3.we
 const gravacaoA = upload.ok ? (await upload.json()).id : null
 if (!gravacaoA) nok('A carrega uma gravação para o teste S3', `devolveu ${upload.status}`)
 
-console.log('\n--- G4–G6: metadados, capítulos e comentários de uma gravação REAL da A ---')
+console.log('\n--- Gravações (R183): metadados, publicação, capítulos, comentários, legendas de uma gravação REAL da A ---')
 // Aqui o id é verdadeiro (a gravação acabou de ser carregada), por isso um
 // `404` para a B quer mesmo dizer «não é tua» — o controlo positivo é a A.
 if (gravacaoA) {
   const capA = await permitido('A cria um capítulo na sua gravação', `/api/recordings/${gravacaoA}/chapters`, {
-    token: A.token, method: 'POST', body: { at_secs: 0, title: 'abertura' },
+    token: A.token, method: 'POST', body: { t_ms: 0, title: 'abertura' },
   })
   const comA = await permitido('A comenta a sua gravação', `/api/recordings/${gravacaoA}/comments`, {
     token: A.token, method: 'POST', body: { body: 'comentário privado da A' },
   })
   await permitido('A lê os metadados da sua gravação', `/api/recordings/${gravacaoA}`, { token: A.token })
   await recusado('B lê os metadados da gravação da A', `/api/recordings/${gravacaoA}`, { token: B.token })
-  await recusado('B muda a categoria da gravação da A', `/api/recordings/${gravacaoA}`, {
-    token: B.token, method: 'PATCH', body: { category: 'other' },
+  await recusado('B muda a descrição da gravação da A', `/api/recordings/${gravacaoA}`, {
+    token: B.token, method: 'PATCH', body: { description: 'forjado' },
   })
   await recusado('B lê os capítulos da gravação da A', `/api/recordings/${gravacaoA}/chapters`, { token: B.token })
   await recusado('B cria um capítulo na gravação da A', `/api/recordings/${gravacaoA}/chapters`, {
-    token: B.token, method: 'POST', body: { at_secs: 1, title: 'forjado' },
+    token: B.token, method: 'POST', body: { t_ms: 1000, title: 'forjado' },
   })
   await recusado('B lê os comentários da gravação da A', `/api/recordings/${gravacaoA}/comments`, { token: B.token })
   await recusado('B comenta a gravação da A', `/api/recordings/${gravacaoA}/comments`, {
@@ -782,8 +782,59 @@ if (gravacaoA) {
     if (ainda.status === 200 && ainda.json?.body === 'comentário privado da A') ok('o comentário da A continua intacto')
     else nok('o comentário da A continua intacto', `devolveu ${ainda.status}: ${JSON.stringify(ainda.json).slice(0, 160)}`)
   }
+  // Legendas: a A envia e publica; a B não chega a nenhuma forma.
+  const lang = 'pt'
+  await permitido('A envia uma legenda para a sua gravação', `/api/recordings/${gravacaoA}/captions/${lang}`, {
+    token: A.token, method: 'PUT', body: { vtt: 'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nlegenda da A\n', publish: true },
+  })
+  await permitido('A lê a sua legenda', `/api/recordings/${gravacaoA}/captions/${lang}`, { token: A.token })
+  await recusado('B lista as legendas da gravação da A', `/api/recordings/${gravacaoA}/captions`, { token: B.token })
+  await recusado('B lê uma legenda da A', `/api/recordings/${gravacaoA}/captions/${lang}`, { token: B.token })
+  await recusado('B lê o VTT da A', `/api/recordings/${gravacaoA}/captions/${lang}/vtt`, { token: B.token })
+  await recusado('B substitui a legenda da A', `/api/recordings/${gravacaoA}/captions/${lang}`, {
+    token: B.token, method: 'PUT', body: { vtt: 'WEBVTT\n' },
+  })
+  await recusado('B despublica a legenda da A', `/api/recordings/${gravacaoA}/captions/${lang}`, {
+    token: B.token, method: 'PATCH', body: { status: 'draft' },
+  })
+  await recusado('B apaga a legenda da A', `/api/recordings/${gravacaoA}/captions/${lang}`, {
+    token: B.token, method: 'DELETE',
+  })
+  // Sub-recursos do leitor.
+  await permitido('A lê a transcrição da sua gravação', `/api/recordings/${gravacaoA}/transcript`, { token: A.token })
+  await recusado('B lê a transcrição da gravação da A', `/api/recordings/${gravacaoA}/transcript`, { token: B.token })
+  await permitido('A lista quem esteve na sua gravação', `/api/recordings/${gravacaoA}/participants`, { token: A.token })
+  await recusado('B lista quem esteve na gravação da A', `/api/recordings/${gravacaoA}/participants`, { token: B.token })
+  await permitido('A lista quem esteve na sua sala', `/api/rooms/${salaA.code}/participants`, { token: A.token })
+  await recusado('B lista quem esteve na sala da A', `/api/rooms/${salaA.code}/participants`, { token: B.token })
+  await recusado('B lê a miniatura da gravação da A', `/api/recordings/${gravacaoA}/thumbnail`, { token: B.token })
+  await permitido('A regista uma visualização da sua gravação', `/api/recordings/${gravacaoA}/views`, {
+    token: A.token, method: 'POST',
+  })
+  await recusado('B conta uma visualização na gravação da A', `/api/recordings/${gravacaoA}/views`, {
+    token: B.token, method: 'POST',
+  })
+  // Publicação para a organização: abre à org da A, nunca à B.
+  await recusado('B publica a gravação da A', `/api/recordings/${gravacaoA}/publication`, {
+    token: B.token, method: 'PUT', body: { visibility: 'org' },
+  })
+  await permitido('A publica a sua gravação para a organização', `/api/recordings/${gravacaoA}/publication`, {
+    token: A.token, method: 'PUT', body: { visibility: 'org' },
+  })
+  await recusado('B lê a gravação PUBLICADA da A', `/api/recordings/${gravacaoA}`, { token: B.token })
+  const publicadasB = await req('/api/recordings?scope=published', { token: B.token })
+  if (publicadasB.status === 200 && Array.isArray(publicadasB.json) && !publicadasB.json.some((r) => r.id === gravacaoA)) {
+    ok('as publicadas da B não incluem a gravação da A')
+  } else {
+    nok('as publicadas da B não incluem a gravação da A', `devolveu ${publicadasB.status}: ${JSON.stringify(publicadasB.json).slice(0, 160)}`)
+  }
+  await recusado('B retira a publicação da A', `/api/recordings/${gravacaoA}/publication`, {
+    token: B.token, method: 'DELETE',
+  })
+  // Sem paginação a biblioteca é uma lista (a UI lê-a assim); com `page_size`, uma página.
   const pesquisaB = await req('/api/recordings?q=s3', { token: B.token })
-  if (pesquisaB.status === 200 && !(pesquisaB.json?.items ?? []).some((r) => r.id === gravacaoA)) {
+  const encontradas = Array.isArray(pesquisaB.json) ? pesquisaB.json : null
+  if (pesquisaB.status === 200 && encontradas && !encontradas.some((r) => r.id === gravacaoA)) {
     ok('a pesquisa da B não devolve a gravação da A')
   } else {
     nok('a pesquisa da B não devolve a gravação da A', `devolveu ${pesquisaB.status}: ${JSON.stringify(pesquisaB.json).slice(0, 160)}`)
