@@ -378,6 +378,59 @@ if (hookB.status >= 200 && hookB.status < 300 && hookB.json?.id) {
   nok('B cria um webhook para o teste', `devolveu ${hookB.status}: ${JSON.stringify(hookB.json).slice(0, 120)}`)
 }
 
+// Pesquisa, filtros, agrupamentos e favoritos (ADR-0007). O que se procura
+// não é só o código de estado: é que NENHUM item, total, grupo ou favorito da B
+// apareça à A — um `total` de outra org também é fuga. Controlo positivo: a B
+// encontra o que é seu com a mesma pesquisa.
+console.log('\n--- pesquisa: a A não encontra nada da B ---')
+const termoB = `zircao${marca}`
+await req('/api/meetings', {
+  token: B.token, method: 'POST',
+  body: { title: `Reunião ${termoB}`, kind: 'video', starts_at: new Date(Date.now() + 7200e3).toISOString(), duration_min: 30, invitee_ids: [] },
+})
+const tudo = 'meetings,recordings,people,whiteboards,rooms,messages,stream_destinations,webhooks,audit_events'
+const buscaB = await req(`/api/search?q=${termoB}&types=${tudo}`, { token: B.token })
+if (buscaB.status === 200 && buscaB.json?.groups?.some((g) => g.type === 'meetings')) ok('B encontra a própria reunião no Ctrl+K')
+else nok('B encontra a própria reunião no Ctrl+K', `devolveu ${buscaB.status}: ${JSON.stringify(buscaB.json).slice(0, 160)}`)
+for (const q of [termoB, `admin-beta${marca}`, 'example', `sala privada`, 'Destino da B']) {
+  const r = await req(`/api/search?q=${encodeURIComponent(q)}&types=${tudo}`, { token: A.token })
+  // A pode encontrar coisas SUAS parecidas (a pesquisa aproximada acha
+  // «admin-alfa» ao procurar «admin-beta»); o que não pode é trazer a B.
+  const texto = JSON.stringify(r.json?.groups ?? [])
+  const vazado = [B.orgId, B.userId, termoB, `beta${marca}`, 'example.com', 'Destino da B', 'sala privada da B', salaB?.code]
+    .filter(Boolean)
+    .some((m) => texto.includes(m))
+  if (r.status === 200 && !vazado) ok(`Ctrl+K da A por «${q}» não traz nada da B`)
+  else nok(`Ctrl+K da A por «${q}» não traz nada da B`, `devolveu ${r.status}: ${JSON.stringify(r.json).slice(0, 200)}`)
+}
+const listaA = await req(`/api/meetings?q=${termoB}&group_by=owner`, { token: A.token })
+if (listaA.status === 200 && listaA.json?.total === 0 && (listaA.json?.groups ?? []).length === 0) ok('lista de reuniões da A com q da B: total 0 e sem grupos')
+else nok('lista de reuniões da A com q da B: total 0 e sem grupos', `devolveu ${listaA.status}: ${JSON.stringify(listaA.json).slice(0, 160)}`)
+const filtroDono = encodeURIComponent(JSON.stringify([['owner', 'eq', B.userId]]))
+const sonda = await req(`/api/meetings?filter=${filtroDono}`, { token: A.token })
+if (sonda.status === 200 && sonda.json?.total === 0) ok('filtrar pelo dono da B não sonda nada (total 0)')
+else nok('filtrar pelo dono da B não sonda nada (total 0)', `devolveu ${sonda.status}: ${JSON.stringify(sonda.json).slice(0, 160)}`)
+await recusado('A pesquisa membros da org B', `/api/orgs/${B.orgId}/employees?q=admin&group_by=role`, { token: A.token })
+await recusado('A agrupa a auditoria da org B', `/api/orgs/${B.orgId}/audit?filters=logins&group_by=actor`, { token: A.token })
+const favB = await req('/api/users/me/saved-searches', {
+  token: B.token, method: 'POST',
+  body: { resource: 'meetings', name: `Favorito ${termoB}`, query: { q: termoB }, shared: true },
+})
+if (favB.status === 201 && favB.json?.id) {
+  const f = `/api/users/me/saved-searches/${favB.json.id}`
+  await recusado('A lê um favorito partilhado da org B', f, { token: A.token })
+  await recusado('A altera um favorito da org B', f, { token: A.token, method: 'PATCH', body: { name: 'roubado' } })
+  await recusado('A apaga um favorito da org B', f, { token: A.token, method: 'DELETE' })
+  const meus = await req('/api/users/me/saved-searches', { token: A.token })
+  if (meus.status === 200 && !(meus.json?.items ?? []).some((x) => x.id === favB.json.id)) ok('e a lista de favoritos da A não traz o da B')
+  else nok('e a lista de favoritos da A não traz o da B', `devolveu ${meus.status}: ${JSON.stringify(meus.json).slice(0, 160)}`)
+  const ainda = await req(f, { token: B.token })
+  if (ainda.status === 200 && ainda.json?.name === `Favorito ${termoB}`) ok('e o favorito da B CONTINUA LÁ, intacto')
+  else nok('e o favorito da B CONTINUA LÁ, intacto', `devolveu ${ainda.status}: ${JSON.stringify(ainda.json).slice(0, 120)}`)
+} else {
+  nok('B cria um favorito partilhado para o teste', `devolveu ${favB.status}: ${JSON.stringify(favB.json).slice(0, 120)}`)
+}
+
 console.log('\n--- salas da org B: o código é uma CAPABILITY, não um passe ---')
 //
 // Aqui a expectativa ingénua ("A tem de levar 403") está ERRADA, e é preciso
