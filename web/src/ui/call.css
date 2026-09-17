@@ -705,3 +705,10 @@ button.call-hist__row:hover strong {
     flex: none;
   }
 }
+
+.call-hist-search {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 6px;
+}

@@ -496,3 +496,20 @@
     display: none;
   }
 }
+
+/* Coluna estreita (Contactos): caixa numa linha, paginador por baixo; o menu
+   abre na largura do ecrã a partir da coluna. */
+.dx-searchbar--stack .dx-sp__row {
+  flex-wrap: wrap;
+}
+.dx-searchbar--stack .dx-sp__box {
+  max-width: none;
+}
+.dx-searchbar--stack .dx-sp__aside {
+  width: 100%;
+  margin-left: 0;
+  justify-content: space-between;
+}
+.dx-searchbar--stack .dx-sp__menu {
+  width: min(640px, calc(100vw - 48px));
+}

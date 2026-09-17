@@ -30,9 +30,12 @@ import PageBar from '../components/PageBar'
 import { usePresence } from '../components/PresenceProvider'
 import { useShell } from '../components/shellContext'
 import { Button, Empty, Select, Skeleton } from '../ui/kit'
+import { SearchBar } from '../ui/search/SearchResults'
+import { useResourceSearch } from '../ui/search/useResourceSearch'
 import CreateGroupDialog from './admin/CreateGroupDialog'
 import CreateOrgDialog from './admin/CreateOrgDialog'
 import { refusalAware, useOrgSelection } from './admin/orgShared'
+import { groupsFallback, membersFallback } from './admin/search'
 import CallStage, { GroupStage, OrgStage } from './directory/CallStage'
 import ContactList, { DirTab, Selection } from './directory/ContactList'
 import SmsDialog from './directory/SmsDialog'
@@ -140,8 +143,12 @@ function DirectoryBody({
   const groups = useAsync(() => refusalAware(listGroups(orgId), t), [orgId])
   const places = useAsync(() => refusalAware(Promise.all([listBranches(orgId), listMeetingRooms(orgId)]), t), [orgId])
   const [tab, setTab] = useState<DirTab>('people')
-  const [q, setQ] = useState('')
-  const [branchFilter, setBranchFilter] = useState('')
+  // Pesquisa estilo Odoo por separador: pessoas (recurso `members`) e grupos
+  // (lista inteira no browser — o servidor não descreve grupos).
+  const peopleFallback = useMemo(() => membersFallback(orgId), [orgId])
+  const groupsSource = useMemo(() => groupsFallback(orgId), [orgId])
+  const rsPeople = useResourceSearch<Employee>({ resource: 'members', orgId, ns: 'people.', fallback: peopleFallback })
+  const rsGroups = useResourceSearch<Group>({ resource: null, orgId, ns: 'groups.', fallback: groupsSource })
   // `#/directory?u=<id>` (pesquisa global) abre já essa pessoa. Só a escolha
   // EXPLÍCITA abre, em ecrã estreito, o detalhe por cima da lista.
   const [selection, setSelection] = useState<Selection>(() => {
@@ -157,33 +164,18 @@ function DirectoryBody({
   const canSendSms = smsPolicy.state.s === 'ready' && (isAdmin || smsPolicy.state.d.send_policy === 'members')
   const smsFor = (p: Employee) => (canSendSms && p.can_sms === true && p.user_id !== meId ? () => setSmsTo(p) : undefined)
 
-  const branches = places.state.s === 'ready' ? places.state.d[0] : []
   const allPeople = useMemo(() => (people.state.s === 'ready' ? people.state.d : []), [people.state])
   const allGroups = useMemo(() => (groups.state.s === 'ready' ? groups.state.d : []), [groups.state])
   const { isOnline, online } = presence
 
-  const shownPeople = useMemo(() => {
-    const term = q.trim().toLowerCase()
-    return allPeople
-      .filter((p) => !branchFilter || p.branch_id === branchFilter)
-      .filter(
-        (p) =>
-          !term ||
-          p.username.toLowerCase().includes(term) ||
-          p.email.toLowerCase().includes(term) ||
-          (p.title ?? '').toLowerCase().includes(term) ||
-          (p.branch_name ?? '').toLowerCase().includes(term),
-      )
-      .sort(
-        (a, b) =>
-          Number(online.has(b.user_id)) - Number(online.has(a.user_id)) || a.username.localeCompare(b.username),
-      )
-  }, [allPeople, q, branchFilter, online])
-
-  const shownGroups = useMemo(() => {
-    const term = q.trim().toLowerCase()
-    return allGroups.filter((g) => !term || g.name.toLowerCase().includes(term))
-  }, [allGroups, q])
+  // A página que a pesquisa devolveu; dentro dela, quem está online primeiro.
+  const pagePeople = rsPeople.list.state.s === 'ready' ? rsPeople.list.state.d.items : null
+  const shownPeople = useMemo(
+    () =>
+      (pagePeople ?? []).slice().sort((a, b) => Number(online.has(b.user_id)) - Number(online.has(a.user_id))),
+    [pagePeople, online],
+  )
+  const shownGroups = rsGroups.list.state.s === 'ready' ? rsGroups.list.state.d.items : null
 
   // Em ecrã estreito o detalhe abre por cima da lista; Esc fecha-o.
   useEffect(() => {
@@ -250,13 +242,15 @@ function DirectoryBody({
       <ContactList
         tab={tab}
         onTab={setTab}
-        q={q}
-        onQ={setQ}
-        branchFilter={branchFilter}
-        onBranchFilter={setBranchFilter}
-        branches={branches}
-        people={people.state.s === 'ready' ? shownPeople : null}
-        groups={groups.state.s === 'ready' ? shownGroups : null}
+        searchBar={
+          tab === 'groups' ? (
+            <SearchBar rs={rsGroups} label={t('search.rotulos.groups')} placeholder={t('org.dir.pesquisarGrupos')} className="dx-searchbar--stack" />
+          ) : (
+            <SearchBar rs={rsPeople} label={t('search.rotulos.members')} placeholder={t('consola.contactos.pesquisar')} className="dx-searchbar--stack" />
+          )
+        }
+        people={pagePeople ? shownPeople : null}
+        groups={shownGroups}
         missed={presence.missed}
         meId={meId}
         isOnline={isOnline}
@@ -272,7 +266,7 @@ function DirectoryBody({
         isAdmin={isAdmin}
         orgPicker={orgPicker}
         pending={
-          tab === 'groups' ? <Pending state={groups.state} onRetry={groups.reload} /> : <Pending state={people.state} onRetry={people.reload} />
+          tab === 'groups' ? <Pending state={rsGroups.list.state} onRetry={rsGroups.reload} /> : <Pending state={rsPeople.list.state} onRetry={rsPeople.reload} />
         }
       />
       <section className={selection ? 'call-main call-main--open' : 'call-main'} aria-label={t('org.dir.detalhe')}>
@@ -296,6 +290,7 @@ function DirectoryBody({
           onCreated={() => {
             setCreatingGroup(false)
             groups.reload()
+            rsGroups.reload()
           }}
         />
       )}

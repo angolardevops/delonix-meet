@@ -10,10 +10,10 @@
  */
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { Branch, Employee, Group } from '../../api'
+import type { Employee, Group } from '../../api'
 import type { MissedCall } from '../../presence'
 import { DelonixSymbol, Icon } from '../../ui/icons'
-import { Avatar, cx, IconButton, Select } from '../../ui/kit'
+import { Avatar, cx, IconButton } from '../../ui/kit'
 import CallHistory from './CallHistory'
 
 export type DirTab = 'people' | 'groups' | 'history'
@@ -22,11 +22,7 @@ export type Selection = { kind: 'person'; id: string } | { kind: 'group'; id: st
 export default function ContactList({
   tab,
   onTab,
-  q,
-  onQ,
-  branchFilter,
-  onBranchFilter,
-  branches,
+  searchBar,
   people,
   groups,
   missed,
@@ -47,11 +43,8 @@ export default function ContactList({
 }: {
   tab: DirTab
   onTab: (t: DirTab) => void
-  q: string
-  onQ: (q: string) => void
-  branchFilter: string
-  onBranchFilter: (id: string) => void
-  branches: Branch[]
+  /** Painel de pesquisa estilo Odoo do separador (pessoas ou grupos). */
+  searchBar: ReactNode
   people: Employee[] | null
   groups: Group[] | null
   missed: MissedCall[]
@@ -101,18 +94,7 @@ export default function ContactList({
           </button>
         </div>
         {orgPicker}
-        {tab !== 'history' && (
-          <label className="call-search">
-            <Icon name="search" size={12} />
-            <input
-              type="search"
-              value={q}
-              onChange={(e) => onQ(e.target.value)}
-              placeholder={tab === 'groups' ? t('org.dir.pesquisarGrupos') : t('consola.contactos.pesquisar')}
-              aria-label={tab === 'groups' ? t('org.dir.pesquisarGrupos') : t('org.dir.pesquisar')}
-            />
-          </label>
-        )}
+        {tab !== 'history' && searchBar}
         <div className="call-tabs" role="tablist" aria-label={t('org.dir.separadores')}>
           {tabs.map((x) => (
             <button
@@ -128,16 +110,6 @@ export default function ContactList({
             </button>
           ))}
         </div>
-        {tab === 'people' && branches.length > 1 && (
-          <Select value={branchFilter} onChange={(e) => onBranchFilter(e.target.value)} aria-label={t('org.dir.filtrarFilial')}>
-            <option value="">{t('org.dir.todasFiliais')}</option>
-            {branches.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </Select>
-        )}
       </div>
 
       <div className="call-list__scroll">
@@ -234,7 +206,7 @@ export default function ContactList({
                 </button>
               )}
             </div>
-            <CallHistory orgId={orgId} isAdmin={isAdmin} missed={missed} onCallBack={onCallBack} />
+            <CallHistory orgId={orgId} isAdmin={isAdmin} missed={missed} onCallBack={onCallBack} searchable />
           </>
         )}
       </div>
