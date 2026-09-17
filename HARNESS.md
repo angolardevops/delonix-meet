@@ -54,6 +54,14 @@
 - `whiteboards.rs` — CRUD quadro branco persistente; URL assinado do PNG (G11): `POST /api/whiteboards/{id}/signed-url` → `{url, expires_at}` (≤15 min, só para quem já vê o quadro); `GET …/png?exp=&sig=` serve SEM sessão (HMAC-SHA256 sobre `(id, exp)` com subchave `core::crypto::derive_key(JWT_SECRET, …)`, tempo constante; adulterado/expirado/inexistente → `404`). Sem `sig`, o PNG com sessão é o de sempre. Regras em `domain::content::whiteboard`. Testes: `server/tests/whiteboard_signed_url.rs`
 - `voice.rs` — PSTN: plano de controlo (DIDs, CDR, facturação, IVR por segredo partilhado em `/internal/v1/voice/ivr/*`); a media depende do operador SIP. O IVR é máquina-a-máquina e, no destino, sai da árvore pública para gRPC (ADR-0004 §4)
 - `sms.rs` — gateway de SMS (ADR-0005): consola da org em `/api/orgs/{org_id}/sms/*` (só admin), superfície do agente USB em `/api/integrations/sms-agent/v1/*` (token `dlxg_`, extractor `SmsGatewayAuth`), encaminhamento pelo plano de numeração angolano (prefixos **por confirmar**) e worker dos operadores que pára no drain. Entrega no máximo uma vez
+- `telephony_service.rs` — telefonia (ADR-0009): o serviço partilhado com a frente D — `resolve_number` (plano de marcação + emergência primeiro), `place_call` (limite por org, canais medidos, linha `telephony_outbound_calls` que segue os `CallEvent`), `send_sms` (porta `SmsGateways` sobre `sms::enqueue_message`) e os `Adapters` montados da configuração (`TELEPHONY_ESL_*`, `TELEPHONY_KAMAILIO_RPC_URL`). Regras puras em `domain::telephony`
+- `telephony_trunks.rs` — operadoras (troncos SIP) por org em `/api/orgs/{org_id}/telephony/trunks*`, `trunk-order` (PUT da ordem inteira), preços e câmbio com histórico não retroactivo; estado MEDIDO (registo no FreeSWITCH, canais do `limit`, ASR dos CDRs); password cifrada, nunca devolvida; host pela guarda de saída (R213)
+- `telephony_dial_plan.rs` — plano de marcação (`GET/PUT …/dial-plan`, `POST …/dial-plan/test`); invariante de emergência (R210)
+- `telephony_sip.rs` — definições SIP (domínio único, R213), `reveal-credentials` com reautenticação auditada (R214), `sip-registration` (estado medido) e `restart`
+- `telephony_calls.rs` — teste rápido (`test-calls`, `202` + acompanhamento), registo de chamadas mascarado e paginado, consumo do mês em Kz só com taxa
+- `telephony_cdr.rs` — ingestão `mod_json_cdr` em `/internal/v1/telephony/call-records` (segredo interno por Basic): idempotente (R211), custo congelado ao preço em vigor (R212), perna A ignorada
+- `telephony_fs_xml.rs` — `mod_xml_curl` em `/internal/v1/telephony/freeswitch-config`: extensão do plano por número (mesma resolução do `dial-plan/test`, `limit_execute`, emergência sem limite) e gateways `dlx-<trunk_id>`
+- `telephony_esl.rs` — adaptadores reais de `SipControl`/`CallOriginator`: FreeSWITCH ESL (`bgapi originate` com eventos, `sofia xmlstatus`, `limit_usage`, `hupall`) e Kamailio JSON-RPC. Provado contra FreeSWITCH 1.11.3 (`tests/telephony_freeswitch.rs`, `web/e2e/telefonia-freeswitch.mjs`); **Kamailio nunca**
 - `sms_codec.rs` — o ÚNICO sítio que codifica SMS: GSM 03.38/UCS-2, segmentação, PDU SMS-SUBMIT para `AT+CMGS`. Puro, sem I/O
 - `sms_smpp.rs` — cliente SMPP 3.4 de saída (`bind_transmitter`/`submit_sm`/`unbind`) para Unitel/Movicel/Africell; credenciais em `SMS_*_SMPP`. Provado contra SMSC falso, **nunca contra um operador**; sem recibos nem TLS
 - `crypto.rs` — sha256 de token e token aleatório (`random_token`). Código novo chama isto; a catraca conta as cópias fora dele
@@ -117,7 +125,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0051) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0069; 0052–0064 reservadas a outras frentes) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 
