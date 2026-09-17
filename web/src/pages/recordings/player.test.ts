@@ -38,15 +38,15 @@ const meeting = (id: string, room: string | null, parent: string | null = null, 
 
 describe('contrato «Editar no Studio»', () => {
   it('vai e volta pelo endereço', () => {
-    expect(studioEditHash(ID)).toBe(`#/studio?editar=${ID}`)
+    expect(studioEditHash(ID)).toBe(`#/studio?vista=edicao&gravacao=${ID}`)
     expect(studioEditTarget(studioEditHash(ID))).toBe(ID)
-    expect(studioEditTarget(`#/studio?x=1&editar=${ID.toUpperCase()}`)).toBe(ID)
+    expect(studioEditTarget(`#/studio?x=1&gravacao=${ID.toUpperCase()}`)).toBe(ID)
   })
 
   it('recusa o que não é um id de gravação', () => {
     expect(studioEditTarget('#/studio')).toBeNull()
-    expect(studioEditTarget('#/studio?editar=../../api')).toBeNull()
-    expect(studioEditTarget(`#/recordings?editar=${ID}`)).toBeNull()
+    expect(studioEditTarget('#/studio?gravacao=../../api')).toBeNull()
+    expect(studioEditTarget(`#/recordings?gravacao=${ID}`)).toBeNull()
   })
 
   it('o leitor tem endereço próprio', () => {
