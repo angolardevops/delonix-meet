@@ -977,40 +977,59 @@ async fn segregation_of_duties(db: sqlx::PgPool) {
     assert_eq!(r["warnings"][0]["rule_id"], rule_id);
 }
 
-/// Publicar gravações de colegas: o dono sempre; o admin da org do dono passa a
-/// poder (alargamento intencional); um membro não (401 herdado).
+/// Publicar e ver gravações de colegas, DENTRO de `owned_item`/`seen_item`: o dono
+/// publica sempre; o admin da org do dono também (alargamento intencional);
+/// quem vê a gravação sem a capacidade → 403 `authz.missing_capability`; quem
+/// não a vê → 404. Nenhum 401 por falta de permissão.
 #[sqlx::test(migrations = "./migrations")]
 async fn recordings_publish_and_view_others(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let owner = app.new_org("gravacoes-rbac.ao").await;
     let admin = app.add_member(&owner, "adm", "admin").await;
     let uploader = app.add_member(&owner, "grava", "member").await;
+    let participant = app.add_member(&owner, "part", "member").await;
     let member = app.add_member(&owner, "mem", "member").await;
     let other = app.new_org("fora-gravacoes.ao").await;
     let room = app.new_room(&uploader, "sala").await;
-    let rec = app
-        .insert_recording(room["id"].as_str().unwrap(), &uploader.user_id)
-        .await;
+    let room_id = room["id"].as_str().unwrap().to_string();
+    let rec = app.insert_recording(&room_id, &uploader.user_id).await;
+    sqlx::query("INSERT INTO room_participants (room_id, user_id) VALUES ($1::uuid, $2::uuid)")
+        .bind(&room_id)
+        .bind(&participant.user_id)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let link = format!("/api/recordings/{rec}/public-link");
-    for (who, acc, want) in [
-        ("dono", &uploader, 200),
-        ("admin", &admin, 200),
-        ("membro", &member, 401),
-        ("outra org", &other, 401),
+    for (who, acc, want, code) in [
+        ("dono", &uploader, 200, None),
+        ("admin", &admin, 200, None),
+        (
+            "participante sem capacidade",
+            &participant,
+            403,
+            Some("authz.missing_capability"),
+        ),
+        ("membro que não a vê", &member, 404, None),
+        ("outra org", &other, 404, None),
     ] {
         let (st, b) = app.put(&link, Some(&acc.token), json!({})).await;
         assert_eq!(st, want, "{who}: {b}");
+        if let Some(c) = code {
+            assert_eq!(b["code"], c, "{who}: {b}");
+            assert_eq!(b["details"][0]["description"], "recordings.publish");
+        }
     }
-    // Ver/descarregar de outros: admin sim (antes e depois), membro não.
+    // Ver/descarregar de outros (`recordings.view_others` no facto do `seen_item`).
     let content = format!("/api/recordings/{rec}/content?dl=1");
     let (st, _) = app.get(&content, Some(&admin.token)).await;
     assert_eq!(
         st, 404,
-        "admin passa a autorização e chega à leitura do ficheiro (inexistente)"
+        "admin passa a autorização e chega ao ficheiro (inexistente)"
     );
-    let (st, _) = app.get(&content, Some(&member.token)).await;
-    assert_eq!(st, 401, "membro recusado antes do ficheiro");
-    // Num papel personalizado com `recordings.view_others`, o facto liga-se.
+    let (st, _) = app
+        .get(&format!("/api/recordings/{rec}"), Some(&member.token))
+        .await;
+    assert_eq!(st, 404, "sem view_others não vê");
     let viewer = create_role(
         &app,
         &owner,
@@ -1023,6 +1042,26 @@ async fn recordings_publish_and_view_others(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200, "{meta}");
     assert_eq!(meta["can_manage"], true, "{meta}");
+    // Vê, mas não publica: 403 com a capacidade em falta.
+    let (st, b) = app.put(&link, Some(&member.token), json!({})).await;
+    assert_eq!(
+        (st, b["code"].as_str()),
+        (403, Some("authz.missing_capability")),
+        "{b}"
+    );
+    // Com `recordings.publish` no papel, publica.
+    let (st, _) = app
+        .put(
+            &format!("/api/orgs/{}/roles/{viewer}/capabilities", owner.org()),
+            Some(&owner.token),
+            json!({"values": {"recordings.view_others": "allow", "recordings.publish": "allow"}}),
+        )
+        .await;
+    assert_eq!(st, 200);
+    let (st, b) = app.put(&link, Some(&member.token), json!({})).await;
+    assert_eq!(st, 200, "{b}");
+    let (st, _) = app.delete(&link, Some(&member.token)).await;
+    assert_eq!(st, 204, "contrato do #90");
 }
 
 /// `sessions.create`: o convidado externo não cria salas.
