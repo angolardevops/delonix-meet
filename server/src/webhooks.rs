@@ -210,31 +210,30 @@ async fn attempt(
     delivery_id: Option<Uuid>,
 ) {
     let started = std::time::Instant::now();
-    let outcome: Result<u16, String> =
-        match state.outbound.check_tenant_url(&hook.url).await {
-            Err(e) => {
-                tracing::warn!(hook = %hook.id, error = %e, "webhook destino bloqueado (SSRF)");
-                Err(format!("destino bloqueado: {e}"))
+    let outcome: Result<u16, String> = match state.outbound.check_tenant_url(&hook.url).await {
+        Err(e) => {
+            tracing::warn!(hook = %hook.id, error = %e, "webhook destino bloqueado (SSRF)");
+            Err(format!("destino bloqueado: {e}"))
+        }
+        // Um segredo que não abre não se troca por um envio sem assinatura:
+        // o receptor aceitaria (ou recusaria) sem saber porquê.
+        Ok(_) => {
+            match secrets_at_rest::open(&state.config, &hook.secret, &secret_aad(hook.id)) {
+                Err(_) => Err("o segredo do webhook não abre neste servidor".to_string()),
+                Ok(secret) => send(
+                    state.outbound.tenant(),
+                    hook,
+                    &secret,
+                    event,
+                    body,
+                    delivery_id,
+                )
+                .await
+                // `without_url`: o URL de um webhook do Slack/Teams é a credencial.
+                .map_err(|e| e.without_url().to_string()),
             }
-            // Um segredo que não abre não se troca por um envio sem assinatura:
-            // o receptor aceitaria (ou recusaria) sem saber porquê.
-            Ok(_) => {
-                match secrets_at_rest::open(&state.config, &hook.secret, &secret_aad(hook.id)) {
-                    Err(_) => Err("o segredo do webhook não abre neste servidor".to_string()),
-                    Ok(secret) => send(
-                        state.outbound.tenant(),
-                        hook,
-                        &secret,
-                        event,
-                        body,
-                        delivery_id,
-                    )
-                    .await
-                    // `without_url`: o URL de um webhook do Slack/Teams é a credencial.
-                    .map_err(|e| e.without_url().to_string()),
-                }
-            }
-        };
+        }
+    };
     let elapsed_ms = i32::try_from(started.elapsed().as_millis()).unwrap_or(i32::MAX);
     let (status, response_status, response_ms, error) = match outcome {
         Ok(code) => {

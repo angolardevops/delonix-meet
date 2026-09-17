@@ -287,7 +287,10 @@ pub async fn test_storage(
             let url = state.outbound.check_operator_url(&url).await?;
             let client = state.outbound.operator();
             let resp = client
-                .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), url.as_str())
+                .request(
+                    reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+                    url.as_str(),
+                )
                 .basic_auth(&user, Some(&pwd))
                 .header("Depth", "0")
                 .send()

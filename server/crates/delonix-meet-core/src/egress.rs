@@ -38,9 +38,11 @@ impl EgressPolicy {
 /// lista de destinos que o operador declarou.
 pub fn host_is_allowlisted(host: &str, allow_hosts: &[String]) -> bool {
     let host = host.trim_start_matches('[').trim_end_matches(']');
-    allow_hosts
-        .iter()
-        .any(|h| h.trim_start_matches('[').trim_end_matches(']').eq_ignore_ascii_case(host))
+    allow_hosts.iter().any(|h| {
+        h.trim_start_matches('[')
+            .trim_end_matches(']')
+            .eq_ignore_ascii_case(host)
+    })
 }
 
 /// O IPv4 que um endereço IPv6 transporta, quando o transporta: mapeado
@@ -52,13 +54,28 @@ fn embedded_v4(v6: Ipv6Addr) -> Option<Ipv4Addr> {
     }
     let s = v6.segments();
     if s[..6] == [0, 0, 0, 0, 0, 0] && !(s[6] == 0 && s[7] <= 1) {
-        return Some(Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8));
+        return Some(Ipv4Addr::new(
+            (s[6] >> 8) as u8,
+            s[6] as u8,
+            (s[7] >> 8) as u8,
+            s[7] as u8,
+        ));
     }
     if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
-        return Some(Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8));
+        return Some(Ipv4Addr::new(
+            (s[6] >> 8) as u8,
+            s[6] as u8,
+            (s[7] >> 8) as u8,
+            s[7] as u8,
+        ));
     }
     if s[0] == 0x2002 {
-        return Some(Ipv4Addr::new((s[1] >> 8) as u8, s[1] as u8, (s[2] >> 8) as u8, s[2] as u8));
+        return Some(Ipv4Addr::new(
+            (s[1] >> 8) as u8,
+            s[1] as u8,
+            (s[2] >> 8) as u8,
+            s[2] as u8,
+        ));
     }
     None
 }
@@ -149,24 +166,48 @@ mod tests {
             "2002:7f00:1::",      // 6to4 de 127.0.0.1
             "2001:db8::1",
         ] {
-            assert!(!EgressPolicy::Tenant.allows(ip(s)), "{s} devia ser recusado");
+            assert!(
+                !EgressPolicy::Tenant.allows(ip(s)),
+                "{s} devia ser recusado"
+            );
         }
     }
 
     #[test]
     fn tenant_aceita_enderecos_publicos() {
-        for s in ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111", "::ffff:8.8.8.8", "2002:0808:0808::"] {
+        for s in [
+            "1.1.1.1",
+            "8.8.8.8",
+            "2606:4700:4700::1111",
+            "::ffff:8.8.8.8",
+            "2002:0808:0808::",
+        ] {
             assert!(EgressPolicy::Tenant.allows(ip(s)), "{s} devia passar");
         }
     }
 
     #[test]
     fn operador_alcanca_a_rede_privada_mas_nao_os_metadados() {
-        for s in ["10.0.0.5", "192.168.1.10", "127.0.0.1", "fc00::5", "1.1.1.1"] {
+        for s in [
+            "10.0.0.5",
+            "192.168.1.10",
+            "127.0.0.1",
+            "fc00::5",
+            "1.1.1.1",
+        ] {
             assert!(EgressPolicy::Operator.allows(ip(s)), "{s} devia passar");
         }
-        for s in ["169.254.169.254", "fe80::1", "fd00:ec2::254", "::ffff:169.254.169.254", "0.0.0.0"] {
-            assert!(!EgressPolicy::Operator.allows(ip(s)), "{s} devia ser recusado");
+        for s in [
+            "169.254.169.254",
+            "fe80::1",
+            "fd00:ec2::254",
+            "::ffff:169.254.169.254",
+            "0.0.0.0",
+        ] {
+            assert!(
+                !EgressPolicy::Operator.allows(ip(s)),
+                "{s} devia ser recusado"
+            );
         }
     }
 

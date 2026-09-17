@@ -17,7 +17,9 @@ async fn odoo_falso() -> (u16, Arc<AtomicUsize>) {
     tokio::spawn(async move {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         loop {
-            let Ok((mut s, _)) = listener.accept().await else { return };
+            let Ok((mut s, _)) = listener.accept().await else {
+                return;
+            };
             conta.fetch_add(1, Ordering::SeqCst);
             tokio::spawn(async move {
                 let mut buf = [0u8; 4096];
@@ -64,10 +66,20 @@ async fn login_odoo_nao_liga_a_um_endereco_interno(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let (port, ligacoes) = odoo_falso().await;
-    apontar_odoo(&app, a.org(), &a.user_id, &format!("http://127.0.0.1:{port}")).await;
+    apontar_odoo(
+        &app,
+        a.org(),
+        &a.user_id,
+        &format!("http://127.0.0.1:{port}"),
+    )
+    .await;
 
     let _ = app
-        .post("/api/auth/login", None, json!({"email": a.email, "password": PASSWORD}))
+        .post(
+            "/api/auth/login",
+            None,
+            json!({"email": a.email, "password": PASSWORD}),
+        )
         .await;
     assert_eq!(
         ligacoes.load(Ordering::SeqCst),
@@ -82,12 +94,25 @@ async fn login_odoo_liga_ao_host_declarado_pelo_operador(db: sqlx::PgPool) {
     let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
     let a = app.new_org("alfa.test").await;
     let (port, ligacoes) = odoo_falso().await;
-    apontar_odoo(&app, a.org(), &a.user_id, &format!("http://127.0.0.1:{port}")).await;
+    apontar_odoo(
+        &app,
+        a.org(),
+        &a.user_id,
+        &format!("http://127.0.0.1:{port}"),
+    )
+    .await;
 
     let _ = app
-        .post("/api/auth/login", None, json!({"email": a.email, "password": PASSWORD}))
+        .post(
+            "/api/auth/login",
+            None,
+            json!({"email": a.email, "password": PASSWORD}),
+        )
         .await;
-    assert!(ligacoes.load(Ordering::SeqCst) >= 1, "o Odoo declarado devia ser contactado");
+    assert!(
+        ligacoes.load(Ordering::SeqCst) >= 1,
+        "o Odoo declarado devia ser contactado"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -110,7 +135,9 @@ async fn odoo_url_interno_e_recusado_ao_gravar(db: sqlx::PgPool) {
         assert_eq!(st, 400, "{url}: {body}");
     }
     // Controlo: um nome (ainda sem DNS) grava.
-    let (st, body) = app.put(&path, Some(&a.token), corpo("https://erp.alfa.test")).await;
+    let (st, body) = app
+        .put(&path, Some(&a.token), corpo("https://erp.alfa.test"))
+        .await;
     assert_eq!(st, 200, "{body}");
 }
 
@@ -119,7 +146,11 @@ async fn emissor_oidc_interno_e_recusado_ao_gravar_e_ao_entrar(db: sqlx::PgPool)
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let path = format!("/api/orgs/{}/sso", a.org());
-    for url in ["https://127.0.0.1", "https://169.254.169.254", "https://[fd00:ec2::254]"] {
+    for url in [
+        "https://127.0.0.1",
+        "https://169.254.169.254",
+        "https://[fd00:ec2::254]",
+    ] {
         let (st, body) = app
             .put(
                 &path,
@@ -140,12 +171,16 @@ async fn emissor_oidc_interno_e_recusado_ao_gravar_e_ao_entrar(db: sqlx::PgPool)
 
     // Um emissor interno já guardado (fora do formulário): o `authorize` não
     // vai buscar a descoberta a ele.
-    sqlx::query("UPDATE org_sso_configs SET issuer_url = 'https://127.0.0.1:1' WHERE org_id = $1::uuid")
-        .bind(a.org())
-        .execute(&app.db)
-        .await
-        .unwrap();
-    let (st, body) = app.get("/api/auth/sso/authorize?domain=alfa.test", None).await;
+    sqlx::query(
+        "UPDATE org_sso_configs SET issuer_url = 'https://127.0.0.1:1' WHERE org_id = $1::uuid",
+    )
+    .bind(a.org())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let (st, body) = app
+        .get("/api/auth/sso/authorize?domain=alfa.test", None)
+        .await;
     assert_eq!(st, 400, "{body}");
 }
 
@@ -154,9 +189,17 @@ async fn webhook_com_ipv6_que_embute_loopback_e_recusado(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let path = format!("/api/orgs/{}/webhooks", a.org());
-    for url in ["http://[::ffff:127.0.0.1]/x", "http://[64:ff9b::a9fe:a9fe]/x", "http://100.64.1.1/x"] {
+    for url in [
+        "http://[::ffff:127.0.0.1]/x",
+        "http://[64:ff9b::a9fe:a9fe]/x",
+        "http://100.64.1.1/x",
+    ] {
         let (st, body) = app
-            .post(&path, Some(&a.token), json!({"kind": "generic", "url": url, "secret": "s"}))
+            .post(
+                &path,
+                Some(&a.token),
+                json!({"kind": "generic", "url": url, "secret": "s"}),
+            )
             .await;
         assert_eq!(st, 400, "{url}: {body}");
     }

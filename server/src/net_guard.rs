@@ -54,13 +54,15 @@ impl Resolve for GuardedResolver {
         let allow_hosts = self.allow_hosts.clone();
         Box::pin(async move {
             let host = name.as_str().to_string();
-            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
-                .await?
-                .collect();
+            let addrs: Vec<SocketAddr> =
+                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
             let allowed: Vec<SocketAddr> = if host_is_allowlisted(&host, &allow_hosts) {
                 addrs
             } else {
-                addrs.into_iter().filter(|a| policy.allows(a.ip())).collect()
+                addrs
+                    .into_iter()
+                    .filter(|a| policy.allows(a.ip()))
+                    .collect()
             };
             if allowed.is_empty() {
                 return Err(format!("{host}: destino recusado pela guarda de saída").into());
@@ -116,7 +118,13 @@ impl Outbound {
     /// Antes de LIGAR a um URL escrito por um cliente: tem de resolver, e só
     /// para endereços públicos.
     pub async fn check_tenant_url(&self, raw: &str) -> Result<Url, ApiError> {
-        check_url(raw, EgressPolicy::Tenant, &self.allow_hosts, Resolution::Required).await
+        check_url(
+            raw,
+            EgressPolicy::Tenant,
+            &self.allow_hosts,
+            Resolution::Required,
+        )
+        .await
     }
 
     /// Ao GRAVAR um URL escrito por um cliente (`odoo_url`, emissor OIDC). Um
@@ -124,17 +132,35 @@ impl Outbound {
     /// configuração, e a guarda da ligação é a autoridade —, mas um nome ou IP
     /// literal que resolve para um endereço interno é recusado já, com razão.
     pub async fn check_tenant_config_url(&self, raw: &str) -> Result<Url, ApiError> {
-        check_url(raw, EgressPolicy::Tenant, &self.allow_hosts, Resolution::Optional).await
+        check_url(
+            raw,
+            EgressPolicy::Tenant,
+            &self.allow_hosts,
+            Resolution::Optional,
+        )
+        .await
     }
 
     /// Antes de ligar a um URL do operador.
     pub async fn check_operator_url(&self, raw: &str) -> Result<Url, ApiError> {
-        check_url(raw, EgressPolicy::Operator, &self.allow_hosts, Resolution::Required).await
+        check_url(
+            raw,
+            EgressPolicy::Operator,
+            &self.allow_hosts,
+            Resolution::Required,
+        )
+        .await
     }
 
     /// Ao gravar um URL do operador (WebDAV). Ver [`Self::check_tenant_config_url`].
     pub async fn check_operator_config_url(&self, raw: &str) -> Result<Url, ApiError> {
-        check_url(raw, EgressPolicy::Operator, &self.allow_hosts, Resolution::Optional).await
+        check_url(
+            raw,
+            EgressPolicy::Operator,
+            &self.allow_hosts,
+            Resolution::Optional,
+        )
+        .await
     }
 }
 
@@ -158,7 +184,9 @@ async fn check_url(
         return Err(ApiError::BadRequest("esquema de URL inválido".into()));
     }
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(ApiError::BadRequest("URL não pode conter credenciais".into()));
+        return Err(ApiError::BadRequest(
+            "URL não pode conter credenciais".into(),
+        ));
     }
     let host = url
         .host_str()
@@ -237,20 +265,44 @@ mod tests {
     #[tokio::test]
     async fn allowlist_isenta_so_os_hosts_nomeados() {
         let out = Outbound::new(vec!["odoo.interno".to_string()]);
-        assert!(out.check_tenant_url("http://odoo.interno:8069/hook").await.is_ok());
-        assert!(out.check_tenant_url("http://ODOO.INTERNO/hook").await.is_ok());
+        assert!(out
+            .check_tenant_url("http://odoo.interno:8069/hook")
+            .await
+            .is_ok());
+        assert!(out
+            .check_tenant_url("http://ODOO.INTERNO/hook")
+            .await
+            .is_ok());
         assert!(out
             .check_tenant_url("http://169.254.169.254/latest/meta-data")
             .await
             .is_err());
-        assert!(out.check_tenant_url("http://127.0.0.1:8069/hook").await.is_err());
-        assert!(out.check_tenant_url("http://[::ffff:127.0.0.1]/").await.is_err());
+        assert!(out
+            .check_tenant_url("http://127.0.0.1:8069/hook")
+            .await
+            .is_err());
+        assert!(out
+            .check_tenant_url("http://[::ffff:127.0.0.1]/")
+            .await
+            .is_err());
         let sem = Outbound::new(vec![]);
-        assert!(sem.check_tenant_url("http://odoo.interno:8069/hook").await.is_err());
+        assert!(sem
+            .check_tenant_url("http://odoo.interno:8069/hook")
+            .await
+            .is_err());
         // Ao gravar, um nome que (ainda) não resolve passa; um IP interno não.
-        assert!(sem.check_tenant_config_url("https://idp.ainda-sem-dns.test").await.is_ok());
-        assert!(sem.check_tenant_config_url("https://127.0.0.1/").await.is_err());
-        assert!(sem.check_tenant_config_url("https://[fd00:ec2::254]/").await.is_err());
+        assert!(sem
+            .check_tenant_config_url("https://idp.ainda-sem-dns.test")
+            .await
+            .is_ok());
+        assert!(sem
+            .check_tenant_config_url("https://127.0.0.1/")
+            .await
+            .is_err());
+        assert!(sem
+            .check_tenant_config_url("https://[fd00:ec2::254]/")
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -264,7 +316,10 @@ mod tests {
     #[tokio::test]
     async fn operador_alcanca_a_rede_privada_mas_nao_os_metadados() {
         let out = Outbound::new(vec![]);
-        assert!(out.check_operator_url("http://127.0.0.1:8080/dav").await.is_ok());
+        assert!(out
+            .check_operator_url("http://127.0.0.1:8080/dav")
+            .await
+            .is_ok());
         assert!(out.check_operator_url("http://10.0.0.7/dav").await.is_ok());
         assert!(out
             .check_operator_url("http://169.254.169.254/latest/meta-data")

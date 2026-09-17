@@ -495,14 +495,8 @@ pub async fn login(
         // SESSÃO, e é ela que permite reler o directório. Sem isso, os
         // colegas admitidos no Odoo depois do primeiro login nunca chegavam
         // aqui — a sincronização era um evento único, não um estado.
-        match crate::odoo_sso::login(
-            &state.outbound,
-            &odoo_url,
-            &odoo_db,
-            &email,
-            &req.password,
-        )
-        .await
+        match crate::odoo_sso::login(&state.outbound, &odoo_url, &odoo_db, &email, &req.password)
+            .await
         {
             Ok(Some(session)) => {
                 // Online: guarda o hash para o modo offline seguinte.
@@ -786,7 +780,9 @@ pub async fn sso_check(
 
 /// Erro da descoberta OIDC. Um emissor recusado pela guarda de saída é um erro
 /// de CONFIGURAÇÃO da organização (400, com razão), não uma avaria do servidor.
-fn oidc_discovery_error(e: openidconnect::DiscoveryError<crate::net_guard::OidcHttpError>) -> ApiError {
+fn oidc_discovery_error(
+    e: openidconnect::DiscoveryError<crate::net_guard::OidcHttpError>,
+) -> ApiError {
     match e {
         openidconnect::DiscoveryError::Request(crate::net_guard::OidcHttpError::Blocked(why)) => {
             ApiError::BadRequest(format!("emissor OIDC recusado pela guarda de saída: {why}"))
