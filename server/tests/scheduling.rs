@@ -161,14 +161,14 @@ async fn recurring_meeting_current_behavior_count_off_by_one(db: sqlx::PgPool) {
 async fn meeting_quota_is_enforced(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
-    let (st, _) = app
-        .post(
-            &format!("/api/orgs/{}/settings", a.org()),
+    let (st, body) = app
+        .patch(
+            &format!("/api/orgs/{}", a.org()),
             Some(&a.token),
             json!({"max_meetings": 1}),
         )
         .await;
-    assert_eq!(st, 200);
+    assert_eq!(st, 200, "{body}");
     app.new_meeting(&a, "primeira", &[]).await;
     let (st, body) = app
         .post(
@@ -263,8 +263,31 @@ async fn delete_meeting_only_by_owner(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let c = app.add_member(&a, "carla", "member").await;
+    let d = app.add_member(&a, "dario", "member").await;
+    let b = app.new_org("beta.test").await;
     let m = app.new_meeting(&a, "Apagar", &[&c.user_id]).await;
     let path = format!("/api/meetings/{}", m["id"].as_str().unwrap());
+
+    // Leitura por id (rota nova): dono e convidado 200; colega não convidado,
+    // outra org e id inventado 404 (sem dizer que existe); anónimo 401.
+    for who in [&a, &c] {
+        let (st, got) = app.get(&path, Some(&who.token)).await;
+        assert_eq!(st, 200, "{}: {got}", who.email);
+        assert_eq!(got["id"], m["id"]);
+        assert_eq!(got["title"], "Apagar");
+    }
+    for who in [&d, &b] {
+        let (st, body) = app.get(&path, Some(&who.token)).await;
+        assert_eq!(st, 404, "{}: {body}", who.email);
+        assert_denied("GET reunião alheia", st, &body, "Apagar");
+    }
+    let (st, _) = app
+        .get(&format!("/api/meetings/{INVENTED_ID}"), Some(&a.token))
+        .await;
+    assert_eq!(st, 404);
+    let (st, _) = app.get(&path, None).await;
+    assert_eq!(st, 401);
+
     let (st, _) = app.delete(&path, Some(&c.token)).await;
     assert_eq!(st, 404, "convidado não apaga");
     let (st, body) = app.delete(&path, Some(&a.token)).await;
@@ -272,6 +295,8 @@ async fn delete_meeting_only_by_owner(db: sqlx::PgPool) {
     assert_eq!(body, json!({"ok": true}));
     let (st, _) = app.delete(&path, Some(&a.token)).await;
     assert_eq!(st, 404);
+    let (st, _) = app.get(&path, Some(&a.token)).await;
+    assert_eq!(st, 404, "apagada deixa de se ler");
     let (_, list) = app.get("/api/meetings", Some(&c.token)).await;
     assert_eq!(list, json!([]));
 }
@@ -389,10 +414,12 @@ async fn ics_export(db: sqlx::PgPool) {
             r.text
         );
     }
-    let (st, _) = app
+    // Quem não é dono nem convidado não fica a saber que a reunião existe.
+    let (st, body) = app
         .get(&format!("/api/meetings/{id}/calendar.ics"), Some(&d.token))
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404);
+    assert_denied("ics de reunião alheia", st, &body, "Plano");
     let (st, _) = app
         .get(
             &format!("/api/meetings/{INVENTED_ID}/calendar.ics"),
@@ -439,20 +466,20 @@ async fn invitees_and_respond(db: sqlx::PgPool) {
     assert_eq!(st, 404);
 
     let (st, _) = app
-        .post(&resp, Some(&c.token), json!({"status": "maybe"}))
+        .put(&resp, Some(&c.token), json!({"status": "maybe"}))
         .await;
     assert_eq!(st, 400);
     let (st, body) = app
-        .post(&resp, Some(&d.token), json!({"status": "declined"}))
+        .put(&resp, Some(&d.token), json!({"status": "declined"}))
         .await;
     assert_eq!(st, 400, "recusa sem motivo: {body}");
     let (st, body) = app
-        .post(&resp, Some(&c.token), json!({"status": "accepted"}))
+        .put(&resp, Some(&c.token), json!({"status": "accepted"}))
         .await;
     assert_eq!(st, 200);
     assert_eq!(body, json!({"ok": true}));
     let (st, _) = app
-        .post(
+        .put(
             &resp,
             Some(&d.token),
             json!({"status": "declined", "reason": " férias "}),
@@ -461,7 +488,7 @@ async fn invitees_and_respond(db: sqlx::PgPool) {
     assert_eq!(st, 200);
     // O anfitrião não é convidado: 404.
     let (st, _) = app
-        .post(&resp, Some(&a.token), json!({"status": "accepted"}))
+        .put(&resp, Some(&a.token), json!({"status": "accepted"}))
         .await;
     assert_eq!(st, 404);
 
@@ -492,7 +519,7 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
     let id = m["id"].as_str().unwrap();
 
     let (st, body) = app
-        .post(
+        .put(
             &format!("/api/meetings/{id}/minutes"),
             Some(&c.token),
             json!({"minutes": "  decisões  ", "transcript": "t"}),
@@ -500,7 +527,7 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200, "o convidado escreve a acta: {body}");
     let (st, _) = app
-        .post(
+        .put(
             &format!("/api/meetings/{id}/minutes"),
             Some(&d.token),
             json!({"minutes": "forjada"}),
@@ -520,7 +547,7 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
         .await;
     let code = s["code"].as_str().unwrap();
     let (st, _) = app
-        .post(
+        .put(
             &format!("/api/rooms/{code}/minutes"),
             Some(&a.token),
             json!({"minutes": "pela sala", "transcript": "tx"}),
@@ -528,20 +555,24 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200);
     let (st, _) = app
-        .post(
+        .put(
             &format!("/api/rooms/{code}/minutes"),
             Some(&d.token),
             json!({"minutes": "forjada"}),
         )
         .await;
     assert_eq!(st, 404);
-    // GET na rota de acta por sala não existe.
+    // A escrita é `PUT` (singleton): o `POST` antigo já não existe.
     let (st, _) = app
-        .get(&format!("/api/rooms/{code}/minutes"), Some(&a.token))
+        .post(
+            &format!("/api/rooms/{code}/minutes"),
+            Some(&a.token),
+            json!({"minutes": "pelo método antigo"}),
+        )
         .await;
     assert_eq!(st, 405);
 
-    // Notas: só quem PARTICIPOU (join) na sala.
+    // Leitura (`GET …/minutes`, antes `/notes`): só quem PARTICIPOU (join) na sala.
     let (st, _) = app
         .get(&format!("/api/rooms/{code}/minutes"), Some(&a.token))
         .await;
@@ -707,7 +738,7 @@ async fn action_plan_crud_and_permissions(db: sqlx::PgPool) {
     assert_eq!(it["status"], "todo");
     assert_eq!(it["position"], 1);
     assert_eq!(it["when_date"], "2030-05-01");
-    let item = format!("/api/action-items/{}", it["id"].as_str().unwrap());
+    let item = format!("{items}/{}", it["id"].as_str().unwrap());
 
     // Convidado muda o estado, não o conteúdo.
     let (st, x) = app
@@ -736,7 +767,7 @@ async fn action_plan_crud_and_permissions(db: sqlx::PgPool) {
     assert_eq!(x["status"], "done");
     let (st, _) = app
         .patch(
-            &format!("/api/action-items/{INVENTED_ID}"),
+            &format!("{items}/{INVENTED_ID}"),
             Some(&a.token),
             json!({"status": "done"}),
         )
@@ -746,10 +777,36 @@ async fn action_plan_crud_and_permissions(db: sqlx::PgPool) {
     let (_, p) = app.get(&plan, Some(&a.token)).await;
     assert_eq!(p["items"].as_array().unwrap().len(), 1);
 
+    // O item tem de ser DESTA reunião: com o id de outra reunião do mesmo
+    // dono, 404 — e o item não muda.
+    let other = app.new_meeting(&a, "outra", &[]).await;
+    let foreign_path = format!(
+        "/api/meetings/{}/action-plan/items/{}",
+        other["id"].as_str().unwrap(),
+        it["id"].as_str().unwrap()
+    );
+    let (st, body) = app
+        .patch(&foreign_path, Some(&a.token), json!({"what": "desviado"}))
+        .await;
+    assert_eq!(st, 404, "item de outra reunião: {body}");
+    let (st, _) = app.delete(&foreign_path, Some(&a.token)).await;
+    assert_eq!(st, 404);
+
+    let (_, p) = app.get(&plan, Some(&a.token)).await;
+    assert_eq!(p["items"][0]["what"], "Assinar");
+
     let (st, _) = app.delete(&item, Some(&c.token)).await;
     assert_eq!(st, 403);
-    let (st, _) = app.delete(&item, Some(&a.token)).await;
-    assert_eq!(st, 200);
+    let r = app
+        .raw(
+            reqwest::Method::DELETE,
+            &item,
+            &[("Authorization", &format!("Bearer {}", a.token))],
+            None,
+        )
+        .await;
+    assert_eq!(r.status, 204);
+    assert_eq!(r.text, "", "204 sem corpo");
     let (st, _) = app.delete(&item, Some(&a.token)).await;
     assert_eq!(st, 404);
 }
@@ -786,8 +843,12 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
             (s, v, "DELETE")
         },
         {
+            let (s, v) = app.get(&format!("/api/meetings/{id}"), t).await;
+            (s, v, "GET")
+        },
+        {
             let (s, v) = app
-                .post(
+                .put(
                     &format!("/api/meetings/{id}/minutes"),
                     t,
                     json!({"minutes": "acta forjada"}),
@@ -855,7 +916,7 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
         },
         {
             let (s, v) = app
-                .post(
+                .put(
                     &format!("/api/meetings/{id}/invitees/me"),
                     t,
                     json!({"status": "accepted"}),
@@ -872,6 +933,9 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
     ];
     for (st, body, what) in checks {
         assert_denied(what, st, &body, leak);
+        // Não é só «não-2xx»: um 405 queria dizer que o teste bateu no método
+        // errado e não provou nada.
+        assert_ne!(st, 405, "{what}: método errado no teste");
     }
 
     // O estado da B sobreviveu a tudo.
@@ -911,14 +975,33 @@ async fn patch_action_item_refuses_session_from_other_org(db: sqlx::PgPool) {
             json!({"what": "segredo comercial da B"}),
         )
         .await;
+    let item_id = it["id"].as_str().unwrap();
+    // Pelo caminho da reunião da B...
     let (st, body) = app
         .patch(
-            &format!("/api/action-items/{}", it["id"].as_str().unwrap()),
+            &format!(
+                "/api/meetings/{}/action-plan/items/{item_id}",
+                m["id"].as_str().unwrap()
+            ),
             Some(&a.token),
             json!({"done": true}),
         )
         .await;
     assert!(!(200..300).contains(&st), "{st} {body}");
+    assert!(!body.to_string().contains("segredo comercial"), "{body}");
+    // ... e pelo caminho de uma reunião da própria A com o id do item da B.
+    let own = app.new_meeting(&a, "reunião da A", &[]).await;
+    let (st, body) = app
+        .patch(
+            &format!(
+                "/api/meetings/{}/action-plan/items/{item_id}",
+                own["id"].as_str().unwrap()
+            ),
+            Some(&a.token),
+            json!({"done": true}),
+        )
+        .await;
+    assert_eq!(st, 404, "{body}");
     assert!(!body.to_string().contains("segredo comercial"), "{body}");
 }
 
@@ -961,22 +1044,32 @@ async fn quarantine_analytics(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 200);
+    let path = format!("/api/orgs/{}/analytics/quarantine", a.org());
     let (st, rows) = app
-        .get("/api/quarantine/analytics?period=week", Some(&a.token))
+        .get(&format!("{path}?period=week"), Some(&a.token))
         .await;
     assert_eq!(st, 200, "{rows}");
     assert_eq!(rows[0]["user_id"], c.user_id.as_str());
     assert_eq!(rows[0]["count"], 1);
-    // Membro sem admin: lista vazia (não erro).
-    let (st, rows) = app.get("/api/quarantine/analytics", Some(&c.token)).await;
-    assert_eq!(st, 200);
-    assert_eq!(rows, json!([]));
-    // org_id de outra org: 404.
-    let (st, _) = app
+    // Sem `period`: mês por omissão, e o mesmo resultado.
+    let (st, rows) = app.get(&path, Some(&a.token)).await;
+    assert_eq!(st, 200, "{rows}");
+    assert_eq!(rows[0]["user_id"], c.user_id.as_str());
+    // Membro sem papel de admin: 403.
+    let (st, body) = app.get(&path, Some(&c.token)).await;
+    assert_eq!(st, 403, "{body}");
+    assert_denied("quarentena para membro", st, &body, &c.user_id);
+    // Não-membro (admin de outra org) pelo caminho da A: 404, sem fuga.
+    let (st, body) = app.get(&path, Some(&b.token)).await;
+    assert_eq!(st, 404, "{body}");
+    assert_denied("quarentena da A para a B", st, &body, &c.user_id);
+    // Controlo positivo da B: a org dela responde, e vazia.
+    let (st, rows) = app
         .get(
-            &format!("/api/quarantine/analytics?org_id={}", b.org()),
-            Some(&a.token),
+            &format!("/api/orgs/{}/analytics/quarantine", b.org()),
+            Some(&b.token),
         )
         .await;
-    assert_eq!(st, 404);
+    assert_eq!(st, 200);
+    assert_eq!(rows, json!([]));
 }
