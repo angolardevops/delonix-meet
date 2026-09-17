@@ -40,7 +40,7 @@ use uuid::Uuid;
 use crate::{
     apikeys::{ApiKeyAuth, Scope},
     error::ApiError,
-    meetings::{Meeting, MEETING_COLUMNS as MEETING_COLS},
+    meetings::{Meeting, SessionOptions, SessionOptionsPatch, MEETING_COLUMNS as MEETING_COLS},
     AppState,
 };
 
@@ -80,10 +80,13 @@ pub struct CreateMeetingReq {
     #[serde(default = "default_kind")]
     #[schema(default = "video")]
     pub kind: String,
+    /// Com `auto_record: true` é recusado (`422 meeting.auto_record_e2ee`).
     #[serde(default)]
     pub e2ee: bool,
-    #[serde(default)]
-    pub waiting_room: bool,
+    /// `format`, `waiting_room`, `auto_record`, `record_quality` — as mesmas
+    /// opções e regras da BFF (R184). Passam à sala logo aqui.
+    #[serde(flatten)]
+    pub options: SessionOptions,
 }
 
 fn default_duration() -> i32 {
@@ -107,6 +110,9 @@ pub struct PatchMeetingReq {
     /// resposta (aceite/recusado) de quem se mantém é preservado.
     #[serde(default)]
     pub invitees: Option<Vec<InviteeReq>>,
+    /// Opções de sessão; a ausente fica como está. Passam também à sala.
+    #[serde(flatten)]
+    pub options: SessionOptionsPatch,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -117,6 +123,8 @@ pub struct MeetingResp {
     pub starts_at: DateTime<Utc>,
     pub duration_min: i32,
     pub kind: String,
+    #[serde(flatten)]
+    pub options: SessionOptions,
     pub room_code: String,
     pub join_url: String,
     pub host_email: String,
@@ -160,6 +168,8 @@ pub struct DeleteMeetingResp {
         InviteeReq,
         CreateMeetingReq,
         PatchMeetingReq,
+        SessionOptions,
+        SessionOptionsPatch,
         MeetingResp,
         InviteeResp,
         SkippedInvitee,
@@ -472,6 +482,7 @@ async fn build_resp(
         starts_at: meeting.starts_at,
         duration_min: meeting.duration_min,
         kind: meeting.kind.clone(),
+        options: meeting.options.clone(),
         join_url: crate::apikeys::room_link(state, org_id, &room_code).await,
         room_code,
         host_email,
@@ -527,11 +538,12 @@ pub async fn get_one(
     request_body = CreateMeetingReq,
     responses(
         (status = 200, body = MeetingResp, description = "Criada, ou reencontrada pela `external_ref` (`existing: true`)"),
-        (status = 400, body = crate::openapi::ErrorBody, description = "`title` vazio, `kind`, `duration_min`, `host_email` inválidos ou mais de 200 convidados"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`title` vazio, `kind`, `duration_min`, `host_email` inválidos ou mais de 200 convidados; `meeting.invalid_format` / `meeting.invalid_record_quality`"),
         (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
         (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
         (status = 404, body = crate::openapi::ErrorBody, description = "a `external_ref` aponta para uma reunião que já não se resolve na organização"),
         (status = 409, body = crate::openapi::ErrorBody, description = "o anfitrião pertence a outra organização"),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`meeting.host_outside_org_domain`; ou `meeting.auto_record_e2ee` (gravação automática pedida numa sala E2EE)"),
         (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
     )
 )]
@@ -558,6 +570,9 @@ pub async fn create(
     if req.invitees.len() > 200 {
         return Err(ApiError::BadRequest("máximo de 200 convidados".into()));
     }
+    // A mesma validação das opções que a BFF usa (regra 8).
+    req.options.validate()?;
+    crate::meetings::refuse_auto_record_on_e2ee(req.options.auto_record, req.e2ee)?;
     let external_ref: Option<String> = req
         .external_ref
         .as_deref()
@@ -622,15 +637,17 @@ pub async fn create(
         host_id,
         &title,
         "sfu",
-        req.waiting_room,
+        req.options.waiting_room,
         req.e2ee,
-        "normal",
+        delonix_meet_domain::conferencing::session_options::room_format_for(&req.options.format),
     )
     .await?;
+    crate::rooms::apply_session_options(&state.db, &room.code, &req.options).await?;
 
     let meeting: Meeting = sqlx::query_as(&format!(
-        "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_code)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_code,
+                               format, waiting_room, auto_record, record_quality)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING {MEETING_COLS}"
     ))
     .bind(host_id)
@@ -640,6 +657,10 @@ pub async fn create(
     .bind(req.starts_at)
     .bind(req.duration_min)
     .bind(&room.code)
+    .bind(&req.options.format)
+    .bind(req.options.waiting_room)
+    .bind(req.options.auto_record)
+    .bind(&req.options.record_quality)
     .fetch_one(&state.db)
     .await?;
 
@@ -710,10 +731,11 @@ pub async fn create(
     request_body = PatchMeetingReq,
     responses(
         (status = 200, body = MeetingResp),
-        (status = 400, body = crate::openapi::ErrorBody, description = "`title` vazio, `duration_min` fora de 1-1440 ou mais de 200 convidados"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`title` vazio, `duration_min` fora de 1-1440 ou mais de 200 convidados; `meeting.invalid_format` / `meeting.invalid_record_quality`"),
         (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
         (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
         (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`meeting.auto_record_e2ee`: gravação automática numa sala E2EE"),
         (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
     )
 )]
@@ -743,6 +765,10 @@ pub async fn patch(
             ));
         }
     }
+    // Validar tudo antes de escrever o que quer que seja.
+    req.options.validate()?;
+    // A mesma função do `PATCH` da BFF: reunião e sala (regra 8).
+    crate::meetings::patch_session_options(&state, id, &req.options).await?;
 
     let meeting: Meeting = sqlx::query_as(&format!(
         "UPDATE meetings SET

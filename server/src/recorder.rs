@@ -542,6 +542,15 @@ async fn finalize_inner(
     // duração do media (não se sonda o ficheiro com ffprobe), por isso pode
     // divergir alguns segundos; é o que se sabe sem mais um processo.
     let duration_secs = i32::try_from(session.started.elapsed().as_secs()).ok();
+    // O que a sala pede ao gravador (R184): `record_quality` NULL = composição
+    // de sempre; vem da reunião agendada quando a sala nasceu de uma.
+    let (code, quality): (String, Option<String>) =
+        sqlx::query_as("SELECT code, record_quality FROM rooms WHERE id = $1")
+            .bind(room_id)
+            .fetch_optional(&state.db)
+            .await?
+            .unwrap_or_default();
+    let quality = quality.as_deref();
     // Tracks com conteúdo real (ficheiros ~vazios ficam de fora).
     let mut videos: Vec<&RecTrackMeta> = Vec::new();
     let mut audios: Vec<&RecTrackMeta> = Vec::new();
@@ -558,6 +567,10 @@ async fn finalize_inner(
         } else {
             videos.push(t);
         }
+    }
+    if quality == Some("audio") {
+        // «Só áudio» pedido na reunião: o vídeo nem entra na composição.
+        videos.clear();
     }
     if videos.is_empty() && audios.is_empty() {
         anyhow::bail!("nothing recorded");
@@ -578,12 +591,13 @@ async fn finalize_inner(
     // Resolução (G4): na composição em grelha é a da grelha; no remux é a do
     // cabeçalho IVF, que o `Vp8IvfWriter` corrige no fecho com as dimensões
     // do primeiro keyframe. Só áudio: sem resolução.
-    let dims = if videos.len() == 1 && audios.len() <= 1 {
-        ivf_dims(&videos[0].path).await
+    let single = videos.len() == 1 && audios.len() <= 1;
+    let (dims, downscale_to) = if single {
+        downscale_single(ivf_dims(&videos[0].path).await, quality)
     } else {
-        grid_dims(videos.len())
+        (grid_dims(quality, videos.len()), None)
     };
-    if videos.len() == 1 && audios.len() <= 1 {
+    if single {
         // Caso simples: remux sem reencode — zero perda de qualidade.
         cmd.arg("-i").arg(&videos[0].path);
         if let Some(a) = audios.first() {
@@ -593,7 +607,15 @@ async fn finalize_inner(
         if !audios.is_empty() {
             cmd.args(["-map", "1:a:0"]);
         }
-        cmd.args(["-c", "copy"]);
+        if let Some(h) = downscale_to {
+            // Acima da qualidade pedida: reduz-se (reencode VP9); o áudio segue
+            // copiado. Nunca se amplia — aumentar não acrescenta detalhe.
+            cmd.args(["-vf", &format!("scale=-2:{h}")]);
+            cmd.args(VP9_ARGS);
+            cmd.args(["-c:a", "copy"]);
+        } else {
+            cmd.args(["-c", "copy"]);
+        }
     } else {
         // Composição em grelha + mistura de áudio (VP9 CRF 30 + Opus 128k).
         for v in &videos {
@@ -604,16 +626,17 @@ async fn finalize_inner(
         }
         let n = videos.len();
         let cols = (n as f64).sqrt().ceil() as usize;
+        let (tw, th) = grid_tile(quality, n);
         let mut fc = String::new();
         for (i, v) in videos.iter().enumerate() {
             let off = v.offset_ms as f64 / 1000.0;
             fc.push_str(&format!(
-                "[{i}:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=start_duration={off:.3}:start_mode=add:color=black[v{i}];"
+                "[{i}:v]scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=start_duration={off:.3}:start_mode=add:color=black[v{i}];"
             ));
         }
         let vout = if n > 1 {
             let layout = (0..n)
-                .map(|i| format!("{}_{}", (i % cols) * 640, (i / cols) * 360))
+                .map(|i| format!("{}_{}", (i % cols) * tw as usize, (i / cols) * th as usize))
                 .collect::<Vec<_>>()
                 .join("|");
             let ins = (0..n).map(|i| format!("[v{i}]")).collect::<String>();
@@ -652,22 +675,7 @@ async fn finalize_inner(
         cmd.arg("-filter_complex").arg(&fc);
         if !vout.is_empty() {
             cmd.args(["-map", vout]);
-            cmd.args([
-                "-c:v",
-                "libvpx-vp9",
-                "-b:v",
-                "0",
-                "-crf",
-                "30",
-                "-deadline",
-                "good",
-                "-cpu-used",
-                "4",
-                "-row-mt",
-                "1",
-                "-pix_fmt",
-                "yuv420p",
-            ]);
+            cmd.args(VP9_ARGS);
         }
         if !aout.is_empty() {
             cmd.args(["-map", &aout]);
@@ -689,11 +697,6 @@ async fn finalize_inner(
     let size = tokio::fs::metadata(&out).await?.len() as i64;
 
     // Nome amigável com o código da sala e a hora.
-    let code: Option<(String,)> = sqlx::query_as("SELECT code FROM rooms WHERE id = $1")
-        .bind(room_id)
-        .fetch_optional(&state.db)
-        .await?;
-    let code = code.map(|c| c.0).unwrap_or_default();
     let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M");
     let filename = format!("Reunião {code} — servidor — {stamp}.webm");
 
@@ -752,15 +755,95 @@ async fn finalize_inner(
     Ok(())
 }
 
-/// Dimensões da grelha que o `xstack` compõe: células de 640×360, `ceil(√n)`
-/// colunas. `None` sem vídeo.
-fn grid_dims(videos: usize) -> Option<(i32, i32)> {
+/// Codificação VP9 da composição (CRF 30, sem tecto de débito).
+const VP9_ARGS: [&str; 14] = [
+    "-c:v",
+    "libvpx-vp9",
+    "-b:v",
+    "0",
+    "-crf",
+    "30",
+    "-deadline",
+    "good",
+    "-cpu-used",
+    "4",
+    "-row-mt",
+    "1",
+    "-pix_fmt",
+    "yuv420p",
+];
+
+/// Caixa de resolução de uma qualidade pedida (R184). `audio`, desconhecida ou
+/// ausente: `None`.
+fn quality_box(quality: Option<&str>) -> Option<(u32, u32)> {
+    match quality? {
+        "2160p" => Some((3840, 2160)),
+        "1080p" => Some((1920, 1080)),
+        "720p" => Some((1280, 720)),
+        _ => None,
+    }
+}
+
+/// Tamanho de cada mosaico da grelha para `n` vídeos.
+///
+/// Sem qualidade pedida, a composição de sempre: mosaicos de 640×360 e a tela
+/// cresce com o número de pessoas. Com qualidade, a TELA é a caixa pedida e os
+/// mosaicos dividem-na (dimensões pares, que o yuv420p exige).
+fn grid_tile(quality: Option<&str>, n: usize) -> (u32, u32) {
+    let Some((w, h)) = quality_box(quality) else {
+        return (640, 360);
+    };
+    let cols = (n.max(1) as f64).sqrt().ceil() as u32;
+    let rows = (n.max(1) as u32).div_ceil(cols);
+    let even = |v: u32| (v / 2) * 2;
+    (even(w / cols), even(h / rows))
+}
+
+/// Dimensões da grelha que o `xstack` compõe: `ceil(√n)` colunas de mosaicos
+/// de `grid_tile`. `None` sem vídeo.
+fn grid_dims(quality: Option<&str>, videos: usize) -> Option<(i32, i32)> {
     if videos == 0 {
         return None;
     }
+    let (tw, th) = grid_tile(quality, videos);
     let cols = (videos as f64).sqrt().ceil() as usize;
     let rows = videos.div_ceil(cols);
-    Some(((cols * 640) as i32, (rows * 360) as i32))
+    Some(((cols * tw as usize) as i32, (rows * th as usize) as i32))
+}
+
+/// Um só orador: as dimensões finais e, se a fonte for mais alta do que a
+/// qualidade pedida, a altura para onde se reduz (`scale=-2:h`, largura par
+/// com a mesma proporção). Nunca se amplia; sem dimensões legíveis, não se
+/// mexe (remux).
+fn downscale_single(
+    source: Option<(i32, i32)>,
+    quality: Option<&str>,
+) -> (Option<(i32, i32)>, Option<u32>) {
+    match (source, quality_box(quality)) {
+        (Some((w, h)), Some((_, target))) if h > target as i32 => {
+            let nw = ((w as i64 * target as i64 / h as i64) / 2 * 2) as i32;
+            (Some((nw, target as i32)), Some(target))
+        }
+        _ => (source, None),
+    }
+}
+
+/// A sala pede gravação automática, não é E2EE (sem chave cedida o gravador
+/// só escreveria ruído cifrado), e ainda não tem nenhuma gravação — parar à
+/// mão e voltar a entrar não recomeça (R184). Decidida na base, na entrada do
+/// anfitrião (`signaling::handle_socket`).
+pub(crate) async fn auto_record_wanted(state: &AppState, room_id: Uuid) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT r.auto_record AND NOT r.e2ee
+                AND NOT EXISTS(SELECT 1 FROM recordings x WHERE x.room_id = r.id)
+         FROM rooms r WHERE r.id = $1",
+    )
+    .bind(room_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(false)
 }
 
 /// Largura e altura do cabeçalho IVF (bytes 12..16, LE). Um ficheiro ilegível
@@ -1111,12 +1194,53 @@ mod tests {
     }
 
     #[test]
+    fn grelha_com_qualidade_divide_a_tela_pedida() {
+        // Sem qualidade (salas fora de reunião agendada): a de sempre.
+        assert_eq!(grid_tile(None, 9), (640, 360));
+        // 2 pessoas em 1080p: 2 colunas × 1 linha.
+        assert_eq!(grid_tile(Some("1080p"), 2), (960, 1080));
+        assert_eq!(grid_dims(Some("1080p"), 2), Some((1920, 1080)));
+        // 4 pessoas em 4K: 2×2 mosaicos de 1920×1080.
+        assert_eq!(grid_tile(Some("2160p"), 4), (1920, 1080));
+        // 5 em 720p: 3 colunas × 2 linhas, dimensões pares.
+        assert_eq!(grid_tile(Some("720p"), 5), (426, 360));
+        assert_eq!(grid_dims(Some("720p"), 5), Some((1278, 720)));
+    }
+
+    #[test]
+    fn um_so_orador_reduz_e_nunca_amplia() {
+        // 1080p pedido, fonte 1280×720: fica (remux).
+        assert_eq!(
+            downscale_single(Some((1280, 720)), Some("1080p")),
+            (Some((1280, 720)), None)
+        );
+        // 720p pedido, fonte 1920×1080: reduz para 1280×720.
+        assert_eq!(
+            downscale_single(Some((1920, 1080)), Some("720p")),
+            (Some((1280, 720)), Some(720))
+        );
+        // Proporção 4:3 → largura par.
+        assert_eq!(
+            downscale_single(Some((1440, 1080)), Some("720p")),
+            (Some((960, 720)), Some(720))
+        );
+        // Sem qualidade, `audio` ou dimensões ilegíveis: não se mexe.
+        assert_eq!(
+            downscale_single(Some((1920, 1080)), None),
+            (Some((1920, 1080)), None)
+        );
+        assert_eq!(downscale_single(None, Some("720p")), (None, None));
+    }
+
+    #[test]
     fn a_resolucao_da_grelha_segue_o_xstack() {
-        assert_eq!(grid_dims(0), None);
-        assert_eq!(grid_dims(1), Some((640, 360)));
-        assert_eq!(grid_dims(2), Some((1280, 360)), "2 colunas, 1 linha");
-        assert_eq!(grid_dims(3), Some((1280, 720)), "2 colunas, 2 linhas");
-        assert_eq!(grid_dims(5), Some((1920, 720)), "3 colunas, 2 linhas");
+        assert_eq!(grid_dims(None, 0), None);
+        assert_eq!(grid_dims(None, 1), Some((640, 360)));
+        assert_eq!(grid_dims(None, 2), Some((1280, 360)), "2 colunas, 1 linha");
+        assert_eq!(grid_dims(None, 3), Some((1280, 720)), "2 colunas, 2 linhas");
+        assert_eq!(grid_dims(None, 5), Some((1920, 720)), "3 colunas, 2 linhas");
+        // `audio` não tem caixa: se houvesse vídeo, seria a grelha de sempre.
+        assert_eq!(grid_dims(Some("audio"), 2), Some((1280, 360)));
     }
 
     #[tokio::test]

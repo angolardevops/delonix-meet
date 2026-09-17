@@ -37,6 +37,176 @@ pub struct Meeting {
     pub recurrence_count: Option<i16>,
     pub recurrence_byday: Option<String>,
     pub recurrence_parent_id: Option<Uuid>,
+    /// Opções de sessão (R184): passam à sala quando ela nasce.
+    #[serde(flatten)]
+    #[sqlx(flatten)]
+    pub options: SessionOptions,
+}
+
+/// Opções de sessão de uma reunião (R184, migração 0055). O contrato de dados
+/// é o `MeetingSessionOptions` da UI. As regras de forma são de
+/// `delonix_meet_domain::conferencing::session_options` — a BFF e a v1 chamam
+/// as mesmas (ADR-0004 §5, regra 8).
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct SessionOptions {
+    /// `meeting` (omissão) | `training` (abre salas de grupo) | `broadcast` | `hybrid`.
+    #[serde(default = "default_format")]
+    #[schema(default = "meeting")]
+    pub format: String,
+    /// Toda a gente passa pela sala de espera, convidados incluídos.
+    #[serde(default)]
+    pub waiting_room: bool,
+    /// O gravador do SERVIDOR arranca sozinho quando o anfitrião entra na sala
+    /// (topologia SFU; nunca numa sala E2EE; só se a sala ainda não tiver
+    /// gravação).
+    #[serde(default)]
+    pub auto_record: bool,
+    /// `2160p` | `1080p` (omissão) | `720p` | `audio`. É a TELA da composição
+    /// em grelha e o tecto de resolução de um só orador (que só é reduzida,
+    /// nunca ampliada); `audio` deixa o vídeo fora da gravação.
+    #[serde(default = "default_record_quality")]
+    #[schema(default = "1080p")]
+    pub record_quality: String,
+}
+
+impl Default for SessionOptions {
+    fn default() -> Self {
+        Self {
+            format: default_format(),
+            waiting_room: false,
+            auto_record: false,
+            record_quality: default_record_quality(),
+        }
+    }
+}
+
+fn default_format() -> String {
+    delonix_meet_domain::conferencing::session_options::DEFAULT_FORMAT.into()
+}
+fn default_record_quality() -> String {
+    delonix_meet_domain::conferencing::session_options::DEFAULT_RECORD_QUALITY.into()
+}
+
+impl SessionOptions {
+    /// Valida a forma. `400 meeting.invalid_format` /
+    /// `400 meeting.invalid_record_quality`.
+    pub(crate) fn validate(&self) -> Result<(), ApiError> {
+        use delonix_meet_domain::conferencing::session_options as rules;
+        rules::validate_format(&self.format)?;
+        rules::validate_record_quality(&self.record_quality)?;
+        Ok(())
+    }
+}
+
+/// Alteração parcial das opções de sessão: o campo ausente fica como está.
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+pub struct SessionOptionsPatch {
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub waiting_room: Option<bool>,
+    #[serde(default)]
+    pub auto_record: Option<bool>,
+    #[serde(default)]
+    pub record_quality: Option<String>,
+}
+
+impl SessionOptionsPatch {
+    pub(crate) fn validate(&self) -> Result<(), ApiError> {
+        use delonix_meet_domain::conferencing::session_options as rules;
+        if let Some(f) = &self.format {
+            rules::validate_format(f)?;
+        }
+        if let Some(q) = &self.record_quality {
+            rules::validate_record_quality(q)?;
+        }
+        Ok(())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.format.is_none()
+            && self.waiting_room.is_none()
+            && self.auto_record.is_none()
+            && self.record_quality.is_none()
+    }
+}
+
+/// Gravação automática numa sala E2EE: o gravador do servidor não tem a chave,
+/// e gravaria ruído cifrado. Recusa-se em vez de aceitar e não gravar.
+pub(crate) fn refuse_auto_record_on_e2ee(auto_record: bool, e2ee: bool) -> Result<(), ApiError> {
+    if auto_record && e2ee {
+        return Err(delonix_meet_core::DomainError::precondition(
+            "meeting.auto_record_e2ee",
+            "a gravação automática do servidor não é possível numa sala com encriptação ponta-a-ponta",
+        )
+        .with_field("auto_record", "incompatível com e2ee")
+        .into());
+    }
+    Ok(())
+}
+
+/// Aplica uma alteração das opções de sessão a uma reunião e, se a sala já
+/// existe, à sala — a mesma função para o `PATCH` da BFF e o da v1 (regra 8).
+/// Valida antes de escrever. Não verifica quem pede: é do chamador.
+pub(crate) async fn patch_session_options(
+    state: &AppState,
+    meeting_id: Uuid,
+    patch: &SessionOptionsPatch,
+) -> Result<(), ApiError> {
+    patch.validate()?;
+    if patch.is_empty() {
+        return Ok(());
+    }
+    let (room_code, current): (Option<String>, SessionOptions) = {
+        let row: (Option<String>, String, bool, bool, String) = sqlx::query_as(
+            "SELECT room_code, format, waiting_room, auto_record, record_quality
+             FROM meetings WHERE id = $1",
+        )
+        .bind(meeting_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+        (
+            row.0,
+            SessionOptions {
+                format: row.1,
+                waiting_room: row.2,
+                auto_record: row.3,
+                record_quality: row.4,
+            },
+        )
+    };
+    let next = SessionOptions {
+        format: patch.format.clone().unwrap_or(current.format),
+        waiting_room: patch.waiting_room.unwrap_or(current.waiting_room),
+        auto_record: patch.auto_record.unwrap_or(current.auto_record),
+        record_quality: patch
+            .record_quality
+            .clone()
+            .unwrap_or(current.record_quality),
+    };
+    if let Some(code) = &room_code {
+        let e2ee: Option<bool> = sqlx::query_scalar("SELECT e2ee FROM rooms WHERE code = $1")
+            .bind(code)
+            .fetch_optional(&state.db)
+            .await?;
+        refuse_auto_record_on_e2ee(next.auto_record, e2ee.unwrap_or(false))?;
+    }
+    sqlx::query(
+        "UPDATE meetings SET format = $2, waiting_room = $3, auto_record = $4, record_quality = $5
+         WHERE id = $1",
+    )
+    .bind(meeting_id)
+    .bind(&next.format)
+    .bind(next.waiting_room)
+    .bind(next.auto_record)
+    .bind(&next.record_quality)
+    .execute(&state.db)
+    .await?;
+    if let Some(code) = &room_code {
+        crate::rooms::apply_session_options(&state.db, code, &next).await?;
+    }
+    Ok(())
 }
 
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
@@ -45,6 +215,7 @@ pub struct Meeting {
     paths(
         list,
         get_one,
+        patch,
         create,
         check_conflicts,
         delete,
@@ -60,6 +231,9 @@ pub struct Meeting {
     components(schemas(
         Meeting,
         MeetingItem,
+        MeetingDetail,
+        SessionOptions,
+        PatchMeetingOptionsReq,
         CreateMeetingReq,
         CreateMeetingResp,
         ParticipantConflict,
@@ -87,7 +261,31 @@ pub const MEETING_COLUMNS: &str =
     "id, owner_id, title, description, kind, starts_at, duration_min, \
      room_code, created_at, room_ref, minutes, transcript, recurrence_freq, \
      recurrence_interval, recurrence_until, recurrence_count, recurrence_byday, \
-     recurrence_parent_id";
+     recurrence_parent_id, format, waiting_room, auto_record, record_quality";
+
+/// `invitee_count` de uma reunião: convidados (sem o anfitrião), qualquer que
+/// seja a resposta. `meeting` é a expressão SQL do id da reunião.
+fn invitee_count_sql(meeting: &str) -> String {
+    format!(
+        "(SELECT COUNT(*) FROM meeting_invitees ic WHERE ic.meeting_id = {meeting}) AS invitee_count"
+    )
+}
+
+/// `external_source` de uma reunião, DERIVADO de `meeting_external_refs` (a
+/// referência que a v1 grava para a idempotência; não há coluna nova): o
+/// prefixo antes do primeiro `:` quando tem forma de identificador
+/// (`odoo:kaeso:calendar.event:42` → `odoo`); `api` quando a referência existe
+/// mas não declara sistema; `NULL` quando a reunião não veio de um sistema
+/// externo com referência. A referência inteira NÃO sai pela BFF — é da
+/// integração, e só a v1 a devolve.
+fn external_source_sql(meeting: &str) -> String {
+    format!(
+        "(SELECT CASE WHEN x.external_ref ~ '^[A-Za-z0-9_-]{{1,32}}:'
+                      THEN lower(split_part(x.external_ref, ':', 1))
+                      ELSE 'api' END
+          FROM meeting_external_refs x WHERE x.meeting_id = {meeting}) AS external_source"
+    )
+}
 
 /// Reunião enriquecida para a UI do calendário.
 #[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
@@ -105,11 +303,32 @@ pub struct MeetingItem {
     pub minutes: String,
     pub room_ref: Option<Uuid>,
     pub room_name: Option<String>,
-    /// A minha resposta enquanto convidado: 'owner' | 'pending' | 'accepted' | 'declined'.
+    /// A minha resposta enquanto convidado: `owner` | `pending` | `accepted` | `declined` | `tentative`.
     pub my_status: String,
     pub recurrence_freq: Option<String>,
     pub recurrence_interval: i16,
     pub recurrence_parent_id: Option<Uuid>,
+    #[serde(flatten)]
+    #[sqlx(flatten)]
+    pub options: SessionOptions,
+    /// Convidados (sem o anfitrião), qualquer que seja a resposta.
+    pub invitee_count: i64,
+    /// Sistema de origem (`odoo`, …), `api` sem sistema declarado, ou `null`
+    /// se a reunião não veio de uma integração com `external_ref`.
+    pub external_source: Option<String>,
+}
+
+/// `GET /api/meetings/{meeting_id}` e `PATCH`: a reunião, as opções e o que a
+/// lista também dá (`my_status`, `invitee_count`, `external_source`).
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct MeetingDetail {
+    #[serde(flatten)]
+    #[sqlx(flatten)]
+    pub meeting: Meeting,
+    /// `owner` | `pending` | `accepted` | `declined` | `tentative`.
+    pub my_status: String,
+    pub invitee_count: i64,
+    pub external_source: Option<String>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -140,6 +359,8 @@ pub struct CreateMeetingReq {
     pub recurrence_count: Option<i16>,
     /// Dias da semana para freq=weekly: "MON,WED,FRI"
     pub recurrence_byday: Option<String>,
+    #[serde(flatten)]
+    pub options: SessionOptions,
 }
 
 fn default_kind() -> String {
@@ -340,7 +561,7 @@ pub struct CreateMeetingResp {
     request_body = CreateMeetingReq,
     responses(
         (status = 200, body = CreateMeetingResp),
-        (status = 400, body = crate::openapi::ErrorBody, description = "título, `kind` ou duração inválidos"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "título, `kind` ou duração inválidos; `meeting.invalid_format` / `meeting.invalid_record_quality`"),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 409, body = crate::openapi::ErrorBody, description = "quota de reuniões da organização atingida, ou sala física já reservada nesse horário"),
     )
@@ -362,6 +583,7 @@ pub async fn create(
     if !(5..=1440).contains(&req.duration_min) {
         return Err(ApiError::BadRequest("duration must be 5-1440 min".into()));
     }
+    req.options.validate()?;
 
     // Quota de reuniões da organização (agenda): conta as reuniões cujo dono é
     // membro da org do criador. NULL => ilimitado.
@@ -421,8 +643,9 @@ pub async fn create(
 
     let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
-                               recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                               recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday,
+                               format, waiting_room, auto_record, record_quality)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
          RETURNING {MEETING_COLUMNS}"
     ))
     .bind(auth.user_id)
@@ -437,6 +660,10 @@ pub async fn create(
     .bind(req.recurrence_until)
     .bind(req.recurrence_count)
     .bind(&req.recurrence_byday)
+    .bind(&req.options.format)
+    .bind(req.options.waiting_room)
+    .bind(req.options.auto_record)
+    .bind(&req.options.record_quality)
     .fetch_one(&state.db)
     .await?;
 
@@ -625,7 +852,7 @@ pub async fn list(
     // e só depois junta `meetings`: um `WHERE m.owner_id = $1 OR i.user_id IS NOT
     // NULL` obriga a varrer a tabela inteira. O `UNION` tira o duplicado do dono
     // que também é convidado.
-    let items: Vec<MeetingItem> = sqlx::query_as(
+    let items: Vec<MeetingItem> = sqlx::query_as(&format!(
         r#"
         WITH mine AS (
             SELECT id FROM meetings WHERE owner_id = $1
@@ -637,7 +864,9 @@ pub async fn list(
                (m.owner_id = $1) AS is_owner, m.minutes,
                m.room_ref, mr.name AS room_name,
                CASE WHEN m.owner_id = $1 THEN 'owner' ELSE COALESCE(i.status, 'pending') END AS my_status,
-               m.recurrence_freq, m.recurrence_interval, m.recurrence_parent_id
+               m.recurrence_freq, m.recurrence_interval, m.recurrence_parent_id,
+               m.format, m.waiting_room, m.auto_record, m.record_quality,
+               {invitee_count}, {external_source}
         FROM mine
         JOIN meetings m ON m.id = mine.id
         JOIN users u ON u.id = m.owner_id
@@ -645,7 +874,9 @@ pub async fn list(
         LEFT JOIN meeting_rooms mr ON mr.id = m.room_ref
         ORDER BY m.starts_at ASC
         "#,
-    )
+        invitee_count = invitee_count_sql("m.id"),
+        external_source = external_source_sql("m.id"),
+    ))
     .bind(auth.user_id)
     .fetch_all(&state.db)
     .await?;
@@ -848,6 +1079,9 @@ pub struct StartResp {
     pub code: String,
     /// `video` | `voice`.
     pub kind: String,
+    /// As opções com que a sala foi (ou já tinha sido) criada.
+    #[serde(flatten)]
+    pub options: SessionOptions,
 }
 
 /// Arranca a reunião: cria a sala (se ainda não existe) e devolve o código.
@@ -891,6 +1125,7 @@ pub async fn start(
             return Ok(Json(StartResp {
                 code,
                 kind: meeting.kind,
+                options: meeting.options,
             }));
         }
     }
@@ -901,16 +1136,22 @@ pub async fn start(
             "a reunião ainda não foi iniciada pelo anfitrião".into(),
         ));
     }
+    // As opções agendadas passam à sala (R184): sala de espera, formato e o que
+    // o gravador do servidor tem de cumprir. Antes era sempre 'normal', sem
+    // sala de espera.
     let room = crate::rooms::insert_room(
         &state.db,
         auth.user_id,
         &meeting.title,
         "sfu",
+        meeting.options.waiting_room,
         false,
-        false,
-        "normal",
+        delonix_meet_domain::conferencing::session_options::room_format_for(
+            &meeting.options.format,
+        ),
     )
     .await?;
+    crate::rooms::apply_session_options(&state.db, &room.code, &meeting.options).await?;
     sqlx::query("UPDATE meetings SET room_code = $1 WHERE id = $2")
         .bind(&room.code)
         .bind(id)
@@ -947,7 +1188,29 @@ pub async fn start(
     Ok(Json(StartResp {
         code: room.code,
         kind: meeting.kind,
+        options: meeting.options,
     }))
+}
+
+/// Lê a reunião com `my_status`, `invitee_count` e `external_source`, para
+/// quem já se sabe que a pode ver.
+async fn load_detail(state: &AppState, id: Uuid, user_id: Uuid) -> Result<MeetingDetail, ApiError> {
+    let detail: Option<MeetingDetail> = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS},
+                CASE WHEN owner_id = $2 THEN 'owner'
+                     ELSE COALESCE((SELECT i.status FROM meeting_invitees i
+                                    WHERE i.meeting_id = meetings.id AND i.user_id = $2), 'pending')
+                END AS my_status,
+                {invitee_count}, {external_source}
+         FROM meetings WHERE id = $1",
+        invitee_count = invitee_count_sql("meetings.id"),
+        external_source = external_source_sql("meetings.id"),
+    ))
+    .bind(id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?;
+    detail.ok_or(ApiError::NotFound)
 }
 
 /// Uma reunião (dono ou convidado). Recurso completo: existe `DELETE`, existe `GET`.
@@ -956,7 +1219,7 @@ pub async fn start(
     security(("session" = [])),
     params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
-        (status = 200, body = Meeting),
+        (status = 200, body = MeetingDetail),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não és dono nem convidado"),
     )
@@ -965,18 +1228,77 @@ pub async fn get_one(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
-) -> Result<Json<Meeting>, ApiError> {
-    let meeting: Option<Meeting> = sqlx::query_as(&format!(
-        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
-    ))
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await?;
-    let meeting = meeting.ok_or(ApiError::NotFound)?;
-    if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
+) -> Result<Json<MeetingDetail>, ApiError> {
+    let detail = load_detail(&state, id, auth.user_id).await?;
+    if !is_owner_or_invitee(&state, id, detail.meeting.owner_id, auth.user_id).await? {
         return Err(ApiError::NotFound);
     }
-    Ok(Json(meeting))
+    Ok(Json(detail))
+}
+
+/// `PATCH /api/meetings/{meeting_id}` — só as opções de sessão (R184). Campos
+/// fora destes são recusados, não ignorados: um título mandado aqui não muda
+/// nada e o cliente tem de o saber.
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PatchMeetingOptionsReq {
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub waiting_room: Option<bool>,
+    #[serde(default)]
+    pub auto_record: Option<bool>,
+    #[serde(default)]
+    pub record_quality: Option<String>,
+}
+
+/// Altera as opções de sessão de uma reunião. Só o anfitrião. Se a sala já
+/// existe, as opções passam-lhe logo: a sala de espera vale para as entradas
+/// seguintes, e a gravação automática para a próxima vez que o anfitrião
+/// entrar numa sala ainda sem gravação.
+#[utoipa::path(
+    patch, path = "/api/meetings/{meeting_id}", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    request_body = PatchMeetingOptionsReq,
+    responses(
+        (status = 200, body = MeetingDetail, description = "A reunião como ficou."),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`meeting.invalid_format` / `meeting.invalid_record_quality`"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`meeting.not_host`: é convidado, não anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não é dono nem convidado"),
+        (status = 422, body = crate::openapi::ErrorBody, description = "campo desconhecido no corpo; ou `meeting.auto_record_e2ee`"),
+    )
+)]
+pub async fn patch(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PatchMeetingOptionsReq>,
+) -> Result<Json<MeetingDetail>, ApiError> {
+    let owner: Option<Uuid> = sqlx::query_scalar("SELECT owner_id FROM meetings WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?;
+    match owner {
+        Some(o) if o == auth.user_id => {}
+        Some(o) if is_owner_or_invitee(&state, id, o, auth.user_id).await? => {
+            return Err(
+                delonix_meet_core::DomainError::forbidden("meeting.not_host")
+                    .with_message("só o anfitrião altera as opções da reunião")
+                    .into(),
+            );
+        }
+        _ => return Err(ApiError::NotFound),
+    }
+    let patch = SessionOptionsPatch {
+        format: req.format,
+        waiting_room: req.waiting_room,
+        auto_record: req.auto_record,
+        record_quality: req.record_quality,
+    };
+    patch_session_options(&state, id, &patch).await?;
+    Ok(Json(load_detail(&state, id, auth.user_id).await?))
 }
 
 /// Exportação iCalendar (roadmap "Google e Outlook Calendar"): um .ics por
@@ -1144,14 +1466,16 @@ pub async fn invitees(
 
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct RespondReq {
-    /// `accepted` | `declined`.
+    /// `accepted` | `declined` | `tentative`.
     pub status: String,
     /// Obrigatório quando `status` é `declined`.
     #[serde(default)]
     pub reason: String,
 }
 
-/// O convidado aceita ou recusa (recusar exige motivo). Ao recusar, o
+/// O convidado aceita, recusa (exige motivo) ou responde «talvez» (`tentative`,
+/// sem motivo; conta como presença possível nos conflitos e continua a ser
+/// chamado no arranque). Ao recusar, o
 /// anfitrião é notificado em tempo real (se online) com o motivo.
 #[utoipa::path(
     put, path = "/api/meetings/{meeting_id}/invitees/me", tag = "meetings",
@@ -1171,7 +1495,7 @@ pub async fn respond(
     Path(id): Path<Uuid>,
     Json(req): Json<RespondReq>,
 ) -> Result<Json<InviteeResponse>, ApiError> {
-    if !matches!(req.status.as_str(), "accepted" | "declined") {
+    if !matches!(req.status.as_str(), "accepted" | "declined" | "tentative") {
         return Err(ApiError::BadRequest("status inválido".into()));
     }
     let reason = req.reason.trim();
@@ -1353,8 +1677,9 @@ pub async fn generate_instances(db: &sqlx::PgPool, parent: &Meeting, invitee_ids
         let child_id: Option<(Uuid,)> = sqlx::query_as(
             "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
                                    recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
-                                   recurrence_byday, recurrence_parent_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                                   recurrence_byday, recurrence_parent_id,
+                                   format, waiting_room, auto_record, record_quality)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
              ON CONFLICT DO NOTHING
              RETURNING id",
         )
@@ -1371,6 +1696,11 @@ pub async fn generate_instances(db: &sqlx::PgPool, parent: &Meeting, invitee_ids
         .bind(parent.recurrence_count)
         .bind(&parent.recurrence_byday)
         .bind(parent.id)
+        // As ocorrências herdam as opções de sessão da reunião-mãe.
+        .bind(&parent.options.format)
+        .bind(parent.options.waiting_room)
+        .bind(parent.options.auto_record)
+        .bind(&parent.options.record_quality)
         .fetch_optional(db)
         .await
         .ok()
