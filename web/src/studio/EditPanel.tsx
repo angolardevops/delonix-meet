@@ -159,7 +159,7 @@ export default function EditPanel({
       setPausas(null)
       try {
         const ok = await pr.abrirGravacao({ id: r.id, titulo: tituloDaGravacao(r.filename) }, async () => {
-          const url = await recordingObjectUrl({ id: r.id } as RecordingItem)
+          const url = await recordingObjectUrl({ id: r.id })
           try {
             return await fetch(url).then((x) => x.blob())
           } finally {

@@ -23,7 +23,6 @@ export default {
     emissoes: 'Diffusions',
     reunioes: 'Réunions',
     quatroK: '4K',
-    aProcessar: 'En traitement',
     contagem_one: '{{count}} enregistrement',
     contagem_other: '{{count}} enregistrements',
     rotulo: 'Filtrer les enregistrements',
@@ -43,8 +42,6 @@ export default {
     estado: 'État',
   },
   estado: {
-    aProcessar: 'En traitement',
-    aProcessarPct: 'En traitement {{pct}} %',
     aTranscrever: 'Transcription',
     aTranscreverPct: 'Transcription {{pct}} %',
     publicada: 'Publié',

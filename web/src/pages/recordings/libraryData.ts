@@ -9,12 +9,11 @@
  */
 import type { RecordingView, SessionCategory } from './recordingView'
 
-export type LibraryFilter = 'all' | 'mine' | 'shared' | 'training' | 'broadcast' | 'meeting' | '4k' | 'processing' | 'failed'
+export type LibraryFilter = 'all' | 'mine' | 'shared' | 'training' | 'broadcast' | 'meeting' | '4k' | 'transcribing' | 'failed'
 
 /** Estado visível de uma gravação, pela ordem em que manda. */
 export type VisibleState =
   | { kind: 'failed' }
-  | { kind: 'processing'; pct: number | null }
   | { kind: 'transcribing'; pct: number | null }
   | { kind: 'published' }
   | { kind: 'retained'; days: number }
@@ -32,7 +31,6 @@ type StateInput = Pick<RecordingView, 'pipeline' | 'progressPct' | 'transcriptRu
  */
 export function visibleState(r: StateInput, retentionDays = 0, now = Date.now()): VisibleState {
   if (r.pipeline === 'failed') return { kind: 'failed' }
-  if (r.pipeline === 'processing') return { kind: 'processing', pct: r.progressPct }
   if (r.pipeline === 'transcribing') return { kind: 'transcribing', pct: r.progressPct }
   if (r.pipeline === 'ready' && r.transcriptRunning) return { kind: 'transcribing', pct: null }
   if (r.pipeline === 'published') return { kind: 'published' }
@@ -58,8 +56,7 @@ export function resolutionLabel(size: { width: number | null; height: number | n
 export const is4k = (r: Pick<RecordingView, 'width' | 'height'>) => resolutionLabel(r) === '4K'
 
 export function isInProgress(r: StateInput): boolean {
-  const k = visibleState(r).kind
-  return k === 'processing' || k === 'transcribing'
+  return visibleState(r).kind === 'transcribing'
 }
 
 /**
@@ -83,7 +80,7 @@ export function matchesFilter(r: RecordingView, f: LibraryFilter): boolean {
       return !r.owned
     case 'failed':
       return r.failed
-    case 'processing':
+    case 'transcribing':
       return isInProgress(r)
     case '4k':
       return is4k(r)
@@ -93,7 +90,7 @@ export function matchesFilter(r: RecordingView, f: LibraryFilter): boolean {
 }
 
 export function filterCounts(items: RecordingView[]): Record<LibraryFilter, number> {
-  const out: Record<LibraryFilter, number> = { all: 0, mine: 0, shared: 0, training: 0, broadcast: 0, meeting: 0, '4k': 0, processing: 0, failed: 0 }
+  const out: Record<LibraryFilter, number> = { all: 0, mine: 0, shared: 0, training: 0, broadcast: 0, meeting: 0, '4k': 0, transcribing: 0, failed: 0 }
   for (const r of items) for (const f of Object.keys(out) as LibraryFilter[]) if (matchesFilter(r, f)) out[f]++
   return out
 }
@@ -110,7 +107,7 @@ export function visibleFilters(items: RecordingView[]): LibraryFilter[] {
   if (items.some((r) => r.category !== null)) out.push('training', 'broadcast', 'meeting')
   else out.push('mine', 'shared')
   if (counts['4k'] > 0) out.push('4k')
-  if (counts.processing > 0) out.push('processing')
+  if (counts.transcribing > 0) out.push('transcribing')
   if (counts.failed > 0) out.push('failed')
   return out
 }

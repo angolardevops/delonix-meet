@@ -61,8 +61,6 @@ export const ROTAS_POR_PORTAR = {
   roomWaiting: false,
   /** `GET /api/orgs/{org_id}/ai/status` e `POST …/ai/suggestions` — assistente do Estúdio. Sai com o porte do Ollama. */
   studioAi: false,
-  /** `GET /api/recordings/{recording_id}/transcript` — transcrição do servidor nas legendas. Sai com o BW2 (gravações). */
-  recordingTranscript: false,
   /** `GET /api/orgs/{org_id}/sms/policy` — quem pode mandar SMS a contactos. Sai quando a `sms-contactos` fundir. */
   smsPolicy: false,
 } as const

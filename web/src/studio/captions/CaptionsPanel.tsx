@@ -14,7 +14,6 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ROTAS_POR_PORTAR } from '../../capabilities'
 import { apiErrorMessage, isAbort, recordingTranscript, translateCaption } from '../../api'
 import { useShell } from '../../components/shellContext'
 import { Alert, cx, IconButton, Select, TextArea } from '../../ui/kit'
@@ -104,7 +103,7 @@ export default function CaptionsPanel({
   const daBiblioteca = fonteDaBiblioteca(p)
   const [doServidor, setDoServidor] = useState<{ gravacao: string; segmentos: TranscriptSegment[]; lingua: string | null } | null>(null)
   useEffect(() => {
-    if (leg || !daBiblioteca || !ROTAS_POR_PORTAR.recordingTranscript) return
+    if (leg || !daBiblioteca) return
     const ctl = new AbortController()
     recordingTranscript(daBiblioteca.gravacao, ctl.signal)
       .then((r) => {

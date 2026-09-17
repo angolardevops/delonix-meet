@@ -1,6 +1,6 @@
 /**
  * Estado de uma gravação como o template o escreve: marca + texto na cor do
- * estado («✓ Pronta», «◐ A processar 74%», «⏱ Retida 90 dias»). As marcas são
+ * estado («✓ Pronta», «◐ A transcrever 74%», «⏱ Retida 90 dias»). As marcas são
  * ícones do kit, não caracteres.
  */
 import { useTranslation } from 'react-i18next'
@@ -10,7 +10,6 @@ import type { VisibleState } from './libraryData'
 
 const ICON: Record<VisibleState['kind'], IconName> = {
   failed: 'alert',
-  processing: 'hourglass',
   transcribing: 'hourglass',
   published: 'check',
   retained: 'clock',
@@ -23,8 +22,6 @@ export function useStateText() {
     switch (s.kind) {
       case 'failed':
         return t('recordings.estado.falhada')
-      case 'processing':
-        return s.pct === null ? t('recordings.estado.aProcessar') : t('recordings.estado.aProcessarPct', { pct: Math.round(s.pct) })
       case 'transcribing':
         return s.pct === null ? t('recordings.estado.aTranscrever') : t('recordings.estado.aTranscreverPct', { pct: Math.round(s.pct) })
       case 'published':

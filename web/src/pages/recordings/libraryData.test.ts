@@ -13,33 +13,59 @@ import {
   visibleFilters,
   visibleState,
 } from './libraryData'
+import type { RecordingLibraryItem } from '../../api'
 import { fromRecordingItem, RecordingView } from './recordingView'
 
-const item = (over: Partial<RecordingView> = {}): RecordingView => ({
-  ...fromRecordingItem({
-    id: 'x',
-    room_id: 'r',
-    uploader_id: 'u',
-    filename: 'a.webm',
-    size_bytes: 10,
-    created_at: '2026-09-01T10:00:00Z',
-    room_code: 'abc',
-    uploader_name: 'Ana',
-    owned: true,
-    share_count: 0,
-    can_download: true,
-    status: 'ready',
-    failure_reason: null,
-  }),
+export const libItem = (over: Partial<RecordingLibraryItem> = {}): RecordingLibraryItem => ({
+  id: 'x',
+  room_id: 'r',
+  uploader_id: 'u',
+  filename: 'a.webm',
+  size_bytes: 10,
+  created_at: '2026-09-01T10:00:00Z',
+  room_code: 'abc',
+  uploader_name: 'Ana',
+  owned: true,
+  share_count: 0,
+  can_download: true,
+  status: 'ready',
+  failure_reason: null,
+  state: 'ready',
+  progress_pct: null,
+  kind: 'meeting',
+  duration_ms: null,
+  width: null,
+  height: null,
+  fps: null,
+  video_codec: null,
+  audio_codec: null,
+  has_thumbnail: false,
+  transcript_status: 'none',
+  transcript_language: null,
+  transcribed_at: null,
+  chapter_count: 0,
+  comment_count: 0,
+  view_count: 0,
+  participant_count: 0,
+  caption_languages: [],
+  description: '',
+  tags: [],
+  visibility: 'private',
+  published_at: null,
+  can_manage: true,
+  uploader_org_id: null,
+  uploader_org_name: null,
   ...over,
 })
+
+const item = (over: Partial<RecordingView> = {}): RecordingView => ({ ...fromRecordingItem(libItem()), ...over })
 
 describe('visibleState', () => {
   it('falhada manda sobre tudo', () => {
     expect(visibleState(item({ pipeline: 'failed', failed: true })).kind).toBe('failed')
   })
-  it('a processar traz a percentagem do servidor', () => {
-    expect(visibleState(item({ pipeline: 'processing', progressPct: 74 }))).toEqual({ kind: 'processing', pct: 74 })
+  it('a transcrever traz a percentagem do servidor', () => {
+    expect(visibleState(item({ pipeline: 'transcribing', progressPct: 74 }))).toEqual({ kind: 'transcribing', pct: 74 })
   })
   it('pronta com transcrição a correr lê-se «a transcrever»', () => {
     expect(visibleState(item({ transcriptRunning: true })).kind).toBe('transcribing')
@@ -72,21 +98,33 @@ describe('resolução e filtros', () => {
     const list = [
       item({ category: 'training' }),
       item({ category: 'hybrid', width: 3840, height: 2160, owned: false }),
-      item({ category: 'broadcast', pipeline: 'processing' }),
+      item({ category: 'broadcast', pipeline: 'transcribing' }),
       item({ category: 'meeting', pipeline: 'failed', failed: true }),
     ]
-    expect(filterCounts(list)).toEqual({ all: 4, mine: 3, shared: 1, training: 2, broadcast: 1, meeting: 0, '4k': 1, processing: 1, failed: 1 })
+    expect(filterCounts(list)).toEqual({ all: 4, mine: 3, shared: 1, training: 2, broadcast: 1, meeting: 0, '4k': 1, transcribing: 1, failed: 1 })
     expect(matchesFilter(list[3], 'meeting')).toBe(false)
-    expect(visibleFilters(list)).toEqual(['all', 'training', 'broadcast', 'meeting', '4k', 'processing', 'failed'])
+    expect(visibleFilters(list)).toEqual(['all', 'training', 'broadcast', 'meeting', '4k', 'transcribing', 'failed'])
   })
   it('sem dado do servidor não há chip que filtraria para zero', () => {
-    const hoje = [item(), item({ owned: false })]
+    const hoje = [item({ category: null }), item({ category: null, owned: false })]
     expect(visibleFilters(hoje)).toEqual(['all', 'mine', 'shared'])
   })
-  it('a camada de mapeamento não inventa metadados que a RecordingItem não tem', () => {
-    const v = item()
-    expect([v.durationMs, v.width, v.category, v.viewCount, v.chapterCount, v.description]).toEqual([null, null, null, null, null, null])
-    expect(item({ ...fromRecordingItem({ ...v.source, status: 'failed', size_bytes: 0 }) }).sizeBytes).toBeNull()
+  it('a camada de mapeamento passa o que o servidor mediu e deixa null o que ele não diz', () => {
+    const medido = fromRecordingItem(
+      libItem({ duration_ms: 125000, width: 1920, height: 1080, kind: 'training', view_count: 3, chapter_count: 2, description: 'd', tags: ['a'] }),
+    )
+    expect([medido.durationMs, medido.width, medido.category, medido.viewCount, medido.chapterCount, medido.description, medido.tags]).toEqual([
+      125000, 1920, 'training', 3, 2, 'd', ['a'],
+    ])
+    const semMedida = fromRecordingItem(libItem())
+    expect([semMedida.durationMs, semMedida.width, semMedida.height]).toEqual([null, null, null])
+    expect(fromRecordingItem(libItem({ status: 'failed', state: 'failed', size_bytes: 0 })).sizeBytes).toBeNull()
+  })
+  it('estado: a transcrever, publicada, falhada — sem «a processar»', () => {
+    expect(fromRecordingItem(libItem({ status: 'transcribing', state: 'transcribing' })).pipeline).toBe('transcribing')
+    expect(fromRecordingItem(libItem({ state: 'published', visibility: 'org' })).pipeline).toBe('published')
+    expect(fromRecordingItem(libItem({ status: 'failed', state: 'failed' })).pipeline).toBe('failed')
+    expect(fromRecordingItem(libItem({ status: 'failed', state: 'failed', visibility: 'org' })).published).toBe(false)
   })
 })
 

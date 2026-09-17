@@ -299,8 +299,12 @@ export interface RecordingItem extends Recording {
   share_count: number
   /** RBAC: só dono + admins da org podem descarregar (os restantes só reproduzem). */
   can_download: boolean
-  /** `ready` = há ficheiro. `failed` = houve tentativa e não há nada. */
-  status: 'ready' | 'failed' | string
+  /**
+   * `ready` = há ficheiro; `transcribing` = há ficheiro e a transcrição corre;
+   * `failed` = houve tentativa e não há nada. A linha só nasce depois de o
+   * ficheiro estar composto: não há estado «a processar».
+   */
+  status: RecordingFileStatus
   /** Causa em linguagem de utilizador, quando falhou. */
   failure_reason: string | null
 }
@@ -368,7 +372,19 @@ export interface QuarantineRow {
 
 export const listRecordings = (code: string) => request<Recording[]>(`/api/rooms/${code}/recordings`)
 
-export const recordingsLibrary = (signal?: AbortSignal) => request<RecordingItem[]>('/api/recordings', { signal })
+/**
+ * Biblioteca com metadados (`RecordingLibraryItem`). `q` pesquisa no nome,
+ * autor, sala, descrição, etiquetas e na TRANSCRIÇÃO (e traz `snippet`).
+ * `scope: 'published'` lista as publicadas que a pessoa vê, incluindo as da
+ * organização em que não participou.
+ */
+export const recordingsLibrary = (signal?: AbortSignal, params: { q?: string; scope?: 'mine' | 'published' } = {}) => {
+  const q = new URLSearchParams()
+  if (params.q) q.set('q', params.q)
+  if (params.scope) q.set('scope', params.scope)
+  const s = q.toString()
+  return request<RecordingLibraryItem[]>(`/api/recordings${s ? `?${s}` : ''}`, { signal })
+}
 
 export const searchUsers = (q: string) =>
   request<User[]>(`/api/users?q=${encodeURIComponent(q)}`)
@@ -425,12 +441,12 @@ export const updateEmployee = (orgId: string, userId: string, data: { role?: str
   request<Employee>(`/api/orgs/${orgId}/members/${userId}`, { method: 'PATCH', body: JSON.stringify(data) })
 
 export const shareRecording = (id: string, userId: string) =>
-  request(`/api/recordings/${id}/share`, { method: 'POST', body: JSON.stringify({ user_id: userId }) })
+  request(`/api/recordings/${id}/shares`, { method: 'POST', body: JSON.stringify({ user_id: userId }) })
 
-export const listRecordingShares = (id: string) => request<User[]>(`/api/recordings/${id}/share`)
+export const listRecordingShares = (id: string) => request<User[]>(`/api/recordings/${id}/shares`)
 
 export const unshareRecording = (id: string, userId: string) =>
-  request(`/api/recordings/${id}/share/${userId}`, { method: 'DELETE' })
+  request(`/api/recordings/${id}/shares/${userId}`, { method: 'DELETE' })
 
 export interface ShareLink {
   id: string
@@ -441,16 +457,16 @@ export interface ShareLink {
 }
 
 export const getRecordingLink = (id: string) =>
-  request<ShareLink | null>(`/api/recordings/${id}/link`)
+  request<ShareLink | null>(`/api/recordings/${id}/public-link`)
 
 export const createRecordingLink = (id: string, opts: { password?: string; expires_at?: string | null }) =>
-  request<ShareLink>(`/api/recordings/${id}/link`, {
-    method: 'POST',
+  request<ShareLink>(`/api/recordings/${id}/public-link`, {
+    method: 'PUT',
     body: JSON.stringify(opts),
   })
 
 export const revokeRecordingLink = (id: string) =>
-  request(`/api/recordings/${id}/link`, { method: 'DELETE' })
+  request(`/api/recordings/${id}/public-link`, { method: 'DELETE' })
 
 export interface PublicShareInfo {
   recording_id: string
@@ -461,8 +477,14 @@ export interface PublicShareInfo {
   has_password: boolean
 }
 
+/** Ficheiro de uma gravação por link público — o token (e a palavra-passe, se houver) é a credencial. */
+export function publicRecordingContentPath(token: string, password?: string): string {
+  const q = password ? `?password=${encodeURIComponent(password)}` : ''
+  return `/api/public/recordings/${encodeURIComponent(token)}/content${q}`
+}
+
 export async function getPublicShare(token: string, password?: string): Promise<PublicShareInfo> {
-  const url = `/api/share/${token}${password ? `?password=${encodeURIComponent(password)}` : ''}`
+  const url = `/api/public/recordings/${token}${password ? `?password=${encodeURIComponent(password)}` : ''}`
   const res = await fetch(url, { credentials: 'same-origin' })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
@@ -614,10 +636,7 @@ export const updateOrgSettings = (
 
 /** Busca autenticada de um recurso binário → object URL (para <img>). */
 export async function authedBlobUrl(path: string): Promise<string> {
-  const res = await fetch(path, {
-    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
-  })
-  if (!res.ok) throw new Error(`blob ${res.status}`)
+  const res = await authedFetch(path)
   return URL.createObjectURL(await res.blob())
 }
 
@@ -890,16 +909,43 @@ export interface RoomNotes {
 }
 export const roomNotes = (code: string) => request<RoomNotes>(`/api/rooms/${code}/minutes`)
 
+/**
+ * Pedido binário autenticado (vídeo, VTT, miniatura, .ics). O `<video>` e o
+ * `<a download>` não enviam o Bearer, por isso o ficheiro vem por aqui e vira
+ * URL de objecto. Renova a sessão uma vez num 401, como o `request`; um 403
+ * ou 404 chega a quem chama como `ApiError`, com o corpo (`code`) quando há.
+ */
+async function authedFetch(path: string, retry = true): Promise<Response> {
+  const res = await fetch(path, { headers: authHeader(), credentials: 'same-origin' })
+  if (res.status === 401 && retry && localStorage.getItem('dx_user')) {
+    await refreshSession()
+    return authedFetch(path, false)
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new ApiError(res.status, body, (body as { error?: string } | null)?.error ?? res.statusText ?? 'request failed')
+  }
+  return res
+}
+
+/**
+ * O FICHEIRO da gravação (`…/content`). `GET /api/recordings/{id}` sem
+ * `/content` são os metadados em JSON: um corpo JSON aqui é o sinal de que o
+ * caminho está errado, e recusa-se em vez de o dar ao `<video>` como vídeo.
+ */
+async function recordingFile(id: string, download: boolean): Promise<Blob> {
+  const res = await authedFetch(`/api/recordings/${id}/content${download ? '?dl=1' : ''}`)
+  if ((res.headers.get('content-type') ?? '').includes('json')) throw new ApiError(415, null, 'a resposta não é o ficheiro da gravação')
+  return res.blob()
+}
+
 /** URL de objeto para reproduzir a gravação inline (o <video> não envia Bearer). */
-export async function recordingObjectUrl(rec: Recording): Promise<string> {
-  const res = await fetch(`/api/recordings/${rec.id}`, { headers: authHeader() })
-  if (!res.ok) throw new Error('failed to load recording')
-  return URL.createObjectURL(await res.blob())
+export async function recordingObjectUrl(rec: Pick<Recording, 'id'>): Promise<string> {
+  return URL.createObjectURL(await recordingFile(rec.id, false))
 }
 
 export async function downloadMeetingIcs(id: string, title: string): Promise<void> {
-  const res = await fetch(`/api/meetings/${id}/calendar.ics`, { headers: authHeader() })
-  if (!res.ok) throw new Error('ics failed')
+  const res = await authedFetch(`/api/meetings/${id}/calendar.ics`)
   const url = URL.createObjectURL(await res.blob())
   const el = document.createElement('a')
   el.href = url
@@ -909,11 +955,9 @@ export async function downloadMeetingIcs(id: string, title: string): Promise<voi
 }
 
 export async function downloadRecording(rec: Recording): Promise<void> {
-  // ?dl=1 → o servidor exige a permissão de download (RBAC: dono + admin da org).
-  const res = await fetch(`/api/recordings/${rec.id}?dl=1`, { headers: authHeader() })
-  if (res.status === 401 || res.status === 403) throw new Error('Sem permissão para descarregar')
-  if (!res.ok) throw new Error('download failed')
-  const url = URL.createObjectURL(await res.blob())
+  // ?dl=1 → o servidor exige a permissão de download (RBAC: dono + admin da
+  // org) e responde 403 aos outros; o erro chega a quem chama com o `code`.
+  const url = URL.createObjectURL(await recordingFile(rec.id, true))
   const a = document.createElement('a')
   a.href = url
   a.download = rec.filename
@@ -1165,7 +1209,8 @@ async function requestEmpty(path: string, options: RequestInit = {}, retry = tru
 
 export type SessionKind = 'meeting' | 'training' | 'broadcast' | 'hybrid'
 export type RecordQuality = '2160p' | '1080p' | '720p' | 'audio'
-export type RecordingFileStatus = 'processing' | 'transcribing' | 'ready' | 'failed'
+/** Estado do ficheiro. Não há `processing`: a linha só nasce com o ficheiro composto. */
+export type RecordingFileStatus = 'transcribing' | 'ready' | 'failed'
 export type TranscriptStatus = 'none' | 'transcribing' | 'ready' | 'failed'
 
 /** Página de uma listagem por cursor (`page_size` ≤ 100, `page_token` opaco). */
@@ -1216,45 +1261,32 @@ export interface RecordingLibraryItem extends RecordingItem {
   visibility: 'private' | 'org'
   published_at: string | null
   can_manage: boolean
+  /** Excerto com os termos entre «», só numa pesquisa (`q`). */
+  snippet?: string | null
   uploader_org_id: string | null
   uploader_org_name: string | null
 }
 
-/**
- * Biblioteca com metadados. `q` pesquisa no nome, autor, sala, descrição,
- * etiquetas e na TRANSCRIÇÃO. `scope: 'published'` lista as publicadas que o
- * utilizador vê (incluindo as da organização em que não participou).
- */
-export const recordingsLibraryMeta = (
-  params: { q?: string; scope?: 'mine' | 'published' } = {},
-  signal?: AbortSignal,
-) => {
-  const q = new URLSearchParams()
-  if (params.q) q.set('q', params.q)
-  if (params.scope) q.set('scope', params.scope)
-  const s = q.toString()
-  return request<RecordingLibraryItem[]>(`/api/recordings${s ? `?${s}` : ''}`, { signal })
-}
+/** Uma gravação: o mesmo item da biblioteca (404 se não a vê). */
+export const getRecording = (id: string, signal?: AbortSignal) => request<RecordingLibraryItem>(`/api/recordings/${id}`, { signal })
 
-export const recordingDetails = (id: string, signal?: AbortSignal) =>
-  request<RecordingLibraryItem>(`/api/recordings/${id}/details`, { signal })
-
+/** Muda nome (`filename`), descrição e etiquetas. Só quem gere (`can_manage`). */
 export const updateRecording = (id: string, patch: { filename?: string; description?: string; tags?: string[] }) =>
   request<RecordingLibraryItem>(`/api/recordings/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
 
+/** Publica para a organização do autor. `409 recording.no_file` numa falhada. */
 export const publishRecording = (id: string) =>
-  request<RecordingLibraryItem>(`/api/recordings/${id}/publish`, {
-    method: 'POST',
+  request<RecordingLibraryItem>(`/api/recordings/${id}/publication`, {
+    method: 'PUT',
     body: JSON.stringify({ visibility: 'org' }),
   })
 
-export const unpublishRecording = (id: string) =>
-  request<RecordingLibraryItem>(`/api/recordings/${id}/unpublish`, { method: 'POST' })
+/** Despublica (`204`). `404 recording.not_published` se não estava publicada. */
+export const unpublishRecording = (id: string) => requestEmpty(`/api/recordings/${id}/publication`, { method: 'DELETE' })
 
 /** URL de objecto da miniatura (o `<img>` não envia Bearer). Rejeita com 404 se não houver. */
 export async function recordingThumbnailUrl(id: string): Promise<string> {
-  const res = await fetch(`/api/recordings/${id}/thumbnail`, { headers: authHeader() })
-  if (!res.ok) throw new ApiError(res.status, null, 'sem miniatura')
+  const res = await authedFetch(`/api/recordings/${id}/thumbnail`)
   return URL.createObjectURL(await res.blob())
 }
 
@@ -1305,6 +1337,8 @@ export interface RecordingComment {
   t_ms: number | null
   body: string
   created_at: string
+  /** `null` se nunca foi editado. */
+  edited_at: string | null
   can_delete: boolean
 }
 
@@ -1417,8 +1451,8 @@ export const recordingCaption = (id: string, lang: string) =>
 
 /** URL de objecto do VTT para `<track src>` (o elemento não envia Bearer). */
 export async function recordingCaptionVttUrl(id: string, lang: string): Promise<string> {
-  const res = await fetch(`/api/recordings/${id}/captions/${lang}/vtt`, { headers: authHeader() })
-  if (!res.ok) throw new ApiError(res.status, null, 'legenda indisponível')
+  // 409 enquanto a legenda gera ou se falhou: quem chama mostra o estado.
+  const res = await authedFetch(`/api/recordings/${id}/captions/${lang}/vtt`)
   return URL.createObjectURL(await res.blob())
 }
 

@@ -23,7 +23,6 @@ export default {
     emissoes: 'Broadcasts',
     reunioes: 'Meetings',
     quatroK: '4K',
-    aProcessar: 'Processing',
     contagem_one: '{{count}} recording',
     contagem_other: '{{count}} recordings',
     rotulo: 'Filter recordings',
@@ -43,8 +42,6 @@ export default {
     estado: 'Status',
   },
   estado: {
-    aProcessar: 'Processing',
-    aProcessarPct: 'Processing {{pct}}%',
     aTranscrever: 'Transcribing',
     aTranscreverPct: 'Transcribing {{pct}}%',
     publicada: 'Published',

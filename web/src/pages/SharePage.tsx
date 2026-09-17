@@ -1,12 +1,12 @@
 /**
  * Gravação partilhada por link público (`#/share/:token`) — sem sessão; o
- * token é a credencial. GET /api/share/{token} responde 404 para link
+ * token é a credencial. GET /api/public/recordings/{token} responde 404 para link
  * inexistente OU expirado (o servidor não distingue, e o ecrã também não) e
  * 401 quando o link tem palavra-passe e ela falta ou está errada.
  */
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getPublicShare, PublicShareInfo } from '../api'
+import { getPublicShare, publicRecordingContentPath, PublicShareInfo } from '../api'
 import { Icon } from '../ui/icons'
 import { Alert, Button, Card, Empty, Field, Spinner } from '../ui/kit'
 import CampoPalavraPasse from './auth/CampoPalavraPasse'
@@ -116,6 +116,16 @@ export default function SharePage({ token }: { token: string }) {
             </div>
             <div className="dx-eyebrow">{t('publico.partilha.gravacao')}</div>
             <h1 className="pub-partilha__nome">{estado.info.filename.replace(/\.(webm|mp4|mkv)$/i, '')}</h1>
+            {/* Sem sessão: o token (e a palavra-passe) é a credencial, por isso o
+                `<video>` lê o ficheiro directamente e pode ir buscando por partes. */}
+            <video
+              className="pub-partilha__video"
+              controls
+              playsInline
+              preload="metadata"
+              src={publicRecordingContentPath(token, password || undefined)}
+              aria-label={t('publico.partilha.gravacao')}
+            />
             <dl className="dx-kv">
               <dt>{t('publico.partilha.criada')}</dt>
               <dd className="dx-num">{new Date(estado.info.created_at).toLocaleString(i18n.language)}</dd>
@@ -124,7 +134,7 @@ export default function SharePage({ token }: { token: string }) {
             </dl>
             <a
               className="dx-btn dx-btn--primary dx-btn--lg dx-btn--block"
-              href={`/api/share/${token}/download${password ? `?password=${encodeURIComponent(password)}` : ''}`}
+              href={publicRecordingContentPath(token, password || undefined)}
               download={estado.info.filename}
             >
               <Icon name="download" />

@@ -23,7 +23,6 @@ export default {
     emissoes: '直播',
     reunioes: '会议',
     quatroK: '4K',
-    aProcessar: '处理中',
     contagem_one: '{{count}} 条录制内容',
     contagem_other: '{{count}} 条录制内容',
     rotulo: '筛选录制内容',
@@ -43,8 +42,6 @@ export default {
     estado: '状态',
   },
   estado: {
-    aProcessar: '处理中',
-    aProcessarPct: '处理中 {{pct}}%',
     aTranscrever: '转写中',
     aTranscreverPct: '转写中 {{pct}}%',
     publicada: '已发布',

@@ -5,7 +5,7 @@ import { playerHash, studioEditHash, studioEditTarget } from './studioLink'
 
 const ID = '6f1c2a34-9b8d-4e7f-a1b2-c3d4e5f6a7b8'
 
-const rec = (id: string, room: string, status = 'ready'): RecordingItem => ({
+const rec = (id: string, room: string, status: RecordingItem['status'] = 'ready'): RecordingItem => ({
   id,
   room_id: 'r',
   uploader_id: 'u',
