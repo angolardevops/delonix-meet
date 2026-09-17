@@ -124,6 +124,11 @@ export default {
     chaveDefinida: '✓ clé définie',
     chaveEmFalta: '— sans clé',
     editarCurto: 'modifier',
+    tentativa: 'tentative {{n}}',
+    recuperacao: {
+      titulo: 'Le réseau est tombé',
+      texto: "L'enregistrement local continue ; la diffusion reprendra toute seule.",
+    },
     contagem: {
       noAr_one: "{{count}} à l'antenne",
       noAr_other: "{{count}} à l'antenne",

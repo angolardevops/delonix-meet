@@ -124,6 +124,11 @@ export default {
     chaveDefinida: '✓ chave definida',
     chaveEmFalta: '— sem chave',
     editarCurto: 'editar',
+    tentativa: 'tentativa {{n}}',
+    recuperacao: {
+      titulo: 'A rede caiu',
+      texto: 'A gravação local continua; a emissão repõe-se sozinha.',
+    },
     contagem: {
       noAr_one: '{{count}} no ar',
       noAr_other: '{{count}} no ar',

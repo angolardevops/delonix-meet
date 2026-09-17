@@ -124,6 +124,11 @@ export default {
     chaveDefinida: '✓ key set',
     chaveEmFalta: '— no key',
     editarCurto: 'edit',
+    tentativa: 'attempt {{n}}',
+    recuperacao: {
+      titulo: 'The network went down',
+      texto: 'Local recording continues; the broadcast will resume on its own.',
+    },
     contagem: {
       noAr_one: '{{count}} live',
       noAr_other: '{{count}} live',

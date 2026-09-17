@@ -26,7 +26,7 @@ import { AVATAR_INICIAL, CompositorDeAula, EstadoDoAvatar, Recorte, RECORTE_INTE
 import Cronometro from '../studio/Cronometro'
 import { useDebito } from '../studio/debito'
 import type { SondagemNoPalco } from '../studio/desenho'
-import { Destino, Directo, directoSuportado, EstadoDoDirecto } from '../studio/directo'
+import { Destino, Directo, directoSuportado, EstadoDoDestino, EstadoDoDirecto } from '../studio/directo'
 import EditPanel, { Gravado, VistaDoEditor } from '../studio/EditPanel'
 import { cortesSuportados } from '../studio/editor'
 import LayoutsPanel from '../studio/LayoutsPanel'
@@ -113,6 +113,7 @@ export default function Studio() {
   const [ocupacao, setOcupacao] = useState(0)
 
   const [directo, setDirecto] = useState<EstadoDoDirecto>({ fase: 'parado' })
+  const [porDestino, setPorDestino] = useState<EstadoDoDestino[]>([])
   const kbps = useDebito(directo)
   // A sala ligada ao Estúdio: pedida pela pessoa, carregada por `lazy`.
   const [salaAberta, setSalaAberta] = useState(false)
@@ -380,6 +381,7 @@ export default function Studio() {
       }
       const d = new Directo()
       d.aoMudar = setDirecto
+      d.aoMudarDestinos = setPorDestino
       directoRef.current = d
       await d.comecar(fluxo, codigo, token, destinos.filter((dest) => dest.chave.trim()))
     } catch (e) {
@@ -779,6 +781,8 @@ export default function Studio() {
           <LivePanel
             suportado={directoSuportado()}
             destinos={destinos}
+            porDestino={porDestino}
+            localAGravar={aGravar}
             maximo={MAX_DESTINOS}
             estado={directo}
             podeEmitir={temFonte}

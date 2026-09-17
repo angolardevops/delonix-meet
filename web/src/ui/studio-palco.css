@@ -647,6 +647,10 @@
   text-transform: uppercase;
   white-space: nowrap;
 }
+.st-dest__retry {
+  font-size: 9px;
+  color: var(--st-dest-fg);
+}
 .st-dest__foot {
   display: flex;
   align-items: center;

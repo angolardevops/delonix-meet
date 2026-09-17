@@ -124,6 +124,11 @@ export default {
     chaveDefinida: '✓ 已设置密钥',
     chaveEmFalta: '— 无密钥',
     editarCurto: '编辑',
+    tentativa: '第 {{n}} 次尝试',
+    recuperacao: {
+      titulo: '网络中断',
+      texto: '本地录制仍在继续；直播会自动恢复。',
+    },
     contagem: {
       noAr_one: '{{count}} 个直播中',
       noAr_other: '{{count}} 个直播中',

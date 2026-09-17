@@ -2,13 +2,13 @@
  * «Destinos simultâneos» (ADR-0003): um cartão por destino, na forma do
  * template — etiqueta, nome, canal, estado.
  *
- * O QUE O ESTADO QUER DIZER, E O QUE NÃO QUER: o cartão mostra o que ESTE
- * browser sabe — se o destino tem chave e em que fase está a emissão (uma só
- * ligação ao servidor, que reparte para todos; ver `destinosLocais.ts`).
- * Saúde, débito e perdas POR destino dependem do estado por destino do
- * servidor, que ainda não é contrato desta UI: não há barra nem kbps no
- * cartão, em vez de um número inventado. O único débito no ecrã é o que o
- * browser ENVIOU (topo).
+ * O QUE O ESTADO QUER DIZER: a FORMA do cartão (bloqueado, editável) vem do
+ * estado GLOBAL do directo — uma só ligação ao servidor, que reparte para
+ * todos (ver `destinosLocais.ts`). A tentativa/motivo por baixo, quando o
+ * destino individual está em erro, vêm do `porDestino` que o servidor manda
+ * a cada 2 s (`directo.ts`, `aoMudarDestinos`) — casado pelo índice `dest`.
+ * Kbps e perdas ficam de fora do cartão de propósito: são números que só
+ * fazem sentido no ecrã do directo a decorrer, não aqui.
  *
  * Os campos (rótulo, servidor, chave) editam-se num diálogo, para o cartão
  * manter a forma do template.
@@ -19,7 +19,7 @@ import { Alert, Button, cx, Dialog, Field, IconButton, TextInput } from '../ui/k
 import { contagemDosDestinos, estadoDoCartao, ORDEM_DA_CONTAGEM } from './destinosLocais'
 import type { EstadoDoCartao } from './destinosLocais'
 import { plataformaDoUrl } from './palco'
-import type { Destino, EstadoDoDirecto } from './directo'
+import type { Destino, EstadoDoDestino, EstadoDoDirecto } from './directo'
 
 const CHAVE_DO_ESTADO: Record<EstadoDoCartao, string> = {
   'sem-chave': 'semChave',
@@ -126,7 +126,22 @@ function DialogoDoDestino({
   )
 }
 
-function CartaoDoDestino({ d, i, fase, bloqueado, onEditar }: { d: Destino; i: number; fase: EstadoDoDirecto['fase']; bloqueado: boolean; onEditar: () => void }) {
+function CartaoDoDestino({
+  d,
+  i,
+  fase,
+  bloqueado,
+  live,
+  onEditar,
+}: {
+  d: Destino
+  i: number
+  fase: EstadoDoDirecto['fase']
+  bloqueado: boolean
+  /** O último estado que o SERVIDOR mandou para este destino, casado por índice. */
+  live?: EstadoDoDestino
+  onEditar: () => void
+}) {
   const { t } = useTranslation()
   const nome = d.rotulo?.trim() || t('studio.directo.destino', { n: i + 1 })
   const temChave = !!d.chave.trim()
@@ -146,6 +161,12 @@ function CartaoDoDestino({ d, i, fase, bloqueado, onEditar }: { d: Destino; i: n
           {t(`studio.directo.estados.${CHAVE_DO_ESTADO[estado]}`)}
         </span>
       </div>
+      {live?.estado === 'erro' && (
+        <div className="st-dest__retry dx-num" data-studio="destino-retry">
+          {t('studio.directo.tentativa', { n: live.tentativas })}
+          {live.motivo ? ` · ${live.motivo}` : ''}
+        </div>
+      )}
       <div className="st-dest__foot dx-num">
         <span>{temChave ? t('studio.directo.chaveDefinida') : t('studio.directo.chaveEmFalta')}</span>
         <button
@@ -170,6 +191,8 @@ function CartaoDoDestino({ d, i, fase, bloqueado, onEditar }: { d: Destino; i: n
 export default function LivePanel({
   suportado,
   destinos,
+  porDestino,
+  localAGravar,
   maximo,
   estado,
   podeEmitir,
@@ -182,6 +205,10 @@ export default function LivePanel({
 }: {
   suportado: boolean
   destinos: Destino[]
+  /** Último estado por destino que o servidor mandou (`directo.aoMudarDestinos`). */
+  porDestino: EstadoDoDestino[]
+  /** A gravação local está mesmo a decorrer — só então a nota de recuperação faz sentido. */
+  localAGravar: boolean
   maximo: number
   estado: EstadoDoDirecto
   /** Há imagem para emitir (ecrã ou câmara). */
@@ -206,6 +233,11 @@ export default function LivePanel({
     .map((e) => t(`studio.directo.contagem.${CHAVE_DO_ESTADO[e]}`, { count: n[e] }))
     .join(' · ')
   const emEdicao = aEditar !== null ? destinos[aEditar] : undefined
+  // Modo de recuperação (andaime «delonix-meet-recovery»): pelo menos um
+  // destino a repetir sozinho, com a gravação local mesmo a decorrer — nunca
+  // só porque a emissão nem chegou a arrancar (aLigar também bate no `erro`
+  // de um cartão que ainda não tem chave, e isso não é uma queda de rede).
+  const emRecuperacao = noAr && localAGravar && porDestino.some((d) => d.estado === 'erro')
 
   return (
     <section className={cx('st-live', noAr && 'st-live--on')} data-studio="directo" aria-labelledby="st-live-h">
@@ -227,11 +259,26 @@ export default function LivePanel({
           <>
             <ul className="st-dests">
               {destinos.map((d, i) => (
-                <CartaoDoDestino key={i} d={d} i={i} fase={estado.fase} bloqueado={bloqueado} onEditar={() => setAEditar(i)} />
+                <CartaoDoDestino
+                  key={i}
+                  d={d}
+                  i={i}
+                  fase={estado.fase}
+                  bloqueado={bloqueado}
+                  live={porDestino.find((p) => p.dest === i)}
+                  onEditar={() => setAEditar(i)}
+                />
               ))}
             </ul>
             {/* Marca para os e2e: a emissão foi aceite. */}
             {noAr && <span data-studio="no-ar" hidden />}
+            {emRecuperacao && (
+              <div className="dx-alert dx-alert--warning" role="status" data-studio="modo-recuperacao">
+                <span>
+                  <strong>{t('studio.directo.recuperacao.titulo')}</strong> — {t('studio.directo.recuperacao.texto')}
+                </span>
+              </div>
+            )}
             {estado.fase === 'erro' && (
               <div className="dx-alert dx-alert--danger" role="alert" data-studio="directo-erro">
                 {estado.motivo}
