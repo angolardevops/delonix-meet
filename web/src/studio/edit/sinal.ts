@@ -8,7 +8,7 @@
 //  Sonoridade integrada (ITU-R BS.1770-4 / EBU R 128, a recomendação de sonoridade)
 // ---------------------------------------------------------------------------
 
-interface Biquad {
+export interface Biquad {
   b0: number
   b1: number
   b2: number
@@ -24,7 +24,7 @@ interface Biquad {
  * Nota medida: a forma «RBJ» dos mesmos parâmetros NÃO a reproduz — dá 0,26 dB
  * a menos a 1 kHz, e um seno de referência media −3,27 em vez de −3,01 LUFS.
  */
-function filtrosK(sr: number): [Biquad, Biquad] {
+export function filtrosK(sr: number): [Biquad, Biquad] {
   // Prateleira alta (efeito da cabeça).
   const G = 3.999843853973347
   const Q = 0.7071752369554196
