@@ -571,6 +571,7 @@ pub async fn v1_join_bot_room(
             wait: false,  // Bypass da sala de espera (acordado com o utilizador)
             adm: false,
             is_bot: true,
+            sid: None, // um bot não tem sessão de pessoa
         },
     )?;
 

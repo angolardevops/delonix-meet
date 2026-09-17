@@ -492,6 +492,8 @@ pub async fn join_room(
             wait: room.waiting_room || !access.direct, // sem entrada direta → sala de espera
             adm: access.admitter, // anfitrião ou co-anfitrião persistido pode admitir
             is_bot: false,        // join normal de utilizador humano
+            // A sessão de onde se entra: terminá-la fecha também este /ws.
+            sid: auth.session_id,
         },
     )?;
 

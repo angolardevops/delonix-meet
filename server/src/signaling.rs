@@ -2107,6 +2107,12 @@ pub async fn ws_handler(
             "Este nó está a encerrar. A tentar noutro…".into(),
         ));
     }
+    // O room token herda a sessão de quem entrou: terminada a sessão, nem o
+    // token de sala ainda válido volta a abrir o /ws.
+    if let Some(sid) = claims.sid {
+        crate::sessions::ensure_active(&state, claims.sub, sid).await?;
+    }
+    let session_id = claims.sid;
     let username = claims.name.unwrap_or_else(|| "anonymous".into());
     let sfu_mode = claims.topo.as_deref() == Some("sfu");
     let is_host = claims.owner;
@@ -2119,7 +2125,7 @@ pub async fn ws_handler(
     Ok(ws.on_upgrade(move |socket| {
         handle_socket(
             state, socket, room_id, user_id, username, sfu_mode, is_host, must_wait, can_admit,
-            is_bot, reconnect,
+            is_bot, reconnect, session_id,
         )
     }))
 }
@@ -2451,6 +2457,7 @@ async fn handle_socket(
     can_admit: bool,
     is_bot: bool,
     reconnect: Option<String>,
+    session_id: Option<Uuid>,
 ) {
     // Gauge de ligações /ws ativas (dec automático no fim do handler).
     let _ws_guard = crate::metrics::WsGuard::signaling(state.metrics.clone());
@@ -2490,6 +2497,9 @@ async fn handle_socket(
     // Fila de saída LIMITADA (ver `PeerTx`): um consumidor lento passa a
     // custar o próprio socket em vez da memória do nó inteiro.
     let (tx, mut rx, shutdown) = PeerTx::new(state.config.ws_queue_cap, state.metrics.clone());
+    // Terminar a sessão (`sessions::revoke`) acorda este `shutdown`: o laço de
+    // entrada sai pelo caminho ordenado de sempre.
+    let _session_guard = session_id.map(|sid| state.session_kills.register(sid, shutdown.clone()));
 
     // Outbound: hub -> websocket. Um Ping periódico mantém a ligação viva
     // (proxies fecham WebSockets ociosos): sem tráfego, o socket cairia e —
@@ -2638,7 +2648,7 @@ async fn handle_socket(
                 _ => break,
             },
             _ = shutdown.notified() => {
-                tracing::warn!(%room_id, %peer_id, "sessão terminada: fila de saída em transbordo");
+                tracing::warn!(%room_id, %peer_id, "sessão terminada: sessão da conta terminada ou fila de saída em transbordo");
                 break;
             }
         };

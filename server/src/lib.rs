@@ -36,6 +36,7 @@ mod redis_state;
 mod room_tools;
 mod rooms;
 pub mod secrets_at_rest;
+mod sessions;
 mod sfu;
 #[cfg(test)]
 mod sfu_e2e;
@@ -132,6 +133,9 @@ pub struct AppState {
     pub redis_bus: Option<Arc<pubsub::PubSubBus>>,
     /// Contadores de observabilidade expostos em `/metrics` (ver metrics.rs).
     pub metrics: Arc<metrics::Metrics>,
+    /// WebSockets de cada sessão de conta neste nó — terminar uma sessão
+    /// fecha-os (ver `sessions`).
+    pub session_kills: sessions::KillRegistry,
 }
 
 impl AppState {
@@ -306,6 +310,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(users::rotate_my_room_code),
         )
         .route("/api/users/me/storage-usage", get(usage::my_storage_usage))
+        // Sessões da conta e reautenticação (Navegavel3, «Dispositivos e sessões»).
+        .route("/api/users/me/sessions", get(sessions::list))
+        .route(
+            "/api/users/me/sessions/{session_id}",
+            get(sessions::get_one).delete(sessions::delete),
+        )
+        .route(
+            "/api/users/me/sessions/revoke-others",
+            post(sessions::revoke_others),
+        )
+        .route(
+            "/api/users/me/reauthentication",
+            post(sessions::reauthenticate),
+        )
         // MFA (TOTP, RFC 6238).
         .route("/api/users/me/mfa", get(mfa::estado))
         .route("/api/users/me/mfa/enroll", post(mfa::inscrever))
@@ -783,10 +801,18 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         config: config.clone(),
         redis_bus: redis_bus.clone(),
         metrics,
+        session_kills: sessions::KillRegistry::default(),
     });
 
     // Subscriber Redis: ouve mensagens de outros nós e entrega localmente.
     if let Some(bus) = redis_bus {
+        let state_ref_sessions = Arc::downgrade(&state);
+        pubsub::start_session_revoked_subscriber(bus.clone(), move |sid| {
+            if let Some(s) = state_ref_sessions.upgrade() {
+                s.session_kills.kill_local(sid);
+            }
+        });
+
         let state_ref = Arc::downgrade(&state);
         pubsub::start_subscriber(bus.clone(), move |user_id, msg| {
             if let Some(s) = state_ref.upgrade() {
@@ -1061,6 +1087,26 @@ pub async fn run() {
                 n += 1;
                 if n.is_multiple_of(240) {
                     let _ = nodes::forget_old(&state.db).await;
+                }
+            }
+        });
+    }
+
+    // Cron: sessões de conta sem refresh token vivo passam a `expired`, as
+    // terminadas há 90 dias saem, e as cerimónias WebAuthn vencidas também.
+    {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                match sessions::sweep(&db).await {
+                    Ok((0, 0)) => {}
+                    Ok((expired, deleted)) => {
+                        tracing::info!(expired, deleted, "varrimento de sessões")
+                    }
+                    Err(e) => tracing::warn!(error = %e, "varrimento de sessões falhou"),
                 }
             }
         });

@@ -126,6 +126,7 @@ fn parts() -> Vec<utoipa::openapi::OpenApi> {
         crate::odoo::ApiDoc::openapi(),
         crate::auth::ApiDoc::openapi(),
         crate::mfa::ApiDoc::openapi(),
+        crate::sessions::ApiDoc::openapi(),
         crate::org::ApiDoc::openapi(),
         crate::audit::ApiDoc::openapi(),
         crate::apikeys::ApiDoc::openapi(),

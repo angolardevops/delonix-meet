@@ -22,6 +22,8 @@ use crate::presence::CallServerMsg;
 const CHANNEL: &str = "dlx:presence";
 const ONLINE_SET: &str = "dlx:online";
 const SIGNALING_PREFIX: &str = "room:";
+/// Sessões terminadas: cada nó fecha as ligações locais dessa sessão.
+const SESSION_REVOKED_CHANNEL: &str = "dlx:session-revoked";
 
 // ---------- Payload ----------
 
@@ -112,6 +114,12 @@ impl PubSubBus {
         let _: redis::RedisResult<()> = c.publish(CHANNEL, payload).await;
     }
 
+    /// Avisa os outros nós de que a sessão `sid` terminou.
+    pub async fn publish_session_revoked(&self, sid: Uuid) {
+        let mut c = self.conn.clone();
+        let _: redis::RedisResult<()> = c.publish(SESSION_REVOKED_CHANNEL, sid.to_string()).await;
+    }
+
     /// Publica um evento de sinalização para uma sala específica.
     pub async fn publish_signaling(&self, room_id: Uuid, event: &RedisRoomEvent) {
         let payload = match serde_json::to_string(event) {
@@ -163,6 +171,40 @@ pub fn start_subscriber(
                     }
                     // Stream fechou — Redis caiu; retry
                     tracing::warn!("Redis subscriber desconectado; a reconectar…");
+                }
+            }
+        }
+    })
+}
+
+/// Subscritor das sessões terminadas: chama `kill` com o id de cada uma.
+pub fn start_session_revoked_subscriber(
+    bus: Arc<PubSubBus>,
+    kill: impl Fn(Uuid) + Send + Sync + 'static,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            match bus.client.get_async_pubsub().await {
+                Err(e) => {
+                    tracing::error!("Redis (sessões): falha ao ligar ({e}); retry em 5s");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                }
+                Ok(mut pubsub) => {
+                    if let Err(e) = pubsub.subscribe(SESSION_REVOKED_CHANNEL).await {
+                        tracing::error!("Redis SUBSCRIBE (sessões) falhou ({e}); retry em 5s");
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                        continue;
+                    }
+                    let mut stream = pubsub.on_message();
+                    while let Some(msg) = stream.next().await {
+                        let Ok(raw) = msg.get_payload::<String>() else {
+                            continue;
+                        };
+                        if let Ok(sid) = Uuid::parse_str(&raw) {
+                            kill(sid);
+                        }
+                    }
+                    tracing::warn!("Redis subscriber (sessões) desconectado; a reconectar…");
                 }
             }
         }
