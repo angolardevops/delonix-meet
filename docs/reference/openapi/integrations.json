@@ -2627,6 +2627,14 @@
       },
       "OrgSettingsReq": {
         "properties": {
+          "chat_retention_days": {
+            "description": "`null`/omisso = promessa por omissão (fim do dia UTC da última\nmensagem); como os outros campos deste pedido, o valor gravado é\nsempre o que vier aqui, não um `PATCH` parcial.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "domain": {
             "type": "string"
           },
@@ -2675,6 +2683,13 @@
       "OrgSettingsUpdated": {
         "description": "Resposta de `POST /api/orgs/{org_id}/settings`: os valores como ficaram\ngravados (domínio normalizado, retenção limitada a 0–3650).",
         "properties": {
+          "chat_retention_days": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "domain": {
             "type": "string"
           },
@@ -2884,6 +2899,14 @@
       },
       "OrgSummary": {
         "properties": {
+          "chat_retention_days": {
+            "description": "Retenção do chat da sala em dias corridos (G9); `null` = promessa por\nomissão (até ao fim do dia UTC da última mensagem).",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "domain": {
             "type": "string"
           },

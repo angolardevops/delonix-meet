@@ -163,15 +163,36 @@ pub async fn apply(db: &PgPool, w: &ChatWrite) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Apaga o chat das salas cuja última mensagem é de um dia (UTC) já acabado —
-/// a retenção prometida na migração 0018. Devolve quantas mensagens saíram.
+/// Apaga o chat das salas cujo prazo de retenção já passou. Por omissão é a
+/// promessa da migração 0018 — até ao fim do dia (UTC) da última mensagem.
+/// Uma organização com `chat_retention_days` definido (G9) troca esse prazo
+/// por N dias corridos a contar da última mensagem; uma dona em várias
+/// organizações usa a mais longa (nunca apaga cedo demais por ambiguidade —
+/// mesmo espírito do `retention_days` das gravações em `recorder.rs`).
+/// Devolve quantas mensagens saíram.
 pub async fn retention_sweep(db: &PgPool) -> Result<u64, sqlx::Error> {
     let r = sqlx::query(
         "DELETE FROM room_chat_messages m
-         USING (SELECT room_id FROM room_chat_messages
-                GROUP BY room_id
-                HAVING date_trunc('day', max(created_at) AT TIME ZONE 'UTC') + interval '1 day'
-                       <= (now() AT TIME ZONE 'UTC')) velhas
+         USING (
+             SELECT c.room_id
+             FROM (SELECT room_id, max(created_at) AS last_at
+                   FROM room_chat_messages GROUP BY room_id) c
+             LEFT JOIN rooms ON rooms.id = c.room_id
+             LEFT JOIN LATERAL (
+                 SELECT max(o.chat_retention_days) AS days
+                 FROM org_members om
+                 JOIN organizations o ON o.id = om.org_id
+                 WHERE om.user_id = rooms.owner_id
+                   AND o.chat_retention_days IS NOT NULL
+             ) org_rule ON true
+             WHERE CASE
+                 WHEN org_rule.days IS NOT NULL THEN
+                     c.last_at + make_interval(days => org_rule.days) <= now()
+                 ELSE
+                     date_trunc('day', c.last_at AT TIME ZONE 'UTC') + interval '1 day'
+                         <= (now() AT TIME ZONE 'UTC')
+             END
+         ) velhas
          WHERE m.room_id = velhas.room_id",
     )
     .execute(db)

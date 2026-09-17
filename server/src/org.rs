@@ -34,6 +34,10 @@ pub struct OrgSummary {
     pub domain: String,
     #[serde(default)]
     pub retention_days: i32,
+    /// Retenção do chat da sala em dias corridos (G9); `null` = promessa por
+    /// omissão (até ao fim do dia UTC da última mensagem).
+    #[serde(default)]
+    pub chat_retention_days: Option<i32>,
     pub max_groups: Option<i32>,
     pub max_rooms: Option<i32>,
     pub max_meetings: Option<i32>,
@@ -45,6 +49,11 @@ pub struct OrgSettingsReq {
     pub domain: String,
     #[serde(default)]
     pub retention_days: i32,
+    /// `null`/omisso = promessa por omissão (fim do dia UTC da última
+    /// mensagem); como os outros campos deste pedido, o valor gravado é
+    /// sempre o que vier aqui, não um `PATCH` parcial.
+    #[serde(default)]
+    pub chat_retention_days: Option<i32>,
     #[serde(default)]
     pub max_groups: Option<i32>,
     #[serde(default)]
@@ -115,6 +124,7 @@ pub struct OrgSettingsUpdated {
     pub ok: bool,
     pub domain: String,
     pub retention_days: i32,
+    pub chat_retention_days: Option<i32>,
 }
 
 /// Definições da organização (só admin): domínio de produção + retenção.
@@ -153,6 +163,10 @@ pub async fn update_settings(
         return Err(ApiError::BadRequest("domínio inválido".into()));
     }
     let retention = req.retention_days.clamp(0, 3650);
+    // G9: None mantém a promessa por omissão (NULL); um valor fora de
+    // 0-3650 é tratado como se não tivesse vindo, em vez de rejeitar o
+    // pedido inteiro por um único campo opcional.
+    let chat_retention = req.chat_retention_days.filter(|n| (0..=3650).contains(n));
     // Quotas: None/negativo => ilimitado (NULL).
     let norm = |v: Option<i32>| v.filter(|n| *n >= 0);
     // Dial-in PSTN: valida os enums (None => mantém o atual via COALESCE).
@@ -168,7 +182,8 @@ pub async fn update_settings(
         "UPDATE organizations SET domain = $1, retention_days = $2,
              max_groups = $3, max_rooms = $4, max_meetings = $5,
              voice_media_backend = COALESCE($7, voice_media_backend),
-             voice_did_model = COALESCE($8, voice_did_model)
+             voice_did_model = COALESCE($8, voice_did_model),
+             chat_retention_days = $9
          WHERE id = $6",
     )
     .bind(&domain)
@@ -179,6 +194,7 @@ pub async fn update_settings(
     .bind(org_id)
     .bind(backend)
     .bind(did_model)
+    .bind(chat_retention)
     .execute(&state.db)
     .await?;
     crate::audit::log(
@@ -193,6 +209,7 @@ pub async fn update_settings(
         ok: true,
         domain,
         retention_days: retention,
+        chat_retention_days: chat_retention,
     }))
 }
 
@@ -455,7 +472,8 @@ const MY_ORGS_SQL: &str = r#"
     SELECT o.id, o.name, o.slug, m.role,
            (SELECT COUNT(*) FROM org_members mm
              WHERE mm.org_id = o.id AND mm.archived_at IS NULL) AS member_count,
-           o.domain, o.retention_days, o.max_groups, o.max_rooms, o.max_meetings
+           o.domain, o.retention_days, o.chat_retention_days,
+           o.max_groups, o.max_rooms, o.max_meetings
     FROM organizations o
     JOIN org_members m ON m.org_id = o.id AND m.user_id = $1 AND m.archived_at IS NULL
     WHERE ($2::uuid IS NULL OR o.id = $2)
@@ -1697,14 +1715,16 @@ mod tests {
             ok: true,
             domain: "meet.acme.com".into(),
             retention_days: 30,
+            chat_retention_days: Some(7),
         })
         .unwrap();
         // Campo a campo, e não um `json!` literal: a catraca da arquitectura
         // conta os `{"ok": true}` do código, e um teste não é dívida.
-        assert_eq!(v.as_object().unwrap().len(), 3);
+        assert_eq!(v.as_object().unwrap().len(), 4);
         assert_eq!(v["ok"], serde_json::Value::Bool(true));
         assert_eq!(v["domain"], "meet.acme.com");
         assert_eq!(v["retention_days"], 30);
+        assert_eq!(v["chat_retention_days"], 7);
     }
 
     #[test]
