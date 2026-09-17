@@ -243,8 +243,11 @@ async fn admin_employees_add_list_patch_archive(db: sqlx::PgPool) {
     let (st, body) = app
         .delete(&org_path(&org, &format!("members/{dario}")), t)
         .await;
-    assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    assert_eq!(st, 204, "{body}");
+    let (st, _) = app
+        .delete(&org_path(&org, &format!("members/{dario}")), t)
+        .await;
+    assert_eq!(st, 404, "já não é membro activo");
     let (_, list) = app.get(&org_path(&org, "members"), t).await;
     assert_eq!(list.as_array().unwrap().len(), 1);
     let archived: bool = sqlx::query_scalar(
@@ -255,11 +258,11 @@ async fn admin_employees_add_list_patch_archive(db: sqlx::PgPool) {
     .await
     .unwrap();
     assert!(archived);
-    // Arquivar alguém que não existe: 200 na mesma (UPDATE sem linhas).
+    // Arquivar alguém que não é membro activo: 404 (antes, 200 sem fazer nada).
     let (st, _) = app
         .delete(&org_path(&org, &format!("members/{INVENTED_ID}")), t)
         .await;
-    assert_eq!(st, 200);
+    assert_eq!(st, 404);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -423,9 +426,10 @@ async fn admin_sso_config_crud(db: sqlx::PgPool) {
     let (_, body) = app.get("/api/auth/sso/discovery", None).await;
     assert_eq!(body, json!({"sso_enabled": false, "enforce_sso": false}));
 
-    let (st, body) = app.delete(&org_path(&org, "sso"), t).await;
-    assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    let (st, _) = app.delete(&org_path(&org, "sso"), t).await;
+    assert_eq!(st, 204);
+    let (st, _) = app.delete(&org_path(&org, "sso"), t).await;
+    assert_eq!(st, 404, "já não havia SSO");
     let (_, body) = app.get(&org_path(&org, "sso"), t).await;
     assert!(body.is_null());
 }
@@ -510,11 +514,14 @@ async fn admin_webhooks_crud(db: sqlx::PgPool) {
     assert_eq!(st, 200);
     assert_eq!(list.as_array().unwrap().len(), 1);
     let id = hook["id"].as_str().unwrap();
-    let (st, body) = app
+    let (st, _) = app
         .delete(&org_path(&org, &format!("webhooks/{id}")), t)
         .await;
-    assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    assert_eq!(st, 204);
+    let (st, _) = app
+        .delete(&org_path(&org, &format!("webhooks/{id}")), t)
+        .await;
+    assert_eq!(st, 404);
     let (_, list) = app.get(&org_path(&org, "webhooks"), t).await;
     assert!(list.as_array().unwrap().is_empty());
 }
@@ -872,7 +879,7 @@ async fn cross_org_delete_leaves_key_and_webhook_alive(db: sqlx::PgPool) {
             Some(&a.token),
         )
         .await;
-    assert_eq!(st, 200);
+    assert_eq!(st, 404, "o webhook é da B: não existe nesta organização");
 
     let (_, keys) = app.get(&org_path(&borg, "api-keys"), Some(&b.token)).await;
     assert!(
@@ -927,7 +934,7 @@ async fn archived_members_lose_org_access(db: sqlx::PgPool) {
         let (st, _) = app
             .delete(&org_path(&org, &format!("members/{u}")), Some(&a.token))
             .await;
-        assert_eq!(st, 200);
+        assert_eq!(st, 204);
     }
 
     // DEPOIS
@@ -949,7 +956,7 @@ async fn archived_members_lose_org_access(db: sqlx::PgPool) {
             Some(&d.token),
         )
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404, "o admin arquivado já não chega à gravação");
     // A sessão em si continua válida (o JWT não é revogado).
     let (st, _) = app.get("/api/users/me", Some(&c.token)).await;
     assert_eq!(st, 200);

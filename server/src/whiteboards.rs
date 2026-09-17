@@ -336,34 +336,39 @@ pub async fn signed_url(
     security(("session" = [])),
     params(("whiteboard_id" = Uuid, Path)),
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 204, description = "Quadro apagado."),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
-        (status = 403, description = "Nem dono nem admin.", body = crate::openapi::ErrorBody),
-        (status = 404, body = crate::openapi::ErrorBody),
+        (status = 403, description = "`whiteboard.not_manager`: membro da organização, mas nem dono nem admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não existe, ou não é membro activo da organização do quadro.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn delete(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     let row: (Uuid, Uuid) =
         sqlx::query_as("SELECT owner_id, org_id FROM whiteboards WHERE id = $1")
             .bind(id)
-            .fetch_one(&state.db)
-            .await?;
-    let is_owner = row.0 == auth.user_id;
-    let is_admin = crate::org::require_admin_pub(&state, row.1, auth.user_id)
-        .await
-        .is_ok();
-    if !is_owner && !is_admin {
-        return Err(ApiError::Forbidden);
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+    // Fora da organização do quadro (ou arquivado nela) não existe: 404.
+    let role = crate::org::role_in_org(&state, row.1, auth.user_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if row.0 != auth.user_id && role != "admin" {
+        return Err(
+            delonix_meet_core::DomainError::forbidden("whiteboard.not_manager")
+                .with_message("só o dono do quadro ou um administrador da organização o apaga")
+                .into(),
+        );
     }
     sqlx::query("DELETE FROM whiteboards WHERE id = $1")
         .bind(id)
         .execute(&state.db)
         .await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]

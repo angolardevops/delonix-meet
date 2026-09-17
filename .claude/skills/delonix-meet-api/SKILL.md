@@ -22,7 +22,7 @@ description: Contrato de API do Delonix Meet — as superfícies (BFF `/api`, p�
     (`delonix_meet_core::page`) — ver `stream_destinations.rs` como referência.
   - **gRPC interno** (`server/proto`, `buf lint`/`breaking` em `check-proto.sh`).
 - **O que falta:**
-  - As rotas HERDADAS mantêm `200`/`{"ok":true}` (22) e listagens sem limite.
+  - Listagens herdadas sem cursor (ver abaixo). As respostas `{"ok": true}` acabaram (catraca `respostas_ok_true=0`, R181).
   - `Idempotency-Key` só no SMS; nada de `ETag`.
 - **Uma superfície por público, sem aliases** (reorganização de 2026-09-16, mapa em
   `docs/reference/api-routes.md`): BFF `/api`, inquilino `/api/v1`, operador
@@ -133,8 +133,11 @@ singletons, `GET` onde havia `PATCH`/`DELETE`. O que continua:
 - **Listagens herdadas sem cursor:** `v1/recordings` com `LIMIT 200` fixo,
   `v1/meetings?since=` com corte aos 500, `meetings::list` e `recordings::library` sem
   limite (a biblioteca só pagina com `page_size`/`q`).
-- **Respostas herdadas** `{"ok": true}` (catraca `respostas_ok_true`) e `200` onde devia ser
-  `201`/`204` — cada uma sai quando o handler for tocado, com o teste ao lado.
+- **Respostas `{"ok": true}`: zero** (R181, catraca `respostas_ok_true=0`). Apagar → `204`
+  (e `404` se não havia nada NESTA organização); `PUT` de configuração devolve o recurso como
+  o `GET`; telemetria → `204`; contagens → `{"updated": n}`. Falta de permissão numa rota de
+  recurso: `404` a quem não chega ao recurso, `403` com `code` a quem chega mas não pode —
+  nunca `401` (R153).
 - **Chaves de API:** R170/R171 fechados. Rota v1 nova com chave: um `Scope` do catálogo,
   `key.require(…)?` na primeira linha, e uma linha em `tests/api_key_scopes.rs::routes`.
 

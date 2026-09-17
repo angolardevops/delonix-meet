@@ -676,24 +676,33 @@ pub async fn ring_users(
 #[openapi(paths(ack_missed_calls))]
 pub struct ApiDoc;
 
+/// Resposta do acknowledge (a mesma forma do `mark-all-read` das notificações).
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct MissedCallsAck {
+    /// Quantas passaram de não vistas a vistas.
+    pub updated: u64,
+}
+
 /// Marca todas as chamadas perdidas do utilizador como vistas.
 #[utoipa::path(
     post, path = "/api/users/me/missed-calls/acknowledge", tag = "calls",
     security(("session" = [])),
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 200, body = MissedCallsAck, description = "Quantas chamadas perdidas passaram a vistas."),
         (status = 401, body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn ack_missed_calls(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     auth: crate::auth::AuthUser,
-) -> Result<axum::Json<serde_json::Value>, crate::error::ApiError> {
-    sqlx::query("UPDATE missed_calls SET seen = TRUE WHERE user_id = $1 AND NOT seen")
+) -> Result<axum::Json<MissedCallsAck>, crate::error::ApiError> {
+    let res = sqlx::query("UPDATE missed_calls SET seen = TRUE WHERE user_id = $1 AND NOT seen")
         .bind(auth.user_id)
         .execute(&state.db)
         .await?;
-    Ok(axum::Json(serde_json::json!({ "ok": true })))
+    Ok(axum::Json(MissedCallsAck {
+        updated: res.rows_affected(),
+    }))
 }
 
 #[cfg(test)]

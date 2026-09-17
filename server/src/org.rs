@@ -867,25 +867,25 @@ pub async fn update_employee(
     Ok(Json(emp))
 }
 
-/// Arquiva o acesso de um membro (soft delete, só admin). Idempotente: um
-/// utilizador que não é membro também devolve `ok`.
+/// Arquiva o acesso de um membro (soft delete, só admin). Um utilizador que
+/// não é membro activo desta organização dá `404`.
 #[utoipa::path(
     delete, path = "/api/orgs/{org_id}/members/{user_id}", tag = "orgs",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização."), ("user_id" = Uuid, Path, description = "Utilizador membro.")),
     responses(
-        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 204, description = "Acesso arquivado."),
         (status = 400, description = "Tentativa de arquivar o próprio acesso.", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
-        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe, quem pede não é membro activo, ou o utilizador não é membro activo desta organização.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn remove_employee(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path((org_id, user_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     require_admin(&state, org_id, auth.user_id).await?;
     if user_id == auth.user_id {
         return Err(ApiError::BadRequest(
@@ -893,7 +893,7 @@ pub async fn remove_employee(
         ));
     }
     // Soft delete: archived_at + archived_by para auditoria futura
-    sqlx::query(
+    let res = sqlx::query(
         "UPDATE org_members SET archived_at = NOW(), archived_by = $3
          WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL",
     )
@@ -902,6 +902,9 @@ pub async fn remove_employee(
     .bind(auth.user_id)
     .execute(&state.db)
     .await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
     crate::audit::log(
         &state.db,
         Some(org_id),
@@ -910,7 +913,7 @@ pub async fn remove_employee(
         &user_id.to_string(),
     )
     .await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 // ---------- groups ----------
@@ -1515,7 +1518,7 @@ pub async fn get_sso_config(
     params(("org_id" = Uuid, Path, description = "Organização.")),
     request_body = SsoConfigReq,
     responses(
-        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 200, body = SsoConfigPublic, description = "A configuração como ficou gravada (a mesma forma do `GET`, sem o segredo)."),
         (status = 400, description = "`issuer_url`/`client_id` em falta, ou `issuer_url` sem `https://`, ou a apontar para um endereço interno (guarda de saída, `OUTBOUND_ALLOW_HOSTS`).", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
@@ -1528,7 +1531,7 @@ pub async fn upsert_sso_config(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
     Json(req): Json<SsoConfigReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<Option<SsoConfigPublic>>, ApiError> {
     require_admin(&state, org_id, auth.user_id).await?;
 
     let issuer = req.issuer_url.trim().to_string();
@@ -1589,7 +1592,7 @@ pub async fn upsert_sso_config(
     }
 
     tracing::info!(%org_id, %issuer, "SSO config upserted");
-    Ok(Json(serde_json::json!({ "ok": true })))
+    get_sso_config(State(state), auth, Path(org_id)).await
 }
 
 /// `aad` do `client_secret` do SSO de uma org (a linha é a org).
@@ -1608,30 +1611,33 @@ pub(crate) fn seal_sso_client_secret(
 }
 
 /// `DELETE /api/orgs/:org_id/sso` — remove a config OIDC (desativa SSO). Só
-/// admin; idempotente.
+/// admin.
 #[utoipa::path(
     delete, path = "/api/orgs/{org_id}/sso", tag = "orgs",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização.")),
     responses(
-        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 204, description = "SSO desligado."),
         (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
-        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe, quem pede não é membro activo, ou não havia SSO configurado.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn delete_sso_config(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     require_admin(&state, org_id, auth.user_id).await?;
-    sqlx::query("DELETE FROM org_sso_configs WHERE org_id = $1")
+    let res = sqlx::query("DELETE FROM org_sso_configs WHERE org_id = $1")
         .bind(org_id)
         .execute(&state.db)
         .await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
     tracing::info!(%org_id, "SSO config deleted");
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 pub async fn group_member_ids(state: &AppState, group_id: Uuid) -> Result<Vec<Uuid>, ApiError> {

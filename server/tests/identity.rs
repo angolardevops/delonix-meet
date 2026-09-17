@@ -396,8 +396,7 @@ async fn logout_clears_cookie_and_revokes_refresh(db: sqlx::PgPool) {
             None,
         )
         .await;
-    assert_eq!(r.status, 200);
-    assert_eq!(r.json()["ok"], true);
+    assert_eq!(r.status, 204);
     let cleared = r
         .set_cookies()
         .into_iter()
@@ -416,11 +415,12 @@ async fn logout_clears_cookie_and_revokes_refresh(db: sqlx::PgPool) {
         .await;
     assert_eq!(r.status, 401);
 
-    // Logout sem cookie também responde 200 (idempotente).
+    // Logout sem cookie também responde 204 (idempotente: não há sessão a
+    // confirmar, só um cookie a limpar).
     let r = app
         .raw(reqwest::Method::POST, "/api/auth/logout", &[], None)
         .await;
-    assert_eq!(r.status, 200);
+    assert_eq!(r.status, 204);
 }
 
 // ---------------------------------------------------------------------------
@@ -811,8 +811,7 @@ async fn mfa_enrol_activate_login_backup_and_disable(db: sqlx::PgPool) {
             json!({"code": backup[1]}),
         )
         .await;
-    assert_eq!(st, 200);
-    assert_eq!(d, json!({"ok": true}));
+    assert_eq!(st, 204, "{d}");
     let (_, e) = app.get("/api/users/me/mfa", Some(&tok2)).await;
     assert_eq!(
         e,

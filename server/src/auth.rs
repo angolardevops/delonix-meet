@@ -681,7 +681,7 @@ pub async fn refresh(
 #[utoipa::path(
     post, path = "/api/auth/logout", tag = "auth",
     responses(
-        (status = 200, description = "{\"ok\": true} (forma herdada). Limpa o cookie `dlx_refresh`.", body = serde_json::Value),
+        (status = 204, description = "Sessão terminada. Limpa o cookie `dlx_refresh` (e revoga-o, se vier)."),
         (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -698,8 +698,8 @@ pub async fn logout(
     }
     let clear = refresh_cookie("", state.config.cookie_secure, 0);
     Ok((
+        axum::http::StatusCode::NO_CONTENT,
         [(header::SET_COOKIE, clear)],
-        Json(serde_json::json!({ "ok": true })),
     )
         .into_response())
 }

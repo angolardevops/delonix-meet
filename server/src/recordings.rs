@@ -315,6 +315,18 @@ async fn managed_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemR
     Ok(row)
 }
 
+/// Como [`seen_item`], e além disso tem de ser o dono activo (`403` se só a vê):
+/// partilhas e link público.
+async fn owned_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemRow, ApiError> {
+    let row = seen_item(state, id, user_id).await?;
+    if !row.facts().can_share() {
+        return Err(DomainError::forbidden("recording.not_owner")
+            .with_message("só o dono da gravação a partilha")
+            .into());
+    }
+    Ok(row)
+}
+
 async fn room_by_code(state: &AppState, code: &str) -> Result<Room, ApiError> {
     let room: Room = sqlx::query_as(&format!(
         "SELECT {} FROM rooms WHERE code = $1",
@@ -355,7 +367,8 @@ pub struct UploadQuery {
     responses(
         (status = 200, body = Recording),
         (status = 400, description = "Corpo vazio.", body = crate::openapi::ErrorBody),
-        (status = 401, description = "Sessão inválida OU não participou na sala.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`room.not_participant`: não participou na sala.", body = crate::openapi::ErrorBody),
         (status = 404, description = "Sala inexistente.", body = crate::openapi::ErrorBody),
         (status = 422, description = "`storage.quota_exceeded`: a gravação não cabe na quota de armazenamento de uma organização do autor. Nada é escrito.", body = crate::openapi::ErrorBody),
         (status = 413, description = "Corpo acima de 512 MiB (rejeitado pelo axum, texto simples)."),
@@ -377,7 +390,9 @@ pub async fn upload(
     let room = room_by_code(&state, &code).await?;
     // Só quem participou na sala pode carregar gravações dela.
     if !is_participant(&state, room.id, auth.user_id).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(DomainError::forbidden("room.not_participant")
+            .with_message("só quem participou na sala")
+            .into());
     }
     // Quota de armazenamento (G3): antes de escrever a linha ou o ficheiro.
     crate::usage::enforce_recording_quota(&state, auth.user_id, body.len() as i64).await?;
@@ -413,14 +428,15 @@ pub async fn upload(
 }
 
 /// Gravações de uma sala específica (painel dentro da reunião).
-/// Só para participantes da sala — senão **401**, não 403.
+/// Só para participantes da sala — senão `403 room.not_participant`.
 #[utoipa::path(
     get, path = "/api/rooms/{room_code}/recordings", tag = "recordings",
     security(("session" = [])),
     params(("room_code" = String, Path, description = "Código da sala.")),
     responses(
         (status = 200, body = Vec<Recording>, description = "Mais recentes primeiro."),
-        (status = 401, description = "Sessão inválida OU não participou na sala.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`room.not_participant`: não participou na sala.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -431,7 +447,9 @@ pub async fn list(
 ) -> Result<Json<Vec<Recording>>, ApiError> {
     let room = room_by_code(&state, &code).await?;
     if !is_participant(&state, room.id, auth.user_id).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(DomainError::forbidden("room.not_participant")
+            .with_message("só quem participou na sala")
+            .into());
     }
     let recs: Vec<Recording> = sqlx::query_as(
         "SELECT id, room_id, uploader_id, filename, size_bytes, created_at
@@ -603,9 +621,10 @@ pub struct DownloadQuery {
     responses(
         (status = 200, body = inline(WebmBytes), content_type = "video/webm",
          description = "`Content-Disposition: inline`, ou `attachment` com `dl=1`."),
-        (status = 400, description = "A gravação falhou e não tem ficheiro (mensagem = causa).", body = crate::openapi::ErrorBody),
-        (status = 401, description = "Sessão inválida OU sem acesso/permissão de download (inclui membro arquivado).", body = crate::openapi::ErrorBody),
-        (status = 404, description = "Gravação inexistente ou ficheiro em falta no disco.", body = crate::openapi::ErrorBody),
+        (status = 400, description = "A gravação falhou e não tem ficheiro (mensagem = causa). Só para quem chega à gravação.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`recording.download_forbidden`: chega à gravação mas não pode descarregar (`dl=1`).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Gravação inexistente, sem acesso (inclui membro arquivado), ou ficheiro em falta no disco.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn download(
@@ -614,9 +633,10 @@ pub async fn download(
     Path(id): Path<Uuid>,
     Query(q): Query<DownloadQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let rec = load_item(&state, id, auth.user_id)
-        .await?
-        .ok_or(ApiError::NotFound)?;
+    // Quem não chega à gravação recebe o 404 de «não existe» ANTES de qualquer
+    // outra resposta: o `400` de gravação falhada levava o motivo da falha a
+    // utilizadores de outra organização.
+    let rec = seen_item(&state, id, auth.user_id).await?;
     // Uma gravação falhada não tem ficheiro. Sem esta guarda, o pedido descia
     // até ao `File::open` e voltava um 500 opaco — quando a resposta honesta é
     // dizer que não há nada para descarregar, e porquê.
@@ -636,7 +656,10 @@ pub async fn download(
         facts.can_view()
     };
     if !allowed {
-        return Err(ApiError::Unauthorized);
+        // Chega a ela (`seen_item`) mas não tem esta permissão.
+        return Err(DomainError::forbidden("recording.download_forbidden")
+            .with_message("só o dono ou um administrador da organização descarrega o ficheiro")
+            .into());
     }
 
     let path = state.config.recordings_dir.join(format!("{}.webm", rec.id));
@@ -673,10 +696,12 @@ pub struct ShareReq {
     params(("recording_id" = Uuid, Path)),
     request_body = ShareReq,
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 201, body = crate::users::UserPublic, description = "Partilha criada. `Location: /api/recordings/{recording_id}/shares/{user_id}`."),
+        (status = 200, body = crate::users::UserPublic, description = "Já estava partilhada com essa pessoa (idempotente)."),
         (status = 400, description = "Partilhar consigo próprio.", body = crate::openapi::ErrorBody),
-        (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
-        (status = 404, body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`recording.not_owner`: vê a gravação mas não é o dono activo.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A gravação não existe ou não lhe chega; ou o utilizador destino não existe.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn share(
@@ -684,20 +709,16 @@ pub async fn share(
     auth: AuthUser,
     Path(id): Path<Uuid>,
     Json(req): Json<ShareReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let rec: Recording = sqlx::query_as(
-        "SELECT id, room_id, uploader_id, filename, size_bytes, created_at FROM recordings WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await?;
-    if rec.uploader_id != auth.user_id {
-        return Err(ApiError::Unauthorized);
-    }
+) -> Result<Response, ApiError> {
+    owned_item(&state, id, auth.user_id).await?;
     if req.user_id == auth.user_id {
         return Err(ApiError::BadRequest("cannot share with yourself".into()));
     }
-    sqlx::query(
+    // Antes era um 500 (chave estrangeira) para um id que não existe.
+    let target = crate::users::fetch_public(&state.db, req.user_id)
+        .await
+        .map_err(|_| ApiError::NotFound)?;
+    let res = sqlx::query(
         "INSERT INTO recording_shares (recording_id, user_id, shared_by) VALUES ($1, $2, $3)
          ON CONFLICT (recording_id, user_id) DO NOTHING",
     )
@@ -706,40 +727,45 @@ pub async fn share(
     .bind(auth.user_id)
     .execute(&state.db)
     .await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    if res.rows_affected() == 0 {
+        return Ok(Json(target).into_response());
+    }
+    let location = format!("/api/recordings/{id}/shares/{}", req.user_id);
+    Ok((
+        StatusCode::CREATED,
+        [(header::LOCATION, location)],
+        Json(target),
+    )
+        .into_response())
 }
 
-/// Remove a partilha com um utilizador (só o dono). Idempotente.
+/// Remove a partilha com um utilizador (só o dono).
 #[utoipa::path(
     delete, path = "/api/recordings/{recording_id}/shares/{user_id}", tag = "recordings",
     security(("session" = [])),
     params(("recording_id" = Uuid, Path), ("user_id" = Uuid, Path)),
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
-        (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
-        (status = 404, body = crate::openapi::ErrorBody),
+        (status = 204, description = "Partilha removida."),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`recording.not_owner`.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A gravação não existe/não lhe chega, ou não estava partilhada com essa pessoa.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn unshare(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path((id, user_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT uploader_id FROM recordings WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?;
-    match owner {
-        Some((uploader,)) if uploader == auth.user_id => {}
-        Some(_) => return Err(ApiError::Unauthorized),
-        None => return Err(ApiError::NotFound),
-    }
-    sqlx::query("DELETE FROM recording_shares WHERE recording_id = $1 AND user_id = $2")
+) -> Result<StatusCode, ApiError> {
+    owned_item(&state, id, auth.user_id).await?;
+    let res = sqlx::query("DELETE FROM recording_shares WHERE recording_id = $1 AND user_id = $2")
         .bind(id)
         .bind(user_id)
         .execute(&state.db)
         .await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    if res.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------- Links públicos de partilha ----------
@@ -780,7 +806,8 @@ fn gen_token() -> String {
     request_body = CreateLinkReq,
     responses(
         (status = 200, body = ShareLink),
-        (status = 401, description = "Sessão inválida OU não é o dono (401, não 403).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`recording.not_owner`: vê a gravação mas não é o dono activo.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -790,15 +817,7 @@ pub async fn create_link(
     Path(id): Path<Uuid>,
     Json(req): Json<CreateLinkReq>,
 ) -> Result<Json<ShareLink>, ApiError> {
-    let rec: Option<(Uuid,)> = sqlx::query_as("SELECT uploader_id FROM recordings WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?;
-    match rec {
-        Some((uploader,)) if uploader == auth.user_id => {}
-        Some(_) => return Err(ApiError::Unauthorized),
-        None => return Err(ApiError::NotFound),
-    }
+    owned_item(&state, id, auth.user_id).await?;
 
     let password_hash = if let Some(ref pw) = req.password {
         if pw.is_empty() {
@@ -848,7 +867,8 @@ pub async fn create_link(
     params(("recording_id" = Uuid, Path)),
     responses(
         (status = 200, body = Option<ShareLink>, description = "`null` se não houver link."),
-        (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`recording.not_owner`: vê a gravação mas não é o dono activo.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -857,15 +877,7 @@ pub async fn get_link(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Option<ShareLink>>, ApiError> {
-    let rec: Option<(Uuid,)> = sqlx::query_as("SELECT uploader_id FROM recordings WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?;
-    match rec {
-        Some((uploader,)) if uploader == auth.user_id => {}
-        Some(_) => return Err(ApiError::Unauthorized),
-        None => return Err(ApiError::NotFound),
-    }
+    owned_item(&state, id, auth.user_id).await?;
     let link: Option<ShareLink> = sqlx::query_as(
         "SELECT id, recording_id, token, expires_at, created_at
          FROM recording_share_links WHERE recording_id = $1",
@@ -882,29 +894,25 @@ pub async fn get_link(
     security(("session" = [])),
     params(("recording_id" = Uuid, Path)),
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
-        (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
-        (status = 404, body = crate::openapi::ErrorBody),
+        (status = 204, description = "Link revogado."),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`recording.not_owner`.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A gravação não existe/não lhe chega, ou não tinha link.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn revoke_link(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let rec: Option<(Uuid,)> = sqlx::query_as("SELECT uploader_id FROM recordings WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?;
-    match rec {
-        Some((uploader,)) if uploader == auth.user_id => {}
-        Some(_) => return Err(ApiError::Unauthorized),
-        None => return Err(ApiError::NotFound),
-    }
-    sqlx::query("DELETE FROM recording_share_links WHERE recording_id = $1")
+) -> Result<StatusCode, ApiError> {
+    owned_item(&state, id, auth.user_id).await?;
+    let res = sqlx::query("DELETE FROM recording_share_links WHERE recording_id = $1")
         .bind(id)
         .execute(&state.db)
         .await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
     crate::audit::log(
         &state.db,
         None,
@@ -913,7 +921,7 @@ pub async fn revoke_link(
         &id.to_string(),
     )
     .await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize, utoipa::IntoParams)]
@@ -1063,7 +1071,8 @@ pub async fn public_share_download(
     params(("recording_id" = Uuid, Path)),
     responses(
         (status = 200, body = Vec<crate::users::UserPublic>),
-        (status = 401, description = "Sessão inválida OU não é o dono.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`recording.not_owner`: vê a gravação mas não é o dono activo.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -1072,15 +1081,7 @@ pub async fn shares(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<UserPublic>>, ApiError> {
-    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT uploader_id FROM recordings WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?;
-    match owner {
-        Some((uploader,)) if uploader == auth.user_id => {}
-        Some(_) => return Err(ApiError::Unauthorized),
-        None => return Err(ApiError::NotFound),
-    }
+    owned_item(&state, id, auth.user_id).await?;
     let users = sqlx::query_as::<_, UserPublic>(
         // `locale` é campo de `UserPublic` — sem ele, sempre 500 (ver users::search).
         "SELECT u.id, u.email, u.username, u.created_at, COALESCE(u.locale, 'pt') AS locale

@@ -395,7 +395,7 @@ export const mfaActivar = (code: string) =>
 /** Desactiva. Exige um código válido — de outra forma, uma sessão roubada
  *  bastava para desligar o segundo factor. */
 export const mfaDesactivar = (code: string) =>
-  request<{ ok: boolean }>('/api/users/me/mfa/disable', {
+  request<void>('/api/users/me/mfa/disable', {
     method: 'POST',
     body: JSON.stringify({ code }),
   })
@@ -763,7 +763,7 @@ export const getOdooConfig = (orgId: string) =>
   request<OdooConfig>(`/api/orgs/${orgId}/integrations/odoo`)
 
 export const saveOdooConfig = (orgId: string, cfg: OdooConfigSaveReq) =>
-  request<{ ok: boolean }>(`/api/orgs/${orgId}/integrations/odoo`, {
+  request<OdooConfig>(`/api/orgs/${orgId}/integrations/odoo`, {
     method: 'PUT',
     body: JSON.stringify(cfg),
   })
@@ -807,7 +807,7 @@ export const getPlatformStorage = () =>
   request<StorageConfig>('/api/operator/v1/storage')
 
 export const savePlatformStorage = (cfg: StorageConfigSaveReq) =>
-  request<{ ok: boolean }>('/api/operator/v1/storage', {
+  request<StorageConfig>('/api/operator/v1/storage', {
     method: 'PUT',
     body: JSON.stringify(cfg),
   })

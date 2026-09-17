@@ -826,7 +826,7 @@ pub struct TimingsReq {
     params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
     request_body = TimingsReq,
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 204, description = "Amostra aceite."),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Sem acesso à sala.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
@@ -837,7 +837,7 @@ pub async fn post_timings(
     auth: AuthUser,
     Path(code): Path<String>,
     Json(t): Json<TimingsReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
         .bind(&code)
         .fetch_optional(&state.db)
@@ -881,7 +881,7 @@ pub async fn post_timings(
             crate::metrics::Metrics::bump(&m.join_slow_total);
         }
     }
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 /// Recebe uma amostra de qualidade (QoS) do cliente durante a chamada (~1/30s).
@@ -894,7 +894,7 @@ pub async fn post_timings(
     params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
     request_body = QosSample,
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 204, description = "Amostra aceite."),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Sem acesso à sala.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
@@ -905,7 +905,7 @@ pub async fn post_qos(
     auth: AuthUser,
     Path(code): Path<String>,
     Json(s): Json<QosSample>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
         .bind(&code)
         .fetch_optional(&state.db)
@@ -976,7 +976,7 @@ pub async fn post_qos(
         crate::metrics::Metrics::bump(&m.qos_cpu_limited_total);
     }
 
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]

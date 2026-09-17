@@ -179,7 +179,7 @@ pub async fn get_config(
     params(("org_id" = Uuid, Path)),
     request_body = OdooConfigReq,
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 200, body = OdooConfig, description = "A configuração como ficou gravada (a mesma forma do `GET`)."),
         (status = 400, description = "`odoo_url` inválido ou a apontar para um endereço interno (guarda de saída, `OUTBOUND_ALLOW_HOSTS`).", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
@@ -190,7 +190,7 @@ pub async fn save_config(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
     Json(req): Json<OdooConfigReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<OdooConfig>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
 
     let url = req
@@ -229,7 +229,7 @@ pub async fn save_config(
         "",
     )
     .await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    get_config(State(state), auth, Path(org_id)).await
 }
 
 /// Token de integração acabado de gerar. É a única vez que sai em claro.

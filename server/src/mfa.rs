@@ -400,7 +400,7 @@ pub async fn activar(
     security(("session" = [])),
     request_body = CodigoReq,
     responses(
-        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 204, description = "MFA desactivado."),
         (status = 401, description = "Sessão inválida, código errado/já usado, ou MFA não inscrito.", body = crate::openapi::ErrorBody),
         (status = 429, description = "Cinco códigos errados em 5 minutos nesta conta (partilhado com a activação). Durante o bloqueio, também um código válido é recusado.", body = crate::openapi::ErrorBody),
     )
@@ -409,7 +409,7 @@ pub async fn desactivar(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Json(req): Json<CodigoReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     travao(&state, auth.user_id)?;
     if !consome_codigo(&state, auth.user_id, &req.code).await? {
         return Err(falhou(&state, auth.user_id));
@@ -423,7 +423,7 @@ pub async fn desactivar(
         .execute(&state.db)
         .await?;
     crate::audit::log(&state.db, None, auth.user_id, "auth.mfa_disabled", "").await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 /// Chave do travão de força bruta do MFA desta conta.

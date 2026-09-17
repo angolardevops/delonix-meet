@@ -841,7 +841,7 @@ mod tests {
     security(("session" = [])),
     params(("org_id" = Uuid, Path), ("hook_id" = Uuid, Path)),
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 204, description = "Webhook apagado."),
         (status = 403, body = crate::openapi::ErrorBody),
     )
 )]
@@ -849,13 +849,16 @@ pub async fn delete(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     auth: crate::auth::AuthUser,
     axum::extract::Path((org_id, hook_id)): axum::extract::Path<(Uuid, Uuid)>,
-) -> Result<axum::Json<serde_json::Value>, crate::error::ApiError> {
+) -> Result<axum::http::StatusCode, crate::error::ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-    sqlx::query("DELETE FROM org_webhooks WHERE id = $1 AND org_id = $2")
+    let res = sqlx::query("DELETE FROM org_webhooks WHERE id = $1 AND org_id = $2")
         .bind(hook_id)
         .bind(org_id)
         .execute(&state.db)
         .await?;
+    if res.rows_affected() == 0 {
+        return Err(crate::error::ApiError::NotFound);
+    }
     crate::audit::log(
         &state.db,
         Some(org_id),
@@ -864,5 +867,5 @@ pub async fn delete(
         &hook_id.to_string(),
     )
     .await;
-    Ok(axum::Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
