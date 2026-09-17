@@ -33,6 +33,7 @@ mod odoo;
 mod odoo_sso;
 pub mod openapi;
 mod org;
+mod phone_bridge;
 mod presence;
 mod pstn_bridge;
 mod pubsub;

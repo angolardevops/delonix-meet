@@ -125,6 +125,10 @@ webrtc-srtp = "0.17.1"
 # já transitivo (o `rtp`/`webrtc-srtp` usam-no internamente), directo aqui só
 # para o tipo `Bytes` do `rtp::packet::Packet::payload`.
 bytes = "1"
+# Ponte telefone↔sala (ADR-0010): Opus em Rust puro, sem libopus no sistema nem
+# na imagem distroless. Interoperabilidade com a libopus medida nos dois
+# sentidos (ADR-0010 §«Medições»).
+opus-rs = "=0.1.33"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
