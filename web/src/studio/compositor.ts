@@ -28,6 +28,19 @@ import {
   type Sobreposicoes,
 } from './palco'
 import { desenharCartaoDeMarca, desenharSobreposicoes, type MarcaDoPalco, type SondagemNoPalco } from './desenho'
+import { desenharQuadroDaMesa, type FontesParaDesenho } from './tv/desenhoDaMesa'
+import type { QuadroDaMesa } from './tv/mesa'
+
+/**
+ * A mesa de corte ligada ao compositor. Com ela, o palco deixa de ser «ecrã +
+ * bolha» e passa a ser o PROGRAMA da mesa (a fonte ou o plano no ar, e a
+ * transição a decorrer). As sobreposições, a gravação e o directo continuam
+ * a ser as do compositor — a mesa escolhe a imagem, não reinventa a saída.
+ */
+export interface MesaNoCompositor {
+  fontes: FontesParaDesenho
+  quadro(agora: number): QuadroDaMesa
+}
 
 /** Onde fica a bolha da câmara. `livre` = posição arrastada pelo utilizador. */
 export type CantoDoAvatar = 'inferior-direito' | 'inferior-esquerdo' | 'superior-direito' | 'superior-esquerdo' | 'livre'
@@ -198,6 +211,14 @@ export class CompositorDeAula {
   private analiserMestre: AnalyserNode | null = null
   private mistura: Mistura = { ...MISTURA_INICIAL }
   private micStream: MediaStream | null = null
+  /**
+   * O som da MESA DE SOM, quando ligada. Substitui o microfone e os convidados
+   * na mistura (eles já passam pela mesa, com EQ e dinâmica) — ligar os dois
+   * dava cada voz em dobro, uma delas atrasada. A música e o som do ecrã
+   * continuam nos barramentos do compositor.
+   */
+  private somExterno: MediaStream | null = null
+  private somExternoFonte: MediaStreamAudioSourceNode | null = null
   private micFonte: MediaStreamAudioSourceNode | null = null
   private ecraFonte: MediaStreamAudioSourceNode | null = null
   /** Microfone escolhido; vazio = o de omissão do sistema. */
@@ -278,6 +299,12 @@ export class CompositorDeAula {
    */
   pessoaComAlfa: CanvasImageSource | null = null
 
+  /** A mesa de corte, quando está ligada (ver `MesaNoCompositor`). */
+  mesa: MesaNoCompositor | null = null
+  private camadaDaMesa: CanvasRenderingContext2D | null = null
+  /** Quanto custou compor o último frame, em ms — medido, não estimado. */
+  custoDoFrameMs = 0
+
   /** Segundos gravados. Lido pelo painel; não dispara render por si. */
   get segundos(): number {
     return this.inicioMs ? Math.floor((Date.now() - this.inicioMs) / 1000) : 0
@@ -355,6 +382,13 @@ export class CompositorDeAula {
   /** A track de vídeo da câmara — o `BackgroundEffect` precisa dela crua. */
   get trackDaCamara(): MediaStreamTrack | null {
     return this.camaraStream?.getVideoTracks()[0] ?? null
+  }
+  /** O vídeo do ecrã partilhado, para a mesa o ter como fonte. `null` sem ecrã. */
+  get videoDoEcra(): HTMLVideoElement | null {
+    return this.temEcra ? this.ecraVideo : null
+  }
+  get fluxoDoEcra(): MediaStream | null {
+    return this.ecraStream
   }
   /** Dimensões do ecrã capturado — precisas para o seletor de recorte. */
   get dimensoesDoEcra(): { w: number; h: number } {
@@ -455,7 +489,7 @@ export class CompositorDeAula {
       c.gain.gain.value = c.ganhoAlvo
       c.gain.connect(this.ganhoPalco)
     }
-    if (c.audio || !c.stream?.getAudioTracks().length) return
+    if (c.audio || this.somExterno || !c.stream?.getAudioTracks().length) return
     c.audio = this.audioCtx.createMediaStreamSource(new MediaStream(c.stream.getAudioTracks()))
     c.audio.connect(c.gain)
   }
@@ -507,12 +541,18 @@ export class CompositorDeAula {
   }
 
   private desenhar(): void {
+    const t0 = performance.now()
     const { width: W, height: H } = this.canvas
     this.ctx.fillStyle = '#0d1117'
     this.ctx.fillRect(0, 0, W, H)
 
     if (this.conteudo === 'marca') {
       desenharCartaoDeMarca(this.ctx, this.marca, W, H)
+    } else if (this.mesa && this.conteudo === 'fontes') {
+      this.camadaDaMesa ??= document.createElement('canvas').getContext('2d', { alpha: false })
+      if (this.camadaDaMesa) {
+        desenharQuadroDaMesa(this.ctx, this.camadaDaMesa, this.mesa.quadro(Date.now()), this.mesa.fontes, this.marca, W, H)
+      }
     } else if (this.layout === 'solo') {
       // O conteúdo a ecrã inteiro e a bolha por cima — o Estúdio de sempre.
       const todo = { x: 0, y: 0, w: W, h: H }
@@ -535,6 +575,7 @@ export class CompositorDeAula {
       sondagem: this.sondagem,
       marca: this.marca,
     }, W, H)
+    this.custoDoFrameMs = performance.now() - t0
   }
 
   /** As fontes pela ordem em que ocupam os lugares: conteúdo, tu, convidados. */
@@ -798,7 +839,36 @@ export class CompositorDeAula {
 
   /** O fluxo do microfone que entra na mistura — as legendas ouvem este. */
   get fluxoDoMicrofone(): MediaStream | null {
-    return this.micStream
+    return this.somExterno ?? this.micStream
+  }
+
+  /** Liga (ou desliga, com `null`) o som da mesa de som. Não reconstrói o grafo. */
+  definirSomExterno(s: MediaStream | null): void {
+    if (s === this.somExterno) return
+    this.somExterno = s
+    this.somExternoFonte?.disconnect()
+    this.somExternoFonte = null
+    if (!this.audioCtx || !this.ganhoPalco) return
+    if (s) {
+      this.micFonte?.disconnect()
+      this.micFonte = null
+      this.micStream?.getTracks().forEach((t) => t.stop())
+      this.micStream = null
+      for (const c of this.convidados.values()) {
+        c.audio?.disconnect()
+        c.audio = null
+      }
+      this.ligarSomExterno()
+    } else {
+      void this.ligarMicrofone()
+      for (const c of this.convidados.values()) this.ligarConvidadoAoGrafo(c)
+    }
+  }
+
+  private ligarSomExterno(): void {
+    if (!this.audioCtx || !this.ganhoPalco || !this.somExterno?.getAudioTracks().length || this.somExternoFonte) return
+    this.somExternoFonte = this.audioCtx.createMediaStreamSource(this.somExterno)
+    this.somExternoFonte.connect(this.ganhoPalco)
   }
 
   /** Troca o microfone. A meio de uma gravação troca a fonte, não o grafo. */
@@ -809,6 +879,10 @@ export class CompositorDeAula {
 
   private async ligarMicrofone(): Promise<void> {
     if (!this.audioCtx || !this.ganhoPalco) return
+    if (this.somExterno) {
+      this.ligarSomExterno()
+      return
+    }
     try {
       const mic = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -818,7 +892,8 @@ export class CompositorDeAula {
         },
         video: false,
       })
-      if (!this.audioCtx || !this.ganhoPalco) {
+      // A mesa de som pode ter sido ligada enquanto o browser pedia o microfone.
+      if (!this.audioCtx || !this.ganhoPalco || this.somExterno) {
         mic.getTracks().forEach((t) => t.stop())
         return
       }
@@ -1028,6 +1103,8 @@ export class CompositorDeAula {
 
   /** Larga as fontes do grafo que vai fechar; a música volta à pré-escuta. */
   private desmontarMistura(): void {
+    this.somExternoFonte?.disconnect()
+    this.somExternoFonte = null
     this.micFonte?.disconnect()
     this.micFonte = null
     this.micStream?.getTracks().forEach((t) => t.stop())
