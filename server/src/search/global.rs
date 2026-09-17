@@ -550,19 +550,30 @@ fn push_viewer<'a>(qb: &mut QueryBuilder<'a, Postgres>, scope: &'a Scope) {
 
 /// Constrói a consulta de um tipo (itens ou contagem) a partir do corpo
 /// comum `FROM … WHERE visibilidade AND texto`.
+/// A consulta de um tipo que não é lista: tudo escrito no código.
+struct Custom {
+    select: &'static str,
+    body: for<'q> fn(&mut QueryBuilder<'q, Postgres>, &'q TextQuery, bool),
+    order: &'static str,
+    score: Option<(Option<&'static str>, &'static [&'static str])>,
+}
+
 async fn run_custom<T>(
     state: &AppState,
     scope: &Scope,
     text: &TextQuery,
     limit: u32,
-    select: &'static str,
-    body: for<'q> fn(&mut QueryBuilder<'q, Postgres>, &'q TextQuery, bool),
-    order: &'static str,
-    score: Option<(Option<&'static str>, &'static [&'static str])>,
+    c: Custom,
 ) -> Result<(Vec<T>, i64, TotalKind), ApiError>
 where
     T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
 {
+    let Custom {
+        select,
+        body,
+        order,
+        score,
+    } = c;
     // Exacta primeiro; aproximada só se a exacta não der nada (como nas listas).
     for fuzzy in [false, true] {
         if fuzzy && text.raw.chars().count() < 3 {
@@ -644,10 +655,12 @@ async fn people(
         scope,
         text,
         limit,
-        "u.id, u.username, u.email",
-        body,
-        "u.username",
-        Some((None, PEOPLE_TRGM)),
+        Custom {
+            select: "u.id, u.username, u.email",
+            body,
+            order: "u.username",
+            score: Some((None, PEOPLE_TRGM)),
+        },
     )
     .await?;
     let items = rows
@@ -721,10 +734,12 @@ async fn rooms(
         scope,
         text,
         limit,
-        "rm.code, rm.name, rm.created_at",
-        body,
-        "rm.created_at DESC",
-        Some((None, ROOMS_TRGM)),
+        Custom {
+            select: "rm.code, rm.name, rm.created_at",
+            body,
+            order: "rm.created_at DESC",
+            score: Some((None, ROOMS_TRGM)),
+        },
     )
     .await?;
     let items = rows
@@ -802,11 +817,13 @@ async fn messages(
         scope,
         text,
         limit,
-        // O realce é feito na mesma consulta (o texto já está na linha).
+        Custom {
+            select: // O realce é feito na mesma consulta (o texto já está na linha).
         "c.id, rm.code, c.username, c.message AS headline, c.created_at",
-        body,
-        "c.created_at DESC",
-        Some((Some("to_tsvector('dlx_search', c.message)"), &[])),
+            body,
+            order: "c.created_at DESC",
+            score: Some((Some("to_tsvector('dlx_search', c.message)"), &[])),
+        },
     )
     .await?;
     // `ts_headline` só para as linhas mostradas.
@@ -879,10 +896,12 @@ async fn stream_destinations(
         scope,
         text,
         limit,
-        "sd.id, sd.org_id, sd.label, sd.kind, sd.created_at",
-        body,
-        "sd.created_at DESC",
-        Some((None, DEST_TRGM)),
+        Custom {
+            select: "sd.id, sd.org_id, sd.label, sd.kind, sd.created_at",
+            body,
+            order: "sd.created_at DESC",
+            score: Some((None, DEST_TRGM)),
+        },
     )
     .await?;
     let items = rows
@@ -946,10 +965,12 @@ async fn webhooks(
         scope,
         text,
         limit,
-        "w.id, w.org_id, w.kind, substring(w.url from '^[A-Za-z]+://([^/:?#]+)') AS host, w.created_at",
-        body,
-        "w.created_at DESC",
-        Some((None, HOOK_TRGM)),
+        Custom {
+            select: "w.id, w.org_id, w.kind, substring(w.url from '^[A-Za-z]+://([^/:?#]+)') AS host, w.created_at",
+            body,
+            order: "w.created_at DESC",
+            score: Some((None, HOOK_TRGM)),
+        },
     )
     .await?;
     let items = rows
@@ -1012,10 +1033,12 @@ async fn audit_events(
         scope,
         text,
         limit,
-        "a.id, a.org_id, a.action, a.target, a.actor_name, a.created_at",
-        body,
-        "a.created_at DESC, a.id DESC",
-        Some((None, AUDIT_TRGM)),
+        Custom {
+            select: "a.id, a.org_id, a.action, a.target, a.actor_name, a.created_at",
+            body,
+            order: "a.created_at DESC, a.id DESC",
+            score: Some((None, AUDIT_TRGM)),
+        },
     )
     .await?;
     let items = rows

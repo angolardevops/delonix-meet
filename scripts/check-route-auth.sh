@@ -80,8 +80,10 @@ for m in re.finditer(r'\.nest\(\s*"([^"]+)"\s*,\s*([a-z_0-9]+)\s*\)', resto):
 
 rotas = []
 for caminho, corpo in pares:
-    nomeados = [((h.group(2) or '').rstrip(':'), h.group(3))
-                for h in re.finditer(r'\b(get|post|put|patch|delete)\(\s*(?:axum::routing::\w+\()?\s*([a-z_0-9]+::)?([a-z_0-9]+)', corpo)]
+    # O caminho do módulo pode ter vários níveis (`search::saved::create`):
+    # o handler procura-se em `server/src/search/saved.rs`.
+    nomeados = [((h.group(2) or '')[:-2], h.group(3))
+                for h in re.finditer(r'\b(get|post|put|patch|delete)\(\s*(?:axum::routing::\w+\()?\s*((?:[a-z_0-9]+::)+)?([a-z_0-9]+)', corpo)]
     if nomeados:
         for mod, h in nomeados:
             rotas.append((caminho, mod, h))
@@ -90,8 +92,13 @@ for caminho, corpo in pares:
         rotas.append((caminho, '', '<closure>'))
 
 handlers = {}
-for f in glob.glob('server/src/*.rs'):
-    mod = os.path.basename(f)[:-3]
+for f in glob.glob('server/src/**/*.rs', recursive=True):
+    # `server/src/org.rs` → `org`; `server/src/search/mod.rs` → `search`;
+    # `server/src/search/saved.rs` → `search::saved`.
+    rel = os.path.relpath(f, 'server/src')[:-3].split(os.sep)
+    if rel[-1] == 'mod':
+        rel = rel[:-1]
+    mod = '::'.join(rel)
     src = open(f).read()
     for m in re.finditer(r'(?:pub )?(?:async )?fn ([a-z_0-9]+)\s*\(([^{]*?)\)\s*(?:->[^{]*?)?\{', src, re.S):
         i = m.end()

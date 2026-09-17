@@ -516,10 +516,10 @@ fn push_keyset<'a>(qb: &mut QueryBuilder<'a, Postgres>, r: &ResourceSql, q: &'a 
             qb.push(" OR ");
         }
         qb.push("(");
-        for j in 0..level {
-            push_order_expr(qb, r, q.order[j].target, text);
+        for (key, bind) in q.order.iter().zip(&binds).take(level) {
+            push_order_expr(qb, r, key.target, text);
             qb.push(" = ");
-            push_val(qb, &binds[j]);
+            push_val(qb, bind);
             qb.push(" AND ");
         }
         if level < n {
