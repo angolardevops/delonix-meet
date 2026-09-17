@@ -188,6 +188,24 @@ pub fn montar_argumentos(destinos: &[Destino], threads: u32) -> Vec<String> {
         "matroska".into(),
         "-i".into(),
         "pipe:0".into(),
+    ];
+    // As opções de codec do ffmpeg valem para a saída SEGUINTE e só para ela.
+    // Postas uma vez, antes da primeira, o segundo destino em diante saía com
+    // os codecs por omissão do FLV (FLV1 + MP3) — re-codificação em software e
+    // recusa pelo servidor RTMP (`unsupported video codec: 2`, medido com
+    // mediamtx). Por isso repetem-se antes de CADA saída (R230).
+    for d in destinos {
+        a.extend(opcoes_de_saida());
+        a.push("-f".into());
+        a.push("flv".into());
+        a.push(alvo(d));
+    }
+    a
+}
+
+/// As opções de codec de UMA saída FLV.
+fn opcoes_de_saida() -> [String; 8] {
+    [
         // O VÍDEO É COPIADO. É a decisão inteira do ADR: sem isto o pod
         // codificaria H.264 em software e saturaria o core que serve a chamada.
         "-c:v".into(),
@@ -200,13 +218,7 @@ pub fn montar_argumentos(destinos: &[Destino], threads: u32) -> Vec<String> {
         "128k".into(),
         "-ar".into(),
         "44100".into(),
-    ];
-    for d in destinos {
-        a.push("-f".into());
-        a.push("flv".into());
-        a.push(alvo(d));
-    }
-    a
+    ]
 }
 
 /// Uma emissão a decorrer.
@@ -476,6 +488,37 @@ mod testes {
     fn cada_destino_ganha_a_sua_saida_flv() {
         let a = montar_argumentos(&[destino("yt", "k1"), destino("tw", "k2")], 2);
         assert_eq!(a.iter().filter(|x| *x == "flv").count(), 2);
+    }
+
+    /// R230: as opções de codec valem só para a saída seguinte. Cada `-f flv`
+    /// tem de ter, desde a saída anterior (ou desde o `-i`), o seu próprio
+    /// `-c:v copy` e `-c:a aac` — senão o 2.º destino sai em FLV1/MP3.
+    #[test]
+    fn cada_saida_leva_as_suas_opcoes_de_codec() {
+        for n in 1..=3 {
+            let destinos: Vec<Destino> = (0..n).map(|i| destino("d", &format!("k{i}"))).collect();
+            let a = montar_argumentos(&destinos, 2);
+            let mut inicio = a.iter().position(|x| x == "pipe:0").unwrap() + 1;
+            let mut saidas = 0;
+            for (i, w) in a.windows(2).enumerate() {
+                if w[0] == "-f" && w[1] == "flv" {
+                    let troco = &a[inicio..i];
+                    let par = |k: &str, v: &str| troco.windows(2).any(|p| p[0] == k && p[1] == v);
+                    assert!(
+                        par("-c:v", "copy"),
+                        "saída {saidas} de {n} sem -c:v copy: {a:?}"
+                    );
+                    assert!(
+                        par("-c:a", "aac"),
+                        "saída {saidas} de {n} sem -c:a aac: {a:?}"
+                    );
+                    assert!(par("-ar", "44100"), "saída {saidas} de {n} sem -ar: {a:?}");
+                    saidas += 1;
+                    inicio = i + 3; // depois de `-f flv <alvo>`
+                }
+            }
+            assert_eq!(saidas, n);
+        }
     }
 
     #[test]
