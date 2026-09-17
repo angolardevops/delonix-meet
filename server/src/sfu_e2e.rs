@@ -43,7 +43,7 @@ use webrtc::{
 
 use crate::{
     metrics::Metrics,
-    sfu::{IceConfig, SfuState},
+    sfu::{CensusSnapshot, IceConfig, SfuState},
     signaling::{ClientMsg, ServerMsg},
 };
 
@@ -429,11 +429,16 @@ fn portas_de_teste() -> (u16, u16) {
 }
 
 fn new_sfu() -> (Arc<SfuState>, Arc<Metrics>) {
+    new_sfu_com(None)
+}
+
+fn new_sfu_com(ice_timeouts: Option<(Duration, Duration)>) -> (Arc<SfuState>, Arc<Metrics>) {
     let metrics = Arc::new(Metrics::default());
     (
         Arc::new(SfuState::new(
             IceConfig {
                 udp_ports: Some(portas_de_teste()),
+                ice_timeouts,
                 ..Default::default()
             },
             metrics.clone(),
@@ -1278,4 +1283,175 @@ async fn media_e_consentimento_sobrevivem_as_renegociacoes_do_sfu() {
 
     sfu.remove_peer(room, a.id).await;
     sfu.remove_peer(room, b.id).await;
+}
+
+/// Espera que o SFU não tenha NADA vivo — nem PCs, nem peers, nem publicações,
+/// nem tarefas. Falha com a fotografia, que diz o que ficou preso.
+async fn esperar_censo_vazio(sfu: &Arc<SfuState>, label: &str, timeout: Duration) {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let c = sfu.census().await;
+        if c == CensusSnapshot::default() {
+            return;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("{label}: o SFU ainda mantém coisas vivas ao fim de {timeout:?}: {c:?}");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// **Armadilha do webrtc-rs 0.17.1** que o SFU tem de contornar, fixada aqui.
+///
+/// `RTCRtpSender::read` espera por `Notify::notify_waiters()` e NÃO consulta a
+/// bandeira de paragem: um `stop()` que aconteça quando ninguém está a ler é
+/// perdido, e a leitura seguinte num sender que nunca enviou fica pendurada
+/// para sempre. Qualquer tarefa que só termine quando `read_rtcp` falhar fica
+/// viva — e com ela tudo o que segura (a `Publication` e a PC do publicador).
+///
+/// Se este teste começar a falhar é porque a biblioteca corrigiu a armadilha:
+/// óptimo, mas o contorno em `subscribe_layer` continua a ser inofensivo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn webrtc_rs_read_rtcp_depois_de_stop_nao_regressa() {
+    use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
+    let pc = client_api()
+        .await
+        .new_peer_connection(RTCConfiguration::default())
+        .await
+        .unwrap();
+    let track = Arc::new(TrackLocalStaticRTP::new(
+        RTCRtpCodecCapability {
+            mime_type: VP8.to_owned(),
+            ..Default::default()
+        },
+        "v".to_owned(),
+        "s".to_owned(),
+    ));
+    let sender = pc
+        .add_track(track as Arc<dyn TrackLocal + Send + Sync>)
+        .await
+        .unwrap();
+    // Paragem ANTES de alguém estar a ler — é a janela que o SFU atravessa ao
+    // subscrever e dessubscrever antes de a tarefa de RTCP ser escalonada.
+    pc.remove_track(&sender).await.unwrap();
+    let r = tokio::time::timeout(Duration::from_secs(2), sender.read_rtcp()).await;
+    assert!(
+        r.is_err(),
+        "read_rtcp regressou depois de stop() — a biblioteca mudou, rever o contorno"
+    );
+    pc.close().await.unwrap();
+}
+
+/// **PC que falha por ICE tem de FECHAR e largar as portas UDP.**
+///
+/// Medido a 2026-09-17: com o host saturado (perda de 64%), um servidor parado
+/// ficou >30 min com 359 sockets UDP abertos e zero peers. O caminho é o
+/// `Failed`: o handler de estado chamava `remove_peer` → `pc.close()` DENTRO do
+/// callback do webrtc-rs, que segura o mutex do handler durante a chamada; o
+/// `close()` volta a pedir esse mutex para anunciar `Closed` e fica pendurado
+/// para sempre — depois de o peer já ter saído da sala, por isso os gauges
+/// liam zero.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pc_que_falha_por_ice_fecha_e_nao_fica_viva() {
+    let (sfu, _metrics) = new_sfu_com(Some((
+        Duration::from_millis(500),
+        Duration::from_millis(1500),
+    )));
+    let room = Uuid::new_v4();
+
+    let a = TestClient::join(&sfu, room).await;
+    a.publish(OPUS, "a-audio").await;
+    let b = TestClient::join(&sfu, room).await;
+    b.publish(OPUS, "b-audio").await;
+
+    eventually_com_diagnostico(
+        "A e B ligados",
+        prazo(30),
+        || {
+            let b = b.clone();
+            let a_id = a.id.to_string();
+            async move { b.rtp_seen.lock().await.get(&a_id).copied().unwrap_or(0) > 0 }
+        },
+        || format!("A[{}] · B[{}]", a.retrato(), b.retrato()),
+    )
+    .await;
+    assert_eq!(sfu.census().await.pc_unclosed, 2);
+
+    // B desaparece sem dizer nada ao SFU (browser morto, rede caída).
+    b.pc.close().await.unwrap();
+
+    // O handler de `Failed` tira-o da sala…
+    eventually("B retirado da sala depois de Failed", prazo(30), || {
+        let sfu = sfu.clone();
+        async move { sfu.census().await.peers_in_rooms == 1 }
+    })
+    .await;
+
+    // …e a PC dele tem de chegar ao fim do close() e deixar de existir.
+    let prazo_fecho = prazo(15);
+    let inicio = tokio::time::Instant::now();
+    loop {
+        let c = sfu.census().await;
+        if c.pc_unclosed == 1 && c.pc_alive == 1 {
+            break;
+        }
+        assert!(
+            inicio.elapsed() < prazo_fecho,
+            "a PC de B saiu da sala mas não fechou/libertou: {c:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    sfu.remove_peer(room, a.id).await;
+    a.pc.close().await.unwrap();
+    esperar_censo_vazio(&sfu, "depois de A sair", prazo(20)).await;
+}
+
+/// **Nada do SFU sobrevive à saída de toda a gente** — nem com subscrições
+/// criadas e desfeitas antes de a renegociação acontecer.
+///
+/// Alternar o interesse de vídeo cria um sender, lança a tarefa de RTCP e
+/// remove-o logo a seguir. Com a armadilha de `read_rtcp` (ver o teste acima),
+/// a tarefa que perdesse o `stop()` ficava viva para sempre a segurar a
+/// `Publication` de A — e com ela a `RTCPeerConnection` de A.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn churn_de_subscricoes_nao_deixa_nada_vivo() {
+    let (sfu, _metrics) = new_sfu();
+    let room = Uuid::new_v4();
+
+    let a = TestClient::join(&sfu, room).await;
+    a.publish(OPUS, "a-audio").await;
+    a.publish(VP8, "a-video").await;
+    let b = TestClient::join(&sfu, room).await;
+    b.publish(OPUS, "b-audio").await;
+
+    eventually_com_diagnostico(
+        "B recebe o vídeo de A",
+        prazo(30),
+        || {
+            let b = b.clone();
+            let a_id = a.id.to_string();
+            async move {
+                b.streams_seen()
+                    .await
+                    .iter()
+                    .any(|(s, k)| *s == a_id && k == "video")
+            }
+        },
+        || format!("A[{}] · B[{}]", a.retrato(), b.retrato()),
+    )
+    .await;
+
+    for _ in 0..200 {
+        sfu.set_video_interest(room, b.id, vec![], None).await;
+        sfu.set_video_interest(room, b.id, vec![a.id], None).await;
+    }
+    let depois = sfu.census().await;
+    eprintln!("churn: censo com A e B na sala = {depois:?}");
+
+    sfu.remove_peer(room, b.id).await;
+    sfu.remove_peer(room, a.id).await;
+    a.pc.close().await.unwrap();
+    b.pc.close().await.unwrap();
+    esperar_censo_vazio(&sfu, "depois do churn", prazo(40)).await;
 }
