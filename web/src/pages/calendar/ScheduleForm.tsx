@@ -3,12 +3,15 @@
  * sessão a marcar desenhada por cima das que já existem, e o cartão de
  * conflitos e capacidade por baixo.
  *
- * Só aparece o que `createMeeting` aceita: título, descrição, vídeo ou voz,
- * início e duração, recorrência, convidados e sala física. O template mostra
- * ainda tipo «Videoaula/Emissão/Híbrida», gravação automática por resolução,
- * destinos de emissão, sala de espera e dial-in PSTN — nenhum destes campos
- * existe no pedido de criação, e um campo que o servidor ignora é pior do que
- * não o ter.
+ * O template mostra ainda «destinos de emissão» e «dial-in PSTN» no ecrã de
+ * agendar — nenhum dos dois tem campo próprio na reunião: destinos são um
+ * recurso da ORGANIZAÇÃO (`stream_destinations`, sem `meeting_id`), escolhidos
+ * no Estúdio ao entrar no ar, não ao marcar a sessão; o dial-in é um número
+ * fixo da organização (endpoint voice/dids), não algo que se define por
+ * reunião. Mostrá-los aqui seria um campo que o servidor ignora — pior do
+ * que não o ter. `format`/`waiting_room`/`auto_record`/`record_quality` (R184,
+ * migração 0046) são diferentes: vivem na própria reunião e chegam à sala no
+ * arranque, por isso têm campo neste formulário.
  */
 import { FormEvent, KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -16,17 +19,19 @@ import {
   apiErrorMessage,
   checkConflicts,
   Conflicts,
-  createMeeting,
+  createMeetingWithOptions,
   listMeetingRooms,
   Meeting,
   MeetingRoom,
+  RecordQuality,
   RecurrenceFreq,
   searchUsers,
+  SessionKind,
   User,
 } from '../../api'
 import { useShell } from '../../components/shellContext'
 import { Icon } from '../../ui/icons'
-import { Alert, Avatar, cx, Field, IconButton, Segmented, Select, Spinner, TextArea, TextInput } from '../../ui/kit'
+import { Alert, Avatar, cx, Field, IconButton, Segmented, Select, Spinner, TextArea, TextInput, Toggle } from '../../ui/kit'
 import WeekView from './WeekView'
 import { addDays, fmtDayMonth, fmtTime, groupByDay, hhmm, localeOf, mondayOf, parseYmd, tzShort, weekdayNames, ymd } from './dates'
 
@@ -65,6 +70,10 @@ export default function ScheduleForm({
   const [titleErr, setTitleErr] = useState('')
   const [description, setDescription] = useState('')
   const [kind, setKind] = useState<'video' | 'voice'>('video')
+  const [format, setFormat] = useState<SessionKind>('meeting')
+  const [waitingRoom, setWaitingRoom] = useState(false)
+  const [autoRecord, setAutoRecord] = useState(false)
+  const [recordQuality, setRecordQuality] = useState<RecordQuality>('1080p')
   const [date, setDate] = useState(initialDate ?? ymd(new Date()))
   const [time, setTime] = useState(initialTime ?? defaultTime())
   const [duration, setDuration] = useState(30)
@@ -156,7 +165,7 @@ export default function ScheduleForm({
     if (roomBlocked) return
     setBusy(true)
     try {
-      await createMeeting({
+      await createMeetingWithOptions({
         title: title.trim(),
         description: description.trim(),
         kind,
@@ -169,6 +178,10 @@ export default function ScheduleForm({
         recurrence_until: freq && end === 'until' && until ? until : null,
         recurrence_count: freq && end === 'count' ? count : null,
         recurrence_byday: freq === 'weekly' ? BYDAY.filter((d) => byday.has(d)).join(',') : null,
+        format,
+        waiting_room: waitingRoom,
+        auto_record: autoRecord,
+        record_quality: recordQuality,
       })
       onCreated(date)
     } catch (e2) {
@@ -232,6 +245,43 @@ export default function ScheduleForm({
             ))}
           </div>
         </fieldset>
+
+        <Segmented<SessionKind>
+          label={t('schedule.form.formato')}
+          value={format}
+          onChange={setFormat}
+          options={[
+            { value: 'meeting', label: t('schedule.form.formatoReuniao') },
+            { value: 'training', label: t('schedule.form.formatoFormacao') },
+            { value: 'broadcast', label: t('schedule.form.formatoEmissao') },
+            { value: 'hybrid', label: t('schedule.form.formatoHibrida') },
+          ]}
+        />
+
+        <div className="sched__pair">
+          <Toggle
+            label={t('schedule.form.salaDeEspera')}
+            hint={t('schedule.form.salaDeEsperaDica')}
+            checked={waitingRoom}
+            onChange={(e) => setWaitingRoom(e.target.checked)}
+          />
+          <Toggle
+            label={t('schedule.form.gravacaoAutomatica')}
+            hint={t('schedule.form.gravacaoAutomaticaDica')}
+            checked={autoRecord}
+            onChange={(e) => setAutoRecord(e.target.checked)}
+          />
+        </div>
+        {autoRecord && (
+          <Field label={t('schedule.form.qualidadeGravacao')} htmlFor={`${uid}-quality`}>
+            <Select id={`${uid}-quality`} value={recordQuality} onChange={(e) => setRecordQuality(e.target.value as RecordQuality)}>
+              <option value="2160p">{t('schedule.form.qualidade2160p')}</option>
+              <option value="1080p">{t('schedule.form.qualidade1080p')}</option>
+              <option value="720p">{t('schedule.form.qualidade720p')}</option>
+              <option value="audio">{t('schedule.form.qualidadeAudio')}</option>
+            </Select>
+          </Field>
+        )}
 
         <div className="sched__pair">
           <fieldset className="sched__fieldset">
