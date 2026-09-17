@@ -57,3 +57,34 @@ Medido com `pesquisa-odoo/medir-altura.mjs` (conta ana.mbala, API 8190). Destaqu
 Agenda Semana a 1920×1080 deixa **303 px vazios** por baixo da grelha, que rola por
 dentro 628 px; a 1440×900, 123 px. Administração rola a página inteira (764–3179 px)
 e a auditoria rola por dentro (2442 px). Integrações e Análise rolam a página.
+
+## Depois (frente `frontend/pesquisa-odoo`)
+
+Contrato seguido: `docs/reference/pesquisa.md` do ramo `delonix-meet-backend/pesquisa-profunda`
+(ADR-0007). Cada lista tenta primeiro o recurso do servidor (`/api/search/schemas/{resource}`);
+com 404 cai na colecção INTEIRA de sempre, com «Filtrado neste browser» no ecrã e sem favoritos.
+
+| Ecrã / lista | Fonte com o servidor do contrato | Sem o recurso no servidor | O que falta no backend |
+|---|---|---|---|
+| Gravações | `recordings` (transcrição, categoria, duração, favoritos) | biblioteca inteira: título, sala, autor, estado, tamanho, data | — |
+| Agenda (Lista + filtro das grelhas) | `meetings` | `GET /api/meetings` inteiro | — |
+| Contactos · pessoas | `members` | `/employees` inteiro | presença (online) não é campo filtrável |
+| Contactos · grupos | local | local | recurso `groups` (não está no contrato) |
+| Contactos · histórico | local (perdidas + CDR 7 dias) | local | `call_records` (fase 2); chamadas efectuadas/recebidas entre contactos não se guardam |
+| Quadros | `whiteboards` (inclui «Os meus», dono) | lista inteira, sem dono | — |
+| Administração · organizações | local | local | recurso `orgs` (não está no contrato) |
+| Administração · membros | `members` | `/employees` inteiro | — |
+| Administração · auditoria | `audit_events` | lista de sempre com «últimos N», SEM painel (a amostra é cortada) | — |
+| Integrações · webhooks | `webhooks` quando existir (fase 2) | lista inteira | recurso `webhooks` (fase 2); registo de entregas não existe |
+| Integrações · chaves de API | local | local | recurso `api_keys` (não está no contrato) |
+| Análise · organizadores, quarentena | local (linhas já agregadas) | local | filtro de período das agregações é do servidor |
+| Estúdio · biblioteca ao abrir gravação | `recordings` (estado só no diálogo) | lista inteira | — |
+| Estúdio · histórico de exportações | local (IndexedDB do dispositivo) | local | fila de exportação no servidor não existe |
+| Estúdio · destinos de emissão | sem painel | sem painel | ≤ 5 cartões ligados por índice ao editor; `stream_destinations` (fase 2) não é usado pela UI |
+| Início · próximas, recentes | sem painel (pré-visualizações curtas) | — | — |
+
+Altura (antes → depois, `bodyScroll` / vazio por baixo, conta ana.mbala na API 8190):
+Agenda Semana 1920×1080 0/303 → 0/20; Agenda Lista 1440×900 324/0 → 0/20 (rola a lista);
+Administração 1440×900 1077/0 → 0/16 (rola cada coluna); Integrações e Análise continuam a
+rolar a página (painéis de configuração/indicadores que não cabem em 1080 px sem regiões
+de scroll aninhadas).
