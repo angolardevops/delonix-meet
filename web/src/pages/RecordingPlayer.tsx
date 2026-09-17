@@ -437,7 +437,8 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
             <Tabs<InfoTab> label={t('player.separadores')} value={info} onChange={setInfo} tabs={tabs} />
             <div className="pl-info__body">
               {info === 'description' && <Description rec={rec} meeting={meeting} />}
-              {info === 'transcript' && (x?.segments ? <Transcript segments={x.segments} nowMs={pb.nowMs} onSeek={seek} /> : <RecordingNotes roomCode={rec.roomCode} />)}
+              {info === 'transcript' &&
+                (extra.state.s === 'loading' ? null : x?.segments ? <Transcript segments={x.segments} nowMs={pb.nowMs} onSeek={seek} /> : <RecordingNotes roomCode={rec.roomCode} />)}
               {info === 'comments' && <RecordingComments recordingId={rec.id} nowMs={pb.nowMs} onSeek={seek} onChanged={onChanged} />}
               {info === 'participants' && <RecordingParticipants recordingId={rec.id} />}
               {info === 'captions' && <RecordingCaptions recordingId={rec.id} canManage={rec.canManage} onChanged={onChanged} />}

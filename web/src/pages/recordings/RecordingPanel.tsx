@@ -197,7 +197,9 @@ export default function RecordingPanel({
         </section>
       )}
 
-      {segments ? (
+      {/* Enquanto os sub-recursos carregam não se pedem as notas da sala: com
+          transcrição do servidor elas nem se mostram. */}
+      {extra.state.s === 'loading' ? null : segments ? (
         <section className="rec-section" aria-labelledby="rec-transcript-title">
           <div className="rec-section__head">
             <h3 id="rec-transcript-title">{t('recordings.notas.transcricao')}</h3>
