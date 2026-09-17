@@ -79,6 +79,7 @@
 |---|---|
 | `GET/POST /api/meetings` | igual |
 | — | `GET /api/meetings/{meeting_id}` (**novo**: recurso completo) |
+| — | `PATCH /api/meetings/{meeting_id}` (**novo**, R184: só as opções de sessão, só o anfitrião) |
 | `DELETE /api/meetings/{id}` | `DELETE /api/meetings/{meeting_id}` (`204`) |
 | `POST /api/meetings/conflicts` | `POST /api/meetings/check-conflicts` |
 | `POST /api/meetings/{id}/start` | `POST /api/meetings/{meeting_id}/start` |
