@@ -2511,7 +2511,7 @@ pub struct OdooProvisioning {
     pub sync_max_age_seconds: i64,
     pub last_synced_at: Option<DateTime<Utc>>,
     /// Resultado da última corrida (`created`, `updated`, `skipped`, `suspended`, `role_changes`,
-    /// `conflicts`, `groups_read`); `null` = nenhuma desde a 0062.
+    /// `conflicts`, `groups_read`); `null` = nenhuma desde a 0057.
     #[schema(value_type = Object)]
     pub last_result: Option<serde_json::Value>,
     pub pending_role_conflicts: i64,

@@ -1999,13 +1999,13 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Portão.** `server/tests/rbac.rs` (`migrated_points_keep_their_status_table`, `no_escalation`, `system_roles_and_unenforced_fields_are_locked`, `materialized_decisions_equal_policy`, `department_scoped_role`, `sessions_create_is_enforced`, `recordings_publish_and_view_others`, `new_routes_are_isolated`, `seeded_system_defaults_match_the_domain`) e unitários de tabela em `authorization/tests.rs`.
 
-**Ficheiros.** `server/crates/delonix-meet-domain/src/identity/authorization{.rs,/tests.rs}`, `server/migrations/0060_org_roles.sql`, `server/src/{org,roles,audit,stream_destinations,broadcast,recordings,rooms,meetings,meetings_v1,apikeys}.rs`, `scripts/check-arquitectura-catraca.sh`.
+**Ficheiros.** `server/crates/delonix-meet-domain/src/identity/authorization{.rs,/tests.rs}`, `server/migrations/0055_org_roles.sql`, `server/src/{org,roles,audit,stream_destinations,broadcast,recordings,rooms,meetings,meetings_v1,apikeys}.rs`, `scripts/check-arquitectura-catraca.sh`.
 
 ### R191 — Uma escrita herdada de `role = 'member'` esmagava em silêncio um papel personalizado
 
 **Sintoma.** Com `role_id` como fonte, os escritores herdados (`add_employee … DO UPDATE SET role`, `update_employee`, o «nunca despromove» da sincronização Odoo) voltavam a escrever o texto e deixavam `role_id` e `role` a dizer coisas diferentes.
 
-**Regra.** `role` é derivado de `role_id` por gatilho num só sentido (0060). `INSERT` só com `role` recebe o papel de sistema; `UPDATE` que mude `role` sem mudar `role_id` levanta excepção. Os escritores que alteram papel chamam `org::set_system_role`. O último dono activo (com humanos activos) é protegido no serviço (`409 role.last_owner`) e por um gatilho de restrição adiado. O utilizador de serviço nunca é dono nem ocupa lugar.
+**Regra.** `role` é derivado de `role_id` por gatilho num só sentido (0055). `INSERT` só com `role` recebe o papel de sistema; `UPDATE` que mude `role` sem mudar `role_id` levanta excepção. Os escritores que alteram papel chamam `org::set_system_role`. O último dono activo (com humanos activos) é protegido no serviço (`409 role.last_owner`) e por um gatilho de restrição adiado. O utilizador de serviço nunca é dono nem ocupa lugar.
 
 **Portão.** `tests/rbac.rs::legacy_role_update_cannot_overwrite_role_id`, `last_owner_and_owner_assignment`, `no_legacy_role_updates_in_source` (varre `src/`).
 

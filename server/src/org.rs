@@ -818,7 +818,7 @@ pub async fn add_employee(
         let (used, limit) = seat_usage_tx(&mut tx, org_id, true).await?;
         delonix_meet_domain::organization::seats::check_activation(used, 1, limit)?;
     }
-    // O papel NÃO se escreve aqui: `role` é derivado de `role_id` (0060). Uma
+    // O papel NÃO se escreve aqui: `role` é derivado de `role_id` (0055). Uma
     // pertença nova recebe o papel de sistema pelo gatilho; uma existente muda
     // por `set_system_role` a seguir.
     sqlx::query(
@@ -2099,7 +2099,7 @@ pub(crate) async fn role_destination_limit(
     )
 }
 
-/// Traduz as recusas dos gatilhos da 0060 para o envelope (409), em vez de 500.
+/// Traduz as recusas dos gatilhos da 0055 para o envelope (409), em vez de 500.
 pub(crate) fn map_member_write_error(e: sqlx::Error) -> ApiError {
     if let sqlx::Error::Database(db) = &e {
         let msg = db.message();
