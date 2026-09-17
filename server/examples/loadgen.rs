@@ -316,10 +316,7 @@ async fn run_client(
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("sem room_token: {join}"))?
         .to_string();
-    let ws_url = format!(
-        "{}/ws?token={token}",
-        args.api.replacen("http", "ws", 1)
-    );
+    let ws_url = format!("{}/ws?token={token}", args.api.replacen("http", "ws", 1));
     let (ws, _) = match tokio_tungstenite::connect_async(&ws_url).await {
         Ok(x) => x,
         Err(e) => {
@@ -480,7 +477,11 @@ async fn run_client(
         clock_rate: 90000,
         ..Default::default()
     };
-    let rids: &[&str] = if args.simulcast { &["q", "h", "f"] } else { &["f"] };
+    let rids: &[&str] = if args.simulcast {
+        &["q", "h", "f"]
+    } else {
+        &["f"]
+    };
     let vtracks: Vec<Arc<TrackLocalStaticSample>> = rids
         .iter()
         .map(|rid| {
@@ -550,7 +551,11 @@ async fn run_client(
                 }
                 last = now;
                 for (li, t) in vtracks.iter().enumerate() {
-                    let layer = if simulcast { &media.layers[li] } else { &media.layers[2] };
+                    let layer = if simulcast {
+                        &media.layers[li]
+                    } else {
+                        &media.layers[2]
+                    };
                     let data = layer[i % layer.len()].clone();
                     let _ = t
                         .write_sample(&Sample {
@@ -611,7 +616,10 @@ async fn run_client(
                     .await
                 {
                     let st = pc.signaling_state();
-                    diag.nego_errors.lock().unwrap().push(format!("answer em {st}: {e}"));
+                    diag.nego_errors
+                        .lock()
+                        .unwrap()
+                        .push(format!("answer em {st}: {e}"));
                     continue;
                 }
                 for c in pending.drain(..) {
@@ -630,13 +638,17 @@ async fn run_client(
                             && m.contains("a=ssrc:")
                     })
                     .count();
-                diag.last_offer_video_send.store(n as u64, Ordering::Relaxed);
+                diag.last_offer_video_send
+                    .store(n as u64, Ordering::Relaxed);
                 if let Err(e) = pc
                     .set_remote_description(RTCSessionDescription::offer(sdp)?)
                     .await
                 {
                     let st = pc.signaling_state();
-                    diag.nego_errors.lock().unwrap().push(format!("offer em {st}: {e}"));
+                    diag.nego_errors
+                        .lock()
+                        .unwrap()
+                        .push(format!("offer em {st}: {e}"));
                     continue;
                 }
                 let ans = pc.create_answer(None).await?;
@@ -858,7 +870,10 @@ async fn main() -> anyhow::Result<()> {
                 let _ = tx.send(json!({"type":"server-record","active":true}).to_string());
             }
         }
-        eprintln!("[{}] gravação no servidor ligada em {} salas", args.label, args.record_rooms);
+        eprintln!(
+            "[{}] gravação no servidor ligada em {} salas",
+            args.label, args.record_rooms
+        );
     }
 
     let tck = 100.0; // CLK_TCK
@@ -867,7 +882,10 @@ async fn main() -> anyhow::Result<()> {
     let mut prev_cpu = args.server_pid.and_then(proc_cpu_ticks).unwrap_or(0);
     let mut prev_self = proc_cpu_ticks(std::process::id()).unwrap_or(0);
     let mut prev_sys = system_busy().unwrap_or((0, 1));
-    let mut prev_ticks = (g.ticks.load(Ordering::Relaxed), g.late_ticks.load(Ordering::Relaxed));
+    let mut prev_ticks = (
+        g.ticks.load(Ordering::Relaxed),
+        g.late_ticks.load(Ordering::Relaxed),
+    );
     let windows = args.duration_secs.div_ceil(args.sample_secs);
     let mut ff_prev = args.server_pid.map(ffmpeg_children).unwrap_or((0, 0)).1;
     let mut phase = "carga";
@@ -886,7 +904,10 @@ async fn main() -> anyhow::Result<()> {
             }
             phase = "composição";
             post_started = Some(Instant::now());
-            eprintln!("[{}] gravação parada → ffmpeg a compor com as chamadas a decorrer", args.label);
+            eprintln!(
+                "[{}] gravação parada → ffmpeg a compor com as chamadas a decorrer",
+                args.label
+            );
         }
         if phase == "composição" {
             let el = post_started.unwrap().elapsed().as_secs();
@@ -910,10 +931,18 @@ async fn main() -> anyhow::Result<()> {
         let jit_p95 = pct(&mut jit, 0.95) as f64 / 10.0;
         let dvp = cur.0.v_packets - prev.0.v_packets;
         let dvl = cur.0.v_lost - prev.0.v_lost;
-        let loss = if dvp + dvl > 0 { dvl as f64 / (dvp + dvl) as f64 * 100.0 } else { 0.0 };
+        let loss = if dvp + dvl > 0 {
+            dvl as f64 / (dvp + dvl) as f64 * 100.0
+        } else {
+            0.0
+        };
         let dap = cur.0.a_packets - prev.0.a_packets;
         let dal = cur.0.a_lost - prev.0.a_lost;
-        let aloss = if dap + dal > 0 { dal as f64 / (dap + dal) as f64 * 100.0 } else { 0.0 };
+        let aloss = if dap + dal > 0 {
+            dal as f64 / (dap + dal) as f64 * 100.0
+        } else {
+            0.0
+        };
         let mbps = (cur.0.v_bytes - prev.0.v_bytes) as f64 * 8.0 / dt / 1e6;
         let cpu_now = args.server_pid.and_then(proc_cpu_ticks).unwrap_or(0);
         let srv_cores = (cpu_now - prev_cpu) as f64 / tck / dt;
@@ -925,7 +954,10 @@ async fn main() -> anyhow::Result<()> {
         let sys = system_busy().unwrap_or((0, 1));
         let sys_busy = (sys.0 - prev_sys.0) as f64 / ((sys.1 - prev_sys.1).max(1)) as f64 * 100.0;
         let rss = args.server_pid.and_then(proc_rss_mb).unwrap_or(0.0);
-        let ticks = (g.ticks.load(Ordering::Relaxed), g.late_ticks.load(Ordering::Relaxed));
+        let ticks = (
+            g.ticks.load(Ordering::Relaxed),
+            g.late_ticks.load(Ordering::Relaxed),
+        );
         let late = if ticks.0 > prev_ticks.0 {
             (ticks.1 - prev_ticks.1) as f64 / (ticks.0 - prev_ticks.0) as f64 * 100.0
         } else {
@@ -973,13 +1005,21 @@ async fn main() -> anyhow::Result<()> {
         (v * 100.0).round() / 100.0
     };
     let maxf = |rs: &[&Value], k: &str| -> f64 {
-        rs.iter().map(|r| r[k].as_f64().unwrap_or(0.0)).fold(0.0, f64::max)
+        rs.iter()
+            .map(|r| r[k].as_f64().unwrap_or(0.0))
+            .fold(0.0, f64::max)
     };
     let minf = |rs: &[&Value], k: &str| -> f64 {
-        rs.iter().map(|r| r[k].as_f64().unwrap_or(0.0)).fold(f64::MAX, f64::min)
+        rs.iter()
+            .map(|r| r[k].as_f64().unwrap_or(0.0))
+            .fold(f64::MAX, f64::min)
     };
     // Descarta a 1.ª janela de carga (arranque de keyframes/camadas) na média.
-    let steady: Vec<&Value> = if carga.len() > 2 { carga[1..].to_vec() } else { carga.clone() };
+    let steady: Vec<&Value> = if carga.len() > 2 {
+        carga[1..].to_vec()
+    } else {
+        carga.clone()
+    };
     let mut fm = g.first_media_ms.lock().unwrap().clone();
     let summary = json!({
         "label": args.label,
@@ -1035,7 +1075,10 @@ async fn main() -> anyhow::Result<()> {
     println!("{}", serde_json::to_string(&summary)?);
     if let Some(out) = &args.out {
         use std::io::Write;
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(out)?;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(out)?;
         writeln!(f, "{}", serde_json::to_string(&summary)?)?;
     }
     // Não esperar que todas as tasks webrtc fechem com graça.

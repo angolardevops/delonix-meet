@@ -75,8 +75,8 @@ Com 40 pessoas colapsou (13–46% de perda).
    uma camada já usada, o webrtc-rs reutilizava um sender já esvaziado
    (`new track must have the same envelope as previous`), e o subscritor
    deixava de ver esse participante até sair da sala. Com simulcast,
-   aconteceu com 2 chamadas. Há correcção numa branch à parte (R156),
-   ainda não fundida à data desta medição.
+   aconteceu com 2 chamadas. Há correcção numa branch à parte
+   (`sfu-troca-camada`), ainda não fundida à data desta medição.
 2. **Subscrições em falta quando várias pessoas entram quase ao mesmo tempo.**
    Com 8 salas × 4 e entradas a 40 ms, o gauge `delonix_sfu_subscriptions`
    ficou em 165 com 192 esperadas. As ofertas SDP do servidor já vinham sem
@@ -99,7 +99,7 @@ Com 40 pessoas colapsou (13–46% de perda).
   servidor. Não foi medido com clientes noutra máquina.
 - **Os clientes não são o Chrome.** O webrtc-rs não troca de papel ICE ao
   responder a uma oferta do SFU, por isso a queda de ligação que o Chrome sofre
-  (R157) não aparece aqui. Até essa correcção entrar, os números são optimistas
+  (correcção na branch `sfu-envio-parado`) não aparece aqui. Até essa correcção entrar, os números são optimistas
   para browsers.
 - **A capacidade foi medida sem simulcast** (por causa do defeito 1). É o pior
   caso de débito por fluxo, mas não é o comportamento normal de um browser.
