@@ -5641,7 +5641,7 @@
                 }
               }
             },
-            "description": "Nome vazio/longo, `odoo_db` sem `odoo_company_id`, ou `scopes` inválidos (`api_key.scopes_empty`, `api_key.unknown_scope`)."
+            "description": "Nome vazio/longo, `odoo_db` sem `odoo_company_id`, `odoo_url`/`sso.issuer_url` a apontar para um endereço interno (guarda de saída), ou `scopes` inválidos (`api_key.scopes_empty`, `api_key.unknown_scope`)."
           },
           "401": {
             "content": {

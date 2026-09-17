@@ -238,3 +238,49 @@ async fn webdav_do_operador_alcanca_a_rede_privada_mas_nao_os_metadados(db: sqlx
     let (st, body) = put("http://10.0.0.7/dav").await;
     assert_eq!(st, 200, "{body}");
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn provisionamento_recusa_urls_internos_antes_de_escrever(db: sqlx::PgPool) {
+    let secret = "segredo-de-plataforma-de-teste";
+    let app = TestApp::spawn_with(db, &[("PROVISIONING_SECRET", secret)]).await;
+    let provisionar = |corpo: serde_json::Value| {
+        let app = &app;
+        async move {
+            app.raw(
+                reqwest::Method::POST,
+                "/api/operator/v1/organizations",
+                &[("X-Provisioning-Secret", secret)],
+                Some(corpo),
+            )
+            .await
+        }
+    };
+    let r = provisionar(json!({
+        "name": "Delta SA", "email_domain": "delta.test",
+        "sso": {"issuer_url": "https://169.254.169.254", "client_id": "meet",
+                "client_secret": "s", "enforce_sso": false}
+    }))
+    .await;
+    assert_eq!(r.status, 400, "{}", r.text);
+    let r = provisionar(json!({
+        "name": "Delta SA", "odoo_url": "http://127.0.0.1:8069", "odoo_db": "prod", "odoo_company_id": 1
+    }))
+    .await;
+    assert_eq!(r.status, 400, "{}", r.text);
+    let orgs: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM organizations WHERE name = 'Delta SA'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(orgs, 0, "a recusa não pode deixar uma organização a meio");
+
+    // Controlo: os mesmos campos com destinos públicos provisionam.
+    let r = provisionar(json!({
+        "name": "Delta SA", "email_domain": "delta.test",
+        "odoo_url": "https://erp.delta.test", "odoo_db": "prod", "odoo_company_id": 1,
+        "sso": {"issuer_url": "https://idp.delta.test", "client_id": "meet",
+                "client_secret": "s", "enforce_sso": false}
+    }))
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+}
