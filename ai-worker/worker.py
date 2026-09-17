@@ -12,7 +12,7 @@ from typing import Callable
 
 from job_source import Job, JobSource, LeaseLost
 from minutes import build_mom
-from transcriber import Transcriber
+from transcriber import Transcriber, Transcription
 
 Log = Callable[[str], None]
 
@@ -67,7 +67,10 @@ def process_one(source: JobSource, transcriber: Transcriber, recordings_dir: str
     log(f"a transcrever gravação {job.recording_id} (tentativa {job.attempt}, {path})…")
     t0 = clock()
     try:
-        transcript = transcriber.transcribe(path)
+        result = transcriber.transcribe(path)
+        if isinstance(result, str):  # um transcritor antigo que só dá o texto
+            result = Transcription(text=result)
+        transcript = result.text
         minutes = build_mom(transcript)
     except Exception as e:
         log(f"gravação {job.recording_id}: transcrição falhou ({type(e).__name__}: {e})")
@@ -82,7 +85,7 @@ def process_one(source: JobSource, transcriber: Transcriber, recordings_dir: str
             f"{now - job.lease_expires_unix:.0f}s — subir LEASE_SECONDS (máx. 7200)")
 
     try:
-        source.complete(job, transcript, minutes)
+        source.complete(job, transcript, minutes, result.segments, result.language)
     except LeaseLost as e:
         log(f"gravação {job.recording_id}: entrega recusada, reserva perdida ({e}) — a seguir")
         return Outcome.LEASE_LOST
