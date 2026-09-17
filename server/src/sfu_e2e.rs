@@ -68,6 +68,17 @@ struct TestClient {
     /// Cada pacote de VÍDEO recebido, por ordem de chegada — é o que deixa
     /// provar numeração, relógio e camada de origem através das trocas.
     video_rx: Arc<std::sync::Mutex<Vec<RxVideo>>>,
+    /// Cada pacote de ÁUDIO recebido, com o instante de chegada — é o que deixa
+    /// descodificar o que a ponte telefone↔sala publicou e medir o atraso.
+    audio_rx: Arc<std::sync::Mutex<Vec<RxAudio>>>,
+}
+
+/// Um pacote de áudio tal como o subscritor o viu.
+#[derive(Clone, Debug)]
+struct RxAudio {
+    stream_id: String,
+    at: std::time::Instant,
+    payload: Vec<u8>,
 }
 
 /// Um pacote de vídeo tal como o subscritor o viu.
@@ -145,6 +156,7 @@ impl TestClient {
             received: Arc::new(Mutex::new(Vec::new())),
             rtp_seen: Arc::new(Mutex::new(std::collections::HashMap::new())),
             video_rx: Arc::new(std::sync::Mutex::new(Vec::new())),
+            audio_rx: Arc::new(std::sync::Mutex::new(Vec::new())),
         });
 
         // Trickle ICE cliente → SFU.
@@ -171,10 +183,12 @@ impl TestClient {
             let received = client.received.clone();
             let rtp_seen = client.rtp_seen.clone();
             let video_rx = client.video_rx.clone();
+            let audio_rx = client.audio_rx.clone();
             pc.on_track(Box::new(move |remote, _r, _t| {
                 let received = received.clone();
                 let rtp_seen = rtp_seen.clone();
                 let video_rx = video_rx.clone();
+                let audio_rx = audio_rx.clone();
                 Box::pin(async move {
                     let stream_id = remote.stream_id().to_string();
                     let is_video = remote.kind() == RTPCodecType::Video;
@@ -193,6 +207,16 @@ impl TestClient {
                                     ts: pkt.header.timestamp,
                                     layer: pkt.payload.first().copied().unwrap_or(0),
                                 });
+                            } else {
+                                let mut a = audio_rx.lock().unwrap();
+                                // Tecto: um teste longo não acumula áudio sem fim.
+                                if a.len() < 20_000 {
+                                    a.push(RxAudio {
+                                        stream_id: stream_id.clone(),
+                                        at: std::time::Instant::now(),
+                                        payload: pkt.payload.to_vec(),
+                                    });
+                                }
                             }
                         }
                     });
@@ -1623,4 +1647,459 @@ async fn pstn_bridge_ingress_forwards_to_webrtc_participant() {
     let _ = sender_task.await;
 
     sfu.remove_peer(room, a.id).await;
+// ===================================================================
+//  Ponte telefone↔sala (ADR-0010, R221)
+// ===================================================================
+
+/// Magnitude normalizada de uma frequência (Goertzel): um seno de amplitude A
+/// dá ~A/2.
+fn tom(x: &[f32], fs: f32, f: f32) -> f32 {
+    crate::phone_bridge::audio::tests::goertzel(x, fs, f)
+}
+
+/// «Telefone» falso: o papel do FreeSWITCH do lado da ponte. Manda RTP G.711
+/// (silêncio e depois um tom) e guarda o que a ponte lhe devolve.
+struct TelefoneFalso {
+    socket: Arc<tokio::net::UdpSocket>,
+    /// (chegada, PCM descodificado) de cada pacote da mistura.
+    recebido: Arc<std::sync::Mutex<Vec<(std::time::Instant, Vec<i16>)>>>,
+    /// Instante em que o tom começou a sair (None = ainda silêncio).
+    tom_desde: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
+    tocar: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl TelefoneFalso {
+    async fn ligar(
+        bind: &str,
+        ponte: std::net::SocketAddr,
+        law: crate::phone_bridge::g711::Law,
+        freq: f32,
+    ) -> Self {
+        use webrtc::util::{Marshal, Unmarshal};
+        let socket = Arc::new(tokio::net::UdpSocket::bind(bind).await.unwrap());
+        let recebido: Arc<std::sync::Mutex<Vec<(std::time::Instant, Vec<i16>)>>> =
+            Default::default();
+        let tom_desde: Arc<std::sync::Mutex<Option<std::time::Instant>>> = Default::default();
+        let tocar = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let socket = socket.clone();
+            let recebido = recebido.clone();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 1500];
+                while let Ok((n, _)) = socket.recv_from(&mut buf).await {
+                    let mut raw = &buf[..n];
+                    if let Ok(p) = webrtc::rtp::packet::Packet::unmarshal(&mut raw) {
+                        let Some(l) = crate::phone_bridge::g711::Law::from_payload_type(
+                            p.header.payload_type,
+                        ) else {
+                            continue;
+                        };
+                        let mut pcm = Vec::new();
+                        l.decode(&p.payload, &mut pcm);
+                        recebido
+                            .lock()
+                            .unwrap()
+                            .push((std::time::Instant::now(), pcm));
+                    }
+                }
+            });
+        }
+        {
+            let socket = socket.clone();
+            let tom_desde = tom_desde.clone();
+            let tocar = tocar.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(Duration::from_millis(20));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
+                let (mut seq, mut ts, mut fase) = (1000u16, 50_000u32, 0usize);
+                loop {
+                    tick.tick().await;
+                    let pcm: Vec<i16> = if tocar.load(std::sync::atomic::Ordering::SeqCst) {
+                        let mut t = tom_desde.lock().unwrap();
+                        if t.is_none() {
+                            *t = Some(std::time::Instant::now());
+                        }
+                        let v = crate::phone_bridge::audio::tests::tone_8k(freq, 160, 0.5, fase);
+                        fase += 160;
+                        v
+                    } else {
+                        vec![0; 160]
+                    };
+                    let mut payload = Vec::new();
+                    law.encode(&pcm, &mut payload);
+                    let pkt = webrtc::rtp::packet::Packet {
+                        header: webrtc::rtp::header::Header {
+                            version: 2,
+                            payload_type: law.payload_type(),
+                            sequence_number: seq,
+                            timestamp: ts,
+                            ssrc: 0x7e1e_f0e0,
+                            ..Default::default()
+                        },
+                        payload: payload.into(),
+                    };
+                    seq = seq.wrapping_add(1);
+                    ts = ts.wrapping_add(160);
+                    if socket
+                        .send_to(&pkt.marshal().unwrap(), ponte)
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
+        Self {
+            socket,
+            recebido,
+            tom_desde,
+            tocar,
+        }
+    }
+}
+
+impl TestClient {
+    /// Publica um microfone com Opus A SÉRIO (codificado com o `opus-rs` a
+    /// 48 kHz), silêncio até `tocar` ficar a `true` e depois um tom de `freq`.
+    async fn publish_opus_tone(
+        &self,
+        id: &str,
+        freq: f32,
+    ) -> (
+        Arc<std::sync::atomic::AtomicBool>,
+        Arc<std::sync::Mutex<Option<std::time::Instant>>>,
+    ) {
+        let track = self.publish_without_media(OPUS, id).await;
+        let tocar = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let desde: Arc<std::sync::Mutex<Option<std::time::Instant>>> = Default::default();
+        let (t2, d2) = (tocar.clone(), desde.clone());
+        tokio::spawn(async move {
+            let mut enc = opus_rs::OpusEncoder::new(48_000, 1, opus_rs::Application::Voip).unwrap();
+            enc.bitrate_bps = 32_000;
+            let mut out = vec![0u8; 1500];
+            let mut tick = tokio::time::interval(Duration::from_millis(20));
+            let mut n = 0usize;
+            loop {
+                tick.tick().await;
+                let on = t2.load(std::sync::atomic::Ordering::SeqCst);
+                if on && d2.lock().unwrap().is_none() {
+                    *d2.lock().unwrap() = Some(std::time::Instant::now());
+                }
+                let pcm: Vec<f32> = (0..960)
+                    .map(|i| {
+                        if on {
+                            0.5 * (2.0 * std::f32::consts::PI * freq * (n + i) as f32 / 48_000.0)
+                                .sin()
+                        } else {
+                            0.0
+                        }
+                    })
+                    .collect();
+                n += 960;
+                let len = enc.encode(&pcm, 960, &mut out).unwrap();
+                let ok = track
+                    .write_sample(&Sample {
+                        data: out[..len].to_vec().into(),
+                        duration: Duration::from_millis(20),
+                        ..Default::default()
+                    })
+                    .await
+                    .is_ok();
+                if !ok {
+                    break;
+                }
+            }
+        });
+        (tocar, desde)
+    }
+
+    /// `publish` sem a bomba de bytes a zero (quem chama manda a media).
+    async fn publish_without_media(&self, mime: &str, id: &str) -> Arc<TrackLocalStaticSample> {
+        let track = Arc::new(TrackLocalStaticSample::new(
+            RTCRtpCodecCapability {
+                mime_type: mime.to_owned(),
+                ..Default::default()
+            },
+            id.to_owned(),
+            format!("stream-{id}"),
+        ));
+        self.pc
+            .add_transceiver_from_track(
+                Arc::clone(&track) as Arc<dyn TrackLocal + Send + Sync>,
+                Some(RTCRtpTransceiverInit {
+                    direction: webrtc::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection::Sendrecv,
+                    send_encodings: vec![],
+                }),
+            )
+            .await
+            .unwrap();
+        self.offer().await;
+        track
+    }
+
+    /// Descodifica (Opus, 48 kHz) o áudio recebido de `stream_id`, pacote a
+    /// pacote: (chegada, magnitude de `freq` nesse pacote).
+    fn tom_recebido(&self, stream_id: &str, freq: f32) -> Vec<(std::time::Instant, f32)> {
+        let pacotes: Vec<RxAudio> = self
+            .audio_rx
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.stream_id == stream_id)
+            .cloned()
+            .collect();
+        let mut dec = opus_rs::OpusDecoder::new(48_000, 1).unwrap();
+        let mut out = vec![0f32; 5760];
+        pacotes
+            .iter()
+            .filter_map(|p| {
+                let n = dec.decode(&p.payload, 5760, &mut out).ok()?;
+                Some((p.at, tom(&out[..n], 48_000.0, freq)))
+            })
+            .collect()
+    }
+}
+
+/// **R221 — a ponte telefone↔sala, com media a sério nos dois sentidos.**
+///
+/// Um «telefone» (socket UDP a mandar RTP G.711 lei μ com um tom de 1 kHz,
+/// exactamente o que o FreeSWITCH entrega) liga-se a uma perna da ponte; um
+/// participante WebRTC (`RTCPeerConnection` do webrtc-rs, o papel do browser)
+/// publica Opus com um tom de 440 Hz. Exige-se:
+///
+/// 1. o participante recebe do SFU um fluxo Opus DESCODIFICÁVEL com o tom de
+///    1 kHz do telefone (a publicação da ponte é um participante como outro);
+/// 2. o telefone recebe G.711 com o tom de 440 Hz do participante;
+/// 3. o telefone NÃO recebe o próprio tom (mix-minus);
+/// 4. um pacote vindo de um IP que não é o do FreeSWITCH não entra na sala.
+///
+/// Mede e imprime o atraso de cada sentido (do primeiro pacote com tom
+/// enviado ao primeiro com tom recebido) e o CPU de codecs por chamada.
+///
+/// **Âmbito:** o transporte até à ponte é o socket local — sem FreeSWITCH, sem
+/// operadora, sem SRTP. O participante é webrtc-rs, não um browser.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ponte_telefone_sala_tom_nos_dois_sentidos() {
+    use crate::phone_bridge::{g711::Law, leg};
+    let (sfu, _metrics) = new_sfu();
+    let room = Uuid::new_v4();
+    let leg_id = Uuid::new_v4();
+
+    let ana = TestClient::join(&sfu, room).await;
+    let (ana_fala, ana_desde) = ana.publish_opus_tone("ana-mic", 440.0).await;
+    // O cliente webrtc-rs não tem rollback nem perfect negotiation (um browser
+    // tem): uma oferta do SFU que chegue a meio da recolha de candidatos dá
+    // «ICE Agent can not be restarted when gathering» NO CLIENTE e a subscrição
+    // fica por responder. A chamada entra depois de a Ana estar ligada — é a
+    // ordem de uma reunião real (alguém lá dentro chama o telefone).
+    eventually_com_diagnostico(
+        "a Ana está ligada ao SFU",
+        prazo(30),
+        || {
+            let ana = ana.clone();
+            async move {
+                ana.pc.connection_state()
+                    == webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected
+                    && ana.pc.signaling_state()
+                        == webrtc::peer_connection::signaling_state::RTCSignalingState::Stable
+            }
+        },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+
+    let (ev_tx, mut ev_rx) = mpsc::channel(16);
+    let perna = leg::start(
+        sfu.clone(),
+        leg::LegConfig {
+            room_id: room,
+            leg_id,
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allowed_sources: vec!["127.0.0.1".parse().unwrap()],
+            default_law: Law::A,
+        },
+        ev_tx,
+    )
+    .await
+    .expect("perna da ponte");
+    let inicio_chamada = std::time::Instant::now();
+    let telefone = TelefoneFalso::ligar("127.0.0.1:0", perna.local_addr, Law::Mu, 1000.0).await;
+
+    // A Ana tem de ver a chamada como um participante da sala (stream_id = perna).
+    eventually_com_diagnostico(
+        "a Ana recebe o áudio da chamada",
+        prazo(30),
+        || {
+            let ana = ana.clone();
+            async move {
+                ana.rtp_seen
+                    .lock()
+                    .await
+                    .get(&leg_id.to_string())
+                    .copied()
+                    .unwrap_or(0)
+                    > 10
+            }
+        },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+    assert_eq!(ev_rx.try_recv().ok(), Some(leg::LegEvent::FirstMedia));
+
+    // Os dois tons arrancam agora.
+    telefone
+        .tocar
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    ana_fala.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    // 1. Sala recebe o telefone.
+    eventually("a Ana ouve o 1 kHz do telefone em Opus", prazo(20), || {
+        let ana = ana.clone();
+        async move {
+            ana.tom_recebido(&leg_id.to_string(), 1000.0)
+                .iter()
+                .rev()
+                .take(25)
+                .filter(|(_, m)| *m > 0.15)
+                .count()
+                >= 20
+        }
+    })
+    .await;
+    // 2. Telefone recebe a sala.
+    eventually(
+        "o telefone ouve os 440 Hz da Ana em G.711",
+        prazo(20),
+        || {
+            let r = telefone.recebido.clone();
+            async move {
+                let v = r.lock().unwrap();
+                v.iter()
+                    .rev()
+                    .take(25)
+                    .filter(|(_, pcm)| {
+                        let f: Vec<f32> = pcm.iter().map(|&s| s as f32 / 32768.0).collect();
+                        tom(&f, 8000.0, 440.0) > 0.15
+                    })
+                    .count()
+                    >= 20
+            }
+        },
+    )
+    .await;
+    // Mais um segundo de conversa para as medições terem amostra.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // Atraso telefone → sala.
+    let t0_tel = telefone.tom_desde.lock().unwrap().expect("tom do telefone");
+    let sala = ana.tom_recebido(&leg_id.to_string(), 1000.0);
+    let t1_sala = sala
+        .iter()
+        .find(|(at, m)| *at >= t0_tel && *m > 0.1)
+        .map(|(at, _)| *at)
+        .expect("tom do telefone na sala");
+    // Atraso sala → telefone.
+    let t0_ana = ana_desde.lock().unwrap().expect("tom da Ana");
+    let (t1_tel, proprio_max, alheio_min) = {
+        let v = telefone.recebido.lock().unwrap();
+        let t1 = v
+            .iter()
+            .find(|(at, pcm)| {
+                let f: Vec<f32> = pcm.iter().map(|&s| s as f32 / 32768.0).collect();
+                *at >= t0_ana && tom(&f, 8000.0, 440.0) > 0.1
+            })
+            .map(|(at, _)| *at)
+            .expect("tom da Ana no telefone");
+        // 3. Mix-minus: nos últimos 40 pacotes, o 1 kHz do próprio telefone
+        //    não volta, e o 440 Hz da Ana está sempre lá.
+        let ultimos: Vec<Vec<f32>> = v
+            .iter()
+            .rev()
+            .take(40)
+            .map(|(_, pcm)| pcm.iter().map(|&s| s as f32 / 32768.0).collect())
+            .collect();
+        let proprio = ultimos
+            .iter()
+            .map(|f| tom(f, 8000.0, 1000.0))
+            .fold(0.0, f32::max);
+        let alheio = ultimos
+            .iter()
+            .map(|f| tom(f, 8000.0, 440.0))
+            .fold(1.0, f32::min);
+        (t1, proprio, alheio)
+    };
+    assert!(
+        proprio_max < 0.02,
+        "o telefone ouve-se a si próprio: {proprio_max}"
+    );
+    assert!(
+        alheio_min > 0.1,
+        "o tom da Ana falha no telefone: {alheio_min}"
+    );
+
+    // 4. Um IP que não é o do FreeSWITCH não publica na sala.
+    let rejeitados_antes = perna
+        .stats
+        .packets_rejected
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let intruso = TelefoneFalso::ligar("127.0.0.2:0", perna.local_addr, Law::Mu, 2000.0).await;
+    intruso
+        .tocar
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let rejeitados = perna
+        .stats
+        .packets_rejected
+        .load(std::sync::atomic::Ordering::Relaxed)
+        - rejeitados_antes;
+    assert!(
+        rejeitados >= 10,
+        "pacotes de 127.0.0.2 deviam ser recusados: {rejeitados}"
+    );
+    assert!(
+        ana.tom_recebido(&leg_id.to_string(), 2000.0)
+            .iter()
+            .rev()
+            .take(20)
+            .all(|(_, m)| *m < 0.02),
+        "o áudio do intruso entrou na sala"
+    );
+    drop(intruso);
+
+    let dur = inicio_chamada.elapsed();
+    let codec_ns = perna
+        .stats
+        .codec_nanos
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let ingress_max = perna
+        .stats
+        .ingress_max_micros
+        .load(std::sync::atomic::Ordering::Relaxed);
+    eprintln!(
+        "R221 ponte: telefone→sala {:?} · sala→telefone {:?} · ingresso (recv→SFU) pior {} µs · \
+         codecs {:.0} µs de CPU por s de chamada ({:.2} % de um núcleo) · pacotes in={} out={} opus={} · \
+         mix-minus: próprio {:.4} / Ana {:.3}",
+        t1_sala.duration_since(t0_tel),
+        t1_tel.duration_since(t0_ana),
+        ingress_max,
+        codec_ns as f64 / 1000.0 / dur.as_secs_f64(),
+        codec_ns as f64 / 1e9 / dur.as_secs_f64() * 100.0,
+        perna.stats.packets_in.load(std::sync::atomic::Ordering::Relaxed),
+        perna.stats.packets_out.load(std::sync::atomic::Ordering::Relaxed),
+        perna.stats.frames_published.load(std::sync::atomic::Ordering::Relaxed),
+        proprio_max,
+        alheio_min,
+    );
+    assert!(t1_sala.duration_since(t0_tel) < Duration::from_millis(1500));
+    assert!(t1_tel.duration_since(t0_ana) < Duration::from_millis(1500));
+
+    // Fim da chamada: a publicação sai da sala e a sala sem ninguém desaparece.
+    perna.stop().await;
+    drop(telefone);
+    sfu.remove_peer(room, ana.id).await;
+    ana.pc.close().await.unwrap();
+    assert!(sfu.is_room_empty(room).await);
+    // Nada da ponte fica vivo: publicação, bomba e sala saem com a chamada.
+    esperar_censo_vazio(&sfu, "depois da chamada e da Ana saírem", prazo(20)).await;
 }
