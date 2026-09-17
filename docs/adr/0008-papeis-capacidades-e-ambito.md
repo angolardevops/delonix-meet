@@ -1,6 +1,6 @@
 # ADR-0008 — Papéis, capacidades e âmbito
 
-**Estado:** Proposto (para revisão da sessão dona da linha de backend) · **Data:** 2026-09-17 ·
+**Estado:** Aceite com revisão (delonix-meet-44, 2026-09-17, sobre `ecc4abd`) · **Data:** 2026-09-17 ·
 **Contexto:** ecrãs «Papéis e permissões» (`DelonixRBAC`) e «Utilizadores e convites»
 (`DelonixUsers`) do template Navegavel3 — frente A do backend v3 ·
 **Assenta em:** [ADR-0004](0004-organizacao-alvo-do-backend.md) (camadas, catraca, pertença em
@@ -59,14 +59,14 @@ escopos e **não herda** as capacidades de quem a criou.
 
 | Grupo | Código | Ecrã | Imposta no servidor nesta frente |
 |---|---|---|---|
-| Sessões | `sessions.create` | Criar e agendar sessões | não |
+| Sessões | `sessions.create` | Criar e agendar sessões | **sim** — `POST /api/rooms`, `POST /api/meetings`, `POST /api/v1/rooms`, `POST /api/v1/meetings` (uma função) |
 | | `sessions.admit_waiting_room` | Admitir da sala de espera (inclui convidados por telefone) | não |
 | | `sessions.mute_remove` | Silenciar e remover pessoas | não |
 | | `sessions.breakout_rooms` | Abrir salas paralelas | não |
 | Gravação e biblioteca | `recordings.record_4k` | Gravar em 4K | não |
-| | `recordings.view_others` | Ver gravações de outros (só dentro do âmbito) | não |
-| | `recordings.publish` | Publicar gravação | não |
-| | `recordings.delete` | Apagar gravação (irreversível) | não |
+| | `recordings.view_others` | Ver gravações de outros (só dentro do âmbito) | **sim** — o facto `org_admin` do SQL da biblioteca (`recordings.rs:269`): descarregar e gerir a gravação de um colega |
+| | `recordings.publish` | Publicar gravação | **sim** — `recordings/{recording_id}/shares` e `recordings/{recording_id}/public-link` sobre gravações de outros |
+| | `recordings.delete` | Apagar gravação (irreversível) | não — **não existe rota HTTP que apague uma gravação** (medido: só a retenção apaga) |
 | Emissão | `broadcast.public_destinations` | Emitir para destinos públicos | **sim** — destinos guardados no `/api/rooms/{room_code}/live` |
 | | `broadcast.manage_rtmp_keys` | Gerir chaves RTMP (credenciais de terceiros) | **sim** — `stream-destinations` (6 rotas) |
 | | `broadcast.highlight_questions` | Destacar perguntas no palco | não |
@@ -83,11 +83,26 @@ escopos e **não herda** as capacidades de quem a criou.
   wrapper de uma capacidade sem mudar de significado. Nunca pode ser dada a um papel
   personalizado (`authz.system_only_capability`): seria a porta de escalada para tudo o que
   o catálogo ainda não parte em capacidades finas.
-- **«Imposta: não» é dito na API.** `GET /api/capabilities` devolve, por capacidade,
-  `enforced: bool` e os pontos onde é imposta. Uma capacidade que a UI mostra e o servidor
-  ainda não impõe fica marcada como tal — não se finge. As capacidades de sessão descrevem
-  poderes sobre sessões de OUTROS e da organização; os direitos do anfitrião na própria sala
-  continuam a ser regras da sala (contexto 4).
+- **Uma capacidade não imposta não é configurável** (doutrina: um campo que o cliente escreve
+  e o sistema ignora é pior do que um que não existe). `GET /api/capabilities` devolve, por
+  capacidade, `enforced: bool` e os pontos onde é imposta; na matriz, uma capacidade com
+  `enforced: false` só aceita o valor por omissão do papel (`inherit` num personalizado) e
+  qualquer outro valor é `422 authz.capability_not_enforced`. A UI mostra-a bloqueada.
+- **Semântica escrita:**
+  - `sessions.create` é o poder de CRIAR uma sessão (sala ou reunião). Avalia-se sobre a pessoa
+    que fica DONA da sessão: na BFF, quem pede, em todas as pertenças activas (basta uma dar
+    `allow`; sem nenhuma pertença, é conta pessoal e cria); na v1, o dono da sala ou o
+    anfitrião, na organização da chave. A chave não ganha nem empresta capacidades — o papel
+    do dono limita o que se cria em nome dele. As chamadas instantâneas (`presence`,
+    `signaling`) não são sessões agendadas e ficam fora.
+  - `recordings.*` são poderes sobre gravações de OUTROS. O dono do recurso mantém os seus
+    direitos (o `uploader` partilha, cria link, gere e descarrega a sua gravação sem
+    capacidade nenhuma). Quem não é dono e tem `recordings.publish` numa organização activa do
+    dono passa a poder partilhar e criar link — **alargamento intencional** para
+    `owner`/`admin`, que hoje já descarregam e gerem essas gravações. O estado de recusa
+    herdado dessas rotas (`401`) mantém-se.
+  - As restantes capacidades de sessão descrevem poderes sobre sessões de OUTROS; os direitos
+    do anfitrião na própria sala continuam a ser regras da sala (contexto 4).
 - **Acrescentar uma capacidade** é mudar o `enum`, subir `CATALOG_VERSION` e escrever a
   migração que a semeia nos papéis de sistema. Os papéis personalizados recebem-na como
   `inherit`.
@@ -136,20 +151,25 @@ carregada, o departamento da pertença e o papel `member` de sistema da mesma or
   (`role.reassignment_required`) e reatribui na mesma transacção.
 - **Uma pertença, um papel** (`org_members.role_id`). A contagem por papel do ecrã
   (1+4+14+38+9+74+2 = 142) confirma-o.
-- **A coluna herdada `org_members.role` fica, sincronizada por gatilho**: `owner`/`admin` →
-  `'admin'`, qualquer outro → `'member'`. É o que mantém intactos o SQL da biblioteca
-  (`recordings.rs:269`), a regra de encerrar sala (`voice.rs:444`) e o «nunca despromove»
-  da sincronização, e todos os escritores herdados (registo, `add_employee`, `odoo_sso`,
-  `meetings_v1`, provisionamento), que continuam a escrever `'admin'`/`'member'`: um
-  `INSERT`/`UPDATE` só com `role` recebe o `role_id` de sistema correspondente, e um
-  `UPDATE` de `role_id` reescreve `role`. O gatilho nunca despromove um `owner` por uma
-  escrita herdada de `'admin'`.
+- **A fonte do papel é `role_id`.** `org_members.role` passa a ser DERIVADO, por gatilho num só
+  sentido (`role_id → role`: `owner`/`admin` → `'admin'`, qualquer outro → `'member'`). É o que
+  mantém fiéis as leituras por texto (`recordings.rs:269` sai nesta frente; `voice.rs:444` e
+  `odoo_sso.rs:415` ficam na catraca).
+  - Um `INSERT` só com `role` (escritores herdados de inserção: registo, SSO JIT, `meetings_v1`,
+    provisionamento) recebe o `role_id` de sistema correspondente.
+  - Um `UPDATE` que mude `role` sem mudar `role_id` **levanta excepção**: um `role='member'`
+    herdado nunca esmaga em silêncio um papel personalizado.
+  - Os escritores que ALTERAM papel (`add_employee` e `update_employee` em `org.rs`, o
+    `upsert_member` da sincronização em `odoo_sso.rs`) chamam `org::set_system_role`, que muda
+    `role_id` com as regras da §5. Um teste varre `server/src` e falha se aparecer uma escrita
+    de `role` em `org_members` fora dessa função.
 - **Migração dos dados:** cada org recebe os quatro papéis de sistema; cada pertença recebe
   o `role_id` do seu `role`; o `owner` é o `created_by` se for admin activo, senão o admin
   activo mais antigo que não seja o utilizador de serviço. Uma org sem humano admin (só o
   utilizador de serviço, caso do Odoo antes do primeiro login) fica sem dono até ao primeiro
-  admin humano entrar, que é promovido pelo gatilho. Esta é a única excepção ao invariante
-  «≥ 1 dono», e é dita no relatório de lugares (`owner_missing: true`).
+  admin humano entrar, que é promovido pelo gatilho.
+- **O utilizador de serviço** (`provisioning@delonix.internal`) nunca é `owner`, nunca conta para
+  lugares e nunca é atribuível (`role.service_account`).
 
 ### 4. Um só ponto de imposição, em `org.rs`
 
@@ -158,9 +178,18 @@ pub(crate) async fn require_capability(state, org_id, user_id, Capability, Resou
     -> Result<Grant, ApiError>
 ```
 
-- Carrega a pertença por `role_in_org` (a ÚNICA fonte; nada de `FROM org_members` fora de
-  `org.rs` — a catraca `pertenca_org_fora_de_org_rs=22` não sobe) e os papéis da org, e
-  chama `authorization::can`.
+- **Uma só query, em `org.rs`**, sem N+1 e sem cache em memória (há várias réplicas): a
+  pertença activa (a mesma regra de `role_in_org`, que continua a ÚNICA fonte — nada de
+  `FROM org_members` fora de `org.rs`, e a catraca `pertenca_org_fora_de_org_rs=22` não sobe)
+  junta-se à tabela `org_role_effective_capabilities`.
+- **Porque não um CTE recursivo em cada pedido:** o SQL da biblioteca (`recordings.rs:269`)
+  precisa da MESMA resposta dentro de uma query que filtra antes de paginar. Resolver a
+  herança em SQL seria uma segunda implementação da policy, que diverge. Por isso a policy
+  pura (`authorization::can`) calcula, para cada papel e capacidade, o valor efectivo nos dois
+  âmbitos (`organization` e `own_department`), e o resultado grava-se na MESMA transacção de
+  qualquer escrita de papéis (criar, alterar matriz, herança, eliminar), recalculando todos os
+  papéis da org, porque um pai mudado muda os filhos. A leitura é um `JOIN` por chave; a
+  escrita é rara. Um teste compara a tabela gravada com `can()` chamado directamente.
 - **Estados (R153):** não membro activo / outra org / inexistente → `404`; autenticado sem a
   capacidade → `403 authz.missing_capability` (com a capacidade em `details`);
   `requires_approval` sem aprovação válida → `403 authz.approval_required` (com o id do
@@ -186,18 +215,24 @@ pub(crate) async fn require_capability(state, org_id, user_id, Capability, Resou
   (3), `org` SSO (3), filiais, salas físicas, estatísticas, `sms` (10), `voice` (4),
   `webhooks` (7), `usage`, `meetings::quarantine_analytics`, `whiteboards` (2, o «admin
   apaga/partilha»).
-- **Ficam como estão, e contam na catraca nova:** `voice.rs:444` e `recordings.rs:269`
-  (lêem a coluna herdada, que o gatilho mantém fiel) e `odoo_sso.rs:415`. Nova medida
-  `verificacoes_papel_por_string_fora_de_org_rs = 3`, que só pode descer. A migração de
-  `recordings.rs:269` para `recordings.view_others` pede a capacidade dentro do SQL de
-  visibilidade (filtra antes de paginar) e fica para quem tocar na biblioteca.
+- **Ficam como estão, e contam na catraca nova:** `voice.rs:444` e `odoo_sso.rs:415`
+  (lêem a coluna derivada). Nova medida `verificacoes_papel_por_string_fora_de_org_rs`:
+  3 antes desta frente, 2 depois de `recordings.rs:269` passar a `recordings.view_others`;
+  só pode descer.
 - **Testes de não-regressão:** para cada ponto migrado, a tabela owner/admin/member/
   arquivado/outra org → estado HTTP, antes igual a depois, contra Postgres real.
+- **Simular utilizador é uma avaliação só de leitura:**
+  `POST /api/orgs/{org_id}/authorization/evaluations` devolve `Decision` + `Explanation` para
+  a pessoa, a capacidade e o âmbito pedidos. Nunca emite sessão nem token, nunca executa em
+  nome de ninguém, exige `admin.manage_roles` e é auditada. Para gatear botões, cada pessoa lê
+  as suas em `GET /api/orgs/{org_id}/members/me/capabilities`; o catálogo estático está em
+  `GET /api/capabilities`.
 
 ### 5. Invariantes
 
-1. **Sempre ≥ 1 dono activo** (excepção da §3). Despromover, suspender, arquivar ou remover
-   o último `owner` → `409 role.last_owner`. Imposto no serviço (todas as escritas desta
+1. **≥ 1 `owner` activo SE houver ≥ 1 membro humano activo.** Despromover, suspender,
+   arquivar ou remover o último `owner` → `409 role.last_owner`. `owner_missing: true` aparece
+   no `GET /api/orgs/{org_id}` e nos lugares quando a org tem humanos activos e nenhum dono. Imposto no serviço (todas as escritas desta
    frente e as herdadas de `org.rs`) e com um gatilho de restrição adiado na base como
    segunda linha.
 2. **Papéis de sistema** não se apagam nem mudam (§3).
@@ -215,14 +250,23 @@ pub(crate) async fn require_capability(state, org_id, user_id, Capability, Resou
 
 ### 6. Pedidos de aprovação
 
-- `approval_requests(org_id, requester_id, capability, action, target, status
-  pending|approved|rejected|consumed|expired, decided_by, decided_at, reason, expires_at)`.
+- `approval_requests(org_id, requester_id, capability, action, target_hash, target, status
+  pending|approved|rejected|consumed|expired|invalidated, decided_by, decided_at, reason,
+  expires_at)`.
+- **Ligado a `(capability, action, hash canónico do target)`**: o `target` é JSON canónico
+  (chaves ordenadas, sem espaços) e o hash é SHA-256 (`core::crypto`). Uma aprovação para um
+  alvo não serve para outro.
 - Criado pelo `require_capability` quando a decisão é `RequiresApproval`; um pedido pendente
-  igual (mesma pessoa, capacidade, acção e alvo) é reutilizado.
-- **Aprovar:** quem aprova tem `allow` nessa capacidade e não é quem pediu
-  (`approval.self_approval`). A aprovação é uma **licença de uso único** válida 24 h: a
-  repetição do mesmo pedido pela mesma pessoa consome-a e executa. Nada é re-executado em
-  nome de ninguém.
+  igual (mesma pessoa e mesma tripla) é reutilizado.
+- **Aprovar/recusar:** quem decide tem `allow` nessa capacidade e não é quem pediu
+  (`approval.self_approval`).
+- **Consumo atómico:** a repetição do pedido pela mesma pessoa faz
+  `UPDATE approval_requests SET status='consumed' WHERE … AND status='approved' AND
+  expires_at > now() RETURNING id`; só uma execução ganha. A aprovação vale 24 h.
+- **Invalidação:** mudar o papel ou o estado (suspender, arquivar, reactivar) de quem pediu
+  passa a `invalidated` os pedidos `pending` e `approved` não consumidos dessa pessoa na org.
+- **Sweeper** de hora a hora passa a `expired` os pendentes e aprovados fora de prazo.
+- Auditoria de pedir, aprovar, recusar, consumir, invalidar e expirar.
 
 ### 7. Suspensão e lugares
 
@@ -230,16 +274,24 @@ pub(crate) async fn require_capability(state, org_id, user_id, Capability, Resou
   (`suspended` | `removed` | `odoo_exit` | `inactive` | `guest_expired`). Reutiliza a regra S3
   inteira — as 22 leituras fora de `org.rs` que filtram `archived_at` passam a tratar o
   suspenso como quem saiu, sem mudar uma linha. Reactivar limpa `archived_at` e passa pela
-  regra dos lugares. O directório mostra os arquivados como `suspended`.
+  regra dos lugares, e **só a partir de `suspended`, `inactive` ou `guest_expired`**
+  (`member.not_reactivatable`): `removed` e `odoo_exit` voltam por convite ou pela
+  sincronização, nunca por «reactivar». O directório mostra `suspended` para os três
+  reactiváveis e não lista os outros dois.
 - **Lugares seguem o padrão da `storage_quota`:** regra pura
   `organization::seats::{check_activation, remaining}` no domínio, tecto em
   `organizations.max_seats` (`NULL` = ilimitado), uso MEDIDO no adaptador (membros activos
   menos o utilizador de serviço). **Não há contador.** O tecto é do operador
-  (`/api/operator/v1`), nunca do admin da org. As edições não são licenciamento (ADR-0006
+  (`/api/operator/v1`), nunca do admin da org.
+- **A activação verifica o tecto dentro da transacção** (`SELECT … FROM organizations WHERE
+  id = $1 FOR UPDATE` antes de contar): duas activações concorrentes serializam-se e não passam
+  o tecto. Há teste de concorrência.
+- **`external_guest` não consome lugar**; tem o seu próprio limite mensal (§8). As edições não são licenciamento (ADR-0006
   §2): `enterprise` e `personal` nascem sem tecto. «Libertar lugares» = suspender, por item,
   quem não entra há N dias (nunca o último dono nem quem pede).
-- **Último acesso:** `users.last_access_at`, escrito por gatilho a cada `auth.login*` na
-  auditoria e preenchido a partir dela na migração.
+- **Último acesso:** `users.last_access_at`, escrito explicitamente num só sítio,
+  `auth::issue_tokens` (todas as entradas com sucesso passam por ele). Nada de gatilhos sobre a
+  auditoria encadeada. A migração preenche-o a partir dos `auth.login*` já auditados.
 
 ### 8. Limites por papel
 
@@ -247,8 +299,9 @@ pub(crate) async fn require_capability(state, org_id, user_id, Capability, Resou
 `max_external_guests_per_month` (`NULL` = sem limite; herdam do pai quando `NULL` num
 personalizado). **Impostos nesta frente:** destinos em simultâneo (no directo, com destinos
 guardados) e convidados externos por mês (na criação de convites externos, contados por quem
-convida). **Guardados e ditos não impostos** (`enforced: false` na resposta): duração e
-resolução — pedem o SFU e o gravador, que não são desta frente.
+convida). **Duração e resolução não são graváveis** enquanto não forem impostas (pedem o SFU e o
+gravador, que não são desta frente): escrever `max_session_minutes` ou `max_resolution_p` é
+`422 role.limit_not_enforced`, e a resposta devolve-os `null` com `enforced: false`.
 
 ### 9. Grupos do Odoo
 
@@ -280,7 +333,12 @@ resolução — pedem o SFU e o gravador, que não são desta frente.
 - **Convite de organização** (`org_invitations`): correio, papel, departamento, externo ou
   não, expiração, estado, token guardado só como hash. **Não há transporte de correio no
   servidor** (medido: zero SMTP): criar e reenviar devolvem o link UMA vez, com
-  `delivery: "manual"`, e a UI entrega-o. Aceitar exige sessão cujo correio é o do convite.
+  `delivery: "manual"`, e a UI entrega-o.
+- **O token é a credencial.** «Correio da sessão = correio do convite» é defesa em
+  profundidade e não garante nada, porque o registo não verifica o email. O token é de uso
+  único (consumo atómico) e com expiração, procurado pelo hash e comparado em tempo constante
+  (`core::crypto`), e a aceitação tem rate-limit por IP. Reenviar roda o token (o anterior
+  deixa de servir).
 - **Regras de entrada** por org: criar conta na primeira entrada só para domínios aprovados,
   suspender ao sair do Odoo, validade dos convidados externos, e o registo de presenças
   `hr.attendance` — que fica `available: false` e recusa ligar-se
@@ -310,6 +368,11 @@ do `GET /api/public/settings`, que já existe; o servidor não esconde rotas por
 - **−** A coluna `org_members.role` fica como sombra sincronizada por gatilho até as três
   leituras por string saírem.
 - **−** Muda o `code` do 403 de `require_admin` (`permission_denied` →
-  `authz.missing_capability`).
+  `authz.missing_capability`). Medido: nenhum consumidor lê o antigo (`web/`, `sms-gateway/`,
+  `docs/reference/api-contract.md`, specs OpenAPI, skills).
+- **−** `owner`/`admin` passam a poder partilhar e criar link de gravações de colegas
+  (`recordings.publish`, §1).
+- **−** A tabela de capacidades efectivas é dado derivado: toda a escrita de papéis tem de a
+  recalcular na mesma transacção (um só caminho em `org.rs`, com teste de equivalência).
 - **−** Capacidades de departamento só têm efeito onde o recurso tem departamento — hoje, o
   directório de pessoas. Salas, gravações e destinos não têm departamento.
