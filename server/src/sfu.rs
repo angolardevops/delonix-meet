@@ -953,7 +953,14 @@ impl SfuState {
             close_done,
             _vivo: Vivo::new(&self.census.peers),
         });
-        room.peers.lock().await.insert(peer_id, peer.clone());
+        let substituido = room.peers.lock().await.insert(peer_id, peer.clone());
+        if let Some(antigo) = substituido {
+            // Não é alcançável hoje (o lugar reservado só é reclamado depois do
+            // `remove_peer` do socket antigo), mas largar o `SfuPeer` não fecha
+            // a PC — o webrtc-rs não fecha no `Drop` — e as portas ficavam presas.
+            tracing::error!(%room_id, %peer_id, "sfu add_peer substituiu um peer ainda registado — a fechar a PC antiga");
+            close_pc(&antigo, room_id, peer_id).await;
+        }
 
         // Trickle ICE: servidor -> cliente.
         {
@@ -1564,7 +1571,9 @@ impl SfuState {
         let removido = {
             let mut peers = room.peers.lock().await;
             match (peers.get(&peer_id), only) {
-                (Some(atual), Some(esperado)) if !Arc::ptr_eq(atual, esperado) => None,
+                // Outro peer com o mesmo id: não é connosco, e a gravação órfã
+                // (se houver) pertence a quem sair a seguir, não a esta tarefa.
+                (Some(atual), Some(esperado)) if !Arc::ptr_eq(atual, esperado) => return None,
                 _ => peers.remove(&peer_id),
             }
         };
