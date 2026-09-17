@@ -84,15 +84,19 @@ pub async fn list_sessions(
                 ip_address: r.ip_address,
                 started_at: r.session_started_at,
                 last_used_at: r.created_at,
-                current: current_hash.as_deref() == Some(r.token_hash.as_str()),
+                // O cookie de refresh só viaja para `/api/auth`; o `sid` do
+                // access token diz qual é a sessão deste pedido.
+                current: current_hash.as_deref() == Some(r.token_hash.as_str())
+                    || auth.session_id == Some(r.session_id),
             })
             .collect(),
     ))
 }
 
 /// Termina uma sessão à distância (ex.: "não reconheço este telemóvel").
-/// Revoga a linha viva do `session_id`: o próximo refresh desse dispositivo
-/// falha e ele tem de voltar a autenticar-se.
+/// Revoga a linha viva do `session_id` e a sessão: o próximo refresh desse
+/// dispositivo falha, o access token dele deixa de abrir a API de imediato
+/// (`auth.session_revoked`) e os WebSockets dele fecham.
 #[utoipa::path(
     delete, path = "/api/users/me/sessions/{session_id}", tag = "users",
     security(("session" = [])),
@@ -108,15 +112,10 @@ pub async fn revoke_session(
     auth: AuthUser,
     Path(session_id): Path<Uuid>,
 ) -> Result<axum::http::StatusCode, ApiError> {
-    let result = sqlx::query(
-        "UPDATE refresh_tokens SET revoked = TRUE
-         WHERE session_id = $1 AND user_id = $2 AND NOT revoked",
-    )
-    .bind(session_id)
-    .bind(auth.user_id)
-    .execute(&state.db)
-    .await?;
-    if result.rows_affected() == 0 {
+    // Uma regra só (`sessions::revoke`): revoga os refresh tokens, marca a
+    // sessão como terminada (o access token deixa de abrir a API já) e fecha
+    // os WebSockets dela.
+    if !crate::sessions::revoke(&state, auth.user_id, session_id, "user_revoked").await? {
         return Err(ApiError::NotFound);
     }
     crate::audit::log(

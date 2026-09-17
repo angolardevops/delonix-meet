@@ -3475,6 +3475,12 @@ pub async fn ws_handler(
             "Este nó está a encerrar. A tentar noutro…".into(),
         ));
     }
+    // O room token herda a sessão de quem entrou: terminada a sessão, nem o
+    // token de sala ainda válido volta a abrir o /ws.
+    if let Some(sid) = claims.sid {
+        crate::sessions::ensure_active(&state, claims.sub, sid).await?;
+    }
+    let session_id = claims.sid;
     let username = claims.name.clone().unwrap_or_else(|| "anonymous".into());
     let sfu_mode = claims.topo.as_deref() == Some("sfu");
     let is_host = claims.owner;
@@ -3513,6 +3519,7 @@ pub async fn ws_handler(
                 reconnect,
                 extras,
                 wait,
+                session_id,
             },
         )
     }))
@@ -3559,6 +3566,8 @@ struct SocketSession {
     reconnect: Option<String>,
     extras: JoinExtras,
     wait: WaitPolicy,
+    /// A sessão da conta de onde se entrou: terminá-la fecha este /ws.
+    session_id: Option<Uuid>,
 }
 
 /// Cria uma sala-filha de grupo (herda topologia/E2EE da principal).
@@ -3939,6 +3948,7 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         reconnect,
         mut extras,
         wait,
+        session_id,
     } = session;
     // Só um participante que não é anfitrião pode ter de esperar; a sala de
     // espera de runtime (se o anfitrião a mudou) ganha à configurada.
@@ -3984,6 +3994,9 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
     // Fila de saída LIMITADA (ver `PeerTx`): um consumidor lento passa a
     // custar o próprio socket em vez da memória do nó inteiro.
     let (tx, mut rx, shutdown) = PeerTx::new(state.config.ws_queue_cap, state.metrics.clone());
+    // Terminar a sessão (`sessions::revoke`) acorda este `shutdown`: o laço de
+    // entrada sai pelo caminho ordenado de sempre.
+    let _session_guard = session_id.map(|sid| state.session_kills.register(sid, shutdown.clone()));
 
     // Outbound: hub -> websocket. Um Ping periódico mantém a ligação viva
     // (proxies fecham WebSockets ociosos): sem tráfego, o socket cairia e —
@@ -4160,7 +4173,7 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                 _ => break,
             },
             _ = shutdown.notified() => {
-                tracing::warn!(%room_id, %peer_id, "sessão terminada: fila de saída em transbordo");
+                tracing::warn!(%room_id, %peer_id, "sessão terminada: sessão da conta terminada ou fila de saída em transbordo");
                 break;
             }
         };

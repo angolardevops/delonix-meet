@@ -544,6 +544,8 @@ pub async fn join_room(
             title,
             lobby: Some(!access.direct),
             wr: Some(room.waiting_room),
+            // A sessão de onde se entra: terminá-la fecha também este /ws.
+            sid: auth.session_id,
         },
     )?;
 
