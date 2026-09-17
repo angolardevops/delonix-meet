@@ -152,7 +152,7 @@ async fn tampered_expired_or_foreign_signatures_are_404(db: sqlx::PgPool) {
     let (st, _) = app
         .delete(&format!("/api/whiteboards/{id}"), Some(&a.token))
         .await;
-    assert_eq!(st, 200);
+    assert_eq!(st, 204);
     let (st, _, _) = get_raw(&app, &url, None).await;
     assert_eq!(st, 404);
 }

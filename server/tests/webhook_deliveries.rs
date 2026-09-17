@@ -215,7 +215,7 @@ async fn delivery_is_recorded_and_redelivery_sends_identical_payload(db: sqlx::P
     let (st, _) = app
         .delete(&format!("{}/{hook}", hooks(a.org())), Some(&a.token))
         .await;
-    assert_eq!(st, 200);
+    assert_eq!(st, 204);
     let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM webhook_deliveries")
         .fetch_one(&app.db)
         .await
