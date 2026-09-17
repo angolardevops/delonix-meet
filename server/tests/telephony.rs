@@ -1338,6 +1338,20 @@ async fn sip_credentials_are_revealed_only_after_reauth_and_audited(db: sqlx::Pg
     assert_eq!(s["password_configured"], true);
     assert!(!s.to_string().contains("sip-secreta"));
 
+    // O domínio decide a org das chamadas que entram: único (R213).
+    let (st, e) = app
+        .put(
+            &t(b.org(), "/sip-settings"),
+            Some(&b.token),
+            json!({"domain": "SIP.delonix.co.ao", "transport": "tls", "srtp": "mandatory"}),
+        )
+        .await;
+    assert_eq!(
+        (st, e["code"].as_str()),
+        (409, Some("telephony.sip_domain_taken")),
+        "{e}"
+    );
+
     let path = t(a.org(), "/sip-settings/reveal-credentials");
     let (st, e) = app
         .post(&path, Some(&a.token), json!({"password": "errada"}))
