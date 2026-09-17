@@ -37,7 +37,8 @@ export interface LocalFallback<T> {
 }
 
 export interface ResourceSearch<T> {
-  mode: 'loading' | 'server' | 'local' | 'error'
+  /** `unsupported`: o servidor não tem o recurso e não há alternativa local honesta. */
+  mode: 'loading' | 'server' | 'local' | 'error' | 'unsupported'
   error: string | null
   schema: SearchSchema | null
   search: SearchState
@@ -49,7 +50,7 @@ export interface ResourceSearch<T> {
   reload: () => void
 }
 
-type Source<T> = { mode: 'server'; schema: SearchSchema } | { mode: 'local'; schema: SearchSchema; rows: T[] }
+type Source<T> = { mode: 'server'; schema: SearchSchema } | { mode: 'local'; schema: SearchSchema; rows: T[] } | { mode: 'unsupported'; schema: null }
 
 export function useResourceSearch<T>({
   resource,
@@ -75,7 +76,8 @@ export function useResourceSearch<T>({
           const schema = await searchSchema(resource, signal)
           return { mode: 'server', schema }
         } catch (e) {
-          if (isAbort(e) || !(e instanceof ApiError) || e.status !== 404 || !fallback) throw e
+          if (isAbort(e) || !(e instanceof ApiError) || e.status !== 404) throw e
+          if (!fallback) return { mode: 'unsupported', schema: null }
         }
       }
       if (!fallback) throw new Error(t('search.estado.erroSchema'))
@@ -88,7 +90,7 @@ export function useResourceSearch<T>({
   const s = src.state
   const schema = s.s === 'ready' ? s.d.schema : null
   const fetcher = useMemo<ListFetcher<T> | null>(() => {
-    if (s.s !== 'ready') return null
+    if (s.s !== 'ready' || s.d.mode === 'unsupported') return null
     if (s.d.mode === 'server') return serverFetcher<T>(s.d.schema, orgId)
     return localFetcher(s.d.rows, { ...fallback!.source, schema: s.d.schema })
     // A fonte local é estável por ecrã; só a colecção muda.

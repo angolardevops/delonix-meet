@@ -30,6 +30,7 @@ export function SearchBar<T>({
   children?: ReactNode
 }) {
   const { t } = useTranslation()
+  if (rs.mode === 'unsupported') return null
   if (rs.mode === 'error') {
     return (
       <Alert tone="danger">
@@ -101,7 +102,7 @@ export function SearchResults<T>({
       ))}
     </div>
   )
-  if (rs.mode === 'error') return null
+  if (rs.mode === 'error' || rs.mode === 'unsupported') return null
   if (rs.mode === 'loading' || st.s === 'loading') return <>{loadingSkeleton}</>
   if (st.s === 'error') {
     return (

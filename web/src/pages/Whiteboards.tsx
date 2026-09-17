@@ -9,29 +9,41 @@
  *
  * Quem pode partilhar ou eliminar decide o servidor (dono ou admin da org);
  * a recusa chega como a mensagem que ele devolve.
+ *
+ * Pesquisa, filtros, agrupar e página: o painel estilo Odoo (recurso
+ * `whiteboards`; sem ele no servidor, a lista inteira filtrada no browser).
+ * `#/whiteboards?id=<id>` (pesquisa global) abre o quadro.
  */
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, deleteWhiteboard, listWhiteboards, shareWhiteboard, WhiteboardMeta } from '../api'
-import { AsyncSection, useAsync } from '../components/AsyncSection'
+import { useAsync } from '../components/AsyncSection'
 import PageBar from '../components/PageBar'
 import { useShell } from '../components/shellContext'
-import { Icon } from '../ui/icons'
-import { Alert, Button, cx, Dialog, Empty, IconButton, Skeleton, TextInput } from '../ui/kit'
+import { Alert, Button, cx, Dialog, IconButton, Skeleton } from '../ui/kit'
+import { hashParams } from '../ui/search/model'
+import { SearchBar, SearchResults } from '../ui/search/SearchResults'
+import { useResourceSearch } from '../ui/search/useResourceSearch'
 import '../ui/boards.css'
 import BoardCard from './boards/BoardCard'
 import BoardViewer, { boardShareUrl } from './boards/BoardViewer'
+import { whiteboardsFallback } from './boards/search'
 import LocalDiagrams from './diagrams/LocalDiagrams'
-
-type Filter = 'all' | 'public' | 'private'
 
 export default function Whiteboards() {
   const { t } = useTranslation()
   const { enterRoom } = useShell()
-  const { state, reload, mutate } = useAsync((signal) => listWhiteboards(signal), [])
-  const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState<Filter>('all')
-  const [viewId, setViewId] = useState<string | null>(null)
+  // A lista inteira de sempre: contagens da barra e o quadro aberto por id.
+  const { state, reload: reloadAll, mutate } = useAsync((signal) => listWhiteboards(signal), [])
+  const rs = useResourceSearch<WhiteboardMeta>({ resource: 'whiteboards', fallback: whiteboardsFallback })
+  const reloadSearch = rs.reload
+  const reload = useCallback(() => {
+    reloadAll()
+    reloadSearch()
+  }, [reloadAll, reloadSearch])
+  // Partilhar muda um quadro: a página da pesquisa mostra-o já actualizado.
+  const [updated, setUpdated] = useState<Record<string, WhiteboardMeta>>({})
+  const [viewId, setViewId] = useState<string | null>(() => hashParams().get('id'))
   const [busyId, setBusyId] = useState<string | null>(null)
   const [toDelete, setToDelete] = useState<WhiteboardMeta | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -39,18 +51,9 @@ export default function Whiteboards() {
   const [notice, setNotice] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null)
 
   const items = useMemo(() => (state.s === 'ready' ? state.d : []), [state])
-  const viewing = items.find((b) => b.id === viewId) ?? null
+  const page = rs.list.state.s === 'ready' ? rs.list.state.d.items : []
+  const viewing = updated[viewId ?? ''] ?? items.find((b) => b.id === viewId) ?? page.find((b) => b.id === viewId) ?? null
   const publicCount = items.filter((b) => b.is_public).length
-
-  const shown = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return items.filter((b) => {
-      if (filter === 'public' && !b.is_public) return false
-      if (filter === 'private' && b.is_public) return false
-      if (!q) return true
-      return b.title.toLowerCase().includes(q) || b.room_code.toLowerCase().includes(q)
-    })
-  }, [items, query, filter])
 
   const toggleShare = useCallback(
     async (b: WhiteboardMeta) => {
@@ -59,6 +62,7 @@ export default function Whiteboards() {
       try {
         const updated = await shareWhiteboard(b.id, !b.is_public)
         mutate((list) => list.map((x) => (x.id === b.id ? updated : x)))
+        setUpdated((m) => ({ ...m, [updated.id]: updated }))
         if (updated.is_public && updated.share_token) {
           // Tornar público é quase sempre para mandar a alguém: copia-se já.
           const copied = await navigator.clipboard
@@ -104,11 +108,6 @@ export default function Whiteboards() {
     }
   }
 
-  const filters: { value: Filter; label: string; count: number }[] = [
-    { value: 'all', label: t('boards.filtros.todos'), count: items.length },
-    { value: 'public', label: t('boards.filtros.publicos'), count: publicCount },
-    { value: 'private', label: t('boards.filtros.privados'), count: items.length - publicCount },
-  ]
 
   return (
     <>
@@ -116,17 +115,6 @@ export default function Whiteboards() {
         title={t('boards.titulo')}
         meta={state.s === 'ready' ? t('boards.meta', { count: items.length, publicos: publicCount }) : undefined}
       >
-        <label className="board-search">
-          <Icon name="search" size={14} />
-          <TextInput
-            type="search"
-            autoComplete="off"
-            value={query}
-            placeholder={t('boards.pesquisa.placeholder')}
-            aria-label={t('boards.pesquisa.rotulo')}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </label>
         <Button size="sm" variant="primary" icon="plus" onClick={() => (location.hash = '/whiteboards/diagram')}>
           {t('diagrams.novo')}
         </Button>
@@ -134,20 +122,7 @@ export default function Whiteboards() {
 
       <div className="page board-page">
         <LocalDiagrams />
-        <div className="dx-chips" role="group" aria-label={t('boards.filtros.rotulo')}>
-          {filters.map((f) => (
-            <button
-              key={f.value}
-              type="button"
-              className="dx-chip"
-              aria-pressed={filter === f.value}
-              onClick={() => setFilter(f.value)}
-            >
-              {f.label}
-              <span className="dx-num">{f.count}</span>
-            </button>
-          ))}
-        </div>
+        <SearchBar rs={rs} label={t('boards.pesquisa.rotulo')} placeholder={t('boards.pesquisa.placeholder')} />
 
         {notice && (
           <div className={cx('board-notice', notice.tone === 'danger' && 'is-danger')} role="status">
@@ -158,9 +133,11 @@ export default function Whiteboards() {
           </div>
         )}
 
-        <AsyncSection
-          state={state}
-          onRetry={reload}
+        <SearchResults
+          rs={rs}
+          emptyIcon="board"
+          emptyTitle={t('boards.vazio.titulo')}
+          emptyText={t('boards.vazio.texto')}
           skeleton={
             <div className="board-grid" aria-busy="true">
               {[0, 1, 2, 3].map((i) => (
@@ -168,32 +145,11 @@ export default function Whiteboards() {
               ))}
             </div>
           }
-        >
-          {() =>
-            items.length === 0 ? (
-              <Empty icon="board" title={t('boards.vazio.titulo')}>
-                {t('boards.vazio.texto')}
-              </Empty>
-            ) : shown.length === 0 ? (
-              <Empty
-                icon="search"
-                title={t('boards.semResultados')}
-                action={
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => {
-                      setQuery('')
-                      setFilter('all')
-                    }}
-                  >
-                    {t('boards.limparFiltros')}
-                  </Button>
-                }
-              />
-            ) : (
-              <ul className="board-grid">
-                {shown.map((b) => (
+          renderItems={(rows) => (
+            <ul className="board-grid">
+              {rows.map((raw) => {
+                const b = updated[raw.id] ?? raw
+                return (
                   <BoardCard
                     key={b.id}
                     board={b}
@@ -203,11 +159,11 @@ export default function Whiteboards() {
                     onOpenRoom={enterRoom}
                     onDelete={askDelete}
                   />
-                ))}
-              </ul>
-            )
-          }
-        </AsyncSection>
+                )
+              })}
+            </ul>
+          )}
+        />
       </div>
 
       {viewing && !toDelete && (

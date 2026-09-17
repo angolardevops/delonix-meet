@@ -1,14 +1,18 @@
-/** Pessoas da organização, em tabela, com papel, cargo, filial e acções. */
-import { useMemo, useState } from 'react'
+/**
+ * Pessoas da organização, em tabela, com papel, cargo, filial e acções.
+ * Pesquisa, filtros, agrupar e página: o painel estilo Odoo (recurso
+ * `members`; sem ele no servidor, a lista inteira filtrada no browser).
+ */
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Branch, Employee } from '../../api'
-import { Async, AsyncSection } from '../../components/AsyncSection'
-import { Icon } from '../../ui/icons'
+import type { Async } from '../../components/AsyncSection'
 import { Alert, Avatar, Button, Card, IconButton, Tag } from '../../ui/kit'
+import { SearchBar, SearchResults } from '../../ui/search/SearchResults'
+import { useResourceSearch } from '../../ui/search/useResourceSearch'
 import { AddMemberDialog, EditMemberDialog, RemoveMemberDialog } from './MemberDialogs'
 import { formatAgo, useLocaleTag } from './orgShared'
-
-type RoleFilter = 'all' | 'admin' | 'member'
+import { membersFallback } from './search'
 
 export default function MembersCard({
   orgId,
@@ -25,37 +29,17 @@ export default function MembersCard({
 }) {
   const { t } = useTranslation()
   const locale = useLocaleTag()
-  const [q, setQ] = useState('')
-  const [filter, setFilter] = useState<RoleFilter>('all')
+  const rs = useResourceSearch<Employee>({ resource: 'members', orgId, ns: 'members.', fallback: membersFallback(orgId) })
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<Employee | null>(null)
   const [removing, setRemoving] = useState<Employee | null>(null)
   const [notice, setNotice] = useState('')
 
   const all = state.s === 'ready' ? state.d : []
-  const counts = useMemo(
-    () => ({ all: all.length, admin: all.filter((m) => m.role === 'admin').length, member: all.filter((m) => m.role === 'member').length }),
-    [all],
-  )
-  const shown = useMemo(() => {
-    const term = q.trim().toLowerCase()
-    return all
-      .filter((m) => filter === 'all' || m.role === filter)
-      .filter(
-        (m) =>
-          !term ||
-          m.username.toLowerCase().includes(term) ||
-          m.email.toLowerCase().includes(term) ||
-          (m.title ?? '').toLowerCase().includes(term) ||
-          (m.branch_name ?? '').toLowerCase().includes(term),
-      )
-  }, [all, q, filter])
-
-  const filters: { v: RoleFilter; label: string }[] = [
-    { v: 'all', label: t('org.membro.filtroTodos', { count: counts.all }) },
-    { v: 'admin', label: t('org.membro.filtroAdmins', { count: counts.admin }) },
-    { v: 'member', label: t('org.membro.filtroMembros', { count: counts.member }) },
-  ]
+  const reloadAll = () => {
+    reload()
+    rs.reload()
+  }
 
   return (
     <Card
@@ -69,35 +53,20 @@ export default function MembersCard({
         </Button>
       }
     >
-      <div className="org-toolbar">
-        <div className="org-search">
-          <Icon name="search" />
-          <input
-            type="search"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder={t('org.dir.pesquisar')}
-            aria-label={t('org.dir.pesquisar')}
-          />
-        </div>
-        <div className="dx-chips" role="group" aria-label={t('org.membro.filtrarPapel')}>
-          {filters.map((f) => (
-            <button key={f.v} type="button" className="dx-chip" aria-pressed={filter === f.v} onClick={() => setFilter(f.v)}>
-              {f.label}
-            </button>
-          ))}
-        </div>
+      <div className="org-card-pad org-search-pad">
+        <SearchBar rs={rs} label={t('search.rotulos.members')} placeholder={t('org.dir.pesquisar')} />
       </div>
       {notice && (
         <div className="org-card-pad">
           <Alert tone="success">{notice}</Alert>
         </div>
       )}
-      <AsyncSection state={state} onRetry={reload}>
-        {() =>
-          shown.length === 0 ? (
-            <p className="dx-muted org-card-note">{t('ui.semResultados')}</p>
-          ) : (
+      <div className="org-results">
+        <SearchResults
+          rs={rs}
+          emptyIcon="people"
+          emptyTitle={t('ui.semResultados')}
+          renderItems={(rows) => (
             <div className="dx-table-wrap org-table-wrap">
               <table className="dx-table org-table">
                 <thead>
@@ -113,7 +82,7 @@ export default function MembersCard({
                   </tr>
                 </thead>
                 <tbody>
-                  {shown.map((m) => {
+                  {rows.map((m) => {
                     const self = m.user_id === meId
                     return (
                       <tr key={m.user_id}>
@@ -147,9 +116,9 @@ export default function MembersCard({
                 </tbody>
               </table>
             </div>
-          )
-        }
-      </AsyncSection>
+          )}
+        />
+      </div>
 
       {adding && (
         <AddMemberDialog
@@ -159,7 +128,7 @@ export default function MembersCard({
           onAdded={(e) => {
             setAdding(false)
             setNotice(t('org.membro.adicionado', { nome: e.username, email: e.email }))
-            reload()
+            reloadAll()
           }}
         />
       )}
@@ -173,7 +142,7 @@ export default function MembersCard({
           onSaved={(e) => {
             setEditing(null)
             setNotice(t('org.membro.guardado', { nome: e.username }))
-            reload()
+            reloadAll()
           }}
         />
       )}
@@ -185,7 +154,7 @@ export default function MembersCard({
           onRemoved={() => {
             setNotice(t('org.membro.removido', { nome: removing.username }))
             setRemoving(null)
-            reload()
+            reloadAll()
           }}
         />
       )}
