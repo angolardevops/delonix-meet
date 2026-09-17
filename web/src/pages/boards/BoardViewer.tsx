@@ -2,7 +2,7 @@
  * Quadro em tamanho real, num diálogo. O PNG vem autenticado (blob), por isso
  * o «Descarregar» é o próprio blob — não há outro URL que funcione sem Bearer.
  * O link público é o endpoint só-leitura do servidor
- * (`/api/whiteboards/shared/{token}`), e só existe enquanto o quadro é público.
+ * (`/api/public/whiteboards/{token}/image`), e só existe enquanto o quadro é público.
  */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -13,7 +13,7 @@ import { formatDateTime } from '../recordings/format'
 import { useBoardPng } from './useBoardPng'
 
 export function boardShareUrl(token: string) {
-  return [location.origin, '/api/whiteboards/shared/', token].join('')
+  return [location.origin, '/api/public/whiteboards/', token, '/image'].join('')
 }
 
 export default function BoardViewer({

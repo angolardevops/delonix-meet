@@ -123,11 +123,11 @@ const nomeA = (await req('/api/users/me', { token: tokenA })).json?.username ?? 
 const dominio = contaA.email.split('@')[1]
 const contaB = { email: `bento@${dominio}`, password: PASSWORD }
 const nomeB = `Bento ${dominio.slice(3, 9)}`
-const criada = await req(`/api/orgs/${orgId}/employees`, {
+const criada = await req(`/api/orgs/${orgId}/members`, {
   token: tokenA, method: 'POST', body: { email: contaB.email, username: nomeB, password: PASSWORD },
 })
 const userB = criada.json?.user_id
-const tel = await req(`/api/orgs/${orgId}/employees/${userB}/phone`, { token: tokenA, method: 'PUT', body: { phone: '923 700 800' } })
+const tel = await req(`/api/orgs/${orgId}/members/${userB}/phone`, { token: tokenA, method: 'PUT', body: { phone: '923 700 800' } })
 const tokenB = (await req('/api/auth/login', { method: 'POST', body: contaB })).json?.access_token
 if (!tokenA || !orgId || !userB || tel.status !== 200 || !tokenB) {
   console.error('não consegui montar a org de teste', { orgId, criada, tel: tel.status })
@@ -351,7 +351,7 @@ await req('/api/users/me/sms-preferences', { token: tokenB, method: 'PUT', body:
 await abrirContacto(paginaA, nomeB)
 await paginaA.locator('.call-controls').getByRole('button', { name: 'SMS' }).click()
 await paginaA.fill('#sms-body', 'Mais uma')
-await req(`/api/orgs/${orgId}/employees/${userB}/phone`, { token: tokenA, method: 'PUT', body: { phone: null } })
+await req(`/api/orgs/${orgId}/members/${userB}/phone`, { token: tokenA, method: 'PUT', body: { phone: null } })
 await paginaA.locator('[data-testid=sms-send]').click()
 const erro422 = await paginaA.locator('[data-testid=sms-error]').textContent({ timeout: 15_000 * FATOR }).catch(() => null)
 ok(/não tem telemóvel/.test(erro422 ?? ''), '422 sms.recipient_no_phone aparece como «não tem telemóvel»', erro422)
@@ -360,7 +360,7 @@ ok(submits.length - antesSms === 1, 'as recusas não chegaram ao SMSC', `${submi
 
 // ---------- telemóvel: ecrã de voz a 390 px ----------
 if (SHOTS) {
-  await req(`/api/orgs/${orgId}/employees/${userB}/phone`, { token: tokenA, method: 'PUT', body: { phone: '923 700 800' } })
+  await req(`/api/orgs/${orgId}/members/${userB}/phone`, { token: tokenA, method: 'PUT', body: { phone: '923 700 800' } })
   const telA = await novaPagina(contaA, { width: 390, height: 844 })
   await telA.goto(`${APP}/#/directory`)
   await telA.locator('.call-row__main', { hasText: nomeB }).first().waitFor({ timeout: 60_000 * FATOR })

@@ -89,7 +89,7 @@ const A = await novaOrg(`gma${marca}`)
 const B = await novaOrg(`gmb${marca}`)
 // C: colega da org A que NÃO esteve na sala.
 const emailC = `carla-${marca}@${A.dominio}`
-const empC = await req(`/api/orgs/${A.orgId}/employees`, {
+const empC = await req(`/api/orgs/${A.orgId}/members`, {
   token: A.token, method: 'POST',
   body: { email: emailC, username: `carla-${marca}`, password: PW, role: 'member', title: 'Formadora' },
 })
@@ -346,7 +346,7 @@ chk(m.status === 200 && m.json.format === 'training' && m.json.record_quality ==
 const ml = (await req('/api/meetings', { token: A.token })).json?.find((x) => x.id === m.json.id)
 chk(ml?.format === 'training' && ml.waiting_room === true && ml.auto_record === true && ml.record_quality === '720p', 'a lista devolve as opções')
 chk(ml?.invitee_count === 1 && ml.external_source === null, `invitee_count=${ml?.invitee_count} external_source=${ml?.external_source}`)
-const tent = await req(`/api/meetings/${m.json.id}/respond`, { token: C.token, method: 'POST', body: { status: 'tentative' } })
+const tent = await req(`/api/meetings/${m.json.id}/invitees/me`, { token: C.token, method: 'PUT', body: { status: 'tentative' } })
 chk(tent.status === 200, `C responde «tentativa» → ${tent.status}`)
 chk((await req('/api/meetings', { token: C.token })).json?.find((x) => x.id === m.json.id)?.my_status === 'tentative', 'e a lista de C mostra tentative')
 const st = await req(`/api/meetings/${m.json.id}/start`, { token: A.token, method: 'POST' })

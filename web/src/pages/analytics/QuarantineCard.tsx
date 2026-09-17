@@ -6,7 +6,7 @@
  */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { quarantineAnalytics } from '../../api'
+import { QuarantineRow, quarantineAnalytics } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Card, Empty, Segmented } from '../../ui/kit'
 import { forbiddenAsMessage } from './format'
@@ -20,9 +20,16 @@ export function QuarantineCard({ orgId }: { orgId: string | null }) {
   const { t } = useTranslation()
   const [period, setPeriod] = useState<Period>('month')
   const [scope, setScope] = useState<Scope>('org')
+  // A quarentena passou a ser um recurso da organização
+  // (`GET /api/orgs/{org_id}/analytics/quarantine`): já não existe caminho que
+  // agregue TODAS as organizações da pessoa, por isso o âmbito «todas» ficou sem
+  // servidor — fica vazio em vez de perguntar o que o servidor não responde.
   const effectiveOrg = scope === 'org' && orgId ? orgId : undefined
   const { state, reload } = useAsync(
-    () => quarantineAnalytics(period, effectiveOrg).catch(forbiddenAsMessage(t('analytics.semPermissao'))),
+    () =>
+      effectiveOrg
+        ? quarantineAnalytics(period, effectiveOrg).catch(forbiddenAsMessage(t('analytics.semPermissao')))
+        : Promise.resolve([] as QuarantineRow[]),
     [period, effectiveOrg],
   )
 

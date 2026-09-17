@@ -12,7 +12,7 @@
  *    `recordings/studioLink.ts`); Partilhar e Descarregar com as regras do
  *    servidor;
  *  - Descrição: a reunião cuja sala é a da gravação (`/api/meetings`);
- *  - Transcrição: as notas da sala (`/api/rooms/{code}/notes`);
+ *  - Transcrição: as notas da sala (`/api/rooms/{code}/minutes`);
  *  - Anexos: os quadros guardados com essa sala e o histórico do chat;
  *  - «A seguir» (biblioteca) e «Da mesma série» (`recurrence_parent_id`).
  *

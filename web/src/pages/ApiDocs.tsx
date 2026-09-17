@@ -84,10 +84,10 @@ function endpoints(base: string): Endpoint[] {
     },
     {
       metodo: 'GET',
-      caminho: '/api/v1/org',
+      caminho: '/api/v1/organization',
       desc: 'publico.api.infoOrg',
       resposta: { id: '…', name: 'acme', email_domain: 'acme.example', domain: 'meet.acme.example', members: 42 },
-      curl: (b) => [`curl ${b}/api/v1/org \\`, `  -H "${AUTH}: Bearer ${CHAVE}"`].join('\n'),
+      curl: (b) => [`curl ${b}/api/v1/organization \\`, `  -H "${AUTH}: Bearer ${CHAVE}"`].join('\n'),
     },
   ]
 }
