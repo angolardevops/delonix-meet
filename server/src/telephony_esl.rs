@@ -381,7 +381,10 @@ pub fn originate_command(
                 None => String::new(),
             };
             format!(
-                "&bridge([{codec}delonix_room_code={room},delonix_leg=room_bridge,delonix_cdr_skip=true]sofia/{profile}/room-{room}@{host}:{bridge_port})",
+                "&bridge([{codec}delonix_room_code={room},delonix_leg=room_bridge,delonix_cdr_skip=true,sip_h_X-Delonix-Call-Id={call}]sofia/{profile}/room-{room}@{host}:{bridge_port})",
+                // O UA da ponte liga a perna SIP ao dial-out por este cabeçalho
+                // (pedido da frente D; `phone_bridge::sip::CALL_ID_HEADER`).
+                call = req.call_id,
                 room = safe(room_code, b"-")?,
                 profile = safe(bridge_profile, b"-_")?,
             )
@@ -958,7 +961,7 @@ mod tests {
         };
         let cmd = originate_command(&r, "external").unwrap();
         assert!(cmd.contains("delonix_room_code=voz-arq-2026"), "{cmd}");
-        assert!(cmd.ends_with(" &bridge([absolute_codec_string=PCMA,delonix_room_code=voz-arq-2026,delonix_leg=room_bridge,delonix_cdr_skip=true]sofia/external/room-voz-arq-2026@127.0.0.1:5190)"), "{cmd}");
+        assert!(cmd.ends_with(&format!(" &bridge([absolute_codec_string=PCMA,delonix_room_code=voz-arq-2026,delonix_leg=room_bridge,delonix_cdr_skip=true,sip_h_X-Delonix-Call-Id={}]sofia/external/room-voz-arq-2026@127.0.0.1:5190)", r.call_id)), "{cmd}");
         assert!(!cmd.contains("conference"));
     }
 
