@@ -1021,6 +1021,30 @@
         ],
         "type": "object"
       },
+      "CreateSavedSearch": {
+        "properties": {
+          "is_default": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "query": {
+            "$ref": "#/components/schemas/SavedQuery"
+          },
+          "resource": {
+            "type": "string"
+          },
+          "shared": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "resource",
+          "name"
+        ],
+        "type": "object"
+      },
       "CreateStreamDestinationReq": {
         "properties": {
           "kind": {
@@ -1521,6 +1545,126 @@
         ],
         "type": "object"
       },
+      "GlobalGroup": {
+        "properties": {
+          "count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "count_kind": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GlobalHit"
+            },
+            "type": "array"
+          },
+          "more_href": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "count",
+          "count_kind",
+          "items"
+        ],
+        "type": "object"
+      },
+      "GlobalHit": {
+        "properties": {
+          "highlight": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "href": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "matched_in": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          },
+          "subtitle": {
+            "type": "string"
+          },
+          "target": {
+            "type": "object"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "title",
+          "subtitle",
+          "highlight",
+          "matched_in",
+          "score",
+          "target"
+        ],
+        "type": "object"
+      },
+      "GlobalResponse": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/GlobalGroup"
+            },
+            "type": "array"
+          },
+          "query": {
+            "type": "string"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/Skipped"
+            },
+            "type": "array"
+          },
+          "took_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query",
+          "took_ms",
+          "groups",
+          "skipped"
+        ],
+        "type": "object"
+      },
       "Group": {
         "properties": {
           "id": {
@@ -1677,6 +1821,26 @@
         ],
         "type": "object"
       },
+      "ItemSearch": {
+        "description": "O que acompanha um item quando há `q`.",
+        "properties": {
+          "highlight": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "score",
+          "highlight"
+        ],
+        "type": "object"
+      },
       "JoinBotReq": {
         "properties": {
           "bot_name": {
@@ -1717,7 +1881,7 @@
         "type": "object"
       },
       "LibraryResponse": {
-        "description": "Sem parâmetros: a lista inteira (forma herdada, lida pelo web). Com `q`,\n`page_size` ou `page_token`: uma página.",
+        "description": "Sem parâmetros: a lista inteira (forma herdada, lida pelo web). Com\nparâmetros de pesquisa: uma página (ADR-0007).",
         "oneOf": [
           {
             "items": {
@@ -2944,6 +3108,22 @@
         ],
         "type": "object"
       },
+      "Owner": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ],
+        "type": "object"
+      },
       "ParticipantConflict": {
         "properties": {
           "meeting_id": {
@@ -3847,23 +4027,48 @@
         "type": "object"
       },
       "RecordingPage": {
-        "description": "Página da biblioteca (com `q`, `page_size` ou `page_token`).",
+        "description": "Página pesquisada da biblioteca (ADR-0007, `docs/reference/pesquisa.md`\n§2.3). Só documentação: a resposta é `search::SearchPage`, com cada item\nacompanhado de `search: {score, highlight}` quando há `q`.",
         "properties": {
+          "groups": {
+            "items": {
+              "type": "object"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/RecordingItem"
             },
             "type": "array"
           },
+          "next_groups_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "next_page_token": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_kind": {
+            "description": "`exact` | `at_least`.",
+            "type": "string"
           }
         },
         "required": [
-          "items"
+          "items",
+          "total",
+          "total_kind"
         ],
         "type": "object"
       },
@@ -4096,6 +4301,137 @@
         ],
         "type": "object"
       },
+      "SavedQuery": {
+        "description": "A consulta guardada, na forma dos parâmetros da lista.",
+        "properties": {
+          "filter": {
+            "description": "O domínio (JSON), como no parâmetro `filter`.",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "filters": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "group_by": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "order_by": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "q": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SavedSearch": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "editable": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "invalid_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/Owner"
+          },
+          "query": {
+            "$ref": "#/components/schemas/SavedQuery"
+          },
+          "resource": {
+            "type": "string"
+          },
+          "shared": {
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "resource",
+          "name",
+          "query",
+          "shared",
+          "is_default",
+          "owner",
+          "editable",
+          "valid",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "SavedSearchPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SavedSearch"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "SchemaList": {
+        "properties": {
+          "items": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "SendReq": {
         "properties": {
           "body": {
@@ -4111,6 +4447,21 @@
         "required": [
           "to",
           "body"
+        ],
+        "type": "object"
+      },
+      "Skipped": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "code"
         ],
         "type": "object"
       },
@@ -4654,6 +5005,39 @@
             "description": "1-120 caracteres, uma linha. `\"\"` apaga o título (a UI volta ao `filename`).",
             "type": [
               "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UpdateSavedSearch": {
+        "properties": {
+          "is_default": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "query": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SavedQuery"
+              }
+            ]
+          },
+          "shared": {
+            "type": [
+              "boolean",
               "null"
             ]
           }
