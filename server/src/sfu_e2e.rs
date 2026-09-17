@@ -1061,15 +1061,30 @@ async fn sonda_de_papel(cliente: &TestClient, controlado: bool) -> RespostaStun 
     );
     let ufrag_meu = campo(&sdp_meu, "a=ice-ufrag:");
 
-    let par = cliente.pc.get_senders().await[0]
-        .transport()
-        .ice_transport()
-        .get_selected_candidate_pair()
-        .await
-        .expect("o cliente não tem par ICE seleccionado");
-    let destino: std::net::SocketAddr = format!("{}:{}", par.remote.address, par.remote.port)
-        .parse()
-        .expect("endereço do candidato do SFU");
+    // O `connected` da PC chega antes de o par seleccionado ficar visível no
+    // `RTCIceTransport` — com os testes em paralelo apanhou-se essa janela.
+    let transporte = cliente.pc.get_senders().await[0].transport();
+    let mut par = None;
+    for _ in 0..50 {
+        par = transporte
+            .ice_transport()
+            .get_selected_candidate_pair()
+            .await;
+        if par.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let par = par.expect("o cliente não tem par ICE seleccionado (5 s)");
+    // `SocketAddr::new` e não `format!("{ip}:{porta}")`: o par pode ser IPv6,
+    // que sem parênteses rectos não se lê como endereço de socket.
+    let destino = std::net::SocketAddr::new(
+        par.remote
+            .address
+            .parse()
+            .expect("endereço do candidato do SFU"),
+        par.remote.port,
+    );
 
     let papel: Box<dyn Setter> = if controlado {
         Box::new(AttrControlled(rand::random()))
