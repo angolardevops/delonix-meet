@@ -519,3 +519,76 @@ async fn tour_progress_and_new_pin(db: sqlx::PgPool) {
     assert_eq!(n, 1);
     let _ = PASSWORD;
 }
+
+/// R204 — o nome legal de uma conta gerida chega pela sincronização do Odoo
+/// (e um email no lugar do nome não o apaga).
+#[sqlx::test(migrations = "./migrations")]
+async fn legal_name_comes_from_the_odoo_sync(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let (st, tok) = app
+        .post(
+            &format!("/api/orgs/{}/integrations/odoo/rotate-token", a.org()),
+            Some(&a.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{tok}");
+    let key = format!("Bearer {}", tok["token"].as_str().unwrap());
+    let body = |name: &str| {
+        json!({"company": "Alfa Lda", "admin_email": a.email,
+               "users": [{"odoo_uid": 7, "name": name, "email": "ana@alfa.test"}]})
+    };
+    let auth = [("Authorization", key.as_str())];
+    let path = "/api/integrations/odoo/v1/provision";
+    let r = app
+        .raw(
+            reqwest::Method::POST,
+            path,
+            &auth,
+            Some(body("Ana Paula Mbala")),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let legal = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT legal_name FROM users WHERE email = 'ana@alfa.test'",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        legal().await.as_deref(),
+        Some("Ana Paula Mbala"),
+        "conta criada pela sincronização"
+    );
+    let r = app
+        .raw(
+            reqwest::Method::POST,
+            path,
+            &auth,
+            Some(body("Ana Paula Mbala Quissanga")),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(
+        legal().await.as_deref(),
+        Some("Ana Paula Mbala Quissanga"),
+        "a seguinte actualiza"
+    );
+    let r = app
+        .raw(
+            reqwest::Method::POST,
+            path,
+            &auth,
+            Some(body("ana@alfa.test")),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(
+        legal().await.as_deref(),
+        Some("Ana Paula Mbala Quissanga"),
+        "um email não é nome legal"
+    );
+}
