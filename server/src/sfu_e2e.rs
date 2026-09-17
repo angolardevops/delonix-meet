@@ -1918,6 +1918,7 @@ async fn ponte_telefone_sala_tom_nos_dois_sentidos() {
             bind: "127.0.0.1:0".parse().unwrap(),
             allowed_sources: vec!["127.0.0.1".parse().unwrap()],
             default_law: Law::A,
+            initial_remote: None,
         },
         ev_tx,
     )
@@ -2102,4 +2103,350 @@ async fn ponte_telefone_sala_tom_nos_dois_sentidos() {
     assert!(sfu.is_room_empty(room).await);
     // Nada da ponte fica vivo: publicação, bomba e sala saem com a chamada.
     esperar_censo_vazio(&sfu, "depois da chamada e da Ana saírem", prazo(20)).await;
+}
+
+// ===================================================================
+//  Ponte contra o FreeSWITCH REAL (ADR-0010, R222)
+// ===================================================================
+
+/// Admissão fixa para a prova: uma sala, uma perna.
+struct AdmissaoFixa {
+    room_code: String,
+    admitted: crate::phone_bridge::sip::Admitted,
+}
+
+#[async_trait::async_trait]
+impl crate::phone_bridge::sip::BridgeAdmission for AdmissaoFixa {
+    async fn admit(
+        &self,
+        room_code: &str,
+        _call_id: Option<Uuid>,
+    ) -> Option<crate::phone_bridge::sip::Admitted> {
+        (room_code == self.room_code).then_some(self.admitted)
+    }
+}
+
+#[derive(Default)]
+struct EventosDaChamada(std::sync::Mutex<Vec<delonix_meet_domain::telephony::ports::CallEvent>>);
+
+impl delonix_meet_domain::telephony::ports::CallEventSink for EventosDaChamada {
+    fn on_event(&self, _: Uuid, e: delonix_meet_domain::telephony::ports::CallEvent) {
+        eprintln!("  evento da chamada: {e:?}");
+        self.0.lock().unwrap().push(e);
+    }
+}
+
+/// Lê um WAV PCM de 16 bits: (taxa, canais separados em f32).
+fn ler_wav(bytes: &[u8]) -> (u32, Vec<Vec<f32>>) {
+    assert_eq!(&bytes[..4], b"RIFF", "não é WAV");
+    let (mut pos, mut rate, mut ch) = (12usize, 0u32, 0usize);
+    while pos + 8 <= bytes.len() {
+        let id = &bytes[pos..pos + 4];
+        let len = u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().unwrap()) as usize;
+        let body = &bytes[pos + 8..(pos + 8 + len).min(bytes.len())];
+        if id == b"fmt " {
+            ch = u16::from_le_bytes([body[2], body[3]]) as usize;
+            rate = u32::from_le_bytes(body[4..8].try_into().unwrap());
+            assert_eq!(
+                u16::from_le_bytes([body[14], body[15]]),
+                16,
+                "só PCM 16 bits"
+            );
+        } else if id == b"data" {
+            let mut out = vec![Vec::new(); ch];
+            for (i, s) in body.chunks_exact(2).enumerate() {
+                out[i % ch].push(i16::from_le_bytes([s[0], s[1]]) as f32 / 32768.0);
+            }
+            return (rate, out);
+        }
+        pos += 8 + len + (len & 1);
+    }
+    panic!("WAV sem dados");
+}
+
+/// **R222 — uma chamada originada pelo FreeSWITCH entra na sala pelo UA SIP
+/// da ponte, com áudio nos dois sentidos.**
+///
+/// Cadeia real, sem nada falso no caminho da media:
+/// `originate` (porta `CallOriginator` da frente C, ESL) → gateway →
+/// «operadora» local que atende, grava a chamada (`record_session`) e toca
+/// 1 kHz (`tone_stream`) → `AfterAnswer::RoomBridge` → `bridge` SIP para o UA
+/// da ponte (`INVITE room-<sala>`, `200 OK` com SDP PCMA) → perna da ponte →
+/// SFU → participante webrtc-rs a publicar 440 Hz em Opus.
+///
+/// Exige: (1) o cabeçalho `X-Delonix-Call-Id` chega ao UA com o id do
+/// `originate`; (2) o participante ouve o 1 kHz do telefone; (3) a gravação
+/// do FreeSWITCH (lado do telefone) tem os 440 Hz da sala; (4) desligar pela
+/// porta manda `BYE` e a perna sai da sala.
+///
+/// Só corre com `FS_ESL_ADDR`, `FS_ESL_PASSWORD`, `FS_CANAIS_GW` e
+/// `FS_CANAIS_RECORDINGS` (ver `voice/freeswitch/canais-prova/README.md`);
+/// sem eles diz «NÃO CORREU» e passa.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ponte_com_freeswitch_real_tom_nos_dois_sentidos() {
+    use crate::phone_bridge::sip::{Admitted, BridgeEvent, SipBridge, SipBridgeConfig};
+    use crate::telephony_esl::{EslConfig, FreeswitchOriginator};
+    use delonix_meet_domain::telephony::ports::{
+        trunk_id_from_gateway, AfterAnswer, CallEvent, CallOriginator, DialLeg, OriginateRequest,
+    };
+    let v = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
+    let (Some(addr), Some(password), Some(gw), Some(rec_dir)) = (
+        v("FS_ESL_ADDR"),
+        v("FS_ESL_PASSWORD"),
+        v("FS_CANAIS_GW"),
+        v("FS_CANAIS_RECORDINGS"),
+    ) else {
+        eprintln!(
+            "NÃO CORREU: faltam FS_ESL_ADDR/FS_ESL_PASSWORD/FS_CANAIS_GW/FS_CANAIS_RECORDINGS"
+        );
+        return;
+    };
+
+    let (sfu, _metrics) = new_sfu();
+    let room = Uuid::new_v4();
+    let room_code = format!("sala-{}", &Uuid::new_v4().simple().to_string()[..8]);
+    let leg_id = Uuid::new_v4();
+
+    let ana = TestClient::join(&sfu, room).await;
+    let (ana_fala, _) = ana.publish_opus_tone("ana-mic", 440.0).await;
+    eventually_com_diagnostico(
+        "a Ana está ligada ao SFU",
+        prazo(30),
+        || {
+            let ana = ana.clone();
+            async move {
+                ana.pc.connection_state()
+                    == webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected
+                    && ana.pc.signaling_state()
+                        == webrtc::peer_connection::signaling_state::RTCSignalingState::Stable
+            }
+        },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+    ana_fala.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let (ev_tx, mut ev_rx) = mpsc::channel(64);
+    let bridge = SipBridge::start(
+        SipBridgeConfig {
+            sip_bind: "127.0.0.1:0".parse().unwrap(),
+            rtp_ip: "127.0.0.1".parse().unwrap(),
+            rtp_ports: None,
+            allowed_sources: vec!["127.0.0.1".parse().unwrap()],
+        },
+        sfu.clone(),
+        Arc::new(AdmissaoFixa {
+            room_code: room_code.clone(),
+            admitted: Admitted {
+                room_id: room,
+                leg_id,
+            },
+        }),
+        ev_tx,
+    )
+    .await
+    .unwrap();
+
+    let originator = FreeswitchOriginator {
+        esl: EslConfig {
+            addr,
+            password,
+            sofia_profile: "external".into(),
+        },
+    };
+    let sink = Arc::new(EventosDaChamada::default());
+    let req = OriginateRequest {
+        call_id: Uuid::new_v4(),
+        org_id: Uuid::nil(),
+        legs: vec![DialLeg {
+            trunk_id: trunk_id_from_gateway(&gw).expect("dlx-<uuid>"),
+            gateway_name: gw.clone(),
+            number: "244923447108".into(),
+        }],
+        caller_id: None,
+        record: false,
+        emergency: false,
+        rule_position: None,
+        answer_timeout_secs: 15,
+        after_answer: AfterAnswer::RoomBridge {
+            room_code: room_code.clone(),
+            bridge_host: bridge.local_sip.ip(),
+            bridge_port: bridge.local_sip.port(),
+            codec: Some("PCMA".into()),
+        },
+    };
+    let t_originate = std::time::Instant::now();
+    let out = originator
+        .originate(&req, sink.clone())
+        .await
+        .expect("originate");
+    assert!(out.answered, "{out:?}");
+
+    // (1) O INVITE chega ao UA com o id da chamada.
+    let started = tokio::time::timeout(prazo(15), async {
+        loop {
+            match ev_rx.recv().await {
+                Some(BridgeEvent::Started {
+                    call_id,
+                    room_code: rc,
+                    ..
+                }) => break (call_id, rc),
+                Some(_) => continue,
+                None => panic!("canal de eventos da ponte fechou"),
+            }
+        }
+    })
+    .await
+    .expect("o FreeSWITCH não chegou ao UA da ponte");
+    let t_started = std::time::Instant::now();
+    assert_eq!(
+        started.0,
+        Some(req.call_id),
+        "X-Delonix-Call-Id em falta ou errado"
+    );
+    assert_eq!(started.1, room_code);
+
+    // (2) A sala ouve o 1 kHz do telefone (o dialplan toca-o 1,5 s depois de atender).
+    eventually(
+        "a Ana ouve o 1 kHz tocado pelo FreeSWITCH",
+        prazo(20),
+        || {
+            let ana = ana.clone();
+            async move {
+                ana.tom_recebido(&leg_id.to_string(), 1000.0)
+                    .iter()
+                    .rev()
+                    .take(25)
+                    .filter(|(_, m)| *m > 0.05)
+                    .count()
+                    >= 20
+            }
+        },
+    )
+    .await;
+    let primeiro_tom = ana
+        .tom_recebido(&leg_id.to_string(), 1000.0)
+        .into_iter()
+        .find(|(_, m)| *m > 0.05)
+        .map(|(at, _)| at)
+        .unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let nivel_mediano = {
+        let mut m: Vec<f32> = ana
+            .tom_recebido(&leg_id.to_string(), 1000.0)
+            .iter()
+            .filter(|(at, _)| *at > primeiro_tom + Duration::from_millis(200))
+            .map(|(_, m)| *m)
+            .collect();
+        m.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        m.get(m.len() / 2).copied().unwrap_or(0.0)
+    };
+
+    // (4) Desligar pela porta da telefonia: BYE no UA, perna fora da sala.
+    originator.hangup(req.call_id).await.expect("hangup");
+    tokio::time::timeout(prazo(15), async {
+        loop {
+            match ev_rx.recv().await {
+                Some(BridgeEvent::Ended { leg_id: l, .. }) if l == leg_id => break,
+                Some(_) => continue,
+                None => panic!("canal fechou sem Ended"),
+            }
+        }
+    })
+    .await
+    .expect("sem BYE do FreeSWITCH");
+    eventually("a perna sai do UA", prazo(10), || {
+        let b = bridge.clone();
+        async move { b.active_legs().await == 0 }
+    })
+    .await;
+    for _ in 0..100 {
+        if sink
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, CallEvent::Ended { .. }))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // (3) A gravação do lado do telefone tem a sala (440 Hz).
+    let wav = {
+        let mut found = None;
+        for _ in 0..50 {
+            let mut files: Vec<_> = std::fs::read_dir(&rec_dir)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with("canais-"))
+                .filter(|e| {
+                    e.metadata()
+                        .and_then(|m| m.modified())
+                        .map(|t| t.elapsed().unwrap_or_default() < Duration::from_secs(60))
+                        .unwrap_or(false)
+                })
+                .collect();
+            files.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+            if let Some(f) = files.last() {
+                let b = std::fs::read(f.path()).unwrap();
+                if b.len() > 44 + 16_000 {
+                    found = Some((f.path(), b));
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        found.expect("gravação do FreeSWITCH não apareceu")
+    };
+    let (rate, canais) = ler_wav(&wav.1);
+    let janela = (rate / 5) as usize; // 200 ms
+    let mut resumo = Vec::new();
+    for (i, c) in canais.iter().enumerate() {
+        // Mediana da magnitude por janela, no último terço da gravação (a sala
+        // já estava ligada) — mais robusta do que um pico.
+        let inicio = c.len() / 3;
+        let mut mags: Vec<(f32, f32)> = c[inicio..]
+            .chunks_exact(janela)
+            .map(|w| (tom(w, rate as f32, 440.0), tom(w, rate as f32, 1000.0)))
+            .collect();
+        mags.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let med = mags.get(mags.len() / 2).copied().unwrap_or_default();
+        resumo.push(med);
+        eprintln!(
+            "  gravação canal {i}: 440 Hz mediana {:.4} · 1 kHz {:.4}",
+            med.0, med.1
+        );
+    }
+    let sala_no_telefone = resumo.iter().any(|(f440, _)| *f440 > 0.05);
+    let telefone_no_telefone = resumo.iter().any(|(_, f1k)| *f1k > 0.05);
+
+    eprintln!(
+        "R222 FreeSWITCH real: originate→atendida {:?} · originate→200 OK do UA {:?} · \
+         200 OK→1.º pacote com 1 kHz na sala {:?} (inclui 1,5 s de silêncio do dialplan) · \
+         1 kHz na sala (mediana por pacote) {:.4} vs no telefone {:.4} · gravação {} ({} Hz, {} canais, {:.1} s) · eventos: {:?}",
+        out.answer_latency_ms.map(Duration::from_millis),
+        t_started.duration_since(t_originate),
+        primeiro_tom.duration_since(t_started),
+        nivel_mediano,
+        resumo.iter().map(|r| r.1).fold(0.0, f32::max),
+        wav.0.display(),
+        rate,
+        canais.len(),
+        canais[0].len() as f32 / rate as f32,
+        sink.0.lock().unwrap(),
+    );
+    assert!(
+        sala_no_telefone,
+        "a gravação do telefone não tem os 440 Hz da sala: {resumo:?}"
+    );
+    assert!(
+        telefone_no_telefone,
+        "a gravação não tem o próprio tom (canal de escrita): {resumo:?}"
+    );
+
+    sfu.remove_peer(room, ana.id).await;
+    ana.pc.close().await.unwrap();
+    esperar_censo_vazio(&sfu, "depois da chamada real", prazo(20)).await;
 }

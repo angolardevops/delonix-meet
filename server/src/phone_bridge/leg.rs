@@ -66,6 +66,9 @@ pub struct LegConfig {
     /// Lei G.711 a usar para a mistura antes de o telefone mandar o primeiro
     /// pacote (depois segue a dele). As operadoras angolanas usam lei A.
     pub default_law: Law,
+    /// Para onde mandar a mistura antes do primeiro pacote chegar (o endereço
+    /// do SDP). Depois segue a origem real do RTP (RTP simétrico).
+    pub initial_remote: Option<SocketAddr>,
 }
 
 /// Evento da perna para quem a gere (canais da sala).
@@ -161,7 +164,7 @@ async fn run(mut r: Run) {
     let mut mixer = Mixer::new(r.cfg.leg_id);
     let mut quality = RtpQuality::new(8000);
     let mut weak = false;
-    let mut remote: Option<SocketAddr> = None;
+    let mut remote: Option<SocketAddr> = r.cfg.initial_remote;
     let mut law = r.cfg.default_law;
     // Numeração e relógio próprios nos dois sentidos, a partir de valores
     // aleatórios (RFC 3550 §5.1).
