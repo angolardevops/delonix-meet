@@ -18,7 +18,11 @@ if sys.argv[1] == "linha":
     )
     sys.exit()
 m = []
-if s["video_ativos_min"] < 0.98 * s["video_esperados"]:
+# CRITERIO=media: mede o limite da MÁQUINA a encaminhar media. As subscrições
+# em falta por corrida na entrada (bug do SFU, não de capacidade) só reprovam
+# abaixo de 90%; continuam a aparecer no número de vídeo activo.
+limiar = 0.90 if __import__("os").environ.get("CRITERIO") == "media" else 0.98
+if s["video_ativos_min"] < limiar * s["video_esperados"]:
     m.append(f"vídeo activo {s['video_ativos_min']:.0f}/{s['video_esperados']}")
 if s["perda_video_pct"] >= 2:
     m.append(f"perda {s['perda_video_pct']}%")
