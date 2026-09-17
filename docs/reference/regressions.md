@@ -2050,6 +2050,56 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Ficheiros.** `scripts/check-repo-hygiene.sh`, `HARNESS.md`.
 
+### R210 — Uma chamada de emergência podia ser gravada, bloqueada ou travada pelo limite de canais
+
+**Risco.** O plano de marcação é do cliente: uma regra `1XX` (ramal) antes da de emergência, uma regra `block` larga (`11X`), `record: true` na regra de emergência, ou o tronco no máximo de canais deixavam o 112 gravado, recusado ou sem caminho.
+
+**Regra.** Os números de emergência (`TELEPHONY_EMERGENCY_NUMBERS`, omissão `112,113,115`) resolvem-se ANTES das regras (`domain::telephony::dial_plan::resolve`), nunca gravados e com TODOS os troncos activos como reserva. Recusa ao gravar: `telephony.emergency_never_recorded`, `telephony.emergency_cannot_be_blocked`. A extensão servida ao FreeSWITCH (`telephony_fs_xml`) usa `bridge` sem `limit_execute` e `delonix_record=false`; a ingestão de CDR força `recorded=false`; a base tem `CHECK (NOT (emergency AND record))` nas regras e nos CDRs. O teste rápido e o convite para sala RECUSAM emergência (`telephony.test_call_emergency_refused`, `telephony.emergency_not_invitable`): o invariante é sobre quem marca.
+
+**Prova.** `dial_plan::tests::emergency_*`, `tests/telephony.rs::dial_plan_first_match_emergency_invariants_and_test` (inclui o `UPDATE` directo recusado pela base), e contra o FreeSWITCH real (`web/e2e/telefonia-freeswitch.mjs`): com o tronco a 1/1 canais a chamada normal é recusada e a de emergência passa.
+
+**Ficheiros.** `server/crates/delonix-meet-domain/src/telephony/dial_plan.rs`, `server/src/telephony_fs_xml.rs`, `server/src/telephony_cdr.rs`, `server/migrations/0066_telephony_dial_plan.sql`, `0068_telephony_call_records.sql`.
+
+### R211 — Um CDR reenviado cobrava a chamada duas vezes
+
+**Risco.** O `mod_json_cdr` reenvia quando não recebe `2xx` (e um `2xx` perdido na rede também causa reenvio). Sem chave, cada reenvio era uma chamada e um custo novos.
+
+**Regra.** `UNIQUE (source, source_call_id)` em `telephony_call_records`; o reenvio responde `200 {duplicate: true}` com o id que já existe. A perna A de uma chamada pelo plano (o PBX) leva `delonix_cdr_skip=true` e responde `204`: o custo e o ASR estão nas pernas B, uma por tentativa de tronco.
+
+**Prova.** `tests/telephony.rs::cdr_ingestion_idempotent_priced_at_time_of_call_listed_and_summed`; contra o FreeSWITCH real, o mesmo ficheiro do `log-dir` reenviado dá `200 duplicate` e a lista não cresce.
+
+**Ficheiros.** `server/src/telephony_cdr.rs`, `server/migrations/0068_telephony_call_records.sql`.
+
+### R212 — O custo de uma chamada mudava quando se mudava o preço
+
+**Risco.** Calcular o custo na leitura com «o preço actual» reescrevia o consumo de meses passados, e um preço gravado com início no passado fazia o mesmo.
+
+**Regra.** Preços e taxas de câmbio são histórico (linhas novas, `valid_from`). O custo congela-se na ingestão ao preço em vigor em `started_at` (`cost_e4`, `price_id`), por começo de minuto, só para saída atendida (atendida = `answer_epoch`, porque uma chamada atendida e desligada em menos de 1 s tem `billsec` 0 — medido). Sem preço: `cost` `null` com `cost_reason`, nunca `0` inventado. A API recusa preços e taxas no passado (`telephony.price_backdated`). O total em Kz só existe com taxa para cada moeda (`total_aoa_reason: missing_exchange_rate`).
+
+**Prova.** `cost::tests::cost_uses_price_in_force_when_call_happened`; `tests/telephony.rs` (mudança de preço a 15/09, consumo em USD sem e com taxa); contra o FreeSWITCH real, o CDR atendido fica com `8.9000 AOA` e o falhado com `0.0000`.
+
+**Ficheiros.** `server/crates/delonix-meet-domain/src/telephony/{cost,money}.rs`, `server/src/telephony_{cdr,trunks,calls}.rs`.
+
+### R213 — Um tronco SIP para um endereço interno era SSRF por SIP, e dois inquilinos com o mesmo domínio trocavam de troncos
+
+**Risco.** O host de um tronco é escrito pelo cliente e é o FreeSWITCH que liga a ele: um tronco para `10.0.0.5` ou `169.254.169.254` fazia a plataforma abrir ligações para dentro. E o domínio SIP decide a org de uma chamada que entra pelo PBX: medido contra o FreeSWITCH real, com dois inquilinos em `127.0.0.1`, a chamada de uma org saiu pelos troncos da outra.
+
+**Regra.** O host passa por `net_guard::check_tenant_config_url` ao criar e ao alterar (`telephony.trunk_host_refused`; excepções só por `OUTBOUND_ALLOW_HOSTS`). SRTP diferente de `off` exige TLS (`telephony.srtp_requires_tls`). O domínio SIP é único na base (`lower(domain)`, `409 telephony.sip_domain_taken`).
+
+**Prova.** `tests/telephony.rs::trunks_crud_order_prices_secrets_and_isolation` (host `10.0.0.5` recusado); `web/e2e/telefonia-freeswitch.mjs` (domínio próprio por org, a chamada do PBX sai pelos troncos certos).
+
+**Ficheiros.** `server/src/telephony_trunks.rs`, `server/src/telephony_sip.rs`, `server/migrations/0067_telephony_sip_settings.sql`.
+
+### R214 — Credenciais SIP e de operadora legíveis sem reautenticação
+
+**Risco.** A password de um tronco e a da conta SIP da org são credenciais de terceiros; uma sessão roubada de um admin chegava para as ler, e sem trilha.
+
+**Regra.** Cifradas em repouso (`secret_box`, aad por linha) e NUNCA devolvidas nas listas nem no `GET` (`password_configured` só). A única saída da password SIP é `POST …/sip-settings/reveal-credentials`, com a password da conta (ou código MFA para contas sem password local), 5 falhas em 5 min bloqueiam (inclusive a certa), e sucesso e falha vão para a auditoria. A password dos troncos só sai decifrada para o FreeSWITCH, no listener interno com `VOICE_INTERNAL_SECRET` (`purpose=gateways`).
+
+**Prova.** `tests/telephony.rs::sip_credentials_are_revealed_only_after_reauth_and_audited`, `trunks_crud_order_prices_secrets_and_isolation`; `web/e2e/isolamento.mjs` (A não obtém as credenciais de B com a sua própria password; o tronco de B continua sem a password na resposta).
+
+**Ficheiros.** `server/src/telephony_sip.rs`, `server/src/telephony_trunks.rs`, `server/src/telephony_fs_xml.rs`.
+
 ### R230 — O directo multidestino só funcionava no primeiro destino
 
 **Sintoma.** Com 2 ou mais destinos, o segundo em diante era recusado pelo servidor RTMP (`unsupported video codec: 2`, medido com mediamtx a 2160p/16 Mbit pela sessão da frente E). O `montar_argumentos` punha `-c:v copy -c:a aac -b:a 128k -ar 44100` UMA vez, antes da primeira saída — e no ffmpeg as opções de saída valem só para a saída seguinte. As restantes saíam com os codecs por omissão do FLV: vídeo FLV1 re-codificado em software (o custo que o ADR-0003 existe para evitar) e áudio MP3. O teste existente só contava as saídas `flv`, não o que cada uma levava.
