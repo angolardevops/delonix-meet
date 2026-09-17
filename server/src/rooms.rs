@@ -477,6 +477,21 @@ pub async fn join_room(
         .await?;
     }
 
+    // Origem e cargo decidem-se AQUI, do lado do servidor, e viajam assinados
+    // no token: o cliente não tem como se declarar «sso» nem inventar um cargo.
+    let origin = if !authorized {
+        "guest"
+    } else if crate::users::is_sso_account(&state.db, auth.user_id).await {
+        "sso"
+    } else {
+        "password"
+    };
+    let title = if authorized {
+        crate::org::title_alongside(&state, room.owner_id, auth.user_id).await
+    } else {
+        None
+    };
+
     let now = Utc::now().timestamp();
     let room_token = sign_jwt(
         &state.config.jwt_secret,
@@ -492,6 +507,10 @@ pub async fn join_room(
             wait: room.waiting_room || !access.direct, // sem entrada direta → sala de espera
             adm: access.admitter, // anfitrião ou co-anfitrião persistido pode admitir
             is_bot: false,        // join normal de utilizador humano
+            origin: Some(origin.into()),
+            title,
+            lobby: Some(!access.direct),
+            wr: Some(room.waiting_room),
         },
     )?;
 

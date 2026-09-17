@@ -36,6 +36,20 @@ pub async fn fetch_public(db: &PgPool, user_id: Uuid) -> Result<UserPublic, ApiE
     .await?)
 }
 
+/// A conta é gerida por um fornecedor de identidade (OIDC ou Odoo)? É a
+/// autoridade explícita da conta (invariante 10), não um palpite por email.
+pub(crate) async fn is_sso_account(db: &PgPool, user_id: Uuid) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT (sso_provider <> '' OR odoo_org_id IS NOT NULL) FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(false)
+}
+
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
 #[derive(utoipa::OpenApi)]
 #[openapi(

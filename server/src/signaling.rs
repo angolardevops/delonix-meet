@@ -37,6 +37,20 @@ pub enum ClientMsg {
     },
     Chat {
         text: String,
+        /// Fio: a mensagem a que esta responde. Tem de ser uma mensagem
+        /// RECENTE desta sala (ver `CHAT_RECENT_CAP`); outra coisa é recusada.
+        #[serde(default)]
+        reply_to: Option<Uuid>,
+        /// Identificador escolhido pelo CLIENTE, só para correlacionar a
+        /// confirmação `chat-sent` com a mensagem que ele próprio desenhou.
+        /// Um cliente antigo não o manda e não recebe confirmação nenhuma.
+        #[serde(default)]
+        client_id: Option<String>,
+    },
+    /// Liga/desliga uma reacção (emoji) de ESTA conta a uma mensagem de chat.
+    ChatReact {
+        id: Uuid,
+        emoji: String,
     },
     Reaction {
         emoji: String,
@@ -190,6 +204,10 @@ pub enum ClientMsg {
         count: u32,
         #[serde(default)]
         minutes: Option<u32>,
+        /// `auto` (por omissão: distribui à vez) ou `manual` (cria as salas
+        /// vazias; o anfitrião move as pessoas com `breakout-move-user`).
+        #[serde(default)]
+        assign: Option<String>,
     },
     BreakoutRename {
         code: String,
@@ -228,6 +246,139 @@ pub enum ClientMsg {
     ShareRequest,
     /// Apresentador (ou anfitrião) abre o quadro branco em todos.
     WbOpen,
+
+    // ---------- frontend/b1-sala ----------
+    /// Só anfitrião: muda o papel de outro participante. `host` não se dá por
+    /// aqui — isso é o `TransferHost`, que troca os dois de forma atómica.
+    SetRole {
+        to: Uuid,
+        role: Role,
+    },
+    /// Só anfitrião: destaca um participante para TODA a sala (`None` limpa).
+    Spotlight {
+        #[serde(default)]
+        peer: Option<Uuid>,
+    },
+    /// Anfitrião ou co-anfitrião: admite toda a gente que está à espera.
+    AdmitAll,
+    /// Só anfitrião: liga/desliga a sala de espera durante a reunião.
+    WaitingRoom {
+        on: bool,
+    },
+    /// Só anfitrião: esconde (ou volta a mostrar) uma pergunta do Q&A.
+    QaHide {
+        id: Uuid,
+        #[serde(default = "verdadeiro")]
+        hidden: bool,
+    },
+    /// Só anfitrião: destaca uma pergunta (`None` limpa o destaque).
+    QaSpotlight {
+        #[serde(default)]
+        id: Option<Uuid>,
+    },
+    /// Apaga um objecto do quadro (autor ou anfitrião).
+    WbErase {
+        id: Uuid,
+    },
+    /// Move um objecto do quadro (autor ou anfitrião). Deslocamento em
+    /// coordenadas normalizadas.
+    WbTransform {
+        id: Uuid,
+        dx: f32,
+        dy: f32,
+    },
+    /// Muda o texto de uma nota/caixa de texto (autor ou anfitrião).
+    WbUpdate {
+        id: Uuid,
+        text: String,
+    },
+    /// Cursor/laser efémero — descartável e com travão por emissor.
+    WbCursor {
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        laser: bool,
+        #[serde(default)]
+        input: Option<String>,
+    },
+    /// Acrescenta uma página ao quadro (quem pode escrever).
+    WbAddPage,
+    /// Muda a página que TODA a sala vê (anfitrião ou apresentador).
+    WbPage {
+        page: u16,
+    },
+    /// Só anfitrião: restringe a escrita no quadro a quem tiver autorização.
+    WbLock {
+        on: bool,
+    },
+    /// Só anfitrião: autoriza/revoga a escrita de um participante no quadro.
+    WbGrant {
+        to: Uuid,
+        allowed: bool,
+    },
+    /// Só anfitrião: mensagem para a sala principal e TODAS as salas de grupo.
+    BreakoutsBroadcast {
+        text: String,
+    },
+}
+
+/// Papel de um participante na sala.
+///
+/// Só `host` e `cohost` têm efeito de autorização no servidor: o anfitrião
+/// tem todos os controlos, o co-anfitrião admite e recusa da sala de espera
+/// (é o mesmo estatuto que o `room_admitters` persiste). `speaker` e
+/// `broadcast` são papéis de APRESENTAÇÃO (quem está no palco, quem vai para a
+/// emissão) — o servidor guarda-os e difunde-os, não os usa para autorizar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    Host,
+    Cohost,
+    Speaker,
+    Broadcast,
+    #[default]
+    Attendee,
+}
+
+/// Como é que esta pessoa chegou à sala. Derivado no SERVIDOR (token de sala),
+/// nunca declarado pelo cliente.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Origin {
+    /// Conta gerida por um fornecedor de identidade (OIDC ou Odoo).
+    Sso,
+    /// Conta local, autenticada por palavra-passe.
+    Password,
+    /// Sem pertença à organização do dono nem convite: entrou pelo link.
+    Guest,
+    /// Telefone (ponte PSTN).
+    Pstn,
+    /// Bot autorizado por chave de API.
+    Bot,
+}
+
+/// Um destino de emissão tal como a SALA o vê: nome e estado. Nunca leva URL
+/// nem chave — isso fica no módulo de emissão.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LiveDestination {
+    pub label: String,
+    /// `connecting` | `live` | `error` | `stopped` (texto livre curto; o
+    /// módulo de emissão é a fonte).
+    #[serde(default)]
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kbps: Option<u32>,
+}
+
+/// Estado AO VIVO da sala.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct LiveInfo {
+    pub on: bool,
+    #[serde(default)]
+    pub destinations: Vec<LiveDestination>,
+    /// Epoch ms de quando a sala entrou no ar.
+    #[serde(default)]
+    pub since: Option<i64>,
 }
 
 /// Serializa um `Secret` **de propósito**. Existe uma única chamada — o campo
@@ -275,6 +426,10 @@ pub enum ServerMsg {
         /// cliente não tem como saber que a outra sessão é dele.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         companion: bool,
+        /// Epoch ms de quando a sessão começou neste nó (primeira entrada na
+        /// sala desde que ficou vazia). 0 = desconhecido (servidor antigo).
+        #[serde(default)]
+        started_at: i64,
     },
     PeerJoined {
         peer: PeerInfo,
@@ -312,6 +467,26 @@ pub enum ServerMsg {
         from: Uuid,
         username: String,
         text: String,
+        /// Identificador da mensagem (é o da linha em `room_chat_messages`).
+        #[serde(default)]
+        id: Uuid,
+        /// Epoch ms, carimbado no servidor.
+        #[serde(default)]
+        at: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<Uuid>,
+    },
+    /// Só para quem enviou: a mensagem `client_id` ficou com este `id`/`at`.
+    ChatSent {
+        client_id: String,
+        id: Uuid,
+        at: i64,
+    },
+    /// Contagem actual das reacções de uma mensagem de chat (estado completo,
+    /// não diferença: quem a perder recebe a certa na seguinte).
+    ChatReactions {
+        id: Uuid,
+        counts: std::collections::BTreeMap<String, u32>,
     },
     Reaction {
         from: Uuid,
@@ -359,11 +534,7 @@ pub enum ServerMsg {
     AdmitRole {
         allowed: bool,
     },
-    /// A toda a sala: o crachá «admite entradas» de um participante mudou.
-    PeerRole {
-        peer_id: Uuid,
-        can_admit: bool,
-    }, // para o anfitrião: alguém espera
+    // para o anfitrião: alguém espera
     WaitingLeft {
         peer_id: Uuid,
     }, // para o anfitrião: desistiu
@@ -396,6 +567,9 @@ pub enum ServerMsg {
         /// Quem foi silenciado pode voltar a ligar-se sozinho.
         #[serde(default = "verdadeiro")]
         allow_unmute: bool,
+        /// Sala de espera activa (valor de runtime, se o anfitrião o mudou).
+        #[serde(default)]
+        waiting_room: bool,
     },
     // Ferramentas: estado completo difundido a cada mudança.
     Polls {
@@ -478,14 +652,147 @@ pub enum ServerMsg {
     Draining {
         reconnect_in_ms: u64,
     },
+
+    // ---------- frontend/b1-sala ----------
+    /// Papel de um participante mudou (difundido a toda a sala).
+    PeerRole {
+        peer_id: Uuid,
+        role: Role,
+        /// Pode admitir da sala de espera (anfitrião ou co-anfitrião).
+        can_admit: bool,
+    },
+    /// Destaque para todos (`None` = sem destaque).
+    Spotlight {
+        peer: Option<Uuid>,
+    },
+    /// Estado AO VIVO da sala.
+    Live {
+        on: bool,
+        destinations: Vec<LiveDestination>,
+        since: Option<i64>,
+    },
+    /// Um objecto do quadro foi apagado.
+    WbErase {
+        id: Uuid,
+    },
+    /// Um objecto do quadro foi movido.
+    WbTransform {
+        id: Uuid,
+        dx: f32,
+        dy: f32,
+    },
+    /// O texto de um objecto do quadro mudou.
+    WbUpdate {
+        id: Uuid,
+        text: String,
+    },
+    /// Cursor/laser de outro participante (efémero).
+    WbCursor {
+        from: Uuid,
+        x: f32,
+        y: f32,
+        laser: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input: Option<String>,
+    },
+    /// Páginas do quadro: quantas há e qual está a ser mostrada a todos.
+    WbPages {
+        count: u16,
+        current: u16,
+    },
+    /// Quem pode escrever no quadro. `restricted = false` → toda a gente.
+    /// O anfitrião escreve sempre, esteja ou não na lista.
+    WbWriters {
+        restricted: bool,
+        writers: Vec<Uuid>,
+    },
+    /// Mensagem do anfitrião à sala principal e a todas as salas de grupo.
+    Announcement {
+        from: String,
+        text: String,
+        at: i64,
+    },
 }
 
-/// Traço do quadro branco: pontos normalizados (0..1), cor CSS e espessura.
+/// Tipo de objecto do quadro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum WbKind {
+    #[default]
+    Stroke,
+    Text,
+    Note,
+    Shape,
+}
+
+/// Formas aceites num objecto `shape`.
+const WB_SHAPES: &[&str] = &["rect", "ellipse", "line", "arrow"];
+
+/// Objecto do quadro branco: pontos normalizados (0..1), cor CSS e espessura.
+///
+/// Nasceu como «traço» e passou a objecto; os campos novos são todos
+/// opcionais para um cliente antigo continuar a mandar `{pts, c, w}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WbStrokeData {
     pub pts: Vec<[f32; 2]>,
     pub c: String,
     pub w: f32,
+    /// Identificador do objecto. Se o cliente não o mandar, o servidor gera.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<Uuid>,
+    #[serde(default)]
+    pub kind: WbKind,
+    /// Texto de `text`/`note`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Forma de `shape` (`rect`|`ellipse`|`line`|`arrow`); os dois pontos são
+    /// os cantos.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<String>,
+    /// Autor (nome), carimbado pelo SERVIDOR — o que o cliente mandar é
+    /// substituído.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    /// Página (0 = primeira).
+    #[serde(default)]
+    pub page: u16,
+    /// Pressão por ponto (0..1), opcional; o mesmo comprimento de `pts`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p: Option<Vec<f32>>,
+}
+
+impl WbStrokeData {
+    /// Forma válida para o `kind`? Recusar aqui é o que impede uma nota sem
+    /// texto ou uma pressão com NaN de entrarem no estado da sala.
+    pub(crate) fn is_valid(&self, pages: u16) -> bool {
+        let pts_ok = self.pts.iter().all(|[x, y]| x.is_finite() && y.is_finite());
+        let shape_ok = match self.kind {
+            WbKind::Stroke => (2..=2000).contains(&self.pts.len()),
+            WbKind::Text | WbKind::Note => {
+                self.pts.len() == 1
+                    && self
+                        .text
+                        .as_ref()
+                        .is_some_and(|t| !t.trim().is_empty() && t.chars().count() <= 2000)
+            }
+            WbKind::Shape => {
+                self.pts.len() == 2
+                    && self
+                        .shape
+                        .as_deref()
+                        .is_some_and(|s| WB_SHAPES.contains(&s))
+            }
+        };
+        let pressure_ok = self.p.as_ref().is_none_or(|p| {
+            p.len() == self.pts.len() && p.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+        });
+        pts_ok
+            && shape_ok
+            && pressure_ok
+            && self.c.len() <= 24
+            && self.w.is_finite()
+            && self.page < pages
+    }
 }
 
 // ---------- Ferramentas de reunião (estado em memória por sala) ----------
@@ -517,6 +824,12 @@ pub struct QaView {
     pub by: String,
     pub upvotes: u32,
     pub answered: bool,
+    /// Escondida pelo anfitrião. Só os anfitriões recebem perguntas escondidas.
+    #[serde(default)]
+    pub hidden: bool,
+    /// Pergunta em destaque (no máximo uma por sala).
+    #[serde(default)]
+    pub spotlight: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -541,6 +854,11 @@ pub struct QaState {
     pub by: String,
     pub upvotes: std::collections::HashSet<Uuid>,
     pub answered: bool,
+    // `serde(default)`: perguntas antigas no Redis continuam a desserializar.
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub spotlight: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -573,9 +891,6 @@ pub struct PeerInfo {
     pub peer_id: Uuid,
     pub username: String,
     pub host: bool,
-    /// Pode admitir da sala de espera (anfitrião ou co-anfitrião de admissões).
-    #[serde(default)]
-    pub can_admit: bool,
     #[serde(default)]
     pub hand: bool,
     /// Estado de media conhecido (true até o peer dizer o contrário).
@@ -585,6 +900,27 @@ pub struct PeerInfo {
     pub is_bot: bool,
     #[serde(default)]
     pub is_pstn: bool,
+    /// Papel na sala. `host` sempre que `host` for `true`.
+    #[serde(default)]
+    pub role: Role,
+    /// Pode admitir da sala de espera (anfitrião ou co-anfitrião).
+    #[serde(default)]
+    pub can_admit: bool,
+    /// Como chegou (derivado do token no servidor).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Origin>,
+    /// Cargo na organização do dono da sala (`org_members.title`), se houver.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+/// O que se sabe de quem entra além do nome e do papel base. Vem do token de
+/// sala (assinado pelo servidor) — nunca do cliente.
+#[derive(Debug, Clone, Default)]
+pub struct JoinExtras {
+    pub role: Role,
+    pub origin: Option<Origin>,
+    pub title: Option<String>,
 }
 
 /// O que o `Hub::join` devolve.
@@ -602,6 +938,8 @@ pub struct Entrada {
     /// segundo lugar entra sem áudio: dois microfones da mesma pessoa no mesmo
     /// espaço físico fazem um ciclo de eco.
     pub companion: bool,
+    /// Epoch ms do início da sessão.
+    pub started_at: i64,
 }
 
 // ---------- Hub (room registry, WS-agnostic and unit-testable) ----------
@@ -676,6 +1014,7 @@ impl ServerMsg {
             ServerMsg::TranscriptInterim { .. }
                 | ServerMsg::WbStroke { .. }
                 | ServerMsg::Reaction { .. }
+                | ServerMsg::WbCursor { .. }
         )
     }
 }
@@ -759,19 +1098,25 @@ impl PeerTx {
     }
 }
 
-struct Peer {
-    username: String,
-    user_id: Uuid,
-    is_host: bool,
+pub(crate) struct Peer {
+    pub(crate) username: String,
+    pub(crate) user_id: Uuid,
+    pub(crate) is_host: bool,
     can_admit: bool,
     hand: bool,
     cam_on: bool,
     mic_on: bool,
     is_bot: bool,
     is_pstn: bool,
+    /// Papel quando NÃO é anfitrião (o anfitrião é sempre `Role::Host`).
+    role: Role,
+    origin: Option<Origin>,
+    title: Option<String>,
     tx: PeerTx,
     /// Travão das legendas parciais deste peer (ver `allow_interim`).
     interim: crate::rate_limit::TokenBucket,
+    /// Travão dos cursores/laser do quadro deste peer.
+    pub(crate) cursor: crate::rate_limit::TokenBucket,
     /// Segredo que permite a este participante RECLAMAR o seu lugar depois de
     /// o socket cair (R91). Opaco, aleatório, e nunca sai deste processo a não
     /// ser para o próprio dono, no `joined`.
@@ -796,6 +1141,7 @@ pub struct ReclaimedSeat {
     pub user_id: Uuid,
     pub is_host: bool,
     pub can_admit: bool,
+    pub role: Role,
 }
 
 /// 32 bytes de `OsRng` em hexadecimal. Não é um JWT de propósito: não precisa
@@ -808,7 +1154,43 @@ fn novo_segredo_de_reclamacao() -> String {
 struct WaitingPeer {
     username: String,
     admit_tx: oneshot::Sender<bool>,
+    extras: JoinExtras,
+    /// Epoch ms de quando começou a esperar.
+    since: i64,
 }
+
+/// Quem está na sala de espera, visto por um anfitrião antes de entrar
+/// (`GET /api/rooms/{code}/waiting`).
+#[derive(Debug, Clone, Serialize)]
+pub struct WaitingView {
+    pub peer_id: Uuid,
+    pub username: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Origin>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub since: i64,
+}
+
+/// Epoch em milissegundos.
+pub(crate) fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+/// Mensagens de chat recentes que se guardam por sala para validar fios e
+/// reacções. Uma mensagem mais antiga do que isto já não aceita respostas nem
+/// reacções ao vivo — continua no histórico.
+const CHAT_RECENT_CAP: usize = 500;
+/// Emojis diferentes por mensagem.
+const CHAT_REACTION_KINDS_CAP: usize = 20;
+/// Páginas do quadro por sala.
+pub(crate) const WB_PAGES_CAP: u16 = 50;
+/// Cursores/laser por emissor: rajada e ritmo sustentado (20 Hz chega para
+/// um laser fluido; o cliente deve amostrar a esse ritmo).
+const CURSOR_BURST: f64 = 30.0;
+const CURSOR_PER_SEC: f64 = 20.0;
+/// Destinos de emissão mostrados à sala.
+const LIVE_DESTINATIONS_CAP: usize = 10;
 
 /// As definições de sala vistas de fora. Os campos estão no sentido POSITIVO —
 /// é assim que o cliente e a interface falam deles — mesmo que por dentro
@@ -818,6 +1200,7 @@ pub struct RoomSettingsView {
     pub host_share_only: bool,
     pub chat_on: bool,
     pub allow_unmute: bool,
+    pub waiting_room: bool,
 }
 
 impl Default for RoomSettingsView {
@@ -827,6 +1210,28 @@ impl Default for RoomSettingsView {
             host_share_only: false,
             chat_on: true,
             allow_unmute: true,
+            waiting_room: false,
+        }
+    }
+}
+
+impl RoomSettingsView {
+    /// Diferente do normal? É a condição para mandar as definições a quem entra.
+    pub fn is_default(&self) -> bool {
+        !self.locked
+            && !self.host_share_only
+            && self.chat_on
+            && self.allow_unmute
+            && !self.waiting_room
+    }
+
+    pub fn to_msg(&self) -> ServerMsg {
+        ServerMsg::RoomSettings {
+            locked: self.locked,
+            host_share_only: self.host_share_only,
+            chat_on: self.chat_on,
+            allow_unmute: self.allow_unmute,
+            waiting_room: self.waiting_room,
         }
     }
 }
@@ -840,7 +1245,7 @@ fn verdadeiro() -> bool {
 
 #[derive(Default)]
 pub(crate) struct Room {
-    peers: HashMap<Uuid, Peer>,
+    pub(crate) peers: HashMap<Uuid, Peer>,
     waiting: HashMap<Uuid, WaitingPeer>,
     /// Reunião bloqueada: ninguém entra sem ser admitido (mesmo com link).
     locked: bool,
@@ -860,19 +1265,132 @@ pub(crate) struct Room {
     /// Autorizações de partilha de ecrã dadas pelo anfitrião (por peer).
     share_grants: HashSet<Uuid>,
     /// Quem está a apresentar agora — gateia controlo remoto e wb-open.
-    presenter: Option<Uuid>,
+    pub(crate) presenter: Option<Uuid>,
     // Ferramentas de reunião:
     pub(crate) polls: Vec<PollState>,
     pub(crate) questions: Vec<QaState>,
     pub(crate) timer_ends_at: Option<i64>,
     /// Quadro branco: traços acumulados (repostos a quem entra).
     pub(crate) wb_strokes: Vec<WbStrokeData>,
+
+    // ---------- frontend/b1-sala ----------
+    /// Epoch ms da primeira entrada desde que a sala existe neste nó.
+    started_at: i64,
+    /// Destaque para todos.
+    spotlight: Option<Uuid>,
+    /// Estado AO VIVO (alimentado pelo módulo de emissão via `set_live`).
+    live: Option<LiveInfo>,
+    /// Sala de espera: `None` até alguém a definir (token do dono) ou o
+    /// anfitrião a mudar em runtime.
+    waiting_room: Option<bool>,
+    /// Chat recente: ordem de chegada + conjunto, para validar fios/reacções.
+    chat_recent: std::collections::VecDeque<Uuid>,
+    /// Reacções por mensagem recente: emoji → contas.
+    chat_reactions: HashMap<Uuid, std::collections::BTreeMap<String, HashSet<Uuid>>>,
+    /// Autor (conta) de cada objecto do quadro — para apagar/mover/editar.
+    pub(crate) wb_owner: HashMap<Uuid, Uuid>,
+    /// Páginas do quadro além da primeira (total = 1 + isto).
+    pub(crate) wb_extra_pages: u16,
+    /// Página mostrada a todos.
+    pub(crate) wb_page: u16,
+    /// Escrita no quadro restrita a `wb_writers` (+ anfitrião).
+    pub(crate) wb_restricted: bool,
+    pub(crate) wb_writers: HashSet<Uuid>,
+}
+
+impl Peer {
+    fn effective_role(&self) -> Role {
+        if self.is_host {
+            Role::Host
+        } else {
+            self.role
+        }
+    }
+
+    /// Pode decidir sobre a sala de espera.
+    fn admits(&self) -> bool {
+        self.is_host || self.can_admit || self.role == Role::Cohost
+    }
+
+    fn info(&self, peer_id: Uuid) -> PeerInfo {
+        PeerInfo {
+            peer_id,
+            username: self.username.clone(),
+            host: self.is_host,
+            hand: self.hand,
+            cam: self.cam_on,
+            mic: self.mic_on,
+            is_bot: self.is_bot,
+            is_pstn: self.is_pstn,
+            role: self.effective_role(),
+            can_admit: self.admits(),
+            origin: self.origin,
+            title: self.title.clone(),
+        }
+    }
+}
+
+impl Room {
+    fn settings_view(&self) -> RoomSettingsView {
+        RoomSettingsView {
+            locked: self.locked,
+            host_share_only: self.host_share_only,
+            chat_on: !self.chat_blocked,
+            allow_unmute: !self.unmute_blocked,
+            waiting_room: self.waiting_room.unwrap_or(false),
+        }
+    }
+
+    fn waiting_info(&self, peer_id: Uuid, w: &WaitingPeer) -> PeerInfo {
+        let _ = self;
+        PeerInfo {
+            peer_id,
+            username: w.username.clone(),
+            host: false,
+            hand: false,
+            cam: true,
+            mic: true,
+            is_bot: false,
+            is_pstn: w.extras.origin == Some(Origin::Pstn),
+            role: Role::Attendee,
+            can_admit: false,
+            origin: w.extras.origin,
+            title: w.extras.title.clone(),
+        }
+    }
+
+    pub(crate) fn wb_pages(&self) -> u16 {
+        1 + self.wb_extra_pages
+    }
+
+    /// Pode escrever no quadro?
+    pub(crate) fn wb_can_write(&self, peer_id: Uuid) -> bool {
+        if !self.wb_restricted {
+            return true;
+        }
+        self.peers.get(&peer_id).is_some_and(|p| p.is_host) || self.wb_writers.contains(&peer_id)
+    }
+
+    /// Pode alterar este objecto? O autor (mesma conta) ou o anfitrião — e,
+    /// em modo restrito, só se ainda puder escrever.
+    pub(crate) fn wb_can_edit(&self, peer_id: Uuid, object: Uuid) -> bool {
+        let Some(p) = self.peers.get(&peer_id) else {
+            return false;
+        };
+        if p.is_host {
+            return true;
+        }
+        self.wb_can_write(peer_id) && self.wb_owner.get(&object) == Some(&p.user_id)
+    }
 }
 
 #[derive(Default)]
 pub struct SignalingHub {
     pub(crate) rooms: DashMap<Uuid, Room>,
     pub bus: Option<Arc<crate::pubsub::PubSubBus>>,
+    /// Escrita do chat na base de dados, FORA do caminho quente (fila
+    /// limitada consumida por uma tarefa própria). `None` em testes.
+    pub chat_store: Option<crate::room_chat::ChatStore>,
 }
 
 impl SignalingHub {
@@ -915,6 +1433,7 @@ impl SignalingHub {
         room.host_share_only = host_share_only;
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn join(
         &self,
         room_id: Uuid,
@@ -926,6 +1445,33 @@ impl SignalingHub {
         is_bot: bool,
         tx: PeerTx,
     ) -> Entrada {
+        self.join_with(
+            room_id,
+            peer_id,
+            user_id,
+            username,
+            is_host,
+            can_admit,
+            is_bot,
+            tx,
+            JoinExtras::default(),
+        )
+    }
+
+    /// Como o `join`, com papel, origem e cargo.
+    #[allow(clippy::too_many_arguments)]
+    pub fn join_with(
+        &self,
+        room_id: Uuid,
+        peer_id: Uuid,
+        user_id: Uuid,
+        username: String,
+        is_host: bool,
+        can_admit: bool,
+        is_bot: bool,
+        tx: PeerTx,
+        extras: JoinExtras,
+    ) -> Entrada {
         // O segredo de reclamação nasce aqui e é a ÚNICA coisa que sai deste
         // método além do roster: quem entra leva-o, ninguém mais o vê.
         let segredo = novo_segredo_de_reclamacao();
@@ -933,7 +1479,7 @@ impl SignalingHub {
         // BEFORE broadcasting. Broadcasting calls broadcast_all_local which
         // calls self.rooms.get() — acquiring a read lock on the same shard
         // while a write lock is held causes a deadlock that hangs tokio threads.
-        let (existing, announce, waiting_msgs, companion) = {
+        let (existing, announce, waiting_msgs, companion, started_at) = {
             let mut room = self.rooms.entry(room_id).or_default();
             // A MESMA conta já cá está? Decide-se DENTRO do lock de escrita: se
             // fosse uma pergunta separada antes do `join`, duas entradas
@@ -947,73 +1493,57 @@ impl SignalingHub {
                 .peers
                 .values()
                 .any(|p| p.user_id == user_id && p.disconnected_at.is_none());
-            let existing: Vec<PeerInfo> = room
-                .peers
-                .iter()
-                .map(|(id, p)| PeerInfo {
-                    can_admit: p.can_admit,
-                    peer_id: *id,
-                    username: p.username.clone(),
-                    host: p.is_host,
-                    hand: p.hand,
-                    cam: p.cam_on,
-                    mic: p.mic_on,
-                    is_bot: p.is_bot,
-                    is_pstn: p.is_pstn,
-                })
-                .collect();
-            let announce = ServerMsg::PeerJoined {
-                peer: PeerInfo {
-                    peer_id,
-                    username: username.clone(),
-                    host: is_host,
-                    can_admit,
-                    hand: false,
-                    cam: true,
-                    mic: true,
-                    is_bot,
-                    is_pstn: false,
-                },
+            // A sessão começa na primeira entrada; uma sala que só teve gente
+            // à espera ainda não começou.
+            if room.started_at == 0 {
+                room.started_at = now_ms();
+            }
+            let existing: Vec<PeerInfo> = room.peers.iter().map(|(id, p)| p.info(*id)).collect();
+            let origin = if is_bot {
+                Some(Origin::Bot)
+            } else {
+                extras.origin
             };
-            let waiting_msgs: Vec<ServerMsg> = if is_host || can_admit {
+            // Um anfitrião é `Host`; ninguém recebe `Host` por outra via.
+            let role = if extras.role == Role::Host {
+                Role::Attendee
+            } else {
+                extras.role
+            };
+            let novo = Peer {
+                username,
+                user_id,
+                is_host,
+                can_admit,
+                hand: false,
+                cam_on: true,
+                mic_on: true,
+                is_bot,
+                is_pstn: origin == Some(Origin::Pstn),
+                role,
+                origin,
+                title: extras.title,
+                tx: tx.clone(),
+                interim: crate::rate_limit::TokenBucket::new(INTERIM_BURST, INTERIM_PER_SEC),
+                cursor: crate::rate_limit::TokenBucket::new(CURSOR_BURST, CURSOR_PER_SEC),
+                reconnect_secret: Secret::new(segredo.clone()),
+                disconnected_at: None,
+            };
+            let announce = ServerMsg::PeerJoined {
+                peer: novo.info(peer_id),
+            };
+            let waiting_msgs: Vec<ServerMsg> = if novo.admits() {
                 room.waiting
                     .iter()
                     .map(|(id, w)| ServerMsg::WaitingJoin {
-                        peer: PeerInfo {
-                            peer_id: *id,
-                            username: w.username.clone(),
-                            host: false,
-                            can_admit: false,
-                            hand: false,
-                            cam: true,
-                            mic: true,
-                            is_bot: false,
-                            is_pstn: false,
-                        },
+                        peer: room.waiting_info(*id, w),
                     })
                     .collect()
             } else {
                 vec![]
             };
-            room.peers.insert(
-                peer_id,
-                Peer {
-                    username,
-                    user_id,
-                    is_host,
-                    can_admit,
-                    hand: false,
-                    cam_on: true,
-                    mic_on: true,
-                    is_bot,
-                    is_pstn: false,
-                    tx: tx.clone(),
-                    interim: crate::rate_limit::TokenBucket::new(INTERIM_BURST, INTERIM_PER_SEC),
-                    reconnect_secret: Secret::new(segredo.clone()),
-                    disconnected_at: None,
-                },
-            );
-            (existing, announce, waiting_msgs, companion)
+            room.peers.insert(peer_id, novo);
+            (existing, announce, waiting_msgs, companion, room.started_at)
         }; // ← DashMap write lock released here
         self.broadcast_all(room_id, announce);
         // Um co-anfitrião de admissões que volta (papel persistido e lido do
@@ -1029,6 +1559,7 @@ impl SignalingHub {
             roster: existing,
             reconnect_secret: segredo,
             companion,
+            started_at,
         }
     }
 
@@ -1097,6 +1628,7 @@ impl SignalingHub {
                     user_id: p.user_id,
                     is_host: p.is_host,
                     can_admit: p.can_admit,
+                    role: p.role,
                 },
             ))
         })?;
@@ -1135,23 +1667,32 @@ impl SignalingHub {
         username: String,
         admit_tx: oneshot::Sender<bool>,
     ) {
-        let info = PeerInfo {
-            peer_id,
-            username: username.clone(),
-            host: false,
-            can_admit: false,
-            hand: false,
-            cam: true,
-            mic: true,
-            is_bot: false,
-            is_pstn: false,
-        };
+        self.add_waiting_with(room_id, peer_id, username, JoinExtras::default(), admit_tx)
+    }
+
+    /// Como o `add_waiting`, com origem e cargo (o anfitrião vê quem é antes
+    /// de admitir).
+    pub fn add_waiting_with(
+        &self,
+        room_id: Uuid,
+        peer_id: Uuid,
+        username: String,
+        extras: JoinExtras,
+        admit_tx: oneshot::Sender<bool>,
+    ) {
         // Insert under lock, broadcast after lock is released.
-        {
+        let info = {
             let mut room = self.rooms.entry(room_id).or_default();
-            room.waiting
-                .insert(peer_id, WaitingPeer { username, admit_tx });
-        }
+            let w = WaitingPeer {
+                username,
+                admit_tx,
+                extras,
+                since: now_ms(),
+            };
+            let info = room.waiting_info(peer_id, &w);
+            room.waiting.insert(peer_id, w);
+            info
+        };
         self.broadcast_admitters(room_id, ServerMsg::WaitingJoin { peer: info });
     }
 
@@ -1166,19 +1707,36 @@ impl SignalingHub {
         }
     }
 
-    /// Decisão do anfitrião sobre um convidado em espera.
+    /// Quem está à espera nesta sala, neste nó.
+    pub fn waiting_list(&self, room_id: Uuid) -> Vec<WaitingView> {
+        self.rooms
+            .get(&room_id)
+            .map(|r| {
+                let mut v: Vec<WaitingView> = r
+                    .waiting
+                    .iter()
+                    .map(|(id, w)| WaitingView {
+                        peer_id: *id,
+                        username: w.username.clone(),
+                        origin: w.extras.origin,
+                        title: w.extras.title.clone(),
+                        since: w.since,
+                    })
+                    .collect();
+                v.sort_by_key(|w| w.since);
+                v
+            })
+            .unwrap_or_default()
+    }
+
+    /// Decisão do anfitrião (ou co-anfitrião) sobre um convidado em espera.
     fn decide_waiting(&self, room_id: Uuid, host: Uuid, target: Uuid, admit: bool) {
         let admitted_tx = {
             let Some(mut room) = self.rooms.get_mut(&room_id) else {
                 return;
             };
-            if !room
-                .peers
-                .get(&host)
-                .map(|p| p.is_host || p.can_admit)
-                .unwrap_or(false)
-            {
-                return; // só o anfitrião ou um co-anfitrião de admissões decide
+            if !room.peers.get(&host).map(|p| p.admits()).unwrap_or(false) {
+                return; // só quem admite decide
             }
             room.waiting.remove(&target).map(|w| w.admit_tx)
         }; // ← DashMap write lock released here
@@ -1186,6 +1744,28 @@ impl SignalingHub {
             let _ = tx.send(admit);
             self.broadcast_admitters(room_id, ServerMsg::WaitingLeft { peer_id: target });
         }
+    }
+
+    /// Admite TODA a gente que está à espera. Devolve quantos.
+    fn admit_all(&self, room_id: Uuid, host: Uuid) -> usize {
+        let admitted: Vec<(Uuid, oneshot::Sender<bool>)> = {
+            let Some(mut room) = self.rooms.get_mut(&room_id) else {
+                return 0;
+            };
+            if !room.peers.get(&host).map(|p| p.admits()).unwrap_or(false) {
+                return 0;
+            }
+            room.waiting
+                .drain()
+                .map(|(id, w)| (id, w.admit_tx))
+                .collect()
+        };
+        let n = admitted.len();
+        for (id, tx) in admitted {
+            let _ = tx.send(true);
+            self.broadcast_admitters(room_id, ServerMsg::WaitingLeft { peer_id: id });
+        }
+        n
     }
 
     pub fn leave(&self, room_id: Uuid, peer_id: Uuid) {
@@ -1197,13 +1777,19 @@ impl SignalingHub {
         // Colhe-se DENTRO do mesmo lock que remove: perguntar depois olharia
         // para uma sala já sem o peer e não saberia de quem ele era.
         let mut orfaos: Vec<Uuid> = Vec::new();
+        let mut spotlight_cleared = false;
         let removed = self
             .rooms
             .get_mut(&room_id)
             .map(|mut r| {
                 r.share_grants.remove(&peer_id);
+                r.wb_writers.remove(&peer_id);
                 if r.presenter == Some(peer_id) {
                     r.presenter = None;
+                }
+                if r.spotlight == Some(peer_id) {
+                    r.spotlight = None;
+                    spotlight_cleared = true;
                 }
                 let saiu = r.peers.remove(&peer_id);
                 if let Some(p) = &saiu {
@@ -1233,6 +1819,9 @@ impl SignalingHub {
             .unwrap_or(false);
         if removed {
             self.broadcast_all(room_id, ServerMsg::PeerLeft { peer_id });
+        }
+        if spotlight_cleared {
+            self.broadcast_all(room_id, ServerMsg::Spotlight { peer: None });
         }
         if empty {
             self.rooms.remove_if(&room_id, |_, room| {
@@ -1375,8 +1964,7 @@ impl SignalingHub {
         }
     }
 
-    /// A quem pode admitir: anfitriões e co-anfitriões de admissões. É o
-    /// destino da sala de espera (`waiting-join`/`waiting-left`).
+    /// Para quem decide sobre a sala de espera (anfitrião e co-anfitriões).
     pub fn broadcast_admitters(&self, room_id: Uuid, msg: ServerMsg) {
         if let Some(bus) = &self.bus {
             let bus = bus.clone();
@@ -1397,7 +1985,7 @@ impl SignalingHub {
 
     pub fn broadcast_admitters_local(&self, room_id: Uuid, msg: ServerMsg) {
         if let Some(room) = self.rooms.get(&room_id) {
-            for peer in room.peers.values().filter(|p| p.is_host || p.can_admit) {
+            for peer in room.peers.values().filter(|p| p.admits()) {
                 let _ = peer.tx.send(msg.clone());
             }
         }
@@ -1408,6 +1996,35 @@ impl SignalingHub {
         self.rooms
             .get(&room_id)
             .and_then(|r| r.peers.get(&peer_id).map(|p| p.user_id))
+    }
+
+    /// Para quem NÃO é anfitrião (par do `broadcast_hosts`, sem sobreposição —
+    /// é assim que anfitriões e participantes recebem vistas diferentes do
+    /// mesmo estado sem a ordem de chegada decidir qual fica).
+    pub fn broadcast_non_hosts(&self, room_id: Uuid, msg: ServerMsg) {
+        if let Some(bus) = &self.bus {
+            let bus = bus.clone();
+            let msg_clone = msg.clone();
+            tokio::spawn(async move {
+                bus.publish_signaling(
+                    room_id,
+                    &crate::pubsub::RedisRoomEvent::BroadcastNonHosts {
+                        node_id: *crate::pubsub::NODE_ID,
+                        msg: msg_clone,
+                    },
+                )
+                .await;
+            });
+        }
+        self.broadcast_non_hosts_local(room_id, msg)
+    }
+
+    pub fn broadcast_non_hosts_local(&self, room_id: Uuid, msg: ServerMsg) {
+        if let Some(room) = self.rooms.get(&room_id) {
+            for peer in room.peers.values().filter(|p| !p.is_host) {
+                let _ = peer.tx.send(msg.clone());
+            }
+        }
     }
 
     /// Lista (peer_id, é_anfitrião) dos presentes na sala.
@@ -1461,12 +2078,7 @@ impl SignalingHub {
     /// Difunde as definições runtime a todos os presentes.
     pub fn broadcast_settings(&self, room_id: Uuid) {
         if let Some(room) = self.rooms.get(&room_id) {
-            let msg = ServerMsg::RoomSettings {
-                locked: room.locked,
-                host_share_only: room.host_share_only,
-                chat_on: !room.chat_blocked,
-                allow_unmute: !room.unmute_blocked,
-            };
+            let msg = room.settings_view().to_msg();
             for peer in room.peers.values() {
                 let _ = peer.tx.send(msg.clone());
             }
@@ -1513,18 +2125,28 @@ impl SignalingHub {
     }
 
     fn qa_view(&self, room_id: Uuid) -> Vec<QaView> {
+        self.qa_view_for(room_id, true)
+    }
+
+    /// Vista do Q&A para um público: os anfitriões veem as escondidas (com a
+    /// marca), os outros não as recebem de todo — esconder na interface não
+    /// esconde nada a quem lê o socket.
+    pub fn qa_view_for(&self, room_id: Uuid, host: bool) -> Vec<QaView> {
         self.rooms
             .get(&room_id)
             .map(|r| {
                 let mut qs: Vec<QaView> = r
                     .questions
                     .iter()
+                    .filter(|q| host || !q.hidden)
                     .map(|q| QaView {
                         id: q.id,
                         text: q.text.clone(),
                         by: q.by.clone(),
                         upvotes: q.upvotes.len() as u32,
                         answered: q.answered,
+                        hidden: q.hidden,
+                        spotlight: q.spotlight,
                     })
                     .collect();
                 // Não respondidas primeiro, depois por votos.
@@ -1560,10 +2182,18 @@ impl SignalingHub {
     }
 
     pub(crate) fn broadcast_qa(&self, room_id: Uuid) {
-        let msg = ServerMsg::Qa {
-            questions: self.qa_view(room_id),
-        };
-        self.broadcast_all(room_id, msg);
+        self.broadcast_hosts(
+            room_id,
+            ServerMsg::Qa {
+                questions: self.qa_view_for(room_id, true),
+            },
+        );
+        self.broadcast_non_hosts(
+            room_id,
+            ServerMsg::Qa {
+                questions: self.qa_view_for(room_id, false),
+            },
+        );
     }
 
     /// Estado das ferramentas (para quem entra a meio).
@@ -1589,12 +2219,7 @@ impl SignalingHub {
     pub fn settings_of(&self, room_id: Uuid) -> RoomSettingsView {
         self.rooms
             .get(&room_id)
-            .map(|r| RoomSettingsView {
-                locked: r.locked,
-                host_share_only: r.host_share_only,
-                chat_on: !r.chat_blocked,
-                allow_unmute: !r.unmute_blocked,
-            })
+            .map(|r| r.settings_view())
             .unwrap_or_default()
     }
 
@@ -1622,6 +2247,144 @@ impl SignalingHub {
             .get(&room_id)
             .and_then(|room| room.peers.get(&peer_id).map(|p| p.is_host))
             .unwrap_or(false)
+    }
+
+    /// Só o anfitrião muda papéis, e nunca o seu nem o de outro anfitrião.
+    fn set_role(&self, room_id: Uuid, by: Uuid, to: Uuid, role: Role) {
+        if role == Role::Host || to == by || !self.is_host(room_id, by) {
+            return;
+        }
+        let resultado = self.rooms.get_mut(&room_id).and_then(|mut r| {
+            let alvo = r.peers.get_mut(&to)?;
+            if alvo.is_host {
+                return None;
+            }
+            let passou_a_admitir = !alvo.admits() && role == Role::Cohost;
+            alvo.role = role;
+            let can_admit = alvo.admits();
+            // Quem passa a admitir recebe a fila que já lá está: sem isto só
+            // via quem chegasse DEPOIS da promoção.
+            let fila: Vec<ServerMsg> = if passou_a_admitir {
+                r.waiting
+                    .iter()
+                    .map(|(id, w)| ServerMsg::WaitingJoin {
+                        peer: r.waiting_info(*id, w),
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+            Some((can_admit, fila))
+        });
+        if let Some((can_admit, fila)) = resultado {
+            self.broadcast_all(
+                room_id,
+                ServerMsg::PeerRole {
+                    peer_id: to,
+                    role,
+                    can_admit,
+                },
+            );
+            for m in fila {
+                self.send_to(room_id, to, m);
+            }
+        }
+    }
+
+    /// Estado AO VIVO da sala — o ponto de entrada do módulo de emissão.
+    ///
+    /// Contrato:
+    /// - chama-se ao ARRANCAR (`on: true`), a cada mudança de estado de um
+    ///   destino, e ao PARAR (`on: false`);
+    /// - `destinations` leva só rótulo e estado — NUNCA URL nem chave;
+    /// - `since` pode vir `None`: ao ligar, o servidor mantém o `since` que já
+    ///   tinha (actualização de estado) ou carimba agora (arranque);
+    /// - difunde `ServerMsg::Live` a toda a sala e guarda o estado para quem
+    ///   entra depois; numa sala que não existe neste nó não faz nada.
+    ///
+    /// Devolve o estado efectivamente guardado (`None` se a sala não existe).
+    pub fn set_live(&self, room_id: Uuid, info: LiveInfo) -> Option<LiveInfo> {
+        let guardado = {
+            let mut room = self.rooms.get_mut(&room_id)?;
+            let mut info = info;
+            info.destinations.truncate(LIVE_DESTINATIONS_CAP);
+            for d in &mut info.destinations {
+                d.label = d.label.chars().take(60).collect();
+                d.state = d.state.chars().take(24).collect();
+            }
+            if info.on {
+                let anterior = room.live.as_ref().filter(|l| l.on).and_then(|l| l.since);
+                info.since = info.since.or(anterior).or_else(|| Some(now_ms()));
+            } else {
+                info.since = None;
+            }
+            room.live = Some(info.clone());
+            info
+        };
+        self.broadcast_all(
+            room_id,
+            ServerMsg::Live {
+                on: guardado.on,
+                destinations: guardado.destinations.clone(),
+                since: guardado.since,
+            },
+        );
+        Some(guardado)
+    }
+
+    /// O que quem entra a meio tem de receber sobre destaque e emissão.
+    pub fn join_snapshot(&self, room_id: Uuid) -> Vec<ServerMsg> {
+        let Some(r) = self.rooms.get(&room_id) else {
+            return vec![];
+        };
+        let mut v = Vec::new();
+        if r.spotlight.is_some() {
+            v.push(ServerMsg::Spotlight { peer: r.spotlight });
+        }
+        if let Some(l) = r.live.as_ref().filter(|l| l.on) {
+            v.push(ServerMsg::Live {
+                on: true,
+                destinations: l.destinations.clone(),
+                since: l.since,
+            });
+        }
+        if r.wb_extra_pages > 0 || r.wb_page > 0 {
+            v.push(ServerMsg::WbPages {
+                count: r.wb_pages(),
+                current: r.wb_page,
+            });
+        }
+        if r.wb_restricted {
+            v.push(ServerMsg::WbWriters {
+                restricted: true,
+                writers: r.wb_writers.iter().copied().collect(),
+            });
+        }
+        v
+    }
+
+    /// Define a sala de espera a partir do token do dono — só se ninguém a
+    /// tiver definido antes (o valor de runtime do anfitrião ganha).
+    pub fn init_waiting_room(&self, room_id: Uuid, on: bool) {
+        if let Some(mut r) = self.rooms.get_mut(&room_id) {
+            if r.waiting_room.is_none() {
+                r.waiting_room = Some(on);
+            }
+        }
+    }
+
+    /// Valor de runtime da sala de espera, se definido.
+    pub fn waiting_room_of(&self, room_id: Uuid) -> Option<bool> {
+        self.rooms.get(&room_id).and_then(|r| r.waiting_room)
+    }
+
+    /// A pessoa com esta CONTA está na sala e pode admitir?
+    pub fn user_admits(&self, room_id: Uuid, user_id: Uuid) -> bool {
+        self.rooms.get(&room_id).is_some_and(|r| {
+            r.peers
+                .values()
+                .any(|p| p.user_id == user_id && p.disconnected_at.is_none() && p.admits())
+        })
     }
 
     pub fn room_size(&self, room_id: Uuid) -> usize {
@@ -1732,8 +2495,15 @@ impl SignalingHub {
                     self.broadcast(room_id, peer_id, ServerMsg::WbOpen { by });
                 }
             }
-            ClientMsg::Chat { text } => {
+            ClientMsg::Chat {
+                text,
+                reply_to,
+                client_id,
+            } => {
                 if text.is_empty() || text.len() > 4000 {
+                    return true;
+                }
+                if client_id.as_ref().is_some_and(|c| c.len() > 64) {
                     return true;
                 }
                 // O chat fechado é imposto AQUI, não no cliente (R92). Esconder
@@ -1752,9 +2522,53 @@ impl SignalingHub {
                     return true;
                 }
                 let text = crate::dlp::censor(&text);
-                let username = self
-                    .username_of(room_id, peer_id)
-                    .unwrap_or_else(|| "?".into());
+                let id = Uuid::new_v4();
+                let at = now_ms();
+                // Regista a mensagem como recente (fios e reacções só se
+                // aceitam sobre estas) e valida o fio, sob o mesmo lock.
+                let autor = {
+                    let Some(mut room) = self.rooms.get_mut(&room_id) else {
+                        return true;
+                    };
+                    if reply_to.is_some_and(|r| !room.chat_recent.contains(&r)) {
+                        drop(room);
+                        self.send_to_local(
+                            room_id,
+                            peer_id,
+                            ServerMsg::Error {
+                                message: "chat: a mensagem a que respondes já não está disponível"
+                                    .into(),
+                            },
+                        );
+                        return true;
+                    }
+                    room.chat_recent.push_back(id);
+                    while room.chat_recent.len() > CHAT_RECENT_CAP {
+                        if let Some(velha) = room.chat_recent.pop_front() {
+                            room.chat_reactions.remove(&velha);
+                        }
+                    }
+                    room.peers
+                        .get(&peer_id)
+                        .map(|p| (p.user_id, p.username.clone()))
+                };
+                let Some((user_id, username)) = autor else {
+                    return true;
+                };
+                if let Some(store) = &self.chat_store {
+                    store.write(crate::room_chat::ChatWrite::Message {
+                        id,
+                        room_id,
+                        user_id,
+                        username: username.clone(),
+                        text: text.clone(),
+                        parent_id: reply_to,
+                        at,
+                    });
+                }
+                if let Some(client_id) = client_id {
+                    self.send_to_local(room_id, peer_id, ServerMsg::ChatSent { client_id, id, at });
+                }
                 self.broadcast(
                     room_id,
                     peer_id,
@@ -1762,8 +2576,58 @@ impl SignalingHub {
                         from: peer_id,
                         username,
                         text,
+                        id,
+                        at,
+                        reply_to,
                     },
                 );
+            }
+            ClientMsg::ChatReact { id, emoji } => {
+                if emoji.is_empty() || emoji.chars().count() > 4 {
+                    return true;
+                }
+                // Reagir é falar: com o chat fechado, só o anfitrião reage.
+                let resultado = {
+                    let Some(mut room) = self.rooms.get_mut(&room_id) else {
+                        return true;
+                    };
+                    let Some((user_id, host)) =
+                        room.peers.get(&peer_id).map(|p| (p.user_id, p.is_host))
+                    else {
+                        return true;
+                    };
+                    if room.chat_blocked && !host {
+                        return true;
+                    }
+                    if !room.chat_recent.contains(&id) {
+                        return true;
+                    }
+                    let mapa = room.chat_reactions.entry(id).or_default();
+                    if !mapa.contains_key(&emoji) && mapa.len() >= CHAT_REACTION_KINDS_CAP {
+                        return true;
+                    }
+                    let contas = mapa.entry(emoji.clone()).or_default();
+                    let on = contas.insert(user_id);
+                    if !on {
+                        contas.remove(&user_id);
+                    }
+                    mapa.retain(|_, c| !c.is_empty());
+                    let counts: std::collections::BTreeMap<String, u32> = mapa
+                        .iter()
+                        .map(|(e, c)| (e.clone(), c.len() as u32))
+                        .collect();
+                    (user_id, on, counts)
+                };
+                let (user_id, on, counts) = resultado;
+                if let Some(store) = &self.chat_store {
+                    store.write(crate::room_chat::ChatWrite::Reaction {
+                        message_id: id,
+                        user_id,
+                        emoji,
+                        on,
+                    });
+                }
+                self.broadcast_all(room_id, ServerMsg::ChatReactions { id, counts });
             }
             ClientMsg::Reaction { emoji } => {
                 // Só emojis curtos — nada de spam de texto por aqui.
@@ -1922,8 +2786,49 @@ impl SignalingHub {
             | ClientMsg::WbStroke { .. }
             | ClientMsg::WbClear
             | ClientMsg::WbClose
-            | ClientMsg::TimerClear) => self.handle_tool_msg(room_id, peer_id, m, bus),
+            | ClientMsg::TimerClear
+            | ClientMsg::QaHide { .. }
+            | ClientMsg::QaSpotlight { .. }
+            | ClientMsg::WbErase { .. }
+            | ClientMsg::WbTransform { .. }
+            | ClientMsg::WbUpdate { .. }
+            | ClientMsg::WbCursor { .. }
+            | ClientMsg::WbAddPage
+            | ClientMsg::WbPage { .. }
+            | ClientMsg::WbLock { .. }
+            | ClientMsg::WbGrant { .. }) => self.handle_tool_msg(room_id, peer_id, m, bus),
             ClientMsg::Admit { to } => self.decide_waiting(room_id, peer_id, to, true),
+            ClientMsg::AdmitAll => {
+                self.admit_all(room_id, peer_id);
+            }
+            ClientMsg::SetRole { to, role } => self.set_role(room_id, peer_id, to, role),
+            ClientMsg::Spotlight { peer } => {
+                if !self.is_host(room_id, peer_id) {
+                    return true;
+                }
+                let mudou = self
+                    .rooms
+                    .get_mut(&room_id)
+                    .map(|mut r| {
+                        if peer.is_some_and(|p| !r.peers.contains_key(&p)) {
+                            return false;
+                        }
+                        r.spotlight = peer;
+                        true
+                    })
+                    .unwrap_or(false);
+                if mudou {
+                    self.broadcast_all(room_id, ServerMsg::Spotlight { peer });
+                }
+            }
+            ClientMsg::WaitingRoom { on } => {
+                if self.is_host(room_id, peer_id) {
+                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                        room.waiting_room = Some(on);
+                    }
+                    self.broadcast_settings(room_id);
+                }
+            }
             ClientMsg::Deny { to } => self.decide_waiting(room_id, peer_id, to, false),
             ClientMsg::ForceMute { to } => {
                 if self.is_host(room_id, peer_id) {
@@ -1992,6 +2897,9 @@ impl SignalingHub {
                     .unwrap_or(false);
                 if trocou {
                     self.broadcast_all(room_id, ServerMsg::HostChanged { from: peer_id, to });
+                    // A vista do Q&A depende de ser anfitrião (perguntas
+                    // escondidas): os dois lados têm de receber a nova.
+                    self.broadcast_qa(room_id);
                 }
             }
             ClientMsg::PromoteAdmit { to, allowed } => {
@@ -2006,17 +2914,7 @@ impl SignalingHub {
                             .waiting
                             .iter()
                             .map(|(id, w)| ServerMsg::WaitingJoin {
-                                peer: PeerInfo {
-                                    peer_id: *id,
-                                    username: w.username.clone(),
-                                    host: false,
-                                    can_admit: false,
-                                    hand: false,
-                                    cam: true,
-                                    mic: true,
-                                    is_bot: false,
-                                    is_pstn: false,
-                                },
+                                peer: r.waiting_info(*id, w),
                             })
                             .collect();
                         let mudou = match r.peers.get_mut(&to) {
@@ -2038,13 +2936,23 @@ impl SignalingHub {
                             self.send_to(room_id, to, m);
                         }
                     }
-                    self.broadcast_all(
-                        room_id,
-                        ServerMsg::PeerRole {
-                            peer_id: to,
-                            can_admit: allowed,
-                        },
-                    );
+                    // O crachá difundido é o EFECTIVO: um co-anfitrião por papel
+                    // continua a admitir mesmo sem a permissão persistida.
+                    let estado = self.rooms.get(&room_id).and_then(|r| {
+                        r.peers
+                            .get(&to)
+                            .map(|p| (p.effective_role(), p.admits()))
+                    });
+                    if let Some((role, can_admit)) = estado {
+                        self.broadcast_all(
+                            room_id,
+                            ServerMsg::PeerRole {
+                                peer_id: to,
+                                role,
+                                can_admit,
+                            },
+                        );
+                    }
                 }
             }
             ClientMsg::Kick { to } => {
@@ -2064,6 +2972,7 @@ impl SignalingHub {
             | ClientMsg::ServerRecord { .. }
             | ClientMsg::ScreenShare { .. }
             | ClientMsg::VideoInterest { .. }
+            | ClientMsg::BreakoutsBroadcast { .. }
             | ClientMsg::BreakoutsClose => {}
         }
         true
@@ -2107,21 +3016,90 @@ pub async fn ws_handler(
             "Este nó está a encerrar. A tentar noutro…".into(),
         ));
     }
-    let username = claims.name.unwrap_or_else(|| "anonymous".into());
+    let username = claims.name.clone().unwrap_or_else(|| "anonymous".into());
     let sfu_mode = claims.topo.as_deref() == Some("sfu");
     let is_host = claims.owner;
-    let must_wait = claims.wait && !claims.owner;
     let user_id = claims.sub;
     let is_bot = claims.is_bot;
-    // can_admit depends on role. Let's say host can admit by default.
-    let can_admit = is_host;
+    // Admite quem é dono ou co-anfitrião persistido (`room_admitters`, que
+    // vai no token como `adm`) — e esse entra com o papel `cohost`.
+    let can_admit = is_host || claims.adm;
+    let extras = JoinExtras {
+        role: if claims.adm && !is_host {
+            Role::Cohost
+        } else {
+            Role::Attendee
+        },
+        origin: claims.origin.as_deref().and_then(parse_origin),
+        title: claims.title.clone().filter(|t| !t.trim().is_empty()),
+    };
+    let wait = WaitPolicy {
+        token_wait: claims.wait,
+        lobby: claims.lobby,
+        waiting_room: claims.wr,
+    };
     let reconnect = query.reconnect.clone();
     Ok(ws.on_upgrade(move |socket| {
         handle_socket(
-            state, socket, room_id, user_id, username, sfu_mode, is_host, must_wait, can_admit,
-            is_bot, reconnect,
+            state,
+            socket,
+            SocketSession {
+                room_id,
+                user_id,
+                username,
+                sfu_mode,
+                is_host,
+                can_admit,
+                is_bot,
+                reconnect,
+                extras,
+                wait,
+            },
         )
     }))
+}
+
+fn parse_origin(s: &str) -> Option<Origin> {
+    serde_json::from_value(serde_json::Value::String(s.to_string())).ok()
+}
+
+/// Como decidir se quem entra espera, a partir do token.
+///
+/// Os tokens antigos só tinham `wait` (= sala de espera da BD OU entrada sem
+/// convite). Os novos separam as duas coisas, e é essa separação que permite ao
+/// anfitrião DESLIGAR a sala de espera em runtime sem abrir a porta a quem não
+/// tem entrada directa.
+#[derive(Debug, Clone, Copy)]
+pub struct WaitPolicy {
+    pub token_wait: bool,
+    /// `Some(true)`: não tem entrada directa — espera SEMPRE.
+    pub lobby: Option<bool>,
+    /// A sala de espera configurada na BD.
+    pub waiting_room: Option<bool>,
+}
+
+impl WaitPolicy {
+    /// `runtime`: o valor que o anfitrião definiu durante a reunião, se houver.
+    pub fn must_wait(&self, runtime: Option<bool>) -> bool {
+        match self.lobby {
+            Some(true) => true,
+            Some(false) => runtime.or(self.waiting_room).unwrap_or(self.token_wait),
+            None => self.token_wait,
+        }
+    }
+}
+
+struct SocketSession {
+    room_id: Uuid,
+    user_id: Uuid,
+    username: String,
+    sfu_mode: bool,
+    is_host: bool,
+    can_admit: bool,
+    is_bot: bool,
+    reconnect: Option<String>,
+    extras: JoinExtras,
+    wait: WaitPolicy,
 }
 
 /// Cria uma sala-filha de grupo (herda topologia/E2EE da principal).
@@ -2209,12 +3187,59 @@ fn breakout_parent_of(state: &Arc<AppState>, room_id: Uuid) -> Option<Uuid> {
 
 /// Anfitrião pediu salas de grupo: cria N salas, distribui os participantes
 /// round-robin, avisa os anfitriões e (opcional) agenda o retorno automático.
+/// Como se distribuem as pessoas pelas salas de grupo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BreakoutAssign {
+    Auto,
+    Manual,
+}
+
+impl BreakoutAssign {
+    /// `None` no campo = `Auto` (cliente antigo); um valor desconhecido é
+    /// recusado, não tratado como automático.
+    pub fn parse(v: Option<&str>) -> Option<Self> {
+        match v {
+            None | Some("auto") => Some(Self::Auto),
+            Some("manual") => Some(Self::Manual),
+            Some(_) => None,
+        }
+    }
+}
+
+/// Mensagem do anfitrião para a sala principal e todas as salas de grupo.
+fn breakouts_broadcast(state: &Arc<AppState>, room_id: Uuid, peer_id: Uuid, text: &str) {
+    let text = text.trim();
+    if text.is_empty() || text.chars().count() > 500 {
+        return;
+    }
+    let text = crate::dlp::censor(text);
+    let from = state
+        .hub
+        .username_of(room_id, peer_id)
+        .unwrap_or_else(|| "?".into());
+    let msg = ServerMsg::Announcement {
+        from,
+        text,
+        at: now_ms(),
+    };
+    let filhas: Vec<Uuid> = state
+        .breakouts
+        .get(&room_id)
+        .map(|s| s.children.iter().map(|c| c.id).collect())
+        .unwrap_or_default();
+    state.hub.broadcast_all(room_id, msg.clone());
+    for f in filhas {
+        state.hub.broadcast_all(f, msg.clone());
+    }
+}
+
 async fn breakouts_create(
     state: &Arc<AppState>,
     room_id: Uuid,
     owner: Uuid,
     count: u32,
     minutes: Option<u32>,
+    assign: BreakoutAssign,
 ) {
     let count = count.clamp(2, 8) as usize;
     let parent: Option<(String, String, bool, String, String)> =
@@ -2248,14 +3273,19 @@ async fn breakouts_create(
         .map(|m| chrono::Utc::now().timestamp() + (m.min(180) as i64) * 60);
     let nonce = Uuid::new_v4();
 
-    // Distribuir os não-anfitriões pelas salas, à vez.
-    let guests: Vec<Uuid> = state
-        .hub
-        .roster(room_id)
-        .into_iter()
-        .filter(|(_, host)| !host)
-        .map(|(id, _)| id)
-        .collect();
+    // Distribuir os não-anfitriões pelas salas, à vez — só no modo automático.
+    // No manual as salas nascem vazias e o anfitrião move quem quiser.
+    let guests: Vec<Uuid> = if assign == BreakoutAssign::Manual {
+        vec![]
+    } else {
+        state
+            .hub
+            .roster(room_id)
+            .into_iter()
+            .filter(|(_, host)| !host)
+            .map(|(id, _)| id)
+            .collect()
+    };
     for (idx, peer) in guests.iter().enumerate() {
         let c = &children[idx % children.len()];
         state.hub.send_to(
@@ -2298,7 +3328,7 @@ async fn breakouts_create(
             }
         });
     }
-    tracing::info!(%room_id, count, ?minutes, "breakout rooms created");
+    tracing::info!(%room_id, count, ?minutes, ?assign, "breakout rooms created");
 }
 
 /// Renomeia um grupo existente.
@@ -2438,20 +3468,22 @@ async fn drain_while_waiting(stream: &mut SplitStream<WebSocket>) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn handle_socket(
-    state: Arc<AppState>,
-    socket: WebSocket,
-    room_id: Uuid,
-    user_id: Uuid,
-    username: String,
-    sfu_mode: bool,
-    is_host: bool,
-    must_wait: bool,
-    can_admit: bool,
-    is_bot: bool,
-    reconnect: Option<String>,
-) {
+async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketSession) {
+    let SocketSession {
+        room_id,
+        user_id,
+        username,
+        sfu_mode,
+        is_host,
+        can_admit,
+        is_bot,
+        reconnect,
+        mut extras,
+        wait,
+    } = session;
+    // Só um participante que não é anfitrião pode ter de esperar; a sala de
+    // espera de runtime (se o anfitrião a mudou) ganha à configurada.
+    let must_wait = !is_host && wait.must_wait(state.hub.waiting_room_of(room_id));
     // Gauge de ligações /ws ativas (dec automático no fim do handler).
     let _ws_guard = crate::metrics::WsGuard::signaling(state.metrics.clone());
 
@@ -2476,6 +3508,9 @@ async fn handle_socket(
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             // `must_wait` cai para `false`: já tinha sido admitido antes de
             // cair. Voltar a pô-lo na fila é o defeito que isto corrige.
+            // O papel volta com o lugar (um co-anfitrião promovido não volta
+            // participante por causa de um F5).
+            extras.role = lugar.role;
             (
                 lugar.peer_id,
                 lugar.is_host,
@@ -2526,7 +3561,7 @@ async fn handle_socket(
         let (admit_tx, admit_rx) = oneshot::channel::<bool>();
         state
             .hub
-            .add_waiting(room_id, peer_id, username.clone(), admit_tx);
+            .add_waiting_with(room_id, peer_id, username.clone(), extras.clone(), admit_tx);
         let _ = tx.send(ServerMsg::Waiting);
         tracing::info!(%room_id, %peer_id, %username, "guest waiting for admission");
 
@@ -2562,7 +3597,7 @@ async fn handle_socket(
             .apply_redis_state(room_id, polls, qa, wb, timer, locked, host_share);
     }
 
-    let entrada = state.hub.join(
+    let entrada = state.hub.join_with(
         room_id,
         peer_id,
         user_id,
@@ -2571,27 +3606,35 @@ async fn handle_socket(
         can_admit,
         is_bot,
         tx.clone(),
+        extras,
     );
+    // O token do DONO traz a sala de espera da BD: é o valor inicial do
+    // runtime, até o anfitrião o mudar.
+    if is_host {
+        if let Some(wr) = wait.waiting_room {
+            state.hub.init_waiting_room(room_id, wr);
+        }
+    }
     let _ = tx.send(ServerMsg::Joined {
         peer_id,
         peers: entrada.roster,
         reconnect: Some(Secret::new(entrada.reconnect_secret)),
         companion: entrada.companion,
+        started_at: entrada.started_at,
     });
     // Quem entra a meio recebe o estado ATUAL da sala. A condição é «alguma
-    // coisa está diferente do normal», e por isso inclui os dois campos novos:
-    // sem eles, quem entrasse depois de o chat ser fechado via-o aberto.
+    // coisa está diferente do normal», e por isso inclui os campos novos: sem
+    // eles, quem entrasse depois de o chat ser fechado via-o aberto.
     let cfg = state.hub.settings_of(room_id);
-    if cfg.locked || cfg.host_share_only || !cfg.chat_on || !cfg.allow_unmute {
-        let _ = tx.send(ServerMsg::RoomSettings {
-            locked: cfg.locked,
-            host_share_only: cfg.host_share_only,
-            chat_on: cfg.chat_on,
-            allow_unmute: cfg.allow_unmute,
-        });
+    if !cfg.is_default() {
+        let _ = tx.send(cfg.to_msg());
+    }
+    for m in state.hub.join_snapshot(room_id) {
+        let _ = tx.send(m);
     }
     // Ferramentas: quem entra a meio recebe sondagens/Q&A/temporizador atuais.
-    let (polls, questions, timer) = state.hub.tools_snapshot(room_id);
+    let (polls, _, timer) = state.hub.tools_snapshot(room_id);
+    let questions = state.hub.qa_view_for(room_id, is_host);
     if !polls.is_empty() {
         let _ = tx.send(ServerMsg::Polls { polls });
     }
@@ -2657,8 +3700,26 @@ async fn handle_socket(
                         tracing::warn!(%room_id, %peer_id, error = %e, "sfu message failed");
                     }
                 }
-                Ok(ClientMsg::BreakoutsCreate { count, minutes }) if is_host => {
-                    breakouts_create(&state, room_id, user_id, count, minutes).await;
+                Ok(ClientMsg::BreakoutsCreate {
+                    count,
+                    minutes,
+                    assign,
+                }) if is_host => match BreakoutAssign::parse(assign.as_deref()) {
+                    Some(assign) => {
+                        breakouts_create(&state, room_id, user_id, count, minutes, assign).await;
+                    }
+                    None => {
+                        let _ = tx.send(ServerMsg::Error {
+                            message: "breakouts: assign tem de ser 'auto' ou 'manual'".into(),
+                        });
+                    }
+                },
+                Ok(ClientMsg::BreakoutsBroadcast { text }) => {
+                    // Autorização lida do HUB e não do `is_host` do arranque
+                    // do socket: esse fica velho depois de um `TransferHost`.
+                    if state.hub.is_host(room_id, peer_id) {
+                        breakouts_broadcast(&state, room_id, peer_id, &text);
+                    }
                 }
                 Ok(ClientMsg::BreakoutRename { code, label }) if is_host => {
                     breakout_rename(&state, room_id, &code, &label);
@@ -3107,7 +4168,8 @@ mod tests {
             locked: true,
             host_share_only: false,
             chat_on: true,
-            allow_unmute: true
+            allow_unmute: true,
+            waiting_room: false,
         }
         .is_droppable());
         // Os controlos de anfitrião são ESTADO AUTORITATIVO (R92): se uma fila
@@ -3243,6 +4305,8 @@ mod tests {
             b,
             ClientMsg::Chat {
                 text: "olá!".into(),
+                reply_to: None,
+                client_id: None,
             },
             None,
         );
@@ -3252,6 +4316,7 @@ mod tests {
                 from,
                 username,
                 text,
+                ..
             } => {
                 assert_eq!(from, b);
                 assert_eq!(username, "bob");
@@ -3309,6 +4374,8 @@ mod tests {
             a,
             ClientMsg::Chat {
                 text: "room1 only".into(),
+                reply_to: None,
+                client_id: None,
             },
             None,
         );
@@ -3321,6 +4388,8 @@ mod tests {
             a,
             ClientMsg::Chat {
                 text: "outra vez só na sala 1".into(),
+                reply_to: None,
+                client_id: None,
             },
             None,
         );
@@ -3432,7 +4501,7 @@ mod tests {
             "o promovido vê quem já esperava: {got:?}"
         );
         assert!(recolher(&mut rx_o).iter().any(
-            |m| matches!(m, ServerMsg::PeerRole { peer_id, can_admit: true } if *peer_id == co)
+            |m| matches!(m, ServerMsg::PeerRole { peer_id, can_admit: true, .. } if *peer_id == co)
         ));
 
         // E admite.
@@ -3493,6 +4562,7 @@ mod tests {
         assert!(matches!(m, ClientMsg::PromoteAdmit { allowed: true, .. }));
         let out = serde_json::to_value(ServerMsg::PeerRole {
             peer_id: to,
+            role: Role::Attendee,
             can_admit: true,
         })
         .unwrap();
@@ -3625,6 +4695,8 @@ mod tests {
             b,
             ClientMsg::Chat {
                 text: "ainda cá estou?".into(),
+                reply_to: None,
+                client_id: None,
             },
             None,
         );
@@ -4003,6 +5075,8 @@ mod tests {
             b,
             ClientMsg::Chat {
                 text: "passo à frente".into(),
+                reply_to: None,
+                client_id: None,
             },
             None,
         );
@@ -4018,6 +5092,8 @@ mod tests {
             a,
             ClientMsg::Chat {
                 text: "só eu falo".into(),
+                reply_to: None,
+                client_id: None,
             },
             None,
         );
@@ -4038,6 +5114,8 @@ mod tests {
             b,
             ClientMsg::Chat {
                 text: "voltei".into(),
+                reply_to: None,
+                client_id: None,
             },
             None,
         );
@@ -4279,4 +5357,1143 @@ mod tests {
             "só o anfitrião fecha uma sondagem"
         );
     }
+}
+
+// ---------- frontend/b1-sala ----------
+//
+// Cada controlo novo tem as DUAS metades (R94): quem pode usá-lo, e quem não
+// pode a tentar. Os testes negativos usam um TERCEIRO participante quando o
+// alvo por si próprio tornaria a asserção indistinguível com e sem guarda (R92).
+#[cfg(test)]
+mod b1_sala_tests {
+    use super::*;
+
+    fn peer() -> (Uuid, PeerTx, mpsc::Receiver<ServerMsg>) {
+        let (tx, rx, _shutdown) = PeerTx::new(512, Arc::new(crate::metrics::Metrics::default()));
+        (Uuid::new_v4(), tx, rx)
+    }
+
+    fn recolher(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<ServerMsg> {
+        let mut v = Vec::new();
+        while let Ok(m) = rx.try_recv() {
+            v.push(m);
+        }
+        v
+    }
+
+    struct Sala {
+        hub: SignalingHub,
+        room: Uuid,
+        a: Uuid,
+        b: Uuid,
+        c: Uuid,
+        rx_a: mpsc::Receiver<ServerMsg>,
+        rx_b: mpsc::Receiver<ServerMsg>,
+        rx_c: mpsc::Receiver<ServerMsg>,
+    }
+
+    /// Anfitriã `a`, participantes `b` e `c`, receptores já drenados.
+    fn sala() -> Sala {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, mut rx_a) = peer();
+        let (b, tx_b, mut rx_b) = peer();
+        let (c, tx_c, mut rx_c) = peer();
+        hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        hub.join(room, b, b, "bia".into(), false, false, false, tx_b);
+        hub.join(room, c, c, "carlos".into(), false, false, false, tx_c);
+        recolher(&mut rx_a);
+        recolher(&mut rx_b);
+        recolher(&mut rx_c);
+        Sala {
+            hub,
+            room,
+            a,
+            b,
+            c,
+            rx_a,
+            rx_b,
+            rx_c,
+        }
+    }
+
+    fn chat(text: &str, reply_to: Option<Uuid>, client_id: Option<&str>) -> ClientMsg {
+        ClientMsg::Chat {
+            text: text.into(),
+            reply_to,
+            client_id: client_id.map(String::from),
+        }
+    }
+
+    fn chat_id(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<(Uuid, i64, Option<Uuid>)> {
+        recolher(rx).into_iter().find_map(|m| match m {
+            ServerMsg::Chat {
+                id, at, reply_to, ..
+            } => Some((id, at, reply_to)),
+            _ => None,
+        })
+    }
+
+    // ------------------------------------------------------------- chat
+
+    #[test]
+    fn um_cliente_antigo_continua_a_mandar_chat_so_com_texto() {
+        let msg: ClientMsg = serde_json::from_str(r#"{"type":"chat","text":"olá"}"#).unwrap();
+        match msg {
+            ClientMsg::Chat {
+                reply_to,
+                client_id,
+                ..
+            } => assert!(reply_to.is_none() && client_id.is_none()),
+            _ => panic!("variante errada"),
+        }
+        // E um cliente antigo que LEIA um chat novo ignora os campos a mais; o
+        // contrário (servidor antigo, cliente novo) dá id nulo e at 0.
+        let antigo: ServerMsg = serde_json::from_str(
+            r#"{"type":"chat","from":"00000000-0000-0000-0000-000000000001","username":"x","text":"y"}"#,
+        )
+        .unwrap();
+        assert!(matches!(antigo, ServerMsg::Chat { at: 0, .. }));
+    }
+
+    #[tokio::test]
+    async fn o_chat_leva_id_e_hora_e_o_remetente_recebe_a_confirmacao() {
+        let mut s = sala();
+        s.hub
+            .handle(s.room, s.b, chat("olá", None, Some("c-1")), None);
+        let (id, at, reply) = chat_id(&mut s.rx_a).expect("a anfitriã recebe o chat");
+        assert!(!id.is_nil() && at > 0 && reply.is_none());
+        let confirmacao = recolher(&mut s.rx_b);
+        assert!(
+            confirmacao.iter().any(|m| matches!(
+                m,
+                ServerMsg::ChatSent { client_id, id: i, .. } if client_id == "c-1" && *i == id
+            )),
+            "o remetente tem de saber o id da mensagem que desenhou: {confirmacao:?}"
+        );
+        // Sem `client_id` (cliente antigo) não há eco nenhum.
+        s.hub.handle(s.room, s.b, chat("outra", None, None), None);
+        assert!(
+            recolher(&mut s.rx_b).is_empty(),
+            "o cliente antigo não recebe eco"
+        );
+    }
+
+    #[tokio::test]
+    async fn um_fio_so_se_aceita_sobre_uma_mensagem_recente_da_sala() {
+        let mut s = sala();
+        s.hub
+            .handle(s.room, s.a, chat("pergunta", None, None), None);
+        let (mae, _, _) = chat_id(&mut s.rx_b).unwrap();
+        recolher(&mut s.rx_c);
+
+        s.hub
+            .handle(s.room, s.b, chat("resposta", Some(mae), None), None);
+        assert_eq!(chat_id(&mut s.rx_c).unwrap().2, Some(mae));
+
+        // Um id que não é desta sala (ou inventado) é recusado, com erro a quem
+        // mandou — não entra como mensagem solta.
+        s.hub.handle(
+            s.room,
+            s.b,
+            chat("perdida", Some(Uuid::new_v4()), None),
+            None,
+        );
+        assert!(
+            chat_id(&mut s.rx_c).is_none(),
+            "fio inválido não é difundido"
+        );
+        assert!(recolher(&mut s.rx_b)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::Error { .. })));
+    }
+
+    #[tokio::test]
+    async fn o_chat_e_as_reaccoes_vao_para_a_fila_de_persistencia() {
+        let mut s = sala();
+        let (store, mut writes, _m) = crate::room_chat::ChatStore::for_test(16);
+        s.hub.chat_store = Some(store);
+        s.hub.handle(s.room, s.b, chat("guardar", None, None), None);
+        let (id, _, _) = chat_id(&mut s.rx_a).unwrap();
+        s.hub.handle(s.room, s.c, chat("fio", Some(id), None), None);
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::ChatReact {
+                id,
+                emoji: "👍".into(),
+            },
+            None,
+        );
+        let w1 = writes.try_recv().expect("a mensagem foi enfileirada");
+        match w1 {
+            ChatWrite::Message {
+                id: i,
+                room_id,
+                user_id,
+                parent_id,
+                ..
+            } => {
+                assert_eq!((i, room_id, user_id, parent_id), (id, s.room, s.b, None));
+            }
+            other => panic!("esperava a mensagem: {other:?}"),
+        }
+        assert!(matches!(
+            writes.try_recv().unwrap(),
+            ChatWrite::Message { parent_id: Some(p), .. } if p == id
+        ));
+        assert!(matches!(
+            writes.try_recv().unwrap(),
+            ChatWrite::Reaction { message_id, on: true, .. } if message_id == id
+        ));
+    }
+
+    #[tokio::test]
+    async fn fila_de_persistencia_cheia_descarta_e_conta_sem_travar_a_sala() {
+        let mut s = sala();
+        let (store, _writes, m) = crate::room_chat::ChatStore::for_test(1);
+        s.hub.chat_store = Some(store);
+        s.hub.handle(s.room, s.b, chat("1", None, None), None);
+        s.hub.handle(s.room, s.b, chat("2", None, None), None);
+        // A sala recebeu as duas; o histórico perdeu uma e contou-a.
+        let n = recolher(&mut s.rx_a)
+            .iter()
+            .filter(|m| matches!(m, ServerMsg::Chat { .. }))
+            .count();
+        assert_eq!(n, 2);
+        assert_eq!(m.chat_persist_dropped_total.load(Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn reaccao_liga_e_desliga_por_conta_e_chega_a_toda_a_sala() {
+        let mut s = sala();
+        s.hub.handle(s.room, s.b, chat("x", None, None), None);
+        let (id, _, _) = chat_id(&mut s.rx_a).unwrap();
+        let reagir = |hub: &SignalingHub, quem| {
+            hub.handle(
+                s.room,
+                quem,
+                ClientMsg::ChatReact {
+                    id,
+                    emoji: "🎉".into(),
+                },
+                None,
+            )
+        };
+        let contagem = |rx: &mut mpsc::Receiver<ServerMsg>| {
+            recolher(rx).into_iter().rev().find_map(|m| match m {
+                ServerMsg::ChatReactions { counts, .. } => Some(counts),
+                _ => None,
+            })
+        };
+        reagir(&s.hub, s.a);
+        reagir(&s.hub, s.c);
+        assert_eq!(contagem(&mut s.rx_b).unwrap().get("🎉"), Some(&2));
+        // Quem reage também recebe a contagem (é estado, não eco).
+        assert!(contagem(&mut s.rx_c).is_some());
+        reagir(&s.hub, s.c);
+        assert_eq!(contagem(&mut s.rx_b).unwrap().get("🎉"), Some(&1));
+        // Mensagem desconhecida: nada.
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::ChatReact {
+                id: Uuid::new_v4(),
+                emoji: "🎉".into(),
+            },
+            None,
+        );
+        assert!(contagem(&mut s.rx_b).is_none());
+    }
+
+    #[tokio::test]
+    async fn com_o_chat_fechado_um_participante_nao_reage() {
+        let mut s = sala();
+        s.hub.handle(s.room, s.b, chat("x", None, None), None);
+        let (id, _, _) = chat_id(&mut s.rx_a).unwrap();
+        s.hub
+            .handle(s.room, s.a, ClientMsg::ChatToggle { on: false }, None);
+        recolher(&mut s.rx_a);
+        s.hub.handle(
+            s.room,
+            s.c,
+            ClientMsg::ChatReact {
+                id,
+                emoji: "👍".into(),
+            },
+            None,
+        );
+        assert!(!recolher(&mut s.rx_a)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::ChatReactions { .. })));
+    }
+
+    // ------------------------------------------------------------- papéis
+
+    fn papel(hub: &SignalingHub, room: Uuid, p: Uuid) -> Role {
+        hub.rooms
+            .get(&room)
+            .unwrap()
+            .peers
+            .get(&p)
+            .unwrap()
+            .effective_role()
+    }
+
+    #[tokio::test]
+    async fn anfitria_da_um_papel_e_toda_a_sala_sabe() {
+        let mut s = sala();
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::SetRole {
+                to: s.b,
+                role: Role::Speaker,
+            },
+            None,
+        );
+        assert_eq!(papel(&s.hub, s.room, s.b), Role::Speaker);
+        assert!(recolher(&mut s.rx_c).iter().any(|m| matches!(
+            m,
+            ServerMsg::PeerRole { peer_id, role: Role::Speaker, can_admit: false } if *peer_id == s.b
+        )));
+    }
+
+    #[tokio::test]
+    async fn participante_nao_da_papeis_a_ninguem() {
+        let s = sala();
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::SetRole {
+                to: s.c,
+                role: Role::Cohost,
+            },
+            None,
+        );
+        assert_eq!(papel(&s.hub, s.room, s.c), Role::Attendee);
+    }
+
+    #[tokio::test]
+    async fn host_nao_se_da_por_set_role_nem_se_tira_ao_anfitriao() {
+        let s = sala();
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::SetRole {
+                to: s.b,
+                role: Role::Host,
+            },
+            None,
+        );
+        assert_eq!(papel(&s.hub, s.room, s.b), Role::Attendee);
+        assert!(!s.hub.is_host(s.room, s.b));
+    }
+
+    #[tokio::test]
+    async fn co_anfitriao_recebe_a_fila_e_admite() {
+        let mut s = sala();
+        let (g, _gtx, _grx) = peer();
+        let (admit_tx, mut admit_rx) = oneshot::channel();
+        s.hub.add_waiting_with(
+            s.room,
+            g,
+            "convidado".into(),
+            JoinExtras {
+                origin: Some(Origin::Guest),
+                ..Default::default()
+            },
+            admit_tx,
+        );
+        // Antes da promoção, `b` não admite ninguém.
+        s.hub.handle(s.room, s.b, ClientMsg::Admit { to: g }, None);
+        assert!(admit_rx.try_recv().is_err(), "participante não admite");
+
+        recolher(&mut s.rx_b);
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::SetRole {
+                to: s.b,
+                role: Role::Cohost,
+            },
+            None,
+        );
+        let fila = recolher(&mut s.rx_b);
+        assert!(
+            fila.iter().any(|m| matches!(
+                m,
+                ServerMsg::WaitingJoin { peer } if peer.peer_id == g && peer.origin == Some(Origin::Guest)
+            )),
+            "quem passa a admitir recebe quem já está à espera: {fila:?}"
+        );
+        s.hub.handle(s.room, s.b, ClientMsg::Admit { to: g }, None);
+        assert_eq!(admit_rx.try_recv().ok(), Some(true));
+    }
+
+    #[tokio::test]
+    async fn o_papel_volta_com_o_lugar_reclamado() {
+        let s = sala();
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::SetRole {
+                to: s.b,
+                role: Role::Cohost,
+            },
+            None,
+        );
+        let segredo = s
+            .hub
+            .rooms
+            .get(&s.room)
+            .unwrap()
+            .peers
+            .get(&s.b)
+            .unwrap()
+            .reconnect_secret
+            .expose()
+            .to_string();
+        assert!(s.hub.disconnect(s.room, s.b));
+        let lugar = s
+            .hub
+            .reclaim(s.room, &segredo, std::time::Duration::from_secs(30))
+            .expect("reclama");
+        assert_eq!(lugar.role, Role::Cohost);
+    }
+
+    // ------------------------------------------------------------- destaque
+
+    #[tokio::test]
+    async fn destaque_para_todos_fica_na_sala_e_cai_quando_a_pessoa_sai() {
+        let mut s = sala();
+        s.hub
+            .handle(s.room, s.a, ClientMsg::Spotlight { peer: Some(s.b) }, None);
+        assert!(recolher(&mut s.rx_c)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::Spotlight { peer: Some(p) } if *p == s.b)));
+        assert!(s
+            .hub
+            .join_snapshot(s.room)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::Spotlight { peer: Some(_) })));
+        s.hub.leave(s.room, s.b);
+        assert!(recolher(&mut s.rx_c)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::Spotlight { peer: None })));
+        assert!(s.hub.join_snapshot(s.room).is_empty());
+    }
+
+    #[tokio::test]
+    async fn participante_nao_destaca_ninguem() {
+        let mut s = sala();
+        s.hub
+            .handle(s.room, s.b, ClientMsg::Spotlight { peer: Some(s.c) }, None);
+        assert!(!recolher(&mut s.rx_a)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::Spotlight { .. })));
+        assert!(s.hub.join_snapshot(s.room).is_empty());
+    }
+
+    // ------------------------------------------------------ início e ao vivo
+
+    #[tokio::test]
+    async fn a_hora_de_inicio_e_a_da_primeira_entrada_e_nao_muda() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _r) = peer();
+        let (b, tx_b, _r2) = peer();
+        let e1 = hub.join(room, a, a, "a".into(), true, true, false, tx_a);
+        assert!(e1.started_at > 0);
+        let e2 = hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+        assert_eq!(e1.started_at, e2.started_at);
+    }
+
+    #[tokio::test]
+    async fn ao_vivo_chega_a_toda_a_sala_e_a_quem_entra_depois() {
+        let mut s = sala();
+        let info = LiveInfo {
+            on: true,
+            destinations: vec![LiveDestination {
+                label: "YouTube".into(),
+                state: "live".into(),
+                kbps: Some(4500),
+            }],
+            since: None,
+        };
+        let g = s.hub.set_live(s.room, info).expect("sala existe");
+        let since = g.since.expect("carimbado ao arrancar");
+        for rx in [&mut s.rx_a, &mut s.rx_b, &mut s.rx_c] {
+            assert!(recolher(rx)
+                .iter()
+                .any(|m| matches!(m, ServerMsg::Live { on: true, .. })));
+        }
+        // Uma actualização de estado mantém a hora de arranque.
+        let g2 = s
+            .hub
+            .set_live(
+                s.room,
+                LiveInfo {
+                    on: true,
+                    destinations: vec![],
+                    since: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(g2.since, Some(since));
+        assert!(s
+            .hub
+            .join_snapshot(s.room)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::Live { on: true, .. })));
+        s.hub.set_live(s.room, LiveInfo::default());
+        assert!(s.hub.join_snapshot(s.room).is_empty());
+        // Sala que não existe neste nó: não cria estado.
+        assert!(s
+            .hub
+            .set_live(Uuid::new_v4(), LiveInfo::default())
+            .is_none());
+    }
+
+    // ------------------------------------------------------- sala de espera
+
+    #[test]
+    fn quem_nao_tem_entrada_directa_espera_mesmo_com_a_sala_de_espera_desligada() {
+        let sem_convite = WaitPolicy {
+            token_wait: true,
+            lobby: Some(true),
+            waiting_room: Some(false),
+        };
+        assert!(sem_convite.must_wait(Some(false)));
+        let convidado = WaitPolicy {
+            token_wait: true,
+            lobby: Some(false),
+            waiting_room: Some(true),
+        };
+        assert!(convidado.must_wait(None), "vale a configuração da sala");
+        assert!(
+            !convidado.must_wait(Some(false)),
+            "o runtime do anfitrião ganha"
+        );
+        // Token antigo: só há `wait`.
+        let antigo = WaitPolicy {
+            token_wait: true,
+            lobby: None,
+            waiting_room: None,
+        };
+        assert!(antigo.must_wait(Some(false)));
+    }
+
+    #[tokio::test]
+    async fn anfitria_liga_a_sala_de_espera_e_participante_nao() {
+        let mut s = sala();
+        s.hub
+            .handle(s.room, s.b, ClientMsg::WaitingRoom { on: true }, None);
+        assert_eq!(s.hub.waiting_room_of(s.room), None);
+        s.hub
+            .handle(s.room, s.a, ClientMsg::WaitingRoom { on: true }, None);
+        assert_eq!(s.hub.waiting_room_of(s.room), Some(true));
+        assert!(recolher(&mut s.rx_c).iter().any(|m| matches!(
+            m,
+            ServerMsg::RoomSettings {
+                waiting_room: true,
+                ..
+            }
+        )));
+        // O token do dono não se sobrepõe ao que o anfitrião decidiu.
+        s.hub.init_waiting_room(s.room, false);
+        assert_eq!(s.hub.waiting_room_of(s.room), Some(true));
+    }
+
+    #[tokio::test]
+    async fn admitir_todos_so_para_quem_admite() {
+        let s = sala();
+        let mut decisoes = Vec::new();
+        for i in 0..3 {
+            let (admit_tx, admit_rx) = oneshot::channel();
+            s.hub
+                .add_waiting(s.room, Uuid::new_v4(), format!("g{i}"), admit_tx);
+            decisoes.push(admit_rx);
+        }
+        s.hub.handle(s.room, s.b, ClientMsg::AdmitAll, None);
+        assert_eq!(
+            s.hub.waiting_list(s.room).len(),
+            3,
+            "participante não admite"
+        );
+        s.hub.handle(s.room, s.a, ClientMsg::AdmitAll, None);
+        assert!(s.hub.waiting_list(s.room).is_empty());
+        for mut d in decisoes {
+            assert_eq!(d.try_recv().ok(), Some(true));
+        }
+    }
+
+    // ------------------------------------------------------------- Q&A
+
+    fn pergunta(s: &Sala) -> Uuid {
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::QaAsk {
+                text: "porquê?".into(),
+            },
+            None,
+        );
+        s.hub
+            .rooms
+            .get(&s.room)
+            .unwrap()
+            .questions
+            .last()
+            .unwrap()
+            .id
+    }
+
+    fn ultima_qa(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<Vec<QaView>> {
+        recolher(rx).into_iter().rev().find_map(|m| match m {
+            ServerMsg::Qa { questions } => Some(questions),
+            _ => None,
+        })
+    }
+
+    #[tokio::test]
+    async fn pergunta_escondida_nao_sai_para_os_participantes() {
+        let mut s = sala();
+        let id = pergunta(&s);
+        s.hub
+            .handle(s.room, s.a, ClientMsg::QaHide { id, hidden: true }, None);
+        let da_anfitria = ultima_qa(&mut s.rx_a).unwrap();
+        assert!(da_anfitria[0].hidden, "a anfitriã vê-a marcada");
+        assert!(
+            ultima_qa(&mut s.rx_c).unwrap().is_empty(),
+            "esconder na interface não esconde nada a quem lê o socket"
+        );
+        assert!(s.hub.qa_view_for(s.room, false).is_empty());
+    }
+
+    #[tokio::test]
+    async fn participante_nao_esconde_nem_destaca_perguntas() {
+        let s = sala();
+        let id = pergunta(&s);
+        s.hub
+            .handle(s.room, s.c, ClientMsg::QaHide { id, hidden: true }, None);
+        s.hub
+            .handle(s.room, s.c, ClientMsg::QaSpotlight { id: Some(id) }, None);
+        let q = &s.hub.qa_view_for(s.room, true)[0];
+        assert!(!q.hidden && !q.spotlight);
+    }
+
+    #[tokio::test]
+    async fn so_uma_pergunta_em_destaque_e_destacar_mostra() {
+        let s = sala();
+        let p1 = pergunta(&s);
+        let p2 = pergunta(&s);
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::QaHide {
+                id: p2,
+                hidden: true,
+            },
+            None,
+        );
+        s.hub
+            .handle(s.room, s.a, ClientMsg::QaSpotlight { id: Some(p1) }, None);
+        s.hub
+            .handle(s.room, s.a, ClientMsg::QaSpotlight { id: Some(p2) }, None);
+        let v = s.hub.qa_view_for(s.room, true);
+        let q1 = v.iter().find(|q| q.id == p1).unwrap();
+        let q2 = v.iter().find(|q| q.id == p2).unwrap();
+        assert!(!q1.spotlight && q2.spotlight && !q2.hidden);
+    }
+
+    // ------------------------------------------------------------- quadro
+
+    fn traco(id: Option<Uuid>) -> WbStrokeData {
+        WbStrokeData {
+            pts: vec![[0.1, 0.1], [0.2, 0.2]],
+            c: "#000".into(),
+            w: 2.0,
+            id,
+            kind: WbKind::Stroke,
+            text: None,
+            shape: None,
+            by: Some("mentira".into()),
+            page: 0,
+            p: None,
+        }
+    }
+
+    fn objectos(hub: &SignalingHub, room: Uuid) -> Vec<WbStrokeData> {
+        hub.wb_snapshot(room)
+    }
+
+    #[test]
+    fn um_traco_antigo_sem_campos_novos_continua_valido() {
+        let t: WbStrokeData =
+            serde_json::from_str(r#"{"pts":[[0,0],[1,1]],"c":"red","w":3}"#).unwrap();
+        assert!(t.is_valid(1));
+        assert_eq!(t.kind, WbKind::Stroke);
+    }
+
+    #[test]
+    fn objectos_mal_formados_sao_recusados() {
+        let mut nota = traco(None);
+        nota.kind = WbKind::Note;
+        nota.pts = vec![[0.5, 0.5]];
+        assert!(!nota.is_valid(1), "nota sem texto");
+        nota.text = Some("lembrar".into());
+        assert!(nota.is_valid(1));
+        let mut forma = traco(None);
+        forma.kind = WbKind::Shape;
+        forma.shape = Some("hexagono".into());
+        assert!(!forma.is_valid(1));
+        let mut pressao = traco(None);
+        pressao.p = Some(vec![0.5, f32::NAN]);
+        assert!(!pressao.is_valid(1), "pressão com NaN");
+        pressao.p = Some(vec![0.5]);
+        assert!(!pressao.is_valid(1), "pressão com comprimento errado");
+        pressao.p = Some(vec![0.2, 0.9]);
+        assert!(pressao.is_valid(1));
+        let mut pagina = traco(None);
+        pagina.page = 1;
+        assert!(!pagina.is_valid(1), "página que não existe");
+    }
+
+    #[tokio::test]
+    async fn o_servidor_carimba_o_autor_e_o_id() {
+        let mut s = sala();
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::WbStroke {
+                stroke: traco(None),
+            },
+            None,
+        );
+        let recebido = recolher(&mut s.rx_c)
+            .into_iter()
+            .find_map(|m| match m {
+                ServerMsg::WbStroke { stroke } => Some(stroke),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            recebido.by.as_deref(),
+            Some("bia"),
+            "o autor é o do servidor"
+        );
+        assert!(recebido.id.is_some());
+    }
+
+    #[tokio::test]
+    async fn um_id_repetido_nao_reescreve_o_objecto_de_outra_pessoa() {
+        let s = sala();
+        let id = Uuid::new_v4();
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::WbStroke {
+                stroke: traco(Some(id)),
+            },
+            None,
+        );
+        s.hub.handle(
+            s.room,
+            s.c,
+            ClientMsg::WbStroke {
+                stroke: traco(Some(id)),
+            },
+            None,
+        );
+        let v = objectos(&s.hub, s.room);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].by.as_deref(), Some("bia"));
+    }
+
+    #[tokio::test]
+    async fn apagar_e_mover_so_o_autor_ou_a_anfitria() {
+        let mut s = sala();
+        let id = Uuid::new_v4();
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::WbStroke {
+                stroke: traco(Some(id)),
+            },
+            None,
+        );
+        // c não é o autor.
+        s.hub.handle(s.room, s.c, ClientMsg::WbErase { id }, None);
+        s.hub.handle(
+            s.room,
+            s.c,
+            ClientMsg::WbTransform {
+                id,
+                dx: 0.3,
+                dy: 0.0,
+            },
+            None,
+        );
+        let v = objectos(&s.hub, s.room);
+        assert_eq!(v.len(), 1, "outro participante não apaga");
+        assert_eq!(v[0].pts[0], [0.1, 0.1], "outro participante não move");
+        // O autor move.
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::WbTransform {
+                id,
+                dx: 0.1,
+                dy: 0.0,
+            },
+            None,
+        );
+        assert!((objectos(&s.hub, s.room)[0].pts[0][0] - 0.2).abs() < 1e-6);
+        // A anfitriã apaga.
+        recolher(&mut s.rx_c);
+        s.hub.handle(s.room, s.a, ClientMsg::WbErase { id }, None);
+        assert!(objectos(&s.hub, s.room).is_empty());
+        assert!(recolher(&mut s.rx_c)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::WbErase { id: i } if *i == id)));
+    }
+
+    #[tokio::test]
+    async fn editar_texto_so_em_notas_e_caixas_de_texto() {
+        let s = sala();
+        let traco_id = Uuid::new_v4();
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::WbStroke {
+                stroke: traco(Some(traco_id)),
+            },
+            None,
+        );
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::WbUpdate {
+                id: traco_id,
+                text: "x".into(),
+            },
+            None,
+        );
+        assert!(objectos(&s.hub, s.room)[0].text.is_none());
+
+        let nota_id = Uuid::new_v4();
+        let mut nota = traco(Some(nota_id));
+        nota.kind = WbKind::Note;
+        nota.pts = vec![[0.4, 0.4]];
+        nota.text = Some("antes".into());
+        s.hub
+            .handle(s.room, s.b, ClientMsg::WbStroke { stroke: nota }, None);
+        s.hub.handle(
+            s.room,
+            s.c,
+            ClientMsg::WbUpdate {
+                id: nota_id,
+                text: "vandalismo".into(),
+            },
+            None,
+        );
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::WbUpdate {
+                id: nota_id,
+                text: "depois".into(),
+            },
+            None,
+        );
+        let v = objectos(&s.hub, s.room);
+        let n = v.iter().find(|o| o.id == Some(nota_id)).unwrap();
+        assert_eq!(n.text.as_deref(), Some("depois"));
+    }
+
+    #[tokio::test]
+    async fn quadro_restrito_so_deixa_escrever_quem_foi_autorizado() {
+        let s = sala();
+        s.hub
+            .handle(s.room, s.a, ClientMsg::WbLock { on: true }, None);
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::WbStroke {
+                stroke: traco(None),
+            },
+            None,
+        );
+        assert!(
+            objectos(&s.hub, s.room).is_empty(),
+            "sem autorização não escreve"
+        );
+        s.hub.handle(s.room, s.b, ClientMsg::WbClear, None);
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::WbGrant {
+                to: s.b,
+                allowed: true,
+            },
+            None,
+        );
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::WbStroke {
+                stroke: traco(None),
+            },
+            None,
+        );
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::WbStroke {
+                stroke: traco(None),
+            },
+            None,
+        );
+        assert_eq!(
+            objectos(&s.hub, s.room).len(),
+            2,
+            "autorizado e anfitriã escrevem"
+        );
+        // `c` sem autorização não limpa o quadro dos outros.
+        s.hub.handle(s.room, s.c, ClientMsg::WbClear, None);
+        assert_eq!(objectos(&s.hub, s.room).len(), 2);
+        assert!(s
+            .hub
+            .join_snapshot(s.room)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::WbWriters { restricted: true, writers } if writers == &vec![s.b])));
+    }
+
+    #[tokio::test]
+    async fn participante_nao_restringe_o_quadro_nem_se_autoriza() {
+        let s = sala();
+        s.hub
+            .handle(s.room, s.b, ClientMsg::WbLock { on: true }, None);
+        assert!(!s.hub.rooms.get(&s.room).unwrap().wb_restricted);
+        s.hub
+            .handle(s.room, s.a, ClientMsg::WbLock { on: true }, None);
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::WbGrant {
+                to: s.c,
+                allowed: true,
+            },
+            None,
+        );
+        assert!(s.hub.rooms.get(&s.room).unwrap().wb_writers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn paginas_quem_escreve_acrescenta_e_so_quem_manda_muda_a_de_todos() {
+        let mut s = sala();
+        s.hub.handle(s.room, s.b, ClientMsg::WbAddPage, None);
+        let mut t = traco(None);
+        t.page = 1;
+        s.hub
+            .handle(s.room, s.b, ClientMsg::WbStroke { stroke: t }, None);
+        assert_eq!(
+            objectos(&s.hub, s.room).len(),
+            1,
+            "página nova aceita traços"
+        );
+        s.hub
+            .handle(s.room, s.c, ClientMsg::WbPage { page: 1 }, None);
+        assert_eq!(
+            s.hub.rooms.get(&s.room).unwrap().wb_page,
+            0,
+            "participante não muda a página de todos"
+        );
+        s.hub
+            .handle(s.room, s.a, ClientMsg::WbPage { page: 5 }, None);
+        assert_eq!(
+            s.hub.rooms.get(&s.room).unwrap().wb_page,
+            0,
+            "página inexistente"
+        );
+        recolher(&mut s.rx_c);
+        s.hub
+            .handle(s.room, s.a, ClientMsg::WbPage { page: 1 }, None);
+        assert!(recolher(&mut s.rx_c).iter().any(|m| matches!(
+            m,
+            ServerMsg::WbPages {
+                count: 2,
+                current: 1
+            }
+        )));
+    }
+
+    #[tokio::test]
+    async fn cursores_sao_descartaveis_e_travados_por_emissor() {
+        let mut s = sala();
+        for _ in 0..200 {
+            s.hub.handle(
+                s.room,
+                s.b,
+                ClientMsg::WbCursor {
+                    x: 0.5,
+                    y: 2.0,
+                    laser: true,
+                    input: Some("pen".into()),
+                },
+                None,
+            );
+        }
+        let recebidos: Vec<ServerMsg> = recolher(&mut s.rx_c)
+            .into_iter()
+            .filter(|m| matches!(m, ServerMsg::WbCursor { .. }))
+            .collect();
+        assert!(!recebidos.is_empty() && recebidos.len() <= CURSOR_BURST as usize + 2);
+        assert!(matches!(recebidos[0], ServerMsg::WbCursor { y, .. } if y == 1.0));
+        assert!(recebidos[0].is_droppable());
+        // Tipo de entrada desconhecido: recusado.
+        let (_, tx_d, _rx) = peer();
+        let d = Uuid::new_v4();
+        s.hub
+            .join(s.room, d, d, "d".into(), false, false, false, tx_d);
+        recolher(&mut s.rx_c);
+        s.hub.handle(
+            s.room,
+            d,
+            ClientMsg::WbCursor {
+                x: 0.1,
+                y: 0.1,
+                laser: false,
+                input: Some("joystick".into()),
+            },
+            None,
+        );
+        assert!(!recolher(&mut s.rx_c)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::WbCursor { .. })));
+    }
+
+    #[test]
+    fn os_controlos_novos_nao_sao_descartaveis() {
+        for m in [
+            ServerMsg::PeerRole {
+                peer_id: Uuid::nil(),
+                role: Role::Cohost,
+                can_admit: true,
+            },
+            ServerMsg::Spotlight { peer: None },
+            ServerMsg::WbErase { id: Uuid::nil() },
+            ServerMsg::WbWriters {
+                restricted: true,
+                writers: vec![],
+            },
+            ServerMsg::ChatReactions {
+                id: Uuid::nil(),
+                counts: Default::default(),
+            },
+            ServerMsg::Live {
+                on: true,
+                destinations: vec![],
+                since: None,
+            },
+        ] {
+            assert!(!m.is_droppable(), "{m:?}");
+        }
+    }
+
+    // ------------------------------------------------ origem, cargo, grupos
+
+    #[tokio::test]
+    async fn origem_e_cargo_viajam_no_roster_e_um_bot_e_sempre_bot() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, mut rx_a) = peer();
+        let (b, tx_b, _rx_b) = peer();
+        hub.join_with(
+            room,
+            a,
+            a,
+            "ana".into(),
+            true,
+            true,
+            false,
+            tx_a,
+            JoinExtras {
+                origin: Some(Origin::Sso),
+                title: Some("Engenheira".into()),
+                ..Default::default()
+            },
+        );
+        let e = hub.join_with(
+            room,
+            b,
+            b,
+            "bot".into(),
+            false,
+            false,
+            true,
+            tx_b,
+            JoinExtras {
+                origin: Some(Origin::Password),
+                role: Role::Host,
+                ..Default::default()
+            },
+        );
+        let ana = &e.roster[0];
+        assert_eq!(ana.origin, Some(Origin::Sso));
+        assert_eq!(ana.title.as_deref(), Some("Engenheira"));
+        assert_eq!(ana.role, Role::Host);
+        assert!(ana.can_admit);
+        let anuncio = recolher(&mut rx_a)
+            .into_iter()
+            .find_map(|m| match m {
+                ServerMsg::PeerJoined { peer } if peer.peer_id == b => Some(peer),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            anuncio.origin,
+            Some(Origin::Bot),
+            "a origem de um bot não se declara"
+        );
+        assert_eq!(
+            anuncio.role,
+            Role::Attendee,
+            "ninguém recebe `host` pelos extras"
+        );
+    }
+
+    #[test]
+    fn assign_das_salas_de_grupo() {
+        assert_eq!(BreakoutAssign::parse(None), Some(BreakoutAssign::Auto));
+        assert_eq!(
+            BreakoutAssign::parse(Some("manual")),
+            Some(BreakoutAssign::Manual)
+        );
+        assert_eq!(BreakoutAssign::parse(Some("aleatorio")), None);
+        let m: ClientMsg =
+            serde_json::from_str(r#"{"type":"breakouts-create","count":3,"minutes":null}"#)
+                .unwrap();
+        assert!(matches!(m, ClientMsg::BreakoutsCreate { assign: None, .. }));
+    }
+
+    #[tokio::test]
+    async fn trocar_de_anfitriao_reenvia_a_vista_do_qa_a_cada_lado() {
+        let mut s = sala();
+        let id = pergunta(&s);
+        s.hub
+            .handle(s.room, s.a, ClientMsg::QaHide { id, hidden: true }, None);
+        recolher(&mut s.rx_a);
+        recolher(&mut s.rx_b);
+        s.hub
+            .handle(s.room, s.a, ClientMsg::TransferHost { to: s.b }, None);
+        assert!(
+            ultima_qa(&mut s.rx_a).unwrap().is_empty(),
+            "quem deixou de mandar deixa de ver as escondidas"
+        );
+        assert_eq!(ultima_qa(&mut s.rx_b).unwrap().len(), 1);
+    }
+
+    use crate::room_chat::ChatWrite;
 }

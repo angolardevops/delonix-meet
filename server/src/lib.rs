@@ -33,6 +33,7 @@ mod rate_limit;
 mod recorder;
 mod recordings;
 mod redis_state;
+mod room_chat;
 mod room_tools;
 mod rooms;
 pub mod secrets_at_rest;
@@ -749,10 +750,11 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
     let mut presence_hub = presence::PresenceHub::default();
     presence_hub.bus = redis_bus.clone();
 
+    let metrics = Arc::new(metrics::Metrics::default());
     let mut hub = SignalingHub::default();
     hub.bus = redis_bus.clone();
-
-    let metrics = Arc::new(metrics::Metrics::default());
+    // Chat persistido fora do caminho quente (fila limitada + tarefa própria).
+    hub.chat_store = Some(room_chat::spawn_writer(db.clone(), metrics.clone()));
     let state = Arc::new(AppState {
         draining: std::sync::atomic::AtomicBool::new(false),
         started: std::time::Instant::now(),
@@ -821,6 +823,11 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
                     pubsub::RedisRoomEvent::BroadcastAdmitters { node_id, msg } => {
                         if node_id != *pubsub::NODE_ID {
                             s.hub.broadcast_admitters_local(room_id, msg);
+                        }
+                    }
+                    pubsub::RedisRoomEvent::BroadcastNonHosts { node_id, msg } => {
+                        if node_id != *pubsub::NODE_ID {
+                            s.hub.broadcast_non_hosts_local(room_id, msg);
                         }
                     }
                 }
@@ -982,6 +989,24 @@ pub async fn run() {
             loop {
                 ticker.tick().await;
                 meetings::ring_upcoming_meetings(&state).await;
+            }
+        });
+    }
+
+    // Cron: retenção do chat da sala (G9) — até ao fim do dia UTC da última
+    // mensagem da sala, a promessa da migração 0018.
+    {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                match room_chat::retention_sweep(&db).await {
+                    Ok(n) if n > 0 => tracing::info!(apagadas = n, "chat retention sweep"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "chat retention sweep failed"),
+                }
             }
         });
     }

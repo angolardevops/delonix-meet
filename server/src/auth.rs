@@ -39,6 +39,21 @@ pub struct Claims {
     /// Room token: indica que este participante é um bot headless.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_bot: bool,
+    /// Room token: como a pessoa chegou (`sso`|`password`|`guest`|`pstn`|`bot`),
+    /// decidido no servidor ao emitir o token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// Room token: cargo (`org_members.title`) na organização do dono da sala.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Room token: sem entrada directa (nem dono, nem convite, nem
+    /// co-anfitrião) — espera SEMPRE, com ou sem sala de espera ligada.
+    /// Ausente num token antigo: vale o `wait`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lobby: Option<bool>,
+    /// Room token: a sala de espera configurada na sala (BD).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wr: Option<bool>,
 }
 
 pub fn sign_jwt(secret: &str, claims: &Claims) -> Result<String, ApiError> {
@@ -79,6 +94,10 @@ pub fn access_token(state: &AppState, user_id: Uuid) -> Result<String, ApiError>
             wait: false,
             adm: false,
             is_bot: false,
+            origin: None,
+            title: None,
+            lobby: None,
+            wr: None,
         },
     )
 }
@@ -586,6 +605,10 @@ fn mfa_challenge_token(state: &AppState, user_id: Uuid) -> Result<String, ApiErr
             wait: false,
             adm: false,
             is_bot: false,
+            origin: None,
+            title: None,
+            lobby: None,
+            wr: None,
         },
     )
 }
@@ -1351,6 +1374,10 @@ mod tests {
                 wait: false,
                 adm: false,
                 is_bot: false,
+                origin: None,
+                title: None,
+                lobby: None,
+                wr: None,
             },
         )
         .unwrap();
@@ -1380,6 +1407,10 @@ mod tests {
                 wait: false,
                 adm: false,
                 is_bot: false,
+                origin: None,
+                title: None,
+                lobby: None,
+                wr: None,
             },
         )
         .unwrap();
