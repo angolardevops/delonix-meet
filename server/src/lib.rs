@@ -34,6 +34,7 @@ mod recordings;
 mod redis_state;
 mod room_tools;
 mod rooms;
+mod search;
 pub mod secrets_at_rest;
 mod sfu;
 #[cfg(test)]
@@ -294,6 +295,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // ══════════════════════════════════════════════════════════════════
         // ---- Utilizador ----
         .route("/api/users", get(users::search))
+        // Pesquisa global, descrição das listas e favoritos (ADR-0007).
+        .route("/api/search", get(search::global::search))
+        .route("/api/search/schemas", get(search::schemas))
+        .route("/api/search/schemas/{resource}", get(search::schema))
+        .route(
+            "/api/users/me/saved-searches",
+            get(search::saved::list).post(search::saved::create),
+        )
+        .route(
+            "/api/users/me/saved-searches/{saved_search_id}",
+            get(search::saved::get_one)
+                .patch(search::saved::update)
+                .delete(search::saved::delete),
+        )
         .route("/api/users/me", get(users::me).patch(users::update_me))
         // «A minha sala» (G2).
         .route(

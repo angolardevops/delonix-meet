@@ -768,9 +768,10 @@ pub struct AddEmployeeResp {
 #[utoipa::path(
     get, path = "/api/orgs/{org_id}/members", tag = "orgs",
     security(("session" = [])),
-    params(("org_id" = Uuid, Path, description = "Organização.")),
+    params(("org_id" = Uuid, Path, description = "Organização."), crate::search::SearchParams),
     responses(
-        (status = 200, body = Vec<Employee>),
+        (status = 200, body = Vec<Employee>, description = "Sem parâmetros: todos os activos. Com parâmetros de pesquisa: a página do ADR-0007."),
+        (status = 400, description = "Códigos `search.*` e `page.invalid_token`.", body = crate::openapi::ErrorBody),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
@@ -779,8 +780,14 @@ pub async fn list_employees(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
-) -> Result<Json<Vec<Employee>>, ApiError> {
+    axum::extract::Query(params): axum::extract::Query<crate::search::SearchParams>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
     require_member(&state, org_id, auth.user_id).await?;
+    if params.is_search() {
+        let page = crate::search::list_members(&state, auth.user_id, org_id, &params).await?;
+        return Ok(Json(page).into_response());
+    }
     let emps: Vec<Employee> = sqlx::query_as(&format!(
         "SELECT {EMPLOYEE_COLUMNS},
                   (SELECT MAX(a.created_at) FROM audit_logs a WHERE a.actor_id = m.user_id) AS last_active
@@ -791,7 +798,7 @@ pub async fn list_employees(
     .bind(org_id)
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(emps))
+    Ok(Json(emps).into_response())
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -1639,6 +1646,112 @@ pub async fn group_member_ids(state: &AppState, group_id: Uuid) -> Result<Vec<Uu
             .fetch_all(&state.db)
             .await?;
     Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+// ---------------------------------------------------------------------------
+//  Pertença em SQL para a pesquisa (ADR-0007 §3)
+// ---------------------------------------------------------------------------
+//
+// A pesquisa monta consultas com `sqlx::QueryBuilder` e precisa das regras de
+// pertença DENTRO do SQL (filtrar antes de paginar). Moram aqui, e não no
+// módulo de pesquisa, pela regra 1 do ADR-0004 §5. Todas referem a relação
+// `viewer(id, org_id, tz)` que o construtor põe à cabeça do FROM, com os
+// valores ligados por bind; nenhuma leva texto de fora — `other` é sempre uma
+// expressão escrita no código (`r.uploader_id`, `rm.owner_id`).
+
+/// «Quem pede é colega ACTIVO de `other`» — a mesma regra de
+/// `rooms::room_access` e `users::search` (S3: activos dos dois lados).
+pub(crate) fn sql_active_colleague_of_viewer(other: &'static str) -> String {
+    [
+        "EXISTS (SELECT 1 FROM org_members va JOIN org_members vb ON va.org_id = vb.org_id \
+         WHERE va.user_id = viewer.id AND vb.user_id = ",
+        other,
+        " AND va.archived_at IS NULL AND vb.archived_at IS NULL)",
+    ]
+    .concat()
+}
+
+/// «Quem pede saiu da organização de `owner` e não ficou noutra dele» —
+/// `AccessFacts::departed` em SQL (o sujeito não se filtra, quem pede sim).
+pub(crate) fn sql_viewer_departed_from(owner: &'static str) -> String {
+    [
+        "(EXISTS (SELECT 1 FROM org_members va JOIN org_members vo ON vo.org_id = va.org_id \
+         WHERE va.user_id = viewer.id AND vo.user_id = ",
+        owner,
+        " AND va.archived_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM org_members va \
+         JOIN org_members vo ON vo.org_id = va.org_id WHERE va.user_id = viewer.id AND vo.user_id = ",
+        owner,
+        " AND va.archived_at IS NULL))",
+    ]
+    .concat()
+}
+
+/// As organizações onde quem pede é membro activo (subconsulta).
+pub(crate) const SQL_VIEWER_ACTIVE_ORGS: &str =
+    "(SELECT va.org_id FROM org_members va WHERE va.user_id = viewer.id AND va.archived_at IS NULL)";
+
+/// As organizações onde quem pede é admin activo (subconsulta).
+pub(crate) const SQL_VIEWER_ADMIN_ORGS: &str = "(SELECT va.org_id FROM org_members va \
+     WHERE va.user_id = viewer.id AND va.role = 'admin' AND va.archived_at IS NULL)";
+
+/// Continuação do FROM (`… viewer CROSS JOIN …`) da pesquisa de membros: os activos da org do caminho (`viewer.org_id`),
+/// a mesma regra do `list_employees`.
+pub(crate) const SQL_MEMBERS_SEARCH_FROM: &str =
+    ", org_members m JOIN users u ON u.id = m.user_id \
+     LEFT JOIN branches b ON b.id = m.branch_id \
+     WHERE m.org_id = viewer.org_id AND m.archived_at IS NULL";
+
+/// FROM da pesquisa de auditoria: a regra do `audit::list` — eventos da org
+/// e os sem org cujo actor é (ou foi) membro dela.
+pub(crate) const SQL_AUDIT_SEARCH_FROM: &str = " CROSS JOIN audit_logs a \
+     WHERE (a.org_id = viewer.org_id OR (a.org_id IS NULL AND EXISTS ( \
+       SELECT 1 FROM org_members om WHERE om.org_id = viewer.org_id AND om.user_id = a.actor_id)))";
+
+/// Os membros da listagem pelos ids, na forma do `list_employees`.
+pub(crate) async fn employees_by_ids(
+    state: &AppState,
+    org_id: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<Employee>, ApiError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {EMPLOYEE_COLUMNS},
+                (SELECT MAX(a.created_at) FROM audit_logs a WHERE a.actor_id = m.user_id) AS last_active
+           FROM org_members m JOIN users u ON u.id = m.user_id
+           LEFT JOIN branches b ON b.id = m.branch_id
+          WHERE m.org_id = $1 AND m.archived_at IS NULL AND m.user_id = ANY($2)"
+    ))
+    .bind(org_id)
+    .bind(ids)
+    .fetch_all(&state.db)
+    .await?)
+}
+
+/// A organização «principal» de quem pede: a pertença activa mais antiga.
+/// É a que dá o fuso às listas sem `{org_id}` e a que recebe um favorito
+/// partilhado. `None` = sem organização activa.
+pub(crate) async fn primary_org_of_user(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<Option<(Uuid, String)>, ApiError> {
+    Ok(sqlx::query_as(
+        "SELECT o.id, o.timezone FROM org_members m JOIN organizations o ON o.id = m.org_id
+          WHERE m.user_id = $1 AND m.archived_at IS NULL
+          ORDER BY m.created_at, o.id LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?)
+}
+
+/// O fuso de uma organização (omissão da coluna: Africa/Luanda).
+pub(crate) async fn org_timezone(state: &AppState, org_id: Uuid) -> Result<String, ApiError> {
+    Ok(
+        sqlx::query_scalar("SELECT timezone FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_optional(&state.db)
+            .await?
+            .unwrap_or_else(|| "Africa/Luanda".to_string()),
+    )
 }
 
 #[cfg(test)]

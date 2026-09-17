@@ -149,18 +149,25 @@ pub async fn save(
 #[utoipa::path(
     get, path = "/api/whiteboards", tag = "whiteboards",
     security(("session" = [])),
+    params(crate::search::SearchParams),
     responses(
-        (status = 200, body = Vec<WhiteboardMeta>),
+        (status = 200, body = Vec<WhiteboardMeta>, description = "Sem parâmetros: até 200, mais recentes primeiro. Com parâmetros de pesquisa: a página do ADR-0007."),
+        (status = 400, description = "Códigos `search.*` e `page.invalid_token`.", body = crate::openapi::ErrorBody),
         (status = 401, body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn list(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-) -> Result<Json<Vec<WhiteboardMeta>>, ApiError> {
+    Query(params): Query<crate::search::SearchParams>,
+) -> Result<axum::response::Response, ApiError> {
+    if params.is_search() {
+        let page = crate::search::list_whiteboards(&state, auth.user_id, &params).await?;
+        return Ok(Json(page).into_response());
+    }
     let orgs = orgs_of_user(&state, auth.user_id).await;
     if orgs.is_empty() {
-        return Ok(Json(vec![]));
+        return Ok(Json(Vec::<WhiteboardMeta>::new()).into_response());
     }
     let items: Vec<WhiteboardMeta> = sqlx::query_as(
         "SELECT id, title, room_code, is_public, share_token, created_at
@@ -169,7 +176,7 @@ pub async fn list(
     .bind(&orgs)
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(items.into_iter().map(mask_token).collect()))
+    Ok(Json(items.into_iter().map(mask_token).collect::<Vec<_>>()).into_response())
 }
 
 /// Metadados de um quadro (sem a imagem).
@@ -440,4 +447,25 @@ pub async fn shared_png(
         return Err(ApiError::NotFound);
     }
     Ok(([(header::CONTENT_TYPE, "image/png")], row.0))
+}
+
+/// Os quadros de uma página de pesquisa, pelos ids e na ordem pedida; só dos
+/// das organizações activas de `user_id` (defesa em profundidade).
+pub(crate) async fn metas_by_ids(
+    state: &AppState,
+    user_id: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<WhiteboardMeta>, ApiError> {
+    let orgs = orgs_of_user(state, user_id).await;
+    let rows: Vec<WhiteboardMeta> = sqlx::query_as(
+        "SELECT id, title, room_code, is_public, share_token, created_at
+           FROM whiteboards WHERE org_id = ANY($1) AND id = ANY($2)",
+    )
+    .bind(&orgs)
+    .bind(ids)
+    .fetch_all(&state.db)
+    .await?;
+    let mut by_id: std::collections::HashMap<Uuid, WhiteboardMeta> =
+        rows.into_iter().map(|m| (m.id, mask_token(m))).collect();
+    Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
 }

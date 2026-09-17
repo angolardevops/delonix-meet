@@ -145,18 +145,28 @@ pub struct RecordingItem {
     pub snippet: Option<String>,
 }
 
-/// Página da biblioteca (com `q`, `page_size` ou `page_token`).
+/// Página pesquisada da biblioteca (ADR-0007, `docs/reference/pesquisa.md`
+/// §2.3). Só documentação: a resposta é `search::SearchPage`, com cada item
+/// acompanhado de `search: {score, highlight}` quando há `q`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RecordingPage {
     pub items: Vec<RecordingItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
+    pub total: i64,
+    /// `exact` | `at_least`.
+    pub total_kind: String,
+    #[schema(value_type = Option<Vec<Object>>)]
+    pub groups: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_groups_page_token: Option<String>,
 }
 
-/// Sem parâmetros: a lista inteira (forma herdada, lida pelo web). Com `q`,
-/// `page_size` ou `page_token`: uma página.
+/// Sem parâmetros: a lista inteira (forma herdada, lida pelo web). Com
+/// parâmetros de pesquisa: uma página (ADR-0007).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(untagged)]
+#[allow(dead_code)] // só documenta a resposta no OpenAPI; o handler serializa as duas formas.
 pub enum LibraryResponse {
     List(Vec<RecordingItem>),
     Page(RecordingPage),
@@ -443,140 +453,51 @@ pub async fn list(
     Ok(Json(recs))
 }
 
-#[derive(Deserialize, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
-pub struct LibraryQuery {
-    /// Pesquisa de texto no título, no nome do ficheiro e na transcrição. Cada
-    /// palavra conta como prefixo e todas têm de aparecer. Só letras e dígitos.
-    pub q: Option<String>,
-    /// 1-100, omissão 50. Com este parâmetro (ou `q`/`page_token`) a resposta é uma página.
-    pub page_size: Option<u32>,
-    pub page_token: Option<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct LibraryCursor {
-    at: DateTime<Utc>,
-    id: Uuid,
-}
-
 /// Biblioteca do utilizador: gravações onde participou + partilhadas consigo.
 ///
 /// **Duas formas, de propósito.** Sem parâmetros devolve a lista inteira, como
 /// sempre — é o que o web lê hoje (`recordingsLibrary`), e trocá-la no mesmo
-/// PR partia a página. Com `q`, `page_size` ou `page_token` devolve uma página
-/// (`items` + `next_page_token`), por `created_at` descendente — também numa
-/// pesquisa, para o cursor ser estável; a relevância só decide o `snippet`.
+/// PR partia a página. Com QUALQUER parâmetro de pesquisa (`q`, `filter`,
+/// `filters`, `group_by`, `order_by`, `page_size`, `page_token`) responde a
+/// pesquisa de lista do ADR-0007: página keyset, `total` e grupos. Com `q` e
+/// sem `order_by` continua por `created_at` descendente (contrato da 0045); a
+/// relevância pede-se com `order_by=-_score`, e o `snippet` mantém-se.
 /// A forma sem limite é dívida e sai quando o web passar a paginar.
 ///
 /// Um membro arquivado (S3) deixa de ver as gravações da ex-organização.
 #[utoipa::path(
     get, path = "/api/recordings", tag = "recordings",
     security(("session" = [])),
-    params(LibraryQuery),
+    params(crate::search::SearchParams),
     responses(
         (status = 200, body = LibraryResponse,
-         description = "Sem parâmetros: `RecordingItem[]` (todas). Com `q`/`page_size`/`page_token`: `RecordingPage`. Inclui as falhadas (`status = failed`)."),
-        (status = 400, body = crate::openapi::ErrorBody, description = "`page_token` inválido, ou `q` sem nenhuma letra ou dígito (`recording.invalid_query`)."),
+         description = "Sem parâmetros: `RecordingItem[]` (todas). Com parâmetros de pesquisa: `RecordingPage` (docs/reference/pesquisa.md §2.3). Inclui as falhadas (`status = failed`)."),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`page.invalid_token`, `recording.invalid_query` (`q` sem letras nem dígitos) e os `search.*` do contrato de pesquisa."),
         (status = 401, body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn library(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-    Query(q): Query<LibraryQuery>,
-) -> Result<Json<LibraryResponse>, ApiError> {
-    if q.q.is_none() && q.page_size.is_none() && q.page_token.is_none() {
-        let rows: Vec<ItemRow> = sqlx::query_as(&format!(
-            "SELECT * FROM ({ITEM_SELECT}) i WHERE {LIBRARY_VISIBLE}
-              ORDER BY i.created_at DESC, i.id DESC"
-        ))
-        .bind(auth.user_id)
-        .fetch_all(&state.db)
-        .await?;
-        return Ok(Json(LibraryResponse::List(
-            rows.into_iter().map(|r| r.into_item(None)).collect(),
-        )));
+    Query(params): Query<crate::search::SearchParams>,
+) -> Result<axum::response::Response, ApiError> {
+    if params.is_search() {
+        let page = crate::search::list_recordings(&state, auth.user_id, &params).await?;
+        return Ok(Json(page).into_response());
     }
-
-    // Um `q` vazio não filtra; um `q` só com pontuação é erro do cliente, não
-    // «tudo» nem «nada» em silêncio.
-    let tsquery = match q.q.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
-        None => None,
-        Some(text) => Some(rules::search_query(text).ok_or_else(|| {
-            DomainError::invalid(
-                "recording.invalid_query",
-                "a pesquisa tem de ter pelo menos uma letra ou dígito",
-            )
-            .with_field("q", "letras e dígitos")
-        })?),
-    };
-    let page = PageRequest {
-        page_size: q.page_size,
-        page_token: q.page_token,
-    };
-    let size = page.size();
-    let cursor: Option<LibraryCursor> = page.cursor()?;
-    // Duas instruções distintas (com e sem texto) em vez de `$2 IS NULL OR …`:
-    // um plano genérico com o OR deixava de usar o índice GIN.
-    let search = if tsquery.is_some() {
-        "r.search_vector @@ to_tsquery('simple', $5)"
-    } else {
-        "$5::text IS NULL"
-    };
     let rows: Vec<ItemRow> = sqlx::query_as(&format!(
-        "SELECT * FROM ({ITEM_SELECT}
-            WHERE {search}
-              AND ($2::timestamptz IS NULL OR (r.created_at, r.id) < ($2, $3))
-         ) i
-         WHERE {LIBRARY_VISIBLE}
-         ORDER BY i.created_at DESC, i.id DESC
-         LIMIT $4"
+        "SELECT * FROM ({ITEM_SELECT}) i WHERE {LIBRARY_VISIBLE}
+          ORDER BY i.created_at DESC, i.id DESC"
     ))
     .bind(auth.user_id)
-    .bind(cursor.as_ref().map(|c| c.at))
-    .bind(cursor.as_ref().map(|c| c.id).unwrap_or_default())
-    .bind(size as i64 + 1)
-    .bind(tsquery.as_deref())
     .fetch_all(&state.db)
     .await?;
-    let p = Page::from_overfetch(rows, size, |r| LibraryCursor {
-        at: r.created_at,
-        id: r.id,
-    });
-
-    // O excerto só para a página devolvida (≤ 100 linhas): o `ts_headline`
-    // relê o texto inteiro, e fazê-lo antes do LIMIT seria por cada candidata.
-    let mut snippets: std::collections::HashMap<Uuid, String> = Default::default();
-    if let Some(tsq) = &tsquery {
-        let ids: Vec<Uuid> = p.items.iter().map(|r| r.id).collect();
-        let found: Vec<(Uuid, String)> = sqlx::query_as(
-            r#"SELECT r.id, ts_headline('simple',
-                        CASE WHEN to_tsvector('simple', r.transcript) @@ q.q
-                             THEN r.transcript
-                             ELSE coalesce(r.title, '') || ' ' || r.filename END,
-                        q.q,
-                        'MaxFragments=1, MaxWords=18, MinWords=6, StartSel="«", StopSel="»"')
-                 FROM recordings r, to_tsquery('simple', $2) AS q(q)
-                WHERE r.id = ANY($1)"#,
-        )
-        .bind(&ids)
-        .bind(tsq)
-        .fetch_all(&state.db)
-        .await?;
-        snippets.extend(found);
-    }
-    Ok(Json(LibraryResponse::Page(RecordingPage {
-        items: p
-            .items
-            .into_iter()
-            .map(|r| {
-                let snippet = snippets.remove(&r.id);
-                r.into_item(snippet)
-            })
-            .collect(),
-        next_page_token: p.next_page_token,
-    })))
+    Ok(Json(
+        rows.into_iter()
+            .map(|r| r.into_item(None))
+            .collect::<Vec<_>>(),
+    )
+    .into_response())
 }
 
 /// `?dl=1` pede o ficheiro para DESCARREGAR (attachment); sem isso, é para
@@ -1687,4 +1608,29 @@ pub async fn delete_comment(
         return Err(ApiError::NotFound);
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// As gravações de uma página de pesquisa, pelos ids e na ordem pedida, com
+/// os factos de `user_id`. Só as que ele VÊ na biblioteca: a pesquisa já
+/// filtrou, e isto volta a aplicar `can_view` (defesa em profundidade).
+pub(crate) async fn library_items_by_ids(
+    state: &AppState,
+    user_id: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<RecordingItem>, ApiError> {
+    let rows: Vec<ItemRow> = sqlx::query_as(&format!("{ITEM_SELECT} WHERE r.id = ANY($2)"))
+        .bind(user_id)
+        .bind(ids)
+        .fetch_all(&state.db)
+        .await?;
+    let mut by_id: std::collections::HashMap<Uuid, ItemRow> = rows
+        .into_iter()
+        .filter(|r| r.facts().can_view())
+        .map(|r| (r.id, r))
+        .collect();
+    Ok(ids
+        .iter()
+        .filter_map(|id| by_id.remove(id))
+        .map(|r| r.into_item(None))
+        .collect())
 }

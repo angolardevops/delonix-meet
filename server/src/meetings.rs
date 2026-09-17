@@ -547,36 +547,32 @@ pub(crate) async fn register_and_ring(
 #[utoipa::path(
     get, path = "/api/meetings", tag = "meetings",
     security(("session" = [])),
+    params(crate::search::SearchParams),
     responses(
-        (status = 200, body = Vec<MeetingItem>, description = "Reuniões criadas pelo utilizador e aquelas para que foi convidado, por data"),
+        (status = 200, body = Vec<MeetingItem>, description = "Sem parâmetros: reuniões criadas pelo utilizador e aquelas para que foi convidado, por data. Com parâmetros de pesquisa: a página do ADR-0007 (`items`, `next_page_token`, `total`, `groups`)."),
+        (status = 400, description = "Códigos `search.*` e `page.invalid_token` (docs/reference/pesquisa.md §2.4).", body = crate::openapi::ErrorBody),
         (status = 401, body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn list(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-) -> Result<Json<Vec<MeetingItem>>, ApiError> {
+    axum::extract::Query(params): axum::extract::Query<crate::search::SearchParams>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
     quarantine_sweep(&state.db).await?;
-    let items: Vec<MeetingItem> = sqlx::query_as(
-        r#"
-        SELECT m.id, m.owner_id, u.username AS owner_name, m.title, m.description,
-               m.kind, m.starts_at, m.duration_min, m.room_code,
-               (m.owner_id = $1) AS is_owner, m.minutes,
-               m.room_ref, mr.name AS room_name,
-               CASE WHEN m.owner_id = $1 THEN 'owner' ELSE COALESCE(i.status, 'pending') END AS my_status,
-               m.recurrence_freq, m.recurrence_interval, m.recurrence_parent_id
-        FROM meetings m
-        JOIN users u ON u.id = m.owner_id
-        LEFT JOIN meeting_invitees i ON i.meeting_id = m.id AND i.user_id = $1
-        LEFT JOIN meeting_rooms mr ON mr.id = m.room_ref
-        WHERE m.owner_id = $1 OR i.user_id IS NOT NULL
-        ORDER BY m.starts_at ASC
-        "#,
-    )
+    if params.is_search() {
+        let page = crate::search::list_meetings(&state, auth.user_id, &params).await?;
+        return Ok(Json(page).into_response());
+    }
+    let items: Vec<MeetingItem> = sqlx::query_as(&format!(
+        "{MEETING_ITEM_SELECT} WHERE m.owner_id = $1 OR i.user_id IS NOT NULL
+         ORDER BY m.starts_at ASC"
+    ))
     .bind(auth.user_id)
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(items))
+    Ok(Json(items).into_response())
 }
 
 #[utoipa::path(
@@ -1445,4 +1441,38 @@ pub async fn ring_upcoming_meetings(state: &Arc<AppState>) {
             "auto-ring de reunião agendada"
         );
     }
+}
+
+/// Uma reunião na forma da agenda, vista por `$1`. Partilhada pela listagem
+/// e pela pesquisa (`search::resources`), para a forma não divergir.
+const MEETING_ITEM_SELECT: &str = r#"
+SELECT m.id, m.owner_id, u.username AS owner_name, m.title, m.description,
+       m.kind, m.starts_at, m.duration_min, m.room_code,
+       (m.owner_id = $1) AS is_owner, m.minutes,
+       m.room_ref, mr.name AS room_name,
+       CASE WHEN m.owner_id = $1 THEN 'owner' ELSE COALESCE(i.status, 'pending') END AS my_status,
+       m.recurrence_freq, m.recurrence_interval, m.recurrence_parent_id
+  FROM meetings m
+  JOIN users u ON u.id = m.owner_id
+  LEFT JOIN meeting_invitees i ON i.meeting_id = m.id AND i.user_id = $1
+  LEFT JOIN meeting_rooms mr ON mr.id = m.room_ref
+"#;
+
+/// As reuniões de uma página de pesquisa, pelos ids e na ordem pedida. Volta
+/// a exigir dono ou convidado (defesa em profundidade).
+pub(crate) async fn items_by_ids(
+    state: &AppState,
+    user_id: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<MeetingItem>, ApiError> {
+    let rows: Vec<MeetingItem> = sqlx::query_as(&format!(
+        "{MEETING_ITEM_SELECT} WHERE m.id = ANY($2) AND (m.owner_id = $1 OR i.user_id IS NOT NULL)"
+    ))
+    .bind(user_id)
+    .bind(ids)
+    .fetch_all(&state.db)
+    .await?;
+    let mut by_id: std::collections::HashMap<Uuid, MeetingItem> =
+        rows.into_iter().map(|m| (m.id, m)).collect();
+    Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
 }
