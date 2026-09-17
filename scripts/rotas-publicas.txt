@@ -28,3 +28,6 @@
 /api/v1/openapi.json         Contrato OpenAPI da v1 pública. Igual ao commitado em docs/reference/openapi/.
 /api/operator/v1/openapi.json          Contrato OpenAPI da superfície de operador. Descreve rotas, não dados.
 /api/integrations/openapi.json         Contrato OpenAPI das integrações (Odoo, agente SMS). Descreve rotas, não dados.
+/api/auth/login/mfa/passkey-options   Opções WebAuthn do segundo factor. A credencial É o token de desafio no corpo (JWT `typ: "mfa"`, 5 min), como em /api/auth/login/mfa; só devolve desafios para as chaves dessa conta.
+/api/auth/login/mfa/passkey           Segunda metade do login com chave de acesso. A credencial É o token de desafio mais a asserção WebAuthn verificada contra a cerimónia (uso único, 5 min).
+/api/users/me/data-exports/{export_id}/content  ZIP de «os meus dados» por link temporário. A credencial É a assinatura HMAC (exp ≤ 15 min) validada no handler, como os PNG assinados dos quadros; assinatura errada ou vencida dá 404.
