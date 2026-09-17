@@ -120,6 +120,14 @@ pub(crate) struct ActiveSession {
     pub reauthenticated_at: Option<DateTime<Utc>>,
 }
 
+/// `(user_id, revoked_at, last_seen_at, reauthenticated_at)`.
+type SessionStateRow = (
+    Uuid,
+    Option<DateTime<Utc>>,
+    DateTime<Utc>,
+    Option<DateTime<Utc>>,
+);
+
 /// A sessão `sid` de `user_id` está activa? Actualiza o «visto por último» no
 /// máximo uma vez por minuto (não é uma escrita por pedido).
 pub(crate) async fn ensure_active(
@@ -127,12 +135,7 @@ pub(crate) async fn ensure_active(
     user_id: Uuid,
     sid: Uuid,
 ) -> Result<ActiveSession, ApiError> {
-    let row: Option<(
-        Uuid,
-        Option<DateTime<Utc>>,
-        DateTime<Utc>,
-        Option<DateTime<Utc>>,
-    )> = sqlx::query_as(
+    let row: Option<SessionStateRow> = sqlx::query_as(
         "SELECT user_id, revoked_at, last_seen_at, reauthenticated_at
                FROM user_sessions WHERE id = $1",
     )

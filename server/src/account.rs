@@ -626,12 +626,15 @@ impl From<jp::JoinPreferences> for JoinPreferencesBody {
     }
 }
 
+/// Colunas de `user_join_preferences`, pela ordem do SELECT.
+type JoinPreferencesRow = (bool, bool, bool, bool, bool, Option<String>, bool);
+
 /// As preferências de entrada de `user_id` (as omissões se nunca as mudou).
 pub(crate) async fn load_join_preferences(
     db: &sqlx::PgPool,
     user_id: Uuid,
 ) -> Result<jp::JoinPreferences, sqlx::Error> {
-    let row: Option<(bool, bool, bool, bool, bool, Option<String>, bool)> = sqlx::query_as(
+    let row: Option<JoinPreferencesRow> = sqlx::query_as(
         "SELECT join_muted, join_camera_off, blur_background, noise_suppression,
                 captions_always_on, captions_language, warn_before_recording
            FROM user_join_preferences WHERE user_id = $1",

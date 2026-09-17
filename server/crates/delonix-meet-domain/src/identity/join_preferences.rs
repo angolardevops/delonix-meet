@@ -14,7 +14,8 @@
 use delonix_meet_core::DomainError;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// As omissões (`Default`, tudo desligado) são o comportamento de hoje.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoinPreferences {
     pub join_muted: bool,
     pub join_camera_off: bool,
@@ -25,20 +26,6 @@ pub struct JoinPreferences {
     /// = o idioma da sessão.
     pub captions_language: Option<String>,
     pub warn_before_recording: bool,
-}
-
-impl Default for JoinPreferences {
-    fn default() -> Self {
-        Self {
-            join_muted: false,
-            join_camera_off: false,
-            blur_background: false,
-            noise_suppression: false,
-            captions_always_on: false,
-            captions_language: None,
-            warn_before_recording: false,
-        }
-    }
 }
 
 /// Idiomas de legenda aceites (os do motor de transcrição e tradução).
