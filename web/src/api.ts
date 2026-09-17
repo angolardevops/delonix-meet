@@ -87,7 +87,10 @@ export function isAbort(e: unknown): boolean {
  * problema é o transporte.
  */
 export function isAuthFailure(e: unknown): boolean {
-  return e instanceof ApiError && (e.status === 401 || e.status === 403)
+  // Só o 401. Desde o #90 o servidor responde 403/404 com `code` a quem ESTÁ
+  // autenticado mas não pode (ex.: `recording.not_owner`): isso é uma recusa
+  // sobre um recurso, não uma sessão inválida, e nunca pode terminar a sessão.
+  return e instanceof ApiError && e.status === 401
 }
 
 /** Mensagem legível de um erro de API, com recurso ao texto dado. */
@@ -159,10 +162,12 @@ async function refreshSession(): Promise<void> {
 async function renovarUmaVez() {
   // Sem corpo: o refresh token vai no cookie HttpOnly (enviado automaticamente).
   const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'same-origin' })
-  // Só 401/403 são «a sessão não serve». Um 500/502/503 é o servidor com um
-  // problema SEU: terminar a sessão aí faz o utilizador perder o sítio onde
+  // Só 401 (cookie ausente, revogado ou expirado) e 404 (a conta do token já
+  // não existe) são «a sessão não serve» — é o contrato do `POST
+  // /api/auth/refresh`. Um 403 é uma recusa, e um 500/502/503 é o servidor com
+  // um problema SEU: terminar a sessão aí faz o utilizador perder o sítio onde
   // estava para resolver um problema que não é dele (ver isAuthFailure).
-  if (!res.ok && res.status !== 401 && res.status !== 403) {
+  if (!res.ok && res.status !== 401 && res.status !== 404) {
     throw new ApiError(res.status, null, 'refresh indisponível')
   }
   if (!res.ok) {
@@ -1316,6 +1321,10 @@ export interface ChatHistoryMsg {
   parent_id?: string | null
   /** Contagem de reacções por emoji (`{}` sem reacções). */
   reactions?: Record<string, number>
+  /** Conversa directa: a conta que a recebe. `null` = mensagem pública. O
+   *  servidor só devolve as directas a quem as enviou e a quem as recebeu. */
+  to_user_id?: string | null
+  to_username?: string | null
 }
 
 /** Quem espera na sala de espera (só dono/co-anfitrião — 403/404 aos outros). */
