@@ -5,8 +5,21 @@
  * Tudo string → string: o browser só entra para descarregar o ficheiro. Os
  * nomes que a pessoa escreveu vão escapados; os identificadores XML são os do
  * modelo com um prefixo, porque um `xmi:id`/`id` BPMN tem de ser NCName.
+ *
+ * Grupos de selecção (⌘G, v5) — decisão: um grupo NÃO muda a semântica do
+ * modelo, por isso nunca sai como pacote (isso mudava o nome qualificado das
+ * classes). Sai assim:
+ *  - BPMN: `bpmn:group` com `bpmn:category` — é o artefacto que a norma tem
+ *    exactamente para isto, sem efeito no fluxo — e forma no diagrama (DI);
+ *  - XMI: `xmi:Extension extender="Delonix Meet"` com os membros por
+ *    `xmi:idref` — o mecanismo da norma para dados de uma ferramenta; outras
+ *    ferramentas ignoram-no e o modelo UML fica igual;
+ *  - PlantUML: `together { … }` para as classes soltas do mesmo grupo (só
+ *    aproxima no desenho); membros dentro de um `package` ficam onde estão;
+ *  - SVG/PNG: a moldura tracejada com o nome, tal como no ecrã.
  */
 import { attachedActivity, center, contentBox, edgeSegment, laneOf, nodeBox, poolHeight, poolOf } from './geometry'
+import { cleanGroups, groupsOf, pickBox } from './groups'
 import {
   ACTIVITY_NODES,
   BPMN_FLOW_NODES,
@@ -48,6 +61,9 @@ export function fileBase(title: string): string {
     .toLowerCase()
   return s.slice(0, 60) || 'diagrama'
 }
+
+/** Margem da moldura de um grupo de selecção à volta dos membros (ecrã, SVG e DI do BPMN). */
+export const GROUP_PAD = 12
 
 const umlNodes = (doc: DiagramDoc) => doc.nodes.filter((n) => NODE_NOTATION[n.type] === 'uml')
 const umlEdges = (doc: DiagramDoc) => {
@@ -269,6 +285,18 @@ export function toXmi(doc: DiagramDoc): string {
 
   for (const [name, id] of dataTypes) out.push(`    <packagedElement xmi:type="uml:DataType" xmi:id="${id}" name="${escapeXml(name)}"/>`)
   out.push('  </uml:Model>')
+  // Grupos de selecção: dados da ferramenta, fora do modelo (ver o cabeçalho).
+  const umlIds = new Set(nodes.map((n) => n.id))
+  const xmiGroups = groupsOf(doc)
+    .map((g) => ({ g, refs: g.nodes.filter((id) => umlIds.has(id)).map((id) => (byId.get(id)!.type === 'note' ? xmlId('nt', id) : refOf(byId.get(id)!))).filter(Boolean) }))
+    .filter((x) => x.refs.length > 0)
+  if (xmiGroups.length > 0) {
+    out.push('  <xmi:Extension extender="Delonix Meet">')
+    for (const { g, refs } of xmiGroups) {
+      out.push(`    <group xmi:id="${xmlId('grp', g.id)}" name="${escapeXml(g.name.trim())}">${refs.map((r) => `<member xmi:idref="${r}"/>`).join('')}</group>`)
+    }
+    out.push('  </xmi:Extension>')
+  }
   out.push('</xmi:XMI>')
   return out.join('\n') + '\n'
 }
@@ -550,7 +578,20 @@ export function toPlantUml(doc: DiagramDoc): string {
       for (const m of members) classifier(m, '  ')
       lines.push('}')
     }
-    for (const m of loose) classifier(m, '')
+    // Classes soltas do mesmo grupo de selecção ficam juntas no desenho.
+    const together = new Set<string>()
+    for (const g of groupsOf(doc)) {
+      const members = loose.filter((n) => g.nodes.includes(n.id) && !together.has(n.id))
+      if (members.length === 0) continue
+      lines.push(`' ${g.name.replace(/\n/g, ' ').trim()}`)
+      lines.push('together {')
+      for (const m of members) {
+        together.add(m.id)
+        classifier(m, '  ')
+      }
+      lines.push('}')
+    }
+    for (const m of loose) if (!together.has(m.id)) classifier(m, '')
     for (const n of classNodes) {
       if (n.type === 'note') lines.push(`note ${puQuote((n.props.text ?? n.name).trim())} as ${alias.get(n.id)}`)
     }
@@ -855,6 +896,14 @@ export function toBpmn(doc: DiagramDoc): string {
   for (const g of groups) {
     out.push(`  <bpmn:category id="${xmlId('Category', g.id)}"><bpmn:categoryValue id="${xmlId('CategoryValue', g.id)}" value="${escapeXml(g.name.trim())}"/></bpmn:category>`)
   }
+  // Grupos de selecção (⌘G) saem como o mesmo artefacto, no processo do primeiro membro.
+  const bpmnMembers = new Set([...flowNodes, ...artifacts].map((n) => n.id))
+  const selGroups = groupsOf(doc)
+    .map((g) => ({ g, members: g.nodes.filter((id) => bpmnMembers.has(id)).map((id) => byId.get(id)!) }))
+    .filter((x) => x.members.length > 0)
+  for (const { g } of selGroups) {
+    out.push(`  <bpmn:category id="${xmlId('SelCategory', g.id)}"><bpmn:categoryValue id="${xmlId('SelCategoryValue', g.id)}" value="${escapeXml(g.name.trim())}"/></bpmn:category>`)
+  }
 
   for (const [key, pid] of processIds) {
     const pool = key ? byId.get(key)! : null
@@ -941,6 +990,9 @@ export function toBpmn(doc: DiagramDoc): string {
       }
       if (a.type === 'group') out.push(`    <bpmn:group id="${xmlId('N', a.id)}" categoryValueRef="${xmlId('CategoryValue', a.id)}"/>`)
     }
+    for (const { g, members } of selGroups.filter((x) => processKey(x.members[0]) === key)) {
+      if (members.length) out.push(`    <bpmn:group id="${xmlId('SelGroup', g.id)}" categoryValueRef="${xmlId('SelCategoryValue', g.id)}"/>`)
+    }
     for (const e of edges.filter((f) => f.type === 'dataAssociation' && processKey(byId.get(f.from)!) === key)) {
       out.push(`    <bpmn:association id="${xmlId('F', e.id)}" sourceRef="${xmlId('N', e.from)}" targetRef="${xmlId('N', e.to)}"/>`)
     }
@@ -964,6 +1016,10 @@ export function toBpmn(doc: DiagramDoc): string {
   for (const n of [...flowNodes, ...artifacts]) {
     const b = nodeBox(n)
     out.push(`      <bpmndi:BPMNShape id="${xmlId('N', n.id)}_di" bpmnElement="${xmlId('N', n.id)}">${bounds(b.x, b.y, b.w, b.h)}</bpmndi:BPMNShape>`)
+  }
+  for (const { g } of selGroups) {
+    const b = pickBox(doc, { nodes: g.nodes, strokes: [] })
+    if (b) out.push(`      <bpmndi:BPMNShape id="${xmlId('SelGroup', g.id)}_di" bpmnElement="${xmlId('SelGroup', g.id)}">${bounds(b.x - GROUP_PAD, b.y - GROUP_PAD, b.w + GROUP_PAD * 2, b.h + GROUP_PAD * 2)}</bpmndi:BPMNShape>`)
   }
   for (const e of edges) {
     const seg = edgeSegment(doc, e)
@@ -1116,7 +1172,7 @@ export function parseJson(text: string): DiagramDoc | null {
   }
   if (!d.nodes.every(okNode) || !d.edges.every(okEdge)) return null
   const now = new Date().toISOString()
-  return {
+  return cleanGroups<DiagramDoc>({
     v: 1,
     id: typeof d.id === 'string' ? d.id : '',
     title: typeof d.title === 'string' ? d.title : '',
@@ -1125,7 +1181,14 @@ export function parseJson(text: string): DiagramDoc | null {
     nodes: d.nodes.map((n) => ({ ...n, name: typeof n.name === 'string' ? n.name : '', props: n.props ?? {} })),
     edges: d.edges.map((e) => ({ ...e, label: typeof e.label === 'string' ? e.label : '' })),
     strokes: Array.isArray(d.strokes) ? d.strokes.filter((s) => s && Array.isArray(s.points)) : [],
+    ...(Array.isArray(d.groups)
+      ? {
+          groups: d.groups
+            .filter((g) => g && typeof g.id === 'string' && Array.isArray(g.nodes) && Array.isArray(g.strokes))
+            .map((g) => ({ id: g.id, name: typeof g.name === 'string' ? g.name : '', nodes: g.nodes.filter((x) => typeof x === 'string'), strokes: g.strokes.filter((x) => typeof x === 'string') })),
+        }
+      : {}),
     createdAt: typeof d.createdAt === 'string' ? d.createdAt : now,
     updatedAt: now,
-  }
+  })
 }
