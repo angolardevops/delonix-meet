@@ -420,6 +420,200 @@
         },
         "type": "object"
       },
+      "AiFillersSuggestion": {
+        "description": "`task = fillers`.",
+        "properties": {
+          "terms": {
+            "description": "≤ 20; só termos que existem na transcrição como palavras inteiras.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "terms"
+        ],
+        "type": "object"
+      },
+      "AiPublicationSuggestion": {
+        "description": "`task = publication`.",
+        "properties": {
+          "description": {
+            "description": "≤ 1000 caracteres.",
+            "type": "string"
+          },
+          "tags": {
+            "description": "≤ 8, com as regras das etiquetas da gravação.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "description": "≤ 100 caracteres.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "description",
+          "tags"
+        ],
+        "type": "object"
+      },
+      "AiStatus": {
+        "properties": {
+          "configured": {
+            "description": "Há `OLLAMA_URL`.",
+            "type": "boolean"
+          },
+          "error": {
+            "description": "A mesma razão, para pessoas. `null` quando está pronto.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "description": "O modelo do Estúdio (`OLLAMA_MODEL_STUDIO`).",
+            "type": "string"
+          },
+          "model_installed": {
+            "description": "`null` quando não se chegou a perguntar (não configurado ou sem resposta).",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "reachable": {
+            "description": "O Ollama respondeu.",
+            "type": "boolean"
+          },
+          "ready": {
+            "description": "Pronto a usar: configurado, alcançável e com o modelo instalado.",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Porque não está pronto: `not_configured` | `url_rejected` |\n`unreachable` | `timeout` | `model_missing` | `upstream_error` |\n`bad_response`. `null` quando está pronto.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "configured",
+          "reachable",
+          "model",
+          "ready"
+        ],
+        "type": "object"
+      },
+      "AiSuggestedChapter": {
+        "properties": {
+          "t_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "t_ms",
+          "title"
+        ],
+        "type": "object"
+      },
+      "AiSuggestion": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AiSummarySuggestion"
+          },
+          {
+            "$ref": "#/components/schemas/AiPublicationSuggestion"
+          },
+          {
+            "$ref": "#/components/schemas/AiFillersSuggestion"
+          }
+        ]
+      },
+      "AiSuggestionReq": {
+        "properties": {
+          "language": {
+            "description": "Língua da transcrição (código curto: `pt`, `en`, `pt-PT`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "segments": {
+            "description": "1-5000 segmentos, ≤ 2000 caracteres cada, ≤ 400 000 no total, ≥ 40 de texto.",
+            "items": {
+              "$ref": "#/components/schemas/AiSuggestionSegment"
+            },
+            "type": "array"
+          },
+          "task": {
+            "description": "`summary` | `publication` | `fillers`.",
+            "type": "string"
+          },
+          "title": {
+            "description": "Título de trabalho (≤ 200 caracteres, uma linha).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "type": "object"
+      },
+      "AiSuggestionSegment": {
+        "properties": {
+          "end_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "start_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_ms",
+          "end_ms",
+          "text"
+        ],
+        "type": "object"
+      },
+      "AiSummarySuggestion": {
+        "description": "`task = summary`.",
+        "properties": {
+          "chapters": {
+            "description": "Dentro da duração da transcrição; pode vir vazio.",
+            "items": {
+              "$ref": "#/components/schemas/AiSuggestedChapter"
+            },
+            "type": "array"
+          },
+          "summary": {
+            "description": "Texto simples, ≤ 2000 caracteres.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "chapters"
+        ],
+        "type": "object"
+      },
       "ApiCreateRoomReq": {
         "properties": {
           "e2ee": {
@@ -2362,6 +2556,25 @@
         ],
         "type": "object"
       },
+      "NetProbeUpload": {
+        "properties": {
+          "bytes": {
+            "description": "Bytes recebidos.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "server_ms": {
+            "description": "Tempo a ler o corpo, no servidor (ms).",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "bytes",
+          "server_ms"
+        ],
+        "type": "object"
+      },
       "Notification": {
         "properties": {
           "body": {
@@ -3615,6 +3828,22 @@
         ],
         "type": "object"
       },
+      "RecordingCaptionGenerateReq": {
+        "properties": {
+          "lang": {
+            "description": "Língua pedida (BCP 47 curto). Omitida: a da transcrição.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "replace": {
+            "description": "Substituir uma legenda que já existe nessa língua (enviada, rascunho ou\npublicada). Sem isto, `409 recording.caption_exists`: gerar não apaga o\ntrabalho de uma pessoa por engano. Uma legenda `failed` substitui-se\nsempre.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "RecordingCaptionPatchReq": {
         "properties": {
           "status": {
@@ -3696,6 +3925,59 @@
           "title",
           "source",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "RecordingChapterGeneration": {
+        "description": "O estado da última geração de capítulos de uma gravação.",
+        "properties": {
+          "chapter_count": {
+            "description": "Capítulos automáticos gravados. Só com `succeeded`.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_code": {
+            "description": "Só com `failed`: `ai.bad_response`, `ai.timeout`, `ai.model_missing`,\n`ai.unreachable`, `ai.interrupted`, `internal`, …",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recording_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "`idle` (nunca pedida) | `running` | `succeeded` | `failed`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recording_id",
+          "status"
         ],
         "type": "object"
       },
@@ -5063,7 +5345,7 @@
       "TranslateReq": {
         "properties": {
           "target": {
-            "description": "Língua de destino: `pt` | `en` | `fr` | `es` | `de`. Outra dá 400.",
+            "description": "Língua de destino: `pt` | `en` | `fr` | `es` | `de` | `zh`. Outra dá 400.",
             "type": "string"
           },
           "text": {

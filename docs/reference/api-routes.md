@@ -143,13 +143,24 @@ o servidor da branch da UI (`integra/validacao-l2`); o que não tem par era novo
 | `GET /api/recordings/{id}/captions` | `GET /api/recordings/{recording_id}/captions` |
 | `GET\|PUT\|PATCH\|DELETE /api/recordings/{id}/captions/{lang}` | `GET\|PUT\|PATCH\|DELETE /api/recordings/{recording_id}/captions/{lang}` (`PUT` → `201`+`Location` ao criar, `200` ao substituir) |
 | `GET /api/recordings/{id}/captions/{lang}/vtt` | `GET /api/recordings/{recording_id}/captions/{lang}/vtt` |
-| `POST /api/recordings/{id}/captions/generate`, `POST …/chapters/generate` | **por portar** (dependem do cliente Ollama; sem rota nem stub até lá) |
+| `POST /api/recordings/{id}/captions/generate` | `POST /api/recordings/{recording_id}/captions/generate` `{lang?, replace?}` — mesma língua da transcrição: `201`/`200` (rascunho); outra: `202` (`generating`, progresso em `…/captions/{lang}`) |
+| `POST /api/recordings/{id}/chapters/generate` (síncrono, devolvia a lista) | `POST /api/recordings/{recording_id}/chapters/generate` → `202` + `Location: …/chapters/generation`; estado em `GET /api/recordings/{recording_id}/chapters/generation` |
+| `GET /api/orgs/{id}/ai/status`, `POST /api/orgs/{id}/ai/suggestions` (linha do Estúdio) | iguais (`{org_id}`); o estado ganha `ready` e `reason` |
+| `GET\|POST /api/net-probe` | igual |
 
 Erros com código: `recording.not_manager` (403), `recording.comment_delete_forbidden` (403),
 `recording.no_file` (409), `recording.chapter_timestamp_taken` (409),
 `recording.caption_not_ready` (409), `recording.too_many_chapters` / `recording.too_many_captions` (422),
 `recording.invalid_{filename,description,tags,kind,visibility,scope,timestamp,chapter_title,comment,caption_lang,caption_status,vtt}` e
 `recording.caption_too_large` (400). Quem não chega à gravação recebe sempre `404` antes de qualquer outro.
+
+Da geração (`recording_ai.rs`): `recording.no_transcript`, `recording.chapter_generation_running`,
+`recording.caption_exists`, `recording.caption_generation_running` (409),
+`recording.caption_lang_required`, `recording.invalid_generate_body`, `ai.unsupported_language` (400).
+Do LLM local (Estúdio e geração): `ai.busy` (429, `Retry-After: 10`) e `ai.not_configured`,
+`ai.url_rejected`, `ai.unreachable`, `ai.timeout`, `ai.model_missing`, `ai.upstream_error`,
+`ai.bad_response` (503); nas sugestões, `ai.invalid_body`, `ai.invalid_task`, `ai.invalid_language`,
+`ai.invalid_title`, `ai.invalid_segments`, `ai.transcript_too_large`, `ai.transcript_too_short` (400).
 
 ### Quadros
 | Antes | Depois |

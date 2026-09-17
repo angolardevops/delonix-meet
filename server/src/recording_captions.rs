@@ -6,15 +6,11 @@
 //! geradas são de quem gere. As regras (língua, VTT, estados) estão em
 //! `delonix_meet_domain::content::caption`.
 //!
-//! **Ponto de extensão — geração (fora deste lote).** `POST
-//! …/captions/generate` (VTT dos segmentos na língua da transcrição, ou
-//! tradução pelo LLM local em segundo plano) entra aqui quando o cliente
-//! Ollama estiver portado. Tem o que precisa: os segmentos em
-//! `recording_meta::load_segments`, as cues em `caption::segments_to_cues` +
-//! `caption::cues_to_vtt`, e a mesma tabela com `source = transcript |
-//! translation` e `status = generating` + `progress_pct`. Não há rota nem stub
-//! enquanto não houver implementação: uma rota que responde «ainda não» é um
-//! contrato falso.
+//! **Geração** (`POST …/captions/generate`): em `recording_ai.rs` — o VTT
+//! dos segmentos na língua da transcrição, ou a tradução pelo LLM local em
+//! segundo plano, na mesma tabela com `source = transcript | translation` e
+//! `status = generating` + `progress_pct`. Enquanto gera ou se falhou, o VTT dá
+//! `409 recording.caption_not_ready` (aqui, em [`vtt`]).
 
 use axum::{
     extract::{Path, State},
@@ -71,7 +67,7 @@ pub struct CaptionMeta {
     pub published_at: Option<DateTime<Utc>>,
 }
 
-const META_COLS: &str =
+pub(crate) const META_COLS: &str =
     "recording_id, lang, source, status, progress_pct, error, created_at, updated_at, published_at";
 
 /// Metadados e o VTT.
@@ -273,10 +269,10 @@ pub async fn put(
 }
 
 #[derive(sqlx::FromRow)]
-struct InsertedMeta {
-    inserted: bool,
+pub(crate) struct InsertedMeta {
+    pub(crate) inserted: bool,
     #[sqlx(flatten)]
-    meta: CaptionMeta,
+    pub(crate) meta: CaptionMeta,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
