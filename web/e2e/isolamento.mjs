@@ -762,7 +762,7 @@ console.log('\n--- papéis, permissões, utilizadores e convites (ADR-0008) ---'
   const depB = await req(`/api/orgs/${B.orgId}/departments`, { token: B.token, method: 'POST', body: { name: 'Dep B' } })
   const dB = depB.json?.id ?? X
   const convB = await req(`/api/orgs/${B.orgId}/invitations`, {
-    token: B.token, method: 'POST', body: { email: `convidado@b-${Date.now()}.local`, role_id: membroB, delivery: 'code' },
+    token: B.token, method: 'POST', body: { email: `convidado-${Date.now()}@${B.email.split('@')[1]}`, role_id: membroB, delivery: 'code' },
   })
   const iB = convB.json?.id ?? X
   const regraB = await req(`/api/orgs/${B.orgId}/sod-rules`, {
