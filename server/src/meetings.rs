@@ -45,6 +45,7 @@ pub struct Meeting {
     paths(
         list,
         get_one,
+        patch,
         create,
         check_conflicts,
         delete,
@@ -60,6 +61,8 @@ pub struct Meeting {
     components(schemas(
         Meeting,
         MeetingItem,
+        SessionOptions,
+        PatchMeetingOptionsReq,
         CreateMeetingReq,
         CreateMeetingResp,
         ParticipantConflict,
@@ -119,7 +122,8 @@ pub struct MeetingItem {
     /// Convidados (sem contar o anfitrião), qualquer que seja a resposta.
     pub invitee_count: i64,
     /// Sistema que criou a reunião, lido da referência externa
-    /// (`odoo:<bd>:calendar.event:<id>` → `odoo`). `None` = criada no Meet.
+    /// (`odoo:<bd>:calendar.event:<id>` → `odoo`; uma referência que não
+    /// declara sistema → `api`). `None` = criada no Meet.
     pub external_source: Option<String>,
 }
 
@@ -146,20 +150,141 @@ fn default_record_quality() -> String {
     "1080p".into()
 }
 
+fn validate_format(format: &str) -> Result<(), ApiError> {
+    if !MEETING_FORMATS.contains(&format) {
+        return Err(ApiError::BadRequest(
+            "format must be meeting, training, broadcast or hybrid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_record_quality(quality: &str) -> Result<(), ApiError> {
+    if !RECORD_QUALITIES.contains(&quality) {
+        return Err(ApiError::BadRequest(
+            "record_quality must be 2160p, 1080p, 720p or audio".into(),
+        ));
+    }
+    Ok(())
+}
+
 impl SessionOptions {
     pub(crate) fn validate(&self) -> Result<(), ApiError> {
-        if !MEETING_FORMATS.contains(&self.format.as_str()) {
-            return Err(ApiError::BadRequest(
-                "format must be meeting, training, broadcast or hybrid".into(),
-            ));
+        validate_format(&self.format)?;
+        validate_record_quality(&self.record_quality)
+    }
+}
+
+/// Alteração parcial das opções de sessão: o campo ausente fica como está.
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+pub struct SessionOptionsPatch {
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub waiting_room: Option<bool>,
+    #[serde(default)]
+    pub auto_record: Option<bool>,
+    #[serde(default)]
+    pub record_quality: Option<String>,
+}
+
+impl SessionOptionsPatch {
+    pub(crate) fn validate(&self) -> Result<(), ApiError> {
+        if let Some(f) = &self.format {
+            validate_format(f)?;
         }
-        if !RECORD_QUALITIES.contains(&self.record_quality.as_str()) {
-            return Err(ApiError::BadRequest(
-                "record_quality must be 2160p, 1080p, 720p or audio".into(),
-            ));
+        if let Some(q) = &self.record_quality {
+            validate_record_quality(q)?;
         }
         Ok(())
     }
+
+    fn is_empty(&self) -> bool {
+        self.format.is_none()
+            && self.waiting_room.is_none()
+            && self.auto_record.is_none()
+            && self.record_quality.is_none()
+    }
+}
+
+/// Gravação automática numa sala E2EE: o gravador do servidor não tem a chave,
+/// e gravaria ruído cifrado. Recusa-se em vez de aceitar e não gravar.
+pub(crate) fn refuse_auto_record_on_e2ee(auto_record: bool, e2ee: bool) -> Result<(), ApiError> {
+    if auto_record && e2ee {
+        return Err(delonix_meet_core::DomainError::precondition(
+            "meeting.auto_record_e2ee",
+            "a gravação automática do servidor não é possível numa sala com encriptação ponta-a-ponta",
+        )
+        .with_field("auto_record", "incompatível com e2ee")
+        .into());
+    }
+    Ok(())
+}
+
+/// As opções de sessão guardadas de uma reunião.
+pub(crate) async fn load_session_options(
+    db: &sqlx::PgPool,
+    meeting_id: Uuid,
+) -> Result<SessionOptions, ApiError> {
+    sqlx::query_as(
+        "SELECT format, waiting_room, auto_record, record_quality FROM meetings WHERE id = $1",
+    )
+    .bind(meeting_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or(ApiError::NotFound)
+}
+
+/// Aplica uma alteração das opções de sessão a uma reunião e, se a sala já
+/// existe, à sala — a mesma função para o `PATCH` da BFF e o da v1. Valida
+/// antes de escrever. Não verifica quem pede: é do chamador. Devolve as opções
+/// como ficaram.
+pub(crate) async fn patch_session_options(
+    state: &AppState,
+    meeting_id: Uuid,
+    patch: &SessionOptionsPatch,
+) -> Result<SessionOptions, ApiError> {
+    patch.validate()?;
+    let current = load_session_options(&state.db, meeting_id).await?;
+    if patch.is_empty() {
+        return Ok(current);
+    }
+    let next = SessionOptions {
+        format: patch.format.clone().unwrap_or(current.format),
+        waiting_room: patch.waiting_room.unwrap_or(current.waiting_room),
+        auto_record: patch.auto_record.unwrap_or(current.auto_record),
+        record_quality: patch
+            .record_quality
+            .clone()
+            .unwrap_or(current.record_quality),
+    };
+    let room_code: Option<String> =
+        sqlx::query_scalar("SELECT room_code FROM meetings WHERE id = $1")
+            .bind(meeting_id)
+            .fetch_one(&state.db)
+            .await?;
+    if let Some(code) = &room_code {
+        let e2ee: Option<bool> = sqlx::query_scalar("SELECT e2ee FROM rooms WHERE code = $1")
+            .bind(code)
+            .fetch_optional(&state.db)
+            .await?;
+        refuse_auto_record_on_e2ee(next.auto_record, e2ee.unwrap_or(false))?;
+    }
+    sqlx::query(
+        "UPDATE meetings SET format = $2, waiting_room = $3, auto_record = $4, record_quality = $5
+         WHERE id = $1",
+    )
+    .bind(meeting_id)
+    .bind(&next.format)
+    .bind(next.waiting_room)
+    .bind(next.auto_record)
+    .bind(&next.record_quality)
+    .execute(&state.db)
+    .await?;
+    if let Some(code) = &room_code {
+        crate::rooms::apply_session_options(&state.db, code, &next).await?;
+    }
+    Ok(next)
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -767,7 +892,13 @@ pub async fn list(
                m.recurrence_freq, m.recurrence_interval, m.recurrence_parent_id,
                m.format, m.waiting_room, m.auto_record, m.record_quality,
                (SELECT COUNT(*) FROM meeting_invitees ic WHERE ic.meeting_id = m.id) AS invitee_count,
-               NULLIF(split_part(x.external_ref, ':', 1), '') AS external_source
+               -- Só o prefixo com forma de identificador (`odoo:…` → `odoo`); uma
+               -- referência que não declara sistema é `api`. A referência inteira
+               -- é da integração e nunca sai pela BFF.
+               CASE WHEN x.external_ref IS NULL THEN NULL
+                    WHEN x.external_ref ~ '^[A-Za-z0-9_-]{1,32}:'
+                    THEN lower(split_part(x.external_ref, ':', 1))
+                    ELSE 'api' END AS external_source
         FROM mine
         JOIN meetings m ON m.id = mine.id
         JOIN users u ON u.id = m.owner_id
@@ -1142,6 +1273,70 @@ pub async fn get_one(
         return Err(ApiError::NotFound);
     }
     Ok(Json(meeting))
+}
+
+/// `PATCH /api/meetings/{meeting_id}` — só as opções de sessão (R184). Campos
+/// fora destes são recusados, não ignorados: um título mandado aqui não muda
+/// nada e o cliente tem de o saber.
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PatchMeetingOptionsReq {
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub waiting_room: Option<bool>,
+    #[serde(default)]
+    pub auto_record: Option<bool>,
+    #[serde(default)]
+    pub record_quality: Option<String>,
+}
+
+/// Altera as opções de sessão de uma reunião. Só o anfitrião. Se a sala já
+/// existe, as opções passam-lhe logo: a sala de espera vale para as entradas
+/// seguintes, e a gravação automática para a próxima vez que o anfitrião
+/// entrar numa sala ainda sem gravação.
+#[utoipa::path(
+    patch, path = "/api/meetings/{meeting_id}", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    request_body = PatchMeetingOptionsReq,
+    responses(
+        (status = 200, body = SessionOptions, description = "As opções como ficaram."),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`format` ou `record_quality` fora dos valores aceites"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`meeting.not_host`: é convidado, não anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não é dono nem convidado"),
+        (status = 422, body = crate::openapi::ErrorBody, description = "campo desconhecido no corpo; ou `meeting.auto_record_e2ee`"),
+    )
+)]
+pub async fn patch(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PatchMeetingOptionsReq>,
+) -> Result<Json<SessionOptions>, ApiError> {
+    let owner: Option<Uuid> = sqlx::query_scalar("SELECT owner_id FROM meetings WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?;
+    match owner {
+        Some(o) if o == auth.user_id => {}
+        Some(o) if is_owner_or_invitee(&state, id, o, auth.user_id).await? => {
+            return Err(
+                delonix_meet_core::DomainError::forbidden("meeting.not_host")
+                    .with_message("só o anfitrião altera as opções da reunião")
+                    .into(),
+            );
+        }
+        _ => return Err(ApiError::NotFound),
+    }
+    let patch = SessionOptionsPatch {
+        format: req.format,
+        waiting_room: req.waiting_room,
+        auto_record: req.auto_record,
+        record_quality: req.record_quality,
+    };
+    patch_session_options(&state, id, &patch).await.map(Json)
 }
 
 /// Exportação iCalendar (roadmap "Google e Outlook Calendar"): um .ics por

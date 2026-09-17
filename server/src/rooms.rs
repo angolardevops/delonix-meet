@@ -173,6 +173,29 @@ pub async fn insert_room(
     Err(ApiError::internal("could not allocate room code"))
 }
 
+/// As opções de sessão de uma reunião passam à sala dela (R184): sala de
+/// espera, formato, gravação automática e a qualidade pedida ao gravador.
+/// Chamado na criação pela v1 e nos `PATCH` da BFF e da v1 (o `start` da BFF
+/// cria a sala já com elas).
+pub(crate) async fn apply_session_options(
+    db: &sqlx::PgPool,
+    room_code: &str,
+    options: &crate::meetings::SessionOptions,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE rooms SET waiting_room = $2, format = $3, auto_record = $4, record_quality = $5
+         WHERE code = $1",
+    )
+    .bind(room_code)
+    .bind(options.waiting_room)
+    .bind(room_format_for_meeting(&options.format))
+    .bind(options.auto_record)
+    .bind(&options.record_quality)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 // ---------- Sala pessoal («a minha sala», G2) ----------
 //
 // Uma sala como as outras (as regras de acesso são as de `room_access`), com
