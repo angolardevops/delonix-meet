@@ -1071,7 +1071,7 @@ async fn quick_test_call_and_sip_status_through_fake_esl(db: sqlx::PgPool) {
             .iter()
             .find(|c| c.starts_with("bgapi originate "))
             .unwrap();
-        assert!(orig.contains(&format!("[delonix_trunk_id={uni}]sofia/gateway/dlx-{uni}/244923447108|[delonix_trunk_id={afr}]sofia/gateway/dlx-{afr}/244923447108")), "{orig}");
+        assert!(orig.contains(&format!("delonix_trunk_id={uni}]sofia/gateway/dlx-{uni}/244923447108|[delonix_trunk_id={afr}]sofia/gateway/dlx-{afr}/244923447108")), "{orig}");
         assert!(orig.contains(&format!("delonix_org_id={}", a.org())));
         assert!(orig.contains("record_session"), "a regra 0 grava");
     }

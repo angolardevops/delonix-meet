@@ -188,6 +188,9 @@ pub struct GatewaySpec {
 }
 
 /// Os gateways de todos os troncos activos, num domínio de directório.
+/// Forma exigida pelo `mod_sofia` (`parse_domain_tag`): `<user>` directo no
+/// domínio, ou `<groups><group><users><user>`. `<users>` directo no domínio é
+/// ignorado EM SILÊNCIO — medido contra o FreeSWITCH 1.11.3.
 pub fn gateways_directory(gws: &[GatewaySpec]) -> String {
     let mut users = String::new();
     for g in gws {
@@ -245,8 +248,12 @@ pub fn gateways_directory(gws: &[GatewaySpec]) -> String {
 <document type="freeswitch/xml">
   <section name="directory" description="Delonix Meet — troncos">
     <domain name="delonix-trunks">
-      <users>
-{users}      </users>
+      <groups>
+        <group name="trunks">
+          <users>
+{users}          </users>
+        </group>
+      </groups>
     </domain>
   </section>
 </document>

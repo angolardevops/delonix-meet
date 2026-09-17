@@ -92,8 +92,10 @@ fn protocol(msg: impl Into<String>) -> PortError {
 }
 
 /// Causa Q.850 → resultado do produto, quando nenhuma variável nossa o disse.
-pub fn outcome_from_cause(cause: Option<&str>, billsec: i64) -> CallOutcome {
-    if billsec > 0 {
+/// Atendida = houve `answer_epoch`: uma chamada atendida e desligada em menos
+/// de um segundo tem `billsec` 0 (medido no FreeSWITCH 1.11.3).
+pub fn outcome_from_cause(cause: Option<&str>, answered: bool) -> CallOutcome {
+    if answered {
         return CallOutcome::Answered;
     }
     match cause.unwrap_or("") {
@@ -141,7 +143,12 @@ impl CdrSource for FreeswitchJsonCdr {
         let hangup_cause = var(vars, "hangup_cause");
         let outcome = var(vars, "delonix_outcome")
             .and_then(|o| CallOutcome::parse(&o))
-            .unwrap_or_else(|| outcome_from_cause(hangup_cause.as_deref(), billsec));
+            .unwrap_or_else(|| {
+                outcome_from_cause(
+                    hangup_cause.as_deref(),
+                    answered_at.is_some() || billsec > 0,
+                )
+            });
         let trunk_id = var(vars, "delonix_trunk_id")
             .and_then(|v| Uuid::parse_str(&v).ok())
             .or_else(|| var(vars, "sip_gateway_name").and_then(|g| trunk_id_from_gateway(&g)));
@@ -167,12 +174,16 @@ impl CdrSource for FreeswitchJsonCdr {
             call_id: var(vars, "delonix_call_id").and_then(|v| Uuid::parse_str(&v).ok()),
             direction,
             from_number: clip(
-                var(vars, "caller_id_number").or_else(|| var(vars, "effective_caller_id_number")),
+                var(vars, "caller_id_number")
+                    .or_else(|| var(vars, "effective_caller_id_number"))
+                    .or_else(|| var(vars, "sip_from_user")),
                 32,
             )
             .unwrap_or_default(),
             to_number: clip(
-                var(vars, "delonix_dialed").or_else(|| var(vars, "destination_number")),
+                var(vars, "delonix_dialed")
+                    .or_else(|| var(vars, "destination_number"))
+                    .or_else(|| var(vars, "sip_to_user")),
                 32,
             )
             .unwrap_or_default(),
@@ -456,18 +467,22 @@ mod tests {
 
     #[test]
     fn outcomes_and_garbage() {
-        assert_eq!(outcome_from_cause(Some("USER_BUSY"), 0), CallOutcome::Busy);
         assert_eq!(
-            outcome_from_cause(Some("NO_ANSWER"), 0),
+            outcome_from_cause(Some("USER_BUSY"), false),
+            CallOutcome::Busy
+        );
+        assert_eq!(
+            outcome_from_cause(Some("NO_ANSWER"), false),
             CallOutcome::NoAnswer
         );
         assert_eq!(
-            outcome_from_cause(Some("NORMAL_TEMPORARY_FAILURE"), 0),
+            outcome_from_cause(Some("NORMAL_TEMPORARY_FAILURE"), false),
             CallOutcome::Failed
         );
         let mut v = sample();
         v["variables"]["delonix_outcome"] = "wrong_pin".into();
         v["variables"]["billsec"] = "0".into();
+        v["variables"]["answer_epoch"] = "0".into();
         let d = FreeswitchJsonCdr.parse(v.to_string().as_bytes()).unwrap();
         assert_eq!(d.outcome, CallOutcome::WrongPin);
         assert!(FreeswitchJsonCdr.parse(b"{}").is_err());

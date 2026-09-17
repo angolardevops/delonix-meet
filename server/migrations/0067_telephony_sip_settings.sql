@@ -17,3 +17,7 @@ CREATE TABLE telephony_sip_settings (
     updated_by       UUID REFERENCES users(id) ON DELETE SET NULL,
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- O domínio decide a org de uma chamada que ENTRA pelo PBX (xml_curl): dois
+-- inquilinos com o mesmo domínio tornavam a escolha arbitrária — medido com o
+-- FreeSWITCH real, a chamada de uma org saiu pelos troncos da outra.
+CREATE UNIQUE INDEX telephony_sip_settings_domain_uidx ON telephony_sip_settings (lower(domain));

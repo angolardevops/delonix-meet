@@ -307,8 +307,11 @@ pub fn originate_command(
     if req.legs.is_empty() {
         return Err(PortError::Protocol("originate sem troncos".into()));
     }
+    // `origination_uuid` NÃO vai nas variáveis globais: com failover (`|`) a
+    // segunda tentativa reutilizava o uuid e falhava com
+    // DESTINATION_OUT_OF_ORDER — medido contra o FreeSWITCH 1.11.3. Vai só na
+    // primeira perna; as seguintes seguem-se por `delonix_call_id`.
     let mut vars = vec![
-        format!("origination_uuid={}", req.call_id),
         format!(
             "originate_timeout={}",
             req.answer_timeout_secs.clamp(5, 120)
@@ -340,9 +343,15 @@ pub fn originate_command(
     let legs: Vec<String> = req
         .legs
         .iter()
-        .map(|l| {
+        .enumerate()
+        .map(|(i, l)| {
             Ok(format!(
-                "[delonix_trunk_id={}]sofia/gateway/{}/{}",
+                "[{}delonix_trunk_id={}]sofia/gateway/{}/{}",
+                if i == 0 {
+                    format!("origination_uuid={},", req.call_id)
+                } else {
+                    String::new()
+                },
                 l.trunk_id,
                 safe(&l.gateway_name, b"-")?,
                 safe(&l.number, b"")?
@@ -907,8 +916,8 @@ mod tests {
     #[test]
     fn originate_command_is_built_from_validated_values() {
         let cmd = originate_command(&req(), "external").unwrap();
-        assert!(cmd.starts_with("originate {origination_uuid=00000000-0000-0000-0000-000000000000,originate_timeout=30,"));
-        assert!(cmd.contains("[delonix_trunk_id=00000000-0000-0000-0000-000000000000]sofia/gateway/dlx-00000000-0000-0000-0000-000000000000/244923447108"));
+        assert!(cmd.starts_with("originate {originate_timeout=30,"), "{cmd}");
+        assert!(cmd.contains("[origination_uuid=00000000-0000-0000-0000-000000000000,delonix_trunk_id=00000000-0000-0000-0000-000000000000]sofia/gateway/dlx-00000000-0000-0000-0000-000000000000/244923447108"));
         assert!(cmd.ends_with(" &playback(tone_stream://%(1000,0,440);loops=3)"));
         assert!(!cmd.contains("record_session"));
 
