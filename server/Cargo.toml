@@ -128,7 +128,7 @@ bytes = "1"
 # sentidos (ADR-0010 §«Medições»).
 opus-rs = "=0.1.33"
 # Chaves de acesso (WebAuthn/passkeys) como segundo factor — ADR-0011. Crate do
-# projecto Kanidm, auditada (SUSE, 2022), com os vectores da especificação.
+# projecto Kanidm, auditada pela SUSE Product Security (README da crate), com os vectores da especificação.
 # `danger-allow-state-serialisation`: o estado da cerimónia guarda-se na base
 # (o «finish» pode cair noutro nó); é consumido uma vez e expira em 5 min.
 webauthn-rs = { version = "=0.5.5", features = ["danger-allow-state-serialisation"] }

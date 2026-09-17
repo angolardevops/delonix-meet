@@ -1,5 +1,5 @@
 //! Chaves de acesso (WebAuthn) como segundo factor, contra Postgres e servidor
-//! reais, com um autenticador em SOFTWARE que assina de verdade (R209).
+//! reais, com um autenticador em SOFTWARE que assina de verdade (R208).
 //!
 //! O que se prova: registar exige reautenticação recente; o login com password
 //! passa a pedir o segundo factor e a chave abre a sessão; a cerimónia serve
@@ -78,7 +78,7 @@ async fn password_login(app: &TestApp, email: &str) -> Value {
     b
 }
 
-/// R209 — registo, login com a chave, cerimónia de uso único, isolamento e
+/// R208 — registo, login com a chave, cerimónia de uso único, isolamento e
 /// último factor.
 #[sqlx::test(migrations = "./migrations")]
 async fn passkey_registration_login_and_last_factor(db: sqlx::PgPool) {
@@ -268,7 +268,7 @@ async fn passkey_registration_login_and_last_factor(db: sqlx::PgPool) {
     assert_eq!(sec["required_by_organization"], true);
 }
 
-/// R209 — o TOTP também é «último factor», e regenerar códigos exige
+/// R208 — o TOTP também é «último factor», e regenerar códigos exige
 /// reautenticação e devolve códigos que funcionam.
 #[sqlx::test(migrations = "./migrations")]
 async fn totp_last_factor_and_regenerated_codes(db: sqlx::PgPool) {
