@@ -19,7 +19,13 @@ import {
   DNode,
   edgeTypesFor,
   EdgeType,
+  DataRole,
+  EVENT_GATEWAYS,
   EventTrigger,
+  GATEWAY_KINDS,
+  TASK_KINDS,
+  THROWABLE,
+  TRIGGERS,
   FRAGMENT_OPERATORS,
   FragmentOperator,
   GatewayKind,
@@ -296,9 +302,17 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
               <Select
                 value={n.type}
                 onChange={(e) => {
-                  const type = e.target.value as DNode['type']
-                  const trigger = type === 'intermediateEvent' && (n.props.trigger ?? 'none') === 'none' ? 'timer' : n.props.trigger
-                  onChange(patchNode(doc, n.id, (x) => ({ ...x, type, props: { ...x.props, trigger } })))
+                  const type = e.target.value as 'startEvent' | 'intermediateEvent' | 'endEvent'
+                  const allowed = TRIGGERS[type]
+                  const trigger = allowed.includes(n.props.trigger ?? 'none') ? n.props.trigger : allowed[0]
+                  const intermediate = type === 'intermediateEvent'
+                  onChange(
+                    patchNode(doc, n.id, (x) => ({
+                      ...x,
+                      type,
+                      props: { ...x.props, trigger, throwing: intermediate ? x.props.throwing : undefined, boundary: intermediate ? x.props.boundary : undefined, nonInterrupting: intermediate ? x.props.nonInterrupting : undefined },
+                    })),
+                  )
                 }}
               >
                 {(['startEvent', 'intermediateEvent', 'endEvent'] as const).map((k) => (
@@ -309,16 +323,37 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
               </Select>
             </Field>
             <Field label={t('diagrams.inspector.gatilho')}>
-              <Select value={n.props.trigger ?? 'none'} onChange={(e) => setProps({ trigger: e.target.value as EventTrigger })}>
-                {(['none', 'message', 'timer', 'signal'] as const)
-                  .filter((k) => !(n.type === 'intermediateEvent' && k === 'none') && !(n.type === 'endEvent' && k === 'timer'))
-                  .map((k) => (
-                    <option key={k} value={k}>
-                      {t(`diagrams.opcoes.gatilho.${k}`)}
-                    </option>
-                  ))}
+              <Select
+                value={n.props.trigger ?? 'none'}
+                onChange={(e) => {
+                  const trigger = e.target.value as EventTrigger
+                  // Erro só existe como fronteira; lançar só onde o gatilho se pode lançar.
+                  setProps({ trigger, throwing: THROWABLE.has(trigger) ? n.props.throwing : undefined, boundary: trigger === 'error' ? true : n.props.boundary })
+                }}
+              >
+                {TRIGGERS[n.type as 'startEvent'].map((k) => (
+                  <option key={k} value={k}>
+                    {t(`diagrams.opcoes.gatilho.${k}`)}
+                  </option>
+                ))}
               </Select>
             </Field>
+            {n.type === 'intermediateEvent' && (
+              <>
+                {THROWABLE.has(n.props.trigger ?? 'none') && !n.props.boundary && (
+                  <Toggle label={t('diagrams.inspector.lanca')} checked={!!n.props.throwing} onChange={(e) => setProps({ throwing: e.target.checked })} />
+                )}
+                <Toggle
+                  label={t('diagrams.inspector.fronteira')}
+                  checked={!!n.props.boundary}
+                  disabled={n.props.trigger === 'error' || n.props.trigger === 'link'}
+                  onChange={(e) => setProps({ boundary: e.target.checked, throwing: e.target.checked ? undefined : n.props.throwing })}
+                />
+                {n.props.boundary && n.props.trigger !== 'error' && n.props.trigger !== 'compensation' && (
+                  <Toggle label={t('diagrams.inspector.naoInterrompe')} checked={!!n.props.nonInterrupting} onChange={(e) => setProps({ nonInterrupting: e.target.checked })} />
+                )}
+              </>
+            )}
           </>
         )}
         {(n.type === 'task' || n.type === 'subProcess') && (
@@ -337,7 +372,7 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
                   )
                 }}
               >
-                {(['none', 'user', 'service', 'script', 'manual', 'send', 'receive'] as const).map((k) => (
+                {TASK_KINDS.map((k) => (
                   <option key={k} value={k}>
                     {t(`diagrams.opcoes.tarefa.${k}`)}
                   </option>
@@ -351,7 +386,7 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
                   <TextInput code value={n.props.implementation ?? ''} onChange={(e) => setProps({ implementation: e.target.value }, 'impl')} />
                 </Field>
                 <Field label={t('diagrams.inspector.multiInstancia')}>
-                  <Select value={n.props.multiInstance ?? 'none'} onChange={(e) => setProps({ multiInstance: e.target.value as MultiInstance })}>
+                  <Select value={n.props.multiInstance ?? 'none'} onChange={(e) => setProps({ multiInstance: e.target.value as MultiInstance, loop: e.target.value === 'none' ? n.props.loop : false })}>
                     {(['none', 'parallel', 'sequential'] as const).map((k) => (
                       <option key={k} value={k}>
                         {t(`diagrams.opcoes.multi.${k}`)}
@@ -361,18 +396,39 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
                 </Field>
               </>
             )}
+            <Toggle
+              label={t('diagrams.inspector.ciclo')}
+              checked={!!n.props.loop}
+              onChange={(e) => setProps({ loop: e.target.checked, multiInstance: e.target.checked ? 'none' : n.props.multiInstance })}
+            />
+            <Toggle label={t('diagrams.inspector.compensacao')} checked={!!n.props.compensation} onChange={(e) => setProps({ compensation: e.target.checked })} />
+            {n.type === 'subProcess' && <Toggle label={t('diagrams.inspector.adHoc')} checked={!!n.props.adHoc} onChange={(e) => setProps({ adHoc: e.target.checked })} />}
           </>
         )}
         {n.type === 'gateway' && (
           <Field label={t('diagrams.inspector.tipo')}>
             <Select value={n.props.gatewayKind ?? 'exclusive'} onChange={(e) => setProps({ gatewayKind: e.target.value as GatewayKind })}>
-              {(['exclusive', 'parallel', 'inclusive', 'eventBased'] as const).map((k) => (
+              {GATEWAY_KINDS.map((k) => (
                 <option key={k} value={k}>
                   {t(`diagrams.opcoes.gateway.${k}`)}
                 </option>
               ))}
             </Select>
           </Field>
+        )}
+        {n.type === 'dataObject' && (
+          <>
+            <Field label={t('diagrams.inspector.papelDados')}>
+              <Select value={n.props.dataRole ?? 'none'} onChange={(e) => setProps({ dataRole: e.target.value as DataRole })}>
+                {(['none', 'input', 'output'] as const).map((k) => (
+                  <option key={k} value={k}>
+                    {t(`diagrams.opcoes.dados.${k}`)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Toggle label={t('diagrams.inspector.colecao')} checked={!!n.props.collection} onChange={(e) => setProps({ collection: e.target.checked })} />
+          </>
         )}
         {bpmn && n.type !== 'pool' && <LaneField doc={doc} n={n} onChange={onChange} />}
 
@@ -532,7 +588,7 @@ function FlowsPanel({ doc, n, onChange, onSelect }: { doc: DiagramDoc; n: DNode;
   const byId = new Map(doc.nodes.map((x) => [x.id, x]))
   const outs = doc.edges.filter((e) => e.from === n.id && (e.type === 'sequenceFlow' || e.type === 'messageFlow'))
   const candidates = doc.nodes.filter((x) => x.id !== n.id && BPMN_FLOW_NODES.has(x.type))
-  const canDefault = n.type === 'task' || n.type === 'subProcess' || (n.type === 'gateway' && (n.props.gatewayKind ?? 'exclusive') !== 'parallel' && n.props.gatewayKind !== 'eventBased')
+  const canDefault = n.type === 'task' || n.type === 'subProcess' || (n.type === 'gateway' && (n.props.gatewayKind ?? 'exclusive') !== 'parallel' && !EVENT_GATEWAYS.has(n.props.gatewayKind ?? 'exclusive'))
 
   function create() {
     const to = byId.get(target)
@@ -631,8 +687,9 @@ function EdgePanel({ doc, e, onChange, onDelete }: { doc: DiagramDoc; e: DEdge; 
   const types = a && b ? edgeTypesFor(a, b) : [e.type]
   const assoc = e.type === 'association' || e.type === 'aggregation' || e.type === 'composition'
   const src = a?.type
-  const canCondition = e.type === 'controlFlow' || (e.type === 'sequenceFlow' && src !== 'startEvent') && !(src === 'gateway' && (a?.props.gatewayKind === 'parallel' || a?.props.gatewayKind === 'eventBased'))
-  const canDefault = e.type === 'sequenceFlow' && (src === 'task' || src === 'subProcess' || (src === 'gateway' && (a?.props.gatewayKind ?? 'exclusive') !== 'parallel' && a?.props.gatewayKind !== 'eventBased'))
+  const eventGw = src === 'gateway' && EVENT_GATEWAYS.has(a?.props.gatewayKind ?? 'exclusive')
+  const canCondition = e.type === 'controlFlow' || (e.type === 'sequenceFlow' && src !== 'startEvent' && !(src === 'gateway' && a?.props.gatewayKind === 'parallel') && !eventGw)
+  const canDefault = e.type === 'sequenceFlow' && (src === 'task' || src === 'subProcess' || (src === 'gateway' && (a?.props.gatewayKind ?? 'exclusive') !== 'parallel' && !eventGw))
 
   return (
     <Section

@@ -40,6 +40,10 @@ function carries(host: DNode, m: DNode): boolean {
   const grown = { x: b.x - 10, y: b.y - 10, w: b.w + 20, h: b.h + 20 }
   if (host.type === 'component') return m.type === 'port' && contains(grown, c)
   if (host.type === 'lifeline') return m.type === 'activation' && contains(grown, c)
+  if (host.type === 'task' || host.type === 'subProcess') {
+    const r = m.w / 2
+    return m.type === 'intermediateEvent' && !!m.props.boundary && contains({ x: b.x - r, y: b.y - r, w: b.w + 2 * r, h: b.h + 2 * r }, c)
+  }
   return false
 }
 const WIDTH_ONLY = new Set<DNode['type']>(['class', 'interface', 'enum'])

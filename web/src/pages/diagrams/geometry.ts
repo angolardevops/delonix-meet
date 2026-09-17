@@ -240,6 +240,18 @@ export function distToSegment(p: Pt, a: Pt, b: Pt): number {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
 }
 
+/** A actividade a cuja borda um evento de fronteira está preso (a mais pequena que o toca). */
+export function attachedActivity(ev: DNode, activities: DNode[]): DNode | undefined {
+  const c = center(nodeBox(ev))
+  const r = ev.w / 2
+  return activities
+    .filter((a) => {
+      const b = nodeBox(a)
+      return c.x >= b.x - r && c.x <= b.x + b.w + r && c.y >= b.y - r && c.y <= b.y + b.h + r
+    })
+    .sort((a, b) => a.w * a.h - b.w * b.h)[0]
+}
+
 /** Mensagens dentro do intervalo vertical de um fragmento combinado. */
 export function messageY(doc: Pick<DiagramDoc, 'nodes'>, e: DEdge): number | null {
   const seg = edgeSegment(doc, e)

@@ -8,12 +8,13 @@
  * escolha (nomear uma classe, desfazer um ciclo de herança, decidir para onde
  * vai uma tarefa sem saída), a regra avisa e não mexe.
  */
-import { center, contains, nodeBox, poolOf } from './geometry'
+import { attachedActivity, center, contains, nodeBox, poolOf } from './geometry'
 import {
   ACTIVITY_NODES,
   BPMN_FLOW_NODES,
   canConnect,
   CLASSIFIERS,
+  EVENT_GATEWAYS,
   DEdge,
   defaultEdgeType,
   DiagramDoc,
@@ -68,6 +69,11 @@ export type RuleCode =
   | 'bpmnForaDaPiscina'
   | 'bpmnGatewayEventos'
   | 'bpmnTarefaSemNome'
+  | 'bpmnFronteiraSolta'
+  | 'bpmnFronteiraComEntrada'
+  | 'bpmnGatewayInutil'
+  | 'bpmnGatewayEventosSaidas'
+  | 'bpmnLigacaoSemPar'
   | 'archSemNome'
   | 'archIsolado'
   | 'flowSemInicio'
@@ -301,30 +307,44 @@ function validateBpmn(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
     }
   }
 
+  const activities = flowNodes.filter((n) => n.type === 'task' || n.type === 'subProcess')
   for (const n of flowNodes) {
     const inc = incoming(n.id)
     const outs = outgoing(n.id)
+    const boundary = n.type === 'intermediateEvent' && !!n.props.boundary
+    const linkCatch = n.type === 'intermediateEvent' && n.props.trigger === 'link' && !n.props.throwing
+    const linkThrow = n.type === 'intermediateEvent' && n.props.trigger === 'link' && !!n.props.throwing
+    // Uma actividade de compensação só corre pela associação ao evento de fronteira: não tem fluxo.
+    const compensation = (n.type === 'task' || n.type === 'subProcess') && !!n.props.compensation
     if (n.type === 'startEvent' && inc.length > 0) out.push(issue('bpmnInicioComEntrada', 'error', [n.id], { name: label(n) }, true))
     if (n.type === 'endEvent' && outs.length > 0) out.push(issue('bpmnFimComSaida', 'error', [n.id], { name: label(n) }, true))
-    if (n.type !== 'startEvent' && inc.length === 0) {
+    if (n.type !== 'startEvent' && inc.length === 0 && !boundary && !linkCatch && !compensation) {
       out.push(issue('bpmnSemEntrada', 'warning', [n.id], { name: label(n) }))
     }
-    if (n.type !== 'endEvent' && outs.length === 0) out.push(issue('bpmnSemSaida', 'warning', [n.id], { name: label(n) }))
+    if (n.type !== 'endEvent' && outs.length === 0 && !linkThrow && !compensation) out.push(issue('bpmnSemSaida', 'warning', [n.id], { name: label(n) }))
+    if (boundary) {
+      if (!attachedActivity(n, activities)) out.push(issue('bpmnFronteiraSolta', 'error', [n.id], { name: label(n) }))
+      if (inc.length > 0) out.push(issue('bpmnFronteiraComEntrada', 'error', [n.id], { name: label(n) }, true))
+    }
     if ((n.type === 'task' || n.type === 'subProcess') && !n.name.trim()) out.push(issue('bpmnTarefaSemNome', 'warning', [n.id]))
     if (hasPools && !poolOf(doc, n)) out.push(issue('bpmnForaDaPiscina', 'warning', [n.id], { name: label(n) }))
 
     if (n.type === 'gateway') {
       const kind = n.props.gatewayKind ?? 'exclusive'
-      if ((kind === 'exclusive' || kind === 'inclusive') && outs.length >= 2 && !outs.some((e) => e.isDefault)) {
+      if ((kind === 'exclusive' || kind === 'inclusive' || kind === 'complex') && outs.length >= 2 && !outs.some((e) => e.isDefault)) {
         out.push(issue('bpmnGatewaySemOmissao', 'warning', [n.id], { name: label(n) }, outs.some((e) => !e.condition?.trim())))
       }
       if (kind === 'parallel') {
         for (const e of outs) if (e.condition?.trim() || e.isDefault) out.push(issue('bpmnCondicaoEmParalelo', 'error', [e.id], { name: label(n) }, true))
       }
-      if (kind === 'eventBased') {
+      if ((inc.length + outs.length > 0) && inc.length <= 1 && outs.length <= 1) {
+        out.push(issue('bpmnGatewayInutil', 'warning', [n.id], { name: label(n) }))
+      }
+      if (EVENT_GATEWAYS.has(kind) && outs.length < 2) out.push(issue('bpmnGatewayEventosSaidas', 'error', [n.id], { name: label(n) }))
+      if (EVENT_GATEWAYS.has(kind)) {
         for (const e of outs) {
           const target = byId.get(e.to)!
-          const ok = target.type === 'intermediateEvent' || (target.type === 'task' && target.props.taskKind === 'receive')
+          const ok = (target.type === 'intermediateEvent' && !target.props.throwing && !target.props.boundary) || (target.type === 'task' && target.props.taskKind === 'receive')
           if (!ok) out.push(issue('bpmnGatewayEventos', 'error', [e.id], { name: label(n), target: label(target) }))
         }
       }
@@ -336,11 +356,17 @@ function validateBpmn(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
   for (const e of seq) {
     const a = byId.get(e.from)!
     if (e.isDefault && e.condition?.trim()) out.push(issue('bpmnOmissaoComCondicao', 'error', [e.id], { name: label(a) }, true))
-    const canDefault = (a.type === 'gateway' && (a.props.gatewayKind === 'exclusive' || a.props.gatewayKind === 'inclusive' || !a.props.gatewayKind)) || a.type === 'task' || a.type === 'subProcess'
+    const canDefault = (a.type === 'gateway' && (a.props.gatewayKind === 'exclusive' || a.props.gatewayKind === 'inclusive' || a.props.gatewayKind === 'complex' || !a.props.gatewayKind)) || a.type === 'task' || a.type === 'subProcess'
     if (e.isDefault && !canDefault) out.push(issue('bpmnOmissaoOrigem', 'error', [e.id], { name: label(a) }, true))
     const pa = poolOf(doc, a)
     const pb = poolOf(doc, byId.get(e.to)!)
     if (pa && pb && pa.id !== pb.id) out.push(issue('bpmnFluxoEntrePiscinas', 'error', [e.id], { from: label(pa), to: label(pb) }, true))
+  }
+  // Eventos de ligação: um «lançar» precisa de um «apanhar» com o mesmo nome, no mesmo processo.
+  const links = flowNodes.filter((n) => n.type === 'intermediateEvent' && n.props.trigger === 'link')
+  for (const n of links) {
+    const pair = links.find((m) => m.id !== n.id && !!m.props.throwing !== !!n.props.throwing && m.name.trim() === n.name.trim() && poolOf(doc, m)?.id === poolOf(doc, n)?.id)
+    if (!pair) out.push(issue('bpmnLigacaoSemPar', 'warning', [n.id], { name: label(n) }))
   }
   for (const e of doc.edges) {
     if (e.type !== 'messageFlow') continue
@@ -450,6 +476,8 @@ export function applyFix(doc: DiagramDoc, is: Issue, names: { start: string; end
       return { ...doc, edges: doc.edges.filter((e) => !(e.type === 'sequenceFlow' && e.to === first)) }
     case 'bpmnFimComSaida':
       return { ...doc, edges: doc.edges.filter((e) => !(e.type === 'sequenceFlow' && e.from === first)) }
+    case 'bpmnFronteiraComEntrada':
+      return { ...doc, edges: doc.edges.filter((e) => !(e.type === 'sequenceFlow' && e.to === first)) }
     case 'bpmnSemInicio':
     case 'bpmnSemFim': {
       const target = byId.get(first)

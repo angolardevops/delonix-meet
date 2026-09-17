@@ -6,7 +6,7 @@
  * nomes que a pessoa escreveu vão escapados; os identificadores XML são os do
  * modelo com um prefixo, porque um `xmi:id`/`id` BPMN tem de ser NCName.
  */
-import { center, contentBox, edgeSegment, laneOf, nodeBox, poolHeight, poolOf } from './geometry'
+import { attachedActivity, center, contentBox, edgeSegment, laneOf, nodeBox, poolHeight, poolOf } from './geometry'
 import {
   ACTIVITY_NODES,
   BPMN_FLOW_NODES,
@@ -765,27 +765,67 @@ function bpmnTag(n: DNode): string {
     case 'endEvent':
       return 'endEvent'
     case 'intermediateEvent':
-      return 'intermediateCatchEvent'
+      return n.props.boundary ? 'boundaryEvent' : n.props.throwing ? 'intermediateThrowEvent' : 'intermediateCatchEvent'
     case 'subProcess':
-      return 'subProcess'
+      return n.props.adHoc ? 'adHocSubProcess' : 'subProcess'
     case 'gateway':
       return (
-        { exclusive: 'exclusiveGateway', parallel: 'parallelGateway', inclusive: 'inclusiveGateway', eventBased: 'eventBasedGateway' } as const
+        {
+          exclusive: 'exclusiveGateway',
+          parallel: 'parallelGateway',
+          inclusive: 'inclusiveGateway',
+          eventBased: 'eventBasedGateway',
+          eventInstantiate: 'eventBasedGateway',
+          eventParallel: 'eventBasedGateway',
+          complex: 'complexGateway',
+        } as const
       )[n.props.gatewayKind ?? 'exclusive']
     case 'task':
       return (
-        { none: 'task', user: 'userTask', service: 'serviceTask', script: 'scriptTask', manual: 'manualTask', send: 'sendTask', receive: 'receiveTask' } as const
+        {
+          none: 'task',
+          user: 'userTask',
+          service: 'serviceTask',
+          script: 'scriptTask',
+          manual: 'manualTask',
+          send: 'sendTask',
+          receive: 'receiveTask',
+          businessRule: 'businessRuleTask',
+          call: 'callActivity',
+        } as const
       )[n.props.taskKind ?? 'none']
     default:
       return 'task'
   }
 }
 
+const EVENT_DEFINITION: Record<Exclude<DNode['props']['trigger'], undefined | 'none'>, string> = {
+  message: 'messageEventDefinition',
+  timer: 'timerEventDefinition',
+  signal: 'signalEventDefinition',
+  error: 'errorEventDefinition',
+  escalation: 'escalationEventDefinition',
+  compensation: 'compensateEventDefinition',
+  conditional: 'conditionalEventDefinition',
+  link: 'linkEventDefinition',
+  terminate: 'terminateEventDefinition',
+}
+
+function eventDefinition(trig: keyof typeof EVENT_DEFINITION, id: string, name: string): string {
+  const tag = EVENT_DEFINITION[trig]
+  // A condição é obrigatória no esquema; a ligação (link) é emparelhada pelo nome.
+  if (trig === 'conditional') return `<bpmn:${tag} id="${id}_def"><bpmn:condition xsi:type="bpmn:tFormalExpression"/></bpmn:${tag}>`
+  if (trig === 'link') return `<bpmn:${tag} id="${id}_def" name="${escapeXml(name)}"/>`
+  return `<bpmn:${tag} id="${id}_def"/>`
+}
+
 export function toBpmn(doc: DiagramDoc): string {
   const byId = new Map(doc.nodes.map((n) => [n.id, n]))
   const pools = doc.nodes.filter((n) => n.type === 'pool')
   const flowNodes = doc.nodes.filter((n) => BPMN_FLOW_NODES.has(n.type))
-  const artifacts = doc.nodes.filter((n) => n.type === 'dataObject' || n.type === 'annotation')
+  const artifacts = doc.nodes.filter((n) => n.type === 'dataObject' || n.type === 'annotation' || n.type === 'dataStore' || n.type === 'group')
+  const activities = flowNodes.filter((n) => n.type === 'task' || n.type === 'subProcess')
+  const hostOf = (ev: DNode) => (ev.type === 'intermediateEvent' && ev.props.boundary ? attachedActivity(ev, activities) : undefined)
   const edges = doc.edges.filter((e) => EDGE_NOTATION[e.type] === 'bpmn' && byId.has(e.from) && byId.has(e.to))
   const seq = edges.filter((e) => e.type === 'sequenceFlow')
 
@@ -801,6 +841,7 @@ export function toBpmn(doc: DiagramDoc): string {
 
   const messageFlows = edges.filter((e) => e.type === 'messageFlow')
   const collabId = xmlId('Collaboration', doc.id)
+  const groups = artifacts.filter((a) => a.type === 'group')
   if (pools.length > 0) {
     out.push(`  <bpmn:collaboration id="${collabId}">`)
     for (const p of pools) out.push(`    <bpmn:participant id="${xmlId('Participant', p.id)}" name="${escapeXml(p.name.trim())}" processRef="${processIds.get(p.id)}"/>`)
@@ -810,12 +851,29 @@ export function toBpmn(doc: DiagramDoc): string {
     }
     out.push('  </bpmn:collaboration>')
   }
+  // Um grupo BPMN aponta para um valor de categoria definido fora do processo.
+  for (const g of groups) {
+    out.push(`  <bpmn:category id="${xmlId('Category', g.id)}"><bpmn:categoryValue id="${xmlId('CategoryValue', g.id)}" value="${escapeXml(g.name.trim())}"/></bpmn:category>`)
+  }
 
   for (const [key, pid] of processIds) {
     const pool = key ? byId.get(key)! : null
     out.push(`  <bpmn:process id="${pid}" isExecutable="false"${pool ? ` name="${escapeXml(pool.name.trim())}"` : ''}>`)
     const members = flowNodes.filter((n) => processKey(n) === key)
     const lanes = pool?.props.lanes ?? []
+    const io = artifacts.filter((a) => processKey(a) === key && a.type === 'dataObject' && (a.props.dataRole === 'input' || a.props.dataRole === 'output'))
+    if (io.length > 0) {
+      // ioSpecification vem antes do laneSet (tCallableElement → tProcess) e pede os dois conjuntos.
+      const ins = io.filter((a) => a.props.dataRole === 'input')
+      const outs = io.filter((a) => a.props.dataRole === 'output')
+      const coll = (a: DNode) => (a.props.collection ? ' isCollection="true"' : '')
+      out.push(`    <bpmn:ioSpecification id="${xmlId('IO', pid)}">`)
+      for (const a of ins) out.push(`      <bpmn:dataInput id="${xmlId('N', a.id)}" name="${escapeXml(a.name.trim())}"${coll(a)}/>`)
+      for (const a of outs) out.push(`      <bpmn:dataOutput id="${xmlId('N', a.id)}" name="${escapeXml(a.name.trim())}"${coll(a)}/>`)
+      out.push(`      <bpmn:inputSet id="${xmlId('InputSet', pid)}">${ins.map((a) => `<bpmn:dataInputRefs>${xmlId('N', a.id)}</bpmn:dataInputRefs>`).join('')}</bpmn:inputSet>`)
+      out.push(`      <bpmn:outputSet id="${xmlId('OutputSet', pid)}">${outs.map((a) => `<bpmn:dataOutputRefs>${xmlId('N', a.id)}</bpmn:dataOutputRefs>`).join('')}</bpmn:outputSet>`)
+      out.push('    </bpmn:ioSpecification>')
+    }
     if (pool && lanes.length > 0) {
       out.push(`    <bpmn:laneSet id="${xmlId('LaneSet', pool.id)}">`)
       for (const lane of lanes) {
@@ -835,6 +893,15 @@ export function toBpmn(doc: DiagramDoc): string {
       const attrs = [`id="${id}"`]
       if (n.name.trim()) attrs.push(`name="${escapeXml(n.name.trim())}"`)
       if (def && (n.type === 'gateway' || n.type === 'task' || n.type === 'subProcess')) attrs.push(`default="${xmlId('F', def.id)}"`)
+      const host = hostOf(n)
+      if (host) {
+        attrs.push(`attachedToRef="${xmlId('N', host.id)}"`)
+        if (n.props.nonInterrupting) attrs.push('cancelActivity="false"')
+      }
+      if (n.type === 'gateway' && (n.props.gatewayKind === 'eventInstantiate' || n.props.gatewayKind === 'eventParallel')) {
+        attrs.push(`instantiate="true" eventGatewayType="${n.props.gatewayKind === 'eventParallel' ? 'Parallel' : 'Exclusive'}"`)
+      }
+      if ((n.type === 'task' || n.type === 'subProcess') && n.props.compensation) attrs.push('isForCompensation="true"')
       const inner: string[] = []
       if (n.type === 'task' && n.props.implementation?.trim()) {
         inner.push(`<bpmn:extensionElements><delonix:executor>${escapeXml(n.props.implementation.trim())}</delonix:executor></bpmn:extensionElements>`)
@@ -843,11 +910,12 @@ export function toBpmn(doc: DiagramDoc): string {
       for (const e of outs) inner.push(`<bpmn:outgoing>${xmlId('F', e.id)}</bpmn:outgoing>`)
       if (n.type === 'task' && n.props.multiInstance && n.props.multiInstance !== 'none') {
         inner.push(`<bpmn:multiInstanceLoopCharacteristics isSequential="${n.props.multiInstance === 'sequential'}"/>`)
+      } else if ((n.type === 'task' || n.type === 'subProcess') && n.props.loop) {
+        inner.push(`<bpmn:standardLoopCharacteristics/>`)
       }
       const trig = n.props.trigger
       if ((n.type === 'startEvent' || n.type === 'intermediateEvent' || n.type === 'endEvent') && trig && trig !== 'none') {
-        const def = { message: 'messageEventDefinition', timer: 'timerEventDefinition', signal: 'signalEventDefinition' }[trig]
-        inner.push(`<bpmn:${def} id="${id}_def"/>`)
+        inner.push(eventDefinition(trig, id, n.name.trim()))
       }
       out.push(inner.length ? `    <bpmn:${tag} ${attrs.join(' ')}>${inner.join('')}</bpmn:${tag}>` : `    <bpmn:${tag} ${attrs.join(' ')}/>`)
     }
@@ -861,15 +929,17 @@ export function toBpmn(doc: DiagramDoc): string {
       )
     }
     for (const a of artifacts.filter((x) => processKey(x) === key)) {
-      if (a.type === 'dataObject') {
-        out.push(`    <bpmn:dataObject id="${xmlId('DO', a.id)}"/>`)
+      if (a.type === 'dataObject' && (a.props.dataRole ?? 'none') === 'none') {
+        out.push(`    <bpmn:dataObject id="${xmlId('DO', a.id)}"${a.props.collection ? ' isCollection="true"' : ''}/>`)
         out.push(`    <bpmn:dataObjectReference id="${xmlId('N', a.id)}" name="${escapeXml(a.name.trim())}" dataObjectRef="${xmlId('DO', a.id)}"/>`)
       }
+      if (a.type === 'dataStore') out.push(`    <bpmn:dataStoreReference id="${xmlId('N', a.id)}" name="${escapeXml(a.name.trim())}"/>`)
     }
     for (const a of artifacts.filter((x) => processKey(x) === key)) {
       if (a.type === 'annotation') {
         out.push(`    <bpmn:textAnnotation id="${xmlId('N', a.id)}"><bpmn:text>${escapeXml((a.props.text ?? a.name).trim())}</bpmn:text></bpmn:textAnnotation>`)
       }
+      if (a.type === 'group') out.push(`    <bpmn:group id="${xmlId('N', a.id)}" categoryValueRef="${xmlId('CategoryValue', a.id)}"/>`)
     }
     for (const e of edges.filter((f) => f.type === 'dataAssociation' && processKey(byId.get(f.from)!) === key)) {
       out.push(`    <bpmn:association id="${xmlId('F', e.id)}" sourceRef="${xmlId('N', e.from)}" targetRef="${xmlId('N', e.to)}"/>`)

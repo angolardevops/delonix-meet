@@ -67,6 +67,8 @@ export type NodeType =
   | 'pool'
   | 'dataObject'
   | 'annotation'
+  | 'dataStore'
+  | 'group'
   // Arquitectura
   | 'service'
   | 'database'
@@ -115,9 +117,21 @@ export type EdgeType =
   // Fluxograma
   | 'flow'
 
-export type TaskKind = 'none' | 'user' | 'service' | 'script' | 'manual' | 'send' | 'receive'
-export type EventTrigger = 'none' | 'message' | 'timer' | 'signal'
-export type GatewayKind = 'exclusive' | 'parallel' | 'inclusive' | 'eventBased'
+export type TaskKind = 'none' | 'user' | 'service' | 'script' | 'manual' | 'send' | 'receive' | 'businessRule' | 'call'
+export const TASK_KINDS: TaskKind[] = ['none', 'user', 'service', 'script', 'manual', 'send', 'receive', 'businessRule', 'call']
+export type EventTrigger = 'none' | 'message' | 'timer' | 'signal' | 'error' | 'escalation' | 'compensation' | 'conditional' | 'link' | 'terminate'
+/** Gatilhos que cada tipo de evento aceita (BPMN 2.0, tabela 10.93). */
+export const TRIGGERS: Record<'startEvent' | 'intermediateEvent' | 'endEvent', EventTrigger[]> = {
+  startEvent: ['none', 'message', 'timer', 'signal', 'conditional'],
+  intermediateEvent: ['message', 'timer', 'signal', 'error', 'escalation', 'compensation', 'conditional', 'link'],
+  endEvent: ['none', 'message', 'signal', 'error', 'escalation', 'compensation', 'terminate'],
+}
+/** Gatilhos que um evento intermédio pode LANÇAR (os outros só se apanham). */
+export const THROWABLE: ReadonlySet<EventTrigger> = new Set(['message', 'signal', 'escalation', 'compensation', 'link'])
+export type GatewayKind = 'exclusive' | 'parallel' | 'inclusive' | 'eventBased' | 'complex' | 'eventInstantiate' | 'eventParallel'
+export const GATEWAY_KINDS: GatewayKind[] = ['exclusive', 'parallel', 'inclusive', 'eventBased', 'complex', 'eventInstantiate', 'eventParallel']
+export const EVENT_GATEWAYS: ReadonlySet<GatewayKind> = new Set(['eventBased', 'eventInstantiate', 'eventParallel'])
+export type DataRole = 'none' | 'input' | 'output'
 export type MultiInstance = 'none' | 'parallel' | 'sequential'
 export type FragmentOperator = 'alt' | 'opt' | 'loop' | 'par' | 'break' | 'critical' | 'neg' | 'strict' | 'seq' | 'ignore' | 'consider' | 'assert' | 'ref'
 
@@ -145,6 +159,18 @@ export interface NodeProps {
   /** Executor de uma tarefa (implementação), ex.: `meet.studio.open`. */
   implementation?: string
   trigger?: EventTrigger
+  /** Evento intermédio que LANÇA (marcador preenchido) em vez de apanhar. */
+  throwing?: boolean
+  /** Evento intermédio preso à borda de uma actividade. */
+  boundary?: boolean
+  /** Evento de fronteira que NÃO interrompe a actividade (traço interrompido). */
+  nonInterrupting?: boolean
+  /** Marcadores de actividade BPMN. */
+  loop?: boolean
+  compensation?: boolean
+  adHoc?: boolean
+  dataRole?: DataRole
+  collection?: boolean
   gatewayKind?: GatewayKind
   lanes?: Lane[]
   /** Objecto UML: a classe de que é instância (`s1: Session`). */
@@ -251,6 +277,8 @@ export const NODE_NOTATION: Record<NodeType, Notation> = {
   pool: 'bpmn',
   dataObject: 'bpmn',
   annotation: 'bpmn',
+  dataStore: 'bpmn',
+  group: 'bpmn',
   service: 'arch',
   database: 'arch',
   queue: 'arch',
@@ -295,7 +323,7 @@ export const EDGE_NOTATION: Record<EdgeType, Notation> = {
 }
 
 /** Contentores: desenham-se por baixo e não se ligam por setas de fluxo. */
-export const CONTAINERS: ReadonlySet<NodeType> = new Set(['package', 'fragment', 'boundary', 'pool', 'zone', 'partition', 'compositeState', 'deviceNode'])
+export const CONTAINERS: ReadonlySet<NodeType> = new Set(['package', 'fragment', 'boundary', 'pool', 'zone', 'partition', 'compositeState', 'deviceNode', 'group'])
 
 /** Nós de actividade UML (ligam-se por fluxo de controlo). */
 export const ACTIVITY_NODES: ReadonlySet<NodeType> = new Set(['initialNode', 'activityFinal', 'flowFinal', 'action', 'decisionNode', 'forkNode', 'objectNode'])
@@ -333,6 +361,7 @@ export const LABEL_BELOW: ReadonlySet<NodeType> = new Set([
   'flowFinal',
   'stateInitial',
   'stateFinal',
+  'dataStore',
 ])
 
 export const CLASSIFIERS: ReadonlySet<NodeType> = new Set(['class', 'interface', 'enum'])
@@ -495,6 +524,79 @@ export const PALETTES: Record<Notation, PaletteGroup[]> = {
         { kind: 'node', key: 'annotation', type: 'annotation' },
       ],
     },
+    {
+      key: 'intermediate',
+      closed: true,
+      items: [
+        { kind: 'node', key: 'catchMessage', type: 'intermediateEvent', props: { trigger: 'message' } },
+        { kind: 'node', key: 'throwMessage', type: 'intermediateEvent', props: { trigger: 'message', throwing: true } },
+        { kind: 'node', key: 'catchSignal', type: 'intermediateEvent', props: { trigger: 'signal' } },
+        { kind: 'node', key: 'throwSignal', type: 'intermediateEvent', props: { trigger: 'signal', throwing: true } },
+        { kind: 'node', key: 'conditionalEvent', type: 'intermediateEvent', props: { trigger: 'conditional' } },
+        { kind: 'node', key: 'throwEscalation', type: 'intermediateEvent', props: { trigger: 'escalation', throwing: true } },
+        { kind: 'node', key: 'throwCompensation', type: 'intermediateEvent', props: { trigger: 'compensation', throwing: true } },
+        { kind: 'node', key: 'catchLink', type: 'intermediateEvent', props: { trigger: 'link' } },
+        { kind: 'node', key: 'throwLink', type: 'intermediateEvent', props: { trigger: 'link', throwing: true } },
+        { kind: 'node', key: 'boundaryTimer', type: 'intermediateEvent', props: { trigger: 'timer', boundary: true } },
+        { kind: 'node', key: 'boundaryError', type: 'intermediateEvent', props: { trigger: 'error', boundary: true } },
+        { kind: 'node', key: 'boundaryMessage', type: 'intermediateEvent', props: { trigger: 'message', boundary: true, nonInterrupting: true } },
+      ],
+    },
+    {
+      key: 'endEvents',
+      closed: true,
+      items: [
+        { kind: 'node', key: 'messageEnd', type: 'endEvent', props: { trigger: 'message' } },
+        { kind: 'node', key: 'signalEnd', type: 'endEvent', props: { trigger: 'signal' } },
+        { kind: 'node', key: 'errorEnd', type: 'endEvent', props: { trigger: 'error' } },
+        { kind: 'node', key: 'escalationEnd', type: 'endEvent', props: { trigger: 'escalation' } },
+        { kind: 'node', key: 'compensationEnd', type: 'endEvent', props: { trigger: 'compensation' } },
+        { kind: 'node', key: 'terminateEnd', type: 'endEvent', props: { trigger: 'terminate' } },
+        { kind: 'node', key: 'timerStart', type: 'startEvent', props: { trigger: 'timer' } },
+        { kind: 'node', key: 'signalStart', type: 'startEvent', props: { trigger: 'signal' } },
+        { kind: 'node', key: 'conditionalStart', type: 'startEvent', props: { trigger: 'conditional' } },
+      ],
+    },
+    {
+      key: 'taskTypes',
+      closed: true,
+      items: [
+        { kind: 'node', key: 'sendTask', type: 'task', props: { taskKind: 'send' } },
+        { kind: 'node', key: 'receiveTask', type: 'task', props: { taskKind: 'receive' } },
+        { kind: 'node', key: 'manualTask', type: 'task', props: { taskKind: 'manual' } },
+        { kind: 'node', key: 'scriptTask', type: 'task', props: { taskKind: 'script' } },
+        { kind: 'node', key: 'businessRuleTask', type: 'task', props: { taskKind: 'businessRule' } },
+        { kind: 'node', key: 'callActivity', type: 'task', props: { taskKind: 'call' } },
+        { kind: 'node', key: 'loopTask', type: 'task', props: { loop: true } },
+        { kind: 'node', key: 'multiParallel', type: 'task', props: { multiInstance: 'parallel' } },
+        { kind: 'node', key: 'multiSequential', type: 'task', props: { multiInstance: 'sequential' } },
+        { kind: 'node', key: 'compensationTask', type: 'task', props: { compensation: true } },
+        { kind: 'node', key: 'adHocSubProcess', type: 'subProcess', props: { adHoc: true } },
+      ],
+    },
+    {
+      key: 'moreGateways',
+      closed: true,
+      items: [
+        { kind: 'node', key: 'complexGateway', type: 'gateway', props: { gatewayKind: 'complex' } },
+        { kind: 'node', key: 'eventInstantiateGateway', type: 'gateway', props: { gatewayKind: 'eventInstantiate' } },
+        { kind: 'node', key: 'eventParallelGateway', type: 'gateway', props: { gatewayKind: 'eventParallel' } },
+      ],
+    },
+    {
+      key: 'dataAndFlows',
+      closed: true,
+      items: [
+        { kind: 'node', key: 'dataStore', type: 'dataStore' },
+        { kind: 'node', key: 'dataInput', type: 'dataObject', props: { dataRole: 'input' } },
+        { kind: 'node', key: 'dataOutput', type: 'dataObject', props: { dataRole: 'output' } },
+        { kind: 'node', key: 'dataCollection', type: 'dataObject', props: { collection: true } },
+        { kind: 'node', key: 'group', type: 'group' },
+        { kind: 'edge', key: 'sequenceFlow', edge: 'sequenceFlow' },
+        { kind: 'edge', key: 'messageFlow', edge: 'messageFlow' },
+        { kind: 'edge', key: 'dataAssociation', edge: 'dataAssociation' },
+      ],
+    },
   ],
   arch: [
     {
@@ -590,6 +692,8 @@ const SIZES: Record<NodeType, [number, number]> = {
   pool: [760, 300],
   dataObject: [40, 52],
   annotation: [150, 50],
+  dataStore: [50, 44],
+  group: [300, 180],
   service: [160, 64],
   database: [120, 80],
   queue: [150, 50],
@@ -646,6 +750,7 @@ export function nodeById(doc: Pick<DiagramDoc, 'nodes'>, id: string): DNode | un
 //  Que ligações fazem sentido — usado ao ligar E pela validação.
 // ---------------------------------------------------------------------------
 
+const DATA_SIDE: ReadonlySet<NodeType> = new Set(['dataObject', 'annotation', 'dataStore'])
 const USECASE_SIDE: ReadonlySet<NodeType> = new Set(['actor', 'usecase'])
 const ARCH_NODES: ReadonlySet<NodeType> = new Set(['service', 'database', 'queue', 'client', 'external'])
 const FLOW_NODES: ReadonlySet<NodeType> = new Set(['terminator', 'process', 'decision', 'io', 'document'])
@@ -703,8 +808,8 @@ export function canConnect(type: EdgeType, a: DNode, b: DNode): boolean {
       return (BPMN_FLOW_NODES.has(a.type) || a.type === 'pool') && (BPMN_FLOW_NODES.has(b.type) || b.type === 'pool')
     case 'dataAssociation':
       return (
-        ((a.type === 'dataObject' || a.type === 'annotation') && b.type !== 'pool') ||
-        ((b.type === 'dataObject' || b.type === 'annotation') && a.type !== 'pool')
+        (DATA_SIDE.has(a.type) && b.type !== 'pool' && b.type !== 'group' && a.id !== b.id) ||
+        (DATA_SIDE.has(b.type) && a.type !== 'pool' && a.type !== 'group' && a.id !== b.id)
       )
     case 'sync':
     case 'async':

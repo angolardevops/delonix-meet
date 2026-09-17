@@ -111,17 +111,45 @@ function Classifier({ n }: { n: DNode }) {
   )
 }
 
-function EventMarker({ trigger, r, color }: { trigger: string | undefined; r: number; color: string }) {
+function EventMarker({ trigger, r, color, filled = false }: { trigger: string | undefined; r: number; color: string; filled?: boolean }) {
+  // Lançar desenha o marcador cheio; apanhar desenha-o a traço (BPMN 2.0, 10.4.2).
+  const fill = filled ? color : 'none'
+  const inner = filled ? INK.surface : color
   if (trigger === 'message') {
     const w = r * 0.9
     const h = r * 0.62
     return (
-      <g stroke={color} strokeWidth={1.3} fill="none">
-        <rect x={r - w / 2} y={r - h / 2} width={w} height={h} />
-        <path d={`M${r - w / 2} ${r - h / 2}L${r} ${r + h * 0.1}L${r + w / 2} ${r - h / 2}`} />
+      <g stroke={filled ? INK.surface : color} strokeWidth={1.3} fill={fill}>
+        <rect x={r - w / 2} y={r - h / 2} width={w} height={h} stroke={color} />
+        <path d={`M${r - w / 2} ${r - h / 2}L${r} ${r + h * 0.1}L${r + w / 2} ${r - h / 2}`} stroke={inner} fill="none" />
       </g>
     )
   }
+  if (trigger === 'error') {
+    return <path d={`M${r - r * 0.45} ${r + r * 0.5}L${r - r * 0.2} ${r - r * 0.45}L${r + r * 0.08} ${r + r * 0.12}L${r + r * 0.45} ${r - r * 0.5}L${r + r * 0.22} ${r + r * 0.45}L${r - r * 0.06} ${r - r * 0.1}Z`} stroke={color} strokeWidth={1.2} fill={fill} strokeLinejoin="round" />
+  }
+  if (trigger === 'escalation') {
+    return <path d={`M${r} ${r - r * 0.5}L${r + r * 0.38} ${r + r * 0.45}L${r} ${r + r * 0.12}L${r - r * 0.38} ${r + r * 0.45}Z`} stroke={color} strokeWidth={1.2} fill={fill} strokeLinejoin="round" />
+  }
+  if (trigger === 'compensation') {
+    const k = r * 0.3
+    return <path d={`M${r} ${r - k}V${r + k}L${r - k * 1.3} ${r}ZM${r + k * 1.3} ${r - k}V${r + k}L${r} ${r}Z`} stroke={color} strokeWidth={1.2} fill={fill} strokeLinejoin="round" />
+  }
+  if (trigger === 'conditional') {
+    const w = r * 0.62
+    const h = r * 0.8
+    return (
+      <g stroke={color} strokeWidth={1.1} fill="none">
+        <rect x={r - w / 2} y={r - h / 2} width={w} height={h} />
+        <path d={`M${r - w / 2 + 2} ${r - h / 4}h${w - 4}M${r - w / 2 + 2} ${r}h${w - 4}M${r - w / 2 + 2} ${r + h / 4}h${w - 4}`} />
+      </g>
+    )
+  }
+  if (trigger === 'link') {
+    const k = r * 0.42
+    return <path d={`M${r - k} ${r - k * 0.4}H${r + k * 0.1}V${r - k * 0.9}L${r + k} ${r}L${r + k * 0.1} ${r + k * 0.9}V${r + k * 0.4}H${r - k}Z`} stroke={color} strokeWidth={1.2} fill={fill} strokeLinejoin="round" />
+  }
+  if (trigger === 'terminate') return <circle cx={r} cy={r} r={r * 0.55} fill={color} />
   if (trigger === 'timer') {
     return (
       <g stroke={color} strokeWidth={1.3} fill="none">
@@ -131,7 +159,7 @@ function EventMarker({ trigger, r, color }: { trigger: string | undefined; r: nu
     )
   }
   if (trigger === 'signal') {
-    return <path d={`M${r} ${r - r * 0.5}L${r + r * 0.48} ${r + r * 0.35}H${r - r * 0.48}Z`} stroke={color} strokeWidth={1.3} fill="none" />
+    return <path d={`M${r} ${r - r * 0.5}L${r + r * 0.48} ${r + r * 0.35}H${r - r * 0.48}Z`} stroke={color} strokeWidth={1.3} fill={fill} />
   }
   return null
 }
@@ -154,11 +182,56 @@ function TaskMarker({ kind }: { kind: string | undefined }) {
       return <path d="M6 13V9.5l2.5-3h2.5l-1 2h5v1.5h-2.5v1.2h2v1.3h-2V13Z" stroke={c} strokeWidth={1.1} fill="none" />
     case 'send':
       return <path d="M6 6.5h10v7H6ZM6 6.5l5 3.5 5-3.5" stroke={INK.ink} strokeWidth={1.1} fill={INK.ink} />
+    case 'businessRule':
+      return <path d="M5 6h12v9H5ZM5 9h12M9 9v6" stroke={c} strokeWidth={1.1} fill="none" />
     case 'receive':
       return <path d="M6 6.5h10v7H6ZM6 6.5l5 3.5 5-3.5" stroke={c} strokeWidth={1.1} fill="none" />
     default:
       return null
   }
+}
+
+/**
+ * Marcadores na base de uma actividade BPMN, lado a lado e centrados:
+ * ciclo, multi-instância, compensação, ad-hoc e o «+» do subprocesso.
+ */
+function ActivityMarkers({ n }: { n: DNode }) {
+  const marks: string[] = []
+  if (n.props.loop && (n.props.multiInstance ?? 'none') === 'none') marks.push('loop')
+  if (n.type === 'task' && n.props.multiInstance === 'parallel') marks.push('par')
+  if (n.type === 'task' && n.props.multiInstance === 'sequential') marks.push('seq')
+  if (n.props.compensation) marks.push('comp')
+  if (n.type === 'subProcess' && n.props.adHoc) marks.push('adhoc')
+  if (n.type === 'subProcess') marks.push('plus')
+  const step = 15
+  const x0 = n.w / 2 - ((marks.length - 1) * step) / 2
+  return (
+    <g stroke={INK.ink} strokeWidth={1.2} fill="none">
+      {marks.map((m, i) => {
+        const cx = x0 + i * step
+        const y = n.h - 8
+        switch (m) {
+          case 'loop':
+            return <path key={m} d={`M${cx - 3} ${y + 4}A5 5 0 1 1 ${cx + 3.5} ${y + 3.5}M${cx - 3} ${y + 4}l-2.4 -0.2M${cx - 3} ${y + 4}l0.3 -2.4`} />
+          case 'par':
+            return <path key={m} d={`M${cx - 4} ${y - 5}v10M${cx} ${y - 5}v10M${cx + 4} ${y - 5}v10`} strokeWidth={1.4} />
+          case 'seq':
+            return <path key={m} d={`M${cx - 5} ${y - 4}h10M${cx - 5} ${y}h10M${cx - 5} ${y + 4}h10`} strokeWidth={1.4} />
+          case 'comp':
+            return <path key={m} d={`M${cx} ${y - 4}v8l-5-4ZM${cx + 5} ${y - 4}v8l-5-4Z`} />
+          case 'adhoc':
+            return <path key={m} d={`M${cx - 5} ${y + 1}c1.6-3 3.4-3 5 0s3.4 3 5 0`} strokeWidth={1.4} />
+          default:
+            return (
+              <g key={m}>
+                <rect x={cx - 6} y={y - 6} width={12} height={12} />
+                <path d={`M${cx} ${y - 3.5}v7M${cx - 3.5} ${y}h7`} />
+              </g>
+            )
+        }
+      })}
+    </g>
+  )
 }
 
 /** Nome por baixo de uma forma pequena (pseudo-estados, portos, interfaces). */
@@ -462,11 +535,12 @@ function NodeBody({ n, sub }: { n: DNode; sub?: string }): ReactNode {
     case 'endEvent': {
       const r = n.w / 2
       const color = n.type === 'startEvent' ? INK.start : n.type === 'intermediateEvent' ? INK.amber : INK.ink
+      const dash = n.props.boundary && n.props.nonInterrupting ? '4 2.5' : undefined
       return (
         <>
-          <circle cx={r} cy={r} r={r} fill={surface} stroke={n.props.emphasis ? INK.accent : color} strokeWidth={n.type === 'endEvent' ? 3 : 1.8} />
-          {n.type === 'intermediateEvent' && <circle cx={r} cy={r} r={r - 3.5} fill="none" stroke={color} strokeWidth={1.2} />}
-          <EventMarker trigger={n.props.trigger} r={r} color={color} />
+          <circle cx={r} cy={r} r={r} fill={surface} stroke={n.props.emphasis ? INK.accent : color} strokeWidth={n.type === 'endEvent' ? 3 : 1.8} strokeDasharray={dash} />
+          {n.type === 'intermediateEvent' && <circle cx={r} cy={r} r={r - 3.5} fill="none" stroke={color} strokeWidth={1.2} strokeDasharray={dash} />}
+          <EventMarker trigger={n.props.trigger} r={r} color={color} filled={n.type === 'endEvent' || (n.type === 'intermediateEvent' && !!n.props.throwing)} />
           {n.name && <Lines lines={wrapText(n.name, 90, 8.5, 2)} x={r} y={n.h + 12} size={8.5} color={INK.muted} />}
         </>
       )
@@ -476,7 +550,7 @@ function NodeBody({ n, sub }: { n: DNode; sub?: string }): ReactNode {
       const accentBorder = n.props.emphasis
       return (
         <>
-          <rect width={n.w} height={n.h} rx={6} fill={accentBorder ? INK.accentTint : surface} stroke={accentBorder ? INK.accent : INK.ink} strokeWidth={SW} />
+          <rect width={n.w} height={n.h} rx={6} fill={accentBorder ? INK.accentTint : surface} stroke={accentBorder ? INK.accent : INK.ink} strokeWidth={n.type === 'task' && n.props.taskKind === 'call' ? 3.5 : SW} />
           <g transform="translate(2 1)">
             <TaskMarker kind={n.type === 'task' ? n.props.taskKind : undefined} />
           </g>
@@ -493,18 +567,7 @@ function NodeBody({ n, sub }: { n: DNode; sub?: string }): ReactNode {
               {sub}
             </text>
           )}
-          {n.type === 'subProcess' && (
-            <g stroke={INK.ink} strokeWidth={1.2} fill="none">
-              <rect x={n.w / 2 - 6} y={n.h - 14} width={12} height={12} />
-              <path d={`M${n.w / 2} ${n.h - 11.5}v7M${n.w / 2 - 3.5} ${n.h - 8}h7`} />
-            </g>
-          )}
-          {n.type === 'task' && n.props.multiInstance === 'parallel' && (
-            <path d={`M${n.w / 2 - 4} ${n.h - 13}v9M${n.w / 2} ${n.h - 13}v9M${n.w / 2 + 4} ${n.h - 13}v9`} stroke={INK.ink} strokeWidth={1.4} />
-          )}
-          {n.type === 'task' && n.props.multiInstance === 'sequential' && (
-            <path d={`M${n.w / 2 - 5} ${n.h - 12}h10M${n.w / 2 - 5} ${n.h - 8.5}h10M${n.w / 2 - 5} ${n.h - 5}h10`} stroke={INK.ink} strokeWidth={1.4} />
-          )}
+          <ActivityMarkers n={n} />
         </>
       )
     }
@@ -528,6 +591,19 @@ function NodeBody({ n, sub }: { n: DNode; sub?: string }): ReactNode {
               <path d={`M${cx} ${cy - 5.5}l5.2 3.8-2 6.2h-6.4l-2-6.2Z`} />
             </g>
           )}
+          {k === 'eventInstantiate' && (
+            <g stroke={color} strokeWidth={1.1} fill="none">
+              <circle cx={cx} cy={cy} r={11} />
+              <path d={`M${cx} ${cy - 5.5}l5.2 3.8-2 6.2h-6.4l-2-6.2Z`} />
+            </g>
+          )}
+          {k === 'eventParallel' && (
+            <g stroke={color} strokeWidth={1.1} fill="none">
+              <circle cx={cx} cy={cy} r={11} />
+              <path d={`M${cx - 1.8} ${cy - 7}h3.6v5.2h5.2v3.6h-5.2v5.2h-3.6v-5.2h-5.2v-3.6h5.2Z`} />
+            </g>
+          )}
+          {k === 'complex' && <path d={`M${cx} ${cy - 10}v20M${cx - 10} ${cy}h20M${cx - 7} ${cy - 7}l14 14M${cx + 7} ${cy - 7}l-14 14`} stroke={color} strokeWidth={2.2} />}
           {n.name && <Lines lines={wrapText(n.name, 100, 8.5, 2)} x={cx} y={h + 12} size={8.5} color={INK.muted} />}
         </>
       )
@@ -561,11 +637,34 @@ function NodeBody({ n, sub }: { n: DNode; sub?: string }): ReactNode {
         </>
       )
     }
+    case 'dataStore': {
+      const ry = 7
+      return (
+        <>
+          <path d={`M0 ${ry}V${n.h - ry}A${n.w / 2} ${ry} 0 0 0 ${n.w} ${n.h - ry}V${ry}`} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <ellipse cx={n.w / 2} cy={ry} rx={n.w / 2} ry={ry} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <path d={`M0 ${ry + 5}A${n.w / 2} ${ry} 0 0 0 ${n.w} ${ry + 5}M0 ${ry + 10}A${n.w / 2} ${ry} 0 0 0 ${n.w} ${ry + 10}`} fill="none" stroke={stroke} strokeWidth={1} />
+          <Below n={n} />
+        </>
+      )
+    }
+    case 'group':
+      return (
+        <>
+          <rect width={n.w} height={n.h} rx={10} fill="none" stroke={INK.muted} strokeWidth={1.5} strokeDasharray="10 4 2 4" />
+          <text x={10} y={16} fontSize={10} fontWeight={600} fill={INK.muted}>
+            {n.name}
+          </text>
+        </>
+      )
     case 'dataObject':
       return (
         <>
           <path d={`M0 0H${n.w - 10}L${n.w} 10V${n.h}H0Z`} fill={surface} stroke={stroke} strokeWidth={SW} />
           <path d={`M${n.w - 10} 0V10H${n.w}`} fill="none" stroke={stroke} strokeWidth={1} />
+          {n.props.dataRole === 'input' && <path d="M4 7h5V4l5 5-5 5v-3H4Z" fill="none" stroke={stroke} strokeWidth={1.1} />}
+          {n.props.dataRole === 'output' && <path d="M4 7h5V4l5 5-5 5v-3H4Z" fill={stroke} stroke={stroke} strokeWidth={1.1} />}
+          {n.props.collection && <path d={`M${n.w / 2 - 4} ${n.h - 12}v8M${n.w / 2} ${n.h - 12}v8M${n.w / 2 + 4} ${n.h - 12}v8`} stroke={stroke} strokeWidth={1.4} />}
           {n.name && <Lines lines={wrapText(n.name, 100, 8.5, 2)} x={n.w / 2} y={n.h + 12} size={8.5} color={INK.muted} />}
         </>
       )

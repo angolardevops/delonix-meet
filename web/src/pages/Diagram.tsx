@@ -287,6 +287,13 @@ export default function Diagram({ id }: { id: string | null }) {
         { id: uid('l'), name: t('diagrams.inspector.pistaN', { n: 2 }), size: 150 },
       ]
     }
+    // Um evento de fronteira com uma actividade seleccionada prende-se à borda de baixo dela.
+    const host = selection?.kind === 'node' && !at && props.boundary ? doc.nodes.find((x) => x.id === selection.id && (x.type === 'task' || x.type === 'subProcess')) : undefined
+    if (host) {
+      const siblings = doc.nodes.filter((x) => x.type === 'intermediateEvent' && x.props.boundary && Math.abs(x.y + x.h / 2 - (host.y + host.h)) < 4).length
+      pos.x = host.x + host.w - probe.w / 2 - 22 - siblings * 42
+      pos.y = host.y + host.h - probe.h / 2
+    }
     const n = makeNode(item.type, Math.round(pos.x / 4) * 4, Math.round(pos.y / 4) * 4, name, props)
     // Contentores entram por baixo de tudo; o resto por cima.
     const nodes = CONTAINERS.has(item.type) ? [n, ...doc.nodes] : [...doc.nodes, n]

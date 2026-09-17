@@ -252,8 +252,9 @@ describe('validação BPMN', () => {
       [N('p', 'pool', 0, 0, 'A'), N('s', 'startEvent', 60, 100), N('g', 'gateway', 150, 90, 'G', { gatewayKind: 'eventBased' }), N('t', 'task', 250, 90, 'T'), N('e', 'endEvent', 900, 900)],
       [E('1', 'sequenceFlow', 's', 'g'), E('2', 'sequenceFlow', 'g', 't'), E('3', 'sequenceFlow', 't', 'e')],
     )
-    // O fim solto forma um processo à parte — e esse não tem início.
-    expect(codes(d)).toEqual(['bpmnForaDaPiscina', 'bpmnGatewayEventos', 'bpmnSemFim', 'bpmnSemInicio'])
+    // O fim solto forma um processo à parte — e esse não tem início. A gateway
+    // de eventos com UMA saída também não decide nada (regras de quadros-formas).
+    expect(codes(d)).toEqual(['bpmnForaDaPiscina', 'bpmnGatewayEventos', 'bpmnGatewayEventosSaidas', 'bpmnGatewayInutil', 'bpmnSemFim', 'bpmnSemInicio'])
   })
 })
 
