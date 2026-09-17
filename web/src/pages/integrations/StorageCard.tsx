@@ -16,6 +16,7 @@ import {
   authedBlobUrl,
   getPlatformStorage,
   orgStats,
+  PLATFORM_STORAGE_PVC_MANIFEST_PATH,
   savePlatformStorage,
   StorageConfig,
   testPlatformStorage,
@@ -122,7 +123,7 @@ function StorageForm({ initial, onSaved, usedText }: { initial: StorageConfig; o
     setBusy('manifest')
     setErr('')
     try {
-      const href = await authedBlobUrl('/api/v1/platform/storage/pvc-manifest')
+      const href = await authedBlobUrl(PLATFORM_STORAGE_PVC_MANIFEST_PATH)
       const a = document.createElement('a')
       a.href = href
       a.download = 'delonix-recordings-pv.yaml'

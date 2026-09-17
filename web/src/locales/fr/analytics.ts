@@ -73,9 +73,6 @@ export default {
       quarter: 'Trimestre',
       year: 'Année',
     },
-    ambito: 'Portée',
-    estaOrg: 'Cette organisation',
-    todasOrgs: "Toutes celles que j'administre",
     vazio: 'Personne en quarantaine sur cette période',
   },
 }

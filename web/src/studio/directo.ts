@@ -27,7 +27,9 @@ export interface Destino {
   /**
    * Destino GUARDADO da organização (`/api/orgs/{org}/stream-destinations`).
    * Com `id`, o servidor lê o URL e decifra a chave do lado dele: `url` e
-   * `chave` NÃO vão na query — a chave guardada nunca volta ao browser.
+   * `chave` NÃO vão na query — a chave guardada nunca volta ao browser. Vai
+   * em `destination_ids` (com `org_id`), nunca dentro do JSON de `destinos`,
+   * que o servidor lê como `{url, chave, rotulo}` e recusaria.
    */
   id?: string
 }
@@ -153,25 +155,34 @@ export function urlDoDirecto(
   codigo: string,
   token: string,
   destinos: Destino[],
+  orgId?: string | null,
 ): string {
   const esquema = base.protocol === 'https:' ? 'wss:' : 'ws:'
+  const guardados = destinos.filter((d) => d.id)
   const q = new URLSearchParams({
     token,
+    // Contrato do `DirectoQuery` (`broadcast.rs`): `destinos` é JSON de
+    // `{url, chave, rotulo?}`; os guardados vão SÓ pelo id em
+    // `destination_ids` (vírgulas) e exigem `org_id` — o servidor decifra a
+    // chave e confirma que quem emite administra a organização.
     destinos: JSON.stringify(
-      destinos.map((d) =>
-        d.id
-          ? // Destino guardado: só o id. A chave fica no servidor.
-            { id: d.id, ...(d.rotulo ? { rotulo: d.rotulo } : {}) }
-          : {
-              url: d.url.trim(),
-              chave: d.chave.trim(),
-              ...(d.rotulo ? { rotulo: d.rotulo } : {}),
-            },
-      ),
+      destinos
+        .filter((d) => !d.id)
+        .map((d) => ({
+          url: d.url.trim(),
+          chave: d.chave.trim(),
+          ...(d.rotulo ? { rotulo: d.rotulo } : {}),
+        })),
     ),
     codec: CODEC_DIRECTO,
   })
-  return `${esquema}//${base.host}/api/rooms/${encodeURIComponent(codigo)}/broadcast?${q}`
+  if (guardados.length) {
+    q.set('destination_ids', guardados.map((d) => d.id).join(','))
+    // Sem organização não se inventa uma: o servidor recusa com a razão
+    // («destination_ids exige org_id»), que chega à interface por inteiro.
+    if (orgId) q.set('org_id', orgId)
+  }
+  return `${esquema}//${base.host}/api/rooms/${encodeURIComponent(codigo)}/live?${q}`
 }
 
 export interface OpcoesDoDirecto {
@@ -179,6 +190,8 @@ export interface OpcoesDoDirecto {
   bitrate?: number
   /** Tamanho dos pedaços, em ms. Menor = menos latência, mais overhead. */
   fatia?: number
+  /** Organização dos destinos guardados (obrigatória se algum destino tiver `id`). */
+  orgId?: string | null
 }
 
 /**
@@ -248,7 +261,7 @@ export class Directo {
     this.destinos = []
     this.motivoDoServidor = null
 
-    const url = urlDoDirecto(location, codigo, token, destinos)
+    const url = urlDoDirecto(location, codigo, token, destinos, opcoes.orgId)
     const socket = new WebSocket(url)
     socket.binaryType = 'arraybuffer'
     this.socket = socket

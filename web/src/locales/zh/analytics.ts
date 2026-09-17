@@ -73,9 +73,6 @@ export default {
       quarter: '季度',
       year: '年',
     },
-    ambito: '范围',
-    estaOrg: '本组织',
-    todasOrgs: '我管理的所有组织',
     vazio: '此期间无人被隔离',
   },
 }

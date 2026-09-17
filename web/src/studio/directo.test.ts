@@ -62,7 +62,7 @@ describe('urlDoDirecto', () => {
 
   it('escapa o código da sala', () => {
     const u = urlDoDirecto({ protocol: 'https:', host: 'h' }, 'a/b?c', 't', [destino])
-    expect(u).toContain('/api/rooms/a%2Fb%3Fc/broadcast')
+    expect(u).toContain('/api/rooms/a%2Fb%3Fc/live')
   })
 
   it('apara espaços à volta do url e da chave de cada destino', () => {
@@ -425,15 +425,34 @@ describe('resumirDestinos', () => {
 })
 
 describe('urlDoDirecto · destinos guardados', () => {
-  it('um destino guardado vai SÓ pelo id: nem URL nem chave saem do browser', () => {
-    const q = new URL(
-      urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 't', [
+  it('um destino guardado vai SÓ pelo id, em destination_ids com org_id: nem URL nem chave saem do browser', () => {
+    // Contrato do `DirectoQuery` do `/api/rooms/{room_code}/live`: o JSON de
+    // `destinos` só aceita `{url, chave, rotulo}`; um `{id}` lá dentro era
+    // recusado como «destinos malformados».
+    const u = urlDoDirecto(
+      { protocol: 'https:', host: 'h' },
+      'c',
+      't',
+      [
         { id: 'd-1', url: 'rtmp://nao-vai', chave: 'nao-vai', rotulo: 'Canal' },
+        { id: 'd-2', url: '', chave: '' },
         { url: 'rtmp://x/live', chave: 'k' },
-      ]),
+      ],
+      'org-9',
+    )
+    const q = new URL(u).searchParams
+    expect(JSON.parse(q.get('destinos')!)).toEqual([{ url: 'rtmp://x/live', chave: 'k' }])
+    expect(q.get('destination_ids')).toBe('d-1,d-2')
+    expect(q.get('org_id')).toBe('org-9')
+    expect(u).not.toContain('nao-vai')
+  })
+
+  it('sem destinos guardados não manda destination_ids nem org_id', () => {
+    const q = new URL(
+      urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 't', [{ url: 'rtmp://x', chave: 'k' }], 'org-9'),
     ).searchParams
-    expect(JSON.parse(q.get('destinos')!)).toEqual([{ id: 'd-1', rotulo: 'Canal' }, { url: 'rtmp://x/live', chave: 'k' }])
-    expect(q.get('destinos')).not.toContain('nao-vai')
+    expect(q.has('destination_ids')).toBe(false)
+    expect(q.has('org_id')).toBe(false)
   })
 })
 

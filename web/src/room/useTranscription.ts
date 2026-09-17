@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { intlLocale } from '../i18n'
 import type { TFunction } from 'i18next'
-import { accessTokenValue, currentUser, saveMinutesByRoom, translateCaption } from '../api'
+import { currentUser, saveMinutesByRoom, saveMinutesOnUnload, translateCaption } from '../api'
 import { Transcriber } from '../media'
 import type { RoomCore } from './useRoomCore'
 
@@ -184,20 +184,13 @@ export function useTranscription(core: RoomCore) {
     [],
   )
 
-  // Fechar o separador sem «Sair»: a acta vai por `fetch keepalive`, que
-  // completa depois do unload. Lê o token REAL (`accessTokenValue`) — a versão
-  // anterior lia uma chave que não existe e nunca guardava nada.
+  // Fechar o separador sem «Sair»: a acta vai por `fetch keepalive` (PUT, o
+  // mesmo contrato do `saveMinutesByRoom`), que completa depois do unload.
+  // Enquanto foi POST, o servidor respondia 405 e a acta perdia-se sem aviso.
   useEffect(() => {
     function handleUnload() {
       if (!core.isHostRef.current || linesRef.current.length === 0 || momSavedRef.current) return
-      const token = accessTokenValue()
-      if (!token) return
-      void fetch(`/api/rooms/${code}/minutes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ minutes: buildMoM(linesRef.current, t, locale), transcript: linesRef.current.join('\n') }),
-        keepalive: true,
-      })
+      saveMinutesOnUnload(code, buildMoM(linesRef.current, t, locale), linesRef.current.join('\n'))
     }
     window.addEventListener('beforeunload', handleUnload)
     return () => window.removeEventListener('beforeunload', handleUnload)
