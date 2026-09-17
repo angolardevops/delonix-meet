@@ -207,6 +207,11 @@ pub enum ClientMsg {
         active: bool,
         #[serde(default)]
         e2ee_key: Option<Secret>,
+        /// O anfitrião confirmou o início. Só é exigido a quem tem «avisar
+        /// antes de gravar» nas preferências de entrada; sem a preferência, o
+        /// pedido antigo (sem este campo) grava como sempre.
+        #[serde(default)]
+        confirmed: bool,
     },
     /// Anuncia partilha de ecrã: a próxima track de vídeo sem rid é o ecrã.
     ScreenShare {
@@ -606,6 +611,9 @@ pub enum ServerMsg {
         active: bool,
         by: String,
     },
+    /// Só para o anfitrião que pediu: tem «avisar antes de gravar» ligado e o
+    /// pedido não trazia `confirmed: true`. A gravação NÃO começou.
+    RecordingConfirmationRequired,
     WbStroke {
         stroke: WbStrokeData,
     },
@@ -4260,8 +4268,26 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                         ServerMsg::Presenting { from: peer_id, on },
                     );
                 }
-                Ok(ClientMsg::ServerRecord { active, e2ee_key }) if is_host && sfu_mode => {
-                    if active {
+                Ok(ClientMsg::ServerRecord {
+                    active,
+                    e2ee_key,
+                    confirmed,
+                }) if is_host && sfu_mode => {
+                    // «Avisar antes de gravar» é imposto AQUI, não no cliente:
+                    // sem a confirmação explícita a gravação não começa.
+                    let needs_confirmation = active
+                        && {
+                            let warn = crate::account::load_join_preferences(&state.db, user_id)
+                                .await
+                                .map(|p| p.warn_before_recording)
+                                .unwrap_or(false);
+                            delonix_meet_domain::identity::join_preferences::recording_start_decision(
+                            warn, confirmed,
+                        ) == delonix_meet_domain::identity::join_preferences::RecordingStart::ConfirmationRequired
+                        };
+                    if needs_confirmation {
+                        let _ = tx.send(ServerMsg::RecordingConfirmationRequired);
+                    } else if active {
                         // Chave E2EE (se cedida): 32 bytes AES-256 em base64.
                         use base64::Engine as _;
                         let key = e2ee_key
@@ -4472,6 +4498,7 @@ mod tests {
         let msg = ClientMsg::ServerRecord {
             active: true,
             e2ee_key: Some(Secret(chave.to_string())),
+            confirmed: false,
         };
         let s = format!("{msg:?}");
         assert!(!s.contains(chave), "a chave apareceu no Debug: {s}");
@@ -4488,7 +4515,9 @@ mod tests {
         let raw = r#"{"type":"server-record","active":true,"e2ee_key":"QUJD"}"#;
         let msg: ClientMsg = serde_json::from_str(raw).expect("o cliente escreve isto");
         match msg {
-            ClientMsg::ServerRecord { active, e2ee_key } => {
+            ClientMsg::ServerRecord {
+                active, e2ee_key, ..
+            } => {
                 assert!(active);
                 assert_eq!(e2ee_key.as_ref().map(|s| s.expose()), Some("QUJD"));
             }

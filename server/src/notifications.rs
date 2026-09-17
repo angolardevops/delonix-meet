@@ -280,6 +280,11 @@ pub(crate) async fn notify(
     draft: Draft,
     data: serde_json::Value,
 ) -> Option<Notification> {
+    // Preferência da pessoa: sem `in_app` para este tipo, a notificação não
+    // nasce (é o único canal com entrega; ver `domain::notification::preferences`).
+    if !crate::account::in_app_enabled(&state.db, user_id, draft.kind).await {
+        return None;
+    }
     // A pertença decide-se em `org.rs` (ADR-0004 §5 regra 1).
     let org_id = crate::org::orgs_of_user(state, user_id)
         .await
