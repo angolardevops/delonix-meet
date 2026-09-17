@@ -1,0 +1,27 @@
+# HPA do servidor na edição SaaS. CÓPIA de ../../k8s/21-server-hpa.yaml porque o
+# kustomize recusa ficheiros fora da pasta do overlay («security; file is not
+# in or below»). A deriva está guardada: scripts/check-k8s-render.sh compara o
+# `spec` renderizado com o de 21-server-hpa.yaml e falha se diferirem.
+#
+# Só é seguro COM a afinidade por sala do ADR-0001 (delonix-server-ws +
+# upstream-hash-by:$arg_room), que vem da base sem alteração.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: delonix-server
+  namespace: delonix-meet
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: delonix-server
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300 # evita flapping durante reuniões

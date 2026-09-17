@@ -28,7 +28,18 @@ RUN cd server && cargo build --release && \
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=build /usr/local/bin/delonix-server /app/delonix-server
 USER nonroot:nonroot
+# 8180 — HTTP público (/api, /ws, /rtc, /health, /ready). BIND_ADDR.
 EXPOSE 8180
+# 8181 — listener INTERNO (/api/voice/ivr/*, /metrics). Só com INTERNAL_BIND_ADDR;
+#        nunca atrás de um ingress (ADR-0006 §3).
+# 9180 — gRPC entre máquinas, mTLS. Só com GRPC_BIND_ADDR (+ GRPC_TLS_CERT,
+#        GRPC_TLS_KEY, GRPC_CLIENT_CA). Desligadas por omissão: o EXPOSE é
+#        documentação, não abre nada.
+EXPOSE 8181 9180
 ENV BIND_ADDR=0.0.0.0:8180
+# Subcomando `migrate`: corre as migrações embutidas e sai (Job da edição SaaS,
+# deploy/k8s-overlays/saas/migrate-job.yaml). A UI não vem na imagem: a edição
+# pessoal monta a SPA construída e aponta UI_DIR para ela
+# (deploy/delonix/meet-stack-personal.yaml).
 # Health: GET /health -> "ok"
 ENTRYPOINT ["/app/delonix-server"]

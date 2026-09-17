@@ -1,0 +1,80 @@
+# Patch estratégico sobre o Deployment da base (02-server.yaml). As listas
+# `ports`, `env` e `volumeMounts` fundem-se pela chave (containerPort / name),
+# não substituem as da base.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-server
+  namespace: delonix-meet
+spec:
+  template:
+    metadata:
+      annotations:
+        # O /metrics passa a ser servido no listener interno (INTERNAL_BIND_ADDR).
+        # O scrape é ao POD; a NetworkPolicy só o deixa entrar a partir do
+        # namespace `monitoring`.
+        prometheus.io/port: "8181"
+    spec:
+      # O Secret do mTLS é montado com modo 0440. Sem fsGroup os ficheiros
+      # ficam root:root e o processo (uid/gid 65532) não lê a própria chave —
+      # o gRPC interno não arrancava (e o servidor sai com código 2).
+      securityContext:
+        fsGroup: 65532
+      containers:
+        - name: server
+          ports:
+            - containerPort: 8181
+              name: internal
+              protocol: TCP
+            - containerPort: 9180
+              name: grpc
+              protocol: TCP
+          env:
+            # Logs estruturados em stdout (doze factores, ADR-0006 §4).
+            - name: LOG_FORMAT
+              value: json
+            # Listener interno: /api/voice/ivr/* (FreeSWITCH) e /metrics.
+            # NUNCA exposto por Ingress — só pelo Service delonix-server-internal.
+            - name: INTERNAL_BIND_ADDR
+              value: "0.0.0.0:8181"
+            # gRPC entre máquinas (IvrService, TranscriptionService, Health).
+            # mTLS obrigatório: os três ficheiros vêm do Secret emitido pelo
+            # cert-manager (grpc-mtls.yaml). NÃO se liga DELONIX_ALLOW_INSECURE.
+            - name: GRPC_BIND_ADDR
+              value: "0.0.0.0:9180"
+            - name: GRPC_TLS_CERT
+              value: /etc/delonix/grpc-tls/tls.crt
+            - name: GRPC_TLS_KEY
+              value: /etc/delonix/grpc-tls/tls.key
+            - name: GRPC_CLIENT_CA
+              value: /etc/delonix/grpc-tls/ca.crt
+          # O arranque inclui as migrações quando DELONIX_MIGRATE=1 (enterprise).
+          # Sem startupProbe, o livenessProbe (15 s + 20 s) podia matar o pod a
+          # meio de uma migração longa. Aqui: até 5 min (60 × 5 s) para o
+          # primeiro /health; depois disso mandam as sondas da base.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          securityContext:
+            # A base já tem runAsNonRoot, seccomp RuntimeDefault, drop ALL e
+            # allowPrivilegeEscalation:false. Falta só o rootfs só-de-leitura:
+            # as gravações vão para o PVC (RECORDINGS_DIR) e o resto da escrita
+            # temporária para o emptyDir em /tmp.
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /etc/delonix/grpc-tls
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: grpc-tls
+          secret:
+            secretName: delonix-server-grpc-tls
+            defaultMode: 0440
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi

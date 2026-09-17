@@ -1,12 +1,47 @@
+# Workspace do backend (ADR-0006 §1). O pacote na raiz (`delonix-server`) é o
+# monólito em transição: o código sai dele para os crates em `crates/`, fatia a
+# fatia, e nenhuma fatia nova volta a entrar nele. A regra da dependência entre
+# crates é medida por `scripts/check-crate-deps.sh`.
+[workspace]
+members = [".", "crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.8"
+argon2 = "0.5"
+base64 = "0.22"
+
 [package]
 name = "delonix-server"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+delonix-meet-core = { path = "crates/delonix-meet-core" }
+delonix-meet-domain = { path = "crates/delonix-meet-domain" }
+delonix-meet-protocol = { path = "crates/delonix-meet-protocol" }
+# gRPC interno (ADR-0006 §3): mTLS com rustls/ring, health e reflection.
+tonic = { version = "0.14", features = ["tls-ring"] }
+tonic-health = "0.14"
+tonic-reflection = "0.14"
+tokio-stream = { version = "0.1", features = ["net"] }
+# OpenAPI 3.1 gerado do código (ADR-0006 §3): o cliente TS do web gera-se daqui.
+utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 axum = { version = "0.8", features = ["ws", "macros"] }
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs", "set-header"] }
+tower = { version = "0.5", features = ["util"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "migrate"] }
@@ -16,7 +51,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 dashmap = "6"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 rand = "0.8"
 thiserror = "2"
 sha2 = "0.10"
@@ -38,6 +73,15 @@ zeroize = "1"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
+# Testes de integração em tests/: `#[sqlx::test]` dá a cada teste uma base
+# própria, migrada, no Postgres de DATABASE_URL.
+sqlx = { version = "0.8", features = ["macros"] }
+# Certificados de teste para o mTLS do gRPC interno (tests/grpc.rs).
+rcgen = "0.13"
+# IdP OIDC falso dos testes de segurança (`tests/security_identity.rs`): gera a
+# chave RS256 em memória, a cada corrida — nenhuma chave privada no repositório.
+# Já vinha no Cargo.lock pelo `openidconnect`.
+rsa = "0.9"
 
 # webrtc-ice 0.17.1 com UMA alteração: responde 487 (Role Conflict) autenticado
 # a um pedido com o mesmo papel ICE que o do agente, em vez de o deitar fora

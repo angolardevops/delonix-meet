@@ -1,0 +1,64 @@
+// Transcrição das gravações pelo ai-worker (GPU).
+//
+// Antes deste serviço o worker ligava-se ao Postgres, fazia polling e
+// escrevia a transcrição por baixo do servidor — sem DLP, sem auditoria, e
+// com dois workers a poderem apanhar a mesma gravação. Agora o servidor é o
+// dono do estado: o worker RESERVA um trabalho (lease), transcreve, e entrega.
+// Autenticação: mTLS.
+syntax = "proto3";
+
+package delonix.meet.transcription.v1;
+
+service TranscriptionService {
+  // Reserva a próxima gravação por transcrever. Sem trabalho, `job` vem vazio.
+  rpc ClaimJob(ClaimJobRequest) returns (ClaimJobResponse);
+  // Entrega o resultado. O servidor aplica o DLP antes de gravar.
+  // Erros: FAILED_PRECONDITION (lease expirada ou de outro worker).
+  rpc CompleteJob(CompleteJobRequest) returns (CompleteJobResponse);
+  // Desiste do trabalho. `retryable=false` marca-o como falhado de vez.
+  rpc FailJob(FailJobRequest) returns (FailJobResponse);
+}
+
+message ClaimJobRequest {
+  // Identificador do worker, para os logs e a auditoria.
+  string worker_id = 1;
+  // Duração pedida da reserva, em segundos (o servidor limita a 60..7200).
+  int32 lease_seconds = 2;
+}
+
+message ClaimJobResponse {
+  // Ausente quando não há trabalho.
+  TranscriptionJob job = 1;
+}
+
+message TranscriptionJob {
+  string recording_id = 1;
+  // Prova de posse da reserva; obrigatória em CompleteJob/FailJob.
+  string lease_token = 2;
+  // Nome do ficheiro relativo ao volume de gravações partilhado.
+  string media_file = 3;
+  string room_code = 4;
+  // Fim da reserva, em segundos Unix.
+  int64 lease_expires_unix = 5;
+  // Tentativa actual (1 na primeira).
+  int32 attempt = 6;
+}
+
+message CompleteJobRequest {
+  string recording_id = 1;
+  string lease_token = 2;
+  string transcript = 3;
+  // Acta em Markdown (pode vir vazia).
+  string minutes = 4;
+}
+
+message CompleteJobResponse {}
+
+message FailJobRequest {
+  string recording_id = 1;
+  string lease_token = 2;
+  string reason = 3;
+  bool retryable = 4;
+}
+
+message FailJobResponse {}

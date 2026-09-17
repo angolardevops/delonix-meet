@@ -8,23 +8,24 @@ description: Contrato de API do Delonix Meet — as superfícies (BFF `/api`, p�
 **Autoridade:** [ADR-0004 §4](../../../docs/adr/0004-organizacao-alvo-do-backend.md) (Proposto) e [`docs/reference/api-contract.md`](../../../docs/reference/api-contract.md).
 **Evidência:** [auditoria de 2026-09-16 §2.4](../../../docs/auditoria-2026-09-16-backend.md).
 
-## O estado real (2026-09-16)
+## O estado real (2026-09-16, ramo `integra/backend-enterprise`)
 
-- **105 `.route(`**, todas em `server/src/main.rs`. O router de `mls.rs` não está montado.
+- **As rotas estão em `server/src/lib.rs`** (`build_router`, `internal_routes`). O router de
+  `mls.rs` não está montado.
 - **O que está bem:**
-  - A fronteira BFF (`/api/…`, instável) vs pública (`/api/v1`, estável) está escrita no
-    `main.rs` e no `api-contract.md`.
-  - O `check-route-auth.sh` garante que cada rota tem autenticação ou está em
-    `scripts/rotas-publicas.txt` com razão.
-  - O `check-isolamento-cobertura.sh` garante que cada rota de org é exercitada por
-    `web/e2e/isolamento.mjs`.
+  - BFF (`/api/…`) vs pública (`/api/v1`) escrita e medida; `check-route-auth.sh` (que desde
+    o R123 também vê os handlers encadeados) e `check-isolamento-cobertura.sh`.
+  - **OpenAPI gerado**, 158/158, catraca a zero: rota nova sem `#[utoipa::path]` falha.
+  - **Envelope de erro** plano com `code` estável e `request_id` (ADR-0006 §3), também nas
+    recusas do axum.
+  - Rotas novas já seguem o contrato: `201`+`Location`, `204`, `202`, paginação por cursor
+    (`delonix_meet_core::page`) — ver `stream_destinations.rs` como referência.
+  - **gRPC interno** (`server/proto`, `buf lint`/`breaking` em `check-proto.sh`).
 - **O que falta:**
-  - Não há OpenAPI, testes de contrato da v1, `201`/`204`/`202`, código de erro estável,
-    paginação nem `Idempotency-Key`.
-  - Não há **gRPC em lado nenhum**.
-- **A v1 mistura três públicos:** o inquilino (`dlx_`), o Odoo (`dlxo_`, em
-  `/integration/odoo/*`) e o operador (`/admin/orgs` com segredo de plataforma,
-  `/platform/storage*` com sessão).
+  - As rotas HERDADAS mantêm `200`/`{"ok":true}` (22) e listagens sem limite.
+  - `Idempotency-Key` só no SMS; nada de `ETag`.
+- **A v1 continua a misturar o operador** (`/admin/orgs`, `/platform/storage*` com sessão);
+  a separação em `/api/operator/v1` está por fazer.
 
 ## Superfícies — um público e uma autenticação cada
 
@@ -74,13 +75,15 @@ dentro de `/api/v1` — a catraca conta `rotas_v1_com_sessao`.
    | Não autenticado / sem permissão | `401` / `403`. Um recurso de outra org é `404` — não se confirma que existe |
    | Rate-limit | `429` + `Retry-After` |
 
-7. **Erro** — o destino na v1 é:
+7. **Erro** — envelope PLANO em todas as superfícies (ADR-0006 §3):
    ```json
-   {"error": {"code": "meeting.host_not_found", "message": "…", "details": [], "request_id": "…"}}
+   {"error": "…", "code": "meeting.host_not_found", "details": [], "request_id": "…"}
    ```
-   O `code` é estável e é parte do contrato; a `message` é para humanos e pode mudar.
-   Hoje `ApiError` (`server/src/error.rs`) só produz `{"error": "<texto>"}`. **Não
-   inventes um segundo formato num handler**: o envelope nasce em `error.rs`, uma vez.
+   O `code` é estável e é parte do contrato; o `error` é a mensagem para humanos e pode
+   mudar (fica plano porque o web e o Odoo lêem `body.error` como texto). Código novo
+   devolve `ApiError::Domain(DomainError::…("contexto.razao", …))`; as variantes
+   genéricas de `ApiError` ficam para o código herdado. **Não inventes um segundo
+   formato num handler.**
 8. **Listagens:** `page_size` (por omissão 50, máximo 100) + `page_token` opaco →
    `next_page_token`. **Nenhuma listagem nova sem limite, e nenhum limite silencioso.**
    Numa sincronização (`since`), o cursor é obrigatório: um corte aos 500 perde registos.

@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# ============================================================
+#  Edição SaaS (ADR-0006 §2): multi-inquilino, registo aberto, várias réplicas.
+#
+#    kubectl kustomize deploy/k8s-overlays/saas        # ver o que sai
+#    kubectl apply -k deploy/k8s-overlays/saas
+#
+#  Diferenças para a base:
+#   - DELONIX_EDITION=saas, REGISTRATION_MODE=open, TENANCY_MODE=multi;
+#   - DELONIX_MIGRATE=0 no Deployment: as migrações correm no Job
+#     `delonix-server-migrate` (mesma imagem, args ["migrate"]);
+#   - REDIS_URL obrigatório (várias réplicas partilham presença e sinalização);
+#   - HPA do servidor ligado (hpa.yaml — cópia guardada contra deriva de
+#     ../../k8s/21-server-hpa.yaml pelo scripts/check-k8s-render.sh);
+#   - tudo o que vem de components/edition-common.
+# ============================================================
+resources:
+  - ../../k8s
+  - migrate-job.yaml
+  - hpa.yaml
+
+components:
+  - ../components/edition-common
+
+patches:
+  - path: server-edition.yaml
+
+# O `images:` da base só transforma os recursos da base; o Job nasce aqui e
+# tem de apontar para a MESMA imagem do Deployment (migrar com uma versão e
+# arrancar com outra é o erro que isto evita).
+images:
+  - name: delonix-server
+    newName: delonix-server
+    newTag: latest

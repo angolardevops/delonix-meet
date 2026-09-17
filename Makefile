@@ -172,7 +172,7 @@ build: ## Compila backend (release) + frontend (produção)
 .PHONY: test
 test: fitness web-deps ## Corre os testes (fitness functions + cargo test + typecheck do frontend)
 	@printf "$(C)▶ testes$(Z)\n"
-	@cd server && cargo test --release
+	@cd server && DATABASE_URL=$${DATABASE_URL:-postgres://delonix:delonix_dev@localhost:5435/delonix_meet} cargo test --release --workspace -- --test-threads=4
 	@cd web && node_modules/.bin/tsc -p tsconfig.json --noEmit && printf "$(G)  ✓ tsc limpo$(Z)\n"
 	@cd web && node_modules/.bin/vitest run && printf "$(G)  ✓ vitest (R1/R2)$(Z)\n"
 	@cd web && npm run build >/dev/null && printf "$(G)  ✓ build do frontend (compila SCSS — R54)$(Z)\n"
@@ -195,7 +195,11 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-route-auth.sh
 	@bash scripts/check-docs-drift.sh
 	@bash scripts/check-room-affinity.sh
+	@bash scripts/check-k8s-render.sh
 	@bash scripts/check-arquitectura-catraca.sh
+	@bash scripts/check-crate-deps.sh
+	@bash scripts/check-proto.sh
+	@bash scripts/check-openapi.sh
 	@bash scripts/check-clippy-ratchet.sh
 	@bash scripts/check-dep-audit.sh
 	@bash scripts/check-tenant-rls.sh

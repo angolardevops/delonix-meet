@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{auth::AuthUser, error::ApiError, AppState};
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct UserPublic {
     pub id: Uuid,
     pub email: String,
@@ -20,15 +20,39 @@ pub struct UserPublic {
     pub locale: String,
 }
 
+/// Lista de colunas que cobre todos os campos de `UserPublic` — usar sempre
+/// que se hidrata `UserPublic`. Estava copiada à mão em quatro sítios (aqui e
+/// três em `auth.rs`) — mesmo padrão de risco de `meetings::MEETING_COLUMNS`
+/// (ver ADR-0004).
+pub const USER_PUBLIC_COLUMNS: &str =
+    "id, email, username, created_at, COALESCE(locale, 'pt') AS locale";
+
 pub async fn fetch_public(db: &PgPool, user_id: Uuid) -> Result<UserPublic, ApiError> {
-    Ok(sqlx::query_as::<_, UserPublic>(
-        "SELECT id, email, username, created_at, COALESCE(locale, 'pt') AS locale FROM users WHERE id = $1",
-    )
+    Ok(sqlx::query_as::<_, UserPublic>(&format!(
+        "SELECT {USER_PUBLIC_COLUMNS} FROM users WHERE id = $1"
+    ))
     .bind(user_id)
     .fetch_one(db)
     .await?)
 }
 
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(me, update_me, search),
+    components(schemas(UserPublic, UpdateMeReq))
+)]
+pub struct ApiDoc;
+
+/// O perfil de quem está autenticado.
+#[utoipa::path(
+    get, path = "/api/users/me", tag = "users",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = UserPublic),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn me(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -36,7 +60,7 @@ pub async fn me(
     Ok(Json(fetch_public(&state.db, auth.user_id).await?))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateMeReq {
     pub username: Option<String>,
     pub password: Option<String>,
@@ -44,6 +68,16 @@ pub struct UpdateMeReq {
 }
 
 /// Atualiza os próprios dados: username e/ou password (cada campo é opcional).
+#[utoipa::path(
+    patch, path = "/api/users/me", tag = "users",
+    security(("session" = [])),
+    request_body = UpdateMeReq,
+    responses(
+        (status = 200, body = UserPublic),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn update_me(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -63,11 +97,11 @@ pub async fn update_me(
             .await?;
     }
     if let Some(password) = req.password.as_deref() {
-        if password.len() < 8 {
-            return Err(ApiError::BadRequest(
-                "a password deve ter pelo menos 8 caracteres".into(),
-            ));
-        }
+        // Antes desta chamada faltava aqui o tecto de 128 que auth::register
+        // já impunha — a mesma política de password, agora num só sítio
+        // (ADR-0004, Fase 2).
+        delonix_meet_domain::identity::validation::validate_password(password)
+            .map_err(ApiError::BadRequest)?;
         let hash = crate::auth::hash_password(password)?;
         sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
             .bind(hash)
@@ -88,13 +122,24 @@ pub async fn update_me(
     Ok(Json(fetch_public(&state.db, auth.user_id).await?))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct SearchQuery {
+    /// Termo (email ou username), 2+ caracteres.
     pub q: String,
 }
 
 /// Pesquisa utilizadores por email/username (para convidar/partilhar).
 /// Devolve no máximo 10; exclui o próprio.
+#[utoipa::path(
+    get, path = "/api/users/search", tag = "users",
+    security(("session" = [])),
+    params(SearchQuery),
+    responses(
+        (status = 200, body = Vec<UserPublic>),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn search(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

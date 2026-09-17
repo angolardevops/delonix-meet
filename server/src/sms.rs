@@ -133,7 +133,7 @@ fn operator_link(state: &AppState, op: Operator) -> Option<SmppLink> {
     SmppLink::parse(raw).ok()
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct OperatorInfo {
     operator: &'static str,
     label: &'static str,
@@ -157,7 +157,7 @@ fn operators_info(state: &AppState) -> Vec<OperatorInfo> {
 //  Consola — gateways
 // ============================================================
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct GatewayInfo {
     id: Uuid,
     name: String,
@@ -167,6 +167,56 @@ pub struct GatewayInfo {
     online: bool,
 }
 
+/// Documentação OpenAPI do gateway de SMS (ADR-0005). As rotas `/api/sms/agent/*`
+/// autenticam com o token de gateway `dlxg_` (esquema `api_key`, com esse prefixo).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        list_gateways,
+        create_gateway,
+        revoke_gateway,
+        list_devices,
+        get_route,
+        put_route,
+        list_messages,
+        get_message,
+        send_message,
+        agent_put_devices,
+        agent_claim,
+        agent_result
+    ),
+    components(schemas(
+        OperatorInfo,
+        GatewayInfo,
+        CreateGatewayReq,
+        CreatedGateway,
+        DeviceInfo,
+        RouteInfo,
+        PutRouteReq,
+        Message,
+        MessagePage,
+        SendReq,
+        DeviceReport,
+        DevicesReq,
+        DevicesResp,
+        ClaimedMessage,
+        ClaimResp,
+        ResultReq
+    ))
+)]
+pub struct ApiDoc;
+
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/sms/gateways", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Vec<GatewayInfo>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_gateways(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -186,13 +236,13 @@ pub async fn list_gateways(
     Ok(Json(rows))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateGatewayReq {
     #[serde(default)]
     name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct CreatedGateway {
     id: Uuid,
     name: String,
@@ -201,6 +251,19 @@ pub struct CreatedGateway {
     token: String,
 }
 
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/sms/gateways", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    request_body = CreateGatewayReq,
+    responses(
+        (status = 201, body = CreatedGateway, description = "O token `dlxg_` sai UMA vez."),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_gateway(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -250,6 +313,17 @@ pub async fn create_gateway(
     ))
 }
 
+#[utoipa::path(
+    delete, path = "/api/orgs/{org_id}/sms/gateways/{gateway_id}", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path), ("gateway_id" = Uuid, Path)),
+    responses(
+        (status = 204, description = "Revogado."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn revoke_gateway(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -290,7 +364,7 @@ pub async fn revoke_gateway(
 //  Consola — dispositivos e rota
 // ============================================================
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct DeviceInfo {
     id: Uuid,
     gateway_id: Uuid,
@@ -313,6 +387,17 @@ pub struct DeviceInfo {
     selected: bool,
 }
 
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/sms/devices", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Vec<DeviceInfo>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_devices(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -339,7 +424,7 @@ pub async fn list_devices(
     Ok(Json(rows))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct RouteInfo {
     device_id: Option<Uuid>,
     operators: Vec<OperatorInfo>,
@@ -358,6 +443,17 @@ async fn route_info(state: &AppState, org_id: Uuid) -> Result<RouteInfo, ApiErro
     })
 }
 
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/sms/route", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = RouteInfo),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_route(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -367,11 +463,25 @@ pub async fn get_route(
     Ok(Json(route_info(&state, org_id).await?))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct PutRouteReq {
     device_id: Option<Uuid>,
 }
 
+#[utoipa::path(
+    put, path = "/api/orgs/{org_id}/sms/route", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    request_body = PutRouteReq,
+    responses(
+        (status = 200, body = RouteInfo),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 422, body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn put_route(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -431,7 +541,7 @@ pub async fn put_route(
 //  Consola — mensagens
 // ============================================================
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Message {
     id: Uuid,
     #[sqlx(rename = "to_e164")]
@@ -452,12 +562,13 @@ pub struct Message {
 const MESSAGE_COLUMNS: &str = "id, to_e164, body, encoding, segments, route, operator, device_id,
      status, error, provider_ref, created_at, sent_at";
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct PageQuery {
     page_size: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct MessagePage {
     items: Vec<Message>,
     /// Sempre `null` por agora: só se servem as mais recentes. O campo existe
@@ -465,6 +576,18 @@ pub struct MessagePage {
     next_page_token: Option<String>,
 }
 
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/sms/messages", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path), PageQuery),
+    responses(
+        (status = 200, body = MessagePage),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_messages(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -492,6 +615,17 @@ pub async fn list_messages(
     }))
 }
 
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/sms/messages/{message_id}", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path), ("message_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Message),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_message(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -509,7 +643,7 @@ pub async fn get_message(
     Ok(Json(m))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct SendReq {
     to: String,
     body: String,
@@ -562,6 +696,21 @@ pub fn decide(
     })
 }
 
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/sms/messages", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path), ("Idempotency-Key" = Option<String>, Header, description = "Repetir com a mesma chave devolve a mesma mensagem.")),
+    request_body = SendReq,
+    responses(
+        (status = 202, body = Message, description = "Aceite na fila."),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 422, body = crate::openapi::ErrorBody, description = "Sem rota ou dispositivo."),
+        (status = 429, body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn send_message(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -705,7 +854,7 @@ impl FromRequestParts<Arc<AppState>> for SmsGatewayAuth {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct DeviceReport {
     device_key: String,
     vendor_id: String,
@@ -722,12 +871,12 @@ pub struct DeviceReport {
     signal_percent: Option<i32>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct DevicesReq {
     devices: Vec<DeviceReport>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct DevicesResp {
     poll_interval_secs: u64,
 }
@@ -740,6 +889,16 @@ fn clip(s: Option<String>) -> Option<String> {
 /// Substitui o inventário deste gateway. Um dispositivo que deixa de aparecer
 /// NÃO é apagado — fica desligado (`online: false`) e mantém a selecção, para
 /// que tirar e voltar a ligar o cabo não obrigue a escolher outra vez.
+#[utoipa::path(
+    put, path = "/api/sms/agent/devices", tag = "sms",
+    security(("api_key" = [])),
+    request_body = DevicesReq,
+    responses(
+        (status = 200, body = DevicesResp),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 401, description = "Token `dlxg_` inválido ou revogado.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn agent_put_devices(
     State(state): State<Arc<AppState>>,
     gw: SmsGatewayAuth,
@@ -814,7 +973,7 @@ pub async fn agent_put_devices(
     }))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ClaimedMessage {
     id: Uuid,
     device_key: String,
@@ -823,7 +982,7 @@ pub struct ClaimedMessage {
     pdus: Vec<sms_codec::AtPdu>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ClaimResp {
     messages: Vec<ClaimedMessage>,
 }
@@ -833,6 +992,14 @@ fn concat_reference(id: Uuid) -> u8 {
     id.as_bytes()[15]
 }
 
+#[utoipa::path(
+    post, path = "/api/sms/agent/claim", tag = "sms",
+    security(("api_key" = [])),
+    responses(
+        (status = 200, body = ClaimResp),
+        (status = 401, description = "Token `dlxg_` inválido ou revogado.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn agent_claim(
     State(state): State<Arc<AppState>>,
     gw: SmsGatewayAuth,
@@ -874,13 +1041,24 @@ pub async fn agent_claim(
     Ok(Json(ClaimResp { messages }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ResultReq {
     ok: bool,
     error: Option<String>,
     provider_ref: Option<String>,
 }
 
+#[utoipa::path(
+    post, path = "/api/sms/agent/messages/{message_id}/result", tag = "sms",
+    security(("api_key" = [])),
+    params(("message_id" = Uuid, Path)),
+    request_body = ResultReq,
+    responses(
+        (status = 204, description = "Registado."),
+        (status = 404, body = crate::openapi::ErrorBody),
+        (status = 401, description = "Token `dlxg_` inválido ou revogado.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn agent_result(
     State(state): State<Arc<AppState>>,
     gw: SmsGatewayAuth,

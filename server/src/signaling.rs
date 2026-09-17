@@ -118,6 +118,15 @@ pub enum ClientMsg {
     ForceMute {
         to: Uuid,
     },
+    /// O anfitrião promove (ou revoga) um participante a co-anfitrião de
+    /// ADMISSÕES: passa a ver a sala de espera e a admitir/recusar. Persiste em
+    /// `room_admitters`, para quem cair e voltar recuperar o papel. Antes desta
+    /// variante o web enviava a mensagem e o servidor recusava-a na
+    /// desserialização («invalid message») — a funcionalidade estava a meio.
+    PromoteAdmit {
+        to: Uuid,
+        allowed: bool,
+    },
     Kick {
         to: Uuid,
     },
@@ -345,11 +354,20 @@ pub enum ServerMsg {
     Waiting, // para o convidado: estás em espera
     WaitingJoin {
         peer: PeerInfo,
+    },
+    /// A quem foi promovido/revogado: passa (ou deixa) de poder admitir.
+    AdmitRole {
+        allowed: bool,
+    },
+    /// A toda a sala: o crachá «admite entradas» de um participante mudou.
+    PeerRole {
+        peer_id: Uuid,
+        can_admit: bool,
     }, // para o anfitrião: alguém espera
     WaitingLeft {
         peer_id: Uuid,
     }, // para o anfitrião: desistiu
-    Denied,  // para o convidado: entrada recusada
+    Denied, // para o convidado: entrada recusada
     // Controlo do anfitrião:
     ForceMuted, // para o alvo: foste silenciado
     /// Para o alvo: a câmara foi desligada por quem manda.
@@ -555,6 +573,9 @@ pub struct PeerInfo {
     pub peer_id: Uuid,
     pub username: String,
     pub host: bool,
+    /// Pode admitir da sala de espera (anfitrião ou co-anfitrião de admissões).
+    #[serde(default)]
+    pub can_admit: bool,
     #[serde(default)]
     pub hand: bool,
     /// Estado de media conhecido (true até o peer dizer o contrário).
@@ -781,10 +802,7 @@ pub struct ReclaimedSeat {
 /// de ser lido por ninguém, não transporta afirmações, e um valor opaco não
 /// tenta ninguém a decidir coisas a partir do que lá está dentro.
 fn novo_segredo_de_reclamacao() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut b);
-    hex::encode(b)
+    delonix_meet_core::crypto::random_hex(32)
 }
 
 struct WaitingPeer {
@@ -933,6 +951,7 @@ impl SignalingHub {
                 .peers
                 .iter()
                 .map(|(id, p)| PeerInfo {
+                    can_admit: p.can_admit,
                     peer_id: *id,
                     username: p.username.clone(),
                     host: p.is_host,
@@ -948,6 +967,7 @@ impl SignalingHub {
                     peer_id,
                     username: username.clone(),
                     host: is_host,
+                    can_admit,
                     hand: false,
                     cam: true,
                     mic: true,
@@ -955,7 +975,7 @@ impl SignalingHub {
                     is_pstn: false,
                 },
             };
-            let waiting_msgs: Vec<ServerMsg> = if is_host {
+            let waiting_msgs: Vec<ServerMsg> = if is_host || can_admit {
                 room.waiting
                     .iter()
                     .map(|(id, w)| ServerMsg::WaitingJoin {
@@ -963,6 +983,7 @@ impl SignalingHub {
                             peer_id: *id,
                             username: w.username.clone(),
                             host: false,
+                            can_admit: false,
                             hand: false,
                             cam: true,
                             mic: true,
@@ -995,6 +1016,12 @@ impl SignalingHub {
             (existing, announce, waiting_msgs, companion)
         }; // ← DashMap write lock released here
         self.broadcast_all(room_id, announce);
+        // Um co-anfitrião de admissões que volta (papel persistido e lido do
+        // token) tem de SABER que pode admitir: o cliente só assume esse poder
+        // para o anfitrião.
+        if can_admit && !is_host {
+            let _ = tx.send(ServerMsg::AdmitRole { allowed: true });
+        }
         for msg in waiting_msgs {
             let _ = tx.send(msg);
         }
@@ -1056,7 +1083,10 @@ impl SignalingHub {
                 return None;
             }
             // Comparação em tempo constante: o segredo é uma credencial.
-            if !crate::apikeys::ct_eq(p.reconnect_secret.expose().as_bytes(), segredo.as_bytes()) {
+            if !delonix_meet_core::crypto::ct_eq(
+                p.reconnect_secret.expose().as_bytes(),
+                segredo.as_bytes(),
+            ) {
                 return None;
             }
             Some((
@@ -1109,6 +1139,7 @@ impl SignalingHub {
             peer_id,
             username: username.clone(),
             host: false,
+            can_admit: false,
             hand: false,
             cam: true,
             mic: true,
@@ -1121,7 +1152,7 @@ impl SignalingHub {
             room.waiting
                 .insert(peer_id, WaitingPeer { username, admit_tx });
         }
-        self.broadcast_hosts(room_id, ServerMsg::WaitingJoin { peer: info });
+        self.broadcast_admitters(room_id, ServerMsg::WaitingJoin { peer: info });
     }
 
     pub fn remove_waiting(&self, room_id: Uuid, peer_id: Uuid) {
@@ -1131,7 +1162,7 @@ impl SignalingHub {
             .map(|mut r| r.waiting.remove(&peer_id).is_some())
             .unwrap_or(false);
         if removed {
-            self.broadcast_hosts(room_id, ServerMsg::WaitingLeft { peer_id });
+            self.broadcast_admitters(room_id, ServerMsg::WaitingLeft { peer_id });
         }
     }
 
@@ -1141,14 +1172,19 @@ impl SignalingHub {
             let Some(mut room) = self.rooms.get_mut(&room_id) else {
                 return;
             };
-            if !room.peers.get(&host).map(|p| p.is_host).unwrap_or(false) {
-                return; // só o anfitrião decide
+            if !room
+                .peers
+                .get(&host)
+                .map(|p| p.is_host || p.can_admit)
+                .unwrap_or(false)
+            {
+                return; // só o anfitrião ou um co-anfitrião de admissões decide
             }
             room.waiting.remove(&target).map(|w| w.admit_tx)
         }; // ← DashMap write lock released here
         if let Some(tx) = admitted_tx {
             let _ = tx.send(admit);
-            self.broadcast_hosts(room_id, ServerMsg::WaitingLeft { peer_id: target });
+            self.broadcast_admitters(room_id, ServerMsg::WaitingLeft { peer_id: target });
         }
     }
 
@@ -1337,6 +1373,41 @@ impl SignalingHub {
                 let _ = peer.tx.send(msg.clone());
             }
         }
+    }
+
+    /// A quem pode admitir: anfitriões e co-anfitriões de admissões. É o
+    /// destino da sala de espera (`waiting-join`/`waiting-left`).
+    pub fn broadcast_admitters(&self, room_id: Uuid, msg: ServerMsg) {
+        if let Some(bus) = &self.bus {
+            let bus = bus.clone();
+            let msg_clone = msg.clone();
+            tokio::spawn(async move {
+                bus.publish_signaling(
+                    room_id,
+                    &crate::pubsub::RedisRoomEvent::BroadcastAdmitters {
+                        node_id: *crate::pubsub::NODE_ID,
+                        msg: msg_clone,
+                    },
+                )
+                .await;
+            });
+        }
+        self.broadcast_admitters_local(room_id, msg)
+    }
+
+    pub fn broadcast_admitters_local(&self, room_id: Uuid, msg: ServerMsg) {
+        if let Some(room) = self.rooms.get(&room_id) {
+            for peer in room.peers.values().filter(|p| p.is_host || p.can_admit) {
+                let _ = peer.tx.send(msg.clone());
+            }
+        }
+    }
+
+    /// Conta do participante (para persistir um papel). `None` se não está na sala.
+    pub fn user_id_of(&self, room_id: Uuid, peer_id: Uuid) -> Option<Uuid> {
+        self.rooms
+            .get(&room_id)
+            .and_then(|r| r.peers.get(&peer_id).map(|p| p.user_id))
     }
 
     /// Lista (peer_id, é_anfitrião) dos presentes na sala.
@@ -1921,6 +1992,59 @@ impl SignalingHub {
                     .unwrap_or(false);
                 if trocou {
                     self.broadcast_all(room_id, ServerMsg::HostChanged { from: peer_id, to });
+                }
+            }
+            ClientMsg::PromoteAdmit { to, allowed } => {
+                // Só o anfitrião promove; não a si próprio, e um anfitrião já
+                // admite (revogá-lo não lhe tira o papel de anfitrião).
+                if !self.is_host(room_id, peer_id) || to == peer_id {
+                    return true;
+                }
+                let (mudou, pendentes) = match self.rooms.get_mut(&room_id) {
+                    Some(mut r) => {
+                        let pendentes: Vec<ServerMsg> = r
+                            .waiting
+                            .iter()
+                            .map(|(id, w)| ServerMsg::WaitingJoin {
+                                peer: PeerInfo {
+                                    peer_id: *id,
+                                    username: w.username.clone(),
+                                    host: false,
+                                    can_admit: false,
+                                    hand: false,
+                                    cam: true,
+                                    mic: true,
+                                    is_bot: false,
+                                    is_pstn: false,
+                                },
+                            })
+                            .collect();
+                        let mudou = match r.peers.get_mut(&to) {
+                            Some(alvo) if !alvo.is_host => {
+                                alvo.can_admit = allowed;
+                                true
+                            }
+                            _ => false,
+                        };
+                        (mudou, pendentes)
+                    }
+                    None => (false, Vec::new()),
+                }; // ← lock libertado antes de enviar
+                if mudou {
+                    self.send_to(room_id, to, ServerMsg::AdmitRole { allowed });
+                    if allowed {
+                        // Quem acabou de ganhar o poder vê quem já estava à espera.
+                        for m in pendentes {
+                            self.send_to(room_id, to, m);
+                        }
+                    }
+                    self.broadcast_all(
+                        room_id,
+                        ServerMsg::PeerRole {
+                            peer_id: to,
+                            can_admit: allowed,
+                        },
+                    );
                 }
             }
             ClientMsg::Kick { to } => {
@@ -2674,6 +2798,35 @@ async fn handle_socket(
                         });
                     }
                 }
+                Ok(ClientMsg::PromoteAdmit { to, allowed }) => {
+                    // O papel muda em memória no hub; a PERSISTÊNCIA (para quem
+                    // cair e voltar) é IO e fica aqui, fora do lock do hub.
+                    let alvo = if state.hub.is_host(room_id, peer_id) && to != peer_id {
+                        state.hub.user_id_of(room_id, to)
+                    } else {
+                        None
+                    };
+                    if !state.hub.handle(
+                        room_id,
+                        peer_id,
+                        ClientMsg::PromoteAdmit { to, allowed },
+                        state.redis_bus.as_ref(),
+                    ) {
+                        break;
+                    }
+                    if let Some(alvo) = alvo {
+                        let st = state.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = crate::rooms::set_room_admitter(
+                                &st, room_id, alvo, user_id, allowed,
+                            )
+                            .await
+                            {
+                                tracing::warn!(%room_id, error = %e, "não persisti o co-anfitrião de admissões");
+                            }
+                        });
+                    }
+                }
                 Ok(client_msg) => {
                     if !state
                         .hub
@@ -3211,6 +3364,141 @@ mod tests {
         // O anfitrião admite.
         hub.handle(room, host, ClientMsg::Admit { to: guest }, None);
         assert_eq!(admit_rx.await, Ok(true));
+    }
+
+    /// `promote-admit` (o web enviava-o e o servidor recusava-o): o anfitrião
+    /// promove um participante, que passa a ver a sala de espera e a admitir;
+    /// revogado, deixa de admitir. Um não-anfitrião não promove ninguém.
+    #[tokio::test]
+    async fn host_promotes_co_admitter_who_can_then_admit() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (host, tx_h, mut rx_h) = peer();
+        let (co, tx_c, mut rx_c) = peer();
+        let (other, tx_o, mut rx_o) = peer();
+        hub.join(room, host, host, "host".into(), true, true, false, tx_h);
+        hub.join(room, co, co, "co".into(), false, false, false, tx_c);
+        hub.join(
+            room,
+            other,
+            other,
+            "other".into(),
+            false,
+            false,
+            false,
+            tx_o,
+        );
+
+        let guest = Uuid::new_v4();
+        let (admit_tx, mut admit_rx) = oneshot::channel();
+        hub.add_waiting(room, guest, "guest".into(), admit_tx);
+        drain(&mut rx_h);
+        drain(&mut rx_c);
+        drain(&mut rx_o);
+
+        // Um não-anfitrião não promove.
+        hub.handle(
+            room,
+            other,
+            ClientMsg::PromoteAdmit {
+                to: co,
+                allowed: true,
+            },
+            None,
+        );
+        assert!(recolher(&mut rx_c).is_empty());
+        hub.handle(room, co, ClientMsg::Admit { to: guest }, None);
+        assert!(admit_rx.try_recv().is_err(), "sem promoção não admite");
+
+        // O anfitrião promove: o promovido sabe, vê a fila, e a sala vê o crachá.
+        hub.handle(
+            room,
+            host,
+            ClientMsg::PromoteAdmit {
+                to: co,
+                allowed: true,
+            },
+            None,
+        );
+        let got = recolher(&mut rx_c);
+        assert!(
+            got.iter()
+                .any(|m| matches!(m, ServerMsg::AdmitRole { allowed: true })),
+            "{got:?}"
+        );
+        assert!(
+            got.iter()
+                .any(|m| matches!(m, ServerMsg::WaitingJoin { peer } if peer.peer_id == guest)),
+            "o promovido vê quem já esperava: {got:?}"
+        );
+        assert!(recolher(&mut rx_o).iter().any(
+            |m| matches!(m, ServerMsg::PeerRole { peer_id, can_admit: true } if *peer_id == co)
+        ));
+
+        // E admite.
+        hub.handle(room, co, ClientMsg::Admit { to: guest }, None);
+        assert_eq!(admit_rx.await, Ok(true));
+
+        // Novas entradas na fila chegam ao co-anfitrião, não aos outros.
+        drain(&mut rx_o);
+        drain(&mut rx_c);
+        let guest2 = Uuid::new_v4();
+        let (admit_tx2, mut admit_rx2) = oneshot::channel();
+        hub.add_waiting(room, guest2, "guest2".into(), admit_tx2);
+        assert!(recolher(&mut rx_c)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::WaitingJoin { .. })));
+        assert!(!recolher(&mut rx_o)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::WaitingJoin { .. })));
+
+        // Revogado: deixa de admitir.
+        hub.handle(
+            room,
+            host,
+            ClientMsg::PromoteAdmit {
+                to: co,
+                allowed: false,
+            },
+            None,
+        );
+        assert!(recolher(&mut rx_c)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::AdmitRole { allowed: false })));
+        hub.handle(room, co, ClientMsg::Admit { to: guest2 }, None);
+        assert!(admit_rx2.try_recv().is_err(), "revogado não admite");
+    }
+
+    /// Um co-anfitrião persistido (papel lido do token) que volta à sala é
+    /// avisado de que pode admitir — o cliente só o assume para o anfitrião.
+    #[tokio::test]
+    async fn persisted_co_admitter_is_told_its_role_on_join() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (co, tx_c, mut rx_c) = peer();
+        hub.join(room, co, co, "co".into(), false, true, false, tx_c);
+        assert!(recolher(&mut rx_c)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::AdmitRole { allowed: true })));
+    }
+
+    /// A mensagem que o web envia desserializa (antes: «invalid message»).
+    #[test]
+    fn promote_admit_wire_format() {
+        let to = Uuid::new_v4();
+        let m: ClientMsg = serde_json::from_str(&format!(
+            r#"{{"type":"promote-admit","to":"{to}","allowed":true}}"#
+        ))
+        .unwrap();
+        assert!(matches!(m, ClientMsg::PromoteAdmit { allowed: true, .. }));
+        let out = serde_json::to_value(ServerMsg::PeerRole {
+            peer_id: to,
+            can_admit: true,
+        })
+        .unwrap();
+        assert_eq!(out["type"], "peer-role");
+        let out = serde_json::to_value(ServerMsg::AdmitRole { allowed: false }).unwrap();
+        assert_eq!(out["type"], "admit-role");
     }
 
     #[tokio::test]

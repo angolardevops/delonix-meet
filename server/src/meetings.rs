@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::{auth::AuthUser, error::ApiError, AppState};
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Meeting {
     pub id: Uuid,
     pub owner_id: Uuid,
@@ -29,6 +29,7 @@ pub struct Meeting {
     pub minutes: String,
     #[serde(default)]
     pub transcript: String,
+    /// `daily` | `weekly` | `monthly` | `yearly`, ou `null` se não recorrente.
     pub recurrence_freq: Option<String>,
     pub recurrence_interval: i16,
     pub recurrence_until: Option<NaiveDate>,
@@ -37,8 +38,57 @@ pub struct Meeting {
     pub recurrence_parent_id: Option<Uuid>,
 }
 
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        list,
+        create,
+        check_conflicts,
+        delete,
+        start,
+        ics,
+        save_minutes,
+        invitees,
+        respond,
+        quarantine_analytics,
+        save_minutes_by_room,
+        notes_by_room
+    ),
+    components(schemas(
+        Meeting,
+        MeetingItem,
+        CreateMeetingReq,
+        CreateMeetingResp,
+        ParticipantConflict,
+        RoomConflict,
+        Conflicts,
+        MinutesReq,
+        RoomNotes,
+        StartResp,
+        ConflictCheckReq,
+        InviteeResponse,
+        RespondReq,
+        QuarantineRow
+    ))
+)]
+pub struct ApiDoc;
+
+/// Lista de colunas que cobre **todos** os campos de `Meeting` — usar sempre
+/// que se hidrata `Meeting` (`SELECT`, `INSERT ... RETURNING`,
+/// `UPDATE ... RETURNING`). O `FromRow` derivado faz `try_get` por campo: uma
+/// coluna em falta é um erro de RUNTIME, não de compilação — foi assim que a
+/// migração 0022 (recorrência) partiu `start` e `ics` em silêncio, com esta
+/// mesma lista repetida à mão em três sítios diferentes dentro deste ficheiro
+/// e mais um em `meetings_v1.rs`. Um só lugar, uma só vez (ADR-0004, Fase 3).
+pub const MEETING_COLUMNS: &str =
+    "id, owner_id, title, description, kind, starts_at, duration_min, \
+     room_code, created_at, room_ref, minutes, transcript, recurrence_freq, \
+     recurrence_interval, recurrence_until, recurrence_count, recurrence_byday, \
+     recurrence_parent_id";
+
 /// Reunião enriquecida para a UI do calendário.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct MeetingItem {
     pub id: Uuid,
     pub owner_id: Uuid,
@@ -60,15 +110,20 @@ pub struct MeetingItem {
     pub recurrence_parent_id: Option<Uuid>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateMeetingReq {
+    /// 1-140 caracteres (depois de `trim`).
     pub title: String,
     #[serde(default)]
     pub description: String,
+    /// `video` (omissão) | `voice`.
     #[serde(default = "default_kind")]
+    #[schema(default = "video")]
     pub kind: String,
     pub starts_at: DateTime<Utc>,
+    /// 5-1440 minutos.
     #[serde(default = "default_duration")]
+    #[schema(default = 30)]
     pub duration_min: i32,
     #[serde(default)]
     pub invitee_ids: Vec<Uuid>,
@@ -77,6 +132,7 @@ pub struct CreateMeetingReq {
     // Recorrência
     pub recurrence_freq: Option<String>,
     #[serde(default = "default_rrule_interval")]
+    #[schema(default = 1)]
     pub recurrence_interval: i16,
     pub recurrence_until: Option<NaiveDate>,
     pub recurrence_count: Option<i16>,
@@ -96,7 +152,7 @@ fn default_rrule_interval() -> i16 {
 
 // ---------- deteção de colisão ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ParticipantConflict {
     pub user_id: Uuid,
     pub username: String,
@@ -105,14 +161,16 @@ pub struct ParticipantConflict {
     pub starts_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct RoomConflict {
     pub meeting_id: Uuid,
     pub meeting_title: String,
     pub starts_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+/// Sobreposições encontradas. As de participantes só avisam; as de sala
+/// física bloqueiam a criação.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct Conflicts {
     pub participants: Vec<ParticipantConflict>,
     pub room: Vec<RoomConflict>,
@@ -202,13 +260,26 @@ pub async fn quarantine_sweep(db: &sqlx::PgPool) -> Result<u64, ApiError> {
     Ok(res.rows_affected())
 }
 
-#[derive(Serialize)]
+/// A reunião criada (campos de `Meeting` ao nível de topo) mais os avisos de
+/// colisão de agenda.
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct CreateMeetingResp {
     #[serde(flatten)]
     pub meeting: Meeting,
     pub conflicts: Conflicts,
 }
 
+#[utoipa::path(
+    post, path = "/api/meetings", tag = "meetings",
+    security(("session" = [])),
+    request_body = CreateMeetingReq,
+    responses(
+        (status = 200, body = CreateMeetingResp),
+        (status = 400, body = crate::openapi::ErrorBody, description = "título, `kind` ou duração inválidos"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "quota de reuniões da organização atingida, ou sala física já reservada nesse horário"),
+    )
+)]
 pub async fn create(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -283,14 +354,12 @@ pub async fn create(
         )));
     }
 
-    let meeting: Meeting = sqlx::query_as(
+    let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
                                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-         RETURNING id, owner_id, title, description, kind, starts_at, duration_min, room_code, created_at, room_ref,
-                   minutes, transcript, recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
-                   recurrence_byday, recurrence_parent_id",
-    )
+         RETURNING {MEETING_COLUMNS}"
+    ))
     .bind(auth.user_id)
     .bind(title)
     .bind(req.description.trim().chars().take(4000).collect::<String>())
@@ -329,6 +398,7 @@ pub async fn create(
     }
 
     fire_meeting_webhook(&state, &meeting, auth.user_id, "meeting.created").await;
+    crate::notifications::meeting_invited(&state, &meeting, auth.user_id, &req.invitee_ids).await;
 
     Ok(Json(CreateMeetingResp { meeting, conflicts }))
 }
@@ -396,7 +466,91 @@ pub(crate) async fn fire_meeting_webhook(
     }
 }
 
+/// Só o dono ou um convidado pode arrancar/exportar a reunião. Antes desta
+/// função, `start` e `ics` repetiam a mesma verificação lado a lado
+/// (ADR-0004, Fase 3).
+async fn is_owner_or_invitee(
+    state: &AppState,
+    meeting_id: Uuid,
+    owner_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, ApiError> {
+    if owner_id == user_id {
+        return Ok(true);
+    }
+    let row: Option<(i32,)> =
+        sqlx::query_as("SELECT 1 FROM meeting_invitees WHERE meeting_id = $1 AND user_id = $2")
+            .bind(meeting_id)
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await?;
+    Ok(row.is_some())
+}
+
+/// Convidados que ainda não estão na sala (participantes ativos menos quem
+/// já está dentro e o próprio anfitrião). O alvo do "toca ao vivo" que
+/// `start`, `ring_upcoming_meetings` (cron) e `meetings_v1::ring` (API
+/// pública) reimplementavam cada um à sua maneira (ADR-0004, Fase 3).
+pub(crate) async fn invitees_to_ring(
+    state: &AppState,
+    meeting_id: Uuid,
+    owner_id: Uuid,
+    room_code: &str,
+) -> std::collections::HashSet<Uuid> {
+    let already_in: std::collections::HashSet<Uuid> =
+        match sqlx::query_as::<_, (Uuid,)>("SELECT id FROM rooms WHERE code = $1")
+            .bind(room_code)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+        {
+            Some((rid,)) => state.hub.users_in_room(rid),
+            None => Default::default(),
+        };
+
+    let invitees: Vec<(Uuid,)> = sqlx::query_as(
+        "SELECT user_id FROM meeting_invitees WHERE meeting_id = $1 AND status <> 'declined'",
+    )
+    .bind(meeting_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    invitees
+        .into_iter()
+        .map(|(uid,)| uid)
+        .filter(|uid| !already_in.contains(uid) && *uid != owner_id)
+        .collect()
+}
+
+/// Regista a chamada e toca aos alvos já filtrados por `invitees_to_ring`.
+/// O `register_call` é o que falta para quem atende entrar directo na sala
+/// em vez de cair na sala de espera — mesma mecânica nos três chamadores.
+pub(crate) async fn register_and_ring(
+    state: &Arc<AppState>,
+    room_code: &str,
+    owner_id: Uuid,
+    owner_name: &str,
+    targets: std::collections::HashSet<Uuid>,
+    kind: &str,
+    title: &str,
+) -> (Vec<Uuid>, Vec<Uuid>) {
+    state
+        .presence
+        .register_call(room_code.to_string(), owner_id, targets.clone());
+    crate::presence::ring_users(state, owner_id, owner_name, targets, room_code, kind, title).await
+}
+
 /// Reuniões do utilizador: as que criou + aquelas para que foi convidado.
+#[utoipa::path(
+    get, path = "/api/meetings", tag = "meetings",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = Vec<MeetingItem>, description = "Reuniões criadas pelo utilizador e aquelas para que foi convidado, por data"),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -424,11 +578,22 @@ pub async fn list(
     Ok(Json(items))
 }
 
+#[utoipa::path(
+    delete, path = "/api/meetings/{id}", tag = "meetings",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe ou não é o dono"),
+    )
+)]
 pub async fn delete(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let audience = crate::notifications::meeting_audience(&state, id, auth.user_id).await;
     let res = sqlx::query("DELETE FROM meetings WHERE id = $1 AND owner_id = $2")
         .bind(id)
         .bind(auth.user_id)
@@ -437,10 +602,11 @@ pub async fn delete(
     if res.rows_affected() == 0 {
         return Err(ApiError::NotFound);
     }
+    crate::notifications::meeting_cancelled(&state, audience).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct MinutesReq {
     #[serde(default)]
     pub minutes: String,
@@ -452,6 +618,16 @@ pub struct MinutesReq {
 }
 
 /// Guarda as MoM (notas AI) numa reunião. Dono ou convidado podem guardar.
+#[utoipa::path(
+    post, path = "/api/meetings/{id}/minutes", tag = "meetings",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    request_body = MinutesReq,
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada). O resumo AI é gerado em segundo plano."),
+        (status = 401, body = crate::openapi::ErrorBody, description = "não é dono nem convidado — também quando a reunião não existe"),
+    )
+)]
 pub async fn save_minutes(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -495,6 +671,17 @@ pub async fn save_minutes(
 /// Guarda MoM associando pela sala: encontra a reunião cuja `room_code` bate
 /// certo (reuniões iniciadas a partir do calendário). Usado quando se grava
 /// a partir de dentro da chamada.
+#[utoipa::path(
+    post, path = "/api/rooms/{code}/minutes", tag = "meetings",
+    security(("session" = [])),
+    params(("code" = String, Path, description = "Código da sala")),
+    request_body = MinutesReq,
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody, description = "sem reunião nesta sala de que seja dono ou convidado (os dois casos não se distinguem)"),
+    )
+)]
 pub async fn save_minutes_by_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -529,7 +716,7 @@ pub async fn save_minutes_by_room(
     save_minutes(State(state), auth, Path(mid), Json(req)).await
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RoomNotes {
     pub title: String,
     pub minutes: String,
@@ -538,6 +725,15 @@ pub struct RoomNotes {
 
 /// Ata e transcrição da reunião associada a uma sala — para o leitor da
 /// biblioteca de gravações. Só participantes da sala têm acesso.
+#[utoipa::path(
+    get, path = "/api/rooms/{code}/notes", tag = "meetings",
+    security(("session" = [])),
+    params(("code" = String, Path, description = "Código da sala")),
+    responses(
+        (status = 200, body = RoomNotes, description = "Ata da reunião mais recente da sala; campos vazios se a sala não tiver reunião"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "não participou na sala"),
+    )
+)]
 pub async fn notes_by_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -569,39 +765,42 @@ pub async fn notes_by_room(
     }))
 }
 
+/// Resposta de `POST /api/meetings/{id}/start`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct StartResp {
+    /// Código da sala a que o cliente se liga.
+    pub code: String,
+    /// `video` | `voice`.
+    pub kind: String,
+}
+
 /// Arranca a reunião: cria a sala (se ainda não existe) e devolve o código.
 /// Reuniões de voz criam na mesma uma sala — o cliente entra sem vídeo.
+#[utoipa::path(
+    post, path = "/api/meetings/{id}/start", tag = "meetings",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = StartResp),
+        (status = 400, body = crate::openapi::ErrorBody, description = "um convidado tentou arrancar antes do anfitrião"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "não é dono nem convidado"),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn start(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let meeting: Meeting = sqlx::query_as(
-        // A lista TEM de cobrir todos os campos de `Meeting` — o `FromRow`
-        // derivado faz `try_get` de cada um e uma coluna em falta é um erro em
-        // runtime (não em compilação). Foi assim que a recorrência (0022)
-        // partiu `start` e `ics` em silêncio.
-        "SELECT id, owner_id, title, description, kind, starts_at, duration_min, room_code,
-                created_at, room_ref, minutes, transcript,
-                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
-                recurrence_byday, recurrence_parent_id
-         FROM meetings WHERE id = $1",
-    )
+) -> Result<Json<StartResp>, ApiError> {
+    let meeting: Meeting = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
+    ))
     .bind(id)
     .fetch_one(&state.db)
     .await?;
 
     // Só dono ou convidado pode arrancar/entrar.
-    let allowed = meeting.owner_id == auth.user_id || {
-        let row: Option<(i32,)> =
-            sqlx::query_as("SELECT 1 FROM meeting_invitees WHERE meeting_id = $1 AND user_id = $2")
-                .bind(id)
-                .bind(auth.user_id)
-                .fetch_optional(&state.db)
-                .await?;
-        row.is_some()
-    };
-    if !allowed {
+    if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
         return Err(ApiError::Unauthorized);
     }
 
@@ -613,9 +812,10 @@ pub async fn start(
             .await?
             .is_some()
         {
-            return Ok(Json(
-                serde_json::json!({ "code": code, "kind": meeting.kind }),
-            ));
+            return Ok(Json(StartResp {
+                code,
+                kind: meeting.kind,
+            }));
         }
     }
 
@@ -649,30 +849,18 @@ pub async fn start(
     // Estilo Teams: a reunião começou → "desperta" os convidados. Quem está
     // online recebe a chamada a tocar (aceitar entra na sala); quem não está
     // fica com chamada perdida. Quem recusou o convite não é incomodado.
-    let invitees: Vec<(Uuid,)> = sqlx::query_as(
-        "SELECT user_id FROM meeting_invitees
-         WHERE meeting_id = $1 AND status <> 'declined'",
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
-    if !invitees.is_empty() {
+    let targets = invitees_to_ring(&state, id, auth.user_id, &room.code).await;
+    if !targets.is_empty() {
         let caller_name: (String,) = sqlx::query_as("SELECT username FROM users WHERE id = $1")
             .bind(auth.user_id)
             .fetch_one(&state.db)
             .await?;
-        let targets: std::collections::HashSet<Uuid> = invitees.into_iter().map(|r| r.0).collect();
-        // Registar a chamada para que os convidados entrem diretamente (sem sala de espera).
-        state
-            .presence
-            .register_call(room.code.clone(), auth.user_id, targets.clone());
-        let (ringing, offline) = crate::presence::ring_users(
+        let (ringing, offline) = register_and_ring(
             &state,
+            &room.code,
             auth.user_id,
             &caller_name.0,
             targets,
-            &room.code,
             &meeting.kind,
             &meeting.title,
         )
@@ -680,42 +868,36 @@ pub async fn start(
         tracing::info!(meeting = %id, ringing = ringing.len(), offline = offline.len(), "meeting start ring");
     }
 
-    Ok(Json(
-        serde_json::json!({ "code": room.code, "kind": meeting.kind }),
-    ))
+    Ok(Json(StartResp {
+        code: room.code,
+        kind: meeting.kind,
+    }))
 }
 
 /// Exportação iCalendar (roadmap "Google e Outlook Calendar"): um .ics por
 /// reunião — importa/abre no Google Calendar, Outlook, Apple Calendar, etc.
+#[utoipa::path(
+    get, path = "/api/meetings/{id}/ics", tag = "meetings",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = String, content_type = "text/calendar", description = "Um VEVENT iCalendar, como anexo `reuniao.ics`"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "não é dono nem convidado"),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn ics(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<axum::response::Response, ApiError> {
-    let meeting: Meeting = sqlx::query_as(
-        // A lista TEM de cobrir todos os campos de `Meeting` — o `FromRow`
-        // derivado faz `try_get` de cada um e uma coluna em falta é um erro em
-        // runtime (não em compilação). Foi assim que a recorrência (0022)
-        // partiu `start` e `ics` em silêncio.
-        "SELECT id, owner_id, title, description, kind, starts_at, duration_min, room_code,
-                created_at, room_ref, minutes, transcript,
-                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
-                recurrence_byday, recurrence_parent_id
-         FROM meetings WHERE id = $1",
-    )
+    let meeting: Meeting = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
+    ))
     .bind(id)
     .fetch_one(&state.db)
     .await?;
-    let allowed = meeting.owner_id == auth.user_id
-        || sqlx::query_as::<_, (i32,)>(
-            "SELECT 1 FROM meeting_invitees WHERE meeting_id = $1 AND user_id = $2",
-        )
-        .bind(id)
-        .bind(auth.user_id)
-        .fetch_optional(&state.db)
-        .await?
-        .is_some();
-    if !allowed {
+    if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
         return Err(ApiError::Unauthorized);
     }
 
@@ -754,10 +936,11 @@ pub async fn ics(
 
 // ---------- pré-verificação de conflitos (antes de agendar) ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ConflictCheckReq {
     pub starts_at: DateTime<Utc>,
     #[serde(default = "default_duration")]
+    #[schema(default = 30)]
     pub duration_min: i32,
     #[serde(default)]
     pub invitee_ids: Vec<Uuid>,
@@ -765,6 +948,15 @@ pub struct ConflictCheckReq {
     pub room_ref: Option<Uuid>,
 }
 
+#[utoipa::path(
+    post, path = "/api/meetings/conflicts", tag = "meetings",
+    security(("session" = [])),
+    request_body = ConflictCheckReq,
+    responses(
+        (status = 200, body = Conflicts),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn check_conflicts(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -791,16 +983,27 @@ pub async fn check_conflicts(
 
 // ---------- respostas dos convidados ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct InviteeResponse {
     pub user_id: Uuid,
     pub username: String,
+    /// `pending` | `accepted` | `declined`.
     pub status: String,
     pub decline_reason: String,
     pub responded_at: Option<DateTime<Utc>>,
 }
 
 /// Lista as respostas dos convidados (só o anfitrião vê tudo).
+#[utoipa::path(
+    get, path = "/api/meetings/{id}/invitees", tag = "meetings",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = Vec<InviteeResponse>),
+        (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn invitees(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -826,15 +1029,29 @@ pub async fn invitees(
     Ok(Json(rows))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct RespondReq {
-    pub status: String, // 'accepted' | 'declined'
+    /// `accepted` | `declined`.
+    pub status: String,
+    /// Obrigatório quando `status` é `declined`.
     #[serde(default)]
     pub reason: String,
 }
 
 /// O convidado aceita ou recusa (recusar exige motivo). Ao recusar, o
 /// anfitrião é notificado em tempo real (se online) com o motivo.
+#[utoipa::path(
+    post, path = "/api/meetings/{id}/respond", tag = "meetings",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    request_body = RespondReq,
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`status` inválido, ou recusa sem motivo"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não é convidado desta reunião"),
+    )
+)]
 pub async fn respond(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -900,17 +1117,20 @@ pub async fn respond(
 
 // ---------- analytics de quarentena ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct QuarantineRow {
     pub user_id: Uuid,
     pub username: String,
     pub count: i64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct AnalyticsQuery {
+    /// `week` | `month` (omissão) | `quarter` | `year`. Valor desconhecido conta como `month`.
     #[serde(default = "default_period")]
-    pub period: String, // week|month|quarter|year
+    #[param(default = "month")]
+    pub period: String,
     /// Se dado, restringe a membros dessa organização (o pedinte tem de ser membro).
     #[serde(default)]
     pub org_id: Option<Uuid>,
@@ -921,6 +1141,16 @@ fn default_period() -> String {
 
 /// Ranking de quem mais fica em quarentena, no período pedido. Opcionalmente
 /// filtrado a uma organização (só membros dessa org).
+#[utoipa::path(
+    get, path = "/api/quarantine/analytics", tag = "meetings",
+    security(("session" = [])),
+    params(AnalyticsQuery),
+    responses(
+        (status = 200, body = Vec<QuarantineRow>, description = "Até 100 linhas; vazio se o utilizador não administra nenhuma organização"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "com `org_id`: membro mas não administrador"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "com `org_id`: não é membro"),
+    )
+)]
 pub async fn quarantine_analytics(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1098,16 +1328,13 @@ fn next_occurrence(
 /// existem instâncias filhas para os próximos 6 meses.
 pub async fn extend_recurrence_horizon(db: &sqlx::PgPool) {
     // Pais com recorrência ativa (sem data de fim ou com data futura)
-    let parents: Vec<Meeting> = sqlx::query_as(
-        "SELECT id, owner_id, title, description, kind, starts_at, duration_min, room_code,
-                created_at, room_ref, minutes, transcript,
-                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
-                recurrence_byday, recurrence_parent_id
+    let parents: Vec<Meeting> = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS}
          FROM meetings
          WHERE recurrence_freq IS NOT NULL
            AND recurrence_parent_id IS NULL
-           AND (recurrence_until IS NULL OR recurrence_until > now()::date)",
-    )
+           AND (recurrence_until IS NULL OR recurrence_until > now()::date)"
+    ))
     .fetch_all(db)
     .await
     .unwrap_or_default();
@@ -1175,47 +1402,18 @@ pub async fn ring_upcoming_meetings(state: &Arc<AppState>) {
             None => continue,
         };
 
-        // Resolve o room_id para verificar quem já está na sala.
-        let room_id_row: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM rooms WHERE code = $1")
-            .bind(&room_code)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-
-        let already_in: std::collections::HashSet<Uuid> = room_id_row
-            .map(|(rid,)| state.hub.users_in_room(rid))
-            .unwrap_or_default();
-
-        let invitees: Vec<(Uuid,)> = sqlx::query_as(
-            "SELECT user_id FROM meeting_invitees
-             WHERE meeting_id = $1 AND status <> 'declined'",
-        )
-        .bind(meeting_id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
-
-        let targets: std::collections::HashSet<Uuid> = invitees
-            .into_iter()
-            .map(|(uid,)| uid)
-            .filter(|uid| !already_in.contains(uid) && *uid != owner_id)
-            .collect();
-
+        let targets = invitees_to_ring(state, meeting_id, owner_id, &room_code).await;
         if targets.is_empty() {
             continue;
         }
-
-        // Registar a chamada para que os convidados entrem diretamente (sem sala de espera).
-        state
-            .presence
-            .register_call(room_code.clone(), owner_id, targets.clone());
-        let (ringing, offline) = crate::presence::ring_users(
+        crate::notifications::meeting_starting(state, meeting_id, &title, &room_code, &targets)
+            .await;
+        let (ringing, offline) = register_and_ring(
             state,
+            &room_code,
             owner_id,
             &owner_name,
             targets,
-            &room_code,
             &kind,
             &title,
         )

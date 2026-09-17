@@ -35,7 +35,10 @@ BASELINE = 'scripts/arquitectura-baseline.txt'
 BLESS = os.environ.get('BLESS') == '1'
 
 def fontes(excluir=()):
-    for path in sorted(glob.glob(f'{SRC}/*.rs')):
+    # O monólito em transição E os crates do workspace (ADR-0006 §1): uma cópia
+    # que saia do monólito para um crate novo continua a contar.
+    caminhos = glob.glob(f'{SRC}/*.rs') + glob.glob('server/crates/*/src/**/*.rs', recursive=True)
+    for path in sorted(caminhos):
         if os.path.basename(path) in excluir:
             continue
         yield path, open(path, encoding='utf-8').read()
@@ -56,10 +59,10 @@ def contar(regex, excluir=()):
 
 def v1_com_sessao():
     """Handlers montados em /api/v1 cuja assinatura extrai `AuthUser` (sessão)."""
-    main = open(f'{SRC}/main.rs', encoding='utf-8').read()
+    main = open(f'{SRC}/lib.rs', encoding='utf-8').read()
     m = re.search(r'\.nest\(\s*"/api/v1"(.*?)\.layer\(\s*middleware::', main, re.S)
     if not m:
-        print('✗ catraca: não encontrei o bloco .nest("/api/v1") em main.rs — o portão ficou cego')
+        print('✗ catraca: não encontrei o bloco .nest("/api/v1") em lib.rs — o portão ficou cego')
         sys.exit(1)
     total, onde = 0, []
     for mod, fn in set(re.findall(r'\b(?:get|post|put|patch|delete)\(\s*(\w+)::(\w+)\s*\)', m.group(1))):

@@ -1,0 +1,65 @@
+# Migrações da edição SaaS — um Job, com a MESMA imagem do servidor.
+#
+#   kubectl apply -k deploy/k8s-overlays/saas
+#   kubectl -n delonix-meet wait --for=condition=complete job/delonix-server-migrate --timeout=10m
+#
+# Um Job é imutável: aplicar uma imagem nova sobre um Job que ainda existe
+# falha com «field is immutable». O `ttlSecondsAfterFinished` apaga-o uma hora
+# depois de terminar; numa release seguida, apagar antes:
+#   kubectl -n delonix-meet delete job delonix-server-migrate --ignore-not-found
+#
+# Ordem: o Deployment pode subir antes de o Job acabar. Com DELONIX_MIGRATE=0 o
+# servidor não migra; se o esquema ainda não estiver pronto, o startupProbe
+# (5 min) segura-o sem reinícios em cascata. Migrações são aditivas (ver
+# deploy/contexts/README.md): a versão anterior aguenta o esquema novo.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: delonix-server-migrate
+  namespace: delonix-meet
+  labels:
+    app: delonix-server-migrate
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: 1800
+  template:
+    metadata:
+      labels:
+        app: delonix-server-migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          image: delonix-server:latest
+          imagePullPolicy: IfNotPresent
+          # Subcomando do binário: corre as migrações embutidas e sai.
+          args: ["migrate"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          envFrom:
+            - configMapRef:
+                name: delonix-config
+            - secretRef:
+                name: delonix-secrets
+          env:
+            - name: LOG_FORMAT
+              value: json
+            - name: DELONIX_EDITION
+              value: saas
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }

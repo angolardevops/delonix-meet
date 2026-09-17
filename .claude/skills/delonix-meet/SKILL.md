@@ -52,20 +52,30 @@ description: Ponto de entrada do Delonix Meet (videoconferência self-hosted —
 | Frontend | `cd web && npx tsc --noEmit && npx vitest run` + o e2e do ecrã |
 | Media | `cargo test --release sfu_e2e` + `node web/e2e/reuniao.mjs` |
 
-## O estado real (2026-09-16) — não o redescubras
+## O estado real (2026-09-16, ramo `integra/backend-enterprise`) — não o redescubras
 
-- **Um crate só** (`delonix-server`), com 34 módulos planos. **Não há workspace nem
-  crates.** A divisão está desenhada no ADR-0004 §3 e **só é possível depois de partir o
-  ciclo de 18 módulos** (§6 passo 3).
-- **Não há gRPC nem OpenAPI.** O desenho de onde entram está no ADR-0004 §4. Não
-  proponhas gRPC entre o browser e o servidor.
-- **S1–S3 fechadas no #76** (R121): administrador da plataforma declarado em
-  `PLATFORM_ADMIN_USER_IDS`, sincronização Odoo pela regra R25, membro arquivado sem
-  acesso; `add_employee` fechado no #78 (R122). **Continuam abertos** S4–S6, o registo
-  sem verificação de email, e `odoo::list_users` com arquivados — ver `delonix-meet-backend`
-  §Segurança. Uma tarefa nesses caminhos fecha-os ou nomeia-os no relatório.
-- **Os revisores estão em `.claude/agents/delonix-meet-*.md`.** A pasta `agents` na raiz, que o
-  harness citava, nunca existiu no git.
+- **Workspace em transição** (ADR-0006 §1). O monólito `delonix-server` continua a ser a
+  raiz, com `src/lib.rs` (o `main.rs` só chama `run()`), mais três crates sem IO:
+  `delonix-meet-core` (cripto, `DomainError` com código, paginação, edições, `SecretBox`),
+  `delonix-meet-domain` (contextos `identity`, `content`, `integration`, `notification`) e
+  `delonix-meet-protocol` (`.proto` gerados). `scripts/check-crate-deps.sh` impõe a regra
+  da dependência. Os módulos do monólito **ainda não** estão em `store`/`api`/`media`/
+  `realtime` — isso é o ADR-0006 §«Ordem» D e G.
+- **OpenAPI 3.1 gerado**, 158/158 operações (`/api/openapi.json`, `/api/v1/openapi.json`,
+  `docs/reference/openapi/`), com catraca a zero (`scripts/check-openapi.sh`).
+- **gRPC interno** com mTLS (`GRPC_BIND_ADDR`): `IvrService` e `TranscriptionService`; o
+  `ai-worker` já fala gRPC. **Nunca** gRPC para o browser.
+- **Edições** `saas` (omissão = histórico), `enterprise`, `personal`; `INTERNAL_BIND_ADDR`,
+  `UI_DIR`, `delonix-server migrate`, `LOG_FORMAT=json`, `DATA_ENCRYPTION_KEYS`.
+- **Testes de integração HTTP/gRPC contra Postgres real** em `server/tests/` (22 binários);
+  `cargo test --release --workspace -- --test-threads=4` precisa de `DATABASE_URL`.
+- **Segurança fechada neste ramo:** R125 (IDOR 5W2H), R130 (tomada de conta por SSO), R131
+  (força bruta MFA), R132, R140–R143 (dial-in de outra org, pool de DIDs, token Odoo,
+  arquivados no directório Odoo), R150 (`changeme123`), R151 (ocupação de contas pela v1),
+  R152, R153 (401→403/404). **Continuam abertos** S4 (SSRF no `odoo_url`/WebDAV/OIDC), S5
+  nos segredos HERDADOS (webhooks, SSO, WebDAV — a `SecretBox` existe e só os destinos de
+  emissão a usam), S6 (escopos de chaves), registo sem verificação de email.
+- **Os revisores estão em `.claude/agents/delonix-meet-*.md`.**
 
 ## Três regras que valem em tudo
 

@@ -2,24 +2,55 @@
 #
 # CONTEXTO: a IA em tempo real (matting RVM, segmentação, transcrição ao vivo)
 # corre no CLIENTE (WebGPU/WASM no browser) — o backend NÃO precisa de GPU para
-# isso. Este worker faz IA em LOTE no servidor: transcreve as gravações
-# (recorder.rs → RECORDINGS_DIR/<id>.webm) com faster-whisper na GPU e preenche
-# a transcrição + a ATA (MoM) na BD. Implementação: ai-worker/ (Python).
+# isso. Este worker faz IA em LOTE no servidor: reserva gravações pelo gRPC
+# interno (TranscriptionService, ADR-0006 §3), transcreve-as com faster-whisper
+# na GPU e entrega a transcrição + a ATA (MoM) ao servidor, que aplica o DLP e
+# grava. O worker NÃO tem credenciais da base. Implementação: ai-worker/ (Python).
 #
 # Pré-requisitos no cluster:
+#   - Um overlay aplicado (deploy/k8s-overlays/{saas,enterprise}): é ele que abre
+#     o gRPC :9180 no Service delonix-server-internal, a NetworkPolicy que deixa
+#     entrar `app: delonix-ai-worker`, e o Issuer `delonix-meet-internal` de que
+#     o Certificate abaixo precisa. Sem overlay (só a base) não há gRPC.
 #   - Pool de nós com GPU NVIDIA + NVIDIA device plugin (expõe nvidia.com/gpu).
 #   - runtimeClass "nvidia" e (recomendado) taint dedicado nos nós GPU.
 #   - PVC `recordings` (ReadWriteMany) partilhado com o backend, e `ai-models`
 #     para persistir o modelo (~3GB) entre reinícios.
-#   - Migração 0016 aplicada (colunas transcript/minutes/transcribed_at).
 #
-#   docker build -f ai-worker/Dockerfile -t ghcr.io/OWNER/delonix-ai-worker .
+#   BUILD_AI_WORKER=1 deploy/build-images.sh   (contexto = raiz: os stubs saem de server/proto)
 #   kubectl apply -f deploy/k8s/60-ai-gpu-worker.yaml
+#
+# Modo legado (DEPRECADO): sem DELONIX_GRPC_ADDR e com DATABASE_URL o worker
+# volta a escrever directamente no Postgres, CONTORNANDO o DLP e as reservas.
+# Não se usa aqui; existe só para instalações sem o gRPC interno.
+---
+# Certificado de CLIENTE do mTLS, emitido pela mesma CA interna que assina o do
+# servidor (grpc-mtls.yaml). O cert-manager roda-o sozinho — sem passo manual.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: delonix-ai-worker-grpc
+  namespace: delonix-meet
+spec:
+  secretName: delonix-ai-worker-grpc-tls
+  duration: 2160h    # 90 dias
+  renewBefore: 360h  # 15 dias
+  commonName: delonix-ai-worker
+  usages:
+    - client auth
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: delonix-meet-internal
+    kind: Issuer
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: delonix-ai-worker
-  namespace: delonix
+  namespace: delonix-meet
   labels: { app: delonix-ai-worker }
 spec:
   replicas: 1
@@ -38,13 +69,25 @@ spec:
           effect: NoSchedule
       securityContext:
         runAsNonRoot: true
+        runAsUser: 65532 # o uid da imagem (ai-worker/Dockerfile)
+        # O Secret do mTLS monta como root:fsGroup 0440 — sem fsGroup o worker
+        # não lê a própria chave. OnRootMismatch evita o chown recursivo do PVC.
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: worker
           image: ghcr.io/OWNER/delonix-ai-worker:latest
-          envFrom:
-            - secretRef: { name: delonix-secrets } # DATABASE_URL
+          # Sem envFrom de delonix-secrets: o worker não tem DATABASE_URL (ADR-0006 §3).
           env:
+            - { name: DELONIX_GRPC_ADDR, value: "delonix-server-internal:9180" }
+            - { name: GRPC_CLIENT_CERT, value: /etc/delonix/grpc-tls/tls.crt }
+            - { name: GRPC_CLIENT_KEY, value: /etc/delonix/grpc-tls/tls.key }
+            - { name: GRPC_CA, value: /etc/delonix/grpc-tls/ca.crt }
+            - name: WORKER_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            # Sem renovação no contrato: cobre a gravação mais longa (máx. 7200).
+            - { name: LEASE_SECONDS, value: "3600" }
             - { name: RECORDINGS_DIR, value: /recordings }
             - { name: WHISPER_MODEL, value: large-v3 }
             - { name: WHISPER_DEVICE, value: cuda }
@@ -62,6 +105,7 @@ spec:
           volumeMounts:
             - { name: recordings, mountPath: /recordings, readOnly: true }
             - { name: models, mountPath: /models }
+            - { name: grpc-tls, mountPath: /etc/delonix/grpc-tls, readOnly: true }
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
@@ -73,13 +117,18 @@ spec:
         # Cache do modelo faster-whisper (~3GB) — evita re-descarregar.
         - name: models
           persistentVolumeClaim: { claimName: ai-models }
+        # Certificado de cliente mTLS (Certificate delonix-ai-worker-grpc acima).
+        - name: grpc-tls
+          secret:
+            secretName: delonix-ai-worker-grpc-tls
+            defaultMode: 0440 # legível pelo fsGroup, não pelo mundo
 ---
 # Autoscale por profundidade de fila (ex.: KEDA) faz mais sentido que CPU para
 # lotes. Exemplo com HPA de CPU (simples) — trocar por KEDA ScaledObject se
 # usares uma fila de trabalhos:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
-metadata: { name: delonix-ai-worker, namespace: delonix }
+metadata: { name: delonix-ai-worker, namespace: delonix-meet }
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: delonix-ai-worker }
   # HPA só escala a zero com o feature-gate HPAScaleToZero (alpha). Para

@@ -1,0 +1,46 @@
+// IVR do dial-in PSTN: a camada de media (FreeSWITCH, ou o sidecar gRPC que o
+// fale por ela) pergunta a que sala liga um chamador e regista a chamada no fim.
+//
+// Substitui /api/voice/ivr/{validate,cdr} (HTTP com segredo partilhado). As
+// duas superfícies chamam as MESMAS funções do servidor — nunca uma segunda
+// implementação da regra (ADR-0004 §4). Autenticação: mTLS.
+syntax = "proto3";
+
+package delonix.meet.telephony.v1;
+
+service IvrService {
+  // Valida (DID, PIN) e devolve a sala activa. Só as falhas contam para o
+  // limite anti-fraude por DID. Erros: NOT_FOUND (PIN/DID sem sala activa),
+  // RESOURCE_EXHAUSTED (tentativas a mais), UNIMPLEMENTED (telefonia desligada).
+  rpc ValidatePin(ValidatePinRequest) returns (ValidatePinResponse);
+  // Regista o CDR no fim de uma chamada e devolve o custo estimado.
+  rpc RecordCallDetail(RecordCallDetailRequest) returns (RecordCallDetailResponse);
+}
+
+message ValidatePinRequest {
+  // Número marcado, em E.164 (+244…).
+  string did_e164 = 1;
+  string pin = 2;
+}
+
+message ValidatePinResponse {
+  // UUID da sala de voz.
+  string voice_room_id = 1;
+  // Código da sala do Meet a que o chamador é ligado.
+  string room_code = 2;
+  string media_backend = 3;
+}
+
+message RecordCallDetailRequest {
+  string voice_room_id = 1;
+  // "inbound" (omissão) ou "outbound".
+  string direction = 2;
+  string caller_number = 3;
+  string did_e164 = 4;
+  int64 duration_secs = 5;
+}
+
+message RecordCallDetailResponse {
+  string id = 1;
+  double cost_estimate = 2;
+}

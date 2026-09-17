@@ -643,10 +643,22 @@ pub struct DirectoQuery {
     /// legível pós-upgrade que as outras regras — um erro do extractor do
     /// axum falha ANTES do upgrade, e é exactamente o que o comentário em
     /// `ws_directo` explica que fica invisível para o browser.
+    #[serde(default = "sem_destinos")]
     pub destinos: String,
+    /// Destinos GUARDADOS da organização (G1), por id, separados por vírgula.
+    /// A chave decifra-se no servidor e nunca volta ao browser. Exige
+    /// `org_id` e que quem emite seja administrador activo dessa organização.
+    #[serde(default)]
+    pub destination_ids: Option<String>,
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
     /// MIME do vídeo que o browser vai empurrar, para se poder recusar ANTES
     /// de arrancar o ffmpeg.
     pub codec: String,
+}
+
+fn sem_destinos() -> String {
+    "[]".into()
 }
 
 /// A forma solta que chega na query, antes de a chave virar `Secret`.
@@ -694,7 +706,7 @@ pub async fn ws_directo(
     // ler. Por isso aceita-se o upgrade e manda-se a razão numa trama de texto.
     // O JSON dos destinos segue a MESMA regra: um parse malformado tem de
     // chegar como razão legível, não como um 400 antes do upgrade.
-    let destinos: Vec<Destino> = match serde_json::from_str::<Vec<DestinoBruto>>(&q.destinos) {
+    let mut destinos: Vec<Destino> = match serde_json::from_str::<Vec<DestinoBruto>>(&q.destinos) {
         Ok(brutos) => brutos
             .into_iter()
             .map(|b| Destino {
@@ -708,6 +720,37 @@ pub async fn ws_directo(
             return Ok(ws.on_upgrade(move |socket| recusar(socket, m)));
         }
     };
+
+    // Destinos guardados (G1): a chave sai da base cifrada e só é aberta aqui.
+    if let Some(csv) = q
+        .destination_ids
+        .as_deref()
+        .filter(|c| !c.trim().is_empty())
+    {
+        let ids: Result<Vec<Uuid>, _> = csv.split(',').map(|p| p.trim().parse::<Uuid>()).collect();
+        let resolvidos = match (ids, q.org_id) {
+            (Ok(ids), Some(org_id)) => {
+                match crate::org::require_admin_pub(&state, org_id, claims.sub).await {
+                    Ok(()) => crate::stream_destinations::resolve_for_broadcast(&state, org_id, &ids)
+                        .await
+                        .map_err(|_| "um ou mais destinos guardados não existem, não estão prontos, ou a chave não abre".to_string()),
+                    Err(_) => Err("só um administrador da organização emite para os destinos guardados".to_string()),
+                }
+            }
+            (Err(_), _) => {
+                Err("destination_ids malformado (UUIDs separados por vírgula)".to_string())
+            }
+            (_, None) => Err("destination_ids exige org_id".to_string()),
+        };
+        match resolvidos {
+            Ok(v) => destinos.extend(v.into_iter().map(|(url, chave, rotulo)| Destino {
+                url,
+                chave: Secret::new(chave),
+                rotulo,
+            })),
+            Err(m) => return Ok(ws.on_upgrade(move |socket| recusar(socket, m))),
+        }
+    }
 
     let activas = state.directos.quantas().await;
     let mut motivo: Option<String> = match pode_emitir(

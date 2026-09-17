@@ -44,6 +44,22 @@ impl RateLimiter {
         *entry = (window_start, count + 1);
         true
     }
+
+    /// A chave está esgotada NESTA janela? Não conta como tentativa.
+    ///
+    /// É o par do `check` para os limitadores que só contam FALHAS (MFA,
+    /// R131): pergunta-se antes de verificar, e só a falha chama `check`. Sem
+    /// esta pergunta prévia, o código certo passava durante o bloqueio — e um
+    /// travão que deixa passar a resposta certa não trava a força bruta.
+    pub fn is_blocked(&self, key: &str) -> bool {
+        match self.hits.get(key) {
+            Some(e) => {
+                let (window_start, count) = *e;
+                Instant::now().duration_since(window_start) <= self.window && count >= self.limit
+            }
+            None => false,
+        }
+    }
 }
 
 /// Token bucket por-socket para o rate-limit dos WebSockets (`/ws`, `/rtc`).
@@ -211,6 +227,28 @@ mod tests {
             !limiter.check("10.0.0.1"),
             "4th request in window must be blocked"
         );
+    }
+
+    #[test]
+    fn is_blocked_does_not_count_and_follows_check() {
+        let limiter = RateLimiter::new(2, Duration::from_secs(60));
+        for _ in 0..10 {
+            assert!(!limiter.is_blocked("u"), "perguntar não gasta tentativas");
+        }
+        assert!(limiter.check("u"));
+        assert!(!limiter.is_blocked("u"));
+        assert!(limiter.check("u"));
+        assert!(limiter.is_blocked("u"), "esgotado ao fim de 2");
+        assert!(!limiter.is_blocked("outra"));
+    }
+
+    #[test]
+    fn is_blocked_ends_with_the_window() {
+        let limiter = RateLimiter::new(1, Duration::from_millis(10));
+        assert!(limiter.check("u"));
+        assert!(limiter.is_blocked("u"));
+        std::thread::sleep(Duration::from_millis(15));
+        assert!(!limiter.is_blocked("u"));
     }
 
     #[test]

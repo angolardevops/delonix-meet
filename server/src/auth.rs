@@ -1,7 +1,3 @@
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2,
-};
 use axum::{
     extract::{FromRequestParts, State},
     http::{header, request::Parts, HeaderMap},
@@ -10,9 +6,7 @@ use axum::{
 };
 use chrono::Utc;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -92,34 +86,22 @@ pub fn access_token(state: &AppState, user_id: Uuid) -> Result<String, ApiError>
 // ---------- Passwords ----------
 
 pub fn hash_password(password: &str) -> Result<String, ApiError> {
-    let salt = SaltString::generate(&mut OsRng);
-    Ok(Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map_err(ApiError::internal)?
-        .to_string())
+    delonix_meet_core::crypto::hash_password(password).map_err(ApiError::internal)
 }
 
 pub fn verify_password(password: &str, hash: &str) -> bool {
-    PasswordHash::new(hash)
-        .map(|parsed| {
-            Argon2::default()
-                .verify_password(password.as_bytes(), &parsed)
-                .is_ok()
-        })
-        .unwrap_or(false)
+    delonix_meet_core::crypto::verify_password(password, hash)
 }
 
 // ---------- Refresh tokens ----------
 
 pub fn new_refresh_token() -> (String, String) {
-    let mut bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut bytes);
-    let token = hex::encode(bytes);
+    let token = delonix_meet_core::crypto::random_hex(32);
     (token.clone(), hash_refresh_token(&token))
 }
 
 pub fn hash_refresh_token(token: &str) -> String {
-    hex::encode(Sha256::digest(token.as_bytes()))
+    delonix_meet_core::crypto::sha256_hex(token)
 }
 
 // ---------- Extractor ----------
@@ -156,9 +138,12 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
 
 // ---------- Handlers ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct RegisterReq {
-    /// Nome da organização — o registo público cria SEMPRE uma organização.
+    /// Nome da organização. Obrigatório em tenancy `multi` (o registo cria
+    /// uma organização); opcional na edição pessoal e ao juntar-se à org
+    /// única da instalação.
+    #[serde(default)]
     pub org_name: String,
     pub email: String,
     #[serde(default)]
@@ -166,7 +151,7 @@ pub struct RegisterReq {
     pub password: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct LoginReq {
     pub email: String,
     pub password: String,
@@ -182,10 +167,30 @@ pub struct TokenPair {
 /// Resposta de auth ao cliente: o access token vai no corpo (usado no header
 /// Authorization); o refresh token NUNCA vai no corpo — vai num cookie
 /// HttpOnly (inacessível a JS, imune a roubo por XSS).
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct AuthOk {
     pub access_token: String,
     pub user: crate::users::UserPublic,
+}
+
+/// Desafio do segundo factor: a password foi aceite mas a conta tem MFA
+/// activo, por isso ainda não há sessão. O `mfa_token` troca-se em
+/// `/api/auth/mfa`.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct MfaChallenge {
+    /// Sempre `true`.
+    pub mfa_required: bool,
+    /// JWT `typ: "mfa"`, válido 5 minutos; não abre mais nenhum endpoint.
+    pub mfa_token: String,
+}
+
+/// Resposta do login: sessão aberta OU desafio de MFA (sem discriminador — o
+/// cliente distingue pela presença de `mfa_required`).
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub enum LoginResponse {
+    Session(AuthOk),
+    MfaRequired(MfaChallenge),
 }
 
 const REFRESH_COOKIE: &str = "dlx_refresh";
@@ -205,10 +210,11 @@ fn auth_ok(state: &AppState, pair: TokenPair) -> Response {
     );
     (
         [(header::SET_COOKIE, cookie)],
-        Json(AuthOk {
+        // `untagged`: serializa exactamente como o `AuthOk` sozinho.
+        Json(LoginResponse::Session(AuthOk {
             access_token: pair.access_token,
             user: pair.user,
-        }),
+        })),
     )
         .into_response()
 }
@@ -244,60 +250,96 @@ async fn issue_tokens(
     })
 }
 
-/// Registo público = criar uma ORGANIZAÇÃO. O Delonix Meet não aceita contas
-/// individuais: cria-se a organização com o primeiro utilizador (admin), e o
-/// domínio do email do admin passa a ser o domínio da organização (único).
-/// Os restantes utilizadores são adicionados no workspace (diretório) com
-/// email do mesmo domínio.
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        register,
+        login,
+        mfa_login,
+        refresh,
+        logout,
+        sso_check,
+        sso_login,
+        sso_callback
+    ),
+    components(schemas(
+        RegisterReq,
+        LoginReq,
+        MfaReq,
+        AuthOk,
+        MfaChallenge,
+        LoginResponse,
+        SsoCheck
+    ))
+)]
+pub struct ApiDoc;
+
+/// Registo de conta. O QUE acontece decide-o a política da instalação
+/// (`delonix_meet_domain::identity::registration`, ADR-0006 §2); aqui só se lê
+/// o retrato da instalação e se executa o plano.
+///
+/// No perfil histórico (`saas` + `open` + `multi`) o registo cria uma
+/// organização com o primeiro utilizador como admin, e o domínio do email passa
+/// a ser o domínio da organização (único) — igual ao que sempre foi.
+///
+/// Abre sessão: O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo.
+#[utoipa::path(
+    post, path = "/api/auth/register", tag = "auth",
+    request_body = RegisterReq,
+    responses(
+        (status = 200, description = "Conta criada e sessão aberta. Define o cookie de refresh `dlx_refresh`.", body = AuthOk),
+        (status = 400, description = "Email, password ou nome da organização inválidos (`registration.invalid_*`, `registration.corporate_email_required`).", body = crate::openapi::ErrorBody),
+        (status = 403, description = "A política da instalação não admite este registo (`registration.closed`, `registration.invite_only`, `registration.domain_not_allowed`).", body = crate::openapi::ErrorBody),
+        (status = 409, description = "Email/username já em uso, ou já existe organização para o domínio (`registration.domain_taken`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn register(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterReq>,
 ) -> Result<Response, ApiError> {
-    let email = req.email.trim().to_lowercase();
-    let org_name = req.org_name.trim().to_string();
+    use delonix_meet_domain::identity::registration::{
+        self, RegistrationPlan, RegistrationRequest,
+    };
+    use delonix_meet_domain::identity::validation;
+
+    let email = validation::normalize_email(&req.email);
     // Sem username explícito → deriva da parte local do email.
     let username = if req.username.trim().len() >= 2 {
         req.username.trim().to_string()
     } else {
         email.split('@').next().unwrap_or("admin").to_string()
     };
-    if !email.contains('@') || email.len() > 254 {
-        return Err(ApiError::BadRequest("email inválido".into()));
-    }
-    if org_name.len() < 2 || org_name.len() > 80 {
-        return Err(ApiError::BadRequest(
-            "nome da organização deve ter 2-80 caracteres".into(),
-        ));
-    }
-    if !(8..=128).contains(&req.password.len()) {
-        return Err(ApiError::BadRequest(
-            "password deve ter 8-128 caracteres".into(),
-        ));
-    }
-    let domain = email.split('@').nth(1).unwrap_or("").to_string();
-    if domain.is_empty() || !domain.contains('.') {
-        return Err(ApiError::BadRequest("email corporativo inválido".into()));
-    }
+    let request = RegistrationRequest {
+        email: email.clone(),
+        org_name: Some(req.org_name.clone()).filter(|n| !n.trim().is_empty()),
+        username: username.clone(),
+        password: req.password.clone(),
+    };
+    let policy = state.config.registration_policy();
 
-    // Domínio já pertence a outra organização? (regra: 1 org por domínio)
-    let taken: Option<(uuid::Uuid,)> =
-        sqlx::query_as("SELECT id FROM organizations WHERE email_domain = $1")
-            .bind(&domain)
-            .fetch_optional(&state.db)
-            .await?;
-    if taken.is_some() {
-        return Err(ApiError::Conflict(format!(
-            "o domínio «{domain}» já tem uma organização registada — pede ao teu administrador para te adicionar"
-        )));
-    }
-
+    // 1.ª decisão sem trinco: recusa cedo, antes do argon2 (caro), o que já se
+    // sabe que não entra.
+    let snapshot = installation_snapshot(&state.db, &email).await?;
+    registration::plan(&policy, &request, &snapshot)?;
     let password_hash = hash_password(&req.password)?;
-    // Transação: utilizador + organização + membro admin, tudo-ou-nada.
+
+    // 2.ª decisão, a que conta: dentro da transação e com trinco, para que duas
+    // contas a nascer ao mesmo tempo numa instalação vazia não sejam ambas «a
+    // primeira».
     let mut tx = state.db.begin().await?;
-    let user: crate::users::UserPublic = sqlx::query_as(
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('delonix.registration'))")
+        .execute(&mut *tx)
+        .await?;
+    let snapshot = installation_snapshot(&mut *tx, &email).await?;
+    let plan = registration::plan(&policy, &request, &snapshot)?;
+
+    let user: crate::users::UserPublic = sqlx::query_as(&format!(
         "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3)
-         RETURNING id, email, username, created_at, COALESCE(locale, 'pt') AS locale",
-    )
+         RETURNING {}",
+        crate::users::USER_PUBLIC_COLUMNS
+    ))
     .bind(&email)
     .bind(&username)
     .bind(&password_hash)
@@ -310,48 +352,114 @@ pub async fn register(
         _ => e.into(),
     })?;
 
-    let slug = crate::org::slugify_pub(&org_name);
-    let (org_id,): (uuid::Uuid,) = sqlx::query_as(
-        "INSERT INTO organizations (name, slug, created_by, email_domain)
-         VALUES ($1, $2, $3, $4) RETURNING id",
-    )
-    .bind(&org_name)
-    // slug único: acrescenta sufixo curto do domínio para evitar colisão de nome
-    .bind(format!("{slug}-{}", &domain.replace('.', "-")))
-    .bind(user.id)
-    .bind(&domain)
-    .fetch_one(&mut *tx)
-    .await?;
-    sqlx::query(
-        "INSERT INTO org_members (org_id, user_id, role, title) VALUES ($1, $2, 'admin', 'Administrador')",
-    )
-    .bind(org_id)
-    .bind(user.id)
-    .execute(&mut *tx)
-    .await?;
+    let (org_id, action, target) = match plan {
+        RegistrationPlan::CreateOrganization {
+            name,
+            email_domain,
+            kind,
+        } => {
+            let base = crate::org::slugify(&name);
+            // slug único: sufixo do domínio (histórico) ou aleatório (sem domínio).
+            let slug = match &email_domain {
+                Some(d) => format!("{base}-{}", d.replace('.', "-")),
+                None => format!("{base}-{}", delonix_meet_core::crypto::random_hex(3)),
+            };
+            let (org_id,): (uuid::Uuid,) = sqlx::query_as(
+                "INSERT INTO organizations (name, slug, created_by, email_domain, kind)
+                 VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            )
+            .bind(&name)
+            .bind(&slug)
+            .bind(user.id)
+            .bind(email_domain.as_deref().unwrap_or(""))
+            .bind(kind.as_str())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| match &e {
+                sqlx::Error::Database(db) if db.is_unique_violation() => {
+                    ApiError::Conflict("já existe uma organização para este domínio".into())
+                }
+                _ => e.into(),
+            })?;
+            crate::org::insert_member_tx(&mut tx, org_id, user.id, "admin", "Administrador")
+                .await?;
+            (org_id, "org.created", name)
+        }
+        RegistrationPlan::JoinOrganization { org_id, as_admin } => {
+            let role = if as_admin { "admin" } else { "member" };
+            crate::org::insert_member_tx(&mut tx, org_id, user.id, role, "").await?;
+            (org_id, "member.registered", email.clone())
+        }
+    };
     tx.commit().await?;
 
-    crate::audit::log(&state.db, Some(org_id), user.id, "org.created", &org_name).await;
+    crate::audit::log(&state.db, Some(org_id), user.id, action, &target).await;
     Ok(auth_ok(&state, issue_tokens(&state, user).await?))
 }
 
+/// O que a política de registo precisa de saber sobre a instalação.
+async fn installation_snapshot<'e, E>(
+    db: E,
+    email: &str,
+) -> Result<delonix_meet_domain::identity::registration::InstallationSnapshot, ApiError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let domain = email.split('@').nth(1).unwrap_or("");
+    // As contas técnicas (`…@delonix.internal`, ex.: a de provisionamento) não
+    // fazem de uma instalação vazia uma instalação com utilizadores.
+    let (has_users, domain_taken, single_org): (bool, bool, Option<uuid::Uuid>) = sqlx::query_as(
+        "SELECT
+            EXISTS (SELECT 1 FROM users WHERE email NOT LIKE '%@delonix.internal'),
+            EXISTS (SELECT 1 FROM organizations WHERE email_domain = $1 AND email_domain <> ''),
+            (SELECT id FROM organizations ORDER BY created_at, id LIMIT 1)",
+    )
+    .bind(domain)
+    .fetch_one(db)
+    .await?;
+    Ok(
+        delonix_meet_domain::identity::registration::InstallationSnapshot {
+            has_users,
+            domain_taken,
+            single_org,
+        },
+    )
+}
+
+/// Login por email e password.
+///
+/// Sem MFA, abre sessão: O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo. Com MFA activo devolve só o desafio
+/// (`MfaChallenge`) e nenhum cookie; os tokens saem em `/api/auth/mfa`. Sem
+/// conta local, tenta o primeiro login pelo Odoo da plataforma.
+#[utoipa::path(
+    post, path = "/api/auth/login", tag = "auth",
+    request_body = LoginReq,
+    responses(
+        (status = 200, description = "Sessão aberta (`AuthOk` + cookie `dlx_refresh`) ou desafio de MFA (`MfaChallenge`, sem cookie).", body = LoginResponse),
+        (status = 400, description = "A organização do domínio exige SSO exclusivo.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Credenciais inválidas.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Demasiadas tentativas (por IP ou por conta).", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn login(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LoginReq>,
 ) -> Result<Response, ApiError> {
     let email = req.email.trim().to_lowercase();
 
+    // Anti-brute-force por conta (complementa o limite por IP): trava após
+    // demasiadas tentativas na mesma conta, mesmo vindas de vários IPs. É a
+    // PRIMEIRA coisa que responde (R132): nenhuma resposta específica da conta
+    // ou do domínio sai antes dele, senão essas respostas ficam sem travão.
+    if !state.login_limiter.check(&format!("acct:{email}")) {
+        return Err(ApiError::TooManyRequests);
+    }
+
     // Bloquear login por password se a organização exige SSO exclusivo.
     if is_sso_enforced(&state.db, &email).await {
         return Err(ApiError::BadRequest(
             "Esta organização exige login via SSO — usa o botão «Entrar com SSO»".into(),
         ));
-    }
-
-    // Anti-brute-force por conta (complementa o limite por IP): trava após
-    // demasiadas tentativas na mesma conta, mesmo vindas de vários IPs.
-    if !state.login_limiter.check(&format!("acct:{email}")) {
-        return Err(ApiError::TooManyRequests);
     }
     let row: Option<(Uuid, String, String, String, chrono::DateTime<Utc>)> = sqlx::query_as(
         "SELECT id, email, username, password_hash, created_at FROM users WHERE email = $1",
@@ -450,9 +558,9 @@ pub async fn login(
         // bastasse para obter o access token, o resto era teatro.
         if crate::mfa::activo(&state.db, user.id).await? {
             crate::audit::log(&state.db, None, user.id, "auth.mfa_challenge", &user.email).await;
-            return Ok(Json(serde_json::json!({
-                "mfa_required": true,
-                "mfa_token": mfa_challenge_token(&state, user.id)?,
+            return Ok(Json(LoginResponse::MfaRequired(MfaChallenge {
+                mfa_required: true,
+                mfa_token: mfa_challenge_token(&state, user.id)?,
             }))
             .into_response());
         }
@@ -488,13 +596,25 @@ fn mfa_challenge_token(state: &AppState, user_id: Uuid) -> Result<String, ApiErr
     )
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct MfaReq {
     pub mfa_token: String,
     pub code: String,
 }
 
 /// Segunda metade do login: troca o desafio + código pelos tokens de sessão.
+///
+/// O código pode ser TOTP ou de recuperação. O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo.
+#[utoipa::path(
+    post, path = "/api/auth/mfa", tag = "auth",
+    request_body = MfaReq,
+    responses(
+        (status = 200, description = "Sessão aberta. Define o cookie de refresh `dlx_refresh`.", body = AuthOk),
+        (status = 401, description = "Desafio inválido/expirado ou código errado/já usado.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A conta do desafio já não existe.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Demasiadas tentativas (por IP ou por conta).", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn mfa_login(
     State(state): State<Arc<AppState>>,
     Json(req): Json<MfaReq>,
@@ -521,6 +641,19 @@ pub async fn mfa_login(
     Ok(auth_ok(&state, issue_tokens(&state, user).await?))
 }
 
+/// Roda a sessão: consome o refresh token do cookie `dlx_refresh` (revoga-o)
+/// e emite um par novo.
+///
+/// Autentica-se pelo cookie HttpOnly, não por header. O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo.
+#[utoipa::path(
+    post, path = "/api/auth/refresh", tag = "auth",
+    responses(
+        (status = 200, description = "Access token novo. Define o cookie `dlx_refresh` rodado.", body = AuthOk),
+        (status = 401, description = "Cookie ausente, revogado ou expirado.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A conta do token já não existe.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn refresh(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -548,6 +681,16 @@ pub async fn refresh(
 }
 
 /// Termina a sessão: revoga o refresh token (se presente) e limpa o cookie.
+///
+/// Responde sempre 200, com ou sem cookie; o `Set-Cookie` devolvido expira o
+/// `dlx_refresh` (`Max-Age=0`).
+#[utoipa::path(
+    post, path = "/api/auth/logout", tag = "auth",
+    responses(
+        (status = 200, description = "{\"ok\": true} (forma herdada). Limpa o cookie `dlx_refresh`.", body = serde_json::Value),
+        (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn logout(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -587,7 +730,7 @@ static SSO_PENDING: std::sync::LazyLock<DashMap<String, PkceEntry>> =
     std::sync::LazyLock::new(DashMap::new);
 
 /// Resultado da verificação de SSO para um domínio de email.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct SsoCheck {
     pub sso_enabled: bool,
     /// Se true, o login por password está bloqueado para este domínio.
@@ -597,6 +740,14 @@ pub struct SsoCheck {
 /// `GET /api/auth/sso/check?domain=example.com`
 /// O frontend chama isto ao preencher o email para decidir se mostra o campo
 /// de password ou redireciona para o IdP.
+#[utoipa::path(
+    get, path = "/api/auth/sso/check", tag = "auth",
+    params(("domain" = Option<String>, Query, description = "Domínio de email (ex.: `example.com`). Vazio ou omisso ⇒ tudo `false`.")),
+    responses(
+        (status = 200, body = SsoCheck),
+        (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn sso_check(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -636,6 +787,17 @@ pub async fn sso_check(
 /// `GET /api/auth/sso/login?domain=example.com`
 /// Descobre o IdP OIDC da organização, gera state+PKCE e redireciona (302)
 /// o browser do utilizador para o IdP (Google/Microsoft/Okta).
+#[utoipa::path(
+    get, path = "/api/auth/sso/login", tag = "auth",
+    params(("domain" = String, Query, description = "Domínio de email da organização.")),
+    responses(
+        (status = 302, description = "Redirecção (`Location`) para o endpoint de autorização do IdP, com state + PKCE."),
+        (status = 400, description = "`domain` em falta.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Nenhuma organização com SSO configurado para o domínio.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
+        (status = 500, description = "Issuer inválido ou discovery OIDC falhou.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn sso_login(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -732,6 +894,26 @@ pub async fn sso_login(
 /// `GET /api/auth/sso/callback?code=...&state=...`
 /// Recebe o código de autorização do IdP, troca-o pelo id_token, e faz
 /// Just-in-Time Provisioning se o utilizador não existir.
+///
+/// Abre sessão e redirecciona para o frontend com o access token no fragmento
+/// (`/#/sso-complete?token=…`). O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo.
+#[utoipa::path(
+    get, path = "/api/auth/sso/callback", tag = "auth",
+    params(
+        ("code" = String, Query, description = "Código de autorização do IdP."),
+        ("state" = String, Query, description = "State anti-CSRF emitido por `/api/auth/sso/login` (uso único, 10 min)."),
+    ),
+    responses(
+        (status = 302, description = "Redirecção para o frontend com o access token no fragmento. Define o cookie `dlx_refresh`."),
+        (status = 400, description = "`code`/`state` em falta, ou o IdP não devolveu email.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "State desconhecido, já consumido ou expirado.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Regra de pertença (R130): `sso.account_not_in_org` — a conta existe mas não é membro activo desta organização; `sso.email_domain_mismatch` — conta nova de um domínio que não é o da organização.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A configuração SSO da organização foi removida entretanto.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "Provisionamento JIT colidiu com email/username existente.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
+        (status = 500, description = "Discovery, troca de código ou verificação do id_token falhou.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn sso_callback(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -832,12 +1014,57 @@ pub async fn sso_callback(
     let sso_provider = claims.issuer().to_string();
     let sso_subject = claims.subject().to_string();
 
-    // Just-in-Time Provisioning: procurar ou criar o utilizador.
-    let existing: Option<crate::users::UserPublic> =
-        sqlx::query_as("SELECT id, email, username, created_at, COALESCE(locale, 'pt') AS locale FROM users WHERE email = $1")
-            .bind(&email)
-            .fetch_optional(&state.db)
+    // Just-in-Time Provisioning: procurar ou criar o utilizador — mas só dentro
+    // da regra de pertença (R130). O IdP é escolhido pelo administrador da org
+    // e pode afirmar o email que quiser: o email não é prova de pertença.
+    let existing: Option<crate::users::UserPublic> = sqlx::query_as(&format!(
+        "SELECT {} FROM users WHERE email = $1",
+        crate::users::USER_PUBLIC_COLUMNS
+    ))
+    .bind(&email)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let account = match &existing {
+        Some(u) => {
+            // Pertença decide-se em org.rs (catraca, regra 1): `role_in_org`
+            // já filtra `archived_at`.
+            let active = crate::org::role_in_org(&state, entry.org_id, u.id)
+                .await?
+                .is_some();
+            Some(active)
+        }
+        None => None,
+    };
+    let org_domain: String =
+        sqlx::query_scalar("SELECT email_domain FROM organizations WHERE id = $1")
+            .bind(entry.org_id)
+            .fetch_one(&state.db)
             .await?;
+
+    match sso_login_decision(&email, &org_domain, account) {
+        SsoLoginDecision::LogIn | SsoLoginDecision::Provision => {}
+        SsoLoginDecision::Refuse(code) => {
+            tracing::warn!(%email, org_id = %entry.org_id, code, "SSO recusado: fora da regra de pertença");
+            crate::audit::log(
+                &state.db,
+                Some(entry.org_id),
+                existing.as_ref().map(|u| u.id).unwrap_or(Uuid::nil()),
+                "auth.sso_refused",
+                &email,
+            )
+            .await;
+            let message = match code {
+                SSO_ACCOUNT_NOT_IN_ORG => {
+                    "Esta conta não é membro activo desta organização — o SSO dela não a abre."
+                }
+                _ => "O email devolvido pelo IdP não é do domínio desta organização.",
+            };
+            return Err(ApiError::Domain(
+                delonix_meet_core::DomainError::forbidden(code).with_message(message),
+            ));
+        }
+    }
 
     let user = match existing {
         Some(u) => {
@@ -859,11 +1086,12 @@ pub async fn sso_callback(
             // JIT: criar conta + adicionar como membro da org.
             let dummy_hash = hash_password(&Uuid::new_v4().to_string())?;
             let mut tx = state.db.begin().await?;
-            let new_user: crate::users::UserPublic = sqlx::query_as(
+            let new_user: crate::users::UserPublic = sqlx::query_as(&format!(
                 "INSERT INTO users (email, username, password_hash, sso_provider, sso_subject)
                  VALUES ($1, $2, $3, $4, $5)
-                 RETURNING id, email, username, created_at, COALESCE(locale, 'pt') AS locale",
-            )
+                 RETURNING {}",
+                crate::users::USER_PUBLIC_COLUMNS
+            ))
             .bind(&email)
             .bind(&name)
             .bind(&dummy_hash)
@@ -929,6 +1157,56 @@ pub async fn sso_callback(
         .into_response())
 }
 
+/// Código estável: a conta existe mas não é membro ACTIVO da org do IdP.
+pub(crate) const SSO_ACCOUNT_NOT_IN_ORG: &str = "sso.account_not_in_org";
+/// Código estável: conta nova de um domínio que não é o da org do IdP.
+pub(crate) const SSO_EMAIL_DOMAIN_MISMATCH: &str = "sso.email_domain_mismatch";
+
+/// O que o callback SSO pode fazer com o email que o IdP afirmou.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SsoLoginDecision {
+    /// Conta existente e membro activo da org: abre sessão.
+    LogIn,
+    /// Sem conta, email do domínio da org: cria a conta como membro.
+    Provision,
+    /// Recusa, com o código estável.
+    Refuse(&'static str),
+}
+
+/// Regra de pertença do SSO (R130, família R25/R122) — a mais restritiva.
+///
+/// O IdP de uma organização é configurado pelo administrador DELA, por isso o
+/// email que devolve só vale dentro da organização:
+/// - conta existente → só se for membro ACTIVO desta org (`account =
+///   Some(true)`). Membro de outra org, arquivado, ou órfã: recusa. Nunca se
+///   junta à org pelo SSO — isso seria o próprio ataque.
+/// - conta nova → só se o domínio do email for o `email_domain` da org, e a
+///   org tiver domínio (uma org sem domínio não cria contas por SSO).
+///
+/// `account`: `None` = não há conta com este email; `Some(activo)`.
+pub(crate) fn sso_login_decision(
+    email: &str,
+    org_domain: &str,
+    account: Option<bool>,
+) -> SsoLoginDecision {
+    match account {
+        Some(true) => SsoLoginDecision::LogIn,
+        Some(false) => SsoLoginDecision::Refuse(SSO_ACCOUNT_NOT_IN_ORG),
+        None => {
+            let org_domain = org_domain.trim().to_lowercase();
+            let email_domain = match email.rsplit_once('@') {
+                Some((local, domain)) if !local.is_empty() => domain.to_lowercase(),
+                _ => String::new(),
+            };
+            if !org_domain.is_empty() && email_domain == org_domain {
+                SsoLoginDecision::Provision
+            } else {
+                SsoLoginDecision::Refuse(SSO_EMAIL_DOMAIN_MISMATCH)
+            }
+        }
+    }
+}
+
 /// `GET /api/auth/sso/enforce?domain=...`
 /// O handler de login local consulta isto para bloquear password quando
 /// a org exige SSO exclusivo.
@@ -952,6 +1230,84 @@ pub async fn is_sso_enforced(db: &sqlx::PgPool, email: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// R130 — a regra de pertença do SSO, caso a caso.
+    #[test]
+    fn sso_login_decision_is_the_most_restrictive_rule() {
+        use SsoLoginDecision::*;
+        // Membro activo entra; qualquer outra conta existente é recusada,
+        // mesmo com o email no domínio da org.
+        assert_eq!(
+            sso_login_decision("ana@alfa.ao", "alfa.ao", Some(true)),
+            LogIn
+        );
+        assert_eq!(
+            sso_login_decision("ana@alfa.ao", "alfa.ao", Some(false)),
+            Refuse(SSO_ACCOUNT_NOT_IN_ORG)
+        );
+        assert_eq!(
+            sso_login_decision("admin@beta.ao", "alfa.ao", Some(false)),
+            Refuse(SSO_ACCOUNT_NOT_IN_ORG)
+        );
+        // Conta nova: só do domínio da org, e só se a org tiver domínio.
+        assert_eq!(
+            sso_login_decision("nova@alfa.ao", "alfa.ao", None),
+            Provision
+        );
+        assert_eq!(
+            sso_login_decision("nova@alfa.ao", "Alfa.AO ", None),
+            Provision
+        );
+        for (email, dom) in [
+            ("nova@beta.ao", "alfa.ao"),
+            ("nova@sub.alfa.ao", "alfa.ao"),
+            ("nova@alfa.ao", ""),
+            ("@alfa.ao", "alfa.ao"),
+            ("sem-arroba", "alfa.ao"),
+            ("x@evil.ao@alfa.ao", "evil.ao"),
+        ] {
+            assert_eq!(
+                sso_login_decision(email, dom, None),
+                Refuse(SSO_EMAIL_DOMAIN_MISMATCH),
+                "{email} em {dom:?}"
+            );
+        }
+    }
+
+    /// As respostas de login passaram de `json!` a tipos (OpenAPI): o JSON
+    /// tem de continuar igual ao que o web já lê.
+    #[test]
+    fn login_response_serializa_como_antes() {
+        let user = crate::users::UserPublic {
+            id: Uuid::nil(),
+            email: "a@b.c".into(),
+            username: "a".into(),
+            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap(),
+            locale: "pt".into(),
+        };
+        let sessao = serde_json::to_value(LoginResponse::Session(AuthOk {
+            access_token: "t".into(),
+            user,
+        }))
+        .unwrap();
+        assert_eq!(
+            sessao,
+            serde_json::json!({
+                "access_token": "t",
+                "user": {"id": Uuid::nil(), "email": "a@b.c", "username": "a",
+                         "created_at": "1970-01-01T00:00:00Z", "locale": "pt"},
+            })
+        );
+        let desafio = serde_json::to_value(LoginResponse::MfaRequired(MfaChallenge {
+            mfa_required: true,
+            mfa_token: "m".into(),
+        }))
+        .unwrap();
+        assert_eq!(
+            desafio,
+            serde_json::json!({ "mfa_required": true, "mfa_token": "m" })
+        );
+    }
 
     #[test]
     fn password_hash_roundtrip() {

@@ -1,0 +1,77 @@
+# mTLS do gRPC interno, sem passo manual (regra 3 do workspace).
+#
+# Cadeia cert-manager (o cert-manager já é pré-requisito da base,
+# 05-cert-manager.yaml):
+#
+#   delonix-meet-selfsigned (Issuer)
+#     └─ delonix-meet-internal-ca (Certificate, isCA)  → Secret delonix-meet-internal-ca
+#          └─ delonix-meet-internal (Issuer do tipo CA)
+#               └─ delonix-server-grpc (Certificate)   → Secret delonix-server-grpc-tls
+#                                                         tls.crt, tls.key, ca.crt
+#
+# O servidor usa o `ca.crt` desse Secret como GRPC_CLIENT_CA: só aceita clientes
+# com certificado emitido pela MESMA CA interna. Um cliente (ai-worker, sidecar
+# do FreeSWITCH) pede o seu com um Certificate `usages: [client auth]` contra o
+# Issuer `delonix-meet-internal`.
+#
+# A CA é por namespace e não sai dele. Em produção com uma PKI própria, trocar
+# o Issuer `delonix-meet-internal` por um que aponte para ela (Vault, CA da
+# empresa) — o resto não muda.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: delonix-meet-selfsigned
+  namespace: delonix-meet
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: delonix-meet-internal-ca
+  namespace: delonix-meet
+spec:
+  isCA: true
+  commonName: delonix-meet-internal-ca
+  secretName: delonix-meet-internal-ca
+  duration: 87600h # 10 anos — a CA; os certificados-folha rodam sozinhos
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: delonix-meet-selfsigned
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: delonix-meet-internal
+  namespace: delonix-meet
+spec:
+  ca:
+    secretName: delonix-meet-internal-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: delonix-server-grpc
+  namespace: delonix-meet
+spec:
+  secretName: delonix-server-grpc-tls
+  duration: 2160h    # 90 dias
+  renewBefore: 360h  # 15 dias — o cert-manager renova; o servidor tem de reler
+  commonName: delonix-server-internal.delonix-meet.svc
+  dnsNames:
+    - delonix-server-internal
+    - delonix-server-internal.delonix-meet
+    - delonix-server-internal.delonix-meet.svc
+    - delonix-server-internal.delonix-meet.svc.cluster.local
+  usages:
+    - server auth
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: delonix-meet-internal
+    kind: Issuer

@@ -1,0 +1,2123 @@
+{
+  "components": {
+    "schemas": {
+      "ApiCreateRoomReq": {
+        "properties": {
+          "e2ee": {
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Omisso ⇒ «Reunião (API)»; cortado a 120 caracteres.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "waiting_room": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "CreateMeetingReq": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "duration_min": {
+            "default": 30,
+            "description": "1-1440 minutos.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "e2ee": {
+            "type": "boolean"
+          },
+          "external_ref": {
+            "description": "Referência do sistema chamador. Opcional, mas **sem ela não há\nidempotência** — recomendada para qualquer integração de calendário.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host_email": {
+            "description": "Email do anfitrião. **Obrigatório**: é ele que fica `owner_id` da sala\ne o único que pode admitir convidados (ver `signaling::decide_waiting`).",
+            "type": "string"
+          },
+          "host_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "invitees": {
+            "description": "No máximo 200.",
+            "items": {
+              "$ref": "#/components/schemas/InviteeReq"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "default": "video",
+            "description": "`video` (omissão) | `voice`.",
+            "type": "string"
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "title": {
+            "description": "Obrigatório; cortado a 120 caracteres.",
+            "type": "string"
+          },
+          "waiting_room": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "title",
+          "starts_at",
+          "host_email"
+        ],
+        "type": "object"
+      },
+      "DeleteMeetingResp": {
+        "description": "Resposta de `DELETE /api/v1/meetings/{id}`.",
+        "properties": {
+          "ok": {
+            "description": "Sempre `true`.",
+            "type": "boolean"
+          },
+          "room_deleted": {
+            "description": "`false` quando a sala foi mantida por ter gravações (ou a reunião não\ntinha sala).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "room_deleted"
+        ],
+        "type": "object"
+      },
+      "ErrorBody": {
+        "description": "Envelope de erro de todas as superfícies (ver `error.rs`).",
+        "properties": {
+          "code": {
+            "description": "Código estável (contrato), p.ex. `registration.domain_taken`.",
+            "type": "string"
+          },
+          "details": {
+            "items": {
+              "$ref": "#/components/schemas/FieldViolation"
+            },
+            "type": "array"
+          },
+          "error": {
+            "description": "Mensagem para pessoas. Pode mudar.",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "Igual ao cabeçalho `X-Request-Id`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "error",
+          "code",
+          "details"
+        ],
+        "type": "object"
+      },
+      "FieldViolation": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "description"
+        ],
+        "type": "object"
+      },
+      "InviteeReq": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "type": "object"
+      },
+      "InviteeResp": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "user_id"
+        ],
+        "type": "object"
+      },
+      "JoinBotReq": {
+        "properties": {
+          "bot_name": {
+            "description": "Nome mostrado na sala; vazio ⇒ «AI Assistant»; cortado a 40 caracteres.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bot_name"
+        ],
+        "type": "object"
+      },
+      "MeetingResp": {
+        "properties": {
+          "duration_min": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "existing": {
+            "description": "`true` quando o pedido reencontrou uma reunião já existente pela\n`external_ref` em vez de criar uma nova.",
+            "type": "boolean"
+          },
+          "external_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host_email": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "invitees": {
+            "description": "Convidados efectivamente registados (email -> id do utilizador).",
+            "items": {
+              "$ref": "#/components/schemas/InviteeResp"
+            },
+            "type": "array"
+          },
+          "join_url": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "skipped": {
+            "description": "Emails NÃO registados e porquê. Nunca falha o pedido por causa de um\nconvidado — o link tem de sair na mesma.",
+            "items": {
+              "$ref": "#/components/schemas/SkippedInvitee"
+            },
+            "type": "array"
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "starts_at",
+          "duration_min",
+          "kind",
+          "room_code",
+          "join_url",
+          "host_email",
+          "invitees",
+          "skipped",
+          "existing"
+        ],
+        "type": "object"
+      },
+      "OdooDirectoryUser": {
+        "description": "Membro da organização, como o Odoo o vê.",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "odoo_uid": {
+            "description": "`null` se a conta não veio do Odoo.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "role": {
+            "description": "Papel na organização (`admin` | `member`).",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "username",
+          "role"
+        ],
+        "type": "object"
+      },
+      "OdooUserEntry": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "is_admin": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "odoo_uid": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "odoo_uid",
+          "name",
+          "email"
+        ],
+        "type": "object"
+      },
+      "PatchMeetingReq": {
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_min": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "invitees": {
+            "description": "Se presente, **substitui** o conjunto de convidados. O estado de\nresposta (aceite/recusado) de quem se mantém é preservado.",
+            "items": {
+              "$ref": "#/components/schemas/InviteeReq"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ProvisionOrgReq": {
+        "properties": {
+          "email_domain": {
+            "description": "Domínio de email da org — necessário para o ``/api/auth/sso/login?domain=``\nresolver esta org. Opcional.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key_name": {
+            "description": "Rótulo da chave de API emitida (default \"Integration\").",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "description": "Nome da organização (== nome da empresa no sistema chamador).",
+            "type": "string"
+          },
+          "odoo_company_id": {
+            "description": "Id da EMPRESA no Odoo (`res.company`). Com `odoo_db`, identifica a\norganização de forma estável — a mesma chave que o login por conta\nOdoo usa (`odoo_sso::ensure_org`).\n\nSem isto, provisionar uma empresa que já tinha entrado por SSO criava\numa SEGUNDA organização para a mesma empresa: os utilizadores ficavam\nnuma e a chave de API na outra, e a criação de reuniões respondia\n«o anfitrião pertence a outra organização» (409).",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "odoo_db": {
+            "description": "Base de dados Odoo da empresa.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "odoo_url": {
+            "description": "URL base da instância Odoo (ex.: `http://localhost:8090`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "setup_odoo": {
+            "description": "Se `true`, activa a integração Odoo e devolve também um `dlxo_...` token\npronto a colar no módulo nk_delonix_meet. Requer `odoo_url` e `odoo_db`.",
+            "type": "boolean"
+          },
+          "sso": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProvisionSso",
+                "description": "Config OIDC a aplicar (opcional)."
+              }
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "ProvisionReq": {
+        "properties": {
+          "admin_email": {
+            "description": "Email do utilizador que fez a integração — será admin da org.",
+            "type": "string"
+          },
+          "company": {
+            "description": "Nome da empresa Odoo (actualiza o nome da org se a org ainda tem o nome\npadrão ou se force_name=true).",
+            "type": "string"
+          },
+          "users": {
+            "items": {
+              "$ref": "#/components/schemas/OdooUserEntry"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "company",
+          "admin_email"
+        ],
+        "type": "object"
+      },
+      "ProvisionResult": {
+        "properties": {
+          "created": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "skipped": {
+            "description": "Entradas do directório que NÃO foram aplicadas, com a razão. Aditivo à\nv1: um integrador antigo ignora o campo, e continua a receber `created`\ne `updated` com o mesmo significado.",
+            "items": {
+              "$ref": "#/components/schemas/SkippedUser"
+            },
+            "type": "array"
+          },
+          "updated": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "org_id",
+          "created",
+          "updated",
+          "skipped"
+        ],
+        "type": "object"
+      },
+      "ProvisionSso": {
+        "description": "Config OIDC opcional a aplicar à org acabada de criar — deixa o provisionador\n(Odoo) apontar a org ao seu próprio IdP num só passo, sem um segundo pedido\nautenticado por sessão de admin (que a org recém-criada ainda não tem).",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "client_secret": {
+            "type": "string"
+          },
+          "enforce_sso": {
+            "type": "boolean"
+          },
+          "issuer_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "issuer_url",
+          "client_id",
+          "client_secret"
+        ],
+        "type": "object"
+      },
+      "ProvisionedOrg": {
+        "properties": {
+          "api_key": {
+            "description": "A chave de API completa (`dlx_...`) — só devolvida AGORA, guarda-se o hash.",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "odoo_token": {
+            "description": "Token de integração Odoo (`dlxo_...`) — presente só se `setup_odoo=true`.\nMostrar uma vez ao utilizador: o servidor guarda apenas o hash.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "sso_configured": {
+            "description": "True se uma config OIDC foi aplicada (fecha o SSO sem SQL manual).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "org_id",
+          "slug",
+          "name",
+          "api_key",
+          "sso_configured"
+        ],
+        "type": "object"
+      },
+      "SkippedInvitee": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "SkippedUser": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "StorageConfigReq": {
+        "properties": {
+          "nfs_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nfs_server": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "storage_type": {
+            "description": "`local` | `nfs` | `webdav`.",
+            "type": "string"
+          },
+          "webdav_password": {
+            "description": "Novo valor; se omitido ou vazio mantém o valor actual (nunca apaga por engano).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "webdav_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "webdav_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "webdav_user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "storage_type"
+        ],
+        "type": "object"
+      },
+      "StorageConfigView": {
+        "description": "Leitura da configuração de armazenamento, com a password WebDAV substituída\npor `webdav_password_set`.",
+        "properties": {
+          "nfs_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nfs_server": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "storage_type": {
+            "description": "`local` | `nfs` | `webdav` (`local` quando nunca foi configurado).",
+            "type": "string"
+          },
+          "webdav_password_set": {
+            "description": "Há password WebDAV guardada? (a password nunca é devolvida).",
+            "type": "boolean"
+          },
+          "webdav_path": {
+            "type": "string"
+          },
+          "webdav_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "webdav_user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "storage_type",
+          "webdav_password_set",
+          "webdav_path"
+        ],
+        "type": "object"
+      },
+      "StorageTestResult": {
+        "description": "Resultado do teste de ligação ao armazenamento.",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "ok": {
+            "description": "Sempre `true` (as falhas são erros HTTP).",
+            "type": "boolean"
+          },
+          "type": {
+            "description": "`local` | `nfs` | `webdav`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "type",
+          "message"
+        ],
+        "type": "object"
+      },
+      "V1BotJoin": {
+        "description": "Credenciais de entrada de um bot numa sala.",
+        "properties": {
+          "room": {
+            "description": "A sala completa (`id`, `code`, `name`, `owner_id`, `topology`,\n`waiting_room`, `e2ee`, `format`, `created_at`).",
+            "type": "object"
+          },
+          "room_token": {
+            "description": "JWT `typ: \"room\"` com `is_bot: true`, atribuído ao criador da chave.",
+            "type": "string"
+          },
+          "ws_path": {
+            "description": "`/ws?token=<room_token>`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "room",
+          "room_token",
+          "ws_path"
+        ],
+        "type": "object"
+      },
+      "V1MeetingList": {
+        "properties": {
+          "meetings": {
+            "items": {
+              "$ref": "#/components/schemas/V1MeetingSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "meetings"
+        ],
+        "type": "object"
+      },
+      "V1MeetingNotes": {
+        "description": "Ata e transcrição de uma reunião.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "minutes": {
+            "description": "Ata (MoM).",
+            "type": "string"
+          },
+          "minutes_ai_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "transcript": {
+            "description": "Transcrição bruta.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "minutes",
+          "transcript"
+        ],
+        "type": "object"
+      },
+      "V1MeetingSummary": {
+        "description": "Reunião vista pelo sync de calendário v1.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "duration_min": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`video` | `voice`.",
+            "type": "string"
+          },
+          "minutes_ai_at": {
+            "description": "Presente ⇒ a ata AI já foi gerada.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "room_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "kind",
+          "starts_at",
+          "duration_min",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "V1Org": {
+        "description": "Organização vista pela API v1.",
+        "properties": {
+          "domain": {
+            "description": "Domínio de produção dos links (vazio se não definido).",
+            "type": "string"
+          },
+          "email_domain": {
+            "description": "Domínio de email da organização (vazio se não definido).",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "members": {
+            "description": "Número de linhas de membro da organização.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email_domain",
+          "domain",
+          "members"
+        ],
+        "type": "object"
+      },
+      "V1Recording": {
+        "description": "Gravação vista pela API v1.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "download_url": {
+            "description": "`/api/recordings/{id}` (rota da BFF, autenticada por sessão).",
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "size_bytes",
+          "created_at",
+          "room_code",
+          "download_url"
+        ],
+        "type": "object"
+      },
+      "V1RecordingList": {
+        "properties": {
+          "recordings": {
+            "items": {
+              "$ref": "#/components/schemas/V1Recording"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "recordings"
+        ],
+        "type": "object"
+      },
+      "V1RoomInfo": {
+        "description": "Sala vista pela API v1.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "e2ee": {
+            "type": "boolean"
+          },
+          "join_url": {
+            "description": "Link de entrada: absoluto com o domínio de produção da org, ou relativo\n(`/#/r/{code}`) se não houver domínio.",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "waiting_room": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "e2ee",
+          "waiting_room",
+          "join_url"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "api_key": {
+        "description": "Chave de API da organização (`dlx_…`).",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "session": {
+        "bearerFormat": "JWT",
+        "description": "Access token da sessão (15 min), renovado por /api/auth/refresh.",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Superfície estável para SDK, mobile e integrações. Autentica por chave `dlx_`. Muda só com v2.",
+    "license": {
+      "name": ""
+    },
+    "title": "Delonix Meet — API pública v1",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/admin/orgs": {
+      "post": {
+        "description": "Fail-closed: com `PROVISIONING_SECRET` vazio o endpoint recusa sempre.\n\nIdempotente por empresa Odoo (`odoo_db` + `odoo_company_id`): reprovisionar\nreutiliza a organização, mas emite SEMPRE uma chave de API nova.",
+        "operationId": "v1_provision_org",
+        "parameters": [
+          {
+            "description": "Segredo de plataforma (`PROVISIONING_SECRET`).",
+            "in": "header",
+            "name": "X-Provisioning-Secret",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProvisionOrgReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisionedOrg"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Nome vazio/longo, ou `odoo_db` sem `odoo_company_id`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Segredo ausente, errado, ou provisionamento desactivado."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos da superfície v1 por IP."
+          }
+        },
+        "summary": "`POST /api/v1/admin/orgs` — provisiona uma organização + emite a sua chave\nde API. Autenticado pelo **segredo de plataforma** (`X-Provisioning-Secret`),\nnão por chave de org (que ainda não existe). Pensado para o Odoo criar a org\nde cada empresa e receber a chave para depois criar salas via `/api/v1/rooms`.",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/api/v1/integration/odoo/provision": {
+      "post": {
+        "description": "Provisiona o directório de utilizadores do Odoo na organização do token.\n\nAutentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), em `Authorization: Bearer …` ou `X-Integration-Token: …`. Uma entrada cuja conta pertence a outra organização ou é local não é aplicada e vem em `skipped`.",
+        "operationId": "provision",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProvisionReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisionResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Token em falta, desconhecido, integração desactivada, ou chave `dlx_` (não é o token desta rota)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Rate-limit da v1 por IP."
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`POST /api/v1/integration/odoo/provision`\nChamado pelo módulo nk_delonix_meet para provisionar utilizadores.",
+        "tags": [
+          "odoo"
+        ]
+      }
+    },
+    "/api/v1/integration/odoo/users": {
+      "get": {
+        "description": "Membros ACTIVOS da organização do token (os arquivados não saem), por `username`.\n\nAutentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), em `Authorization: Bearer …` ou `X-Integration-Token: …`.",
+        "operationId": "list_users",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OdooDirectoryUser"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Token em falta, desconhecido, integração desactivada, ou chave `dlx_` (não é o token desta rota)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Rate-limit da v1 por IP."
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`GET /api/v1/integration/odoo/users` — lista utilizadores para o Odoo",
+        "tags": [
+          "odoo"
+        ]
+      }
+    },
+    "/api/v1/meetings": {
+      "get": {
+        "operationId": "v1_meetings",
+        "parameters": [
+          {
+            "description": "Cursor incremental: devolve reuniões criadas, com ata AI atualizada ou\ncom início desde este instante. Omisso => tudo (limitado a 500).",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1MeetingList"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`since` não é RFC 3339."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos da superfície v1 por IP."
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`GET /api/v1/meetings?since=<rfc3339>` — reuniões da organização (dono é\nmembro), incremental para o cron de sync do Odoo (idempotente no cliente).\nNo máximo 500, por `starts_at`.",
+        "tags": [
+          "v1"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMeetingReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingResp"
+                }
+              }
+            },
+            "description": "Criada, ou reencontrada pela `external_ref` (`existing: true`)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`title` vazio, `kind`, `duration_min`, `host_email` inválidos ou mais de 200 convidados"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "chave de API ausente ou inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a `external_ref` aponta para uma reunião que já não se resolve na organização"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "o anfitrião pertence a outra organização"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "rate-limit da v1"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`POST /api/v1/meetings` — cria (ou reencontra) uma reunião agendada com\nsala, anfitrião e convidados.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/v1/meetings/{id}": {
+      "delete": {
+        "description": "A sala só é apagada se não tiver gravações: a reunião pode ter acontecido\ne sido cancelada no calendário depois, e uma gravação é um artefacto que o\nutilizador espera manter (a FK `recordings.room_id` é ON DELETE CASCADE —\napagar a sala apagaria o registo da gravação).",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteMeetingResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "chave de API ausente ou inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a reunião não existe ou o dono não é membro da organização da chave"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "rate-limit da v1"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`DELETE /api/v1/meetings/{id}` — cancela a reunião e liberta a sala.",
+        "tags": [
+          "meetings"
+        ]
+      },
+      "patch": {
+        "operationId": "patch",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchMeetingReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`title` vazio, `duration_min` fora de 1-1440 ou mais de 200 convidados"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "chave de API ausente ou inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a reunião não existe ou o dono não é membro da organização da chave"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "rate-limit da v1"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`PATCH /api/v1/meetings/{id}` — reagendar / renomear / actualizar convidados.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/v1/meetings/{id}/notes": {
+      "get": {
+        "operationId": "v1_meeting_notes",
+        "parameters": [
+          {
+            "description": "Reunião.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1MeetingNotes"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A reunião não existe ou o dono não é membro da organização da chave."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos da superfície v1 por IP."
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`GET /api/v1/meetings/{id}/notes` — ata (MoM) + transcrição (ata bruta).\n`minutes_ai_at` presente => o MoM já é a versão final do LLM local.",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/api/v1/meetings/{id}/ring": {
+      "post": {
+        "description": "É o \"começar agora\" a partir de um sistema externo: o anfitrião carrega em\niniciar no ERP e o Delonix faz aparecer a chamada no ecrã de cada convidado,\ncomo uma chamada de telefone — não uma notificação que se perde no meio de\noutras.\n\nJá existia auto-ring por cron um minuto antes da hora marcada\n(`meetings::ring_upcoming_meetings`); o que faltava era **sob comando**.\nReutiliza a mesma mecânica para o comportamento ser idêntico nos dois\ncasos, incluindo o `register_call` — sem ele, quem atende cairia na sala\nde espera em vez de entrar directo.",
+        "operationId": "ring",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Com alvos: `{ringing: [uuid], offline: [uuid], room_code, join_url}`. Sem convidados por chamar: `{ringing: [], offline: [], reason, join_url}` (sem `room_code`)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a reunião ainda não tem sala"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "chave de API ausente ou inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a reunião não existe ou o dono não é membro da organização da chave"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "rate-limit da v1"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`POST /api/v1/meetings/{id}/ring` — toca nos dispositivos dos convidados.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/v1/org": {
+      "get": {
+        "operationId": "v1_org",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1Org"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos da superfície v1 por IP."
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`GET /api/v1/org` — dados da organização da chave.",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/api/v1/platform/storage": {
+      "get": {
+        "operationId": "get_storage",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageConfigView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão válida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos da superfície v1 por IP."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/v1/platform/storage` — lê a config actual (admin plataforma).\nA password WebDAV nunca é devolvida: `webdav_password_set` diz se existe.",
+        "tags": [
+          "platform"
+        ]
+      },
+      "put": {
+        "operationId": "save_storage",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageConfigReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "{\"ok\": true} (forma herdada)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`storage_type` fora de `local`/`nfs`/`webdav`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão válida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos da superfície v1 por IP."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PUT /api/v1/platform/storage` — actualiza a config (admin plataforma).\n`webdav_password` vazia ou omissa mantém a guardada.",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/v1/platform/storage/pvc-manifest": {
+      "get": {
+        "operationId": "pvc_manifest",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Manifesto YAML (PV + PVC para NFS, ou um comentário para `local`), servido como anexo `delonix-recordings-pv.yaml`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão válida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos da superfície v1 por IP."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Gera o manifesto K8s do PVC para o tipo de storage configurado.\n`GET /api/v1/platform/storage/pvc-manifest` — devolve YAML para kubectl apply.",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/v1/platform/storage/test": {
+      "post": {
+        "description": "`local` e `nfs` só confirmam a configuração; `webdav` faz um `PROPFIND` real.\nUma falha do destino remoto responde 400, não 502.",
+        "operationId": "test_storage",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageTestResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Configuração incompleta, tipo desconhecido, ou o WebDAV falhou/respondeu não-2xx."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão válida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos da superfície v1 por IP."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/v1/platform/storage/test` — testa a ligação ao storage configurado.",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/v1/recordings": {
+      "get": {
+        "operationId": "v1_recordings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1RecordingList"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos da superfície v1 por IP."
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`GET /api/v1/recordings` — gravações da organização (membros), as 200 mais\nrecentes.",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/api/v1/rooms": {
+      "post": {
+        "operationId": "v1_create_room",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiCreateRoomReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1RoomInfo"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos da superfície v1 por IP."
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`POST /api/v1/rooms` — cria uma sala e devolve o código + link de entrada.\nO dono da sala é o utilizador que criou a chave.",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/api/v1/rooms/{code}": {
+      "get": {
+        "operationId": "v1_get_room",
+        "parameters": [
+          {
+            "description": "Código da sala (sensível a maiúsculas aqui).",
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1RoomInfo"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A sala não existe ou o dono não é membro activo da organização da chave."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos da superfície v1 por IP."
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`GET /api/v1/rooms/{code}` — metadados de uma sala da organização da chave.",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/api/v1/rooms/{code}/join-bot": {
+      "post": {
+        "operationId": "v1_join_bot_room",
+        "parameters": [
+          {
+            "description": "Código da sala (normalizado para minúsculas).",
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinBotReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1BotJoin"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Chave ausente, sem prefixo `dlx_`, ou desconhecida."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A sala não existe ou o dono não é membro activo da organização da chave."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos da superfície v1 por IP."
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "`POST /api/v1/rooms/{code}/join-bot` — gera um room_token para um bot headless.\nO token contorna a sala de espera.",
+        "tags": [
+          "v1"
+        ]
+      }
+    }
+  }
+}

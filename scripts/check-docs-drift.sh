@@ -92,6 +92,8 @@ skills = {os.path.basename(os.path.dirname(p)) for p in glob.glob('.claude/skill
 # Os crates `delonix-meet-*` partilham o prefixo: os planeados (árvore do ADR-0004,
 # `├── delonix-meet-x/`) e os que já existirem num Cargo.toml não são revisores.
 crates = set(re.findall(r'(delonix-meet-[a-z]+)/', open('docs/adr/0004-organizacao-alvo-do-backend.md', encoding='utf-8').read()))
+# O ADR-0006 refina a lista (tabela `| \`delonix-meet-x\` |`) — os crates dele também não são revisores.
+crates |= set(re.findall(r'\| `(delonix-meet-[a-z]+)` \|', open('docs/adr/0006-backend-enterprise-contextos-edicoes-e-entrega.md', encoding='utf-8').read()))
 for toml in glob.glob('server/**/Cargo.toml', recursive=True):
     crates |= set(re.findall(r'name\s*=\s*"(delonix-meet-[a-z]+)"', open(toml, encoding='utf-8').read()))
 

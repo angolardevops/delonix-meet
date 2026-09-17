@@ -181,6 +181,26 @@ if (chaveB.status >= 200 && chaveB.status < 300 && chaveB.json?.id) {
   nok('B cria uma chave de API para o teste', `devolveu ${chaveB.status}`)
 }
 
+// Destinos de emissão guardados (G1): a chave RTMP é credencial de terceiros.
+await recusado('A lista destinos de emissão da org B', `/api/orgs/${B.orgId}/stream-destinations`, { token: A.token })
+const destinoB = await req(`/api/orgs/${B.orgId}/stream-destinations`, {
+  token: B.token, method: 'POST',
+  body: { kind: 'rtmp', label: 'Destino da B', url: 'rtmp://10.0.0.9/live', stream_key: 'chave-da-b' },
+})
+if (destinoB.status === 201 && destinoB.json?.id) {
+  const d = `/api/orgs/${B.orgId}/stream-destinations/${destinoB.json.id}`
+  await recusado('A lê um destino da org B', d, { token: A.token })
+  await recusado('A roda a chave de um destino da org B', `/api/orgs/${B.orgId}/stream-destinations/${destinoB.json.id}/rotate-key`, {
+    token: A.token, method: 'POST', body: { stream_key: 'roubada' },
+  })
+  await recusado('A apaga um destino da org B', d, { token: A.token, method: 'DELETE' })
+  const ainda = await req(d, { token: B.token })
+  if (ainda.status === 200 && ainda.json?.key_prefix === 'chav') ok('e o destino da B CONTINUA LÁ, com a chave dela')
+  else nok('e o destino da B CONTINUA LÁ, com a chave dela', `devolveu ${ainda.status}: ${JSON.stringify(ainda.json).slice(0, 120)}`)
+} else {
+  nok('B cria um destino de emissão para o teste', `devolveu ${destinoB.status}: ${JSON.stringify(destinoB.json).slice(0, 120)}`)
+}
+
 const hookB = await req(`/api/orgs/${B.orgId}/webhooks`, {
   token: B.token, method: 'POST',
   body: { kind: 'generic', url: 'https://example.com/hook', secret: 's3cr3t-de-teste' },
@@ -189,6 +209,33 @@ if (hookB.status >= 200 && hookB.status < 300 && hookB.json?.id) {
   await recusado('A apaga um webhook da org B', `/api/orgs/${B.orgId}/webhooks/${hookB.json.id}`, {
     token: A.token, method: 'DELETE',
   })
+  // Registo de entregas e reenvio (G7): o payload traz dados de reuniões da B.
+  await recusado('A lê um webhook da org B', `/api/orgs/${B.orgId}/webhooks/${hookB.json.id}`, { token: A.token })
+  await recusado('A lista as entregas de um webhook da org B', `/api/orgs/${B.orgId}/webhooks/${hookB.json.id}/deliveries`, { token: A.token })
+  // Uma entrega A SÉRIO da B: uma reunião dispara `meeting.created`, e a linha
+  // fica registada mesmo que o envio a example.com falhe. Sem ela, um 404 só
+  // provaria que a linha não existe, não que a org é recusada.
+  await req('/api/meetings', {
+    token: B.token, method: 'POST',
+    body: { title: 'Dispara o webhook da B', kind: 'video', starts_at: new Date(Date.now() + 3600e3).toISOString(), duration_min: 30, invitee_ids: [] },
+  })
+  let entregaB = null
+  for (let i = 0; i < 50 && !entregaB; i++) {
+    const l = await req(`/api/orgs/${B.orgId}/webhooks/${hookB.json.id}/deliveries`, { token: B.token })
+    entregaB = l.json?.items?.[0]?.id ?? null
+    if (!entregaB) await new Promise((r) => setTimeout(r, 100))
+  }
+  if (entregaB) ok('B vê a entrega do seu webhook')
+  else nok('B vê a entrega do seu webhook', 'nenhuma entrega registada em 5 s')
+  for (const entregaId of [entregaB, '00000000-0000-4000-8000-000000000000'].filter(Boolean)) {
+    await recusado('A lê uma entrega de webhook da org B', `/api/orgs/${B.orgId}/webhooks/${hookB.json.id}/deliveries/${entregaId}`, { token: A.token })
+    await recusado('A reenvia uma entrega de webhook da org B', `/api/orgs/${B.orgId}/webhooks/${hookB.json.id}/deliveries/${entregaId}/redeliver`, {
+      token: A.token, method: 'POST',
+    })
+  }
+  const entregas = await req(`/api/orgs/${B.orgId}/webhooks/${hookB.json.id}/deliveries`, { token: B.token })
+  if (Array.isArray(entregas.json?.items) && entregas.json.items.every((d) => d.redelivery_of == null)) ok('e nenhum reenvio da A chegou a criar entrega na B')
+  else nok('e nenhum reenvio da A chegou a criar entrega na B', `devolveu ${entregas.status}: ${JSON.stringify(entregas.json).slice(0, 160)}`)
   const depois = await req(`/api/orgs/${B.orgId}/webhooks`, { token: B.token })
   const sobreviveu = Array.isArray(depois.json) && depois.json.some((h) => h.id === hookB.json.id)
   if (sobreviveu) ok('e o webhook da B CONTINUA LÁ')
@@ -406,16 +453,17 @@ await recusadoNaPorta('admin de org recém-registado dispara o teste de ligaçã
 })
 
 console.log('\n--- S2: a sincronização Odoo não captura contas de outra organização ---')
-// A org A emite uma chave `dlx_` (o extractor do Odoo aceita-a) e lista no seu
-// «directório» o endereço do administrador da org B. Antes: a conta de B era
-// reescrita (nome, `odoo_managed`) e entrava na org A como admin.
-const chaveA = await req(`/api/orgs/${A.orgId}/api-keys`, {
-  token: A.token, method: 'POST', body: { name: 's2-provision' },
+// A org A emite o seu token de integração `dlxo_` e lista no seu «directório»
+// o endereço do administrador da org B. Antes: a conta de B era reescrita
+// (nome, `odoo_managed`) e entrava na org A como admin. (Até ao R142 usava-se a
+// chave `dlx_`, que o extractor do Odoo aceitava; já não aceita.)
+const chaveA = await req(`/api/orgs/${A.orgId}/integration/odoo/token`, {
+  token: A.token, method: 'POST', body: {},
 })
-if (chaveA.status >= 200 && chaveA.status < 300 && chaveA.json?.key) {
+if (chaveA.status >= 200 && chaveA.status < 300 && chaveA.json?.token) {
   const novoEmail = `novo-${marca}@alfa${marca}.local`
   const prov = await req('/api/v1/integration/odoo/provision', {
-    token: chaveA.json.key, method: 'POST',
+    token: chaveA.json.token, method: 'POST',
     body: {
       company: `Org alfa${marca}`,
       admin_email: A.email,
@@ -442,7 +490,7 @@ if (chaveA.status >= 200 && chaveA.status < 300 && chaveA.json?.key) {
   if (loginB.status === 200) ok('B continua a entrar com a sua password local')
   else nok('B continua a entrar com a sua password local', `login devolveu ${loginB.status}`)
 } else {
-  nok('A cria uma chave de API para o teste S2', `devolveu ${chaveA.status}`)
+  nok('A emite o token de integração Odoo para o teste S2', `devolveu ${chaveA.status}`)
 }
 
 console.log('\n--- S3: um membro ARQUIVADO perde o acesso da organização ---')
@@ -471,6 +519,55 @@ const upload = await fetch(`${API}/api/rooms/${salaA.code}/recordings?name=s3.we
 const gravacaoA = upload.ok ? (await upload.json()).id : null
 if (!gravacaoA) nok('A carrega uma gravação para o teste S3', `devolveu ${upload.status}`)
 
+console.log('\n--- G4–G6: metadados, capítulos e comentários de uma gravação REAL da A ---')
+// Aqui o id é verdadeiro (a gravação acabou de ser carregada), por isso um
+// `404` para a B quer mesmo dizer «não é tua» — o controlo positivo é a A.
+if (gravacaoA) {
+  const capA = await permitido('A cria um capítulo na sua gravação', `/api/recordings/${gravacaoA}/chapters`, {
+    token: A.token, method: 'POST', body: { at_secs: 0, title: 'abertura' },
+  })
+  const comA = await permitido('A comenta a sua gravação', `/api/recordings/${gravacaoA}/comments`, {
+    token: A.token, method: 'POST', body: { body: 'comentário privado da A' },
+  })
+  await permitido('A lê os metadados da sua gravação', `/api/recordings/${gravacaoA}/metadata`, { token: A.token })
+  await recusado('B lê os metadados da gravação da A', `/api/recordings/${gravacaoA}/metadata`, { token: B.token })
+  await recusado('B muda a categoria da gravação da A', `/api/recordings/${gravacaoA}`, {
+    token: B.token, method: 'PATCH', body: { category: 'other' },
+  })
+  await recusado('B lê os capítulos da gravação da A', `/api/recordings/${gravacaoA}/chapters`, { token: B.token })
+  await recusado('B cria um capítulo na gravação da A', `/api/recordings/${gravacaoA}/chapters`, {
+    token: B.token, method: 'POST', body: { at_secs: 1, title: 'forjado' },
+  })
+  await recusado('B lê os comentários da gravação da A', `/api/recordings/${gravacaoA}/comments`, { token: B.token })
+  await recusado('B comenta a gravação da A', `/api/recordings/${gravacaoA}/comments`, {
+    token: B.token, method: 'POST', body: { body: 'forjado' },
+  })
+  if (capA?.id) {
+    await recusado('B lê um capítulo da A', `/api/recordings/${gravacaoA}/chapters/${capA.id}`, { token: B.token })
+    await recusado('B apaga um capítulo da A', `/api/recordings/${gravacaoA}/chapters/${capA.id}`, {
+      token: B.token, method: 'DELETE',
+    })
+  }
+  if (comA?.id) {
+    await recusado('B lê um comentário da A', `/api/recordings/${gravacaoA}/comments/${comA.id}`, { token: B.token })
+    await recusado('B edita um comentário da A', `/api/recordings/${gravacaoA}/comments/${comA.id}`, {
+      token: B.token, method: 'PATCH', body: { body: 'forjado' },
+    })
+    await recusado('B apaga um comentário da A', `/api/recordings/${gravacaoA}/comments/${comA.id}`, {
+      token: B.token, method: 'DELETE',
+    })
+    const ainda = await req(`/api/recordings/${gravacaoA}/comments/${comA.id}`, { token: A.token })
+    if (ainda.status === 200 && ainda.json?.body === 'comentário privado da A') ok('o comentário da A continua intacto')
+    else nok('o comentário da A continua intacto', `devolveu ${ainda.status}: ${JSON.stringify(ainda.json).slice(0, 160)}`)
+  }
+  const pesquisaB = await req('/api/recordings?q=s3', { token: B.token })
+  if (pesquisaB.status === 200 && !(pesquisaB.json?.items ?? []).some((r) => r.id === gravacaoA)) {
+    ok('a pesquisa da B não devolve a gravação da A')
+  } else {
+    nok('a pesquisa da B não devolve a gravação da A', `devolveu ${pesquisaB.status}: ${JSON.stringify(pesquisaB.json).slice(0, 160)}`)
+  }
+}
+
 const pesquisaPorA = async (token) => {
   const r = await req(`/api/users/search?q=${encodeURIComponent(`admin-alfa${marca}`)}`, { token })
   return Array.isArray(r.json) && r.json.some((u) => u.id === A.userId)
@@ -482,9 +579,16 @@ if (await pesquisaPorA(C.token)) ok('C (membro activo) encontra o admin da A na 
 else nok('C (membro activo) encontra o admin da A na pesquisa', 'não encontrou — o controlo positivo falhou')
 if (gravacaoA) {
   await permitido('D (admin activo) descarrega a gravação da A', `/api/recordings/${gravacaoA}?dl=1`, { token: D.token })
+  await permitido('D (admin activo) lê os comentários da gravação da A', `/api/recordings/${gravacaoA}/comments`, { token: D.token })
 }
+// Chave de API `dlx_` da A, própria destes casos. A `chaveA` de cima passou a
+// ser o token Odoo (`dlxo_`, R142), que a v1 de reuniões não aceita — sem esta,
+// o controlo dava 401 e a recusa do caso ARQUIVADO passava por engano.
+const chaveApiA = await req(`/api/orgs/${A.orgId}/api-keys`, {
+  token: A.token, method: 'POST', body: { name: 's3-arquivo' },
+})
 await permitido('controlo: a chave da A cria reunião com C como anfitriã', '/api/v1/meetings', {
-  token: chaveA.json?.key, method: 'POST',
+  token: chaveApiA.json?.key, method: 'POST',
   body: { title: 's3 antes', starts_at: new Date(Date.now() + 7200_000).toISOString(), host_email: C.email },
 })
 
@@ -498,9 +602,10 @@ if (!(await pesquisaPorA(C.token))) ok('C ARQUIVADA já não encontra o admin da
 else nok('C ARQUIVADA já não encontra o admin da A na pesquisa', 'o directório da ex-organização continua visível')
 if (gravacaoA) {
   await recusado('D ARQUIVADO descarrega a gravação da A', `/api/recordings/${gravacaoA}?dl=1`, { token: D.token })
+  await recusado('D ARQUIVADO lê os comentários da gravação da A', `/api/recordings/${gravacaoA}/comments`, { token: D.token })
 }
 await recusado('a chave da A cria reunião com C ARQUIVADA como anfitriã', '/api/v1/meetings', {
-  token: chaveA.json?.key, method: 'POST',
+  token: chaveApiA.json?.key, method: 'POST',
   body: { title: 's3 depois', starts_at: new Date(Date.now() + 9000_000).toISOString(), host_email: C.email },
 })
 

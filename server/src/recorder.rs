@@ -537,6 +537,11 @@ async fn finalize_inner(
     room_id: Uuid,
     session: &RecordingSession,
 ) -> anyhow::Result<()> {
+    // Duração (G4): relógio de parede desde o início da sessão até aqui, ANTES
+    // do ffmpeg — o `finalize` é chamado quando a gravação pára. Não é a
+    // duração do media (não se sonda o ficheiro com ffprobe), por isso pode
+    // divergir alguns segundos; é o que se sabe sem mais um processo.
+    let duration_secs = i32::try_from(session.started.elapsed().as_secs()).ok();
     // Tracks com conteúdo real (ficheiros ~vazios ficam de fora).
     let mut videos: Vec<&RecTrackMeta> = Vec::new();
     let mut audios: Vec<&RecTrackMeta> = Vec::new();
@@ -570,6 +575,14 @@ async fn finalize_inner(
     cmd.args(["-threads", &state.config.ffmpeg_threads.to_string()]);
     cmd.kill_on_drop(true);
 
+    // Resolução (G4): na composição em grelha é a da grelha; no remux é a do
+    // cabeçalho IVF, que o `Vp8IvfWriter` corrige no fecho com as dimensões
+    // do primeiro keyframe. Só áudio: sem resolução.
+    let dims = if videos.len() == 1 && audios.len() <= 1 {
+        ivf_dims(&videos[0].path).await
+    } else {
+        grid_dims(videos.len())
+    };
     if videos.len() == 1 && audios.len() <= 1 {
         // Caso simples: remux sem reencode — zero perda de qualidade.
         cmd.arg("-i").arg(&videos[0].path);
@@ -685,13 +698,16 @@ async fn finalize_inner(
     let filename = format!("Reunião {code} — servidor — {stamp}.webm");
 
     let (rec_id,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes)
-         VALUES ($1, $2, $3, $4) RETURNING id",
+        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, duration_secs, width, height)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
     )
     .bind(room_id)
     .bind(session.by_user)
     .bind(&filename)
     .bind(size)
+    .bind(duration_secs)
+    .bind(dims.map(|d| d.0))
+    .bind(dims.map(|d| d.1))
     .fetch_one(&state.db)
     .await?;
 
@@ -707,6 +723,7 @@ async fn finalize_inner(
         Err(e) => return Err(e.into()),
     }
     tracing::info!(%room_id, %rec_id, size, "server recording pronta na biblioteca");
+    crate::notifications::recording_ready(state, session.by_user, rec_id, &filename, &code).await;
 
     // Webhook recording.ready para as organizações de quem gravou.
     let orgs = crate::org::orgs_of_user(state, session.by_user).await;
@@ -733,6 +750,32 @@ async fn finalize_inner(
         }
     }
     Ok(())
+}
+
+/// Dimensões da grelha que o `xstack` compõe: células de 640×360, `ceil(√n)`
+/// colunas. `None` sem vídeo.
+fn grid_dims(videos: usize) -> Option<(i32, i32)> {
+    if videos == 0 {
+        return None;
+    }
+    let cols = (videos as f64).sqrt().ceil() as usize;
+    let rows = videos.div_ceil(cols);
+    Some(((cols * 640) as i32, (rows * 360) as i32))
+}
+
+/// Largura e altura do cabeçalho IVF (bytes 12..16, LE). Um ficheiro ilegível
+/// dá `None` — a gravação não falha por causa de um metadado.
+async fn ivf_dims(path: &Path) -> Option<(i32, i32)> {
+    use tokio::io::AsyncReadExt;
+    let mut f = tokio::fs::File::open(path).await.ok()?;
+    let mut h = [0u8; 16];
+    f.read_exact(&mut h).await.ok()?;
+    if &h[0..4] != b"DKIF" {
+        return None;
+    }
+    let w = u16::from_le_bytes([h[12], h[13]]) as i32;
+    let hh = u16::from_le_bytes([h[14], h[15]]) as i32;
+    (w > 0 && hh > 0).then_some((w, hh))
 }
 
 /// Cron de retenção (DLP-lite): apaga gravações mais antigas que
@@ -1062,7 +1105,18 @@ mod tests {
         let w_px = u16::from_le_bytes([bytes[12], bytes[13]]);
         let h_px = u16::from_le_bytes([bytes[14], bytes[15]]);
         assert_eq!((w_px, h_px), (320, 240));
+        // E é isso que a biblioteca recebe (G4).
+        assert_eq!(ivf_dims(&path).await, Some((320, 240)));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_resolucao_da_grelha_segue_o_xstack() {
+        assert_eq!(grid_dims(0), None);
+        assert_eq!(grid_dims(1), Some((640, 360)));
+        assert_eq!(grid_dims(2), Some((1280, 360)), "2 colunas, 1 linha");
+        assert_eq!(grid_dims(3), Some((1280, 720)), "2 colunas, 2 linhas");
+        assert_eq!(grid_dims(5), Some((1920, 720)), "3 colunas, 2 linhas");
     }
 
     #[tokio::test]

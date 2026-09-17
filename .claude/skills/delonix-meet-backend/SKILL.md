@@ -76,11 +76,12 @@ Uma proposta que comece por apagar código que funciona é recusada na revisão.
   membro activo de outra org, a mesma regra `ForeignOrg`. A guarda só era alcançável numa
   org legada (`email_domain` vazio); o portão `web/e2e/captura-empregado.mjs` ataca a base
   directamente para lá chegar.
-- **`odoo::list_users`** devolve membros arquivados ao Odoo.
-- **`meetings_v1::resolve_org_user`** junta à org uma conta existente que não pertença a
-  nenhuma org (conta órfã).
+- ~~`odoo::list_users` devolve arquivados~~ **fechado (R143)**.
+- ~~`meetings_v1::resolve_org_user` junta contas órfãs~~ **fechado (R151)**: só dentro do
+  domínio da organização.
 - **S4:** SSRF no `odoo_url`, no WebDAV e na descoberta OIDC. **S5:** segredos de
-  integração em claro. **S6:** chaves de API sem escopos.
+  integração HERDADOS em claro (webhooks, SSO, WebDAV) — usa `core::secret_box` (já em
+  `stream_destinations`) com migração preguiçosa. **S6:** chaves de API sem escopos.
 - A cópia única `users::provision_by_email` (ADR-0004 §6 passo 4) continua por fazer:
   o #76 fechou a cópia que estava errada, não juntou as seis.
 

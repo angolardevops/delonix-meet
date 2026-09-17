@@ -31,7 +31,7 @@ async fn meeting_owner(db: &sqlx::PgPool, meeting_id: Uuid) -> Result<Uuid, ApiE
 async fn require_owner(db: &sqlx::PgPool, meeting_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
     let owner = meeting_owner(db, meeting_id).await?;
     if owner != user_id {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
     Ok(())
 }
@@ -53,13 +53,41 @@ async fn require_member_or_owner(
     .bind(user_id)
     .fetch_optional(db)
     .await?;
-    row.ok_or(ApiError::Unauthorized)?;
+    // Quem não é membro da reunião não fica a saber que ela existe.
+    row.ok_or(ApiError::NotFound)?;
     Ok(())
 }
 
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        list_agenda,
+        add_agenda_item,
+        patch_agenda_item,
+        delete_agenda_item,
+        get_action_plan,
+        upsert_action_plan,
+        add_action_item,
+        patch_action_item,
+        delete_action_item
+    ),
+    components(schemas(
+        AgendaItem,
+        AgendaItemReq,
+        AgendaPatchReq,
+        ActionItem,
+        ActionPlan,
+        ActionPlanGoalReq,
+        ActionItemReq,
+        ActionItemPatch
+    ))
+)]
+pub struct ApiDoc;
+
 // ─── Agenda ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct AgendaItem {
     pub id: Uuid,
     pub meeting_id: Uuid,
@@ -73,13 +101,22 @@ pub struct AgendaItem {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Deserialize)]
+/// Estava copiada à mão em três sítios (ADR-0004, mesmo padrão de
+/// `meetings::MEETING_COLUMNS`).
+const AGENDA_ITEM_COLUMNS: &str =
+    "id, meeting_id, position, topic, description, duration_min, done, done_at, done_by_id, created_at";
+
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct AgendaItemReq {
+    /// 1-200 caracteres (depois de `trim`).
     pub topic: String,
     #[serde(default)]
     pub description: String,
+    /// Limitado a 1-480 (valores fora são ajustados, não recusados).
     #[serde(default = "default_dur")]
+    #[schema(default = 5)]
     pub duration_min: i16,
+    /// Omisso: a seguir ao último tópico.
     #[serde(default)]
     pub position: Option<i16>,
 }
@@ -87,7 +124,7 @@ fn default_dur() -> i16 {
     5
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct AgendaPatchReq {
     #[serde(default)]
     pub topic: Option<String>,
@@ -102,17 +139,25 @@ pub struct AgendaPatchReq {
 }
 
 /// `GET /api/meetings/:id/agenda`
+#[utoipa::path(
+    get, path = "/api/meetings/{id}/agenda", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = Vec<AgendaItem>),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não és dono nem convidado"),
+    )
+)]
 pub async fn list_agenda(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(meeting_id): Path<Uuid>,
 ) -> Result<Json<Vec<AgendaItem>>, ApiError> {
     require_member_or_owner(&state.db, meeting_id, auth.user_id).await?;
-    let items: Vec<AgendaItem> = sqlx::query_as(
-        "SELECT id, meeting_id, position, topic, description, duration_min,
-                done, done_at, done_by_id, created_at
-         FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position, created_at",
-    )
+    let items: Vec<AgendaItem> = sqlx::query_as(&format!(
+        "SELECT {AGENDA_ITEM_COLUMNS} FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position, created_at"
+    ))
     .bind(meeting_id)
     .fetch_all(&state.db)
     .await?;
@@ -120,6 +165,19 @@ pub async fn list_agenda(
 }
 
 /// `POST /api/meetings/:id/agenda` — adiciona tópico (só anfitrião).
+#[utoipa::path(
+    post, path = "/api/meetings/{id}/agenda", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    request_body = AgendaItemReq,
+    responses(
+        (status = 200, body = AgendaItem),
+        (status = 400, body = crate::openapi::ErrorBody, description = "tópico vazio ou com mais de 200 caracteres"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "reunião não existe"),
+    )
+)]
 pub async fn add_agenda_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -145,13 +203,12 @@ pub async fn add_agenda_item(
         .await?;
         max.unwrap_or(0) + 1
     };
-    let item: AgendaItem = sqlx::query_as(
+    let item: AgendaItem = sqlx::query_as(&format!(
         "INSERT INTO meeting_agenda_items
             (meeting_id, position, topic, description, duration_min)
          VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, meeting_id, position, topic, description, duration_min,
-                   done, done_at, done_by_id, created_at",
-    )
+         RETURNING {AGENDA_ITEM_COLUMNS}"
+    ))
     .bind(meeting_id)
     .bind(pos)
     .bind(&topic)
@@ -164,6 +221,19 @@ pub async fn add_agenda_item(
 
 /// `PATCH /api/meetings/:id/agenda/:item_id` — editar ou marcar como feito.
 /// Qualquer membro pode marcar como feito; só o anfitrião pode editar os campos.
+#[utoipa::path(
+    patch, path = "/api/meetings/{id}/agenda/{item_id}", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião"), ("item_id" = Uuid, Path, description = "Id do item")),
+    request_body = AgendaPatchReq,
+    responses(
+        (status = 200, body = AgendaItem, description = "Qualquer membro muda `done`; só o anfitrião edita os restantes campos"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "tópico inválido"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "editar campos que não `done` sem ser anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "reunião ou tópico não existe"),
+    )
+)]
 pub async fn patch_agenda_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -188,10 +258,18 @@ pub async fn patch_agenda_item(
         || req.position.is_some())
         && !is_owner
     {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
     // `done` pode ser alterado por qualquer membro.
     require_member_or_owner(&state.db, meeting_id, auth.user_id).await?;
+    // Validar ANTES de escrever: um tópico inválido recusava o pedido com 400
+    // depois de o `done` já estar gravado (escrita parcial).
+    if let Some(topic) = &req.topic {
+        let t = topic.trim();
+        if t.is_empty() || t.len() > 200 {
+            return Err(ApiError::BadRequest("tópico inválido".into()));
+        }
+    }
 
     if let Some(done) = req.done {
         let (done_at, done_by): (Option<DateTime<Utc>>, Option<Uuid>) = if done {
@@ -242,11 +320,9 @@ pub async fn patch_agenda_item(
             .await?;
     }
 
-    let item: AgendaItem = sqlx::query_as(
-        "SELECT id, meeting_id, position, topic, description, duration_min,
-                done, done_at, done_by_id, created_at
-         FROM meeting_agenda_items WHERE id = $1",
-    )
+    let item: AgendaItem = sqlx::query_as(&format!(
+        "SELECT {AGENDA_ITEM_COLUMNS} FROM meeting_agenda_items WHERE id = $1"
+    ))
     .bind(item_id)
     .fetch_one(&state.db)
     .await?;
@@ -254,6 +330,17 @@ pub async fn patch_agenda_item(
 }
 
 /// `DELETE /api/meetings/:id/agenda/:item_id` — só anfitrião.
+#[utoipa::path(
+    delete, path = "/api/meetings/{id}/agenda/{item_id}", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião"), ("item_id" = Uuid, Path, description = "Id do item")),
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada); também quando o tópico não existe"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "reunião não existe"),
+    )
+)]
 pub async fn delete_agenda_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -270,7 +357,7 @@ pub async fn delete_agenda_item(
 
 // ─── Plano de Ação 5W2H ────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ActionItem {
     pub id: Uuid,
     pub plan_id: Uuid,
@@ -289,7 +376,12 @@ pub struct ActionItem {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+/// Estava copiada à mão em três sítios (ADR-0004, mesmo padrão de
+/// `meetings::MEETING_COLUMNS`).
+const ACTION_ITEM_COLUMNS: &str = "id, plan_id, position, what, when_date, where_text, \
+     who_id, who_name, why, how, resources, status, created_at, updated_at";
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ActionPlan {
     pub id: Uuid,
     pub meeting_id: Uuid,
@@ -298,12 +390,12 @@ pub struct ActionPlan {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ActionPlanGoalReq {
     pub goal: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ActionItemReq {
     #[serde(default)]
     pub what: String,
@@ -321,7 +413,9 @@ pub struct ActionItemReq {
     pub how: String,
     #[serde(default)]
     pub resources: String,
+    /// `todo` (omissão) | `doing` | `done`.
     #[serde(default = "default_status")]
+    #[schema(default = "todo")]
     pub status: String,
     #[serde(default)]
     pub position: Option<i16>,
@@ -330,7 +424,7 @@ fn default_status() -> String {
     "todo".into()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ActionItemPatch {
     #[serde(default)]
     pub what: Option<String>,
@@ -368,11 +462,9 @@ async fn load_plan_with_items(
         return Ok(None);
     };
 
-    let items: Vec<ActionItem> = sqlx::query_as(
-        "SELECT id, plan_id, position, what, when_date, where_text,
-                who_id, who_name, why, how, resources, status, created_at, updated_at
-         FROM action_items WHERE plan_id = $1 ORDER BY position, created_at",
-    )
+    let items: Vec<ActionItem> = sqlx::query_as(&format!(
+        "SELECT {ACTION_ITEM_COLUMNS} FROM action_items WHERE plan_id = $1 ORDER BY position, created_at"
+    ))
     .bind(plan_id)
     .fetch_all(db)
     .await?;
@@ -387,6 +479,16 @@ async fn load_plan_with_items(
 }
 
 /// `GET /api/meetings/:id/action-plan`
+#[utoipa::path(
+    get, path = "/api/meetings/{id}/action-plan", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = Option<ActionPlan>, description = "`null` se a reunião ainda não tem plano"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não és dono nem convidado"),
+    )
+)]
 pub async fn get_action_plan(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -397,6 +499,18 @@ pub async fn get_action_plan(
 }
 
 /// `PUT /api/meetings/:id/action-plan` — cria ou atualiza a META do plano.
+#[utoipa::path(
+    put, path = "/api/meetings/{id}/action-plan", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    request_body = ActionPlanGoalReq,
+    responses(
+        (status = 200, body = ActionPlan),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "reunião não existe"),
+    )
+)]
 pub async fn upsert_action_plan(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -420,6 +534,19 @@ pub async fn upsert_action_plan(
 }
 
 /// `POST /api/meetings/:id/action-plan/items` — adiciona linha 5W2H.
+#[utoipa::path(
+    post, path = "/api/meetings/{id}/action-plan/items", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("id" = Uuid, Path, description = "Id da reunião")),
+    request_body = ActionItemReq,
+    responses(
+        (status = 200, body = ActionItem, description = "Cria o plano (sem meta) se ainda não existir"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`status` inválido"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "reunião não existe"),
+    )
+)]
 pub async fn add_action_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -470,14 +597,13 @@ pub async fn add_action_item(
         req.who_name.trim().to_string()
     };
 
-    let item: ActionItem = sqlx::query_as(
+    let item: ActionItem = sqlx::query_as(&format!(
         "INSERT INTO action_items
             (plan_id, position, what, when_date, where_text, who_id, who_name,
              why, how, resources, status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-         RETURNING id, plan_id, position, what, when_date, where_text,
-                   who_id, who_name, why, how, resources, status, created_at, updated_at",
-    )
+         RETURNING {ACTION_ITEM_COLUMNS}"
+    ))
     .bind(plan_id)
     .bind(pos)
     .bind(req.what.trim())
@@ -496,6 +622,20 @@ pub async fn add_action_item(
 
 /// `PATCH /api/action-items/:item_id` — atualiza campos ou status.
 /// Qualquer membro pode mudar o status; só o anfitrião pode editar campos.
+#[utoipa::path(
+    patch, path = "/api/action-items/{item_id}", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("item_id" = Uuid, Path, description = "Id do item")),
+    request_body = ActionItemPatch,
+    responses(
+        (status = 200, body = ActionItem, description = "Qualquer membro muda `status`; só o anfitrião edita os restantes campos"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`status` inválido"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "editar campos que não `status` sem ser anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "item inexistente, ou não és membro da reunião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "item não existe"),
+    )
+)]
 pub async fn patch_action_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -513,6 +653,11 @@ pub async fn patch_action_item(
     .await?;
     let (meeting_id,) = row.ok_or(ApiError::NotFound)?;
 
+    // Primeiro: quem pede tem de ser membro da reunião (convidado ou dono),
+    // SEMPRE. Esta verificação só corria quando o pedido trazia `status`, e um
+    // PATCH vazio devolvia o item inteiro a qualquer conta autenticada de
+    // qualquer organização (R125).
+    require_member_or_owner(&state.db, meeting_id, auth.user_id).await?;
     let owner = meeting_owner(&state.db, meeting_id).await?;
     let is_owner = owner == auth.user_id;
 
@@ -527,13 +672,9 @@ pub async fn patch_action_item(
         || req.position.is_some()
         || req.when_date.is_some();
     if editing && !is_owner {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
-    // Status pode ser alterado por qualquer membro.
-    if req.status.is_some() {
-        require_member_or_owner(&state.db, meeting_id, auth.user_id).await?;
-    }
-
+    // Status pode ser alterado por qualquer membro (já verificado acima).
     if let Some(s) = &req.status {
         if !matches!(s.as_str(), "todo" | "doing" | "done") {
             return Err(ApiError::BadRequest("status inválido".into()));
@@ -618,11 +759,9 @@ pub async fn patch_action_item(
             .await?;
     }
 
-    let item: ActionItem = sqlx::query_as(
-        "SELECT id, plan_id, position, what, when_date, where_text,
-                who_id, who_name, why, how, resources, status, created_at, updated_at
-         FROM action_items WHERE id = $1",
-    )
+    let item: ActionItem = sqlx::query_as(&format!(
+        "SELECT {ACTION_ITEM_COLUMNS} FROM action_items WHERE id = $1"
+    ))
     .bind(item_id)
     .fetch_one(&state.db)
     .await?;
@@ -630,6 +769,17 @@ pub async fn patch_action_item(
 }
 
 /// `DELETE /api/action-items/:item_id` — só anfitrião.
+#[utoipa::path(
+    delete, path = "/api/action-items/{item_id}", tag = "meeting-actions",
+    security(("session" = [])),
+    params(("item_id" = Uuid, Path, description = "Id do item")),
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "item não existe"),
+    )
+)]
 pub async fn delete_action_item(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

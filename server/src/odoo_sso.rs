@@ -250,7 +250,7 @@ pub async fn ensure_org(
     // O mesmo utilizador de serviço que possui as orgs provisionadas por API:
     // a org tem de ter um dono técnico antes de existir gente lá dentro.
     let service_user = crate::apikeys::ensure_provisioning_user_pub(state).await?;
-    let base = crate::org::slugify_pub(&name);
+    let base = crate::org::slugify(&name);
 
     for i in 0..8 {
         let slug = if i == 0 {

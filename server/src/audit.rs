@@ -94,8 +94,16 @@ pub async fn log_com_metricas(
     }
 }
 
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(list, verify),
+    components(schemas(AuditEntry, VerificacaoCadeia))
+)]
+pub struct ApiDoc;
+
 /// Resultado da verificação da cadeia de uma organização.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct VerificacaoCadeia {
     /// A cadeia está intacta?
     pub intact: bool,
@@ -186,6 +194,20 @@ pub async fn verificar_cadeia(db: &PgPool, org_id: Uuid) -> Result<VerificacaoCa
 }
 
 /// `GET /api/orgs/{org_id}/audit/verify` — só admins da org.
+///
+/// Uma cadeia partida NÃO é erro HTTP: responde 200 com `intact: false` e o
+/// `seq` onde a quebra começa.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/audit/verify", tag = "audit",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = VerificacaoCadeia),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn verify(
     State(state): State<Arc<AppState>>,
     Path(org_id): Path<Uuid>,
@@ -195,7 +217,7 @@ pub async fn verify(
     Ok(Json(verificar_cadeia(&state.db, org_id).await?))
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct AuditEntry {
     pub id: i64,
     pub actor: String,
@@ -204,13 +226,28 @@ pub struct AuditEntry {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct AuditQuery {
+    /// Máximo de eventos (1–500, por omissão 100).
     #[serde(default)]
     pub limit: Option<i64>,
 }
 
-/// Últimos eventos de auditoria da org (só admins).
+/// Últimos eventos de auditoria da org (só admins), mais recentes primeiro.
+/// Inclui os eventos sem org cujo actor é membro da organização.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/audit", tag = "audit",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização."), AuditQuery),
+    responses(
+        (status = 200, body = Vec<AuditEntry>),
+        (status = 400, description = "`limit` não numérico.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list(
     State(state): State<Arc<AppState>>,
     Path(org_id): Path<Uuid>,

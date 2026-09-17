@@ -106,6 +106,11 @@ pub enum CallServerMsg {
         by_name: String,
         reason: String,
     },
+    /// Nova notificação na caixa pessoal (G8). O cliente que não conhece o
+    /// tipo ignora-o (`default: break` no `PresenceProvider.tsx`).
+    Notification {
+        notification: crate::notifications::Notification,
+    },
     Error {
         message: String,
     },
@@ -657,6 +662,8 @@ pub async fn ring_users(
             .bind(kind)
             .execute(&state.db)
             .await;
+            crate::notifications::call_missed(state, uid, caller, caller_name, room_code, kind)
+                .await;
         }
     }
     (ringing, offline)
@@ -664,7 +671,20 @@ pub async fn ring_users(
 
 // ---------- endpoints REST (ack de chamadas perdidas) ----------
 
+/// Documentação OpenAPI das rotas HTTP deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(ack_missed_calls))]
+pub struct ApiDoc;
+
 /// Marca todas as chamadas perdidas do utilizador como vistas.
+#[utoipa::path(
+    post, path = "/api/missed-calls/ack", tag = "calls",
+    security(("session" = [])),
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn ack_missed_calls(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     auth: crate::auth::AuthUser,
@@ -674,4 +694,33 @@ pub async fn ack_missed_calls(
         .execute(&state.db)
         .await?;
     Ok(axum::Json(serde_json::json!({ "ok": true })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Formato no fio da mensagem `notification` (G8): o `type` em kebab-case,
+    /// como as outras, e a notificação inteira debaixo de `notification`. O
+    /// Redis transporta o mesmo JSON entre nós, por isso também tem de voltar.
+    #[test]
+    fn notification_wire_format() {
+        let n = crate::notifications::Notification {
+            id: Uuid::nil(),
+            kind: "recording.ready".into(),
+            title: "Gravação pronta".into(),
+            body: "b".into(),
+            link: "/#/recordings".into(),
+            data: serde_json::json!({"recording_id": Uuid::nil()}),
+            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap(),
+            read_at: None,
+        };
+        let v = serde_json::to_value(CallServerMsg::Notification { notification: n }).unwrap();
+        assert_eq!(v["type"], "notification");
+        assert_eq!(v["notification"]["kind"], "recording.ready");
+        assert_eq!(v["notification"]["link"], "/#/recordings");
+        assert_eq!(v["notification"]["read_at"], serde_json::Value::Null);
+        let back: CallServerMsg = serde_json::from_value(v).unwrap();
+        assert!(matches!(back, CallServerMsg::Notification { .. }));
+    }
 }

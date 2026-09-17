@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{extract::State, Json};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{auth::AuthUser, error::ApiError, AppState};
@@ -166,19 +166,45 @@ pub fn spawn_mom_summary(state: Arc<AppState>, meeting_id: Uuid) {
 
 // ---------- Endpoint de tradução (legendas em tempo real) ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct TranslateReq {
+    /// Linha de legenda; cortada a 500 caracteres.
     pub text: String,
+    /// Língua de destino: `pt` | `en` | `fr` | `es` | `de`. Outra dá 400.
     pub target: String,
 }
 
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct TranslateResp {
+    /// O texto traduzido.
+    pub text: String,
+}
+
+/// Documentação OpenAPI das rotas HTTP deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(translate_caption),
+    components(schemas(TranslateReq, TranslateResp))
+)]
+pub struct ApiDoc;
+
 /// POST /api/translate — traduz uma linha de legenda. Autenticado; o texto é
 /// curto (legendas) e o rate-limit global de /api aplica-se por IP.
+#[utoipa::path(
+    post, path = "/api/translate", tag = "ai",
+    security(("session" = [])),
+    request_body = TranslateReq,
+    responses(
+        (status = 200, body = TranslateResp),
+        (status = 400, body = crate::openapi::ErrorBody, description = "texto vazio, língua não suportada, LLM local não configurado, ou a tradução falhou"),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn translate_caption(
     State(state): State<Arc<AppState>>,
     _auth: AuthUser,
     Json(req): Json<TranslateReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<TranslateResp>, ApiError> {
     if state.config.ollama_url.is_none() {
         return Err(ApiError::BadRequest(
             "tradução indisponível (sem LLM local)".into(),
@@ -189,7 +215,7 @@ pub async fn translate_caption(
         return Err(ApiError::BadRequest("texto vazio".into()));
     }
     match translate(&state, &text, &req.target).await {
-        Some(t) => Ok(Json(serde_json::json!({ "text": t }))),
+        Some(t) => Ok(Json(TranslateResp { text: t })),
         None => Err(ApiError::BadRequest("tradução falhou".into())),
     }
 }

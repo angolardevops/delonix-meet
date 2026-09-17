@@ -1,0 +1,21 @@
+[package]
+name = "delonix-meet-core"
+description = "Núcleo partilhado do Delonix Meet: erros de domínio com código estável, cripto, paginação, edições. Sem IO."
+version.workspace = true
+edition.workspace = true
+
+# Regra (ADR-0006 §1): nada de IO aqui — nem sqlx, nem axum, nem tonic, nem
+# reqwest, nem redis, nem webrtc. Medido por scripts/check-crate-deps.sh.
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+hex.workspace = true
+rand.workspace = true
+argon2.workspace = true
+base64.workspace = true
+# Cifra de segredos em repouso (crypto::SecretBox). Pura: sem IO.
+aes-gcm = "0.11.0"

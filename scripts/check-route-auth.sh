@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 exec python3 - <<'PYEOF'
 import re, os, sys, glob
 
-MAIN = 'server/src/main.rs'
+MAIN = 'server/src/lib.rs'  # o router vive na biblioteca (ADR-0004 §6 passo 1)
 PUBLICAS = 'scripts/rotas-publicas.txt'
 
 # Autenticação por EXTRACTOR na assinatura.
@@ -30,10 +30,21 @@ GUARDAS = ('check_media_secret', 'check_provisioning_secret')
 main = open(MAIN).read()
 
 def rotas_de(src, prefixo=''):
-    """Todas as rotas declaradas em `src`, com o prefixo de aninhamento."""
+    """Todas as rotas declaradas em `src`, com o prefixo de aninhamento.
+
+    O corpo lê-se por parêntesis EQUILIBRADOS. A versão anterior usava uma
+    regex preguiçosa que parava no primeiro `)` seguido de `.`: em
+    `get(a).patch(b)` só `a` era verificado, e o `b` encadeado — `update_me`,
+    `webhooks::create`, `sso` PUT/DELETE, … — passava sem ninguém olhar para a
+    sua autenticação. Medido a 2026-09-16: 26 handlers encadeados estavam fora
+    do portão."""
     saida = []
-    for m in re.finditer(r'\.route\(\s*"([^"]+)"\s*,(.*?)\)\s*(?=[,.\n])', src, re.S):
-        saida.append((prefixo + m.group(1), m.group(2)))
+    for m in re.finditer(r'\.route\(\s*"([^"]+)"\s*,', src):
+        i, prof = m.end(), 1
+        while i < len(src) and prof:
+            prof += {'(': 1, ')': -1}.get(src[i], 0)
+            i += 1
+        saida.append((prefixo + m.group(1), src[m.end():i - 1]))
     return saida
 
 # Routers ANINHADOS. Sem isto o portão é cego exactamente onde o buraco esteve:

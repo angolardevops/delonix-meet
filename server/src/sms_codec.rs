@@ -181,7 +181,7 @@ pub fn e164_digits(to: &str) -> Result<String, CodecError> {
 }
 
 /// Um PDU pronto para `AT+CMGS=<tpdu_len>` seguido de `<hex>` e Ctrl-Z.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 pub struct AtPdu {
     pub hex: String,
     /// Octetos do TPDU, SEM o octeto do SMSC — é o número que o `AT+CMGS` pede.

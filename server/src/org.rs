@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::{auth::AuthUser, error::ApiError, AppState};
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct Organization {
     pub id: Uuid,
     pub name: String,
@@ -23,7 +23,7 @@ pub struct Organization {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct OrgSummary {
     pub id: Uuid,
     pub name: String,
@@ -39,7 +39,7 @@ pub struct OrgSummary {
     pub max_meetings: Option<i32>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct OrgSettingsReq {
     #[serde(default)]
     pub domain: String,
@@ -59,15 +59,86 @@ pub struct OrgSettingsReq {
     pub voice_did_model: Option<String>,
 }
 
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        update_settings,
+        create_org,
+        my_orgs,
+        create_branch,
+        list_branches,
+        add_employee,
+        list_employees,
+        update_employee,
+        remove_employee,
+        create_group,
+        list_groups,
+        create_meeting_room,
+        list_meeting_rooms,
+        org_stats,
+        get_sso_config,
+        upsert_sso_config,
+        delete_sso_config,
+    ),
+    components(schemas(
+        Organization,
+        OrgSummary,
+        OrgSettingsReq,
+        AddEmployeeResp,
+        OrgSettingsUpdated,
+        Branch,
+        Employee,
+        Group,
+        MeetingRoom,
+        OrgStats,
+        WeekBucket,
+        Organizer,
+        SsoConfigPublic,
+        SsoConfigReq,
+        CreateOrgReq,
+        CreateBranchReq,
+        AddEmployeeReq,
+        UpdateEmployeeReq,
+        CreateGroupReq,
+        CreateMeetingRoomReq,
+    ))
+)]
+pub struct ApiDoc;
+
+/// Resposta de `POST /api/orgs/{org_id}/settings`: os valores como ficaram
+/// gravados (domínio normalizado, retenção limitada a 0–3650).
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OrgSettingsUpdated {
+    /// Sempre `true`.
+    pub ok: bool,
+    pub domain: String,
+    pub retention_days: i32,
+}
+
 /// Definições da organização (só admin): domínio de produção + retenção.
 /// O domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a
-/// retenção (>0) apaga gravações mais antigas que N dias.
+/// retenção (>0) apaga gravações mais antigas que N dias. Quotas negativas ou
+/// omissas ficam ilimitadas; valores de voz fora do enum são ignorados.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/settings", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = OrgSettingsReq,
+    responses(
+        (status = 200, body = OrgSettingsUpdated),
+        (status = 400, description = "Domínio inválido (>253 caracteres ou com espaços).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn update_settings(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
     Json(req): Json<OrgSettingsReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<OrgSettingsUpdated>, ApiError> {
     require_admin(&state, org_id, auth.user_id).await?;
     // Normaliza o domínio: sem esquema, sem barra final, minúsculas.
     let domain = req
@@ -117,9 +188,11 @@ pub async fn update_settings(
         &domain,
     )
     .await;
-    Ok(Json(
-        serde_json::json!({ "ok": true, "domain": domain, "retention_days": retention }),
-    ))
+    Ok(Json(OrgSettingsUpdated {
+        ok: true,
+        domain,
+        retention_days: retention,
+    }))
 }
 
 /// Faz cumprir uma quota da organização: se o limite (`limit_col`) estiver
@@ -151,7 +224,7 @@ async fn enforce_quota(
     Ok(())
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct Branch {
     pub id: Uuid,
     pub org_id: Uuid,
@@ -160,7 +233,11 @@ pub struct Branch {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+/// Ver ADR-0004 (mesmo padrão de `meetings::MEETING_COLUMNS`): estava copiada
+/// à mão em `create_branch` e `list_branches`.
+const BRANCH_COLUMNS: &str = "id, org_id, name, location, created_at";
+
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct Employee {
     pub user_id: Uuid,
     pub username: String,
@@ -174,13 +251,23 @@ pub struct Employee {
     pub last_active: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+/// Sem `last_active` (só a listagem o traz, via subquery à parte). Estava
+/// copiada à mão em `add_employee` e `update_employee`; `list_employees`
+/// agora compõe a partir daqui em vez de repetir a lista (ADR-0004).
+const EMPLOYEE_COLUMNS: &str =
+    "m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name";
+
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct Group {
     pub id: Uuid,
     pub org_id: Uuid,
     pub name: String,
     pub member_count: i64,
 }
+
+/// Estava copiada à mão em `create_group` e `list_groups` (ADR-0004).
+const GROUP_COLUMNS: &str = "g.id, g.org_id, g.name, \
+     (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS member_count";
 
 // ---------- helpers ----------
 
@@ -202,7 +289,9 @@ pub async fn role_in_org(
 async fn require_admin(state: &AppState, org_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
     match role_in_org(state, org_id, user_id).await? {
         Some(r) if r == "admin" => Ok(()),
-        Some(_) => Err(ApiError::Unauthorized),
+        // Membro sem o papel: 403. O web lê 401 como «a sessão não serve» e
+        // gastava um refresh antes de mostrar o erro (R153).
+        Some(_) => Err(ApiError::Forbidden),
         None => Err(ApiError::NotFound),
     }
 }
@@ -232,11 +321,27 @@ pub async fn require_member_pub(
 }
 
 /// Slugify exposto para o registo de organizações (auth.rs).
-pub fn slugify_pub(name: &str) -> String {
-    slugify(name)
+/// Junta uma conta a uma organização dentro de uma transação já aberta. É o
+/// único `INSERT INTO org_members` fora dos handlers deste módulo — quem
+/// precisa de o fazer (o registo) chama isto em vez de escrever o SQL.
+pub(crate) async fn insert_member_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_id: Uuid,
+    user_id: Uuid,
+    role: &str,
+    title: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO org_members (org_id, user_id, role, title) VALUES ($1, $2, $3, $4)")
+        .bind(org_id)
+        .bind(user_id)
+        .bind(role)
+        .bind(title)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
-fn slugify(name: &str) -> String {
+pub(crate) fn slugify(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.to_lowercase().chars() {
         if c.is_ascii_alphanumeric() {
@@ -255,16 +360,40 @@ fn slugify(name: &str) -> String {
 
 // ---------- organizations ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateOrgReq {
     pub name: String,
 }
 
+/// Cria uma organização; quem cria entra como `admin`. Máximo de 20
+/// organizações criadas por utilizador.
+#[utoipa::path(
+    post, path = "/api/orgs", tag = "orgs",
+    security(("session" = [])),
+    request_body = CreateOrgReq,
+    responses(
+        (status = 200, body = Organization),
+        (status = 400, description = "Nome vazio ou com mais de 120 caracteres.", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 409, description = "Limite de 20 organizações por utilizador atingido.", body = crate::openapi::ErrorBody),
+        (status = 422, description = "Instalação em tenancy `single` (`organization.single_tenancy`).", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_org(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Json(req): Json<CreateOrgReq>,
 ) -> Result<Json<Organization>, ApiError> {
+    // Tenancy `single` (ADR-0006 §2): a instalação tem UMA organização, criada
+    // pelo primeiro registo. Criar outra partia a premissa de que toda a gente
+    // se encontra no mesmo directório.
+    if state.config.tenancy_mode == delonix_meet_core::edition::TenancyMode::Single {
+        return Err(delonix_meet_core::DomainError::precondition(
+            "organization.single_tenancy",
+            "esta instalação tem uma só organização",
+        )
+        .into());
+    }
     let name = req.name.trim();
     if name.is_empty() || name.len() > 120 {
         return Err(ApiError::BadRequest("nome da organização inválido".into()));
@@ -318,6 +447,15 @@ pub async fn create_org(
     Ok(Json(org))
 }
 
+/// Organizações de quem está autenticado, com o seu papel em cada uma.
+#[utoipa::path(
+    get, path = "/api/orgs", tag = "orgs",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = Vec<OrgSummary>),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn my_orgs(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -325,10 +463,13 @@ pub async fn my_orgs(
     let orgs: Vec<OrgSummary> = sqlx::query_as(
         r#"
         SELECT o.id, o.name, o.slug, m.role,
-               (SELECT COUNT(*) FROM org_members mm WHERE mm.org_id = o.id) AS member_count,
+               (SELECT COUNT(*) FROM org_members mm
+                 WHERE mm.org_id = o.id AND mm.archived_at IS NULL) AS member_count,
                o.domain, o.retention_days, o.max_groups, o.max_rooms, o.max_meetings
         FROM organizations o
-        JOIN org_members m ON m.org_id = o.id AND m.user_id = $1
+        -- Só pertenças ACTIVAS: um membro arquivado deixava de alcançar as
+        -- rotas da org (S3) mas continuava a vê-la aqui, com o papel antigo.
+        JOIN org_members m ON m.org_id = o.id AND m.user_id = $1 AND m.archived_at IS NULL
         ORDER BY o.name
         "#,
     )
@@ -340,13 +481,27 @@ pub async fn my_orgs(
 
 // ---------- branches ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateBranchReq {
     pub name: String,
     #[serde(default)]
     pub location: String,
 }
 
+/// Cria uma filial (só admin).
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/branches", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = CreateBranchReq,
+    responses(
+        (status = 200, body = Branch),
+        (status = 400, description = "Nome vazio ou com mais de 120 caracteres.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_branch(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -358,10 +513,10 @@ pub async fn create_branch(
     if name.is_empty() || name.len() > 120 {
         return Err(ApiError::BadRequest("nome da filial inválido".into()));
     }
-    let branch: Branch = sqlx::query_as(
+    let branch: Branch = sqlx::query_as(&format!(
         "INSERT INTO branches (org_id, name, location) VALUES ($1, $2, $3)
-         RETURNING id, org_id, name, location, created_at",
-    )
+         RETURNING {BRANCH_COLUMNS}"
+    ))
     .bind(org_id)
     .bind(name)
     .bind(req.location.trim())
@@ -370,15 +525,26 @@ pub async fn create_branch(
     Ok(Json(branch))
 }
 
+/// Filiais da organização (membros).
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/branches", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = Vec<Branch>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_branches(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<Branch>>, ApiError> {
     require_member(&state, org_id, auth.user_id).await?;
-    let branches: Vec<Branch> = sqlx::query_as(
-        "SELECT id, org_id, name, location, created_at FROM branches WHERE org_id = $1 ORDER BY name",
-    )
+    let branches: Vec<Branch> = sqlx::query_as(&format!(
+        "SELECT {BRANCH_COLUMNS} FROM branches WHERE org_id = $1 ORDER BY name"
+    ))
     .bind(org_id)
     .fetch_all(&state.db)
     .await?;
@@ -387,7 +553,7 @@ pub async fn list_branches(
 
 // ---------- employees ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct AddEmployeeReq {
     /// Adicionar por email: se o utilizador existir liga-o; senão cria a conta.
     pub email: String,
@@ -403,17 +569,35 @@ pub struct AddEmployeeReq {
     pub branch_id: Option<Uuid>,
 }
 
+/// Adiciona um colaborador por email (só admin). Se a conta não existir, é
+/// criada (password por omissão quando omitida); se já for membro, actualiza
+/// papel, cargo e filial.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/employees", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = AddEmployeeReq,
+    responses(
+        (status = 200, body = AddEmployeeResp, description = "Sem `password` no pedido e conta nova: `temporary_password` vem preenchida (uma só vez)."),
+        (status = 400, description = "Email/password inválidos, email fora do domínio da organização, ou `role` diferente de `admin`/`member`.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "A conta já pertence a outra organização, ou email/username já existe.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn add_employee(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
     Json(req): Json<AddEmployeeReq>,
-) -> Result<Json<Employee>, ApiError> {
+) -> Result<Json<AddEmployeeResp>, ApiError> {
     require_admin(&state, org_id, auth.user_id).await?;
-    let email = req.email.trim().to_lowercase();
-    if !email.contains('@') {
-        return Err(ApiError::BadRequest("email inválido".into()));
-    }
+    let email = delonix_meet_domain::identity::validation::normalize_email(&req.email);
+    // Antes faltava aqui o limite de 254 caracteres que auth::register já
+    // impunha — mesma política de email, agora num só sítio (ADR-0004, Fase 2).
+    delonix_meet_domain::identity::validation::validate_email(&email)
+        .map_err(ApiError::BadRequest)?;
     // Org-first: o email do colaborador tem de ser do domínio da organização.
     let org_domain: Option<(String,)> =
         sqlx::query_as("SELECT email_domain FROM organizations WHERE id = $1")
@@ -461,6 +645,9 @@ pub async fn add_employee(
             )));
         }
     }
+    // Password temporária gerada quando o admin não indica nenhuma. Sai UMA vez,
+    // nesta resposta, para o admin a entregar ao colaborador.
+    let mut temporary_password: Option<String> = None;
     let user_id = match existing {
         Some((id,)) => id,
         None => {
@@ -470,13 +657,21 @@ pub async fn add_employee(
                 .map(|s| s.trim().to_string())
                 .filter(|s| s.len() >= 2)
                 .unwrap_or_else(|| email.split('@').next().unwrap_or("employee").to_string());
-            let password = req.password.as_deref().unwrap_or("changeme123");
-            if !(8..=128).contains(&password.len()) {
-                return Err(ApiError::BadRequest(
-                    "password deve ter 8-128 caracteres".into(),
-                ));
-            }
-            let hash = crate::auth::hash_password(password)?;
+            // Nunca uma password FIXA: `changeme123` abria a conta de qualquer
+            // colaborador recém-adicionado a quem soubesse o email (R150).
+            let password = match req.password.as_deref() {
+                Some(p) => {
+                    delonix_meet_domain::identity::validation::validate_password(p)
+                        .map_err(ApiError::BadRequest)?;
+                    p.to_string()
+                }
+                None => {
+                    let p = delonix_meet_core::crypto::random_hex(12);
+                    temporary_password = Some(p.clone());
+                    p
+                }
+            };
+            let hash = crate::auth::hash_password(&password)?;
             let row: Result<(Uuid,), sqlx::Error> = sqlx::query_as(
                 "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id",
             )
@@ -507,12 +702,12 @@ pub async fn add_employee(
     .execute(&state.db)
     .await?;
 
-    let emp: Employee = sqlx::query_as(
-        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name
+    let emp: Employee = sqlx::query_as(&format!(
+        "SELECT {EMPLOYEE_COLUMNS}
            FROM org_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN branches b ON b.id = m.branch_id
-           WHERE m.org_id = $1 AND m.user_id = $2"#,
-    )
+           WHERE m.org_id = $1 AND m.user_id = $2"
+    ))
     .bind(org_id)
     .bind(user_id)
     .fetch_one(&state.db)
@@ -525,35 +720,73 @@ pub async fn add_employee(
         &emp.email,
     )
     .await;
-    Ok(Json(emp))
+    Ok(Json(AddEmployeeResp {
+        employee: emp,
+        temporary_password,
+    }))
 }
 
+/// O colaborador adicionado e, SÓ quando a conta nasceu sem password
+/// indicada, a password temporária gerada — mostrada uma vez.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct AddEmployeeResp {
+    #[serde(flatten)]
+    pub employee: Employee,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporary_password: Option<String>,
+}
+
+/// Colaboradores activos da organização (membros), com a última actividade.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/employees", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = Vec<Employee>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_employees(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<Employee>>, ApiError> {
     require_member(&state, org_id, auth.user_id).await?;
-    let emps: Vec<Employee> = sqlx::query_as(
-        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name,
+    let emps: Vec<Employee> = sqlx::query_as(&format!(
+        "SELECT {EMPLOYEE_COLUMNS},
                   (SELECT MAX(a.created_at) FROM audit_logs a WHERE a.actor_id = m.user_id) AS last_active
            FROM org_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN branches b ON b.id = m.branch_id
-           WHERE m.org_id = $1 AND m.archived_at IS NULL ORDER BY u.username"#,
-    )
+           WHERE m.org_id = $1 AND m.archived_at IS NULL ORDER BY u.username"
+    ))
     .bind(org_id)
     .fetch_all(&state.db)
     .await?;
     Ok(Json(emps))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateEmployeeReq {
     pub role: Option<String>,
     pub title: Option<String>,
     pub branch_id: Option<Uuid>,
 }
 
+/// Altera papel, cargo e/ou filial de um membro (só admin).
+#[utoipa::path(
+    patch, path = "/api/orgs/{org_id}/employees/{user_id}", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização."), ("user_id" = Uuid, Path, description = "Utilizador membro.")),
+    request_body = UpdateEmployeeReq,
+    responses(
+        (status = 200, body = Employee),
+        (status = 400, description = "`role` diferente de `admin`/`member`.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Quem pede não é membro activo, ou o utilizador não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn update_employee(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -593,12 +826,12 @@ pub async fn update_employee(
                 .await?;
         }
     }
-    let emp: Employee = sqlx::query_as(
-        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name
+    let emp: Employee = sqlx::query_as(&format!(
+        "SELECT {EMPLOYEE_COLUMNS}
            FROM org_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN branches b ON b.id = m.branch_id
-           WHERE m.org_id = $1 AND m.user_id = $2"#,
-    )
+           WHERE m.org_id = $1 AND m.user_id = $2"
+    ))
     .bind(org_id)
     .bind(user_id)
     .fetch_one(&state.db)
@@ -606,6 +839,20 @@ pub async fn update_employee(
     Ok(Json(emp))
 }
 
+/// Arquiva o acesso de um membro (soft delete, só admin). Idempotente: um
+/// utilizador que não é membro também devolve `ok`.
+#[utoipa::path(
+    delete, path = "/api/orgs/{org_id}/employees/{user_id}", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização."), ("user_id" = Uuid, Path, description = "Utilizador membro.")),
+    responses(
+        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 400, description = "Tentativa de arquivar o próprio acesso.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn remove_employee(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -640,13 +887,28 @@ pub async fn remove_employee(
 
 // ---------- groups ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateGroupReq {
     pub name: String,
     #[serde(default)]
     pub member_ids: Vec<Uuid>,
 }
 
+/// Cria um grupo de colaboradores (qualquer membro). O criador entra sempre;
+/// `member_ids` que não sejam membros da organização são ignorados.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/groups", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = CreateGroupReq,
+    responses(
+        (status = 200, body = Group),
+        (status = 400, description = "Nome vazio ou com mais de 120 caracteres.", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "Quota `max_groups` da organização atingida.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_group(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -661,6 +923,20 @@ pub async fn create_group(
     // RLS (migração 0024): employee_groups corre no contexto de tenant. O limite
     // de quota vive em `organizations` (sem RLS); o COUNT dos grupos existentes
     // corre na MESMA tx (sob RLS) para ser correto. Ver AppState::tenant_tx.
+    // Os membros validam-se ANTES de abrir a transacção: `role_in_org` usa a
+    // pool, e pedir uma segunda ligação com a tx aberta prendia duas ligações
+    // por pedido — com a pool cheia, o pedido esperava por si próprio até ao
+    // timeout e dava 500 (medido nos testes de integração, 2026-09-16).
+    let mut ids = req.member_ids.clone();
+    ids.push(auth.user_id);
+    ids.sort();
+    ids.dedup();
+    let mut members = Vec::with_capacity(ids.len());
+    for uid in ids {
+        if role_in_org(&state, org_id, uid).await?.is_some() {
+            members.push(uid);
+        }
+    }
     let mut tx = state.tenant_tx(auth.user_id).await?;
     let limit: Option<i32> =
         sqlx::query_scalar("SELECT max_groups FROM organizations WHERE id = $1")
@@ -688,23 +964,20 @@ pub async fn create_group(
     .fetch_one(&mut *tx)
     .await?;
 
-    // O criador entra sempre; membros validados como pertencentes à org.
-    let mut ids = req.member_ids.clone();
-    ids.push(auth.user_id);
-    for uid in ids {
-        if role_in_org(&state, org_id, uid).await?.is_some() {
-            sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-                .bind(group_id)
-                .bind(uid)
-                .execute(&mut *tx)
-                .await?;
-        }
+    // O criador entra sempre; membros já validados como pertencentes à org.
+    for uid in members {
+        sqlx::query(
+            "INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(group_id)
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
     }
 
-    let group: Group = sqlx::query_as(
-        "SELECT g.id, g.org_id, g.name, (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS member_count
-         FROM employee_groups g WHERE g.id = $1",
-    )
+    let group: Group = sqlx::query_as(&format!(
+        "SELECT {GROUP_COLUMNS} FROM employee_groups g WHERE g.id = $1"
+    ))
     .bind(group_id)
     .fetch_one(&mut *tx)
     .await?;
@@ -712,6 +985,17 @@ pub async fn create_group(
     Ok(Json(group))
 }
 
+/// Grupos da organização (membros).
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/groups", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = Vec<Group>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_groups(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -721,10 +1005,9 @@ pub async fn list_groups(
     // RLS: employee_groups tem Row-Level Security (migração 0024). A query corre
     // no contexto de tenant do utilizador — ver AppState::tenant_tx / ADR-0002.
     let mut tx = state.tenant_tx(auth.user_id).await?;
-    let groups: Vec<Group> = sqlx::query_as(
-        "SELECT g.id, g.org_id, g.name, (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS member_count
-         FROM employee_groups g WHERE g.org_id = $1 ORDER BY g.name",
-    )
+    let groups: Vec<Group> = sqlx::query_as(&format!(
+        "SELECT {GROUP_COLUMNS} FROM employee_groups g WHERE g.org_id = $1 ORDER BY g.name"
+    ))
     .bind(org_id)
     .fetch_all(&mut *tx)
     .await?;
@@ -734,7 +1017,7 @@ pub async fn list_groups(
 
 // ---------- salas presenciais (físicas) ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct MeetingRoom {
     pub id: Uuid,
     pub org_id: Uuid,
@@ -743,7 +1026,10 @@ pub struct MeetingRoom {
     pub capacity: i32,
 }
 
-#[derive(Deserialize)]
+/// Estava copiada à mão em `create_meeting_room` e `list_meeting_rooms` (ADR-0004).
+const MEETING_ROOM_COLUMNS: &str = "id, org_id, name, location, capacity";
+
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateMeetingRoomReq {
     pub name: String,
     #[serde(default)]
@@ -752,6 +1038,21 @@ pub struct CreateMeetingRoomReq {
     pub capacity: i32,
 }
 
+/// Cria uma sala presencial (física) da organização (só admin).
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/meeting-rooms", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = CreateMeetingRoomReq,
+    responses(
+        (status = 200, body = MeetingRoom),
+        (status = 400, description = "Nome vazio ou com mais de 120 caracteres.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "Quota `max_rooms` da organização atingida.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_meeting_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -770,10 +1071,10 @@ pub async fn create_meeting_room(
         "SELECT COUNT(*) FROM meeting_rooms WHERE org_id = $1",
     )
     .await?;
-    let room: MeetingRoom = sqlx::query_as(
+    let room: MeetingRoom = sqlx::query_as(&format!(
         "INSERT INTO meeting_rooms (org_id, name, location, capacity) VALUES ($1, $2, $3, $4)
-         RETURNING id, org_id, name, location, capacity",
-    )
+         RETURNING {MEETING_ROOM_COLUMNS}"
+    ))
     .bind(org_id)
     .bind(name)
     .bind(req.location.trim())
@@ -783,15 +1084,26 @@ pub async fn create_meeting_room(
     Ok(Json(room))
 }
 
+/// Salas presenciais da organização (membros).
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/meeting-rooms", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = Vec<MeetingRoom>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_meeting_rooms(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<MeetingRoom>>, ApiError> {
     require_member(&state, org_id, auth.user_id).await?;
-    let rooms: Vec<MeetingRoom> = sqlx::query_as(
-        "SELECT id, org_id, name, location, capacity FROM meeting_rooms WHERE org_id = $1 ORDER BY name",
-    )
+    let rooms: Vec<MeetingRoom> = sqlx::query_as(&format!(
+        "SELECT {MEETING_ROOM_COLUMNS} FROM meeting_rooms WHERE org_id = $1 ORDER BY name"
+    ))
     .bind(org_id)
     .fetch_all(&state.db)
     .await?;
@@ -800,14 +1112,14 @@ pub async fn list_meeting_rooms(
 
 // ---------- Estatísticas da organização (consola admin) ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct WeekBucket {
     pub week_start: DateTime<Utc>,
     pub count: i64,
     pub minutes: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct OrgStats {
     pub meetings_30d: i64,
     pub meeting_minutes_30d: i64,
@@ -847,7 +1159,7 @@ pub struct OrgStats {
     pub active_users_prev_30d: i64,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct Organizer {
     pub username: String,
     pub count: i64,
@@ -855,7 +1167,18 @@ pub struct Organizer {
 
 /// KPIs agregados da organização: reuniões e minutos dos últimos 30 dias,
 /// utilizadores envolvidos, gravações e série semanal (8 semanas).
-/// Uma reunião "pertence" à org se o dono ou um convidado for membro.
+/// Uma reunião "pertence" à org se o dono ou um convidado for membro. Só admin.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/stats", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = OrgStats),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn org_stats(
     State(state): State<Arc<AppState>>,
     Path(org_id): Path<Uuid>,
@@ -1103,7 +1426,7 @@ pub async fn primary_domain(state: &AppState, user_id: Uuid) -> String {
 
 // ---------- SSO Config (admin) ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema, sqlx::FromRow)]
 pub struct SsoConfigPublic {
     pub org_id: Uuid,
     pub issuer_url: String,
@@ -1111,7 +1434,7 @@ pub struct SsoConfigPublic {
     pub enforce_sso: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct SsoConfigReq {
     pub issuer_url: String,
     pub client_id: String,
@@ -1122,6 +1445,18 @@ pub struct SsoConfigReq {
 }
 
 /// `GET /api/orgs/:org_id/sso` — lê a config OIDC (sem devolver o segredo).
+/// `null` quando a organização não tem SSO configurado. Só admin.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/sso", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, description = "Configuração OIDC, ou `null` se não houver.", body = Option<SsoConfigPublic>),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_sso_config(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1139,7 +1474,20 @@ pub async fn get_sso_config(
 }
 
 /// `PUT /api/orgs/:org_id/sso` — cria ou atualiza a config OIDC.
-/// O `client_secret` só é atualizado se for enviado não-vazio.
+/// O `client_secret` só é atualizado se for enviado não-vazio. Só admin.
+#[utoipa::path(
+    put, path = "/api/orgs/{org_id}/sso", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = SsoConfigReq,
+    responses(
+        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 400, description = "`issuer_url`/`client_id` em falta, ou `issuer_url` sem `https://`.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn upsert_sso_config(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1203,7 +1551,19 @@ pub async fn upsert_sso_config(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// `DELETE /api/orgs/:org_id/sso` — remove a config OIDC (desativa SSO).
+/// `DELETE /api/orgs/:org_id/sso` — remove a config OIDC (desativa SSO). Só
+/// admin; idempotente.
+#[utoipa::path(
+    delete, path = "/api/orgs/{org_id}/sso", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn delete_sso_config(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1229,7 +1589,24 @@ pub async fn group_member_ids(state: &AppState, group_id: Uuid) -> Result<Vec<Uu
 
 #[cfg(test)]
 mod tests {
-    use super::slugify;
+    use super::{slugify, OrgSettingsUpdated};
+
+    /// O tipo que substituiu o `json!` (OpenAPI) serializa igual.
+    #[test]
+    fn settings_updated_serializa_como_antes() {
+        let v = serde_json::to_value(OrgSettingsUpdated {
+            ok: true,
+            domain: "meet.acme.com".into(),
+            retention_days: 30,
+        })
+        .unwrap();
+        // Campo a campo, e não um `json!` literal: a catraca da arquitectura
+        // conta os `{"ok": true}` do código, e um teste não é dívida.
+        assert_eq!(v.as_object().unwrap().len(), 3);
+        assert_eq!(v["ok"], serde_json::Value::Bool(true));
+        assert_eq!(v["domain"], "meet.acme.com");
+        assert_eq!(v["retention_days"], 30);
+    }
 
     #[test]
     fn slugify_basic() {

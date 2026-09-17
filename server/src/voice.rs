@@ -20,7 +20,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{auth::AuthUser, error::ApiError, org::orgs_of_user, AppState};
+use delonix_meet_core::DomainError;
+
+use crate::{
+    auth::AuthUser,
+    error::ApiError,
+    org::{orgs_of_user, role_in_org},
+    AppState,
+};
 
 // ---------- Enums (persistidos como TEXT) ----------
 
@@ -53,19 +60,55 @@ pub fn estimate_cost(duration_secs: i64, tariff_per_min: f64) -> f64 {
 
 // ---------- Tipos de saída ----------
 
-#[derive(Serialize, sqlx::FromRow)]
+/// Documentação OpenAPI do control plane de voz (`openapi.rs` junta-a). A API
+/// interna de IVR (`/api/voice/ivr/*`) fica de fora: o contrato dela é o
+/// `.proto`.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        create_room,
+        get_room,
+        list_participants,
+        close_room,
+        list_dids,
+        create_did,
+        list_cdr,
+        billing_summary
+    ),
+    components(schemas(
+        VoiceRoom,
+        VoiceRoomResp,
+        CreateVoiceRoomReq,
+        VoiceParticipant,
+        VoiceDid,
+        CreateDidReq,
+        VoiceCdr,
+        BillingSummary
+    ))
+)]
+pub struct ApiDoc;
+
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct VoiceRoom {
     pub id: Uuid,
     pub org_id: Uuid,
     pub room_code: String,
+    /// PIN de 6 dígitos para o dial-in.
     pub pin: String,
     pub did_id: Option<Uuid>,
+    /// `freeswitch` | `provider`.
     pub media_backend: String,
+    /// `active` | `closed`.
     pub status: String,
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+/// Estava copiada à mão em `create_room` e `get_room` (ADR-0004, mesmo
+/// padrão de `meetings::MEETING_COLUMNS`).
+const VOICE_ROOM_COLUMNS: &str =
+    "id, org_id, room_code, pin, did_id, media_backend, status, created_at";
+
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct VoiceParticipant {
     pub id: Uuid,
     pub channel: String,
@@ -74,19 +117,25 @@ pub struct VoiceParticipant {
     pub left_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct VoiceDid {
     pub id: Uuid,
+    /// `null` = pool partilhado entre organizações.
     pub org_id: Option<Uuid>,
+    /// Número em +E.164.
     pub e164: String,
     pub market: String,
+    /// `shared` | `dedicated`.
     pub model: String,
     pub provider: String,
     pub active: bool,
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+/// Estava copiada à mão em `create_did` e `list_dids` (ADR-0004).
+const VOICE_DID_COLUMNS: &str = "id, org_id, e164, market, model, provider, active, created_at";
+
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct VoiceCdr {
     pub id: Uuid,
     pub direction: String,
@@ -114,11 +163,37 @@ async fn caller_org(state: &AppState, user_id: Uuid) -> Result<Uuid, ApiError> {
         .ok_or_else(|| ApiError::BadRequest("utilizador sem organização".into()))
 }
 
+/// A sala de conferência `room_code` é da organização `org_id`: o DONO da sala
+/// é membro ACTIVO dela.
+///
+/// Sem isto, o admin de uma org ligava um DID+PIN seu ao código da sala de
+/// OUTRA org, e o IVR (HTTP e gRPC partilham `validate_pin`) punha chamadores
+/// PSTN dentro dessa reunião (R140). Regra escolhida por ser a mais restritiva
+/// das que o `rooms::room_access` conhece: «colega do dono». O convite na
+/// agenda e o co-anfitrião NÃO contam — dão acesso a uma pessoa, não fazem da
+/// sala um recurso da org. Inexistente e alheia dão a mesma resposta.
+async fn ensure_room_in_org(
+    state: &AppState,
+    org_id: Uuid,
+    room_code: &str,
+) -> Result<(), ApiError> {
+    let not_found = || ApiError::Domain(DomainError::not_found("voice.room_not_found"));
+    let owner: Option<Uuid> = sqlx::query_scalar("SELECT owner_id FROM rooms WHERE code = $1")
+        .bind(room_code)
+        .fetch_optional(&state.db)
+        .await?;
+    let owner = owner.ok_or_else(not_found)?;
+    match role_in_org(state, org_id, owner).await? {
+        Some(_) => Ok(()),
+        None => Err(not_found()),
+    }
+}
+
 // ============================================================
 //  API do utilizador (autenticada por sessão, escopada à org)
 // ============================================================
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateVoiceRoomReq {
     /// Código da sala de conferência existente (rooms.code) a ligar ao dial-in.
     pub room_code: String,
@@ -127,7 +202,7 @@ pub struct CreateVoiceRoomReq {
     pub did_id: Option<Uuid>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct VoiceRoomResp {
     pub id: Uuid,
     pub room_code: String,
@@ -137,6 +212,23 @@ pub struct VoiceRoomResp {
 }
 
 /// Cria uma sala de voz (dial-in) para uma sala de conferência existente.
+///
+/// A sala de voz pertence à primeira organização do utilizador. O `room_code`
+/// é normalizado para minúsculas e tem de ser de uma sala cujo DONO é membro
+/// ACTIVO dessa organização; senão `404` (`voice.room_not_found`), a mesma
+/// resposta de um código inexistente.
+#[utoipa::path(
+    post, path = "/api/voice/rooms", tag = "voice",
+    security(("session" = [])),
+    request_body = CreateVoiceRoomReq,
+    responses(
+        (status = 200, body = VoiceRoomResp),
+        (status = 400, description = "Utilizador sem organização ou `room_code` vazio.", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "`voice.room_not_found`: a sala não existe, ou o dono não é membro activo da organização de quem pede.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "Sem DID disponível para dial-in nesta organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -147,6 +239,7 @@ pub async fn create_room(
     if room_code.is_empty() {
         return Err(ApiError::BadRequest("room_code em falta".into()));
     }
+    ensure_room_in_org(&state, org_id, &room_code).await?;
 
     // Backend de media e modelo de DID vêm da configuração da org.
     let (backend, did_model): (String, String) = sqlx::query_as(
@@ -159,29 +252,29 @@ pub async fn create_room(
 
     // Resolver o DID: explícito (validado), dedicado da org, ou do pool partilhado.
     let did: Option<VoiceDid> = if let Some(id) = req.did_id {
-        sqlx::query_as(
-            "SELECT id, org_id, e164, market, model, provider, active, created_at
-             FROM voice_did WHERE id = $1 AND active AND (org_id = $2 OR org_id IS NULL)",
-        )
+        sqlx::query_as(&format!(
+            "SELECT {VOICE_DID_COLUMNS}
+             FROM voice_did WHERE id = $1 AND active AND (org_id = $2 OR org_id IS NULL)"
+        ))
         .bind(id)
         .bind(org_id)
         .fetch_optional(&state.db)
         .await?
     } else if did_model == "dedicated" {
-        sqlx::query_as(
-            "SELECT id, org_id, e164, market, model, provider, active, created_at
-             FROM voice_did WHERE org_id = $1 AND active ORDER BY created_at LIMIT 1",
-        )
+        sqlx::query_as(&format!(
+            "SELECT {VOICE_DID_COLUMNS}
+             FROM voice_did WHERE org_id = $1 AND active ORDER BY created_at LIMIT 1"
+        ))
         .bind(org_id)
         .fetch_optional(&state.db)
         .await?
     } else {
         // Modelo partilhado: primeiro um dedicado da org, senão o pool partilhado.
-        sqlx::query_as(
-            "SELECT id, org_id, e164, market, model, provider, active, created_at
+        sqlx::query_as(&format!(
+            "SELECT {VOICE_DID_COLUMNS}
              FROM voice_did WHERE active AND (org_id = $1 OR org_id IS NULL)
-             ORDER BY (org_id = $1) DESC, created_at LIMIT 1",
-        )
+             ORDER BY (org_id = $1) DESC, created_at LIMIT 1"
+        ))
         .bind(org_id)
         .fetch_optional(&state.db)
         .await?
@@ -194,11 +287,11 @@ pub async fn create_room(
     let mut last_err = None;
     for _ in 0..8 {
         let pin = gen_pin();
-        let res: Result<VoiceRoom, sqlx::Error> = sqlx::query_as(
+        let res: Result<VoiceRoom, sqlx::Error> = sqlx::query_as(&format!(
             "INSERT INTO voice_room (org_id, room_code, pin, did_id, media_backend, created_by)
              VALUES ($1, $2, $3, $4, $5, $6)
-             RETURNING id, org_id, room_code, pin, did_id, media_backend, status, created_at",
-        )
+             RETURNING {VOICE_ROOM_COLUMNS}"
+        ))
         .bind(org_id)
         .bind(&room_code)
         .bind(&pin)
@@ -226,16 +319,25 @@ pub async fn create_room(
         .unwrap_or_else(|| ApiError::internal("não foi possível gerar PIN")))
 }
 
-/// Detalhes de uma sala de voz (membro da org dona).
+/// Detalhes de uma sala de voz (membro da org dona). Inclui o PIN.
+#[utoipa::path(
+    get, path = "/api/voice/rooms/{id}", tag = "voice",
+    security(("session" = [])),
+    params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, body = VoiceRoom),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "Inexistente ou de outra organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<VoiceRoom>, ApiError> {
-    let vr: VoiceRoom = sqlx::query_as(
-        "SELECT id, org_id, room_code, pin, did_id, media_backend, status, created_at
-         FROM voice_room WHERE id = $1",
-    )
+    let vr: VoiceRoom = sqlx::query_as(&format!(
+        "SELECT {VOICE_ROOM_COLUMNS} FROM voice_room WHERE id = $1"
+    ))
     .bind(id)
     .fetch_one(&state.db)
     .await?;
@@ -248,7 +350,17 @@ pub async fn get_room(
     Ok(Json(vr))
 }
 
-/// Participantes de uma sala de voz.
+/// Participantes de uma sala de voz (membro da org dona).
+#[utoipa::path(
+    get, path = "/api/voice/rooms/{id}/participants", tag = "voice",
+    security(("session" = [])),
+    params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Vec<VoiceParticipant>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "Inexistente ou de outra organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_participants(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -274,21 +386,39 @@ pub async fn list_participants(
     Ok(Json(parts))
 }
 
-/// Encerra uma sala de voz (o PIN deixa de ser válido).
+/// Encerra uma sala de voz (o PIN deixa de ser válido). Só quem a CRIOU ou um
+/// admin da org dona; outro membro recebe `403` (`voice.room_close_forbidden`).
+/// Idempotente.
+#[utoipa::path(
+    post, path = "/api/voice/rooms/{id}/close", tag = "voice",
+    security(("session" = [])),
+    params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "`voice.room_close_forbidden`: membro da org, mas nem criador da sala de voz nem admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Inexistente ou de outra organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn close_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let owner_org: Uuid = sqlx::query_scalar("SELECT org_id FROM voice_room WHERE id = $1")
-        .bind(id)
-        .fetch_one(&state.db)
-        .await?;
-    if !orgs_of_user(&state, auth.user_id)
-        .await
-        .contains(&owner_org)
-    {
-        return Err(ApiError::NotFound);
+    let (owner_org, created_by): (Uuid, Uuid) =
+        sqlx::query_as("SELECT org_id, created_by FROM voice_room WHERE id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?;
+    // Quem não é membro activo da org dona não sabe que a sala existe (404).
+    // Dentro da org, encerrar corta a chamada de TODOS os participantes PSTN:
+    // é do criador ou de um admin, não de qualquer colega (R141).
+    match role_in_org(&state, owner_org, auth.user_id).await? {
+        None => return Err(ApiError::NotFound),
+        Some(role) if role != "admin" && created_by != auth.user_id => {
+            return Err(DomainError::forbidden("voice.room_close_forbidden").into());
+        }
+        Some(_) => {}
     }
     sqlx::query("UPDATE voice_room SET status = 'closed', closed_at = now() WHERE id = $1 AND status = 'active'")
         .bind(id)
@@ -305,11 +435,14 @@ pub async fn close_room(
 
 // ---------- Inventário de DIDs (admin) ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateDidReq {
+    /// `+` seguido do número; 8–20 caracteres.
     pub e164: String,
+    /// Omissão `AO`.
     #[serde(default = "default_market")]
     pub market: String,
+    /// `dedicated`; qualquer outro valor conta como `shared` (omissão).
     #[serde(default = "default_model")]
     pub model: String,
     #[serde(default)]
@@ -326,6 +459,26 @@ fn default_model() -> String {
 }
 
 /// Adiciona um DID ao inventário de uma org (admin).
+///
+/// Com `model = shared` e `org_scoped` falso/ausente o DID vai para o pool
+/// PARTILHADO (`org_id = null`), visível a todas as organizações — e isso só o
+/// administrador da PLATAFORMA (`PLATFORM_ADMIN_USER_IDS`) pode fazer; um admin
+/// de org recebe `403` (`voice.shared_did_requires_platform_admin`) e cria DIDs
+/// só da sua org (`org_scoped: true` ou `model: dedicated`).
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/voice/dids", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    request_body = CreateDidReq,
+    responses(
+        (status = 200, body = VoiceDid),
+        (status = 400, description = "Número fora do formato +E.164.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`voice.shared_did_requires_platform_admin`: o pool partilhado é da plataforma.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "Número já existe no inventário.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_did(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -346,11 +499,21 @@ pub async fn create_did(
     };
     // shared + org_scoped=false => pool partilhado (org_id NULL).
     let scoped = req.org_scoped.unwrap_or(model == "dedicated");
-    let did: VoiceDid = sqlx::query_as(
+    // O pool partilhado serve o dial-in de TODAS as organizações: um número
+    // lá posto por um inquilino passava a atender chamadas de outros. Só a
+    // plataforma o gere (R141). A recusa vem antes de escrever.
+    if !scoped {
+        crate::storage::require_platform_admin(&state, auth.user_id).map_err(|_| {
+            ApiError::from(DomainError::forbidden(
+                "voice.shared_did_requires_platform_admin",
+            ))
+        })?;
+    }
+    let did: VoiceDid = sqlx::query_as(&format!(
         "INSERT INTO voice_did (org_id, e164, market, model, provider)
          VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, org_id, e164, market, model, provider, active, created_at",
-    )
+         RETURNING {VOICE_DID_COLUMNS}"
+    ))
     .bind(if scoped { Some(org_id) } else { None })
     .bind(e164)
     .bind(req.market.trim())
@@ -367,24 +530,43 @@ pub async fn create_did(
     Ok(Json(did))
 }
 
-/// Lista os DIDs visíveis a uma org (dedicados + pool partilhado).
+/// Lista os DIDs visíveis a uma org (dedicados + pool partilhado). Admin.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/voice/dids", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Vec<VoiceDid>),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_dids(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<VoiceDid>>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-    let dids: Vec<VoiceDid> = sqlx::query_as(
-        "SELECT id, org_id, e164, market, model, provider, active, created_at
-         FROM voice_did WHERE org_id = $1 OR org_id IS NULL ORDER BY created_at DESC",
-    )
+    let dids: Vec<VoiceDid> = sqlx::query_as(&format!(
+        "SELECT {VOICE_DID_COLUMNS} FROM voice_did WHERE org_id = $1 OR org_id IS NULL ORDER BY created_at DESC"
+    ))
     .bind(org_id)
     .fetch_all(&state.db)
     .await?;
     Ok(Json(dids))
 }
 
-/// CDRs da org para billing/auditoria (admin).
+/// CDRs da org para billing/auditoria (admin). Os 500 mais recentes.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/voice/cdr", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Vec<VoiceCdr>),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_cdr(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -401,8 +583,11 @@ pub async fn list_cdr(
     Ok(Json(rows))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct BillingQuery {
+    /// `week` (7 dias) | `month` (30, omissão) | `quarter` (90) | `year` (365).
+    /// Um valor desconhecido conta como 30 dias e é ecoado tal como veio.
     #[serde(default = "default_period")]
     pub period: String,
 }
@@ -410,7 +595,7 @@ fn default_period() -> String {
     "month".into()
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct BillingSummary {
     pub period: String,
     pub calls: i64,
@@ -420,6 +605,16 @@ pub struct BillingSummary {
 }
 
 /// Resumo de billing de voz do período (admin) — alimenta a faturação Delonix.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/voice/billing", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path), BillingQuery),
+    responses(
+        (status = 200, body = BillingSummary),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn billing_summary(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -497,22 +692,35 @@ pub async fn ivr_validate_pin(
     Json(req): Json<ValidatePinReq>,
 ) -> Result<Json<ValidatePinResp>, ApiError> {
     check_media_secret(&state, &headers)?;
-    let did = req.did_e164.trim();
+    validate_pin(&state, &req.did_e164, &req.pin)
+        .await
+        .map(Json)
+}
+
+/// A regra do IVR, partilhada pelo HTTP (`/api/voice/ivr/validate`) e pelo gRPC
+/// (`IvrService.ValidatePin`). Fronteira de isolamento: só encontra salas
+/// ATIVAS cujo DID corresponde.
+pub(crate) async fn validate_pin(
+    state: &AppState,
+    did_e164: &str,
+    pin: &str,
+) -> Result<ValidatePinResp, ApiError> {
+    let did = did_e164.trim();
     let row: Option<(Uuid, String, String)> = sqlx::query_as(
         "SELECT vr.id, vr.room_code, vr.media_backend
          FROM voice_room vr JOIN voice_did d ON d.id = vr.did_id
          WHERE d.e164 = $1 AND vr.pin = $2 AND vr.status = 'active'",
     )
     .bind(did)
-    .bind(req.pin.trim())
+    .bind(pin.trim())
     .fetch_optional(&state.db)
     .await?;
     match row {
-        Some((id, room_code, backend)) => Ok(Json(ValidatePinResp {
+        Some((id, room_code, backend)) => Ok(ValidatePinResp {
             voice_room_id: id,
             room_code,
             media_backend: backend,
-        })),
+        }),
         None => {
             // Anti-toll-fraud / PIN-guessing: só as FALHAS contam para o limite;
             // chamadores legítimos com PIN certo nunca são penalizados.
@@ -536,7 +744,7 @@ pub struct CdrReq {
     pub did_e164: String,
     pub duration_secs: i64,
 }
-fn inbound() -> String {
+pub(crate) fn inbound() -> String {
     "inbound".into()
 }
 
@@ -547,6 +755,12 @@ pub async fn ivr_record_cdr(
     Json(req): Json<CdrReq>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_media_secret(&state, &headers)?;
+    let (id, cost) = record_cdr(&state, &req).await?;
+    Ok(Json(serde_json::json!({ "id": id, "cost_estimate": cost })))
+}
+
+/// Regista o CDR — partilhada pelo HTTP e pelo gRPC (`RecordCallDetail`).
+pub(crate) async fn record_cdr(state: &AppState, req: &CdrReq) -> Result<(Uuid, f64), ApiError> {
     let org_id: Uuid = sqlx::query_scalar("SELECT org_id FROM voice_room WHERE id = $1")
         .bind(req.voice_room_id)
         .fetch_one(&state.db)
@@ -566,7 +780,7 @@ pub async fn ivr_record_cdr(
     .bind(cost)
     .fetch_one(&state.db)
     .await?;
-    Ok(Json(serde_json::json!({ "id": id, "cost_estimate": cost })))
+    Ok((id, cost))
 }
 
 #[cfg(test)]

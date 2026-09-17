@@ -1640,6 +1640,174 @@ portão existe para impedir, cometida ao escrevê-lo.
 
 **Ficheiros.** `server/src/org.rs` (`add_employee`), `web/e2e/captura-empregado.mjs`, `.github/workflows/ci.yml`.
 
+### R123 — O portão de autorização não via o segundo handler de uma rota
+
+**Sintoma.** Nenhum visível, e é isso o problema. `scripts/check-route-auth.sh` dava verde com uma rota como `.route("/api/users/me", get(users::me).patch(<handler sem autenticação>))`. Medido a 2026-09-16 com o controlo negativo: trocar `update_me` por um handler público → portão antigo **verde**, portão corrigido **vermelho**.
+
+**Causa raiz.** O corpo de cada `.route(…)` lia-se com uma regex preguiçosa, `\.route\(\s*"…"\s*,(.*?)\)\s*(?=[,.\n])`, que pára no primeiro `)` seguido de `.`. Em `get(a).patch(b)` o corpo capturado era só `get(a`: o `b` encadeado nunca era inspeccionado. Eram **26 handlers** fora do portão — todos os `PATCH`/`PUT`/`DELETE`/`POST` escritos a seguir a um `get(…)` (`update_me`, `webhooks::create`, `sso` PUT/DELETE, `recordings` link, …). Nenhum estava de facto sem autenticação; nenhum estava provado.
+
+**Regra.** Um portão que lê código lê-o por estrutura, não por regex preguiçosa: o corpo de `.route(` é o texto entre parêntesis EQUILIBRADOS. E um portão novo nasce com o controlo negativo do caso que o originou (R51/R94) — aqui, o handler público encadeado.
+
+**Portão.** `scripts/check-route-auth.sh` (parser equilibrado); o `scripts/check-openapi.sh` usa o mesmo, e foi ao contar operações que a diferença apareceu (94 contadas pela regex vs 120 montadas).
+
+**Ficheiros.** `scripts/check-route-auth.sh`, `scripts/check-openapi.sh`.
+
+### R124 — «Permitir admissão» enviava uma mensagem que o servidor recusava
+
+**Sintoma.** O anfitrião carregava no escudo ao lado de um participante («permitir admissão»), o crachá não mudava e o participante nunca via a sala de espera. No socket do anfitrião chegava `{"type":"error","message":"invalid message"}`.
+
+**Causa raiz.** Uma funcionalidade a meio, nas duas pontas. O web enviava `promote-admit` e esperava `admit-role`/`peer-role` (`web/src/signaling.ts`), mas o `ClientMsg` do servidor não tinha a variante: a desserialização falhava. Do lado de dentro também faltava metade: a tabela `room_admitters` (0017) era LIDA no token (`adm` → `can_admit`) mas nunca ESCRITA (`rooms::set_room_admitter` sem chamadores), e o `can_admit` não autorizava nada — `decide_waiting` só aceitava o anfitrião e a sala de espera só ia para anfitriões.
+
+**Regra.** Uma mensagem do protocolo tem as duas pontas no mesmo commit, e um teste de formato (`promote_admit_wire_format`) prova que a forma que o web envia desserializa. O papel muda em memória no hub (síncrono, sob o lock); a persistência é IO e corre FORA do lock, no loop do socket. A sala de espera vai para quem PODE admitir (`broadcast_admitters`, com evento Redis próprio), e quem volta com o papel persistido é avisado (`admit-role`) — o cliente só assume esse poder para o anfitrião.
+
+**Portão.** `signaling::tests::{host_promotes_co_admitter_who_can_then_admit, persisted_co_admitter_is_told_its_role_on_join, promote_admit_wire_format}`. Não verificado em browser nem a persistência ponta-a-ponta por WebSocket.
+
+**Ficheiros.** `server/src/{signaling,pubsub,lib}.rs`.
+
+### R125 — `PATCH /api/action-items/{id}` vazio devolvia o item a qualquer conta
+
+**Sintoma.** Nenhum para a vítima. Uma conta autenticada de OUTRA organização que soubesse o id de um item do plano de acção (5W2H) fazia `PATCH /api/action-items/{id}` com `{}` e recebia `200` com o item inteiro: o quê, porquê, quem, recursos. Provado ao vivo a 2026-09-16 contra Postgres real (`tests/security.rs`, que falhou com `200` antes da correcção).
+
+**Causa raiz.** A autorização dependia do CONTEÚDO do pedido: os campos de edição exigiam o anfitrião, e o `status` exigia ser membro — mas um pedido sem nenhum dos dois não passava por verificação nenhuma e seguia para o `SELECT` final, que devolve o item. Encontrado ao documentar o handler para o OpenAPI (ADR-0006 §3), não por teste.
+
+**Regra.** A verificação de acesso ao RECURSO vem primeiro e é incondicional; o que o pedido quer alterar só pode ACRESCENTAR exigências (anfitrião para editar), nunca decidir se há verificação. E valida-se antes de escrever: no `patch_agenda_item` vizinho, um tópico inválido dava `400` depois de o `done` já estar gravado.
+
+**Portão.** `server/tests/security.rs::action_item_patch_does_not_leak_to_other_org` (controlo positivo: o dono lê o item pelo mesmo PATCH vazio).
+
+**Ficheiros.** `server/src/actions.rs`, `server/tests/security.rs`.
+
+### R150 — Colaborador adicionado sem password nascia com `changeme123`
+
+**Sintoma.** Nenhum para a vítima. `POST /api/orgs/{org}/employees` sem `password` criava a conta com a password FIXA `changeme123`. Quem soubesse o email de um colaborador recém-adicionado entrava como ele até à primeira mudança de password. Provado a 2026-09-16 contra Postgres real (`login` com `changeme123` → `200` com sessão).
+
+**Causa raiz.** Um valor por omissão escrito como conveniência (`unwrap_or("changeme123")`) numa credencial. A validação de password corria sobre ele e passava — tem 11 caracteres.
+
+**Regra.** Nenhuma credencial tem valor por omissão conhecido. Sem password indicada gera-se uma aleatória (`core::crypto::random_hex`), devolvida UMA vez ao admin em `temporary_password` para a entregar; com password indicada, o campo não aparece.
+
+**Portão.** `server/tests/security.rs::added_employee_without_password_does_not_get_a_known_password`.
+
+**Ficheiros.** `server/src/org.rs`.
+
+### R151 — Uma chave de API ocupava contas de outro domínio pela v1
+
+**Sintoma.** `POST /api/v1/meetings` da org A com `host_email: ninguem@beta.test` (domínio da org B) criava a conta como membro da A. Quando a B tentava adicionar a pessoa, recebia `409` («já pertence a outra organização», R122) — a identidade ficava presa na A. Os convidados desconhecidos tinham o mesmo efeito.
+
+**Causa raiz.** `meetings_v1::resolve_org_user` recusava contas de OUTRA org (`ForeignOrg`) mas criava as que não existiam — e juntava contas órfãs — sem olhar para o domínio da organização, que é a fronteira que o registo e o `add_employee` já impõem.
+
+**Regra.** Criar ou juntar uma conta por email só dentro do domínio da organização (`organizations.email_domain`; numa org legada sem domínio não há regra a aplicar). Anfitrião fora do domínio → `422 meeting.host_outside_org_domain`; convidado → `skipped` com a razão.
+
+**Portão.** `server/tests/api_v1.rs::v1_meeting_refuses_to_create_accounts_outside_org_domain` (controlo positivo: anfitrião novo do próprio domínio continua a nascer; a org dona do domínio adiciona a pessoa sem conflito).
+
+**Ficheiros.** `server/src/meetings_v1.rs`.
+
+### R152 — `GET /api/orgs` mostrava a org a um membro arquivado
+
+**Sintoma.** Um colaborador arquivado deixava de alcançar as rotas da organização (S3) mas continuava a vê-la em `GET /api/orgs`, com o papel antigo, e o `member_count` contava os arquivados.
+
+**Causa raiz.** A 18.ª verificação de pertença escrita à mão sem `archived_at IS NULL` — a mesma classe da S3, num `JOIN` que a auditoria não apanhou por estar dentro de `org.rs`.
+
+**Regra.** A da S3: «membro» é membro ACTIVO, também nas listagens e contagens.
+
+**Portão.** `server/tests/organization.rs::my_orgs_hides_org_from_archived_member`.
+
+**Ficheiros.** `server/src/org.rs`.
+
+### R153 — Falta de permissão respondia 401, e o web renovava a sessão por nada
+
+**Sintoma.** Um membro sem papel de admin (ou um participante sem acesso a uma sala, ou um convidado que não é anfitrião) recebia `401`. O `web/src/api.ts` lê `401` como «a sessão caducou»: chamava `/api/auth/refresh`, repetia o pedido, levava outro `401` e só então mostrava o erro — dois pedidos a mais por clique, e um erro que dizia «sessão» quando o problema era papel.
+
+**Causa raiz.** `org::require_admin`, o acesso a sala em `rooms.rs`, as guardas de `whiteboards.rs` e `actions.rs` usavam `ApiError::Unauthorized` para falta de PERMISSÃO. O `error.rs` já tinha `Forbidden` com o comentário a explicar exactamente isto; faltava usá-lo.
+
+**Regra.** `401` é só «não sei quem és». Sem o papel: `403`. Recurso de outra organização ou reunião de que não és membro: `404` — não se confirma que existe. 22 asserções dos testes de caracterização mudaram com intenção (18× `401→403`, 3× `401→404`), e o OpenAPI descreve os três casos em separado.
+
+**Ficheiros.** `server/src/{org,rooms,whiteboards,actions}.rs`, `server/tests/{content,organization,scheduling}.rs`. Por fazer: as mesmas guardas em `meetings.rs` e `recordings.rs` (esta última foi reescrita no G4–G6 com 403/404).
+### R130 — O SSO de uma organização abria sessão em contas de OUTRA organização
+
+**Sintoma.** Nenhum para a vítima. O administrador de uma organização configura o IdP OIDC dela (`PUT /api/orgs/{id}/sso`) — e portanto controla o email que esse IdP afirma. Bastava o IdP devolver `admin@outra-org` para o `/api/auth/sso/callback` responder `302` com uma sessão da vítima. O mesmo callback criava contas de QUALQUER domínio e juntava-as à org, e reabria a porta a membros arquivados. Provado a 2026-09-16 contra Postgres real e um IdP OIDC falso (discovery, JWKS, id_token RS256): antes da correcção, `left: (302, Some("<id da vítima>"))`.
+
+**Causa raiz.** O callback tratava o email do id_token como prova de pertença: `SELECT … FROM users WHERE email = $1` e, se existisse, abria sessão; se não, criava e juntava. A assinatura do id_token prova só que o IdP da org o disse — e esse IdP é escolhido por quem administra a org.
+
+**Regra.** Família R25/R122, na forma mais restritiva (`auth::sso_login_decision`): o SSO da org X só (a) abre sessão numa conta que seja membro ACTIVO de X, ou (b) cria conta nova se o domínio do email for o `email_domain` (não vazio) de X. Conta existente fora de X → `403 sso.account_not_in_org`; conta nova de outro domínio → `403 sso.email_domain_mismatch`. Nunca se junta uma conta existente à org pelo SSO. A recusa fica na auditoria (`auth.sso_refused`).
+
+**Portão.** `server/tests/security_identity.rs::{sso_callback_refuses_account_of_another_org, sso_jit_only_creates_accounts_of_the_org_domain, sso_refuses_archived_member}` (controlo positivo em cada: o membro activo entra, o JIT do próprio domínio cria), e `auth::tests::sso_login_decision_is_the_most_restrictive_rule`. Não validado contra um IdP real (Google, Entra, Okta); o `email_verified` do id_token continua sem ser lido.
+
+**Ficheiros.** `server/src/auth.rs`, `server/tests/security_identity.rs`, `server/Cargo.toml` (`rsa` em dev-dependencies, para a chave do IdP falso gerada em memória).
+
+### R131 — A activação e a desactivação do MFA aceitavam tentativas ilimitadas
+
+**Sintoma.** Nenhum para a vítima. Com uma sessão roubada, `POST /api/users/me/mfa/disable` aceitava quantos códigos errados o atacante quisesse — seis dígitos adivinham-se, e acertar desliga o segundo factor. O `activate` tinha o mesmo oráculo sem travão. Provado a 2026-09-16 contra Postgres real: a sexta tentativa errada devolvia `left: 401, right: 429`.
+
+**Causa raiz.** O passo MFA do LOGIN (`/api/auth/mfa`) tinha travão por conta desde o início (`login_limiter`, chave `mfa:{user}`); os dois endpoints da sessão, escritos depois, não o herdaram. Não havia teste que contasse tentativas fora do login.
+
+**Regra.** Todo o endpoint que verifica um segredo curto (código MFA, PIN) tem travão por conta, e o travão pergunta ANTES de verificar (`RateLimiter::is_blocked`) — senão o código certo passa durante o bloqueio e o travão só atrasa quem adivinha. Só as falhas contam (`check` depois da falha, como o `voice_pin_limiter`): quem acerta à primeira nunca gasta tentativas. `mfa_limiter`: 5 falhas em 5 min, partilhado entre activar e desactivar → `429` com `Retry-After`.
+
+**Portão.** `server/tests/security_identity.rs::{mfa_activate_locks_after_five_failures, mfa_disable_locks_after_five_failures}` (controlo positivo: noutra conta, 4 falhas não bloqueiam e o código certo activa; o código de recuperação desactiva), `mfa_login_step_is_limited_per_account` (guarda do travão que já existia), e `rate_limit::tests::is_blocked_*`. O limitador é em memória por pod: com N réplicas o orçamento é N×5 — o mesmo limite dos outros travões (`rate_limit.rs`).
+
+**Ficheiros.** `server/src/{mfa,rate_limit,lib}.rs`, `server/tests/security_identity.rs`, `HARNESS.md`.
+
+### R132 — Contas de domínio com SSO exclusivo não tinham travão por conta no login
+
+**Sintoma.** Nenhum visível. `POST /api/auth/login` para uma conta cujo domínio exige SSO respondia sempre `400` («exige login via SSO») — antes do travão por conta, por isso nunca `429`. Provado a 2026-09-16 contra Postgres real: dez tentativas seguidas davam `left: 400, right: 429`.
+
+**Causa raiz.** A ordem das verificações no `auth::login`: o `is_sso_enforced` corria primeiro e respondia sem passar pelo `login_limiter`. O risco medido é baixo — a recusa depende do DOMÍNIO, não da conta, e o `/api/auth/sso/check` já diz publicamente que o domínio exige SSO; não há password a adivinhar por aqui. Mas é uma resposta sem travão num endpoint de credenciais, e a próxima verificação específica que alguém lá puser herdava o mesmo defeito.
+
+**Regra.** No login, o travão por conta é a PRIMEIRA coisa que responde; nenhuma resposta dependente da conta ou do domínio sai antes dele.
+
+**Portão.** `server/tests/security_identity.rs::login_rate_limit_applies_to_sso_enforced_accounts` (controlo positivo: a recusa `400` do SSO exclusivo continua a ser dita até ao limite).
+
+**Ficheiros.** `server/src/auth.rs`, `server/tests/security_identity.rs`.
+### R140 — Dial-in PSTN ligado à sala de conferência de OUTRA organização
+
+**Sintoma.** Nenhum para a vítima. O admin (ou qualquer membro) da org A fazia `POST /api/voice/rooms` com o `room_code` de uma sala da org B e recebia `200` com um PIN e um número de dial-in da SUA org. Quem ligasse para esse número com esse PIN era validado pelo IVR (`/api/voice/ivr/validate` e o gRPC `IvrService.ValidatePin`, que partilham `voice::validate_pin`) e posto dentro da reunião de B. Provado a 2026-09-16 contra Postgres real: `tests/security_voice_odoo.rs` falhou com `devolveu 200: {"dial_in_number":"+244222100001",…,"pin":"197966","room_code":"ifa-mrjw-nei"}` antes da correcção.
+
+**Causa raiz.** `create_room` normalizava o código e gravava-o sem o procurar em `rooms` — a própria documentação do handler dizia «NÃO é verificado contra as salas». A fronteira multi-tenant do módulo era o par (DID, PIN), mas o ALVO desse par era texto livre escolhido por quem pede.
+
+**Regra.** A sala de voz só se liga a uma sala cujo DONO é membro ACTIVO da organização de quem pede (`org::role_in_org`, sem `org_members` novo em `voice.rs`). Das regras do `rooms::room_access` é a mais restritiva: convite na agenda e co-anfitrião dão acesso a uma PESSOA, não tornam a sala num recurso da org. Inexistente e alheia dão a mesma resposta, `404` `voice.room_not_found` — não se revela que o código existe.
+
+**Portão.** `server/tests/security_voice_odoo.rs::voice_room_for_another_orgs_room_code_is_refused` (controlo positivo: B liga a sua sala e o IVR HTTP devolve-a; A continua a ligar a sua). O caminho gRPC não é testado de novo: a correcção está na criação, a montante das duas validações. Não verificado com FreeSWITCH nem chamada PSTN real.
+
+**Ficheiros.** `server/src/voice.rs`, `server/tests/security_voice_odoo.rs`, `docs/reference/openapi/bff.json`.
+
+### R141 — Qualquer membro encerrava a sala de voz de outro, e um admin de org escrevia no pool partilhado de DIDs
+
+**Sintoma.** (1) `POST /api/voice/rooms/{id}/close` dava `200` a qualquer membro da org dona: um colega cortava a chamada PSTN de todos os participantes da sala de voz de outra pessoa. (2) `POST /api/orgs/{org}/voice/dids` com `{"e164": …}` (modelo `shared` por omissão, sem `org_scoped`) gravava o número com `org_id = NULL` — o POOL PARTILHADO que `create_room` usa para o dial-in de TODAS as organizações. Qualquer conta que se registe é admin da sua org, portanto qualquer pessoa injectava números no dial-in dos outros. Provado a 2026-09-16 contra Postgres real: `um membro qualquer encerrou a sala de voz: {"ok":true}` e `um admin de org escreveu no pool partilhado: {…,"org_id":null,…}`.
+
+**Causa raiz.** O fecho só perguntava «é membro da org?» (a documentação do handler dizia-o por escrito), e o inventário de DIDs confundia «admin da org» com «dono da plataforma» — a mesma confusão que a S1 do R121 fechou no armazenamento.
+
+**Regra.** Encerrar uma sala de voz é do CRIADOR ou de um admin da org dona (`org::role_in_org`); outro membro recebe `403` `voice.room_close_forbidden`, e quem não é membro continua a receber `404`. Escrever no pool partilhado exige o administrador da PLATAFORMA (`storage::require_platform_admin`, agora `pub(crate)` em vez de copiado); o admin de org recebe `403` `voice.shared_did_requires_platform_admin` e cria DIDs só da sua org (`org_scoped: true` ou `model: dedicated`). A recusa corre antes de escrever. Sem consumidor no web (nenhum ecrã chama estas rotas), por isso a mudança do omisso não parte nada visível.
+
+**Não fechado.** Um admin de org continua a poder registar QUALQUER número +E.164 para a sua org — não há prova de posse do número (exigiria o fornecedor SIP). O efeito fica confinado à sua org, mas ocupa o número (índice único) e o `409` revela que um número já está no inventário.
+
+**Portão.** `server/tests/security_voice_odoo.rs::{voice_room_close_requires_creator_or_org_admin, shared_did_pool_requires_platform_admin}` (controlos positivos: a criadora e o admin encerram; o admin de org cria DIDs da sua org; o administrador da plataforma escreve no pool).
+
+**Ficheiros.** `server/src/{voice,storage}.rs`, `server/tests/security_voice_odoo.rs`, `docs/reference/openapi/bff.json`.
+
+### R142 — A chave de API do inquilino (`dlx_`) abria as rotas da integração Odoo
+
+**Sintoma.** `GET /api/v1/integration/odoo/users` e `POST /api/v1/integration/odoo/provision` aceitavam, além do token de integração `dlxo_`, a chave de API `dlx_` da organização. Uma chave emitida para ler salas e reuniões (`/api/v1/org`, `/rooms`, `/meetings`) listava o directório de membros e provisionava contas e papéis — incluindo com a integração Odoo DESACTIVADA, porque o ramo `dlx_` não olhava para `odoo_enabled`. Foi este o vector da S2 (R121). Provado a 2026-09-16 contra Postgres real: `dlx_ lista o directório Odoo: devia ser recusado e devolveu 200: [{"email":"admin@zeta-odoo.ao",…,"role":"admin"}]`.
+
+**Causa raiz.** O `OdooTokenAuth` tinha dois ramos, e o segundo justificava-se por um fluxo («a auto-provisão via `/admin/orgs` gera uma `dlx_` que o módulo usa directamente») que o módulo não segue: medido a 2026-09-16 em `kaeso-18/nokubiko/nk_delonix_meet` (e nas outras árvores do módulo no workspace), a `dlx_` só é usada em `/api/v1/admin/orgs` e `/api/v1/meetings`; nenhuma chama `/integration/odoo/*`. Duas credenciais com públicos diferentes (inquilino vs integração) numa mesma porta.
+
+**Decisão de compatibilidade — explícita.** A descrição OpenAPI das duas rotas DOCUMENTAVA a `dlx_` como aceite («a chave `dlx_` da organização também é aceite»), embora o `api-contract.md` e o `HARNESS.md` já dissessem `dlxo_`. A aceitação é retirada sem período de transição nem flag: um integrador que siga a descrição antiga passa a receber `401` e tem de emitir o token em `POST /api/orgs/{org}/integration/odoo/token`. Não se encontrou nenhum consumidor real; se aparecer, a correcção é do lado dele, não reabrir a porta.
+
+**Regra.** O extractor de uma superfície aceita a credencial DESSA superfície e mais nenhuma. `OdooTokenAuth` recusa (`401`) tudo o que não seja `dlxo_`, antes de consultar a base.
+
+**Portão.** `server/tests/security_voice_odoo.rs::odoo_integration_routes_refuse_tenant_api_key` (controlos positivos: a mesma `dlx_` abre `/api/v1/org`; o `dlxo_` abre as duas rotas). `web/e2e/isolamento.mjs` S2 passa a atacar com o `dlxo_` — com a `dlx_` o ataque já nem chegava ao `upsert_member`.
+
+**Ficheiros.** `server/src/odoo.rs`, `server/tests/{security_voice_odoo,api_v1}.rs` (o `odoo_provision_does_not_capture_accounts` passa a autenticar com `dlxo_`), `web/e2e/isolamento.mjs`, `docs/reference/openapi/v1.json`.
+
+### R143 — O directório do Odoo recebia membros ARQUIVADOS como se ainda estivessem na empresa
+
+**Sintoma.** `GET /api/v1/integration/odoo/users` devolvia todos os registos de `org_members` da organização, incluindo os arquivados (`archived_at` preenchido por `remove_employee`). O Odoo via quem saiu da empresa como membro activo, com o papel que tinha (`admin` incluído). Aberto na skill `delonix-meet-backend` desde o R121. Provado a 2026-09-16 contra Postgres real: `o membro arquivado continua no directório: [… {"email":"saiu@eta-odoo.ao", …}]`.
+
+**Causa raiz.** A regra S3 do R121 («colega e quem pede são membros ACTIVOS») foi aplicada às cópias que decidiam acesso; esta listagem tinha a sua própria query sobre `org_members` e ficou de fora — o padrão que a catraca `pertenca_org_fora_de_org_rs` mede.
+
+**Regra.** O directório entregue a uma integração é o de membros ACTIVOS. O filtro `archived_at IS NULL` entra na query existente (não soma uma ocorrência nova de `org_members` fora de `org.rs`). O destino é um helper em `org.rs` que devolva email/username/`odoo_uid`/papel (ADR-0004 §6 passo 3); não foi criado aqui porque `org.rs` estava a ser editado por outra sessão.
+
+**Portão.** `server/tests/security_voice_odoo.rs::odoo_list_users_excludes_archived_members` (controlo positivo: o mesmo membro aparece antes de ser arquivado; o activo e o admin continuam depois).
+
+**Ficheiros.** `server/src/odoo.rs`, `server/tests/security_voice_odoo.rs`, `docs/reference/openapi/v1.json`.
+
 ### R156 — A câmara ligada não aparecia nos outros participantes depois de uma troca de camada
 
 **Sintoma.** Reportado pelo dono do produto: «a imagem da câmara ligada não aparece nas telas de outros participantes». Nos logs, `sfu layer switch failed` com `new track must have the same envelope as previous`, a seguir `sfu subscribe failed`, e a PC do subscritor em `failed`. Acontecia sempre que um subscritor voltava a uma camada simulcast que já tinha usado (`f → h → f`) — o que o `layerPolicy.ts` faz a cada redimensionamento de tile, aba em segundo plano ou perda medida.

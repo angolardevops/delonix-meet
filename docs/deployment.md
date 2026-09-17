@@ -35,6 +35,37 @@ Guia único para pôr o Delonix Meet a correr, do portátil ao cluster. Escolhe 
 
 Se hesitas: **zero-touch**. Faz o que as secções 5 e 6 fazem à mão.
 
+### Edições e alvos de entrega
+
+Um só binário, três perfis ([ADR-0006 §2](adr/0006-backend-enterprise-contextos-edicoes-e-entrega.md)).
+A edição fixa os defaults (`DELONIX_EDITION`, `REGISTRATION_MODE`, `TENANCY_MODE`);
+o alvo decide o manifesto.
+
+| Edição | Alvo | Manifesto | Aplica-se com | Validado como |
+|---|---|---|---|---|
+| saas | Kubernetes | [`deploy/k8s-overlays/saas`](../deploy/k8s-overlays/saas/kustomization.yaml) | `kubectl apply -k` | `bash scripts/check-k8s-render.sh`: render + portas internas fora do ingress + ADR-0001 + deriva do HPA. **Sem** `kubectl apply --dry-run` (precisa de API server) |
+| enterprise | Kubernetes | [`deploy/k8s-overlays/enterprise`](../deploy/k8s-overlays/enterprise/kustomization.yaml) | `kubectl apply -k` | idem |
+| enterprise | um host, `delonix-runtime` | [`deploy/delonix/meet-stack.yaml`](../deploy/delonix/meet-stack.yaml) | `delonix apply -f` | `delonix manifest validate --strict`, `delonix plan`, `delonix apply --dry-run` |
+| personal | um host, `delonix-runtime` | [`deploy/delonix/meet-stack-personal.yaml`](../deploy/delonix/meet-stack-personal.yaml) | `delonix apply -f` | idem |
+| saas | PaaS NgolaCloud | [`deploy/delonix/meet-application.yaml`](../deploy/delonix/meet-application.yaml) | `delonixctl apply -f` | parse + `validate` + `expand` contra o `delonix-orchestrator` de `origin/main`. **Não aplica hoje:** o PaaS não injecta `env.from_secret` ([detalhe](../deploy/delonix/README.md#o-que-ainda-não-fecha--ler-antes-de-aplicar)) |
+| todas | Kubernetes, sem edição | [`deploy/k8s`](../deploy/k8s/kustomization.yaml) (base) | `make stage` / `make prod` | inalterado: `check-room-affinity.sh` |
+
+Nenhum destes foi aplicado num cluster, host ou PaaS vivo no momento em que a
+tabela foi escrita (2026-09-16). Os overlays vivem em `deploy/k8s-overlays/` e
+não em `deploy/k8s/overlays/`: o kustomize recusa um overlay dentro da própria
+base.
+
+O que muda entre edições no Kubernetes, além das três variáveis:
+
+| | base (`deploy/k8s`) | overlay saas | overlay enterprise |
+|---|---|---|---|
+| Réplicas | 3 | 3 + HPA 2–8 | 1 |
+| Migrações | no arranque | `Job` `delonix-server-migrate` (`args: [migrate]`), `DELONIX_MIGRATE=0` | no arranque (`DELONIX_MIGRATE=1`) |
+| Redis | do ConfigMap | obrigatório (`configMapKeyRef`, `optional: false`) | opcional |
+| Listener interno `:8181` e gRPC `:9180` | não | Service `delonix-server-internal` (ClusterIP, sem ingress), NetworkPolicy, mTLS por cert-manager | idem |
+| `LOG_FORMAT` | omissão (text) | json | json |
+| `startupProbe`, rootfs só-de-leitura | não | sim | sim |
+
 ### O que é preciso saber sobre a arquitectura
 
 ```
@@ -237,6 +268,19 @@ com afinidade por sala ([§4](#4-a-rede-de-media-a-parte-que-mais-falha)), e
 **RWX** para o PVC de gravações em multi-nó (RWO só funciona em nó único).
 Detalhe em [deploy/k8s/README.md](../deploy/k8s/README.md) e no
 [runbook §5.3](ops/platform-engineering.md).
+
+Com edição (saas ou enterprise), aplicar o overlay em vez da base — ver
+[Edições e alvos de entrega](#edições-e-alvos-de-entrega):
+
+```bash
+bash scripts/check-k8s-render.sh               # render + fronteiras, sem cluster
+kubectl apply -k deploy/k8s-overlays/saas
+kubectl -n delonix-meet wait --for=condition=complete job/delonix-server-migrate --timeout=10m
+```
+
+O overlay pressupõe o cert-manager instalado (emite o mTLS do gRPC) e um
+namespace `monitoring` para o scrape do `:8181/metrics`. Com o FreeSWITCH fora
+do cluster, a NetworkPolicy precisa de uma regra `ipBlock` para o IP dele.
 
 ---
 

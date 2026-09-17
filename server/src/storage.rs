@@ -22,8 +22,46 @@ pub struct StorageConfig {
     pub webdav_path: Option<String>,
 }
 
-#[derive(Deserialize)]
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+///
+/// Estas rotas vivem em `/api/v1` mas autenticam por SESSÃO de administrador
+/// da plataforma, não por chave de API.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(get_storage, save_storage, test_storage, pvc_manifest),
+    components(schemas(StorageConfigView, StorageConfigReq, StorageTestResult))
+)]
+pub struct ApiDoc;
+
+/// Leitura da configuração de armazenamento, com a password WebDAV substituída
+/// por `webdav_password_set`.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct StorageConfigView {
+    /// `local` | `nfs` | `webdav` (`local` quando nunca foi configurado).
+    pub storage_type: String,
+    pub nfs_server: Option<String>,
+    pub nfs_path: Option<String>,
+    pub webdav_url: Option<String>,
+    pub webdav_user: Option<String>,
+    /// Há password WebDAV guardada? (a password nunca é devolvida).
+    pub webdav_password_set: bool,
+    pub webdav_path: String,
+}
+
+/// Resultado do teste de ligação ao armazenamento.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct StorageTestResult {
+    /// Sempre `true` (as falhas são erros HTTP).
+    pub ok: bool,
+    /// `local` | `nfs` | `webdav`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub message: String,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct StorageConfigReq {
+    /// `local` | `nfs` | `webdav`.
     pub storage_type: String,
     pub nfs_server: Option<String>,
     pub nfs_path: Option<String>,
@@ -35,11 +73,21 @@ pub struct StorageConfigReq {
 }
 
 /// `GET /api/v1/platform/storage` — lê a config actual (admin plataforma).
-/// Máscara a password WebDAV: devolve `"••••"` se existir.
+/// A password WebDAV nunca é devolvida: `webdav_password_set` diz se existe.
+#[utoipa::path(
+    get, path = "/api/v1/platform/storage", tag = "platform",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = StorageConfigView),
+        (status = 401, description = "Sem sessão válida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_storage(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<StorageConfigView>, ApiError> {
     require_platform_admin(&state, auth.user_id)?;
 
     let row: Option<StorageConfig> = sqlx::query_as(
@@ -70,18 +118,33 @@ pub async fn get_storage(
         webdav_path: None,
     });
 
-    Ok(Json(serde_json::json!({
-        "storage_type": cfg.storage_type,
-        "nfs_server": cfg.nfs_server,
-        "nfs_path": cfg.nfs_path,
-        "webdav_url": cfg.webdav_url,
-        "webdav_user": cfg.webdav_user,
-        "webdav_password_set": has_pwd,
-        "webdav_path": cfg.webdav_path.unwrap_or_else(|| "/remote.php/dav/files/{user}/Delonix".into()),
-    })))
+    Ok(Json(StorageConfigView {
+        storage_type: cfg.storage_type,
+        nfs_server: cfg.nfs_server,
+        nfs_path: cfg.nfs_path,
+        webdav_url: cfg.webdav_url,
+        webdav_user: cfg.webdav_user,
+        webdav_password_set: has_pwd,
+        webdav_path: cfg
+            .webdav_path
+            .unwrap_or_else(|| "/remote.php/dav/files/{user}/Delonix".into()),
+    }))
 }
 
 /// `PUT /api/v1/platform/storage` — actualiza a config (admin plataforma).
+/// `webdav_password` vazia ou omissa mantém a guardada.
+#[utoipa::path(
+    put, path = "/api/v1/platform/storage", tag = "platform",
+    security(("session" = [])),
+    request_body = StorageConfigReq,
+    responses(
+        (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
+        (status = 400, description = "`storage_type` fora de `local`/`nfs`/`webdav`.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão válida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn save_storage(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -136,10 +199,24 @@ pub async fn save_storage(
 }
 
 /// `POST /api/v1/platform/storage/test` — testa a ligação ao storage configurado.
+///
+/// `local` e `nfs` só confirmam a configuração; `webdav` faz um `PROPFIND` real.
+/// Uma falha do destino remoto responde 400, não 502.
+#[utoipa::path(
+    post, path = "/api/v1/platform/storage/test", tag = "platform",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = StorageTestResult),
+        (status = 400, description = "Configuração incompleta, tipo desconhecido, ou o WebDAV falhou/respondeu não-2xx.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão válida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn test_storage(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<StorageTestResult>, ApiError> {
     require_platform_admin(&state, auth.user_id)?;
 
     let row: Option<(
@@ -156,23 +233,31 @@ pub async fn test_storage(
     .await?;
 
     let Some((stype, wurl, wuser, wpwd, nfs_srv)) = row else {
-        return Ok(Json(
-            serde_json::json!({ "ok": true, "type": "local", "message": "Armazenamento local activo (sem configuração remota)." }),
-        ));
+        return Ok(Json(StorageTestResult {
+            ok: true,
+            kind: "local".into(),
+            message: "Armazenamento local activo (sem configuração remota).".into(),
+        }));
     };
 
     match stype.as_str() {
-        "local" => Ok(Json(
-            serde_json::json!({ "ok": true, "type": "local", "message": "Armazenamento local activo." }),
-        )),
+        "local" => Ok(Json(StorageTestResult {
+            ok: true,
+            kind: "local".into(),
+            message: "Armazenamento local activo.".into(),
+        })),
         "nfs" => {
             let srv = nfs_srv.unwrap_or_default();
             if srv.is_empty() {
                 return Err(ApiError::BadRequest("nfs_server não configurado".into()));
             }
-            Ok(Json(
-                serde_json::json!({ "ok": true, "type": "nfs", "message": format!("NFS configurado para {srv}. O volume é montado pelo K8s — verificar o PVC.") }),
-            ))
+            Ok(Json(StorageTestResult {
+                ok: true,
+                kind: "nfs".into(),
+                message: format!(
+                    "NFS configurado para {srv}. O volume é montado pelo K8s — verificar o PVC."
+                ),
+            }))
         }
         "webdav" => {
             let url = wurl.unwrap_or_default();
@@ -193,9 +278,11 @@ pub async fn test_storage(
                 .await
                 .map_err(|e| ApiError::BadRequest(format!("Falha na ligação WebDAV: {e}")))?;
             if resp.status().is_success() || resp.status().as_u16() == 207 {
-                Ok(Json(
-                    serde_json::json!({ "ok": true, "type": "webdav", "message": "Ligação WebDAV bem-sucedida." }),
-                ))
+                Ok(Json(StorageTestResult {
+                    ok: true,
+                    kind: "webdav".into(),
+                    message: "Ligação WebDAV bem-sucedida.".into(),
+                }))
             } else {
                 Err(ApiError::BadRequest(format!(
                     "WebDAV respondeu com HTTP {}",
@@ -209,6 +296,16 @@ pub async fn test_storage(
 
 /// Gera o manifesto K8s do PVC para o tipo de storage configurado.
 /// `GET /api/v1/platform/storage/pvc-manifest` — devolve YAML para kubectl apply.
+#[utoipa::path(
+    get, path = "/api/v1/platform/storage/pvc-manifest", tag = "platform",
+    security(("session" = [])),
+    responses(
+        (status = 200, description = "Manifesto YAML (PV + PVC para NFS, ou um comentário para `local`), servido como anexo `delonix-recordings-pv.yaml`.", body = String, content_type = "text/plain"),
+        (status = 401, description = "Sem sessão válida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn pvc_manifest(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -284,7 +381,10 @@ fn is_platform_admin(declared: &[uuid::Uuid], user_id: uuid::Uuid) -> bool {
     declared.contains(&user_id)
 }
 
-fn require_platform_admin(state: &AppState, user_id: uuid::Uuid) -> Result<(), ApiError> {
+pub(crate) fn require_platform_admin(
+    state: &AppState,
+    user_id: uuid::Uuid,
+) -> Result<(), ApiError> {
     if is_platform_admin(&state.config.platform_admin_user_ids, user_id) {
         Ok(())
     } else {
@@ -294,8 +394,43 @@ fn require_platform_admin(state: &AppState, user_id: uuid::Uuid) -> Result<(), A
 
 #[cfg(test)]
 mod tests {
-    use super::is_platform_admin;
+    use super::{is_platform_admin, StorageConfigView, StorageTestResult};
     use uuid::Uuid;
+
+    /// Os tipos que substituíram os `json!` (OpenAPI) serializam igual.
+    #[test]
+    fn respostas_tipadas_serializam_como_antes() {
+        let v = serde_json::to_value(StorageConfigView {
+            storage_type: "local".into(),
+            nfs_server: None,
+            nfs_path: None,
+            webdav_url: Some("https://x".into()),
+            webdav_user: None,
+            webdav_password_set: false,
+            webdav_path: "/p".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "storage_type": "local", "nfs_server": null, "nfs_path": null,
+                "webdav_url": "https://x", "webdav_user": null,
+                "webdav_password_set": false, "webdav_path": "/p",
+            })
+        );
+        let t = serde_json::to_value(StorageTestResult {
+            ok: true,
+            kind: "nfs".into(),
+            message: "m".into(),
+        })
+        .unwrap();
+        // Campo a campo, e não um `json!` literal: a catraca da arquitectura
+        // conta os `{"ok": true}` do código, e um teste não é dívida.
+        assert_eq!(t.as_object().unwrap().len(), 3);
+        assert_eq!(t["ok"], serde_json::Value::Bool(true));
+        assert_eq!(t["type"], "nfs");
+        assert_eq!(t["message"], "m");
+    }
 
     #[test]
     fn nobody_is_platform_admin_when_none_is_declared() {
