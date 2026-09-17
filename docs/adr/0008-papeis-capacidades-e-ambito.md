@@ -65,7 +65,7 @@ escopos e **não herda** as capacidades de quem a criou.
 | | `sessions.breakout_rooms` | Abrir salas paralelas | não |
 | Gravação e biblioteca | `recordings.record_4k` | Gravar em 4K | não |
 | | `recordings.view_others` | Ver gravações de outros (só dentro do âmbito) | **sim** — o facto `org_admin` do SQL da biblioteca (`recordings.rs:269`): descarregar e gerir a gravação de um colega |
-| | `recordings.publish` | Publicar gravação | **sim** — `recordings/{recording_id}/shares` e `recordings/{recording_id}/public-link` sobre gravações de outros |
+| | `recordings.publish` | Publicar gravação | **sim** — `recordings/{recording_id}/shares` (listar, partilhar, retirar) e `recordings/{recording_id}/public-link` (ler, criar, revogar) sobre gravações de outros |
 | | `recordings.delete` | Apagar gravação (irreversível) | não — **não existe rota HTTP que apague uma gravação** (medido: só a retenção apaga) |
 | Emissão | `broadcast.public_destinations` | Emitir para destinos públicos | **sim** — destinos guardados no `/api/rooms/{room_code}/live` |
 | | `broadcast.manage_rtmp_keys` | Gerir chaves RTMP (credenciais de terceiros) | **sim** — `stream-destinations` (6 rotas) |
@@ -376,3 +376,16 @@ do `GET /api/public/settings`, que já existe; o servidor não esconde rotas por
   recalcular na mesma transacção (um só caminho em `org.rs`, com teste de equivalência).
 - **−** Capacidades de departamento só têm efeito onde o recurso tem departamento — hoje, o
   directório de pessoas. Salas, gravações e destinos não têm departamento.
+
+## Estado da implementação (2026-09-17, ramo `delonix-meet-backend/v3-rbac-utilizadores`)
+
+- Implementado como decidido acima; migrações 0060–0063; regressões R190–R194.
+- **Não imposto nesta frente** (e por isso não configurável): as capacidades de sessão excepto
+  `sessions.create`, `recordings.record_4k`, `recordings.delete` (não há rota que apague),
+  `broadcast.highlight_questions`, as três de estúdio; os limites de duração e de resolução.
+- **Salas e chamadas instantâneas** (`presence`, `signaling`) criam sala sem `sessions.create`.
+- **A leitura periódica do Odoo** (grupos por `ir.model.data`, departamentos por `hr.employee`)
+  não foi corrida contra um Odoo real; o `provision` (push) foi, contra Postgres.
+- **Filtros por domínio JSON** (`filter`) do directório chegam com o motor da ADR-0007
+  (`search.filter_unsupported` até lá).
+
