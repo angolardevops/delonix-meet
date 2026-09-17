@@ -159,6 +159,22 @@ const lista2 = (await api(`/api/orgs/${orgId}/members`, { token: tA })).json
 ok(!lista2.some((m) => m.username === novo), 'a pessoa sai da lista')
 ok((await A.page.locator('.dx-alert, [role=alert]').filter({ hasText: /não foi possível|erro/i }).count()) === 0, 'sem mensagem de erro no ecrã')
 
+// ---------- 4. quadros: miniatura e link público ----------
+console.log('· quadros')
+const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+const titulo = `Quadro ${Date.now().toString(36)}`
+await api('/api/whiteboards', { token: tA, method: 'POST', body: { title: titulo, room_code: code, png_base64: png } })
+await A.page.goto(`${APP}/#/whiteboards`, { waitUntil: 'domcontentloaded' })
+await A.page.getByRole('button', { name: `Ver o quadro ${titulo}` }).click({ timeout: 30000 })
+await A.page.waitForTimeout(1500)
+ok(!!viu(A, /^GET \/api\/whiteboards\/[^/]+\/image 200$/), 'a imagem do quadro vem de /image (200)')
+await A.page.locator('.board-viewer__share').getByRole('button', { name: 'Criar link' }).click()
+await A.page.waitForTimeout(1500)
+ok(!!viu(A, /^PUT \/api\/whiteboards\/[^/]+\/public-link 200$/), 'criar link → PUT public-link 200')
+const link = await A.page.locator('.board-viewer__share input').inputValue()
+const publico = await fetch(link.replace(APP, API))
+ok(publico.status === 200 && (publico.headers.get('content-type') ?? '').includes('image/png'), 'o link público abre a imagem SEM sessão', `${link} → ${publico.status} ${publico.headers.get('content-type')}`)
+
 console.log('\n· respostas ≥ 400 da API vistas pelos browsers:')
 for (const e of [...new Set(erros)]) console.log(`    ${e}`)
 await browser.close()
