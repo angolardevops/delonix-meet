@@ -119,9 +119,66 @@ pub struct DialLeg {
 pub enum AfterAnswer {
     /// Teste rápido: um tom durante `secs` segundos e desliga.
     TestTone { secs: u32 },
-    /// Frente D: entra na conferência da sala (a ponte FreeSWITCH↔SFU que leva
-    /// o áudio para a reunião NÃO existe — ver ADR-0009 §EXTERNAL).
+    /// Entra na conferência LOCAL do FreeSWITCH com o nome da sala. Quem liga
+    /// ouve os outros ao telefone, NÃO a reunião.
     Conference { room_code: String },
+    /// Frente D: liga a chamada atendida à PONTE da sala (o lado SFU), e não à
+    /// conferência local. O FreeSWITCH desta instalação não tem `mod_rtp`: não
+    /// consegue mandar RTP cru para um endereço. A ponte é por isso um UA SIP
+    /// mínimo em `bridge_host:bridge_port`; o FreeSWITCH envia-lhe um INVITE
+    /// para `room-<room_code>` e o endereço RTP da ponte vem na resposta SDP.
+    /// Se a ponte só souber falar RTP cru, é preciso recompilar com `mod_rtp`
+    /// (ADR-0009 §EXTERNAL).
+    RoomBridge {
+        room_code: String,
+        bridge_host: std::net::IpAddr,
+        bridge_port: u16,
+        /// Codec que a ponte aceita (`PCMA`, `OPUS`…); vazio = o do perfil.
+        codec: Option<String>,
+    },
+}
+
+/// Progresso de uma chamada originada. Cada chamada recebe, por ordem:
+/// zero ou mais tentativas (`Dialing`, talvez `Ringing`, `AttemptFailed`), no
+/// máximo um `Answered`, e EXACTAMENTE um `Ended` no fim.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CallEvent {
+    /// O media server criou o canal para este tronco.
+    Dialing { trunk_id: Option<Uuid> },
+    /// A tocar (`180`) ou com media antecipada (`183`).
+    Ringing {
+        trunk_id: Option<Uuid>,
+        early_media: bool,
+    },
+    /// Um tronco recusou (a seguir vem o próximo, ou `Ended`).
+    AttemptFailed {
+        trunk_id: Option<Uuid>,
+        cause: String,
+    },
+    Answered {
+        trunk_id: Option<Uuid>,
+        latency_ms: u64,
+    },
+    /// Fim da chamada. `billsec` só quando foi atendida.
+    Ended {
+        answered: bool,
+        cause: String,
+        billsec: Option<i64>,
+    },
+}
+
+/// Quem quer acompanhar a chamada. Chamado na ordem dos eventos; não deve
+/// bloquear (despacha para uma fila se precisar de IO).
+pub trait CallEventSink: Send + Sync {
+    fn on_event(&self, call_id: Uuid, event: CallEvent);
+}
+
+/// Para quem só quer o resultado.
+pub struct IgnoreEvents;
+
+impl CallEventSink for IgnoreEvents {
+    fn on_event(&self, _: Uuid, _: CallEvent) {}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -152,8 +209,13 @@ pub struct OriginateOutcome {
 #[async_trait]
 pub trait CallOriginator: Send + Sync {
     /// Liga e espera pelo atendimento (ou pela recusa), até
-    /// `answer_timeout_secs`. Não devolve antes disso.
-    async fn originate(&self, req: &OriginateRequest) -> Result<OriginateOutcome, PortError>;
+    /// `answer_timeout_secs`. Os eventos (`events`) continuam a chegar depois
+    /// de devolver, até ao `Ended`.
+    async fn originate(
+        &self,
+        req: &OriginateRequest,
+        events: std::sync::Arc<dyn CallEventSink>,
+    ) -> Result<OriginateOutcome, PortError>;
     /// Desliga a chamada `call_id`, se ainda existir.
     async fn hangup(&self, call_id: Uuid) -> Result<(), PortError>;
 }

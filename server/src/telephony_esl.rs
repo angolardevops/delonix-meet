@@ -27,15 +27,15 @@
 //! na versão instalada, e o comportamento do `originate` com failover `|` e
 //! `origination_uuid` — ver ADR-0009 §EXTERNAL.
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chrono::Utc;
 use delonix_meet_domain::telephony::{
     cost::RegistrationState,
     ports::{
-        AfterAnswer, CallOriginator, GatewayStatus, MediaServerStatus, OriginateOutcome,
-        OriginateRequest, PortError, SbcStatus, SipControl, SipSnapshot,
+        AfterAnswer, CallEvent, CallEventSink, CallOriginator, GatewayStatus, MediaServerStatus,
+        OriginateOutcome, OriginateRequest, PortError, SbcStatus, SipControl, SipSnapshot,
     },
 };
 use tokio::{
@@ -106,6 +106,50 @@ impl EslConn {
             .write_all(format!("{line}\n\n").as_bytes())
             .await
             .map_err(unavailable)
+    }
+
+    /// Uma linha de comando com cabeçalhos extra (`bgapi … \nJob-UUID: …`).
+    async fn send_with_headers(
+        &mut self,
+        line: &str,
+        headers: &[(&str, String)],
+    ) -> Result<(), PortError> {
+        let mut msg = String::new();
+        for part in std::iter::once(line.to_string())
+            .chain(headers.iter().map(|(k, v)| format!("{k}: {v}")))
+        {
+            if part.contains('\n') || part.contains('\r') {
+                return Err(PortError::Protocol(
+                    "comando ESL com quebra de linha recusado".into(),
+                ));
+            }
+            msg.push_str(&part);
+            msg.push('\n');
+        }
+        msg.push('\n');
+        self.writer
+            .write_all(msg.as_bytes())
+            .await
+            .map_err(unavailable)
+    }
+
+    /// Comando de sessão (`event`, `filter`, `bgapi`): espera o `command/reply`.
+    async fn command(
+        &mut self,
+        line: &str,
+        headers: &[(&str, String)],
+    ) -> Result<String, PortError> {
+        self.send_with_headers(line, headers).await?;
+        loop {
+            let (h, _) = self.read_message(COMMAND_TIMEOUT).await?;
+            if h.get("content-type").map(String::as_str) == Some("command/reply") {
+                let reply = h.get("reply-text").cloned().unwrap_or_default();
+                if reply.starts_with("-ERR") {
+                    return Err(PortError::Rejected(format!("{line}: {reply}")));
+                }
+                return Ok(reply);
+            }
+        }
     }
 
     /// Lê uma mensagem: cabeçalhos até à linha vazia e, com `Content-Length`,
@@ -256,7 +300,10 @@ fn safe(value: &str, extra: &[u8]) -> Result<String, PortError> {
 }
 
 /// Monta o comando `originate` (sem o prefixo `api`). Público para os testes.
-pub fn originate_command(req: &OriginateRequest) -> Result<String, PortError> {
+pub fn originate_command(
+    req: &OriginateRequest,
+    bridge_profile: &str,
+) -> Result<String, PortError> {
     if req.legs.is_empty() {
         return Err(PortError::Protocol("originate sem troncos".into()));
     }
@@ -278,8 +325,11 @@ pub fn originate_command(req: &OriginateRequest) -> Result<String, PortError> {
     if let Some(cid) = &req.caller_id {
         vars.push(format!("origination_caller_id_number={}", safe(cid, b"+")?));
     }
-    if let AfterAnswer::Conference { room_code } = &req.after_answer {
-        vars.push(format!("delonix_room_code={}", safe(room_code, b"-")?));
+    match &req.after_answer {
+        AfterAnswer::Conference { room_code } | AfterAnswer::RoomBridge { room_code, .. } => {
+            vars.push(format!("delonix_room_code={}", safe(room_code, b"-")?));
+        }
+        AfterAnswer::TestTone { .. } => {}
     }
     if req.record && !req.emergency {
         vars.push(format!(
@@ -306,6 +356,26 @@ pub fn originate_command(req: &OriginateRequest) -> Result<String, PortError> {
         ),
         AfterAnswer::Conference { room_code } => {
             format!("&conference({}@delonix)", safe(room_code, b"-")?)
+        }
+        AfterAnswer::RoomBridge {
+            room_code,
+            bridge_host,
+            bridge_port,
+            codec,
+        } => {
+            let host = match bridge_host {
+                std::net::IpAddr::V4(v4) => v4.to_string(),
+                std::net::IpAddr::V6(v6) => format!("[{v6}]"),
+            };
+            let codec = match codec {
+                Some(c) => format!("absolute_codec_string={},", safe(c, b"@")?),
+                None => String::new(),
+            };
+            format!(
+                "&bridge([{codec}delonix_room_code={room},delonix_leg=room_bridge]sofia/{profile}/room-{room}@{host}:{bridge_port})",
+                room = safe(room_code, b"-")?,
+                profile = safe(bridge_profile, b"-_")?,
+            )
         }
     };
     Ok(format!(
@@ -556,28 +626,229 @@ pub struct FreeswitchOriginator {
     pub esl: EslConfig,
 }
 
+/// Um evento `text/event-plain`: cabeçalhos (valores descodificados de URL)
+/// e o corpo (no `BACKGROUND_JOB`, o resultado do comando).
+pub fn parse_plain_event(body: &str) -> (HashMap<String, String>, String) {
+    let (head, rest) = body.split_once("\n\n").unwrap_or((body, ""));
+    let mut h = HashMap::new();
+    for line in head.lines() {
+        if let Some((k, v)) = line.split_once(": ") {
+            let v = url::form_urlencoded::parse(format!("v={}", v.replace('+', "%2B")).as_bytes())
+                .next()
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_else(|| v.to_string());
+            h.insert(k.to_string(), v);
+        }
+    }
+    (h, rest.to_string())
+}
+
+/// Máximo que se segue uma chamada atendida antes de largar o ESL.
+const MAX_CALL: Duration = Duration::from_secs(6 * 3600);
+
+async fn follow_call(
+    mut c: EslConn,
+    call_id: Uuid,
+    started: Instant,
+    events: Arc<dyn CallEventSink>,
+    outcome_tx: tokio::sync::oneshot::Sender<OriginateOutcome>,
+) {
+    let mut outcome_tx = Some(outcome_tx);
+    let trunk_of = |h: &HashMap<String, String>| {
+        h.get("variable_delonix_trunk_id")
+            .and_then(|v| Uuid::parse_str(v).ok())
+    };
+    let mut answered: Option<String> = None;
+    let mut last_cause = String::from("UNKNOWN");
+    let deadline = Instant::now() + MAX_CALL;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let (outer, body) = match c.read_message(left.max(Duration::from_millis(1))).await {
+            Ok(m) => m,
+            Err(_) => break,
+        };
+        match outer.get("content-type").map(String::as_str) {
+            Some("text/event-plain") => {}
+            Some("text/disconnect-notice") => break,
+            _ => continue,
+        }
+        let (h, job_body) = parse_plain_event(&body);
+        let uuid = h.get("Unique-ID").cloned().unwrap_or_default();
+        match h.get("Event-Name").map(String::as_str) {
+            Some("CHANNEL_CREATE") => events.on_event(
+                call_id,
+                CallEvent::Dialing {
+                    trunk_id: trunk_of(&h),
+                },
+            ),
+            Some("CHANNEL_PROGRESS") => events.on_event(
+                call_id,
+                CallEvent::Ringing {
+                    trunk_id: trunk_of(&h),
+                    early_media: false,
+                },
+            ),
+            Some("CHANNEL_PROGRESS_MEDIA") => events.on_event(
+                call_id,
+                CallEvent::Ringing {
+                    trunk_id: trunk_of(&h),
+                    early_media: true,
+                },
+            ),
+            Some("CHANNEL_ANSWER") if answered.is_none() => {
+                let latency_ms = started.elapsed().as_millis() as u64;
+                answered = Some(uuid);
+                events.on_event(
+                    call_id,
+                    CallEvent::Answered {
+                        trunk_id: trunk_of(&h),
+                        latency_ms,
+                    },
+                );
+                if let Some(tx) = outcome_tx.take() {
+                    let _ = tx.send(OriginateOutcome {
+                        answered: true,
+                        answer_latency_ms: Some(latency_ms),
+                        hangup_cause: None,
+                    });
+                }
+            }
+            Some("CHANNEL_HANGUP_COMPLETE") => {
+                let cause = h
+                    .get("Hangup-Cause")
+                    .cloned()
+                    .unwrap_or_else(|| "UNKNOWN".into());
+                if answered.as_deref() == Some(uuid.as_str()) {
+                    let billsec = h.get("variable_billsec").and_then(|v| v.parse().ok());
+                    events.on_event(
+                        call_id,
+                        CallEvent::Ended {
+                            answered: true,
+                            cause,
+                            billsec,
+                        },
+                    );
+                    return;
+                }
+                last_cause = cause.clone();
+                events.on_event(
+                    call_id,
+                    CallEvent::AttemptFailed {
+                        trunk_id: trunk_of(&h),
+                        cause,
+                    },
+                );
+            }
+            Some("BACKGROUND_JOB") => {
+                let (ok, cause) =
+                    parse_originate(&job_body).unwrap_or((false, Some(last_cause.clone())));
+                if !ok {
+                    let cause = cause.unwrap_or_else(|| last_cause.clone());
+                    if let Some(tx) = outcome_tx.take() {
+                        let _ = tx.send(OriginateOutcome {
+                            answered: false,
+                            answer_latency_ms: None,
+                            hangup_cause: Some(cause.clone()),
+                        });
+                    }
+                    events.on_event(
+                        call_id,
+                        CallEvent::Ended {
+                            answered: false,
+                            cause,
+                            billsec: None,
+                        },
+                    );
+                    return;
+                }
+                // `+OK <uuid>`: atendida. Se o CHANNEL_ANSWER não chegou
+                // (filtro), o uuid do job é o canal que atendeu.
+                if answered.is_none() {
+                    let latency_ms = started.elapsed().as_millis() as u64;
+                    answered = job_body
+                        .trim()
+                        .strip_prefix("+OK")
+                        .map(|u| u.trim().to_string());
+                    events.on_event(
+                        call_id,
+                        CallEvent::Answered {
+                            trunk_id: None,
+                            latency_ms,
+                        },
+                    );
+                    if let Some(tx) = outcome_tx.take() {
+                        let _ = tx.send(OriginateOutcome {
+                            answered: true,
+                            answer_latency_ms: Some(latency_ms),
+                            hangup_cause: None,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // O fluxo de eventos acabou sem o fim da chamada: diz-se, não se inventa.
+    events.on_event(
+        call_id,
+        CallEvent::Ended {
+            answered: answered.is_some(),
+            cause: "EVENT_STREAM_LOST".into(),
+            billsec: None,
+        },
+    );
+}
+
 #[async_trait]
 impl CallOriginator for FreeswitchOriginator {
-    async fn originate(&self, req: &OriginateRequest) -> Result<OriginateOutcome, PortError> {
-        let cmd = originate_command(req)?;
+    async fn originate(
+        &self,
+        req: &OriginateRequest,
+        events: Arc<dyn CallEventSink>,
+    ) -> Result<OriginateOutcome, PortError> {
+        let cmd = originate_command(req, &self.esl.sofia_profile)?;
         let mut c = EslConn::connect(&self.esl).await?;
+        c.command(
+            "event plain CHANNEL_CREATE CHANNEL_PROGRESS CHANNEL_PROGRESS_MEDIA CHANNEL_ANSWER CHANNEL_HANGUP_COMPLETE BACKGROUND_JOB",
+            &[],
+        )
+        .await?;
+        // Só os canais desta chamada (todas as tentativas levam a variável) e o
+        // resultado do job desta chamada.
+        c.command(
+            &format!("filter variable_delonix_call_id {}", req.call_id),
+            &[],
+        )
+        .await?;
+        c.command(&format!("filter Job-UUID {}", req.call_id), &[])
+            .await?;
         let started = Instant::now();
-        let limit = Duration::from_secs(u64::from(req.answer_timeout_secs.clamp(5, 120)) + 10);
-        let body = c.api(&cmd, limit).await?;
-        let (answered, hangup_cause) = parse_originate(&body)?;
-        Ok(OriginateOutcome {
-            answered,
-            answer_latency_ms: answered.then(|| started.elapsed().as_millis() as u64),
-            hangup_cause,
-        })
+        c.command(
+            &format!("bgapi {cmd}"),
+            &[("Job-UUID", req.call_id.to_string())],
+        )
+        .await?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(follow_call(c, req.call_id, started, events, tx));
+        let limit = Duration::from_secs(u64::from(req.answer_timeout_secs.clamp(5, 120)) + 15);
+        match timeout(limit, rx).await {
+            Ok(Ok(o)) => Ok(o),
+            Ok(Err(_)) => Err(unavailable("o ESL fechou antes do resultado da chamada")),
+            Err(_) => Err(unavailable("sem resultado da chamada no tempo previsto")),
+        }
     }
 
     async fn hangup(&self, call_id: Uuid) -> Result<(), PortError> {
         let mut c = EslConn::connect(&self.esl).await?;
+        // Pela variável: com failover, o uuid do canal que atendeu não é
+        // necessariamente o `origination_uuid`.
         let body = c
-            .api(&format!("uuid_kill {call_id}"), COMMAND_TIMEOUT)
+            .api(
+                &format!("hupall NORMAL_CLEARING delonix_call_id {call_id}"),
+                COMMAND_TIMEOUT,
+            )
             .await?;
-        if body.trim_start().starts_with("-ERR") && !body.contains("No such channel") {
+        if body.trim_start().starts_with("-ERR") {
             return Err(PortError::Rejected(body.trim().to_string()));
         }
         Ok(())
@@ -635,7 +906,7 @@ mod tests {
 
     #[test]
     fn originate_command_is_built_from_validated_values() {
-        let cmd = originate_command(&req()).unwrap();
+        let cmd = originate_command(&req(), "external").unwrap();
         assert!(cmd.starts_with("originate {origination_uuid=00000000-0000-0000-0000-000000000000,originate_timeout=30,"));
         assert!(cmd.contains("[delonix_trunk_id=00000000-0000-0000-0000-000000000000]sofia/gateway/dlx-00000000-0000-0000-0000-000000000000/244923447108"));
         assert!(cmd.ends_with(" &playback(tone_stream://%(1000,0,440);loops=3)"));
@@ -644,18 +915,43 @@ mod tests {
         let mut r = req();
         r.record = true;
         r.emergency = true;
-        let cmd = originate_command(&r).unwrap();
+        let cmd = originate_command(&r, "external").unwrap();
         assert!(!cmd.contains("record_session"), "emergência nunca gravada");
         assert!(cmd.contains("delonix_record=false"));
 
         let mut r = req();
         r.legs[0].number = "923\nhangup".into();
-        assert!(originate_command(&r).is_err());
+        assert!(originate_command(&r, "external").is_err());
         let mut r = req();
         r.after_answer = AfterAnswer::Conference {
             room_code: "abc;evil".into(),
         };
-        assert!(originate_command(&r).is_err());
+        assert!(originate_command(&r, "external").is_err());
+    }
+
+    #[test]
+    fn room_bridge_goes_to_the_bridge_ua_not_the_local_conference() {
+        let mut r = req();
+        r.after_answer = AfterAnswer::RoomBridge {
+            room_code: "voz-arq-2026".into(),
+            bridge_host: "127.0.0.1".parse().unwrap(),
+            bridge_port: 5190,
+            codec: Some("PCMA".into()),
+        };
+        let cmd = originate_command(&r, "external").unwrap();
+        assert!(cmd.contains("delonix_room_code=voz-arq-2026"), "{cmd}");
+        assert!(cmd.ends_with(" &bridge([absolute_codec_string=PCMA,delonix_room_code=voz-arq-2026,delonix_leg=room_bridge]sofia/external/room-voz-arq-2026@127.0.0.1:5190)"), "{cmd}");
+        assert!(!cmd.contains("conference"));
+    }
+
+    #[test]
+    fn plain_events_are_decoded() {
+        let (h, body) = parse_plain_event(
+            "Event-Name: BACKGROUND_JOB\nJob-UUID: x\nCaller-Caller-ID-Number: %2B244%20923\nContent-Length: 8\n\n-ERR NO\n",
+        );
+        assert_eq!(h["Event-Name"], "BACKGROUND_JOB");
+        assert_eq!(h["Caller-Caller-ID-Number"], "+244 923");
+        assert_eq!(body, "-ERR NO\n");
     }
 
     #[test]

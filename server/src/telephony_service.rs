@@ -15,8 +15,8 @@ use delonix_meet_domain::telephony::{
     money::{format_e4, Currency, Money},
     number::{mask, parse_dialed, DialedNumber},
     ports::{
-        gateway_name, AfterAnswer, CallOriginator, DialLeg, OriginateRequest, PortError,
-        SipControl, SmsGateways, SmsQueued, SmsSendRequest,
+        gateway_name, AfterAnswer, CallEvent, CallEventSink, CallOriginator, DialLeg,
+        OriginateRequest, PortError, SipControl, SmsGateways, SmsQueued, SmsSendRequest,
     },
 };
 use serde::Serialize;
@@ -313,7 +313,8 @@ pub struct OutboundCall {
     /// Mascarado (`+244 923 ***108`).
     #[sqlx(rename = "to_number")]
     pub to_masked: String,
-    /// `dialing` | `answered` | `no_answer` | `busy` | `failed`.
+    /// `dialing` → `ringing` → `answered` (fica, com `finished_at` no fim) |
+    /// `no_answer` | `busy` | `failed`.
     pub status: String,
     /// Troncos tentados, por ordem.
     pub trunk_ids: Vec<Uuid>,
@@ -327,10 +328,14 @@ pub struct OutboundCall {
     /// Porque falhou antes de chegar à operadora (media server em baixo…).
     pub error: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub answered_at: Option<DateTime<Utc>>,
+    /// Segundos falados, quando a chamada acabou atendida.
+    pub billsec: Option<i32>,
+    /// Fim da chamada (ou da tentativa). `null` enquanto decorre.
     pub finished_at: Option<DateTime<Utc>>,
 }
 
-pub(crate) const OUTBOUND_COLUMNS: &str = "id, purpose, room_code, to_number, status, trunk_ids, rule_position, record, emergency, answer_latency_ms, hangup_cause, error, created_at, finished_at";
+pub(crate) const OUTBOUND_COLUMNS: &str = "id, purpose, room_code, to_number, status, trunk_ids, rule_position, record, emergency, answer_latency_ms, hangup_cause, error, created_at, answered_at, billsec, finished_at";
 
 pub(crate) fn masked(state: &AppState, mut c: OutboundCall) -> OutboundCall {
     c.to_masked = mask_number(state, &c.to_masked);
@@ -354,6 +359,7 @@ pub(crate) async fn place_call(
     number: &str,
     after_answer: AfterAnswer,
     purpose: CallPurpose,
+    listener: Option<Arc<dyn CallEventSink>>,
 ) -> Result<OutboundCall, ApiError> {
     let originator = state.telephony.originator.clone().ok_or_else(|| {
         refuse(
@@ -506,47 +512,101 @@ pub(crate) async fn place_call(
         after_answer,
     };
     let st = state.clone();
-    // Tarefa curta (≤ ANSWER_TIMEOUT_SECS + margem do ESL). Se o processo
-    // parar a meio, a linha fica `dialing`: o `finish_stale` fecha-a.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CallEvent>();
+    let sink: Arc<dyn CallEventSink> = Arc::new(RowSink {
+        tx,
+        extra: listener,
+    });
+    // Os eventos gravam-se pela ordem, numa só tarefa.
+    let db = state.db.clone();
     tokio::spawn(async move {
-        let (status, latency, cause, error) = match originator.originate(&req).await {
-            Ok(o) if o.answered => (
-                "answered",
-                o.answer_latency_ms.map(|v| v as i64),
-                None,
-                None,
-            ),
-            Ok(o) => (
-                match o.hangup_cause.as_deref() {
-                    Some("USER_BUSY") | Some("CALL_REJECTED") => "busy",
-                    Some("NO_ANSWER") | Some("NO_USER_RESPONSE") | Some("ALLOTTED_TIMEOUT") => {
-                        "no_answer"
-                    }
-                    _ => "failed",
-                },
-                None,
-                o.hangup_cause,
-                None,
-            ),
-            Err(e) => ("failed", None, None, Some(e.to_string())),
-        };
-        if let Err(e) = sqlx::query(
-            "UPDATE telephony_outbound_calls
-                SET status = $2, answer_latency_ms = $3, hangup_cause = $4, error = $5, finished_at = now()
-              WHERE id = $1 AND status = 'dialing'",
-        )
-        .bind(req.call_id)
-        .bind(status)
-        .bind(latency)
-        .bind(cause)
-        .bind(error)
-        .execute(&st.db)
-        .await
-        {
-            tracing::error!(call = %req.call_id, "não consegui gravar o resultado da chamada: {e}");
+        while let Some(ev) = rx.recv().await {
+            if let Err(e) = apply_event(&db, call_id, &ev).await {
+                tracing::error!(call = %call_id, "não consegui gravar o evento da chamada: {e}");
+            }
+            if matches!(ev, CallEvent::Ended { .. }) {
+                break;
+            }
+        }
+    });
+    // Se o processo parar a meio, a linha fica `dialing`/`ringing`: o
+    // `finish_stale` fecha-a.
+    tokio::spawn(async move {
+        if let Err(e) = originator.originate(&req, sink).await {
+            let _ = sqlx::query(
+                "UPDATE telephony_outbound_calls
+                    SET status = 'failed', error = $2, finished_at = now()
+                  WHERE id = $1 AND status IN ('dialing','ringing')",
+            )
+            .bind(req.call_id)
+            .bind(e.to_string())
+            .execute(&st.db)
+            .await;
         }
     });
     Ok(masked(state, row))
+}
+
+/// Encaminha os eventos para a fila da linha e para quem mais os quiser.
+struct RowSink {
+    tx: tokio::sync::mpsc::UnboundedSender<CallEvent>,
+    extra: Option<Arc<dyn CallEventSink>>,
+}
+
+impl CallEventSink for RowSink {
+    fn on_event(&self, call_id: Uuid, event: CallEvent) {
+        if let Some(x) = &self.extra {
+            x.on_event(call_id, event.clone());
+        }
+        let _ = self.tx.send(event);
+    }
+}
+
+/// Estado da linha a partir de um evento. Só avança (nunca volta atrás).
+async fn apply_event(db: &sqlx::PgPool, id: Uuid, ev: &CallEvent) -> Result<(), sqlx::Error> {
+    match ev {
+        CallEvent::Dialing { .. } | CallEvent::AttemptFailed { .. } => Ok(()),
+        CallEvent::Ringing { .. } => sqlx::query(
+            "UPDATE telephony_outbound_calls SET status = 'ringing' WHERE id = $1 AND status = 'dialing'",
+        )
+        .bind(id)
+        .execute(db)
+        .await
+        .map(|_| ()),
+        CallEvent::Answered { latency_ms, .. } => sqlx::query(
+            "UPDATE telephony_outbound_calls
+                SET status = 'answered', answer_latency_ms = $2, answered_at = now()
+              WHERE id = $1 AND status IN ('dialing','ringing')",
+        )
+        .bind(id)
+        .bind(*latency_ms as i64)
+        .execute(db)
+        .await
+        .map(|_| ()),
+        CallEvent::Ended { answered, cause, billsec } => {
+            let status = if *answered {
+                "answered"
+            } else {
+                match cause.as_str() {
+                    "USER_BUSY" | "CALL_REJECTED" => "busy",
+                    "NO_ANSWER" | "NO_USER_RESPONSE" | "ALLOTTED_TIMEOUT" | "ORIGINATOR_CANCEL" => "no_answer",
+                    _ => "failed",
+                }
+            };
+            sqlx::query(
+                "UPDATE telephony_outbound_calls
+                    SET status = $2, hangup_cause = $3, billsec = $4, finished_at = now()
+                  WHERE id = $1 AND finished_at IS NULL",
+            )
+            .bind(id)
+            .bind(status)
+            .bind(cause)
+            .bind(billsec.map(|b| b as i32))
+            .execute(db)
+            .await
+            .map(|_| ())
+        }
+    }
 }
 
 /// Linhas `dialing` com mais de 5 minutos: o processo que as seguia morreu.
@@ -554,7 +614,7 @@ pub(crate) async fn finish_stale(state: &AppState, org_id: Uuid) -> Result<(), A
     sqlx::query(
         "UPDATE telephony_outbound_calls
             SET status = 'failed', error = 'o servidor reiniciou antes do resultado', finished_at = now()
-          WHERE org_id = $1 AND status = 'dialing' AND created_at < now() - interval '5 minutes'",
+          WHERE org_id = $1 AND status IN ('dialing','ringing') AND created_at < now() - interval '5 minutes'",
     )
     .bind(org_id)
     .execute(&state.db)

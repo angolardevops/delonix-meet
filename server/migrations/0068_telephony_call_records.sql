@@ -60,7 +60,7 @@ CREATE TABLE telephony_outbound_calls (
     room_code         TEXT,
     -- O número completo fica para «voltar a ligar»; a API só o devolve mascarado.
     to_number         TEXT NOT NULL,
-    status            TEXT NOT NULL CHECK (status IN ('dialing','answered','no_answer','busy','failed')),
+    status            TEXT NOT NULL CHECK (status IN ('dialing','ringing','answered','no_answer','busy','failed')),
     trunk_ids         UUID[] NOT NULL DEFAULT '{}',
     rule_position     INT,
     record            BOOLEAN NOT NULL DEFAULT FALSE,
@@ -69,6 +69,8 @@ CREATE TABLE telephony_outbound_calls (
     hangup_cause      TEXT,
     error             TEXT,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    answered_at       TIMESTAMPTZ,
+    billsec           INT,
     finished_at       TIMESTAMPTZ
 );
 CREATE INDEX telephony_outbound_calls_org_page_idx
