@@ -43,7 +43,7 @@
 - `sfu.rs` — SFU Rust: Hub, Room, Publication, simulcast, PLI, gravação RTP→IVF/OGG. `Census`: o que está VIVO de facto (PCs por `Weak`, `close()` que nunca regressou, peers/publicações/tarefas por `Drop`) em `/metrics` — é aí que se vê uma fuga, não nos gauges de negócio (R158)
 - `signaling.rs` — WebSocket `/ws` (room token): transporte SFU (offer/answer/ice) + moderação (admit/kick/lock/host-*, `set-role`, `spotlight`, `admit-all`, sala de espera em runtime) + chat (fios, reacções, conversa directa só ao par) + breakout-* (incl. `breakouts-broadcast`) + media; papéis, origem e cargo no `PeerInfo`, decididos no servidor (R182)
 - `room_tools.rs` — contexto de colaboração in-room extraído de `signaling.rs`: sondagens, Q&A, temporizador, quadro branco (`impl SignalingHub::handle_tool_msg`)
-- `room_chat.rs` — chat da sala persistido fora do caminho quente (`ChatStore`: fila limitada + tarefa própria, métricas de descarte e falha), fios (`parent_id`) e reacções (`room_chat_reactions`; migração 0049), conversa directa (`to_user_id`; migração 0050; o histórico só a devolve ao par) e retenção até ao fim do dia UTC da última mensagem (cron horário, G9). Ver R182
+- `room_chat.rs` — chat da sala persistido fora do caminho quente (`ChatStore`: fila limitada + tarefa própria, métricas de descarte e falha), fios (`parent_id`) e reacções (`room_chat_reactions`; migração 0050), conversa directa (`to_user_id`; migração 0051; o histórico só a devolve ao par) e retenção até ao fim do dia UTC da última mensagem (cron horário, G9). Ver R182
 - `presence.rs` — WebSocket `/rtc` (access token), chamadas WhatsApp-style: call-start/accept/decline/cancel, ring de reunião agendada
 - `meetings.rs` — calendário, conflitos, quarentena, MoM, transcrição, webhooks de meeting
 - `recordings.rs` — biblioteca de gravações, partilha read-only, metadados e `processing_state` derivado (G4), capítulos e comentários (G5), pesquisa `?q=` com FTS `simple` + `snippet` (G6; migração 0045). UMA regra de acesso: `load_item` lê os factos numa só junção de pertença e `domain::content::recording::AccessFacts` decide reproduzir/descarregar/gerir/comentar — um membro arquivado (S3) perde tudo. `GET /api/recordings` sem parâmetros continua a lista inteira (o web lê-a assim); com `q`/`page_size`/`page_token` é uma página. O ficheiro vai para `config.recordings_dir`. Testes: `server/tests/recordings_metadata.rs`
@@ -117,12 +117,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-<<<<<<< HEAD
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0050) |
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0047; a 0046 está reservada por outro ramo) |
-=======
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0049) |
->>>>>>> origin/backend/contrato-legado
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0051) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 

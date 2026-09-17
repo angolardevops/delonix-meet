@@ -1962,8 +1962,16 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Regra 4 — desligar a sala de espera não abre a porta a quem não tem entrada directa.** O token de sala separa `lobby` (sem entrada directa: espera sempre) de `wr` (a configuração da sala); só o segundo é substituível em runtime. Origem e cargo decidem-se no servidor e viajam assinados no token.
 
-**Adaptações nesta linha.** Router e crons em `lib.rs`. As migrações 0039 e 0048 da UI passam a 0049 e 0050. O `PeerRole` do R124 funde-se com o da UI (`role` + `can_admit` EFECTIVO: um co-anfitrião por papel continua a admitir).
+**Adaptações nesta linha.** Router e crons em `lib.rs`. As migrações 0039 e 0048 da UI passam a 0050 e 0051 (a 0049 é a dos convites pendentes, #88). O `PeerRole` do R124 funde-se com o da UI (`role` + `can_admit` EFECTIVO: um co-anfitrião por papel continua a admitir).
 
 **Portão.** `signaling` + `room_chat` (91 testes do hub, com a metade negativa de cada controlo e os 6 da conversa directa); `tests/room_chat.rs` contra Postgres real (a privada não volta a um terceiro; fios e reacções no histórico).
 
-**Ficheiros.** `server/src/{signaling,room_tools,room_chat,rooms,auth,org,users,pubsub,metrics,lib}.rs`, `server/migrations/0049_room_chat_threads_reactions.sql`, `server/migrations/0050_room_chat_direct.sql`, `server/tests/room_chat.rs`.
+**Ficheiros.** `server/src/{signaling,room_tools,room_chat,rooms,auth,org,users,pubsub,metrics,lib}.rs`, `server/migrations/0050_room_chat_threads_reactions.sql`, `server/migrations/0051_room_chat_direct.sql`, `server/tests/room_chat.rs`.
+
+### R189 — Um merge com dois blocos de conflito foi empurrado com o segundo por resolver
+
+**Sintoma.** Ao propagar a `main` (#89) pela pilha, o `HARNESS.md` da `backend/bw1-protocolo-sala` tinha dois blocos em conflito. O script de resolução tratou o primeiro e o commit seguiu com `<<<<<<< HEAD` … `>>>>>>>` na tabela de infraestrutura. Nenhum portão reparou: o `check-docs-drift.sh` lê as linhas que procura e não o ficheiro inteiro, e num `.md` nada compila. No mesmo passo, a bateria final correu sobre uma árvore com um merge PARADO em conflito, porque o script não parava quando o `git merge` falhava.
+
+**Regra.** Uma linha seguida que comece por `<<<<<<< ` ou `>>>>>>> ` é um conflito por resolver, e o `check-repo-hygiene.sh` falha com o ficheiro e a linha (controlo negativo feito: um bloco acrescentado ao `HARNESS.md` faz o portão falhar). Resolver conflitos por script: iterar até não restar NENHUM marcador, nunca só o primeiro índice. Uma bateria só conta sobre `git status` sem `UU`.
+
+**Ficheiros.** `scripts/check-repo-hygiene.sh`, `HARNESS.md`.
