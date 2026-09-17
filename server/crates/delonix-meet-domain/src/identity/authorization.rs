@@ -177,8 +177,8 @@ impl Capability {
                 "Publicar gravação",
                 "",
                 &[
-                    "POST /api/recordings/{recording_id}/shares",
-                    "PUT /api/recordings/{recording_id}/public-link",
+                    "/api/recordings/{recording_id}/shares (listar, partilhar, retirar)",
+                    "/api/recordings/{recording_id}/public-link (ler, criar, revogar)",
                 ],
             ),
             RecordingsDelete => mk(
