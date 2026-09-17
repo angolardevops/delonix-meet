@@ -1,0 +1,277 @@
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { currentUser, Recording } from '../api'
+import { Icon } from '../ui/icons'
+import { Avatar, Button, IconButton, Tag, Toggle, cx } from '../ui/kit'
+import { BreakoutsCard } from './BreakoutsCard'
+import { SpeakingBars } from './ParticipantTile'
+import { ligacaoFraca } from './qosAmostra'
+import type { Breakouts } from './useBreakouts'
+import type { Participants } from './useParticipants'
+import type { RemotePeer } from './useRoomCore'
+import type { QosReport } from '../webrtc'
+
+export function PeoplePanel({
+  code,
+  isHost,
+  canAdmit,
+  isTraining,
+  peers,
+  speaking,
+  micOn,
+  qos,
+  participants,
+  chatOn,
+  onChatOpenForAll,
+  hostShareOnly,
+  onHostShareOnly,
+  sharePerms,
+  onGrantShare,
+  onTransferHost,
+  breakouts,
+  recordings,
+  onDownload,
+  onInvite,
+  onPrivateMessage,
+  spotlightId,
+  onSpotlight,
+}: {
+  code: string
+  isHost: boolean
+  canAdmit: boolean
+  isTraining: boolean
+  peers: RemotePeer[]
+  speaking: Set<string>
+  micOn: boolean
+  qos: QosReport | null
+  participants: Participants
+  chatOn: boolean
+  onChatOpenForAll: (on: boolean) => void
+  hostShareOnly: boolean
+  onHostShareOnly: (on: boolean) => void
+  sharePerms: Set<string>
+  onGrantShare: (peerId: string, allowed: boolean) => void
+  onTransferHost: (peer: RemotePeer) => void
+  breakouts: Breakouts
+  recordings: Recording[]
+  onDownload: (r: Recording) => void
+  onInvite: () => void
+  /** «Mensagem privada»: abre o chat com o «Para» nessa pessoa. */
+  onPrivateMessage?: (peer: RemotePeer) => void
+  /** Destaque para todos (só anfitrião). */
+  spotlightId?: string | null
+  onSpotlight?: (peerId: string | null) => void
+}) {
+  const { t, i18n } = useTranslation()
+  const [search, setSearch] = useState('')
+  const me = currentUser()?.username ?? ''
+  const q = search.trim().toLowerCase()
+  const lista = peers.filter((p) => !q || p.username.toLowerCase().includes(q))
+  const maos = peers.filter((p) => p.hand).length
+
+  return (
+    <div className="rm-scroll">
+      <div className="rm-block__row">
+        <Button size="sm" variant="primary" icon="userPlus" onClick={onInvite}>
+          {t('room.pessoas.convidar')}
+        </Button>
+        {isHost && (
+          <Button size="sm" variant="outline" icon="micOff" onClick={() => participants.muteAll(true)}>
+            {t('room.pessoas.silenciarTodos')}
+          </Button>
+        )}
+      </div>
+      {isHost && (
+        <div className="rm-block__row">
+          <Button size="sm" variant="ghost" icon="ban" onClick={() => participants.muteAll(false)}>
+            {t('room.pessoas.silenciarSemVolta')}
+          </Button>
+          <Button size="sm" variant="ghost" icon="chat" onClick={() => onChatOpenForAll(!chatOn)}>
+            {chatOn ? t('room.pessoas.fecharChat') : t('room.pessoas.reabrirChat')}
+          </Button>
+        </div>
+      )}
+
+      {canAdmit && participants.waitingQueue.length > 0 && (
+        <section className="rm-block rm-block--accent" aria-labelledby="rm-wait-h">
+          <h3 id="rm-wait-h" className="rm-block__title">
+            <Icon name="door" size={13} />
+            {t('room.avisos.salaDeEspera')}
+            <span className="dx-spacer" />
+            <span className="dx-num dx-muted">{t('room.pessoas.aAguardar', { count: participants.waitingQueue.length })}</span>
+          </h3>
+          {participants.waitingQueue.map((p) => (
+            <div key={p.peer_id} className="rm-person">
+              <Avatar name={p.username} size={28} />
+              <span className="rm-person__name">
+                <strong>{p.username}</strong>
+                {p.is_pstn && <small className="dx-muted">{t('room.papel.telefone')}</small>}
+              </span>
+              <Button size="sm" variant="primary" onClick={() => participants.admit(p.peer_id, true)}>
+                {t('room.avisos.admitir')}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => participants.admit(p.peer_id, false)}>
+                {t('room.avisos.negar')}
+              </Button>
+            </div>
+          ))}
+          {participants.waitingQueue.length > 1 && (
+            <Button size="sm" variant="outline" block onClick={participants.admitAll}>
+              {t('room.avisos.admitirTodos', { count: participants.waitingQueue.length })}
+            </Button>
+          )}
+        </section>
+      )}
+
+      <section className="rm-block" aria-labelledby="rm-people-h">
+        <h3 id="rm-people-h" className="rm-block__title">
+          <Icon name="people" size={13} />
+          {t('room.pessoas.naSala', { count: peers.length + 1 })}
+          <span className="dx-spacer" />
+          {maos > 0 && (
+            <Tag tone="live">
+              <Icon name="hand" size={10} />
+              {t('room.pessoas.maosNoAr', { count: maos })}
+            </Tag>
+          )}
+        </h3>
+        <label className="rm-search">
+          <Icon name="search" size={13} />
+          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('room.pessoas.pesquisar')} aria-label={t('room.pessoas.pesquisar')} />
+        </label>
+
+        <div className="rm-person">
+          <Avatar name={me} size={28} />
+          <span className="rm-person__name">
+            <strong>{me ? t('room.tile.nomeTu', { nome: me }) : t('room.tile.tu')}</strong>
+            {qos && (
+              <small className="dx-num dx-muted" title={t('room.pessoas.qualidadeDica', { score: qos.score })}>
+                {t('room.pessoas.qualidadePropria', { score: qos.score, up: qos.upKbps })}
+                {qos.rttMs != null && ` · ${t('room.pessoas.rtt', { ms: qos.rttMs })}`}
+                {qos.turnRelay && ` · ${t('room.pessoas.viaRelay')}`}
+              </small>
+            )}
+          </span>
+          {isHost && <Tag tone="accent">{t('room.papel.anfitriao')}</Tag>}
+          {micOn ? speaking.has('me') ? <SpeakingBars /> : <Icon name="mic" size={13} /> : <Icon name="micOff" size={13} className="dx-icon rm-tile__muted" />}
+        </div>
+
+        {lista.map((p) => {
+          const pq = qos?.byPeer[p.peerId]
+          return (
+            <div key={p.peerId} className={cx('rm-person', p.reconnecting && 'is-reconnecting')}>
+              <Avatar name={p.username} size={28} />
+              <span className="rm-person__name">
+                <strong>{p.username}</strong>
+                {pq && (
+                  <small className={cx('dx-num', ligacaoFraca(pq.lossPct) ? 'rm-bad' : 'dx-muted')}>
+                    {t('room.pessoas.qualidadePar', { kbps: pq.kbps, perda: pq.lossPct })}
+                    {pq.jitterMs > 30 && ` · ${t('room.pessoas.jitter', { ms: pq.jitterMs })}`}
+                    {pq.freezeMs > 0 && ` · ${t('room.pessoas.congelado', { ms: Math.round(pq.freezeMs) })}`}
+                  </small>
+                )}
+              </span>
+              {p.hand && (
+                <Tag tone="live">
+                  <Icon name="hand" size={10} />
+                  {t('room.tile.mao')}
+                </Tag>
+              )}
+              {p.host ? (
+                <Tag tone="accent">{t('room.papel.anfitriao')}</Tag>
+              ) : p.role === 'cohost' || p.canAdmit ? (
+                <span title={t('room.papel.coAnfitriaoDica')}>
+                  <Tag>{t('room.papel.coAnfitriao')}</Tag>
+                </span>
+              ) : p.role === 'speaker' ? (
+                <Tag tone="live">{t('room.papel.orador')}</Tag>
+              ) : p.role === 'broadcast' ? (
+                <Tag tone="live">{t('room.papel.emissao')}</Tag>
+              ) : p.is_pstn ? (
+                <Tag>{t('room.papel.telefone')}</Tag>
+              ) : p.is_bot ? (
+                <Tag>{t('room.papel.assistente')}</Tag>
+              ) : null}
+              {speaking.has(p.peerId) ? <SpeakingBars /> : p.micOn ? <Icon name="mic" size={13} /> : <Icon name="micOff" size={13} className="dx-icon rm-tile__muted" />}
+              {onPrivateMessage && !p.is_pstn && !p.is_bot && (
+                <IconButton icon="chat" label={t('room.pessoas.mensagemPrivada', { nome: p.username })} onClick={() => onPrivateMessage(p)} />
+              )}
+              {isHost && onSpotlight && (
+                <IconButton
+                  icon="pin"
+                  label={spotlightId === p.peerId ? t('room.pessoas.desafixarParaTodos', { nome: p.username }) : t('room.pessoas.fixarParaTodos', { nome: p.username })}
+                  aria-pressed={spotlightId === p.peerId}
+                  onClick={() => onSpotlight(spotlightId === p.peerId ? null : p.peerId)}
+                />
+              )}
+              {isHost && !p.host && (
+                <div className="rm-person__actions" role="group" aria-label={t('room.pessoas.accoesSobre', { nome: p.username })}>
+                  <IconButton icon="micOff" label={t('room.tile.silenciar', { nome: p.username })} onClick={() => participants.mute(p.peerId)} />
+                  <IconButton icon="videoOff" label={t('room.pessoas.desligarCamara', { nome: p.username })} onClick={() => participants.camOff(p.peerId)} />
+                  <IconButton
+                    icon="screen"
+                    label={sharePerms.has(p.peerId) ? t('room.pessoas.retirarPartilha', { nome: p.username }) : t('room.pessoas.permitirPartilha', { nome: p.username })}
+                    aria-pressed={sharePerms.has(p.peerId)}
+                    onClick={() => onGrantShare(p.peerId, !sharePerms.has(p.peerId))}
+                  />
+                  <IconButton
+                    icon="door"
+                    label={p.canAdmit ? t('room.pessoas.retirarAdmissao', { nome: p.username }) : t('room.pessoas.permitirAdmissao', { nome: p.username })}
+                    aria-pressed={p.canAdmit}
+                    // Co-anfitrião pelo `set-role` (o antigo `promote-admit` não tem handler no servidor).
+                    onClick={() => participants.setRole(p.peerId, p.canAdmit ? 'attendee' : 'cohost')}
+                  />
+                  <IconButton icon="key" label={t('room.pessoas.passarAnfitriao', { nome: p.username })} onClick={() => onTransferHost(p)} />
+                  <IconButton icon="x" label={t('room.tile.remover', { nome: p.username })} onClick={() => participants.kick(p.peerId)} />
+                </div>
+              )}
+            </div>
+          )
+        })}
+        {q && lista.length === 0 && <p className="dx-muted">{t('room.pessoas.ninguem')}</p>}
+      </section>
+
+      {isHost && (
+        <section className="rm-block" aria-labelledby="rm-host-h">
+          <h3 id="rm-host-h" className="rm-block__title">
+            <Icon name="shield" size={13} />
+            {t('room.pessoas.controlosAnfitriao')}
+          </h3>
+          <Toggle
+            label={t('room.pessoas.bloquear')}
+            hint={t('room.pessoas.bloquearDica')}
+            checked={participants.roomLocked}
+            onChange={(e) => participants.setLocked(e.target.checked)}
+          />
+          <Toggle
+            label={t('room.pessoas.soAnfitriaoPartilha')}
+            hint={t('room.pessoas.soAnfitriaoPartilhaDica')}
+            checked={hostShareOnly}
+            onChange={(e) => onHostShareOnly(e.target.checked)}
+          />
+        </section>
+      )}
+
+      {isHost && isTraining && <BreakoutsCard code={code} api={breakouts} className="rm-block" />}
+
+      <section className="rm-block" aria-labelledby="rm-recs-h">
+        <h3 id="rm-recs-h" className="rm-block__title">
+          <Icon name="film" size={13} />
+          {t('room.pessoas.gravacoes')}
+        </h3>
+        {recordings.length === 0 && <p className="dx-muted">{t('room.pessoas.semGravacoes')}</p>}
+        {recordings.map((r) => (
+          <button key={r.id} type="button" className="rm-rec" onClick={() => onDownload(r)}>
+            <Icon name="download" size={14} />
+            <span className="rm-rec__text">
+              <span>{r.filename}</span>
+              <small className="dx-num dx-muted">
+                {new Date(r.created_at).toLocaleString(i18n.language)} · {t('room.pessoas.megabytes', { n: (r.size_bytes / 1_048_576).toFixed(1) })}
+              </small>
+            </span>
+          </button>
+        ))}
+      </section>
+    </div>
+  )
+}

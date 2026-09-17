@@ -53,12 +53,12 @@ const browser = await chromium.launch({
 const ctx = { ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] }
 const page = await (await browser.newContext(ctx)).newPage()
 await entrar(page, APP, conta)
-await page.getByRole('button', { name: /nova reuni/i }).first().click()
+await page.getByRole('button', { name: /iniciar agora/i }).first().click()
 await page.waitForFunction(() => /^#\/r\/[a-z-]+$/.test(location.hash), null, { timeout: 60000 })
 const rota = await page.evaluate(() => location.hash)
-await page.getByRole('button', { name: /entrar agora/i }).first().click({ timeout: 60000 })
+await page.getByRole('button', { name: /entrar na sessão/i }).first().click({ timeout: 60000 })
 const entrou = await page
-  .waitForFunction(() => !/Pronto para entrar/i.test(document.body.innerText || ''), null, { timeout: 90000 })
+  .waitForFunction(() => !document.querySelector('.rm-prejoin'), null, { timeout: 90000 })
   .then(() => true)
   .catch(() => false)
 ok(entrou, 'chamada estabelecida antes da morte', entrou ? `rota ${rota}` : 'não entrou')
@@ -126,9 +126,10 @@ const conta2 = await criarConta(API, 'mort2')
 const page2 = await (await browser.newContext(ctx)).newPage()
 await entrar(page2, APP, conta2)
 await page2.goto(`${APP}/#/r/${codigo}`, { waitUntil: 'domcontentloaded' })
-await page2.getByRole('button', { name: /entrar agora/i }).first().click({ timeout: 60000 })
+await page2.getByRole('button', { name: /entrar na sessão/i }).first().click({ timeout: 60000 })
 
-const pilula = page.locator('.waiting-pill')
+// A fila de espera vive na barra de baixo (template DelonixRoomGrid).
+const pilula = page.locator('.rm-occupancy__waiting')
 const viuPedido = await pilula
   .waitFor({ timeout: 90000 })
   .then(() => true)
@@ -140,11 +141,11 @@ ok(
 )
 
 if (viuPedido) {
-  await page.locator('.admit-accept').first().click({ timeout: 30000 }).catch(() => {})
+  await page.locator('.rm-admit-accept').first().click({ timeout: 30000 }).catch(() => {})
   const juntou = await page
     .waitForFunction(
       () =>
-        [...document.querySelectorAll('.tile')].filter((t) => !/\\beu\\b/i.test(t.textContent || '')).length === 1,
+        document.querySelectorAll('.rm-tile[data-peer="remoto"]').length === 1,
       null,
       { timeout: 90000 },
     )

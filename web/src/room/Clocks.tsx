@@ -1,20 +1,13 @@
-import { useEffect, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { ReactNode, useEffect, useState } from 'react'
 
 /**
- * Relógios da sala, como FOLHAS (achado 2.1 do docs/ux-perf-review.md).
- *
- * PORQUÊ: `Room.tsx` tinha três `setInterval` de 1 Hz a chamar `setState` na
- * RAIZ de um componente de 4 254 linhas. Cada tique reconciliava a árvore
- * inteira — incluindo todos os `<RemoteTile>` e os seus elementos `<video>` —
- * para actualizar um contador de segundos num canto do ecrã.
- *
- * Aqui o tique fica dentro do componente que mostra o número. O resto da sala
- * não sabe que horas são, e não volta a renderizar por causa delas.
+ * Relógios da sala, como FOLHAS (achado 2.1). O tique fica dentro do nó que
+ * mostra o número; o resto da sala não sabe que horas são e não volta a
+ * renderizar por causa delas.
  */
 
-/** mm:ss (ou h:mm:ss). Veio da sala com os relógios — lá já não é usado. */
-function fmt(secs: number): string {
+/** mm:ss (ou h:mm:ss). */
+export function fmtDuracao(secs: number): string {
   const s = Math.max(0, Math.floor(secs))
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
@@ -23,58 +16,60 @@ function fmt(secs: number): string {
   return h > 0 ? `${h}:${dois(m)}:${dois(r)}` : `${dois(m)}:${dois(r)}`
 }
 
-/** Força um render por segundo — NESTE nó e em mais nenhum. */
+/** hh:mm:ss sempre (o cronómetro da sessão no template: «00:24:18»). */
+export function fmtRelogio(secs: number): string {
+  const s = Math.max(0, Math.floor(secs))
+  const dois = (n: number) => String(n).padStart(2, '0')
+  return `${dois(Math.floor(s / 3600))}:${dois(Math.floor((s % 3600) / 60))}:${dois(s % 60)}`
+}
+
+/** Um render por segundo — NESTE nó e em mais nenhum. */
 function useSegundo(): void {
   const [, setN] = useState(0)
   useEffect(() => {
-    const t = setInterval(() => setN((n) => n + 1), 1000)
-    return () => clearInterval(t)
+    const id = setInterval(() => setN((n) => n + 1), 1000)
+    return () => clearInterval(id)
   }, [])
 }
 
-/** Duração da reunião. Era `elapsed` na raiz — um `setState` por segundo. */
-export function MeetingElapsed({ startedAt }: { startedAt: number }) {
-  const { t } = useTranslation()
+/** Duração da reunião desde a entrada (`startedAt` em ms). */
+export function MeetingElapsed({ startedAt, className }: { startedAt: number; className?: string }) {
   useSegundo()
-  // Sem hora de início não se mostra número NENHUM. Sem esta guarda, um
-  // `startedAt` a 0 dá a distância à época Unix — o contador mostrava
-  // `496594:12:29` e lia-se como um relógio a funcionar. Um ecrã sem contador
-  // é uma avaria visível; um contador com 56 anos passa despercebido.
+  // Sem hora de início não se mostra número NENHUM: um `startedAt` a 0 dava a
+  // distância à época Unix e lia-se como um relógio a funcionar.
   if (!startedAt) return null
   const secs = Math.floor((Date.now() - startedAt) / 1000)
-  if (secs <= 0) return null
-  return (
-    <span className="meeting-elapsed" title={t('room.barra.duracaoDaReuniao')}>
-      {fmt(secs)}
-    </span>
-  )
+  return <span className={className}>{fmtRelogio(Math.max(0, secs))}</span>
 }
 
 /**
- * Conta para trás até `endsAt` (segundos epoch). `render` decide o invólucro —
- * a mesma folha serve o chip do topo e o painel de grupos.
+ * Conta para trás até `endsAt` (SEGUNDOS epoch — temporizador e salas
+ * paralelas). `render` decide o invólucro.
  */
-export function Countdown({
-  endsAt,
-  render,
-}: {
-  endsAt: number
-  render: (texto: string, restam: number) => React.ReactNode
-}) {
+export function Countdown({ endsAt, render }: { endsAt: number; render: (texto: string, restam: number) => ReactNode }) {
   useSegundo()
   const restam = endsAt - Math.floor(Date.now() / 1000)
-  return <>{render(fmt(restam), restam)}</>
+  return <>{render(fmtDuracao(restam), restam)}</>
 }
 
-/**
- * Relógio de parede do topo da sala. Era `setClock` na raiz de 30 em 30
- * segundos — 2 880 reconciliações da sala inteira por dia para mostrar as horas.
- */
-export function WallClock({ locale = 'pt-PT' }: { locale?: string }) {
+/** Segundos que faltam até `endsAtMs` (MILISSEGUNDOS — sondagens com prazo). */
+export function SecondsLeft({ endsAtMs, render }: { endsAtMs: number; render: (restam: number) => ReactNode }) {
+  useSegundo()
+  return <>{render(Math.max(0, Math.ceil((endsAtMs - Date.now()) / 1000)))}</>
+}
+
+/** Tempo desde `desde` (ms) — duração de um directo. */
+export function Since({ desde, render }: { desde: number; render: (texto: string) => ReactNode }) {
+  useSegundo()
+  return <>{render(fmtDuracao((Date.now() - desde) / 1000))}</>
+}
+
+/** Relógio de parede: 30 s chegam para mostrar as horas. */
+export function WallClock({ locale, className }: { locale: string; className?: string }) {
   const [agora, setAgora] = useState(() => new Date())
   useEffect(() => {
-    const t = setInterval(() => setAgora(new Date()), 30_000)
-    return () => clearInterval(t)
+    const id = setInterval(() => setAgora(new Date()), 30_000)
+    return () => clearInterval(id)
   }, [])
-  return <span className="rt-clock">{agora.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}</span>
+  return <span className={className}>{agora.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}</span>
 }

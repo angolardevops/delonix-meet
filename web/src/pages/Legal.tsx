@@ -1,40 +1,60 @@
+/**
+ * Termos de utilização e política de privacidade — públicos, sem sessão.
+ * Texto honesto para uma instância auto-alojada: quem opera a instância é o
+ * responsável pelo tratamento, e os dados ficam nos servidores dele.
+ *
+ * O índice usa botões e não âncoras `#…`: a app encaminha pelo hash, e uma
+ * âncora mudava de página em vez de descer até à secção.
+ */
 import { useTranslation } from 'react-i18next'
-import { BrandLockup } from '../components/BrandMark'
+import { getAppName } from '../branding'
+import { Card } from '../ui/kit'
+import Moldura from './publico/Moldura'
 
-/** Termos de Utilização + Política de Privacidade — página pública, sem autenticação.
- *  Conteúdo honesto para self-hosted: quem opera a instância é o responsável pelo
- *  tratamento; os dados ficam nos servidores da organização. */
+const SECCOES = [
+  { id: 'termos', titulo: 'publico.legal.termosTitulo', paragrafos: ['termos1', 'termos2', 'termos3', 'termos4', 'termos5'] },
+  {
+    id: 'privacidade',
+    titulo: 'publico.legal.privacidadeTitulo',
+    paragrafos: ['privacidade1', 'privacidade2', 'privacidade3', 'privacidade4', 'privacidade5', 'privacidade6'],
+  },
+]
+
 export default function Legal() {
   const { t } = useTranslation()
-  const ta = (key: string): string[] => t(key, { returnObjects: true }) as string[]
+  const app = getAppName()
 
   return (
-    <div className="legal-page">
-      <header className="legal-head">
-        <a href="#/" className="brand-text">
-          <BrandLockup />
-        </a>
-        <a className="link small-link" href="#/login">{t('legal.back')}</a>
+    <Moldura pagina="legal" estreita>
+      <header className="pub-cabecalho">
+        <h1>{t('publico.legal.titulo')}</h1>
+        <p className="dx-muted">{t('publico.legal.actualizado')}</p>
       </header>
 
-      <main className="legal-body">
-        <h1>{t('legal.title')}</h1>
-        <p className="muted">{t('legal.updated')}</p>
+      <nav className="pub-indice" aria-label={t('publico.legal.indice')}>
+        {SECCOES.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            className="dx-btn dx-btn--secondary dx-btn--sm"
+            onClick={() => document.getElementById(`legal-${s.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          >
+            {t(s.titulo)}
+          </button>
+        ))}
+      </nav>
 
-        <section id="terms">
-          <h2>{t('legal.termsTitle')}</h2>
-          {ta('legal.termsBody').map((p) => (
-            <p key={p}>{p}</p>
-          ))}
+      {SECCOES.map((s) => (
+        <section key={s.id} id={`legal-${s.id}`} className="pub-legal" tabIndex={-1}>
+          <Card title={t(s.titulo)} className="pub-cartao">
+            <div className="pub-prosa">
+              {s.paragrafos.map((p) => (
+                <p key={p}>{t(`publico.legal.${p}`, { app })}</p>
+              ))}
+            </div>
+          </Card>
         </section>
-
-        <section id="privacy">
-          <h2>{t('legal.privacyTitle')}</h2>
-          {ta('legal.privacyBody').map((p) => (
-            <p key={p}>{p}</p>
-          ))}
-        </section>
-      </main>
-    </div>
+      ))}
+    </Moldura>
   )
 }

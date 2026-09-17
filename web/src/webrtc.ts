@@ -60,7 +60,7 @@ function pcConfig(base: RTCConfiguration, crypto?: FrameCrypto): RTCConfiguratio
  * subscritor conforme o tamanho da sala. Uplink sobe ~35%, downlink de
  * salas grandes cai para uma fração.
  */
-const SIMULCAST_ENCODINGS: RTCRtpEncodingParameters[] = [
+export const SIMULCAST_ENCODINGS: readonly RTCRtpEncodingParameters[] = [
   { rid: 'q', scaleResolutionDownBy: 4, maxBitrate: 300_000 },
   { rid: 'h', scaleResolutionDownBy: 2, maxBitrate: 1_200_000 },
   { rid: 'f', maxBitrate: 6_000_000 },
@@ -71,7 +71,7 @@ function addSimulcastVideo(pc: RTCPeerConnection, track: MediaStreamTrack, strea
     const tr = pc.addTransceiver(track, {
       direction: 'sendrecv',
       streams: [stream],
-      sendEncodings: SIMULCAST_ENCODINGS,
+      sendEncodings: SIMULCAST_ENCODINGS.map((e) => ({ ...e })),
     })
     return tr.sender
   } catch {
@@ -113,6 +113,12 @@ export interface Call {
   stopScreen(): Promise<void>
   /** Telemetria QoS por participante (só SFU): kbps recebidos e perda. */
   qos?(): Promise<QosReport>
+  /**
+   * Senders da CÂMARA (não do ecrã) — um no SFU, um por participante no mesh.
+   * Existe para o perfil de envio nítido (`media/sendProfile.ts`) ajustar e
+   * medir o que a câmara envia sem esta classe saber de perfis.
+   */
+  cameraSenders?(): RTCRtpSender[]
   hangup(): void
 }
 
@@ -351,6 +357,15 @@ export class MeshCall implements Call {
       await pc.setLocalDescription(offer)
       this.signal.send({ type: 'offer', to: peerId, sdp: offer.sdp! })
     }
+  }
+
+  cameraSenders(): RTCRtpSender[] {
+    const out: RTCRtpSender[] = []
+    for (const pc of this.pcs.values()) {
+      const sender = pc.getSenders().find((s) => s.track?.kind === 'video')
+      if (sender) out.push(sender)
+    }
+    return out
   }
 
   async disableVideo() {
@@ -673,6 +688,11 @@ export class SfuCall implements Call {
       await this.pc.setLocalDescription(offer)
       this.send({ type: 'sfu-offer', sdp: offer.sdp! })
     })
+  }
+
+  cameraSenders(): RTCRtpSender[] {
+    const sender = this.videoSender ?? this.pc.getSenders().find((s) => s.track?.kind === 'video' && s !== this.screenSender)
+    return sender ? [sender] : []
   }
 
   async disableVideo() {

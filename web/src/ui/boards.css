@@ -1,0 +1,213 @@
+/*
+ * Quadros — importada por `pages/Whiteboards.tsx` (fica no chunk da rota).
+ * Cores, raios e alturas vêm dos tokens.
+ */
+.board-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 240px;
+  color: var(--muted);
+}
+.board-search .dx-icon {
+  position: absolute;
+  left: 9px;
+  pointer-events: none;
+}
+.board-search .dx-input {
+  width: 100%;
+  padding-left: 28px;
+  background: var(--surface);
+}
+
+.board-page {
+  gap: 12px;
+}
+.board-page .dx-chip .dx-num {
+  font-size: var(--t-xs);
+  opacity: 0.85;
+}
+
+.board-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.board-notice .dx-alert {
+  flex: 1;
+}
+
+.board-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.board-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+}
+.board-card[data-public] {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+}
+.board-card__thumb {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 10;
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background-color: var(--raised);
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 18px 18px;
+  cursor: zoom-in;
+}
+.board-card__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.board-card__thumb .dx-skeleton {
+  width: 100%;
+  height: 100% !important;
+  border-radius: 0;
+}
+.board-card__nopreview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: var(--t-sm);
+}
+.board-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px 10px;
+  min-width: 0;
+}
+.board-card__title {
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.board-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+.board-card__foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* ------------------------------------------------------------- visor */
+.board-viewer__meta {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+.board-viewer__stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 200px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background-color: var(--surface);
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+.board-viewer__stage img {
+  display: block;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  max-width: 100%;
+  max-height: 60vh;
+  max-height: 60dvh;
+  object-fit: contain;
+  background: var(--raised);
+}
+.board-viewer__share {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.board-viewer__share-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.board-viewer__share-head > div {
+  flex: 1;
+  min-width: 200px;
+}
+.board-viewer__share h3 {
+  margin: 0 0 2px;
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+.board-viewer__share p {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+.board-viewer__url {
+  display: flex;
+  gap: 6px;
+}
+.board-viewer__url .dx-input {
+  flex: 1;
+  min-width: 0;
+}
+.dx-dialog:has(.board-viewer__stage) .dx-dialog__foot {
+  flex-wrap: wrap;
+}
+.board-delete__text {
+  margin: 0;
+}
+
+@media (max-width: 700px) {
+  .page-bar:has(.board-search) {
+    height: auto;
+    min-height: var(--top-h);
+    flex-wrap: wrap;
+    padding-block: 8px;
+  }
+  .page-bar:has(.board-search) .page-bar__actions {
+    width: 100%;
+  }
+  .board-search {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+  }
+  .board-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

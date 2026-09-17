@@ -49,6 +49,13 @@ describe('o precache vem do GRAFO, não de nomes escritos à mão', () => {
     expect(cfg).toMatch(/Studio-\[\^\/\]\+/)
   })
 
+  it('e a folha de estilo dele também', () => {
+    // A UI nova importa `ui/studio.css` na página, e o Vite faz dela um
+    // `Studio-*.css` que não aparece nos `imports` do Rollup. Fora do
+    // precache, a rota offline rebentava com «Unable to preload CSS».
+    expect(cfg).toContain('parte.viteMetadata?.importedCss')
+  })
+
   it('a Room e os modelos NÃO entram', () => {
     // A Room precisa do servidor por definição; os modelos passam dos 30 MB.
     expect(cfg).not.toMatch(/assets\\\/Room-/)
@@ -105,8 +112,11 @@ describe('guardar é local PRIMEIRO', () => {
     // Procura DENTRO da função, não no ficheiro todo: o `enviarUma` também
     // chama `uploadRecording`, e uma busca global encontrava-o e dava verde a
     // uma ordem invertida. Foi o que a primeira versão deste teste fazia.
+    // A função passou a receber o ficheiro EXPORTADO pelo editor (o projecto é
+    // não destrutivo e o que se guarda é a exportação, não a gravação crua);
+    // a ordem protegida — dispositivo primeiro, servidor depois — é a mesma.
     const s = semComentarios('web/src/pages/Studio.tsx')
-    const inicio = s.indexOf('async function guardarNaBiblioteca()')
+    const inicio = s.indexOf('async function guardarNaBiblioteca(')
     expect(inicio).toBeGreaterThan(-1)
     const corpo = s.slice(inicio, s.indexOf('\n  }', inicio))
     const iArquivo = corpo.indexOf('arquivo.guardar(')
@@ -121,5 +131,18 @@ describe('guardar é local PRIMEIRO', () => {
   it('uma falha de upload não é apresentada como erro, mas como adiamento', () => {
     const s = semComentarios('web/src/pages/Studio.tsx')
     expect(s).toContain("setGuardado(t('studio.guardadoLocal'")
+  })
+})
+
+describe('o aviso de «sem rede» é do Estúdio', () => {
+  it('aparece quando a rede cai e promete o que é verdade', () => {
+    // O e2e `offline.mjs` procura-o por `data-studio="offline"`. Se o atributo
+    // ou a condição saírem, o aviso some-se sem nada ficar vermelho aqui.
+    const s = semComentarios('web/src/pages/Studio.tsx')
+    expect(s).toMatch(/\{!online && \(\s*<div[^>]*data-studio="offline"[^>]*>\s*\{t\('studio\.offline'\)\}/)
+    expect(s).toContain("window.addEventListener('offline', desce)")
+    for (const loc of ['pt', 'en', 'fr']) {
+      expect(read(`web/src/locales/${loc}/studio.ts`)).toMatch(/^  offline: /m)
+    }
   })
 })

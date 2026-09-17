@@ -1,0 +1,106 @@
+/* Nitidez e palco imersivo — o HUD por cima do palco, a sugestão ao anfitrião
+   e as medidas nas definições. Importada pelos componentes de `room/enhance`,
+   que só existem no chunk da sala. Sem dimensões de retrato aqui (R11): o
+   canvas do efeito ocupa 100 % do elemento onde entra, definido inline. */
+
+.enh-hud {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  z-index: 6;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.enh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background: color-mix(in srgb, var(--stage) 84%, transparent);
+  color: var(--text);
+  font-size: var(--t-xs);
+  pointer-events: auto;
+}
+.enh-pill__name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.enh-pill__cost {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.enh-pill--notice {
+  padding-left: 8px;
+  border-color: var(--warning);
+}
+.enh-suggest {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(320px, calc(100% - 24px));
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-3);
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: var(--e-2);
+}
+.enh-suggest h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--t-md);
+}
+.enh-suggest p {
+  margin: 0;
+}
+.enh-suggest__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.enh-measure {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0;
+  font-size: var(--t-sm);
+}
+.enh-measure dt {
+  color: var(--muted);
+}
+.enh-measure dd {
+  margin: 0;
+}
+.enh-layers {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--t-xs);
+}
+.enh-strength {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.enh-strength input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}

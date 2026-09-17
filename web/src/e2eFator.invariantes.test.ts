@@ -26,7 +26,7 @@ const LE_O_FACTOR = /process\.env\.E2E_TIMEOUT_FACTOR/
 describe('R118 · quem espera por media honra o E2E_TIMEOUT_FACTOR', () => {
   // Só os que ESPERAM por uma ligação de media. Os que medem layout ou falam
   // com a API não têm ICE pelo meio e não precisam do factor.
-  const COM_MEDIA = ['tempos.mjs', 'estudio.mjs']
+  const COM_MEDIA = ['tempos.mjs', 'estudio.mjs', 'nitidez-imersivo.mjs']
   for (const f of COM_MEDIA) {
     it(`${f} lê o factor do ambiente`, () => {
       expect(semComentarios(f), `${f} espera por media e ignora o factor`).toMatch(LE_O_FACTOR)

@@ -1,0 +1,515 @@
+/*
+ * Painel de pesquisa estilo Odoo (ui/search/*): caixa com facetas, sugestões,
+ * menu Filtros · Agrupar por · Favoritos, paginador e lista agrupada.
+ * Só tokens: nenhuma cor, raio ou altura escritos à mão.
+ */
+
+.dx-sp {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+}
+.dx-sp__row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.dx-sp__box {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  max-width: 720px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  min-height: var(--ctl-h);
+  padding: 2px 2px 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--raised);
+  color: var(--muted);
+  cursor: text;
+}
+.dx-sp__box:focus-within,
+.dx-sp__box.is-open {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.dx-sp__facets {
+  display: contents;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.dx-sp__facet {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 24px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--t-sm);
+  overflow: hidden;
+}
+.dx-sp__facet-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: stretch;
+  padding: 0 6px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.dx-sp__facet--groupBy .dx-sp__facet-kind {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
+}
+.dx-sp__facet-text {
+  padding: 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.dx-sp__facet-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  width: 22px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.dx-sp__facet-x:hover {
+  color: var(--danger);
+}
+.dx-sp__input {
+  flex: 1;
+  min-width: 120px;
+  min-height: 26px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: var(--t-md);
+}
+.dx-sp__input:focus {
+  outline: none;
+}
+.dx-sp__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-height: 26px;
+  margin-left: auto;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.dx-sp__toggle[aria-expanded='true'],
+.dx-sp__toggle:hover {
+  color: var(--accent);
+}
+.dx-sp__aside {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-left: auto;
+  flex: none;
+}
+
+/* Sugestões enquanto se escreve. */
+.dx-sp__suggest {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: var(--s-1);
+  list-style: none;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  box-shadow: var(--e-2);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.dx-sp__opt {
+  padding: 7px 10px;
+  border-radius: var(--r-2);
+  font-size: var(--t-md);
+  color: var(--text);
+  cursor: pointer;
+}
+.dx-sp__opt.is-active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* Menu de três colunas. */
+.dx-sp__scrim {
+  display: none;
+}
+.dx-sp__menu {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 4px);
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(190px, 1fr));
+  width: min(720px, calc(100vw - 32px));
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  box-shadow: var(--e-3);
+  color: var(--text);
+}
+.dx-sp-col {
+  min-width: 0;
+  padding: var(--s-2) 0;
+  max-height: 60vh;
+  max-height: 60dvh;
+  overflow-y: auto;
+}
+.dx-sp-col + .dx-sp-col {
+  border-left: 1px solid var(--border);
+}
+.dx-sp-col__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 14px 6px;
+  font-size: var(--t-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.dx-sp-col__list,
+.dx-sp-col__sub {
+  list-style: none;
+  margin: 0;
+  padding: 2px 0;
+}
+.dx-sp-col__list.has-sep {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 6px;
+}
+.dx-sp-col__sub .dx-sp-item {
+  padding-left: 40px;
+}
+.dx-sp-col__empty,
+.dx-sp-col__err {
+  margin: 0;
+  padding: 6px 14px;
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+.dx-sp-col__err {
+  color: var(--danger);
+}
+.dx-sp-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 14px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: var(--t-md);
+  text-align: left;
+  cursor: pointer;
+}
+.dx-sp-item:hover:not(:disabled),
+.dx-sp-item:focus-visible {
+  background: var(--hover);
+  outline: none;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.dx-sp-item:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.dx-sp-item[aria-pressed='true'] {
+  font-weight: 600;
+}
+.dx-sp-item--action {
+  color: var(--accent);
+}
+.dx-sp-item__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex: none;
+  color: var(--accent);
+}
+.dx-sp-item__lvl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-2);
+  background: var(--accent-strong);
+  color: var(--raised);
+  font-size: var(--t-xs);
+}
+.dx-sp-item > .dx-icon:last-child {
+  margin-left: auto;
+}
+.dx-sp-fav {
+  display: flex;
+  align-items: center;
+}
+.dx-sp-fav__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dx-sp-fav__owner {
+  font-size: var(--t-xs);
+}
+.dx-sp-fav__del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ctl-h);
+  align-self: stretch;
+  flex: none;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.dx-sp-fav__del:hover {
+  color: var(--danger);
+}
+.dx-sp-save {
+  display: grid;
+  gap: 6px;
+  padding: 4px 14px;
+}
+
+/* Construtor de filtro personalizado. */
+.dx-sp-builder {
+  display: grid;
+  gap: var(--s-3);
+}
+.dx-sp-builder__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-2);
+}
+.dx-sp-builder__row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) minmax(140px, 1.4fr) auto;
+  align-items: center;
+  gap: var(--s-2);
+}
+.dx-sp-builder__join {
+  grid-column: 1 / -1;
+}
+.dx-sp-builder__between {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+.dx-sp-builder__multi {
+  min-height: 72px;
+}
+.dx-sp-builder__hint {
+  margin: 0;
+  font-size: var(--t-sm);
+}
+
+/* Paginador. */
+.dx-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--t-md);
+  color: var(--text);
+  white-space: nowrap;
+}
+.dx-pager__range {
+  min-height: 26px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: var(--r-2);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: text;
+}
+.dx-pager__range:hover:not(:disabled) {
+  border-color: var(--border);
+}
+.dx-pager__input {
+  min-height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.dx-pager__total {
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+/* Lista agrupada. */
+.dx-groups {
+  display: flex;
+  flex-direction: column;
+}
+.dx-group {
+  border-bottom: 1px solid var(--border);
+}
+.dx-group__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  min-height: 36px;
+  padding: 4px 12px;
+  border: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--t-md);
+  text-align: left;
+  cursor: pointer;
+}
+.dx-group__head:hover {
+  background: var(--hover);
+}
+.dx-group__head[aria-expanded='true'] {
+  font-weight: 600;
+}
+.dx-group__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dx-group__count,
+.dx-group__agg {
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+.dx-group__body {
+  padding: 0 0 var(--s-2);
+}
+.dx-group__pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 2px 8px;
+}
+.dx-groups__more {
+  align-self: center;
+  margin: var(--s-2) 0;
+}
+
+/* Barra de pesquisa de uma lista (caixa + paginador). */
+.dx-searchbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.dx-search-note {
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+
+/* Ecrã estreito: o menu é uma folha inferior. */
+@media (max-width: 600px) {
+  .dx-sp__row {
+    flex-wrap: wrap;
+  }
+  .dx-sp__box {
+    max-width: none;
+  }
+  .dx-sp__aside {
+    margin-left: 0;
+  }
+  .dx-sp__scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: var(--scrim);
+  }
+  .dx-sp__menu {
+    position: fixed;
+    z-index: 56;
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    grid-template-columns: 1fr;
+    max-height: 80vh;
+    max-height: 80dvh;
+    overflow-y: auto;
+    border-radius: var(--r-3) var(--r-3) 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .dx-sp-col {
+    max-height: none;
+    overflow: visible;
+  }
+  .dx-sp-col + .dx-sp-col {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+  .dx-sp-builder__row {
+    grid-template-columns: 1fr auto;
+  }
+  .dx-sp-builder__row > :nth-child(n) {
+    grid-column: 1;
+  }
+  .dx-sp-builder__row > button {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .dx-group__agg {
+    display: none;
+  }
+}
+
+/* Coluna estreita (Contactos): caixa numa linha, paginador por baixo; o menu
+   abre na largura do ecrã a partir da coluna. */
+.dx-searchbar--stack .dx-sp__row {
+  flex-wrap: wrap;
+}
+.dx-searchbar--stack .dx-sp__box {
+  max-width: none;
+}
+.dx-searchbar--stack .dx-sp__aside {
+  width: 100%;
+  margin-left: 0;
+  justify-content: space-between;
+}
+.dx-searchbar--stack .dx-sp__menu {
+  width: min(640px, calc(100vw - 48px));
+}

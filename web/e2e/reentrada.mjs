@@ -34,10 +34,10 @@ const novaPagina = async () =>
 // ---- O anfitrião abre a sala ----
 const page = await novaPagina()
 await entrar(page, APP, await criarConta(API, 'reent'))
-await page.getByRole('button', { name: /nova reuni/i }).first().click()
+await page.getByRole('button', { name: /iniciar agora/i }).first().click()
 await page.waitForFunction(() => /^#\/r\/[a-z-]+$/.test(location.hash), null, { timeout: 60000 })
 const codigo = await page.evaluate(() => location.hash.split('/r/')[1])
-await page.getByRole('button', { name: /entrar agora/i }).first().click({ timeout: 60000 })
+await page.getByRole('button', { name: /entrar na sessão/i }).first().click({ timeout: 60000 })
 
 // ESPERAR pelo segredo, não lê-lo de imediato: a pré-entrada desaparece ao
 // clicar, ANTES de o `joined` chegar. Ler nesse instante dava «nenhum» com o
@@ -53,12 +53,12 @@ ok(!!segredoAnfitriao, 'quem entra recebe e guarda o segredo do lugar',
 const page2 = await novaPagina()
 await entrar(page2, APP, await criarConta(API, 'reent2'))
 await page2.goto(`${APP}/#/r/${codigo}`, { waitUntil: 'domcontentloaded' })
-await page2.getByRole('button', { name: /entrar agora/i }).first().click({ timeout: 60000 })
+await page2.getByRole('button', { name: /entrar na sessão/i }).first().click({ timeout: 60000 })
 
-const pilula = page.locator('.waiting-pill')
+// A fila de espera vive na barra de baixo (template DelonixRoomGrid: «N na sala · M em espera · Admitir»).
+const pilula = page.locator('.rm-occupancy__waiting')
 await pilula.waitFor({ timeout: 90000 }).catch(() => {})
-await pilula.click().catch(() => {})
-const admitir = page.locator('.admit-accept').first()
+const admitir = page.locator('.rm-admit-accept').first()
 await admitir.waitFor({ timeout: 30000 }).catch(() => {})
 await admitir.click().catch(() => {})
 
@@ -80,11 +80,11 @@ await page2.reload({ waitUntil: 'domcontentloaded' })
 // o aviso ainda renderizado — condição verdadeira nos DOIS estados, que é
 // precisamente a armadilha do R69. Esta asserção passou com a reclamação
 // desligada até este `waitForTimeout` existir.
-await page2.locator('.controls-bar').waitFor({ timeout: 60000 }).catch(() => {})
+await page2.locator('.rm-controls').waitFor({ timeout: 60000 }).catch(() => {})
 await page2.waitForTimeout(8000)
 const estado = await page2.evaluate(() => ({
   espera: /À espera que o anfitrião/i.test(document.body.innerText || ''),
-  barra: document.querySelectorAll('.controls-bar').length,
+  barra: document.querySelectorAll('.rm-controls').length,
   texto: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 110),
 }))
 ok(!estado.espera && estado.barra === 1,
@@ -96,7 +96,7 @@ ok(!estado.espera && estado.barra === 1,
 // reportava «o lugar não foi largado» quando na verdade nunca tinha carregado
 // em sair. Um `catch` silencioso num PASSO (não numa asserção) transforma uma
 // falha do teste numa falha do produto.
-const sair = page2.locator('.ctrl.hangup')
+const sair = page2.locator('.rm-ctrl--hangup')
 await sair.waitFor({ state: 'visible', timeout: 60000 })
 await sair.click()
 const largou = await page2

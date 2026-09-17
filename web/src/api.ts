@@ -87,7 +87,10 @@ export function isAbort(e: unknown): boolean {
  * problema é o transporte.
  */
 export function isAuthFailure(e: unknown): boolean {
-  return e instanceof ApiError && (e.status === 401 || e.status === 403)
+  // Só o 401. Desde o #90 o servidor responde 403/404 com `code` a quem ESTÁ
+  // autenticado mas não pode (ex.: `recording.not_owner`): isso é uma recusa
+  // sobre um recurso, não uma sessão inválida, e nunca pode terminar a sessão.
+  return e instanceof ApiError && e.status === 401
 }
 
 /** Mensagem legível de um erro de API, com recurso ao texto dado. */
@@ -159,10 +162,12 @@ async function refreshSession(): Promise<void> {
 async function renovarUmaVez() {
   // Sem corpo: o refresh token vai no cookie HttpOnly (enviado automaticamente).
   const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'same-origin' })
-  // Só 401/403 são «a sessão não serve». Um 500/502/503 é o servidor com um
-  // problema SEU: terminar a sessão aí faz o utilizador perder o sítio onde
+  // Só 401 (cookie ausente, revogado ou expirado) e 404 (a conta do token já
+  // não existe) são «a sessão não serve» — é o contrato do `POST
+  // /api/auth/refresh`. Um 403 é uma recusa, e um 500/502/503 é o servidor com
+  // um problema SEU: terminar a sessão aí faz o utilizador perder o sítio onde
   // estava para resolver um problema que não é dele (ver isAuthFailure).
-  if (!res.ok && res.status !== 401 && res.status !== 403) {
+  if (!res.ok && res.status !== 401 && res.status !== 404) {
     throw new ApiError(res.status, null, 'refresh indisponível')
   }
   if (!res.ok) {
@@ -294,8 +299,12 @@ export interface RecordingItem extends Recording {
   share_count: number
   /** RBAC: só dono + admins da org podem descarregar (os restantes só reproduzem). */
   can_download: boolean
-  /** `ready` = há ficheiro. `failed` = houve tentativa e não há nada. */
-  status: 'ready' | 'failed' | string
+  /**
+   * `ready` = há ficheiro; `transcribing` = há ficheiro e a transcrição corre;
+   * `failed` = houve tentativa e não há nada. A linha só nasce depois de o
+   * ficheiro estar composto: não há estado «a processar».
+   */
+  status: RecordingFileStatus
   /** Causa em linguagem de utilizador, quando falhou. */
   failure_reason: string | null
 }
@@ -363,7 +372,19 @@ export interface QuarantineRow {
 
 export const listRecordings = (code: string) => request<Recording[]>(`/api/rooms/${code}/recordings`)
 
-export const recordingsLibrary = (signal?: AbortSignal) => request<RecordingItem[]>('/api/recordings', { signal })
+/**
+ * Biblioteca com metadados (`RecordingLibraryItem`). `q` pesquisa no nome,
+ * autor, sala, descrição, etiquetas e na TRANSCRIÇÃO (e traz `snippet`).
+ * `scope: 'published'` lista as publicadas que a pessoa vê, incluindo as da
+ * organização em que não participou.
+ */
+export const recordingsLibrary = (signal?: AbortSignal, params: { q?: string; scope?: 'mine' | 'published' } = {}) => {
+  const q = new URLSearchParams()
+  if (params.q) q.set('q', params.q)
+  if (params.scope) q.set('scope', params.scope)
+  const s = q.toString()
+  return request<RecordingLibraryItem[]>(`/api/recordings${s ? `?${s}` : ''}`, { signal })
+}
 
 export const searchUsers = (q: string) =>
   request<User[]>(`/api/users?q=${encodeURIComponent(q)}`)
@@ -456,6 +477,12 @@ export interface PublicShareInfo {
   has_password: boolean
 }
 
+/** Ficheiro de uma gravação por link público — o token (e a palavra-passe, se houver) é a credencial. */
+export function publicRecordingContentPath(token: string, password?: string): string {
+  const q = password ? `?password=${encodeURIComponent(password)}` : ''
+  return `/api/public/recordings/${encodeURIComponent(token)}/content${q}`
+}
+
 export async function getPublicShare(token: string, password?: string): Promise<PublicShareInfo> {
   const url = `/api/public/recordings/${token}${password ? `?password=${encodeURIComponent(password)}` : ''}`
   const res = await fetch(url, { credentials: 'same-origin' })
@@ -502,7 +529,7 @@ export const startMeeting = (id: string) =>
   request<{ code: string; kind: 'video' | 'voice' }>(`/api/meetings/${id}/start`, { method: 'POST' })
 
 export const respondMeeting = (id: string, status: 'accepted' | 'declined', reason = '') =>
-  request(`/api/meetings/${id}/invitees/me`, { method: 'PUT', body: JSON.stringify({ status, reason }) })
+  request<InviteeResponse>(`/api/meetings/${id}/invitees/me`, { method: 'PUT', body: JSON.stringify({ status, reason }) })
 
 export const meetingInvitees = (id: string) => request<InviteeResponse[]>(`/api/meetings/${id}/invitees`)
 
@@ -516,8 +543,24 @@ export const createMeetingRoom = (orgId: string, name: string, location: string,
     body: JSON.stringify({ name, location, capacity }),
   })
 
+/**
+ * A mesma escrita da acta, mas para o `beforeunload`: `keepalive` deixa o
+ * pedido acabar depois de a página fechar, e por isso não há resposta a ler
+ * nem renovação de sessão a tentar. `false` quando não há token.
+ */
+export function saveMinutesOnUnload(code: string, minutes: string, transcript: string): boolean {
+  if (!accessToken) return false
+  void fetch(`/api/rooms/${code}/minutes`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ minutes, transcript }),
+    keepalive: true,
+  }).catch(() => {})
+  return true
+}
+
 export const saveMinutesByRoom = (code: string, minutes: string, transcript: string) =>
-  request(`/api/rooms/${code}/minutes`, { method: 'PUT', body: JSON.stringify({ minutes, transcript }) })
+  request<void>(`/api/rooms/${code}/minutes`, { method: 'PUT', body: JSON.stringify({ minutes, transcript }) })
 
 // ---------- Enterprise ----------
 
@@ -562,6 +605,8 @@ export const shareWhiteboard = (id: string, isPublic: boolean) =>
     body: JSON.stringify({ public: isPublic }),
   })
 export const whiteboardPngUrl = (id: string) => `/api/whiteboards/${id}/image`
+/** Vista pública só-leitura do PNG (sem sessão; só enquanto o quadro é público). */
+export const publicWhiteboardImagePath = (token: string) => `/api/public/whiteboards/${encodeURIComponent(token)}/image`
 
 export interface Webhook {
   id: string
@@ -572,23 +617,26 @@ export interface Webhook {
   active: boolean
 }
 
+/** Resposta do `PATCH /api/orgs/{org_id}`: os valores como ficaram gravados. */
+export interface OrgSettingsUpdated {
+  domain: string
+  retention_days: number
+}
+
 export const updateOrgSettings = (
   orgId: string,
   domain: string,
   retentionDays: number,
   quotas?: Partial<OrgQuotas>,
 ) =>
-  request(`/api/orgs/${orgId}`, {
+  request<OrgSettingsUpdated>(`/api/orgs/${orgId}`, {
     method: 'PATCH',
     body: JSON.stringify({ domain, retention_days: retentionDays, ...quotas }),
   })
 
 /** Busca autenticada de um recurso binário → object URL (para <img>). */
 export async function authedBlobUrl(path: string): Promise<string> {
-  const res = await fetch(path, {
-    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
-  })
-  if (!res.ok) throw new Error(`blob ${res.status}`)
+  const res = await authedFetch(path)
   return URL.createObjectURL(await res.blob())
 }
 
@@ -621,7 +669,8 @@ export interface Branch {
   name: string
   location: string
 }
-export interface Employee {
+/** `phone`/`phone_source`/`can_sms` vêm da extensão de SMS (ADR-0005 §Contactos). */
+export interface Employee extends Partial<EmployeeSmsFields> {
   user_id: string
   username: string
   email: string
@@ -699,10 +748,10 @@ export interface QosSample {
 
 /** Tempos de estabelecimento de UMA sessão (ver `callTimings.ts`). */
 export const postTimings = (code: string, t: import('./callTimings').Tempos) =>
-  request(`/api/rooms/${code}/join-timings`, { method: 'POST', body: JSON.stringify(t) })
+  request<void>(`/api/rooms/${code}/join-timings`, { method: 'POST', body: JSON.stringify(t) })
 
 export const postQos = (code: string, s: QosSample) =>
-  request(`/api/rooms/${code}/quality-samples`, { method: 'POST', body: JSON.stringify(s) })
+  request<void>(`/api/rooms/${code}/quality-samples`, { method: 'POST', body: JSON.stringify(s) })
 
 /** Tradução de uma linha de legenda via LLM local (Ollama in-cluster). */
 export const translateCaption = (text: string, target: string) =>
@@ -732,7 +781,7 @@ export const addEmployee = (
   body: { email: string; username?: string; password?: string; title?: string; role?: string; branch_id?: string },
 ) => request<Employee>(`/api/orgs/${orgId}/members`, { method: 'POST', body: JSON.stringify(body) })
 export const removeEmployee = (orgId: string, userId: string) =>
-  request(`/api/orgs/${orgId}/members/${userId}`, { method: 'DELETE' })
+  request<void>(`/api/orgs/${orgId}/members/${userId}`, { method: 'DELETE' })
 export const listGroups = (orgId: string) => request<Group[]>(`/api/orgs/${orgId}/groups`)
 export const createGroup = (orgId: string, name: string, memberIds: string[]) =>
   request<Group>(`/api/orgs/${orgId}/groups`, { method: 'POST', body: JSON.stringify({ name, member_ids: memberIds }) })
@@ -812,6 +861,9 @@ export const savePlatformStorage = (cfg: StorageConfigSaveReq) =>
     body: JSON.stringify(cfg),
   })
 
+/** Manifesto K8s do PVC (YAML); pede sessão de operador, busca-se com `authedBlobUrl`. */
+export const PLATFORM_STORAGE_PVC_MANIFEST_PATH = '/api/operator/v1/storage/pvc-manifest'
+
 export const testPlatformStorage = () =>
   request<{ ok: boolean; type: string; message: string }>('/api/operator/v1/storage/test', {
     method: 'POST',
@@ -836,7 +888,9 @@ export async function tryRefreshToken(): Promise<boolean> {
   }
 }
 
-export const ackMissedCalls = () => request('/api/users/me/missed-calls/acknowledge', { method: 'POST' })
+/** Marca as chamadas perdidas como vistas; devolve quantas mudaram (#90). */
+export const ackMissedCalls = () =>
+  request<{ updated: number }>('/api/users/me/missed-calls/acknowledge', { method: 'POST' })
 
 export async function uploadRecording(code: string, blob: Blob, name: string): Promise<Recording> {
   const res = await fetch(`/api/rooms/${code}/recordings?name=${encodeURIComponent(name)}`, {
@@ -855,16 +909,43 @@ export interface RoomNotes {
 }
 export const roomNotes = (code: string) => request<RoomNotes>(`/api/rooms/${code}/minutes`)
 
+/**
+ * Pedido binário autenticado (vídeo, VTT, miniatura, .ics). O `<video>` e o
+ * `<a download>` não enviam o Bearer, por isso o ficheiro vem por aqui e vira
+ * URL de objecto. Renova a sessão uma vez num 401, como o `request`; um 403
+ * ou 404 chega a quem chama como `ApiError`, com o corpo (`code`) quando há.
+ */
+async function authedFetch(path: string, retry = true): Promise<Response> {
+  const res = await fetch(path, { headers: authHeader(), credentials: 'same-origin' })
+  if (res.status === 401 && retry && localStorage.getItem('dx_user')) {
+    await refreshSession()
+    return authedFetch(path, false)
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new ApiError(res.status, body, (body as { error?: string } | null)?.error ?? res.statusText ?? 'request failed')
+  }
+  return res
+}
+
+/**
+ * O FICHEIRO da gravação (`…/content`). `GET /api/recordings/{id}` sem
+ * `/content` são os metadados em JSON: um corpo JSON aqui é o sinal de que o
+ * caminho está errado, e recusa-se em vez de o dar ao `<video>` como vídeo.
+ */
+async function recordingFile(id: string, download: boolean): Promise<Blob> {
+  const res = await authedFetch(`/api/recordings/${id}/content${download ? '?dl=1' : ''}`)
+  if ((res.headers.get('content-type') ?? '').includes('json')) throw new ApiError(415, null, 'a resposta não é o ficheiro da gravação')
+  return res.blob()
+}
+
 /** URL de objeto para reproduzir a gravação inline (o <video> não envia Bearer). */
-export async function recordingObjectUrl(rec: Recording): Promise<string> {
-  const res = await fetch(`/api/recordings/${rec.id}/content`, { headers: authHeader() })
-  if (!res.ok) throw new Error('failed to load recording')
-  return URL.createObjectURL(await res.blob())
+export async function recordingObjectUrl(rec: Pick<Recording, 'id'>): Promise<string> {
+  return URL.createObjectURL(await recordingFile(rec.id, false))
 }
 
 export async function downloadMeetingIcs(id: string, title: string): Promise<void> {
-  const res = await fetch(`/api/meetings/${id}/calendar.ics`, { headers: authHeader() })
-  if (!res.ok) throw new Error('ics failed')
+  const res = await authedFetch(`/api/meetings/${id}/calendar.ics`)
   const url = URL.createObjectURL(await res.blob())
   const el = document.createElement('a')
   el.href = url
@@ -874,11 +955,9 @@ export async function downloadMeetingIcs(id: string, title: string): Promise<voi
 }
 
 export async function downloadRecording(rec: Recording): Promise<void> {
-  // ?dl=1 → o servidor exige a permissão de download (RBAC: dono + admin da org).
-  const res = await fetch(`/api/recordings/${rec.id}/content?dl=1`, { headers: authHeader() })
-  if (res.status === 401 || res.status === 403) throw new Error('Sem permissão para descarregar')
-  if (!res.ok) throw new Error('download failed')
-  const url = URL.createObjectURL(await res.blob())
+  // ?dl=1 → o servidor exige a permissão de download (RBAC: dono + admin da
+  // org) e responde 403 aos outros; o erro chega a quem chama com o `code`.
+  const url = URL.createObjectURL(await recordingFile(rec.id, true))
   const a = document.createElement('a')
   a.href = url
   a.download = rec.filename
@@ -996,7 +1075,7 @@ export async function patchActionItem(
 }
 
 export async function deleteActionItem(meetingId: string, itemId: string): Promise<void> {
-  await request(`/api/meetings/${meetingId}/action-plan/items/${itemId}`, { method: 'DELETE' })
+  await request<void>(`/api/meetings/${meetingId}/action-plan/items/${itemId}`, { method: 'DELETE' })
 }
 
 // ---------- SSO Config (admin) ----------
@@ -1031,3 +1110,995 @@ export async function deleteSsoConfig(orgId: string): Promise<void> {
 function authHeader(): Record<string, string> {
   return accessToken ? { Authorization: `Bearer ${accessToken}` } : {}
 }
+
+// ---------- frontend/b1-sala ----------
+
+/** Campos que o histórico de chat passou a trazer (fios e reacções). */
+export interface ChatHistoryMsg {
+  /** Mensagem a que esta responde (fio), ou `null`. */
+  parent_id?: string | null
+  /** Contagem de reacções por emoji (`{}` sem reacções). */
+  reactions?: Record<string, number>
+  /** Conversa directa: a conta que a recebe. `null` = mensagem pública. O
+   *  servidor só devolve as directas a quem as enviou e a quem as recebeu. */
+  to_user_id?: string | null
+  to_username?: string | null
+}
+
+/** Quem espera na sala de espera (só dono/co-anfitrião — 403/404 aos outros). */
+export interface WaitingPeer {
+  peer_id: string
+  username: string
+  origin?: 'sso' | 'password' | 'guest' | 'pstn' | 'bot'
+  title?: string
+  /** Epoch ms de quando começou a esperar. */
+  since: number
+}
+
+/**
+ * Espreitar a sala de espera ANTES de entrar. O `?room=` é a chave de
+ * afinidade do balanceador: a fila vive na memória do pod da sala.
+ */
+export const roomWaiting = (code: string) =>
+  request<WaitingPeer[]>(`/api/rooms/${code}/waiting?room=${encodeURIComponent(code)}`)
+
+/** Resultado de uma sondagem de rede contra este servidor. */
+export interface NetProbeResult {
+  download_bytes: number
+  download_ms: number
+  /** kbit/s medidos no cliente. */
+  download_kbps: number
+  upload_bytes: number
+  /** Tempo a ler o corpo, medido NO SERVIDOR. */
+  upload_server_ms: number
+  upload_kbps: number
+}
+
+/**
+ * Sondagem de descarga e subida (tecto 4 MiB por pedido; 30 sondagens por
+ * conta por minuto). `bytes` é por sentido; por omissão 256 KiB.
+ */
+export async function netProbe(bytes = 256 * 1024, signal?: AbortSignal): Promise<NetProbeResult> {
+  const t0 = performance.now()
+  const dl = await fetch(`/api/net-probe?bytes=${bytes}`, { headers: authHeader(), cache: 'no-store', signal })
+  if (!dl.ok) throw new ApiError(dl.status, null, `net-probe ${dl.status}`)
+  const down = await dl.arrayBuffer()
+  const downloadMs = Math.max(1, performance.now() - t0)
+
+  const up = await fetch('/api/net-probe', {
+    method: 'POST',
+    headers: { ...authHeader(), 'Content-Type': 'application/octet-stream' },
+    body: new Uint8Array(bytes),
+    signal,
+  })
+  if (!up.ok) throw new ApiError(up.status, null, `net-probe ${up.status}`)
+  const r = (await up.json()) as { bytes: number; server_ms: number }
+  const serverMs = Math.max(1, r.server_ms)
+  return {
+    download_bytes: down.byteLength,
+    download_ms: downloadMs,
+    download_kbps: (down.byteLength * 8) / downloadMs,
+    upload_bytes: r.bytes,
+    upload_server_ms: r.server_ms,
+    upload_kbps: (r.bytes * 8) / serverMs,
+  }
+}
+// ---------- frontend/b1-gravacoes ----------
+//
+// Contrato das rotas abertas pelo branch `frontend/b1-gravacoes` (migrações
+// 0040–0046). Os tipos estendem os que já existem em vez de os alterar, para a
+// integração com os outros branches do lote ser trivial.
+
+/** Pedido cuja resposta de sucesso não tem corpo (`204 No Content`). */
+async function requestEmpty(path: string, options: RequestInit = {}, retry = true): Promise<void> {
+  const headers: Record<string, string> = {
+    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(options.headers as Record<string, string>),
+  }
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+  const res = await fetch(path, { ...options, headers, credentials: 'same-origin' })
+  if (res.status === 401 && retry && localStorage.getItem('dx_user')) {
+    await refreshSession()
+    return requestEmpty(path, options, false)
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new ApiError(res.status, body, body?.error ?? res.statusText ?? 'request failed')
+  }
+}
+
+export type SessionKind = 'meeting' | 'training' | 'broadcast' | 'hybrid'
+export type RecordQuality = '2160p' | '1080p' | '720p' | 'audio'
+/** Estado do ficheiro. Não há `processing`: a linha só nasce com o ficheiro composto. */
+export type RecordingFileStatus = 'transcribing' | 'ready' | 'failed'
+export type TranscriptStatus = 'none' | 'transcribing' | 'ready' | 'failed'
+
+/** Página de uma listagem por cursor (`page_size` ≤ 100, `page_token` opaco). */
+export interface Page<T> {
+  items: T[]
+  next_page_token: string | null
+}
+
+export interface PageParams {
+  page_size?: number
+  page_token?: string | null
+}
+
+function pageQuery(p?: PageParams): string {
+  const q = new URLSearchParams()
+  if (p?.page_size) q.set('page_size', String(p.page_size))
+  if (p?.page_token) q.set('page_token', p.page_token)
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
+
+/** Item da biblioteca com metadados de media, estados, contagens e publicação. */
+export interface RecordingLibraryItem extends RecordingItem {
+  status: RecordingFileStatus
+  /** `status`, com `published` quando está pronta e publicada. */
+  state: RecordingFileStatus | 'published'
+  progress_pct: number | null
+  kind: SessionKind
+  /** Medidos com ffprobe; `null` = não foi possível medir (nunca inventado). */
+  duration_ms: number | null
+  width: number | null
+  height: number | null
+  fps: number | null
+  video_codec: string | null
+  audio_codec: string | null
+  has_thumbnail: boolean
+  transcript_status: TranscriptStatus
+  transcript_language: string | null
+  transcribed_at: string | null
+  chapter_count: number
+  comment_count: number
+  view_count: number
+  participant_count: number
+  /** Línguas com legenda publicada. */
+  caption_languages: string[]
+  description: string
+  tags: string[]
+  visibility: 'private' | 'org'
+  published_at: string | null
+  can_manage: boolean
+  /** Excerto com os termos entre «», só numa pesquisa (`q`). */
+  snippet?: string | null
+  uploader_org_id: string | null
+  uploader_org_name: string | null
+}
+
+/** Uma gravação: o mesmo item da biblioteca (404 se não a vê). */
+export const getRecording = (id: string, signal?: AbortSignal) => request<RecordingLibraryItem>(`/api/recordings/${id}`, { signal })
+
+/** Muda nome (`filename`), descrição e etiquetas. Só quem gere (`can_manage`). */
+export const updateRecording = (id: string, patch: { filename?: string; description?: string; tags?: string[] }) =>
+  request<RecordingLibraryItem>(`/api/recordings/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
+
+/** Publica para a organização do autor. `409 recording.no_file` numa falhada. */
+export const publishRecording = (id: string) =>
+  request<RecordingLibraryItem>(`/api/recordings/${id}/publication`, {
+    method: 'PUT',
+    body: JSON.stringify({ visibility: 'org' }),
+  })
+
+/** Despublica (`204`). `404 recording.not_published` se não estava publicada. */
+export const unpublishRecording = (id: string) => requestEmpty(`/api/recordings/${id}/publication`, { method: 'DELETE' })
+
+/** URL de objecto da miniatura (o `<img>` não envia Bearer). Rejeita com 404 se não houver. */
+export async function recordingThumbnailUrl(id: string): Promise<string> {
+  const res = await authedFetch(`/api/recordings/${id}/thumbnail`)
+  return URL.createObjectURL(await res.blob())
+}
+
+/** Regista uma visualização (uma por pessoa por dia). */
+export const recordRecordingView = (id: string) => requestEmpty(`/api/recordings/${id}/views`, { method: 'POST' })
+
+export interface RecordingParticipant {
+  user_id: string
+  username: string
+  joined_at: string
+}
+
+export const recordingParticipants = (id: string, page?: PageParams) =>
+  request<Page<RecordingParticipant>>(`/api/recordings/${id}/participants${pageQuery(page)}`)
+
+export const roomParticipants = (code: string, page?: PageParams) =>
+  request<Page<RecordingParticipant>>(`/api/rooms/${code}/participants${pageQuery(page)}`)
+
+export interface TranscriptSegment {
+  start_ms: number
+  end_ms: number
+  text: string
+  confidence: number | null
+}
+
+export interface RecordingTranscript {
+  recording_id: string
+  status: TranscriptStatus
+  progress_pct: number | null
+  language: string | null
+  /** Média de exp(avg_logprob) dos segmentos, 0–1. */
+  confidence: number | null
+  transcribed_at: string | null
+  error: string | null
+  text: string
+  segments: TranscriptSegment[]
+}
+
+export const recordingTranscript = (id: string, signal?: AbortSignal) =>
+  request<RecordingTranscript>(`/api/recordings/${id}/transcript`, { signal })
+
+export interface RecordingComment {
+  id: string
+  recording_id: string
+  user_id: string
+  username: string
+  /** Instante do vídeo; `null` = comentário à gravação inteira. */
+  t_ms: number | null
+  body: string
+  created_at: string
+  /** `null` se nunca foi editado. */
+  edited_at: string | null
+  can_delete: boolean
+}
+
+export const recordingComments = (id: string, page?: PageParams) =>
+  request<Page<RecordingComment>>(`/api/recordings/${id}/comments${pageQuery(page)}`)
+
+export const addRecordingComment = (id: string, body: string, tMs?: number | null) =>
+  request<RecordingComment>(`/api/recordings/${id}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ body, t_ms: tMs ?? null }),
+  })
+
+export const deleteRecordingComment = (id: string, commentId: string) =>
+  requestEmpty(`/api/recordings/${id}/comments/${commentId}`, { method: 'DELETE' })
+
+export interface RecordingChapter {
+  id: string
+  recording_id: string
+  t_ms: number
+  title: string
+  source: 'auto' | 'manual'
+  created_at: string
+}
+
+export const recordingChapters = (id: string) => request<RecordingChapter[]>(`/api/recordings/${id}/chapters`)
+
+export const addRecordingChapter = (id: string, tMs: number, title: string) =>
+  request<RecordingChapter>(`/api/recordings/${id}/chapters`, {
+    method: 'POST',
+    body: JSON.stringify({ t_ms: tMs, title }),
+  })
+
+export const updateRecordingChapter = (id: string, chapterId: string, patch: { t_ms?: number; title?: string }) =>
+  request<RecordingChapter>(`/api/recordings/${id}/chapters/${chapterId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+export const deleteRecordingChapter = (id: string, chapterId: string) =>
+  requestEmpty(`/api/recordings/${id}/chapters/${chapterId}`, { method: 'DELETE' })
+
+/**
+ * Gera (ou volta a gerar) os capítulos automáticos pelo LLM local; os manuais
+ * ficam. `409` sem transcrição, `503` sem LLM.
+ */
+export const generateRecordingChapters = (id: string) =>
+  request<RecordingChapter[]>(`/api/recordings/${id}/chapters/generate`, { method: 'POST' })
+
+// ---------- IA local no servidor (Ollama) para o Estúdio ----------
+
+/** Estado do LLM local visto pela organização. Sempre 200: o erro vem em `error`. */
+export interface StudioAiStatus {
+  configured: boolean
+  reachable: boolean
+  model: string
+  model_installed: boolean | null
+  error: string | null
+}
+
+export const studioAiStatus = (orgId: string, signal?: AbortSignal) =>
+  request<StudioAiStatus>(`/api/orgs/${orgId}/ai/status`, { signal })
+
+export type StudioAiTask = 'summary' | 'publication' | 'fillers'
+
+export interface StudioAiRequest {
+  task: StudioAiTask
+  language?: string
+  title?: string
+  segments: { start_ms: number; end_ms: number; text: string }[]
+}
+
+export interface StudioAiSummary {
+  summary: string
+  chapters: { t_ms: number; title: string }[]
+}
+export interface StudioAiPublication {
+  title: string
+  description: string
+  tags: string[]
+}
+export interface StudioAiFillers {
+  terms: string[]
+}
+
+/**
+ * Pede ao LLM local da organização (Ollama, pelo servidor — o browser nunca
+ * fala com o Ollama). Nada fica guardado no servidor. `503` com a razão quando
+ * o modelo não está disponível; `429` quando a organização já tem um pedido a
+ * correr.
+ */
+export const studioAi = <T,>(orgId: string, body: StudioAiRequest, signal?: AbortSignal) =>
+  request<T>(`/api/orgs/${orgId}/ai/suggestions`, { method: 'POST', body: JSON.stringify(body), signal })
+
+export interface RecordingCaption {
+  recording_id: string
+  lang: string
+  source: 'upload' | 'transcript' | 'translation'
+  status: 'generating' | 'draft' | 'published' | 'failed'
+  progress_pct: number | null
+  error: string | null
+  created_at: string
+  updated_at: string
+  published_at: string | null
+}
+
+export const recordingCaptions = (id: string) => request<RecordingCaption[]>(`/api/recordings/${id}/captions`)
+
+export const recordingCaption = (id: string, lang: string) =>
+  request<RecordingCaption & { vtt: string }>(`/api/recordings/${id}/captions/${lang}`)
+
+/** URL de objecto do VTT para `<track src>` (o elemento não envia Bearer). */
+export async function recordingCaptionVttUrl(id: string, lang: string): Promise<string> {
+  // 409 enquanto a legenda gera ou se falhou: quem chama mostra o estado.
+  const res = await authedFetch(`/api/recordings/${id}/captions/${lang}/vtt`)
+  return URL.createObjectURL(await res.blob())
+}
+
+export const putRecordingCaption = (id: string, lang: string, vtt: string, publish = false) =>
+  request<RecordingCaption>(`/api/recordings/${id}/captions/${lang}`, {
+    method: 'PUT',
+    body: JSON.stringify({ vtt, publish }),
+  })
+
+export const setRecordingCaptionStatus = (id: string, lang: string, status: 'draft' | 'published') =>
+  request<RecordingCaption>(`/api/recordings/${id}/captions/${lang}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  })
+
+export const deleteRecordingCaption = (id: string, lang: string) =>
+  requestEmpty(`/api/recordings/${id}/captions/${lang}`, { method: 'DELETE' })
+
+/**
+ * Gera legenda: na língua da transcrição sai já (rascunho); noutra língua é
+ * traduzida em segundo plano (`status: 'generating'`, ver `progress_pct`).
+ */
+export const generateRecordingCaption = (id: string, lang?: string) =>
+  request<RecordingCaption>(`/api/recordings/${id}/captions/generate`, {
+    method: 'POST',
+    body: JSON.stringify(lang ? { lang } : {}),
+  })
+
+export interface RecordingUploadResult extends Recording {
+  kind: SessionKind
+  status: RecordingFileStatus
+  duration_ms: number | null
+  width: number | null
+  height: number | null
+  fps: number | null
+  video_codec: string | null
+  audio_codec: string | null
+  has_thumbnail: boolean
+}
+
+/** Upload que declara o tipo de sessão (o estúdio envia `broadcast`) e devolve os metadados medidos. */
+export async function uploadRecordingWithKind(
+  code: string,
+  blob: Blob,
+  name: string,
+  kind?: SessionKind,
+): Promise<RecordingUploadResult> {
+  const q = new URLSearchParams({ name })
+  if (kind) q.set('kind', kind)
+  const res = await fetch(`/api/rooms/${code}/recordings?${q}`, {
+    method: 'POST',
+    headers: authHeader(),
+    body: blob,
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new ApiError(res.status, body, body?.error ?? 'upload failed')
+  }
+  return res.json()
+}
+
+/** Opções de sessão de uma reunião agendada (passadas à sala no arranque). */
+export interface MeetingSessionOptions {
+  format: SessionKind
+  waiting_room: boolean
+  auto_record: boolean
+  record_quality: RecordQuality
+}
+
+export interface MeetingWithOptions extends Omit<Meeting, 'my_status'>, MeetingSessionOptions {
+  my_status?: 'owner' | 'pending' | 'accepted' | 'declined' | 'tentative'
+  /** Convidados (sem o anfitrião), qualquer que seja a resposta. */
+  invitee_count: number
+  /** Sistema de origem (`odoo`), ou `null` se criada no Meet. */
+  external_source: string | null
+}
+
+export const listMeetingsWithOptions = (signal?: AbortSignal) =>
+  request<MeetingWithOptions[]>('/api/meetings', { signal })
+
+export const createMeetingWithOptions = (
+  m: Parameters<typeof createMeeting>[0] & Partial<MeetingSessionOptions>,
+) =>
+  request<Meeting & MeetingSessionOptions & { conflicts: Conflicts }>('/api/meetings', {
+    method: 'POST',
+    body: JSON.stringify(m),
+  })
+
+export const startMeetingWithOptions = (id: string) =>
+  request<{ code: string; kind: 'video' | 'voice' } & MeetingSessionOptions>(`/api/meetings/${id}/start`, {
+    method: 'POST',
+  })
+
+export const respondMeetingStatus = (id: string, status: 'accepted' | 'declined' | 'tentative', reason = '') =>
+  request<InviteeResponse>(`/api/meetings/${id}/invitees/me`, { method: 'PUT', body: JSON.stringify({ status, reason }) })
+
+// ---------- frontend/b1-emissao ----------
+
+/**
+ * Destino de directo GUARDADO pela organização (`server/src/stream_destinations.rs`).
+ *
+ * A chave de emissão NÃO vem aqui, nem cifrada: depois de guardada só volta
+ * `key_set: true`. Para emitir com ele, passa `{ id }` no `Destino` do
+ * `studio/directo.ts` — o servidor decifra a chave do lado dele.
+ */
+export type StreamPlatform = 'youtube' | 'facebook' | 'linkedin' | 'twitch' | 'rtmp'
+
+export interface StreamDestination {
+  id: string
+  org_id: string
+  label: string
+  platform: StreamPlatform
+  /** URL base, sem a chave. */
+  rtmp_url: string
+  key_set: true
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  last_used_at: string | null
+  /** Como acabou a última emissão que o usou: `ok` (esteve no ar) ou `erro`. */
+  last_status: 'ok' | 'erro' | null
+  last_error: string | null
+}
+
+export interface StreamDestinationCreate {
+  label: string
+  /** Omitido: o servidor deriva do host do URL. */
+  platform?: StreamPlatform
+  rtmp_url: string
+  stream_key: string
+}
+
+/** Omitir um campo mantém-no; `stream_key` presente SUBSTITUI a chave guardada. */
+export type StreamDestinationPatch = Partial<StreamDestinationCreate>
+
+/** Lista (membro da organização). No máximo 50 por organização. */
+export const listStreamDestinations = (orgId: string, signal?: AbortSignal) =>
+  request<StreamDestination[]>(`/api/orgs/${orgId}/stream-destinations`, { signal })
+
+export const getStreamDestination = (orgId: string, id: string, signal?: AbortSignal) =>
+  request<StreamDestination>(`/api/orgs/${orgId}/stream-destinations/${id}`, { signal })
+
+/** Cria (administrador). `409` = nome repetido ou tecto; `503` = servidor sem `SECRETS_KEY`. */
+export const createStreamDestination = (orgId: string, body: StreamDestinationCreate) =>
+  request<StreamDestination>(`/api/orgs/${orgId}/stream-destinations`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+/** Altera (administrador). */
+export const updateStreamDestination = (orgId: string, id: string, patch: StreamDestinationPatch) =>
+  request<StreamDestination>(`/api/orgs/${orgId}/stream-destinations/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+/**
+ * Apaga (administrador). O servidor responde `204` sem corpo, que o `request`
+ * (que lê sempre JSON) não sabe tratar — por isso este pedido tem o seu
+ * próprio caminho, com a mesma renovação de sessão no `401`.
+ */
+export async function deleteStreamDestination(orgId: string, id: string): Promise<void> {
+  const path = `/api/orgs/${orgId}/stream-destinations/${id}`
+  const tentar = () =>
+    fetch(path, { method: 'DELETE', headers: authHeader(), credentials: 'same-origin' })
+  let res = await tentar()
+  if (res.status === 401 && localStorage.getItem('dx_user')) {
+    await refreshSession()
+    res = await tentar()
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new ApiError(res.status, body, body?.error ?? res.statusText ?? 'request failed')
+  }
+}
+
+// ---------- frontend/l1-consola ----------
+
+/** `GET /api/status` — público, sem sessão (`server/src/main.rs` `status`). */
+export interface ServerStatus {
+  status: 'ok' | 'degraded' | string
+  api: boolean
+  db: boolean
+  uptime_secs: number
+  version: string
+}
+export async function serverStatus(signal?: AbortSignal): Promise<ServerStatus> {
+  const r = await fetch('/api/status', { signal, cache: 'no-store' })
+  if (!r.ok) throw new ApiError(r.status, null, r.statusText)
+  return (await r.json()) as ServerStatus
+}
+
+/**
+ * `GET /api/orgs/{org}/audit/verify` — recalcula a cadeia de hashes do registo
+ * de auditoria (migração 0037). Só admins. `intact: false` diz em que registo
+ * a cadeia partiu.
+ */
+export interface AuditChainCheck {
+  intact: boolean
+  entries: number
+  broken_at_seq: number | null
+  detail: string
+}
+export const verifyAudit = (orgId: string, signal?: AbortSignal) =>
+  request<AuditChainCheck>(`/api/orgs/${orgId}/audit-events/verification`, { signal })
+
+// Dial-in PSTN — plano de controlo (`server/src/voice.rs`). Salas de voz com
+// número e PIN, inventário de DIDs, CDR e resumo de facturação. A camada de
+// media (Kamailio + FreeSWITCH, `voice/`) e a ponte FreeSWITCH↔SFU são outra
+// coisa: sem a ponte, quem liga fala numa conferência só de voz, não na sala.
+
+export interface VoiceRoomCreated {
+  id: string
+  room_code: string
+  pin: string
+  dial_in_number: string | null
+  media_backend: string
+}
+export interface VoiceRoom {
+  id: string
+  org_id: string
+  room_code: string
+  pin: string
+  did_id: string | null
+  media_backend: string
+  status: 'active' | 'closed' | string
+  created_at: string
+}
+export interface VoiceParticipant {
+  id: string
+  channel: string
+  caller_number: string
+  joined_at: string
+  left_at: string | null
+}
+export interface VoiceDid {
+  id: string
+  org_id: string | null
+  e164: string
+  market: string
+  model: 'shared' | 'dedicated' | string
+  provider: string
+  active: boolean
+  created_at: string
+}
+export interface VoiceCdr {
+  id: string
+  direction: string
+  caller_number: string
+  did_e164: string
+  duration_secs: number
+  cost_estimate: number
+  started_at: string
+  ended_at: string | null
+}
+export type VoicePeriod = 'week' | 'month' | 'quarter' | 'year'
+export interface VoiceBilling {
+  period: string
+  calls: number
+  total_minutes: number
+  total_cost: number
+  currency_note: string
+}
+
+export const createVoiceRoom = (orgId: string, roomCode: string, didId?: string) =>
+  request<VoiceRoomCreated>(`/api/orgs/${orgId}/voice/rooms`, {
+    method: 'POST',
+    body: JSON.stringify({ room_code: roomCode, ...(didId ? { did_id: didId } : {}) }),
+  })
+export const getVoiceRoom = (orgId: string, id: string) => request<VoiceRoom>(`/api/orgs/${orgId}/voice/rooms/${id}`)
+export const voiceRoomParticipants = (orgId: string, id: string) =>
+  request<VoiceParticipant[]>(`/api/orgs/${orgId}/voice/rooms/${id}/participants`)
+/** `204` (#90). */
+export const closeVoiceRoom = (orgId: string, id: string) =>
+  request<void>(`/api/orgs/${orgId}/voice/rooms/${id}/close`, { method: 'POST' })
+export const listVoiceDids = (orgId: string, signal?: AbortSignal) =>
+  request<VoiceDid[]>(`/api/orgs/${orgId}/voice/dids`, { signal })
+export const createVoiceDid = (
+  orgId: string,
+  did: { e164: string; market?: string; model?: 'shared' | 'dedicated'; provider?: string; org_scoped?: boolean },
+) => request<VoiceDid>(`/api/orgs/${orgId}/voice/dids`, { method: 'POST', body: JSON.stringify(did) })
+export const listVoiceCdr = (orgId: string, signal?: AbortSignal) =>
+  request<VoiceCdr[]>(`/api/orgs/${orgId}/voice/call-records`, { signal })
+export const voiceBilling = (orgId: string, period: VoicePeriod = 'month', signal?: AbortSignal) =>
+  request<VoiceBilling>(`/api/orgs/${orgId}/voice/billing?period=${period}`, { signal })
+
+/** Tecto de upload de uma gravação no servidor (recordings.rs MAX_RECORDING_BYTES). */
+export const MAX_RECORDING_UPLOAD_BYTES = 512 * 1024 * 1024
+
+// ---------- delonix-meet-backend/sms-contactos ----------
+// SMS a contactos e de reunião (ADR-0005 §Contactos). Só o cliente de API: os
+// ecrãs são da UI nova (`frontend/ui-template-rebuild`). O número de um
+// contacto NUNCA sai daqui — manda-se o `user_id` e o servidor resolve-o.
+
+export type SmsPurpose = 'direct' | 'contact' | 'meeting_invite' | 'meeting_reminder'
+export type SmsStatus = 'queued' | 'claimed' | 'sent' | 'failed'
+
+export interface SmsMessage {
+  id: string
+  /** E.164 para admin; mascarado (`+244*******00`) para um membro. */
+  to: string
+  body: string
+  encoding: 'gsm7' | 'ucs2'
+  segments: number
+  route: 'usb' | 'operator'
+  operator: string | null
+  device_id: string | null
+  status: SmsStatus
+  error: string | null
+  provider_ref: string | null
+  created_at: string
+  sent_at: string | null
+  purpose: SmsPurpose
+  recipient_user_id: string | null
+  meeting_id: string | null
+  created_by: string | null
+}
+
+/** Campos que `GET /api/orgs/{id}/employees` acrescenta a cada `Employee`. */
+export interface EmployeeSmsFields {
+  /** Só para admin ou o próprio; `null` para colegas. */
+  phone: string | null
+  phone_source: 'odoo' | 'manual' | null
+  /** Tem número e não desligou SMS de contactos. */
+  can_sms: boolean
+}
+
+export type SmsSendPolicy = 'admins' | 'members'
+
+/** Códigos estáveis no início de `error` (ver `smsErrorCode`). */
+export type SmsErrorCode =
+  | 'sms.recipient_opted_out'
+  | 'sms.recipient_no_phone'
+  | 'sms.target_ambiguous'
+  | 'sms.target_missing'
+  | 'sms.idempotency_key_in_use'
+  | 'sms.reminder_recurring_unsupported'
+  | 'sms.no_org'
+
+/** Extrai o código `sms.*` do texto de erro do servidor, se houver. */
+export function smsErrorCode(message: string): SmsErrorCode | null {
+  const m = /^(sms\.[a-z_]+)(?::|$)/.exec(message.trim())
+  return (m?.[1] as SmsErrorCode | undefined) ?? null
+}
+
+/** Envia a um contacto da org. `idempotencyKey`: uma por intenção de envio (repetir não duplica). */
+export const sendSmsToContact = (
+  orgId: string,
+  body: { user_id: string; body: string; route?: 'auto' | 'usb' | 'operator' },
+  idempotencyKey?: string,
+) =>
+  request<SmsMessage>(`/api/orgs/${orgId}/sms/messages`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {},
+  })
+
+/** Admin vê todas as mensagens da org; membro vê só as que enviou. */
+export const listSmsMessages = (orgId: string, pageSize = 50) =>
+  request<{ items: SmsMessage[]; next_page_token: string | null }>(
+    `/api/orgs/${orgId}/sms/messages?page_size=${pageSize}`,
+  )
+
+export const getSmsMessage = (orgId: string, messageId: string) =>
+  request<SmsMessage>(`/api/orgs/${orgId}/sms/messages/${messageId}`)
+
+export const getSmsPolicy = (orgId: string) =>
+  request<{ send_policy: SmsSendPolicy }>(`/api/orgs/${orgId}/sms/policy`)
+
+export const setSmsPolicy = (orgId: string, sendPolicy: SmsSendPolicy) =>
+  request<{ send_policy: SmsSendPolicy }>(`/api/orgs/${orgId}/sms/policy`, {
+    method: 'PUT',
+    body: JSON.stringify({ send_policy: sendPolicy }),
+  })
+
+/** O próprio ou um admin. `phone: null` apaga (fica `manual`); `follow_directory` devolve o campo ao Odoo. */
+export const setMemberPhone = (
+  orgId: string,
+  userId: string,
+  change: { phone: string | null } | { follow_directory: true },
+) =>
+  request<{ user_id: string; phone: string | null; phone_source: 'manual' | null }>(
+    `/api/orgs/${orgId}/employees/${userId}/phone`,
+    { method: 'PUT', body: JSON.stringify(change) },
+  )
+
+export interface SmsPreferences {
+  contact_opt_out: boolean
+  meeting_opt_out: boolean
+  phones: { org_id: string; org_name: string; phone: string | null; phone_source: 'odoo' | 'manual' | null }[]
+}
+
+export const getSmsPreferences = () => request<SmsPreferences>('/api/users/me/sms-preferences')
+
+export const setSmsPreferences = (prefs: { contact_opt_out?: boolean; meeting_opt_out?: boolean }) =>
+  request<SmsPreferences>('/api/users/me/sms-preferences', { method: 'PUT', body: JSON.stringify(prefs) })
+
+export interface MeetingSmsOptions {
+  sms_invite?: boolean
+  /** 5–1440; recusado (422) com recorrência. */
+  sms_reminder_min?: number | null
+}
+
+export interface MeetingSmsReport {
+  invite: { queued: number; skipped: { user_id: string; reason: string }[] } | null
+  reminder_min: number | null
+}
+
+/** `createMeeting` com as opções de SMS; `sms` só vem quando foram pedidas. */
+export const createMeetingWithSms = (m: Parameters<typeof createMeeting>[0] & MeetingSmsOptions) =>
+  request<Meeting & { conflicts: Conflicts; sms?: MeetingSmsReport }>('/api/meetings', {
+    method: 'POST',
+    body: JSON.stringify(m),
+  })
+
+// ---------------------------------------------------------------------------
+//  Pesquisa — contrato `docs/reference/pesquisa.md` (ADR-0007) do backend.
+//  Ctrl+K (`/api/search`), descrição das listas (`/api/search/schemas`), as
+//  listas estilo Odoo (parâmetros uniformes na própria colecção) e os
+//  favoritos (`/api/users/me/saved-searches`).
+// ---------------------------------------------------------------------------
+
+/** Código estável do envelope de erro plano (ADR-0006 §3): `search.invalid_filter`… */
+export function apiErrorCode(e: unknown): string | null {
+  if (!(e instanceof ApiError)) return null
+  const b = e.body as { code?: unknown } | null
+  return b && typeof b === 'object' && typeof b.code === 'string' ? b.code : null
+}
+
+export type SearchType =
+  | 'meetings'
+  | 'recordings'
+  | 'people'
+  | 'whiteboards'
+  | 'rooms'
+  | 'messages'
+  | 'stream_destinations'
+  | 'webhooks'
+  | 'audit_events'
+
+/** Ordem fixa dos grupos (a da tabela do contrato). */
+export const SEARCH_TYPES: SearchType[] = [
+  'meetings',
+  'recordings',
+  'people',
+  'whiteboards',
+  'rooms',
+  'messages',
+  'stream_destinations',
+  'webhooks',
+  'audit_events',
+]
+
+/** Texto partido em segmentos; a UI escapa cada um e realça os `match`. Nunca HTML. */
+export interface HighlightSegment {
+  text: string
+  match: boolean
+}
+
+export interface SearchHit {
+  type: SearchType
+  id: string
+  title: string
+  subtitle: string | null
+  highlight: HighlightSegment[]
+  matched_in: string
+  score: number
+  /** Ids para abrir: `{recording_id, at_secs}`, `{room_code, message_id, created_at}`… */
+  target: Record<string, string | number | null>
+  href: string
+  occurred_at: string | null
+}
+
+export interface SearchResultGroup {
+  type: SearchType
+  count: number
+  count_kind: 'exact' | 'at_least'
+  more_href: string
+  items: SearchHit[]
+}
+
+export interface GlobalSearchResult {
+  query: string
+  took_ms: number
+  groups: SearchResultGroup[]
+  skipped: { type: SearchType; code: string }[]
+}
+
+export const globalSearch = (q: string, opts: { types?: SearchType[]; limit?: number } = {}, signal?: AbortSignal) => {
+  const p = new URLSearchParams({ q })
+  if (opts.types?.length) p.set('types', opts.types.join(','))
+  if (opts.limit) p.set('limit', String(opts.limit))
+  return request<GlobalSearchResult>(`/api/search?${p}`, { signal })
+}
+
+export type SearchFieldType = 'text' | 'enum' | 'number' | 'datetime' | 'bool' | 'user' | 'ref'
+export type SearchOperator =
+  | 'eq'
+  | 'ne'
+  | 'contains'
+  | 'not_contains'
+  | 'starts_with'
+  | 'in'
+  | 'not_in'
+  | 'is_set'
+  | 'is_not_set'
+  | 'lt'
+  | 'lte'
+  | 'gt'
+  | 'gte'
+  | 'between'
+  | 'in_period'
+export type DateGranularity = 'day' | 'week' | 'month' | 'quarter' | 'year'
+
+export interface SearchSchemaField {
+  name: string
+  label: string
+  type: SearchFieldType
+  operators: SearchOperator[]
+  filterable: boolean
+  sortable: boolean
+  groupable: boolean
+  granularities?: DateGranularity[]
+  /** `['sum']`, `['sum','avg']`… sobre o conjunto filtrado do grupo. */
+  aggregates: string[]
+  options?: { value: string; label: string }[]
+}
+
+/** Nó do domínio: `[campo, op]`, `[campo, op, valor]`, `{and}`, `{or}`, `{not}`. Lista no topo = E. */
+export type DomainNode =
+  | [string, SearchOperator]
+  | [string, SearchOperator, unknown]
+  | { and: DomainNode[] }
+  | { or: DomainNode[] }
+  | { not: DomainNode }
+export type Domain = DomainNode | DomainNode[]
+
+export interface SearchSchema {
+  resource: string
+  label: string
+  /** `/api/recordings`, ou com `{org_id}` quando `org_scoped`. */
+  collection: string
+  org_scoped: boolean
+  timezone: string
+  text_search: { fields: string[]; typo_tolerant: boolean }
+  fields: SearchSchemaField[]
+  filters: { name: string; label: string; group: string; filter: Domain }[]
+  group_by: { value: string; label: string }[]
+  default_order: string[]
+  periods: string[]
+}
+
+export const searchSchema = (resource: string, signal?: AbortSignal) =>
+  request<SearchSchema>(`/api/search/schemas/${encodeURIComponent(resource)}`, { signal })
+
+export interface ListQuery {
+  q?: string
+  filter?: Domain | null
+  filters?: string[]
+  group_by?: string[]
+  order_by?: string[]
+  page_size?: number
+  page_token?: string | null
+  groups_page_token?: string | null
+}
+
+export interface ListGroup {
+  key: string | null
+  label: string | null
+  count: number
+  aggregates: Record<string, Record<string, number>>
+  range?: { from: string; to: string }
+  /** O nó a JUNTAR ao `filter` corrente para abrir o grupo. */
+  filter: Domain
+  /** O que falta agrupar dentro deste grupo. */
+  group_by: string[]
+}
+
+export interface ListEnvelope<T> {
+  items: (T & { search?: { score: number; highlight: HighlightSegment[] } })[]
+  next_page_token: string | null
+  total: number
+  total_kind: 'exact' | 'at_least'
+  groups?: ListGroup[]
+  next_groups_page_token?: string | null
+}
+
+/** Caminho da colecção a partir do schema — nunca escrito à mão por ecrã. */
+export function collectionPath(schema: Pick<SearchSchema, 'collection' | 'org_scoped'>, orgId?: string | null): string {
+  if (!schema.collection.startsWith('/api/')) throw new Error('collection fora de /api')
+  if (!schema.org_scoped) return schema.collection
+  if (!orgId) throw new Error('org_id em falta')
+  return schema.collection.replace('{org_id}', encodeURIComponent(orgId))
+}
+
+/** Parâmetros da lista. Leva SEMPRE `page_size`: assim a resposta é o envelope, nunca o array herdado. */
+export function listQueryString(query: ListQuery): string {
+  const p = new URLSearchParams()
+  if (query.q?.trim()) p.set('q', query.q.trim())
+  const f = query.filter
+  if (f && !(Array.isArray(f) && f.length === 0)) p.set('filter', JSON.stringify(f))
+  if (query.filters?.length) p.set('filters', query.filters.join(','))
+  if (query.group_by?.length) p.set('group_by', query.group_by.join(','))
+  if (query.order_by?.length) p.set('order_by', query.order_by.join(','))
+  p.set('page_size', String(query.page_size ?? 50))
+  if (query.page_token) p.set('page_token', query.page_token)
+  if (query.groups_page_token) p.set('groups_page_token', query.groups_page_token)
+  return p.toString()
+}
+
+export const searchList = <T>(path: string, query: ListQuery, signal?: AbortSignal) =>
+  request<ListEnvelope<T>>(`${path}?${listQueryString(query)}`, { signal })
+
+export interface SavedSearchQuery {
+  q?: string
+  filter?: Domain | null
+  filters?: string[]
+  group_by?: string[]
+  order_by?: string[]
+}
+
+export interface SavedSearch {
+  id: string
+  resource: string
+  name: string
+  query: SavedSearchQuery
+  shared: boolean
+  is_default: boolean
+  owner: { id: string; username: string }
+  editable: boolean
+  valid: boolean
+  invalid_code: string | null
+  created_at: string
+  updated_at: string
+}
+
+export const listSavedSearches = (resource: string, signal?: AbortSignal) =>
+  request<Page<SavedSearch>>(`/api/users/me/saved-searches?resource=${encodeURIComponent(resource)}&page_size=100`, { signal })
+
+export const createSavedSearch = (body: { resource: string; name: string; query: SavedSearchQuery; shared: boolean; is_default: boolean }) =>
+  request<SavedSearch>('/api/users/me/saved-searches', { method: 'POST', body: JSON.stringify(body) })
+
+export const updateSavedSearch = (
+  id: string,
+  body: Partial<{ name: string; query: SavedSearchQuery; shared: boolean; is_default: boolean }>,
+) => request<SavedSearch>(`/api/users/me/saved-searches/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) })
+
+export const deleteSavedSearch = (id: string) =>
+  request<void>(`/api/users/me/saved-searches/${encodeURIComponent(id)}`, { method: 'DELETE' })

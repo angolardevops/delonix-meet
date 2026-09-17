@@ -72,7 +72,7 @@ async function main() {
   tempos.marcar('intencao')
   window.__dlx.tempos = tempos
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
-  const rtcConfig: RTCConfiguration = await fetch('/api/ice-servers', {
+  const rtcConfig: RTCConfiguration = await fetch('/api/ice', {
     headers: { Authorization: `Bearer ${params.get('access') ?? ''}` },
   })
     .then((r) => (r.ok ? r.json() : { iceServers: [] }))

@@ -8,19 +8,12 @@
 //
 // Uso:  BASE=http://127.0.0.1:5174 node e2e/estudio.mjs
 import { chromium } from '@playwright/test'
-
-// O corte por WebCodecs cai para SOFTWARE quando o runner não tem aceleração,
-// e aí um vídeo de 5 s pode levar bem mais do que os 90 s deste limite. Foi uma
-// das três falhas que puseram o job `isolamento` a falhar num teste diferente
-// de cada vez (R90) — e a única que não era um defeito de asserção, era mesmo
-// tempo a mais num runner partilhado.
-//
-// Mesmo idioma do `sfu_e2e.rs`: um limite generoso E ajustável, em vez de
-// calibrado para a máquina de quem o escreveu. O CI põe o factor a 4.
-const FATOR = Number(process.env.E2E_TIMEOUT_FACTOR) || 1
-const LIMITE_CORTE = 90000 * FATOR
 import { criarConta, entrar } from './sessao.mjs'
+import { texto } from './estudio-textos.mjs'
 
+// Esperas por media (segmentação, gravação a entrar no editor) escalam com o
+// factor do runner: o CI põe-no a 4 (R118).
+const FATOR = Number(process.env.E2E_TIMEOUT_FACTOR) || 1
 const BASE = process.env.BASE ?? process.env.APP ?? 'http://127.0.0.1:5174'
 const API = process.env.API ?? BASE
 const conta = await criarConta(API, 'est')
@@ -59,15 +52,15 @@ console.log('\nnavegação')
 const entrada = page.locator('.nav-item', { hasText: /Estúdio|Studio/ })
 ok('a entrada «Estúdio» está no rail', (await entrada.count()) > 0)
 await entrada.first().click()
-await page.waitForSelector('.studio-canvas', { timeout: 20000 })
+await page.waitForSelector('[data-studio="canvas"]', { timeout: 20000 })
 ok('a rota #/studio abre e monta o canvas', page.url().includes('studio'))
 
-const dim = await page.locator('.studio-canvas').evaluate((c) => ({ w: c.width, h: c.height }))
+const dim = await page.locator('[data-studio="canvas"]').evaluate((c) => ({ w: c.width, h: c.height }))
 ok('o canvas de gravação é 1920×1080', dim.w === 1920 && dim.h === 1080, `${dim.w}×${dim.h}`)
 
 // Lê o brilho médio de um quadrado no canto pedido do CANVAS (não do ecrã).
 async function brilhoNoCanto(canto, frac = 0.22) {
-  return page.locator('.studio-canvas').evaluate(
+  return page.locator('[data-studio="canvas"]').evaluate(
     (c, { canto, frac }) => {
       const g = c.getContext('2d')
       const s = Math.round(Math.min(c.width, c.height) * frac)
@@ -84,7 +77,9 @@ async function brilhoNoCanto(canto, frac = 0.22) {
 
 // ---- câmara
 console.log('\navatar')
-await page.locator('.studio-grupo', { hasText: /A tua imagem|Your picture/ }).getByRole('button').first().click()
+const grupoImagem = page.locator('[data-studio-grupo="imagem"]')
+ok('o grupo «a tua imagem» tem o título traduzido', texto('imagem.titulo').test((await grupoImagem.textContent()) ?? ''))
+await grupoImagem.locator('[data-studio="camara"]').click()
 await page.waitForTimeout(1500)
 
 const fundo = await brilhoNoCanto('superior-esquerdo')
@@ -93,7 +88,7 @@ ok('a câmara desenha no canto inferior-direito (o de omissão)',
    comAvatarBD > fundo + 8, `fundo=${fundo} canto=${comAvatarBD}`)
 
 // ---- mover o avatar: é o pedido central
-await page.locator('.studio-canto').nth(0).click()   // superior-esquerdo
+await page.locator('[data-studio-canto="superior-esquerdo"]').click()
 await page.waitForTimeout(900)
 const seDepois = await brilhoNoCanto('superior-esquerdo')
 const idDepois = await brilhoNoCanto('inferior-direito')
@@ -102,7 +97,7 @@ ok('e apaga o canto de onde saiu', idDepois < comAvatarBD - 8, `${comAvatarBD} �
 
 // ---- tamanho
 const antesTam = await brilhoNoCanto('superior-esquerdo', 0.12)
-await page.locator('.studio-grupo input[type=range]').fill('45')
+await page.locator('[data-studio="tamanho"]').fill('45')
 await page.waitForTimeout(700)
 const depoisTam = await brilhoNoCanto('superior-esquerdo', 0.12)
 ok('o cursor de tamanho muda a bolha', Math.abs(depoisTam - antesTam) > 3, `${antesTam} → ${depoisTam}`)
@@ -112,13 +107,13 @@ ok('o cursor de tamanho muda a bolha', Math.abs(depoisTam - antesTam) > 3, `${an
 console.log('\narrasto e recorte de fundo')
 {
   // Volta a um canto conhecido antes de medir.
-  await page.locator('.studio-canto').nth(3).click()   // inferior-direito
-  await page.locator('.studio-grupo input[type=range]').fill('22')
+  await page.locator('[data-studio-canto="inferior-direito"]').click()
+  await page.locator('[data-studio="tamanho"]').fill('22')
   await page.waitForTimeout(700)
   const antesID = await brilhoNoCanto('inferior-direito')
 
   // Arrasta para o canto superior-esquerdo do palco.
-  const palco = await page.locator('.studio-canvas').boundingBox()
+  const palco = await page.locator('[data-studio="canvas"]').boundingBox()
   await page.mouse.move(palco.x + palco.width * 0.85, palco.y + palco.height * 0.8)
   await page.mouse.down()
   await page.mouse.move(palco.x + palco.width * 0.16, palco.y + palco.height * 0.18, { steps: 18 })
@@ -126,7 +121,7 @@ console.log('\narrasto e recorte de fundo')
   await page.waitForTimeout(900)
 
   const brilhoEm = (fx, fy) =>
-    page.locator('.studio-canvas').evaluate(
+    page.locator('[data-studio="canvas"]').evaluate(
       (c, { fx, fy }) => {
         const g = c.getContext('2d')
         const s = Math.round(Math.min(c.width, c.height) * 0.14)
@@ -145,24 +140,21 @@ console.log('\narrasto e recorte de fundo')
   ok('e tira-a de onde estava', depoisID < antesID - 8, `${antesID} → ${depoisID}`)
 
   // Recorte de fundo: liga a segmentação e espera pelo primeiro resultado.
-  const botaoRecorte = page.locator('.studio-seg .seg-btn').filter({ hasText: /Sem fundo|No background|Sans fond/ }).first()
-  ok('há um interruptor de «sem fundo»', (await botaoRecorte.count()) > 0)
+  const botaoRecorte = page.locator('[data-studio-modo="recorte"]')
+  ok('há um interruptor de «sem fundo»', (await botaoRecorte.count()) > 0 && texto('imagem.semFundo').test((await botaoRecorte.textContent()) ?? ''))
   await botaoRecorte.click()
-  // `querySelector` singular apanhava o PRIMEIRO <small> do painel — que é o
-  // da dica de arrasto — e dava «não arrancou» com a segmentação a correr.
-  // Um teste que olha para o elemento errado mente nas duas direcções.
+  // A nota da segmentação tem atributo próprio. A versão antiga procurava o
+  // primeiro <small> do painel — que era a dica de arrasto — e dava «não
+  // arrancou» com a segmentação a correr. Um teste que olha para o elemento
+  // errado mente nas duas direcções.
   const ligou = await page
-    .waitForFunction(
-      () => [...document.querySelectorAll('.studio-grupo small')].some((e) => e.textContent?.includes('segmenta')),
-      null,
-      { timeout: 60000 },
-    )
+    .waitForSelector('[data-studio="nota-recorte"]', { timeout: 60000 * FATOR })
     .then(() => true)
     .catch(() => false)
   if (!ligou) {
     console.log('  --    a segmentação não arrancou neste ambiente — modo recorte não verificado no fio')
   } else {
-    ok('o modo «sem fundo» fica activo', await botaoRecorte.evaluate((b) => b.classList.contains('active')))
+    ok('o modo «sem fundo» fica activo', (await botaoRecorte.getAttribute('aria-pressed')) === 'true')
     await page.waitForTimeout(3000)
     ok('o segmentador arrancou mesmo (não só o rótulo)',
        logsSegmentacao.some((l) => /segmenta(ção|tion) em (GPU|CPU)/i.test(l)),
@@ -189,17 +181,19 @@ const podeEcra = await page.evaluate(() => typeof navigator.mediaDevices?.getDis
 if (!podeEcra) {
   console.log('  --    getDisplayMedia indisponível neste browser — secção saltada')
 } else {
-  await page.locator('.studio-grupo', { hasText: /O que gravar|What to record/ })
-    .locator('button').filter({ hasText: /Escolher ecrã|Choose screen/ }).first()
-    .click({ timeout: 5000 }).catch(() => {})
+  const grupoFonte = page.locator('[data-studio-grupo="fonte"]')
+  ok('o grupo «o que gravar» tem o título traduzido', texto('fonte.titulo').test((await grupoFonte.textContent()) ?? ''))
+  const escolher = grupoFonte.locator('[data-studio="escolher-ecra"]')
+  ok('o botão de escolher ecrã diz o que faz', texto('fonte.escolherEcra').test((await escolher.textContent()) ?? ''))
+  await escolher.click({ timeout: 5000 }).catch(() => {})
   await page.waitForTimeout(2500)
-  const temFonte = await page.locator('.studio-seg').count()
+  const temFonte = await page.locator('[data-studio-regiao]').count()
   if (!temFonte) {
     console.log('  --    o browser não concedeu captura de ecrã (headless) — recorte não verificado')
   } else {
     ok('a fonte de ecrã foi aceite e os controlos de recorte aparecem', temFonte > 0)
     // Com ecrã, o CENTRO do canvas deixa de ser o fundo liso.
-    const centro = await page.locator('.studio-canvas').evaluate((c) => {
+    const centro = await page.locator('[data-studio="canvas"]').evaluate((c) => {
       const g = c.getContext('2d')
       const s = 200
       const d = g.getImageData((c.width - s) / 2, (c.height - s) / 2, s, s).data
@@ -216,15 +210,15 @@ if (!podeEcra) {
        `médio=${centro.medio} variação=${centro.variacao}`)
 
     // Recorte: escolhe uma região arrastando sobre a pré-visualização.
-    await page.locator('.studio-seg .seg-btn').filter({ hasText: /região|region/i }).first().click()
-    await page.waitForSelector('.studio-recorte-area', { timeout: 5000 })
-    const caixa = await page.locator('.studio-recorte-area').boundingBox()
+    await page.locator('[data-studio-regiao="regiao"]').click()
+    await page.waitForSelector('[data-studio="recorte-area"]', { timeout: 5000 })
+    const caixa = await page.locator('[data-studio="recorte-area"]').boundingBox()
     await page.mouse.move(caixa.x + caixa.width * 0.2, caixa.y + caixa.height * 0.2)
     await page.mouse.down()
     await page.mouse.move(caixa.x + caixa.width * 0.6, caixa.y + caixa.height * 0.6, { steps: 12 })
     await page.mouse.up()
     await page.waitForTimeout(800)
-    const rotulo = await page.locator('.studio-grupo .mono').first().textContent().catch(() => '')
+    const rotulo = await page.locator('[data-studio="regiao-rotulo"]').textContent({ timeout: 3000 }).catch(() => '')
     ok('arrastar define uma região menor que o ecrã', /\d+% × \d+%/.test(rotulo || ''), rotulo || '(sem rótulo)')
     const frac = (rotulo || '').match(/(\d+)% × (\d+)%/)
     ok('a região guardada bate certo com o arrasto (~40%×40%)',
@@ -234,14 +228,22 @@ if (!podeEcra) {
 
 // ---- gravar
 console.log('\ngravação')
-await page.locator('.studio-acoes button').filter({ hasText: /Gravar|Record/ }).first().click()
-await page.waitForSelector('.studio-tempo', { timeout: 10000 })
-ok('o cronómetro aparece ao gravar', await page.locator('.studio-tempo').isVisible())
+const botaoGravar = page.locator('[data-studio="acoes"] [data-studio="gravar"]')
+ok('o botão de gravar diz «gravar»', texto('acoes.gravar').test((await botaoGravar.textContent()) ?? ''))
+const inicioGravacao = Date.now()
+await botaoGravar.click()
+await page.waitForSelector('[data-studio="tempo"]', { timeout: 10000 })
+ok('o cronómetro aparece ao gravar', await page.locator('[data-studio="tempo"]').isVisible())
 await page.waitForTimeout(3200)
-await page.locator('.studio-acoes button').filter({ hasText: /Parar|Stop/ }).first().click()
+const botaoParar = page.locator('[data-studio="acoes"] [data-studio="parar"]')
+ok('o botão de parar diz «parar»', texto('acoes.parar').test((await botaoParar.textContent()) ?? ''))
+const cronometro = ((await page.locator('[data-studio="tempo"]').textContent()) ?? '').match(/(\d+):(\d{2})\s*$/)
+const segundosNoCronometro = cronometro ? Number(cronometro[1]) * 60 + Number(cronometro[2]) : NaN
+await botaoParar.click()
+const segundosGravados = (Date.now() - inicioGravacao) / 1000
 
-await page.waitForSelector('.studio-preview', { timeout: 20000 })
-const video = await page.locator('.studio-preview').evaluate(
+await page.waitForSelector('[data-studio="preview"]', { timeout: 60000 * FATOR })
+const video = await page.locator('[data-studio="preview"]').evaluate(
   (v) => new Promise((r) => {
     const acabar = () => r({ dur: v.duration, w: v.videoWidth, h: v.videoHeight, src: v.src.slice(0, 5) })
     if (v.readyState >= 1) acabar()
@@ -253,95 +255,49 @@ ok('a gravação produz um ficheiro reproduzível', video.src === 'blob:', `src=
 ok('com imagem 1920×1080', video.w === 1920 && video.h === 1080, `${video.w}×${video.h}`)
 
 // ---- corte
-console.log('\ncorte')
+// O editor é NÃO DESTRUTIVO: aparar é uma edição no projecto e a linha de
+// tempo encurta logo; o ficheiro mais curto só nasce na exportação (WebCodecs),
+// e essa medida — com a duração do ficheiro produzido — é do `e2e/editor.mjs`.
+// O passo antigo (dois cursores e um botão «Cortar» que reencodificava) deixou
+// de existir; o que aqui se prova é que a gravação chega ao editor e que
+// aparar pela entrada/saída encurta o projecto e se desfaz.
+console.log('\ncorte (projecto não destrutivo)')
 {
-  const suporta = await page.evaluate(() => typeof VideoEncoder === 'function' && typeof MediaStreamTrackProcessor === 'function')
-  ok('o browser tem WebCodecs (o caminho de pouco recurso)', suporta)
-
-  // TER WebCodecs não é o mesmo que ter ACELERAÇÃO. O `editor.ts` documenta-o e
-  // mede-o: sem GPU, o corte cai para software e um troço de dois segundos não
-  // acaba em 90 s — nem em 360 s, verificado no runner do CI com o
-  // `E2E_TIMEOUT_FACTOR` a 4.
-  //
-  // Por isso a asserção passa a ser condicional, e a condição é PERGUNTADA ao
-  // browser em vez de assumida — o mesmo que o `escolherPerfil` faz. Onde há
-  // hardware, o corte tem de encurtar; onde não há, diz-se que não se
-  // verificou e porquê.
-  //
-  // A alternativa que NÃO se escolheu: pôr o `estudio.mjs` inteiro fora do CI.
-  // Ele tem outras trinta asserções que passam e protegem o Estúdio — perdê-las
-  // todas para acomodar uma seria trocar cobertura por silêncio.
-  const temHardware = suporta && await page.evaluate(async () => {
-    try {
-      const r = await VideoEncoder.isConfigSupported({
-        codec: 'vp8', width: 1920, height: 1080, framerate: 30,
-        bitrate: 3_000_000, hardwareAcceleration: 'prefer-hardware',
-      })
-      return !!r.supported
-    } catch { return false }
-  })
-  if (suporta && !temHardware) {
-    console.log('  --    sem encoder acelerado neste ambiente — o corte cai para software e não')
-    console.log('  --    termina em tempo útil (ver escolherPerfil em web/src/studio/editor.ts).')
-    console.log('  --    As asserções de CORTE ficam por verificar; o resto do Estúdio corre.')
+  const duracaoMostrada = async () => {
+    const t = (await page.locator('[data-studio="duracao"]').textContent()) ?? ''
+    const m = t.match(/(\d+):(\d{2})/)
+    return m ? Number(m[1]) * 60 + Number(m[2]) : NaN
   }
-  if (suporta && temHardware) {
-    // Espera que a duração seja conhecida — um WebM de MediaRecorder chega
-    // muitas vezes com `Infinity` até se procurar até ao fim.
-    const dur = await page
-      .waitForFunction(() => {
-        const v = document.querySelector('.studio-preview')
-        return v && Number.isFinite(v.duration) && v.duration > 0 ? v.duration : null
-      }, null, { timeout: 20000 })
-      .then((h) => h.jsonValue())
-      .catch(() => null)
-    ok('a duração do gravado é conhecida', dur !== null, dur ? `${dur.toFixed(1)}s` : 'Infinity')
+  ok('parar abre o editor em #/studio?vista=edicao', page.url().includes('vista=edicao'), page.url())
+  const temClipe = await page
+    .waitForSelector('[data-faixa="V1"] .ed-clip', { timeout: 30000 * FATOR })
+    .then(() => true)
+    .catch(() => false)
+  ok('a gravação entra na linha de tempo como clipe de V1', temClipe)
+  const dur0 = await duracaoMostrada()
+  // Entre o que o cronómetro marcava antes de parar (mínimo) e o tempo de
+  // relógio desde o clique em gravar (máximo): num runner carregado os cliques
+  // demoram, e um intervalo fixo dava falhas ao acaso.
+  ok('a linha de tempo tem a duração gravada', dur0 >= segundosNoCronometro - 1 && dur0 <= segundosGravados + 2,
+     `${dur0}s (cronómetro ${segundosNoCronometro}s, relógio ${segundosGravados.toFixed(1)}s)`)
 
-    if (dur) {
-      ok('os cursores de corte aparecem', (await page.locator('.studio-corte input[type=range]').count()) === 2)
-      const cursores = page.locator('.studio-corte input[type=range]')
-      await cursores.nth(0).fill('1')
-      await cursores.nth(1).fill('3')
-      await page.waitForTimeout(400)
-
-      const botao = page.locator('.studio-corte button')
-      ok('o botão anuncia a duração do troço', /0[01]:0[12]/.test((await botao.textContent()) ?? ''), await botao.textContent())
-      await botao.click()
-
-      // O corte substitui o resultado: espera pela nova duração.
-      const nova = await page
-        .waitForFunction(() => {
-          const v = document.querySelector('.studio-preview')
-          return v && Number.isFinite(v.duration) && v.duration > 0 && v.duration < 2.9 ? v.duration : null
-        }, null, { timeout: LIMITE_CORTE })
-        .then((h) => h.jsonValue())
-        .catch(() => null)
-      // «não encurtou» não distingue as três coisas que podem ter acontecido, e
-      // cada uma manda investigar noutro sítio (R90):
-      //   · duração ILEGÍVEL (Infinity/NaN) — o WebM saiu sem cabeçalho de
-      //     duração, que é um defeito do que se PRODUZ, não do corte;
-      //   · duração igual à original — o corte não correu;
-      //   · duração diferente mas ≥ 2,9 s — cortou o troço errado.
-      // Subir o prazo não resolve nenhuma das três, e foi o que a primeira
-      // tentativa de correcção assumiu, sem prova.
-      const diag = nova !== null ? null : await page.evaluate(() => {
-        const v = document.querySelector('.studio-preview')
-        if (!v) return 'sem elemento .studio-preview'
-        const d = v.duration
-        if (!Number.isFinite(d)) return `duração ILEGÍVEL (${d}) — WebM sem cabeçalho de duração`
-        return `duração ${d.toFixed(2)}s — não desceu abaixo de 2,9s`
-      })
-      ok('o corte produz um ficheiro mais curto', nova !== null,
-         nova ? `${nova.toFixed(2)}s (pedidos ~2s)` : diag)
-      if (nova) ok('e com a duração pedida (±0,6s)', Math.abs(nova - 2) < 0.6, `${nova.toFixed(2)}s`)
-
-      const temAudio = await page.locator('.studio-preview').evaluate((v) => {
-        const el = v
-        return el.mozHasAudio || !!el.webkitAudioDecodedByteCount || !!(el.audioTracks && el.audioTracks.length)
-      })
-      console.log(`  --    faixa de áudio no cortado: ${temAudio ? 'sim' : 'não detectável por este browser'}`)
-    }
+  if (temClipe) {
+    await page.locator('[data-faixa="V1"] .ed-clip').first().click({ position: { x: 20, y: 10 } })
+    await page.waitForSelector('[data-studio="corte"]', { timeout: 5000 })
+    await page.locator('[data-studio="corte-de"]').fill('00:00:01')
+    await page.locator('[data-studio="corte-de"]').press('Enter')
+    await page.locator('[data-studio="corte-ate"]').fill('00:00:03')
+    await page.locator('[data-studio="corte-ate"]').press('Enter')
+    await page.waitForTimeout(300)
+    const dur1 = await duracaoMostrada()
+    ok('aparar para 1–3 s deixa o projecto com 2 s', dur1 === 2, `${dur1}s`)
+    await page.locator('[data-studio="desfazer"]').click()
+    await page.locator('[data-studio="desfazer"]').click()
+    await page.waitForTimeout(200)
+    ok('desfazer volta à duração gravada (a fonte não foi tocada)', (await duracaoMostrada()) === dur0, `${await duracaoMostrada()}s`)
   }
+  const suporta = await page.evaluate(() => typeof VideoEncoder === 'function')
+  console.log(`  --    WebCodecs ${suporta ? 'disponível' : 'indisponível'}: a exportação e a duração do ficheiro produzido são do e2e/editor.mjs`)
 }
 
 ok('sem erros de página', errosConsola.length === 0, errosConsola.slice(0, 2).join(' | ') || 'nenhum')
