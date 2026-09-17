@@ -673,7 +673,8 @@ fn build_cors(state: &Arc<AppState>) -> CorsLayer {
 async fn metrics_handler(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
 ) -> impl axum::response::IntoResponse {
-    let body = state.metrics.render(state.started.elapsed().as_secs());
+    let mut body = state.metrics.render(state.started.elapsed().as_secs());
+    body.push_str(&state.sfu.census().await.render());
     (
         [(
             axum::http::header::CONTENT_TYPE,
@@ -762,6 +763,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
                 turn_host: config.turn_host.clone(),
                 turn_secret: config.turn_secret.clone(),
                 force_relay: config.force_turn_relay,
+                ice_timeouts: None,
             },
             metrics.clone(),
             config.nego_queue_cap,

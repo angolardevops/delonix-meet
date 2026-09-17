@@ -40,7 +40,7 @@
 - `auth.rs` — registo (cria org+admin), login, refresh, logout, room tokens
 - `org.rs` — multi-tenant: organizations, branches, org_members, employee groups, salas presenciais, quotas, stats, SSO stubs
 - `rooms.rs` — CRUD salas, `can_access_room` (isolamento cross-org), `insert_room` (helper reutilizado); sala pessoal (G2; migração 0047): `ensure_personal_room` cria-a na primeira leitura com `ON CONFLICT` sobre o índice único parcial `rooms_personal_owner_uidx` (idempotente sob concorrência), `update_personal_room`, `rotate_personal_room_code` (o código antigo deixa de existir). A sala pessoal NÃO tem regras de acesso próprias
-- `sfu.rs` — SFU Rust: Hub, Room, Publication, simulcast, PLI, gravação RTP→IVF/OGG
+- `sfu.rs` — SFU Rust: Hub, Room, Publication, simulcast, PLI, gravação RTP→IVF/OGG. `Census`: o que está VIVO de facto (PCs por `Weak`, `close()` que nunca regressou, peers/publicações/tarefas por `Drop`) em `/metrics` — é aí que se vê uma fuga, não nos gauges de negócio (R158)
 - `signaling.rs` — WebSocket `/ws` (room token): transporte SFU (offer/answer/ice) + moderação (admit/kick/lock/host-*) + chat/breakout-*/media
 - `room_tools.rs` — contexto de colaboração in-room extraído de `signaling.rs`: sondagens, Q&A, temporizador, quadro branco (`impl SignalingHub::handle_tool_msg`)
 - `presence.rs` — WebSocket `/rtc` (access token), chamadas WhatsApp-style: call-start/accept/decline/cancel, ring de reunião agendada
