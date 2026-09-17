@@ -1438,12 +1438,31 @@ impl SignalingHub {
         host_share_only: bool,
     ) {
         let mut room = self.rooms.entry(room_id).or_default();
-        room.polls = polls;
-        room.questions = questions;
-        room.wb_strokes = wb_strokes;
-        room.timer_ends_at = timer_ends_at;
-        room.locked = locked;
-        room.host_share_only = host_share_only;
+        // O Redis serve para uma sala que ACORDA neste nó (migração de pod): o
+        // que ele guarda repõe-se. Numa sala que já tem gente aqui, a memória é
+        // a verdade e o Redis está atrás dela — nem todos os estados são lá
+        // escritos (o quadro, por exemplo, não é). Sobrescrever a cada entrada
+        // apagava o quadro inteiro de uma sala activa sempre que alguém entrava:
+        // quem chegava depois recebia um `wb-state` vazio e o servidor esquecia
+        // os traços para toda a gente.
+        if !room.peers.is_empty() {
+            return;
+        }
+        // Mesmo numa sala vazia, o Redis só ACRESCENTA o que a memória não tem.
+        if !polls.is_empty() || room.polls.is_empty() {
+            room.polls = polls;
+        }
+        if !questions.is_empty() || room.questions.is_empty() {
+            room.questions = questions;
+        }
+        if !wb_strokes.is_empty() || room.wb_strokes.is_empty() {
+            room.wb_strokes = wb_strokes;
+        }
+        if timer_ends_at.is_some() {
+            room.timer_ends_at = timer_ends_at;
+        }
+        room.locked = room.locked || locked;
+        room.host_share_only = room.host_share_only || host_share_only;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3070,11 +3089,10 @@ impl SignalingHub {
                     }
                     // O crachá difundido é o EFECTIVO: um co-anfitrião por papel
                     // continua a admitir mesmo sem a permissão persistida.
-                    let estado = self.rooms.get(&room_id).and_then(|r| {
-                        r.peers
-                            .get(&to)
-                            .map(|p| (p.effective_role(), p.admits()))
-                    });
+                    let estado = self
+                        .rooms
+                        .get(&room_id)
+                        .and_then(|r| r.peers.get(&to).map(|p| (p.effective_role(), p.admits())));
                     if let Some((role, can_admit)) = estado {
                         self.broadcast_all(
                             room_id,
@@ -6346,6 +6364,51 @@ mod b1_sala_tests {
 
     fn objectos(hub: &SignalingHub, room: Uuid) -> Vec<WbStrokeData> {
         hub.wb_snapshot(room)
+    }
+
+    #[tokio::test]
+    async fn quem_entra_depois_nao_apaga_o_quadro_de_uma_sala_activa() {
+        // Defeito visto na stack de validação (com Redis): a cada entrada o
+        // estado do Redis — sem traços, porque o quadro não é lá escrito —
+        // substituía o da memória. Quem entrava depois via o quadro vazio, e o
+        // servidor esquecia os traços para toda a gente.
+        let s = sala();
+        for _ in 0..3 {
+            s.hub.handle(
+                s.room,
+                s.b,
+                ClientMsg::WbStroke {
+                    stroke: traco(None),
+                },
+                None,
+            );
+        }
+        assert_eq!(objectos(&s.hub, s.room).len(), 3);
+        // O que o `handle_socket` faz ANTES de juntar quem chega, com o Redis vazio.
+        s.hub
+            .apply_redis_state(s.room, vec![], vec![], vec![], None, false, false);
+        assert_eq!(
+            objectos(&s.hub, s.room).len(),
+            3,
+            "o Redis não apaga o quadro de uma sala com gente"
+        );
+    }
+
+    #[test]
+    fn uma_sala_que_acorda_neste_no_recupera_o_quadro_do_redis() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        hub.apply_redis_state(
+            room,
+            vec![],
+            vec![],
+            vec![traco(Some(Uuid::new_v4()))],
+            None,
+            true,
+            false,
+        );
+        assert_eq!(objectos(&hub, room).len(), 1);
+        assert!(hub.is_locked(room));
     }
 
     #[test]
