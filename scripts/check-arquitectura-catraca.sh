@@ -85,7 +85,7 @@ MEDIDAS = {
         lambda: contar(r'strip_prefix\(\s*"Bearer '),
         'regra 2 — usar um extractor de auth.rs'),
     'clientes_reqwest': (
-        lambda: contar(r'reqwest::Client::(builder|new)\('),
+        lambda: contar(r'reqwest::Client::(builder|new)\(', excluir=('net_guard.rs',)),
         'regra 3 — pedidos de saída pelo cliente partilhado, com guarda SSRF'),
     'primitivas_cripto_espalhadas': (
         lambda: contar(r'Sha256::digest|Argon2::default\(\)|\.fill_bytes\(|thread_rng\(\)\.fill\(',

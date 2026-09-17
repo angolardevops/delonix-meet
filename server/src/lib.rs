@@ -20,6 +20,7 @@ mod meetings_v1;
 mod metrics;
 mod mfa;
 mod mls;
+pub mod net_guard;
 pub mod nodes;
 mod notifications;
 mod odoo;
@@ -125,9 +126,9 @@ pub struct AppState {
     pub mfa_limiter: RateLimiter,
     /// Salas de grupo ativas: sala principal -> conjunto de salas filhas.
     pub breakouts: dashmap::DashMap<uuid::Uuid, signaling::BreakoutSet>,
-    /// Cliente HTTP partilhado para envio de webhooks (sem redirects, timeout 8s).
-    /// Criado uma vez para reutilizar o connection pool TLS entre eventos.
-    pub webhook_client: reqwest::Client,
+    /// Clientes HTTP de saída, com a guarda anti-SSRF (ver `net_guard`). Os
+    /// únicos do servidor: criados uma vez para reutilizar o pool TLS.
+    pub outbound: net_guard::Outbound,
     pub redis_bus: Option<Arc<pubsub::PubSubBus>>,
     /// Contadores de observabilidade expostos em `/metrics` (ver metrics.rs).
     pub metrics: Arc<metrics::Metrics>,
@@ -714,11 +715,19 @@ pub(crate) async fn status(
 /// listeners nem tarefas de fundo — é o que os testes de integração usam
 /// para montar o router sobre uma base real.
 pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
-    let webhook_client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .expect("falha ao criar HTTP client para webhooks");
+    // O host do Odoo da plataforma foi declarado pelo operador ao configurá-lo:
+    // as orgs criadas a partir dele guardam-no como `odoo_url`, e o login delas
+    // passa pelo cliente de inquilino.
+    let mut allow_hosts = config.outbound_allow_hosts.clone();
+    if let Some(host) = config
+        .platform_odoo_url
+        .as_deref()
+        .and_then(|u| reqwest::Url::parse(u).ok())
+        .and_then(|u| u.host_str().map(str::to_string))
+    {
+        allow_hosts.push(host);
+    }
+    let outbound = net_guard::Outbound::new(allow_hosts);
 
     // Redis pub/sub: opcional — só ativo se REDIS_URL estiver definido.
     let redis_bus = if let Some(url) = &config.redis_url {
@@ -770,7 +779,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
         sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
         mfa_limiter: RateLimiter::new(5, Duration::from_secs(300)),
-        webhook_client,
+        outbound,
         config: config.clone(),
         redis_bus: redis_bus.clone(),
         metrics,

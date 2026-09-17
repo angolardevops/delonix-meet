@@ -456,7 +456,7 @@ async fn sso_enforced_blocks_password_login(db: sqlx::PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn admin_webhooks_crud(db: sqlx::PgPool) {
     // `hooks.test` na allowlist: a criação não depende de DNS no CI.
-    let app = TestApp::spawn_with(db, &[("WEBHOOK_ALLOW_HOSTS", "hooks.test")]).await;
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "hooks.test")]).await;
     let a = app.new_org("alfa.test").await;
     let org = a.org().to_string();
     let t = Some(a.token.as_str());
@@ -828,7 +828,7 @@ async fn cross_org_admin_is_denied_on_every_org_route(db: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn cross_org_delete_leaves_key_and_webhook_alive(db: sqlx::PgPool) {
-    let app = TestApp::spawn_with(db, &[("WEBHOOK_ALLOW_HOSTS", "hooks.test")]).await;
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "hooks.test")]).await;
     let a = app.new_org("alfa.test").await;
     let b = app.new_org("beta.test").await;
     let borg = b.org().to_string();

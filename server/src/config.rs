@@ -65,12 +65,14 @@ pub struct Config {
     /// comportamento é o de sempre: só entra quem já foi provisionado.
     pub platform_odoo_url: Option<String>,
     pub platform_odoo_db: Option<String>,
-    /// Hosts isentos da guarda anti-SSRF dos webhooks (`WEBHOOK_ALLOW_HOSTS`,
-    /// separados por vírgula). Vazio (omissão) => nenhum destino interno é
+    /// Hosts isentos da guarda de saída para URLs escritos por clientes
+    /// (`OUTBOUND_ALLOW_HOSTS`, separados por vírgula): webhooks, `odoo_url` da
+    /// organização, emissor OIDC. Vazio (omissão) => nenhum destino interno é
     /// alcançável, que é o comportamento seguro. Existe porque o integrador
-    /// típico — um Odoo on-prem em `10.x` ou `localhost` — seria bloqueado e
-    /// ficaria sem o webhook de aceleração. Nomes exactos, nunca redes.
-    pub webhook_allow_hosts: Vec<String>,
+    /// típico on-prem — Odoo ou Keycloak em `10.x` — seria recusado. Nomes
+    /// exactos, nunca redes. O host de `PLATFORM_ODOO_URL` entra sozinho (ver
+    /// `net_guard`).
+    pub outbound_allow_hosts: Vec<String>,
     pub cookie_secure: bool,
     /// Segredo partilhado que a camada de media (FreeSWITCH/provider) usa para
     /// chamar a API interna de IVR. Vazio => API interna de voz DESATIVADA.
@@ -334,7 +336,7 @@ impl Config {
                 .map(|u| u.trim_end_matches('/').to_string())
                 .filter(|u| !u.is_empty()),
             platform_odoo_db: src.var("PLATFORM_ODOO_DB").ok().filter(|d| !d.is_empty()),
-            webhook_allow_hosts: csv_env(src, "WEBHOOK_ALLOW_HOSTS"),
+            outbound_allow_hosts: csv_env(src, "OUTBOUND_ALLOW_HOSTS"),
             cookie_secure: src.var("COOKIE_INSECURE").ok().as_deref() != Some("1"),
             voice_internal_secret: src.var("VOICE_INTERNAL_SECRET").unwrap_or_default(),
             provisioning_secret: src.var("PROVISIONING_SECRET").unwrap_or_default(),

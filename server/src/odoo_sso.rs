@@ -29,7 +29,6 @@
 //! autenticação. O utilizador que entra é criado de forma síncrona (precisa
 //! dele para o token); os restantes chegam segundos depois.
 
-use reqwest::Client;
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -89,12 +88,15 @@ const SYNC_MAX_AGE_SECS: i64 = 3600;
 /// o chamador tem de distinguir para não trancar utilizadores fora quando é o
 /// Odoo que está em baixo.
 pub async fn login(
-    client: &Client,
+    out: &crate::net_guard::Outbound,
     odoo_url: &str,
     odoo_db: &str,
     login: &str,
     password: &str,
 ) -> anyhow::Result<Option<OdooSession>> {
+    // O URL é da organização: guarda anti-SSRF antes de lhe mandar a password.
+    out.check_tenant_url(odoo_url).await?;
+    let client = out.tenant();
     let body = serde_json::json!({
         "jsonrpc": "2.0", "method": "call", "id": 1,
         "params": { "db": odoo_db, "login": login, "password": password }
@@ -174,10 +176,12 @@ pub async fn login(
 /// Lê os utilizadores INTERNOS ACTIVOS da empresa (`share = false` exclui as
 /// contas de portal/público, que não são pessoal da empresa).
 pub async fn active_users(
-    client: &Client,
+    out: &crate::net_guard::Outbound,
     odoo_url: &str,
     session: &OdooSession,
 ) -> anyhow::Result<Vec<OdooUser>> {
+    out.check_tenant_url(odoo_url).await?;
+    let client = out.tenant();
     let body = serde_json::json!({
         "jsonrpc": "2.0", "method": "call", "id": 1,
         "params": {
@@ -483,7 +487,7 @@ pub fn spawn_directory_sync(
                 .execute(&state.db)
                 .await;
         };
-        let users = match active_users(&state.webhook_client, &odoo_url, &session).await {
+        let users = match active_users(&state.outbound, &odoo_url, &session).await {
             Ok(u) => u,
             Err(e) => {
                 tracing::warn!(error = %e, %org_id, "sync do directório Odoo falhou");
@@ -542,7 +546,7 @@ pub async fn try_first_login(
         _ => return None, // fail-closed: sem config, nada muda
     };
 
-    let session = match login(&state.webhook_client, &url, &db, email, password).await {
+    let session = match login(&state.outbound, &url, &db, email, password).await {
         Ok(Some(s)) => s,
         Ok(None) => return None, // credenciais inválidas
         Err(e) => {

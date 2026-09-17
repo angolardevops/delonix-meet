@@ -25,9 +25,12 @@ async fn generate(
     timeout: Duration,
 ) -> Option<String> {
     let base = state.config.ollama_url.as_ref()?;
-    let client = reqwest::Client::builder().timeout(timeout).build().ok()?;
-    let resp = client
+    // Destino do operador (OLLAMA_URL): rede privada sim, metadados não.
+    let resp = state
+        .outbound
+        .operator()
         .post(format!("{base}/api/generate"))
+        .timeout(timeout)
         .json(&serde_json::json!({
             "model": model,
             "prompt": prompt,

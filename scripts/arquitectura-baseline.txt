@@ -3,7 +3,7 @@
 # Só se baixa. Subir um número é aceitar uma cópia nova — não se faz aqui.
 pertenca_org_fora_de_org_rs=22
 authorization_lido_a_mao=1
-clientes_reqwest=4
+clientes_reqwest=0
 primitivas_cripto_espalhadas=0
 funcoes_sufixo_pub=4
 respostas_ok_true=18

@@ -48,7 +48,7 @@ up() {
       -e BIND_ADDR=0.0.0.0:8180 -e COOKIE_INSECURE=1 \
       -e PROVISIONING_SECRET=kaeso_demo_provisioning_secret \
       -e TURN_HOST=127.0.0.1:3478 \
-      -e WEBHOOK_ALLOW_HOSTS=127.0.0.1,localhost,meet.kaeso.local,kaeso-odoo \
+      -e OUTBOUND_ALLOW_HOSTS=127.0.0.1,localhost,meet.kaeso.local,kaeso-odoo \
       -v "$REPO/server/target/release/delonix-server:/app/delonix-server:ro" \
       ubuntu:24.04 /app/delonix-server >/dev/null
   fi

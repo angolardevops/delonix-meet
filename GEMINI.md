@@ -165,7 +165,7 @@ cargo build --release
 - `sqlx::query` / `sqlx::query_as::<_, T>` (runtime API — no compile-time verification; a wrong column name fails at runtime, not at build)
 - Handlers return `Result<impl IntoResponse, AppError>`
 - New modules: declare in `main.rs` (`mod new_module;`) + register routes in router
-- **Call the rule, never copy it** (ADR-0004 §5, counted by `scripts/check-arquitectura-catraca.sh` — no count may rise): membership → `org::`; auth → an existing extractor; outbound HTTP → `state.webhook_client` (+ `validate_public_url` for client-chosen URLs); crypto → the existing function; exports → `pub(crate)`, never `*_pub`; no new `{"ok": true}`; no session auth inside `/api/v1`
+- **Call the rule, never copy it** (ADR-0004 §5, counted by `scripts/check-arquitectura-catraca.sh` — no count may rise): membership → `org::`; auth → an existing extractor; outbound HTTP → `state.outbound` from `net_guard` (`tenant()` + `check_tenant_url` for client-chosen URLs, `operator()` + `check_operator_url` for operator-configured ones); crypto → the existing function; exports → `pub(crate)`, never `*_pub`; no new `{"ok": true}`; no session auth inside `/api/v1`
 - **Language boundary (2026-09-03):** NEW identifiers in English; comments, docs and user-facing text in Portuguese. Existing code is not renamed for this
 - Migrations: `server/migrations/NNNN_name.sql` with sequential prefix
 

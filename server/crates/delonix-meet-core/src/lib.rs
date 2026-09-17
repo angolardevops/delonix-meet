@@ -7,12 +7,14 @@
 //! - [`crypto`] — hashes, tokens aleatórios, comparação em tempo constante e
 //!   argon2, com UM dono (antes havia cópias em seis módulos);
 //! - [`page`] — paginação por cursor opaco, com limite obrigatório;
-//! - [`edition`] — os perfis de instalação (SaaS, enterprise, pessoal).
+//! - [`edition`] — os perfis de instalação (SaaS, enterprise, pessoal);
+//! - [`egress`] — para que endereços o servidor pode abrir ligações (anti-SSRF).
 //!
 //! Ver `docs/adr/0006-backend-enterprise-contextos-edicoes-e-entrega.md`.
 
 pub mod crypto;
 pub mod edition;
+pub mod egress;
 pub mod error;
 pub mod page;
 pub mod secret_box;

@@ -287,7 +287,7 @@ cargo build --release    # depois de migração nova, SEMPRE rebuild antes de re
 - Handlers async retornam `Result<impl IntoResponse, AppError>`
 - Migrações em `server/migrations/` com prefixo numérico sequencial (`0001_`, `0002_`, …)
 - Novos módulos: declarar em `main.rs` (`mod novo_modulo;`) + registar rotas no router
-- **Código novo chama a regra, não a copia** (ADR-0004 §5): pertença → `org::`; autenticação → um extractor de `auth.rs`/`apikeys.rs`/`odoo.rs`; pedidos de saída → `state.webhook_client` (+ `validate_public_url` se o URL vem do cliente); cripto → a função que existe; exportar → `pub(crate)`, nunca `*_pub`. A catraca da arquitectura falha se alguma contagem subir
+- **Código novo chama a regra, não a copia** (ADR-0004 §5): pertença → `org::`; autenticação → um extractor de `auth.rs`/`apikeys.rs`/`odoo.rs`; pedidos de saída → `state.outbound` do `net_guard` (`tenant()` + `check_tenant_url` se o URL vem do cliente, `operator()` + `check_operator_url` se vem do operador); cripto → a função que existe; exportar → `pub(crate)`, nunca `*_pub`. A catraca da arquitectura falha se alguma contagem subir
 - **Rota nova:** checklist da skill `delonix-meet-api` — `201`/`204` em vez de `{"ok": true}`, listagem com limite e cursor, recurso completo, uma autenticação por superfície
 - **Língua:** identificadores NOVOS em inglês; comentários, documentação e mensagens ao utilizador em português (regra de fronteira de 2026-09-03). O código existente não se renomeia por isso — renomeia-se quando mudar de crate
 

@@ -218,7 +218,7 @@ fn open_sso(
 
 #[sqlx::test(migrations = "./migrations")]
 async fn webhook_secret_is_sealed_and_delivery_signs_with_the_original(db: sqlx::PgPool) {
-    let app = TestApp::spawn_with(db, &[("WEBHOOK_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
     let rx = Receiver::spawn().await;
     let a = app.new_org("alfa.test").await;
     let (st, created) = app
@@ -345,7 +345,7 @@ async fn legacy_plaintext_keeps_working_and_is_resealed_idempotently(db: sqlx::P
     let app = TestApp::spawn_with(
         db,
         &[
-            ("WEBHOOK_ALLOW_HOSTS", "127.0.0.1"),
+            ("OUTBOUND_ALLOW_HOSTS", "127.0.0.1"),
             ("PLATFORM_ADMIN_USER_IDS", &admin.to_string()),
         ],
     )
@@ -436,7 +436,7 @@ async fn without_keys_writes_are_refused_and_legacy_reads_work(db: sqlx::PgPool)
     let admin = uuid::Uuid::new_v4();
     let admin_s = admin.to_string();
     let mut config = test_config(&[
-        ("WEBHOOK_ALLOW_HOSTS", "127.0.0.1"),
+        ("OUTBOUND_ALLOW_HOSTS", "127.0.0.1"),
         ("PLATFORM_ADMIN_USER_IDS", &admin_s),
     ]);
     config.secret_box = None;
@@ -569,7 +569,7 @@ async fn without_keys_writes_are_refused_and_legacy_reads_work(db: sqlx::PgPool)
 
 #[sqlx::test(migrations = "./migrations")]
 async fn ciphertext_copied_to_another_row_does_not_open(db: sqlx::PgPool) {
-    let app = TestApp::spawn_with(db, &[("WEBHOOK_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
     let rx_a = Receiver::spawn().await;
     let rx_b = Receiver::spawn().await;
     let a = app.new_org("alfa.test").await;

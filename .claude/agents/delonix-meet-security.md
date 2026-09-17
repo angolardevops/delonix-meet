@@ -48,7 +48,7 @@ vivo antes de fechadas (R121):
 3. **De quem é a conta:** nenhuma ligação por email sem a guarda de autoridade
    (`ForeignOrg`); nenhuma escrita de `role` que promova quem veio de fora (R25).
 4. **Para onde vai:**
-   - um URL escolhido pelo cliente passa por `validate_public_url`, com timeout e sem
+   - um URL escolhido pelo cliente passa por `state.outbound.check_tenant_url` (`net_guard`), com timeout e sem
      redirects;
    - na descoberta OIDC, o issuer não se valida só com `starts_with("https://")`.
 5. **O que se guarda:**

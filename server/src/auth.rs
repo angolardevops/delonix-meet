@@ -496,7 +496,7 @@ pub async fn login(
         // colegas admitidos no Odoo depois do primeiro login nunca chegavam
         // aqui — a sincronização era um evento único, não um estado.
         match crate::odoo_sso::login(
-            &state.webhook_client,
+            &state.outbound,
             &odoo_url,
             &odoo_db,
             &email,
@@ -784,6 +784,17 @@ pub async fn sso_check(
     }
 }
 
+/// Erro da descoberta OIDC. Um emissor recusado pela guarda de saída é um erro
+/// de CONFIGURAÇÃO da organização (400, com razão), não uma avaria do servidor.
+fn oidc_discovery_error(e: openidconnect::DiscoveryError<crate::net_guard::OidcHttpError>) -> ApiError {
+    match e {
+        openidconnect::DiscoveryError::Request(crate::net_guard::OidcHttpError::Blocked(why)) => {
+            ApiError::BadRequest(format!("emissor OIDC recusado pela guarda de saída: {why}"))
+        }
+        e => ApiError::Internal(format!("OIDC discovery: {e}")),
+    }
+}
+
 /// `GET /api/auth/sso/authorize?domain=example.com`
 /// Descobre o IdP OIDC da organização, gera state+PKCE e redireciona (302)
 /// o browser do utilizador para o IdP (Google/Microsoft/Okta).
@@ -792,7 +803,7 @@ pub async fn sso_check(
     params(("domain" = String, Query, description = "Domínio de email da organização.")),
     responses(
         (status = 302, description = "Redirecção (`Location`) para o endpoint de autorização do IdP, com state + PKCE."),
-        (status = 400, description = "`domain` em falta.", body = crate::openapi::ErrorBody),
+        (status = 400, description = "`domain` em falta, ou o emissor OIDC da organização aponta para um endereço interno (guarda de saída).", body = crate::openapi::ErrorBody),
         (status = 404, description = "Nenhuma organização com SSO configurado para o domínio.", body = crate::openapi::ErrorBody),
         (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
         (status = 500, description = "Issuer inválido ou discovery OIDC falhou.", body = crate::openapi::ErrorBody),
@@ -834,15 +845,14 @@ pub async fn sso_login(
     let issuer = IssuerUrl::new(issuer_url.clone())
         .map_err(|e| ApiError::Internal(format!("issuer URL inválido: {e}")))?;
 
-    let http_client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .build()
-        .map_err(ApiError::internal)?;
+    // Sem redirects, com timeout e guarda anti-SSRF em cada pedido do fluxo
+    // (descoberta, JWKS, troca do código) — ver `net_guard::OidcHttp`.
+    let http_client = state.outbound.oidc();
 
     let provider_metadata =
         openidconnect::core::CoreProviderMetadata::discover_async(issuer, &http_client)
             .await
-            .map_err(|e| ApiError::Internal(format!("OIDC discovery failed: {e}")))?;
+            .map_err(oidc_discovery_error)?;
 
     // O callback URL é relativo ao host que serviu o pedido.
     let callback_url = state
@@ -964,15 +974,14 @@ pub async fn sso_callback(
     let issuer =
         IssuerUrl::new(issuer_url).map_err(|e| ApiError::Internal(format!("issuer URL: {e}")))?;
 
-    let http_client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .build()
-        .map_err(ApiError::internal)?;
+    // Sem redirects, com timeout e guarda anti-SSRF em cada pedido do fluxo
+    // (descoberta, JWKS, troca do código) — ver `net_guard::OidcHttp`.
+    let http_client = state.outbound.oidc();
 
     let provider_metadata =
         openidconnect::core::CoreProviderMetadata::discover_async(issuer, &http_client)
             .await
-            .map_err(|e| ApiError::Internal(format!("OIDC discovery: {e}")))?;
+            .map_err(oidc_discovery_error)?;
 
     let callback_url = state
         .config

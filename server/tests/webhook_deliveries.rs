@@ -1,5 +1,5 @@
 //! Registo de entregas de webhooks e reenvio (G7) contra Postgres real e um
-//! receptor HTTP real em 127.0.0.1 (na allowlist `WEBHOOK_ALLOW_HOSTS`).
+//! receptor HTTP real em 127.0.0.1 (na allowlist `OUTBOUND_ALLOW_HOSTS`).
 //!
 //! O evento dispara-se pelo caminho do produto — criar uma reunião dispara
 //! `meeting.created` —, não por uma chamada directa a `fire()`.
@@ -77,7 +77,7 @@ impl Receiver {
 }
 
 async fn spawn_app(db: sqlx::PgPool) -> TestApp {
-    TestApp::spawn_with(db, &[("WEBHOOK_ALLOW_HOSTS", "127.0.0.1")]).await
+    TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await
 }
 
 fn hooks(org: &str) -> String {

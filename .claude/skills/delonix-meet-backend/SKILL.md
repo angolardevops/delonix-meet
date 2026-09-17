@@ -27,7 +27,7 @@ Uma proposta que comece por apagar código que funciona é recusada na revisão.
 |---|---|---|
 | Uma verificação «é membro/admin da org?» | chamar `org::role_in_org` / `org::require_member_pub` / `org::require_admin_pub` | um `SELECT … FROM org_members` no teu módulo |
 | Autenticação de um pedido | um extractor existente (`auth::AuthUser`, `apikeys::ApiKeyAuth`, `odoo::OdooTokenAuth`), ou um novo em `auth.rs` | `headers.get("authorization")…strip_prefix("Bearer ")` |
-| Um pedido HTTP de saída | `state.webhook_client`; se o URL vem do cliente, `webhooks::validate_public_url` (torna-a `pub(crate)`, não a copies) | `reqwest::Client::builder()` |
+| Um pedido HTTP de saída | `state.outbound` (`net_guard`): `tenant()` + `check_tenant_url` se o URL vem do cliente, `operator()` + `check_operator_url` se vem do operador; OIDC via `outbound.oidc()` | `reqwest::Client::builder()` |
 | sha256, token aleatório, comparação em tempo constante, argon2 | a função que já existe (`auth::hash_password`/`verify_password`, `auth::hash_refresh_token`, `apikeys::ct_eq`); **a próxima necessidade é a extracção para `crypto.rs`** | uma cópia local |
 | Uma regra usada pela BFF E pela v1 | uma função partilhada no módulo do domínio, chamada pelas duas | dois handlers com a mesma validação |
 | Um erro de unicidade | `ApiError::Conflict` a partir de um helper; se não existir, cria `ApiError::from_unique` | o 15.º `match db.is_unique_violation()` à mão |

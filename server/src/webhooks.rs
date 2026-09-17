@@ -45,44 +45,12 @@ use delonix_meet_domain::integration::webhook_delivery as rules;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{auth::AuthUser, error::ApiError, secrets_at_rest, AppState};
 
 type HmacSha256 = Hmac<Sha256>;
-
-/// True se o IP pertence a um intervalo interno/privado que não deve ser
-/// alcançável a partir do servidor (anti-SSRF).
-fn ip_is_blocked(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            let o = v4.octets();
-            v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || v4.is_multicast()
-                || v4.is_documentation()
-                || o[0] == 0
-                || (o[0] == 100 && (o[1] & 0xc0) == 64) // 100.64.0.0/10 CGNAT
-        }
-        IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return ip_is_blocked(IpAddr::V4(mapped));
-            }
-            let seg0 = v6.segments()[0];
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                || (seg0 & 0xfe00) == 0xfc00 // fc00::/7 ULA
-                || (seg0 & 0xffc0) == 0xfe80 // fe80::/10 link-local
-                || v6 == Ipv6Addr::LOCALHOST
-        }
-    }
-}
 
 /// Eventos que um webhook pode subscrever. Um nome fora desta lista é um typo
 /// que silenciaria o hook sem erro nenhum — recusa-se na criação.
@@ -98,52 +66,6 @@ pub const KNOWN_EVENTS: &[&str] = &[
 /// criado sem `events` explícitos nunca o receberia.
 pub const DEFAULT_EVENTS: &str =
     "meeting.created,meeting.started,meeting.mom_ready,recording.ready";
-
-/// Valida que um URL de webhook é público e seguro. Chamado na criação E na
-/// entrega (esta última defende contra DNS-rebinding entre check e envio).
-///
-/// `allow_hosts` é a allowlist de `WEBHOOK_ALLOW_HOSTS`: hosts que o operador
-/// declarou explicitamente como destinos internos legítimos (o caso real é um
-/// Odoo on-prem em `10.x`/`localhost`, que a guarda anti-SSRF bloquearia e
-/// deixaria a integração sem o webhook de aceleração). Só nomes exactos — sem
-/// wildcards, sem CIDR: a isenção é por destino nomeado, não por rede.
-async fn validate_public_url(raw: &str, allow_hosts: &[String]) -> Result<(), ApiError> {
-    let url = reqwest::Url::parse(raw).map_err(|_| ApiError::BadRequest("URL inválido".into()))?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err(ApiError::BadRequest("esquema de URL inválido".into()));
-    }
-    if url.username() != "" || url.password().is_some() {
-        return Err(ApiError::BadRequest(
-            "URL não pode conter credenciais".into(),
-        ));
-    }
-    let host = url
-        .host_str()
-        .ok_or_else(|| ApiError::BadRequest("URL sem host".into()))?;
-    // A isenção é pelo HOST do URL, não pelo IP resolvido: assim um rebind de
-    // DNS para 169.254.169.254 continua a ser bloqueado em todos os destinos
-    // que o operador não nomeou.
-    if allow_hosts.iter().any(|h| h.eq_ignore_ascii_case(host)) {
-        return Ok(());
-    }
-    let port = url.port_or_known_default().unwrap_or(443);
-    let mut any = false;
-    for sa in tokio::net::lookup_host((host, port))
-        .await
-        .map_err(|_| ApiError::BadRequest("host do URL não resolve".into()))?
-    {
-        any = true;
-        if ip_is_blocked(sa.ip()) {
-            return Err(ApiError::BadRequest(
-                "o URL aponta para um endereço interno/privado".into(),
-            ));
-        }
-    }
-    if !any {
-        return Err(ApiError::BadRequest("host do URL não resolve".into()));
-    }
-    Ok(())
-}
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Webhook {
@@ -289,18 +211,18 @@ async fn attempt(
 ) {
     let started = std::time::Instant::now();
     let outcome: Result<u16, String> =
-        match validate_public_url(&hook.url, &state.config.webhook_allow_hosts).await {
+        match state.outbound.check_tenant_url(&hook.url).await {
             Err(e) => {
                 tracing::warn!(hook = %hook.id, error = %e, "webhook destino bloqueado (SSRF)");
                 Err(format!("destino bloqueado: {e}"))
             }
             // Um segredo que não abre não se troca por um envio sem assinatura:
             // o receptor aceitaria (ou recusaria) sem saber porquê.
-            Ok(()) => {
+            Ok(_) => {
                 match secrets_at_rest::open(&state.config, &hook.secret, &secret_aad(hook.id)) {
                     Err(_) => Err("o segredo do webhook não abre neste servidor".to_string()),
                     Ok(secret) => send(
-                        &state.webhook_client,
+                        state.outbound.tenant(),
                         hook,
                         &secret,
                         event,
@@ -501,7 +423,7 @@ pub async fn create(
             "tipo de webhook inválido".into(),
         ));
     }
-    validate_public_url(&req.url, &state.config.webhook_allow_hosts).await?;
+    state.outbound.check_tenant_url(&req.url).await?;
     let events = req.events.unwrap_or_else(|| DEFAULT_EVENTS.into());
     // Um nome desconhecido nunca dispara — recusa-se aqui em vez de deixar o
     // admin com um webhook silenciosamente morto.
@@ -791,7 +713,7 @@ pub async fn redeliver(
 
     // Antes de aceitar: o URL de AGORA tem de passar a guarda (o envio volta a
     // validá-lo, contra DNS-rebinding). Fora da transacção — é uma resolução DNS.
-    validate_public_url(&hook.url, &state.config.webhook_allow_hosts).await?;
+    state.outbound.check_tenant_url(&hook.url).await?;
 
     // O ritmo conta-se sob o lock da linha do webhook: dois reenvios em
     // simultâneo (dois nós, dois separadores) não passam ambos pelo último lugar.
@@ -847,68 +769,6 @@ pub async fn redeliver(
 
 #[cfg(test)]
 mod tests {
-    use super::ip_is_blocked;
-    use std::net::IpAddr;
-
-    fn ip(s: &str) -> IpAddr {
-        s.parse().unwrap()
-    }
-
-    #[test]
-    fn blocks_internal_ranges() {
-        for s in [
-            "127.0.0.1",        // loopback
-            "10.0.0.5",         // privado
-            "172.16.3.4",       // privado
-            "192.168.1.1",      // privado
-            "169.254.169.254",  // link-local / metadata cloud
-            "100.64.0.1",       // CGNAT
-            "0.0.0.0",          // unspecified
-            "::1",              // loopback v6
-            "fc00::1",          // ULA v6
-            "fe80::1",          // link-local v6
-            "::ffff:127.0.0.1", // v4-mapped loopback
-            "::ffff:10.0.0.1",  // v4-mapped privado
-        ] {
-            assert!(ip_is_blocked(ip(s)), "devia bloquear {s}");
-        }
-    }
-
-    #[tokio::test]
-    async fn allowlist_exempts_only_named_hosts() {
-        let allow = vec!["odoo.interno".to_string()];
-        // O destino nomeado passa mesmo resolvendo (ou não) para rede privada.
-        assert!(
-            super::validate_public_url("http://odoo.interno:8069/hook", &allow)
-                .await
-                .is_ok()
-        );
-        // Maiúsculas/minúsculas não contornam nem impedem a isenção.
-        assert!(
-            super::validate_public_url("http://ODOO.INTERNO/hook", &allow)
-                .await
-                .is_ok()
-        );
-        // Um host NÃO nomeado continua bloqueado — a isenção é por destino,
-        // não por rede: o endpoint de metadata da cloud não passa.
-        assert!(
-            super::validate_public_url("http://169.254.169.254/latest/meta-data", &allow)
-                .await
-                .is_err()
-        );
-        assert!(
-            super::validate_public_url("http://127.0.0.1:8069/hook", &allow)
-                .await
-                .is_err()
-        );
-        // Sem allowlist (omissão) nada interno passa.
-        assert!(
-            super::validate_public_url("http://odoo.interno:8069/hook", &[])
-                .await
-                .is_err()
-        );
-    }
-
     #[test]
     fn mom_ready_is_subscribed_by_default() {
         // Sem isto, um Odoo que crie o webhook sem `events` nunca soube que a
@@ -973,18 +833,6 @@ mod tests {
         );
         assert_eq!(by_id(in_flight).unwrap().1, "pending", "ainda em curso");
         assert_eq!(by_id(recent).unwrap().1, "failed");
-    }
-
-    #[test]
-    fn allows_public_addresses() {
-        for s in [
-            "1.1.1.1",
-            "8.8.8.8",
-            "93.184.216.34",
-            "2606:4700:4700::1111",
-        ] {
-            assert!(!ip_is_blocked(ip(s)), "não devia bloquear {s}");
-        }
     }
 }
 

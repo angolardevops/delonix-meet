@@ -163,6 +163,9 @@ pub async fn save_storage(
     if !valid.contains(&req.storage_type.as_str()) {
         return Err(ApiError::BadRequest("storage_type inválido".into()));
     }
+    if let Some(u) = req.webdav_url.as_deref().filter(|u| !u.is_empty()) {
+        state.outbound.check_operator_config_url(u).await?;
+    }
 
     // Se password vazia/omitida → manter a existente (COALESCE). Nova → cifrada.
     let new_pwd = req
@@ -281,9 +284,10 @@ pub async fn test_storage(
                 ));
             }
             // Teste real: PROPFIND na raiz do WebDAV.
-            let client = &state.webhook_client;
+            let url = state.outbound.check_operator_url(&url).await?;
+            let client = state.outbound.operator();
             let resp = client
-                .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &url)
+                .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), url.as_str())
                 .basic_auth(&user, Some(&pwd))
                 .header("Depth", "0")
                 .send()

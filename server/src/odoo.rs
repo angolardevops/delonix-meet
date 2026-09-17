@@ -129,7 +129,8 @@ pub struct OdooConfig {
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct OdooConfigReq {
     pub odoo_enabled: bool,
-    /// Guardado sem `/` finais. Não é validado.
+    /// Guardado sem `/` finais. Passa pela guarda de saída (`net_guard`): um
+    /// endereço interno é recusado com 400, salvo `OUTBOUND_ALLOW_HOSTS`.
     pub odoo_url: Option<String>,
     pub odoo_db: Option<String>,
     pub hide_org_creation: bool,
@@ -179,6 +180,7 @@ pub async fn get_config(
     request_body = OdooConfigReq,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 400, description = "`odoo_url` inválido ou a apontar para um endereço interno (guarda de saída, `OUTBOUND_ALLOW_HOSTS`).", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
     )
@@ -194,7 +196,13 @@ pub async fn save_config(
     let url = req
         .odoo_url
         .as_deref()
-        .map(|u| u.trim_end_matches('/').to_string());
+        .map(|u| u.trim().trim_end_matches('/').to_string())
+        .filter(|u| !u.is_empty());
+    // O servidor manda passwords a este URL (login por conta Odoo): guarda
+    // anti-SSRF ao gravar (S4).
+    if let Some(u) = &url {
+        state.outbound.check_tenant_config_url(u).await?;
+    }
 
     sqlx::query(
         "UPDATE organizations
