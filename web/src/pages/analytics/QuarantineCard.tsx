@@ -14,16 +14,13 @@ import { RankList } from './RankList'
 
 type Period = 'week' | 'month' | 'quarter' | 'year'
 const PERIODS: Period[] = ['week', 'month', 'quarter', 'year']
-type Scope = 'org' | 'all'
 
-export function QuarantineCard({ orgId }: { orgId: string | null }) {
+export function QuarantineCard({ orgId }: { orgId: string }) {
   const { t } = useTranslation()
   const [period, setPeriod] = useState<Period>('month')
-  const [scope, setScope] = useState<Scope>('org')
-  const effectiveOrg = scope === 'org' && orgId ? orgId : undefined
   const { state, reload } = useAsync(
-    () => quarantineAnalytics(period, effectiveOrg).catch(forbiddenAsMessage(t('analytics.semPermissao'))),
-    [period, effectiveOrg],
+    () => quarantineAnalytics(orgId, period).catch(forbiddenAsMessage(t('analytics.semPermissao'))),
+    [orgId, period],
   )
 
   return (
@@ -37,17 +34,6 @@ export function QuarantineCard({ orgId }: { orgId: string | null }) {
             onChange={setPeriod}
             options={PERIODS.map((p) => ({ value: p, label: t(`analytics.quarentena.periodos.${p}`) }))}
           />
-          {orgId && (
-            <Segmented
-              label={t('analytics.quarentena.ambito')}
-              value={scope}
-              onChange={setScope}
-              options={[
-                { value: 'org', label: t('analytics.quarentena.estaOrg') },
-                { value: 'all', label: t('analytics.quarentena.todasOrgs') },
-              ]}
-            />
-          )}
         </div>
         <AsyncSection state={state} onRetry={reload}>
           {(rows) =>

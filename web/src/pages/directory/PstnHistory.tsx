@@ -1,6 +1,6 @@
 /**
  * Histórico PSTN: as chamadas telefónicas que entraram pelo dial-in da
- * organização (GET /api/orgs/{org}/voice/cdr, só admins). É o registo real
+ * organização (GET /api/orgs/{org}/voice/call-records, só admins). É o registo real
  * da central — número de quem ligou, número marcado e duração.
  *
  * Chamadas efectuadas não aparecem porque não existem: não há saída PSTN
