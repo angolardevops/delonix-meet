@@ -12,4 +12,5 @@ pub mod integration;
 pub mod notification;
 pub mod operations;
 pub mod organization;
+pub mod studio;
 pub mod telephony;
