@@ -200,7 +200,7 @@ async fn invitation_acceptance_rules(db: sqlx::PgPool) {
             Some(&owner.token),
         )
         .await;
-    assert_eq!(st, 200);
+    assert_eq!(st, 204, "contrato do #90");
     let (_, b) = app
         .post(
             &format!("/api/orgs/{org}/users/bulk-actions"),
