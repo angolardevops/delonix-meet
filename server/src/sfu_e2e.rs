@@ -68,6 +68,9 @@ struct TestClient {
     /// Cada pacote de VÍDEO recebido, por ordem de chegada — é o que deixa
     /// provar numeração, relógio e camada de origem através das trocas.
     video_rx: Arc<std::sync::Mutex<Vec<RxVideo>>>,
+    /// Pacotes RTP recebidos por (stream_id, kind) — o `rtp_seen` junta áudio
+    /// e vídeo do mesmo publicador e não distinguiria «só chegou o áudio».
+    rtp_por_tipo: Arc<Mutex<std::collections::HashMap<(String, String), usize>>>,
 }
 
 /// Um pacote de vídeo tal como o subscritor o viu.
@@ -87,15 +90,26 @@ async fn client_api() -> webrtc::api::API {
     // As MESMAS extensões, pela MESMA ordem, que o servidor regista em
     // `sfu::new_api` (e que o browser anuncia): sem mid+rid o cliente não
     // consegue ENVIAR simulcast.
-    media
-        .register_header_extension(
-            RTCRtpHeaderExtensionCapability {
-                uri: "urn:ietf:params:rtp-hdrext:ssrc-audio-level".to_owned(),
-            },
-            RTPCodecType::Audio,
-            None,
-        )
-        .unwrap();
+    //
+    // `sdes:mid` também no ÁUDIO, como o browser: sem ele o webrtc-rs do SFU
+    // desiste da sonda de media não declarada ANTES de fechar o stream, e a
+    // R172 ficava invisível no áudio. Nota: `ssrc-audio-level` fica negociado
+    // mas o `TrackLocalStaticSample` não o escreve — energia sempre 0. Um teste
+    // com ≥5 peers que verifique áudio veria o top-N (R22) escolher ao acaso.
+    for uri in [
+        "urn:ietf:params:rtp-hdrext:ssrc-audio-level",
+        "urn:ietf:params:rtp-hdrext:sdes:mid",
+    ] {
+        media
+            .register_header_extension(
+                RTCRtpHeaderExtensionCapability {
+                    uri: uri.to_owned(),
+                },
+                RTPCodecType::Audio,
+                None,
+            )
+            .unwrap();
+    }
     for uri in [
         "urn:ietf:params:rtp-hdrext:sdes:mid",
         "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id",
@@ -145,6 +159,7 @@ impl TestClient {
             received: Arc::new(Mutex::new(Vec::new())),
             rtp_seen: Arc::new(Mutex::new(std::collections::HashMap::new())),
             video_rx: Arc::new(std::sync::Mutex::new(Vec::new())),
+            rtp_por_tipo: Arc::new(Mutex::new(std::collections::HashMap::new())),
         });
 
         // Trickle ICE cliente → SFU.
@@ -171,10 +186,12 @@ impl TestClient {
             let received = client.received.clone();
             let rtp_seen = client.rtp_seen.clone();
             let video_rx = client.video_rx.clone();
+            let rtp_por_tipo = client.rtp_por_tipo.clone();
             pc.on_track(Box::new(move |remote, _r, _t| {
                 let received = received.clone();
                 let rtp_seen = rtp_seen.clone();
                 let video_rx = video_rx.clone();
+                let rtp_por_tipo = rtp_por_tipo.clone();
                 Box::pin(async move {
                     let stream_id = remote.stream_id().to_string();
                     let is_video = remote.kind() == RTPCodecType::Video;
@@ -183,8 +200,14 @@ impl TestClient {
                         .await
                         .push((stream_id.clone(), remote.kind().to_string()));
                     tokio::spawn(async move {
+                        let kind = remote.kind().to_string();
                         while let Ok((pkt, _)) = remote.read_rtp().await {
                             *rtp_seen.lock().await.entry(stream_id.clone()).or_insert(0) += 1;
+                            *rtp_por_tipo
+                                .lock()
+                                .await
+                                .entry((stream_id.clone(), kind.clone()))
+                                .or_insert(0) += 1;
                             if is_video {
                                 video_rx.lock().unwrap().push(RxVideo {
                                     stream_id: stream_id.clone(),
@@ -204,9 +227,29 @@ impl TestClient {
         client
     }
 
-    /// Publica uma track e oferta ao SFU (é o que o browser faz ao entrar, ao
-    /// ligar a câmara ou ao partilhar o ecrã).
+    /// Publica uma track e oferta ao SFU (é o que o browser faz ao ligar a
+    /// câmara ou ao partilhar o ecrã).
     async fn publish(&self, mime: &str, id: &str) -> Arc<TrackLocalStaticSample> {
+        let track = self.adicionar_track(mime, id).await;
+        self.offer().await;
+        emitir(track.clone());
+        track
+    }
+
+    /// Entrada como a de um browser: microfone E câmara na MESMA oferta.
+    async fn publicar_audio_e_video(&self) {
+        let audio = self
+            .adicionar_track(OPUS, &format!("{}-audio", self.id))
+            .await;
+        let video = self
+            .adicionar_track(VP8, &format!("{}-video", self.id))
+            .await;
+        self.offer().await;
+        emitir(audio);
+        emitir(video);
+    }
+
+    async fn adicionar_track(&self, mime: &str, id: &str) -> Arc<TrackLocalStaticSample> {
         let track = Arc::new(TrackLocalStaticSample::new(
             RTCRtpCodecCapability {
                 mime_type: mime.to_owned(),
@@ -225,26 +268,6 @@ impl TestClient {
             )
             .await
             .unwrap();
-        self.offer().await;
-
-        // Media contínua: o `on_track` do SFU só dispara com RTP a chegar.
-        let t = track.clone();
-        tokio::spawn(async move {
-            loop {
-                let ok = t
-                    .write_sample(&Sample {
-                        data: vec![0u8; 120].into(),
-                        duration: Duration::from_millis(20),
-                        ..Default::default()
-                    })
-                    .await
-                    .is_ok();
-                if !ok {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        });
         track
     }
 
@@ -387,6 +410,26 @@ impl TestClient {
     }
 }
 
+/// Media contínua: o `on_track` do SFU só dispara com RTP a chegar.
+fn emitir(track: Arc<TrackLocalStaticSample>) {
+    tokio::spawn(async move {
+        loop {
+            let ok = track
+                .write_sample(&Sample {
+                    data: vec![0u8; 120].into(),
+                    duration: Duration::from_millis(20),
+                    ..Default::default()
+                })
+                .await
+                .is_ok();
+            if !ok {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    });
+}
+
 /// Bomba de mensagens servidor → cliente (o equivalente ao WebSocket).
 async fn pump(client: Arc<TestClient>, mut rx: mpsc::Receiver<ServerMsg>) {
     while let Some(msg) = rx.recv().await {
@@ -423,9 +466,11 @@ async fn pump(client: Arc<TestClient>, mut rx: mpsc::Receiver<ServerMsg>) {
 /// 20000+ nunca é entregue pelo SO como porta efémera, por isso o único
 /// concorrente possível é outro processo de teste — e o PID separa-os.
 fn portas_de_teste() -> (u16, u16) {
-    // 60 portas chegam para os pares destes testes; 200 fatias distintas.
-    let base = 20_000u16 + ((std::process::id() % 200) as u16 * 60);
-    (base, base + 59)
+    // 250 portas por processo, 48 fatias distintas (20000–31999). Eram 60, que
+    // chegavam para os pares dos outros testes mas não para dezasseis peers
+    // ligados ao mesmo tempo (R172).
+    let base = 20_000u16 + ((std::process::id() % 48) as u16 * 250);
+    (base, base + 249)
 }
 
 fn new_sfu() -> (Arc<SfuState>, Arc<Metrics>) {
@@ -1278,4 +1323,129 @@ async fn media_e_consentimento_sobrevivem_as_renegociacoes_do_sfu() {
 
     sfu.remove_peer(room, a.id).await;
     sfu.remove_peer(room, b.id).await;
+}
+
+/// **R172 — entradas concorrentes: toda a gente recebe toda a gente.**
+///
+/// Medido a 2026-09-17 com clientes WebRTC reais (`examples/loadgen.rs`): 8
+/// salas × 4 com entradas espaçadas de 40 ms davam 75–87 de 96 fluxos de
+/// vídeo, com 0 % de perda nos que chegavam. A causa não era a subscrição: a
+/// PUBLICAÇÃO morria dezenas de ms depois de nascer (`read_rtp` →
+/// `buffer: closed`) e com ela as subscrições da sala inteira.
+///
+/// No webrtc-rs 0.17.1, o primeiro pacote de um publicador que chegue entre a
+/// sessão SRTP nascer e o `start_rtp` abrir os receivers faz a sessão criar o
+/// stream sozinha. O processador de media «não declarada» sonda-o como
+/// simulcast, falha (não há rid) e FECHA-o — o mesmo stream que o receiver
+/// abriu entretanto. Correcção em `vendor/webrtc` (`[patch.crates-io]`).
+///
+/// A armadilha que escondeu isto dos testes: a sonda só chega ao fecho se o
+/// par negociou `sdes:mid`. O cliente de teste não o registava e o webrtc-rs
+/// desistia antes de fechar; um browser (e o loadgen) negoceia-o sempre. Com
+/// as extensões de browser em `client_api`, este teste falhou 3/3 sem a
+/// correcção (6 a 63 pares em falta). O veredicto é por par (subscritor,
+/// publicador, tipo) e com RTP a passar: uma track negociada que não recebe
+/// nada é a avaria medida.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn entradas_concorrentes_todos_recebem_todos() {
+    const SALAS: usize = 4;
+    const POR_SALA: usize = 4;
+    let (sfu, metrics) = new_sfu();
+    let salas: Vec<Uuid> = (0..SALAS).map(|_| Uuid::new_v4()).collect();
+
+    // Entradas intercaladas entre salas, sem esperar que a anterior acabe.
+    let mut entradas = Vec::new();
+    for i in 0..SALAS * POR_SALA {
+        let sfu = sfu.clone();
+        let sala = salas[i % SALAS];
+        entradas.push(tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10 * i as u64)).await;
+            let c = TestClient::join(&sfu, sala).await;
+            c.publicar_audio_e_video().await;
+            c
+        }));
+    }
+    let mut clientes = Vec::new();
+    for e in entradas {
+        clientes.push(e.await.expect("entrada"));
+    }
+
+    let clientes = Arc::new(clientes);
+    let em_falta = {
+        let clientes = clientes.clone();
+        move || {
+            let clientes = clientes.clone();
+            async move {
+                let mut falta = Vec::new();
+                for sub in clientes.iter() {
+                    let rtp = sub.rtp_por_tipo.lock().await.clone();
+                    for publ in clientes
+                        .iter()
+                        .filter(|p| p.room == sub.room && p.id != sub.id)
+                    {
+                        for kind in ["audio", "video"] {
+                            let chave = (publ.id.to_string(), kind.to_string());
+                            if rtp.get(&chave).copied().unwrap_or(0) == 0 {
+                                falta.push(format!(
+                                    "{}←{}:{kind}",
+                                    &sub.id.to_string()[..8],
+                                    &publ.id.to_string()[..8]
+                                ));
+                            }
+                        }
+                    }
+                }
+                falta
+            }
+        }
+    };
+
+    let ultima_falta = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    eventually_com_diagnostico(
+        "cada subscritor recebe RTP de áudio e vídeo de cada publicador da sua sala",
+        prazo(60),
+        || {
+            let em_falta = em_falta.clone();
+            let ultima_falta = ultima_falta.clone();
+            async move {
+                let f = em_falta().await;
+                let completo = f.is_empty();
+                *ultima_falta.lock().unwrap() = f;
+                completo
+            }
+        },
+        || {
+            let f = ultima_falta.lock().unwrap();
+            format!(
+                "em falta ({}): {:?} · subscrições={}",
+                f.len(),
+                *f,
+                metrics
+                    .sfu_subscriptions
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            )
+        },
+    )
+    .await;
+
+    // E FICA: a avaria era uma publicação a desaparecer depois de nascer, e um
+    // `eventually` que olhasse só para o primeiro pacote deixava-a passar.
+    tokio::time::sleep(prazo(1)).await;
+    for c in clientes.iter() {
+        c.rtp_por_tipo.lock().await.clear();
+    }
+    tokio::time::sleep(prazo(1)).await;
+    let depois = em_falta().await;
+    assert!(depois.is_empty(), "media deixou de chegar: {depois:?}");
+    assert_eq!(
+        metrics
+            .sfu_subscriptions
+            .load(std::sync::atomic::Ordering::Relaxed),
+        (SALAS * POR_SALA * (POR_SALA - 1) * 2) as i64,
+        "delonix_sfu_subscriptions tem de ser 2·N·(N−1) por sala"
+    );
+
+    for c in clientes.iter() {
+        sfu.remove_peer(c.room, c.id).await;
+    }
 }

@@ -46,5 +46,15 @@ tokio-tungstenite = "0.24"
 # perdia o consentimento ICE ~5 s depois de ligar — R157. Nem a 0.17.2 trata o
 # conflito. Retirar este patch só quando o upstream o fizer (o teste
 # `conflito_de_papel_ice_recebe_487_autenticado` diz se fez).
+#
+# webrtc 0.17.1 com UMA alteração: o processador de media não declarada deixa
+# de sondar (e FECHAR) o stream SRTP de um SSRC que o SDP remoto declara
+# (`ssrc_declared_in_remote_description` em
+# vendor/webrtc/src/peer_connection/peer_connection_internal.rs). Sem ela, o
+# primeiro pacote que chegasse antes do `start_rtp` matava a publicação com o
+# publicador ainda a enviar — num nó carregado, 75–87 de 96 fluxos de vídeo em
+# 8 salas × 4 (R172). A 0.17.2 não trata disto e a 0.20 é outra API. Retirar só
+# quando o upstream o fizer.
 [patch.crates-io]
 webrtc-ice = { path = "vendor/webrtc-ice" }
+webrtc = { path = "vendor/webrtc" }

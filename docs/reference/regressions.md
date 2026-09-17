@@ -1690,3 +1690,26 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Não validado.** Firefox e Safari (não usam o libwebrtc para o papel ICE da mesma forma; o 487 é RFC, deviam tratá-lo). Kubernetes com relay-only (`FORCE_TURN_RELAY=1`): o mecanismo é o mesmo mas não se correu. Chrome 153.0.8010.12 só uma corrida de 60 s na UI nova (estável, e o SFU respondeu 487 durante ela — o 153 também muda de papel).
 
 **Ficheiros.** `server/vendor/webrtc-ice/src/agent/agent_internal.rs` (`send_role_conflict`), `server/Cargo.toml` (`[patch.crates-io]`), `server/Cargo.lock`, `server/src/sfu_e2e.rs`.
+### R172 — Entradas concorrentes: a sala inteira deixava de ver um publicador, sem perda nenhuma
+
+**Sintoma.** Medido a 2026-09-17 com clientes WebRTC reais (`examples/loadgen.rs`, sem simulcast): 8 salas × 4 com entradas espaçadas de 40 ms davam **75–87 de 96** fluxos de vídeo, com 0 % de perda nos que chegavam; `delonix_sfu_subscriptions` = 165 em vez de 192. Espaçadas de 150/400 ms, ou 4 salas × 4, davam 96/96. Todos os peers tinham `sfu track published` para áudio e vídeo, e as ofertas de renegociação do servidor já não traziam o vídeo em falta — parecia uma subscrição perdida no `sfu.rs`.
+
+**Causa raiz.** Não era a subscrição. A PUBLICAÇÃO morria 30–65 ms depois de nascer: o `read_rtp` da bomba devolvia `buffer: closed`, o `unpublish` retirava-a a toda a sala, e o publicador continuava a enviar. Dentro do webrtc-rs 0.17.1 (e 0.17.2):
+1. o DTLS liga e a sessão SRTP nasce; o `start_rtp` que abre os receivers dos SSRC declarados é uma operação em fila que só corre a seguir;
+2. num nó carregado essa janela tem dezenas de ms, e um vídeo a centenas de pacotes/s põe lá um pacote quase sempre;
+3. a sessão cria o stream sozinha e anuncia-o ao processador de media **não declarada** (a sonda de simulcast);
+4. o `start_rtp` abre o MESMO stream para o receiver (`Session::open` devolve o existente);
+5. a sonda não encontra `rid`, falha e **fecha o stream** — o do receiver.
+
+`Incoming unhandled RTP ssrc(…) … failed Simulcast probing` era a assinatura, mas o filtro de log por omissão (`delonix_server=info`) escondia-a.
+
+**Correcção.** `vendor/webrtc` (0.17.1 intacto num commit, a alteração no seguinte) + `[patch.crates-io]`: um SSRC que o SDP remoto declara não passa pela sonda — o stream fica para o receiver, sem ser lido nem fechado. E a bomba de RTP do `sfu.rs` passa a registar **porque** terminou (`sfu track terminou … error=`), para que «track unpublished» deixe de ser indistinguível de «o publicador saiu».
+
+**Regra.**
+- O cliente de teste negoceia as extensões RTP de um browser (`sdes:mid`, `rtp-stream-id`, `repaired-rtp-stream-id`, `ssrc-audio-level`). **Sem `mid` a sonda desiste antes de fechar** e o bug é invisível aos testes: o teste novo passou 6/6 sem a correcção até o cliente as registar, e falhou 3/3 depois.
+- Não retirar o patch sem o teste abaixo passar com o crate do crates.io. A 0.20 é outra API; subir para ela não é «a correcção», é uma migração.
+- Afecta produção para lá do vídeo sem simulcast: áudio e partilha de ecrã não têm `rid` e seguem o mesmo caminho.
+
+**Portão.** `sfu_e2e::entradas_concorrentes_todos_recebem_todos` — 16 clientes em 4 salas a entrar intercalados, veredicto por par (subscritor, publicador, tipo) com RTP a passar, e de novo um segundo depois (a avaria era a media DEIXAR de chegar), mais o gauge de subscrições = 2·N·(N−1) por sala. Carga real, antes/depois, no mesmo servidor e cenário (8 × 4, 40 ms): 75/96 → **96/96 em 3/3 corridas**, 0 PCs falhadas, 0 `Incoming unhandled RTP`.
+
+**Ficheiros.** `server/vendor/webrtc/src/peer_connection/peer_connection_internal.rs`, `server/Cargo.toml`, `server/src/sfu.rs`, `server/src/sfu_e2e.rs`.
