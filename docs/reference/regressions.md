@@ -1690,3 +1690,28 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Não validado.** Firefox e Safari (não usam o libwebrtc para o papel ICE da mesma forma; o 487 é RFC, deviam tratá-lo). Kubernetes com relay-only (`FORCE_TURN_RELAY=1`): o mecanismo é o mesmo mas não se correu. Chrome 153.0.8010.12 só uma corrida de 60 s na UI nova (estável, e o SFU respondeu 487 durante ela — o 153 também muda de papel).
 
 **Ficheiros.** `server/vendor/webrtc-ice/src/agent/agent_internal.rs` (`send_role_conflict`), `server/Cargo.toml` (`[patch.crates-io]`), `server/Cargo.lock`, `server/src/sfu_e2e.rs`.
+
+### R158 — Portas UDP presas num servidor parado: a PC que falhava por ICE nunca acabava de fechar
+
+**Sintoma.** Depois de uma carga com o host saturado (30 salas × 4, perda de 64%, muitos `sfu create_offer failed error=connection closed`), o servidor já sem ninguém ficou >30 min com 359 sockets UDP abertos, com `delonix_sfu_peer_connections` e `delonix_sfu_subscriptions` a zero. Em corridas limpas os sockets fechavam em 90 s. Cada PC presa segura ~18 portas: o intervalo por omissão (50000–50200, 201 portas) esgota-se à 12.ª.
+
+**Causa raiz.** O handler de `on_peer_connection_state_change` chamava `remove_peer` → `pc.close()` quando o estado passava a `Failed`. O webrtc-rs 0.17.1 (`do_peer_connection_state_change`) segura um `tokio::Mutex` à volta do handler enquanto ele corre; o `close()` chega ao passo 11 (`update_connection_state` → `Closed`) e pede o MESMO mutex. Fica pendurado para sempre — e o peer já tinha saído da sala, por isso nenhum gauge o via e a saída do WebSocket mais tarde já não o encontrava para fechar.
+
+Ao lado, uma armadilha da mesma biblioteca: `RTCRtpSender::read` espera por `Notify::notify_waiters()` sem consultar a bandeira de paragem. Um `stop()` que chegue quando a tarefa não está a ler perde-se, e num sender que nunca enviou o `read_rtcp` seguinte nunca regressa. A tarefa de drenagem de RTCP segurava um `Arc<Publication>` (e com ele a PC do publicador) até esse `read_rtcp` falhar. Não se reproduziu no SFU (200 ciclos de subscrever/dessubscrever sem ficar nada vivo), mas a armadilha está fixada num teste.
+
+**Medição que o prova.** Recenseamento novo em `/metrics` (`delonix_sfu_pc_alive` por `Weak`, `delonix_sfu_pc_unclosed` = `close()` que nunca regressou, peers/publicações/tarefas contados por `Drop`). Servidor real, 8 clientes do gerador de carga congelados com `SIGSTOP` (WebSocket aberto, ICE morto → `Failed`), depois mortos: antes da correcção `peers_in_rooms=0`, `peer_connections=0`, mas `pc_alive=8 pc_unclosed=8`, 8 peers e 8 tarefas de negociação vivos e **144 sockets UDP**, iguais 120 s depois; com a correcção tudo a zero e 0 sockets 20 s depois do `Failed`.
+
+**Regra.**
+- NUNCA fechar (nem remover, que fecha) uma `RTCPeerConnection` de dentro de um callback dela. A remoção por `Failed` corre numa tarefa à parte, e só remove o peer se ainda for o mesmo `Arc` (`remove_peer_exact`).
+- Uma tarefa que vive de um sender ou receiver do webrtc-rs não pode depender só de a leitura falhar para terminar: segura `Weak`s e confirma periodicamente que a subscrição existe (`subscription_alive`, pergunta ao `subscribed` do peer, que sobrevive à troca de camada por `replace_track`).
+- Um `close()` acima de 10 s é um erro no log (`close_pc`), não silêncio.
+- Uma fuga de PC vê-se em `delonix_sfu_pc_unclosed - delonix_sfu_peers_in_rooms > 0` sustentado, não nos gauges de negócio.
+
+**Portão.**
+- `sfu_e2e::pc_que_falha_por_ice_fecha_e_nao_fica_viva` — o cliente desaparece sem avisar, ICE com timeouts curtos; exige que a PC do SFU feche e deixe de existir. Sem a correcção falha com `pc_alive: 2, pc_unclosed: 2, peers_in_rooms: 1`.
+- `sfu_e2e::churn_de_subscricoes_nao_deixa_nada_vivo` — 200 ciclos de interesse de vídeo; depois de todos saírem o censo tem de voltar a zero.
+- `sfu_e2e::webrtc_rs_read_rtcp_depois_de_stop_nao_regressa` — fixa a armadilha da biblioteca; se passar a falhar, o upstream corrigiu-a.
+
+**Não validado.** A liveness da tarefa de RTCP depois de uma troca de camada só se exercita quando passam 5 s sem RTCP, o que não acontece nos testes (os interceptors mandam Receiver Reports a cada segundo); está coberta por leitura de código, não por um teste que a force. Kubernetes com relay-only não se correu.
+
+**Ficheiros.** `server/src/sfu.rs` (`Census`, `close_pc`, `remove_peer_exact`, handler de estado, `subscribe_layer`, `subscription_alive`), `server/src/main.rs` (`/metrics`), `server/src/sfu_e2e.rs`.
