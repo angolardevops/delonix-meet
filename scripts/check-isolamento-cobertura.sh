@@ -51,7 +51,10 @@ while read -r rota; do
   # As públicas por desenho têm a razão escrita no rotas-publicas.txt.
   grep -qF "$rota" scripts/rotas-publicas.txt && continue
   base=$(echo "$rota" | sed -E 's|^/api/([a-z-]+).*|\1|')
-  sufixo=$(echo "$rota" | sed -E 's|^/api/[a-z-]+||; s|/\{[a-z_]+\}||g')
+  # O id do recurso (primeiro parâmetro) e um parâmetro no FIM saem; um
+  # parâmetro a MEIO (`/captions/{lang}/vtt`) fica como `${…}` interpolado no
+  # teste — sem isto, uma rota com parâmetro a meio nunca era verificável (R183).
+  sufixo=$(echo "$rota" | sed -E 's|^/api/[a-z-]+/\{[a-z_]+\}||; s|/\{[a-z_]+\}$||; s|\{[a-z_]+\}|\\$\\{[^}]+\\}|g')
   # Rotas de colecção (sem parâmetro) não são recursos por id.
   echo "$rota" | grep -q '{' || continue
   if ! grep -qE "/api/${base}/\\$\{[A-Za-z0-9_.]+\}${sufixo}" "$ISO"; then
