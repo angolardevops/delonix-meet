@@ -1,0 +1,19 @@
+<profile name="pbx">
+  <gateways/>
+  <domains></domains>
+  <settings>
+    <param name="context" value="delonix-outbound"/>
+    <param name="dialplan" value="XML"/>
+    <param name="sip-ip" value="127.0.0.1"/>
+    <param name="rtp-ip" value="127.0.0.1"/>
+    <param name="sip-port" value="5160"/>
+    <param name="auth-calls" value="false"/>
+    <param name="apply-inbound-acl" value="loopback.auto"/>
+    <param name="inbound-codec-prefs" value="PCMA,PCMU"/>
+    <param name="outbound-codec-prefs" value="PCMA,PCMU"/>
+    <param name="rtp-timer-name" value="soft"/>
+    <param name="manage-presence" value="false"/>
+    <param name="rtp-timeout-sec" value="60"/>
+    <param name="inbound-late-negotiation" value="true"/>
+  </settings>
+</profile>

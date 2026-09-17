@@ -1,0 +1,45 @@
+<include>
+  <!-- Operadoras de TESTE locais (frente C). "carrier" atende; "carrier-down" recusa 503. -->
+  <context name="carrier">
+    <extension name="skip-cdr" continue="true">
+      <condition field="destination_number" expression="^(.*)$">
+        <action application="set" data="delonix_cdr_skip=true"/>
+      </condition>
+    </extension>
+    <extension name="busy">
+      <condition field="destination_number" expression="000$">
+        <action application="respond" data="486 Busy Here"/>
+      </condition>
+    </extension>
+    <extension name="slow-answer">
+      <condition field="destination_number" expression="777$">
+        <action application="ring_ready"/>
+        <action application="sleep" data="1500"/>
+        <action application="answer"/>
+        <action application="playback" data="silence_stream://4000"/>
+        <action application="hangup"/>
+      </condition>
+    </extension>
+    <extension name="answer">
+      <condition field="destination_number" expression="^(.+)$">
+        <action application="ring_ready"/>
+        <action application="sleep" data="300"/>
+        <action application="answer"/>
+        <action application="playback" data="silence_stream://6000"/>
+        <action application="hangup"/>
+      </condition>
+    </extension>
+  </context>
+  <context name="carrier-down">
+    <extension name="skip-cdr" continue="true">
+      <condition field="destination_number" expression="^(.*)$">
+        <action application="set" data="delonix_cdr_skip=true"/>
+      </condition>
+    </extension>
+    <extension name="down">
+      <condition field="destination_number" expression="^(.*)$">
+        <action application="respond" data="503 Service Unavailable"/>
+      </condition>
+    </extension>
+  </context>
+</include>
