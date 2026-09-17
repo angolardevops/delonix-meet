@@ -1807,3 +1807,54 @@ portão existe para impedir, cometida ao escrevê-lo.
 **Portão.** `server/tests/security_voice_odoo.rs::odoo_list_users_excludes_archived_members` (controlo positivo: o mesmo membro aparece antes de ser arquivado; o activo e o admin continuam depois).
 
 **Ficheiros.** `server/src/odoo.rs`, `server/tests/security_voice_odoo.rs`, `docs/reference/openapi/v1.json`.
+
+### R156 — A câmara ligada não aparecia nos outros participantes depois de uma troca de camada
+
+**Sintoma.** Reportado pelo dono do produto: «a imagem da câmara ligada não aparece nas telas de outros participantes». Nos logs, `sfu layer switch failed` com `new track must have the same envelope as previous`, a seguir `sfu subscribe failed`, e a PC do subscritor em `failed`. Acontecia sempre que um subscritor voltava a uma camada simulcast que já tinha usado (`f → h → f`) — o que o `layerPolicy.ts` faz a cada redimensionamento de tile, aba em segundo plano ou perda medida.
+
+**Causa raiz.** Quatro defeitos empilhados; cada correcção destapou o seguinte.
+1. **Transceiver parado reaproveitado.** A troca removia a track e subscrevia de novo com o MESMO id (`<pub>-video-f`). O `add_track` do webrtc-rs 0.17 reaproveita um transceiver parado cujo id seja igual, e o `replace_track` interno recusa porque o `track_encodings` está vazio — falha sempre, não por corrida.
+2. **Numeração e relógio crus.** Com a troca a fazer-se no MESMO sender (`replace_track`), cada camada chega com a sua numeração e o seu relógio RTP. O receptor via-os recuar e descartava os fotogramas: vídeo congelado depois da troca (medido com browsers: 20 fps → 0–2).
+3. **Extensões de cabeçalho do publicador reencaminhadas.** Os ids de `a=extmap` só valem na negociação onde foram acordados, e o publicador e cada subscritor negoceiam em separado. Medido com clientes webrtc-rs: o `rid` do publicador (id 2, 1 byte) chegava ao subscritor no id que este usa para `transport-cc`; o interceptor TWCC falhava a leitura (`buffer too small`), a primeira leitura da track falhava e o `on_track` nunca disparava — subscrição negociada, RTP a sair do SFU, nenhum vídeo. Existia antes das trocas; só não havia um teste com simulcast real para o ver.
+4. **Pacote perdido na fronteira.** Com o `LayerRewriter` a fechar a camada antiga DEPOIS do `replace_track`, um pacote dela já aceite (e com a numeração já avançada) ia para a track antiga, já desligada, e perdia-se: buraco na numeração exactamente na troca (medido a ~1 kpps: 2 fronteiras em 12).
+
+**Regra.**
+- A troca de camada faz-se no MESMO sender (`replace_track`), sem renegociar. A remoção + nova subscrição é só o recurso quando o `replace_track` recusa. Um id de track de subscrição é ÚNICO (`NEXT_TRACK_SEQ`) — nunca derivado só de publicador/tipo/rid.
+- Cada subscrição de vídeo tem um `LayerRewriter`: numeração contígua e relógio sempre a avançar através das trocas; pacotes de outra camada são recusados. A porta à camada antiga fecha-se ANTES do `replace_track`.
+- O vídeo reencaminhado vai SEM as extensões de cabeçalho do publicador (`strip_hop_extensions`); o sender do subscritor põe as suas. Não «optimizar» tirando a cópia.
+- O PLI de um subscritor vai para a camada que o alimenta AGORA (`current_source`), não para a da subscrição original.
+
+**Portão.** `sfu_e2e::troca_de_camada_simulcast_sem_renegociar_e_com_rtp_continuo` — publicador webrtc-rs com simulcast real (três encodings, numeração e relógio próprios, camada marcada no payload), subscritor a pedir `f → h → f → q → f` pela mensagem `video-interest` do browser. Verificado a falhar contra a base `4ff5249` em três pontos distintos: sem nenhuma correcção, o subscritor nunca recebe vídeo (defeito 3); só com a correcção das extensões, a troca #1 renegoceia (transceivers 3 → 4) e, com essa asserção desligada, a troca #2 (`h → f`) sai com `sfu layer switch failed` (defeito 1); com `e0184f5` sem o `LayerRewriter`, `timestamp recuou: 3000093000 (f) → 1500096000 (h)` (defeito 2). O defeito 4 é uma corrida: o teste publica a 200 pacotes/s por camada para a tornar provável, mas não a apanha de forma determinista.
+
+**Observabilidade.** `delonix_sfu_layer_switch_failures_total` (novo) — cada unidade é um subscritor sem o vídeo de alguém; tem de estar a zero. Antes só existia num `warn`.
+
+**Não validado.** Com browsers reais depois das quatro correcções (a máquina estava a carga 40–70 e o ICE caía por CPU). Se o defeito 3 também tirava vídeo a um subscritor Chrome/Firefox (os ids que o Chrome propõe não são os do SFU, mas o browser pode tolerar a extensão errada) não foi medido. O áudio continua a ser reencaminhado com as extensões do publicador (leva o nível de voz): não se mediu se colide com os ids do subscritor.
+
+**Ficheiros.** `server/src/sfu.rs` (`switch_layer`, `subscribe_layer`, `LayerRewriter`, `strip_hop_extensions`, `current_source`), `server/src/metrics.rs`, `server/src/sfu_e2e.rs`.
+
+### R157 — A câmara aparecia e sumia: o browser perdia o consentimento ICE ~5 s depois de ligar
+
+**Sintoma.** Continuação do reporte da R156 («a imagem da câmara ligada não aparece nas telas de outros participantes»), com a R156 já corrigida. Com dois Chromium: um dos participantes (quase sempre o que entra em segundo lugar, às vezes o primeiro) liga o ICE, recebe umas centenas de pacotes de vídeo e **~5 s depois** passa a `disconnected`; o ICE restart do `callRecovery.ts` não recupera e acaba em `failed`. No servidor o agente ICE desse peer continua `Connected` e o log enche-se de `[controlled]: inbound isControlled && a.isControlling == false`. Parecia que o SFU deixava de enviar; não deixava — deixava de RESPONDER.
+
+**Causa raiz.** Os dois lados ficavam com o papel ICE CONTROLLED, e o webrtc-ice não resolve conflitos de papel.
+1. O libwebrtc actual (medido no Chrome 151.0.7922.34) passa a CONTROLLED sempre que aplica `setLocalDescription(answer)` estando CONTROLLING (`JsepTransportController::SetLocalDescription_n`: `if (ice_role_ == ICEROLE_CONTROLLING) SetIceRole_n(type == kOffer ? CONTROLLING : CONTROLLED)`). O browser oferta primeiro (fica controlling) e o SFU oferta logo a seguir para o subscrever a quem já está na sala (e outra vez a cada câmara/ecrã) — o browser responde e muda de papel.
+2. Entre dois libwebrtc isto resolve-se sozinho pelo conflito de papel da RFC 8445 §7.3.1.1 (tiebreaker ou erro 487). O webrtc-ice 0.17.1 — e a 0.17.2 — num agente controlled que recebe `ICE-CONTROLLED` **descarta o pedido sem responder** (`handle_inbound`) e ignora 487. As verificações de consentimento do browser (RFC 7675) ficavam sem resposta e o browser declarava a ligação morta. Metade das vezes o browser safava-se sozinho (o tiebreaker dele perdia contra um pedido do SFU e voltava a controlling); a outra metade respondia 487 ao SFU, que o ignorava — daí «às vezes funciona».
+3. O ICE restart do cliente não saía do impasse pela mesma razão: o browser oferta o restart já controlled, e o SFU continua controlled.
+
+**Medição que o prova.** Agente webrtc-ice instrumentado (papel, tiebreaker e USERNAME de cada pedido): o Chrome da Teresa manda `ICE-CONTROLLING` às 00:20:53.267 e `ICE-CONTROLLED` às 00:20:53.385 — ~70 ms depois de aplicar a resposta à oferta do SFU (00:20:53.345); a Ana muda às 00:20:54.494, depois da renegociação dela. No log do Chrome (`--enable-logging --v=1`) aparecem `Got role conflict; switching to controlling role` / `Sending STUN BINDING error response: reason=Role Conflict` para as portas do SFU. Não é o caminho de envio do SFU: nenhum lock nem tarefa parada (CPU ~2 %), e os clientes webrtc-rs do teste de carga (que não mudam de papel) nunca o viram.
+
+**Onde nasce.** Não num commit deste repositório. Reproduzido na `origin/main` (`4ff5249`, UI antiga, 3/3 corridas a falhar, 284 pedidos descartados numa corrida com `webrtc_ice=debug`), na `delonix-meet-backend/sfu-troca-camada` e na `frontend/ui-template-rebuild` (`9f09319`, UI nova, 3/3). A oferta do SFU depois da do browser existe desde `3537eba` (o primeiro commit); o gatilho é o comportamento do libwebrtc. Em que versão do Chrome essa regra entrou não foi determinado.
+
+**Regra.**
+- Um agente ICE nosso NUNCA descarta em silêncio um pedido autenticado com o mesmo papel que o dele: responde 487 com MESSAGE-INTEGRITY. É o que manda o browser inverter o papel (`Connection::OnConnectionRequestErrorResponse` → `NotifyRoleConflict`). O SFU não troca de papel.
+- O patch vive em `server/vendor/webrtc-ice` (0.17.1 intacto no commit `34be6f8`, a alteração no seguinte, só em `agent_internal.rs`). Actualizar o webrtc-rs obriga a reaplicar o patch ou a provar, com os testes abaixo, que o upstream já o faz.
+- ICE-lite no SFU também resolvia (o Chrome fica controlling contra um lite), mas é incompatível com o relay-only do Kubernetes (`FORCE_TURN_RELAY=1`): um agente lite só usa candidatos host. Por isso não foi essa a correcção.
+
+**Portão.**
+- `sfu_e2e::conflito_de_papel_ice_recebe_487_autenticado` — sonda STUN pelo par seleccionado, com as credenciais reais: papel certo → sucesso autenticado (controlo); `ICE-CONTROLLED` → 487 autenticado. Sem o patch falha em `Silencio`.
+- `sfu_e2e::media_e_consentimento_sobrevivem_as_renegociacoes_do_sfu` — dois peers, 24 s de media nos dois sentidos, renegociação do SFU logo após cada ligação e a meio; a cada 4 s exige PC `connected`, RTP a subir nos dois sentidos, sucesso ao consentimento e 487 ao conflito. Sem o patch falha na janela 1. Âmbito: o cliente webrtc-rs não muda de papel ao responder, a inversão do browser é encenada pela sonda.
+- Dois Chromium com câmara falsa (script da sessão em `.worktrees/delonix-meet/sfu-envio-run/cruzado.mjs`, fora do repo): 5/5 corridas de 60 s com `framesDecoded` a subir nos dois sentidos em todas as amostras, na UI antiga (base desta branch) e 5/5 na UI nova (`frontend/ui-template-rebuild` + estes commits), com TURN desligado e o Chrome restrito à interface por omissão; mais 2/2 na UI nova com TURN e todas as interfaces, e o script das trocas de camada (janela 480↔1440) sem quedas. Sem o patch: 3/3 a falhar em cada base.
+
+**Não validado.** Firefox e Safari (não usam o libwebrtc para o papel ICE da mesma forma; o 487 é RFC, deviam tratá-lo). Kubernetes com relay-only (`FORCE_TURN_RELAY=1`): o mecanismo é o mesmo mas não se correu. Chrome 153.0.8010.12 só uma corrida de 60 s na UI nova (estável, e o SFU respondeu 487 durante ela — o 153 também muda de papel).
+
+**Ficheiros.** `server/vendor/webrtc-ice/src/agent/agent_internal.rs` (`send_role_conflict`), `server/Cargo.toml` (`[patch.crates-io]`), `server/Cargo.lock`, `server/src/sfu_e2e.rs`.

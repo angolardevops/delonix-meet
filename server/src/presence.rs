@@ -490,6 +490,14 @@ async fn handle(state: Arc<AppState>, socket: WebSocket, user_id: Uuid, username
                 .await;
             }
             CallClientMsg::CallAccept { room_code } => {
+                // Atendida num dispositivo/separador: os OUTROS desta conta
+                // deixam de tocar (antes continuavam até o chamador desligar).
+                state.presence.send_or_publish(
+                    user_id,
+                    CallServerMsg::Cancelled {
+                        room_code: room_code.clone(),
+                    },
+                );
                 if let Some(caller) = state.presence.caller_of(&room_code) {
                     state.presence.send_or_publish(
                         caller,
@@ -502,6 +510,12 @@ async fn handle(state: Arc<AppState>, socket: WebSocket, user_id: Uuid, username
                 }
             }
             CallClientMsg::CallDecline { room_code } => {
+                state.presence.send_or_publish(
+                    user_id,
+                    CallServerMsg::Cancelled {
+                        room_code: room_code.clone(),
+                    },
+                );
                 if let Some(caller) = state.presence.caller_of(&room_code) {
                     state.presence.send_or_publish(
                         caller,

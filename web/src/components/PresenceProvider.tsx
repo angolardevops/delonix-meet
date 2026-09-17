@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ackMissedCalls } from '../api'
 import { MissedCall, Presence, PresenceEvent } from '../presence'
 import { CamIcon, CloseIcon, HangupIcon, MicIcon, VoiceCallIcon } from '../icons'
+import { RING_TIMEOUT_MS, roomCodeInHash } from '../callRing'
 
 interface Ringing {
   room_code: string
@@ -40,6 +41,9 @@ export default function PresenceProvider({
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([])
   const [missed, setMissed] = useState<MissedCall[]>([])
   const ringAudio = useRef<HTMLAudioElement | null>(null)
+  // Chamadas que ESTA sessão fez e que ainda ninguém atendeu: se quem liga
+  // sair da sala antes disso, os outros deixam de tocar (`call-cancel`).
+  const outgoing = useRef(new Set<string>())
 
   function pushToast(text: string) {
     const id = Date.now() + Math.floor(performance.now())
@@ -97,7 +101,11 @@ export default function PresenceProvider({
           break
         case 'ringing':
           // O chamador entra logo na sala e aguarda os outros.
+          outgoing.current.add(e.room_code)
           onEnterRoom(e.room_code, e.kind === 'voice')
+          break
+        case 'accepted':
+          outgoing.current.delete(e.room_code)
           break
         case 'cancelled':
           setIncoming((cur) => cur.filter((c) => c.room_code !== e.room_code))
@@ -119,6 +127,33 @@ export default function PresenceProvider({
     // onEnterRoom é estável (vem do App via location.hash) — só liga uma vez.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Sair da sala de uma chamada por atender = desligar antes de atenderem.
+  // Entrar na sala de uma chamada a tocar (por link, noutro ecrã) = atendida.
+  useEffect(() => {
+    const onHash = () => {
+      const here = roomCodeInHash(location.hash)
+      for (const code of [...outgoing.current]) {
+        if (code !== here) {
+          outgoing.current.delete(code)
+          presenceRef.current?.cancel(code)
+        }
+      }
+      if (here) setIncoming((cur) => (cur.some((c) => c.room_code === here) ? cur.filter((c) => c.room_code !== here) : cur))
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
+  // Cada chamada a entrar deixa de tocar ao fim de RING_TIMEOUT_MS.
+  const ringingCodes = incoming.map((c) => c.room_code).join(',')
+  useEffect(() => {
+    if (!ringingCodes) return
+    const timers = ringingCodes.split(',').map((code) =>
+      setTimeout(() => setIncoming((cur) => cur.filter((c) => c.room_code !== code)), RING_TIMEOUT_MS),
+    )
+    return () => timers.forEach(clearTimeout)
+  }, [ringingCodes])
 
   // Toque enquanto há chamadas a receber — tom sintético quente estilo telemóvel
   // (não é possível embutir o som proprietário do Galaxy; recria-se um toque

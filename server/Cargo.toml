@@ -82,3 +82,13 @@ rcgen = "0.13"
 # chave RS256 em memória, a cada corrida — nenhuma chave privada no repositório.
 # Já vinha no Cargo.lock pelo `openidconnect`.
 rsa = "0.9"
+
+# webrtc-ice 0.17.1 com UMA alteração: responde 487 (Role Conflict) autenticado
+# a um pedido com o mesmo papel ICE que o do agente, em vez de o deitar fora
+# (`send_role_conflict` em vendor/webrtc-ice/src/agent/agent_internal.rs).
+# Sem ela o Chrome, que passa a CONTROLLED ao responder a cada oferta do SFU,
+# perdia o consentimento ICE ~5 s depois de ligar — R157. Nem a 0.17.2 trata o
+# conflito. Retirar este patch só quando o upstream o fizer (o teste
+# `conflito_de_papel_ice_recebe_487_autenticado` diz se fez).
+[patch.crates-io]
+webrtc-ice = { path = "vendor/webrtc-ice" }
