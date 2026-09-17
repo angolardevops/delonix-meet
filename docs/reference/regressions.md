@@ -1985,3 +1985,44 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 **Regra.** As opções de codec vêm de `opcoes_de_saida()` e repetem-se antes de CADA `-f flv`. Portão: `broadcast::testes::cada_saida_leva_as_suas_opcoes_de_codec` (1, 2 e 3 destinos; cada saída tem de ter o seu `-c:v copy`, `-c:a aac` e `-ar` desde a saída anterior). Continua por resolver, e é da frente E (ADR-0013): um destino pendurado congela os outros, porque é um só processo.
 
 **Ficheiros.** `server/src/broadcast.rs`.
+
+### R190 — «É admin» era uma string comparada em 52 sítios; não havia dono, papéis nem capacidades (ADR-0008)
+
+**Sintoma.** `org_members.role` só tinha `admin | member`. Quem criava a org não era distinguível de outro admin, um admin podia arquivar o criador, e nenhum papel intermédio (gestor de emissão, formador) existia sem dar tudo. Três módulos decidiam por texto (`voice.rs:444`, `recordings.rs:269`, `odoo_sso.rs:415`).
+
+**Regra.**
+- **Catálogo fechado** `delonix_meet_domain::identity::authorization::Capability` (19, `CATALOG_VERSION = 1`), policy pura `can()`, valores `allow | deny | inherit | requires_approval`. Capacidade com `enforced: false` só aceita o valor por omissão (`422 authz.capability_not_enforced`); `org.administer` nunca num papel personalizado.
+- **Ponto único** `org::require_capability` (uma query sobre `org_role_effective_capabilities`, calculada pela policy na transacção de cada escrita de papéis). `require_admin` = `org.administer`. Estranho → `404`; sem capacidade → `403 authz.missing_capability` (antes `permission_denied`).
+- **Papéis de sistema imutáveis** com a semântica de hoje: `owner`/`admin` tudo, `member` só `sessions.create` e `recordings.record_4k`, `external_guest` nada.
+- **Pontos migrados:** membros (`admin.manage_accounts`), auditoria (`admin.view_audit`), destinos de emissão (`broadcast.manage_rtmp_keys`), directo com destinos guardados (`broadcast.public_destinations` + limite do papel), definições (`admin.change_retention`), salas/reuniões BFF e v1 (`sessions.create`), partilhas e link público (`recordings.publish` dentro de `owned_item`: dono activo OU a capacidade; vê sem ela → `403 authz.missing_capability`, não vê → `404`; alargamento intencional a `owner`/`admin`), facto `org_admin` da biblioteca (`recordings.view_others`).
+- **Catraca nova** `verificacoes_papel_por_string_fora_de_org_rs` (medida sobre a base com o #90: 2 — `voice.rs:444` e `whiteboards.rs:360`).
+
+**Portão.** `server/tests/rbac.rs` (`migrated_points_keep_their_status_table`, `no_escalation`, `system_roles_and_unenforced_fields_are_locked`, `materialized_decisions_equal_policy`, `department_scoped_role`, `sessions_create_is_enforced`, `recordings_publish_and_view_others`, `new_routes_are_isolated`, `seeded_system_defaults_match_the_domain`) e unitários de tabela em `authorization/tests.rs`.
+
+**Ficheiros.** `server/crates/delonix-meet-domain/src/identity/authorization{.rs,/tests.rs}`, `server/migrations/0060_org_roles.sql`, `server/src/{org,roles,audit,stream_destinations,broadcast,recordings,rooms,meetings,meetings_v1,apikeys}.rs`, `scripts/check-arquitectura-catraca.sh`.
+
+### R191 — Uma escrita herdada de `role = 'member'` esmagava em silêncio um papel personalizado
+
+**Sintoma.** Com `role_id` como fonte, os escritores herdados (`add_employee … DO UPDATE SET role`, `update_employee`, o «nunca despromove» da sincronização Odoo) voltavam a escrever o texto e deixavam `role_id` e `role` a dizer coisas diferentes.
+
+**Regra.** `role` é derivado de `role_id` por gatilho num só sentido (0060). `INSERT` só com `role` recebe o papel de sistema; `UPDATE` que mude `role` sem mudar `role_id` levanta excepção. Os escritores que alteram papel chamam `org::set_system_role`. O último dono activo (com humanos activos) é protegido no serviço (`409 role.last_owner`) e por um gatilho de restrição adiado. O utilizador de serviço nunca é dono nem ocupa lugar.
+
+**Portão.** `tests/rbac.rs::legacy_role_update_cannot_overwrite_role_id`, `last_owner_and_owner_assignment`, `no_legacy_role_updates_in_source` (varre `src/`).
+
+### R192 — «Requer aprovação» tem de criar um pedido e nunca executar; a aprovação serve uma vez e para um alvo
+
+**Regra.** `approval_requests` ligados a `(capacidade, acção, SHA-256 do alvo canónico)`; consumo atómico (`UPDATE … WHERE status = 'approved' AND expires_at > now() RETURNING`); mudar papel, departamento ou estado de quem pediu invalida o pendente e o aprovado; sem auto-aprovação; sweeper de expiração; auditoria de cada passo.
+
+**Portão.** `tests/rbac.rs::requires_approval_flow`, `approval_is_consumed_once_under_concurrency`.
+
+### R193 — O convite é a credencial: token em hash, uso único, sem capturar contas de outra org
+
+**Regra.** Só o SHA-256 do token é guardado; aceitar faz `SELECT … FOR UPDATE` e consome na mesma transacção; o correio da sessão tem de coincidir (defesa em profundidade — o registo não verifica o correio); rate-limit por IP; conta activa noutra org só entra como `external_guest`; reenviar roda o token; `removed`/`odoo_exit` voltam por convite, nunca por «reactivar». Sem SMTP: `delivery_channel: manual`.
+
+**Portão.** `tests/directory.rs::invitation_acceptance_rules`, e o bloco ADR-0008 de `web/e2e/isolamento.mjs`.
+
+### R194 — Duas activações concorrentes passavam o tecto de lugares
+
+**Regra.** O tecto (`organizations.max_seats`, só o operador o fixa) verifica-se com `SELECT … FROM organizations … FOR UPDATE` dentro da transacção que activa (convite aceite, reactivação, `add_employee` novo). O uso mede-se na hora (sem contador): activos humanos que não são `external_guest`.
+
+**Portão.** `tests/directory.rs::seats` (duas reactivações em simultâneo com um lugar livre → uma entra, a outra `seats.limit_reached`).
