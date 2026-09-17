@@ -4,15 +4,17 @@
  * por baixo — sem ▶, sem botão, sem acções (R59). Oferecer «reproduzir» sobre
  * um ficheiro que não existe é prometer duas vezes à mesma pessoa.
  *
- * Duração e resolução só aparecem sobre a miniatura quando `RecordingView` as
- * tiver; hoje não há, e não se desenha um selo vazio.
+ * Duração e resolução aparecem sobre a miniatura quando o servidor as mediu;
+ * sem medida não se desenha um selo vazio. A miniatura é a do servidor, ou o
+ * tom por nome quando não há.
  */
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../../ui/icons'
 import { cx, Tag } from '../../ui/kit'
-import { formatBytes, thumbBackground } from './format'
+import { formatBytes } from './format'
 import { formatClock, resolutionLabel, visibleState } from './libraryData'
 import RecordingState from './RecordingState'
+import { thumbStyle, useThumbnail } from './RecordingThumb'
 import { useMetaLine } from './RecordingTable'
 import type { RecordingView } from './recordingView'
 
@@ -41,19 +43,7 @@ export default function RecordingGrid({
                 <Icon name="alert" size={20} />
               </div>
             ) : (
-              <button
-                type="button"
-                className="rec-card__thumb"
-                style={{ background: thumbBackground(r.name) }}
-                aria-label={t('recordings.abrir', { name: r.name })}
-                onClick={() => onOpen(r)}
-              >
-                <span className="rec-card__play" aria-hidden="true">
-                  <Icon name="play" size={16} />
-                </span>
-                {res && <span className="rec-badge rec-card__res">{res}</span>}
-                {r.durationMs !== null && <span className="rec-badge rec-card__dur dx-num">{formatClock(r.durationMs)}</span>}
-              </button>
+              <CardThumb r={r} res={res} onOpen={onOpen} />
             )}
             <div className="rec-card__body">
               <strong className="rec-card__title" title={r.name}>
@@ -75,5 +65,19 @@ export default function RecordingGrid({
         )
       })}
     </ul>
+  )
+}
+
+function CardThumb({ r, res, onOpen }: { r: RecordingView; res: string | null; onOpen: (r: RecordingView) => void }) {
+  const { t } = useTranslation()
+  const thumb = useThumbnail(r)
+  return (
+    <button type="button" className="rec-card__thumb" style={thumbStyle(thumb, r.name)} aria-label={t('recordings.abrir', { name: r.name })} onClick={() => onOpen(r)}>
+      <span className="rec-card__play" aria-hidden="true">
+        <Icon name="play" size={16} />
+      </span>
+      {res && <span className="rec-badge rec-card__res">{res}</span>}
+      {r.durationMs !== null && <span className="rec-badge rec-card__dur dx-num">{formatClock(r.durationMs)}</span>}
+    </button>
   )
 }

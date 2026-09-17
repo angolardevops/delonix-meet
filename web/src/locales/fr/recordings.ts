@@ -13,6 +13,11 @@ export default {
     rotulo: 'Rechercher des enregistrements',
     placeholder: 'Rechercher par nom, salle ou auteur…',
   },
+  ambito: {
+    rotulo: 'Portée',
+    minhas: 'Les miennes',
+    publicadas: 'Publiés',
+  },
   vistas: {
     rotulo: 'Vue',
     lista: 'Liste',

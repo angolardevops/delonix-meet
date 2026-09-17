@@ -13,6 +13,11 @@ export default {
     rotulo: 'Search recordings',
     placeholder: 'Search by name, room or author…',
   },
+  ambito: {
+    rotulo: 'Scope',
+    minhas: 'Mine',
+    publicadas: 'Published',
+  },
   vistas: {
     rotulo: 'View',
     lista: 'List',

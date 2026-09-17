@@ -13,6 +13,11 @@ export default {
     rotulo: '搜索录制内容',
     placeholder: '按名称、会议室或创建者搜索…',
   },
+  ambito: {
+    rotulo: '范围',
+    minhas: '我的',
+    publicadas: '已发布',
+  },
   vistas: {
     rotulo: '视图',
     lista: '列表',

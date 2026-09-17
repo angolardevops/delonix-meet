@@ -5,13 +5,12 @@
  * O vídeo NÃO se descarrega sozinho ao abrir a página: `recordingObjectUrl`
  * traz o ficheiro inteiro (o `<video>` não envia Bearer), e uma gravação de
  * uma hora são centenas de MB. Carrega quando a pessoa escolhe uma gravação
- * ou carrega em reproduzir. A duração e a resolução, enquanto a biblioteca não
- * as traz, são as MEDIDAS no ficheiro depois de carregado.
+ * ou carrega em reproduzir; até lá mostra a miniatura do servidor, se houver.
  *
  * Só aparece o que tem dado ou acção real: Partilhar (dono), Descarregar
- * (quem pode), página inteira. «Publicar», «Exportar», «Guardar em…» e o
- * cartão de armazenamento não têm servidor e não se desenham. A secção de
- * capítulos aparece quando `loadChapters` devolver capítulos.
+ * (quem pode), página inteira — é aí que se edita, publica, comenta e legenda.
+ * «Exportar», «Guardar em…» e o cartão de armazenamento não têm servidor e
+ * não se desenham. A secção de capítulos aparece quando os há.
  *
  * Este painel nunca recebe uma gravação falhada (R59) — a página não a deixa
  * seleccionar.
@@ -23,10 +22,11 @@ import { useAsync } from '../../components/AsyncSection'
 import { Icon } from '../../ui/icons'
 import { Alert, Button, IconButton, Spinner, Tag } from '../../ui/kit'
 import ChapterList from './ChapterList'
-import { formatDateTime, thumbBackground } from './format'
+import { formatDateTime } from './format'
 import { chapterAt, formatClock, resolutionLabel } from './libraryData'
 import { clockPair, ProgressBar, usePlayback } from './playback'
 import { useRecordingVideo } from './recordingMedia'
+import { thumbStyle, useThumbnail } from './RecordingThumb'
 import RecordingNotes from './RecordingNotes'
 import { loadChapters, loadSegments } from './recordingLoaders'
 import type { RecordingView } from './recordingView'
@@ -52,6 +52,7 @@ export default function RecordingPanel({
   const pb = usePlayback(videoRef, src)
   const [actionErr, setActionErr] = useState('')
   const [downloading, setDownloading] = useState(false)
+  const thumb = useThumbnail(rec)
   const extra = useAsync(async (signal) => {
     const [chapters, segments] = await Promise.all([loadChapters(rec, signal), loadSegments(rec, signal)])
     return { chapters, segments }
@@ -107,7 +108,7 @@ export default function RecordingPanel({
         {src ? (
           <video ref={videoRef} className="rec-player__video" src={src} autoPlay playsInline onClick={pb.toggle} />
         ) : (
-          <div className="rec-player__poster" style={{ background: thumbBackground(rec.name) }} />
+          <div className="rec-player__poster" style={thumbStyle(thumb, rec.name)} />
         )}
         {video.s === 'loading' ? (
           <div className="rec-player__center">

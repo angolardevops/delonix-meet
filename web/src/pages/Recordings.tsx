@@ -8,12 +8,11 @@
  * ainda não o tiver, sobre a biblioteca inteira, dito no ecrã.
  *
  * Os componentes só vêem `RecordingView` (`recordings/recordingView.ts`), a
- * camada que lê a API. Hoje a biblioteca não traz duração, resolução,
- * categoria, estados de processamento nem armazenamento por gravação: as
- * colunas existem e mostram «—», e os chips que filtrariam por esses campos
- * não aparecem (filtrariam sempre para zero). Fica de fora, sem botão inerte:
- * «Enviar para storage», «Publicar», «Exportar», «Guardar em…», pesquisa na
- * transcrição e o cartão MinIO/Nextcloud.
+ * camada que lê a API: duração e resolução medidas, categoria, estados,
+ * miniatura. «Minhas» e «Publicadas» são o `scope` do servidor. Publicar,
+ * editar, capítulos, comentários e legendas vivem no leitor. Fica de fora, sem
+ * botão inerte: armazenamento por gravação, «Enviar para storage»,
+ * «Exportar», «Guardar em…» e o cartão MinIO/Nextcloud.
  *
  * R59: uma gravação FALHADA aparece com a causa, mas nunca é seleccionável,
  * nunca abre o leitor e nunca oferece acções — em NENHUMA das vistas. O e2e
@@ -34,7 +33,7 @@ import RecordingGrid from './recordings/RecordingGrid'
 import RecordingPanel from './recordings/RecordingPanel'
 import RecordingTable from './recordings/RecordingTable'
 import { fromRecordingItem, RecordingView } from './recordings/recordingView'
-import { recordingsFallback } from './recordings/search'
+import { recordingsFallbackFor } from './recordings/search'
 import ShareDialog from './recordings/ShareDialog'
 
 type View = 'list' | 'grid'
@@ -58,7 +57,10 @@ export default function Recordings() {
   const { t, i18n } = useTranslation()
   const { org } = useShell()
   const retentionDays = org?.retention_days ?? 0
-  const rs = useResourceSearch<RecordingLibraryItem>({ resource: 'recordings', fallback: recordingsFallback })
+  // «Minhas» (participei, partilhadas comigo) ou «Publicadas» na organização.
+  const [scope, setScope] = useState<'mine' | 'published'>(() => (hashParam('scope') === 'published' ? 'published' : 'mine'))
+  const fallback = useMemo(() => recordingsFallbackFor(scope), [scope])
+  const rs = useResourceSearch<RecordingLibraryItem>({ resource: 'recordings', fallback, deps: [scope] })
   const [view, setView] = useState<View>(storedView)
   // Seleccionada: o painel mostra-a. `picked` distingue a escolha da pessoa
   // (carrega o vídeo, e em ecrã estreito abre o painel por cima) da selecção
@@ -134,6 +136,15 @@ export default function Recordings() {
         meta={page ? t('search.grupos.registos', { count: page.total }) + (page.total_kind === 'at_least' ? '+' : '') : undefined}
       >
         <div className="rec-views">
+          <Segmented<'mine' | 'published'>
+            label={t('recordings.ambito.rotulo')}
+            value={scope}
+            onChange={setScope}
+            options={[
+              { value: 'mine', label: t('recordings.ambito.minhas') },
+              { value: 'published', label: t('recordings.ambito.publicadas') },
+            ]}
+          />
           <Segmented<View>
             label={t('recordings.vistas.rotulo')}
             value={view}

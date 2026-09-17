@@ -3,6 +3,7 @@ import {
   chapterAt,
   filterCounts,
   formatClock,
+  parseClock,
   kindGroup,
   matchesFilter,
   parseTags,
@@ -134,6 +135,15 @@ describe('tempo, capítulos e transcrição', () => {
     expect(formatClock(521_000)).toBe('08:41')
     expect(formatClock(3_775_000)).toBe('1:02:55')
     expect(formatClock(null)).toBe('—')
+  })
+  it('lê um instante escrito à mão, e o formatClock volta a dar o mesmo', () => {
+    expect(parseClock('08:41')).toBe(521_000)
+    expect(parseClock('1:02:55')).toBe(3_775_000)
+    expect(parseClock('95')).toBe(95_000)
+    expect(parseClock(formatClock(521_000))).toBe(521_000)
+    expect(parseClock('1:75')).toBeNull()
+    expect(parseClock('a:10')).toBeNull()
+    expect(parseClock('')).toBeNull()
   })
   it('capítulo e segmento em curso', () => {
     const ch = [{ tMs: 0 }, { tMs: 41000 }, { tMs: 92000 }]

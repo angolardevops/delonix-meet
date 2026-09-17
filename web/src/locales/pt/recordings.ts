@@ -13,6 +13,11 @@ export default {
     rotulo: 'Procurar gravações',
     placeholder: 'Procurar por nome, sala ou autor…',
   },
+  ambito: {
+    rotulo: 'Âmbito',
+    minhas: 'Minhas',
+    publicadas: 'Publicadas',
+  },
   vistas: {
     rotulo: 'Vista',
     lista: 'Lista',

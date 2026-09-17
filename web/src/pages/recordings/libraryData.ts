@@ -125,6 +125,16 @@ export function formatClock(ms: number | null | undefined): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(s % 60)}` : `${pad(m)}:${pad(s % 60)}`
 }
 
+/** «08:41», «1:02:55» ou «95» (segundos) → milissegundos; `null` se não se lê. */
+export function parseClock(raw: string): number | null {
+  const parts = raw.trim().split(':')
+  if (parts.length === 0 || parts.length > 3 || parts.some((p) => !/^\d+$/.test(p))) return null
+  const n = parts.map(Number)
+  if (n.slice(1).some((x) => x >= 60)) return null
+  const secs = n.reduce((acc, x) => acc * 60 + x, 0)
+  return secs * 1000
+}
+
 /** Índice do capítulo em curso no instante `tMs` (o último que já começou), ou -1. */
 export function chapterAt(chapters: { tMs: number }[], tMs: number): number {
   let idx = -1

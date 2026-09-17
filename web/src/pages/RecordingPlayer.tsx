@@ -2,34 +2,38 @@
  * Leitor em página inteira — DelonixPlayer do template. Rota `#/recordings/<id>`.
  *
  * Disposição do template: vídeo de 432 px com barra própria (progresso com
- * marcas de capítulo, reproduzir, seguinte, som, tempo, velocidade, janela
- * flutuante, ecrã inteiro), título, autor e acções, o cartão de separadores
- * (Descrição · Transcrição · Participantes · Anexos) ao lado do cartão de
- * capítulos, e a coluna «A seguir» / «Da mesma série» com o cartão «Esta
- * gravação é editável».
+ * marcas de capítulo, reproduzir, seguinte, som, legendas, tempo, velocidade,
+ * janela flutuante, ecrã inteiro), título, autor e acções, o cartão de
+ * separadores (Descrição · Transcrição · Comentários · Participantes ·
+ * Legendas · Anexos) ao lado do cartão de capítulos, e a coluna «A seguir» /
+ * «Da mesma série».
  *
- * Os componentes só vêem `RecordingView` (`recordings/recordingView.ts`). O
- * que tem dado hoje: o ficheiro (duração e resolução MEDIDAS no browser,
- * cenas por tempo tiradas dele), autor, data, sala e tamanho da biblioteca,
- * a descrição da reunião da sala, as notas da sala, os quadros e o chat, a
- * série pela recorrência da reunião. O que espera pelo contrato de metadados
- * — legendas e «CC», menu de qualidade, capítulos do servidor, organização,
- * visualizações, etiquetas, participantes, comentários, «Publicadas» e os
- * selos de duração/resolução nas listas — tem o sítio pronto e só aparece
- * quando a camada de mapeamento o devolver. «Guardar em…» não tem servidor.
+ * A gravação vem do próprio recurso (getRecording: uma
+ * publicada da organização abre mesmo sem ter estado na sala). Capítulos,
+ * transcrição com tempos, comentários, participantes, legendas, visualizações
+ * e publicação são do servidor (#93). Sem capítulos, o cartão mostra cenas por
+ * tempo tiradas do próprio ficheiro. Editar, publicar, capítulos e legendas só
+ * aparecem a quem o servidor diz que gere (`can_manage`). «Guardar em…» não
+ * tem servidor e não se desenha.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  ApiError,
   apiErrorMessage,
   ChatHistoryMsg,
   downloadRecording,
+  getRecording,
   isAbort,
   listMeetings,
   listWhiteboards,
   Meeting,
+  publishRecording,
+  recordingCaptionVttUrl,
   recordingsLibrary,
+  recordRecordingView,
   roomChatHistory,
+  unpublishRecording,
   WhiteboardMeta,
 } from '../api'
 import { AsyncSection, useAsync } from '../components/AsyncSection'
@@ -39,8 +43,15 @@ import { Alert, Avatar, Button, cx, Dialog, Empty, Skeleton, Spinner, Tabs, Text
 import '../ui/player.css'
 import '../ui/recordings.css'
 import { useBoardPng } from './boards/useBoardPng'
+import { recordingErrorMessage } from './recordings/apiErrors'
 import ChapterList from './recordings/ChapterList'
-import { formatBytes, formatDate, formatDateTime, formatDateTimeShort, formatDayMonth, thumbBackground } from './recordings/format'
+import RecordingCaptions from './recordings/RecordingCaptions'
+import RecordingChaptersEditor from './recordings/RecordingChaptersEditor'
+import RecordingComments from './recordings/RecordingComments'
+import RecordingEditDialog from './recordings/RecordingEditDialog'
+import RecordingParticipants from './recordings/RecordingParticipants'
+import { thumbStyle, useThumbnail } from './recordings/RecordingThumb'
+import { formatBytes, formatDate, formatDateTime, formatDateTimeShort, formatDayMonth } from './recordings/format'
 import { chapterAt, formatClock, resolutionLabel, visibleState } from './recordings/libraryData'
 import { clockPair, ProgressBar, usePlayback } from './recordings/playback'
 import { frameTimes, nextUp, sameSeries } from './recordings/playerData'
@@ -53,7 +64,7 @@ import ShareDialog from './recordings/ShareDialog'
 import { playerHash, studioEditHash } from './recordings/studioLink'
 import Transcript from './recordings/Transcript'
 
-type InfoTab = 'description' | 'transcript' | 'participants' | 'attachments'
+type InfoTab = 'description' | 'transcript' | 'comments' | 'participants' | 'captions' | 'attachments'
 type SideTab = 'next' | 'series'
 
 const RATES = [1, 1.25, 1.5, 2, 0.75]
@@ -67,10 +78,21 @@ const optional = <T,>(p: Promise<T>, fallback: T): Promise<T> =>
 export default function RecordingPlayer({ id }: { id: string }) {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
-  const { state, reload } = useAsync(async (signal) => {
-    const [library, meetings] = await Promise.all([recordingsLibrary(signal), optional(listMeetings(signal), [] as Meeting[])])
-    return { library: library.map(fromRecordingItem), meetings }
-  }, [])
+  const { state, reload } = useAsync(
+    async (signal) => {
+      const [item, library, meetings] = await Promise.all([
+        // 404: não existe ou esta pessoa não a vê — o servidor não distingue, e o ecrã também não.
+        getRecording(id, signal).catch((e) => {
+          if (e instanceof ApiError && e.status === 404) return null
+          throw e
+        }),
+        recordingsLibrary(signal),
+        optional(listMeetings(signal), [] as Meeting[]),
+      ])
+      return { rec: item ? fromRecordingItem(item) : null, library: library.map(fromRecordingItem), meetings }
+    },
+    [id],
+  )
   const count = state.s === 'ready' ? state.d.library.length : null
 
   return (
@@ -106,8 +128,7 @@ export default function RecordingPlayer({ id }: { id: string }) {
           </div>
         }
       >
-        {({ library, meetings }) => {
-          const rec = library.find((r) => r.id === id)
+        {({ rec, library, meetings }) => {
           if (!rec) {
             return (
               <div className="page">
@@ -142,6 +163,11 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
   const [info, setInfo] = useState<InfoTab>('description')
   const [side, setSide] = useState<SideTab>('next')
   const [share, setShare] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [publishing, setPublishing] = useState(false)
+  const [ccLang, setCcLang] = useState<string | null>(null)
+  const thumb = useThumbnail(rec)
+  const tracks = useCaptionTracks(rec)
   const [downloading, setDownloading] = useState(false)
   const [actionErr, setActionErr] = useState('')
   const pipAvailable = typeof document !== 'undefined' && document.pictureInPictureEnabled === true
@@ -152,6 +178,22 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
   const upNext = useMemo(() => nextUp(sources, rec.id).map((s) => byId.get(s.id)!), [sources, rec.id, byId])
   const series = useMemo(() => sameSeries(sources, meetings, rec.source).map((s) => byId.get(s.id)!), [sources, meetings, rec.source, byId])
   const next = upNext[0] ?? null
+
+  // Uma visualização por gravação aberta, quando o vídeo começa mesmo a tocar
+  // (o servidor conta uma por pessoa por dia).
+  const viewSent = useRef(false)
+  useEffect(() => {
+    if (!pb.playing || viewSent.current) return
+    viewSent.current = true
+    recordRecordingView(rec.id).catch(() => undefined)
+  }, [pb.playing, rec.id])
+
+  // Legendas: a língua escolhida fica «showing», as outras «disabled».
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    for (const tr of Array.from(v.textTracks)) tr.mode = tr.language === ccLang ? 'showing' : 'disabled'
+  }, [ccLang, src, tracks])
 
   const extra = useAsync(async (signal) => {
     const [chapters, segments, boards, chat] = await Promise.all([
@@ -210,6 +252,20 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
     }
   }
 
+  async function togglePublication() {
+    setPublishing(true)
+    setActionErr('')
+    try {
+      if (rec.published) await unpublishRecording(rec.id)
+      else await publishRecording(rec.id)
+      onChanged()
+    } catch (e) {
+      setActionErr(recordingErrorMessage(e, t, rec.published ? 'player.publicacao.erroDespublicar' : 'player.publicacao.erroPublicar'))
+    } finally {
+      setPublishing(false)
+    }
+  }
+
   async function fullscreen() {
     const el = stageRef.current
     if (!el) return
@@ -237,7 +293,9 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
     { value: 'description', label: t('player.descricao') },
     { value: 'transcript', label: t('player.transcricao') },
   ]
+  if (!rec.failed) tabs.push({ value: 'comments', label: t('player.comentariosN', { count: rec.commentCount ?? 0 }) })
   if (rec.participantCount !== null) tabs.push({ value: 'participants', label: t('player.participantesN', { count: rec.participantCount }) })
+  if (!rec.failed) tabs.push({ value: 'captions', label: t('player.legendasN', { count: rec.captionLanguages.length }) })
   tabs.push({ value: 'attachments', label: attachCount === null ? t('player.anexos') : t('player.anexosN', { count: attachCount }) })
 
   return (
@@ -250,9 +308,13 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
         ) : (
           <div className="pl-video" ref={stageRef}>
             {src ? (
-              <video ref={videoRef} className="pl-video__el" src={src} autoPlay playsInline onClick={pb.toggle} />
+              <video ref={videoRef} className="pl-video__el" src={src} autoPlay playsInline onClick={pb.toggle}>
+                {tracks.map((tr) => (
+                  <track key={tr.lang} kind="subtitles" srcLang={tr.lang} label={tr.lang} src={tr.url} />
+                ))}
+              </video>
             ) : (
-              <div className="pl-video__poster" style={{ background: thumbBackground(rec.name) }}>
+              <div className="pl-video__poster" style={thumbStyle(thumb, rec.name)}>
                 {video.s === 'error' ? (
                   <div className="rec-player__error" role="alert">
                     <Icon name="alert" />
@@ -301,6 +363,15 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
                 <Ctl icon={pb.playing ? 'pause' : 'play'} label={pb.playing ? t('player.pausar') : t('player.reproduzir')} onClick={pb.toggle} disabled={!src} />
                 <Ctl icon="chevronRight" label={t('player.seguinte')} onClick={goNext} disabled={!next} />
                 <Ctl icon="volume" label={pb.muted ? t('player.ligarSom') : t('player.silenciar')} pressed={pb.muted} onClick={() => pb.setMuted(!pb.muted)} disabled={!src} />
+                {tracks.length > 0 && (
+                  <Ctl
+                    icon="captions"
+                    label={ccLang ? t('player.legendasDesligar') : t('player.legendasLigar', { lang: tracks[0].lang })}
+                    pressed={!!ccLang}
+                    onClick={() => setCcLang(ccLang ? null : tracks[0].lang)}
+                    disabled={!src}
+                  />
+                )}
                 <span className="pl-controls__time dx-num">{clockPair(pb.nowMs, durationMs)}</span>
                 <span className="dx-spacer" />
                 <button
@@ -335,6 +406,16 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
                 <Button variant="primary" size="sm" icon="scissors" onClick={() => (location.hash = studioEditHash(rec.id).slice(1))}>
                   {t('player.editarStudio')}
                 </Button>
+                {rec.canManage && (
+                  <Button size="sm" variant="secondary" icon="edit" onClick={() => setEditing(true)}>
+                    {t('player.editar.botao')}
+                  </Button>
+                )}
+                {rec.canManage && (
+                  <Button size="sm" variant="secondary" icon={rec.published ? 'eyeOff' : 'globe'} busy={publishing} onClick={() => void togglePublication()}>
+                    {rec.published ? t('player.publicacao.despublicar') : t('player.publicacao.publicar')}
+                  </Button>
+                )}
                 {rec.owned && (
                   <Button size="sm" variant="secondary" onClick={() => setShare(true)}>
                     {rec.shareCount > 0 ? t('recordings.accoes.partilharN', { count: rec.shareCount }) : t('recordings.accoes.partilhar')}
@@ -357,6 +438,9 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
             <div className="pl-info__body">
               {info === 'description' && <Description rec={rec} meeting={meeting} />}
               {info === 'transcript' && (x?.segments ? <Transcript segments={x.segments} nowMs={pb.nowMs} onSeek={seek} /> : <RecordingNotes roomCode={rec.roomCode} />)}
+              {info === 'comments' && <RecordingComments recordingId={rec.id} nowMs={pb.nowMs} onSeek={seek} onChanged={onChanged} />}
+              {info === 'participants' && <RecordingParticipants recordingId={rec.id} />}
+              {info === 'captions' && <RecordingCaptions recordingId={rec.id} canManage={rec.canManage} onChanged={onChanged} />}
               {info === 'attachments' && (
                 <AsyncSection state={extra.state} onRetry={extra.reload}>
                   {(d) => <Attachments boards={d.boards} chat={d.chat} />}
@@ -378,6 +462,17 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
                   {framesFailed && <p className="pl-empty">{t('player.cenasErro')}</p>}
                   <ChapterList chapters={listed} active={chapterAt(listed, pb.nowMs)} onSeek={seek} variant="thumbs" frames={frames} />
                 </>
+              )}
+              {rec.canManage && chapters !== null && (
+                <RecordingChaptersEditor
+                  recordingId={rec.id}
+                  chapters={chapters}
+                  nowMs={pb.nowMs}
+                  onChanged={() => {
+                    extra.reload()
+                    onChanged()
+                  }}
+                />
               )}
             </section>
           )}
@@ -403,6 +498,16 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
         )}
       </aside>
 
+      {editing && (
+        <RecordingEditDialog
+          rec={rec}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false)
+            onChanged()
+          }}
+        />
+      )}
       {share && (
         <ShareDialog
           rec={rec.source}
@@ -425,16 +530,24 @@ function Ctl({ icon, label, onClick, disabled, pressed, boxed }: { icon: IconNam
 }
 
 function RecList({ items, empty }: { items: RecordingView[]; empty: string }) {
-  const { i18n } = useTranslation()
   if (items.length === 0) return <p className="pl-empty">{empty}</p>
   return (
     <ul className="pl-list">
-      {items.map((r) => {
-        const res = resolutionLabel(r)
-        return (
-          <li key={r.id}>
+      {items.map((r) => (
+        <RecListItem key={r.id} r={r} />
+      ))}
+    </ul>
+  )
+}
+
+function RecListItem({ r }: { r: RecordingView }) {
+  const { i18n } = useTranslation()
+  const thumb = useThumbnail(r)
+  const res = resolutionLabel(r)
+  return (
+          <li>
             <a className="pl-item" href={playerHash(r.id)}>
-              <span className="pl-item__thumb" style={{ background: thumbBackground(r.name) }} aria-hidden="true">
+              <span className="pl-item__thumb" style={thumbStyle(thumb, r.name)} aria-hidden="true">
                 {res && <span className="rec-badge pl-item__res">{res}</span>}
                 {r.durationMs !== null && <span className="rec-badge is-soft pl-item__dur dx-num">{formatClock(r.durationMs)}</span>}
               </span>
@@ -449,10 +562,38 @@ function RecList({ items, empty }: { items: RecordingView[]; empty: string }) {
               </span>
             </a>
           </li>
-        )
-      })}
-    </ul>
   )
+}
+
+/** Legendas publicadas prontas a pôr no `<video>`; uma que ainda gera (409) fica de fora. */
+function useCaptionTracks(rec: RecordingView): { lang: string; url: string }[] {
+  const [tracks, setTracks] = useState<{ lang: string; url: string }[]>([])
+  const key = rec.captionLanguages.join(',')
+  useEffect(() => {
+    setTracks([])
+    if (rec.failed || rec.captionLanguages.length === 0) return
+    let live = true
+    const made: string[] = []
+    void Promise.all(
+      rec.captionLanguages.map((lang) =>
+        recordingCaptionVttUrl(rec.id, lang)
+          .then((url) => {
+            made.push(url)
+            return { lang, url }
+          })
+          .catch(() => null),
+      ),
+    ).then((list) => {
+      if (live) setTracks(list.filter((x): x is { lang: string; url: string } => x !== null))
+    })
+    return () => {
+      live = false
+      made.forEach((u) => URL.revokeObjectURL(u))
+    }
+    // `key` resume as línguas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rec.id, key, rec.failed])
+  return tracks
 }
 
 /**

@@ -8,8 +8,9 @@ import { displayName } from './recordingView'
 import { localSchema } from '../../ui/search/localSchema'
 import type { LocalFallback } from '../../ui/search/useResourceSearch'
 
-export const recordingsFallback: LocalFallback<RecordingLibraryItem> = {
-  load: (signal) => recordingsLibrary(signal),
+/** `scope: 'published'` lista as publicadas que a pessoa vê, também as de salas onde não esteve. */
+export const recordingsFallbackFor = (scope: 'mine' | 'published'): LocalFallback<RecordingLibraryItem> => ({
+  load: (signal) => recordingsLibrary(signal, { scope }),
   source: {
     schema: localSchema(
       'recordings',
@@ -51,4 +52,6 @@ export const recordingsFallback: LocalFallback<RecordingLibraryItem> = {
     },
     text: (r) => `${r.filename} ${r.room_code} ${r.uploader_name} ${r.description} ${r.tags.join(' ')}`,
   },
-}
+})
+
+export const recordingsFallback = recordingsFallbackFor('mine')

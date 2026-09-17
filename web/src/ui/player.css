@@ -671,3 +671,95 @@
     display: none;
   }
 }
+
+/* ---- gestão da gravação (#93): formulários, comentários, pessoas, legendas ---- */
+.pl-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pl-form__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.pl-comments,
+.pl-captions,
+.pl-chapter-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pl-chapter-edit {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.pl-comment-list,
+.pl-people,
+.pl-captions__list,
+.pl-chapter-edit__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pl-comment {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.pl-comment__main {
+  flex: 1;
+  min-width: 0;
+}
+.pl-comment__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11.5px;
+}
+.pl-comment__time {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+}
+.pl-comment__time:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pl-comment__body {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.pl-people li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.pl-people__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pl-chapter-edit__time {
+  width: 7ch;
+  flex: none;
+}
+.pl-chapter-edit__title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pl-captions__lang {
+  width: 9ch;
+  flex: none;
+}
