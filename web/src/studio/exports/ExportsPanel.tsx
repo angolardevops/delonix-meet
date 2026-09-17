@@ -21,12 +21,39 @@ import { relogio } from '../captions/legendas'
 import * as bd from '../edit/bd'
 import type { Projecto } from '../edit/projecto'
 import { duracaoDoProjecto } from '../edit/projecto'
+import ListSearch from '../../ui/search/ListSearch'
+import { localSchema } from '../../ui/search/localSchema'
 import { exportacaoSuportada, renderizar } from '../edit/render'
 import type { ProgressoDeRender } from '../edit/render'
 import { nomeDeFicheiro, predefinicao, PREDEFINICOES, tamanhoEstimado, tamanhoLegivel, tempoEstimado } from './predefinicoes'
 import type { IdDaPredefinicao } from './predefinicoes'
 
 const FPS_MEDIDOS = 'dx_editor_fps'
+
+/** Pesquisa do histórico: vive NESTE dispositivo (IndexedDB), filtra-se aqui. */
+const exportsSource = {
+  schema: localSchema(
+    'exports',
+    [
+      { name: 'titulo', type: 'text' },
+      { name: 'predefinicao', type: 'enum', options: PREDEFINICOES.map((p) => p.id) },
+      { name: 'formato', type: 'text', groupable: true },
+      { name: 'bytes', type: 'number', aggregates: ['sum'] },
+      { name: 'estado', type: 'enum', options: ['concluida', 'falhou', 'cancelada'] },
+      { name: 'destino', type: 'enum', options: ['descarregado', 'biblioteca'] },
+      { name: 'criadaEm', type: 'datetime' },
+    ],
+    [
+      { name: 'concluida', group: 'estado', filter: [['estado', 'eq', 'concluida']] },
+      { name: 'falhou', group: 'estado', filter: [['estado', 'eq', 'falhou']] },
+      { name: 'today', group: 'period', filter: [['criadaEm', 'in_period', 'today']] },
+      { name: 'last_7_days', group: 'period', filter: [['criadaEm', 'in_period', 'last_7_days']] },
+    ],
+    { textFields: ['titulo', 'formato'], defaultOrder: ['-criadaEm'] },
+  ),
+  get: (h: bd.RegistoDeExportacao, f: string) => (f === 'criadaEm' ? new Date(h.criadaEm).toISOString() : (h as unknown as Record<string, unknown>)[f]),
+  text: (h: bd.RegistoDeExportacao) => `${h.titulo} ${h.formato}`,
+}
 
 type Destino = 'descarregar' | 'biblioteca'
 type Aba = 'fila' | 'historico' | 'predefinicoes'
@@ -258,7 +285,7 @@ export default function ExportsPanel({
   const emEspera = fila.filter((j) => j.estado === 'espera').length
   const visiveis = fila.filter((j) => j.estado === 'espera' || j.estado === 'a-exportar' || (j.estado !== 'cancelada' && j.resultado) || j.estado === 'falhou')
 
-  const tabela = (
+  const tabela = (historico: bd.RegistoDeExportacao[]) => (
     <div className="ed-exp__table dx-table-wrap">
       <table className="dx-table">
         <thead>
@@ -272,13 +299,6 @@ export default function ExportsPanel({
           </tr>
         </thead>
         <tbody>
-          {!historico.length && (
-            <tr>
-              <td colSpan={6} className="dx-muted">
-                {t('editor.exportar.historicoVazio')}
-              </td>
-            </tr>
-          )}
           {historico.map((h) => (
             <tr key={h.id}>
               <td>
@@ -441,7 +461,14 @@ export default function ExportsPanel({
                   </button>
                 )}
               </div>
-              {tabela}
+              <ListSearch
+                rows={historico}
+                source={exportsSource}
+                ns="exp."
+                label={t('search.rotulos.exports')}
+                emptyTitle={t('editor.exportar.historicoVazio')}
+                renderItems={tabela}
+              />
             </>
           )}
 

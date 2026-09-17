@@ -1004,3 +1004,59 @@ button.cal-week__day:hover {
   font-family: var(--font-mono);
   font-size: 11.5px;
 }
+
+/* ------------------------------------------- altura do ecrã (sem scroll da página)
+   A página da Agenda ocupa a altura da janela; a grelha (dia, semana, mês,
+   ano) ou a lista estica até ao fundo e só ELA rola. Antes a semana tinha
+   uma altura fixa (620 px) e deixava ~300 px vazios a 1920×1080. Só dentro
+   de `.cal-page`: a semana compacta ao lado do formulário não muda. */
+.cal-page {
+  flex: 1;
+  min-height: 0;
+  padding-bottom: 20px;
+}
+.cal-page > .cal-week,
+.cal-page > .cal-month,
+.cal-page > .cal-year,
+.cal-page > .cal-results {
+  flex: 1;
+  min-height: 0;
+}
+.cal-page > .cal-week {
+  display: flex;
+  flex-direction: column;
+}
+.cal-page .cal-week__scroller {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cal-page .cal-week__body {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+.cal-page > .cal-month {
+  display: flex;
+  flex-direction: column;
+}
+.cal-page .cal-month__grid {
+  flex: 1;
+  min-height: 0;
+  grid-auto-rows: minmax(min-content, 1fr);
+  overflow-y: auto;
+}
+.cal-page > .cal-year {
+  overflow-y: auto;
+  grid-auto-rows: minmax(min-content, 1fr);
+}
+.cal-results {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.cal-search {
+  flex: 1 1 360px;
+  min-width: 0;
+}

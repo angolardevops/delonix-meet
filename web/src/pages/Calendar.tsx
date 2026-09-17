@@ -5,20 +5,29 @@
  * O estado vive na rota, para o botão «voltar» e os links da Início
  * funcionarem: `#/calendar` (ver), `#/calendar/new?d=AAAA-MM-DD&t=HHMM`
  * (agendar) e `#/calendar/m/<id>` (detalhe por cima da vista).
+ *
+ * Pesquisa estilo Odoo (`ui/search`, recurso `meetings`): na vista Lista é a
+ * lista paginada e agrupável; nas vistas de calendário filtra o que a grelha
+ * mostra. O estado da pesquisa viaja na query do hash, também ao abrir e
+ * fechar o detalhe de uma reunião.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, createRoom, deleteMeeting, listMeetings, Meeting, startMeeting } from '../api'
 import { AsyncSection, useAsync } from '../components/AsyncSection'
 import PageBar from '../components/PageBar'
 import { useShell } from '../components/shellContext'
 import { Alert, Button, Dialog, IconButton, Segmented, Skeleton } from '../ui/kit'
+import { hashParams, isEmptySearch } from '../ui/search/model'
+import { SearchBar, SearchResults } from '../ui/search/SearchResults'
+import { useResourceSearch } from '../ui/search/useResourceSearch'
 import '../ui/schedule.css'
 import ListView from './calendar/ListView'
 import MeetingDialog from './calendar/MeetingDialog'
 import { MonthView, YearView } from './calendar/MonthView'
 import { occurrenceOf } from './calendar/occurrence'
 import ScheduleForm from './calendar/ScheduleForm'
+import { meetingsFallback, useMeetingsMatching } from './calendar/search'
 import { useOdooCalendar } from './home/useOdooCalendar'
 import WeekView from './calendar/WeekView'
 import {
@@ -40,6 +49,8 @@ type View = 'day' | 'week' | 'month' | 'year' | 'list'
 const FORM_ID = 'schedule-form'
 
 function initialView(): View {
+  // «Ver todos em Agenda» da pesquisa global abre a Lista.
+  if (hashParams().get('vista') === 'lista') return 'list'
   try {
     if (window.matchMedia('(max-width: 720px)').matches) return 'list'
   } catch {
@@ -69,14 +80,52 @@ export default function Calendar() {
     return () => window.removeEventListener('hashchange', on)
   }, [])
 
-  const { state, reload } = useAsync((signal) => listMeetings(signal), [])
-  const byDay = useMemo(() => groupByDay(state.s === 'ready' ? state.d : []), [state])
+  const { state, reload: reloadAll } = useAsync((signal) => listMeetings(signal), [])
+  const rs = useResourceSearch<Meeting>({ resource: 'meetings', fallback: meetingsFallback })
+  const reloadSearch = rs.reload
+  const reload = useCallback(() => {
+    reloadAll()
+    reloadSearch()
+  }, [reloadAll, reloadSearch])
+
+  // O intervalo que a grelha mostra — a pesquisa pede só esse.
+  const range = useMemo(() => {
+    if (view === 'day') return [cursor, addDays(cursor, 1)] as const
+    if (view === 'week') return [mondayOf(cursor), addDays(mondayOf(cursor), 7)] as const
+    if (view === 'month') {
+      const first = mondayOf(new Date(cursor.getFullYear(), cursor.getMonth(), 1))
+      return [first, addDays(first, 42)] as const
+    }
+    return [new Date(cursor.getFullYear(), 0, 1), new Date(cursor.getFullYear() + 1, 0, 1)] as const
+  }, [view, cursor])
+  const matching = useMeetingsMatching(rs, range[0], range[1])
+  const byDay = useMemo(
+    () => groupByDay(matching ? (matching.s === 'ready' ? matching.d : []) : state.s === 'ready' ? state.d : []),
+    [state, matching],
+  )
 
   const go = (hash: string) => {
     location.hash = hash
   }
-  const openMeeting = useCallback((m: Meeting) => go(calendarHash.meeting(m.id)), [])
-  const closeDialog = useCallback(() => go(calendarHash.browse()), [])
+  // A query do hash (a pesquisa) acompanha o detalhe, para voltar à mesma vista.
+  const withQuery = (path: string) => {
+    const qs = hashParams().toString()
+    return qs ? `${path}?${qs}` : path
+  }
+  const openMeeting = useCallback((m: Meeting) => go(withQuery(calendarHash.meeting(m.id))), [])
+  const closeDialog = useCallback(() => go(withQuery(calendarHash.browse())), [])
+
+  function changeView(v: View) {
+    setView(v)
+    // A Lista abre, como antes, nas próximas — agora como filtro visível e removível.
+    if (v === 'list' && isEmptySearch(rs.search)) rs.setSearch({ ...rs.search, filters: ['upcoming'] }, { replace: true })
+  }
+  const listDefaulted = useRef(false)
+  useEffect(() => {
+    if (listDefaulted.current || view !== 'list' || !rs.schema) return
+    listDefaulted.current = true
+    if (isEmptySearch(rs.search) && rs.schema.filters.some((f) => f.name === 'upcoming')) rs.setSearch({ ...rs.search, filters: ['upcoming'] }, { replace: true })
+  }, [view, rs])
   const cancelDelete = useCallback(() => setToDelete(null), [])
   const onFormBusy = useCallback((busy: boolean, blocked: boolean) => setFormState({ busy, blocked }), [])
 
@@ -184,7 +233,9 @@ export default function Calendar() {
           ? cursor.toLocaleDateString(locale, { month: 'long', year: 'numeric' })
           : view === 'year'
             ? String(cursor.getFullYear())
-            : t('schedule.vista.deHojeEmDiante')
+            : rs.list.state.s === 'ready'
+              ? t('search.grupos.registos', { count: rs.list.state.d.total })
+              : ''
 
   const detailMeeting =
     route.kind === 'meeting' && state.s === 'ready' ? (state.d.find((m) => m.id === route.id) ?? null) : undefined
@@ -218,11 +269,11 @@ export default function Calendar() {
               <h2 className="cal-toolbar__label">{rangeLabel}</h2>
             </div>
           )}
-          <span className="dx-spacer" />
+          <SearchBar rs={rs} label={t('search.rotulos.meetings')} pager={view === 'list'} className="cal-search" />
           <Segmented<View>
             label={t('schedule.vista.rotulo')}
             value={view}
-            onChange={setView}
+            onChange={changeView}
             options={[
               { value: 'day', label: t('schedule.vista.dia') },
               { value: 'week', label: t('schedule.vista.semana') },
@@ -234,6 +285,7 @@ export default function Calendar() {
         </div>
 
         {err && <Alert tone="danger">{err}</Alert>}
+        {matching?.s === 'error' && view !== 'list' && <Alert tone="danger">{matching.msg}</Alert>}
 
         <AsyncSection
           state={state}
@@ -245,7 +297,7 @@ export default function Calendar() {
             </div>
           }
         >
-          {(meetings) => (
+          {() => (
             <>
               {(view === 'week' || view === 'day') && (
                 <WeekView
@@ -271,14 +323,29 @@ export default function Calendar() {
                 />
               )}
               {view === 'list' && (
-                <ListView
-                  meetings={meetings}
-                  onOpen={openMeeting}
-                  onEnter={(m) => void enter(m)}
-                  onDelete={setToDelete}
-                  entering={entering}
-                  onSchedule={() => go(calendarHash.schedule())}
-                />
+                <div className="cal-results">
+                  <SearchResults
+                    rs={rs}
+                    emptyIcon="calendar"
+                    emptyTitle={t('schedule.lista.vazio')}
+                    emptyAction={
+                      <Button size="sm" icon="plus" onClick={() => go(calendarHash.schedule())}>
+                        {t('schedule.accoes.agendar')}
+                      </Button>
+                    }
+                    renderItems={(items) => (
+                      <ListView
+                        meetings={items}
+                        all
+                        onOpen={openMeeting}
+                        onEnter={(m) => void enter(m)}
+                        onDelete={setToDelete}
+                        entering={entering}
+                        onSchedule={() => go(calendarHash.schedule())}
+                      />
+                    )}
+                  />
+                </div>
               )}
             </>
           )}

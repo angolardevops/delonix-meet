@@ -18,7 +18,7 @@
  * selos de duração/resolução nas listas — tem o sítio pronto e só aparece
  * quando a camada de mapeamento o devolver. «Guardar em…» não tem servidor.
  */
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   apiErrorMessage,
@@ -187,6 +187,15 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
   const { frames, failed: framesFailed } = useFrameGrabs(src, grabTimes)
 
   const seek = useCallback((ms: number) => (src ? pb.seek(ms, true) : pb.queueSeek(ms)), [src, pb])
+
+  // `#/recordings/<id>?t=<segundos>`: a pesquisa global abre no instante do
+  // capítulo ou do comentário encontrado. Aplica-se uma vez por gravação.
+  const queueSeek = pb.queueSeek
+  useEffect(() => {
+    const at = Number(new URLSearchParams(location.hash.split('?')[1] ?? '').get('t'))
+    if (Number.isFinite(at) && at > 0) queueSeek(at * 1000)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rec.id])
 
   async function download() {
     setDownloading(true)

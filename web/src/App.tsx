@@ -2,6 +2,7 @@ import { lazy, ReactNode, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { completeSsoLogin, currentUser, logout, User } from './api'
 import Shell, { NavKey } from './components/Shell'
+import PaletteHost from './components/PaletteHost'
 import PresenceProvider from './components/PresenceProvider'
 import { Icon } from './ui/icons'
 import { Spinner } from './ui/kit'
@@ -60,7 +61,7 @@ function parseHash(): Route {
   if (share) return { kind: 'share', token: share[1] }
   const diagram = h.match(/^#\/whiteboards\/diagram(?:\/([A-Za-z0-9_-]+))?(?:\?.*)?$/)
   if (diagram) return { kind: 'diagram', id: diagram[1] ?? null }
-  const player = h.match(/^#\/recordings\/([0-9a-f-]{36})$/)
+  const player = h.match(/^#\/recordings\/([0-9a-f-]{36})(?:\?.*)?$/)
   if (player) return { kind: 'player', id: player[1] }
   for (const p of PAGES) if (h.startsWith(`#/${p}`)) return { kind: p }
   return { kind: 'home' }
@@ -141,6 +142,16 @@ export default function App() {
         </div>
       )}
       <PresenceProvider onEnterRoom={enterRoom}>
+        <PaletteHost
+          user={user}
+          inRoom={route.kind === 'room'}
+          onEnterRoom={enterRoom}
+          onLogout={() => {
+            logout()
+            setUser(null)
+            location.hash = '/'
+          }}
+        >
         {route.kind === 'room' ? (
           <RouteFallback>
             <Room
@@ -181,6 +192,7 @@ export default function App() {
             </RouteFallback>
           </Shell>
         )}
+        </PaletteHost>
       </PresenceProvider>
     </>
   )

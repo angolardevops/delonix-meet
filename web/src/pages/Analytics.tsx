@@ -54,6 +54,7 @@ function OrgStatsSection({ orgId }: { orgId: string }) {
               <RankList
                 label={t('analytics.organizadores.titulo')}
                 rows={s.top_organizers.map((o) => ({ key: o.username, name: o.username, count: o.count }))}
+                searchNs="org."
               />
             )}
           </Card>

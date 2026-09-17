@@ -425,7 +425,7 @@ kbd {
   padding-top: 12vh;
 }
 .palette {
-  width: min(560px, 100%);
+  width: min(640px, 100%);
   background: var(--raised);
   border: 1px solid var(--border);
   border-radius: var(--r-3);
@@ -488,6 +488,89 @@ kbd {
   padding: 8px 14px;
   color: var(--danger);
   font-size: 12px;
+}
+/* Pesquisa global: grupos, realce, excertos e a linha de estado. */
+.palette__group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 10px 4px;
+}
+.palette__clear {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: var(--t-xs);
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.palette__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette__hint {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  max-width: 55%;
+  min-width: 0;
+  text-align: right;
+}
+.palette__snippet,
+.palette__meta {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette__snippet {
+  color: var(--text);
+  font-size: var(--t-sm);
+}
+.palette__hl {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: inherit;
+  border-radius: var(--r-2);
+  padding: 0 1px;
+  font-weight: 600;
+}
+.palette__item--more {
+  color: var(--accent);
+}
+.palette__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 30px;
+  align-items: center;
+  padding: 6px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--t-sm);
+}
+.palette__status:empty,
+.palette__list:empty {
+  display: none;
+}
+.palette__err-inline {
+  color: var(--danger);
+}
+@media (max-width: 600px) {
+  .palette__item {
+    flex-wrap: wrap;
+  }
+  .palette__hint {
+    max-width: 100%;
+    flex-basis: 100%;
+    align-items: flex-start;
+    text-align: left;
+    padding-left: 26px;
+  }
 }
 
 /* --------------------------------------------------------- definições */

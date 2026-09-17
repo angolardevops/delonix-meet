@@ -538,3 +538,37 @@
     white-space: normal;
   }
 }
+
+/* Pesquisa estilo Odoo dentro dos cartões (membros, auditoria, organizações). */
+.org-search-pad {
+  padding: 10px 14px 6px;
+}
+.org-results {
+  min-width: 0;
+}
+.org-results > .dx-groups {
+  border-top: 1px solid var(--border);
+}
+
+/* Altura da janela em ecrã largo: a página não rola; rola cada coluna de
+   cartões por si. Abaixo de 1181 px as colunas empilham e a página rola. */
+@media (min-width: 1181px) {
+  .page.org-admin {
+    flex: 1;
+    min-height: 0;
+    padding-bottom: 16px;
+  }
+  .org-admin__grid {
+    flex: 1;
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .org-admin__main,
+  .org-admin__side {
+    min-height: 0;
+    overflow-y: auto;
+    align-content: start;
+    padding-right: 2px;
+  }
+}

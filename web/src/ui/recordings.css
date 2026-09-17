@@ -61,6 +61,8 @@
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 402px;
+  /* Uma linha com a altura do ecrã: a página não rola, rola a lista. */
+  grid-template-rows: minmax(0, 1fr);
   align-items: stretch;
 }
 .rec-layout.is-single {
@@ -68,10 +70,22 @@
 }
 .rec-main {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding: 16px 22px;
+}
+/* A região de dados: só ela rola (o menu do painel fica por fora, visível). */
+.rec-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.rec-results > .rec-table-wrap {
+  flex: none;
 }
 .rec-skeleton {
   display: grid;

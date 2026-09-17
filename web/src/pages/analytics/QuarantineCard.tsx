@@ -57,6 +57,7 @@ export function QuarantineCard({ orgId }: { orgId: string | null }) {
               <RankList
                 label={t('analytics.quarentena.titulo')}
                 rows={rows.map((r) => ({ key: r.user_id, name: r.username, count: r.count }))}
+                searchNs="quar."
               />
             )
           }
