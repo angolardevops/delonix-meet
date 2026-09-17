@@ -34,7 +34,7 @@ Grupos da paleta: fixos, não recolhíveis.
 | Falta | Face a | Prioridade | Nota de implementação |
 |---|---|---|---|
 | Agregação, realização, dependência, extensão, generalização em casos de uso | spec, draw.io | **P1** (modelo) | expor na paleta; XMI/PlantUML já saem |
-| **Actividade**: nó inicial, final de actividade, final de fluxo, acção, decisão/junção, fork/join, partição (swimlane), nó de objecto, fluxo de controlo com guarda | spec, draw.io «UML» | **P1** | `uml:Activity` no XMI; PlantUML legado `(*) -->` aceita grafo arbitrário |
+| **Actividade**: nó inicial, final de actividade, final de fluxo, acção, decisão/junção, fork/join, partição (swimlane), nó de objecto, fluxo de controlo com guarda | spec, draw.io «UML» | **P1** | `uml:Activity` no XMI; PlantUML em sintaxe de estados (`<<choice>>`, `<<fork>>`, `[*]`), que aceita um grafo arbitrário |
 | **Estados**: estado, estado composto, inicial, final, escolha, histórico (superficial/profundo), transição `evento [guarda] / efeito` | spec, draw.io | **P1** | `uml:StateMachine`/`region`/`Pseudostate` no XMI; `@startuml` de estados |
 | **Componentes/implantação**: componente, porto, interface fornecida (lollipop), requerida (socket), nó, artefacto, `«deploy»`, `«manifest»` | spec, draw.io | **P2** | `uml:Component`/`Port`/`Node`/`Artifact`/`Deployment`/`Usage` |
 | **Objecto** (`nome: Classe` sublinhado, slots) e ligação | spec, draw.io | **P2** | `uml:InstanceSpecification` com `classifier` quando a classe existe |
@@ -109,3 +109,28 @@ com decisão, conector e base de dados. (UML e BPMN já existem.)
   aplicação (ver licenças).
 - Coreografia/conversação BPMN, diagramas UML de timing/comunicação/perfil.
 - Colaboração em tempo real no diagrama: sem `doc JSONB` nem mensagem de sinalização.
+
+## Estado da entrega (2026-09-17, branch `frontend/quadros-formas`)
+
+Entregue tudo o que está acima com prioridade P1 e P2, e os P3 de UML
+(operadores de fragmento). Ficou de fora, com a razão já escrita: coreografia e
+conversação BPMN, diagramas UML de timing/comunicação/perfil, ícones oficiais
+de fornecedores, sincronização do diagrama com a sala.
+
+Prova: `web/e2e/quadros-formas.mjs` (1440×900 e 1920×1080, contra a API) e os
+testes `web/src/pages/diagrams/formas-*.test.ts`.
+
+Bundle medido com `npm run build` (bytes; gzip entre parênteses):
+
+| | antes (`445e41a`) | depois |
+|---|---|---|
+| JS inicial (`index-*.js`) | 483 889 (154 543) | 496 889 (158 431) |
+| chunk do editor (`Diagram-*.js`) | 121 632 (36 585) | 216 029 (60 480) |
+| grupos do catálogo (8 chunks) | — | 303–773 cada (218–409) |
+| glifos partilhados do catálogo | — | 3 173 (1 500) |
+| rótulos do catálogo (1 por língua) | — | 3 417–3 539 (1 517–1 737) |
+
+Os +13 KB do inicial são as chaves novas do `pt/diagrams.ts`, que o `i18n.ts`
+importa de forma síncrona (o português é a língua de recurso). Os rótulos do
+catálogo já ficaram fora disso; mover o resto das chaves dos diagramas para uma
+área carregada com o editor é o passo seguinte, e mexe no `i18n.ts`.

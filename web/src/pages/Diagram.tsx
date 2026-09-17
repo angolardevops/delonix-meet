@@ -697,7 +697,7 @@ export default function Diagram({ id }: { id: string | null }) {
             {menu && (
               <div className="dg-menu" role="menu">
                 {formats.map((f) => (
-                  <button key={f} type="button" role="menuitem" onClick={() => void exportAs(f)}>
+                  <button key={f} type="button" role="menuitem" data-export={f} onClick={() => void exportAs(f)}>
                     {t(`diagrams.exportar.${f}`)}
                   </button>
                 ))}
