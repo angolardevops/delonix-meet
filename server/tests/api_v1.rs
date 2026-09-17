@@ -31,12 +31,7 @@ async fn v1(
         format!("/api/v1{path}")
     };
     let r = app
-        .raw(
-            method,
-            &url,
-            &[("Authorization", &auth)],
-            body,
-        )
+        .raw(method, &url, &[("Authorization", &auth)], body)
         .await;
     (r.status, r.json())
 }
@@ -108,7 +103,14 @@ async fn v1_is_rate_limited_per_ip(db: sqlx::PgPool) {
     // autenticação. Com chave válida o balde é da chave (`api_key_scopes`).
     let mut statuses = Vec::new();
     for _ in 0..121 {
-        let (st, _) = v1(&app, reqwest::Method::GET, "/organization", "dlx_invalida", None).await;
+        let (st, _) = v1(
+            &app,
+            reqwest::Method::GET,
+            "/organization",
+            "dlx_invalida",
+            None,
+        )
+        .await;
         statuses.push(st);
     }
     assert!(statuses[..120].iter().all(|s| *s == 401), "{statuses:?}");
@@ -823,7 +825,11 @@ async fn platform_storage_requires_declared_platform_admin(db: sqlx::PgPool) {
             "/api/operator/v1/storage/test",
             Some(json!({})),
         ),
-        (reqwest::Method::GET, "/api/operator/v1/storage/pvc-manifest", None),
+        (
+            reqwest::Method::GET,
+            "/api/operator/v1/storage/pvc-manifest",
+            None,
+        ),
     ] {
         let (st, resp) = v1(&app, method.clone(), path, &a.token, body.clone()).await;
         assert_eq!(st, 403, "{method} {path}: {resp}");
@@ -838,7 +844,14 @@ async fn platform_storage_requires_declared_platform_admin(db: sqlx::PgPool) {
 
     // Controlo positivo: o administrador DECLARADO lê e escreve.
     let tok = access_token_for(&app, platform_admin);
-    let (st, cfg) = v1(&app, reqwest::Method::GET, "/api/operator/v1/storage", &tok, None).await;
+    let (st, cfg) = v1(
+        &app,
+        reqwest::Method::GET,
+        "/api/operator/v1/storage",
+        &tok,
+        None,
+    )
+    .await;
     assert_eq!(st, 200, "{cfg}");
     assert_eq!(cfg["storage_type"], "local");
     assert_eq!(cfg["webdav_password_set"], false);
@@ -863,7 +876,14 @@ async fn platform_storage_requires_declared_platform_admin(db: sqlx::PgPool) {
     )
     .await;
     assert_eq!(st, 200);
-    let (_, cfg) = v1(&app, reqwest::Method::GET, "/api/operator/v1/storage", &tok, None).await;
+    let (_, cfg) = v1(
+        &app,
+        reqwest::Method::GET,
+        "/api/operator/v1/storage",
+        &tok,
+        None,
+    )
+    .await;
     assert_eq!(cfg["storage_type"], "webdav");
     assert_eq!(cfg["webdav_password_set"], true);
     assert!(!cfg.to_string().contains("segredo"), "{cfg}");

@@ -384,7 +384,10 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
     let (st, _) = app.get(&format!("{content}?dl=1"), Some(&b.token)).await;
     assert_eq!(st, 401);
     let (st, _) = app
-        .get(&format!("/api/recordings/{INVENTED_ID}/content"), Some(&a.token))
+        .get(
+            &format!("/api/recordings/{INVENTED_ID}/content"),
+            Some(&a.token),
+        )
         .await;
     assert_eq!(st, 404);
     // Gravação falhada: 400 com o motivo, antes da autorização.

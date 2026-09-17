@@ -163,18 +163,14 @@ async fn patch_metadata_owner_admin_member_and_other_org(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 403, "{v}");
     assert_eq!(v["code"], "recording.not_manager");
-    let (_, m) = app
-        .get(&path, Some(&f.carla.token))
-        .await;
+    let (_, m) = app.get(&path, Some(&f.carla.token)).await;
     assert_eq!(m["can_manage"], false);
     // Membro da mesma org sem acesso nenhum: nem sabe que existe.
     let (st, _) = app
         .patch(&path, Some(&f.duarte.token), json!({"category": "other"}))
         .await;
     assert_eq!(st, 404);
-    let (st, _) = app
-        .get(&path, Some(&f.duarte.token))
-        .await;
+    let (st, _) = app.get(&path, Some(&f.duarte.token)).await;
     assert_eq!(st, 404);
     // Outra org: 404, igual a um id inventado.
     let (st, v) = app
@@ -628,10 +624,7 @@ async fn archived_member_cannot_read_comments_nor_see_library(db: sqlx::PgPool) 
         .await;
     assert_eq!(st, 404);
     let (st, _) = app
-        .get(
-            &format!("/api/recordings/{}", f.rec),
-            Some(&f.carla.token),
-        )
+        .get(&format!("/api/recordings/{}", f.rec), Some(&f.carla.token))
         .await;
     assert_eq!(st, 404);
     let (_, lib) = app.get("/api/recordings", Some(&f.carla.token)).await;

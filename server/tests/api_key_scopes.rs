@@ -294,7 +294,14 @@ async fn chave_expirada_e_401_api_key_expired(db: sqlx::PgPool) {
     assert_eq!(st, 401, "{err}");
     assert_eq!(err["code"], "api_key.expired");
     // Desconhecida e revogada continuam a ser o 401 de sempre.
-    let (st, err) = v1(&app, reqwest::Method::GET, "/organization", "dlx_nao_existe", None).await;
+    let (st, err) = v1(
+        &app,
+        reqwest::Method::GET,
+        "/organization",
+        "dlx_nao_existe",
+        None,
+    )
+    .await;
     assert_eq!(
         (st, err["code"].as_str()),
         (401, Some("auth.unauthenticated"))
@@ -529,7 +536,14 @@ async fn limite_por_chave_isola_duas_chaves_do_mesmo_ip(db: sqlx::PgPool) {
     let (st, _) = v1(&app, reqwest::Method::GET, "/organization", &k2, None).await;
     assert_eq!(st, 200, "a chave 2 não paga pela chave 1");
     // Sem chave válida conta o IP, que também está intacto.
-    let (st, _) = v1(&app, reqwest::Method::GET, "/organization", "dlx_inventada", None).await;
+    let (st, _) = v1(
+        &app,
+        reqwest::Method::GET,
+        "/organization",
+        "dlx_inventada",
+        None,
+    )
+    .await;
     assert_eq!(st, 401);
 }
 

@@ -28,14 +28,20 @@ async fn my_orgs_shape(db: sqlx::PgPool) {
     let o = &orgs[0];
     // `GET /api/orgs/{org_id}` devolve o MESMO item da lista, e um membro sem
     // papel também o lê (com o papel dele).
-    let (st, one) = app.get(&format!("/api/orgs/{}", a.org()), Some(&a.token)).await;
+    let (st, one) = app
+        .get(&format!("/api/orgs/{}", a.org()), Some(&a.token))
+        .await;
     assert_eq!(st, 200, "{one}");
     assert_eq!(&one, o);
-    let (st, one) = app.get(&format!("/api/orgs/{}", a.org()), Some(&c.token)).await;
+    let (st, one) = app
+        .get(&format!("/api/orgs/{}", a.org()), Some(&c.token))
+        .await;
     assert_eq!(st, 200, "{one}");
     assert_eq!(one["id"], a.org());
     assert_eq!(one["role"], "member");
-    let (st, _) = app.get(&format!("/api/orgs/{INVENTED_ID}"), Some(&a.token)).await;
+    let (st, _) = app
+        .get(&format!("/api/orgs/{INVENTED_ID}"), Some(&a.token))
+        .await;
     assert_eq!(st, 404);
     let (st, _) = app.get(&format!("/api/orgs/{}", a.org()), None).await;
     assert_eq!(st, 401);
@@ -305,7 +311,9 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
     assert!(actions.contains(&"org.created"), "{actions:?}");
     assert!(actions.contains(&"auth.login"), "{actions:?}");
     assert_eq!(audit[0]["actor"], "admin-alfa.test");
-    let (st, v) = app.get(&org_path(&org, "audit-events/verification"), t).await;
+    let (st, v) = app
+        .get(&org_path(&org, "audit-events/verification"), t)
+        .await;
     assert_eq!(st, 200);
     assert_eq!(v["intact"], true, "{v}");
     assert!(v["broken_at_seq"].is_null());
@@ -582,7 +590,11 @@ async fn admin_api_keys_voice_and_odoo(db: sqlx::PgPool) {
     assert_eq!(cfg["hide_org_creation"], true);
     assert_eq!(cfg["odoo_admin_id"], a.user_id.as_str());
     let (st, tok) = app
-        .post(&org_path(&org, "integrations/odoo/rotate-token"), t, json!({}))
+        .post(
+            &org_path(&org, "integrations/odoo/rotate-token"),
+            t,
+            json!({}),
+        )
         .await;
     assert_eq!(st, 200, "{tok}");
     let token = tok["token"].as_str().unwrap();
@@ -757,7 +769,11 @@ async fn cross_org_admin_is_denied_on_every_org_route(db: sqlx::PgPool) {
         assert_eq!(st, 404, "POST {p}: {resp}");
     }
     let (st, resp) = app
-        .patch(&format!("/api/orgs/{borg}"), t, json!({"domain": "evil.test"}))
+        .patch(
+            &format!("/api/orgs/{borg}"),
+            t,
+            json!({"domain": "evil.test"}),
+        )
         .await;
     assert_eq!(st, 404, "PATCH org da B: {resp}");
     // Leitura do recurso (rota nova): não-membro 404, sem fuga de dados.
@@ -899,7 +915,10 @@ async fn archived_members_lose_org_access(db: sqlx::PgPool) {
     assert_eq!(st, 200);
     // D (admin) pode descarregar: passa a autorização e só falha no ficheiro.
     let (st, _) = app
-        .get(&format!("/api/recordings/{rec}/content?dl=1"), Some(&d.token))
+        .get(
+            &format!("/api/recordings/{rec}/content?dl=1"),
+            Some(&d.token),
+        )
         .await;
     assert_eq!(st, 404, "autorizado; o ficheiro não existe");
 
@@ -925,7 +944,10 @@ async fn archived_members_lose_org_access(db: sqlx::PgPool) {
     let (st, _) = app.get(&org_path(&org, "stats"), Some(&d.token)).await;
     assert_eq!(st, 404);
     let (st, _) = app
-        .get(&format!("/api/recordings/{rec}/content?dl=1"), Some(&d.token))
+        .get(
+            &format!("/api/recordings/{rec}/content?dl=1"),
+            Some(&d.token),
+        )
         .await;
     assert_eq!(st, 401);
     // A sessão em si continua válida (o JWT não é revogado).
@@ -952,7 +974,9 @@ async fn my_orgs_hides_org_from_archived_member(db: sqlx::PgPool) {
     assert_eq!(st, 200);
     assert_eq!(orgs, serde_json::json!([]), "{orgs}");
     // Nem pelo id: arquivado deixa de ser membro activo.
-    let (st, _) = app.get(&format!("/api/orgs/{}", a.org()), Some(&c.token)).await;
+    let (st, _) = app
+        .get(&format!("/api/orgs/{}", a.org()), Some(&c.token))
+        .await;
     assert_eq!(st, 404);
     let (_, orgs) = app.get("/api/orgs", Some(&a.token)).await;
     assert_eq!(orgs[0]["member_count"], 1);
