@@ -17,7 +17,18 @@
 //! servidor (por /proc) e — para não confundir saturação do GERADOR com
 //! saturação do servidor — os ticks de envio atrasados do próprio gerador.
 //!
-//! Uso: ver `.carga/README.md` na raiz do worktree, ou `--help`.
+//! Media (uma vez, em `.carga/media`):
+//!
+//! ```text
+//! enc(){ ffmpeg -y -f lavfi -i "testsrc2=size=$1:rate=30,noise=alls=12:allf=t" -t 60 \
+//!   -c:v libvpx -deadline realtime -cpu-used 8 -b:v $2 -minrate $2 -maxrate $2 \
+//!   -g 60 -keyint_min 60 -error-resilient 1 -auto-alt-ref 0 -lag-in-frames 0 -f ivf $3; }
+//! enc 320x180 150k q.ivf; enc 640x360 500k h.ivf; enc 1280x720 1700k f.ivf
+//! ffmpeg -y -f lavfi -i "sine=frequency=440:sample_rate=48000" -t 60 -ac 1 \
+//!   -c:a libopus -b:a 32k -frame_duration 20 -page_duration 20000 audio.ogg
+//! ```
+//!
+//! Uso e resultados medidos: `docs/ops/teste-de-carga-2026-09-17.md`, ou `--help`.
 
 use std::{
     net::IpAddr,
