@@ -9,7 +9,7 @@ use delonix_meet_protocol::{
     telephony::v1::{ivr_service_client::IvrServiceClient, ValidatePinRequest},
     transcription::v1::{
         transcription_service_client::TranscriptionServiceClient, ClaimJobRequest,
-        CompleteJobRequest, FailJobRequest,
+        CompleteJobRequest, FailJobRequest, TranscriptSegment,
     },
 };
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
@@ -98,6 +98,7 @@ async fn transcription_queue_lease_complete_and_dlp(db: sqlx::PgPool) {
             lease_token: "nao-e-meu".into(),
             transcript: "x".into(),
             minutes: String::new(),
+            ..Default::default()
         })
         .await
         .unwrap_err();
@@ -109,9 +110,51 @@ async fn transcription_queue_lease_complete_and_dlp(db: sqlx::PgPool) {
         lease_token: job.lease_token.clone(),
         transcript: format!("a chave é {secret} e acabou"),
         minutes: "# Acta".into(),
+        // Segmentos (R183): o DLP corre em cada um; os incoerentes saem; a
+        // confiança da transcrição é a média dos que a têm.
+        segments: vec![
+            TranscriptSegment {
+                start_ms: 2500,
+                end_ms: 4000,
+                text: format!("é {secret}"),
+                confidence: Some(0.6),
+            },
+            TranscriptSegment {
+                start_ms: 0,
+                end_ms: 2400,
+                text: "a chave".into(),
+                confidence: Some(0.8),
+            },
+            TranscriptSegment {
+                start_ms: 5000,
+                end_ms: 4000,
+                text: "fim antes do início".into(),
+                confidence: None,
+            },
+        ],
+        language: "pt".into(),
     })
     .await
     .unwrap();
+    let (segments, language, confidence): (serde_json::Value, Option<String>, Option<f32>) =
+        sqlx::query_as(
+            "SELECT transcript_segments, transcript_language, transcript_confidence
+               FROM recordings WHERE id = $1",
+        )
+        .bind(rec)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let segs = segments.as_array().unwrap();
+    assert_eq!(segs.len(), 2, "o segmento incoerente sai: {segments}");
+    assert_eq!(segs[0]["text"], "a chave", "por ordem de início");
+    assert_eq!(segs[0]["start_ms"], 0);
+    assert!(
+        !segments.to_string().contains(&secret),
+        "o DLP corre nos segmentos: {segments}"
+    );
+    assert_eq!(language.as_deref(), Some("pt"));
+    assert!((confidence.unwrap() - 0.7).abs() < 1e-4, "{confidence:?}");
     let (transcript, done): (String, bool) = sqlx::query_as(
         "SELECT transcript, transcribed_at IS NOT NULL FROM recordings WHERE id = $1",
     )

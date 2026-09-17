@@ -12,7 +12,9 @@ Duas implementações do mesmo contrato (`JobSource`):
 O ciclo (`worker.py`) só conhece o contrato; nenhum dos dois sabe transcrever.
 """
 from dataclasses import dataclass
-from typing import Optional, Protocol
+from typing import Optional, Protocol, Sequence
+
+from transcriber import Segment
 
 
 @dataclass(frozen=True)
@@ -32,7 +34,8 @@ class LeaseLost(Exception):
 class JobSource(Protocol):
     def claim(self) -> Optional[Job]: ...
 
-    def complete(self, job: Job, transcript: str, minutes: str) -> None: ...
+    def complete(self, job: Job, transcript: str, minutes: str,
+                 segments: Sequence[Segment] = (), language: str = "") -> None: ...
 
     def fail(self, job: Job, reason: str, retryable: bool) -> None: ...
 
@@ -119,12 +122,21 @@ class GrpcJobSource:
                    room_code=j.room_code, lease_token=j.lease_token,
                    lease_expires_unix=j.lease_expires_unix, attempt=j.attempt)
 
-    def complete(self, job: Job, transcript: str, minutes: str) -> None:
+    def complete(self, job: Job, transcript: str, minutes: str,
+                 segments: Sequence[Segment] = (), language: str = "") -> None:
+        # `confidence` é `optional` no proto: ausente = desconhecida, e não 0.
+        segs = [
+            self._m.TranscriptSegment(
+                start_ms=s.start_ms, end_ms=s.end_ms, text=s.text,
+                **({} if s.confidence is None else {"confidence": s.confidence}))
+            for s in segments
+        ]
         try:
             self._stub.CompleteJob(
                 self._m.CompleteJobRequest(recording_id=job.recording_id,
                                            lease_token=job.lease_token,
-                                           transcript=transcript, minutes=minutes),
+                                           transcript=transcript, minutes=minutes,
+                                           segments=segs, language=language),
                 timeout=self._timeout)
         except Exception as e:
             if self._is_lease_lost(e):
@@ -185,7 +197,10 @@ class LegacyDbJobSource:
         return Job(recording_id=str(rec_id), media_file=f"{rec_id}.webm",
                    room_code=room_code or "")
 
-    def complete(self, job: Job, transcript: str, minutes: str) -> None:
+    def complete(self, job: Job, transcript: str, minutes: str,
+                 segments: Sequence[Segment] = (), language: str = "") -> None:
+        # Os segmentos NÃO vão por aqui: escrevê-los na base por baixo do
+        # servidor era contornar o DLP também neles (R183). Só pelo gRPC.
         try:
             self._mark_done(job.recording_id, transcript, minutes)
             # A acta da reunião ligada (é o que o leitor mostra), se ainda vazia.

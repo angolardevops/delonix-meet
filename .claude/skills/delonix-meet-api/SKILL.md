@@ -132,7 +132,12 @@ singletons, `GET` onde havia `PATCH`/`DELETE`. O que continua:
 
 - **Listagens herdadas sem cursor:** `v1/recordings` com `LIMIT 200` fixo,
   `v1/meetings?since=` com corte aos 500, `meetings::list` e `recordings::library` sem
-  limite (a biblioteca só pagina com `page_size`/`q`).
+  limite (a biblioteca só pagina com `page_size`/`page_token`; com `q`/`scope` e sem eles
+  devolve a lista, que é a forma que a UI nova lê — R183).
+- **Gravações (R183):** o contrato de DADOS é o da UI nova (`RecordingLibraryItem`,
+  milissegundos, `kind`, `visibility`), exposto nos caminhos desta linha. Um sub-recurso
+  novo de gravação decide o acesso por `recordings::seen_item`/`managed_item` (404 antes
+  de 403) e, se mexer em quem vê, por `AccessFacts` + `LIBRARY_VISIBLE_*` no mesmo commit.
 - **Respostas `{"ok": true}`: zero** (R181, catraca `respostas_ok_true=0`). Apagar → `204`
   (e `404` se não havia nada NESTA organização); `PUT` de configuração devolve o recurso como
   o `GET`; telemetria → `204`; contagens → `{"updated": n}`. Falta de permissão numa rota de

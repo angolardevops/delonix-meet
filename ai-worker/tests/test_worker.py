@@ -21,7 +21,7 @@ import transcribe_worker  # noqa: E402
 import worker  # noqa: E402
 from job_source import ConfigError, GrpcJobSource, Job, LeaseLost, open_channel  # noqa: E402
 from minutes import build_mom  # noqa: E402
-from transcriber import FakeTranscriber  # noqa: E402
+from transcriber import FakeTranscriber, Segment, confidence_from_logprob  # noqa: E402
 
 
 # ------------------------------------------------------------------ dobras
@@ -35,6 +35,7 @@ def _messages():
     return types.SimpleNamespace(
         ClaimJobRequest=lambda **kw: _Msg(kind="claim", **kw),
         CompleteJobRequest=lambda **kw: _Msg(kind="complete", **kw),
+        TranscriptSegment=lambda **kw: _Msg(kind="segment", **kw),
         FailJobRequest=lambda **kw: _Msg(kind="fail", **kw),
     )
 
@@ -126,6 +127,43 @@ class WorkerLoopTest(unittest.TestCase):
         self.assertEqual(complete.transcript, text)
         self.assertEqual(complete.minutes, build_mom(text))
         self.assertIn("## Ações / decisões", complete.minutes)
+
+    def test_completes_with_segments_and_language(self):
+        job = _job()
+        self._touch(job.media_file)
+        stub = FakeStub([job])
+        segs = (Segment(0, 1800, "olá a todos", 0.91), Segment(2000, 3500, "boa tarde"))
+        fake = FakeTranscriber("olá a todos boa tarde", segs, "pt")
+        out = worker.process_one(self._source(stub), fake, self.dir, _nolog)
+        self.assertEqual(out, worker.Outcome.COMPLETED)
+        complete = stub.calls[-1]
+        self.assertEqual(complete.language, "pt")
+        self.assertEqual([(s.start_ms, s.end_ms, s.text) for s in complete.segments],
+                         [(0, 1800, "olá a todos"), (2000, 3500, "boa tarde")])
+        self.assertAlmostEqual(complete.segments[0].confidence, 0.91)
+        # Confiança desconhecida não vai como 0: o campo fica ausente.
+        self.assertFalse(hasattr(complete.segments[1], "confidence"))
+
+    def test_text_only_transcriber_still_completes_without_segments(self):
+        class TextOnly:
+            def transcribe(self, path):
+                return "só texto"
+
+        job = _job()
+        self._touch(job.media_file)
+        stub = FakeStub([job])
+        out = worker.process_one(self._source(stub), TextOnly(), self.dir, _nolog)
+        self.assertEqual(out, worker.Outcome.COMPLETED)
+        self.assertEqual(stub.calls[-1].transcript, "só texto")
+        self.assertEqual(stub.calls[-1].segments, [])
+        self.assertEqual(stub.calls[-1].language, "")
+
+    def test_confidence_from_logprob_is_bounded(self):
+        self.assertAlmostEqual(confidence_from_logprob(0.0), 1.0)
+        self.assertAlmostEqual(confidence_from_logprob(-0.105), 0.9003, places=3)
+        self.assertEqual(confidence_from_logprob(5.0), 1.0)
+        self.assertIsNone(confidence_from_logprob(None))
+        self.assertIsNone(confidence_from_logprob("nan"))
 
     def test_missing_file_fails_for_good(self):
         stub = FakeStub([_job()])

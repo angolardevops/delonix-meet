@@ -159,7 +159,23 @@ impl TranscriptionService for Transcription {
     ) -> Result<Response<CompleteJobResponse>, Status> {
         let r = req.into_inner();
         let id = parse_uuid("recording_id", &r.recording_id)?;
-        crate::transcription::complete(&self.state, id, &r.lease_token, &r.transcript, &r.minutes)
+        let segments = r
+            .segments
+            .into_iter()
+            .map(|s| delonix_meet_domain::content::transcription::Segment {
+                start_ms: s.start_ms,
+                end_ms: s.end_ms,
+                text: s.text,
+                confidence: s.confidence,
+            })
+            .collect();
+        let delivery = crate::transcription::Delivery {
+            transcript: &r.transcript,
+            minutes: &r.minutes,
+            segments,
+            language: &r.language,
+        };
+        crate::transcription::complete(&self.state, id, &r.lease_token, delivery)
             .await
             .map_err(status_from)?;
         Ok(Response::new(CompleteJobResponse {}))
