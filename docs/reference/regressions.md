@@ -1975,3 +1975,13 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 **Regra.** Uma linha seguida que comece por `<<<<<<< ` ou `>>>>>>> ` é um conflito por resolver, e o `check-repo-hygiene.sh` falha com o ficheiro e a linha (controlo negativo feito: um bloco acrescentado ao `HARNESS.md` faz o portão falhar). Resolver conflitos por script: iterar até não restar NENHUM marcador, nunca só o primeiro índice. Uma bateria só conta sobre `git status` sem `UU`.
 
 **Ficheiros.** `scripts/check-repo-hygiene.sh`, `HARNESS.md`.
+
+### R230 — O directo multidestino só funcionava no primeiro destino
+
+**Sintoma.** Com 2 ou mais destinos, o segundo em diante era recusado pelo servidor RTMP (`unsupported video codec: 2`, medido com mediamtx a 2160p/16 Mbit pela sessão da frente E). O `montar_argumentos` punha `-c:v copy -c:a aac -b:a 128k -ar 44100` UMA vez, antes da primeira saída — e no ffmpeg as opções de saída valem só para a saída seguinte. As restantes saíam com os codecs por omissão do FLV: vídeo FLV1 re-codificado em software (o custo que o ADR-0003 existe para evitar) e áudio MP3. O teste existente só contava as saídas `flv`, não o que cada uma levava.
+
+**Prova.** ffmpeg real, a mesma entrada Matroska H.264+Opus por cano, dois ficheiros FLV: com os argumentos antigos, `ffprobe` dá `h264 aac` na 1.ª saída e `mp3 flv1` na 2.ª; com os novos, `h264 aac` nas duas.
+
+**Regra.** As opções de codec vêm de `opcoes_de_saida()` e repetem-se antes de CADA `-f flv`. Portão: `broadcast::testes::cada_saida_leva_as_suas_opcoes_de_codec` (1, 2 e 3 destinos; cada saída tem de ter o seu `-c:v copy`, `-c:a aac` e `-ar` desde a saída anterior). Continua por resolver, e é da frente E (ADR-0013): um destino pendurado congela os outros, porque é um só processo.
+
+**Ficheiros.** `server/src/broadcast.rs`.
