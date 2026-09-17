@@ -360,6 +360,16 @@ pub async fn ingest_handler(
         Some(rest) => pct_decode(&String::from_utf8_lossy(rest)).into_bytes(),
         None => body.to_vec(),
     };
+    // A perna A de uma chamada pelo plano (o PBX que marcou): o custo e o ASR
+    // estão nas pernas B. Aceita-se (o FreeSWITCH não volta a tentar) e ignora-se.
+    if serde_json::from_slice::<Value>(&raw)
+        .ok()
+        .and_then(|v| var(&v["variables"], "delonix_cdr_skip"))
+        .as_deref()
+        == Some("true")
+    {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
     let mut detail = FreeswitchJsonCdr.parse(&raw).map_err(|e| {
         ApiError::from(DomainError::invalid("telephony.cdr_invalid", e.to_string()))
     })?;

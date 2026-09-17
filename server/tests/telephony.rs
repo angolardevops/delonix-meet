@@ -31,7 +31,9 @@ fn t(org: &str, rest: &str) -> String {
 //  ESL falso
 // ============================================================
 
-type Responder = Arc<dyn Fn(&str) -> (u64, String) + Send + Sync>;
+/// Resposta do ESL falso a um comando: mensagens cruas, cada uma com um
+/// atraso antes de a escrever.
+type Responder = Arc<dyn Fn(&str) -> Vec<(u64, String)> + Send + Sync>;
 
 struct FakeEsl {
     addr: String,
@@ -51,8 +53,38 @@ async fn read_cmd(r: &mut BufReader<tokio::net::tcp::OwnedReadHalf>) -> Option<S
             }
             return Some(line);
         }
+        if !line.is_empty() {
+            line.push('\n');
+        }
         line.push_str(l.trim_end());
     }
+}
+
+fn api(body: &str) -> String {
+    format!(
+        "Content-Type: api/response\nContent-Length: {}\n\n{body}",
+        body.len()
+    )
+}
+
+fn reply(text: &str) -> String {
+    format!("Content-Type: command/reply\nReply-Text: {text}\n\n")
+}
+
+fn event(headers: &[(&str, &str)], job_body: Option<&str>) -> String {
+    let mut body: String = headers
+        .iter()
+        .map(|(k, v)| format!("{k}: {}\n", v.replace(' ', "%20")))
+        .collect();
+    if let Some(j) = job_body {
+        body.push_str(&format!("Content-Length: {}\n\n{j}", j.len()));
+    } else {
+        body.push('\n');
+    }
+    format!(
+        "Content-Length: {}\nContent-Type: text/event-plain\n\n{body}",
+        body.len()
+    )
 }
 
 async fn spawn_esl(password: &'static str, responder: Responder) -> FakeEsl {
@@ -75,27 +107,20 @@ async fn spawn_esl(password: &'static str, responder: Responder) -> FakeEsl {
                     return;
                 };
                 if auth != format!("auth {password}") {
-                    w.write_all(b"Content-Type: command/reply\nReply-Text: -ERR invalid\n\n")
-                        .await
-                        .ok();
+                    w.write_all(reply("-ERR invalid").as_bytes()).await.ok();
                     return;
                 }
-                w.write_all(b"Content-Type: command/reply\nReply-Text: +OK accepted\n\n")
-                    .await
-                    .ok();
+                w.write_all(reply("+OK accepted").as_bytes()).await.ok();
                 while let Some(cmd) = read_cmd(&mut r).await {
                     let cmd = cmd.strip_prefix("api ").unwrap_or(&cmd).to_string();
                     log.lock().unwrap().push(cmd.clone());
-                    let (delay, body) = responder(&cmd);
-                    if delay > 0 {
-                        tokio::time::sleep(Duration::from_millis(delay)).await;
-                    }
-                    let msg = format!(
-                        "Content-Type: api/response\nContent-Length: {}\n\n{body}",
-                        body.len()
-                    );
-                    if w.write_all(msg.as_bytes()).await.is_err() {
-                        return;
+                    for (delay, msg) in responder(&cmd) {
+                        if delay > 0 {
+                            tokio::time::sleep(Duration::from_millis(delay)).await;
+                        }
+                        if w.write_all(msg.as_bytes()).await.is_err() {
+                            return;
+                        }
                     }
                 }
             });
@@ -104,39 +129,106 @@ async fn spawn_esl(password: &'static str, responder: Responder) -> FakeEsl {
     FakeEsl { addr, log }
 }
 
-/// Um FreeSWITCH «saudável»: gateways registados, 3 canais no limite,
-/// originate atendido ao fim de 150 ms — excepto para números `…000`, que
-/// dão `USER_BUSY`.
+/// Um FreeSWITCH «saudável»: gateways registados, 3 canais no limite; um
+/// `bgapi originate` toca, é atendido ao fim de 150 ms e desliga 200 ms
+/// depois — excepto números `…000`, que dão `USER_BUSY`.
 fn healthy_fs() -> Responder {
     Arc::new(|cmd: &str| {
+        let one = |b: &str| vec![(0, api(b))];
         if cmd == "version" {
-            (
-                0,
-                "FreeSWITCH Version 1.10.11-release+git~20231213 (git 64bit)\n".into(),
-            )
+            one("FreeSWITCH Version 1.10.11-release+git~20231213 (git 64bit)\n")
         } else if cmd == "uptime s" {
-            (0, "3600\n".into())
+            one("3600\n")
         } else if cmd == "show channels count" {
-            (0, "\n3 total.\n".into())
+            one("\n3 total.\n")
         } else if cmd.starts_with("global_getvar outbound_codec_prefs") {
-            (0, "OPUS,G722,PCMA\n".into())
+            one("OPUS,G722,PCMA\n")
         } else if let Some(gw) = cmd.strip_prefix("sofia xmlstatus gateway ") {
-            (
-                0,
-                format!("<gateway><name>{gw}</name><state>REGED</state><status>UP</status><pingtime>12.0</pingtime></gateway>\n"),
-            )
+            one(&format!("<gateway><name>{gw}</name><state>REGED</state><status>UP</status><pingtime>12.0</pingtime></gateway>\n"))
         } else if cmd.starts_with("limit_usage hash delonix_trunk ") {
-            (0, "3\n".into())
-        } else if cmd.starts_with("sofia profile ") {
-            (0, "+OK\n".into())
-        } else if cmd.starts_with("originate ") {
-            if cmd.contains("000 &") {
-                (50, "-ERR USER_BUSY\n".into())
+            one("3\n")
+        } else if cmd.starts_with("sofia profile ") || cmd.starts_with("hupall ") {
+            one("+OK\n")
+        } else if cmd.starts_with("event ") || cmd.starts_with("filter ") {
+            vec![(0, reply("+OK"))]
+        } else if let Some(rest) = cmd.strip_prefix("bgapi originate ") {
+            let job = rest
+                .split("Job-UUID: ")
+                .nth(1)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let trunk = rest
+                .split("[delonix_trunk_id=")
+                .nth(1)
+                .and_then(|x| x.split(']').next())
+                .unwrap_or("")
+                .to_string();
+            let chan = format!("chan-{job}");
+            let base = |name: &'static str| {
+                vec![
+                    ("Event-Name", name.to_string()),
+                    ("Unique-ID", chan.clone()),
+                    ("variable_delonix_call_id", job.clone()),
+                    ("variable_delonix_trunk_id", trunk.clone()),
+                ]
+            };
+            let ev = |h: Vec<(&str, String)>, extra: &[(&str, &str)], body: Option<&str>| {
+                let mut all: Vec<(&str, &str)> = h.iter().map(|(k, v)| (*k, v.as_str())).collect();
+                all.extend_from_slice(extra);
+                event(&all, body)
+            };
+            let mut out = vec![(0, reply(&format!("+OK Job-UUID: {job}")))];
+            out.push((20, ev(base("CHANNEL_CREATE"), &[], None)));
+            if rest.contains("000 &") {
+                out.push((
+                    30,
+                    ev(
+                        base("CHANNEL_HANGUP_COMPLETE"),
+                        &[("Hangup-Cause", "USER_BUSY")],
+                        None,
+                    ),
+                ));
+                out.push((
+                    0,
+                    ev(
+                        vec![
+                            ("Event-Name", "BACKGROUND_JOB".into()),
+                            ("Job-UUID", job.clone()),
+                        ],
+                        &[],
+                        Some("-ERR USER_BUSY\n"),
+                    ),
+                ));
             } else {
-                (150, "+OK 1b2c\n".into())
+                out.push((20, ev(base("CHANNEL_PROGRESS"), &[], None)));
+                out.push((150, ev(base("CHANNEL_ANSWER"), &[], None)));
+                out.push((
+                    0,
+                    ev(
+                        vec![
+                            ("Event-Name", "BACKGROUND_JOB".into()),
+                            ("Job-UUID", job.clone()),
+                        ],
+                        &[],
+                        Some(&format!("+OK {chan}\n")),
+                    ),
+                ));
+                out.push((
+                    200,
+                    ev(
+                        base("CHANNEL_HANGUP_COMPLETE"),
+                        &[
+                            ("Hangup-Cause", "NORMAL_CLEARING"),
+                            ("variable_billsec", "1"),
+                        ],
+                        None,
+                    ),
+                ));
             }
+            out
         } else {
-            (0, "-ERR command not found\n".into())
+            one("-ERR command not found\n")
         }
     })
 }
@@ -959,7 +1051,7 @@ async fn quick_test_call_and_sip_status_through_fake_esl(db: sqlx::PgPool) {
         let (_, c) = app
             .get(&t(a.org(), &format!("/test-calls/{id}")), Some(&a.token))
             .await;
-        if c["status"] != "dialing" {
+        if !c["finished_at"].is_null() {
             done = c;
             break;
         }
@@ -967,9 +1059,18 @@ async fn quick_test_call_and_sip_status_through_fake_esl(db: sqlx::PgPool) {
     }
     assert_eq!(done["status"], "answered", "{done}");
     assert!(done["answer_latency_ms"].as_i64().unwrap() >= 150, "{done}");
+    assert_eq!(
+        (done["hangup_cause"].as_str(), done["billsec"].as_i64()),
+        (Some("NORMAL_CLEARING"), Some(1)),
+        "{done}"
+    );
+    assert!(!done["answered_at"].is_null());
     {
         let log = esl.log.lock().unwrap();
-        let orig = log.iter().find(|c| c.starts_with("originate ")).unwrap();
+        let orig = log
+            .iter()
+            .find(|c| c.starts_with("bgapi originate "))
+            .unwrap();
         assert!(orig.contains(&format!("[delonix_trunk_id={uni}]sofia/gateway/dlx-{uni}/244923447108|[delonix_trunk_id={afr}]sofia/gateway/dlx-{afr}/244923447108")), "{orig}");
         assert!(orig.contains(&format!("delonix_org_id={}", a.org())));
         assert!(orig.contains("record_session"), "a regra 0 grava");
@@ -988,7 +1089,7 @@ async fn quick_test_call_and_sip_status_through_fake_esl(db: sqlx::PgPool) {
         let (_, c) = app
             .get(&t(a.org(), &format!("/test-calls/{id2}")), Some(&a.token))
             .await;
-        if c["status"] != "dialing" {
+        if !c["finished_at"].is_null() {
             busy = c;
             break;
         }
@@ -1020,7 +1121,7 @@ async fn quick_test_call_and_sip_status_through_fake_esl(db: sqlx::PgPool) {
             .lock()
             .unwrap()
             .iter()
-            .filter(|c| c.starts_with("originate "))
+            .filter(|c| c.starts_with("bgapi originate "))
             .count(),
         2,
         "nenhuma recusa chegou ao FreeSWITCH"
@@ -1165,7 +1266,7 @@ async fn xml_curl_dialplan_matches_test_endpoint_and_serves_gateways(db: sqlx::P
     assert_eq!(st, 200);
     assert!(
         x.contains(&format!(
-            "hash delonix_trunk {uni} 60 bridge sofia/gateway/dlx-{uni}/244923447108"
+            "hash delonix_trunk {uni} 60 bridge [delonix_trunk_id={uni}]sofia/gateway/dlx-{uni}/244923447108"
         )),
         "{x}"
     );

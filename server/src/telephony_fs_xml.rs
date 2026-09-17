@@ -84,15 +84,19 @@ pub fn dialplan_extension(
             esc(&data)
         ))
     };
+    // O CDR que conta é o de cada perna B (uma por tentativa de tronco: é o
+    // que dá o ASR por operadora). A perna A — o PBX que marcou — marca-se
+    // para a ingestão a ignorar; o resto EXPORTA-se para as pernas B.
+    act("set", "delonix_cdr_skip=true".into());
     act("export", format!("delonix_org_id={org_id}"));
-    act("set", "delonix_direction=outbound".into());
-    act("set", format!("delonix_dialed={wire_number}"));
-    act("set", format!("delonix_emergency={emergency}"));
+    act("export", "delonix_direction=outbound".into());
+    act("export", format!("delonix_dialed={wire_number}"));
+    act("export", format!("delonix_emergency={emergency}"));
     // Emergência nunca gravada: nem que a regra o dissesse.
     let record = record && !emergency;
-    act("set", format!("delonix_record={record}"));
+    act("export", format!("delonix_record={record}"));
     if let Some(p) = rule_position {
-        act("set", format!("delonix_rule_position={p}"));
+        act("export", format!("delonix_rule_position={p}"));
     }
     match (outcome, action) {
         (ResolutionOutcome::Route, _) => {
@@ -106,16 +110,21 @@ pub fn dialplan_extension(
             }
             for leg in legs {
                 let gw = gateway_name(leg.trunk_id);
-                act("set", format!("delonix_trunk_id={}", leg.trunk_id));
                 if emergency {
                     // Nunca bloqueada: sem limite de canais.
-                    act("bridge", format!("sofia/gateway/{gw}/{wire_number}"));
+                    act(
+                        "bridge",
+                        format!(
+                            "[delonix_trunk_id={}]sofia/gateway/{gw}/{wire_number}",
+                            leg.trunk_id
+                        ),
+                    );
                 } else {
                     act(
                         "limit_execute",
                         format!(
-                            "hash delonix_trunk {} {} bridge sofia/gateway/{gw}/{wire_number}",
-                            leg.trunk_id, leg.max_channels
+                            "hash delonix_trunk {} {} bridge [delonix_trunk_id={}]sofia/gateway/{gw}/{wire_number}",
+                            leg.trunk_id, leg.max_channels, leg.trunk_id
                         ),
                     );
                 }
@@ -435,12 +444,12 @@ mod tests {
         assert!(x.contains(r#"expression="^923447108$""#));
         let ia = x
             .find(&format!(
-                "hash delonix_trunk {a} 60 bridge sofia/gateway/dlx-{a}/244923447108"
+                "hash delonix_trunk {a} 60 bridge [delonix_trunk_id={a}]sofia/gateway/dlx-{a}/244923447108"
             ))
             .unwrap();
         let ib = x
             .find(&format!(
-                "hash delonix_trunk {b} 30 bridge sofia/gateway/dlx-{b}/244923447108"
+                "hash delonix_trunk {b} 30 bridge [delonix_trunk_id={b}]sofia/gateway/dlx-{b}/244923447108"
             ))
             .unwrap();
         assert!(ia < ib, "a ordem de failover é a da resolução");
@@ -469,7 +478,7 @@ mod tests {
         assert!(x.contains("delonix_record=false"));
         assert!(!x.contains("limit_execute"));
         assert!(x.contains(&format!(
-            r#"application="bridge" data="sofia/gateway/dlx-{a}/112""#
+            r#"application="bridge" data="[delonix_trunk_id={a}]sofia/gateway/dlx-{a}/112""#
         )));
     }
 
