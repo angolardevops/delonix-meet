@@ -6,8 +6,11 @@
 > ([`api-routes.md`](api-routes.md)); onde a rota herdada ainda tem outro nome, vai entre
 > parênteses.
 >
-> **Estado de cada peça:** «fase 1» = a entregar nesta linha e a UI pode construir já contra
-> ela; «fase 2» = mesmo mecanismo, a seguir. Quando uma peça fica provada, a marca muda aqui.
+> **Estado de cada peça:** «implementado» = servido e provado nesta linha
+> (`server/tests/search.rs`, `web/e2e/isolamento.mjs`); «fase 2» = mesmo mecanismo, a seguir.
+> **Caminhos:** as colecções respondem HOJE nos caminhos herdados (`/api/orgs/{org_id}/employees`,
+> `/api/orgs/{org_id}/audit`); mudam para `members`/`audit-events` com a reorganização de rotas,
+> sem alteração dos parâmetros nem da resposta.
 
 ## 0. Resumo para a UI
 
@@ -39,9 +42,13 @@ junta-as localmente ao resultado do servidor.
 - **Acentos e maiúsculas:** `orcamento` encontra «Orçamento» (`unaccent`).
 - **Enquanto se escreve:** cada termo é prefixo (`reuni` encontra «reunião»); termos juntam-se
   com E.
-- **Erros de escrita e subcadeias:** trigramas (`pg_trgm`, `word_similarity ≥ 0.4`) sobre
-  títulos, nomes, emails e códigos — `orcamneto` encontra «Orçamento»; `ab-cd` encontra a
-  sala `xab-cdy`. Só termos ≥ 3 caracteres usam o índice de trigramas.
+- **Subcadeias:** trigramas (`pg_trgm`) sobre títulos, nomes, emails e códigos — `ab-cd`
+  encontra a sala `xab-cdy`. Só termos ≥ 3 caracteres usam o índice de trigramas.
+- **Erros de escrita — só quando a pesquisa exacta não encontra nada.** Primeiro corre a exacta
+  (prefixos + subcadeias); se der zero, corre a aproximada (`word_similarity ≥ 0.4`) —
+  `orcamneto` encontra «Orçamento». Sem esta ordem, «orcamento» traria «planeamento» ao lado
+  (medido). Nas listas, a resposta diz qual foi com `text_match: "exact" | "fuzzy"`, e a UI deve
+  dizer «resultados aproximados».
 - **Chinês e outras escritas sem espaços:** encontrados por subcadeia (trigramas). Um termo
   CJK de 2 caracteres é correcto mas não usa índice.
 - **Sem stemming:** «reuniões» não encontra «reunião» a não ser como prefixo. Decisão do
@@ -51,15 +58,15 @@ junta-as localmente ao resultado do servidor.
 
 | `type` | Onde procura (peso) | Quem vê (a MESMA regra do endpoint normal) | `target` para abrir | Estado |
 |---|---|---|---|---|
-| `meetings` | título (A), descrição (B), acta (C) | dono ou convidado (`GET /api/meetings`) | `{meeting_id, room_code, starts_at}` | fase 1 |
-| `recordings` | título/ficheiro (A), transcrição (B), capítulos (C, com `at_secs`), comentários não apagados (C, com `at_secs`) | a biblioteca: quem carregou, participante da sala ou partilhada, e não arquivado (`AccessFacts::can_view`) | `{recording_id, at_secs}` | fase 1 (legendas e segmentos com tempo: contrato — só existem na linha da UI) |
-| `people` | nome de utilizador, email, cargo | colegas **activos** de uma organização comum (`GET /api/users?q=`) | `{user_id}` | fase 1 |
-| `whiteboards` | título, código da sala | membros activos da org do quadro (`GET /api/whiteboards`) | `{whiteboard_id}` | fase 1 |
-| `rooms` | código, nome | dono; ou colega activo do dono, convidado de uma reunião da sala, co-anfitrião (`rooms::room_access`) | `{room_code}` | fase 1 |
-| `messages` | texto das mensagens de chat persistidas | dono da sala; ou **participante** da sala que ainda passa no `room_access` (quem saiu da org deixa de ver) | `{room_code, message_id, created_at}` | fase 1 |
-| `stream_destinations` | nome, tipo | admin activo da org (`GET /api/orgs/{org_id}/stream-destinations`) | `{org_id, stream_destination_id}` | fase 1 |
-| `webhooks` | tipo e **só o anfitrião** do URL (o caminho de um webhook do Slack é segredo) | admin activo da org | `{org_id, webhook_id}` | fase 1 |
-| `audit_events` | acção, alvo, nome do actor | admin activo da org (`GET /api/orgs/{org_id}/audit-events`) — só quando pedido explicitamente em `types` | `{org_id, audit_event_id}` | fase 1 |
+| `meetings` | título (A), descrição (B), acta (C) | dono ou convidado (`GET /api/meetings`) | `{meeting_id, room_code, starts_at}` | implementado |
+| `recordings` | título/ficheiro (A), transcrição (B), capítulos (C, com `at_secs`), comentários não apagados (C, com `at_secs`) | a biblioteca: quem carregou, participante da sala ou partilhada, e não arquivado (`AccessFacts::can_view`) | `{recording_id, at_secs}` | implementado (legendas e segmentos com tempo: contrato — só existem na linha da UI) |
+| `people` | nome de utilizador, email | colegas **activos** de uma organização comum (`GET /api/users?q=`) | `{user_id}` | implementado |
+| `whiteboards` | título, código da sala | membros activos da org do quadro (`GET /api/whiteboards`) | `{whiteboard_id}` | implementado |
+| `rooms` | código, nome | só as salas que a pessoa **já conhece**: dela, onde esteve, convidada para uma reunião nessa sala, co-anfitriã. Mais restrito do que o `room_access` (que deixa qualquer colega pedir para entrar): o Ctrl+K não revela códigos de salas de colegas | `{room_code}` | implementado |
+| `messages` | texto das mensagens de chat persistidas (ordenadas por recência, `score` 0) | dono da sala; ou **participante** da sala que ainda passa no `room_access` (quem saiu da org deixa de ver) | `{room_code, message_id, created_at}` | implementado |
+| `stream_destinations` | nome, tipo | admin activo da org (`GET /api/orgs/{org_id}/stream-destinations`) | `{org_id, stream_destination_id}` | implementado |
+| `webhooks` | tipo e **só o anfitrião** do URL (o caminho de um webhook do Slack é segredo) | admin activo da org | `{org_id, webhook_id}` | implementado |
+| `audit_events` | acção, alvo, nome do actor | admin activo da org — só quando pedido explicitamente em `types`; só os eventos COM org (os sem org, p.ex. logins, ficam na lista da org) | `{org_id, audit_event_id}` | implementado |
 
 Um tipo que a pessoa não pode ver **não aparece**. Se foi pedido explicitamente em `types`,
 aparece em `skipped` com a razão (`search.forbidden`) — sem dizer nada sobre o que existe.
@@ -106,6 +113,11 @@ aparece em `skipped` com a razão (`search.forbidden`) — sem dizer nada sobre 
   `name` | `email` | `code` | `message` | `url_host` | `action`.
 - `count` é exacto até 1000 (`count_kind: "exact"`); acima disso `1000` com
   `"at_least"`.
+- Tipos sem `tsvector` (pessoas, quadros, salas, destinos, webhooks, auditoria) realçam por
+  subcadeia em minúsculas — sem dobrar acentos: «orcamento» não realça «Orçamento» nesses tipos
+  (o resultado aparece; o realce não).
+- A transcrição ainda não tem tempos nesta linha: `at_secs` é `null` quando `matched_in` é
+  `transcript`; capítulos e comentários trazem-no.
 - Ordem dos grupos: fixa (a da tabela). Ordem dentro do grupo: `score` descendente, depois
   data descendente, depois `id`.
 - `score` só compara resultados do MESMO tipo.
@@ -125,7 +137,7 @@ herdada responde como antes** (array); com qualquer um, responde o envelope da �
 | `filter` | JSON (URL-encoded) — o **domínio** (§2.2) | `filter=[["status","eq","ready"],{"or":[["category","eq","lecture"],["duration_secs","gte",3600]]}]` |
 | `filters` | nomes de filtros pré-definidos do schema, separados por vírgulas | `filters=mine,this_week` |
 | `group_by` | até 3 campos agrupáveis; datas com granularidade `:day`/`:week`/`:month`/`:quarter`/`:year` | `group_by=created_at:month,uploader` |
-| `order_by` | até 3 campos ordenáveis; `-` = descendente | `order_by=-duration_secs,title` |
+| `order_by` | até 3 campos ordenáveis; `-` = descendente; `_score` = relevância (só com `q`) | `order_by=-duration_secs,title` · `order_by=-_score` |
 | `page_size` | 1..100, omissão 50 (`core::page`) | |
 | `page_token` | cursor opaco de `next_page_token` | |
 | `groups_page_token` | cursor opaco de `next_groups_page_token` | |
@@ -135,7 +147,8 @@ herdada responde como antes** (array); com qualquer um, responde o envelope da �
 «As minhas» OU «Partilhadas comigo», E «Esta semana»).
 
 **Ordem por omissão:** a do schema (`default_order`); com `q` e sem `order_by`, relevância
-descendente. O `id` é sempre o último desempate — a paginação é estável mesmo com empates.
+descendente — excepto onde o schema diz `relevance_default: false` (gravações: a biblioteca
+continua por data, como no contrato da 0045; relevância com `order_by=-_score`). O `id` é sempre o último desempate — a paginação é estável mesmo com empates.
 
 **Keyset:** o `page_token` guarda os valores da última linha e uma impressão digital de
 `q`/`filter`/`filters`/`order_by`. Reutilizá-lo com outra pesquisa → `400
@@ -184,12 +197,13 @@ omissão `Africa/Luanda`): `today`, `yesterday`, `this_week` (segunda a domingo)
       "label": "2026-09",
       "count": 12,
       "aggregates": {"duration_secs": {"sum": 36000}, "size_bytes": {"sum": 9876543}},
-      "range": {"from": "2026-09-01T00:00:00+01:00", "to": "2026-10-01T00:00:00+01:00"},
-      "filter": {"and": [["created_at", "gte", "2026-09-01T00:00:00+01:00"], ["created_at", "lt", "2026-10-01T00:00:00+01:00"]]},
+      "range": {"from": "2026-08-31T23:00:00Z", "to": "2026-09-30T23:00:00Z"},
+      "filter": {"and": [["created_at", "gte", "2026-08-31T23:00:00Z"], ["created_at", "lt", "2026-09-30T23:00:00Z"]]},
       "group_by": ["uploader"]
     }
   ],
-  "next_groups_page_token": null
+  "next_groups_page_token": null,
+  "text_match": "exact"
 }
 ```
 
@@ -197,7 +211,9 @@ omissão `Africa/Luanda`): `today`, `yesterday`, `this_week` (segunda a domingo)
   `total_kind`, `groups` e `next_groups_page_token` acrescentam.
 - `total`: exacto até 10 000 (`"exact"`); acima, `10000` com `"at_least"`.
 - `search` só aparece com `q` (o `highlight` segue a forma da §1). As gravações mantêm
-  também o `snippet` herdado.
+  também o `snippet` herdado (marcas «»).
+- `text_match` só aparece com `q`: `exact` ou `fuzzy` (§1).
+- `range` vem em UTC (`Z`): é o mesmo instante que o início do dia/semana/… no fuso da org.
 - **`groups`** só com `group_by`, e só do **primeiro** campo (agrupamento preguiçoso):
   - `key`: o valor do grupo — UUID (user/ref), valor do enum, texto, `true`/`false`, ou a
     chave de data `2026-09-17` (dia) · `2026-W38` (semana ISO) · `2026-09` (mês) ·
@@ -207,8 +223,9 @@ omissão `Africa/Luanda`): `today`, `yesterday`, `this_week` (segunda a domingo)
   - `filter`: o nó a JUNTAR ao `filter` corrente para abrir o grupo (para `null`,
     `[campo, "is_not_set"]`); `group_by`: o que falta agrupar.
   - `aggregates`: os do schema, sobre o conjunto filtrado inteiro do grupo.
-  - Ordem dos grupos: pela chave (datas ascendentes; o resto alfabético), `null` no fim;
-    até 100 grupos por página.
+  - Ordem dos grupos: pelo rótulo (nome da pessoa/referência; para o resto, a própria chave —
+    as datas ficam cronológicas), `null` no fim; até 100 grupos por página, e
+    `next_groups_page_token` para os seguintes.
   - Com `group_by`, `items` continua a trazer a primeira página **não agrupada** (a UI
     pode pedir `page_size=1` se só quer os grupos).
 
@@ -225,7 +242,7 @@ omissão `Africa/Luanda`): `today`, `yesterday`, `this_week` (segunda a domingo)
 | `search.unknown_filter` | nome em `filters` que o schema não tem | `filters` |
 | `search.invalid_group_by` | granularidade num campo que não é data, granularidade desconhecida, mais de 3 campos, repetido | `group_by` |
 | `search.invalid_order_by` | mais de 3 campos ou repetido | `order_by` |
-| `search.invalid_query` | `q` sem letras nem dígitos, ou > 200 caracteres | `q` |
+| `search.invalid_query` | `q` sem letras nem dígitos, ou > 200 caracteres (nas gravações o código continua `recording.invalid_query`, contrato da 0045) | `q` |
 | `search.page_token_mismatch` | `page_token`/`groups_page_token` de outra pesquisa | `page_token` |
 | `page.invalid_token` | token corrompido (`core::page`) | — |
 
@@ -237,7 +254,7 @@ recurso de outra organização continua a ser `404`/`403` como no endpoint norma
 ## 3. Descrição — `GET /api/search/schemas` e `GET /api/search/schemas/{resource}`
 
 A lista devolve `{"items": [schema, …]}` só com os recursos que a pessoa pode listar em
-alguma organização. O individual devolve um schema:
+alguma organização (`members` exige pertença activa; `audit_events` exige ser admin activo). O individual devolve um schema:
 
 ```json
 {
@@ -261,6 +278,7 @@ alguma organização. O individual devolve um schema:
   ],
   "group_by": [{"value": "created_at:month", "label": "Criada em: mês"}],
   "default_order": ["-created_at"],
+  "relevance_default": false,
   "periods": ["today", "yesterday", "this_week", "…"]
 }
 ```
@@ -275,7 +293,7 @@ caminho.
 
 Legenda: **F** filtra · **O** ordena · **A** agrupa · Σ agregado.
 
-### 4.1 `recordings` — `GET /api/recordings` · fase 1
+### 4.1 `recordings` — `GET /api/recordings` · implementado
 
 Visibilidade: a da biblioteca (`AccessFacts::can_view`). `q`: título/ficheiro (A) +
 transcrição (B).
@@ -300,7 +318,7 @@ Filtros: `mine` «As minhas» e `shared_with_me` «Partilhadas comigo» (grupo `
 `failed` «Falhadas» (`status`); `today`, `this_week`, `this_month` (`period`);
 `long` «Mais de 1 hora» (`duration`); `uhd` «4K» (`width ≥ 3840`, `quality`). Ordem: `-created_at`.
 
-### 4.2 `meetings` — `GET /api/meetings` · fase 1
+### 4.2 `meetings` — `GET /api/meetings` · implementado
 
 Visibilidade: dono ou convidado. `q`: título (A), descrição (B), acta (C).
 
@@ -324,7 +342,7 @@ Filtros: `mine` «Organizadas por mim», `invited` «Convidado» (`owner`); `pen
 `this_week`, `next_7_days` (`period`); `recurring` «Recorrentes», `with_minutes` «Com acta»
 (`content`). Ordem: `starts_at`.
 
-### 4.3 `members` — `GET /api/orgs/{org_id}/members` (hoje `/employees`) · fase 1
+### 4.3 `members` — `GET /api/orgs/{org_id}/members` (hoje `/employees`) · implementado
 
 Visibilidade: membro activo da org; lista só membros activos. `q`: nome, email, cargo.
 
@@ -340,7 +358,7 @@ Visibilidade: membro activo da org; lista só membros activos. `q`: nome, email,
 Filtros: `admins` «Administradores», `members` «Membros» (`role`); `without_branch` «Sem
 filial» (`branch`); `joined_this_month` «Entraram este mês» (`period`). Ordem: `username`.
 
-### 4.4 `whiteboards` — `GET /api/whiteboards` · fase 1
+### 4.4 `whiteboards` — `GET /api/whiteboards` · implementado
 
 Visibilidade: membro activo da org do quadro. `q`: título, código da sala.
 
@@ -355,7 +373,7 @@ Visibilidade: membro activo da org do quadro. `q`: título, código da sala.
 Filtros: `mine` «Os meus» (`owner`); `public` «Com link público» (`sharing`); `this_week`,
 `this_month` (`period`). Ordem: `-created_at`.
 
-### 4.5 `audit_events` — `GET /api/orgs/{org_id}/audit-events` (hoje `/audit`) · fase 1
+### 4.5 `audit_events` — `GET /api/orgs/{org_id}/audit-events` (hoje `/audit`) · implementado
 
 Visibilidade: admin activo da org; os eventos da org e os sem org cujo actor é (ou foi)
 membro — a regra do `audit::list`. `q`: acção, alvo, nome do actor.
@@ -434,6 +452,10 @@ Regras:
 - Só o dono altera ou apaga: um partilhado de outra pessoa → `403 saved_search.not_owner`;
   um que não vês → `404`.
 - ≤ 100 favoritos por pessoa → `422 saved_search.limit_reached`.
+- `name` vazio ou > 80 → `400 saved_search.invalid_name`; `resource` sem pesquisa → `400
+  search.unknown_resource`; não existe ou não o vês → `404 saved_search.not_found`.
+- A «organização principal» (fuso das listas sem `{org_id}` e destino de um partilhado) é a
+  pertença activa mais antiga de quem pede.
 
 ---
 
@@ -447,4 +469,5 @@ Regras:
 3. Um `filter` sobre `uploader`/`owner`/`actor` com o UUID de alguém de outra org devolve
    zero linhas — não é uma forma de sondar.
 4. Provas: testes de integração por recurso em `server/tests/search.rs` (org A não vê a
-   org B, membro arquivado deixa de ver) e os casos em `web/e2e/isolamento.mjs`.
+   org B, membro arquivado deixa de ver, a pesquisa concorda com a biblioteca pessoa a
+   pessoa) e a secção «pesquisa» de `web/e2e/isolamento.mjs`.
