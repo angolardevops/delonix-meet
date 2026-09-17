@@ -1304,6 +1304,40 @@ console.log('\n--- telefonia: org A contra a de B ---')
   }
 }
 
+console.log('\n--- conta pessoal: sessões, fotografia e exportação de B (ADR-0011) ---')
+{
+  const sidB = JSON.parse(Buffer.from(B.token.split('.')[1], 'base64url').toString()).sid
+  await permitido('controlo: B lista as suas sessões', '/api/users/me/sessions', { token: B.token })
+  await recusado('A termina uma sessão de B', `/api/users/me/sessions/${sidB}`, { token: A.token, method: 'DELETE' })
+  const sessA = (await req('/api/users/me/sessions', { token: A.token })).json
+  if (JSON.stringify(sessA ?? {}).includes(sidB)) nok('a lista de sessões de A não traz as de B', JSON.stringify(sessA).slice(0, 160))
+  else ok('a lista de sessões de A não traz as de B')
+  await permitido('controlo: a sessão de B continua viva', '/api/users/me', { token: B.token })
+
+  // Fotografia de B (PNG mínimo): só quem partilha organização a vê.
+  const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
+  const up = await fetch(`${API}/api/users/me/avatar`, {
+    method: 'PUT', headers: { Authorization: `Bearer ${B.token}`, 'Content-Type': 'image/png' }, body: png,
+  })
+  if (up.status === 200) ok('controlo: B carrega a sua fotografia → 200')
+  else nok('controlo: B carrega a sua fotografia', `${up.status}`)
+  await permitido('controlo: B vê a sua fotografia', `/api/users/${B.userId}/avatar`, { token: B.token })
+  await recusado('A vê a fotografia de B (outra org)', `/api/users/${B.userId}/avatar`, { token: A.token })
+
+  // Exportação «os meus dados» de B.
+  const expB = await req('/api/users/me/data-exports', { token: B.token, method: 'POST' })
+  if (expB.status === 202 && expB.json?.id) ok('controlo: B pede a sua exportação → 202')
+  else nok('controlo: B pede a sua exportação', `${expB.status} ${JSON.stringify(expB.json)}`)
+  const expId = expB.json?.id
+  await recusado('A lê a exportação de B', `/api/users/me/data-exports/${expId}`, { token: A.token })
+  await recusado('A pede o link da exportação de B', `/api/users/me/data-exports/${expId}/download-link`, { token: A.token, method: 'POST' })
+  await recusado('anónimo descarrega a exportação de B sem assinatura', `/api/users/me/data-exports/${expId}/content`, {})
+  await recusado('anónimo descarrega com assinatura inventada', `/api/users/me/data-exports/${expId}/content?exp=9999999999&sig=00`, {})
+  await recusado('anónimo lê o perfil da conta', '/api/users/me/profile', {})
+  await recusado('anónimo lista sessões', '/api/users/me/sessions', {})
+  await recusado('anónimo lista chaves de acesso', '/api/users/me/passkeys', {})
+}
+
 console.log('\n--- sem autenticação nenhuma ---')
 await recusado('anónimo lê stats da org B', `/api/orgs/${B.orgId}/stats`, {})
 await recusado('anónimo lista as suas orgs', '/api/orgs', {})
