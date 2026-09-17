@@ -81,7 +81,7 @@ export default function ActionPlanPanel({ meetingId, isOwner }: { meetingId: str
   async function cycle(item: ActionItem) {
     setErr('')
     try {
-      await patchActionItem(item.id, { status: NEXT[item.status] })
+      await patchActionItem(meetingId, item.id, { status: NEXT[item.status] })
       reload()
     } catch (e) {
       setErr(apiErrorMessage(e, t('schedule.plano.erroActualizar')))
@@ -91,7 +91,7 @@ export default function ActionPlanPanel({ meetingId, isOwner }: { meetingId: str
   async function remove(item: ActionItem) {
     setErr('')
     try {
-      await deleteActionItem(item.id)
+      await deleteActionItem(meetingId, item.id)
       reload()
     } catch (e) {
       setErr(apiErrorMessage(e, t('schedule.plano.erroRemover')))

@@ -65,7 +65,7 @@ console.log('--- inscrição ---')
 let e = await req('/api/users/me/mfa', { token: tok })
 e.json?.enabled === false && e.json?.pending === false ? ok('conta nova não tem MFA') : nok('estado inicial', JSON.stringify(e.json))
 
-const insc = await req('/api/users/me/mfa/enrol', { token: tok, method: 'POST' })
+const insc = await req('/api/users/me/mfa/enroll', { token: tok, method: 'POST' })
 insc.json?.secret ? ok('inscrição devolve segredo e URI otpauth') : nok('inscrever', JSON.stringify(insc.json))
 const segredo = insc.json.secret
 insc.json.otpauth_uri?.includes('otpauth://totp/') ? ok('URI otpauth bem formado') : nok('URI', insc.json.otpauth_uri)
@@ -95,14 +95,14 @@ const desafio = l.json.mfa_token
 const semCodigo = await req('/api/users/me', { token: desafio })
 semCodigo.status === 401 ? ok('o token de desafio NÃO abre a API → 401') : nok('desafio como access token', `HTTP ${semCodigo.status}`)
 
-const errado = await req('/api/auth/mfa', { method: 'POST', body: { mfa_token: desafio, code: '000000' } })
+const errado = await req('/api/auth/login/mfa', { method: 'POST', body: { mfa_token: desafio, code: '000000' } })
 errado.status === 401 ? ok('código errado no login → 401') : nok('código errado', `HTTP ${errado.status}`)
 
 // A ACTIVAÇÃO consumiu o código daquela janela. Reutilizá-lo para entrar é um
 // replay, e tem de ser recusado — mesmo sendo uma operação diferente. Não é
 // óbvio, e é por isso que se testa explicitamente.
 const codigoDaActivacao = totp(segredo)
-const replayEntreOperacoes = await req('/api/auth/mfa', { method: 'POST', body: { mfa_token: desafio, code: codigoDaActivacao } })
+const replayEntreOperacoes = await req('/api/auth/login/mfa', { method: 'POST', body: { mfa_token: desafio, code: codigoDaActivacao } })
 replayEntreOperacoes.status === 401
   ? ok('o código usado para ACTIVAR não serve para entrar (anti-replay entre operações)')
   : nok('replay entre operações', `HTTP ${replayEntreOperacoes.status} — o código da activação foi reaceite`)
@@ -115,23 +115,23 @@ await new Promise((r) => setTimeout(r, esperaMs))
 
 const l1b = await req('/api/auth/login', { method: 'POST', body: { email, password: PW } })
 const codigo = totp(segredo)
-const fim = await req('/api/auth/mfa', { method: 'POST', body: { mfa_token: l1b.json.mfa_token, code: codigo } })
+const fim = await req('/api/auth/login/mfa', { method: 'POST', body: { mfa_token: l1b.json.mfa_token, code: codigo } })
 fim.json?.access_token ? ok('código da janela seguinte → sessão emitida') : nok('login com MFA', JSON.stringify(fim.json).slice(0, 200))
 
 console.log('\n--- anti-replay ---')
 const l2 = await req('/api/auth/login', { method: 'POST', body: { email, password: PW } })
-const replay = await req('/api/auth/mfa', { method: 'POST', body: { mfa_token: l2.json.mfa_token, code: codigo } })
+const replay = await req('/api/auth/login/mfa', { method: 'POST', body: { mfa_token: l2.json.mfa_token, code: codigo } })
 replay.status !== 200
   ? ok(`o MESMO código não serve segunda vez → ${replay.status}`)
   : nok('anti-replay', 'o código foi aceite outra vez dentro da mesma janela de 30 s')
 
 console.log('\n--- códigos de recuperação ---')
 const l3 = await req('/api/auth/login', { method: 'POST', body: { email, password: PW } })
-const rec = await req('/api/auth/mfa', { method: 'POST', body: { mfa_token: l3.json.mfa_token, code: backup[0] } })
+const rec = await req('/api/auth/login/mfa', { method: 'POST', body: { mfa_token: l3.json.mfa_token, code: backup[0] } })
 rec.json?.access_token ? ok('código de recuperação entra') : nok('recuperação', JSON.stringify(rec.json).slice(0, 160))
 
 const l4 = await req('/api/auth/login', { method: 'POST', body: { email, password: PW } })
-const rec2 = await req('/api/auth/mfa', { method: 'POST', body: { mfa_token: l4.json.mfa_token, code: backup[0] } })
+const rec2 = await req('/api/auth/login/mfa', { method: 'POST', body: { mfa_token: l4.json.mfa_token, code: backup[0] } })
 rec2.status === 401 ? ok('o mesmo código de recuperação NÃO serve duas vezes → 401') : nok('recuperação repetida', `HTTP ${rec2.status}`)
 
 const tok2 = rec.json.access_token
