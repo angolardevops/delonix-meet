@@ -755,6 +755,7 @@ dependencies = [
  "argon2",
  "axum",
  "base64 0.22.1",
+ "bytes",
  "chrono",
  "dashmap",
  "futures-util",

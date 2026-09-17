@@ -38,3 +38,5 @@ zeroize = "1"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
+# Só para o gerador de carga (`examples/loadgen.rs`); já vinha no lock pelo webrtc.
+bytes = "1"
