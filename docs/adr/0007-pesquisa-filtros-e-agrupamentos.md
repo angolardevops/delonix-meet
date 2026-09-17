@@ -64,6 +64,12 @@ existe. Sem nenhum deles, a colecção herdada mantém a forma antiga (o mesmo m
 | Tradução para SQL (tsvector, unaccent, pg_trgm, keyset, `GROUP BY`) e a visibilidade por recurso | monólito, `server/src/search/` (futuro `delonix-meet-store`) | é o único sítio com `sqlx`; `check-crate-deps.sh` proíbe-o no core e no domínio |
 | Handlers | `server/src/search/` (global, schemas, favoritos) e os handlers de colecção existentes (um ramo de poucas linhas) | a rota de colecção é a mesma |
 
+**A visibilidade não se reescreve — mas escreve-se em semi-junção.** Com ≥ 100 k linhas, a
+forma «EXISTS por linha» (`m.owner_id = me OR convidado`) percorre a tabela inteira (1,3 s
+medidos nas reuniões); a mesma regra escrita como `id IN (as minhas ∪ onde fui convidado)`
+parte de quem pede (0,6 ms). Onde a forma muda, um teste compara pessoa a pessoa com o
+endpoint herdado (`recordings_visibility_matches_the_library`).
+
 **A visibilidade não se reescreve.** Cada recurso tem UMA função SQL de visibilidade, e a
 lista, o Ctrl+K e o endpoint por id concordam — o teste de isolamento prova-o por recurso
 e o `web/e2e/isolamento.mjs` fá-lo contra servidor real. O `org_id` vem do caminho (com
@@ -91,6 +97,10 @@ de um parâmetro de pesquisa.
   `dlx_search` (a coluna é gerada, por isso sai e volta na mesma migração). As duas
   consultas do `recordings::library` passam a `dlx_search`. Não há segunda coluna nem
   segundo índice.
+- **Erros de escrita só como recurso.** A pesquisa exacta (prefixos + subcadeias) corre
+  primeiro; a aproximada (`word_similarity ≥ 0.4`) só quando a exacta não encontra nada, e a
+  resposta diz `text_match: fuzzy`. Medido com 200 k gravações: com as duas juntas,
+  «orcamento» trazia «planeamento» (semelhança 0,45).
 - Relevância: `ts_rank_cd` com pesos (A título/nome, B transcrição/descrição, C
   capítulos/comentários) somado a `word_similarity` do trigrama; trecho com `ts_headline`
   **só nas linhas da página devolvida** (relê o texto inteiro — antes do `LIMIT` seria por

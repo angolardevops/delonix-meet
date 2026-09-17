@@ -61,11 +61,15 @@ pub static RECORDINGS: ResourceSql = ResourceSql {
 
 pub static MEETINGS: ResourceSql = ResourceSql {
     schema: &scheduling::search::MEETINGS,
-    // A regra do `meetings::list`: dono ou convidado.
+    // A regra do `meetings::list`: dono ou convidado. Em semi-junção a partir
+    // de quem pede: com `m.owner_id = viewer.id OR mi.user_id IS NOT NULL` o
+    // Postgres percorria as 150 k reuniões (1,3 s medidos); assim, 0,6 ms.
+    // O LEFT JOIN fica só para o `my_status`.
     from: || {
         " CROSS JOIN meetings m \
          LEFT JOIN meeting_invitees mi ON mi.meeting_id = m.id AND mi.user_id = viewer.id \
-         WHERE (m.owner_id = viewer.id OR mi.user_id IS NOT NULL)"
+         WHERE m.id IN (SELECT m1.id FROM meetings m1 WHERE m1.owner_id = viewer.id \
+                        UNION ALL SELECT i1.meeting_id FROM meeting_invitees i1 WHERE i1.user_id = viewer.id)"
             .to_string()
     },
     id: "m.id",

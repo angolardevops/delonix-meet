@@ -23,7 +23,6 @@ use delonix_meet_core::query::{
     capped_total, encode_groups_cursor, encode_keyset, highlight_segments, Condition, FieldType,
     FilterValue, Granularity, HighlightSegment, IdKind, KeyValue, ListQuery, Node, Op, OrderTarget,
     Period, RowId, SearchSchema, TextQuery, TotalKind, HL_START, HL_STOP, MAX_GROUPS_PAGE,
-    TOTAL_CAP,
 };
 use serde::Serialize;
 use serde_json::{json, Map, Value as Json};
@@ -629,7 +628,7 @@ pub fn count_sql<'a>(
     push_head(&mut qb, r, scope);
     push_where(&mut qb, r, q);
     qb.push(" LIMIT ");
-    qb.push_bind(TOTAL_CAP + 1);
+    qb.push_bind(q.total_cap + 1);
     qb.push(") c");
     qb
 }
@@ -786,7 +785,7 @@ async fn run_list_once(
             .build_query_scalar()
             .fetch_one(&mut *tx)
             .await?;
-        capped_total(counted, TOTAL_CAP)
+        capped_total(counted, q.total_cap)
     };
 
     let (groups, next_groups_page_token) = if q.group_by.is_empty() {

@@ -16,7 +16,7 @@ use chrono::{DateTime, Utc};
 use delonix_meet_core::{
     query::{
         capped_total, highlight_segments, parse_text, HighlightSegment, ListQuery, TextQuery,
-        TotalKind, HL_START, HL_STOP, TOTAL_CAP,
+        TotalKind, HL_START, HL_STOP,
     },
     DomainError,
 };
@@ -35,6 +35,9 @@ use super::{
 use crate::{auth::AuthUser, error::ApiError, org, AppState};
 
 pub const DEFAULT_LIMIT: u32 = 5;
+/// No Ctrl+K a contagem é exacta até 1000 (depois, `at_least`): contar as
+/// 38 000 mensagens com «orçamento» não muda o que a pessoa vê.
+pub const COUNT_CAP: i64 = 1000;
 pub const MAX_LIMIT: u32 = 20;
 
 /// Os tipos, pela ordem em que os grupos saem.
@@ -244,7 +247,8 @@ async fn via_list(
         page_size: Some(limit),
         ..Default::default()
     };
-    let q = super::compile_for(r, &params, scope.me)?;
+    let mut q = super::compile_for(r, &params, scope.me)?;
+    q.total_cap = COUNT_CAP;
     let out = sql::run_list(&state.db, r, &q, scope).await?;
     Ok((q, out))
 }
@@ -619,11 +623,11 @@ where
         push_viewer(&mut cq, scope);
         body(&mut cq, text, fuzzy);
         cq.push(" LIMIT ");
-        cq.push_bind(TOTAL_CAP + 1);
+        cq.push_bind(COUNT_CAP + 1);
         cq.push(") c");
         let n: i64 = cq.build_query_scalar().fetch_one(&mut *tx).await?;
         tx.commit().await?;
-        let (count, kind) = capped_total(n, TOTAL_CAP);
+        let (count, kind) = capped_total(n, COUNT_CAP);
         return Ok((rows, count, kind));
     }
     Ok((Vec::new(), 0, TotalKind::Exact))
@@ -804,14 +808,17 @@ async fn messages(
         // recebeu — a regra de `rooms::room_chat`.
         static VIS: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
             [
+                // Primeiro as salas de quem pede (dele ou onde esteve), em
+                // semi-junção; depois, para as que não são dele, a regra do
+                // `room_access` (quem saiu da org deixa de ver).
                 " CROSS JOIN room_chat_messages c JOIN rooms rm ON rm.id = c.room_id \
-                 WHERE (rm.owner_id = viewer.id OR (\
-                   EXISTS (SELECT 1 FROM room_participants p WHERE p.room_id = rm.id AND p.user_id = viewer.id) \
-                   AND (",
+                 WHERE c.room_id IN (SELECT r1.id FROM rooms r1 WHERE r1.owner_id = viewer.id \
+                                     UNION SELECT p.room_id FROM room_participants p WHERE p.user_id = viewer.id) \
+                 AND (rm.owner_id = viewer.id OR ",
                 &org::sql_active_colleague_of_viewer("rm.owner_id"),
                 " OR EXISTS (SELECT 1 FROM meeting_invitees mi JOIN meetings m ON m.id = mi.meeting_id \
                              WHERE m.room_code = rm.code AND mi.user_id = viewer.id) \
-                   OR EXISTS (SELECT 1 FROM room_admitters ra WHERE ra.room_id = rm.id AND ra.user_id = viewer.id)))) \
+                   OR EXISTS (SELECT 1 FROM room_admitters ra WHERE ra.room_id = rm.id AND ra.user_id = viewer.id)) \
                  AND (c.to_user_id IS NULL OR c.user_id = viewer.id OR c.to_user_id = viewer.id) AND ",
             ]
             .concat()
@@ -835,7 +842,8 @@ async fn messages(
         "c.id, rm.code, c.username, c.message AS headline, c.created_at",
             body,
             order: "c.created_at DESC",
-            score: Some((Some("to_tsvector('dlx_search', c.message)"), &[])),
+            // Mensagens por recência: o `ts_rank_cd` relia cada mensagem.
+                score: None,
         },
     )
     .await?;

@@ -721,6 +721,8 @@ pub struct ListQuery {
     /// Pesquisa aproximada (trigramas por semelhança). Só entra quando a
     /// exacta — prefixos e subcadeias — não encontra nada (contrato §1).
     pub fuzzy: bool,
+    /// Até onde se conta exacto (`TOTAL_CAP` nas listas; o Ctrl+K usa menos).
+    pub total_cap: i64,
 }
 
 impl ListQuery {
@@ -872,6 +874,7 @@ pub fn compile(
         group_by,
         page_size: page.size(),
         fuzzy: cursor.as_ref().map(|c| c.z).unwrap_or(false),
+        total_cap: TOTAL_CAP,
         cursor,
         groups_cursor,
         fingerprint,
