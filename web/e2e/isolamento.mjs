@@ -293,8 +293,8 @@ const filtroDono = encodeURIComponent(JSON.stringify([['owner', 'eq', B.userId]]
 const sonda = await req(`/api/meetings?filter=${filtroDono}`, { token: A.token })
 if (sonda.status === 200 && sonda.json?.total === 0) ok('filtrar pelo dono da B não sonda nada (total 0)')
 else nok('filtrar pelo dono da B não sonda nada (total 0)', `devolveu ${sonda.status}: ${JSON.stringify(sonda.json).slice(0, 160)}`)
-await recusado('A pesquisa membros da org B', `/api/orgs/${B.orgId}/employees?q=admin&group_by=role`, { token: A.token })
-await recusado('A agrupa a auditoria da org B', `/api/orgs/${B.orgId}/audit?filters=logins&group_by=actor`, { token: A.token })
+await recusado('A pesquisa membros da org B', `/api/orgs/${B.orgId}/members?q=admin&group_by=role`, { token: A.token })
+await recusado('A agrupa a auditoria da org B', `/api/orgs/${B.orgId}/audit-events?filters=logins&group_by=actor`, { token: A.token })
 const favB = await req('/api/users/me/saved-searches', {
   token: B.token, method: 'POST',
   body: { resource: 'meetings', name: `Favorito ${termoB}`, query: { q: termoB }, shared: true },

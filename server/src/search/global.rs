@@ -160,7 +160,7 @@ pub async fn search(
             Some(out)
         }
     };
-    let is_admin = !org::admin_orgs_of_user(&state, me).await.is_empty();
+    let is_admin = org::is_admin_somewhere(&state, me).await?;
     let mut skipped = Vec::new();
     let wanted: Vec<&'static str> = TYPES
         .iter()

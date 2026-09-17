@@ -265,9 +265,7 @@ pub async fn schemas(
         .as_ref()
         .map(|(_, tz)| tz.clone())
         .unwrap_or_else(|| DEFAULT_TZ.to_string());
-    let is_admin = !crate::org::admin_orgs_of_user(&state, auth.user_id)
-        .await
-        .is_empty();
+    let is_admin = crate::org::is_admin_somewhere(&state, auth.user_id).await?;
     let items = delonix_meet_domain::search::schemas()
         .into_iter()
         .filter(|s| match s.resource {

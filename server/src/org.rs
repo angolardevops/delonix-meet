@@ -1743,6 +1743,18 @@ pub(crate) async fn primary_org_of_user(
     .await?)
 }
 
+/// Quem pede é admin ACTIVO de alguma organização? (Decide que tipos de
+/// administração aparecem no Ctrl+K e nos schemas.)
+pub(crate) async fn is_admin_somewhere(state: &AppState, user_id: Uuid) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM org_members
+                         WHERE user_id = $1 AND role = 'admin' AND archived_at IS NULL)",
+    )
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await?)
+}
+
 /// O fuso de uma organização (omissão da coluna: Africa/Luanda).
 pub(crate) async fn org_timezone(state: &AppState, org_id: Uuid) -> Result<String, ApiError> {
     Ok(
