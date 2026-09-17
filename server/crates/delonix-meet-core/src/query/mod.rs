@@ -445,13 +445,20 @@ pub struct TextQuery {
 }
 
 pub fn parse_text(raw: &str) -> Result<Option<TextQuery>, DomainError> {
+    parse_text_with_code(raw, "search.invalid_query")
+}
+
+pub fn parse_text_with_code(
+    raw: &str,
+    code: &'static str,
+) -> Result<Option<TextQuery>, DomainError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Ok(None);
     }
     if trimmed.chars().count() > MAX_Q_CHARS {
         return Err(err(
-            "search.invalid_query",
+            code,
             "q",
             format!("a pesquisa tem mais de {MAX_Q_CHARS} caracteres"),
         ));
@@ -469,7 +476,7 @@ pub fn parse_text(raw: &str) -> Result<Option<TextQuery>, DomainError> {
         .collect();
     if terms.is_empty() {
         return Err(err(
-            "search.invalid_query",
+            code,
             "q",
             "a pesquisa tem de ter pelo menos uma letra ou dígito",
         ));
@@ -519,7 +526,7 @@ fn parse_order(
 ) -> Result<Vec<OrderKey>, DomainError> {
     let raw = raw.map(str::trim).filter(|s| !s.is_empty());
     let Some(raw) = raw else {
-        if has_text {
+        if has_text && schema.relevance_default {
             return Ok(vec![OrderKey {
                 target: OrderTarget::Score,
                 desc: true,
@@ -528,7 +535,7 @@ fn parse_order(
         return schema
             .default_order
             .iter()
-            .map(|o| order_key(schema, o))
+            .map(|o| order_key(schema, o, false))
             .collect();
     };
     let parts: Vec<&str> = raw.split(',').map(str::trim).collect();
@@ -541,7 +548,7 @@ fn parse_order(
     }
     let mut keys: Vec<OrderKey> = Vec::new();
     for p in parts {
-        let key = order_key(schema, p)?;
+        let key = order_key(schema, p, has_text)?;
         if keys.iter().any(|k| k.name() == key.name()) {
             return Err(err("search.invalid_order_by", "order_by", "campo repetido"));
         }
@@ -550,11 +557,31 @@ fn parse_order(
     Ok(keys)
 }
 
-fn order_key(schema: &'static SearchSchema, p: &str) -> Result<OrderKey, DomainError> {
+/// Nome da pseudo-chave de relevância em `order_by` (só com `q`).
+pub const SCORE_KEY: &str = "_score";
+
+fn order_key(
+    schema: &'static SearchSchema,
+    p: &str,
+    has_text: bool,
+) -> Result<OrderKey, DomainError> {
     let (desc, name) = match p.strip_prefix('-') {
         Some(n) => (true, n),
         None => (false, p),
     };
+    if name == SCORE_KEY {
+        if !has_text {
+            return Err(err(
+                "search.invalid_order_by",
+                "order_by",
+                "_score só existe com q",
+            ));
+        }
+        return Ok(OrderKey {
+            target: OrderTarget::Score,
+            desc,
+        });
+    }
     let field = schema.field(name).ok_or_else(|| {
         err(
             "search.unknown_field",
@@ -659,6 +686,10 @@ pub enum RowId {
 pub struct KeysetCursor {
     /// Impressão digital da pesquisa.
     pub f: String,
+    /// A página veio da pesquisa aproximada (erros de escrita): as seguintes
+    /// continuam nela.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub z: bool,
     /// Valores das chaves (datas em RFC 3339, números, texto).
     pub k: Vec<KeyValue>,
     pub id: RowId,
@@ -687,6 +718,9 @@ pub struct ListQuery {
     pub cursor: Option<KeysetCursor>,
     pub groups_cursor: Option<GroupsCursor>,
     pub fingerprint: String,
+    /// Pesquisa aproximada (trigramas por semelhança). Só entra quando a
+    /// exacta — prefixos e subcadeias — não encontra nada (contrato §1).
+    pub fuzzy: bool,
 }
 
 impl ListQuery {
@@ -743,7 +777,7 @@ pub fn compile(
     ctx: Ctx,
 ) -> Result<ListQuery, DomainError> {
     let text = match params.q.as_deref() {
-        Some(q) => parse_text(q)?,
+        Some(q) => parse_text_with_code(q, schema.invalid_query_code)?,
         None => None,
     };
     let client = match params.filter.as_deref().map(str::trim) {
@@ -837,6 +871,7 @@ pub fn compile(
         order,
         group_by,
         page_size: page.size(),
+        fuzzy: cursor.as_ref().map(|c| c.z).unwrap_or(false),
         cursor,
         groups_cursor,
         fingerprint,
@@ -844,9 +879,10 @@ pub fn compile(
 }
 
 /// Codifica o cursor da próxima página.
-pub fn encode_keyset(fingerprint: &str, keys: Vec<KeyValue>, id: RowId) -> String {
+pub fn encode_keyset(fingerprint: &str, keys: Vec<KeyValue>, id: RowId, fuzzy: bool) -> String {
     encode_cursor(&KeysetCursor {
         f: fingerprint.to_string(),
+        z: fuzzy,
         k: keys,
         id,
     })

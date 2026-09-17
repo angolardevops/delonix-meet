@@ -212,6 +212,27 @@ pub struct RecordingPage {
 pub enum LibraryResponse {
     List(Vec<RecordingItem>),
     Page(RecordingPage),
+    /// Com `filter`, `filters`, `group_by` ou `order_by`: a pesquisa de lista
+    /// do ADR-0007. Só documentação — o handler serializa `search::SearchPage`.
+    #[allow(dead_code)]
+    Search(RecordingSearchPage),
+}
+
+/// Página pesquisada da biblioteca (ADR-0007, `docs/reference/pesquisa.md`
+/// §2.3). Só documentação: a resposta é `search::SearchPage`, com cada item
+/// acompanhado de `search: {score, highlight}` quando há `q`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RecordingSearchPage {
+    pub items: Vec<RecordingItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_page_token: Option<String>,
+    pub total: i64,
+    /// `exact` | `at_least`.
+    pub total_kind: String,
+    #[schema(value_type = Option<Vec<Object>>)]
+    pub groups: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_groups_page_token: Option<String>,
 }
 
 /// Uma linha da biblioteca com os factos de acesso de quem pede.
@@ -891,11 +912,18 @@ struct LibraryCursor {
 #[utoipa::path(
     get, path = "/api/recordings", tag = "recordings",
     security(("session" = [])),
-    params(LibraryQuery),
+    params(
+        LibraryQuery,
+        ("filter" = Option<String>, Query, description = "Domínio em JSON (ADR-0007, `docs/reference/pesquisa.md` §2.1). Com este parâmetro, `filters`, `group_by` ou `order_by`, a resposta é a página pesquisada (`total`, `groups`) e só cobre `scope=mine`."),
+        ("filters" = Option<String>, Query, description = "Filtros pré-definidos do schema, separados por vírgulas."),
+        ("group_by" = Option<String>, Query, description = "Até 3 campos; datas com `:day|week|month|quarter|year`."),
+        ("order_by" = Option<String>, Query, description = "Até 3 campos; `-` = descendente; `_score` = relevância (só com `q`)."),
+        ("groups_page_token" = Option<String>, Query, description = "Continuação dos grupos."),
+    ),
     responses(
         (status = 200, body = LibraryResponse,
-         description = "Sem `page_size`/`page_token`: `RecordingLibraryItem[]` (todas). Com eles: `RecordingPage`. Inclui as falhadas (`status = failed`)."),
-        (status = 400, body = crate::openapi::ErrorBody, description = "`page.invalid_token`; `recording.invalid_query` (`q` sem nenhuma letra ou dígito); `recording.invalid_scope`."),
+         description = "Sem `page_size`/`page_token`: `RecordingLibraryItem[]` (todas). Com eles: `RecordingPage`. Com `filter`/`filters`/`group_by`/`order_by`: `RecordingSearchPage`. Inclui as falhadas (`status = failed`)."),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`page.invalid_token`; `recording.invalid_query` (`q` sem nenhuma letra ou dígito); `recording.invalid_scope`; e os `search.*` do contrato de pesquisa."),
         (status = 401, body = crate::openapi::ErrorBody),
     )
 )]
@@ -903,8 +931,25 @@ pub async fn library(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Query(q): Query<LibraryQuery>,
-) -> Result<Json<LibraryResponse>, ApiError> {
+    Query(params): Query<crate::search::SearchParams>,
+) -> Result<Response, ApiError> {
     let scope = rules::LibraryScope::parse(q.scope.as_deref())?;
+
+    // Pesquisa de lista do ADR-0007: só quando vem um parâmetro que a
+    // biblioteca de sempre não conhece. `q`, `page_size` e `page_token`
+    // sozinhos continuam a ser a forma abaixo — é a que o web lê.
+    if params.is_structured() {
+        if scope != rules::LibraryScope::Mine {
+            return Err(DomainError::invalid(
+                "recording.invalid_scope",
+                "a pesquisa com filtros, grupos ou ordenação só cobre scope=mine",
+            )
+            .with_field("scope", "mine")
+            .into());
+        }
+        let page = crate::search::list_recordings(&state, auth.user_id, &params).await?;
+        return Ok(Json(page).into_response());
+    }
     let visible: &str = match scope {
         rules::LibraryScope::Mine => &LIBRARY_VISIBLE_MINE,
         rules::LibraryScope::Published => &LIBRARY_VISIBLE_PUBLISHED,
@@ -929,7 +974,7 @@ pub async fn library(
     // cursor), por isso escreve-se aqui em função dele.
     let search = |n: u8| {
         if tsquery.is_some() {
-            format!("r.search_vector @@ to_tsquery('simple', ${n})")
+            format!("r.search_vector @@ to_tsquery('dlx_search', ${n})")
         } else {
             format!("${n}::text IS NULL")
         }
@@ -956,7 +1001,8 @@ pub async fn library(
                     r.into_item(snippet)
                 })
                 .collect(),
-        )));
+        ))
+        .into_response());
     }
 
     let page = PageRequest {
@@ -998,7 +1044,8 @@ pub async fn library(
             })
             .collect(),
         next_page_token: p.next_page_token,
-    })))
+    }))
+    .into_response())
 }
 
 /// O excerto só para as linhas devolvidas: o `ts_headline` relê o texto
@@ -1013,13 +1060,13 @@ async fn snippets_for(
     };
     let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
     let found: Vec<(Uuid, String)> = sqlx::query_as(
-        r#"SELECT r.id, ts_headline('simple',
-                    CASE WHEN to_tsvector('simple', r.transcript) @@ q.q
+        r#"SELECT r.id, ts_headline('dlx_search',
+                    CASE WHEN to_tsvector('dlx_search', r.transcript) @@ q.q
                          THEN r.transcript
                          ELSE coalesce(r.title, '') || ' ' || r.filename END,
                     q.q,
                     'MaxFragments=1, MaxWords=18, MinWords=6, StartSel="«", StopSel="»"')
-             FROM recordings r, to_tsquery('simple', $2) AS q(q)
+             FROM recordings r, to_tsquery('dlx_search', $2) AS q(q)
             WHERE r.id = ANY($1)"#,
     )
     .bind(&ids)
@@ -2303,4 +2350,30 @@ pub async fn delete_comment(
         return Err(ApiError::NotFound);
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// As gravações de uma página de pesquisa, pelos ids e na ordem pedida, com
+/// os factos de `user_id`. Só as que ele VÊ na biblioteca `mine`: a pesquisa
+/// já filtrou, e isto volta a aplicar `listed_in(Mine)` do domínio (defesa em
+/// profundidade).
+pub(crate) async fn library_items_by_ids(
+    state: &AppState,
+    user_id: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<RecordingItem>, ApiError> {
+    let rows: Vec<ItemRow> = sqlx::query_as(&format!("{} WHERE r.id = ANY($2)", *ITEM_SELECT))
+        .bind(user_id)
+        .bind(ids)
+        .fetch_all(&state.db)
+        .await?;
+    let mut by_id: std::collections::HashMap<Uuid, ItemRow> = rows
+        .into_iter()
+        .filter(|r| r.facts().listed_in(rules::LibraryScope::Mine, false))
+        .map(|r| (r.id, r))
+        .collect();
+    Ok(ids
+        .iter()
+        .filter_map(|id| by_id.remove(id))
+        .map(|r| r.into_item(None))
+        .collect())
 }

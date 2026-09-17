@@ -62,6 +62,8 @@ static SCHEMA: SearchSchema = SearchSchema {
     filters: FILTERS,
     default_order: &["-created_at"],
     id_kind: IdKind::Uuid,
+    relevance_default: true,
+    invalid_query_code: "search.invalid_query",
 };
 
 fn ctx() -> Ctx {
@@ -359,6 +361,19 @@ fn order_defaults_and_validation() {
         ctx(),
     )
     .unwrap();
+    let q2 = compile(
+        &SCHEMA,
+        &params(&[("q", "abc"), ("order_by", "title,-_score")]),
+        ctx(),
+    )
+    .unwrap();
+    assert_eq!(q2.order[1].target, OrderTarget::Score);
+    assert_eq!(
+        compile(&SCHEMA, &params(&[("order_by", "-_score")]), ctx())
+            .unwrap_err()
+            .code,
+        "search.invalid_order_by"
+    );
     assert_eq!(q.order[0].name(), "title");
     for (o, want) in [
         ("category", "search.field_not_sortable"),
@@ -419,6 +434,7 @@ fn page_token_bound_to_the_query_and_the_person() {
         &q.fingerprint,
         vec![KeyValue::Text("2026-09-17T10:00:00Z".into())],
         RowId::Uuid(Uuid::from_u128(1)),
+        false,
     );
     // Mesma pesquisa: aceite.
     let again = compile(
@@ -460,6 +476,7 @@ fn page_token_bound_to_the_query_and_the_person() {
         &q.fingerprint,
         vec![KeyValue::Text("ontem".into())],
         RowId::Uuid(Uuid::from_u128(1)),
+        false,
     );
     assert_eq!(
         compile(
@@ -475,6 +492,7 @@ fn page_token_bound_to_the_query_and_the_person() {
         &q.fingerprint,
         vec![KeyValue::Text("2026-09-17T10:00:00Z".into())],
         RowId::Int(3),
+        false,
     );
     assert_eq!(
         compile(

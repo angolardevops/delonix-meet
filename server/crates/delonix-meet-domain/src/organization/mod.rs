@@ -2,3 +2,5 @@
 
 pub mod seats;
 pub mod storage_quota;
+
+pub mod search;

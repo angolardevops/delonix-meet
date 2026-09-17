@@ -247,10 +247,10 @@ pub struct AuditQuery {
 #[utoipa::path(
     get, path = "/api/orgs/{org_id}/audit-events", tag = "audit",
     security(("session" = [])),
-    params(("org_id" = Uuid, Path, description = "Organização."), AuditQuery),
+    params(("org_id" = Uuid, Path, description = "Organização."), AuditQuery, crate::search::SearchParams),
     responses(
-        (status = 200, body = Vec<AuditEntry>),
-        (status = 400, description = "`limit` não numérico.", body = crate::openapi::ErrorBody),
+        (status = 200, body = Vec<AuditEntry>, description = "Sem parâmetros de pesquisa: os últimos `limit`. Com eles: a página do ADR-0007 (keyset, `total`, `groups`)."),
+        (status = 400, description = "`limit` não numérico; códigos `search.*` e `page.invalid_token`.", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Sem `admin.view_audit` (`authz.missing_capability`).", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
@@ -260,8 +260,10 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     Path(org_id): Path<Uuid>,
     Query(q): Query<AuditQuery>,
+    Query(params): Query<crate::search::SearchParams>,
     auth: AuthUser,
-) -> Result<Json<Vec<AuditEntry>>, ApiError> {
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
     crate::org::require_capability(
         &state,
         org_id,
@@ -270,6 +272,10 @@ pub async fn list(
         ResourceScope::Organization,
     )
     .await?;
+    if params.is_search() {
+        let page = crate::search::list_audit_events(&state, auth.user_id, org_id, &params).await?;
+        return Ok(Json(page).into_response());
+    }
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     // LEFT JOIN e `actor_name` como recuo: com o INNER JOIN anterior, apagar
     // uma conta fazia os eventos DELA desaparecerem da vista do administrador —
@@ -288,5 +294,28 @@ pub async fn list(
     .bind(limit)
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(rows))
+    Ok(Json(rows).into_response())
+}
+
+/// Os eventos de uma página de pesquisa, pelos ids e na ordem pedida. A
+/// visibilidade (a mesma do `list`) já foi aplicada pela pesquisa, com
+/// `org::SQL_AUDIT_SEARCH_FROM`; aqui volta a exigir-se a org ou actor sem org.
+pub(crate) async fn entries_by_ids(
+    state: &AppState,
+    org_id: Uuid,
+    ids: &[i64],
+) -> Result<Vec<AuditEntry>, ApiError> {
+    let rows: Vec<AuditEntry> = sqlx::query_as(
+        "SELECT a.id, COALESCE(u.username, a.actor_name) AS actor, a.action, a.target, a.created_at
+           FROM audit_logs a
+           LEFT JOIN users u ON u.id = a.actor_id
+          WHERE a.id = ANY($2) AND (a.org_id = $1 OR a.org_id IS NULL)",
+    )
+    .bind(org_id)
+    .bind(ids)
+    .fetch_all(&state.db)
+    .await?;
+    let mut by_id: std::collections::HashMap<i64, AuditEntry> =
+        rows.into_iter().map(|e| (e.id, e)).collect();
+    Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
 }

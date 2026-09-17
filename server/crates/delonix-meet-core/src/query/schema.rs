@@ -317,6 +317,12 @@ pub struct SearchSchema {
     /// `campo` ou `-campo`.
     pub default_order: &'static [&'static str],
     pub id_kind: IdKind,
+    /// Com `q` e sem `order_by`: `true` ordena por relevância; `false` mantém
+    /// `default_order` (gravações, por compatibilidade com o contrato da 0045).
+    pub relevance_default: bool,
+    /// Código do erro de `q` inválido. `search.invalid_query`, excepto onde um
+    /// código anterior já era contrato (`recording.invalid_query`).
+    pub invalid_query_code: &'static str,
 }
 
 impl SearchSchema {
@@ -381,6 +387,8 @@ pub struct SchemaView {
     pub filters: Vec<FilterView>,
     pub group_by: Vec<GroupByView>,
     pub default_order: &'static [&'static str],
+    /// Com `q`, a ordem por omissão é a relevância (`_score`)?
+    pub relevance_default: bool,
     pub periods: &'static [&'static str],
 }
 
@@ -443,6 +451,7 @@ impl SearchSchema {
             filters,
             group_by,
             default_order: self.default_order,
+            relevance_default: self.relevance_default,
             periods: &Period::ALL,
         }
     }

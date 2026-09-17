@@ -84,7 +84,7 @@ de um parâmetro de pesquisa.
   termos ≥ 3 caracteres; um termo CJK de 2 caracteres é correcto mas não indexado — está
   escrito no contrato.
 - **`unaccent()` não é `IMMUTABLE`**, por isso nem coluna gerada nem índice a aceitam. A
-  0052 cria `dlx_unaccent(text)` IMMUTABLE com o dicionário fixado
+  0115 cria `dlx_unaccent(text)` IMMUTABLE com o dicionário fixado
   (`public.unaccent('public.unaccent'::regdictionary, $1)`), que é o padrão documentado.
 - **Gravações alinham com a 0045:** a coluna `recordings.search_vector` e o índice
   `idx_recordings_search` mantêm nome e papel; só a configuração passa de `simple` para
