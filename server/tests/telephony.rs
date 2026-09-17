@@ -184,7 +184,7 @@ fn healthy_fs() -> Responder {
                 out.push((
                     30,
                     ev(
-                        base("CHANNEL_HANGUP_COMPLETE"),
+                        base("CHANNEL_HANGUP"),
                         &[("Hangup-Cause", "USER_BUSY")],
                         None,
                     ),

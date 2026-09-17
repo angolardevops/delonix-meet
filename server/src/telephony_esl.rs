@@ -381,7 +381,7 @@ pub fn originate_command(
                 None => String::new(),
             };
             format!(
-                "&bridge([{codec}delonix_room_code={room},delonix_leg=room_bridge]sofia/{profile}/room-{room}@{host}:{bridge_port})",
+                "&bridge([{codec}delonix_room_code={room},delonix_leg=room_bridge,delonix_cdr_skip=true]sofia/{profile}/room-{room}@{host}:{bridge_port})",
                 room = safe(room_code, b"-")?,
                 profile = safe(bridge_profile, b"-_")?,
             )
@@ -542,6 +542,7 @@ impl FreeswitchSipControl {
                 .await?;
             let mut st = parse_gateway_xml(&name, &body);
             if let Some(trunk) = delonix_meet_domain::telephony::ports::trunk_id_from_gateway(&name)
+                .filter(|_| st.registration != RegistrationState::Unknown)
             {
                 st.channels_in_use = c
                     .api(
@@ -722,23 +723,14 @@ async fn follow_call(
                     });
                 }
             }
-            Some("CHANNEL_HANGUP_COMPLETE") => {
+            // Tentativa falhada: no CHANNEL_HANGUP, que chega na hora. O
+            // HANGUP_COMPLETE de uma perna falhada chega DEPOIS de a seguinte
+            // ter atendido (medido no FreeSWITCH 1.11.3).
+            Some("CHANNEL_HANGUP") if answered.as_deref() != Some(uuid.as_str()) => {
                 let cause = h
                     .get("Hangup-Cause")
                     .cloned()
                     .unwrap_or_else(|| "UNKNOWN".into());
-                if answered.as_deref() == Some(uuid.as_str()) {
-                    let billsec = h.get("variable_billsec").and_then(|v| v.parse().ok());
-                    events.on_event(
-                        call_id,
-                        CallEvent::Ended {
-                            answered: true,
-                            cause,
-                            billsec,
-                        },
-                    );
-                    return;
-                }
                 last_cause = cause.clone();
                 events.on_event(
                     call_id,
@@ -747,6 +739,23 @@ async fn follow_call(
                         cause,
                     },
                 );
+            }
+            // Fim: o HANGUP_COMPLETE da perna atendida (traz o billsec).
+            Some("CHANNEL_HANGUP_COMPLETE") if answered.as_deref() == Some(uuid.as_str()) => {
+                let cause = h
+                    .get("Hangup-Cause")
+                    .cloned()
+                    .unwrap_or_else(|| "UNKNOWN".into());
+                let billsec = h.get("variable_billsec").and_then(|v| v.parse().ok());
+                events.on_event(
+                    call_id,
+                    CallEvent::Ended {
+                        answered: true,
+                        cause,
+                        billsec,
+                    },
+                );
+                return;
             }
             Some("BACKGROUND_JOB") => {
                 let (ok, cause) =
@@ -818,7 +827,7 @@ impl CallOriginator for FreeswitchOriginator {
         let cmd = originate_command(req, &self.esl.sofia_profile)?;
         let mut c = EslConn::connect(&self.esl).await?;
         c.command(
-            "event plain CHANNEL_CREATE CHANNEL_PROGRESS CHANNEL_PROGRESS_MEDIA CHANNEL_ANSWER CHANNEL_HANGUP_COMPLETE BACKGROUND_JOB",
+            "event plain CHANNEL_CREATE CHANNEL_PROGRESS CHANNEL_PROGRESS_MEDIA CHANNEL_ANSWER CHANNEL_HANGUP CHANNEL_HANGUP_COMPLETE BACKGROUND_JOB",
             &[],
         )
         .await?;
@@ -949,7 +958,7 @@ mod tests {
         };
         let cmd = originate_command(&r, "external").unwrap();
         assert!(cmd.contains("delonix_room_code=voz-arq-2026"), "{cmd}");
-        assert!(cmd.ends_with(" &bridge([absolute_codec_string=PCMA,delonix_room_code=voz-arq-2026,delonix_leg=room_bridge]sofia/external/room-voz-arq-2026@127.0.0.1:5190)"), "{cmd}");
+        assert!(cmd.ends_with(" &bridge([absolute_codec_string=PCMA,delonix_room_code=voz-arq-2026,delonix_leg=room_bridge,delonix_cdr_skip=true]sofia/external/room-voz-arq-2026@127.0.0.1:5190)"), "{cmd}");
         assert!(!cmd.contains("conference"));
     }
 
