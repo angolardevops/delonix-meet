@@ -266,7 +266,10 @@ SELECT r.id, r.room_id, rm.code AS room_code, r.uploader_id, u.username AS uploa
   JOIN rooms rm ON rm.id = r.room_id
   JOIN users u ON u.id = r.uploader_id
   CROSS JOIN LATERAL (
-      SELECT COALESCE(bool_or(me.archived_at IS NULL AND me.role = 'admin'), false) AS org_admin,
+      SELECT COALESCE(bool_or(me.archived_at IS NULL AND EXISTS (
+                 SELECT 1 FROM org_role_effective_capabilities vo
+                  WHERE vo.role_id = me.role_id AND vo.capability = 'recordings.view_others'
+                    AND vo.org_decision = 'allow')), false) AS org_admin,
              COALESCE(bool_or(me.archived_at IS NULL), false) AS active_member,
              COALESCE(bool_or(me.archived_at IS NOT NULL), false) AS archived_member
         FROM org_members me JOIN org_members o ON o.org_id = me.org_id
@@ -315,16 +318,24 @@ async fn managed_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemR
     Ok(row)
 }
 
-/// Como [`seen_item`], e além disso tem de ser o dono activo (`403` se só a vê):
-/// partilhas e link público.
+/// Como [`seen_item`], e além disso tem de a poder publicar (partilhas e link
+/// público): o dono activo (`can_share`), OU quem tem `recordings.publish` numa
+/// organização activa do dono (ADR-0008 §1 — poder sobre gravações de OUTROS).
+/// Vê a gravação sem nenhum dos dois → `403 authz.missing_capability`; não a vê
+/// → `404` (de `seen_item`).
 async fn owned_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemRow, ApiError> {
     let row = seen_item(state, id, user_id).await?;
-    if !row.facts().can_share() {
-        return Err(DomainError::forbidden("recording.not_owner")
-            .with_message("só o dono da gravação a partilha")
-            .into());
+    if row.facts().can_share() {
+        return Ok(row);
     }
-    Ok(row)
+    let cap = delonix_meet_domain::identity::authorization::Capability::RecordingsPublish;
+    if crate::org::has_capability_over_colleague(state, user_id, row.uploader_id, cap).await? {
+        return Ok(row);
+    }
+    Err(DomainError::forbidden("authz.missing_capability")
+        .with_message("só o dono da gravação, ou quem tem recordings.publish, a partilha")
+        .with_field("capability", cap.as_str())
+        .into())
 }
 
 async fn room_by_code(state: &AppState, code: &str) -> Result<Room, ApiError> {
@@ -700,7 +711,7 @@ pub struct ShareReq {
         (status = 200, body = crate::users::UserPublic, description = "Já estava partilhada com essa pessoa (idempotente)."),
         (status = 400, description = "Partilhar consigo próprio.", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
-        (status = 403, description = "`recording.not_owner`: vê a gravação mas não é o dono activo.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`authz.missing_capability` (`recordings.publish`): vê a gravação mas não é o dono activo nem tem a capacidade.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A gravação não existe ou não lhe chega; ou o utilizador destino não existe.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -747,7 +758,7 @@ pub async fn share(
     responses(
         (status = 204, description = "Partilha removida."),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
-        (status = 403, description = "`recording.not_owner`.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`authz.missing_capability` (`recordings.publish`).", body = crate::openapi::ErrorBody),
         (status = 404, description = "A gravação não existe/não lhe chega, ou não estava partilhada com essa pessoa.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -807,7 +818,7 @@ fn gen_token() -> String {
     responses(
         (status = 200, body = ShareLink),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
-        (status = 403, description = "`recording.not_owner`: vê a gravação mas não é o dono activo.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`authz.missing_capability` (`recordings.publish`): vê a gravação mas não é o dono activo nem tem a capacidade.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -868,7 +879,7 @@ pub async fn create_link(
     responses(
         (status = 200, body = Option<ShareLink>, description = "`null` se não houver link."),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
-        (status = 403, description = "`recording.not_owner`: vê a gravação mas não é o dono activo.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`authz.missing_capability` (`recordings.publish`): vê a gravação mas não é o dono activo nem tem a capacidade.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -896,7 +907,7 @@ pub async fn get_link(
     responses(
         (status = 204, description = "Link revogado."),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
-        (status = 403, description = "`recording.not_owner`.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`authz.missing_capability` (`recordings.publish`).", body = crate::openapi::ErrorBody),
         (status = 404, description = "A gravação não existe/não lhe chega, ou não tinha link.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -1072,7 +1083,7 @@ pub async fn public_share_download(
     responses(
         (status = 200, body = Vec<crate::users::UserPublic>),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
-        (status = 403, description = "`recording.not_owner`: vê a gravação mas não é o dono activo.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`authz.missing_capability` (`recordings.publish`): vê a gravação mas não é o dono activo nem tem a capacidade.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]

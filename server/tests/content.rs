@@ -449,7 +449,8 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 200, "repetir é idempotente");
-    // O admin da org gere a gravação, mas não decide a quem é mostrada.
+    // ADR-0008: o admin de sistema tem `recordings.publish` sobre as gravações
+    // de colegas (alargamento intencional); a partilha já existia → 200.
     let (st, body) = app
         .post(
             &format!("{base}/shares"),
@@ -457,8 +458,7 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
             json!({"user_id": c.user_id}),
         )
         .await;
-    assert_eq!(st, 403, "{body}");
-    assert_eq!(body["code"], "recording.not_owner");
+    assert_eq!(st, 200, "{body}");
     let (st, _) = app
         .post(
             &format!("{base}/shares"),
@@ -473,8 +473,9 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
     let (_, shares) = app.get(&format!("{base}/shares"), Some(&a.token)).await;
     assert_eq!(shares[0]["id"], c.user_id.as_str());
     let (st, body) = app.get(&format!("{base}/shares"), Some(&c.token)).await;
-    assert_eq!(st, 403, "vê (partilhada) mas não é o dono");
-    assert_eq!(body["code"], "recording.not_owner");
+    assert_eq!(st, 403, "vê (partilhada) mas não é o dono nem tem a capacidade");
+    assert_eq!(body["code"], "authz.missing_capability");
+    assert_eq!(body["details"][0]["description"], "recordings.publish");
     // Com partilha, C vê inline (404 = autorizada) mas não descarrega.
     let (st, _) = app.get(&content, Some(&c.token)).await;
     assert_eq!(st, 404);

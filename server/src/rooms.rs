@@ -272,6 +272,8 @@ pub async fn create_room(
             "format must be 'normal' or 'training'".into(),
         ));
     }
+    // `sessions.create` (ADR-0008 §1): o poder de criar, avaliado sobre o dono.
+    crate::org::require_session_create(&state, auth.user_id, None).await?;
     let room = insert_room(
         &state.db,
         auth.user_id,

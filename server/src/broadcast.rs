@@ -876,11 +876,33 @@ pub async fn ws_directo(
         let ids: Result<Vec<Uuid>, _> = csv.split(',').map(|p| p.trim().parse::<Uuid>()).collect();
         let resolvidos = match (ids, q.org_id) {
             (Ok(ids), Some(org_id)) => {
-                match crate::org::require_admin_pub(&state, org_id, claims.sub).await {
-                    Ok(()) => crate::stream_destinations::resolve_for_broadcast(&state, org_id, &ids)
-                        .await
-                        .map_err(|_| "um ou mais destinos guardados não existem, não estão prontos, ou a chave não abre".to_string()),
-                    Err(_) => Err("só um administrador da organização emite para os destinos guardados".to_string()),
+                // `broadcast.public_destinations` (ADR-0008 §4) e o limite de
+                // destinos em simultâneo do papel (§8).
+                match crate::org::require_capability_for(
+                    &state,
+                    org_id,
+                    claims.sub,
+                    delonix_meet_domain::identity::authorization::Capability::BroadcastPublicDestinations,
+                    delonix_meet_domain::identity::authorization::ResourceScope::Organization,
+                    &crate::org::Action {
+                        name: "broadcast.start_saved_destinations",
+                        target: serde_json::json!({"org_id": org_id, "room": codigo.to_lowercase(), "destination_ids": ids}),
+                    },
+                )
+                .await
+                {
+                    Ok(grant) => match crate::org::role_destination_limit(&state, grant.role_id).await {
+                        Ok(Some(max)) if ids.len() > max as usize => Err(format!(
+                            "o seu papel permite {max} destinos em simultâneo e pediu {}",
+                            ids.len()
+                        )),
+                        Err(_) => Err("não foi possível ler o limite do papel".to_string()),
+                        _ => crate::stream_destinations::resolve_for_broadcast(&state, org_id, &ids)
+                            .await
+                            .map_err(|_| "um ou mais destinos guardados não existem, não estão prontos, ou a chave não abre".to_string()),
+                    },
+                    Err(ApiError::Domain(e)) if e.code == "authz.approval_required" => Err(e.message),
+                    Err(_) => Err("sem a capacidade broadcast.public_destinations nesta organização".to_string()),
                 }
             }
             (Err(_), _) => {

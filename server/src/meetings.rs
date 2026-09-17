@@ -362,6 +362,8 @@ pub async fn create(
     if !(5..=1440).contains(&req.duration_min) {
         return Err(ApiError::BadRequest("duration must be 5-1440 min".into()));
     }
+    // `sessions.create` (ADR-0008 §1): o poder de criar, avaliado sobre o dono.
+    crate::org::require_session_create(&state, auth.user_id, None).await?;
 
     // Quota de reuniões da organização (agenda): conta as reuniões cujo dono é
     // membro da org do criador. NULL => ilimitado.

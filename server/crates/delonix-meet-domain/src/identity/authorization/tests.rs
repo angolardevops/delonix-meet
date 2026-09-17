@@ -98,6 +98,16 @@ fn catalog_is_closed_and_round_trips() {
     assert!(!RecordingsDelete.info().enforced, "não há rota que apague");
 }
 
+/// (papel, departamento da pertença, âmbito, capacidade, decisão, razão).
+type PolicyCase = (
+    u128,
+    Option<u128>,
+    ResourceScope,
+    Capability,
+    Decision,
+    Reason,
+);
+
 /// A tabela da policy: (papel, departamento da pertença, âmbito, capacidade) → decisão, razão.
 #[test]
 fn policy_table() {
@@ -105,7 +115,7 @@ fn policy_table() {
     use Decision as D;
     use Reason as R;
     let org = ResourceScope::Organization;
-    let cases: &[(u128, Option<u128>, ResourceScope, Capability, D, R)] = &[
+    let cases: &[PolicyCase] = &[
         // sistema: semântica de hoje
         (OWNER, None, org, OrgAdminister, D::Allow, R::RoleValue),
         (
