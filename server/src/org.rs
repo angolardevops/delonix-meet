@@ -1410,6 +1410,17 @@ pub(crate) fn recording_uploader_in_org_sql(org: &str, uploader: &str) -> String
     )
 }
 
+/// A quarentena de `subject` conta para a organização `org`: é, ou FOI,
+/// membro dela. Mesma razão que `recording_uploader_in_org_sql` — é
+/// atribuição, não acesso: quem saiu continua no histórico da empresa. A
+/// leitura da analítica e a varredura que a precede usam ESTE predicado, para
+/// a varredura marcar exactamente o conjunto que a leitura conta.
+pub(crate) fn quarantine_subject_in_org_sql(org: &str, subject: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM org_members om WHERE om.org_id = {org} AND om.user_id = {subject})"
+    )
+}
+
 /// user_ids dos membros de um grupo (para iniciar chamada de grupo).
 /// Organizações a que um utilizador pertence (para disparar webhooks dos
 /// eventos das suas reuniões/gravações).
