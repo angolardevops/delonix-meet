@@ -323,6 +323,12 @@ pub async fn upsert_member(
     admin: bool,
 ) -> Result<Uuid, ApiError> {
     let email = email.trim().to_lowercase();
+    // Nome legal (perfil «gerido pelo Odoo»): o `name` do Odoo, se for um nome.
+    // A sincronização cai para o email quando o Odoo não tem nome, e um email
+    // não é um nome legal — aí fica o que já estava.
+    let legal_name = Some(name.trim())
+        .filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case(&email))
+        .map(|n| n.chars().take(200).collect::<String>());
     let user_id = match sqlx::query_as::<_, (Uuid, Option<Uuid>)>(
         "SELECT id, odoo_org_id FROM users WHERE email = $1",
     )
@@ -330,13 +336,18 @@ pub async fn upsert_member(
     .fetch_optional(&state.db)
     .await?
     {
-        // Já é uma conta gerida por ESTA org: só refresca o uid.
+        // Já é uma conta gerida por ESTA org: refresca o uid e o nome legal.
         Some((id, Some(owner))) if owner == org_id => {
-            sqlx::query("UPDATE users SET odoo_uid = $1, odoo_managed = TRUE WHERE id = $2")
-                .bind(odoo_uid)
-                .bind(id)
-                .execute(&state.db)
-                .await?;
+            sqlx::query(
+                "UPDATE users SET odoo_uid = $1, odoo_managed = TRUE,
+                        legal_name = COALESCE($3, legal_name)
+                  WHERE id = $2",
+            )
+            .bind(odoo_uid)
+            .bind(id)
+            .bind(&legal_name)
+            .execute(&state.db)
+            .await?;
             id
         }
         // A conta é gerida por OUTRA org. É a mesma regra de isolamento que o
@@ -368,13 +379,14 @@ pub async fn upsert_member(
             // Sem password local: o hash só é gravado quando o utilizador
             // entra de facto (auth::login), para servir de cache offline.
             match sqlx::query_as::<_, (Uuid,)>(
-                "INSERT INTO users (email, username, password_hash, odoo_uid, odoo_managed, odoo_org_id)
-                 VALUES ($1, $2, '', $3, TRUE, $4) RETURNING id",
+                "INSERT INTO users (email, username, password_hash, odoo_uid, odoo_managed, odoo_org_id, legal_name)
+                 VALUES ($1, $2, '', $3, TRUE, $4, $5) RETURNING id",
             )
             .bind(&email)
             .bind(&username)
             .bind(odoo_uid)
             .bind(org_id)
+            .bind(&legal_name)
             .fetch_one(&state.db)
             .await
             {
