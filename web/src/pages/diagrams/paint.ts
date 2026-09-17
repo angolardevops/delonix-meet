@@ -43,6 +43,26 @@ export const PENS: Record<string, string> = {
   red: '#ad1017',
   blue: '#2f5d8a',
   green: '#1e7a4a',
+  amber: '#c77700',
+  purple: '#6b3fa0',
+  grey: '#8a8a91',
+  yellow: '#f2c200',
+}
+
+/** Espessuras da caneta (unidades do quadro). */
+export const PEN_WIDTHS = [1.5, 2.5, 5, 9] as const
+
+/** Opacidades oferecidas; o marcador usa a sua. */
+export const PEN_OPACITIES = [1, 0.6, 0.3] as const
+export const MARKER = { width: 16, opacity: 0.35 } as const
+
+/** Cores dos post-its. */
+export const STICKY: Record<string, { fill: string; edge: string }> = {
+  yellow: { fill: '#fff4a8', edge: '#e0cf5c' },
+  pink: { fill: '#ffd6e4', edge: '#e39bb5' },
+  blue: { fill: '#d4e8ff', edge: '#8fb6e3' },
+  green: { fill: '#d6f2dc', edge: '#8ccb9a' },
+  orange: { fill: '#ffe0bf', edge: '#e8aa6a' },
 }
 
 /**

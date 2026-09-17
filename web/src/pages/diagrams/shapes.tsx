@@ -8,10 +8,10 @@
  */
 import { memo, ReactNode } from 'react'
 import { CLASS, classifierHeight, LANE_HEADER, objectHeight, poolHeight, Pt, POOL_HEADER } from './geometry'
-import { DEdge, DNode, parseMember } from './model'
+import { DEdge, DNode, parseMember, Stroke } from './model'
 import { catalogVisual } from './catalog'
 import { useCatalogVersion } from './catalog/useCatalog'
-import { C4, FILLS, INK, MONO } from './paint'
+import { C4, FILLS, INK, MONO, STICKY } from './paint'
 
 const SW = 1.5
 
@@ -1124,6 +1124,16 @@ function NodeBody({ n, sub }: { n: DNode; sub?: string }): ReactNode {
           <Lines lines={wrapText(n.props.text ?? n.name, n.w - 14, 9.5, 3)} x={8} y={n.h / 2} size={9.5} anchor="start" color={INK.noteInk} />
         </>
       )
+    case 'sticky': {
+      const c = STICKY[n.props.stickyColor ?? 'yellow'] ?? STICKY.yellow
+      return (
+        <>
+          <path d={`M0 0H${n.w}V${n.h - 14}L${n.w - 14} ${n.h}H0Z`} fill={c.fill} stroke={n.props.emphasis ? INK.accent : c.edge} strokeWidth={1} />
+          <path d={`M${n.w} ${n.h - 14}H${n.w - 14}V${n.h}`} fill={c.edge} fillOpacity={0.5} stroke={c.edge} strokeWidth={1} />
+          <Lines lines={wrapText(n.props.text ?? n.name, n.w - 20, 11, Math.max(1, Math.floor((n.h - 24) / 14)))} x={10} y={16} size={11} anchor="start" color={INK.noteInk} lh={1.27} />
+        </>
+      )
+    }
     case 'text':
       return (
         <>
@@ -1304,6 +1314,39 @@ export const EdgeShape = memo(function EdgeShape({ e, a, b, sourceType, selfLoop
     </>
   )
 })
+
+/** Desenho de uma forma rápida a partir dos dois pontos. */
+export function quickShapePath(s: Pick<Stroke, 'points' | 'shape'>): string {
+  const [x0, y0, x1, y1] = s.points
+  const x = Math.min(x0, x1)
+  const y = Math.min(y0, y1)
+  const w = Math.abs(x1 - x0)
+  const h = Math.abs(y1 - y0)
+  switch (s.shape) {
+    case 'rect':
+      // Concatenação e não template literal: o portão de i18n lia «M hvhZ» como frase.
+      return 'M' + x + ' ' + y + 'h' + w + 'v' + h + 'h' + -w + 'Z'
+    case 'ellipse': {
+      const rx = w / 2
+      const ry = h / 2
+      return `M${x} ${y + ry}a${rx} ${ry} 0 1 0 ${w} 0a${rx} ${ry} 0 1 0 ${-w} 0Z`
+    }
+    case 'arrow': {
+      const ang = Math.atan2(y1 - y0, x1 - x0)
+      const k = 14
+      const a = { x: x1 - k * Math.cos(ang - 0.45), y: y1 - k * Math.sin(ang - 0.45) }
+      const b = { x: x1 - k * Math.cos(ang + 0.45), y: y1 - k * Math.sin(ang + 0.45) }
+      return `M${x0} ${y0}L${x1} ${y1}M${a.x.toFixed(1)} ${a.y.toFixed(1)}L${x1} ${y1}L${b.x.toFixed(1)} ${b.y.toFixed(1)}`
+    }
+    default:
+      return `M${x0} ${y0}L${x1} ${y1}`
+  }
+}
+
+/** Caminho SVG de um traço, seja à mão ou forma rápida. */
+export function strokeD(s: Pick<Stroke, 'points' | 'shape'>): string {
+  return s.shape ? quickShapePath(s) : strokePath(s.points)
+}
 
 /** Traço livre: polilinha suave. */
 export function strokePath(points: number[]): string {

@@ -233,6 +233,49 @@ export function clampZoom(k: number): number {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, k))
 }
 
+/** Ponto dentro de um polígono (pares x,y seguidos), por paridade de cruzamentos. */
+export function pointInPolygon(p: Pt, poly: number[]): boolean {
+  let inside = false
+  const n = poly.length / 2
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = poly[2 * i]
+    const yi = poly[2 * i + 1]
+    const xj = poly[2 * j]
+    const yj = poly[2 * j + 1]
+    if (yi > p.y !== yj > p.y && p.x < ((xj - xi) * (p.y - yi)) / (yj - yi) + xi) inside = !inside
+  }
+  return inside
+}
+
+/**
+ * O que um laço apanha: traços com a maioria dos pontos dentro, e elementos
+ * com o centro dentro.
+ */
+export function lassoPick(doc: Pick<DiagramDoc, 'nodes' | 'strokes'>, poly: number[]): { nodes: string[]; strokes: string[] } {
+  if (poly.length < 6) return { nodes: [], strokes: [] }
+  const strokes = doc.strokes
+    .filter((s) => {
+      let inside = 0
+      const total = s.points.length / 2
+      for (let i = 0; i < s.points.length; i += 2) if (pointInPolygon({ x: s.points[i], y: s.points[i + 1] }, poly)) inside++
+      return total > 0 && inside / total > 0.5
+    })
+    .map((s) => s.id)
+  const nodes = doc.nodes.filter((n) => pointInPolygon(center(nodeBox(n)), poly)).map((n) => n.id)
+  return { nodes, strokes }
+}
+
+/** Desloca elementos e traços escolhidos. */
+export function moveSelection<T extends Pick<DiagramDoc, 'nodes' | 'strokes'>>(doc: T, pick: { nodes: string[]; strokes: string[] }, dx: number, dy: number): T {
+  const ns = new Set(pick.nodes)
+  const ss = new Set(pick.strokes)
+  return {
+    ...doc,
+    nodes: doc.nodes.map((n) => (ns.has(n.id) ? { ...n, x: n.x + dx, y: n.y + dy } : n)),
+    strokes: doc.strokes.map((s) => (ss.has(s.id) ? { ...s, points: s.points.map((v, i) => v + (i % 2 ? dy : dx)) } : s)),
+  }
+}
+
 /** Distância de um ponto a um segmento (para apagar traços e tocar arestas). */
 export function distToSegment(p: Pt, a: Pt, b: Pt): number {
   const dx = b.x - a.x

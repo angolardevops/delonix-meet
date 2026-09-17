@@ -114,6 +114,7 @@ export type NodeType =
   | 'flowAnnotation'
   // Livre
   | 'text'
+  | 'sticky'
 
 export type EdgeType =
   // UML
@@ -208,6 +209,8 @@ export interface NodeProps {
   dataRole?: DataRole
   collection?: boolean
   gatewayKind?: GatewayKind
+  /** Post-it: chave de `STICKY` (paint.ts). */
+  stickyColor?: string
   /** C4 e catálogo: descrição curta (o que faz). */
   description?: string
   /** C4 e catálogo: tecnologia (`Rust / Axum`, `PostgreSQL 17`). */
@@ -258,12 +261,19 @@ export interface DEdge {
   offset?: number
 }
 
+export type QuickShape = 'rect' | 'ellipse' | 'arrow' | 'line'
+export const QUICK_SHAPES: QuickShape[] = ['rect', 'ellipse', 'arrow', 'line']
+
 export interface Stroke {
   id: string
-  /** Pares x,y seguidos. */
+  /** Pares x,y seguidos. Numa forma rápida: os dois cantos (ou pontas). */
   points: number[]
   color: string
   width: number
+  /** 0–1; o marcador é translúcido. Ausente = opaco. */
+  opacity?: number
+  /** Forma rápida desenhada a arrastar, em vez de traço à mão. */
+  shape?: QuickShape
 }
 
 export interface DiagramDoc {
@@ -365,6 +375,7 @@ export const NODE_NOTATION: Record<NodeType, Notation> = {
   offPageConnector: 'flow',
   flowAnnotation: 'flow',
   text: 'free',
+  sticky: 'free',
 }
 
 export const EDGE_NOTATION: Record<EdgeType, Notation> = {
@@ -465,6 +476,9 @@ export type PaletteItem =
   | { kind: 'lane'; key: string }
   | { kind: 'pen'; key: string }
   | { kind: 'eraser'; key: string }
+  | { kind: 'marker'; key: string }
+  | { kind: 'lasso'; key: string }
+  | { kind: 'shape'; key: string; shape: QuickShape }
 
 export interface PaletteGroup {
   key: string
@@ -784,7 +798,19 @@ export const PALETTES: Record<Notation, PaletteGroup[]> = {
         { kind: 'eraser', key: 'eraser' },
         { kind: 'node', key: 'text', type: 'text' },
         { kind: 'node', key: 'note', type: 'note' },
+        { kind: 'marker', key: 'marker' },
+        { kind: 'lasso', key: 'lasso' },
       ],
+    },
+    {
+      key: 'quickShapes',
+      items: QUICK_SHAPES.map((shape): PaletteItem => ({ kind: 'shape', key: `quick${shape[0].toUpperCase()}${shape.slice(1)}`, shape })),
+    },
+    {
+      key: 'stickies',
+      items: (['yellow', 'pink', 'blue', 'green', 'orange'] as const).map(
+        (fill): PaletteItem => ({ kind: 'node', key: `sticky${fill[0].toUpperCase()}${fill.slice(1)}`, type: 'sticky', props: { stickyColor: fill } }),
+      ),
     },
   ],
 }
@@ -875,6 +901,7 @@ const SIZES: Record<NodeType, [number, number]> = {
   offPageConnector: [44, 48],
   flowAnnotation: [160, 50],
   text: [240, 30],
+  sticky: [150, 120],
 }
 
 export function uid(prefix = 'n'): string {

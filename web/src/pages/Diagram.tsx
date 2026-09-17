@@ -26,7 +26,7 @@ import { useShell } from '../components/shellContext'
 import { DelonixSymbol, Icon } from '../ui/icons'
 import { Alert, Button, cx, IconButton, Spinner } from '../ui/kit'
 import '../ui/diagrams.css'
-import Canvas, { Sel, Tool, View } from './diagrams/Canvas'
+import Canvas, { Multi, Sel, Tool, View } from './diagrams/Canvas'
 import { fileBase, parseJson, toBpmn, toC4PlantUml, toJson, toPlantUml, toXmi } from './diagrams/exporters'
 import { clampZoom, contentBox, fitView, laneOf, nodeBox, Pt } from './diagrams/geometry'
 import Inspector, { InspectorTab, tabsFor } from './diagrams/Inspector'
@@ -107,6 +107,9 @@ export default function Diagram({ id }: { id: string | null }) {
   const [view, setView] = useState<View>({ x: 40, y: 40, k: 1 })
   const [tab, setTab] = useState<InspectorTab>('element')
   const [penColor, setPenColor] = useState<string>(PENS.ink)
+  const [penWidth, setPenWidth] = useState(2.5)
+  const [penOpacity, setPenOpacity] = useState(1)
+  const [multi, setMulti] = useState<Multi | null>(null)
   const [persist, setPersist] = useState<Persist>('idle')
   const [notice, setNotice] = useState<Notice>(null)
   const [saving, setSaving] = useState(false)
@@ -335,7 +338,7 @@ export default function Diagram({ id }: { id: string | null }) {
     const pos = at
       ? { x: at.x - probe.w / 2, y: at.y - (probe.h || 40) / 2 }
       : { x: (w / 2 - view.x) / view.k - probe.w / 2 + stagger, y: (h / 2 - view.y) / view.k - (probe.h || 60) / 2 + stagger }
-    const textual = item.type === 'note' || item.type === 'annotation' || item.type === 'flowAnnotation'
+    const textual = item.type === 'note' || item.type === 'annotation' || item.type === 'flowAnnotation' || item.type === 'sticky'
     const name = textual ? '' : defaultName(doc, item.type, item.key)
     const props = { ...item.props }
     if (textual) props.text = t(`diagrams.novos.${item.key}`)
@@ -386,6 +389,10 @@ export default function Diagram({ id }: { id: string | null }) {
       setDrawer(null)
     } else if (item.kind === 'pen') setTool((cur) => (cur.kind === 'pen' ? { kind: 'select' } : { kind: 'pen' }))
     else if (item.kind === 'eraser') setTool((cur) => (cur.kind === 'eraser' ? { kind: 'select' } : { kind: 'eraser' }))
+    else if (item.kind === 'marker') setTool((cur) => (cur.kind === 'marker' ? { kind: 'select' } : { kind: 'marker' }))
+    else if (item.kind === 'lasso') setTool((cur) => (cur.kind === 'lasso' ? { kind: 'select' } : { kind: 'lasso' }))
+    else if (item.kind === 'shape') setTool((cur) => (cur.kind === 'shape' && cur.shape === item.shape ? { kind: 'select' } : { kind: 'shape', shape: item.shape }))
+    if (item.kind !== 'node') setMulti(null)
   }
 
   function connect(from: DNode, toNode: DNode, offset: number) {
@@ -419,6 +426,14 @@ export default function Diagram({ id }: { id: string | null }) {
   }
 
   const removeSelection = useCallback(() => {
+    if (doc && multi) {
+      const ns = new Set(multi.nodes)
+      const ss = new Set(multi.strokes)
+      commit({ ...doc, nodes: doc.nodes.filter((n) => !ns.has(n.id)), edges: doc.edges.filter((e) => !ns.has(e.from) && !ns.has(e.to)), strokes: doc.strokes.filter((s) => !ss.has(s.id)) })
+      setMulti(null)
+      setSelection(null)
+      return
+    }
     if (!doc || !selection) return
     if (selection.kind === 'node') {
       commit({ ...doc, nodes: doc.nodes.filter((n) => n.id !== selection.id), edges: doc.edges.filter((e) => e.from !== selection.id && e.to !== selection.id) })
@@ -428,7 +443,7 @@ export default function Diagram({ id }: { id: string | null }) {
       commit({ ...doc, strokes: doc.strokes.filter((s) => s.id !== selection.id) })
     }
     setSelection(null)
-  }, [doc, selection, commit])
+  }, [doc, selection, multi, commit])
 
   const duplicate = useCallback(() => {
     if (!doc || selection?.kind !== 'node') return
@@ -541,13 +556,14 @@ export default function Diagram({ id }: { id: string | null }) {
         e.preventDefault()
         duplicate()
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selection) {
+        if (selection || multi) {
           e.preventDefault()
           removeSelection()
         }
       } else if (e.key === 'Escape') {
         if (menu) setMenu(false)
         else if (drawer) setDrawer(null)
+        else if (multi) setMulti(null)
         else if (tool.kind !== 'select') setTool({ kind: 'select' })
         else setSelection(null)
       } else if (!mod && (e.key === '+' || e.key === '=')) zoomBy(1.2)
@@ -732,8 +748,12 @@ export default function Diagram({ id }: { id: string | null }) {
             doc={d}
             tool={tool}
             penColor={penColor}
+            penWidth={penWidth}
+            penOpacity={penOpacity}
             typeLabel={typeLabel}
             onPenColor={setPenColor}
+            onPenWidth={setPenWidth}
+            onPenOpacity={setPenOpacity}
             onPick={pick}
             onFind={(n) => {
               setSelection({ kind: 'node', id: n.id })
@@ -752,6 +772,13 @@ export default function Diagram({ id }: { id: string | null }) {
             view={view}
             svgRef={svgRef}
             penColor={penColor}
+            penWidth={penWidth}
+            penOpacity={penOpacity}
+            multi={multi}
+            onMulti={(m) => {
+              setMulti(m)
+              if (m) setTab('element')
+            }}
             typeLabel={typeLabel}
             subLabel={subLabel}
             onView={setView}
@@ -842,6 +869,7 @@ export default function Diagram({ id }: { id: string | null }) {
               const n = s?.kind === 'node' ? d.nodes.find((x) => x.id === s.id) : undefined
               if (n) centreOn(n)
             }}
+            multi={multi}
             onDelete={removeSelection}
             onDuplicate={duplicate}
             onFix={fixOne}
@@ -892,7 +920,7 @@ function summary(t: (k: string, o?: Record<string, unknown>) => string, d: Diagr
     u('ligacoes', edges('flow'))
   } else {
     u('tracos', d.strokes.length)
-    u('textos', of(['text', 'note']))
+    u('textos', of(['text', 'note', 'sticky']))
   }
   return parts.join(' · ')
 }

@@ -9,7 +9,7 @@ import { ReactNode, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../../ui/icons'
 import { Button, cx, Field, IconButton, Select, TextArea, TextInput, Toggle } from '../../ui/kit'
-import type { Sel } from './Canvas'
+import type { Multi, Sel } from './Canvas'
 import { laneOf, laneTop, nodeBox, poolHeight } from './geometry'
 import {
   BPMN_FLOW_NODES,
@@ -41,7 +41,7 @@ import {
   TaskKind,
   uid,
 } from './model'
-import { FILLS } from './paint'
+import { FILLS, PEN_OPACITIES, PEN_WIDTHS, PENS, STICKY } from './paint'
 import { CATALOG_CONTAINERS, CATALOG_ITEMS, catalogGroupOf, catalogKey } from './catalog'
 import { Issue, issueParams } from './validate'
 
@@ -80,6 +80,7 @@ export default function Inspector({
   tab,
   issues,
   typeLabel,
+  multi = null,
   showValidation = false,
   onTab,
   onChange,
@@ -96,6 +97,7 @@ export default function Inspector({
   tab: InspectorTab
   issues: Issue[]
   typeLabel: (n: DNode) => string
+  multi?: Multi | null
   showValidation?: boolean
   onTab: (t: InspectorTab) => void
   onChange: Change
@@ -126,16 +128,20 @@ export default function Inspector({
 
       <div className="dg-inspector__body" role="tabpanel">
         {current === 'element' &&
-          (node ? (
-            <NodePanel doc={doc} n={node} onChange={onChange} onSelect={onSelect} onDelete={onDelete} onDuplicate={onDuplicate} />
-          ) : edge ? (
-            <EdgePanel doc={doc} e={edge} onChange={onChange} onDelete={onDelete} />
-          ) : stroke ? (
-            <Section title={t('diagrams.inspector.traco')}>
+          (multi ? (
+            <Section title={t('diagrams.inspector.seleccaoMultipla')}>
+              <p className="dg-muted">{t('diagrams.inspector.seleccaoResumo', { elementos: multi.nodes.length, tracos: multi.strokes.length })}</p>
+              <p className="dg-muted">{t('diagrams.inspector.seleccaoAjuda')}</p>
               <Button size="sm" variant="danger" icon="trash" onClick={onDelete}>
                 {t('diagrams.inspector.eliminar')}
               </Button>
             </Section>
+          ) : node ? (
+            <NodePanel doc={doc} n={node} onChange={onChange} onSelect={onSelect} onDelete={onDelete} onDuplicate={onDuplicate} />
+          ) : edge ? (
+            <EdgePanel doc={doc} e={edge} onChange={onChange} onDelete={onDelete} />
+          ) : stroke ? (
+            <StrokePanel doc={doc} s={stroke} onChange={onChange} onDelete={onDelete} />
           ) : (
             <p className="dg-empty">{t('diagrams.inspector.nada')}</p>
           ))}
@@ -184,7 +190,7 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
     onChange(patchNode(doc, n.id, (x) => ({ ...x, props: { ...x.props, ...patch } })), key && `${n.id}:${key}`)
   const bpmn = NODE_NOTATION[n.type] === 'bpmn'
   const isEvent = n.type === 'startEvent' || n.type === 'intermediateEvent' || n.type === 'endEvent'
-  const nameIsText = n.type === 'note' || n.type === 'annotation' || n.type === 'flowAnnotation'
+  const nameIsText = n.type === 'note' || n.type === 'annotation' || n.type === 'flowAnnotation' || n.type === 'sticky'
 
   return (
     <>
@@ -506,7 +512,7 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
       {bpmn && BPMN_FLOW_NODES.has(n.type) ? (
         <FlowsPanel doc={doc} n={n} onChange={onChange} onSelect={onSelect} />
       ) : (
-        n.type !== 'text' && n.type !== 'pool' && <RelationsPanel doc={doc} n={n} onChange={onChange} onSelect={onSelect} />
+        n.type !== 'text' && n.type !== 'pool' && n.type !== 'sticky' && <RelationsPanel doc={doc} n={n} onChange={onChange} onSelect={onSelect} />
       )}
     </>
   )
@@ -831,9 +837,66 @@ function EdgePanel({ doc, e, onChange, onDelete }: { doc: DiagramDoc; e: DEdge; 
 //  Estilo, camadas, pistas, validação
 // ---------------------------------------------------------------------------
 
+function StrokePanel({ doc, s, onChange, onDelete }: { doc: DiagramDoc; s: DiagramDoc['strokes'][number]; onChange: Change; onDelete: () => void }) {
+  const { t } = useTranslation()
+  const set = (patch: Partial<typeof s>, key?: string) => onChange({ ...doc, strokes: doc.strokes.map((x) => (x.id === s.id ? { ...x, ...patch } : x)) }, key && `${s.id}:${key}`)
+  return (
+    <Section title={t(s.shape ? `diagrams.paleta.itens.quick${s.shape[0].toUpperCase()}${s.shape.slice(1)}` : 'diagrams.inspector.traco')}>
+      <div className="dg-swatches" role="group" aria-label={t('diagrams.paleta.cores')}>
+        {Object.entries(PENS).map(([k, c]) => (
+          <button key={k} type="button" className="dg-swatch" style={{ background: c }} aria-pressed={s.color === c} aria-label={t(`diagrams.paleta.cor.${k}`)} title={t(`diagrams.paleta.cor.${k}`)} onClick={() => set({ color: c })} />
+        ))}
+      </div>
+      <Field label={t('diagrams.paleta.espessura')}>
+        <Select value={String(s.width)} onChange={(e) => set({ width: Number(e.target.value) })}>
+          {[...new Set([...PEN_WIDTHS, s.width])].sort((a, b) => a - b).map((w) => (
+            <option key={w} value={w}>
+              {t('diagrams.paleta.espessuraN', { n: w })}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field label={t('diagrams.paleta.opacidade')}>
+        <Select value={String(s.opacity ?? 1)} onChange={(e) => set({ opacity: Number(e.target.value) >= 1 ? undefined : Number(e.target.value) })}>
+          {[...new Set([...PEN_OPACITIES, s.opacity ?? 1])].sort((a, b) => b - a).map((o) => (
+            <option key={o} value={o}>
+              {t('diagrams.paleta.opacidadeN', { n: Math.round(o * 100) })}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <div className="dg-actions">
+        <Button size="sm" variant="ghost" icon="trash" onClick={onDelete}>
+          {t('diagrams.inspector.eliminar')}
+        </Button>
+      </div>
+    </Section>
+  )
+}
+
 function StylePanel({ doc, n, onChange }: { doc: DiagramDoc; n: DNode | undefined; onChange: Change }) {
   const { t } = useTranslation()
   if (!n) return <p className="dg-empty">{t('diagrams.inspector.nada')}</p>
+  if (n.type === 'sticky') {
+    return (
+      <Section title={t('diagrams.inspector.corPostit')}>
+        <div className="dg-swatches" role="group" aria-label={t('diagrams.inspector.corPostit')}>
+          {Object.entries(STICKY).map(([k, c]) => (
+            <button
+              key={k}
+              type="button"
+              className="dg-swatch"
+              style={{ background: c.fill }}
+              aria-pressed={(n.props.stickyColor ?? 'yellow') === k}
+              aria-label={t(`diagrams.inspector.coresPostit.${k}`)}
+              title={t(`diagrams.inspector.coresPostit.${k}`)}
+              onClick={() => onChange(patchNode(doc, n.id, (x) => ({ ...x, props: { ...x.props, stickyColor: k } })))}
+            />
+          ))}
+        </div>
+      </Section>
+    )
+  }
   return (
     <Section title={t('diagrams.inspector.preenchimento')}>
       <div className="dg-swatches" role="group" aria-label={t('diagrams.inspector.preenchimento')}>

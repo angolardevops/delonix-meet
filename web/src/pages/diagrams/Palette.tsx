@@ -12,7 +12,7 @@ import { cx, TextInput } from '../../ui/kit'
 import type { Tool } from './Canvas'
 import { PALETTE_MIME } from './Canvas'
 import { DiagramDoc, DNode, Notation, PaletteGroup, PALETTES, PaletteItem } from './model'
-import { PENS } from './paint'
+import { PEN_OPACITIES, PEN_WIDTHS, PENS, STICKY } from './paint'
 import { CATALOG_GROUPS, CatalogGroup, catalogVisual, loadCatalogGroup } from './catalog'
 import { loadCatalogLabels } from './catalog/labels'
 import { useCatalogVersion } from './catalog/useCatalog'
@@ -110,6 +110,18 @@ const GLYPH: Record<string, string> = {
   // UML — objectos
   object: 'M2 3h18v12H2zM2 8h18M6 6h10',
   link: 'M2 9h18',
+  // Livre — quadros-formas
+  marker: 'M5 13l7-9 5 4-7 9H5zM3 17h16',
+  lasso: 'M11 3c5 0 8 2 8 5s-3 5-8 5c-2 0-4-.4-5-1M6 12c-2 1-2 3 0 4',
+  quickRect: 'M3 3h16v12H3z',
+  quickEllipse: 'M11 3c5 0 8 2.7 8 6s-3 6-8 6-8-2.7-8-6 3-6 8-6Z',
+  quickArrow: 'M3 15 18 4M12 4h6v6',
+  quickLine: 'M3 15 19 3',
+  stickyYellow: 'M3 3h16v9l-4 4H3zM15 16v-4h4',
+  stickyPink: 'M3 3h16v9l-4 4H3zM15 16v-4h4',
+  stickyBlue: 'M3 3h16v9l-4 4H3zM15 16v-4h4',
+  stickyGreen: 'M3 3h16v9l-4 4H3zM15 16v-4h4',
+  stickyOrange: 'M3 3h16v9l-4 4H3zM15 16v-4h4',
   // Arquitectura — C4
   c4Person: 'M11 7a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4 17a4 4 0 0 1 4-8h6a4 4 0 0 1 4 8z',
   c4PersonExt: 'M11 7a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4 17a4 4 0 0 1 4-8h6a4 4 0 0 1 4 8z',
@@ -223,8 +235,12 @@ export default function Palette({
   doc,
   tool,
   penColor,
+  penWidth,
+  penOpacity,
   typeLabel,
   onPenColor,
+  onPenWidth,
+  onPenOpacity,
   onPick,
   onFind,
 }: {
@@ -232,8 +248,12 @@ export default function Palette({
   doc: DiagramDoc
   tool: Tool
   penColor: string
+  penWidth: number
+  penOpacity: number
   typeLabel: (n: DNode) => string
   onPenColor: (c: string) => void
+  onPenWidth: (w: number) => void
+  onPenOpacity: (o: number) => void
   onPick: (item: PaletteItem) => void
   onFind: (n: DNode) => void
 }) {
@@ -275,7 +295,11 @@ export default function Palette({
   const isActive = (it: PaletteItem) =>
     (it.kind === 'edge' && tool.kind === 'edge' && (tool.key ? tool.key === it.key : tool.edge === it.edge)) ||
     (it.kind === 'pen' && tool.kind === 'pen') ||
-    (it.kind === 'eraser' && tool.kind === 'eraser')
+    (it.kind === 'eraser' && tool.kind === 'eraser') ||
+    (it.kind === 'marker' && tool.kind === 'marker') ||
+    (it.kind === 'lasso' && tool.kind === 'lasso') ||
+    (it.kind === 'shape' && tool.kind === 'shape' && tool.shape === it.shape)
+  const isTool = (it: PaletteItem) => it.kind !== 'node' && it.kind !== 'lane'
 
   return (
     <div className="dg-palette">
@@ -334,7 +358,7 @@ export default function Palette({
                     type="button"
                     className={cx('dg-item', isActive(it) && 'is-active')}
                     data-palette-item={it.key}
-                    aria-pressed={it.kind === 'edge' || it.kind === 'pen' || it.kind === 'eraser' ? isActive(it) : undefined}
+                    aria-pressed={isTool(it) ? isActive(it) : undefined}
                     draggable={it.kind === 'node'}
                     onDragStart={(e) => {
                       e.dataTransfer.setData(PALETTE_MIME, `${notation}:${g.key}:${it.key}`)
@@ -356,7 +380,7 @@ export default function Palette({
       {tool.kind === 'select' && notation !== 'free' && <p className="dg-help">{t('diagrams.paleta.ajuda')}</p>}
 
       {notation === 'free' && (
-        <div className="dg-pens" role="group" aria-label={t('diagrams.paleta.cores')}>
+        <div className="dg-pens" role="group" aria-label={t('diagrams.paleta.cores')} data-pen-colors>
           {Object.entries(PENS).map(([key, color]) => (
             <button
               key={key}
@@ -372,6 +396,44 @@ export default function Palette({
             </button>
           ))}
         </div>
+      )}
+      {notation === 'free' && (
+        <>
+          <div className="dg-pens dg-pens--sizes" role="group" aria-label={t('diagrams.paleta.espessura')}>
+            {PEN_WIDTHS.map((w) => (
+              <button
+                key={w}
+                type="button"
+                className="dg-pen"
+                aria-pressed={penWidth === w && tool.kind !== 'marker'}
+                aria-label={t('diagrams.paleta.espessuraN', { n: w })}
+                title={t('diagrams.paleta.espessuraN', { n: w })}
+                disabled={tool.kind === 'marker'}
+                onClick={() => onPenWidth(w)}
+              >
+                <svg viewBox="0 0 20 20" width={18} height={18} aria-hidden="true">
+                  <path d="M3 13c4-6 9 2 14-4" fill="none" stroke="currentColor" strokeWidth={Math.min(8, w)} strokeLinecap="round" />
+                </svg>
+              </button>
+            ))}
+          </div>
+          <div className="dg-pens dg-pens--sizes" role="group" aria-label={t('diagrams.paleta.opacidade')}>
+            {PEN_OPACITIES.map((o) => (
+              <button
+                key={o}
+                type="button"
+                className="dg-pen"
+                aria-pressed={tool.kind !== 'marker' && penOpacity === o}
+                aria-label={t('diagrams.paleta.opacidadeN', { n: Math.round(o * 100) })}
+                title={t('diagrams.paleta.opacidadeN', { n: Math.round(o * 100) })}
+                disabled={tool.kind === 'marker'}
+                onClick={() => onPenOpacity(o)}
+              >
+                <span aria-hidden="true" style={{ color: penColor, opacity: o }} />
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   )
@@ -400,8 +462,9 @@ function PaletteGlyph({ it }: { it: PaletteItem }) {
       </svg>
     )
   }
+  const sticky = it.kind === 'node' && it.type === 'sticky' ? STICKY[it.props?.stickyColor ?? 'yellow'] : undefined
   return (
-    <svg viewBox="0 0 22 18" width={17} height={15} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={DASHED.has(it.key) ? '3 2' : undefined} aria-hidden="true">
+    <svg viewBox="0 0 22 18" width={17} height={15} fill={sticky ? sticky.fill : 'none'} stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={DASHED.has(it.key) ? '3 2' : undefined} aria-hidden="true">
       <path d={GLYPH[it.key] ?? GLYPH.process} />
     </svg>
   )

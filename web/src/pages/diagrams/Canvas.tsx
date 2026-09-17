@@ -9,13 +9,26 @@
 import { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, RefObject, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '../../ui/kit'
-import { center, clampZoom, contains, edgeSegment, nodeBox, Pt } from './geometry'
-import { CONTAINERS, DiagramDoc, DNode, EdgeType, FIXED_SIZE, Stroke, uid } from './model'
-import { EdgeShape, NodeShape, strokePath } from './shapes'
-import { FONT } from './paint'
+import { Box, center, clampZoom, contains, edgeSegment, lassoPick, moveSelection, nodeBox, Pt } from './geometry'
+import { CONTAINERS, DiagramDoc, DNode, EdgeType, FIXED_SIZE, QuickShape, Stroke, uid } from './model'
+import { EdgeShape, NodeShape, strokeD, strokePath } from './shapes'
+import { FONT, MARKER } from './paint'
 
 export type Sel = { kind: 'node' | 'edge' | 'stroke'; id: string }
-export type Tool = { kind: 'select' } | { kind: 'edge'; edge: EdgeType; key?: string } | { kind: 'pen' } | { kind: 'eraser' }
+export type Tool =
+  | { kind: 'select' }
+  | { kind: 'edge'; edge: EdgeType; key?: string }
+  | { kind: 'pen' }
+  | { kind: 'marker' }
+  | { kind: 'eraser' }
+  | { kind: 'lasso' }
+  | { kind: 'shape'; shape: QuickShape }
+
+/** Selecção múltipla (laço): elementos e traços. */
+export interface Multi {
+  nodes: string[]
+  strokes: string[]
+}
 export interface View {
   x: number
   y: number
@@ -57,6 +70,9 @@ type Gesture =
   | { t: 'pinch'; d0: number; mid0: Pt; orig: View }
   | { t: 'pen'; points: number[] }
   | { t: 'erase' }
+  | { t: 'shape'; a: Pt; b: Pt }
+  | { t: 'lasso'; points: number[] }
+  | { t: 'moveMulti'; start: Pt; pick: Multi; before: DiagramDoc; moved: boolean; dx: number; dy: number }
 
 const snap = (v: number) => Math.round(v / 4) * 4
 
@@ -67,6 +83,9 @@ export default function Canvas({
   view,
   svgRef,
   penColor,
+  penWidth,
+  penOpacity,
+  multi,
   typeLabel,
   subLabel,
   onView,
@@ -75,6 +94,7 @@ export default function Canvas({
   onCommit,
   onConnect,
   onDropPalette,
+  onMulti,
 }: {
   doc: DiagramDoc
   selection: Sel | null
@@ -82,6 +102,9 @@ export default function Canvas({
   view: View
   svgRef: RefObject<SVGSVGElement | null>
   penColor: string
+  penWidth: number
+  penOpacity: number
+  multi: Multi | null
   typeLabel: (n: DNode) => string
   subLabel: (n: DNode) => string | undefined
   onView: (v: View) => void
@@ -90,6 +113,7 @@ export default function Canvas({
   onCommit: (next: DiagramDoc, before: DiagramDoc) => void
   onConnect: (from: DNode, to: DNode, offset: number) => void
   onDropPalette: (key: string, at: Pt) => void
+  onMulti: (m: Multi | null) => void
 }) {
   const { t } = useTranslation()
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -97,6 +121,8 @@ export default function Canvas({
   const pointers = useRef(new Map<number, Pt>())
   const [ghost, setGhost] = useState<{ a: Pt; b: Pt } | null>(null)
   const [ink, setInk] = useState<number[] | null>(null)
+  const [draft, setDraft] = useState<Stroke | null>(null)
+  const [lasso, setLasso] = useState<number[] | null>(null)
   const docRef = useRef(doc)
   docRef.current = doc
   const viewRef = useRef(view)
@@ -148,7 +174,13 @@ export default function Canvas({
       capture(e)
       return
     }
-    if (tool.kind === 'pen' || tool.kind === 'eraser') return
+    if (tool.kind === 'pen' || tool.kind === 'marker' || tool.kind === 'eraser' || tool.kind === 'shape') return
+    if (multi && multi.nodes.includes(n.id)) {
+      startMove(e, multi)
+      return
+    }
+    if (tool.kind === 'lasso') return
+    onMulti(null)
     onSelect({ kind: 'node', id: n.id })
     const orig = new Map<string, Pt>([[n.id, { x: n.x, y: n.y }]])
     // Um contentor leva consigo o que está lá dentro.
@@ -186,6 +218,23 @@ export default function Canvas({
     capture(e)
   }
 
+  function startMove(e: ReactPointerEvent, pick: Multi) {
+    e.stopPropagation()
+    gesture.current = { t: 'moveMulti', start: toWorld(e.clientX, e.clientY), pick, before: docRef.current, moved: false, dx: 0, dy: 0 }
+    capture(e)
+  }
+
+  function startStroke(e: ReactPointerEvent, id: string) {
+    if (e.button !== 0 || (tool.kind !== 'select' && tool.kind !== 'lasso')) return
+    if (multi && multi.strokes.includes(id)) {
+      startMove(e, multi)
+      return
+    }
+    onMulti(null)
+    onSelect({ kind: 'stroke', id })
+    startMove(e, { nodes: [], strokes: [id] })
+  }
+
   function startEdge(e: ReactPointerEvent, id: string) {
     if (e.button !== 0 || tool.kind !== 'select') return
     e.stopPropagation()
@@ -208,14 +257,24 @@ export default function Canvas({
     }
     if (e.button !== 0 && e.pointerType === 'mouse' && e.button !== 1) return
     const p = toWorld(e.clientX, e.clientY)
-    if (tool.kind === 'pen' && e.button === 0) {
+    if ((tool.kind === 'pen' || tool.kind === 'marker') && e.button === 0) {
       gesture.current = { t: 'pen', points: [Math.round(p.x), Math.round(p.y)] }
       setInk([Math.round(p.x), Math.round(p.y)])
+    } else if (tool.kind === 'shape' && e.button === 0) {
+      const q = { x: Math.round(p.x), y: Math.round(p.y) }
+      gesture.current = { t: 'shape', a: q, b: q }
+    } else if (tool.kind === 'lasso' && e.button === 0) {
+      onMulti(null)
+      gesture.current = { t: 'lasso', points: [Math.round(p.x), Math.round(p.y)] }
+      setLasso([Math.round(p.x), Math.round(p.y)])
     } else if (tool.kind === 'eraser' && e.button === 0) {
       gesture.current = { t: 'erase' }
       eraseAt(e.clientX, e.clientY)
     } else {
-      if (tool.kind === 'select') onSelect(null)
+      if (tool.kind === 'select') {
+        onSelect(null)
+        onMulti(null)
+      }
       gesture.current = { t: 'pan', sx: e.clientX, sy: e.clientY, orig: viewRef.current }
     }
     capture(e)
@@ -301,7 +360,36 @@ export default function Canvas({
       case 'erase':
         eraseAt(e.clientX, e.clientY)
         break
+      case 'shape': {
+        const q = p()
+        g.b = { x: Math.round(q.x), y: Math.round(q.y) }
+        setDraft(shapeStroke(g.a, g.b, tool.kind === 'shape' ? tool.shape : 'rect'))
+        break
+      }
+      case 'lasso': {
+        const q = p()
+        const n = g.points.length
+        if (Math.hypot(q.x - g.points[n - 2], q.y - g.points[n - 1]) < 3) return
+        g.points.push(Math.round(q.x), Math.round(q.y))
+        setLasso([...g.points])
+        break
+      }
+      case 'moveMulti': {
+        const q = p()
+        const dx = snap(q.x - g.start.x)
+        const dy = snap(q.y - g.start.y)
+        if (!g.moved && Math.abs(dx) + Math.abs(dy) < 4) return
+        g.moved = true
+        g.dx = dx
+        g.dy = dy
+        onLive(moveSelection(g.before, g.pick, dx, dy))
+        break
+      }
     }
+  }
+
+  function shapeStroke(a: Pt, b: Pt, shape: QuickShape): Stroke {
+    return { id: 'draft', points: [a.x, a.y, b.x, b.y], color: penColor, width: penWidth, opacity: penOpacity < 1 ? penOpacity : undefined, shape }
   }
 
   function onUp(e: ReactPointerEvent) {
@@ -331,11 +419,33 @@ export default function Canvas({
       case 'pen': {
         setInk(null)
         if (g.points.length >= 2) {
-          const s: Stroke = { id: uid('s'), points: g.points, color: penColor, width: 2.5 }
+          const marker = tool.kind === 'marker'
+          const opacity = marker ? MARKER.opacity : penOpacity
+          const s: Stroke = { id: uid('s'), points: g.points, color: penColor, width: marker ? MARKER.width : penWidth }
+          if (opacity < 1) s.opacity = opacity
           onCommit({ ...d, strokes: [...d.strokes, s] }, d)
         }
         break
       }
+      case 'shape': {
+        setDraft(null)
+        if (tool.kind === 'shape' && Math.hypot(g.b.x - g.a.x, g.b.y - g.a.y) >= 6) {
+          const s = { ...shapeStroke(g.a, g.b, tool.shape), id: uid('s') }
+          onCommit({ ...d, strokes: [...d.strokes, s] }, d)
+          onSelect({ kind: 'stroke', id: s.id })
+        }
+        break
+      }
+      case 'lasso': {
+        setLasso(null)
+        const pick = lassoPick(d, g.points)
+        onMulti(pick.nodes.length + pick.strokes.length > 0 ? pick : null)
+        onSelect(null)
+        break
+      }
+      case 'moveMulti':
+        if (g.moved) onCommit(d, g.before)
+        break
     }
   }
 
@@ -413,12 +523,43 @@ export default function Canvas({
           })}
           {others.map(renderNode)}
           {doc.strokes.map((s) => (
-            <g key={s.id} data-stroke-id={s.id} className="dg-stroke">
-              <path data-ui d={strokePath(s.points)} className="dg-stroke__hit" />
-              <path d={strokePath(s.points)} fill="none" stroke={s.color} strokeWidth={s.width} strokeLinecap="round" strokeLinejoin="round" />
+            <g key={s.id} data-stroke-id={s.id} className={cx('dg-stroke', selection?.kind === 'stroke' && selection.id === s.id && 'is-selected')} onPointerDown={(e) => startStroke(e, s.id)}>
+              <path data-ui d={strokeD(s)} className="dg-stroke__hit" />
+              <path d={strokeD(s)} fill="none" stroke={s.color} strokeWidth={s.width} strokeOpacity={s.opacity} strokeLinecap="round" strokeLinejoin="round" />
             </g>
           ))}
-          {ink && <path data-ui d={strokePath(ink)} fill="none" stroke={penColor} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />}
+          {ink && (
+            <path
+              data-ui
+              d={strokePath(ink)}
+              fill="none"
+              stroke={penColor}
+              strokeWidth={tool.kind === 'marker' ? MARKER.width : penWidth}
+              strokeOpacity={tool.kind === 'marker' ? MARKER.opacity : penOpacity}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              pointerEvents="none"
+            />
+          )}
+          {draft && <path data-ui d={strokeD(draft)} fill="none" stroke={draft.color} strokeWidth={draft.width} strokeOpacity={draft.opacity} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />}
+          {lasso && <path data-ui d={`${strokePath(lasso)}Z`} className="dg-lasso" pointerEvents="none" />}
+          {selBoxOf(doc, selection, multi) && (() => {
+            const b = selBoxOf(doc, selection, multi)!
+            return (
+              <rect
+                data-ui
+                x={b.x - 6}
+                y={b.y - 6}
+                width={b.w + 12}
+                height={b.h + 12}
+                className="dg-multi"
+                onPointerDown={(e) => {
+                  if (e.button !== 0 || (tool.kind !== 'select' && tool.kind !== 'lasso')) return
+                  startMove(e, multi ?? { nodes: [], strokes: selection?.kind === 'stroke' ? [selection.id] : [] })
+                }}
+              />
+            )
+          })()}
           {selNode && selBox && tool.kind === 'select' && (
             <g data-ui className="dg-sel">
               <rect x={selBox.x - 4} y={selBox.y - 4} width={selBox.w + 8} height={selBox.h + 8} className="dg-sel__box" />
@@ -450,4 +591,33 @@ export default function Canvas({
       </svg>
     </div>
   )
+}
+
+/** Caixa da selecção múltipla, ou do traço seleccionado. */
+function selBoxOf(doc: DiagramDoc, selection: Sel | null, multi: Multi | null): Box | null {
+  const strokes = multi ? multi.strokes : selection?.kind === 'stroke' ? [selection.id] : []
+  const nodes = multi ? multi.nodes : []
+  if (strokes.length + nodes.length === 0) return null
+  let x0 = Infinity
+  let y0 = Infinity
+  let x1 = -Infinity
+  let y1 = -Infinity
+  for (const s of doc.strokes) {
+    if (!strokes.includes(s.id)) continue
+    for (let i = 0; i < s.points.length; i += 2) {
+      x0 = Math.min(x0, s.points[i])
+      y0 = Math.min(y0, s.points[i + 1])
+      x1 = Math.max(x1, s.points[i])
+      y1 = Math.max(y1, s.points[i + 1])
+    }
+  }
+  for (const n of doc.nodes) {
+    if (!nodes.includes(n.id)) continue
+    const b = nodeBox(n)
+    x0 = Math.min(x0, b.x)
+    y0 = Math.min(y0, b.y)
+    x1 = Math.max(x1, b.x + b.w)
+    y1 = Math.max(y1, b.y + b.h)
+  }
+  return Number.isFinite(x0) ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null
 }
