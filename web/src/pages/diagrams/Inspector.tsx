@@ -19,6 +19,11 @@ import {
   DNode,
   edgeTypesFor,
   EdgeType,
+  BOUNDARY_KINDS,
+  BoundaryKind,
+  C4_ELEMENTS,
+  C4_SHAPES,
+  C4Shape,
   DataRole,
   EVENT_GATEWAYS,
   EventTrigger,
@@ -37,6 +42,7 @@ import {
   uid,
 } from './model'
 import { FILLS } from './paint'
+import { CATALOG_CONTAINERS, CATALOG_ITEMS, catalogGroupOf, catalogKey } from './catalog'
 import { Issue, issueParams } from './validate'
 
 export type InspectorTab = 'element' | 'style' | 'layers' | 'lanes' | 'validation'
@@ -416,6 +422,61 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
             </Select>
           </Field>
         )}
+        {(C4_ELEMENTS.has(n.type) || n.type === 'c4DeploymentNode' || n.type === 'resource' || n.type === 'resourceGroup') && (
+          <>
+            {n.type !== 'c4Person' && n.type !== 'c4System' && (
+              <Field label={t('diagrams.inspector.tecnologia')}>
+                <TextInput code value={n.props.technology ?? ''} onChange={(e) => setProps({ technology: e.target.value }, 'tech')} />
+              </Field>
+            )}
+            <Field label={t('diagrams.inspector.descricao')}>
+              <TextArea rows={3} value={n.props.description ?? ''} onChange={(e) => setProps({ description: e.target.value }, 'desc')} />
+            </Field>
+          </>
+        )}
+        {(n.type === 'c4Container' || n.type === 'c4Component') && (
+          <Field label={t('diagrams.inspector.formaC4')}>
+            <Select value={n.props.c4Shape ?? 'app'} onChange={(e) => setProps({ c4Shape: e.target.value as C4Shape })}>
+              {C4_SHAPES.map((k) => (
+                <option key={k} value={k}>
+                  {t(`diagrams.opcoes.c4Forma.${k}`)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+        {(n.type === 'c4Person' || n.type === 'c4System' || n.type === 'c4Container' || n.type === 'c4Component') && (
+          <Toggle label={t('diagrams.inspector.externo')} checked={!!n.props.external} onChange={(e) => setProps({ external: e.target.checked })} />
+        )}
+        {n.type === 'c4Boundary' && (
+          <Field label={t('diagrams.inspector.tipo')}>
+            <Select value={n.props.boundaryKind ?? 'system'} onChange={(e) => setProps({ boundaryKind: e.target.value as BoundaryKind })}>
+              {BOUNDARY_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {t(`diagrams.opcoes.fronteira.${k}`)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+        {(n.type === 'resource' || n.type === 'resourceGroup') && catalogGroupOf(n.props.catalog) && (
+          <Field label={t('diagrams.inspector.tipo')}>
+            <Select
+              value={n.props.catalog}
+              onChange={(e) => setProps({ catalog: e.target.value })}
+            >
+              {CATALOG_ITEMS[catalogGroupOf(n.props.catalog)!]
+                .map((item) => catalogKey(catalogGroupOf(n.props.catalog)!, item))
+                // Trocar de tipo não pode transformar um contentor num cartão (ou o contrário).
+                .filter((k) => CATALOG_CONTAINERS.has(k) === (n.type === 'resourceGroup'))
+                .map((k) => (
+                  <option key={k} value={k}>
+                    {t(`diagramCatalog.itens.${k}`)}
+                  </option>
+                ))}
+            </Select>
+          </Field>
+        )}
         {n.type === 'dataObject' && (
           <>
             <Field label={t('diagrams.inspector.papelDados')}>
@@ -710,8 +771,13 @@ function EdgePanel({ doc, e, onChange, onDelete }: { doc: DiagramDoc; e: DEdge; 
           ))}
         </Select>
       </Field>
+      {(e.type === 'c4Rel' || e.type === 'sync' || e.type === 'async' || e.type === 'dataFlow') && (
+        <Field label={t('diagrams.inspector.tecnologia')}>
+          <TextInput code value={e.technology ?? ''} onChange={(ev) => set({ technology: ev.target.value }, 'tech')} />
+        </Field>
+      )}
       {e.type !== 'anchor' && (
-        <Field label={t('diagrams.inspector.etiqueta')}>
+        <Field label={t(e.type === 'c4Rel' ? 'diagrams.inspector.descricao' : 'diagrams.inspector.etiqueta')}>
           <TextInput value={e.label} placeholder={e.type === 'transition' ? t('diagrams.inspector.transicaoAjuda') : undefined} onChange={(ev) => set({ label: ev.target.value }, 'label')} />
         </Field>
       )}

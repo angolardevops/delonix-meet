@@ -14,6 +14,7 @@ import {
   BPMN_FLOW_NODES,
   canConnect,
   CLASSIFIERS,
+  CONTAINERS,
   EVENT_GATEWAYS,
   FLOW_NODES,
   DEdge,
@@ -77,6 +78,9 @@ export type RuleCode =
   | 'bpmnLigacaoSemPar'
   | 'archSemNome'
   | 'archIsolado'
+  | 'c4RelSemTecnologia'
+  | 'c4RelSemDescricao'
+  | 'c4PessoaDentroFronteira'
   | 'flowSemInicio'
   | 'flowDecisaoSaidas'
   | 'flowDecisaoEtiquetas'
@@ -390,7 +394,24 @@ function validateBpmn(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
 
 function validateArch(doc: DiagramDoc): Issue[] {
   const out: Issue[] = []
-  const comps = doc.nodes.filter((n) => NODE_NOTATION[n.type] === 'arch' && n.type !== 'zone')
+  const byId = new Map(doc.nodes.map((n) => [n.id, n]))
+  for (const e of doc.edges) {
+    if (e.type !== 'c4Rel') continue
+    const a = byId.get(e.from)
+    const b = byId.get(e.to)
+    if (!a || !b) continue
+    const params = { from: label(a), to: label(b) }
+    if (!e.label.trim()) out.push(issue('c4RelSemDescricao', 'warning', [e.id], params))
+    // Entre contentores e componentes a tecnologia é o que o diagrama existe para dizer.
+    const technical = (n: DNode) => n.type === 'c4Container' || n.type === 'c4Component'
+    if ((technical(a) || technical(b)) && !e.technology?.trim()) out.push(issue('c4RelSemTecnologia', 'warning', [e.id], params))
+  }
+  const boundaries = doc.nodes.filter((n) => n.type === 'c4Boundary' && (n.props.boundaryKind ?? 'system') !== 'enterprise')
+  for (const p of doc.nodes.filter((n) => n.type === 'c4Person')) {
+    const inside = boundaries.find((b) => contains(nodeBox(b), center(nodeBox(p))))
+    if (inside) out.push(issue('c4PessoaDentroFronteira', 'warning', [p.id, inside.id], { name: label(p), boundary: label(inside) }))
+  }
+  const comps = doc.nodes.filter((n) => NODE_NOTATION[n.type] === 'arch' && !CONTAINERS.has(n.type))
   for (const n of comps) {
     if (!n.name.trim()) out.push(issue('archSemNome', 'warning', [n.id]))
     if (!doc.edges.some((e) => EDGE_NOTATION[e.type] === 'arch' && (e.from === n.id || e.to === n.id))) {

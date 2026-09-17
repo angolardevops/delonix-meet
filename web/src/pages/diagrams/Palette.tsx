@@ -5,7 +5,7 @@
  * caminho do teclado e do toque); arrastar para o quadro põe-no onde cair.
  * Os itens de ligação escolhem a ferramenta de aresta.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../../ui/icons'
 import { cx, TextInput } from '../../ui/kit'
@@ -13,6 +13,9 @@ import type { Tool } from './Canvas'
 import { PALETTE_MIME } from './Canvas'
 import { DiagramDoc, DNode, Notation, PaletteGroup, PALETTES, PaletteItem } from './model'
 import { PENS } from './paint'
+import { CATALOG_GROUPS, CatalogGroup, catalogVisual, loadCatalogGroup } from './catalog'
+import { loadCatalogLabels } from './catalog/labels'
+import { useCatalogVersion } from './catalog/useCatalog'
 
 /** Glifos da paleta, desenhados como no template (viewBox 22×18). */
 const GLYPH: Record<string, string> = {
@@ -107,6 +110,22 @@ const GLYPH: Record<string, string> = {
   // UML — objectos
   object: 'M2 3h18v12H2zM2 8h18M6 6h10',
   link: 'M2 9h18',
+  // Arquitectura — C4
+  c4Person: 'M11 7a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4 17a4 4 0 0 1 4-8h6a4 4 0 0 1 4 8z',
+  c4PersonExt: 'M11 7a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4 17a4 4 0 0 1 4-8h6a4 4 0 0 1 4 8z',
+  c4System: 'M2 3h18v12H2zM6 8h10M6 11h6',
+  c4SystemExt: 'M2 3h18v12H2zM6 8h10M6 11h6',
+  c4Container: 'M3 3h16v12H3zM7 7h8M7 10h5',
+  c4ContainerDb: 'M11 2c4 0 7 1 7 2.4v9.2c0 1.4-3 2.4-7 2.4s-7-1-7-2.4V4.4C4 3 7 2 11 2ZM4 4.4c0 1.4 3 2.4 7 2.4s7-1 7-2.4',
+  c4ContainerQueue: 'M5 4h12a3 5 0 0 1 0 10H5a3 5 0 0 1 0-10ZM17 4a3 5 0 0 0 0 10',
+  c4ContainerWeb: 'M2 3h18v12H2zM2 6h18M4.5 4.5h.01M6.5 4.5h.01',
+  c4ContainerMobile: 'M7 1h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2ZM10 14h2',
+  c4Component: 'M4 4h14v10H4zM2 6h4M2 9h4',
+  c4Code: 'M8 5 3 9l5 4M14 5l5 4-5 4',
+  c4SystemBoundary: 'M2 2h18v14H2zM4 5h6',
+  c4ContainerBoundary: 'M2 2h18v14H2zM4 5h6',
+  c4DeploymentNode: 'M3 2h16v14H3zM3 5h16',
+  c4Rel: 'M2 9h16M14 5l4 4-4 4',
   // BPMN — quadros-formas
   catchMessage: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 4.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6ZM8.4 7.4h5.2v3.2H8.4zM8.4 7.4 11 9.2l2.6-1.8',
   throwMessage: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 4.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6ZM8.4 7.4h5.2v3.2H8.4zM8.4 7.4 11 9.2l2.6-1.8M9 8.6h4M9 9.6h4',
@@ -172,7 +191,7 @@ const GLYPH: Record<string, string> = {
   flowNote: 'M2 9h2M6 9h2M10 9h2M14 9h2M18 9h2',
 }
 
-const DASHED = new Set(['flowNote', 'group', 'messageFlow', 'dataAssociation', 'boundary', 'external', 'zone', 'partition', 'reply', 'realization', 'dependency', 'usage', 'deploy', 'manifest', 'extend'])
+const DASHED = new Set(['c4SystemBoundary', 'c4ContainerBoundary', 'c4Rel', 'flowNote', 'group', 'messageFlow', 'dataAssociation', 'boundary', 'external', 'zone', 'partition', 'reply', 'realization', 'dependency', 'usage', 'deploy', 'manifest', 'extend'])
 
 const CLOSED_KEY = 'dx-diagram-palette-closed'
 
@@ -196,7 +215,7 @@ function writeClosed(v: Record<string, boolean>) {
 /** Texto em que «Procurar elemento» procura dentro de um elemento do quadro. */
 export function searchableText(n: DNode, typeLabel: string): string[] {
   const p = n.props
-  return [n.name, typeLabel, p.text ?? '', p.stereotype ?? '', p.instanceOf ?? '', p.implementation ?? '', ...(p.attributes ?? []), ...(p.operations ?? [])]
+  return [n.name, typeLabel, p.text ?? '', p.stereotype ?? '', p.instanceOf ?? '', p.implementation ?? '', p.description ?? '', p.technology ?? '', ...(p.attributes ?? []), ...(p.operations ?? [])]
 }
 
 export default function Palette({
@@ -227,8 +246,10 @@ export default function Palette({
     return doc.nodes.filter((n) => searchableText(n, typeLabel(n)).some((s) => s.toLowerCase().includes(q))).slice(0, 12)
   }, [doc.nodes, q, typeLabel])
 
+  useCatalogVersion()
   const groups = PALETTES[notation]
-  const itemLabel = (it: PaletteItem) => t(`diagrams.paleta.itens.${it.key}`)
+  // Itens do catálogo têm chave `grupo.item` e o rótulo na área `diagramCatalog`.
+  const itemLabel = (it: PaletteItem) => (it.key.includes('.') ? t(`diagramCatalog.itens.${it.key}`) : t(`diagrams.paleta.itens.${it.key}`))
   const itemMatches = (g: PaletteGroup, it: PaletteItem) => {
     if (!q) return true
     const words = [itemLabel(it), t(`diagrams.paleta.grupos.${g.key}`)]
@@ -238,6 +259,13 @@ export default function Palette({
   }
   const visible = groups.map((g) => ({ g, items: g.items.filter((it) => itemMatches(g, it)) })).filter((x) => x.items.length > 0)
   const isClosed = (g: PaletteGroup) => (q ? false : closed[`${notation}:${g.key}`] ?? !!g.closed)
+  // O desenho de um grupo do catálogo só se pede quando o grupo está aberto (ou há pesquisa).
+  const openCatalog = notation === 'arch' ? groups.filter((g) => CATALOG_GROUPS.includes(g.key as CatalogGroup) && (q || !isClosed(g))).map((g) => g.key).join(',') : ''
+  useEffect(() => {
+    if (notation !== 'arch') return
+    loadCatalogLabels().catch(() => undefined)
+    for (const g of openCatalog.split(',').filter(Boolean)) loadCatalogGroup(g as CatalogGroup).catch(() => undefined)
+  }, [notation, openCatalog])
   const toggle = (g: PaletteGroup) => {
     const next = { ...closed, [`${notation}:${g.key}`]: !isClosed(g) }
     setClosed(next)
@@ -350,6 +378,28 @@ export default function Palette({
 }
 
 function PaletteGlyph({ it }: { it: PaletteItem }) {
+  if (it.kind === 'node' && it.props?.catalog) {
+    const v = catalogVisual(it.props.catalog)
+    return (
+      <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden="true" className="dg-item__tile">
+        {!v ? (
+          <rect x={2} y={2} width={20} height={20} rx={4} fill="none" stroke="currentColor" strokeDasharray="3 2" />
+        ) : v.abbr ? (
+          <>
+            <rect x={1} y={1} width={22} height={22} rx={5} fill={v.bg} />
+            <text x={12} y={13} fontSize={v.abbr.length > 4 ? 5.5 : 7} fontWeight={700} fill={v.fg} textAnchor="middle" dominantBaseline="middle">
+              {v.abbr}
+            </text>
+          </>
+        ) : (
+          <>
+            <rect x={1} y={1} width={22} height={22} rx={5} fill={v.bg} />
+            <path d={v.glyph} transform="translate(4 4) scale(0.667)" fill="none" stroke={v.fg} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+          </>
+        )}
+      </svg>
+    )
+  }
   return (
     <svg viewBox="0 0 22 18" width={17} height={15} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={DASHED.has(it.key) ? '3 2' : undefined} aria-hidden="true">
       <path d={GLYPH[it.key] ?? GLYPH.process} />

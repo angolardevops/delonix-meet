@@ -12,6 +12,8 @@
  * uma mensagem de sinalização). Não se finge aqui que já existe.
  */
 
+import { CATALOG_CONTAINERS, CATALOG_GROUPS, CATALOG_ITEMS, catalogKey } from './catalog'
+
 export type Notation = 'uml' | 'bpmn' | 'arch' | 'flow' | 'free'
 
 export const NOTATIONS: Notation[] = ['uml', 'bpmn', 'arch', 'flow', 'free']
@@ -76,6 +78,17 @@ export type NodeType =
   | 'client'
   | 'external'
   | 'zone'
+  // Arquitectura — C4
+  | 'c4Person'
+  | 'c4System'
+  | 'c4Container'
+  | 'c4Component'
+  | 'c4Code'
+  | 'c4Boundary'
+  | 'c4DeploymentNode'
+  // Arquitectura — catálogo (cloud, fornecedores, Kubernetes, rede, on-prem, plataforma)
+  | 'resource'
+  | 'resourceGroup'
   // Fluxograma
   | 'terminator'
   | 'process'
@@ -131,6 +144,7 @@ export type EdgeType =
   | 'sync'
   | 'async'
   | 'dataFlow'
+  | 'c4Rel'
   // Fluxograma
   | 'flow'
   | 'flowNote'
@@ -150,6 +164,10 @@ export type GatewayKind = 'exclusive' | 'parallel' | 'inclusive' | 'eventBased' 
 export const GATEWAY_KINDS: GatewayKind[] = ['exclusive', 'parallel', 'inclusive', 'eventBased', 'complex', 'eventInstantiate', 'eventParallel']
 export const EVENT_GATEWAYS: ReadonlySet<GatewayKind> = new Set(['eventBased', 'eventInstantiate', 'eventParallel'])
 export type DataRole = 'none' | 'input' | 'output'
+export type C4Shape = 'app' | 'db' | 'queue' | 'web' | 'mobile'
+export const C4_SHAPES: C4Shape[] = ['app', 'db', 'queue', 'web', 'mobile']
+export type BoundaryKind = 'system' | 'container' | 'enterprise'
+export const BOUNDARY_KINDS: BoundaryKind[] = ['system', 'container', 'enterprise']
 export type MultiInstance = 'none' | 'parallel' | 'sequential'
 export type FragmentOperator = 'alt' | 'opt' | 'loop' | 'par' | 'break' | 'critical' | 'neg' | 'strict' | 'seq' | 'ignore' | 'consider' | 'assert' | 'ref'
 
@@ -190,6 +208,16 @@ export interface NodeProps {
   dataRole?: DataRole
   collection?: boolean
   gatewayKind?: GatewayKind
+  /** C4 e catálogo: descrição curta (o que faz). */
+  description?: string
+  /** C4 e catálogo: tecnologia (`Rust / Axum`, `PostgreSQL 17`). */
+  technology?: string
+  /** C4: elemento externo ao sistema que se está a descrever. */
+  external?: boolean
+  c4Shape?: C4Shape
+  boundaryKind?: BoundaryKind
+  /** Catálogo: chave `grupo.item` (`aws.ec2`, `k8s.pod`). */
+  catalog?: string
   lanes?: Lane[]
   /** Objecto UML: a classe de que é instância (`s1: Session`). */
   instanceOf?: string
@@ -224,6 +252,8 @@ export interface DEdge {
   condition?: string
   /** Fluxo por omissão de uma gateway ou tarefa (BPMN). */
   isDefault?: boolean
+  /** C4 e arquitectura: tecnologia da relação (`HTTPS/JSON`, `gRPC`). */
+  technology?: string
   /** Mensagens de sequência: distância vertical ao topo das linhas de vida. */
   offset?: number
 }
@@ -303,6 +333,15 @@ export const NODE_NOTATION: Record<NodeType, Notation> = {
   client: 'arch',
   external: 'arch',
   zone: 'arch',
+  c4Person: 'arch',
+  c4System: 'arch',
+  c4Container: 'arch',
+  c4Component: 'arch',
+  c4Code: 'arch',
+  c4Boundary: 'arch',
+  c4DeploymentNode: 'arch',
+  resource: 'arch',
+  resourceGroup: 'arch',
   terminator: 'flow',
   process: 'flow',
   decision: 'flow',
@@ -354,12 +393,16 @@ export const EDGE_NOTATION: Record<EdgeType, Notation> = {
   sync: 'arch',
   async: 'arch',
   dataFlow: 'arch',
+  c4Rel: 'arch',
   flow: 'flow',
   flowNote: 'flow',
 }
 
 /** Contentores: desenham-se por baixo e não se ligam por setas de fluxo. */
-export const CONTAINERS: ReadonlySet<NodeType> = new Set(['package', 'fragment', 'boundary', 'pool', 'zone', 'partition', 'compositeState', 'deviceNode', 'group'])
+export const CONTAINERS: ReadonlySet<NodeType> = new Set(['package', 'fragment', 'boundary', 'pool', 'zone', 'partition', 'compositeState', 'deviceNode', 'group', 'c4Boundary', 'c4DeploymentNode', 'resourceGroup'])
+
+/** Elementos C4 (não contentores). */
+export const C4_ELEMENTS: ReadonlySet<NodeType> = new Set(['c4Person', 'c4System', 'c4Container', 'c4Component', 'c4Code'])
 
 /** Nós de actividade UML (ligam-se por fluxo de controlo). */
 export const ACTIVITY_NODES: ReadonlySet<NodeType> = new Set(['initialNode', 'activityFinal', 'flowFinal', 'action', 'decisionNode', 'forkNode', 'objectNode'])
@@ -637,6 +680,26 @@ export const PALETTES: Record<Notation, PaletteGroup[]> = {
   ],
   arch: [
     {
+      key: 'c4',
+      items: [
+        { kind: 'node', key: 'c4Person', type: 'c4Person' },
+        { kind: 'node', key: 'c4PersonExt', type: 'c4Person', props: { external: true } },
+        { kind: 'node', key: 'c4System', type: 'c4System' },
+        { kind: 'node', key: 'c4SystemExt', type: 'c4System', props: { external: true } },
+        { kind: 'node', key: 'c4Container', type: 'c4Container', props: { c4Shape: 'app' } },
+        { kind: 'node', key: 'c4ContainerDb', type: 'c4Container', props: { c4Shape: 'db' } },
+        { kind: 'node', key: 'c4ContainerQueue', type: 'c4Container', props: { c4Shape: 'queue' } },
+        { kind: 'node', key: 'c4ContainerWeb', type: 'c4Container', props: { c4Shape: 'web' } },
+        { kind: 'node', key: 'c4ContainerMobile', type: 'c4Container', props: { c4Shape: 'mobile' } },
+        { kind: 'node', key: 'c4Component', type: 'c4Component' },
+        { kind: 'node', key: 'c4Code', type: 'c4Code' },
+        { kind: 'node', key: 'c4SystemBoundary', type: 'c4Boundary', props: { boundaryKind: 'system' } },
+        { kind: 'node', key: 'c4ContainerBoundary', type: 'c4Boundary', props: { boundaryKind: 'container' } },
+        { kind: 'node', key: 'c4DeploymentNode', type: 'c4DeploymentNode' },
+        { kind: 'edge', key: 'c4Rel', edge: 'c4Rel' },
+      ],
+    },
+    {
       key: 'components',
       items: [
         { kind: 'node', key: 'service', type: 'service' },
@@ -656,6 +719,16 @@ export const PALETTES: Record<Notation, PaletteGroup[]> = {
         { kind: 'node', key: 'note', type: 'note' },
       ],
     },
+    ...CATALOG_GROUPS.map(
+      (g): PaletteGroup => ({
+        key: g,
+        closed: g !== 'cloud',
+        items: CATALOG_ITEMS[g].map((item): PaletteItem => {
+          const key = catalogKey(g, item)
+          return { kind: 'node', key, type: CATALOG_CONTAINERS.has(key) ? 'resourceGroup' : 'resource', props: { catalog: key } }
+        }),
+      }),
+    ),
   ],
   flow: [
     {
@@ -770,6 +843,15 @@ const SIZES: Record<NodeType, [number, number]> = {
   client: [130, 60],
   external: [160, 64],
   zone: [420, 260],
+  c4Person: [170, 150],
+  c4System: [220, 120],
+  c4Container: [220, 120],
+  c4Component: [200, 110],
+  c4Code: [180, 90],
+  c4Boundary: [520, 320],
+  c4DeploymentNode: [420, 280],
+  resource: [190, 56],
+  resourceGroup: [420, 260],
   terminator: [140, 48],
   process: [150, 60],
   decision: [120, 80],
@@ -839,7 +921,7 @@ export function nodeById(doc: Pick<DiagramDoc, 'nodes'>, id: string): DNode | un
 
 const DATA_SIDE: ReadonlySet<NodeType> = new Set(['dataObject', 'annotation', 'dataStore'])
 const USECASE_SIDE: ReadonlySet<NodeType> = new Set(['actor', 'usecase'])
-const ARCH_NODES: ReadonlySet<NodeType> = new Set(['service', 'database', 'queue', 'client', 'external'])
+const ARCH_NODES: ReadonlySet<NodeType> = new Set(['service', 'database', 'queue', 'client', 'external', 'resource', 'c4Person', 'c4System', 'c4Container', 'c4Component', 'c4Code'])
 export const FLOW_NODES: ReadonlySet<NodeType> = new Set([
   'terminator',
   'process',
@@ -924,6 +1006,8 @@ export function canConnect(type: EdgeType, a: DNode, b: DNode): boolean {
     case 'async':
     case 'dataFlow':
       return ARCH_NODES.has(a.type) && ARCH_NODES.has(b.type)
+    case 'c4Rel':
+      return ARCH_NODES.has(a.type) && ARCH_NODES.has(b.type) && (C4_ELEMENTS.has(a.type) || C4_ELEMENTS.has(b.type))
     case 'flow':
       return FLOW_NODES.has(a.type) && FLOW_NODES.has(b.type)
     case 'flowNote':
@@ -957,6 +1041,7 @@ export function defaultEdgeType(a: DNode, b: DNode): EdgeType | null {
     'sequenceFlow',
     'dataAssociation',
     'messageFlow',
+    'c4Rel',
     'sync',
     'flow',
     'flowNote',

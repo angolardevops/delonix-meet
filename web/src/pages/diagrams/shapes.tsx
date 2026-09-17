@@ -9,7 +9,9 @@
 import { memo, ReactNode } from 'react'
 import { CLASS, classifierHeight, LANE_HEADER, objectHeight, poolHeight, Pt, POOL_HEADER } from './geometry'
 import { DEdge, DNode, parseMember } from './model'
-import { FILLS, INK, MONO } from './paint'
+import { catalogVisual } from './catalog'
+import { useCatalogVersion } from './catalog/useCatalog'
+import { C4, FILLS, INK, MONO } from './paint'
 
 const SW = 1.5
 
@@ -191,8 +193,199 @@ function TaskMarker({ kind }: { kind: string | undefined }) {
   }
 }
 
+/** Cor do C4 para o elemento (externos em cinzento). */
+function c4Color(n: DNode): { fill: string; text: string } {
+  const ext = !!n.props.external
+  switch (n.type) {
+    case 'c4Person':
+      return { fill: ext ? C4.personExt : C4.person, text: C4.text }
+    case 'c4System':
+      return { fill: ext ? C4.systemExt : C4.system, text: C4.text }
+    case 'c4Container':
+      return { fill: ext ? C4.containerExt : C4.container, text: C4.text }
+    case 'c4Component':
+      return { fill: ext ? C4.componentExt : C4.component, text: C4.textDark }
+    default:
+      return { fill: C4.code, text: C4.textDark }
+  }
+}
+
 /**
- * Marcadores na base de uma actividade BPMN, lado a lado e centrados:
+ * Elemento C4: nome, a etiqueta `[Contentor: tecnologia]` (vem traduzida em
+ * `sub`) e a descrição. A forma do contentor segue o que ele é: aplicação,
+ * base de dados (cilindro), fila (tubo), web (janela) ou móvel (telefone).
+ */
+function C4Element({ n, sub }: { n: DNode; sub?: string }) {
+  const { fill, text } = c4Color(n)
+  const stroke = n.props.emphasis ? INK.accent : n.type === 'c4Code' ? C4.component : fill
+  const shape = n.type === 'c4Container' || n.type === 'c4Component' ? n.props.c4Shape ?? 'app' : 'app'
+  const person = n.type === 'c4Person'
+  const top = person ? 44 : shape === 'db' ? 16 : shape === 'web' ? 14 : shape === 'mobile' ? 10 : 0
+  const bodyH = n.h - top
+  const desc = n.props.description?.trim() ?? ''
+  const nameLines = wrapText(n.name, n.w - 24, 12, 2)
+  const descLines = desc ? wrapText(desc, n.w - 24, 9.5, Math.max(1, Math.floor((bodyH - 44) / 12))) : []
+  const block = nameLines.length * 15 + (sub ? 14 : 0) + (descLines.length ? 6 + descLines.length * 12 : 0)
+  let y = top + bodyH / 2 - block / 2 + 7
+  const body = (() => {
+    if (person) {
+      return (
+        <>
+          <circle cx={n.w / 2} cy={24} r={22} fill={fill} stroke={stroke} strokeWidth={1.2} />
+          <rect y={top - 4} width={n.w} height={bodyH + 4} rx={22} fill={fill} stroke={stroke} strokeWidth={1.2} />
+        </>
+      )
+    }
+    if (shape === 'db') {
+      const ry = 12
+      return (
+        <>
+          <path d={`M0 ${ry}V${n.h - ry}A${n.w / 2} ${ry} 0 0 0 ${n.w} ${n.h - ry}V${ry}`} fill={fill} stroke={stroke} strokeWidth={1.2} />
+          <ellipse cx={n.w / 2} cy={ry} rx={n.w / 2} ry={ry} fill={fill} stroke={INK.surface} strokeOpacity={0.6} strokeWidth={1.2} />
+        </>
+      )
+    }
+    if (shape === 'queue') {
+      const rx = 14
+      return (
+        <>
+          <path d={`M${rx} 0H${n.w - rx}A${rx} ${n.h / 2} 0 0 1 ${n.w - rx} ${n.h}H${rx}A${rx} ${n.h / 2} 0 0 1 ${rx} 0Z`} fill={fill} stroke={stroke} strokeWidth={1.2} />
+          <path d={`M${n.w - rx} 0A${rx} ${n.h / 2} 0 0 0 ${n.w - rx} ${n.h}`} fill="none" stroke={INK.surface} strokeOpacity={0.6} strokeWidth={1.2} />
+        </>
+      )
+    }
+    if (shape === 'web') {
+      return (
+        <>
+          <rect width={n.w} height={n.h} rx={6} fill={fill} stroke={stroke} strokeWidth={1.2} />
+          <path d={`M0 ${top}H${n.w}`} stroke={INK.surface} strokeOpacity={0.6} strokeWidth={1} />
+          <g fill={INK.surface} fillOpacity={0.7}>
+            <circle cx={9} cy={7} r={2} />
+            <circle cx={16} cy={7} r={2} />
+            <circle cx={23} cy={7} r={2} />
+          </g>
+        </>
+      )
+    }
+    if (shape === 'mobile') {
+      return (
+        <>
+          <rect width={n.w} height={n.h} rx={14} fill={fill} stroke={stroke} strokeWidth={1.2} />
+          <path d={`M${n.w / 2 - 12} 5H${n.w / 2 + 12}`} stroke={INK.surface} strokeOpacity={0.7} strokeWidth={2} strokeLinecap="round" />
+          <path d={`M${n.w / 2 - 8} ${n.h - 5}H${n.w / 2 + 8}`} stroke={INK.surface} strokeOpacity={0.7} strokeWidth={2} strokeLinecap="round" />
+        </>
+      )
+    }
+    return <rect width={n.w} height={n.h} rx={n.type === 'c4Code' ? 2 : 6} fill={fill} stroke={stroke} strokeWidth={1.2} />
+  })()
+  const out: ReactNode[] = []
+  nameLines.forEach((l, i) => {
+    out.push(
+      <text key={`n${i}`} x={n.w / 2} y={y} fontSize={12} fontWeight={700} fill={text} textAnchor="middle">
+        {l}
+      </text>,
+    )
+    y += 15
+  })
+  if (sub) {
+    out.push(
+      <text key="sub" x={n.w / 2} y={y - 2} fontSize={9} fill={text} fillOpacity={0.85} textAnchor="middle">
+        {sub}
+      </text>,
+    )
+    y += 14
+  }
+  if (descLines.length) {
+    y += 4
+    descLines.forEach((l, i) => {
+      out.push(
+        <text key={`d${i}`} x={n.w / 2} y={y + i * 12} fontSize={9.5} fill={text} textAnchor="middle">
+          {l}
+        </text>,
+      )
+    })
+  }
+  return (
+    <>
+      {body}
+      {out}
+    </>
+  )
+}
+
+const HEPTAGON = (() => {
+  const pts: string[] = []
+  for (let i = 0; i < 7; i++) {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / 7
+    pts.push(`${(18 + 17 * Math.cos(a)).toFixed(2)} ${(18 + 17 * Math.sin(a)).toFixed(2)}`)
+  }
+  return `M${pts.join('L')}Z`
+})()
+
+/** Mosaico do catálogo: glifo genérico (ou abreviatura) sobre a cor do grupo. */
+function Tile({ catalog, size = 36 }: { catalog?: string; size?: number }) {
+  useCatalogVersion()
+  const v = catalogVisual(catalog)
+  const k = size / 36
+  if (!v) return <rect width={size} height={size} rx={6 * k} fill={INK.header} stroke={INK.grid} />
+  return (
+    <g transform={`scale(${k})`}>
+      {v.heptagon ? <path d={HEPTAGON} fill={v.bg} /> : <rect width={36} height={36} rx={6} fill={v.bg} />}
+      {v.abbr ? (
+        <text x={18} y={19} fontSize={v.abbr.length > 4 ? 8 : 10} fontWeight={700} fill={v.fg} textAnchor="middle" dominantBaseline="middle" fontFamily={MONO}>
+          {v.abbr}
+        </text>
+      ) : (
+        <path d={v.glyph} transform="translate(6 6)" fill="none" stroke={v.fg} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
+      )}
+    </g>
+  )
+}
+
+function Resource({ n, sub }: { n: DNode; sub?: string }) {
+  const stroke = strokeOf(n)
+  const tile = Math.min(36, n.h - 12)
+  const tx = 8 + tile + 9
+  const lines = wrapText(n.name, n.w - tx - 8, 11, sub ? 1 : 2)
+  return (
+    <>
+      <rect width={n.w} height={n.h} rx={6} fill={fillOf(n, INK.surface)} stroke={stroke} strokeWidth={1.3} />
+      <g transform={`translate(8 ${(n.h - tile) / 2})`}>
+        <Tile catalog={n.props.catalog} size={tile} />
+      </g>
+      <Lines lines={lines} x={tx} y={sub ? n.h / 2 - 7 : n.h / 2} size={11} weight={700} anchor="start" />
+      {sub && (
+        <text x={tx} y={n.h / 2 + 10} fontSize={8.5} fill={INK.muted} fontFamily={MONO}>
+          {wrapText(sub, n.w - tx - 8, 8.5, 1)[0]}
+        </text>
+      )}
+    </>
+  )
+}
+
+function ResourceGroup({ n, sub }: { n: DNode; sub?: string }) {
+  useCatalogVersion()
+  const v = catalogVisual(n.props.catalog)
+  const color = v?.bg ?? INK.muted
+  return (
+    <>
+      <rect width={n.w} height={n.h} rx={6} fill={fillOf(n, INK.surface)} fillOpacity={n.fill ? 0.5 : 0.35} stroke={color} strokeWidth={1.5} strokeDasharray="7 4" />
+      <g transform="translate(8 8)">
+        <Tile catalog={n.props.catalog} size={22} />
+      </g>
+      <text x={38} y={sub ? 17 : 23} fontSize={11} fontWeight={700} fill={INK.ink}>
+        {n.name}
+      </text>
+      {sub && (
+        <text x={38} y={30} fontSize={8.5} fill={INK.muted} fontFamily={MONO}>
+          {sub}
+        </text>
+      )}
+    </>
+  )
+}
+
+/** Marcadores na base de uma actividade BPMN, lado a lado e centrados:
  * ciclo, multi-instância, compensação, ad-hoc e o «+» do subprocesso.
  */
 function ActivityMarkers({ n }: { n: DNode }) {
@@ -725,6 +918,40 @@ function NodeBody({ n, sub }: { n: DNode; sub?: string }): ReactNode {
           </text>
         </>
       )
+    case 'c4Person':
+    case 'c4System':
+    case 'c4Container':
+    case 'c4Component':
+    case 'c4Code':
+      return <C4Element n={n} sub={sub} />
+    case 'c4Boundary':
+    case 'c4DeploymentNode':
+      return (
+        <>
+          <rect
+            width={n.w}
+            height={n.h}
+            rx={n.type === 'c4DeploymentNode' ? 8 : 2}
+            fill={fillOf(n, INK.surface)}
+            fillOpacity={n.fill ? 0.5 : 0}
+            stroke={n.type === 'c4DeploymentNode' ? C4.node : C4.boundary}
+            strokeWidth={1.4}
+            strokeDasharray={n.type === 'c4Boundary' ? '8 4' : undefined}
+          />
+          <text x={10} y={18} fontSize={11.5} fontWeight={700} fill={INK.ink}>
+            {n.name}
+          </text>
+          {sub && (
+            <text x={10} y={32} fontSize={9} fill={INK.muted}>
+              {sub}
+            </text>
+          )}
+        </>
+      )
+    case 'resource':
+      return <Resource n={n} sub={sub} />
+    case 'resourceGroup':
+      return <ResourceGroup n={n} sub={sub} />
     case 'terminator':
       return (
         <>
@@ -1024,6 +1251,8 @@ export function edgeStyle(e: DEdge, sourceType?: DNode['type']): EdgeStyle {
       return { dash: '7 4', start: null, end: 'open', color: ink }
     case 'dataFlow':
       return { dash: '2 3', start: null, end: 'filled', color: INK.muted }
+    case 'c4Rel':
+      return { dash: '6 3', start: null, end: 'open', color: C4.rel }
     case 'flow':
       return { start: null, end: 'filled', color: ink }
     case 'flowNote':
@@ -1063,7 +1292,7 @@ export const EdgeShape = memo(function EdgeShape({ e, a, b, sourceType, selfLoop
   const nearB = { x: b.x - ux * 18 - uy * 9, y: b.y - uy * 18 + ux * 9 }
   const horizontalMsg = e.type === 'message' || e.type === 'reply' || e.type === 'lostMessage' || e.type === 'foundMessage'
   const labelAt = { x: mid.x - uy * 9, y: mid.y + ux * 9 - (horizontalMsg ? 16 : 0) }
-  const text = [st.keyword, e.label.trim(), e.condition?.trim() ? `[${e.condition.trim()}]` : ''].filter(Boolean).join(' ')
+  const text = [st.keyword, e.label.trim(), e.condition?.trim() ? `[${e.condition.trim()}]` : '', e.technology?.trim() ? `[${e.technology.trim()}]` : ''].filter(Boolean).join(' ')
   return (
     <>
       <path d={d} fill="none" stroke={st.color} strokeWidth={e.type === 'anchor' ? 1 : SW} strokeDasharray={st.dash} />

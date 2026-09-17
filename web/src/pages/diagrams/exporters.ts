@@ -979,6 +979,88 @@ export function toBpmn(doc: DiagramDoc): string {
 }
 
 // ---------------------------------------------------------------------------
+//  C4-PlantUML (arquitectura)
+// ---------------------------------------------------------------------------
+
+const c4Quote = (s: string) => `"${s.replace(/"/g, "'").replace(/\n/g, ' ').trim()}"`
+
+/**
+ * Arquitectura em C4-PlantUML (biblioteca padrão do PlantUML, `<C4/...>`).
+ * Os elementos C4 saem com as macros deles; os outros componentes de
+ * arquitectura (serviço, base de dados, fila, recursos do catálogo) saem como
+ * contentores, com o tipo como tecnologia — o diagrama continua a renderizar.
+ * As fronteiras e os nós de implantação aninham pelo desenho.
+ */
+export function toC4PlantUml(doc: DiagramDoc, typeName: (n: DNode) => string = (n) => n.props.catalog ?? n.type): string {
+  const nodes = doc.nodes.filter((n) => NODE_NOTATION[n.type] === 'arch' && n.type !== 'zone')
+  const ids = new Set(nodes.map((n) => n.id))
+  const alias = (n: DNode) => `e_${n.id.replace(/[^A-Za-z0-9_]/g, '_')}`
+  const boxes = nodes.filter((n) => n.type === 'c4Boundary' || n.type === 'c4DeploymentNode' || n.type === 'resourceGroup')
+  const parentOf = (n: DNode) => boxes.filter((b) => b.id !== n.id && insideBox(n, b) && b.w * b.h > n.w * n.h).sort((a, b) => a.w * a.h - b.w * b.h)[0]
+  const hasDeployment = nodes.some((n) => n.type === 'c4DeploymentNode' || n.type === 'resourceGroup')
+  const hasComponent = nodes.some((n) => n.type === 'c4Component' || n.type === 'c4Code')
+  const lines: string[] = [`@startuml ${fileBase(doc.title)}_c4`]
+  if (hasDeployment) lines.push('!include <C4/C4_Deployment>')
+  if (hasComponent || !hasDeployment) lines.push(hasComponent ? '!include <C4/C4_Component>' : '!include <C4/C4_Container>')
+  lines.push(`title ${doc.title.replace(/\n/g, ' ')}`)
+  const q = (v: string | undefined) => c4Quote(v ?? '')
+  const decl = (n: DNode, ind: string) => {
+    const a = alias(n)
+    const name = q(n.name || typeName(n))
+    const desc = n.props.description?.trim()
+    const tech = n.props.technology?.trim()
+    const ext = n.props.external ? '_Ext' : ''
+    const kids = nodes.filter((c) => parentOf(c)?.id === n.id)
+    const block = (open: string) => {
+      lines.push(`${ind}${open} {`)
+      for (const k of kids) decl(k, `${ind}  `)
+      lines.push(`${ind}}`)
+    }
+    switch (n.type) {
+      case 'c4Person':
+        lines.push(`${ind}Person${ext}(${a}, ${name}${desc ? `, ${q(desc)}` : ''})`)
+        break
+      case 'c4System':
+        lines.push(`${ind}System${ext}(${a}, ${name}${desc ? `, ${q(desc)}` : ''})`)
+        break
+      case 'c4Container':
+      case 'c4Component':
+      case 'c4Code': {
+        const base = n.type === 'c4Container' ? 'Container' : 'Component'
+        const shape = n.props.c4Shape === 'db' ? 'Db' : n.props.c4Shape === 'queue' ? 'Queue' : ''
+        const t = n.type === 'c4Code' ? tech || 'code' : tech ?? ''
+        lines.push(`${ind}${base}${shape}${ext}(${a}, ${name}, ${q(t)}${desc ? `, ${q(desc)}` : ''})`)
+        break
+      }
+      case 'c4Boundary': {
+        const k = n.props.boundaryKind ?? 'system'
+        block(`${k === 'container' ? 'Container_Boundary' : k === 'enterprise' ? 'Enterprise_Boundary' : 'System_Boundary'}(${a}, ${name})`)
+        break
+      }
+      case 'c4DeploymentNode':
+      case 'resourceGroup':
+        block(`Deployment_Node(${a}, ${name}, ${q(tech || (n.type === 'resourceGroup' ? typeName(n) : ''))}${desc ? `, ${q(desc)}` : ''})`)
+        break
+      default: {
+        const shape = n.type === 'database' ? 'Db' : n.type === 'queue' ? 'Queue' : ''
+        const t = n.type === 'resource' ? tech || typeName(n) : tech || n.props.stereotype || ''
+        lines.push(`${ind}${n.type === 'external' ? 'System_Ext' : `Container${shape}`}(${a}, ${name}${n.type === 'external' ? '' : `, ${q(t)}`}${desc ? `, ${q(desc)}` : ''})`)
+      }
+    }
+  }
+  for (const n of nodes.filter((x) => !parentOf(x))) decl(n, '')
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  for (const e of doc.edges) {
+    if (EDGE_NOTATION[e.type] !== 'arch' || !ids.has(e.from) || !ids.has(e.to)) continue
+    const tech = e.technology?.trim()
+    const label = e.label.trim() || (e.type === 'async' ? 'async' : '')
+    lines.push(`Rel(${alias(byId.get(e.from)!)}, ${alias(byId.get(e.to)!)}, ${q(label)}${tech ? `, ${q(tech)}` : ''})`)
+  }
+  lines.push('@enduml')
+  return lines.join('\n') + '\n'
+}
+
+// ---------------------------------------------------------------------------
 //  SVG e JSON
 // ---------------------------------------------------------------------------
 

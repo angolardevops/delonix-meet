@@ -27,7 +27,7 @@ import { DelonixSymbol, Icon } from '../ui/icons'
 import { Alert, Button, cx, IconButton, Spinner } from '../ui/kit'
 import '../ui/diagrams.css'
 import Canvas, { Sel, Tool, View } from './diagrams/Canvas'
-import { fileBase, parseJson, toBpmn, toJson, toPlantUml, toXmi } from './diagrams/exporters'
+import { fileBase, parseJson, toBpmn, toC4PlantUml, toJson, toPlantUml, toXmi } from './diagrams/exporters'
 import { clampZoom, contentBox, fitView, laneOf, nodeBox, Pt } from './diagrams/geometry'
 import Inspector, { InspectorTab, tabsFor } from './diagrams/Inspector'
 import {
@@ -54,12 +54,17 @@ import SaveDialog from './diagrams/SaveDialog'
 import { downloadBlob, downloadText, pngFromSvg, svgFromCanvas } from './diagrams/snapshot'
 import { getDiagram, putDiagram } from './diagrams/store'
 import { applyFix, fixAll, Issue, issueParams, validate } from './diagrams/validate'
-import { example, hasExample } from './diagrams/examples'
+import { example, examplesFor } from './diagrams/examples'
+import { ensureCatalog } from './diagrams/catalog'
+import { loadCatalogLabels } from './diagrams/catalog/labels'
+import { useCatalogVersion } from './diagrams/catalog/useCatalog'
+import i18n from 'i18next'
+import { resolveLang } from '../i18n'
 
 type Load = { s: 'loading' } | { s: 'ready' } | { s: 'missing' } | { s: 'error' }
 type Persist = 'idle' | 'saving' | 'saved' | 'error'
 type Notice = { tone: 'success' | 'danger' | 'warning'; text: string; link?: boolean } | null
-type ExportKind = 'xmi' | 'plantuml' | 'bpmn' | 'svg' | 'png' | 'json'
+type ExportKind = 'xmi' | 'plantuml' | 'bpmn' | 'c4' | 'svg' | 'png' | 'json'
 
 const HISTORY_MAX = 100
 
@@ -68,10 +73,16 @@ function roomFromHash(): string {
   return m ? m[1] : ''
 }
 
-/** `?tipo=bpmn` escolhe a notação de um quadro novo; `?exemplo=1` começa do exemplo. */
-function startFromHash(): { notation: Notation; example: boolean } {
+/**
+ * `?tipo=bpmn` escolhe a notação de um quadro novo; `?exemplo=1` começa do
+ * (primeiro) exemplo dela, `?exemplo=cloud` de um exemplo pelo nome.
+ */
+function startFromHash(): { notation: Notation; example: string | null } {
   const tipo = location.hash.match(/[?&]tipo=([a-z]+)/)?.[1] as Notation | undefined
-  return { notation: tipo && NOTATIONS.includes(tipo) ? tipo : 'uml', example: /[?&]exemplo=1/.test(location.hash) }
+  const notation = tipo && NOTATIONS.includes(tipo) ? tipo : 'uml'
+  const asked = location.hash.match(/[?&]exemplo=([a-z0-9]+)/)?.[1]
+  const variants = examplesFor(notation)
+  return { notation, example: !asked ? null : asked === '1' ? variants[0] ?? null : variants.includes(asked) ? asked : null }
 }
 
 function isTyping(el: EventTarget | null): boolean {
@@ -83,6 +94,8 @@ function isTyping(el: EventTarget | null): boolean {
 export default function Diagram({ id }: { id: string | null }) {
   const { t } = useTranslation()
   const { setNavOpen } = useShell()
+  // Os rótulos e desenhos do catálogo chegam depois: re-desenha quando chegam.
+  useCatalogVersion()
   const [load, setLoad] = useState<Load>({ s: 'loading' })
   const [doc, setDoc] = useState<DiagramDoc | null>(null)
   const past = useRef<DiagramDoc[]>([])
@@ -120,8 +133,8 @@ export default function Diagram({ id }: { id: string | null }) {
       fitted.current = false
       const start = startFromHash()
       const base = emptyDoc(uid('d'), t('diagrams.semTitulo'), start.notation, roomFromHash())
-      const sample = start.example ? example(start.notation, (k) => t(`diagrams.exemplos.${k}`)) : null
-      const fresh = sample ? { ...base, title: t(`diagrams.exemplos.${start.notation}.nome`), ...sample } : base
+      const sample = start.example ? example(start.example, (k) => t(`diagrams.exemplos.${k}`)) : null
+      const fresh = sample ? { ...base, title: t(`diagrams.exemplos.${start.example}.nome`), ...sample } : base
       loadedId.current = fresh.id
       setDoc(fresh)
       // Um exemplo abre com o elemento em destaque seleccionado, como o template.
@@ -154,6 +167,23 @@ export default function Diagram({ id }: { id: string | null }) {
       live = false
     }
   }, [id, t])
+
+  // Catálogo de arquitectura: carrega os grupos que o quadro usa e os rótulos
+  // (na língua activa e sempre que ela muda).
+  const catalogKeys = doc ? doc.nodes.map((n) => n.props.catalog).filter(Boolean).sort().join(',') : ''
+  const needsCatalog = doc?.notation === 'arch' || catalogKeys !== ''
+  useEffect(() => {
+    if (!needsCatalog) return
+    const failed = () => setNotice({ tone: 'danger', text: t('diagrams.catalogo.erro') })
+    loadCatalogLabels().catch(failed)
+    ensureCatalog(catalogKeys.split(',')).catch(failed)
+    const onLang = (lng: string) => {
+      const lang = resolveLang(lng)
+      if (lang) loadCatalogLabels(lang).catch(failed)
+    }
+    i18n.on('languageChanged', onLang)
+    return () => i18n.off('languageChanged', onLang)
+  }, [needsCatalog, catalogKeys, t])
 
   // Gravação automática, meio segundo depois da última alteração.
   useEffect(() => {
@@ -248,19 +278,45 @@ export default function Diagram({ id }: { id: string | null }) {
   // ---------------------------------------------------------------- derivados
   const notation: Notation = doc?.notation ?? 'uml'
   const issues = useMemo(() => (doc ? validate(doc, notation) : []), [doc, notation])
-  const typeLabel = useCallback((n: DNode) => t(`diagrams.tipos.${n.type}`), [t])
+  const typeLabel = useCallback(
+    (n: DNode) => (n.props.catalog && (n.type === 'resource' || n.type === 'resourceGroup') ? t(`diagramCatalog.itens.${n.props.catalog}`) : t(`diagrams.tipos.${n.type}`)),
+    [t],
+  )
   // Linha secundária das tarefas BPMN: o executor, ou o tipo («service task»).
+  // Linha secundária do C4 («[Contentor: Rust]») e do catálogo (tecnologia, ou o tipo quando o nome é outro).
   const subLabel = useCallback(
-    (n: DNode) =>
-      n.type !== 'task'
-        ? undefined
-        : n.props.implementation?.trim() || (n.props.taskKind && n.props.taskKind !== 'none' ? t(`diagrams.opcoes.tarefaCurta.${n.props.taskKind}`) : undefined),
+    (n: DNode) => {
+      const tech = n.props.technology?.trim()
+      switch (n.type) {
+        case 'task':
+          return n.props.implementation?.trim() || (n.props.taskKind && n.props.taskKind !== 'none' ? t(`diagrams.opcoes.tarefaCurta.${n.props.taskKind}`) : undefined)
+        case 'c4Person':
+        case 'c4System':
+          return t(`diagrams.c4.tag.${n.type}${n.props.external ? 'Ext' : ''}`)
+        case 'c4Container':
+        case 'c4Component':
+        case 'c4Code':
+          return tech ? t(`diagrams.c4.tag.${n.type}Tech`, { tech }) : t(`diagrams.c4.tag.${n.type}`)
+        case 'c4Boundary':
+          return t(`diagrams.c4.fronteira.${n.props.boundaryKind ?? 'system'}`)
+        case 'c4DeploymentNode':
+          return tech ? `[${tech}]` : undefined
+        case 'resource':
+        case 'resourceGroup': {
+          if (tech) return tech
+          const type = n.props.catalog ? t(`diagramCatalog.itens.${n.props.catalog}`) : ''
+          return type && type !== n.name.trim() ? type : undefined
+        }
+        default:
+          return undefined
+      }
+    },
     [t],
   )
 
   // ---------------------------------------------------------------- criar
   function defaultName(d: DiagramDoc, type: DNode['type'], key: string): string {
-    const base = t(`diagrams.novos.${key}`)
+    const base = key.includes('.') ? t(`diagramCatalog.itens.${key}`) : t(`diagrams.novos.${key}`)
     if (!base) return ''
     const tight = CLASSIFIERS.has(type) || type === 'lifeline'
     const taken = new Set(d.nodes.map((n) => n.name))
@@ -432,8 +488,12 @@ export default function Diagram({ id }: { id: string | null }) {
       if (kind === 'xmi') downloadText((file = `${base}.xmi`), toXmi(doc), 'application/xml')
       if (kind === 'plantuml') downloadText((file = `${base}.puml`), toPlantUml(doc), 'text/plain')
       if (kind === 'bpmn') downloadText((file = `${base}.bpmn`), toBpmn(doc), 'application/xml')
+      if (kind === 'c4') downloadText((file = `${base}.c4.puml`), toC4PlantUml(doc, typeLabel), 'text/plain')
       if (kind === 'json') downloadText((file = `${base}.delonix-diagram.json`), toJson(doc), 'application/json')
       if (kind === 'svg' || kind === 'png') {
+        // O desenho dos grupos do catálogo tem de estar no ecrã antes de se copiar o SVG.
+        await ensureCatalog(doc.nodes.map((n) => n.props.catalog))
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
         const svg = svgFromCanvas(svgRef.current!, doc)
         if (kind === 'svg') downloadText((file = `${base}.svg`), svg, 'image/svg+xml')
         else downloadBlob((file = `${base}.png`), (await pngFromSvg(svg)).blob)
@@ -533,7 +593,13 @@ export default function Diagram({ id }: { id: string | null }) {
   const d = doc!
   const primaryExport: ExportKind = notation === 'uml' ? 'xmi' : notation === 'bpmn' ? 'bpmn' : 'svg'
   const formats: ExportKind[] =
-    notation === 'uml' ? ['xmi', 'plantuml', 'svg', 'png', 'json'] : notation === 'bpmn' ? ['bpmn', 'svg', 'png', 'json'] : ['svg', 'png', 'json']
+    notation === 'uml'
+      ? ['xmi', 'plantuml', 'svg', 'png', 'json']
+      : notation === 'bpmn'
+        ? ['bpmn', 'svg', 'png', 'json']
+        : notation === 'arch'
+          ? ['svg', 'c4', 'png', 'json']
+          : ['svg', 'png', 'json']
   const empty = d.nodes.length === 0 && d.strokes.length === 0
   const first = issues[0]
 
@@ -705,21 +771,23 @@ export default function Diagram({ id }: { id: string | null }) {
           {empty && (
             <div className="dg-hint" aria-live="polite">
               <p>{t(notation === 'free' ? 'diagrams.canvas.vazioLivre' : 'diagrams.canvas.vazio')}</p>
-              {hasExample(notation) && (
+              {examplesFor(notation).map((variant, _i, all) => (
                 <Button
+                  key={variant}
                   size="sm"
                   variant="outline"
                   icon="sparkles"
+                  data-example={variant}
                   onClick={() => {
-                    const sample = example(notation, (k) => t(`diagrams.exemplos.${k}`))
+                    const sample = example(variant, (k) => t(`diagrams.exemplos.${k}`))
                     if (!sample) return
-                    commit({ ...d, ...sample, title: d.title === t('diagrams.semTitulo') ? t(`diagrams.exemplos.${notation}.nome`) : d.title })
+                    commit({ ...d, ...sample, title: d.title === t('diagrams.semTitulo') ? t(`diagrams.exemplos.${variant}.nome`) : d.title })
                     fitted.current = false
                   }}
                 >
-                  {t('diagrams.canvas.exemplo')}
+                  {all.length > 1 ? t('diagrams.canvas.exemploDe', { nome: t(`diagrams.exemplos.${variant}.nome`) }) : t('diagrams.canvas.exemplo')}
                 </Button>
-              )}
+              ))}
             </div>
           )}
 
@@ -789,7 +857,10 @@ export default function Diagram({ id }: { id: string | null }) {
           title={d.title}
           roomCode={d.roomCode}
           empty={empty}
-          makePng={async () => (await pngFromSvg(svgFromCanvas(svgRef.current!, d))).base64}
+          makePng={async () => {
+            await ensureCatalog(d.nodes.map((n) => n.props.catalog))
+            return (await pngFromSvg(svgFromCanvas(svgRef.current!, d))).base64
+          }}
           onClose={() => setSaving(false)}
           onSaved={onSaved}
         />
@@ -814,7 +885,7 @@ function summary(t: (k: string, o?: Record<string, unknown>) => string, d: Diagr
     u('pistas', pools.reduce((s, p) => s + (p.props.lanes?.length ?? 0), 0))
     u('elementos', d.nodes.filter((n) => NODE_NOTATION[n.type] === 'bpmn' && n.type !== 'pool').length)
   } else if (notation === 'arch') {
-    u('componentes', of(['service', 'database', 'queue', 'client', 'external']))
+    u('componentes', d.nodes.filter((n) => NODE_NOTATION[n.type] === 'arch' && !CONTAINERS.has(n.type)).length)
     u('ligacoes', edges('arch'))
   } else if (notation === 'flow') {
     u('formas', d.nodes.filter((n) => FLOW_NODES.has(n.type)).length)

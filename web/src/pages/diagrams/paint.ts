@@ -45,5 +45,26 @@ export const PENS: Record<string, string> = {
   green: '#1e7a4a',
 }
 
+/**
+ * Convenção de cores do C4 (C4-PlantUML, MIT): pessoa, sistema, contentor e
+ * componente em azuis que escurecem com o nível; externos em cinzento.
+ */
+export const C4 = {
+  person: '#08427b',
+  personExt: '#686868',
+  system: '#1168bd',
+  systemExt: '#999999',
+  container: '#438dd5',
+  containerExt: '#b3b3b3',
+  component: '#85bbf0',
+  componentExt: '#cccccc',
+  code: '#e9f2fb',
+  boundary: '#444444',
+  node: '#888888',
+  text: '#ffffff',
+  textDark: '#0b0b0c',
+  rel: '#707070',
+} as const
+
 export const FONT = "Archivo, 'Helvetica Neue', Arial, sans-serif"
 export const MONO = "'DM Mono', ui-monospace, Menlo, monospace"
