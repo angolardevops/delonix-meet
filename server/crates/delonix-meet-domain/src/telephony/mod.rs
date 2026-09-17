@@ -22,3 +22,4 @@ pub mod dial_plan;
 pub mod money;
 pub mod number;
 pub mod ports;
+pub mod trunk;
