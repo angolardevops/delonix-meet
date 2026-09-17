@@ -1,4 +1,4 @@
-//! «A minha conta» contra Postgres e servidor reais (R204–R206): perfil com
+//! «A minha conta» contra Postgres e servidor reais (R204–R207): perfil com
 //! campos geridos pelo Odoo, fotografia, preferências de entrada (e a gravação
 //! que pede confirmação), preferências de notificação, guia e «Novo PIN».
 mod common;
@@ -416,7 +416,7 @@ async fn notification_preferences_are_honest_and_enforced(db: sqlx::PgPool) {
     );
 }
 
-/// R208 — guia: passos validados contra a lista versionada, «N de M», saltar e
+/// R207 — guia: passos validados contra a lista versionada, «N de M», saltar e
 /// recomeçar; «Novo PIN» só com dial-in, e o antigo deixa de valer.
 #[sqlx::test(migrations = "./migrations")]
 async fn tour_progress_and_new_pin(db: sqlx::PgPool) {

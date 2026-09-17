@@ -151,7 +151,7 @@ fn avatar_url(user_id: Uuid, at: Option<DateTime<Utc>>) -> Option<String> {
     at.map(|t| format!("/api/users/{user_id}/avatar?v={}", t.timestamp_millis()))
 }
 
-async fn build_profile(state: &AppState, user_id: Uuid) -> Result<Profile, ApiError> {
+pub(crate) async fn build_profile(state: &AppState, user_id: Uuid) -> Result<Profile, ApiError> {
     let r = load_row(state, user_id).await?;
     let m = crate::org::primary_membership(state, user_id).await?;
     let managed_by = r.odoo_managed.then(|| ManagedBy {
@@ -759,7 +759,7 @@ pub struct PutNotificationPreferencesReq {
     pub preferences: Vec<NotificationPreferenceItem>,
 }
 
-async fn load_notification_preferences(
+pub(crate) async fn load_notification_preferences(
     state: &AppState,
     user_id: Uuid,
 ) -> Result<NotificationPreferences, ApiError> {
@@ -929,7 +929,7 @@ pub struct TourStepReq {
     pub completed: bool,
 }
 
-async fn load_tour(db: &sqlx::PgPool, user_id: Uuid) -> Result<TourState, ApiError> {
+pub(crate) async fn load_tour(db: &sqlx::PgPool, user_id: Uuid) -> Result<TourState, ApiError> {
     let row: Option<(bool, Vec<String>, Option<DateTime<Utc>>)> = sqlx::query_as(
         "SELECT enabled, completed_steps, skipped_at FROM user_tour_state WHERE user_id = $1",
     )

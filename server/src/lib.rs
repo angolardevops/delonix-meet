@@ -13,6 +13,7 @@ mod auth;
 mod broadcast;
 pub mod config;
 mod crypto;
+pub mod data_exports;
 mod dlp;
 mod error;
 pub mod grpc;
@@ -353,6 +354,23 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/users/me/tour/skip", post(account::skip_tour))
         .route("/api/users/me/tour/restart", post(account::restart_tour))
+        // «Os meus dados» (exportação pessoal assíncrona).
+        .route(
+            "/api/users/me/data-exports",
+            get(data_exports::list).post(data_exports::create),
+        )
+        .route(
+            "/api/users/me/data-exports/{export_id}",
+            get(data_exports::get_one),
+        )
+        .route(
+            "/api/users/me/data-exports/{export_id}/download-link",
+            post(data_exports::download_link),
+        )
+        .route(
+            "/api/users/me/data-exports/{export_id}/content",
+            get(data_exports::content),
+        )
         .route("/api/users/me/storage-usage", get(usage::my_storage_usage))
         // Sessões da conta e reautenticação (Navegavel3, «Dispositivos e sessões»).
         .route("/api/users/me/sessions", get(sessions::list))
@@ -1170,6 +1188,25 @@ pub async fn run() {
                         tracing::info!(expired, deleted, "varrimento de sessões")
                     }
                     Err(e) => tracing::warn!(error = %e, "varrimento de sessões falhou"),
+                }
+            }
+        });
+    }
+
+    // Cron: exportações «os meus dados» — pedidos na fila (e os abandonados)
+    // a cada minuto; ficheiros vencidos apagados.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                data_exports::run_queue(&state).await;
+                match data_exports::sweep_expired(&state).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(expired = n, "exportações vencidas apagadas"),
+                    Err(e) => tracing::warn!(error = %e, "varrimento de exportações falhou"),
                 }
             }
         });

@@ -43,7 +43,7 @@ Medido na base `d3ffd8f` antes de escrever código:
 
 ### 2. Crate: `webauthn-rs` (Kanidm), versão fixada
 
-- `webauthn-rs =0.5.5`: mantida, com auditoria pública (SUSE, 2022) e usada em
+- `webauthn-rs =0.5.5`: mantida, com auditoria de segurança pela SUSE Product Security (README da crate) e usada em
   produção pelo Kanidm. Nada de verificação WebAuthn escrita à mão.
 - A política é a da crate para passkeys: **verificação do utilizador obrigatória**
   (PIN/biometria), contador actualizado a cada uso.
