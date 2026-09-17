@@ -77,6 +77,8 @@ zeroize = "1"
 # na imagem distroless. Interoperabilidade com a libopus medida nos dois
 # sentidos (ADR-0010 §«Medições»).
 opus-rs = "=0.1.33"
+# Payload RTP partilhado sem cópia entre a bomba do SFU e a ponte (já no lock pelo webrtc).
+bytes = "1"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
