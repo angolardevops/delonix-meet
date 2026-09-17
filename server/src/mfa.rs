@@ -215,7 +215,7 @@ fn agora() -> u64 {
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(estado, inscrever, activar, desactivar),
+    paths(estado, inscrever, activar, desactivar, regenerar_codigos),
     components(schemas(EstadoMfa, Inscricao, CodigoReq, CodigosRecuperacao))
 )]
 pub struct ApiDoc;
@@ -402,6 +402,7 @@ pub async fn activar(
     responses(
         (status = 204, description = "MFA desactivado."),
         (status = 401, description = "Sessão inválida, código errado/já usado, ou MFA não inscrito.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "É o último factor e uma organização da conta exige 2FA (`security.last_factor_required`).", body = crate::openapi::ErrorBody),
         (status = 429, description = "Cinco códigos errados em 5 minutos nesta conta (partilhado com a activação). Durante o bloqueio, também um código válido é recusado.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -411,6 +412,13 @@ pub async fn desactivar(
     Json(req): Json<CodigoReq>,
 ) -> Result<axum::http::StatusCode, ApiError> {
     travao(&state, auth.user_id)?;
+    // Numa organização que exige 2FA, o TOTP não sai se for o único factor.
+    // Verifica-se ANTES de consumir o código: a recusa não gasta um código.
+    delonix_meet_domain::identity::factors::check_removal(
+        crate::org::any_org_requires_mfa(&state, auth.user_id).await?,
+        factors(&state.db, auth.user_id).await?,
+        delonix_meet_domain::identity::factors::Factor::Totp,
+    )?;
     if !consome_codigo(&state, auth.user_id, &req.code).await? {
         return Err(falhou(&state, auth.user_id));
     }
@@ -424,6 +432,65 @@ pub async fn desactivar(
         .await?;
     crate::audit::log(&state.db, None, auth.user_id, "auth.mfa_disabled", "").await;
     Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+/// Método personalizado: gera um conjunto NOVO de códigos de recuperação (os
+/// antigos deixam de valer) e mostra-os uma vez. Exige reautenticação recente
+/// e o TOTP activo.
+#[utoipa::path(
+    post, path = "/api/users/me/mfa/backup-codes/regenerate", tag = "mfa",
+    security(("session" = [])),
+    responses(
+        (status = 200, description = "Códigos novos (mostrados uma vez).", body = CodigosRecuperacao),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Sem reautenticação recente (`auth.reauthentication_required`).", body = crate::openapi::ErrorBody),
+        (status = 409, description = "O TOTP não está activo (`mfa.not_enabled`).", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn regenerar_codigos(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> Result<Json<CodigosRecuperacao>, ApiError> {
+    crate::sessions::require_recent(&auth)?;
+    if !factors(&state.db, auth.user_id).await?.totp_enabled {
+        return Err(delonix_meet_core::DomainError::conflict(
+            "mfa.not_enabled",
+            "os códigos de recuperação são do TOTP, que não está activo",
+        )
+        .into());
+    }
+    let codigos = codigos_de_recuperacao();
+    let mut hashes = Vec::with_capacity(codigos.len());
+    for c in &codigos {
+        hashes
+            .push(crate::auth::hash_password(c).map_err(|_| {
+                ApiError::Internal("falha a cifrar o código de recuperação".into())
+            })?);
+    }
+    let mut tx = state.db.begin().await?;
+    sqlx::query("DELETE FROM user_mfa_backup_codes WHERE user_id = $1")
+        .bind(auth.user_id)
+        .execute(&mut *tx)
+        .await?;
+    for h in hashes {
+        sqlx::query("INSERT INTO user_mfa_backup_codes (user_id, code_hash) VALUES ($1, $2)")
+            .bind(auth.user_id)
+            .bind(h)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    crate::audit::log(
+        &state.db,
+        None,
+        auth.user_id,
+        "auth.mfa_backup_codes_regenerated",
+        "",
+    )
+    .await;
+    Ok(Json(CodigosRecuperacao {
+        backup_codes: codigos,
+    }))
 }
 
 /// Chave do travão de força bruta do MFA desta conta.
@@ -452,15 +519,29 @@ fn falhou(state: &AppState, user_id: Uuid) -> ApiError {
     }
 }
 
-/// Está o MFA activo nesta conta?
+/// Está o TOTP activo nesta conta? (quem pede um CÓDIGO pergunta isto; o
+/// login pergunta por [`factors`], que também conta as chaves de acesso.)
 pub async fn activo(db: &sqlx::PgPool, user_id: Uuid) -> Result<bool, ApiError> {
-    let n: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM user_mfa WHERE user_id = $1 AND enabled_at IS NOT NULL",
+    Ok(factors(db, user_id).await?.totp_enabled)
+}
+
+/// Os segundos factores desta conta: TOTP confirmado e chaves de acesso
+/// (ADR-0011). Qualquer um deles faz o login pedir o desafio.
+pub async fn factors(
+    db: &sqlx::PgPool,
+    user_id: Uuid,
+) -> Result<delonix_meet_domain::identity::factors::Factors, ApiError> {
+    let (totp, passkeys): (bool, i64) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM user_mfa WHERE user_id = $1 AND enabled_at IS NOT NULL),
+                (SELECT COUNT(*) FROM user_passkeys WHERE user_id = $1)",
     )
     .bind(user_id)
     .fetch_one(db)
     .await?;
-    Ok(n > 0)
+    Ok(delonix_meet_domain::identity::factors::Factors {
+        totp_enabled: totp,
+        passkeys,
+    })
 }
 
 /// Consome um código — TOTP ou de recuperação. Devolve `true` se era válido.
