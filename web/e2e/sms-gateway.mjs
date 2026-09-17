@@ -224,12 +224,12 @@ else nok('page_size > 100', `${grande.status}`)
 // ---------- 5. SMS de reunião: convite e lembrete ----------
 {
   const dominio = email.split('@')[1]
-  await req(`/api/orgs/${orgId}/settings`, { token, method: 'POST', body: { domain: 'meet.exemplo.ao', retention_days: 0 } })
+  await req(`/api/orgs/${orgId}`, { token, method: 'PATCH', body: { domain: 'meet.exemplo.ao', retention_days: 0 } })
   const membro = async (nome, telefone) => {
-    const r = await req(`/api/orgs/${orgId}/employees`, {
+    const r = await req(`/api/orgs/${orgId}/members`, {
       token, method: 'POST', body: { email: `${nome}-${marca}@${dominio}`, username: `${nome}-${marca}`, password: PW },
     })
-    const t = await req(`/api/orgs/${orgId}/employees/${r.json?.user_id}/phone`, { token, method: 'PUT', body: { phone: telefone } })
+    const t = await req(`/api/orgs/${orgId}/members/${r.json?.user_id}/phone`, { token, method: 'PUT', body: { phone: telefone } })
     if (t.status !== 200) nok(`telefone de ${nome}`, `${t.status} ${JSON.stringify(t.json)}`)
     return { userId: r.json?.user_id, email: `${nome}-${marca}@${dominio}` }
   }
@@ -299,13 +299,13 @@ else nok('page_size > 100', `${grande.status}`)
 
 // ---------- 5b. telefone vindo do Odoo: a edição manual ganha ----------
 {
-  const odoo = (await req(`/api/orgs/${orgId}/integration/odoo/token`, { token, method: 'POST' })).json?.token
+  const odoo = (await req(`/api/orgs/${orgId}/integrations/odoo/rotate-token`, { token, method: 'POST' })).json?.token
   const correio = `odoo-${marca}@odoo${marca}.local`
-  const sync = (entrada) => req('/api/v1/integration/odoo/provision', {
+  const sync = (entrada) => req('/api/integrations/odoo/v1/provision', {
     token: odoo, method: 'POST', body: { company: '', admin_email: email, users: [{ odoo_uid: 77, name: `odoo-${marca}`, email: correio, ...entrada }] },
   })
   const telefoneDe = async () => {
-    const lista = (await req(`/api/orgs/${orgId}/employees`, { token })).json ?? []
+    const lista = (await req(`/api/orgs/${orgId}/members`, { token })).json ?? []
     const e = lista.find((x) => x.email === correio)
     return { phone: e?.phone ?? null, source: e?.phone_source ?? null, userId: e?.user_id }
   }
@@ -317,12 +317,12 @@ else nok('page_size > 100', `${grande.status}`)
   t = await telefoneDe()
   if (t.phone === '+244923400500') ok('provision sem campos de telefone (integrador antigo) não apaga o número')
   else nok('campos ausentes não apagam', JSON.stringify(t))
-  await req(`/api/orgs/${orgId}/employees/${t.userId}/phone`, { token, method: 'PUT', body: { phone: '944 111 222' } })
+  await req(`/api/orgs/${orgId}/members/${t.userId}/phone`, { token, method: 'PUT', body: { phone: '944 111 222' } })
   await sync({ mobile_phone: '923 999 000', work_phone: false })
   t = await telefoneDe()
   if (t.phone === '+244944111222' && t.source === 'manual') ok('provision seguinte NÃO sobrescreve o número editado à mão')
   else nok('edição manual sobrevive à sincronização', JSON.stringify(t))
-  await req(`/api/orgs/${orgId}/employees/${t.userId}/phone`, { token, method: 'PUT', body: { follow_directory: true } })
+  await req(`/api/orgs/${orgId}/members/${t.userId}/phone`, { token, method: 'PUT', body: { follow_directory: true } })
   const s4 = await sync({ mobile_phone: false, work_phone: '+33 6 00 00 00 00' })
   t = await telefoneDe()
   if (t.phone === null && s4.json?.phones_rejected?.[0]?.email === correio) ok('follow_directory devolve o campo ao Odoo; número inutilizável sai em phones_rejected')

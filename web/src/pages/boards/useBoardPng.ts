@@ -1,6 +1,6 @@
 /**
  * PNG de um quadro como object URL. O endpoint exige Bearer, por isso um
- * `<img src="/api/whiteboards/…/png">` cru dá «unauthorized»: vai-se buscar
+ * `<img src="/api/whiteboards/…/image">` cru dá «unauthorized»: vai-se buscar
  * autenticado e mostra-se o blob. O URL é revogado ao desmontar.
  */
 import { useEffect, useState } from 'react'

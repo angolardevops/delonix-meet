@@ -6,7 +6,7 @@
  */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { quarantineAnalytics } from '../../api'
+import { quarantineAnalytics, QuarantineRow } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Card, Empty, Segmented } from '../../ui/kit'
 import { forbiddenAsMessage } from './format'
@@ -21,8 +21,14 @@ export function QuarantineCard({ orgId }: { orgId: string | null }) {
   const [period, setPeriod] = useState<Period>('month')
   const [scope, setScope] = useState<Scope>('org')
   const effectiveOrg = scope === 'org' && orgId ? orgId : undefined
+  // A rota nova é org-scoped (`/api/orgs/{org_id}/analytics/quarantine`): sem
+  // organização activa não há caminho para pedir, e o âmbito «todas as orgs»
+  // deixou de existir no servidor.
   const { state, reload } = useAsync(
-    () => quarantineAnalytics(period, effectiveOrg).catch(forbiddenAsMessage(t('analytics.semPermissao'))),
+    () =>
+      effectiveOrg
+        ? quarantineAnalytics(effectiveOrg, period).catch(forbiddenAsMessage(t('analytics.semPermissao')))
+        : Promise.resolve([] as QuarantineRow[]),
     [period, effectiveOrg],
   )
 
