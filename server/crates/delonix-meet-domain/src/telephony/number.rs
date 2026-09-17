@@ -86,6 +86,14 @@ pub fn mask(number: &str, home_cc: &str) -> String {
         return n;
     }
     let tail = &digits[digits.len() - 3..];
+    // O FreeSWITCH manda E.164 sem `+` (`244923447108`): um número que começa
+    // pelo indicativo e tem pelo menos o comprimento internacional mínimo é
+    // lido como internacional.
+    let n = if !n.starts_with('+') && n.starts_with(home_cc) && n.len() >= home_cc.len() + 9 {
+        format!("+{n}")
+    } else {
+        n
+    };
     match n.strip_prefix('+') {
         Some(intl) => match intl.strip_prefix(home_cc) {
             Some(national) if national.len() > 6 => {
@@ -152,5 +160,6 @@ mod tests {
         assert_eq!(mask("+27115550192", "244"), "+2711 ***192");
         assert_eq!(mask("112", "244"), "112");
         assert_eq!(mask("923447108", "244"), "923 ***108");
+        assert_eq!(mask("244923447108", "244"), "+244 923 ***108");
     }
 }
