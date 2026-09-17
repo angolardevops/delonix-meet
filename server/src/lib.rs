@@ -6,6 +6,7 @@
 
 mod actions;
 mod ai;
+mod ai_assist;
 mod apikeys;
 mod audit;
 mod auth;
@@ -22,6 +23,7 @@ mod metrics;
 mod mfa;
 mod mls;
 pub mod net_guard;
+mod net_probe;
 pub mod nodes;
 mod notifications;
 mod odoo;
@@ -32,6 +34,7 @@ mod presence;
 mod pubsub;
 mod rate_limit;
 mod recorder;
+mod recording_ai;
 mod recording_captions;
 mod recording_meta;
 mod recordings;
@@ -132,6 +135,11 @@ pub struct AppState {
     /// Anti-força-bruta do código MFA na activação e na desactivação (por
     /// conta). Só conta falhas; trava também o código certo (R131).
     pub mfa_limiter: RateLimiter,
+    /// Sondagens de rede da pré-entrada por IP (`net_probe`).
+    pub net_probe_limiter: RateLimiter,
+    /// Vagas do LLM local por organização (`AI_STUDIO_CONCURRENCY_PER_ORG`):
+    /// sugestões do Estúdio, capítulos e legendas traduzidas contam juntos.
+    pub ai_slots: ai_assist::OrgSlots,
     /// Salas de grupo ativas: sala principal -> conjunto de salas filhas.
     pub breakouts: dashmap::DashMap<uuid::Uuid, signaling::BreakoutSet>,
     /// Clientes HTTP de saída, com a guarda anti-SSRF (ver `net_guard`). Os
@@ -346,6 +354,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/rooms/{room_code}/invitations", post(rooms::invite_to_room))
         .route("/api/rooms/{room_code}/quality-samples", post(rooms::post_qos))
+        // Sondagem de rede da pré-entrada («qualidade prevista»): sessão, por IP.
+        .route(
+            "/api/net-probe",
+            get(net_probe::download).post(net_probe::upload),
+        )
         // Tempos de estabelecimento (um por sessão) — ver callTimings.ts.
         .route("/api/rooms/{room_code}/join-timings", post(rooms::post_timings))
         .route(
@@ -415,6 +428,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/recordings/{recording_id}/chapters",
             get(recordings::list_chapters).post(recordings::create_chapter),
         )
+        // Capítulos automáticos pelo LLM local (assíncrono, `recording_ai.rs`).
+        .route(
+            "/api/recordings/{recording_id}/chapters/generate",
+            post(recording_ai::generate_chapters),
+        )
+        .route(
+            "/api/recordings/{recording_id}/chapters/generation",
+            get(recording_ai::chapter_generation),
+        )
         .route(
             "/api/recordings/{recording_id}/chapters/{chapter_id}",
             get(recordings::get_chapter)
@@ -433,6 +455,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/recordings/{recording_id}/transcript", get(recording_meta::transcript))
         .route("/api/recordings/{recording_id}/captions", get(recording_captions::list))
+        .route(
+            "/api/recordings/{recording_id}/captions/generate",
+            post(recording_ai::generate_caption),
+        )
         .route(
             "/api/recordings/{recording_id}/captions/{lang}",
             get(recording_captions::get)
@@ -507,6 +533,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(org::get_org).patch(org::update_settings),
         )
         .route("/api/orgs/{org_id}/stats", get(org::org_stats))
+        // IA local do Estúdio (Ollama do operador, `ai_assist.rs`).
+        .route("/api/orgs/{org_id}/ai/status", get(ai_assist::get_status))
+        .route(
+            "/api/orgs/{org_id}/ai/suggestions",
+            post(ai_assist::suggestions)
+                .layer(DefaultBodyLimit::max(ai_assist::MAX_SUGGESTION_BODY_BYTES)),
+        )
         .route(
             "/api/orgs/{org_id}/analytics/quarantine",
             get(meetings::quarantine_analytics),
@@ -821,6 +854,11 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
         sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
         mfa_limiter: RateLimiter::new(5, Duration::from_secs(300)),
+        net_probe_limiter: RateLimiter::new(
+            net_probe::PROBES_PER_IP_PER_MINUTE,
+            Duration::from_secs(60),
+        ),
+        ai_slots: ai_assist::OrgSlots::new(config.ai_studio_concurrency_per_org),
         outbound,
         config: config.clone(),
         redis_bus: redis_bus.clone(),

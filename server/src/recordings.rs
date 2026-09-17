@@ -223,7 +223,7 @@ pub(crate) struct ItemRow {
     pub(crate) id: Uuid,
     pub(crate) room_id: Uuid,
     room_code: String,
-    uploader_id: Uuid,
+    pub(crate) uploader_id: Uuid,
     uploader_name: String,
     pub(crate) filename: String,
     size_bytes: i64,
@@ -242,7 +242,7 @@ pub(crate) struct ItemRow {
     audio_codec: Option<String>,
     pub(crate) has_thumbnail: bool,
     pub(crate) progress_pct: Option<i16>,
-    transcript_language: Option<String>,
+    pub(crate) transcript_language: Option<String>,
     pub(crate) transcribed_at: Option<DateTime<Utc>>,
     description: String,
     tags: Vec<String>,
@@ -262,7 +262,7 @@ pub(crate) struct ItemRow {
     view_count: i64,
     participant_count: i64,
     caption_languages: Vec<String>,
-    uploader_org_id: Option<Uuid>,
+    pub(crate) uploader_org_id: Option<Uuid>,
     uploader_org_name: Option<String>,
 }
 
@@ -1646,6 +1646,85 @@ pub async fn create_chapter(
         Json(chapter),
     )
         .into_response())
+}
+
+/// Substitui os capítulos AUTOMÁTICOS da gravação pelos propostos (geração
+/// pelo LLM local, `recording_ai.rs`). É o mesmo serviço dos manuais — as mesmas
+/// regras de título e de marca temporal, o mesmo tecto de 100, a mesma
+/// unicidade por instante — e com duas regras próprias:
+///
+/// - um capítulo MANUAL nunca é apagado nem ocupado por uma máquina: um instante
+///   já tomado por um manual fica de fora;
+/// - só uma geração que chega aqui marca `chapters_generated_at`: quem falha
+///   antes (resposta sem capítulos utilizáveis) não marca nada (B12).
+///
+/// Devolve quantos automáticos ficaram gravados.
+pub(crate) async fn replace_auto_chapters(
+    state: &AppState,
+    recording_id: Uuid,
+    duration_ms: Option<i64>,
+    proposed: &[(i64, String)],
+    actor: Uuid,
+) -> Result<usize, ApiError> {
+    let mut tx = state.db.begin().await?;
+    // Serializa com outra geração e com os `create_chapter` pelo tecto.
+    sqlx::query("SELECT 1 FROM recordings WHERE id = $1 FOR UPDATE")
+        .bind(recording_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM recording_chapters WHERE recording_id = $1 AND source = 'auto'")
+        .bind(recording_id)
+        .execute(&mut *tx)
+        .await?;
+    let taken: Vec<(i64,)> =
+        sqlx::query_as("SELECT t_ms FROM recording_chapters WHERE recording_id = $1")
+            .bind(recording_id)
+            .fetch_all(&mut *tx)
+            .await?;
+    let mut room = (rules::MAX_CHAPTERS as usize).saturating_sub(taken.len());
+    let mut inserted = 0usize;
+    for (t_ms, title) in proposed {
+        if room == 0 {
+            break;
+        }
+        let (Ok(title), Ok(t_ms)) = (
+            rules::validate_chapter_title(title),
+            rules::validate_t_ms(*t_ms, duration_ms),
+        ) else {
+            continue;
+        };
+        if taken.iter().any(|(t,)| *t == t_ms) {
+            continue;
+        }
+        let r = sqlx::query(
+            "INSERT INTO recording_chapters (recording_id, t_ms, title, source, created_by)
+             VALUES ($1, $2, $3, 'auto', NULL)
+             ON CONFLICT (recording_id, t_ms) DO NOTHING",
+        )
+        .bind(recording_id)
+        .bind(t_ms)
+        .bind(&title)
+        .execute(&mut *tx)
+        .await?;
+        if r.rows_affected() == 1 {
+            inserted += 1;
+            room -= 1;
+        }
+    }
+    sqlx::query("UPDATE recordings SET chapters_generated_at = now() WHERE id = $1")
+        .bind(recording_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    crate::audit::log(
+        &state.db,
+        None,
+        actor,
+        "recording.chapters_generated",
+        &recording_id.to_string(),
+    )
+    .await;
+    Ok(inserted)
 }
 
 async fn fetch_chapter(
