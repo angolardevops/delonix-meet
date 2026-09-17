@@ -769,6 +769,85 @@ impl AgentInternal {
         }
     }
 
+    /// DELONIX — resposta 487 (Role Conflict) a um pedido com o MESMO papel que o nosso.
+    ///
+    /// O original deitava estes pedidos fora em silêncio (RFC 8445 §7.3.1.1 manda
+    /// resolver o conflito: trocar de papel ou responder 487). O libwebrtc actual
+    /// (Chrome 151 medido) passa a CONTROLLED sempre que aplica
+    /// `setLocalDescription(answer)` estando CONTROLLING — ou seja, a cada oferta
+    /// que o SFU lhe faz depois de o browser ter ofertado primeiro. Ficavam os dois
+    /// lados controlled: as verificações de consentimento do browser eram
+    /// descartadas aqui, ninguém respondia, e ~5 s depois o browser declarava a
+    /// ligação `disconnected` (e o ICE restart repetia o mesmo impasse).
+    ///
+    /// Este agente nunca troca de papel (o SFU é sempre o answerer inicial, logo
+    /// controlled); responde 487 autenticado e o browser, ao recebê-lo, inverte o
+    /// seu papel (`Connection::OnConnectionRequestErrorResponse` →
+    /// `NotifyRoleConflict`). Só se responde a pedidos com USERNAME e
+    /// MESSAGE-INTEGRITY válidos: um 487 não autenticado seria descartado pelo
+    /// browser e um pedido forjado não pode provocar respostas.
+    pub(crate) async fn send_role_conflict(
+        &self,
+        m: &mut Message,
+        local: &Arc<dyn Candidate + Send + Sync>,
+        remote: SocketAddr,
+    ) {
+        let local_pwd = {
+            let ufrag_pwd = self.ufrag_pwd.lock().await;
+            let username = ufrag_pwd.local_ufrag.clone() + ":" + ufrag_pwd.remote_ufrag.as_str();
+            if assert_inbound_username(m, &username).is_err()
+                || assert_inbound_message_integrity(m, ufrag_pwd.local_pwd.as_bytes()).is_err()
+            {
+                return;
+            }
+            ufrag_pwd.local_pwd.clone()
+        };
+
+        let mut out = Message::new();
+        let result = out.build(&[
+            Box::new(m.clone()),
+            Box::new(BINDING_ERROR),
+            Box::new(stun::error_code::ErrorCodeAttribute {
+                code: stun::error_code::CODE_ROLE_CONFLICT,
+                reason: b"Role Conflict".to_vec(),
+            }),
+            Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+            Box::new(FINGERPRINT),
+        ]);
+        if let Err(err) = result {
+            log::warn!("[{}]: failed to build 487 response: {}", self.get_name(), err);
+            return;
+        }
+
+        let remote_candidate = match self.find_remote_candidate(local.network_type(), remote).await {
+            Some(rc) => rc,
+            None => {
+                let config = CandidatePeerReflexiveConfig {
+                    base_config: CandidateBaseConfig {
+                        network: local.network_type().to_string(),
+                        address: remote.ip().to_string(),
+                        port: remote.port(),
+                        component: local.component(),
+                        ..CandidateBaseConfig::default()
+                    },
+                    rel_addr: "".to_owned(),
+                    rel_port: 0,
+                };
+                match config.new_candidate_peer_reflexive() {
+                    Ok(c) => Arc::new(c),
+                    Err(_) => return,
+                }
+            }
+        };
+        log::debug!(
+            "[{}]: role conflict — 487 enviado a {} (via {})",
+            self.get_name(),
+            remote,
+            local
+        );
+        self.send_stun(&out, local, &remote_candidate).await;
+    }
+
     /// Removes pending binding requests that are over `maxBindingRequestTimeout` old Let HTO be the
     /// transaction timeout, which SHOULD be 2*RTT if RTT is known or 500 ms otherwise.
     ///
@@ -847,6 +926,10 @@ impl AgentInternal {
                     "[{}]: inbound isControlling && a.isControlling == true",
                     self.get_name(),
                 );
+                // DELONIX: ver `send_role_conflict`.
+                if m.typ.class == CLASS_REQUEST {
+                    self.send_role_conflict(m, local, remote).await;
+                }
                 return;
             } else if m.contains(ATTR_USE_CANDIDATE) {
                 log::debug!(
@@ -860,6 +943,10 @@ impl AgentInternal {
                 "[{}]: inbound isControlled && a.isControlling == false",
                 self.get_name(),
             );
+            // DELONIX: ver `send_role_conflict`.
+            if m.typ.class == CLASS_REQUEST {
+                self.send_role_conflict(m, local, remote).await;
+            }
             return;
         }
 

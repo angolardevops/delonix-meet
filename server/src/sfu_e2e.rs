@@ -1000,3 +1000,186 @@ async fn troca_de_camada_simulcast_sem_renegociar_e_com_rtp_continuo() {
     sfu.remove_peer(room, a.id).await;
     sfu.remove_peer(room, b.id).await;
 }
+
+/// Resposta do SFU a uma verificação de conectividade encenada.
+#[derive(Debug, PartialEq)]
+enum RespostaStun {
+    /// Nada chegou dentro do prazo — o pedido foi deitado fora.
+    Silencio,
+    /// Resposta de sucesso com MESSAGE-INTEGRITY válida.
+    Sucesso,
+    /// Resposta de erro autenticada, com o código.
+    Erro(u16),
+    /// Chegou alguma coisa, mas a integridade não bate: o browser descarta-a.
+    NaoAutenticada,
+}
+
+/// Envia ao SFU, pelo par ICE que ESTE cliente tem seleccionado, um Binding
+/// Request com as credenciais verdadeiras da sessão e o papel pedido — é a
+/// verificação de consentimento (RFC 7675) que o browser manda a cada ~1 s.
+///
+/// Existe porque o browser que motivou a R157 não se consegue encenar com um
+/// cliente webrtc-rs: é o libwebrtc que passa a CONTROLLED ao responder a uma
+/// oferta do servidor. O que se pode medir, e é o que conta, é o que o SFU FAZ
+/// quando recebe um pedido com o mesmo papel que o dele.
+async fn sonda_de_papel(cliente: &TestClient, controlado: bool) -> RespostaStun {
+    use webrtc::ice::control::{AttrControlled, AttrControlling};
+    use webrtc::ice::priority::PriorityAttr;
+    use webrtc::stun::{
+        agent::TransactionId,
+        attributes::ATTR_USERNAME,
+        error_code::ErrorCodeAttribute,
+        fingerprint::FINGERPRINT,
+        integrity::MessageIntegrity,
+        message::{
+            Getter, Message, Setter, BINDING_REQUEST, CLASS_ERROR_RESPONSE, CLASS_SUCCESS_RESPONSE,
+        },
+        textattrs::Username,
+    };
+
+    let campo = |sdp: &str, chave: &str| -> String {
+        sdp.lines()
+            .find_map(|l| l.strip_prefix(chave))
+            .map(|v| v.trim().to_string())
+            .expect("SDP sem credenciais ICE")
+    };
+    let sdp_sfu = cliente
+        .pc
+        .remote_description()
+        .await
+        .expect("sem SDP do SFU")
+        .sdp;
+    let sdp_meu = cliente
+        .pc
+        .local_description()
+        .await
+        .expect("sem SDP local")
+        .sdp;
+    let (ufrag_sfu, pwd_sfu) = (
+        campo(&sdp_sfu, "a=ice-ufrag:"),
+        campo(&sdp_sfu, "a=ice-pwd:"),
+    );
+    let ufrag_meu = campo(&sdp_meu, "a=ice-ufrag:");
+
+    let par = cliente.pc.get_senders().await[0]
+        .transport()
+        .ice_transport()
+        .get_selected_candidate_pair()
+        .await
+        .expect("o cliente não tem par ICE seleccionado");
+    let destino: std::net::SocketAddr = format!("{}:{}", par.remote.address, par.remote.port)
+        .parse()
+        .expect("endereço do candidato do SFU");
+
+    let papel: Box<dyn Setter> = if controlado {
+        Box::new(AttrControlled(rand::random()))
+    } else {
+        Box::new(AttrControlling(rand::random()))
+    };
+    let mut pedido = Message::new();
+    pedido
+        .build(&[
+            Box::new(BINDING_REQUEST),
+            Box::new(TransactionId::new()),
+            Box::new(Username::new(
+                ATTR_USERNAME,
+                format!("{ufrag_sfu}:{ufrag_meu}"),
+            )),
+            papel,
+            Box::new(PriorityAttr(1_845_501_695)),
+            Box::new(MessageIntegrity::new_short_term_integrity(pwd_sfu.clone())),
+            Box::new(FINGERPRINT),
+        ])
+        .expect("pedido STUN");
+
+    let socket = tokio::net::UdpSocket::bind(if destino.is_ipv4() {
+        "0.0.0.0:0"
+    } else {
+        "[::]:0"
+    })
+    .await
+    .expect("socket da sonda");
+    let mut buf = vec![0u8; 1500];
+    // Três tentativas: é UDP, e um pacote perdido não pode dar «Silêncio».
+    for _ in 0..3 {
+        socket
+            .send_to(&pedido.raw, destino)
+            .await
+            .expect("envio da sonda");
+        let Ok(Ok((n, _))) =
+            tokio::time::timeout(Duration::from_millis(700), socket.recv_from(&mut buf)).await
+        else {
+            continue;
+        };
+        let mut resposta = Message::new();
+        resposta.raw = buf[..n].to_vec();
+        if resposta.decode().is_err() || resposta.transaction_id != pedido.transaction_id {
+            continue;
+        }
+        if MessageIntegrity::new_short_term_integrity(pwd_sfu.clone())
+            .check(&mut resposta)
+            .is_err()
+        {
+            return RespostaStun::NaoAutenticada;
+        }
+        if resposta.typ.class == CLASS_SUCCESS_RESPONSE {
+            return RespostaStun::Sucesso;
+        }
+        if resposta.typ.class == CLASS_ERROR_RESPONSE {
+            let mut codigo = ErrorCodeAttribute::default();
+            let _ = codigo.get_from(&resposta);
+            return RespostaStun::Erro(codigo.code.0);
+        }
+    }
+    RespostaStun::Silencio
+}
+
+/// **R157 — o SFU tem de responder 487 a um pedido com papel ICE em conflito.**
+///
+/// O Chrome (151, medido) passa a CONTROLLED sempre que aplica a sua resposta a
+/// uma oferta do SFU — e o SFU oferta logo a seguir a cada ligação, para
+/// subscrever quem já está na sala. Com o webrtc-ice original, o SFU (também
+/// controlled) deitava fora em silêncio todos os pedidos dele: sem respostas
+/// de consentimento, o browser declarava `disconnected` ~5 s depois, e a
+/// câmara «não aparecia» aos outros. A correcção (vendor/webrtc-ice,
+/// `send_role_conflict`) responde 487 autenticado, que é o que manda o browser
+/// voltar a CONTROLLING.
+///
+/// Sem a correcção este teste FALHA em `Silencio`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn conflito_de_papel_ice_recebe_487_autenticado() {
+    let (sfu, _metrics) = new_sfu();
+    let room = Uuid::new_v4();
+    let a = TestClient::join(&sfu, room).await;
+    a.publish(OPUS, "a-audio").await;
+    eventually_com_diagnostico(
+        "A liga ao SFU",
+        prazo(30),
+        || {
+            let a = a.clone();
+            async move {
+                a.pc.connection_state()
+                    == webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected
+            }
+        },
+        || a.retrato(),
+    )
+    .await;
+
+    // Controlo: a MESMA sonda com o papel certo é aceite. Sem isto, um pedido
+    // mal formado daria «Silêncio» e passaria por prova do defeito.
+    assert_eq!(
+        sonda_de_papel(&a, false).await,
+        RespostaStun::Sucesso,
+        "a sonda com ICE-CONTROLLING tem de receber sucesso autenticado"
+    );
+    // O caso do browser depois de responder a uma oferta do SFU.
+    assert_eq!(
+        sonda_de_papel(&a, true).await,
+        RespostaStun::Erro(487),
+        "pedido com ICE-CONTROLLED a um SFU controlled: tem de vir 487 autenticado, \
+         não silêncio (R157)"
+    );
+
+    sfu.remove_peer(room, a.id).await;
+}
