@@ -291,6 +291,19 @@ export interface DiagramDoc {
   /** Último PNG guardado na biblioteca da organização. */
   boardId?: string
   savedAt?: string
+  /**
+   * Grupos de selecção (template v5, ⌘G): elementos e traços que se escolhem,
+   * movem, alinham e apagam juntos. Não mudam a semântica do modelo — não são
+   * pacotes. Opcional: os quadros guardados antes disto não o têm.
+   */
+  groups?: SelectionGroup[]
+}
+
+export interface SelectionGroup {
+  id: string
+  name: string
+  nodes: string[]
+  strokes: string[]
 }
 
 export const NODE_NOTATION: Record<NodeType, Notation> = {

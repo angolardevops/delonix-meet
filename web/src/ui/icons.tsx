@@ -127,6 +127,20 @@ const P: Record<string, string> = {
   sms: 'M4 5h16v11H9l-5 4zM8 9h8M8 12h5',
   // pesquisa (frontend/pesquisa-odoo)
   star: 'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z',
+  // quadros · selecção múltipla e agrupar (frontend/v5-quadros-seleccao) — desenhos do template v5, escalados a 24
+  wbPointer: 'M4.5 3l13.5 8.4-6 1.35-2.1 6.15z',
+  wbLasso: 'M3.75 3.75h16.5v16.5h-16.5z',
+  selGroup: 'M3 3h7.5v7.5H3zM13.5 13.5h7.5v7.5H13.5zM10.5 10.5h3v3H10.5z',
+  selUngroup: 'M3 3h7.5v7.5H3zM13.5 13.5h7.5v7.5H13.5z',
+  selArrow: 'M5.4 2.64 18.24 10.92l-5.64 1.32-2.64 5.88z',
+  selMarquee: 'M4.2 4.2h15.6v15.6h-15.6z',
+  selHand: 'M7.44 11.28V5.76a1.56 1.56 0 0 1 3.12 0v5.04m0-2.04a1.56 1.56 0 0 1 3.12 0v1.68m0-1.32a1.56 1.56 0 0 1 3.12 0v5.16a5.4 5.4 0 0 1-5.4 5.4h-0.72a5.4 5.4 0 0 1-5.4-5.4v-1.68a1.44 1.44 0 0 1 2.88 0',
+  selDistributeH: 'M3.6 5.28h5.04v5.04H3.6zM15.36 13.68H20.4v5.04h-5.04zM8.64 7.8h4.08a2.4 2.4 0 0 1 2.4 2.4v5.88',
+  selDistributeV: 'M4.8 5.52h14.4M12 5.52v13.2M9.12 18.72h5.76',
+  selAlignLeft: 'M4.08 3.6v16.8M7.68 7.68h9.6M7.68 16.32h6',
+  selAlignCenter: 'M12 3.6v16.8M5.52 7.92h12.96M7.92 16.08h8.16',
+  selAlignTop: 'M3.6 4.08h16.8M7.68 7.68v9.6M16.32 7.68v6',
+  selTrash: 'M5.28 6.72h13.44M10.08 6.72V4.32h3.84v2.4M7.44 6.72l0.96 12.96h7.2l0.96-12.96',
 }
 
 export type IconName = keyof typeof P
