@@ -34,7 +34,7 @@ async fn action_item_patch_does_not_leak_to_other_org(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200, "{item}");
     let item_id = item["id"].as_str().unwrap();
-    let path = format!("/api/action-items/{item_id}");
+    let path = format!("/api/meetings/{meeting_id}/action-plan/items/{item_id}");
 
     // Controlo positivo: o dono lê o item por PATCH vazio.
     let (st, own) = app.patch(&path, Some(&a.token), json!({})).await;

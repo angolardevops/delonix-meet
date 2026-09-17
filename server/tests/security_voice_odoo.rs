@@ -32,9 +32,15 @@ async fn ivr_validate(app: &TestApp, did: &str, pin: &str) -> (u16, Value) {
     (r.status, r.json())
 }
 
+/// Cria a sala de voz pelo caminho da org de `who` (a sala de voz vive debaixo
+/// da organização).
 async fn voice_room(app: &TestApp, who: &Account, code: &str) -> (u16, Value) {
+    voice_room_in(app, who, who.org(), code).await
+}
+
+async fn voice_room_in(app: &TestApp, who: &Account, org: &str, code: &str) -> (u16, Value) {
     app.post(
-        "/api/voice/rooms",
+        &format!("/api/orgs/{org}/voice/rooms"),
         Some(&who.token),
         json!({ "room_code": code }),
     )
@@ -75,6 +81,34 @@ async fn voice_room_for_another_orgs_room_code_is_refused(db: sqlx::PgPool) {
     let (st, missing) = voice_room(&app, &a, "nao-existe-nenhuma").await;
     assert_eq!((st, &missing["code"]), (404, &attack["code"]), "{missing}");
 
+    // Pelo caminho da org B (de que A não é membro): 404 antes de tudo.
+    let (st, body) = voice_room_in(&app, &a, b.org(), code_b).await;
+    assert_denied("A cria dial-in pelo caminho da org B", st, &body, "pin");
+    assert_eq!(st, 404, "{body}");
+
+    // Leitura da sala de voz da B: B lê; A não, nem pelo caminho da B nem
+    // pelo seu com o id da B.
+    let own_id = own["id"].as_str().unwrap();
+    for suffix in ["", "/participants"] {
+        let (st, body) = app
+            .get(
+                &format!("/api/orgs/{}/voice/rooms/{own_id}{suffix}", b.org()),
+                Some(&b.token),
+            )
+            .await;
+        assert_eq!(st, 200, "B lê a sua sala de voz{suffix}: {body}");
+        for org in [b.org(), a.org()] {
+            let (st, body) = app
+                .get(
+                    &format!("/api/orgs/{org}/voice/rooms/{own_id}{suffix}"),
+                    Some(&a.token),
+                )
+                .await;
+            assert_eq!(st, 404, "A lê a sala de voz da B{suffix} via {org}: {body}");
+            assert_denied("sala de voz da B", st, &body, "pin");
+        }
+    }
+
     // E nada ficou gravado para A.
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM voice_room WHERE org_id = $1::uuid")
         .bind(a.org())
@@ -107,7 +141,7 @@ async fn voice_room_close_requires_creator_or_org_admin(db: sqlx::PgPool) {
     // O ataque: um colega que não criou a sala nem é admin.
     let (st, body) = app
         .post(
-            &format!("/api/voice/rooms/{id1}/close"),
+            &format!("/api/orgs/{}/voice/rooms/{id1}/close", admin.org()),
             Some(&other.token),
             json!({}),
         )
@@ -121,15 +155,15 @@ async fn voice_room_close_requires_creator_or_org_admin(db: sqlx::PgPool) {
         .unwrap();
     assert_eq!(status, "active", "a recusa não pode ter encerrado a sala");
 
-    // Controlo positivo 1: a criadora encerra a sua.
+    // Controlo positivo 1: a criadora encerra a sua (204, sem corpo).
     let (st, body) = app
         .post(
-            &format!("/api/voice/rooms/{id1}/close"),
+            &format!("/api/orgs/{}/voice/rooms/{id1}/close", admin.org()),
             Some(&creator.token),
             json!({}),
         )
         .await;
-    assert_eq!(st, 200, "{body}");
+    assert_eq!(st, 204, "{body}");
 
     // Controlo positivo 2: o admin da org encerra a de outra pessoa.
     let (st, vr2) = voice_room(&app, &creator, code).await;
@@ -137,18 +171,27 @@ async fn voice_room_close_requires_creator_or_org_admin(db: sqlx::PgPool) {
     let id2 = vr2["id"].as_str().unwrap();
     let (st, body) = app
         .post(
-            &format!("/api/voice/rooms/{id2}/close"),
+            &format!("/api/orgs/{}/voice/rooms/{id2}/close", admin.org()),
             Some(&admin.token),
             json!({}),
         )
         .await;
-    assert_eq!(st, 200, "{body}");
+    assert_eq!(st, 204, "{body}");
 
-    // Outra org continua a receber 404 (não revela a existência).
+    // Outra org continua a receber 404 (não revela a existência): pelo
+    // caminho da org dona e pelo caminho da sua própria org.
     let foreign = app.new_org("delta-voz.ao").await;
     let (st, body) = app
         .post(
-            &format!("/api/voice/rooms/{id2}/close"),
+            &format!("/api/orgs/{}/voice/rooms/{id2}/close", foreign.org()),
+            Some(&foreign.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 404, "{body}");
+    let (st, body) = app
+        .post(
+            &format!("/api/orgs/{}/voice/rooms/{id2}/close", admin.org()),
             Some(&foreign.token),
             json!({}),
         )

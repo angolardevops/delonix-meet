@@ -35,6 +35,19 @@ async fn get_raw(app: &TestApp, path: &str, token: Option<&str>) -> (u16, Option
     (st, ct, res.bytes().await.unwrap().to_vec())
 }
 
+/// BUG registado (servidor): o URL assinado ainda é emitido para a rota antiga
+/// `/api/whiteboards/{id}/png`, que deixou de existir na reorganização de rotas
+/// (`crates/delonix-meet-domain/src/content/whiteboard.rs:44`, `signed_path`).
+/// A imagem vive em `/image`, e um `<img>` com o URL emitido recebe 404.
+/// Enquanto não for corrigido, os testes da assinatura levam o URL para a rota
+/// nova — a assinatura cobre `(id, exp)`, não o caminho — e
+/// `signed_url_loads_without_session` caracteriza a falha. Quando o servidor
+/// emitir `/image`, esta função passa a ser a identidade e essa asserção tem de
+/// mudar.
+fn on_image_route(url: &str) -> String {
+    url.replacen("/png?", "/image?", 1)
+}
+
 fn png_bytes() -> Vec<u8> {
     base64::engine::general_purpose::STANDARD
         .decode(PNG_1X1)
@@ -55,7 +68,16 @@ async fn signed_url_loads_without_session(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 200, "{s}");
-    let url = s["url"].as_str().unwrap().to_string();
+    let emitted = s["url"].as_str().unwrap().to_string();
+    // Caracterização do BUG (ver `on_image_route`): o URL emitido aponta para
+    // a rota que já não existe e, tal como sai, não carrega.
+    assert!(
+        emitted.starts_with(&format!("/api/whiteboards/{id}/png?exp=")),
+        "{emitted}"
+    );
+    let (st, _, _) = get_raw(&app, &emitted, None).await;
+    assert_eq!(st, 404, "a rota antiga `/png` saiu do router");
+    let url = on_image_route(&emitted);
     assert!(
         url.starts_with(&format!("/api/whiteboards/{id}/image?exp=")),
         "{url}"
@@ -86,7 +108,7 @@ async fn tampered_expired_or_foreign_signatures_are_404(db: sqlx::PgPool) {
             json!({}),
         )
         .await;
-    let url = s["url"].as_str().unwrap().to_string();
+    let url = on_image_route(s["url"].as_str().unwrap());
     let (exp, sig) = {
         let q = url.split_once('?').unwrap().1;
         let mut exp = "";
@@ -126,15 +148,15 @@ async fn tampered_expired_or_foreign_signatures_are_404(db: sqlx::PgPool) {
     let key =
         delonix_meet_core::crypto::derive_key(&app.state.config.jwt_secret, rules::KEY_PURPOSE);
     let past = chrono::Utc::now().timestamp() - 5;
-    let expired = rules::signed_path(&key, id.parse().unwrap(), past);
+    let expired = on_image_route(&rules::signed_path(&key, id.parse().unwrap(), past));
     let (st, _, _) = get_raw(&app, &expired, None).await;
     assert_eq!(st, 404, "expirado");
     // Controlo positivo com a mesma chave: o 404 acima é do prazo, não da chave.
-    let fresh = rules::signed_path(
+    let fresh = on_image_route(&rules::signed_path(
         &key,
         id.parse().unwrap(),
         rules::expiry_from(chrono::Utc::now().timestamp()),
-    );
+    ));
     let (st, _, _) = get_raw(&app, &fresh, None).await;
     assert_eq!(st, 200);
 
