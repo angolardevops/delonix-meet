@@ -1054,7 +1054,14 @@ impl SfuState {
                             let _ = track.write_rtp(&packet).await;
                         }
                     }
-                    Err(_) => break, // track terminou
+                    Err(e) => {
+                        // A razão entra no log: «track unpublished» sem ela não
+                        // distingue o publicador que saiu de um stream SRTP
+                        // fechado por baixo pelo webrtc-rs (`buffer: closed`,
+                        // R172) com o publicador ainda a enviar.
+                        tracing::info!(%room_id, publisher = %publication.publisher, kind = %publication.kind, rid = %publication.rid, error = %e, "sfu track terminou");
+                        break;
+                    }
                 }
             }
             // O writer é RETIRADO primeiro (o guard morre no fim da linha) e só

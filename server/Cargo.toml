@@ -38,3 +38,14 @@ zeroize = "1"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
+
+# webrtc 0.17.1 com UMA alteração: o processador de media não declarada deixa
+# de sondar (e FECHAR) o stream SRTP de um SSRC que o SDP remoto declara
+# (`ssrc_declared_in_remote_description` em
+# vendor/webrtc/src/peer_connection/peer_connection_internal.rs). Sem ela, o
+# primeiro pacote que chegasse antes do `start_rtp` matava a publicação com o
+# publicador ainda a enviar — num nó carregado, 75–87 de 96 fluxos de vídeo em
+# 8 salas × 4 (R172). A 0.17.2 não trata disto e a 0.20 é outra API. Retirar só
+# quando o upstream o fizer.
+[patch.crates-io]
+webrtc = { path = "vendor/webrtc" }

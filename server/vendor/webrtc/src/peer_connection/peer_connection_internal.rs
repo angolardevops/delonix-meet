@@ -364,6 +364,26 @@ impl PeerConnectionInternal {
                     let pci = Arc::clone(&pci);
                     tokio::spawn(async move {
                         let ssrc = stream.get_ssrc();
+
+                        // PATCH delonix-meet (R172): um SSRC DECLARADO no SDP
+                        // remoto não é tráfego «não declarado». Se o primeiro
+                        // pacote chega entre a criação da sessão SRTP e o
+                        // `start_rtp` que abre os receivers, a sessão cria o
+                        // stream sozinha e anuncia-o aqui; o `start_rtp` abre
+                        // depois o MESMO stream para o receiver. Sondá-lo como
+                        // simulcast falha (sem rid) e o fecho do fim da sonda
+                        // fechava o stream do receiver: `read_rtp` devolvia
+                        // `buffer: closed` e a track morria com o publicador a
+                        // enviar. Deixa-se o stream para o receiver, sem o ler
+                        // nem fechar.
+                        if pci.ssrc_declared_in_remote_description(ssrc).await {
+                            log::debug!(
+                                "RTP ssrc({ssrc}) chegou antes do receiver; declarado no SDP, fica para ele"
+                            );
+                            simulcast_routine_count.fetch_sub(1, Ordering::SeqCst);
+                            return;
+                        }
+
                         dtls_transport
                             .store_simulcast_stream(ssrc, Arc::clone(&stream))
                             .await;
@@ -1057,6 +1077,18 @@ impl PeerConnectionInternal {
         )
         .await;
         Ok(true)
+    }
+
+    /// PATCH delonix-meet (R172): o SSRC aparece (como SSRC ou como repair
+    /// SSRC) numa secção de media do SDP remoto? É o mesmo critério com que o
+    /// `start_rtp` decide que receivers abrir.
+    async fn ssrc_declared_in_remote_description(&self, ssrc: SSRC) -> bool {
+        let Some(parsed) = self.remote_description().await.and_then(|rd| rd.parsed) else {
+            return false;
+        };
+        track_details_from_sdp(&parsed, false)
+            .iter()
+            .any(|d| d.ssrcs.contains(&ssrc) || (d.repair_ssrc != 0 && d.repair_ssrc == ssrc))
     }
 
     async fn handle_incoming_rtp_stream(
