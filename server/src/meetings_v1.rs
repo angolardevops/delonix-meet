@@ -765,7 +765,12 @@ pub async fn patch(
             ));
         }
     }
-    // Validar tudo antes de escrever o que quer que seja.
+    if req.invitees.as_ref().is_some_and(|l| l.len() > 200) {
+        return Err(ApiError::BadRequest("máximo de 200 convidados".into()));
+    }
+    // Validar tudo antes de escrever o que quer que seja: antes, o tecto de
+    // convidados só era verificado DEPOIS de gravar título, datas e opções, e um
+    // `400` deixava a reunião meio alterada.
     req.options.validate()?;
     // A mesma função do `PATCH` da BFF: reunião e sala (regra 8).
     crate::meetings::patch_session_options(&state, id, &req.options).await?;
@@ -802,9 +807,6 @@ pub async fn patch(
 
     let mut skipped = Vec::new();
     if let Some(list) = &req.invitees {
-        if list.len() > 200 {
-            return Err(ApiError::BadRequest("máximo de 200 convidados".into()));
-        }
         let (_keep, sk) =
             add_invitees(&state, key.org_id, meeting.id, meeting.owner_id, list).await?;
         skipped = sk;

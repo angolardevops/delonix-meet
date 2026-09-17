@@ -786,3 +786,60 @@ async fn auto_record_starts_when_the_host_enters(db: sqlx::PgPool) {
     let _ws4 = host_enters(&app, &a.token, &code4).await;
     assert_eq!(recording_by(&app, rid4, 2).await, None, "já tinha gravação");
 }
+
+/// O `PATCH` v1 valida TUDO antes de escrever: com mais de 200 convidados, o
+/// título e as opções que vinham no mesmo pedido não ficam gravados (antes o
+/// tecto só era verificado depois de escrever). E a lista v1 traz as opções.
+#[sqlx::test(migrations = "./migrations")]
+async fn v1_patch_validates_before_writing_and_list_has_options(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let (_, ka) = app.api_key(&a).await;
+    let m = app.new_meeting(&a, "Original", &[]).await;
+    let id = m["id"].as_str().unwrap();
+
+    let demasiados: Vec<Value> = (0..201)
+        .map(|i| json!({"email": format!("p{i}@alfa.test")}))
+        .collect();
+    let (st, body) = v1(
+        &app,
+        reqwest::Method::PATCH,
+        &format!("/meetings/{id}"),
+        &ka,
+        Some(json!({"title": "Mudado", "format": "training", "invitees": demasiados})),
+    )
+    .await;
+    assert_eq!(st, 400, "{body}");
+    let (_, g) = app
+        .get(&format!("/api/meetings/{id}"), Some(&a.token))
+        .await;
+    assert_eq!(
+        g["title"], "Original",
+        "o 400 não pode deixar escrita parcial"
+    );
+    assert_eq!(g["format"], "meeting");
+
+    // Controlo: o mesmo pedido dentro do tecto escreve.
+    let (st, body) = v1(
+        &app,
+        reqwest::Method::PATCH,
+        &format!("/meetings/{id}"),
+        &ka,
+        Some(json!({"title": "Mudado", "format": "training"})),
+    )
+    .await;
+    assert_eq!(st, 200, "{body}");
+
+    let (st, list) = v1(&app, reqwest::Method::GET, "/meetings", &ka, None).await;
+    assert_eq!(st, 200, "{list}");
+    let item = list["meetings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == id)
+        .expect("a reunião está na lista v1");
+    assert_eq!(
+        options_of(item),
+        json!({"format": "training", "waiting_room": false, "auto_record": false, "record_quality": "1080p"})
+    );
+}
