@@ -525,6 +525,27 @@ pub async fn get_org(
     Ok(Json(org.ok_or(ApiError::NotFound)?))
 }
 
+/// Retenção do chat (G9) de quem é dono de uma sala: a mais longa entre as
+/// organizações onde é membro activo com `chat_retention_days` definido.
+/// `None` = nenhuma organização do dono define um valor — quem chama aplica
+/// a promessa por omissão (fim do dia UTC). A regra 1 do ADR-0004 §5 exige
+/// que a pertença a `org_members` só se leia daqui — por isso é `room_chat`
+/// quem chama esta função, em vez de escrever o `JOIN` no seu próprio módulo.
+pub async fn chat_retention_days_for_owner(
+    state: &AppState,
+    owner_id: Uuid,
+) -> Result<Option<i32>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT max(o.chat_retention_days) FROM org_members om
+         JOIN organizations o ON o.id = om.org_id
+         WHERE om.user_id = $1 AND om.archived_at IS NULL
+           AND o.chat_retention_days IS NOT NULL",
+    )
+    .bind(owner_id)
+    .fetch_one(&state.db)
+    .await
+}
+
 // ---------- branches ----------
 
 #[derive(Deserialize, utoipa::ToSchema)]
