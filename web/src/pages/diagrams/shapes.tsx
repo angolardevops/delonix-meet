@@ -760,6 +760,143 @@ function NodeBody({ n, sub }: { n: DNode; sub?: string }): ReactNode {
           <Lines lines={wrapText(n.name, n.w - 16, 10.5, 2)} x={n.w / 2} y={(n.h - 10) / 2} size={10.5} />
         </>
       )
+    case 'predefinedProcess':
+      return (
+        <>
+          <rect width={n.w} height={n.h} rx={2} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <path d={`M10 0V${n.h}M${n.w - 10} 0V${n.h}`} stroke={stroke} strokeWidth={SW} />
+          <Lines lines={wrapText(n.name, n.w - 32, 10.5, 3)} x={n.w / 2} y={n.h / 2} size={10.5} />
+        </>
+      )
+    case 'manualInput':
+      return (
+        <>
+          <path d={`M0 ${n.h * 0.3}L${n.w} 0V${n.h}H0Z`} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <Lines lines={wrapText(n.name, n.w - 20, 10.5, 2)} x={n.w / 2} y={n.h * 0.6} size={10.5} />
+        </>
+      )
+    case 'manualOperation':
+      return (
+        <>
+          <path d={`M0 0H${n.w}L${n.w - 18} ${n.h}H18Z`} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <Lines lines={wrapText(n.name, n.w - 44, 10.5, 2)} x={n.w / 2} y={n.h / 2} size={10.5} />
+        </>
+      )
+    case 'preparation':
+      return (
+        <>
+          <path d={`M0 ${n.h / 2}L20 0H${n.w - 20}L${n.w} ${n.h / 2}L${n.w - 20} ${n.h}H20Z`} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <Lines lines={wrapText(n.name, n.w - 44, 10.5, 2)} x={n.w / 2} y={n.h / 2} size={10.5} />
+        </>
+      )
+    case 'delay':
+      return (
+        <>
+          <path d={`M0 0H${n.w - n.h / 2}A${n.h / 2} ${n.h / 2} 0 0 1 ${n.w - n.h / 2} ${n.h}H0Z`} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <Lines lines={wrapText(n.name, n.w - n.h / 2 - 12, 10.5, 2)} x={(n.w - n.h / 4) / 2} y={n.h / 2} size={10.5} />
+        </>
+      )
+    case 'merge':
+      return (
+        <>
+          <path d={`M0 0H${n.w}L${n.w / 2} ${n.h}Z`} fill={surface} stroke={stroke} strokeWidth={SW} strokeLinejoin="round" />
+          {n.name && <Lines lines={wrapText(n.name, 110, 8.5, 2)} x={n.w / 2} y={n.h + 11} size={8.5} color={INK.muted} />}
+        </>
+      )
+    case 'loopLimit':
+      return (
+        <>
+          <path d={`M14 0H${n.w - 14}L${n.w} 14V${n.h}H0V14Z`} fill={surface} stroke={stroke} strokeWidth={SW} strokeLinejoin="round" />
+          <Lines lines={wrapText(n.name, n.w - 20, 10.5, 2)} x={n.w / 2} y={n.h / 2 + 3} size={10.5} />
+        </>
+      )
+    case 'display':
+      return (
+        <>
+          <path d={`M0 ${n.h / 2}L22 0H${n.w - 22}A22 ${n.h / 2} 0 0 1 ${n.w - 22} ${n.h}H22Z`} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <Lines lines={wrapText(n.name, n.w - 50, 10.5, 2)} x={n.w / 2} y={n.h / 2} size={10.5} />
+        </>
+      )
+    case 'multiDocument': {
+      const page = (dx: number, dy: number) =>
+        `M${dx} ${dy}H${n.w - 12 + dx}V${n.h - 22 + dy}C${(n.w - 12) * 0.75 + dx} ${n.h - 32 + dy} ${(n.w - 12) * 0.5 + dx} ${n.h - 8 + dy} ${dx} ${n.h - 20 + dy}Z`
+      return (
+        <>
+          <path d={page(12, 0)} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <path d={page(6, 6)} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <path d={page(0, 12)} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <Lines lines={wrapText(n.name, n.w - 30, 10.5, 2)} x={(n.w - 12) / 2} y={12 + (n.h - 34) / 2} size={10.5} />
+        </>
+      )
+    }
+    case 'storedData':
+      return (
+        <>
+          <path d={`M14 0H${n.w}A14 ${n.h / 2} 0 0 0 ${n.w} ${n.h}H14A14 ${n.h / 2} 0 0 1 14 0Z`} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <Lines lines={wrapText(n.name, n.w - 40, 10.5, 2)} x={n.w / 2} y={n.h / 2} size={10.5} />
+        </>
+      )
+    case 'flowDatabase': {
+      const ry = 10
+      return (
+        <>
+          <path d={`M0 ${ry}V${n.h - ry}A${n.w / 2} ${ry} 0 0 0 ${n.w} ${n.h - ry}V${ry}`} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <ellipse cx={n.w / 2} cy={ry} rx={n.w / 2} ry={ry} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <Lines lines={wrapText(n.name, n.w - 12, 10.5, 2)} x={n.w / 2} y={n.h / 2 + 6} size={10.5} />
+        </>
+      )
+    }
+    case 'internalStorage':
+      return (
+        <>
+          <rect width={n.w} height={n.h} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <path d={`M14 0V${n.h}M0 14H${n.w}`} stroke={stroke} strokeWidth={1.2} />
+          <Lines lines={wrapText(n.name, n.w - 28, 10.5, 2)} x={n.w / 2 + 7} y={n.h / 2 + 7} size={10.5} />
+        </>
+      )
+    case 'sequentialStorage': {
+      const r = Math.min(n.w, n.h) / 2
+      return (
+        <>
+          <path d={`M${n.w / 2} ${n.h}A${r} ${r} 0 1 1 ${n.w / 2 + r * 0.99} ${n.h / 2 + r * 0.1}V${n.h}Z`} fill={surface} stroke={stroke} strokeWidth={SW} strokeLinejoin="round" />
+          <Lines lines={wrapText(n.name, n.w - 14, 9.5, 2)} x={n.w / 2} y={n.h / 2} size={9.5} />
+        </>
+      )
+    }
+    case 'directAccessStorage': {
+      const rx = 12
+      return (
+        <>
+          <path d={`M${rx} 0H${n.w - rx}A${rx} ${n.h / 2} 0 0 1 ${n.w - rx} ${n.h}H${rx}A${rx} ${n.h / 2} 0 0 1 ${rx} 0Z`} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <path d={`M${n.w - rx} 0A${rx} ${n.h / 2} 0 0 0 ${n.w - rx} ${n.h}`} fill="none" stroke={stroke} strokeWidth={SW} />
+          <Lines lines={wrapText(n.name, n.w - rx * 3 - 8, 10.5, 2)} x={(n.w - rx) / 2} y={n.h / 2} size={10.5} />
+        </>
+      )
+    }
+    case 'connector':
+      return (
+        <>
+          <circle cx={n.w / 2} cy={n.h / 2} r={n.w / 2 - 0.75} fill={surface} stroke={stroke} strokeWidth={SW} />
+          <text x={n.w / 2} y={n.h / 2 + 0.5} fontSize={11} fontWeight={700} fill={INK.ink} textAnchor="middle" dominantBaseline="middle">
+            {n.name.slice(0, 3)}
+          </text>
+        </>
+      )
+    case 'offPageConnector':
+      return (
+        <>
+          <path d={`M0 0H${n.w}V${n.h * 0.62}L${n.w / 2} ${n.h}L0 ${n.h * 0.62}Z`} fill={surface} stroke={stroke} strokeWidth={SW} strokeLinejoin="round" />
+          <Lines lines={wrapText(n.name, n.w - 6, 9.5, 2)} x={n.w / 2} y={n.h * 0.36} size={9.5} weight={700} />
+        </>
+      )
+    case 'flowAnnotation':
+      return (
+        <>
+          <rect width={n.w} height={n.h} fill="transparent" />
+          <path d={`M14 0H0V${n.h}H14`} fill="none" stroke={INK.muted} strokeWidth={SW} />
+          <Lines lines={wrapText(n.props.text ?? n.name, n.w - 14, 9.5, 3)} x={8} y={n.h / 2} size={9.5} anchor="start" color={INK.noteInk} />
+        </>
+      )
     case 'text':
       return (
         <>
@@ -889,6 +1026,8 @@ export function edgeStyle(e: DEdge, sourceType?: DNode['type']): EdgeStyle {
       return { dash: '2 3', start: null, end: 'filled', color: INK.muted }
     case 'flow':
       return { start: null, end: 'filled', color: ink }
+    case 'flowNote':
+      return { dash: '4 3', start: null, end: null, color: INK.muted }
   }
 }
 

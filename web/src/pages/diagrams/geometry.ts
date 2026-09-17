@@ -78,6 +78,8 @@ const ELLIPSES: ReadonlySet<DNode['type']> = new Set([
   'history',
   'providedInterface',
   'requiredInterface',
+  'connector',
+  'sequentialStorage',
 ])
 const DIAMONDS: ReadonlySet<DNode['type']> = new Set(['gateway', 'decision', 'decisionNode', 'choice'])
 

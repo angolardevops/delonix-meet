@@ -22,12 +22,13 @@ const N = (id: string, type: NodeType, x: number, y: number, name: string, props
 const E = (id: string, type: DEdge['type'], from: string, to: string, extra: Partial<DEdge> = {}): DEdge => ({ id, type, from, to, label: '', ...extra })
 
 export function hasExample(n: Notation): boolean {
-  return n === 'uml' || n === 'bpmn'
+  return n === 'uml' || n === 'bpmn' || n === 'flow'
 }
 
 export function example(n: Notation, tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> | null {
   if (n === 'uml') return uml(tx)
   if (n === 'bpmn') return bpmn(tx)
+  if (n === 'flow') return flow(tx)
   return null
 }
 
@@ -132,6 +133,37 @@ function bpmn(tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> {
       E('x_f12', 'sequenceFlow', 'x_reduce', 'x_end2'),
       E('x_f15', 'sequenceFlow', 'x_close', 'x_trans'),
       E('x_f13', 'sequenceFlow', 'x_trans', 'x_ready'),
+    ],
+  }
+}
+
+function flow(tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> {
+  const cx = 300
+  return {
+    nodes: [
+      N('x_title', 'text', 18, 4, tx('flow.titulo'), {}, [620, 34]),
+      N('x_start', 'terminator', cx - 70, 60, tx('flow.inicio')),
+      N('x_pick', 'manualInput', cx - 75, 140, tx('flow.escolher')),
+      N('x_prep', 'preparation', cx - 80, 230, tx('flow.preparar')),
+      N('x_dec', 'decision', cx - 60, 320, tx('flow.legendas')),
+      N('x_trans', 'predefinedProcess', cx + 120, 330, tx('flow.transcrever')),
+      N('x_merge', 'merge', cx - 30, 450, ''),
+      N('x_store', 'flowDatabase', cx + 150, 440, 'MinIO'),
+      N('x_show', 'display', cx - 75, 540, tx('flow.link')),
+      N('x_page', 'offPageConnector', cx - 22, 630, tx('flow.pagina')),
+      N('x_note', 'flowAnnotation', cx + 150, 230, '', { text: tx('flow.nota') }, [200, 50]),
+    ],
+    edges: [
+      E('x_f1', 'flow', 'x_start', 'x_pick'),
+      E('x_f2', 'flow', 'x_pick', 'x_prep'),
+      E('x_f3', 'flow', 'x_prep', 'x_dec'),
+      E('x_f4', 'flow', 'x_dec', 'x_trans', { label: tx('flow.nao') }),
+      E('x_f5', 'flow', 'x_dec', 'x_merge', { label: tx('flow.sim') }),
+      E('x_f6', 'flow', 'x_trans', 'x_merge'),
+      E('x_f7', 'flow', 'x_trans', 'x_store'),
+      E('x_f8', 'flow', 'x_merge', 'x_show'),
+      E('x_f9', 'flow', 'x_show', 'x_page'),
+      E('x_n1', 'flowNote', 'x_note', 'x_prep'),
     ],
   }
 }

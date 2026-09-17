@@ -151,9 +151,28 @@ const GLYPH: Record<string, string> = {
   sequenceFlow: 'M2 9h16M14 5l4 4-4 4',
   messageFlow: 'M4 9a2 2 0 1 0 0 .1M6 9h2M10 9h2M14 9h3M17 6l3 3-3 3',
   dataAssociation: 'M2 9h2M6 9h2M10 9h2M14 9h2M18 9h2',
+  // Fluxograma — quadros-formas
+  predefinedProcess: 'M2 4h18v10H2zM5 4v10M17 4v10',
+  preparation: 'M2 9l4-5h10l4 5-4 5H6z',
+  manualInput: 'M2 7l18-3v10H2z',
+  manualOperation: 'M2 4h18l-4 10H6z',
+  delay: 'M2 4h11a5 5 0 0 1 0 10H2z',
+  merge: 'M4 4h14l-7 10z',
+  loopLimit: 'M5 4h12l3 3v7H2V7z',
+  display: 'M2 9l4-5h11a4 5 0 0 1 0 10H6z',
+  multiDocument: 'M7 1h13v9M5 3h13v9M3 5h13v8c-3-1.6-6 2.4-13 .8z',
+  flowDatabase: 'M11 2c4 0 7 1 7 2.4v9.2c0 1.4-3 2.4-7 2.4s-7-1-7-2.4V4.4C4 3 7 2 11 2ZM4 4.4c0 1.4 3 2.4 7 2.4s7-1 7-2.4',
+  storedData: 'M6 4h14a3 5 0 0 0 0 10H6a3 5 0 0 1 0-10Z',
+  internalStorage: 'M3 3h16v12H3zM6 3v12M3 6h16',
+  sequentialStorage: 'M11 16a7 7 0 1 1 7-6.6V16z',
+  directAccessStorage: 'M5 4h12a3 5 0 0 1 0 10H5a3 5 0 0 1 0-10ZM17 4a3 5 0 0 0 0 10',
+  connector: 'M11 3a6 6 0 1 0 0 12 6 6 0 0 0 0-12Z',
+  offPageConnector: 'M5 2h12v9l-6 5-6-5z',
+  flowAnnotation: 'M6 2v14M6 2h12M6 16h12',
+  flowNote: 'M2 9h2M6 9h2M10 9h2M14 9h2M18 9h2',
 }
 
-const DASHED = new Set(['group', 'messageFlow', 'dataAssociation', 'boundary', 'external', 'zone', 'partition', 'reply', 'realization', 'dependency', 'usage', 'deploy', 'manifest', 'extend'])
+const DASHED = new Set(['flowNote', 'group', 'messageFlow', 'dataAssociation', 'boundary', 'external', 'zone', 'partition', 'reply', 'realization', 'dependency', 'usage', 'deploy', 'manifest', 'extend'])
 
 const CLOSED_KEY = 'dx-diagram-palette-closed'
 

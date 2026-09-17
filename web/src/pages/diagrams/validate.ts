@@ -15,6 +15,7 @@ import {
   canConnect,
   CLASSIFIERS,
   EVENT_GATEWAYS,
+  FLOW_NODES,
   DEdge,
   defaultEdgeType,
   DiagramDoc,
@@ -80,6 +81,7 @@ export type RuleCode =
   | 'flowDecisaoSaidas'
   | 'flowDecisaoEtiquetas'
   | 'flowInalcancavel'
+  | 'flowConectorSemPar'
 
 export interface Issue {
   id: string
@@ -400,11 +402,21 @@ function validateArch(doc: DiagramDoc): Issue[] {
 
 function validateFlow(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
   const out: Issue[] = []
-  const nodes = doc.nodes.filter((n) => NODE_NOTATION[n.type] === 'flow')
+  // Anotações não fazem parte do fluxo: nem contam como início, nem como inalcançáveis.
+  const nodes = doc.nodes.filter((n) => FLOW_NODES.has(n.type))
   if (nodes.length === 0) return out
   const edges = doc.edges.filter((e) => e.type === 'flow' && byId.has(e.from) && byId.has(e.to))
-  const starts = nodes.filter((n) => n.type === 'terminator' && !edges.some((e) => e.to === n.id))
-  if (starts.length === 0) out.push(issue('flowSemInicio', 'error', nodes[0] ? [nodes[0].id] : []))
+  // Um conector sem entrada continua o fluxo vindo de outro sítio (outra página ou outro ramo): também arranca.
+  const isConnector = (n: DNode) => n.type === 'connector' || n.type === 'offPageConnector'
+  const starts = nodes.filter((n) => (n.type === 'terminator' || isConnector(n)) && !edges.some((e) => e.to === n.id))
+  for (const n of nodes.filter((x) => x.type === 'connector')) {
+    // Na mesma página, um conector só serve se houver outro com o mesmo rótulo.
+    const pair = nodes.some((m) => m.id !== n.id && m.type === 'connector' && m.name.trim() === n.name.trim())
+    if (!pair) out.push(issue('flowConectorSemPar', 'warning', [n.id], { name: label(n) }))
+  }
+  if (!nodes.some((n) => n.type === 'terminator' && !edges.some((e) => e.to === n.id)) && !nodes.some((n) => n.type === 'offPageConnector' && !edges.some((e) => e.to === n.id))) {
+    out.push(issue('flowSemInicio', 'error', nodes[0] ? [nodes[0].id] : []))
+  }
   for (const n of nodes) {
     if (n.type !== 'decision') continue
     const outs = edges.filter((e) => e.from === n.id)

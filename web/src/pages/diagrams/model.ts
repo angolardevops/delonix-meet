@@ -82,6 +82,23 @@ export type NodeType =
   | 'decision'
   | 'io'
   | 'document'
+  | 'predefinedProcess'
+  | 'manualInput'
+  | 'manualOperation'
+  | 'preparation'
+  | 'delay'
+  | 'merge'
+  | 'loopLimit'
+  | 'display'
+  | 'multiDocument'
+  | 'storedData'
+  | 'flowDatabase'
+  | 'internalStorage'
+  | 'sequentialStorage'
+  | 'directAccessStorage'
+  | 'connector'
+  | 'offPageConnector'
+  | 'flowAnnotation'
   // Livre
   | 'text'
 
@@ -116,6 +133,7 @@ export type EdgeType =
   | 'dataFlow'
   // Fluxograma
   | 'flow'
+  | 'flowNote'
 
 export type TaskKind = 'none' | 'user' | 'service' | 'script' | 'manual' | 'send' | 'receive' | 'businessRule' | 'call'
 export const TASK_KINDS: TaskKind[] = ['none', 'user', 'service', 'script', 'manual', 'send', 'receive', 'businessRule', 'call']
@@ -290,6 +308,23 @@ export const NODE_NOTATION: Record<NodeType, Notation> = {
   decision: 'flow',
   io: 'flow',
   document: 'flow',
+  predefinedProcess: 'flow',
+  manualInput: 'flow',
+  manualOperation: 'flow',
+  preparation: 'flow',
+  delay: 'flow',
+  merge: 'flow',
+  loopLimit: 'flow',
+  display: 'flow',
+  multiDocument: 'flow',
+  storedData: 'flow',
+  flowDatabase: 'flow',
+  internalStorage: 'flow',
+  sequentialStorage: 'flow',
+  directAccessStorage: 'flow',
+  connector: 'flow',
+  offPageConnector: 'flow',
+  flowAnnotation: 'flow',
   text: 'free',
 }
 
@@ -320,6 +355,7 @@ export const EDGE_NOTATION: Record<EdgeType, Notation> = {
   async: 'arch',
   dataFlow: 'arch',
   flow: 'flow',
+  flowNote: 'flow',
 }
 
 /** Contentores: desenham-se por baixo e não se ligam por setas de fluxo. */
@@ -334,6 +370,7 @@ export const STATE_NODES: ReadonlySet<NodeType> = new Set(['state', 'compositeSt
 /** Elementos de tamanho fixo: o nome vai por baixo e não se redimensionam. */
 export const FIXED_SIZE: ReadonlySet<NodeType> = new Set([
   'actor',
+  'connector',
   'initialNode',
   'activityFinal',
   'flowFinal',
@@ -632,6 +669,39 @@ export const PALETTES: Record<Notation, PaletteGroup[]> = {
         { kind: 'edge', key: 'flow', edge: 'flow' },
       ],
     },
+    {
+      key: 'flowProcess',
+      items: [
+        { kind: 'node', key: 'predefinedProcess', type: 'predefinedProcess' },
+        { kind: 'node', key: 'preparation', type: 'preparation' },
+        { kind: 'node', key: 'manualInput', type: 'manualInput' },
+        { kind: 'node', key: 'manualOperation', type: 'manualOperation' },
+        { kind: 'node', key: 'delay', type: 'delay' },
+        { kind: 'node', key: 'merge', type: 'merge' },
+        { kind: 'node', key: 'loopLimit', type: 'loopLimit' },
+        { kind: 'node', key: 'display', type: 'display' },
+        { kind: 'node', key: 'multiDocument', type: 'multiDocument' },
+      ],
+    },
+    {
+      key: 'flowData',
+      items: [
+        { kind: 'node', key: 'flowDatabase', type: 'flowDatabase' },
+        { kind: 'node', key: 'storedData', type: 'storedData' },
+        { kind: 'node', key: 'internalStorage', type: 'internalStorage' },
+        { kind: 'node', key: 'sequentialStorage', type: 'sequentialStorage' },
+        { kind: 'node', key: 'directAccessStorage', type: 'directAccessStorage' },
+      ],
+    },
+    {
+      key: 'flowConnectors',
+      items: [
+        { kind: 'node', key: 'connector', type: 'connector' },
+        { kind: 'node', key: 'offPageConnector', type: 'offPageConnector' },
+        { kind: 'node', key: 'flowAnnotation', type: 'flowAnnotation' },
+        { kind: 'edge', key: 'flowNote', edge: 'flowNote' },
+      ],
+    },
   ],
   free: [
     {
@@ -705,6 +775,23 @@ const SIZES: Record<NodeType, [number, number]> = {
   decision: [120, 80],
   io: [150, 56],
   document: [150, 66],
+  predefinedProcess: [150, 60],
+  manualInput: [150, 60],
+  manualOperation: [150, 56],
+  preparation: [160, 56],
+  delay: [130, 56],
+  merge: [60, 50],
+  loopLimit: [150, 56],
+  display: [150, 56],
+  multiDocument: [150, 72],
+  storedData: [150, 56],
+  flowDatabase: [110, 76],
+  internalStorage: [130, 70],
+  sequentialStorage: [70, 70],
+  directAccessStorage: [150, 60],
+  connector: [36, 36],
+  offPageConnector: [44, 48],
+  flowAnnotation: [160, 50],
   text: [240, 30],
 }
 
@@ -753,7 +840,29 @@ export function nodeById(doc: Pick<DiagramDoc, 'nodes'>, id: string): DNode | un
 const DATA_SIDE: ReadonlySet<NodeType> = new Set(['dataObject', 'annotation', 'dataStore'])
 const USECASE_SIDE: ReadonlySet<NodeType> = new Set(['actor', 'usecase'])
 const ARCH_NODES: ReadonlySet<NodeType> = new Set(['service', 'database', 'queue', 'client', 'external'])
-const FLOW_NODES: ReadonlySet<NodeType> = new Set(['terminator', 'process', 'decision', 'io', 'document'])
+export const FLOW_NODES: ReadonlySet<NodeType> = new Set([
+  'terminator',
+  'process',
+  'decision',
+  'io',
+  'document',
+  'predefinedProcess',
+  'manualInput',
+  'manualOperation',
+  'preparation',
+  'delay',
+  'merge',
+  'loopLimit',
+  'display',
+  'multiDocument',
+  'storedData',
+  'flowDatabase',
+  'internalStorage',
+  'sequentialStorage',
+  'directAccessStorage',
+  'connector',
+  'offPageConnector',
+])
 
 const PROVIDERS: ReadonlySet<NodeType> = new Set(['class', 'component', 'port'])
 const DEPENDS: ReadonlySet<NodeType> = new Set(['class', 'interface', 'enum', 'package', 'component', 'deviceNode', 'artifact', 'providedInterface', 'requiredInterface'])
@@ -817,6 +926,8 @@ export function canConnect(type: EdgeType, a: DNode, b: DNode): boolean {
       return ARCH_NODES.has(a.type) && ARCH_NODES.has(b.type)
     case 'flow':
       return FLOW_NODES.has(a.type) && FLOW_NODES.has(b.type)
+    case 'flowNote':
+      return (a.type === 'flowAnnotation') !== (b.type === 'flowAnnotation') && (FLOW_NODES.has(a.type) || FLOW_NODES.has(b.type))
   }
   return false
 }
@@ -848,6 +959,7 @@ export function defaultEdgeType(a: DNode, b: DNode): EdgeType | null {
     'messageFlow',
     'sync',
     'flow',
+    'flowNote',
     'dependency',
   ]
   for (const t of pref) if (canConnect(t, a, b)) return t

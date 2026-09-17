@@ -40,6 +40,7 @@ import {
   DNode,
   EDGE_NOTATION,
   emptyDoc,
+  FLOW_NODES,
   makeNode,
   NODE_NOTATION,
   Notation,
@@ -278,9 +279,10 @@ export default function Diagram({ id }: { id: string | null }) {
     const pos = at
       ? { x: at.x - probe.w / 2, y: at.y - (probe.h || 40) / 2 }
       : { x: (w / 2 - view.x) / view.k - probe.w / 2 + stagger, y: (h / 2 - view.y) / view.k - (probe.h || 60) / 2 + stagger }
-    const name = item.type === 'note' || item.type === 'annotation' ? '' : defaultName(doc, item.type, item.key)
+    const textual = item.type === 'note' || item.type === 'annotation' || item.type === 'flowAnnotation'
+    const name = textual ? '' : defaultName(doc, item.type, item.key)
     const props = { ...item.props }
-    if (item.type === 'note' || item.type === 'annotation') props.text = t(`diagrams.novos.${item.key}`)
+    if (textual) props.text = t(`diagrams.novos.${item.key}`)
     if (item.type === 'pool') {
       props.lanes = [
         { id: uid('l'), name: t('diagrams.inspector.pistaN', { n: 1 }), size: 150 },
@@ -815,7 +817,7 @@ function summary(t: (k: string, o?: Record<string, unknown>) => string, d: Diagr
     u('componentes', of(['service', 'database', 'queue', 'client', 'external']))
     u('ligacoes', edges('arch'))
   } else if (notation === 'flow') {
-    u('formas', of(['terminator', 'process', 'decision', 'io', 'document']))
+    u('formas', d.nodes.filter((n) => FLOW_NODES.has(n.type)).length)
     u('ligacoes', edges('flow'))
   } else {
     u('tracos', d.strokes.length)

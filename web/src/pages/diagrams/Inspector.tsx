@@ -178,7 +178,7 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
     onChange(patchNode(doc, n.id, (x) => ({ ...x, props: { ...x.props, ...patch } })), key && `${n.id}:${key}`)
   const bpmn = NODE_NOTATION[n.type] === 'bpmn'
   const isEvent = n.type === 'startEvent' || n.type === 'intermediateEvent' || n.type === 'endEvent'
-  const nameIsText = n.type === 'note' || n.type === 'annotation'
+  const nameIsText = n.type === 'note' || n.type === 'annotation' || n.type === 'flowAnnotation'
 
   return (
     <>
