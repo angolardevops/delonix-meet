@@ -57,6 +57,23 @@
 | `/api/users/me/notifications…` | igual |
 | `POST /api/missed-calls/ack` | `POST /api/users/me/missed-calls/acknowledge` |
 
+### Conta pessoal (Navegavel3, frente B — rotas novas, sem «antes»)
+| Rota | Notas |
+|---|---|
+| `GET/PATCH /api/users/me/profile` | `409 profile.field_managed_by_odoo` nos campos do Odoo |
+| `GET/PUT/DELETE /api/users/me/avatar`, `GET /api/users/{user_id}/avatar` | imagem crua; a de outra pessoa só com org em comum |
+| `GET/PUT /api/users/me/join-preferences` | singleton (`PUT` completo) |
+| `GET/PUT /api/users/me/notification-preferences` | singleton (`PUT` completo) |
+| `GET/PATCH /api/users/me/tour`, `PUT /api/users/me/tour/steps/{step_id}`, `POST /api/users/me/tour/skip`, `POST /api/users/me/tour/restart` | passos versionados |
+| `GET /api/users/me/sessions`, `GET/DELETE /api/users/me/sessions/{session_id}`, `POST /api/users/me/sessions/revoke-others` | `204` ao terminar |
+| `POST /api/users/me/reauthentication` | abre a janela de 5 min para alterar factores |
+| `GET /api/users/me/security` | resumo de segurança |
+| `GET/POST /api/users/me/passkeys`, `GET/DELETE /api/users/me/passkeys/{passkey_id}`, `POST /api/users/me/passkeys/begin-registration` | `201` + `Location` ao registar |
+| `POST /api/users/me/mfa/backup-codes/regenerate` | exige reautenticação |
+| `POST /api/auth/login/mfa/passkey-options`, `POST /api/auth/login/mfa/passkey` | segundo factor com chave |
+| `POST /api/users/me/room/rotate-pin` | «Novo PIN» |
+| `GET/POST /api/users/me/data-exports`, `GET /api/users/me/data-exports/{export_id}`, `POST …/{export_id}/download-link`, `GET …/{export_id}/content` | `202` + `Location`; `content` sem sessão (assinatura) |
+
 ### Salas
 | Antes | Depois |
 |---|---|

@@ -54,6 +54,12 @@ pub struct Claims {
     /// Room token: a sala de espera configurada na sala (BD).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wr: Option<bool>,
+    /// Sessão de onde o token vem (`user_sessions.id`). Os access e room
+    /// tokens emitidos desde a migração das sessões (`sessoes`) levam-no, e é o que permite
+    /// terminar uma sessão de imediato. Ausente num token anterior (expira
+    /// sozinho em minutos) e nos tokens de bot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sid: Option<Uuid>,
 }
 
 pub fn sign_jwt(secret: &str, claims: &Claims) -> Result<String, ApiError> {
@@ -78,7 +84,7 @@ pub fn verify_jwt(secret: &str, token: &str, expected_typ: &str) -> Result<Claim
     Ok(data.claims)
 }
 
-pub fn access_token(state: &AppState, user_id: Uuid) -> Result<String, ApiError> {
+pub fn access_token(state: &AppState, user_id: Uuid, sid: Uuid) -> Result<String, ApiError> {
     let now = Utc::now().timestamp();
     sign_jwt(
         &state.config.jwt_secret,
@@ -98,6 +104,7 @@ pub fn access_token(state: &AppState, user_id: Uuid) -> Result<String, ApiError>
             title: None,
             lobby: None,
             wr: None,
+            sid: Some(sid),
         },
     )
 }
@@ -136,8 +143,15 @@ pub(crate) fn bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
 }
 
 /// Authenticated user, extracted from `Authorization: Bearer <access token>`.
+///
+/// Um token com `sid` só passa se a sessão estiver activa: terminar uma sessão
+/// (`DELETE /api/users/me/sessions/{id}`) corta-a já, não quando o JWT expirar.
 pub struct AuthUser {
     pub user_id: Uuid,
+    /// A sessão do pedido. `None` num access token anterior à migração das sessões.
+    pub session_id: Option<Uuid>,
+    /// Última prova de identidade NESTA sessão (login ou reautenticação).
+    pub reauthenticated_at: Option<chrono::DateTime<Utc>>,
 }
 
 impl FromRequestParts<Arc<AppState>> for AuthUser {
@@ -149,8 +163,18 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
     ) -> Result<Self, Self::Rejection> {
         let token = bearer_token(&parts.headers).ok_or(ApiError::Unauthorized)?;
         let claims = verify_jwt(&state.config.jwt_secret, token, "access")?;
+        let reauthenticated_at = match claims.sid {
+            Some(sid) => {
+                crate::sessions::ensure_active(state, claims.sub, sid)
+                    .await?
+                    .reauthenticated_at
+            }
+            None => None,
+        };
         Ok(AuthUser {
             user_id: claims.sub,
+            session_id: claims.sid,
+            reauthenticated_at,
         })
     }
 }
@@ -194,13 +218,15 @@ pub struct AuthOk {
 
 /// Desafio do segundo factor: a password foi aceite mas a conta tem MFA
 /// activo, por isso ainda não há sessão. O `mfa_token` troca-se em
-/// `/api/auth/login/mfa`.
+/// `/api/auth/login/mfa` (código) ou `/api/auth/login/mfa/passkey` (chave).
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct MfaChallenge {
     /// Sempre `true`.
     pub mfa_required: bool,
     /// JWT `typ: "mfa"`, válido 5 minutos; não abre mais nenhum endpoint.
     pub mfa_token: String,
+    /// Factores que a conta tem: `totp` e/ou `passkey`.
+    pub methods: Vec<String>,
 }
 
 /// Resposta do login: sessão aberta OU desafio de MFA (sem discriminador — o
@@ -221,6 +247,10 @@ fn refresh_cookie(token: &str, secure: bool, max_age: i64) -> String {
 }
 
 /// Constrói a resposta de auth: define o cookie de refresh + devolve o access.
+pub(crate) fn auth_ok_response(state: &AppState, pair: TokenPair) -> Response {
+    auth_ok(state, pair)
+}
+
 fn auth_ok(state: &AppState, pair: TokenPair) -> Response {
     let cookie = refresh_cookie(
         &pair.refresh_token,
@@ -249,11 +279,23 @@ fn read_refresh_cookie(headers: &HeaderMap) -> Option<String> {
     })
 }
 
+/// Abre uma SESSÃO nova (login) e emite o primeiro par de tokens dela.
+pub(crate) async fn open_session(
+    state: &AppState,
+    user: crate::users::UserPublic,
+    method: crate::sessions::AuthMethod,
+    ctx: &crate::sessions::ClientCtx,
+) -> Result<TokenPair, ApiError> {
+    let sid = crate::sessions::create(state, user.id, method, ctx).await?;
+    issue_tokens(state, user, sid).await
+}
+
 async fn issue_tokens(
     state: &AppState,
     user: crate::users::UserPublic,
+    sid: Uuid,
 ) -> Result<TokenPair, ApiError> {
-    let access = access_token(state, user.id)?;
+    let access = access_token(state, user.id, sid)?;
     // Último acesso (ADR-0008 §7): escrito aqui, num só sítio, porque todas as
     // entradas com sucesso emitem tokens por esta função.
     let _ = sqlx::query("UPDATE users SET last_access_at = now() WHERE id = $1")
@@ -262,12 +304,15 @@ async fn issue_tokens(
         .await;
     let (refresh, refresh_hash) = new_refresh_token();
     let expires = Utc::now() + chrono::Duration::seconds(state.config.refresh_ttl_secs);
-    sqlx::query("INSERT INTO refresh_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)")
-        .bind(&refresh_hash)
-        .bind(user.id)
-        .bind(expires)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "INSERT INTO refresh_tokens (token_hash, user_id, expires_at, session_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(&refresh_hash)
+    .bind(user.id)
+    .bind(expires)
+    .bind(sid)
+    .execute(&state.db)
+    .await?;
     Ok(TokenPair {
         access_token: access,
         refresh_token: refresh,
@@ -322,6 +367,7 @@ pub struct ApiDoc;
 )]
 pub async fn register(
     State(state): State<Arc<AppState>>,
+    ctx: crate::sessions::ClientCtx,
     Json(req): Json<RegisterReq>,
 ) -> Result<Response, ApiError> {
     use delonix_meet_domain::identity::registration::{
@@ -419,7 +465,10 @@ pub async fn register(
     tx.commit().await?;
 
     crate::audit::log(&state.db, Some(org_id), user.id, action, &target).await;
-    Ok(auth_ok(&state, issue_tokens(&state, user).await?))
+    Ok(auth_ok(
+        &state,
+        open_session(&state, user, crate::sessions::AuthMethod::Password, &ctx).await?,
+    ))
 }
 
 /// O que a política de registo precisa de saber sobre a instalação.
@@ -468,6 +517,7 @@ where
 )]
 pub async fn login(
     State(state): State<Arc<AppState>>,
+    ctx: crate::sessions::ClientCtx,
     Json(req): Json<LoginReq>,
 ) -> Result<Response, ApiError> {
     let email = req.email.trim().to_lowercase();
@@ -505,27 +555,94 @@ pub async fn login(
         // credenciais não servem, e aí o 401 mantém-se.
         if let Some(user) = crate::odoo_sso::try_first_login(&state, &email, &req.password).await {
             crate::audit::log(&state.db, None, user.id, "auth.login_odoo", &user.email).await;
-            return Ok(auth_ok(&state, issue_tokens(&state, user).await?));
+            return Ok(auth_ok(
+                &state,
+                open_session(&state, user, crate::sessions::AuthMethod::Odoo, &ctx).await?,
+            ));
         }
         let _ = verify_password(&req.password, DUMMY);
         return Err(ApiError::Unauthorized);
     };
 
+    let authenticated = password_matches(&state, id, &email, &password_hash, &req.password).await;
+
+    if authenticated {
+        let user = crate::users::UserPublic {
+            id,
+            email: user_email,
+            username,
+            created_at,
+            locale: "pt".into(),
+        };
+        // Segundo factor: com MFA activo, a password sozinha NÃO produz sessão.
+        // Devolve-se um desafio de curta duração, e os tokens só saem no
+        // `/api/auth/login/mfa`. É o ponto todo do segundo factor — se a password
+        // bastasse para obter o access token, o resto era teatro.
+        let factors = crate::mfa::factors(&state.db, user.id).await?;
+        if factors.any() {
+            crate::audit::log(&state.db, None, user.id, "auth.mfa_challenge", &user.email).await;
+            let mut methods = Vec::new();
+            if factors.totp_enabled {
+                methods.push("totp".to_string());
+            }
+            if factors.passkeys > 0 {
+                methods.push("passkey".to_string());
+            }
+            return Ok(Json(LoginResponse::MfaRequired(MfaChallenge {
+                mfa_required: true,
+                mfa_token: mfa_challenge_token(&state, user.id)?,
+                methods,
+            }))
+            .into_response());
+        }
+        crate::audit::log(&state.db, None, user.id, "auth.login", &user.email).await;
+        Ok(auth_ok(
+            &state,
+            open_session(&state, user, crate::sessions::AuthMethod::Password, &ctx).await?,
+        ))
+    } else {
+        Err(ApiError::Unauthorized)
+    }
+}
+
+/// Resultado de verificar a password de uma conta.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PasswordCheck {
+    Valid,
+    Invalid,
+    /// A password não confere e a conta entra por SSO: não tem password local
+    /// que a pessoa conheça.
+    NoLocalPassword,
+}
+
+/// A regra ÚNICA de «esta password é a desta conta», partilhada pelo login e
+/// pela reautenticação (ADR-0004 §5 regra 8).
+///
+/// Integração Odoo: se a org do utilizador tem integração activa, valida contra
+/// o Odoo primeiro. Com o Odoo inacessível, vale o hash Argon2 guardado na
+/// última autenticação online bem-sucedida.
+async fn password_matches(
+    state: &Arc<AppState>,
+    id: Uuid,
+    email: &str,
+    password_hash: &str,
+    password: &str,
+) -> bool {
+    // Verify against a dummy hash so timing doesn't leak which branch ran.
+    const DUMMY: &str = "$argon2id$v=19$m=19456,t=2,p=1$YWFhYWFhYWFhYWFhYWFhYQ$m6vRnxkbG10eB0QdjqfLd8Y6M3holKAAvfeFXTiXBdU";
     // Integração Odoo: se a org do utilizador tem integração activa, validar
     // contra o Odoo primeiro. Em modo offline (Odoo inacessível), usa o hash
     // Argon2 guardado na última autenticação online bem-sucedida.
-    let odoo_cfg = crate::odoo::org_odoo_config(&state.db, &email).await;
-    let authenticated = if let Some((org_id, odoo_url, odoo_db)) = odoo_cfg {
+    let odoo_cfg = crate::odoo::org_odoo_config(&state.db, email).await;
+    if let Some((org_id, odoo_url, odoo_db)) = odoo_cfg {
         // Usa o mesmo cliente do primeiro login (odoo_sso): além do uid, dá a
         // SESSÃO, e é ela que permite reler o directório. Sem isso, os
         // colegas admitidos no Odoo depois do primeiro login nunca chegavam
         // aqui — a sincronização era um evento único, não um estado.
-        match crate::odoo_sso::login(&state.outbound, &odoo_url, &odoo_db, &email, &req.password)
-            .await
-        {
+        match crate::odoo_sso::login(&state.outbound, &odoo_url, &odoo_db, email, password).await {
             Ok(Some(session)) => {
                 // Online: guarda o hash para o modo offline seguinte.
-                if let Ok(h) = hash_password(&req.password) {
+                if let Ok(h) = hash_password(password) {
                     let _ = sqlx::query(
                         "UPDATE users SET password_hash = $1, odoo_uid = $2 WHERE id = $3",
                     )
@@ -549,44 +666,39 @@ pub async fn login(
             Ok(None) => {
                 // Senha alterada/revogada no Odoo — rejeitar mesmo que o hash
                 // local ainda coincida. O Odoo é a fonte de verdade.
-                let _ = verify_password(&req.password, DUMMY);
+                let _ = verify_password(password, DUMMY);
                 false
             }
             Err(_) => {
                 // Odoo inacessível: vale o hash Argon2 da última autenticação
                 // online. É o que mantém as reuniões a funcionar quando é o
                 // ERP que está em baixo.
-                !password_hash.is_empty() && verify_password(&req.password, &password_hash)
+                !password_hash.is_empty() && verify_password(password, password_hash)
             }
         }
     } else {
-        verify_password(&req.password, &password_hash)
-    };
+        verify_password(password, password_hash)
+    }
+}
 
-    if authenticated {
-        let user = crate::users::UserPublic {
-            id,
-            email: user_email,
-            username,
-            created_at,
-            locale: "pt".into(),
-        };
-        // Segundo factor: com MFA activo, a password sozinha NÃO produz sessão.
-        // Devolve-se um desafio de curta duração, e os tokens só saem no
-        // `/api/auth/login/mfa`. É o ponto todo do segundo factor — se a password
-        // bastasse para obter o access token, o resto era teatro.
-        if crate::mfa::activo(&state.db, user.id).await? {
-            crate::audit::log(&state.db, None, user.id, "auth.mfa_challenge", &user.email).await;
-            return Ok(Json(LoginResponse::MfaRequired(MfaChallenge {
-                mfa_required: true,
-                mfa_token: mfa_challenge_token(&state, user.id)?,
-            }))
-            .into_response());
-        }
-        crate::audit::log(&state.db, None, user.id, "auth.login", &user.email).await;
-        Ok(auth_ok(&state, issue_tokens(&state, user).await?))
+/// A password `password` é a da conta `user_id`? Para a reautenticação.
+pub(crate) async fn check_password_of(
+    state: &Arc<AppState>,
+    user_id: Uuid,
+    password: &str,
+) -> Result<PasswordCheck, ApiError> {
+    let (email, password_hash, sso_provider): (String, String, String) =
+        sqlx::query_as("SELECT email, password_hash, sso_provider FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or(ApiError::Unauthorized)?;
+    if password_matches(state, user_id, &email, &password_hash, password).await {
+        Ok(PasswordCheck::Valid)
+    } else if !sso_provider.is_empty() {
+        Ok(PasswordCheck::NoLocalPassword)
     } else {
-        Err(ApiError::Unauthorized)
+        Ok(PasswordCheck::Invalid)
     }
 }
 
@@ -615,6 +727,7 @@ fn mfa_challenge_token(state: &AppState, user_id: Uuid) -> Result<String, ApiErr
             title: None,
             lobby: None,
             wr: None,
+            sid: None,
         },
     )
 }
@@ -640,6 +753,7 @@ pub struct MfaReq {
 )]
 pub async fn mfa_login(
     State(state): State<Arc<AppState>>,
+    ctx: crate::sessions::ClientCtx,
     Json(req): Json<MfaReq>,
 ) -> Result<Response, ApiError> {
     // O `verify_jwt` exige o `typ` esperado: um access token NÃO serve de
@@ -661,7 +775,10 @@ pub async fn mfa_login(
     }
     let user = crate::users::fetch_public(&state.db, user_id).await?;
     crate::audit::log(&state.db, None, user.id, "auth.login_mfa", &user.email).await;
-    Ok(auth_ok(&state, issue_tokens(&state, user).await?))
+    Ok(auth_ok(
+        &state,
+        open_session(&state, user, crate::sessions::AuthMethod::Mfa, &ctx).await?,
+    ))
 }
 
 /// Roda a sessão: consome o refresh token do cookie `dlx_refresh` (revoga-o)
@@ -684,23 +801,48 @@ pub async fn refresh(
     // O refresh token vem do cookie HttpOnly (não do corpo — imune a XSS).
     let token = read_refresh_cookie(&headers).ok_or(ApiError::Unauthorized)?;
     let hash = hash_refresh_token(&token);
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT user_id FROM refresh_tokens
-         WHERE token_hash = $1 AND NOT revoked AND expires_at > now()",
+    // A sessão do token tem de estar activa: terminar uma sessão revoga os
+    // tokens dela, e esta junção é a segunda barreira.
+    let row: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(
+        "SELECT t.user_id, t.session_id FROM refresh_tokens t
+           LEFT JOIN user_sessions s ON s.id = t.session_id
+         WHERE t.token_hash = $1 AND NOT t.revoked AND t.expires_at > now()
+           AND (t.session_id IS NULL OR s.revoked_at IS NULL)",
     )
     .bind(&hash)
     .fetch_optional(&state.db)
     .await?;
-    let (user_id,) = row.ok_or(ApiError::Unauthorized)?;
+    let (user_id, session_id) = row.ok_or(ApiError::Unauthorized)?;
 
-    // Rotate: revoke the used token, issue a fresh pair.
-    sqlx::query("UPDATE refresh_tokens SET revoked = TRUE WHERE token_hash = $1")
-        .bind(&hash)
-        .execute(&state.db)
-        .await?;
+    // Rotate: revoke the used token, issue a fresh pair. Condicional: dois
+    // refresh simultâneos com o mesmo token — só um roda.
+    let rotated = sqlx::query(
+        "UPDATE refresh_tokens SET revoked = TRUE WHERE token_hash = $1 AND NOT revoked",
+    )
+    .bind(&hash)
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+    if rotated == 0 {
+        return Err(ApiError::Unauthorized);
+    }
 
     let user = crate::users::fetch_public(&state.db, user_id).await?;
-    Ok(auth_ok(&state, issue_tokens(&state, user).await?))
+    // Um token sem sessão (emitido entre a migração das sessões e este código) passa a
+    // ter uma, sem dispositivo conhecido.
+    let sid = match session_id {
+        Some(sid) => sid,
+        None => {
+            crate::sessions::create(
+                &state,
+                user_id,
+                crate::sessions::AuthMethod::Legacy,
+                &crate::sessions::ClientCtx::default(),
+            )
+            .await?
+        }
+    };
+    Ok(auth_ok(&state, issue_tokens(&state, user, sid).await?))
 }
 
 /// Termina a sessão: revoga o refresh token (se presente) e limpa o cookie.
@@ -720,10 +862,18 @@ pub async fn logout(
 ) -> Result<Response, ApiError> {
     if let Some(token) = read_refresh_cookie(&headers) {
         let hash = hash_refresh_token(&token);
-        let _ = sqlx::query("UPDATE refresh_tokens SET revoked = TRUE WHERE token_hash = $1")
-            .bind(&hash)
-            .execute(&state.db)
-            .await;
+        // Sair termina a SESSÃO do token (e os WebSockets dela), não só o token.
+        let owner: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(
+            "UPDATE refresh_tokens SET revoked = TRUE WHERE token_hash = $1
+             RETURNING user_id, session_id",
+        )
+        .bind(&hash)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+        if let Some((user_id, Some(sid))) = owner {
+            let _ = crate::sessions::revoke(&state, user_id, sid, "logout").await;
+        }
     }
     let clear = refresh_cookie("", state.config.cookie_secure, 0);
     Ok((
@@ -957,6 +1107,7 @@ pub async fn sso_login(
 )]
 pub async fn sso_callback(
     State(state): State<Arc<AppState>>,
+    ctx: crate::sessions::ClientCtx,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
     let code = params
@@ -1169,7 +1320,7 @@ pub async fn sso_callback(
     };
 
     // Emitir tokens nativos do Delonix e redirecionar para o frontend.
-    let pair = issue_tokens(&state, user).await?;
+    let pair = open_session(&state, user, crate::sessions::AuthMethod::Sso, &ctx).await?;
     let cookie = refresh_cookie(
         &pair.refresh_token,
         state.config.cookie_secure,
@@ -1346,11 +1497,13 @@ mod tests {
         let desafio = serde_json::to_value(LoginResponse::MfaRequired(MfaChallenge {
             mfa_required: true,
             mfa_token: "m".into(),
+            methods: vec!["totp".into()],
         }))
         .unwrap();
+        // `methods` acrescenta (ADR-0011); os dois campos de sempre ficam iguais.
         assert_eq!(
             desafio,
-            serde_json::json!({ "mfa_required": true, "mfa_token": "m" })
+            serde_json::json!({ "mfa_required": true, "mfa_token": "m", "methods": ["totp"] })
         );
     }
 
@@ -1384,6 +1537,7 @@ mod tests {
                 title: None,
                 lobby: None,
                 wr: None,
+                sid: None,
             },
         )
         .unwrap();
@@ -1417,6 +1571,7 @@ mod tests {
                 title: None,
                 lobby: None,
                 wr: None,
+                sid: None,
             },
         )
         .unwrap();

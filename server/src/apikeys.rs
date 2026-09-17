@@ -578,6 +578,7 @@ pub async fn v1_join_bot_room(
             title: None,
             lobby: None,
             wr: None,
+            sid: None, // um bot não tem sessão de pessoa
         },
     )?;
 

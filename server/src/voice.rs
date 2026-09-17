@@ -177,6 +177,54 @@ pub(crate) async fn dial_in_for_room(
     .await?)
 }
 
+/// «Novo PIN» da sala pessoal: dá um PIN novo à sala de voz ACTIVA ligada a
+/// `room_code` (a mesma que [`dial_in_for_room`] mostra). O PIN antigo deixa de
+/// abrir o IVR no mesmo instante — a validação lê a linha. `None` se não houver
+/// dial-in. Um PIN que colida com outro activo no mesmo DID tenta-se de novo.
+pub(crate) async fn rotate_dial_in_pin(
+    state: &AppState,
+    org_ids: &[Uuid],
+    room_code: &str,
+) -> Result<Option<(Uuid, DialIn)>, ApiError> {
+    if org_ids.is_empty() {
+        return Ok(None);
+    }
+    let row: Option<(Uuid, Uuid, String, String)> = sqlx::query_as(
+        "SELECT vr.id, vr.org_id, d.e164, vr.pin
+           FROM voice_room vr JOIN voice_did d ON d.id = vr.did_id
+          WHERE vr.room_code = $1 AND vr.org_id = ANY($2)
+            AND vr.status = 'active' AND d.active
+          ORDER BY vr.created_at DESC LIMIT 1",
+    )
+    .bind(room_code)
+    .bind(org_ids)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((voice_room_id, org_id, number, old_pin)) = row else {
+        return Ok(None);
+    };
+    for _ in 0..8 {
+        let pin = gen_pin();
+        if pin == old_pin {
+            continue;
+        }
+        match sqlx::query("UPDATE voice_room SET pin = $1 WHERE id = $2 AND status = 'active'")
+            .bind(&pin)
+            .bind(voice_room_id)
+            .execute(&state.db)
+            .await
+        {
+            Ok(r) if r.rows_affected() == 1 => return Ok(Some((org_id, DialIn { number, pin }))),
+            Ok(_) => return Ok(None),
+            Err(sqlx::Error::Database(db)) if db.is_unique_violation() => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(ApiError::Internal(
+        "não foi possível gerar um PIN livre".into(),
+    ))
+}
+
 fn gen_pin() -> String {
     let mut rng = rand::thread_rng();
     format!("{:06}", rng.gen_range(0..1_000_000))

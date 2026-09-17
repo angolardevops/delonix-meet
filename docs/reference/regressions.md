@@ -2040,3 +2040,70 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 **Regra.** O tecto (`organizations.max_seats`, só o operador o fixa) verifica-se com `SELECT … FROM organizations … FOR UPDATE` dentro da transacção que activa (convite aceite, reactivação, `add_employee` novo). O uso mede-se na hora (sem contador): activos humanos que não são `external_guest`.
 
 **Portão.** `tests/directory.rs::seats` (duas reactivações em simultâneo com um lugar livre → uma entra, a outra `seats.limit_reached`).
+
+
+### R200 — Terminar uma sessão não cortava nada até o JWT expirar
+
+**Sintoma.** Não havia sessão: o login emitia um access token de 15 min e um refresh token solto. Revogar o refresh deixava o access token a abrir a API e o `/rtc` e o `/ws` ligados; não havia como terminar só «o iPhone».
+
+**Regra.** Cada login abre uma `user_sessions`; o access e o room token levam `sid`; `AuthUser`, `/rtc` e `/ws` recusam uma sessão terminada com `401 auth.session_revoked`. Terminar revoga os refresh tokens dela e acorda o `shutdown` das ligações dela neste nó e, pelo canal Redis `dlx:session-revoked`, nos outros. O logout termina a sessão.
+
+**Portão.** `server/tests/account_sessions.rs::revoking_a_session_kills_refresh_access_and_websockets` (o `/rtc` e o `/ws` fecham, o room token ainda válido não reabre, a sessão de onde se termina continua). Ao vivo em 8420 com Redis: o `/rtc` fechou 26 ms depois do `DELETE`. **Não validado:** com duas réplicas reais (o caminho Redis entre nós).
+
+**Ficheiros.** `server/src/{sessions,auth,presence,signaling,rooms,pubsub,lib}.rs`, migração `sessoes`.
+
+### R201 — «Terminar todas as outras sessões»
+
+**Regra.** `POST /api/users/me/sessions/revoke-others` termina todas menos a do pedido; um access token sem `sid` (anterior às sessões) recebe `422 sessions.current_unknown` em vez de terminar a própria.
+
+**Portão.** `server/tests/account_sessions.rs::revoke_others_keeps_only_the_current_one`.
+
+### R202 — As sessões são só da própria pessoa, também para o administrador da org
+
+**Regra.** Toda a leitura e revogação filtra pelo `user_id` da sessão; uma sessão de outra pessoa dá `404 sessions.not_found`, igual a uma inexistente. Suspender a conta de outro é outra superfície.
+
+**Portão.** `server/tests/account_sessions.rs::sessions_of_others_are_not_found`; `web/e2e/isolamento.mjs` («A lê/termina uma sessão de B»).
+
+### R203 — Reautenticação recente para alterar factores
+
+**Regra.** `POST /api/users/me/reauthentication` (password pela mesma função do login — `auth::password_matches`, Odoo incluído — ou código TOTP/recuperação) abre 5 min NESSA sessão; o travão `mfa_limiter` conta as falhas e recusa também a prova certa durante o bloqueio. Sem janela: `403 auth.reauthentication_required`.
+
+**Portão.** `server/tests/account_sessions.rs::reauthentication_needs_the_real_password`, `account_passkeys.rs`.
+
+### R204 — Os campos do Odoo não se editam no perfil, e o nome legal vem da sincronização
+
+**Sintoma evitado.** Um perfil editável localmente numa conta gerida divergia do ERP em silêncio; o `PATCH /api/users/me` ignorava um idioma desconhecido (200) e aceitava mudar a password de uma conta cuja password é a do Odoo.
+
+**Regra.** `PATCH /api/users/me/profile` valida tudo antes de escrever; `legal_name`, `email`, `department` → `409 profile.field_managed_by_odoo` (conta gerida) ou `409 profile.field_read_only`; telefone pela `sms::normalize_msisdn` (`422 profile.invalid_phone`); idioma `400 profile.invalid_locale` (também no `PATCH /api/users/me`, onde antes era ignorado); password de conta gerida `409`. A sincronização (`odoo_sso::upsert_member`) escreve `legal_name`, e um email no lugar do nome não o apaga.
+
+**Portão.** `server/tests/account_profile.rs::{profile_validates_normalizes_and_protects_odoo_fields, legal_name_comes_from_the_odoo_sync}`; `tests/identity.rs::users_me_get_and_patch` mudou com intenção (idioma desconhecido 200→400).
+
+### R205 — Fotografia de perfil pelos bytes, com tecto, e só para quem partilha organização
+
+**Regra.** PNG/JPEG/WebP reconhecidos pela assinatura (um SVG com `Content-Type: image/png` → `422 profile.avatar_unsupported_type`), até 1 MiB (`422 profile.avatar_too_large`; acima de 2 MiB o servidor corta com 413). `GET /api/users/{user_id}/avatar` só com organização activa em comum; senão `404`.
+
+**Portão.** `server/tests/account_profile.rs::avatar_is_sniffed_limited_and_scoped`; `isolamento.mjs`.
+
+### R206 — «Avisar antes de gravar» é imposto pelo servidor
+
+**Regra.** As preferências de entrada vêm no `POST /api/rooms/{room_code}/join`. Um anfitrião com `warn_before_recording` que manda `server-record` sem `confirmed: true` recebe `recording-confirmation-required` e a gravação NÃO começa. Sem a preferência, o pedido antigo grava como sempre.
+
+**Portão.** `server/tests/account_profile.rs::join_preferences_reach_the_join_and_recording_needs_confirmation`, `domain::identity::join_preferences::tests`.
+
+### R207 — Preferências de notificação honestas; guia e «Novo PIN»
+
+**Regra.** Só `in_app` entrega; `email` e `sms` são guardados mas anunciados `not_configured`. Com `in_app` desligado para um tipo, o produtor não cria a notificação. O guia valida os ids contra a lista versionada (`404 tour.unknown_step`). «Novo PIN» troca o PIN da sala de voz activa ligada à sala pessoal (o antigo morre), auditado; sem dial-in `409 personal_room.no_dial_in`.
+
+**Portão.** `server/tests/account_profile.rs::{notification_preferences_are_honest_and_enforced, tour_progress_and_new_pin}`.
+
+### R208 — Chaves de acesso: segundo factor, cerimónia de uso único, último factor
+
+**Regra.** ADR-0011. Registar exige reautenticação; o login com password passa a desafio `methods: ["passkey"]`; a cerimónia é consumida uma vez (replay `404 passkeys.ceremony_not_found`) e uma asserção não serve noutra (`401 passkeys.authentication_failed`); com `organizations.require_mfa`, a última chave e o único TOTP não saem (`409 security.last_factor_required`, antes de gastar o código); sem RP configurado `503 passkeys.not_configured`.
+
+**Portão.** `server/tests/account_passkeys.rs` com o `SoftPasskey` do `webauthn-authenticator-rs` (assina de verdade). **Não validado:** com um autenticador de hardware e um browser real.
+
+### R209 — «Os meus dados» só com dados da própria pessoa
+
+**Regra.** Exportação assíncrona (`202`), uma de cada vez (`409 data_export.already_running`), 3 por 24 h (`429 data_export.rate_limited`). O ZIP leva perfil, preferências, gravações CARREGADAS pela pessoa como links, as transcrições dessas, a actividade em que é actora (alvos de acções sobre terceiros → `target_redacted`) e o uso G3. Link por HMAC, 15 min; assinatura errada, outro id ou vencido → `404`; o ficheiro apaga-se às 48 h. Limite escrito: uma transcrição de reunião contém a fala de outros participantes.
+
+**Portão.** `server/tests/account_data_export.rs`; `isolamento.mjs` (A não lê nem pede link da exportação de B; sem assinatura 404).

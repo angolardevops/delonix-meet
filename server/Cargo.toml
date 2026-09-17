@@ -71,6 +71,14 @@ redis = { version = "0.27", default-features = false, features = ["tokio-comp", 
 regex = "1.13.0"
 # Limpeza de material de chave em memória (ver signaling::Secret).
 zeroize = "1"
+# Chaves de acesso (WebAuthn/passkeys) como segundo factor — ADR-0011. Crate do
+# projecto Kanidm, auditada pela SUSE Product Security (README da crate), com os vectores da especificação.
+# `danger-allow-state-serialisation`: o estado da cerimónia guarda-se na base
+# (o «finish» pode cair noutro nó); é consumido uma vez e expira em 5 min.
+webauthn-rs = { version = "=0.5.5", features = ["danger-allow-state-serialisation"] }
+# Exportação «os meus dados»: um ZIP sem compressão (gravações vão como links;
+# o resto é texto pequeno). Sem `deflate`/`bzip2`/`aes`: menos código nativo.
+zip = { version = "2", default-features = false }
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
@@ -83,6 +91,9 @@ rcgen = "0.13"
 # chave RS256 em memória, a cada corrida — nenhuma chave privada no repositório.
 # Já vinha no Cargo.lock pelo `openidconnect`.
 rsa = "0.9"
+# Autenticador WebAuthn em software para os testes das chaves de acesso
+# (tests/account_passkeys.rs): regista e assina como um autenticador real.
+webauthn-authenticator-rs = { version = "=0.5.5", features = ["softpasskey"] }
 
 # webrtc-ice 0.17.1 com UMA alteração: responde 487 (Role Conflict) autenticado
 # a um pedido com o mesmo papel ICE que o do agente, em vez de o deitar fora

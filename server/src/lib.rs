@@ -4,6 +4,7 @@
 //! testes de integração em `tests/` possam montar o router e o estado sem
 //! arrancar um processo (ADR-0004 §6, passo 1).
 
+mod account;
 mod actions;
 mod ai;
 mod ai_assist;
@@ -15,6 +16,7 @@ mod broadcast;
 pub mod config;
 mod crypto;
 mod directory;
+pub mod data_exports;
 mod dlp;
 mod error;
 pub mod grpc;
@@ -32,6 +34,7 @@ mod odoo;
 mod odoo_sso;
 pub mod openapi;
 mod org;
+mod passkeys;
 mod presence;
 mod pubsub;
 mod rate_limit;
@@ -46,6 +49,7 @@ mod room_chat;
 mod room_tools;
 mod rooms;
 pub mod secrets_at_rest;
+mod sessions;
 mod sfu;
 #[cfg(test)]
 mod sfu_e2e;
@@ -151,6 +155,11 @@ pub struct AppState {
     pub redis_bus: Option<Arc<pubsub::PubSubBus>>,
     /// Contadores de observabilidade expostos em `/metrics` (ver metrics.rs).
     pub metrics: Arc<metrics::Metrics>,
+    /// WebSockets de cada sessão de conta neste nó — terminar uma sessão
+    /// fecha-os (ver `sessions`).
+    pub session_kills: sessions::KillRegistry,
+    /// Chaves de acesso (ADR-0011). `None` sem `WEBAUTHN_RP_ID`/`_ORIGIN`.
+    pub webauthn: Option<Arc<webauthn_rs::prelude::Webauthn>>,
 }
 
 impl AppState {
@@ -215,6 +224,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Segunda metade do login quando o MFA está activo: troca o desafio
         // de curta duração + o código pelos tokens de sessão.
         .route("/login/mfa", post(auth::mfa_login))
+        // A chave de acesso como segundo factor (ADR-0011).
+        .route("/login/mfa/passkey-options", post(passkeys::login_options))
+        .route("/login/mfa/passkey", post(passkeys::login))
         .route("/refresh", post(auth::refresh))
         .route("/logout", post(auth::logout))
         // SSO / OIDC
@@ -329,12 +341,98 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/users/me/room/rotate-code",
             post(users::rotate_my_room_code),
         )
+        // «Novo PIN» do dial-in da sala pessoal.
+        .route(
+            "/api/users/me/room/rotate-pin",
+            post(users::rotate_my_room_pin),
+        )
+        // «A minha conta» (Navegavel3): perfil, fotografia, preferências, guia.
+        .route(
+            "/api/users/me/profile",
+            get(account::get_profile).patch(account::update_profile),
+        )
+        .route(
+            "/api/users/me/avatar",
+            get(account::get_my_avatar)
+                .put(account::put_avatar)
+                .delete(account::delete_avatar)
+                .layer(DefaultBodyLimit::max(account::AVATAR_BODY_LIMIT)),
+        )
+        .route("/api/users/{user_id}/avatar", get(account::get_avatar))
+        .route(
+            "/api/users/me/join-preferences",
+            get(account::get_join_preferences).put(account::put_join_preferences),
+        )
+        .route(
+            "/api/users/me/notification-preferences",
+            get(account::get_notification_preferences)
+                .put(account::put_notification_preferences),
+        )
+        .route(
+            "/api/users/me/tour",
+            get(account::get_tour).patch(account::update_tour),
+        )
+        .route(
+            "/api/users/me/tour/steps/{step_id}",
+            axum::routing::put(account::put_tour_step),
+        )
+        .route("/api/users/me/tour/skip", post(account::skip_tour))
+        .route("/api/users/me/tour/restart", post(account::restart_tour))
+        // «Os meus dados» (exportação pessoal assíncrona).
+        .route(
+            "/api/users/me/data-exports",
+            get(data_exports::list).post(data_exports::create),
+        )
+        .route(
+            "/api/users/me/data-exports/{export_id}",
+            get(data_exports::get_one),
+        )
+        .route(
+            "/api/users/me/data-exports/{export_id}/download-link",
+            post(data_exports::download_link),
+        )
+        .route(
+            "/api/users/me/data-exports/{export_id}/content",
+            get(data_exports::content),
+        )
         .route("/api/users/me/storage-usage", get(usage::my_storage_usage))
+        // Sessões da conta e reautenticação (Navegavel3, «Dispositivos e sessões»).
+        .route("/api/users/me/sessions", get(sessions::list))
+        .route(
+            "/api/users/me/sessions/{session_id}",
+            get(sessions::get_one).delete(sessions::delete),
+        )
+        .route(
+            "/api/users/me/sessions/revoke-others",
+            post(sessions::revoke_others),
+        )
+        .route(
+            "/api/users/me/reauthentication",
+            post(sessions::reauthenticate),
+        )
         // MFA (TOTP, RFC 6238).
         .route("/api/users/me/mfa", get(mfa::estado))
         .route("/api/users/me/mfa/enroll", post(mfa::inscrever))
         .route("/api/users/me/mfa/activate", post(mfa::activar))
         .route("/api/users/me/mfa/disable", post(mfa::desactivar))
+        .route(
+            "/api/users/me/mfa/backup-codes/regenerate",
+            post(mfa::regenerar_codigos),
+        )
+        // «Segurança» e chaves de acesso (ADR-0011).
+        .route("/api/users/me/security", get(passkeys::security))
+        .route(
+            "/api/users/me/passkeys",
+            get(passkeys::list).post(passkeys::finish_registration),
+        )
+        .route(
+            "/api/users/me/passkeys/begin-registration",
+            post(passkeys::begin_registration),
+        )
+        .route(
+            "/api/users/me/passkeys/{passkey_id}",
+            get(passkeys::get_one).delete(passkeys::delete),
+        )
         // Centro de notificações pessoal (G8).
         .route("/api/users/me/notifications", get(notifications::list))
         .route(
@@ -982,10 +1080,19 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         config: config.clone(),
         redis_bus: redis_bus.clone(),
         metrics,
+        session_kills: sessions::KillRegistry::default(),
+        webauthn: passkeys::build(&config),
     });
 
     // Subscriber Redis: ouve mensagens de outros nós e entrega localmente.
     if let Some(bus) = redis_bus {
+        let state_ref_sessions = Arc::downgrade(&state);
+        pubsub::start_session_revoked_subscriber(bus.clone(), move |sid| {
+            if let Some(s) = state_ref_sessions.upgrade() {
+                s.session_kills.kill_local(sid);
+            }
+        });
+
         let state_ref = Arc::downgrade(&state);
         pubsub::start_subscriber(bus.clone(), move |user_id, msg| {
             if let Some(s) = state_ref.upgrade() {
@@ -1291,6 +1398,45 @@ pub async fn run() {
                 n += 1;
                 if n.is_multiple_of(240) {
                     let _ = nodes::forget_old(&state.db).await;
+                }
+            }
+        });
+    }
+
+    // Cron: sessões de conta sem refresh token vivo passam a `expired`, as
+    // terminadas há 90 dias saem, e as cerimónias WebAuthn vencidas também.
+    {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                match sessions::sweep(&db).await {
+                    Ok((0, 0)) => {}
+                    Ok((expired, deleted)) => {
+                        tracing::info!(expired, deleted, "varrimento de sessões")
+                    }
+                    Err(e) => tracing::warn!(error = %e, "varrimento de sessões falhou"),
+                }
+            }
+        });
+    }
+
+    // Cron: exportações «os meus dados» — pedidos na fila (e os abandonados)
+    // a cada minuto; ficheiros vencidos apagados.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                data_exports::run_queue(&state).await;
+                match data_exports::sweep_expired(&state).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(expired = n, "exportações vencidas apagadas"),
+                    Err(e) => tracing::warn!(error = %e, "varrimento de exportações falhou"),
                 }
             }
         });
