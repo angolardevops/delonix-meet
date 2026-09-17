@@ -126,24 +126,24 @@ await permitido('B lê a própria sala', `/api/rooms/${salaB.code}`, { token: B.
 
 console.log('\n--- org A contra recursos da org B ---')
 await recusado('A lê stats da org B', `/api/orgs/${B.orgId}/stats`, { token: A.token })
-await recusado('A lista empregados da org B', `/api/orgs/${B.orgId}/employees`, { token: A.token })
+await recusado('A lista empregados da org B', `/api/orgs/${B.orgId}/members`, { token: A.token })
 await recusado('A lista filiais da org B', `/api/orgs/${B.orgId}/branches`, { token: A.token })
 await recusado('A lista grupos da org B', `/api/orgs/${B.orgId}/groups`, { token: A.token })
 await recusado('A lista salas presenciais da org B', `/api/orgs/${B.orgId}/meeting-rooms`, { token: A.token })
 await recusado('A lista webhooks da org B', `/api/orgs/${B.orgId}/webhooks`, { token: A.token })
 await recusado('A lista chaves de API da org B', `/api/orgs/${B.orgId}/api-keys`, { token: A.token })
-await recusado('A lê a config Odoo da org B', `/api/orgs/${B.orgId}/integration/odoo`, { token: A.token })
+await recusado('A lê a config Odoo da org B', `/api/orgs/${B.orgId}/integrations/odoo`, { token: A.token })
 await recusado('A lista DIDs de voz da org B', `/api/orgs/${B.orgId}/voice/dids`, { token: A.token })
-await recusado('A lista CDR de voz da org B', `/api/orgs/${B.orgId}/voice/cdr`, { token: A.token })
+await recusado('A lista CDR de voz da org B', `/api/orgs/${B.orgId}/voice/call-records`, { token: A.token })
 
 console.log('\n--- escrita cross-tenant ---')
-await recusado('A altera definições da org B', `/api/orgs/${B.orgId}/settings`, {
-  token: A.token, method: 'POST', body: { hide_org_creation: true },
+await recusado('A altera definições da org B', `/api/orgs/${B.orgId}`, {
+  token: A.token, method: 'PATCH', body: { hide_org_creation: true },
 })
-await recusado('A roda o token Odoo da org B', `/api/orgs/${B.orgId}/integration/odoo/token`, {
+await recusado('A roda o token Odoo da org B', `/api/orgs/${B.orgId}/integrations/odoo/rotate-token`, {
   token: A.token, method: 'POST', body: {},
 })
-await recusado('A remove um empregado da org B', `/api/orgs/${B.orgId}/employees/${B.userId}`, {
+await recusado('A remove um empregado da org B', `/api/orgs/${B.orgId}/members/${B.userId}`, {
   token: A.token, method: 'DELETE',
 })
 
@@ -152,8 +152,8 @@ await recusado('A remove um empregado da org B', `/api/orgs/${B.orgId}/employees
 // `main.rs`) com o inventário do que se TESTA — o mesmo método que apanhou os
 // testes ponta-a-ponta que nunca corriam (R72).
 console.log('\n--- as seis que faltavam ---')
-await recusado('A lê a trilha de auditoria da org B', `/api/orgs/${B.orgId}/audit`, { token: A.token })
-await recusado('A verifica a cadeia de auditoria da org B', `/api/orgs/${B.orgId}/audit/verify`, {
+await recusado('A lê a trilha de auditoria da org B', `/api/orgs/${B.orgId}/audit-events`, { token: A.token })
+await recusado('A verifica a cadeia de auditoria da org B', `/api/orgs/${B.orgId}/audit-events/verification`, {
   token: A.token,
 })
 await recusado('A lê a configuração de SSO da org B', `/api/orgs/${B.orgId}/sso`, { token: A.token })
@@ -264,7 +264,7 @@ if (destinoB.status === 201 && destinoB.json?.id) {
   // trama de texto depois do upgrade (ver `ws_directo`).
   const recusaDoDirecto = (roomToken, code, destinos) => new Promise((resolve) => {
     const q = new URLSearchParams({ token: roomToken, destinos: JSON.stringify(destinos), codec: 'video/h264' })
-    const ws = new WebSocket(`${WS}/api/rooms/${code}/broadcast?${q}`)
+    const ws = new WebSocket(`${WS}/api/rooms/${code}/live?${q}`)
     const t = setTimeout(() => { ws.close(); resolve('(sem resposta)') }, 8000)
     ws.on('message', (d) => {
       const m = JSON.parse(d.toString())
@@ -335,10 +335,10 @@ if (vB === 'joined') ok('B (dono) entra directo na sua própria sala (controlo p
 else nok('B entra directo na sua sala', `respondeu "${vB}" — se o dono não entra, o teste acima não prova nada`)
 
 console.log('\n--- o que o código NÃO abre ---')
-await recusado('A lê o chat da sala da B', `/api/rooms/${salaB.code}/chat`, { token: A.token })
+await recusado('A lê o chat da sala da B', `/api/rooms/${salaB.code}/messages`, { token: A.token })
 await recusado('A lista gravações da sala da B', `/api/rooms/${salaB.code}/recordings`, { token: A.token })
-await recusado('A lê notas da sala da B', `/api/rooms/${salaB.code}/notes`, { token: A.token })
-await recusado('A reporta QoS na sala da B', `/api/rooms/${salaB.code}/qos`, {
+await recusado('A lê notas da sala da B', `/api/rooms/${salaB.code}/minutes`, { token: A.token })
+await recusado('A reporta QoS na sala da B', `/api/rooms/${salaB.code}/quality-samples`, {
   token: A.token, method: 'POST', body: { rtt_ms: 1, loss_pct: 0, up_kbps: 1 },
 })
 await recusado('anónimo vê metadados da sala da B', `/api/rooms/${salaB.code}`, {})
@@ -377,8 +377,8 @@ const reuniaoB = await req('/api/meetings', {
 })
 if (reuniaoB.status >= 200 && reuniaoB.status < 300 && reuniaoB.json?.id) {
   const m = reuniaoB.json.id
-  // `/api/meetings/{id}` só tem DELETE e `/minutes` só tem POST — um GET
-  // devolve 405, que o helper contava como recusa sem provar nada. Foi o
+  // `/api/meetings/{meeting_id}/minutes` só tem PUT — um GET devolve 405,
+  // que o helper contava como recusa sem provar nada. Foi o
   // CONTROLO POSITIVO abaixo que deu por isso: «B lê a sua própria reunião»
   // devolvia 405 também. Sem ele, duas asserções verdes mediam o router, não a
   // autorização.
@@ -386,14 +386,14 @@ if (reuniaoB.status >= 200 && reuniaoB.status < 300 && reuniaoB.json?.id) {
     token: A.token, method: 'DELETE',
   })
   await recusado('A escreve a ACTA da reunião da B', `/api/meetings/${m}/minutes`, {
-    token: A.token, method: 'POST', body: { markdown: 'acta forjada' },
+    token: A.token, method: 'PUT', body: { markdown: 'acta forjada' },
   })
-  await recusado('A lê a agenda da reunião da B', `/api/meetings/${m}/agenda`, { token: A.token })
+  await recusado('A lê a agenda da reunião da B', `/api/meetings/${m}/agenda-items`, { token: A.token })
   await recusado('A lê os convidados da reunião da B', `/api/meetings/${m}/invitees`, { token: A.token })
   await recusado('A lê o plano de acção da reunião da B', `/api/meetings/${m}/action-plan`, { token: A.token })
-  await recusado('A descarrega o ICS da reunião da B', `/api/meetings/${m}/ics`, { token: A.token })
-  await recusado('A responde ao convite da reunião da B', `/api/meetings/${m}/respond`, {
-    token: A.token, method: 'POST', body: { status: 'accepted' },
+  await recusado('A descarrega o ICS da reunião da B', `/api/meetings/${m}/calendar.ics`, { token: A.token })
+  await recusado('A responde ao convite da reunião da B', `/api/meetings/${m}/invitees/me`, {
+    token: A.token, method: 'PUT', body: { status: 'accepted' },
   })
   await recusado('A ARRANCA a reunião da B', `/api/meetings/${m}/start`, {
     token: A.token, method: 'POST', body: {},
@@ -427,9 +427,9 @@ const quadroB = await req('/api/whiteboards', {
 })
 if (quadroB.status >= 200 && quadroB.status < 300 && quadroB.json?.id) {
   const q = quadroB.json.id
-  await recusado('A descarrega o PNG do quadro da B', `/api/whiteboards/${q}/png`, { token: A.token })
-  await recusado('A PARTILHA o quadro da B por link', `/api/whiteboards/${q}/share`, {
-    token: A.token, method: 'POST', body: { public: true },
+  await recusado('A descarrega o PNG do quadro da B', `/api/whiteboards/${q}/image`, { token: A.token })
+  await recusado('A PARTILHA o quadro da B por link', `/api/whiteboards/${q}/public-link`, {
+    token: A.token, method: 'PUT', body: { public: true },
   })
   await recusado('A apaga o quadro da B', `/api/whiteboards/${q}`, {
     token: A.token, method: 'DELETE',
@@ -511,20 +511,20 @@ if (gravB) {
 // Recursos ligados à SALA da org B, com o código real dela. O código é uma
 // capability para VER metadados e PEDIR entrada — não para escrever.
 console.log('\n--- o que o código da sala NÃO autoriza a escrever ---')
-await recusado('A convida gente para a sala da B', `/api/rooms/${salaB.code}/invite`, {
+await recusado('A convida gente para a sala da B', `/api/rooms/${salaB.code}/invitations`, {
   token: A.token, method: 'POST', body: { user_ids: [] },
 })
 await recusado('A lê a acta da sala da B', `/api/rooms/${salaB.code}/minutes`, { token: A.token })
 await recusado('A escreve a acta da sala da B', `/api/rooms/${salaB.code}/minutes`, {
-  token: A.token, method: 'POST', body: { markdown: 'acta forjada' },
+  token: A.token, method: 'PUT', body: { markdown: 'acta forjada' },
 })
-await recusado('A reporta tempos de chamada na sala da B', `/api/rooms/${salaB.code}/timings`, {
+await recusado('A reporta tempos de chamada na sala da B', `/api/rooms/${salaB.code}/join-timings`, {
   token: A.token, method: 'POST', body: { join_ms: 1 },
 })
-await recusado('A partilha uma gravação alheia com alguém', `/api/recordings/${inventado}/share`, {
+await recusado('A partilha uma gravação alheia com alguém', `/api/recordings/${inventado}/shares`, {
   token: A.token, method: 'POST', body: { user_id: inventado },
 })
-await recusado('A revoga a partilha de uma gravação alheia', `/api/recordings/${inventado}/share/${inventado}`, {
+await recusado('A revoga a partilha de uma gravação alheia', `/api/recordings/${inventado}/shares/${inventado}`, {
   token: A.token, method: 'DELETE',
 })
 
@@ -533,13 +533,13 @@ await recusado('A revoga a partilha de uma gravação alheia', `/api/recordings/
 // que o resto deste ficheiro e está dito: um `404` aqui não distingue «não é
 // tua» de «não existe». O caminho por id fica coberto pela sala
 // (`/api/rooms/{code}/recordings`, acima), que usa um id REAL da org B.
-await recusado('A descarrega uma gravação por id inventado', `/api/recordings/${inventado}`, {
+await recusado('A descarrega uma gravação por id inventado', `/api/recordings/${inventado}/content`, {
   token: A.token,
 })
-await recusado('A cria link de partilha de uma gravação alheia', `/api/recordings/${inventado}/link`, {
-  token: A.token, method: 'POST', body: {},
+await recusado('A cria link de partilha de uma gravação alheia', `/api/recordings/${inventado}/public-link`, {
+  token: A.token, method: 'PUT', body: {},
 })
-await recusado('A mexe num item de acção por id inventado', `/api/action-items/${inventado}`, {
+await recusado('A mexe num item de acção por id inventado', `/api/meetings/${inventado}/action-plan/items/${inventado}`, {
   token: A.token, method: 'PATCH', body: { done: true },
 })
 
@@ -592,7 +592,7 @@ if (chaveA.status >= 200 && chaveA.status < 300 && chaveA.json?.key) {
   if (prov.status >= 200 && prov.status < 300) ok(`a sincronização corre para o resto do lote → ${prov.status}`)
   else nok('a sincronização corre para o resto do lote', `devolveu ${prov.status}: ${JSON.stringify(prov.json).slice(0, 160)}`)
 
-  const empA = await req(`/api/orgs/${A.orgId}/employees`, { token: A.token })
+  const empA = await req(`/api/orgs/${A.orgId}/members`, { token: A.token })
   const emails = Array.isArray(empA.json) ? empA.json.map((e) => e.email) : []
   if (!emails.includes(B.email)) ok('o administrador da org B NÃO entrou na org A')
   else nok('o administrador da org B NÃO entrou na org A', `está na lista de empregados da A: ${JSON.stringify(emails)}`)
@@ -616,7 +616,7 @@ console.log('\n--- S3: um membro ARQUIVADO perde o acesso da organização ---')
 const dominioA = A.email.split('@')[1]
 async function colaborador(nome, role) {
   const email = `${nome}-${marca}@${dominioA}`
-  const r = await req(`/api/orgs/${A.orgId}/employees`, {
+  const r = await req(`/api/orgs/${A.orgId}/members`, {
     token: A.token, method: 'POST',
     body: { email, username: `${nome}-${marca}`, password: PW, role, title: nome },
   })
@@ -636,12 +636,12 @@ const gravacaoA = upload.ok ? (await upload.json()).id : null
 if (!gravacaoA) nok('A carrega uma gravação para o teste S3', `devolveu ${upload.status}`)
 
 const pesquisaPorA = async (token) => {
-  const r = await req(`/api/users/search?q=${encodeURIComponent(`admin-alfa${marca}`)}`, { token })
+  const r = await req(`/api/users?q=${encodeURIComponent(`admin-alfa${marca}`)}`, { token })
   return Array.isArray(r.json) && r.json.some((u) => u.id === A.userId)
 }
 
 // ANTES
-await permitido('C (membro activo) lê o chat da sala da A', `/api/rooms/${salaA.code}/chat`, { token: C.token })
+await permitido('C (membro activo) lê o chat da sala da A', `/api/rooms/${salaA.code}/messages`, { token: C.token })
 if (await pesquisaPorA(C.token)) ok('C (membro activo) encontra o admin da A na pesquisa')
 else nok('C (membro activo) encontra o admin da A na pesquisa', 'não encontrou — o controlo positivo falhou')
 if (gravacaoA) {
@@ -653,11 +653,11 @@ await permitido('controlo: a chave da A cria reunião com C como anfitriã', '/a
 })
 
 // ARQUIVAR
-await permitido('A arquiva C', `/api/orgs/${A.orgId}/employees/${C.userId}`, { token: A.token, method: 'DELETE' })
-await permitido('A arquiva D', `/api/orgs/${A.orgId}/employees/${D.userId}`, { token: A.token, method: 'DELETE' })
+await permitido('A arquiva C', `/api/orgs/${A.orgId}/members/${C.userId}`, { token: A.token, method: 'DELETE' })
+await permitido('A arquiva D', `/api/orgs/${A.orgId}/members/${D.userId}`, { token: A.token, method: 'DELETE' })
 
 // DEPOIS
-await recusado('C ARQUIVADA lê o chat da sala da A', `/api/rooms/${salaA.code}/chat`, { token: C.token })
+await recusado('C ARQUIVADA lê o chat da sala da A', `/api/rooms/${salaA.code}/messages`, { token: C.token })
 if (!(await pesquisaPorA(C.token))) ok('C ARQUIVADA já não encontra o admin da A na pesquisa')
 else nok('C ARQUIVADA já não encontra o admin da A na pesquisa', 'o directório da ex-organização continua visível')
 if (gravacaoA) {
@@ -786,7 +786,7 @@ if (gwB.status !== 201 || !gwB.json?.token?.startsWith('dlxg_') || gwA.status !=
   const dominioB = B.email.split('@')[1]
   async function membroB(nome, role) {
     const email = `${nome}-${marca}@${dominioB}`
-    const r = await req(`/api/orgs/${B.orgId}/employees`, {
+    const r = await req(`/api/orgs/${B.orgId}/members`, {
       token: B.token, method: 'POST',
       body: { email, username: `${nome}-${marca}`, password: PW, role, title: nome },
     })
@@ -800,42 +800,42 @@ if (gwB.status !== 201 || !gwB.json?.token?.startsWith('dlxg_') || gwA.status !=
   const P = await membroB('paulo', 'member') // contacto que vai ser arquivado
 
   // Telefone: o próprio e o admin escrevem; mais ninguém.
-  const telM = await permitido('M regista o próprio telefone', `/api/orgs/${B.orgId}/employees/${M.userId}/phone`, {
+  const telM = await permitido('M regista o próprio telefone', `/api/orgs/${B.orgId}/members/${M.userId}/phone`, {
     token: M.token, method: 'PUT', body: { phone: '923 100 200' },
   })
   if (telM?.phone === '+244923100200' && telM?.phone_source === 'manual') ok('o número fica normalizado e marcado manual')
   else nok('o número fica normalizado e marcado manual', JSON.stringify(telM))
-  await permitido('o admin de B regista o telefone de N', `/api/orgs/${B.orgId}/employees/${N.userId}/phone`, {
+  await permitido('o admin de B regista o telefone de N', `/api/orgs/${B.orgId}/members/${N.userId}/phone`, {
     token: B.token, method: 'PUT', body: { phone: '+244 923 300 400' },
   })
-  await permitido('o admin de B regista o telefone de P', `/api/orgs/${B.orgId}/employees/${P.userId}/phone`, {
+  await permitido('o admin de B regista o telefone de P', `/api/orgs/${B.orgId}/members/${P.userId}/phone`, {
     token: B.token, method: 'PUT', body: { phone: '923500600' },
   })
-  const telOutro = await req(`/api/orgs/${B.orgId}/employees/${N.userId}/phone`, {
+  const telOutro = await req(`/api/orgs/${B.orgId}/members/${N.userId}/phone`, {
     token: M.token, method: 'PUT', body: { phone: '923999999' },
   })
   if (telOutro.status === 403) ok('M (membro) muda o telefone de N → 403')
   else nok('M (membro) muda o telefone de N → 403', `${telOutro.status} ${JSON.stringify(telOutro.json)}`)
-  await recusadoNaPorta('A muda o telefone de um membro da org B', `/api/orgs/${B.orgId}/employees/${N.userId}/phone`, {
+  await recusadoNaPorta('A muda o telefone de um membro da org B', `/api/orgs/${B.orgId}/members/${N.userId}/phone`, {
     token: A.token, method: 'PUT', body: { phone: '923999999' },
   })
-  await recusadoNaPorta('A escreve o telefone de N pelo caminho da SUA org', `/api/orgs/${A.orgId}/employees/${N.userId}/phone`, {
+  await recusadoNaPorta('A escreve o telefone de N pelo caminho da SUA org', `/api/orgs/${A.orgId}/members/${N.userId}/phone`, {
     token: A.token, method: 'PUT', body: { phone: '923999999' },
   })
-  const telPt = await req(`/api/orgs/${B.orgId}/employees/${M.userId}/phone`, {
+  const telPt = await req(`/api/orgs/${B.orgId}/members/${M.userId}/phone`, {
     token: M.token, method: 'PUT', body: { phone: '+351 912 345 678' },
   })
   if (telPt.status === 422) ok('número fora de Angola não é guardado (422) — o encaminhamento não o serve')
   else nok('número fora de Angola não é guardado (422)', `${telPt.status} ${JSON.stringify(telPt.json)}`)
 
   // Visibilidade: o colega sabe QUE há número, não QUAL.
-  const dirM = (await req(`/api/orgs/${B.orgId}/employees`, { token: M.token })).json ?? []
+  const dirM = (await req(`/api/orgs/${B.orgId}/members`, { token: M.token })).json ?? []
   const nVistoPorM = dirM.find((e) => e.user_id === N.userId)
   const mVistoPorM = dirM.find((e) => e.user_id === M.userId)
   if (nVistoPorM && nVistoPorM.phone === null && nVistoPorM.can_sms === true && mVistoPorM?.phone === '+244923100200') {
     ok('o membro vê can_sms do colega mas não o número; vê o seu')
   } else nok('o membro não vê o número do colega', JSON.stringify({ nVistoPorM, mVistoPorM }))
-  const dirB = (await req(`/api/orgs/${B.orgId}/employees`, { token: B.token })).json ?? []
+  const dirB = (await req(`/api/orgs/${B.orgId}/members`, { token: B.token })).json ?? []
   if (dirB.find((e) => e.user_id === N.userId)?.phone === '+244923300400') ok('controlo: o admin vê o número de N')
   else nok('controlo: o admin vê o número de N', JSON.stringify(dirB))
 
@@ -894,7 +894,7 @@ if (gwB.status !== 201 || !gwB.json?.token?.startsWith('dlxg_') || gwA.status !=
   await recusadoNaPorta('A envia SMS a N pelo caminho da SUA org', `/api/orgs/${A.orgId}/sms/messages`, {
     token: A.token, method: 'POST', body: { user_id: N.userId, body: 'x' },
   })
-  await permitido('o admin de B arquiva P', `/api/orgs/${B.orgId}/employees/${P.userId}`, { token: B.token, method: 'DELETE' })
+  await permitido('o admin de B arquiva P', `/api/orgs/${B.orgId}/members/${P.userId}`, { token: B.token, method: 'DELETE' })
   await recusadoNaPorta('M envia SMS a P ARQUIVADO (tinha telefone)', `/api/orgs/${B.orgId}/sms/messages`, {
     token: M.token, method: 'POST', body: { user_id: P.userId, body: 'x' },
   })
@@ -916,7 +916,7 @@ if (gwB.status !== 201 || !gwB.json?.token?.startsWith('dlxg_') || gwA.status !=
   })
   if (optOut.status === 409 && /^sms\.recipient_opted_out/.test(optOut.json?.error ?? '')) ok('N com opt-out → 409 sms.recipient_opted_out')
   else nok('N com opt-out → 409', `${optOut.status} ${JSON.stringify(optOut.json)}`)
-  const dirDepois = (await req(`/api/orgs/${B.orgId}/employees`, { token: M.token })).json ?? []
+  const dirDepois = (await req(`/api/orgs/${B.orgId}/members`, { token: M.token })).json ?? []
   if (dirDepois.find((e) => e.user_id === N.userId)?.can_sms === false) ok('o directório deixa de oferecer SMS a N (can_sms false)')
   else nok('o directório deixa de oferecer SMS a N', JSON.stringify(dirDepois.find((e) => e.user_id === N.userId)))
 
@@ -926,7 +926,7 @@ if (gwB.status !== 201 || !gwB.json?.token?.startsWith('dlxg_') || gwA.status !=
     ok(`M lista só a sua mensagem, mascarada, com estado «${listaM[0].status}»`)
   } else nok('M lista só a sua mensagem', JSON.stringify(listaM).slice(0, 300))
   await recusado('M lê uma mensagem do admin de B', `/api/orgs/${B.orgId}/sms/messages/${msgB.json?.id}`, { token: M.token })
-  const trilha = JSON.stringify((await req(`/api/orgs/${B.orgId}/audit?limit=200`, { token: B.token })).json ?? [])
+  const trilha = JSON.stringify((await req(`/api/orgs/${B.orgId}/audit-events?limit=200`, { token: B.token })).json ?? [])
   if (trilha.includes('sms.contact_queued') && !trilha.includes('923300400') && !trilha.includes('923100200')) {
     ok('a auditoria regista o envio a contacto sem nenhum número em claro')
   } else nok('a auditoria sem números', trilha.slice(0, 300))

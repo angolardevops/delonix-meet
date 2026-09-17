@@ -1,6 +1,6 @@
 /**
  * Notas da reunião de onde a gravação saiu: transcrição, acta e tarefas.
- * Vêm de `/api/rooms/{code}/minutes` — as mesmas para todas as gravações da
+ * Vêm de `/api/rooms/{room_code}/minutes` — as mesmas para todas as gravações da
  * sala. As tarefas são as linhas `- [ ]` / `- [x]` da acta, e marcá-las grava a
  * acta de volta.
  *
