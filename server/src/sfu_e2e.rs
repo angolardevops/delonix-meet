@@ -1183,3 +1183,84 @@ async fn conflito_de_papel_ice_recebe_487_autenticado() {
 
     sfu.remove_peer(room, a.id).await;
 }
+
+/// R157 no caminho completo: dois participantes, media nos DOIS sentidos durante
+/// 24 s, com o SFU a renegociar logo a seguir a cada ligação (subscrição de
+/// quem já estava) e outra vez a meio (A liga a câmara). A cada janela de 4 s
+/// exige-se que: o RTP continue a chegar nos dois sentidos, as PCs continuem
+/// `connected`, o SFU responda ao consentimento (sonda com o papel certo) e
+/// responda 487 a um pedido com papel em conflito — o estado em que o Chrome
+/// fica depois de cada resposta a uma oferta do SFU.
+///
+/// Âmbito: os clientes aqui são webrtc-rs, que NÃO muda de papel ao responder
+/// (o libwebrtc muda). A inversão do browser é encenada pela sonda; a prova
+/// com o browser real está na R157 (dois Chromium, 5 corridas de 60 s).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn media_e_consentimento_sobrevivem_as_renegociacoes_do_sfu() {
+    use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected;
+
+    let (sfu, _metrics) = new_sfu();
+    let room = Uuid::new_v4();
+
+    let a = TestClient::join(&sfu, room).await;
+    a.publish(OPUS, "a-audio").await;
+    let b = TestClient::join(&sfu, room).await;
+    b.publish(OPUS, "b-audio").await;
+
+    let rtp = |c: &TestClient, de: &TestClient| {
+        c.rtp_seen
+            .try_lock()
+            .ok()
+            .and_then(|m| m.get(&de.id.to_string()).copied())
+            .unwrap_or(0)
+    };
+    eventually_com_diagnostico(
+        "RTP nos dois sentidos",
+        prazo(30),
+        || {
+            let (a2, b2) = (a.clone(), b.clone());
+            async move { rtp(&a2, &b2) > 0 && rtp(&b2, &a2) > 0 }
+        },
+        || format!("A[{}] · B[{}]", a.retrato(), b.retrato()),
+    )
+    .await;
+
+    let mut a_para_b = rtp(&b, &a);
+    let mut b_para_a = rtp(&a, &b);
+    for janela in 1..=6 {
+        if janela == 2 {
+            // Renegociação do SFU a meio: A liga a câmara → oferta nova a B.
+            a.publish(VP8, "a-video").await;
+        }
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        let diag = format!("janela {janela}: A[{}] · B[{}]", a.retrato(), b.retrato());
+        for c in [&a, &b] {
+            assert_eq!(c.pc.connection_state(), Connected, "PC caiu — {diag}");
+            assert_eq!(
+                sonda_de_papel(c, false).await,
+                RespostaStun::Sucesso,
+                "o SFU deixou de responder ao consentimento — {diag}"
+            );
+            assert_eq!(
+                sonda_de_papel(c, true).await,
+                RespostaStun::Erro(487),
+                "conflito de papel sem 487 — {diag}"
+            );
+        }
+        let (ab, ba) = (rtp(&b, &a), rtp(&a, &b));
+        assert!(ab > a_para_b, "RTP A→B parou ({a_para_b} → {ab}) — {diag}");
+        assert!(ba > b_para_a, "RTP B→A parou ({b_para_a} → {ba}) — {diag}");
+        (a_para_b, b_para_a) = (ab, ba);
+    }
+    assert!(
+        b.streams_seen()
+            .await
+            .iter()
+            .any(|(s, k)| *s == a.id.to_string() && k == "video"),
+        "a câmara ligada a meio nunca chegou a B — a renegociação do meio não aconteceu"
+    );
+    eprintln!("media_e_consentimento: RTP A→B={a_para_b} B→A={b_para_a} em 24 s");
+
+    sfu.remove_peer(room, a.id).await;
+    sfu.remove_peer(room, b.id).await;
+}
