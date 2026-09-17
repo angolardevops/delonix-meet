@@ -3,15 +3,22 @@
 //! Isolamento multi-tenant: um quadro pertence a uma organização e só é
 //! listado/acedido por membros dessa org (via [`crate::org::orgs_of_user`]).
 //! Partilha só-leitura por link público com token (`share_token`).
+//!
+//! **URL assinado (G11).** `POST /api/whiteboards/{id}/signed-url` devolve um
+//! `/png?exp=…&sig=…` de no máximo 15 minutos, para um `<img>` o carregar sem
+//! sessão. Só o emite quem já pode ver o quadro; as regras estão em
+//! `delonix_meet_domain::content::whiteboard`.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::header,
     response::IntoResponse,
     Json,
 };
 use base64::{engine::general_purpose, Engine};
 use chrono::{DateTime, Utc};
+use delonix_meet_core::crypto;
+use delonix_meet_domain::content::whiteboard as rules;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -30,8 +37,8 @@ pub struct PngBytes(Vec<u8>);
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(list, save, delete, png, set_share, shared_png),
-    components(schemas(WhiteboardMeta, SaveReq, ShareReq))
+    paths(list, get_one, save, delete, png, signed_url, set_share, shared_png),
+    components(schemas(WhiteboardMeta, SaveReq, ShareReq, SignedUrl))
 )]
 pub struct ApiDoc;
 
@@ -165,40 +172,169 @@ pub async fn list(
     Ok(Json(items.into_iter().map(mask_token).collect()))
 }
 
-/// Imagem PNG de um quadro — apenas membros da org dona.
+/// Metadados de um quadro (sem a imagem).
 #[utoipa::path(
-    get, path = "/api/whiteboards/{id}/png", tag = "whiteboards",
+    get, path = "/api/whiteboards/{whiteboard_id}", tag = "whiteboards",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("whiteboard_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = WhiteboardMeta),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou é de uma organização de que não és membro"),
+    )
+)]
+pub async fn get_one(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<WhiteboardMeta>, ApiError> {
+    let orgs = orgs_of_user(&state, auth.user_id).await;
+    let item: Option<WhiteboardMeta> = sqlx::query_as(
+        "SELECT id, title, room_code, is_public, share_token, created_at
+         FROM whiteboards WHERE id = $1 AND org_id = ANY($2)",
+    )
+    .bind(id)
+    .bind(&orgs)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(Json(mask_token(item.ok_or(ApiError::NotFound)?)))
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct PngQuery {
+    /// Prazo (segundos Unix) de um URL assinado. Só com `sig`.
+    pub exp: Option<String>,
+    /// Assinatura de um URL assinado (ver `POST /api/whiteboards/{id}/signed-url`).
+    pub sig: Option<String>,
+}
+
+/// A subchave dos URLs assinados, derivada do segredo do servidor.
+fn signing_key(state: &AppState) -> [u8; 32] {
+    crypto::derive_key(&state.config.jwt_secret, rules::KEY_PURPOSE)
+}
+
+/// O PNG do quadro, se quem pede o puder ver (membro activo da org
+/// dona). Inexistente e alheio dão o mesmo `404`.
+async fn viewable_png(state: &AppState, id: Uuid, user_id: Uuid) -> Result<Vec<u8>, ApiError> {
+    let orgs = orgs_of_user(state, user_id).await;
+    let row: Option<(Vec<u8>, Uuid)> =
+        sqlx::query_as("SELECT png, org_id FROM whiteboards WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?;
+    match row {
+        Some((png, org)) if orgs.contains(&org) => Ok(png),
+        // Quadro de outra organização: não se confirma que existe.
+        _ => Err(ApiError::NotFound),
+    }
+}
+
+/// Imagem PNG de um quadro.
+///
+/// - **Com sessão** (sem `sig`): apenas membros da org dona.
+/// - **Com `exp` e `sig`** (URL assinado): sem sessão. Assinatura errada, prazo
+///   expirado ou quadro inexistente dão todos `404`.
+#[utoipa::path(
+    get, path = "/api/whiteboards/{whiteboard_id}/image", tag = "whiteboards",
+    security((), ("session" = [])),
+    params(("whiteboard_id" = Uuid, Path), PngQuery),
     responses(
         (status = 200, body = inline(PngBytes), content_type = "image/png"),
-        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
-        (status = 404, description = "Não existe, ou é de uma organização de que não és membro.", body = crate::openapi::ErrorBody),
-        (status = 404, body = crate::openapi::ErrorBody),
+        (status = 400, description = "Com sessão: `id` que não é UUID.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem `sig` e sem sessão válida.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não existe, é de uma organização de que não és membro, ou o URL assinado é inválido ou expirou.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn png(
     State(state): State<Arc<AppState>>,
+    // A sessão só se exige sem URL assinado: a rejeição do extractor fica
+    // guardada e devolve-se tal e qual nesse caso (o comportamento de sempre).
+    auth: Result<AuthUser, ApiError>,
+    Path(id): Path<String>,
+    Query(q): Query<PngQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    if q.sig.is_some() || q.exp.is_some() {
+        let id = Uuid::parse_str(&id).map_err(|_| ApiError::NotFound)?;
+        let valid = match (q.exp.as_deref(), q.sig.as_deref()) {
+            (Some(exp), Some(sig)) => {
+                rules::verify(&signing_key(&state), id, exp, sig, Utc::now().timestamp())
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(ApiError::NotFound);
+        }
+        let png: Option<Vec<u8>> = sqlx::query_scalar("SELECT png FROM whiteboards WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?;
+        let png = png.ok_or(ApiError::NotFound)?;
+        return Ok((
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                // O URL é uma credencial de curta duração: nenhuma cache
+                // partilhada o guarda, e o browser não o reenvia como Referer.
+                (header::CACHE_CONTROL, "private, no-store"),
+                (header::REFERRER_POLICY, "no-referrer"),
+            ],
+            png,
+        )
+            .into_response());
+    }
+    let auth = auth?;
+    let id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("id de quadro inválido".into()))?;
+    let png = viewable_png(&state, id, auth.user_id).await?;
+    Ok(([(header::CONTENT_TYPE, "image/png")], png).into_response())
+}
+
+/// URL assinado do PNG.
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = WhiteboardSignedUrl)]
+pub struct SignedUrl {
+    /// Caminho relativo (`/api/whiteboards/{id}/image?exp=…&sig=…`), carregável sem sessão.
+    pub url: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Método personalizado: emite um URL assinado do PNG, válido 15 minutos, para
+/// quem JÁ pode ver o quadro. Quem não pode recebe `404`, como no PNG.
+#[utoipa::path(
+    post, path = "/api/whiteboards/{whiteboard_id}/signed-url", tag = "whiteboards",
+    security(("session" = [])),
+    params(("whiteboard_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = SignedUrl),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não existe, ou é de uma organização de que não és membro.", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn signed_url(
+    State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Json<SignedUrl>, ApiError> {
     let orgs = orgs_of_user(&state, auth.user_id).await;
-    let row: (Vec<u8>, Uuid) = sqlx::query_as("SELECT png, org_id FROM whiteboards WHERE id = $1")
+    let org: Option<Uuid> = sqlx::query_scalar("SELECT org_id FROM whiteboards WHERE id = $1")
         .bind(id)
-        .fetch_one(&state.db)
+        .fetch_optional(&state.db)
         .await?;
-    if !orgs.contains(&row.1) {
-        // Quadro de outra organização: não se confirma que existe.
+    if !org.is_some_and(|o| orgs.contains(&o)) {
         return Err(ApiError::NotFound);
     }
-    Ok(([(header::CONTENT_TYPE, "image/png")], row.0))
+    let exp = rules::expiry_from(Utc::now().timestamp());
+    Ok(Json(SignedUrl {
+        url: rules::signed_path(&signing_key(&state), id, exp),
+        expires_at: DateTime::from_timestamp(exp, 0).ok_or_else(|| ApiError::internal("prazo"))?,
+    }))
 }
 
 /// Apaga um quadro — dono ou admin da org.
 #[utoipa::path(
-    delete, path = "/api/whiteboards/{id}", tag = "whiteboards",
+    delete, path = "/api/whiteboards/{whiteboard_id}", tag = "whiteboards",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("whiteboard_id" = Uuid, Path)),
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
@@ -239,9 +375,9 @@ pub struct ShareReq {
 /// Ativa/desativa a partilha por link público. Dono ou admin.
 /// Desativar roda o token: o link antigo deixa de funcionar.
 #[utoipa::path(
-    post, path = "/api/whiteboards/{id}/share", tag = "whiteboards",
+    put, path = "/api/whiteboards/{whiteboard_id}/public-link", tag = "whiteboards",
     security(("session" = [])),
-    params(("id" = Uuid, Path)),
+    params(("whiteboard_id" = Uuid, Path)),
     request_body = ShareReq,
     responses(
         (status = 200, body = WhiteboardMeta),
@@ -284,7 +420,7 @@ pub async fn set_share(
 
 /// Vista pública só-leitura por token — sem autenticação, se `is_public`.
 #[utoipa::path(
-    get, path = "/api/whiteboards/shared/{token}", tag = "whiteboards",
+    get, path = "/api/public/whiteboards/{token}/image", tag = "whiteboards",
     params(("token" = String, Path, description = "`share_token` do quadro.")),
     responses(
         (status = 200, body = inline(PngBytes), content_type = "image/png"),

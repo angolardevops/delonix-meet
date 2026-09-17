@@ -134,6 +134,112 @@ pub async fn insert_room(
     Err(ApiError::internal("could not allocate room code"))
 }
 
+// ---------- Sala pessoal («a minha sala», G2) ----------
+//
+// Uma sala como as outras (as regras de acesso são as de `room_access`), com
+// `is_personal = true`. As regras de forma estão em
+// `delonix_meet_domain::conferencing::personal_room`.
+
+/// Quantas vezes se tenta um código novo quando o sorteado já existe.
+const CODE_ATTEMPTS: usize = 5;
+
+async fn find_personal_room(db: &sqlx::PgPool, owner_id: Uuid) -> Result<Option<Room>, ApiError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {ROOM_COLUMNS} FROM rooms WHERE owner_id = $1 AND is_personal"
+    ))
+    .bind(owner_id)
+    .fetch_optional(db)
+    .await?)
+}
+
+/// A sala pessoal de `owner_id`, criada na primeira chamada.
+///
+/// Idempotente sob concorrência. O árbitro é o índice único parcial
+/// `rooms_personal_owner_uidx` (migração 0047): dois pedidos simultâneos tentam
+/// ambos inserir, um ganha, e o outro não insere nada (`ON CONFLICT DO
+/// NOTHING`) e lê a linha do vencedor. Uma colisão de CÓDIGO é outro índice, e
+/// repete com um código novo — como `insert_room`.
+pub(crate) async fn ensure_personal_room(
+    db: &sqlx::PgPool,
+    owner_id: Uuid,
+    default_name: &str,
+) -> Result<Room, ApiError> {
+    use delonix_meet_domain::conferencing::personal_room as rules;
+    if let Some(room) = find_personal_room(db, owner_id).await? {
+        return Ok(room);
+    }
+    for _ in 0..CODE_ATTEMPTS {
+        let res: Result<Option<Room>, sqlx::Error> = sqlx::query_as(&format!(
+            "INSERT INTO rooms (code, name, owner_id, topology, waiting_room, e2ee, format, is_personal)
+             VALUES ($1, $2, $3, $4, $5, false, 'normal', true)
+             ON CONFLICT (owner_id) WHERE is_personal DO NOTHING
+             RETURNING {ROOM_COLUMNS}"
+        ))
+        .bind(generate_room_code())
+        .bind(default_name)
+        .bind(owner_id)
+        .bind(rules::DEFAULT_TOPOLOGY)
+        .bind(rules::DEFAULT_WAITING_ROOM)
+        .fetch_optional(db)
+        .await;
+        match res {
+            Ok(Some(room)) => return Ok(room),
+            // Outro pedido criou-a entre a leitura e a escrita.
+            Ok(None) => {
+                return find_personal_room(db, owner_id)
+                    .await?
+                    .ok_or_else(|| ApiError::internal("sala pessoal desapareceu a meio"))
+            }
+            Err(sqlx::Error::Database(dbe)) if dbe.is_unique_violation() => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(ApiError::internal("could not allocate room code"))
+}
+
+/// Altera nome e/ou sala de espera da sala pessoal (que tem de existir).
+pub(crate) async fn update_personal_room(
+    db: &sqlx::PgPool,
+    owner_id: Uuid,
+    name: Option<&str>,
+    waiting_room: Option<bool>,
+) -> Result<Room, ApiError> {
+    sqlx::query_as(&format!(
+        "UPDATE rooms SET name = COALESCE($2, name), waiting_room = COALESCE($3, waiting_room)
+          WHERE owner_id = $1 AND is_personal RETURNING {ROOM_COLUMNS}"
+    ))
+    .bind(owner_id)
+    .bind(name)
+    .bind(waiting_room)
+    .fetch_optional(db)
+    .await?
+    .ok_or(ApiError::NotFound)
+}
+
+/// Dá um código novo à sala pessoal (que tem de existir). O antigo deixa de
+/// existir no mesmo `UPDATE`: `GET /api/rooms/{antigo}` passa a `404`.
+pub(crate) async fn rotate_personal_room_code(
+    db: &sqlx::PgPool,
+    owner_id: Uuid,
+) -> Result<Room, ApiError> {
+    for _ in 0..CODE_ATTEMPTS {
+        let res: Result<Option<Room>, sqlx::Error> = sqlx::query_as(&format!(
+            "UPDATE rooms SET code = $2 WHERE owner_id = $1 AND is_personal RETURNING {ROOM_COLUMNS}"
+        ))
+        .bind(owner_id)
+        .bind(generate_room_code())
+        .fetch_optional(db)
+        .await;
+        match res {
+            Ok(Some(room)) => return Ok(room),
+            Ok(None) => return Err(ApiError::NotFound),
+            Err(sqlx::Error::Database(dbe)) if dbe.is_unique_violation() => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(ApiError::internal("could not allocate room code"))
+}
+
 /// Cria uma sala; o autenticado fica dono.
 #[utoipa::path(
     post, path = "/api/rooms", tag = "rooms",
@@ -183,9 +289,9 @@ pub async fn create_room(
 /// o conheça lê os metadados (o controlo de entrada faz-se no `join`). O código
 /// é normalizado para minúsculas.
 #[utoipa::path(
-    get, path = "/api/rooms/{code}", tag = "rooms",
+    get, path = "/api/rooms/{room_code}", tag = "rooms",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala (`abc-defg-hij`).")),
+    params(("room_code" = String, Path, description = "Código da sala (`abc-defg-hij`).")),
     responses(
         (status = 200, body = Room),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -327,9 +433,9 @@ pub struct JoinRoomResp {
 /// não é dono, convidado na agenda nem co-anfitrião recebe um token com
 /// `wait = true` (sala de espera). O código é normalizado para minúsculas.
 #[utoipa::path(
-    post, path = "/api/rooms/{code}/join", tag = "rooms",
+    post, path = "/api/rooms/{room_code}/join", tag = "rooms",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala.")),
+    params(("room_code" = String, Path, description = "Código da sala.")),
     responses(
         (status = 200, body = JoinRoomResp),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -412,7 +518,7 @@ pub async fn join_room(
 /// Configuração ICE para o `RTCPeerConnection`: STUN + TURN com credenciais
 /// válidas por 1 hora. Rate-limit por IP (partilha o limitador da v1).
 #[utoipa::path(
-    get, path = "/api/ice", tag = "rooms",
+    get, path = "/api/ice-servers", tag = "rooms",
     security(("session" = [])),
     responses(
         (status = 200, body = serde_json::Value,
@@ -471,9 +577,9 @@ pub struct ChatMessage {
 /// Últimas 200 mensagens de chat de uma sala (requer autenticação + acesso).
 /// Sem acesso à sala devolve **403**. O código NÃO é normalizado.
 #[utoipa::path(
-    get, path = "/api/rooms/{code}/chat", tag = "rooms",
+    get, path = "/api/rooms/{room_code}/messages", tag = "rooms",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
     responses(
         (status = 200, body = Vec<ChatMessage>, description = "Ordem cronológica ascendente."),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
@@ -533,9 +639,9 @@ pub struct InviteResp {
 /// Faz tocar os dispositivos de colegas de organização para a sala em curso.
 /// Sem acesso à sala devolve **403**. O código NÃO é normalizado.
 #[utoipa::path(
-    post, path = "/api/rooms/{code}/invite", tag = "rooms",
+    post, path = "/api/rooms/{room_code}/invitations", tag = "rooms",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
     request_body = InviteReq,
     responses(
         (status = 200, body = InviteResp),
@@ -710,14 +816,14 @@ pub struct TimingsReq {
     pub reconnects: Option<i32>,
 }
 
-/// `POST /api/rooms/{code}/timings` — uma vez por sessão.
+/// `POST /api/rooms/{code}/join-timings` — uma vez por sessão.
 ///
 /// Valores limitados a 10 minutos (`ice_restarts`/`reconnects` a 1000) antes
 /// de gravar. Sem acesso à sala devolve **401**, não 403.
 #[utoipa::path(
-    post, path = "/api/rooms/{code}/timings", tag = "rooms",
+    post, path = "/api/rooms/{room_code}/join-timings", tag = "rooms",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
     request_body = TimingsReq,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
@@ -783,9 +889,9 @@ pub async fn post_timings(
 /// clampados; autorização igual à do resto da sala (can_access_room).
 /// Sem acesso à sala devolve **401**, não 403.
 #[utoipa::path(
-    post, path = "/api/rooms/{code}/qos", tag = "rooms",
+    post, path = "/api/rooms/{room_code}/quality-samples", tag = "rooms",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
     request_body = QosSample,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),

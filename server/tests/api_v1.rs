@@ -22,13 +22,16 @@ async fn v1(
     body: Option<Value>,
 ) -> (u16, Value) {
     let auth = bearer(key);
+    // Um caminho relativo é da v1 do inquilino; um absoluto (`/api/…`) é de
+    // outra superfície (operador, integração) com a mesma autenticação por
+    // cabeçalho.
+    let url = if path.starts_with("/api/") {
+        path.to_string()
+    } else {
+        format!("/api/v1{path}")
+    };
     let r = app
-        .raw(
-            method,
-            &format!("/api/v1{path}"),
-            &[("Authorization", &auth)],
-            body,
-        )
+        .raw(method, &url, &[("Authorization", &auth)], body)
         .await;
     (r.status, r.json())
 }
@@ -48,7 +51,7 @@ async fn api_key_authenticates_org_endpoint(db: sqlx::PgPool) {
     app.add_member(&a, "carla", "member").await;
     let (key_id, key) = app.api_key(&a).await;
 
-    let (st, org) = v1(&app, reqwest::Method::GET, "/org", &key, None).await;
+    let (st, org) = v1(&app, reqwest::Method::GET, "/organization", &key, None).await;
     assert_eq!(st, 200, "{org}");
     assert_eq!(
         org,
@@ -59,7 +62,7 @@ async fn api_key_authenticates_org_endpoint(db: sqlx::PgPool) {
     let r = app
         .raw(
             reqwest::Method::GET,
-            "/api/v1/org",
+            "/api/v1/organization",
             &[("X-API-Key", &key)],
             None,
         )
@@ -73,33 +76,41 @@ async fn api_key_authenticates_org_endpoint(db: sqlx::PgPool) {
 
     // Recusas: sem chave, JWT de sessão, prefixo errado, chave inventada.
     let r = app
-        .raw(reqwest::Method::GET, "/api/v1/org", &[], None)
+        .raw(reqwest::Method::GET, "/api/v1/organization", &[], None)
         .await;
     assert_eq!(r.status, 401);
     for bad in [a.token.as_str(), "abc_123", "dlx_0000"] {
-        let (st, _) = v1(&app, reqwest::Method::GET, "/org", bad, None).await;
+        let (st, _) = v1(&app, reqwest::Method::GET, "/organization", bad, None).await;
         assert_eq!(st, 401, "{bad}");
     }
 
-    // Revogar: a chave deixa de servir.
+    // Revogar: 204, e a chave deixa de servir.
     let (st, _) = app
         .delete(
             &format!("/api/orgs/{}/api-keys/{key_id}", a.org()),
             Some(&a.token),
         )
         .await;
-    assert_eq!(st, 200);
-    let (st, _) = v1(&app, reqwest::Method::GET, "/org", &key, None).await;
+    assert_eq!(st, 204);
+    let (st, _) = v1(&app, reqwest::Method::GET, "/organization", &key, None).await;
     assert_eq!(st, 401);
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn v1_is_rate_limited_per_ip(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
-    // 120 pedidos/min por IP; o limitador corre ANTES da autenticação.
+    // Sem chave válida, 120 pedidos/min por IP; o limitador corre ANTES da
+    // autenticação. Com chave válida o balde é da chave (`api_key_scopes`).
     let mut statuses = Vec::new();
     for _ in 0..121 {
-        let (st, _) = v1(&app, reqwest::Method::GET, "/org", "dlx_invalida", None).await;
+        let (st, _) = v1(
+            &app,
+            reqwest::Method::GET,
+            "/organization",
+            "dlx_invalida",
+            None,
+        )
+        .await;
         statuses.push(st);
     }
     assert!(statuses[..120].iter().all(|s| *s == 401), "{statuses:?}");
@@ -140,12 +151,14 @@ async fn v1_rooms_create_get_and_join_bot(db: sqlx::PgPool) {
     assert_eq!(bff["owner_id"], a.user_id.as_str());
 
     // Com domínio de produção, o link é absoluto.
-    app.post(
-        &format!("/api/orgs/{}/settings", a.org()),
-        Some(&a.token),
-        json!({"domain": "meet.alfa.test"}),
-    )
-    .await;
+    let (st, body) = app
+        .patch(
+            &format!("/api/orgs/{}", a.org()),
+            Some(&a.token),
+            json!({"domain": "meet.alfa.test"}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
     let (st, got) = v1(
         &app,
         reqwest::Method::GET,
@@ -177,7 +190,7 @@ async fn v1_rooms_create_get_and_join_bot(db: sqlx::PgPool) {
     let (st, bot) = v1(
         &app,
         reqwest::Method::POST,
-        &format!("/rooms/{}/join-bot", code.to_uppercase()),
+        &format!("/rooms/{}/bots", code.to_uppercase()),
         &ka,
         Some(json!({"bot_name": "  "})),
     )
@@ -194,7 +207,7 @@ async fn v1_rooms_create_get_and_join_bot(db: sqlx::PgPool) {
     let (st, _) = v1(
         &app,
         reqwest::Method::POST,
-        &format!("/rooms/{code}/join-bot"),
+        &format!("/rooms/{code}/bots"),
         &kb,
         Some(json!({"bot_name": "espião"})),
     )
@@ -222,7 +235,8 @@ async fn v1_recordings_list_scoped_to_org(db: sqlx::PgPool) {
     assert_eq!(r["id"], rec.as_str());
     assert_eq!(r["room_code"], room["code"]);
     assert_eq!(r["size_bytes"], 4);
-    assert_eq!(r["download_url"], format!("/api/recordings/{rec}"));
+    // O ficheiro vive em `/content`; `GET /api/recordings/{id}` são os metadados.
+    assert_eq!(r["download_url"], format!("/api/recordings/{rec}/content"));
     let (_, body) = v1(&app, reqwest::Method::GET, "/recordings", &kb, None).await;
     assert_eq!(body, json!({"recordings": []}));
 }
@@ -291,7 +305,7 @@ async fn v1_meetings_create_idempotent_patch_ring_notes_delete(db: sqlx::PgPool)
     );
     // A conta nova ficou membro da org A.
     let (_, emps) = app
-        .get(&format!("/api/orgs/{}/employees", a.org()), Some(&a.token))
+        .get(&format!("/api/orgs/{}/members", a.org()), Some(&a.token))
         .await;
     assert!(emps.to_string().contains("novo@alfa.test"));
 
@@ -382,11 +396,25 @@ async fn v1_meetings_create_idempotent_patch_ring_notes_delete(db: sqlx::PgPool)
     assert_eq!(ring["offline"].as_array().unwrap().len(), 1);
     assert_eq!(ring["room_code"], code.as_str());
 
+    // Leitura da reunião por id (rota nova): o mesmo recurso que o PATCH devolveu.
+    let (st, got) = v1(
+        &app,
+        reqwest::Method::GET,
+        &format!("/meetings/{id}"),
+        &ka,
+        None,
+    )
+    .await;
+    assert_eq!(st, 200, "{got}");
+    assert_eq!(got["id"], id.as_str());
+    assert_eq!(got["title"], "Comité II");
+    assert_eq!(got["room_code"], code.as_str());
+
     // Notas
     let (st, notes) = v1(
         &app,
         reqwest::Method::GET,
-        &format!("/meetings/{id}/notes"),
+        &format!("/meetings/{id}/minutes"),
         &ka,
         None,
     )
@@ -399,10 +427,11 @@ async fn v1_meetings_create_idempotent_patch_ring_notes_delete(db: sqlx::PgPool)
 
     // Chave da org B: nada disto existe para ela.
     for (method, path) in [
+        (reqwest::Method::GET, format!("/meetings/{id}")),
         (reqwest::Method::PATCH, format!("/meetings/{id}")),
         (reqwest::Method::DELETE, format!("/meetings/{id}")),
         (reqwest::Method::POST, format!("/meetings/{id}/ring")),
-        (reqwest::Method::GET, format!("/meetings/{id}/notes")),
+        (reqwest::Method::GET, format!("/meetings/{id}/minutes")),
     ] {
         let body = (method == reqwest::Method::PATCH).then(|| json!({"title": "forjado"}));
         let (st, resp) = v1(&app, method.clone(), &path, &kb, body).await;
@@ -567,14 +596,14 @@ async fn v1_meeting_refuses_to_create_accounts_outside_org_domain(db: sqlx::PgPo
     assert_eq!(st, 422, "{body}");
     assert_eq!(body["code"], "meeting.host_outside_org_domain");
     let (_, emps) = app
-        .get(&format!("/api/orgs/{}/employees", a.org()), Some(&a.token))
+        .get(&format!("/api/orgs/{}/members", a.org()), Some(&a.token))
         .await;
     assert!(!emps.to_string().contains("ninguem@beta.test"), "{emps}");
 
     // E a org dona do domínio adiciona a pessoa sem conflito.
     let (st, body) = app
         .post(
-            &format!("/api/orgs/{}/employees", b.org()),
+            &format!("/api/orgs/{}/members", b.org()),
             Some(&b.token),
             json!({"email": "ninguem@beta.test"}),
         )
@@ -595,7 +624,7 @@ async fn odoo_provision_does_not_capture_accounts(db: sqlx::PgPool) {
     // 401 desde o R142 (`tests/security_voice_odoo.rs`).
     let (st, tok) = app
         .post(
-            &format!("/api/orgs/{}/integration/odoo/token", a.org()),
+            &format!("/api/orgs/{}/integrations/odoo/rotate-token", a.org()),
             Some(&a.token),
             json!({}),
         )
@@ -606,7 +635,7 @@ async fn odoo_provision_does_not_capture_accounts(db: sqlx::PgPool) {
     let (st, prov) = v1(
         &app,
         reqwest::Method::POST,
-        "/integration/odoo/provision",
+        "/api/integrations/odoo/v1/provision",
         &ka,
         Some(json!({
             "company": "Alfa Lda",
@@ -629,7 +658,7 @@ async fn odoo_provision_does_not_capture_accounts(db: sqlx::PgPool) {
         .contains("conta local"));
 
     let (_, emps) = app
-        .get(&format!("/api/orgs/{}/employees", a.org()), Some(&a.token))
+        .get(&format!("/api/orgs/{}/members", a.org()), Some(&a.token))
         .await;
     let s = emps.to_string();
     assert!(!s.contains(&b.email), "o admin da B entrou na A: {s}");
@@ -644,7 +673,7 @@ async fn odoo_provision_does_not_capture_accounts(db: sqlx::PgPool) {
     let (st, users) = v1(
         &app,
         reqwest::Method::GET,
-        "/integration/odoo/users",
+        "/api/integrations/odoo/v1/users",
         &ka,
         None,
     )
@@ -654,7 +683,7 @@ async fn odoo_provision_does_not_capture_accounts(db: sqlx::PgPool) {
     let (st, _) = v1(
         &app,
         reqwest::Method::GET,
-        "/integration/odoo/users",
+        "/api/integrations/odoo/v1/users",
         "dlxo_inventado",
         None,
     )
@@ -672,7 +701,7 @@ async fn admin_orgs_without_configured_secret_is_401(db: sqlx::PgPool) {
     let r = app
         .raw(
             reqwest::Method::POST,
-            "/api/v1/admin/orgs",
+            "/api/operator/v1/organizations",
             &[("X-Provisioning-Secret", "")],
             Some(json!({"name": "Org"})),
         )
@@ -689,7 +718,7 @@ async fn admin_orgs_provisioning_with_secret(db: sqlx::PgPool) {
         async move {
             app.raw(
                 reqwest::Method::POST,
-                "/api/v1/admin/orgs",
+                "/api/operator/v1/organizations",
                 &[("X-Provisioning-Secret", hdr)],
                 Some(body),
             )
@@ -701,7 +730,7 @@ async fn admin_orgs_provisioning_with_secret(db: sqlx::PgPool) {
     let r = app
         .raw(
             reqwest::Method::POST,
-            "/api/v1/admin/orgs",
+            "/api/operator/v1/organizations",
             &[],
             Some(json!({"name": "Org"})),
         )
@@ -727,7 +756,7 @@ async fn admin_orgs_provisioning_with_secret(db: sqlx::PgPool) {
     let key = p["api_key"].as_str().unwrap().to_string();
     assert!(key.starts_with("dlx_"));
 
-    let (st, org) = v1(&app, reqwest::Method::GET, "/org", &key, None).await;
+    let (st, org) = v1(&app, reqwest::Method::GET, "/organization", &key, None).await;
     assert_eq!(st, 200);
     assert_eq!(org["id"], p["org_id"]);
     assert_eq!(org["email_domain"], "gama.test");
@@ -780,20 +809,24 @@ async fn platform_storage_requires_declared_platform_admin(db: sqlx::PgPool) {
 
     // Admin de org recém-registado: 403 em tudo, antes do handler correr.
     for (method, path, body) in [
-        (reqwest::Method::GET, "/platform/storage", None),
+        (reqwest::Method::GET, "/api/operator/v1/storage", None),
         (
             reqwest::Method::PUT,
-            "/platform/storage",
+            "/api/operator/v1/storage",
             Some(
                 json!({"storage_type": "webdav", "webdav_url": "http://169.254.169.254/", "webdav_user": "x"}),
             ),
         ),
         (
             reqwest::Method::POST,
-            "/platform/storage/test",
+            "/api/operator/v1/storage/test",
             Some(json!({})),
         ),
-        (reqwest::Method::GET, "/platform/storage/pvc-manifest", None),
+        (
+            reqwest::Method::GET,
+            "/api/operator/v1/storage/pvc-manifest",
+            None,
+        ),
     ] {
         let (st, resp) = v1(&app, method.clone(), path, &a.token, body.clone()).await;
         assert_eq!(st, 403, "{method} {path}: {resp}");
@@ -802,20 +835,27 @@ async fn platform_storage_requires_declared_platform_admin(db: sqlx::PgPool) {
         assert_eq!(st, 401);
     }
     let r = app
-        .raw(reqwest::Method::GET, "/api/v1/platform/storage", &[], None)
+        .raw(reqwest::Method::GET, "/api/operator/v1/storage", &[], None)
         .await;
     assert_eq!(r.status, 401);
 
     // Controlo positivo: o administrador DECLARADO lê e escreve.
     let tok = access_token_for(&app, platform_admin);
-    let (st, cfg) = v1(&app, reqwest::Method::GET, "/platform/storage", &tok, None).await;
+    let (st, cfg) = v1(
+        &app,
+        reqwest::Method::GET,
+        "/api/operator/v1/storage",
+        &tok,
+        None,
+    )
+    .await;
     assert_eq!(st, 200, "{cfg}");
     assert_eq!(cfg["storage_type"], "local");
     assert_eq!(cfg["webdav_password_set"], false);
     let (st, _) = v1(
         &app,
         reqwest::Method::PUT,
-        "/platform/storage",
+        "/api/operator/v1/storage",
         &tok,
         Some(json!({"storage_type": "ftp"})),
     )
@@ -824,7 +864,7 @@ async fn platform_storage_requires_declared_platform_admin(db: sqlx::PgPool) {
     let (st, _) = v1(
         &app,
         reqwest::Method::PUT,
-        "/platform/storage",
+        "/api/operator/v1/storage",
         &tok,
         Some(
             json!({"storage_type": "webdav", "webdav_url": "https://dav.test", "webdav_user": "u",
@@ -833,7 +873,14 @@ async fn platform_storage_requires_declared_platform_admin(db: sqlx::PgPool) {
     )
     .await;
     assert_eq!(st, 200);
-    let (_, cfg) = v1(&app, reqwest::Method::GET, "/platform/storage", &tok, None).await;
+    let (_, cfg) = v1(
+        &app,
+        reqwest::Method::GET,
+        "/api/operator/v1/storage",
+        &tok,
+        None,
+    )
+    .await;
     assert_eq!(cfg["storage_type"], "webdav");
     assert_eq!(cfg["webdav_password_set"], true);
     assert!(!cfg.to_string().contains("segredo"), "{cfg}");

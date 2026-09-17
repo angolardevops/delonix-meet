@@ -66,6 +66,7 @@ pub struct OrgSettingsReq {
         update_settings,
         create_org,
         my_orgs,
+        get_org,
         create_branch,
         list_branches,
         add_employee,
@@ -121,7 +122,7 @@ pub struct OrgSettingsUpdated {
 /// retenção (>0) apaga gravações mais antigas que N dias. Quotas negativas ou
 /// omissas ficam ilimitadas; valores de voz fora do enum são ignorados.
 #[utoipa::path(
-    post, path = "/api/orgs/{org_id}/settings", tag = "orgs",
+    patch, path = "/api/orgs/{org_id}", tag = "orgs",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização.")),
     request_body = OrgSettingsReq,
@@ -447,6 +448,20 @@ pub async fn create_org(
     Ok(Json(org))
 }
 
+/// Consulta das organizações de um utilizador, com o seu papel. Só pertenças
+/// ACTIVAS: um membro arquivado deixava de alcançar as rotas da org (S3) mas
+/// continuava a vê-la na lista, com o papel antigo (R152).
+const MY_ORGS_SQL: &str = r#"
+    SELECT o.id, o.name, o.slug, m.role,
+           (SELECT COUNT(*) FROM org_members mm
+             WHERE mm.org_id = o.id AND mm.archived_at IS NULL) AS member_count,
+           o.domain, o.retention_days, o.max_groups, o.max_rooms, o.max_meetings
+    FROM organizations o
+    JOIN org_members m ON m.org_id = o.id AND m.user_id = $1 AND m.archived_at IS NULL
+    WHERE ($2::uuid IS NULL OR o.id = $2)
+    ORDER BY o.name
+"#;
+
 /// Organizações de quem está autenticado, com o seu papel em cada uma.
 #[utoipa::path(
     get, path = "/api/orgs", tag = "orgs",
@@ -460,23 +475,36 @@ pub async fn my_orgs(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<Vec<OrgSummary>>, ApiError> {
-    let orgs: Vec<OrgSummary> = sqlx::query_as(
-        r#"
-        SELECT o.id, o.name, o.slug, m.role,
-               (SELECT COUNT(*) FROM org_members mm
-                 WHERE mm.org_id = o.id AND mm.archived_at IS NULL) AS member_count,
-               o.domain, o.retention_days, o.max_groups, o.max_rooms, o.max_meetings
-        FROM organizations o
-        -- Só pertenças ACTIVAS: um membro arquivado deixava de alcançar as
-        -- rotas da org (S3) mas continuava a vê-la aqui, com o papel antigo.
-        JOIN org_members m ON m.org_id = o.id AND m.user_id = $1 AND m.archived_at IS NULL
-        ORDER BY o.name
-        "#,
-    )
-    .bind(auth.user_id)
-    .fetch_all(&state.db)
-    .await?;
+    let orgs: Vec<OrgSummary> = sqlx::query_as(MY_ORGS_SQL)
+        .bind(auth.user_id)
+        .bind(None::<Uuid>)
+        .fetch_all(&state.db)
+        .await?;
     Ok(Json(orgs))
+}
+
+/// Uma organização de que se é membro activo, com o papel.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = OrgSummary),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe ou não és membro activo"),
+    )
+)]
+pub async fn get_org(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<OrgSummary>, ApiError> {
+    let org: Option<OrgSummary> = sqlx::query_as(MY_ORGS_SQL)
+        .bind(auth.user_id)
+        .bind(Some(org_id))
+        .fetch_optional(&state.db)
+        .await?;
+    Ok(Json(org.ok_or(ApiError::NotFound)?))
 }
 
 // ---------- branches ----------
@@ -573,7 +601,7 @@ pub struct AddEmployeeReq {
 /// criada (password por omissão quando omitida); se já for membro, actualiza
 /// papel, cargo e filial.
 #[utoipa::path(
-    post, path = "/api/orgs/{org_id}/employees", tag = "orgs",
+    post, path = "/api/orgs/{org_id}/members", tag = "orgs",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização.")),
     request_body = AddEmployeeReq,
@@ -738,7 +766,7 @@ pub struct AddEmployeeResp {
 
 /// Colaboradores activos da organização (membros), com a última actividade.
 #[utoipa::path(
-    get, path = "/api/orgs/{org_id}/employees", tag = "orgs",
+    get, path = "/api/orgs/{org_id}/members", tag = "orgs",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização.")),
     responses(
@@ -775,7 +803,7 @@ pub struct UpdateEmployeeReq {
 
 /// Altera papel, cargo e/ou filial de um membro (só admin).
 #[utoipa::path(
-    patch, path = "/api/orgs/{org_id}/employees/{user_id}", tag = "orgs",
+    patch, path = "/api/orgs/{org_id}/members/{user_id}", tag = "orgs",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização."), ("user_id" = Uuid, Path, description = "Utilizador membro.")),
     request_body = UpdateEmployeeReq,
@@ -842,7 +870,7 @@ pub async fn update_employee(
 /// Arquiva o acesso de um membro (soft delete, só admin). Idempotente: um
 /// utilizador que não é membro também devolve `ok`.
 #[utoipa::path(
-    delete, path = "/api/orgs/{org_id}/employees/{user_id}", tag = "orgs",
+    delete, path = "/api/orgs/{org_id}/members/{user_id}", tag = "orgs",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização."), ("user_id" = Uuid, Path, description = "Utilizador membro.")),
     responses(
@@ -1266,10 +1294,10 @@ pub async fn org_stats(
             .fetch_one(&state.db)
             .await?;
 
-    let (recordings_total, recordings_bytes): (i64, i64) = sqlx::query_as(
-        "SELECT COUNT(*), COALESCE(SUM(r.size_bytes), 0)::bigint FROM recordings r
-         WHERE EXISTS (SELECT 1 FROM org_members om WHERE om.org_id = $1 AND om.user_id = r.uploader_id)",
-    )
+    let (recordings_total, recordings_bytes): (i64, i64) = sqlx::query_as(&format!(
+        "SELECT COUNT(*), COALESCE(SUM(r.size_bytes), 0)::bigint FROM recordings r WHERE {}",
+        recording_uploader_in_org_sql("$1", "r.uploader_id")
+    ))
     .bind(org_id)
     .fetch_one(&state.db)
     .await?;
@@ -1365,24 +1393,37 @@ pub async fn org_stats(
     }))
 }
 
+/// A gravação carregada por `uploader` conta para a organização `org`: quem a
+/// carregou é, ou FOI, membro dela. Predicado SQL com as expressões dadas
+/// (parâmetros `$n` ou colunas).
+///
+/// Não filtra `archived_at`, e de propósito: é atribuição, não acesso. A
+/// gravação de quem saiu continua da empresa (S3) — continua nas estatísticas
+/// e continua a ocupar a quota de armazenamento (G3). Um só dono para as duas
+/// contas, para o painel e a quota nunca darem números diferentes.
+pub(crate) fn recording_uploader_in_org_sql(org: &str, uploader: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM org_members om WHERE om.org_id = {org} AND om.user_id = {uploader})"
+    )
+}
+
+/// A quarentena de `subject` conta para a organização `org`: é, ou FOI,
+/// membro dela. Mesma razão que `recording_uploader_in_org_sql` — é
+/// atribuição, não acesso: quem saiu continua no histórico da empresa. A
+/// leitura da analítica e a varredura que a precede usam ESTE predicado, para
+/// a varredura marcar exactamente o conjunto que a leitura conta.
+pub(crate) fn quarantine_subject_in_org_sql(org: &str, subject: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM org_members om WHERE om.org_id = {org} AND om.user_id = {subject})"
+    )
+}
+
 /// user_ids dos membros de um grupo (para iniciar chamada de grupo).
 /// Organizações a que um utilizador pertence (para disparar webhooks dos
 /// eventos das suas reuniões/gravações).
 pub async fn orgs_of_user(state: &AppState, user_id: Uuid) -> Vec<Uuid> {
     sqlx::query_as::<_, (Uuid,)>(
         "SELECT org_id FROM org_members WHERE user_id = $1 AND archived_at IS NULL",
-    )
-    .bind(user_id)
-    .fetch_all(&state.db)
-    .await
-    .map(|rows| rows.into_iter().map(|r| r.0).collect())
-    .unwrap_or_default()
-}
-
-/// Organizações onde `user_id` é admin (para analytics/ações administrativas).
-pub async fn admin_orgs_of_user(state: &AppState, user_id: Uuid) -> Vec<Uuid> {
-    sqlx::query_as::<_, (Uuid,)>(
-        "SELECT org_id FROM org_members WHERE user_id = $1 AND role = 'admin' AND archived_at IS NULL",
     )
     .bind(user_id)
     .fetch_all(&state.db)
@@ -1432,6 +1473,8 @@ pub struct SsoConfigPublic {
     pub issuer_url: String,
     pub client_id: String,
     pub enforce_sso: bool,
+    /// Há `client_secret` guardado? (o segredo nunca é devolvido).
+    pub has_client_secret: bool,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -1439,6 +1482,7 @@ pub struct SsoConfigReq {
     pub issuer_url: String,
     pub client_id: String,
     /// Vazio → mantém o segredo existente (no-op em update sem nova rotação).
+    /// Guarda-se cifrado; não vazio sem `DATA_ENCRYPTION_KEYS` → `422`.
     #[serde(default)]
     pub client_secret: String,
     pub enforce_sso: bool,
@@ -1464,7 +1508,8 @@ pub async fn get_sso_config(
 ) -> Result<Json<Option<SsoConfigPublic>>, ApiError> {
     require_admin(&state, org_id, auth.user_id).await?;
     let row: Option<SsoConfigPublic> = sqlx::query_as(
-        "SELECT org_id, issuer_url, client_id, enforce_sso
+        "SELECT org_id, issuer_url, client_id, enforce_sso,
+                client_secret <> '' AS has_client_secret
          FROM org_sso_configs WHERE org_id = $1",
     )
     .bind(org_id)
@@ -1486,6 +1531,7 @@ pub async fn get_sso_config(
         (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 422, description = "`client_secret` não vazio sem DATA_ENCRYPTION_KEYS (`secrets.encryption_unconfigured`).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn upsert_sso_config(
@@ -1541,7 +1587,11 @@ pub async fn upsert_sso_config(
         .bind(org_id)
         .bind(&issuer)
         .bind(&client_id)
-        .bind(req.client_secret.trim())
+        .bind(seal_sso_client_secret(
+            &state.config,
+            org_id,
+            req.client_secret.trim(),
+        )?)
         .bind(req.enforce_sso)
         .execute(&state.db)
         .await?;
@@ -1549,6 +1599,21 @@ pub async fn upsert_sso_config(
 
     tracing::info!(%org_id, %issuer, "SSO config upserted");
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `aad` do `client_secret` do SSO de uma org (a linha é a org).
+pub(crate) fn sso_client_secret_aad(org_id: Uuid) -> String {
+    crate::secrets_at_rest::aad("org_sso_configs", "client_secret", org_id)
+}
+
+/// O `client_secret` cifrado para gravar em `org_sso_configs` (S5). Quem
+/// escreve essa coluna passa por aqui; sem `DATA_ENCRYPTION_KEYS` é `422`.
+pub(crate) fn seal_sso_client_secret(
+    config: &crate::config::Config,
+    org_id: Uuid,
+    plain: &str,
+) -> Result<String, ApiError> {
+    crate::secrets_at_rest::seal(config, plain, &sso_client_secret_aad(org_id))
 }
 
 /// `DELETE /api/orgs/:org_id/sso` — remove a config OIDC (desativa SSO). Só

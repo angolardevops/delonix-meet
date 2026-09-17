@@ -38,7 +38,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
-    apikeys::ApiKeyAuth,
+    apikeys::{ApiKeyAuth, Scope},
     error::ApiError,
     meetings::{Meeting, MEETING_COLUMNS as MEETING_COLS},
     AppState,
@@ -155,7 +155,7 @@ pub struct DeleteMeetingResp {
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as à v1).
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(create, patch, ring, delete),
+    paths(get_one, create, patch, ring, delete),
     components(schemas(
         InviteeReq,
         CreateMeetingReq,
@@ -493,19 +493,46 @@ async fn email_of(state: &AppState, user_id: Uuid) -> String {
 
 // ---------- handlers ----------
 
+/// `GET /api/v1/meetings/{meeting_id}` — uma reunião da organização da chave,
+/// na mesma forma que a criação devolve.
+#[utoipa::path(
+    get, path = "/api/v1/meetings/{meeting_id}", tag = "meetings",
+    security(("api_key" = ["meetings:read"])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = MeetingResp),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:read`"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe ou é de outra organização"),
+    )
+)]
+pub async fn get_one(
+    State(state): State<Arc<AppState>>,
+    key: ApiKeyAuth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<MeetingResp>, ApiError> {
+    key.require(Scope::MeetingsRead)?;
+    let meeting = meeting_in_org(&state, key.org_id, id).await?;
+    let host_email = email_of(&state, meeting.owner_id).await;
+    Ok(Json(
+        build_resp(&state, key.org_id, &meeting, host_email, Vec::new(), false).await?,
+    ))
+}
+
 /// `POST /api/v1/meetings` — cria (ou reencontra) uma reunião agendada com
 /// sala, anfitrião e convidados.
 #[utoipa::path(
     post, path = "/api/v1/meetings", tag = "meetings",
-    security(("api_key" = [])),
+    security(("api_key" = ["meetings:write"])),
     request_body = CreateMeetingReq,
     responses(
         (status = 200, body = MeetingResp, description = "Criada, ou reencontrada pela `external_ref` (`existing: true`)"),
         (status = 400, body = crate::openapi::ErrorBody, description = "`title` vazio, `kind`, `duration_min`, `host_email` inválidos ou mais de 200 convidados"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente ou inválida"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
         (status = 404, body = crate::openapi::ErrorBody, description = "a `external_ref` aponta para uma reunião que já não se resolve na organização"),
         (status = 409, body = crate::openapi::ErrorBody, description = "o anfitrião pertence a outra organização"),
-        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
     )
 )]
 pub async fn create(
@@ -513,6 +540,7 @@ pub async fn create(
     key: ApiKeyAuth,
     Json(req): Json<CreateMeetingReq>,
 ) -> Result<Json<MeetingResp>, ApiError> {
+    key.require(Scope::MeetingsWrite)?;
     let title: String = req.title.trim().chars().take(120).collect();
     if title.is_empty() {
         return Err(ApiError::BadRequest("title é obrigatório".into()));
@@ -676,16 +704,17 @@ pub async fn create(
 
 /// `PATCH /api/v1/meetings/{id}` — reagendar / renomear / actualizar convidados.
 #[utoipa::path(
-    patch, path = "/api/v1/meetings/{id}", tag = "meetings",
-    security(("api_key" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    patch, path = "/api/v1/meetings/{meeting_id}", tag = "meetings",
+    security(("api_key" = ["meetings:write"])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     request_body = PatchMeetingReq,
     responses(
         (status = 200, body = MeetingResp),
         (status = 400, body = crate::openapi::ErrorBody, description = "`title` vazio, `duration_min` fora de 1-1440 ou mais de 200 convidados"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente ou inválida"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
         (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
-        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
     )
 )]
 pub async fn patch(
@@ -694,6 +723,7 @@ pub async fn patch(
     Path(id): Path<Uuid>,
     Json(req): Json<PatchMeetingReq>,
 ) -> Result<Json<MeetingResp>, ApiError> {
+    key.require(Scope::MeetingsWrite)?;
     let current = meeting_in_org(&state, key.org_id, id).await?;
 
     let title: Option<String> = match &req.title {
@@ -804,15 +834,16 @@ pub async fn patch(
 /// casos, incluindo o `register_call` — sem ele, quem atende cairia na sala
 /// de espera em vez de entrar directo.
 #[utoipa::path(
-    post, path = "/api/v1/meetings/{id}/ring", tag = "meetings",
-    security(("api_key" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    post, path = "/api/v1/meetings/{meeting_id}/ring", tag = "meetings",
+    security(("api_key" = ["meetings:write"])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = serde_json::Value, description = "Com alvos: `{ringing: [uuid], offline: [uuid], room_code, join_url}`. Sem convidados por chamar: `{ringing: [], offline: [], reason, join_url}` (sem `room_code`)."),
         (status = 400, body = crate::openapi::ErrorBody, description = "a reunião ainda não tem sala"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente ou inválida"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
         (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
-        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
     )
 )]
 pub async fn ring(
@@ -820,6 +851,7 @@ pub async fn ring(
     key: ApiKeyAuth,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    key.require(Scope::MeetingsWrite)?;
     let meeting = meeting_in_org(&state, key.org_id, id).await?;
     let Some(room_code) = meeting.room_code.clone() else {
         return Err(ApiError::BadRequest(
@@ -875,14 +907,15 @@ pub async fn ring(
 /// utilizador espera manter (a FK `recordings.room_id` é ON DELETE CASCADE —
 /// apagar a sala apagaria o registo da gravação).
 #[utoipa::path(
-    delete, path = "/api/v1/meetings/{id}", tag = "meetings",
-    security(("api_key" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    delete, path = "/api/v1/meetings/{meeting_id}", tag = "meetings",
+    security(("api_key" = ["meetings:write"])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = DeleteMeetingResp),
-        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente ou inválida"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
         (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
-        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
     )
 )]
 pub async fn delete(
@@ -890,6 +923,7 @@ pub async fn delete(
     key: ApiKeyAuth,
     Path(id): Path<Uuid>,
 ) -> Result<Json<DeleteMeetingResp>, ApiError> {
+    key.require(Scope::MeetingsWrite)?;
     let meeting = meeting_in_org(&state, key.org_id, id).await?;
 
     sqlx::query("DELETE FROM meetings WHERE id = $1")

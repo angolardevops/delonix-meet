@@ -40,6 +40,10 @@ pub struct Config {
     /// em produção `None`, e as capacidades NOVAS que guardam segredos recusam
     /// (422) em vez de os escrever em claro.
     pub secret_box: Option<std::sync::Arc<delonix_meet_core::secret_box::SecretBox>>,
+    /// Participantes que este nó aguenta (`NODE_PEER_CAPACITY`), declarado pelo
+    /// operador a partir de testes de carga. Sem ele o inventário não inventa
+    /// uma ocupação.
+    pub node_peer_capacity: Option<u32>,
     /// `DELONIX_ALLOW_INSECURE=1`: segredos de dev aceites e CORS permissivo.
     /// Lido UMA vez aqui — nenhum outro módulo lê o ambiente.
     pub allow_insecure: bool,
@@ -72,7 +76,7 @@ pub struct Config {
     /// chamar a API interna de IVR. Vazio => API interna de voz DESATIVADA.
     pub voice_internal_secret: String,
     /// Segredo de plataforma que autoriza o provisionamento de organizações via
-    /// `POST /api/v1/admin/orgs` (ex.: o Odoo cria a org de cada empresa e
+    /// `POST /api/operator/v1/organizations` (ex.: o Odoo cria a org de cada empresa e
     /// recebe a chave de API). Vazio => endpoint de provisão DESATIVADO
     /// (fail-closed). Não é uma chave de org — é anterior a qualquer org.
     pub provisioning_secret: String,
@@ -292,6 +296,15 @@ impl Config {
             registration_mode,
             registration_domains,
             tenancy_mode,
+            node_peer_capacity: opt("NODE_PEER_CAPACITY").map(|v| {
+                v.trim()
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .unwrap_or_else(|| {
+                        panic!("NODE_PEER_CAPACITY: «{v}» não é um inteiro positivo")
+                    })
+            }),
             migrate_on_start: src.var("DELONIX_MIGRATE").ok().as_deref() != Some("0"),
             log_json: src.var("LOG_FORMAT").ok().as_deref() == Some("json"),
             internal_bind_addr: opt("INTERNAL_BIND_ADDR"),

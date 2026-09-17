@@ -188,10 +188,10 @@ pub struct TranslateResp {
 )]
 pub struct ApiDoc;
 
-/// POST /api/translate — traduz uma linha de legenda. Autenticado; o texto é
+/// POST /api/ai/translations — traduz uma linha de legenda. Autenticado; o texto é
 /// curto (legendas) e o rate-limit global de /api aplica-se por IP.
 #[utoipa::path(
-    post, path = "/api/translate", tag = "ai",
+    post, path = "/api/ai/translations", tag = "ai",
     security(("session" = [])),
     request_body = TranslateReq,
     responses(

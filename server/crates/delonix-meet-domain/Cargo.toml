@@ -11,5 +11,6 @@ delonix-meet-core = { path = "../delonix-meet-core" }
 serde.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+hex.workspace = true
 # Parsing de URL (puro, sem rede) para validar a forma de destinos.
 url = "2"

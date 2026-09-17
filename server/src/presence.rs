@@ -678,7 +678,7 @@ pub struct ApiDoc;
 
 /// Marca todas as chamadas perdidas do utilizador como vistas.
 #[utoipa::path(
-    post, path = "/api/missed-calls/ack", tag = "calls",
+    post, path = "/api/users/me/missed-calls/acknowledge", tag = "calls",
     security(("session" = [])),
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),

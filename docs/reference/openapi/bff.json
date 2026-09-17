@@ -420,17 +420,45 @@
         },
         "type": "object"
       },
+      "ApiCreateRoomReq": {
+        "properties": {
+          "e2ee": {
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Omisso ⇒ «Reunião (API)»; cortado a 120 caracteres.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "waiting_room": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "ApiKeyInfo": {
+        "description": "Chave de API como a lista a mostra. Nunca leva a chave nem o hash.",
         "properties": {
           "created_at": {
             "format": "date-time",
             "type": "string"
+          },
+          "expires_at": {
+            "description": "Ausente ⇒ não expira.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "id": {
             "format": "uuid",
             "type": "string"
           },
           "last_used_at": {
+            "description": "Actualizado no máximo uma vez por minuto por chave.",
             "format": "date-time",
             "type": [
               "string",
@@ -442,13 +470,21 @@
           },
           "prefix": {
             "type": "string"
+          },
+          "scopes": {
+            "description": "Escopos concedidos (`org:read`, `rooms:read`, `rooms:write`, `bots:join`,\n`meetings:read`, `meetings:write`, `recordings:read`).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
           "id",
           "name",
           "prefix",
-          "created_at"
+          "created_at",
+          "scopes"
         ],
         "type": "object"
       },
@@ -802,9 +838,27 @@
       },
       "CreateKeyReq": {
         "properties": {
+          "expires_at": {
+            "description": "Expiração opcional: no futuro e a no máximo dois anos. Omissa ⇒ não\nexpira.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
             "description": "Rótulo (cortado a 60 caracteres).",
             "type": "string"
+          },
+          "scopes": {
+            "description": "Escopos do catálogo (`org:read`, `rooms:read`, `rooms:write`,\n`bots:join`, `meetings:read`, `meetings:write`, `recordings:read`).\n**Omisso ⇒ o catálogo inteiro** (compatibilidade com os clientes que\njá criam chaves sem escopos); `[]` é recusado.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "type": "object"
@@ -1039,6 +1093,13 @@
       },
       "CreatedKey": {
         "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -1052,13 +1113,38 @@
           },
           "prefix": {
             "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
           "id",
           "name",
           "prefix",
-          "key"
+          "key",
+          "scopes"
+        ],
+        "type": "object"
+      },
+      "DeleteMeetingResp": {
+        "description": "Resposta de `DELETE /api/v1/meetings/{id}`.",
+        "properties": {
+          "ok": {
+            "description": "Sempre `true`.",
+            "type": "boolean"
+          },
+          "room_deleted": {
+            "description": "`false` quando a sala foi mantida por ter gravações (ou a reunião não\ntinha sala).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "room_deleted"
         ],
         "type": "object"
       },
@@ -1261,6 +1347,24 @@
         },
         "required": [
           "poll_interval_secs"
+        ],
+        "type": "object"
+      },
+      "DialIn": {
+        "description": "Como ligar para uma sala de conferência por telefone.",
+        "properties": {
+          "number": {
+            "description": "Número em +E.164.",
+            "type": "string"
+          },
+          "pin": {
+            "description": "PIN de 6 dígitos.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "pin"
         ],
         "type": "object"
       },
@@ -1508,6 +1612,39 @@
         ],
         "type": "object"
       },
+      "InviteeReq": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "type": "object"
+      },
+      "InviteeResp": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "user_id"
+        ],
+        "type": "object"
+      },
       "InviteeResponse": {
         "properties": {
           "decline_reason": {
@@ -1537,6 +1674,18 @@
           "username",
           "status",
           "decline_reason"
+        ],
+        "type": "object"
+      },
+      "JoinBotReq": {
+        "properties": {
+          "bot_name": {
+            "description": "Nome mostrado na sala; vazio ⇒ «AI Assistant»; cortado a 40 caracteres.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bot_name"
         ],
         "type": "object"
       },
@@ -1618,6 +1767,116 @@
         },
         "required": [
           "updated"
+        ],
+        "type": "object"
+      },
+      "MediaNode": {
+        "properties": {
+          "edition": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "live_broadcasts": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "load": {
+            "description": "Ocupação 0–1 face à capacidade declarada; ausente sem capacidade.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "node_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "peer_capacity": {
+            "description": "Capacidade declarada (`NODE_PEER_CAPACITY`), se houver.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "peers": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "rooms": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "description": "`serving` | `draining` | `unreachable` — derivado do último batimento.",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "ws_connections": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "node_id",
+          "hostname",
+          "version",
+          "edition",
+          "started_at",
+          "last_seen_at",
+          "status",
+          "rooms",
+          "peers",
+          "ws_connections",
+          "live_broadcasts"
+        ],
+        "type": "object"
+      },
+      "MediaNodeList": {
+        "properties": {
+          "draining": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MediaNode"
+            },
+            "type": "array"
+          },
+          "peers": {
+            "description": "Participantes em nós que respondem.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "serving": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unreachable": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "serving",
+          "draining",
+          "unreachable",
+          "peers"
         ],
         "type": "object"
       },
@@ -1817,6 +2076,75 @@
         ],
         "type": "object"
       },
+      "MeetingResp": {
+        "properties": {
+          "duration_min": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "existing": {
+            "description": "`true` quando o pedido reencontrou uma reunião já existente pela\n`external_ref` em vez de criar uma nova.",
+            "type": "boolean"
+          },
+          "external_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host_email": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "invitees": {
+            "description": "Convidados efectivamente registados (email -> id do utilizador).",
+            "items": {
+              "$ref": "#/components/schemas/InviteeResp"
+            },
+            "type": "array"
+          },
+          "join_url": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "skipped": {
+            "description": "Emails NÃO registados e porquê. Nunca falha o pedido por causa de um\nconvidado — o link tem de sair na mesma.",
+            "items": {
+              "$ref": "#/components/schemas/SkippedInvitee"
+            },
+            "type": "array"
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "starts_at",
+          "duration_min",
+          "kind",
+          "room_code",
+          "join_url",
+          "host_email",
+          "invitees",
+          "skipped",
+          "existing"
+        ],
+        "type": "object"
+      },
       "MeetingRoom": {
         "properties": {
           "capacity": {
@@ -1943,7 +2271,7 @@
         "type": "object"
       },
       "MfaChallenge": {
-        "description": "Desafio do segundo factor: a password foi aceite mas a conta tem MFA\nactivo, por isso ainda não há sessão. O `mfa_token` troca-se em\n`/api/auth/mfa`.",
+        "description": "Desafio do segundo factor: a password foi aceite mas a conta tem MFA\nactivo, por isso ainda não há sessão. O `mfa_token` troca-se em\n`/api/auth/login/mfa`.",
         "properties": {
           "mfa_required": {
             "description": "Sempre `true`.",
@@ -2155,6 +2483,40 @@
         ],
         "type": "object"
       },
+      "OdooDirectoryUser": {
+        "description": "Membro da organização, como o Odoo o vê.",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "odoo_uid": {
+            "description": "`null` se a conta não veio do Odoo.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "role": {
+            "description": "Papel na organização (`admin` | `member`).",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "username",
+          "role"
+        ],
+        "type": "object"
+      },
       "OdooTokenResp": {
         "description": "Token de integração acabado de gerar. É a única vez que sai em claro.",
         "properties": {
@@ -2170,6 +2532,29 @@
         "required": [
           "token",
           "prefix"
+        ],
+        "type": "object"
+      },
+      "OdooUserEntry": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "is_admin": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "odoo_uid": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "odoo_uid",
+          "name",
+          "email"
         ],
         "type": "object"
       },
@@ -2411,6 +2796,51 @@
         ],
         "type": "object"
       },
+      "OrgStorageUsage": {
+        "description": "Uso de armazenamento da organização e a sua quota.",
+        "properties": {
+          "max_storage_bytes": {
+            "description": "Tecto em bytes; `null` = ilimitado.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "recordings": {
+            "$ref": "#/components/schemas/UsageBucket",
+            "description": "Gravações (soma de `size_bytes`; as falhadas contam 0)."
+          },
+          "remaining_bytes": {
+            "description": "Quanto ainda cabe (nunca negativo); `null` = ilimitado.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "used_bytes": {
+            "description": "`recordings.bytes + whiteboards.bytes`.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "whiteboards": {
+            "$ref": "#/components/schemas/UsageBucket",
+            "description": "Quadros (bytes do PNG guardado)."
+          }
+        },
+        "required": [
+          "org_id",
+          "recordings",
+          "whiteboards",
+          "used_bytes"
+        ],
+        "type": "object"
+      },
       "OrgSummary": {
         "properties": {
           "domain": {
@@ -2541,6 +2971,264 @@
           "meeting_id",
           "meeting_title",
           "starts_at"
+        ],
+        "type": "object"
+      },
+      "PatchMeetingReq": {
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_min": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "invitees": {
+            "description": "Se presente, **substitui** o conjunto de convidados. O estado de\nresposta (aceite/recusado) de quem se mantém é preservado.",
+            "items": {
+              "$ref": "#/components/schemas/InviteeReq"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "PersonalRoom": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Room"
+          },
+          {
+            "properties": {
+              "dial_in": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DialIn",
+                    "description": "Número e PIN, se uma organização do dono tiver uma sala de voz ACTIVA\nligada a este código. Só leitura: esta rota não cria DIDs."
+                  }
+                ]
+              },
+              "join_url": {
+                "description": "Link partilhável (`https://<domínio da org>/#/r/<código>`, ou relativo\nse a organização não tem domínio).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "join_url"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "A sala pessoal, o link para a partilhar e o dial-in, se houver."
+      },
+      "ProvisionOrgReq": {
+        "properties": {
+          "email_domain": {
+            "description": "Domínio de email da org — necessário para o ``/api/auth/sso/authorize?domain=``\nresolver esta org. Opcional.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key_name": {
+            "description": "Rótulo da chave de API emitida (default \"Integration\").",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "description": "Nome da organização (== nome da empresa no sistema chamador).",
+            "type": "string"
+          },
+          "odoo_company_id": {
+            "description": "Id da EMPRESA no Odoo (`res.company`). Com `odoo_db`, identifica a\norganização de forma estável — a mesma chave que o login por conta\nOdoo usa (`odoo_sso::ensure_org`).\n\nSem isto, provisionar uma empresa que já tinha entrado por SSO criava\numa SEGUNDA organização para a mesma empresa: os utilizadores ficavam\nnuma e a chave de API na outra, e a criação de reuniões respondia\n«o anfitrião pertence a outra organização» (409).",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "odoo_db": {
+            "description": "Base de dados Odoo da empresa.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "odoo_url": {
+            "description": "URL base da instância Odoo (ex.: `http://localhost:8090`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scopes": {
+            "description": "Escopos da chave emitida (ver `CreateKeyReq::scopes`). **Omisso ⇒ o\ncatálogo inteiro** — é o que o módulo Odoo recebe hoje.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "setup_odoo": {
+            "description": "Se `true`, activa a integração Odoo e devolve também um `dlxo_...` token\npronto a colar no módulo nk_delonix_meet. Requer `odoo_url` e `odoo_db`.",
+            "type": "boolean"
+          },
+          "sso": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProvisionSso",
+                "description": "Config OIDC a aplicar (opcional)."
+              }
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "ProvisionReq": {
+        "properties": {
+          "admin_email": {
+            "description": "Email do utilizador que fez a integração — será admin da org.",
+            "type": "string"
+          },
+          "company": {
+            "description": "Nome da empresa Odoo (actualiza o nome da org se a org ainda tem o nome\npadrão ou se force_name=true).",
+            "type": "string"
+          },
+          "users": {
+            "items": {
+              "$ref": "#/components/schemas/OdooUserEntry"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "company",
+          "admin_email"
+        ],
+        "type": "object"
+      },
+      "ProvisionResult": {
+        "properties": {
+          "created": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "skipped": {
+            "description": "Entradas do directório que NÃO foram aplicadas, com a razão. Aditivo à\nv1: um integrador antigo ignora o campo, e continua a receber `created`\ne `updated` com o mesmo significado.",
+            "items": {
+              "$ref": "#/components/schemas/SkippedUser"
+            },
+            "type": "array"
+          },
+          "updated": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "org_id",
+          "created",
+          "updated",
+          "skipped"
+        ],
+        "type": "object"
+      },
+      "ProvisionSso": {
+        "description": "Config OIDC opcional a aplicar à org acabada de criar — deixa o provisionador\n(Odoo) apontar a org ao seu próprio IdP num só passo, sem um segundo pedido\nautenticado por sessão de admin (que a org recém-criada ainda não tem).",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "client_secret": {
+            "type": "string"
+          },
+          "enforce_sso": {
+            "type": "boolean"
+          },
+          "issuer_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "issuer_url",
+          "client_id",
+          "client_secret"
+        ],
+        "type": "object"
+      },
+      "ProvisionedOrg": {
+        "properties": {
+          "api_key": {
+            "description": "A chave de API completa (`dlx_...`) — só devolvida AGORA, guarda-se o hash.",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "odoo_token": {
+            "description": "Token de integração Odoo (`dlxo_...`) — presente só se `setup_odoo=true`.\nMostrar uma vez ao utilizador: o servidor guarda apenas o hash.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "sso_configured": {
+            "description": "True se uma config OIDC foi aplicada (fecha o SSO sem SQL manual).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "org_id",
+          "slug",
+          "name",
+          "api_key",
+          "sso_configured"
         ],
         "type": "object"
       },
@@ -3426,6 +4114,36 @@
         ],
         "type": "object"
       },
+      "SkippedInvitee": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "SkippedUser": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "reason"
+        ],
+        "type": "object"
+      },
       "SsoCheck": {
         "description": "Resultado da verificação de SSO para um domínio de email.",
         "properties": {
@@ -3451,6 +4169,10 @@
           "enforce_sso": {
             "type": "boolean"
           },
+          "has_client_secret": {
+            "description": "Há `client_secret` guardado? (o segredo nunca é devolvido).",
+            "type": "boolean"
+          },
           "issuer_url": {
             "type": "string"
           },
@@ -3463,7 +4185,8 @@
           "org_id",
           "issuer_url",
           "client_id",
-          "enforce_sso"
+          "enforce_sso",
+          "has_client_secret"
         ],
         "type": "object"
       },
@@ -3473,7 +4196,7 @@
             "type": "string"
           },
           "client_secret": {
-            "description": "Vazio → mantém o segredo existente (no-op em update sem nova rotação).",
+            "description": "Vazio → mantém o segredo existente (no-op em update sem nova rotação).\nGuarda-se cifrado; não vazio sem `DATA_ENCRYPTION_KEYS` → `422`.",
             "type": "string"
           },
           "enforce_sso": {
@@ -3536,6 +4259,123 @@
           "db",
           "uptime_secs",
           "version"
+        ],
+        "type": "object"
+      },
+      "StorageConfigReq": {
+        "properties": {
+          "nfs_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nfs_server": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "storage_type": {
+            "description": "`local` | `nfs` | `webdav`.",
+            "type": "string"
+          },
+          "webdav_password": {
+            "description": "Novo valor; se omitido ou vazio mantém o valor actual (nunca apaga por engano).\nGuarda-se cifrado; não vazio sem `DATA_ENCRYPTION_KEYS` → `422`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "webdav_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "webdav_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "webdav_user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "storage_type"
+        ],
+        "type": "object"
+      },
+      "StorageConfigView": {
+        "description": "Leitura da configuração de armazenamento, com a password WebDAV substituída\npor `webdav_password_set`.",
+        "properties": {
+          "nfs_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nfs_server": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "storage_type": {
+            "description": "`local` | `nfs` | `webdav` (`local` quando nunca foi configurado).",
+            "type": "string"
+          },
+          "webdav_password_set": {
+            "description": "Há password WebDAV guardada? (a password nunca é devolvida).",
+            "type": "boolean"
+          },
+          "webdav_path": {
+            "type": "string"
+          },
+          "webdav_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "webdav_user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "storage_type",
+          "webdav_password_set",
+          "webdav_path"
+        ],
+        "type": "object"
+      },
+      "StorageTestResult": {
+        "description": "Resultado do teste de ligação ao armazenamento.",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "ok": {
+            "description": "Sempre `true` (as falhas são erros HTTP).",
+            "type": "boolean"
+          },
+          "type": {
+            "description": "`local` | `nfs` | `webdav`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "type",
+          "message"
         ],
         "type": "object"
       },
@@ -3781,6 +4621,26 @@
         ],
         "type": "object"
       },
+      "UpdatePersonalRoomReq": {
+        "additionalProperties": false,
+        "description": "Campos alteráveis. Um campo desconhecido é recusado (`422`): um campo que o\ncliente escreve e o servidor ignora é pior do que não existir.",
+        "properties": {
+          "name": {
+            "description": "1–100 caracteres (depois de `trim`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "waiting_room": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "UpdateRecordingReq": {
         "properties": {
           "category": {
@@ -3823,6 +4683,23 @@
         },
         "type": "object"
       },
+      "UsageBucket": {
+        "properties": {
+          "bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "count": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count",
+          "bytes"
+        ],
+        "type": "object"
+      },
       "UserPublic": {
         "properties": {
           "created_at": {
@@ -3848,6 +4725,272 @@
           "email",
           "username",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "UserStorageUsage": {
+        "description": "Uso de armazenamento de quem está autenticado.",
+        "properties": {
+          "recordings": {
+            "$ref": "#/components/schemas/UsageBucket",
+            "description": "Gravações que carregou."
+          },
+          "used_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "whiteboards": {
+            "$ref": "#/components/schemas/UsageBucket",
+            "description": "Quadros de que é dono."
+          }
+        },
+        "required": [
+          "user_id",
+          "recordings",
+          "whiteboards",
+          "used_bytes"
+        ],
+        "type": "object"
+      },
+      "V1BotJoin": {
+        "description": "Credenciais de entrada de um bot numa sala.",
+        "properties": {
+          "room": {
+            "description": "A sala completa (`id`, `code`, `name`, `owner_id`, `topology`,\n`waiting_room`, `e2ee`, `format`, `created_at`).",
+            "type": "object"
+          },
+          "room_token": {
+            "description": "JWT `typ: \"room\"` com `is_bot: true`, atribuído ao criador da chave.",
+            "type": "string"
+          },
+          "ws_path": {
+            "description": "`/ws?token=<room_token>`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "room",
+          "room_token",
+          "ws_path"
+        ],
+        "type": "object"
+      },
+      "V1MeetingList": {
+        "properties": {
+          "meetings": {
+            "items": {
+              "$ref": "#/components/schemas/V1MeetingSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "meetings"
+        ],
+        "type": "object"
+      },
+      "V1MeetingNotes": {
+        "description": "Ata e transcrição de uma reunião.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "minutes": {
+            "description": "Ata (MoM).",
+            "type": "string"
+          },
+          "minutes_ai_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "transcript": {
+            "description": "Transcrição bruta.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "minutes",
+          "transcript"
+        ],
+        "type": "object"
+      },
+      "V1MeetingSummary": {
+        "description": "Reunião vista pelo sync de calendário v1.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "duration_min": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`video` | `voice`.",
+            "type": "string"
+          },
+          "minutes_ai_at": {
+            "description": "Presente ⇒ a ata AI já foi gerada.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "room_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "starts_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "kind",
+          "starts_at",
+          "duration_min",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "V1Org": {
+        "description": "Organização vista pela API v1.",
+        "properties": {
+          "domain": {
+            "description": "Domínio de produção dos links (vazio se não definido).",
+            "type": "string"
+          },
+          "email_domain": {
+            "description": "Domínio de email da organização (vazio se não definido).",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "members": {
+            "description": "Número de linhas de membro da organização.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email_domain",
+          "domain",
+          "members"
+        ],
+        "type": "object"
+      },
+      "V1Recording": {
+        "description": "Gravação vista pela API v1.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "download_url": {
+            "description": "`/api/recordings/{id}` (rota da BFF, autenticada por sessão).",
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "size_bytes",
+          "created_at",
+          "room_code",
+          "download_url"
+        ],
+        "type": "object"
+      },
+      "V1RecordingList": {
+        "properties": {
+          "recordings": {
+            "items": {
+              "$ref": "#/components/schemas/V1Recording"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "recordings"
+        ],
+        "type": "object"
+      },
+      "V1RoomInfo": {
+        "description": "Sala vista pela API v1.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "e2ee": {
+            "type": "boolean"
+          },
+          "join_url": {
+            "description": "Link de entrada: absoluto com o domínio de produção da org, ou relativo\n(`/#/r/{code}`) se não houver domínio.",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "waiting_room": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "e2ee",
+          "waiting_room",
+          "join_url"
         ],
         "type": "object"
       },
@@ -4255,6 +5398,7 @@
             "type": "string"
           },
           "secret": {
+            "description": "Segredo HMAC do alvo `generic`. Guarda-se cifrado e nunca é devolvido.\nVazio = sem assinatura. Não vazio sem `DATA_ENCRYPTION_KEYS` → `422`.",
             "type": "string"
           },
           "url": {
@@ -4353,6 +5497,24 @@
           "public"
         ],
         "type": "object"
+      },
+      "WhiteboardSignedUrl": {
+        "description": "URL assinado do PNG.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "url": {
+            "description": "Caminho relativo (`/api/whiteboards/{id}/image?exp=…&sig=…`), carregável sem sessão.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at"
+        ],
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -4370,7 +5532,7 @@
     }
   },
   "info": {
-    "description": "API interna do web Delonix. **Instável**: muda com o frontend. Erros no envelope `ErrorBody`.",
+    "description": "API do web Delonix (sessão). **Instável**: muda com o frontend. Erros no envelope `ErrorBody`.",
     "license": {
       "name": ""
     },
@@ -4379,85 +5541,14 @@
   },
   "openapi": "3.1.0",
   "paths": {
-    "/api/action-items/{item_id}": {
-      "delete": {
-        "operationId": "delete_action_item",
-        "parameters": [
-          {
-            "description": "Id do item",
-            "in": "path",
-            "name": "item_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "sessão inválida"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "não é o anfitrião"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "item não existe"
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "`DELETE /api/action-items/:item_id` — só anfitrião.",
-        "tags": [
-          "meeting-actions"
-        ]
-      },
-      "patch": {
-        "operationId": "patch_action_item",
-        "parameters": [
-          {
-            "description": "Id do item",
-            "in": "path",
-            "name": "item_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
+    "/api/ai/translations": {
+      "post": {
+        "operationId": "translate_caption",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ActionItemPatch"
+                "$ref": "#/components/schemas/TranslateReq"
               }
             }
           },
@@ -4468,11 +5559,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ActionItem"
+                  "$ref": "#/components/schemas/TranslateResp"
                 }
               }
             },
-            "description": "Qualquer membro muda `status`; só o anfitrião edita os restantes campos"
+            "description": ""
           },
           "400": {
             "content": {
@@ -4482,7 +5573,7 @@
                 }
               }
             },
-            "description": "`status` inválido"
+            "description": "texto vazio, língua não suportada, LLM local não configurado, ou a tradução falhou"
           },
           "401": {
             "content": {
@@ -4492,27 +5583,7 @@
                 }
               }
             },
-            "description": "sessão inválida"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "editar campos que não `status` sem ser anfitrião"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "item não existe"
+            "description": ""
           }
         },
         "security": [
@@ -4520,15 +5591,15 @@
             "session": []
           }
         ],
-        "summary": "`PATCH /api/action-items/:item_id` — atualiza campos ou status.\nQualquer membro pode mudar o status; só o anfitrião pode editar campos.",
+        "summary": "POST /api/ai/translations — traduz uma linha de legenda. Autenticado; o texto é\ncurto (legendas) e o rate-limit global de /api aplica-se por IP.",
         "tags": [
-          "meeting-actions"
+          "ai"
         ]
       }
     },
     "/api/auth/login": {
       "post": {
-        "description": "Sem MFA, abre sessão: O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo. Com MFA activo devolve só o desafio\n(`MfaChallenge`) e nenhum cookie; os tokens saem em `/api/auth/mfa`. Sem\nconta local, tenta o primeiro login pelo Odoo da plataforma.",
+        "description": "Sem MFA, abre sessão: O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo. Com MFA activo devolve só o desafio\n(`MfaChallenge`) e nenhum cookie; os tokens saem em `/api/auth/login/mfa`. Sem\nconta local, tenta o primeiro login pelo Odoo da plataforma.",
         "operationId": "login",
         "requestBody": {
           "content": {
@@ -4588,37 +5659,7 @@
         ]
       }
     },
-    "/api/auth/logout": {
-      "post": {
-        "description": "Responde sempre 200, com ou sem cookie; o `Set-Cookie` devolvido expira o\n`dlx_refresh` (`Max-Age=0`).",
-        "operationId": "logout",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "{\"ok\": true} (forma herdada). Limpa o cookie `dlx_refresh`."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Limite de pedidos de autenticação por IP."
-          }
-        },
-        "summary": "Termina a sessão: revoga o refresh token (se presente) e limpa o cookie.",
-        "tags": [
-          "auth"
-        ]
-      }
-    },
-    "/api/auth/mfa": {
+    "/api/auth/login/mfa": {
       "post": {
         "description": "O código pode ser TOTP ou de recuperação. O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo.",
         "operationId": "mfa_login",
@@ -4675,6 +5716,36 @@
           }
         },
         "summary": "Segunda metade do login: troca o desafio + código pelos tokens de sessão.",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "description": "Responde sempre 200, com ou sem cookie; o `Set-Cookie` devolvido expira o\n`dlx_refresh` (`Max-Age=0`).",
+        "operationId": "logout",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "{\"ok\": true} (forma herdada). Limpa o cookie `dlx_refresh`."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos de autenticação por IP."
+          }
+        },
+        "summary": "Termina a sessão: revoga o refresh token (se presente) e limpa o cookie.",
         "tags": [
           "auth"
         ]
@@ -4804,6 +5875,71 @@
         ]
       }
     },
+    "/api/auth/sso/authorize": {
+      "get": {
+        "operationId": "sso_login",
+        "parameters": [
+          {
+            "description": "Domínio de email da organização.",
+            "in": "query",
+            "name": "domain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirecção (`Location`) para o endpoint de autorização do IdP, com state + PKCE."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`domain` em falta."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Nenhuma organização com SSO configurado para o domínio."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Limite de pedidos de autenticação por IP."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Issuer inválido ou discovery OIDC falhou."
+          }
+        },
+        "summary": "`GET /api/auth/sso/authorize?domain=example.com`\nDescobre o IdP OIDC da organização, gera state+PKCE e redireciona (302)\no browser do utilizador para o IdP (Google/Microsoft/Okta).",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/auth/sso/callback": {
       "get": {
         "description": "Abre sessão e redirecciona para o frontend com o access token no fragmento\n(`/#/sso-complete?token=…`). O refresh token vai no cabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth` — nunca no corpo.",
@@ -4819,7 +5955,7 @@
             }
           },
           {
-            "description": "State anti-CSRF emitido por `/api/auth/sso/login` (uso único, 10 min).",
+            "description": "State anti-CSRF emitido por `/api/auth/sso/authorize` (uso único, 10 min).",
             "in": "query",
             "name": "state",
             "required": true,
@@ -4909,7 +6045,7 @@
         ]
       }
     },
-    "/api/auth/sso/check": {
+    "/api/auth/sso/discovery": {
       "get": {
         "operationId": "sso_check",
         "parameters": [
@@ -4945,78 +6081,13 @@
             "description": "Limite de pedidos de autenticação por IP."
           }
         },
-        "summary": "`GET /api/auth/sso/check?domain=example.com`\nO frontend chama isto ao preencher o email para decidir se mostra o campo\nde password ou redireciona para o IdP.",
+        "summary": "`GET /api/auth/sso/discovery?domain=example.com`\nO frontend chama isto ao preencher o email para decidir se mostra o campo\nde password ou redireciona para o IdP.",
         "tags": [
           "auth"
         ]
       }
     },
-    "/api/auth/sso/login": {
-      "get": {
-        "operationId": "sso_login",
-        "parameters": [
-          {
-            "description": "Domínio de email da organização.",
-            "in": "query",
-            "name": "domain",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "302": {
-            "description": "Redirecção (`Location`) para o endpoint de autorização do IdP, com state + PKCE."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "`domain` em falta."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Nenhuma organização com SSO configurado para o domínio."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Limite de pedidos de autenticação por IP."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Issuer inválido ou discovery OIDC falhou."
-          }
-        },
-        "summary": "`GET /api/auth/sso/login?domain=example.com`\nDescobre o IdP OIDC da organização, gera state+PKCE e redireciona (302)\no browser do utilizador para o IdP (Google/Microsoft/Okta).",
-        "tags": [
-          "auth"
-        ]
-      }
-    },
-    "/api/ice": {
+    "/api/ice-servers": {
       "get": {
         "description": "Configuração ICE para o `RTCPeerConnection`: STUN + TURN com credenciais\nválidas por 1 hora. Rate-limit por IP (partilha o limitador da v1).",
         "operationId": "ice_servers",
@@ -5163,7 +6234,7 @@
         ]
       }
     },
-    "/api/meetings/conflicts": {
+    "/api/meetings/check-conflicts": {
       "post": {
         "operationId": "check_conflicts",
         "requestBody": {
@@ -5208,14 +6279,14 @@
         ]
       }
     },
-    "/api/meetings/{id}": {
+    "/api/meetings/{meeting_id}": {
       "delete": {
         "operationId": "delete",
         "parameters": [
           {
             "description": "Id da reunião",
             "in": "path",
-            "name": "id",
+            "name": "meeting_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -5224,8 +6295,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+          "204": {
+            "description": "Apagada."
           },
           "401": {
             "content": {
@@ -5256,16 +6327,72 @@
         "tags": [
           "meetings"
         ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Meeting"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não existe, ou não és dono nem convidado"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Uma reunião (dono ou convidado). Recurso completo: existe `DELETE`, existe `GET`.",
+        "tags": [
+          "meetings"
+        ]
       }
     },
-    "/api/meetings/{id}/action-plan": {
+    "/api/meetings/{meeting_id}/action-plan": {
       "get": {
         "operationId": "get_action_plan",
         "parameters": [
           {
             "description": "Id da reunião",
             "in": "path",
-            "name": "id",
+            "name": "meeting_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -5328,7 +6455,7 @@
           {
             "description": "Id da reunião",
             "in": "path",
-            "name": "id",
+            "name": "meeting_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -5399,14 +6526,14 @@
         ]
       }
     },
-    "/api/meetings/{id}/action-plan/items": {
+    "/api/meetings/{meeting_id}/action-plan/items": {
       "post": {
         "operationId": "add_action_item",
         "parameters": [
           {
             "description": "Id da reunião",
             "in": "path",
-            "name": "id",
+            "name": "meeting_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -5487,14 +6614,179 @@
         ]
       }
     },
-    "/api/meetings/{id}/agenda": {
+    "/api/meetings/{meeting_id}/action-plan/items/{item_id}": {
+      "delete": {
+        "operationId": "delete_action_item",
+        "parameters": [
+          {
+            "description": "Id do item",
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{\"ok\": true}` (forma herdada)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "sessão inválida"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é o anfitrião"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "item não existe"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`DELETE /api/action-items/:item_id` — só anfitrião.",
+        "tags": [
+          "meeting-actions"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_action_item",
+        "parameters": [
+          {
+            "description": "Id do item",
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionItemPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionItem"
+                }
+              }
+            },
+            "description": "Qualquer membro muda `status`; só o anfitrião edita os restantes campos"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`status` inválido"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "sessão inválida"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "editar campos que não `status` sem ser anfitrião"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "item não existe"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PATCH /api/action-items/:item_id` — atualiza campos ou status.\nQualquer membro pode mudar o status; só o anfitrião pode editar campos.",
+        "tags": [
+          "meeting-actions"
+        ]
+      }
+    },
+    "/api/meetings/{meeting_id}/agenda-items": {
       "get": {
         "operationId": "list_agenda",
         "parameters": [
           {
             "description": "Id da reunião",
             "in": "path",
-            "name": "id",
+            "name": "meeting_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -5542,7 +6834,7 @@
             "session": []
           }
         ],
-        "summary": "`GET /api/meetings/:id/agenda`",
+        "summary": "`GET /api/meetings/:id/agenda-items`",
         "tags": [
           "meeting-actions"
         ]
@@ -5553,7 +6845,7 @@
           {
             "description": "Id da reunião",
             "in": "path",
-            "name": "id",
+            "name": "meeting_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -5628,20 +6920,20 @@
             "session": []
           }
         ],
-        "summary": "`POST /api/meetings/:id/agenda` — adiciona tópico (só anfitrião).",
+        "summary": "`POST /api/meetings/:id/agenda-items` — adiciona tópico (só anfitrião).",
         "tags": [
           "meeting-actions"
         ]
       }
     },
-    "/api/meetings/{id}/agenda/{item_id}": {
+    "/api/meetings/{meeting_id}/agenda-items/{item_id}": {
       "delete": {
         "operationId": "delete_agenda_item",
         "parameters": [
           {
             "description": "Id da reunião",
             "in": "path",
-            "name": "id",
+            "name": "meeting_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -5699,7 +6991,7 @@
             "session": []
           }
         ],
-        "summary": "`DELETE /api/meetings/:id/agenda/:item_id` — só anfitrião.",
+        "summary": "`DELETE /api/meetings/:id/agenda-items/:item_id` — só anfitrião.",
         "tags": [
           "meeting-actions"
         ]
@@ -5710,7 +7002,7 @@
           {
             "description": "Id da reunião",
             "in": "path",
-            "name": "id",
+            "name": "meeting_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -5795,20 +7087,20 @@
             "session": []
           }
         ],
-        "summary": "`PATCH /api/meetings/:id/agenda/:item_id` — editar ou marcar como feito.\nQualquer membro pode marcar como feito; só o anfitrião pode editar os campos.",
+        "summary": "`PATCH /api/meetings/:id/agenda-items/:item_id` — editar ou marcar como feito.\nQualquer membro pode marcar como feito; só o anfitrião pode editar os campos.",
         "tags": [
           "meeting-actions"
         ]
       }
     },
-    "/api/meetings/{id}/ics": {
+    "/api/meetings/{meeting_id}/calendar.ics": {
       "get": {
         "operationId": "ics",
         "parameters": [
           {
             "description": "Id da reunião",
             "in": "path",
-            "name": "id",
+            "name": "meeting_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -5859,14 +7151,14 @@
         ]
       }
     },
-    "/api/meetings/{id}/invitees": {
+    "/api/meetings/{meeting_id}/invitees": {
       "get": {
         "operationId": "invitees",
         "parameters": [
           {
             "description": "Id da reunião",
             "in": "path",
-            "name": "id",
+            "name": "meeting_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -5920,65 +7212,14 @@
         ]
       }
     },
-    "/api/meetings/{id}/minutes": {
-      "post": {
-        "operationId": "save_minutes",
-        "parameters": [
-          {
-            "description": "Id da reunião",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MinutesReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada). O resumo AI é gerado em segundo plano."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "não é dono nem convidado — também quando a reunião não existe"
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "Guarda as MoM (notas AI) numa reunião. Dono ou convidado podem guardar.",
-        "tags": [
-          "meetings"
-        ]
-      }
-    },
-    "/api/meetings/{id}/respond": {
-      "post": {
+    "/api/meetings/{meeting_id}/invitees/me": {
+      "put": {
         "operationId": "respond",
         "parameters": [
           {
             "description": "Id da reunião",
             "in": "path",
-            "name": "id",
+            "name": "meeting_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -6042,14 +7283,65 @@
         ]
       }
     },
-    "/api/meetings/{id}/start": {
+    "/api/meetings/{meeting_id}/minutes": {
+      "put": {
+        "operationId": "save_minutes",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MinutesReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "`{\"ok\": true}` (forma herdada). O resumo AI é gerado em segundo plano."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é dono nem convidado — também quando a reunião não existe"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Guarda as MoM (notas AI) numa reunião. Dono ou convidado podem guardar.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{meeting_id}/start": {
       "post": {
         "operationId": "start",
         "parameters": [
           {
             "description": "Id da reunião",
             "in": "path",
-            "name": "id",
+            "name": "meeting_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -6086,7 +7378,7 @@
                 }
               }
             },
-            "description": "não é dono nem convidado"
+            "description": ""
           },
           "404": {
             "content": {
@@ -6096,7 +7388,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "não existe, ou não és dono nem convidado"
           }
         },
         "security": [
@@ -6107,35 +7399,6 @@
         "summary": "Arranca a reunião: cria a sala (se ainda não existe) e devolve o código.\nReuniões de voz criam na mesma uma sala — o cliente entra sem vídeo.",
         "tags": [
           "meetings"
-        ]
-      }
-    },
-    "/api/missed-calls/ack": {
-      "post": {
-        "operationId": "ack_missed_calls",
-        "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "Marca todas as chamadas perdidas do utilizador como vistas.",
-        "tags": [
-          "calls"
         ]
       }
     },
@@ -6252,6 +7515,229 @@
         ]
       }
     },
+    "/api/orgs/{org_id}": {
+      "get": {
+        "operationId": "get_org",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgSummary"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não existe ou não és membro activo"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Uma organização de que se é membro activo, com o papel.",
+        "tags": [
+          "orgs"
+        ]
+      },
+      "patch": {
+        "operationId": "update_settings",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrgSettingsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgSettingsUpdated"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Domínio inválido (>253 caracteres ou com espaços)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A organização não existe ou quem pede não é membro activo."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Definições da organização (só admin): domínio de produção + retenção.\nO domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a\nretenção (>0) apaga gravações mais antigas que N dias. Quotas negativas ou\nomissas ficam ilimitadas; valores de voz fora do enum são ignorados.",
+        "tags": [
+          "orgs"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/analytics/quarantine": {
+      "get": {
+        "operationId": "quarantine_analytics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "`week` | `month` (omissão) | `quarter` | `year`. Valor desconhecido conta como `month`.",
+            "in": "query",
+            "name": "period",
+            "required": false,
+            "schema": {
+              "default": "month",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/QuarantineRow"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Até 100 linhas"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "membro sem papel de admin"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é membro da organização"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Ranking de quem mais fica em quarentena na organização, no período pedido.\nSó administradores da org.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/api-keys": {
       "get": {
         "operationId": "list",
@@ -6317,7 +7803,7 @@
             "session": []
           }
         ],
-        "summary": "Chaves de API da organização (só admin). Nunca devolve a chave, só o prefixo.",
+        "summary": "Chaves de API da organização (só admin). Nunca devolve a chave nem o hash,\nsó o prefixo, os escopos, a expiração e o último uso.",
         "tags": [
           "api-keys"
         ]
@@ -6356,6 +7842,16 @@
               }
             },
             "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`api_key.scopes_empty`, `api_key.unknown_scope`, `api_key.expiry_in_past` ou `api_key.expiry_too_far`."
           },
           "401": {
             "content": {
@@ -6425,13 +7921,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "{\"ok\": true} (forma herdada)"
+          "204": {
+            "description": "Revogada: a chave deixa de servir no pedido seguinte."
           },
           "401": {
             "content": {
@@ -6461,7 +7952,7 @@
                 }
               }
             },
-            "description": "A organização não existe ou quem pede não é membro activo."
+            "description": "A organização não existe, quem pede não é membro activo, ou a chave não existe nesta organização (`api_key.not_found`)."
           }
         },
         "security": [
@@ -6469,13 +7960,13 @@
             "session": []
           }
         ],
-        "summary": "Revoga (apaga) uma chave (só admin). Idempotente: uma chave inexistente\ntambém devolve `ok`.",
+        "summary": "Revoga (apaga) uma chave (só admin). `204`; uma chave que não existe — ou\nque é de outra organização — dá `404 api_key.not_found`, sem confirmar que\nexiste noutro sítio.",
         "tags": [
           "api-keys"
         ]
       }
     },
-    "/api/orgs/{org_id}/audit": {
+    "/api/orgs/{org_id}/audit-events": {
       "get": {
         "operationId": "list",
         "parameters": [
@@ -6566,7 +8057,7 @@
         ]
       }
     },
-    "/api/orgs/{org_id}/audit/verify": {
+    "/api/orgs/{org_id}/audit-events/verification": {
       "get": {
         "description": "Uma cadeia partida NÃO é erro HTTP: responde 200 com `intact: false` e o\n`seq` onde a quebra começa.",
         "operationId": "verify",
@@ -6629,7 +8120,7 @@
             "session": []
           }
         ],
-        "summary": "`GET /api/orgs/{org_id}/audit/verify` — só admins da org.",
+        "summary": "`GET /api/orgs/{org_id}/audit-events/verification` — só admins da org.",
         "tags": [
           "audit"
         ]
@@ -6782,7 +8273,486 @@
         ]
       }
     },
-    "/api/orgs/{org_id}/employees": {
+    "/api/orgs/{org_id}/groups": {
+      "get": {
+        "operationId": "list_groups",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Group"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A organização não existe ou quem pede não é membro activo."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Grupos da organização (membros).",
+        "tags": [
+          "orgs"
+        ]
+      },
+      "post": {
+        "operationId": "create_group",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGroupReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Nome vazio ou com mais de 120 caracteres."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A organização não existe ou quem pede não é membro activo."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Quota `max_groups` da organização atingida."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Cria um grupo de colaboradores (qualquer membro). O criador entra sempre;\n`member_ids` que não sejam membros da organização são ignorados.",
+        "tags": [
+          "orgs"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/integrations/odoo": {
+      "get": {
+        "description": "Configuração da integração Odoo da organização (admin).",
+        "operationId": "get_config",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OdooConfig"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sessão inválida OU membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro da organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/orgs/{org_id}/integrations/odoo`",
+        "tags": [
+          "odoo"
+        ]
+      },
+      "put": {
+        "description": "Grava a configuração (admin). Na primeira gravação o autenticado fica\nregistado como `odoo_admin_id`.",
+        "operationId": "save_config",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OdooConfigReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "`{\"ok\": true}` (forma herdada)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sessão inválida OU membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro da organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PUT /api/orgs/{org_id}/integrations/odoo`",
+        "tags": [
+          "odoo"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/integrations/odoo/rotate-token": {
+      "post": {
+        "description": "Invalida o token anterior e ACTIVA a integração (`odoo_enabled = true`).",
+        "operationId": "rotate_token",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OdooTokenResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sessão inválida OU membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro da organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/orgs/{org_id}/integrations/odoo/rotate-token` — gera/rota token",
+        "tags": [
+          "odoo"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/meeting-rooms": {
+      "get": {
+        "operationId": "list_meeting_rooms",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MeetingRoom"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A organização não existe ou quem pede não é membro activo."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Salas presenciais da organização (membros).",
+        "tags": [
+          "orgs"
+        ]
+      },
+      "post": {
+        "operationId": "create_meeting_room",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMeetingRoomReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingRoom"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Nome vazio ou com mais de 120 caracteres."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A organização não existe ou quem pede não é membro activo."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Quota `max_rooms` da organização atingida."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Cria uma sala presencial (física) da organização (só admin).",
+        "tags": [
+          "orgs"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/members": {
       "get": {
         "operationId": "list_employees",
         "parameters": [
@@ -6939,7 +8909,7 @@
         ]
       }
     },
-    "/api/orgs/{org_id}/employees/{user_id}": {
+    "/api/orgs/{org_id}/members/{user_id}": {
       "delete": {
         "operationId": "remove_employee",
         "parameters": [
@@ -7116,573 +9086,6 @@
           }
         ],
         "summary": "Altera papel, cargo e/ou filial de um membro (só admin).",
-        "tags": [
-          "orgs"
-        ]
-      }
-    },
-    "/api/orgs/{org_id}/groups": {
-      "get": {
-        "operationId": "list_groups",
-        "parameters": [
-          {
-            "description": "Organização.",
-            "in": "path",
-            "name": "org_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/Group"
-                  },
-                  "type": "array"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": ""
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "A organização não existe ou quem pede não é membro activo."
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "Grupos da organização (membros).",
-        "tags": [
-          "orgs"
-        ]
-      },
-      "post": {
-        "operationId": "create_group",
-        "parameters": [
-          {
-            "description": "Organização.",
-            "in": "path",
-            "name": "org_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateGroupReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Group"
-                }
-              }
-            },
-            "description": ""
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Nome vazio ou com mais de 120 caracteres."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": ""
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "A organização não existe ou quem pede não é membro activo."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Quota `max_groups` da organização atingida."
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "Cria um grupo de colaboradores (qualquer membro). O criador entra sempre;\n`member_ids` que não sejam membros da organização são ignorados.",
-        "tags": [
-          "orgs"
-        ]
-      }
-    },
-    "/api/orgs/{org_id}/integration/odoo": {
-      "get": {
-        "description": "Configuração da integração Odoo da organização (admin).",
-        "operationId": "get_config",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "org_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OdooConfig"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Sessão inválida OU membro sem papel de admin."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Não é membro da organização."
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "`GET /api/orgs/{org_id}/integration/odoo`",
-        "tags": [
-          "odoo"
-        ]
-      },
-      "put": {
-        "description": "Grava a configuração (admin). Na primeira gravação o autenticado fica\nregistado como `odoo_admin_id`.",
-        "operationId": "save_config",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "org_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/OdooConfigReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Sessão inválida OU membro sem papel de admin."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Não é membro da organização."
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "`PUT /api/orgs/{org_id}/integration/odoo`",
-        "tags": [
-          "odoo"
-        ]
-      }
-    },
-    "/api/orgs/{org_id}/integration/odoo/token": {
-      "post": {
-        "description": "Invalida o token anterior e ACTIVA a integração (`odoo_enabled = true`).",
-        "operationId": "rotate_token",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "org_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OdooTokenResp"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Sessão inválida OU membro sem papel de admin."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Não é membro da organização."
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "`POST /api/orgs/{org_id}/integration/odoo/token` — gera/rota token",
-        "tags": [
-          "odoo"
-        ]
-      }
-    },
-    "/api/orgs/{org_id}/meeting-rooms": {
-      "get": {
-        "operationId": "list_meeting_rooms",
-        "parameters": [
-          {
-            "description": "Organização.",
-            "in": "path",
-            "name": "org_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/MeetingRoom"
-                  },
-                  "type": "array"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": ""
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "A organização não existe ou quem pede não é membro activo."
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "Salas presenciais da organização (membros).",
-        "tags": [
-          "orgs"
-        ]
-      },
-      "post": {
-        "operationId": "create_meeting_room",
-        "parameters": [
-          {
-            "description": "Organização.",
-            "in": "path",
-            "name": "org_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateMeetingRoomReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MeetingRoom"
-                }
-              }
-            },
-            "description": ""
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Nome vazio ou com mais de 120 caracteres."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Sem sessão."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Membro sem papel de admin."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "A organização não existe ou quem pede não é membro activo."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Quota `max_rooms` da organização atingida."
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "Cria uma sala presencial (física) da organização (só admin).",
-        "tags": [
-          "orgs"
-        ]
-      }
-    },
-    "/api/orgs/{org_id}/settings": {
-      "post": {
-        "operationId": "update_settings",
-        "parameters": [
-          {
-            "description": "Organização.",
-            "in": "path",
-            "name": "org_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/OrgSettingsReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OrgSettingsUpdated"
-                }
-              }
-            },
-            "description": ""
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Domínio inválido (>253 caracteres ou com espaços)."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Sem sessão."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Membro sem papel de admin."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "A organização não existe ou quem pede não é membro activo."
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "Definições da organização (só admin): domínio de produção + retenção.\nO domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a\nretenção (>0) apaga gravações mais antigas que N dias. Quotas negativas ou\nomissas ficam ilimitadas; valores de voz fora do enum são ignorados.",
         "tags": [
           "orgs"
         ]
@@ -8624,6 +10027,16 @@
               }
             },
             "description": "A organização não existe ou quem pede não é membro activo."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`client_secret` não vazio sem DATA_ENCRYPTION_KEYS (`secrets.encryption_unconfigured`)."
           }
         },
         "security": [
@@ -8700,6 +10113,73 @@
           }
         ],
         "summary": "KPIs agregados da organização: reuniões e minutos dos últimos 30 dias,\nutilizadores envolvidos, gravações e série semanal (8 semanas).\nUma reunião \"pertence\" à org se o dono ou um convidado for membro. Só admin.",
+        "tags": [
+          "orgs"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/storage-usage": {
+      "get": {
+        "operationId": "org_storage_usage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgStorageUsage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de administrador."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro da organização (ou não existe)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Armazenamento da organização. Só administradores; um membro recebe `403` e\nquem não é da organização `404`.",
         "tags": [
           "orgs"
         ]
@@ -9252,7 +10732,7 @@
         ]
       }
     },
-    "/api/orgs/{org_id}/voice/cdr": {
+    "/api/orgs/{org_id}/voice/call-records": {
       "get": {
         "operationId": "list_cdr",
         "parameters": [
@@ -9468,6 +10948,298 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/voice/rooms": {
+      "post": {
+        "description": "A sala de voz pertence à primeira organização do utilizador. O `room_code`\né normalizado para minúsculas e tem de ser de uma sala cujo DONO é membro\nACTIVO dessa organização; senão `404` (`voice.room_not_found`), a mesma\nresposta de um código inexistente.",
+        "operationId": "create_room",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateVoiceRoomReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceRoomResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Utilizador sem organização ou `room_code` vazio."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`voice.room_not_found`: a sala não existe, ou o dono não é membro activo da organização de quem pede."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem DID disponível para dial-in nesta organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Cria uma sala de voz (dial-in) para uma sala de conferência existente.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/voice/rooms/{voice_room_id}": {
+      "get": {
+        "operationId": "get_room",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "voice_room_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceRoom"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Inexistente ou de outra organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Detalhes de uma sala de voz (membro da org dona). Inclui o PIN.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/voice/rooms/{voice_room_id}/close": {
+      "post": {
+        "operationId": "close_room",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "voice_room_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Encerrada."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`voice.room_close_forbidden`: membro da org, mas nem criador da sala de voz nem admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Inexistente ou de outra organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Encerra uma sala de voz (o PIN deixa de ser válido). Só quem a CRIOU ou um\nadmin da org dona; outro membro recebe `403` (`voice.room_close_forbidden`).\nIdempotente.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/voice/rooms/{voice_room_id}/participants": {
+      "get": {
+        "operationId": "list_participants",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "voice_room_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/VoiceParticipant"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Inexistente ou de outra organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Participantes de uma sala de voz (membro da org dona).",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/webhooks": {
       "get": {
         "operationId": "list",
@@ -9580,6 +11352,16 @@
               }
             },
             "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`secret` não vazio sem DATA_ENCRYPTION_KEYS (`secrets.encryption_unconfigured`)"
           }
         },
         "security": [
@@ -10037,6 +11819,131 @@
         ]
       }
     },
+    "/api/public/recordings/{token}": {
+      "get": {
+        "description": "Link expirado responde como inexistente (404).",
+        "operationId": "public_share",
+        "parameters": [
+          {
+            "description": "Token do link público.",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Password do link, se tiver. Vai na query string.",
+            "in": "query",
+            "name": "password",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicShareResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O link tem password e a dada (ou a sua falta) não confere."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Token inexistente ou expirado."
+          }
+        },
+        "summary": "Acesso público a uma gravação via token (sem autenticação).",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/public/recordings/{token}/content": {
+      "get": {
+        "operationId": "public_share_download",
+        "parameters": [
+          {
+            "description": "Token do link público.",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Password do link, se tiver. Vai na query string.",
+            "in": "query",
+            "name": "password",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "video/webm": {
+                "schema": {
+                  "description": "Ficheiro webm em bruto (só para o spec).",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Sempre `Content-Disposition: attachment`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Password em falta ou errada."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Token inexistente, expirado, ou sem ficheiro (gravação falhada)."
+          }
+        },
+        "summary": "Download via link público (sem autenticação — token é a credencial).",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
     "/api/public/settings": {
       "get": {
         "operationId": "public_settings",
@@ -10058,27 +11965,16 @@
         ]
       }
     },
-    "/api/quarantine/analytics": {
+    "/api/public/whiteboards/{token}/image": {
       "get": {
-        "operationId": "quarantine_analytics",
+        "operationId": "shared_png",
         "parameters": [
           {
-            "description": "`week` | `month` (omissão) | `quarter` | `year`. Valor desconhecido conta como `month`.",
-            "in": "query",
-            "name": "period",
-            "required": false,
+            "description": "`share_token` do quadro.",
+            "in": "path",
+            "name": "token",
+            "required": true,
             "schema": {
-              "default": "month",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Se dado, restringe a membros dessa organização (o pedinte tem de ser membro).",
-            "in": "query",
-            "name": "org_id",
-            "required": false,
-            "schema": {
-              "format": "uuid",
               "type": "string"
             }
           }
@@ -10086,26 +11982,15 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
+              "image/png": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/QuarantineRow"
-                  },
-                  "type": "array"
+                  "description": "Imagem PNG em bruto (só para o spec).",
+                  "format": "binary",
+                  "type": "string"
                 }
               }
             },
-            "description": "Até 100 linhas; vazio se o utilizador não administra nenhuma organização"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "com `org_id`: membro mas não administrador"
+            "description": ""
           },
           "404": {
             "content": {
@@ -10115,17 +12000,12 @@
                 }
               }
             },
-            "description": "com `org_id`: não é membro"
+            "description": "Token inexistente ou quadro não público."
           }
         },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "Ranking de quem mais fica em quarentena, no período pedido. Opcionalmente\nfiltrado a uma organização (só membros dessa org).",
+        "summary": "Vista pública só-leitura por token — sem autenticação, se `is_public`.",
         "tags": [
-          "meetings"
+          "whiteboards"
         ]
       }
     },
@@ -10206,53 +12086,30 @@
         ]
       }
     },
-    "/api/recordings/{id}": {
+    "/api/recordings/{recording_id}": {
       "get": {
-        "description": "Os metadados em JSON estão em `GET /api/recordings/{id}/metadata`: este\ncaminho é o `src` do leitor de vídeo e o link de download do web, e não\nmuda de representação.",
-        "operationId": "download",
+        "operationId": "get_metadata",
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
               "type": "string"
-            }
-          },
-          {
-            "description": "`1` = descarregar (`attachment`, exige dono ou admin da org do dono);\noutro valor ou ausente = reproduzir `inline` (basta ter acesso).",
-            "in": "query",
-            "name": "dl",
-            "required": false,
-            "schema": {
-              "format": "int32",
-              "type": "integer"
             }
           }
         ],
         "responses": {
           "200": {
             "content": {
-              "video/webm": {
-                "schema": {
-                  "description": "Ficheiro webm em bruto (só para o spec).",
-                  "format": "binary",
-                  "type": "string"
-                }
-              }
-            },
-            "description": "`Content-Disposition: inline`, ou `attachment` com `dl=1`."
-          },
-          "400": {
-            "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
+                  "$ref": "#/components/schemas/RecordingItem"
                 }
               }
             },
-            "description": "A gravação falhou e não tem ficheiro (mensagem = causa)."
+            "description": ""
           },
           "401": {
             "content": {
@@ -10262,7 +12119,7 @@
                 }
               }
             },
-            "description": "Sessão inválida OU sem acesso/permissão de download (inclui membro arquivado)."
+            "description": ""
           },
           "404": {
             "content": {
@@ -10272,7 +12129,7 @@
                 }
               }
             },
-            "description": "Gravação inexistente ou ficheiro em falta no disco."
+            "description": "Inexistente, ou sem acesso (inclui membro arquivado)."
           }
         },
         "security": [
@@ -10280,7 +12137,7 @@
             "session": []
           }
         ],
-        "summary": "O ficheiro webm de uma gravação, para reproduzir ou descarregar (`?dl=1`).",
+        "summary": "Metadados de uma gravação — o mesmo item da biblioteca.",
         "tags": [
           "recordings"
         ]
@@ -10290,7 +12147,7 @@
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -10371,13 +12228,13 @@
         ]
       }
     },
-    "/api/recordings/{id}/chapters": {
+    "/api/recordings/{recording_id}/chapters": {
       "get": {
         "operationId": "list_chapters",
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -10461,7 +12318,7 @@
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -10559,13 +12416,13 @@
         ]
       }
     },
-    "/api/recordings/{id}/chapters/{chapter_id}": {
+    "/api/recordings/{recording_id}/chapters/{chapter_id}": {
       "delete": {
         "operationId": "delete_chapter",
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -10632,7 +12489,7 @@
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -10692,13 +12549,13 @@
         ]
       }
     },
-    "/api/recordings/{id}/comments": {
+    "/api/recordings/{recording_id}/comments": {
       "get": {
         "operationId": "list_comments",
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -10782,7 +12639,7 @@
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -10860,13 +12717,13 @@
         ]
       }
     },
-    "/api/recordings/{id}/comments/{comment_id}": {
+    "/api/recordings/{recording_id}/comments/{comment_id}": {
       "delete": {
         "operationId": "delete_comment",
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -10933,7 +12790,7 @@
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -10997,7 +12854,7 @@
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -11087,13 +12944,93 @@
         ]
       }
     },
-    "/api/recordings/{id}/link": {
+    "/api/recordings/{recording_id}/content": {
+      "get": {
+        "description": "Os metadados em JSON estão em `GET /api/recordings/{id}/metadata`: este\ncaminho é o `src` do leitor de vídeo e o link de download do web, e não\nmuda de representação.",
+        "operationId": "download",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "`1` = descarregar (`attachment`, exige dono ou admin da org do dono);\noutro valor ou ausente = reproduzir `inline` (basta ter acesso).",
+            "in": "query",
+            "name": "dl",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "video/webm": {
+                "schema": {
+                  "description": "Ficheiro webm em bruto (só para o spec).",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "`Content-Disposition: inline`, ou `attachment` com `dl=1`."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A gravação falhou e não tem ficheiro (mensagem = causa)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sessão inválida OU sem acesso/permissão de download (inclui membro arquivado)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Gravação inexistente ou ficheiro em falta no disco."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O ficheiro webm de uma gravação, para reproduzir ou descarregar (`?dl=1`).",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/public-link": {
       "delete": {
         "operationId": "revoke_link",
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -11141,7 +13078,7 @@
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -11198,12 +13135,12 @@
           "recordings"
         ]
       },
-      "post": {
+      "put": {
         "operationId": "create_link",
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -11264,70 +13201,13 @@
         ]
       }
     },
-    "/api/recordings/{id}/metadata": {
-      "get": {
-        "operationId": "get_metadata",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RecordingItem"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": ""
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Inexistente, ou sem acesso (inclui membro arquivado)."
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "Metadados de uma gravação — o mesmo item da biblioteca.",
-        "tags": [
-          "recordings"
-        ]
-      }
-    },
-    "/api/recordings/{id}/share": {
+    "/api/recordings/{recording_id}/shares": {
       "get": {
         "operationId": "shares",
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -11385,7 +13265,7 @@
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -11449,13 +13329,13 @@
         ]
       }
     },
-    "/api/recordings/{id}/share/{user_id}": {
+    "/api/recordings/{recording_id}/shares/{user_id}": {
       "delete": {
         "operationId": "unshare",
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "recording_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -11564,14 +13444,14 @@
         ]
       }
     },
-    "/api/rooms/{code}": {
+    "/api/rooms/{room_code}": {
       "get": {
         "operationId": "get_room",
         "parameters": [
           {
             "description": "Código da sala (`abc-defg-hij`).",
             "in": "path",
-            "name": "code",
+            "name": "room_code",
             "required": true,
             "schema": {
               "type": "string"
@@ -11621,84 +13501,14 @@
         ]
       }
     },
-    "/api/rooms/{code}/chat": {
-      "get": {
-        "operationId": "room_chat",
-        "parameters": [
-          {
-            "description": "Código da sala (sensível a maiúsculas).",
-            "in": "path",
-            "name": "code",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ChatMessage"
-                  },
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Ordem cronológica ascendente."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Sessão inválida."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Sem acesso à sala."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "Últimas 200 mensagens de chat de uma sala (requer autenticação + acesso).\nSem acesso à sala devolve **403**. O código NÃO é normalizado.",
-        "tags": [
-          "rooms"
-        ]
-      }
-    },
-    "/api/rooms/{code}/invite": {
+    "/api/rooms/{room_code}/invitations": {
       "post": {
         "operationId": "invite_to_room",
         "parameters": [
           {
             "description": "Código da sala (sensível a maiúsculas).",
             "in": "path",
-            "name": "code",
+            "name": "room_code",
             "required": true,
             "schema": {
               "type": "string"
@@ -11778,7 +13588,7 @@
         ]
       }
     },
-    "/api/rooms/{code}/join": {
+    "/api/rooms/{room_code}/join": {
       "post": {
         "description": "Troca a sessão por um token de sala. Nunca recusa quem tem o código: quem\nnão é dono, convidado na agenda nem co-anfitrião recebe um token com\n`wait = true` (sala de espera). O código é normalizado para minúsculas.",
         "operationId": "join_room",
@@ -11786,7 +13596,7 @@
           {
             "description": "Código da sala.",
             "in": "path",
-            "name": "code",
+            "name": "room_code",
             "required": true,
             "schema": {
               "type": "string"
@@ -11836,14 +13646,200 @@
         ]
       }
     },
-    "/api/rooms/{code}/minutes": {
+    "/api/rooms/{room_code}/join-timings": {
       "post": {
+        "description": "Valores limitados a 10 minutos (`ice_restarts`/`reconnects` a 1000) antes\nde gravar. Sem acesso à sala devolve **401**, não 403.",
+        "operationId": "post_timings",
+        "parameters": [
+          {
+            "description": "Código da sala (sensível a maiúsculas).",
+            "in": "path",
+            "name": "room_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimingsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "`{\"ok\": true}` (forma herdada)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem acesso à sala."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/rooms/{code}/join-timings` — uma vez por sessão.",
+        "tags": [
+          "rooms"
+        ]
+      }
+    },
+    "/api/rooms/{room_code}/messages": {
+      "get": {
+        "operationId": "room_chat",
+        "parameters": [
+          {
+            "description": "Código da sala (sensível a maiúsculas).",
+            "in": "path",
+            "name": "room_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ChatMessage"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Ordem cronológica ascendente."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem acesso à sala."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Últimas 200 mensagens de chat de uma sala (requer autenticação + acesso).\nSem acesso à sala devolve **403**. O código NÃO é normalizado.",
+        "tags": [
+          "rooms"
+        ]
+      }
+    },
+    "/api/rooms/{room_code}/minutes": {
+      "get": {
+        "operationId": "notes_by_room",
+        "parameters": [
+          {
+            "description": "Código da sala",
+            "in": "path",
+            "name": "room_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoomNotes"
+                }
+              }
+            },
+            "description": "Ata da reunião mais recente da sala; campos vazios se a sala não tiver reunião"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não participou na sala"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Ata e transcrição da reunião associada a uma sala — para o leitor da\nbiblioteca de gravações. Só participantes da sala têm acesso.",
+        "tags": [
+          "meetings"
+        ]
+      },
+      "put": {
         "operationId": "save_minutes_by_room",
         "parameters": [
           {
             "description": "Código da sala",
             "in": "path",
-            "name": "code",
+            "name": "room_code",
             "required": true,
             "schema": {
               "type": "string"
@@ -11896,61 +13892,14 @@
         ]
       }
     },
-    "/api/rooms/{code}/notes": {
-      "get": {
-        "operationId": "notes_by_room",
-        "parameters": [
-          {
-            "description": "Código da sala",
-            "in": "path",
-            "name": "code",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RoomNotes"
-                }
-              }
-            },
-            "description": "Ata da reunião mais recente da sala; campos vazios se a sala não tiver reunião"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "não participou na sala"
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "Ata e transcrição da reunião associada a uma sala — para o leitor da\nbiblioteca de gravações. Só participantes da sala têm acesso.",
-        "tags": [
-          "meetings"
-        ]
-      }
-    },
-    "/api/rooms/{code}/qos": {
+    "/api/rooms/{room_code}/quality-samples": {
       "post": {
         "operationId": "post_qos",
         "parameters": [
           {
             "description": "Código da sala (sensível a maiúsculas).",
             "in": "path",
-            "name": "code",
+            "name": "room_code",
             "required": true,
             "schema": {
               "type": "string"
@@ -12013,14 +13962,14 @@
         ]
       }
     },
-    "/api/rooms/{code}/recordings": {
+    "/api/rooms/{room_code}/recordings": {
       "get": {
         "operationId": "list",
         "parameters": [
           {
             "description": "Código da sala.",
             "in": "path",
-            "name": "code",
+            "name": "room_code",
             "required": true,
             "schema": {
               "type": "string"
@@ -12078,7 +14027,7 @@
           {
             "description": "Código da sala.",
             "in": "path",
-            "name": "code",
+            "name": "room_code",
             "required": true,
             "schema": {
               "type": "string"
@@ -12150,6 +14099,16 @@
           },
           "413": {
             "description": "Corpo acima de 512 MiB (rejeitado pelo axum, texto simples)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`storage.quota_exceeded`: a gravação não cabe na quota de armazenamento de uma organização do autor. Nada é escrito."
           }
         },
         "security": [
@@ -12160,352 +14119,6 @@
         "summary": "Carrega uma gravação da sala. O corpo é o ficheiro **em bruto** (não\nmultipart); o `Content-Type` não é verificado. Máximo 512 MiB. Só quem\nparticipou na sala pode carregar — senão **401**, não 403.",
         "tags": [
           "recordings"
-        ]
-      }
-    },
-    "/api/rooms/{code}/timings": {
-      "post": {
-        "description": "Valores limitados a 10 minutos (`ice_restarts`/`reconnects` a 1000) antes\nde gravar. Sem acesso à sala devolve **401**, não 403.",
-        "operationId": "post_timings",
-        "parameters": [
-          {
-            "description": "Código da sala (sensível a maiúsculas).",
-            "in": "path",
-            "name": "code",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TimingsReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Sessão inválida."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Sem acesso à sala."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "`POST /api/rooms/{code}/timings` — uma vez por sessão.",
-        "tags": [
-          "rooms"
-        ]
-      }
-    },
-    "/api/share/{token}": {
-      "get": {
-        "description": "Link expirado responde como inexistente (404).",
-        "operationId": "public_share",
-        "parameters": [
-          {
-            "description": "Token do link público.",
-            "in": "path",
-            "name": "token",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Password do link, se tiver. Vai na query string.",
-            "in": "query",
-            "name": "password",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PublicShareResp"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "O link tem password e a dada (ou a sua falta) não confere."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Token inexistente ou expirado."
-          }
-        },
-        "summary": "Acesso público a uma gravação via token (sem autenticação).",
-        "tags": [
-          "recordings"
-        ]
-      }
-    },
-    "/api/share/{token}/download": {
-      "get": {
-        "operationId": "public_share_download",
-        "parameters": [
-          {
-            "description": "Token do link público.",
-            "in": "path",
-            "name": "token",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Password do link, se tiver. Vai na query string.",
-            "in": "query",
-            "name": "password",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "video/webm": {
-                "schema": {
-                  "description": "Ficheiro webm em bruto (só para o spec).",
-                  "format": "binary",
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Sempre `Content-Disposition: attachment`."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Password em falta ou errada."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Token inexistente, expirado, ou sem ficheiro (gravação falhada)."
-          }
-        },
-        "summary": "Download via link público (sem autenticação — token é a credencial).",
-        "tags": [
-          "recordings"
-        ]
-      }
-    },
-    "/api/sms/agent/claim": {
-      "post": {
-        "operationId": "agent_claim",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClaimResp"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Token `dlxg_` inválido ou revogado."
-          }
-        },
-        "security": [
-          {
-            "api_key": []
-          }
-        ],
-        "tags": [
-          "sms"
-        ]
-      }
-    },
-    "/api/sms/agent/devices": {
-      "put": {
-        "operationId": "agent_put_devices",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DevicesReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DevicesResp"
-                }
-              }
-            },
-            "description": ""
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Token `dlxg_` inválido ou revogado."
-          }
-        },
-        "security": [
-          {
-            "api_key": []
-          }
-        ],
-        "summary": "Substitui o inventário deste gateway. Um dispositivo que deixa de aparecer\nNÃO é apagado — fica desligado (`online: false`) e mantém a selecção, para\nque tirar e voltar a ligar o cabo não obrigue a escolher outra vez.",
-        "tags": [
-          "sms"
-        ]
-      }
-    },
-    "/api/sms/agent/messages/{message_id}/result": {
-      "post": {
-        "operationId": "agent_result",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "message_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ResultReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Registado."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Token `dlxg_` inválido ou revogado."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "api_key": []
-          }
-        ],
-        "tags": [
-          "sms"
         ]
       }
     },
@@ -12530,39 +14143,33 @@
         ]
       }
     },
-    "/api/translate": {
-      "post": {
-        "operationId": "translate_caption",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TranslateReq"
-              }
+    "/api/users": {
+      "get": {
+        "operationId": "search",
+        "parameters": [
+          {
+            "description": "Termo (email ou username), 2+ caracteres.",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
-          },
-          "required": true
-        },
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TranslateResp"
+                  "items": {
+                    "$ref": "#/components/schemas/UserPublic"
+                  },
+                  "type": "array"
                 }
               }
             },
             "description": ""
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "texto vazio, língua não suportada, LLM local não configurado, ou a tradução falhou"
           },
           "401": {
             "content": {
@@ -12580,9 +14187,9 @@
             "session": []
           }
         ],
-        "summary": "POST /api/translate — traduz uma linha de legenda. Autenticado; o texto é\ncurto (legendas) e o rate-limit global de /api aplica-se por IP.",
+        "summary": "Pesquisa utilizadores por email/username (para convidar/partilhar).\nDevolve no máximo 10; exclui o próprio.",
         "tags": [
-          "ai"
+          "users"
         ]
       }
     },
@@ -12832,7 +14439,7 @@
         ]
       }
     },
-    "/api/users/me/mfa/enrol": {
+    "/api/users/me/mfa/enroll": {
       "post": {
         "description": "Repetir isto antes de confirmar substitui o segredo — é o que permite\nrecomeçar quando o QR foi lido para o autenticador errado. Depois de\nconfirmado, recusa: trocar o segredo de uma conta com MFA activo sem provar\nposse do actual seria uma forma de o desligar sem o saber.",
         "operationId": "inscrever",
@@ -12886,6 +14493,35 @@
         "summary": "Começa a inscrição: gera um segredo novo e devolve-o UMA vez.",
         "tags": [
           "mfa"
+        ]
+      }
+    },
+    "/api/users/me/missed-calls/acknowledge": {
+      "post": {
+        "operationId": "ack_missed_calls",
+        "responses": {
+          "200": {
+            "description": "`{\"ok\": true}` (forma herdada)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Marca todas as chamadas perdidas do utilizador como vistas.",
+        "tags": [
+          "calls"
         ]
       }
     },
@@ -13181,29 +14817,15 @@
         ]
       }
     },
-    "/api/users/search": {
+    "/api/users/me/room": {
       "get": {
-        "operationId": "search",
-        "parameters": [
-          {
-            "description": "Termo (email ou username), 2+ caracteres.",
-            "in": "query",
-            "name": "q",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
+        "operationId": "my_room",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/UserPublic"
-                  },
-                  "type": "array"
+                  "$ref": "#/components/schemas/PersonalRoom"
                 }
               }
             },
@@ -13225,21 +14847,18 @@
             "session": []
           }
         ],
-        "summary": "Pesquisa utilizadores por email/username (para convidar/partilhar).\nDevolve no máximo 10; exclui o próprio.",
+        "summary": "A sala pessoal de quem está autenticado. Na primeira chamada é criada (com\na sala de espera ligada); as seguintes devolvem sempre a mesma.",
         "tags": [
           "users"
         ]
-      }
-    },
-    "/api/voice/rooms": {
-      "post": {
-        "description": "A sala de voz pertence à primeira organização do utilizador. O `room_code`\né normalizado para minúsculas e tem de ser de uma sala cujo DONO é membro\nACTIVO dessa organização; senão `404` (`voice.room_not_found`), a mesma\nresposta de um código inexistente.",
-        "operationId": "create_room",
+      },
+      "patch": {
+        "operationId": "update_my_room",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateVoiceRoomReq"
+                "$ref": "#/components/schemas/UpdatePersonalRoomReq"
               }
             }
           },
@@ -13250,7 +14869,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/VoiceRoomResp"
+                  "$ref": "#/components/schemas/PersonalRoom"
                 }
               }
             },
@@ -13264,7 +14883,7 @@
                 }
               }
             },
-            "description": "Utilizador sem organização ou `room_code` vazio."
+            "description": "`personal_room.invalid_name`."
           },
           "401": {
             "content": {
@@ -13276,7 +14895,7 @@
             },
             "description": ""
           },
-          "404": {
+          "422": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13284,17 +14903,7 @@
                 }
               }
             },
-            "description": "`voice.room_not_found`: a sala não existe, ou o dono não é membro activo da organização de quem pede."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Sem DID disponível para dial-in nesta organização."
+            "description": "Corpo que não desserializa, incluindo um campo desconhecido."
           }
         },
         "security": [
@@ -13302,86 +14911,25 @@
             "session": []
           }
         ],
-        "summary": "Cria uma sala de voz (dial-in) para uma sala de conferência existente.",
+        "summary": "Altera o nome e/ou a sala de espera. Valida tudo antes de escrever.",
         "tags": [
-          "voice"
+          "users"
         ]
       }
     },
-    "/api/voice/rooms/{id}": {
-      "get": {
-        "operationId": "get_room",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VoiceRoom"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": ""
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Inexistente ou de outra organização."
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ],
-        "summary": "Detalhes de uma sala de voz (membro da org dona). Inclui o PIN.",
-        "tags": [
-          "voice"
-        ]
-      }
-    },
-    "/api/voice/rooms/{id}/close": {
+    "/api/users/me/room/rotate-code": {
       "post": {
-        "operationId": "close_room",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
+        "operationId": "rotate_my_room_code",
         "responses": {
           "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalRoom"
+                }
+              }
+            },
+            "description": ""
           },
           "401": {
             "content": {
@@ -13392,26 +14940,6 @@
               }
             },
             "description": ""
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "`voice.room_close_forbidden`: membro da org, mas nem criador da sala de voz nem admin."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Inexistente ou de outra organização."
           }
         },
         "security": [
@@ -13419,35 +14947,21 @@
             "session": []
           }
         ],
-        "summary": "Encerra uma sala de voz (o PIN deixa de ser válido). Só quem a CRIOU ou um\nadmin da org dona; outro membro recebe `403` (`voice.room_close_forbidden`).\nIdempotente.",
+        "summary": "Método personalizado: dá à sala pessoal um código novo. O link antigo\ndeixa de abrir (`GET /api/rooms/{antigo}` → `404`). Um dial-in ligado ao\ncódigo antigo NÃO acompanha: fica no código antigo e deixa de aparecer.",
         "tags": [
-          "voice"
+          "users"
         ]
       }
     },
-    "/api/voice/rooms/{id}/participants": {
+    "/api/users/me/storage-usage": {
       "get": {
-        "operationId": "list_participants",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
+        "operationId": "my_storage_usage",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/VoiceParticipant"
-                  },
-                  "type": "array"
+                  "$ref": "#/components/schemas/UserStorageUsage"
                 }
               }
             },
@@ -13462,16 +14976,6 @@
               }
             },
             "description": ""
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Inexistente ou de outra organização."
           }
         },
         "security": [
@@ -13479,9 +14983,9 @@
             "session": []
           }
         ],
-        "summary": "Participantes de uma sala de voz (membro da org dona).",
+        "summary": "Armazenamento de quem está autenticado: as gravações que carregou e os\nquadros de que é dono. Serve a edição pessoal, onde não há administração de\norganização para consultar.",
         "tags": [
-          "voice"
+          "users"
         ]
       }
     },
@@ -13581,57 +15085,13 @@
         ]
       }
     },
-    "/api/whiteboards/shared/{token}": {
-      "get": {
-        "operationId": "shared_png",
-        "parameters": [
-          {
-            "description": "`share_token` do quadro.",
-            "in": "path",
-            "name": "token",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "image/png": {
-                "schema": {
-                  "description": "Imagem PNG em bruto (só para o spec).",
-                  "format": "binary",
-                  "type": "string"
-                }
-              }
-            },
-            "description": ""
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Token inexistente ou quadro não público."
-          }
-        },
-        "summary": "Vista pública só-leitura por token — sem autenticação, se `is_public`.",
-        "tags": [
-          "whiteboards"
-        ]
-      }
-    },
-    "/api/whiteboards/{id}": {
+    "/api/whiteboards/{whiteboard_id}": {
       "delete": {
         "operationId": "delete",
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "whiteboard_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -13683,18 +15143,92 @@
         "tags": [
           "whiteboards"
         ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "whiteboard_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhiteboardMeta"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não existe, ou é de uma organização de que não és membro"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Metadados de um quadro (sem a imagem).",
+        "tags": [
+          "whiteboards"
+        ]
       }
     },
-    "/api/whiteboards/{id}/png": {
+    "/api/whiteboards/{whiteboard_id}/image": {
       "get": {
+        "description": "- **Com sessão** (sem `sig`): apenas membros da org dona.\n- **Com `exp` e `sig`** (URL assinado): sem sessão. Assinatura errada, prazo\n  expirado ou quadro inexistente dão todos `404`.",
         "operationId": "png",
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "whiteboard_id",
             "required": true,
             "schema": {
               "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Prazo (segundos Unix) de um URL assinado. Só com `sig`.",
+            "in": "query",
+            "name": "exp",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Assinatura de um URL assinado (ver `POST /api/whiteboards/{id}/signed-url`).",
+            "in": "query",
+            "name": "sig",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           }
@@ -13712,6 +15246,16 @@
             },
             "description": ""
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Com sessão: `id` que não é UUID."
+          },
           "401": {
             "content": {
               "application/json": {
@@ -13720,7 +15264,7 @@
                 }
               }
             },
-            "description": "Sessão inválida."
+            "description": "Sem `sig` e sem sessão válida."
           },
           "404": {
             "content": {
@@ -13730,27 +15274,28 @@
                 }
               }
             },
-            "description": ""
+            "description": "Não existe, é de uma organização de que não és membro, ou o URL assinado é inválido ou expirou."
           }
         },
         "security": [
+          {},
           {
             "session": []
           }
         ],
-        "summary": "Imagem PNG de um quadro — apenas membros da org dona.",
+        "summary": "Imagem PNG de um quadro.",
         "tags": [
           "whiteboards"
         ]
       }
     },
-    "/api/whiteboards/{id}/share": {
-      "post": {
+    "/api/whiteboards/{whiteboard_id}/public-link": {
+      "put": {
         "operationId": "set_share",
         "parameters": [
           {
             "in": "path",
-            "name": "id",
+            "name": "whiteboard_id",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -13816,6 +15361,63 @@
           }
         ],
         "summary": "Ativa/desativa a partilha por link público. Dono ou admin.\nDesativar roda o token: o link antigo deixa de funcionar.",
+        "tags": [
+          "whiteboards"
+        ]
+      }
+    },
+    "/api/whiteboards/{whiteboard_id}/signed-url": {
+      "post": {
+        "operationId": "signed_url",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "whiteboard_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhiteboardSignedUrl"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não existe, ou é de uma organização de que não és membro."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Método personalizado: emite um URL assinado do PNG, válido 15 minutos, para\nquem JÁ pode ver o quadro. Quem não pode recebe `404`, como no PNG.",
         "tags": [
           "whiteboards"
         ]

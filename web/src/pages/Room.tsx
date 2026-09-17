@@ -1632,7 +1632,7 @@ export default function Room({
       const token = localStorage.getItem('dlx_token')
       if (!token) return
       fetch(`/api/rooms/${code}/minutes`, {
-        method: 'POST',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           minutes: buildMoM(linesRef.current),

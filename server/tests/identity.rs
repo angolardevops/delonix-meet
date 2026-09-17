@@ -503,7 +503,7 @@ async fn users_me_get_and_patch(db: sqlx::PgPool) {
 }
 
 // ---------------------------------------------------------------------------
-//  /api/users/search
+//  /api/users
 // ---------------------------------------------------------------------------
 
 #[sqlx::test(migrations = "./migrations")]
@@ -514,12 +514,12 @@ async fn users_search_is_scoped_to_shared_orgs(db: sqlx::PgPool) {
     let carla = app.add_member(&a, "carla", "member").await;
 
     // Termo curto: lista vazia, não erro.
-    let (st, body) = app.get("/api/users/search?q=a", Some(&a.token)).await;
+    let (st, body) = app.get("/api/users?q=a", Some(&a.token)).await;
     assert_eq!(st, 200);
     assert_eq!(body, json!([]));
 
     // Colega da mesma org: encontrado (por email ou username).
-    let (st, body) = app.get("/api/users/search?q=carla", Some(&a.token)).await;
+    let (st, body) = app.get("/api/users?q=carla", Some(&a.token)).await;
     assert_eq!(st, 200, "{body}");
     let ids: Vec<&str> = body
         .as_array()
@@ -531,20 +531,20 @@ async fn users_search_is_scoped_to_shared_orgs(db: sqlx::PgPool) {
     assert_eq!(body[0]["locale"], "pt");
 
     // O próprio nunca aparece.
-    let (_, body) = app.get("/api/users/search?q=admin", Some(&a.token)).await;
+    let (_, body) = app.get("/api/users?q=admin", Some(&a.token)).await;
     assert!(!body.to_string().contains(&a.user_id), "{body}");
 
     // Utilizadores de OUTRA org: nunca aparecem.
-    let (st, body) = app.get("/api/users/search?q=beta", Some(&a.token)).await;
+    let (st, body) = app.get("/api/users?q=beta", Some(&a.token)).await;
     assert_eq!(st, 200);
     assert_eq!(body, json!([]), "vazou o directório da org B");
-    let (_, body) = app.get("/api/users/search?q=admin", Some(&a.token)).await;
+    let (_, body) = app.get("/api/users?q=admin", Some(&a.token)).await;
     assert!(!body.to_string().contains(&b.user_id), "{body}");
 
     // Sem sessão: 401. Sem `q`: 400 do extractor de query.
-    let (st, _) = app.get("/api/users/search?q=carla", None).await;
+    let (st, _) = app.get("/api/users?q=carla", None).await;
     assert_eq!(st, 401);
-    let (st, _) = app.get("/api/users/search", Some(&a.token)).await;
+    let (st, _) = app.get("/api/users", Some(&a.token)).await;
     assert_eq!(st, 400);
 }
 
@@ -625,7 +625,7 @@ async fn mfa_enrol_activate_login_backup_and_disable(db: sqlx::PgPool) {
     assert_eq!(st, 400);
 
     let (st, insc) = app
-        .post("/api/users/me/mfa/enrol", Some(&tok), json!({}))
+        .post("/api/users/me/mfa/enroll", Some(&tok), json!({}))
         .await;
     assert_eq!(st, 200, "{insc}");
     let secret = insc["secret"].as_str().unwrap().to_string();
@@ -685,7 +685,7 @@ async fn mfa_enrol_activate_login_backup_and_disable(db: sqlx::PgPool) {
 
     // Reinscrever com MFA activo: 400.
     let (st, _) = app
-        .post("/api/users/me/mfa/enrol", Some(&tok), json!({}))
+        .post("/api/users/me/mfa/enroll", Some(&tok), json!({}))
         .await;
     assert_eq!(st, 400);
 
@@ -717,7 +717,7 @@ async fn mfa_enrol_activate_login_backup_and_disable(db: sqlx::PgPool) {
     // Um access token não serve de desafio.
     let (st, _) = app
         .post(
-            "/api/auth/mfa",
+            "/api/auth/login/mfa",
             None,
             json!({"mfa_token": tok, "code": totp_at_step(&secret, step + 1)}),
         )
@@ -726,7 +726,7 @@ async fn mfa_enrol_activate_login_backup_and_disable(db: sqlx::PgPool) {
     // Código errado.
     let (st, _) = app
         .post(
-            "/api/auth/mfa",
+            "/api/auth/login/mfa",
             None,
             json!({"mfa_token": ch1, "code": "000000"}),
         )
@@ -735,7 +735,7 @@ async fn mfa_enrol_activate_login_backup_and_disable(db: sqlx::PgPool) {
     // O código usado para ACTIVAR não serve para entrar (anti-replay, R117).
     let (st, _) = app
         .post(
-            "/api/auth/mfa",
+            "/api/auth/login/mfa",
             None,
             json!({"mfa_token": ch1, "code": totp_at_step(&secret, step)}),
         )
@@ -747,7 +747,7 @@ async fn mfa_enrol_activate_login_backup_and_disable(db: sqlx::PgPool) {
     let r = app
         .raw(
             reqwest::Method::POST,
-            "/api/auth/mfa",
+            "/api/auth/login/mfa",
             &[],
             Some(json!({"mfa_token": ch1, "code": next})),
         )
@@ -763,7 +763,7 @@ async fn mfa_enrol_activate_login_backup_and_disable(db: sqlx::PgPool) {
     let ch2 = challenge(&app).await;
     let (st, _) = app
         .post(
-            "/api/auth/mfa",
+            "/api/auth/login/mfa",
             None,
             json!({"mfa_token": ch2, "code": next}),
         )
@@ -773,7 +773,7 @@ async fn mfa_enrol_activate_login_backup_and_disable(db: sqlx::PgPool) {
     // Código de recuperação entra uma vez.
     let (st, rec) = app
         .post(
-            "/api/auth/mfa",
+            "/api/auth/login/mfa",
             None,
             json!({"mfa_token": ch2, "code": backup[0].to_lowercase()}),
         )
@@ -786,7 +786,7 @@ async fn mfa_enrol_activate_login_backup_and_disable(db: sqlx::PgPool) {
     let ch3 = challenge(&app).await;
     let (st, _) = app
         .post(
-            "/api/auth/mfa",
+            "/api/auth/login/mfa",
             None,
             json!({"mfa_token": ch3, "code": backup[0]}),
         )
@@ -836,11 +836,11 @@ async fn mfa_endpoints_require_session(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let (st, _) = app.get("/api/users/me/mfa", None).await;
     assert_eq!(st, 401);
-    let (st, _) = app.post("/api/users/me/mfa/enrol", None, json!({})).await;
+    let (st, _) = app.post("/api/users/me/mfa/enroll", None, json!({})).await;
     assert_eq!(st, 401);
     let (st, _) = app
         .post(
-            "/api/auth/mfa",
+            "/api/auth/login/mfa",
             None,
             json!({"mfa_token": "lixo", "code": "123456"}),
         )

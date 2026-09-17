@@ -670,7 +670,7 @@ struct DestinoBruto {
     rotulo: Option<String>,
 }
 
-/// `GET /api/rooms/{code}/broadcast` (upgrade para WebSocket).
+/// `GET /api/rooms/{code}/live` (upgrade para WebSocket).
 ///
 /// O browser compõe, codifica em H.264 e empurra pedaços de WebM por aqui; o
 /// servidor remultiplexa para RTMP. Ver o ADR-0003.

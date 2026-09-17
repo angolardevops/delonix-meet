@@ -14,10 +14,10 @@ Telefone → SIP Trunk → Kamailio (ACL trunk + TLS + dispatcher)
                        FreeSWITCH (N nós)
                         1) atende (SRTP obrigatório)
                         2) IVR pede PIN (DTMF)
-                        3) POST /api/voice/ivr/validate  ─────► Control plane (Rust)
+                        3) POST /internal/v1/voice/ivr/validate  ─────► Control plane (Rust)
                            (X-Voice-Secret)               ◄───── { room_code, voice_room_id }
                         4) conference(room_code@delonix)
-                        5) no fim: POST /api/voice/ivr/cdr ────► CDR + custo estimado
+                        5) no fim: POST /internal/v1/voice/ivr/cdr ────► CDR + custo estimado
 ```
 
 ## Ficheiros
@@ -48,7 +48,7 @@ A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Z
 2. `docker compose -f voice/docker-compose.voice.yml up -d`.
 3. Registar o softphone no Kamailio e "ligar" para o número da sala.
 4. Introduzir o PIN → deve entrar na conferência. Confirmar o CDR em
-   `GET /api/orgs/{org}/voice/cdr`.
+   `GET /api/orgs/{org}/voice/call-records`.
 
 ## ⚠️ Integração que falta: ponte FreeSWITCH ↔ SFU (sub-fase 2b)
 Nesta sub-fase, os chamadores PSTN entram numa **conferência do FreeSWITCH**

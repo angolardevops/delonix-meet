@@ -304,7 +304,7 @@ impl TestApp {
         let email = format!("{local}@{domain}");
         let (st, body) = self
             .post(
-                &format!("/api/orgs/{}/employees", admin.org()),
+                &format!("/api/orgs/{}/members", admin.org()),
                 Some(&admin.token),
                 json!({"email": email, "username": format!("{local}-{domain}"),
                        "password": PASSWORD, "role": role, "title": local}),

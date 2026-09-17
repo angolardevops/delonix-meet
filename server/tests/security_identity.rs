@@ -163,7 +163,7 @@ async fn sso_flow(
     let r = app
         .raw(
             reqwest::Method::GET,
-            &format!("/api/auth/sso/login?domain={domain}"),
+            &format!("/api/auth/sso/authorize?domain={domain}"),
             &[],
             None,
         )
@@ -382,7 +382,7 @@ fn wrong_code(secret: &str) -> String {
 
 async fn enrol(app: &TestApp, token: &str) -> String {
     let (st, body) = app
-        .post("/api/users/me/mfa/enrol", Some(token), json!({}))
+        .post("/api/users/me/mfa/enroll", Some(token), json!({}))
         .await;
     assert_eq!(st, 200, "{body}");
     body["secret"].as_str().unwrap().to_string()
@@ -534,7 +534,7 @@ async fn mfa_disable_locks_after_five_failures(db: sqlx::PgPool) {
     assert_eq!(st, 200, "{body}");
 }
 
-/// O passo MFA do login (`/api/auth/mfa`) JÁ tinha travão por conta (8 em
+/// O passo MFA do login (`/api/auth/login/mfa`) JÁ tinha travão por conta (8 em
 /// 5 min, `login_limiter`). Este teste não corrige nada: guarda que o travão
 /// continua lá e que trava também o código válido.
 #[sqlx::test(migrations = "./migrations")]
@@ -560,7 +560,7 @@ async fn mfa_login_step_is_limited_per_account(db: sqlx::PgPool) {
     let ch = challenge().await;
     let (st, body) = app
         .post(
-            "/api/auth/mfa",
+            "/api/auth/login/mfa",
             None,
             json!({"mfa_token": ch, "code": backup[0]}),
         )
@@ -572,7 +572,7 @@ async fn mfa_login_step_is_limited_per_account(db: sqlx::PgPool) {
     for _ in 0..10 {
         let (st, _) = app
             .post(
-                "/api/auth/mfa",
+                "/api/auth/login/mfa",
                 None,
                 json!({"mfa_token": ch, "code": errado}),
             )
@@ -586,7 +586,7 @@ async fn mfa_login_step_is_limited_per_account(db: sqlx::PgPool) {
     assert_eq!(ultimo, 429, "o passo MFA do login não trava");
     let (st, body) = app
         .post(
-            "/api/auth/mfa",
+            "/api/auth/login/mfa",
             None,
             json!({"mfa_token": ch, "code": backup[1]}),
         )

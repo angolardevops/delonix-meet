@@ -77,7 +77,8 @@ fn items(v: &Value) -> &Vec<Value> {
 async fn processing_state_is_derived_for_each_state(db: sqlx::PgPool) {
     let f = fixture(db).await;
     let (app, a) = (&f.app, &f.a);
-    let meta = format!("/api/recordings/{}/metadata", f.rec);
+    // Os metadados são o próprio recurso (o ficheiro está em `/content`).
+    let meta = format!("/api/recordings/{}", f.rec);
 
     let (st, m) = app.get(&meta, Some(&a.token)).await;
     assert_eq!(st, 200, "{m}");
@@ -153,7 +154,7 @@ async fn patch_metadata_owner_admin_member_and_other_org(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 400);
     assert_eq!(v["code"], "recording.invalid_title");
-    let (_, m) = app.get(&format!("{path}/metadata"), Some(&f.a.token)).await;
+    let (_, m) = app.get(&path, Some(&f.a.token)).await;
     assert_eq!(m["title"], "Aula de Química", "sem escrita parcial");
 
     // Participante que não é dono: vê, não gere.
@@ -162,24 +163,23 @@ async fn patch_metadata_owner_admin_member_and_other_org(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 403, "{v}");
     assert_eq!(v["code"], "recording.not_manager");
-    let (_, m) = app
-        .get(&format!("{path}/metadata"), Some(&f.carla.token))
-        .await;
+    let (_, m) = app.get(&path, Some(&f.carla.token)).await;
     assert_eq!(m["can_manage"], false);
     // Membro da mesma org sem acesso nenhum: nem sabe que existe.
     let (st, _) = app
         .patch(&path, Some(&f.duarte.token), json!({"category": "other"}))
         .await;
     assert_eq!(st, 404);
-    let (st, _) = app
-        .get(&format!("{path}/metadata"), Some(&f.duarte.token))
-        .await;
+    let (st, _) = app.get(&path, Some(&f.duarte.token)).await;
     assert_eq!(st, 404);
     // Outra org: 404, igual a um id inventado.
     let (st, v) = app
         .patch(&path, Some(&f.b.token), json!({"category": "other"}))
         .await;
     assert_eq!(st, 404);
+    assert!(!v.to_string().contains("Química"));
+    let (st, v) = app.get(&path, Some(&f.b.token)).await;
+    assert_eq!(st, 404, "metadados para outra org: {v}");
     assert!(!v.to_string().contains("Química"));
     let (st, _) = app
         .patch(
@@ -591,12 +591,15 @@ async fn archived_member_cannot_read_comments_nor_see_library(db: sqlx::PgPool) 
     let (_, lib) = app.get("/api/recordings", Some(&f.carla.token)).await;
     assert_eq!(lib.as_array().unwrap().len(), 1);
     let (st, _) = app
-        .get(&format!("/api/recordings/{}", f.rec), Some(&f.carla.token))
+        .get(
+            &format!("/api/recordings/{}/content", f.rec),
+            Some(&f.carla.token),
+        )
         .await;
     assert_eq!(st, 404);
     let (st, _) = app
         .get(
-            &format!("/api/recordings/{}?dl=1", f.rec),
+            &format!("/api/recordings/{}/content?dl=1", f.rec),
             Some(&f.eva.token),
         )
         .await;
@@ -621,10 +624,7 @@ async fn archived_member_cannot_read_comments_nor_see_library(db: sqlx::PgPool) 
         .await;
     assert_eq!(st, 404);
     let (st, _) = app
-        .get(
-            &format!("/api/recordings/{}/metadata", f.rec),
-            Some(&f.carla.token),
-        )
+        .get(&format!("/api/recordings/{}", f.rec), Some(&f.carla.token))
         .await;
     assert_eq!(st, 404);
     let (_, lib) = app.get("/api/recordings", Some(&f.carla.token)).await;
@@ -638,12 +638,15 @@ async fn archived_member_cannot_read_comments_nor_see_library(db: sqlx::PgPool) 
         .await;
     assert_eq!(items(&lib).len(), 0);
     let (st, _) = app
-        .get(&format!("/api/recordings/{}", f.rec), Some(&f.carla.token))
+        .get(
+            &format!("/api/recordings/{}/content", f.rec),
+            Some(&f.carla.token),
+        )
         .await;
     assert_eq!(st, 401, "reproduzir também");
     let (st, _) = app
         .get(
-            &format!("/api/recordings/{}?dl=1", f.rec),
+            &format!("/api/recordings/{}/content?dl=1", f.rec),
             Some(&f.eva.token),
         )
         .await;
@@ -659,7 +662,7 @@ async fn archived_member_cannot_read_comments_nor_see_library(db: sqlx::PgPool) 
     assert_eq!(st, 200, "{p}");
     let (st, _) = app
         .get(
-            &format!("/api/recordings/{}?dl=1", f.rec),
+            &format!("/api/recordings/{}/content?dl=1", f.rec),
             Some(&admin2.token),
         )
         .await;
@@ -855,7 +858,7 @@ async fn upload_writes_to_configured_recordings_dir(db: sqlx::PgPool) {
 
     let res = app
         .http
-        .get(app.url(&format!("/api/recordings/{id}?dl=1")))
+        .get(app.url(&format!("/api/recordings/{id}/content?dl=1")))
         .bearer_auth(&f.a.token)
         .send()
         .await

@@ -75,7 +75,7 @@ export default function Whiteboards() {
     if (updated) {
       setItems((xs) => xs.map((x) => (x.id === w.id ? updated : x)))
       if (updated.is_public) {
-        const link = `${location.origin}/api/whiteboards/shared/${updated.share_token}`
+        const link = `${location.origin}/api/public/whiteboards/${updated.share_token}/image`
         void navigator.clipboard.writeText(link).catch(() => {})
       }
     }

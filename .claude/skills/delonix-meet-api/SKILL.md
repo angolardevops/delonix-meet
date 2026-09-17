@@ -24,19 +24,21 @@ description: Contrato de API do Delonix Meet — as superfícies (BFF `/api`, p�
 - **O que falta:**
   - As rotas HERDADAS mantêm `200`/`{"ok":true}` (22) e listagens sem limite.
   - `Idempotency-Key` só no SMS; nada de `ETag`.
-- **A v1 continua a misturar o operador** (`/admin/orgs`, `/platform/storage*` com sessão);
-  a separação em `/api/operator/v1` está por fazer.
+- **Uma superfície por público, sem aliases** (reorganização de 2026-09-16, mapa em
+  `docs/reference/api-routes.md`): BFF `/api`, inquilino `/api/v1`, operador
+  `/api/operator/v1`, integrações `/api/integrations/{odoo,sms-agent}/v1`, interna
+  `/internal/v1`. Quatro specs: `docs/reference/openapi/{bff,v1,operator,integrations}.json`.
 
 ## Superfícies — um público e uma autenticação cada
 
-| Superfície | Hoje | Destino | Auth |
+| Superfície | Prefixo | Auth | Spec |
 |---|---|---|---|
-| BFF do web | `/api/…` | igual | sessão |
-| Pública do inquilino | `/api/v1/…` | igual, **só** chave `dlx_` com escopos | `ApiKeyAuth` |
-| Operador | misturado na v1 | `/api/operator/v1/…` | identidade de operador explícita na config |
-| Integração Odoo | `/api/v1/integration/odoo/*` | `/api/integrations/odoo/v1/…` | `OdooTokenAuth` |
-| Tempo real | `/ws`, `/rtc`, `/api/rooms/{code}/broadcast` | igual | token de sala / access token |
-| Máquina-a-máquina | `/api/voice/ivr/*` (HTTP público com segredo) | **gRPC**, porta sem ingress, mTLS | mTLS |
+| BFF do web | `/api/…` | sessão | `docs/reference/openapi/bff.json` |
+| Pública do inquilino | `/api/v1/…` | **só** chave `dlx_` com escopos (`ApiKeyAuth`) | `v1.json` |
+| Operador | `/api/operator/v1/…` | `PLATFORM_ADMIN_USER_IDS` ou segredo de plataforma | `operator.json` |
+| Integrações | `/api/integrations/odoo/v1/…`, `/api/integrations/sms-agent/v1/…` | `dlxo_` / `dlxg_` | `integrations.json` |
+| Tempo real | `/ws`, `/rtc`, `/api/rooms/{room_code}/live` | token de sala / access token | — (`protocol`) |
+| Máquina-a-máquina | `/internal/v1/voice/ivr/*` (listener interno) e **gRPC** (porta sem ingress, mTLS) | segredo / mTLS | `.proto` |
 
 **Um endpoint novo é da BFF por omissão.** Só entra na v1 por promoção consciente, com
 um consumidor externo real. **Nunca** se monta uma rota de operador ou de integração
@@ -102,7 +104,7 @@ dentro de `/api/v1` — a catraca conta `rotas_v1_com_sessao`.
 
 | Fronteira | Porquê gRPC |
 |---|---|
-| FreeSWITCH/IVR ↔ servidor (hoje `/api/voice/ivr/{validate,cdr}`) | contrato tipado, baixa latência, sai da árvore pública |
+| FreeSWITCH/IVR ↔ servidor (hoje `/internal/v1/voice/ivr/{validate,cdr}`) | contrato tipado, baixa latência, sai da árvore pública |
 | `ai-worker`/`whisper-server` ↔ servidor | streaming bidireccional de áudio e texto, com contra-pressão e prazos |
 | Nó ↔ nó | **só** com evidência escrita do que o Redis pub/sub do ADR-0001 não resolve |
 
@@ -124,23 +126,17 @@ Quem propuser «gRPC completo em todo o backend» leva esta tabela como resposta
 
 ## Dívida conhecida da superfície (não copiar como modelo)
 
-- **Recursos incompletos e sem limite:**
-  - `DELETE /api/meetings/{id}` sem `GET`, e na v1 `PATCH`/`DELETE` sem `GET`;
-  - `v1/recordings` com `LIMIT 200` fixo, `v1/meetings?since=` com corte aos 500;
-    `meetings::list` e `recordings::library` sem limite nenhum.
-- **Semântica das rotas da BFF:**
-  - `POST /api/orgs/{id}/settings` a fazer update;
-  - `POST /api/meetings/{id}/minutes` a fazer upsert;
-  - `/api/recordings/{id}/share` no singular para uma colecção;
-  - `/api/whiteboards/{id}/share` e `/api/whiteboards/shared/{token}` para a mesma coisa;
-  - `/api/action-items/{id}`, `/api/quarantine/analytics` e `/api/missed-calls/ack` fora
-    da hierarquia;
-  - `/api/rooms/{code}/minutes` duplica `/api/meetings/{id}/minutes`.
-- **Na v1:**
-  - `/admin/orgs` e `/platform/storage*` na superfície do inquilino;
-  - chaves sem escopos;
-  - `revoke` responde `{"ok":true}` mesmo sem a chave existir;
-  - rate-limit por IP e não por chave.
+A reorganização de 2026-09-16 (sem aliases, `docs/reference/api-routes.md`) tirou a dívida
+de NOMES e de superfícies: operador fora da v1, itens debaixo do pai, `PUT` para
+singletons, `GET` onde havia `PATCH`/`DELETE`. O que continua:
+
+- **Listagens herdadas sem cursor:** `v1/recordings` com `LIMIT 200` fixo,
+  `v1/meetings?since=` com corte aos 500, `meetings::list` e `recordings::library` sem
+  limite (a biblioteca só pagina com `page_size`/`q`).
+- **Respostas herdadas** `{"ok": true}` (catraca `respostas_ok_true`) e `200` onde devia ser
+  `201`/`204` — cada uma sai quando o handler for tocado, com o teste ao lado.
+- **Chaves de API:** R170/R171 fechados. Rota v1 nova com chave: um `Scope` do catálogo,
+  `key.require(…)?` na primeira linha, e uma linha em `tests/api_key_scopes.rs::routes`.
 
 ## Portões
 

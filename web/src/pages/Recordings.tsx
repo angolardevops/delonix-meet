@@ -364,7 +364,7 @@ function ViewerBody({
               className="secondary small"
               onClick={() => {
                 const a = document.createElement('a')
-                a.href = `/api/recordings/${rec.id}?dl=1`
+                a.href = `/api/recordings/${rec.id}/content?dl=1`
                 a.download = rec.filename
                 a.click()
               }}

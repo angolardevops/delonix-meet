@@ -60,9 +60,9 @@ def contar(regex, excluir=()):
 def v1_com_sessao():
     """Handlers montados em /api/v1 cuja assinatura extrai `AuthUser` (sessão)."""
     main = open(f'{SRC}/lib.rs', encoding='utf-8').read()
-    m = re.search(r'\.nest\(\s*"/api/v1"(.*?)\.layer\(\s*middleware::', main, re.S)
+    m = re.search(r'let v1_routes = Router::new\(\)(.*?);\n', main, re.S)
     if not m:
-        print('✗ catraca: não encontrei o bloco .nest("/api/v1") em lib.rs — o portão ficou cego')
+        print('✗ catraca: não encontrei o `let v1_routes = Router::new()` em lib.rs — o portão ficou cego')
         sys.exit(1)
     total, onde = 0, []
     for mod, fn in set(re.findall(r'\b(?:get|post|put|patch|delete)\(\s*(\w+)::(\w+)\s*\)', m.group(1))):

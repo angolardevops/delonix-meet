@@ -33,7 +33,7 @@ spec:
             # Logs estruturados em stdout (doze factores, ADR-0006 §4).
             - name: LOG_FORMAT
               value: json
-            # Listener interno: /api/voice/ivr/* (FreeSWITCH) e /metrics.
+            # Listener interno: /internal/v1/voice/ivr/* (FreeSWITCH) e /metrics.
             # NUNCA exposto por Ingress — só pelo Service delonix-server-internal.
             - name: INTERNAL_BIND_ADDR
               value: "0.0.0.0:8181"

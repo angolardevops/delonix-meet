@@ -615,7 +615,7 @@ function PlatformStoragePanel() {
 
   function downloadPvc() {
     const a = document.createElement('a')
-    a.href = '/api/v1/platform/storage/pvc-manifest'
+    a.href = '/api/operator/v1/storage/pvc-manifest'
     a.download = 'delonix-recordings-pv.yaml'
     a.click()
   }
@@ -735,8 +735,13 @@ export default function Analytics() {
   }, [orgId])
 
   useEffect(() => {
+    // A análise de quarentena é por organização (e só para admin).
+    if (!orgId) {
+      setRows([])
+      return
+    }
     setLoading(true)
-    quarantineAnalytics(period, orgId || undefined)
+    quarantineAnalytics(period, orgId)
       .then(setRows)
       .catch(() => setRows([]))
       .finally(() => setLoading(false))

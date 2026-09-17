@@ -79,9 +79,14 @@ Uma proposta que comece por apagar código que funciona é recusada na revisão.
 - ~~`odoo::list_users` devolve arquivados~~ **fechado (R143)**.
 - ~~`meetings_v1::resolve_org_user` junta contas órfãs~~ **fechado (R151)**: só dentro do
   domínio da organização.
-- **S4:** SSRF no `odoo_url`, no WebDAV e na descoberta OIDC. **S5:** segredos de
-  integração HERDADOS em claro (webhooks, SSO, WebDAV) — usa `core::secret_box` (já em
-  `stream_destinations`) com migração preguiçosa. **S6:** chaves de API sem escopos.
+- **S4:** SSRF no `odoo_url`, no WebDAV e na descoberta OIDC — **continua aberta**.
+- ~~**S5:** segredos de integração em claro~~ **fechado para webhooks, SSO e WebDAV (R160)**:
+  quem escreve ou lê `org_webhooks.secret`, `org_sso_configs.client_secret` ou
+  `platform_storage.webdav_password` passa por `secrets_at_rest::{seal,open}` (aad
+  `<tabela>.<coluna>:<id>`); sem chaves a escrita é `422`, o herdado em claro lê-se, e
+  `reseal_legacy` cifra-o no arranque e de hora a hora.
+- ~~**S6:** chaves de API sem escopos~~ **fechado (R170)**: `key.require(Scope::…)?` na
+  primeira linha de cada handler v1.
 - A cópia única `users::provision_by_email` (ADR-0004 §6 passo 4) continua por fazer:
   o #76 fechou a cópia que estava errada, não juntou as seis.
 

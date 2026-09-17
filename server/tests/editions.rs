@@ -121,7 +121,9 @@ async fn internal_listener_takes_ivr_and_metrics_off_the_public_router(db: sqlx:
     let app = TestApp::spawn_with(db, &[("INTERNAL_BIND_ADDR", "127.0.0.1:0")]).await;
     let (st, _) = app.get("/metrics", None).await;
     assert_eq!(st, 404, "com listener interno, /metrics sai do público");
-    let (st, _) = app.post("/api/voice/ivr/validate", None, json!({})).await;
+    let (st, _) = app
+        .post("/internal/v1/voice/ivr/validate", None, json!({}))
+        .await;
     assert_eq!(st, 404);
 
     let internal = delonix_server::build_internal_router(app.state.clone());

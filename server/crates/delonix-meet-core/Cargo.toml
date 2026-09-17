@@ -16,6 +16,8 @@ sha2.workspace = true
 hex.workspace = true
 rand.workspace = true
 argon2.workspace = true
+# HMAC-SHA256 (crypto::hmac_sha256): URLs assinados. Puro: sem IO.
+hmac = "0.12"
 base64.workspace = true
 # Cifra de segredos em repouso (crypto::SecretBox). Pura: sem IO.
 aes-gcm = "0.11.0"

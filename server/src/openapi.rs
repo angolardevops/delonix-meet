@@ -70,55 +70,49 @@ impl Modify for Security {
 #[openapi(paths(crate::status), components(schemas(crate::StatusResp)))]
 struct PlatformDoc;
 
-#[derive(OpenApi)]
-#[openapi(
-    info(
-        title = "Delonix Meet — BFF",
-        description = "API interna do web Delonix. **Instável**: muda com o frontend. Erros no envelope `ErrorBody`.",
-    ),
-    components(schemas(ErrorBody, FieldViolation)),
-    modifiers(&Security)
-)]
-struct BffDoc;
-
-#[derive(OpenApi)]
-#[openapi(
-    info(
-        title = "Delonix Meet — API pública v1",
-        description = "Superfície estável para SDK, mobile e integrações. Autentica por chave `dlx_`. Muda só com v2.",
-    ),
-    components(schemas(ErrorBody, FieldViolation)),
-    modifiers(&Security)
-)]
-struct V1Doc;
-
-/// O documento da BFF, com os `ApiDoc` de cada módulo.
-pub fn bff() -> utoipa::openapi::OpenApi {
-    let mut doc = BffDoc::openapi();
-    doc.info.version = env!("CARGO_PKG_VERSION").to_string();
-    for part in bff_parts() {
-        doc.merge(part);
-    }
-    doc
+macro_rules! surface_doc {
+    ($name:ident, $title:literal, $desc:literal) => {
+        #[derive(OpenApi)]
+        #[openapi(
+                                                    info(title = $title, description = $desc),
+                                                    components(schemas(ErrorBody, FieldViolation)),
+                                                    modifiers(&Security)
+                                                )]
+        struct $name;
+    };
 }
 
-/// O documento da v1.
-pub fn v1() -> utoipa::openapi::OpenApi {
-    let mut doc = V1Doc::openapi();
-    doc.info.version = env!("CARGO_PKG_VERSION").to_string();
-    for part in v1_parts() {
-        doc.merge(part);
-    }
-    doc
-}
+surface_doc!(
+    BffDoc,
+    "Delonix Meet — BFF",
+    "API do web Delonix (sessão). **Instável**: muda com o frontend. Erros no envelope `ErrorBody`."
+);
+surface_doc!(
+    V1Doc,
+    "Delonix Meet — API pública v1",
+    "Superfície estável do inquilino para SDK, mobile e integrações. Chave `dlx_` com escopos. Muda só com v2."
+);
+surface_doc!(
+    OperatorDoc,
+    "Delonix Meet — Operador",
+    "Superfície de quem opera a plataforma (ADR-0004 §4): provisionamento de organizações, armazenamento e nós. Fora do SDK do inquilino."
+);
+surface_doc!(
+    IntegrationsDoc,
+    "Delonix Meet — Integrações",
+    "Módulo Odoo `nk_delonix_meet` (token `dlxo_`) e agente de SMS por USB (token `dlxg_`)."
+);
 
-/// Os módulos que já documentam as suas rotas da BFF. Um módulo novo entra aqui.
-fn bff_parts() -> Vec<utoipa::openapi::OpenApi> {
+/// Todos os `ApiDoc` dos módulos. Um módulo novo entra aqui; a superfície a
+/// que cada rota pertence decide-se pelo prefixo do caminho, não por esta lista.
+fn parts() -> Vec<utoipa::openapi::OpenApi> {
     vec![
         PlatformDoc::openapi(),
+        crate::nodes::ApiDoc::openapi(),
         crate::users::ApiDoc::openapi(),
         crate::webhooks::ApiDoc::openapi(),
         crate::stream_destinations::ApiDoc::openapi(),
+        crate::usage::ApiDoc::openapi(),
         crate::sms::ApiDoc::openapi(),
         crate::notifications::ApiDoc::openapi(),
         crate::meetings::ApiDoc::openapi(),
@@ -135,16 +129,67 @@ fn bff_parts() -> Vec<utoipa::openapi::OpenApi> {
         crate::org::ApiDoc::openapi(),
         crate::audit::ApiDoc::openapi(),
         crate::apikeys::ApiDoc::openapi(),
-    ]
-}
-
-fn v1_parts() -> Vec<utoipa::openapi::OpenApi> {
-    vec![
         crate::meetings_v1::ApiDoc::openapi(),
         crate::odoo::V1ApiDoc::openapi(),
         crate::apikeys::V1ApiDoc::openapi(),
         crate::storage::ApiDoc::openapi(),
     ]
+}
+
+/// A superfície de um caminho (ADR-0004 §4).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Surface {
+    Bff,
+    V1,
+    Operator,
+    Integrations,
+}
+
+pub fn surface_of(path: &str) -> Surface {
+    if path.starts_with("/api/v1/") {
+        Surface::V1
+    } else if path.starts_with("/api/operator/") {
+        Surface::Operator
+    } else if path.starts_with("/api/integrations/") {
+        Surface::Integrations
+    } else {
+        Surface::Bff
+    }
+}
+
+fn build(mut doc: utoipa::openapi::OpenApi, surface: Surface) -> utoipa::openapi::OpenApi {
+    doc.info.version = env!("CARGO_PKG_VERSION").to_string();
+    let mut all = utoipa::openapi::OpenApi::default();
+    for part in parts() {
+        all.merge(part);
+    }
+    for (path, item) in all.paths.paths {
+        if surface_of(&path) == surface {
+            doc.paths.paths.insert(path, item);
+        }
+    }
+    if let (Some(to), Some(from)) = (doc.components.as_mut(), all.components) {
+        for (k, v) in from.schemas {
+            to.schemas.entry(k).or_insert(v);
+        }
+    }
+    doc
+}
+
+pub fn bff() -> utoipa::openapi::OpenApi {
+    build(BffDoc::openapi(), Surface::Bff)
+}
+
+pub fn v1() -> utoipa::openapi::OpenApi {
+    build(V1Doc::openapi(), Surface::V1)
+}
+
+pub fn operator() -> utoipa::openapi::OpenApi {
+    build(OperatorDoc::openapi(), Surface::Operator)
+}
+
+pub fn integrations() -> utoipa::openapi::OpenApi {
+    build(IntegrationsDoc::openapi(), Surface::Integrations)
 }
 
 pub async fn bff_json() -> Json<utoipa::openapi::OpenApi> {
@@ -153,6 +198,14 @@ pub async fn bff_json() -> Json<utoipa::openapi::OpenApi> {
 
 pub async fn v1_json() -> Json<utoipa::openapi::OpenApi> {
     Json(v1())
+}
+
+pub async fn operator_json() -> Json<utoipa::openapi::OpenApi> {
+    Json(operator())
+}
+
+pub async fn integrations_json() -> Json<utoipa::openapi::OpenApi> {
+    Json(integrations())
 }
 
 /// JSON estável (chaves ordenadas pelo serde_json/preserve_order desligado) para

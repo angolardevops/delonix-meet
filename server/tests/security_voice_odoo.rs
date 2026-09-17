@@ -24,7 +24,7 @@ async fn ivr_validate(app: &TestApp, did: &str, pin: &str) -> (u16, Value) {
     let r = app
         .raw(
             reqwest::Method::POST,
-            "/api/voice/ivr/validate",
+            "/internal/v1/voice/ivr/validate",
             &[("x-voice-secret", VOICE_SECRET)],
             Some(json!({"did_e164": did, "pin": pin})),
         )
@@ -32,9 +32,15 @@ async fn ivr_validate(app: &TestApp, did: &str, pin: &str) -> (u16, Value) {
     (r.status, r.json())
 }
 
+/// Cria a sala de voz pelo caminho da org de `who` (a sala de voz vive debaixo
+/// da organização).
 async fn voice_room(app: &TestApp, who: &Account, code: &str) -> (u16, Value) {
+    voice_room_in(app, who, who.org(), code).await
+}
+
+async fn voice_room_in(app: &TestApp, who: &Account, org: &str, code: &str) -> (u16, Value) {
     app.post(
-        "/api/voice/rooms",
+        &format!("/api/orgs/{org}/voice/rooms"),
         Some(&who.token),
         json!({ "room_code": code }),
     )
@@ -75,6 +81,34 @@ async fn voice_room_for_another_orgs_room_code_is_refused(db: sqlx::PgPool) {
     let (st, missing) = voice_room(&app, &a, "nao-existe-nenhuma").await;
     assert_eq!((st, &missing["code"]), (404, &attack["code"]), "{missing}");
 
+    // Pelo caminho da org B (de que A não é membro): 404 antes de tudo.
+    let (st, body) = voice_room_in(&app, &a, b.org(), code_b).await;
+    assert_denied("A cria dial-in pelo caminho da org B", st, &body, "pin");
+    assert_eq!(st, 404, "{body}");
+
+    // Leitura da sala de voz da B: B lê; A não, nem pelo caminho da B nem
+    // pelo seu com o id da B.
+    let own_id = own["id"].as_str().unwrap();
+    for suffix in ["", "/participants"] {
+        let (st, body) = app
+            .get(
+                &format!("/api/orgs/{}/voice/rooms/{own_id}{suffix}", b.org()),
+                Some(&b.token),
+            )
+            .await;
+        assert_eq!(st, 200, "B lê a sua sala de voz{suffix}: {body}");
+        for org in [b.org(), a.org()] {
+            let (st, body) = app
+                .get(
+                    &format!("/api/orgs/{org}/voice/rooms/{own_id}{suffix}"),
+                    Some(&a.token),
+                )
+                .await;
+            assert_eq!(st, 404, "A lê a sala de voz da B{suffix} via {org}: {body}");
+            assert_denied("sala de voz da B", st, &body, "pin");
+        }
+    }
+
     // E nada ficou gravado para A.
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM voice_room WHERE org_id = $1::uuid")
         .bind(a.org())
@@ -107,7 +141,7 @@ async fn voice_room_close_requires_creator_or_org_admin(db: sqlx::PgPool) {
     // O ataque: um colega que não criou a sala nem é admin.
     let (st, body) = app
         .post(
-            &format!("/api/voice/rooms/{id1}/close"),
+            &format!("/api/orgs/{}/voice/rooms/{id1}/close", admin.org()),
             Some(&other.token),
             json!({}),
         )
@@ -121,15 +155,15 @@ async fn voice_room_close_requires_creator_or_org_admin(db: sqlx::PgPool) {
         .unwrap();
     assert_eq!(status, "active", "a recusa não pode ter encerrado a sala");
 
-    // Controlo positivo 1: a criadora encerra a sua.
+    // Controlo positivo 1: a criadora encerra a sua (204, sem corpo).
     let (st, body) = app
         .post(
-            &format!("/api/voice/rooms/{id1}/close"),
+            &format!("/api/orgs/{}/voice/rooms/{id1}/close", admin.org()),
             Some(&creator.token),
             json!({}),
         )
         .await;
-    assert_eq!(st, 200, "{body}");
+    assert_eq!(st, 204, "{body}");
 
     // Controlo positivo 2: o admin da org encerra a de outra pessoa.
     let (st, vr2) = voice_room(&app, &creator, code).await;
@@ -137,18 +171,27 @@ async fn voice_room_close_requires_creator_or_org_admin(db: sqlx::PgPool) {
     let id2 = vr2["id"].as_str().unwrap();
     let (st, body) = app
         .post(
-            &format!("/api/voice/rooms/{id2}/close"),
+            &format!("/api/orgs/{}/voice/rooms/{id2}/close", admin.org()),
             Some(&admin.token),
             json!({}),
         )
         .await;
-    assert_eq!(st, 200, "{body}");
+    assert_eq!(st, 204, "{body}");
 
-    // Outra org continua a receber 404 (não revela a existência).
+    // Outra org continua a receber 404 (não revela a existência): pelo
+    // caminho da org dona e pelo caminho da sua própria org.
     let foreign = app.new_org("delta-voz.ao").await;
     let (st, body) = app
         .post(
-            &format!("/api/voice/rooms/{id2}/close"),
+            &format!("/api/orgs/{}/voice/rooms/{id2}/close", foreign.org()),
+            Some(&foreign.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 404, "{body}");
+    let (st, body) = app
+        .post(
+            &format!("/api/orgs/{}/voice/rooms/{id2}/close", admin.org()),
             Some(&foreign.token),
             json!({}),
         )
@@ -239,17 +282,17 @@ async fn odoo_integration_routes_refuse_tenant_api_key(db: sqlx::PgPool) {
     assert!(dlx.starts_with("dlx_"), "{dlx}");
 
     // A chave está boa: abre a SUA superfície (controlo positivo da chave).
-    let (st, body) = app.get("/api/v1/org", Some(&dlx)).await;
+    let (st, body) = app.get("/api/v1/organization", Some(&dlx)).await;
     assert_eq!(st, 200, "{body}");
 
     // O ataque: a mesma chave nas rotas da integração.
-    let (st, body) = app.get("/api/v1/integration/odoo/users", Some(&dlx)).await;
+    let (st, body) = app.get("/api/integrations/odoo/v1/users", Some(&dlx)).await;
     assert_denied("dlx_ lista o directório Odoo", st, &body, &admin.email);
     assert_eq!(st, 401, "{body}");
     let r = app
         .raw(
             reqwest::Method::GET,
-            "/api/v1/integration/odoo/users",
+            "/api/integrations/odoo/v1/users",
             &[("x-integration-token", &dlx)],
             None,
         )
@@ -257,7 +300,7 @@ async fn odoo_integration_routes_refuse_tenant_api_key(db: sqlx::PgPool) {
     assert_eq!(r.status, 401, "{}", r.text);
     let (st, body) = app
         .post(
-            "/api/v1/integration/odoo/provision",
+            "/api/integrations/odoo/v1/provision",
             Some(&dlx),
             json!({"company": "Capturada", "admin_email": admin.email, "users": []}),
         )
@@ -267,19 +310,19 @@ async fn odoo_integration_routes_refuse_tenant_api_key(db: sqlx::PgPool) {
     // Controlo positivo: o token de integração `dlxo_` abre as duas.
     let (st, tok) = app
         .post(
-            &format!("/api/orgs/{}/integration/odoo/token", admin.org()),
+            &format!("/api/orgs/{}/integrations/odoo/rotate-token", admin.org()),
             Some(&admin.token),
             json!({}),
         )
         .await;
     assert_eq!(st, 200, "{tok}");
     let dlxo = tok["token"].as_str().unwrap();
-    let (st, body) = app.get("/api/v1/integration/odoo/users", Some(dlxo)).await;
+    let (st, body) = app.get("/api/integrations/odoo/v1/users", Some(dlxo)).await;
     assert_eq!(st, 200, "{body}");
     assert!(body.to_string().contains(&admin.email), "{body}");
     let (st, body) = app
         .post(
-            "/api/v1/integration/odoo/provision",
+            "/api/integrations/odoo/v1/provision",
             Some(dlxo),
             json!({"company": "Org zeta-odoo.ao", "admin_email": admin.email, "users": []}),
         )
@@ -287,7 +330,7 @@ async fn odoo_integration_routes_refuse_tenant_api_key(db: sqlx::PgPool) {
     assert_eq!(st, 200, "{body}");
 }
 
-/// R143 — `GET /api/v1/integration/odoo/users` devolvia ao Odoo membros
+/// R143 — `GET /api/integrations/odoo/v1/users` devolvia ao Odoo membros
 /// ARQUIVADOS (saídos da empresa) como se ainda lá estivessem.
 #[sqlx::test(migrations = "./migrations")]
 async fn odoo_list_users_excludes_archived_members(db: sqlx::PgPool) {
@@ -297,7 +340,7 @@ async fn odoo_list_users_excludes_archived_members(db: sqlx::PgPool) {
     let stays = app.add_member(&admin, "fica", "member").await;
     let (st, tok) = app
         .post(
-            &format!("/api/orgs/{}/integration/odoo/token", admin.org()),
+            &format!("/api/orgs/{}/integrations/odoo/rotate-token", admin.org()),
             Some(&admin.token),
             json!({}),
         )
@@ -306,13 +349,13 @@ async fn odoo_list_users_excludes_archived_members(db: sqlx::PgPool) {
     let dlxo = tok["token"].as_str().unwrap();
 
     // Controlo positivo: antes de sair, está na lista.
-    let (st, body) = app.get("/api/v1/integration/odoo/users", Some(dlxo)).await;
+    let (st, body) = app.get("/api/integrations/odoo/v1/users", Some(dlxo)).await;
     assert_eq!(st, 200, "{body}");
     assert!(body.to_string().contains(&gone.email), "{body}");
 
     app.archive_member(admin.org(), &gone.user_id).await;
 
-    let (st, body) = app.get("/api/v1/integration/odoo/users", Some(dlxo)).await;
+    let (st, body) = app.get("/api/integrations/odoo/v1/users", Some(dlxo)).await;
     assert_eq!(st, 200, "{body}");
     let text = body.to_string();
     assert!(

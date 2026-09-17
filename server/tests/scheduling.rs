@@ -126,6 +126,70 @@ async fn list_meetings_for_owner_and_invitee(db: sqlx::PgPool) {
     assert_eq!(list, json!([]));
 }
 
+/// A lista junta as reuniões de que se é dono com aquelas para que se foi
+/// convidado, por `starts_at`. Um dono que também está em `meeting_invitees`
+/// (a API filtra-o ao criar, mas a base não o impede) aparece UMA vez, como
+/// `owner` — nunca com o estado do convite.
+#[sqlx::test(migrations = "./migrations")]
+async fn list_meetings_merges_owned_and_invited_without_duplicates(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let c = app.add_member(&a, "carla", "member").await;
+    let d = app.add_member(&a, "dario", "member").await;
+    let mut ids_by_title = std::collections::HashMap::new();
+    for (owner, title, hours, invitees) in [
+        (&a, "da-alfa", 3, vec![c.user_id.as_str()]),
+        (&c, "da-carla", 1, vec![a.user_id.as_str()]),
+        (&d, "do-dario", 2, vec![]),
+    ] {
+        let (st, m) = app
+            .post(
+                "/api/meetings",
+                Some(&owner.token),
+                json!({"title": title, "starts_at": in_hours(hours), "invitee_ids": invitees}),
+            )
+            .await;
+        assert_eq!(st, 200, "{m}");
+        ids_by_title.insert(title, m["id"].as_str().unwrap().to_string());
+    }
+    let own = &ids_by_title["da-alfa"];
+    let theirs = &ids_by_title["da-carla"];
+    sqlx::query(
+        "INSERT INTO meeting_invitees (meeting_id, user_id, status) VALUES ($1::uuid, $2::uuid, 'declined')",
+    )
+    .bind(own)
+    .bind(&a.user_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE meeting_invitees SET status = 'accepted' WHERE meeting_id = $1::uuid AND user_id = $2::uuid",
+    )
+    .bind(own)
+    .bind(&c.user_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    let (st, list) = app.get("/api/meetings", Some(&a.token)).await;
+    assert_eq!(st, 200, "{list}");
+    assert_eq!(ids(&list), vec![theirs.clone(), own.clone()]);
+    assert_eq!(list[0]["is_owner"], false);
+    assert_eq!(list[0]["my_status"], "pending");
+    assert_eq!(list[0]["owner_name"], "carla-alfa.test");
+    assert_eq!(list[1]["is_owner"], true);
+    assert_eq!(list[1]["my_status"], "owner");
+
+    let (_, list) = app.get("/api/meetings", Some(&c.token)).await;
+    assert_eq!(ids(&list), vec![theirs.clone(), own.clone()]);
+    assert_eq!(list[0]["my_status"], "owner");
+    assert_eq!(list[1]["my_status"], "accepted");
+
+    // Só a de que é dono: não foi convidado para nenhuma.
+    let (_, list) = app.get("/api/meetings", Some(&d.token)).await;
+    assert_eq!(ids(&list), vec![ids_by_title["do-dario"].clone()]);
+}
+
 /// DÍVIDA: `meetings::generate_instances` tem um erro de um em
 /// `recurrence_count`. Com `count = 3` gera o pai + TRÊS filhas (4 ocorrências):
 /// o ramo `occurs.len() >= max - 1` só dispara depois de já ter empurrado
@@ -161,14 +225,14 @@ async fn recurring_meeting_current_behavior_count_off_by_one(db: sqlx::PgPool) {
 async fn meeting_quota_is_enforced(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
-    let (st, _) = app
-        .post(
-            &format!("/api/orgs/{}/settings", a.org()),
+    let (st, body) = app
+        .patch(
+            &format!("/api/orgs/{}", a.org()),
             Some(&a.token),
             json!({"max_meetings": 1}),
         )
         .await;
-    assert_eq!(st, 200);
+    assert_eq!(st, 200, "{body}");
     app.new_meeting(&a, "primeira", &[]).await;
     let (st, body) = app
         .post(
@@ -212,7 +276,7 @@ async fn conflicts_for_participants_and_physical_room(db: sqlx::PgPool) {
     let probe = (start + Duration::minutes(30)).to_rfc3339();
     let (st, cf) = app
         .post(
-            "/api/meetings/conflicts",
+            "/api/meetings/check-conflicts",
             Some(&c.token),
             json!({"starts_at": probe, "duration_min": 15, "room_ref": room["id"]}),
         )
@@ -226,7 +290,7 @@ async fn conflicts_for_participants_and_physical_room(db: sqlx::PgPool) {
     let after = (start + Duration::minutes(60)).to_rfc3339();
     let (_, cf) = app
         .post(
-            "/api/meetings/conflicts",
+            "/api/meetings/check-conflicts",
             t,
             json!({"starts_at": after, "room_ref": room["id"]}),
         )
@@ -263,15 +327,39 @@ async fn delete_meeting_only_by_owner(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let c = app.add_member(&a, "carla", "member").await;
+    let d = app.add_member(&a, "dario", "member").await;
+    let b = app.new_org("beta.test").await;
     let m = app.new_meeting(&a, "Apagar", &[&c.user_id]).await;
     let path = format!("/api/meetings/{}", m["id"].as_str().unwrap());
+
+    // Leitura por id (rota nova): dono e convidado 200; colega não convidado,
+    // outra org e id inventado 404 (sem dizer que existe); anónimo 401.
+    for who in [&a, &c] {
+        let (st, got) = app.get(&path, Some(&who.token)).await;
+        assert_eq!(st, 200, "{}: {got}", who.email);
+        assert_eq!(got["id"], m["id"]);
+        assert_eq!(got["title"], "Apagar");
+    }
+    for who in [&d, &b] {
+        let (st, body) = app.get(&path, Some(&who.token)).await;
+        assert_eq!(st, 404, "{}: {body}", who.email);
+        assert_denied("GET reunião alheia", st, &body, "Apagar");
+    }
+    let (st, _) = app
+        .get(&format!("/api/meetings/{INVENTED_ID}"), Some(&a.token))
+        .await;
+    assert_eq!(st, 404);
+    let (st, _) = app.get(&path, None).await;
+    assert_eq!(st, 401);
+
     let (st, _) = app.delete(&path, Some(&c.token)).await;
     assert_eq!(st, 404, "convidado não apaga");
-    let (st, body) = app.delete(&path, Some(&a.token)).await;
-    assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    let (st, _) = app.delete(&path, Some(&a.token)).await;
+    assert_eq!(st, 204);
     let (st, _) = app.delete(&path, Some(&a.token)).await;
     assert_eq!(st, 404);
+    let (st, _) = app.get(&path, Some(&a.token)).await;
+    assert_eq!(st, 404, "apagada deixa de se ler");
     let (_, list) = app.get("/api/meetings", Some(&c.token)).await;
     assert_eq!(list, json!([]));
 }
@@ -328,7 +416,11 @@ async fn start_meeting_creates_room_once(db: sqlx::PgPool) {
     .unwrap();
     assert_eq!(missed, 1);
     let (st, body) = app
-        .post("/api/missed-calls/ack", Some(&c.token), json!({}))
+        .post(
+            "/api/users/me/missed-calls/acknowledge",
+            Some(&c.token),
+            json!({}),
+        )
         .await;
     assert_eq!(st, 200);
     assert_eq!(body, json!({"ok": true}));
@@ -361,7 +453,7 @@ async fn ics_export(db: sqlx::PgPool) {
         let r = app
             .raw(
                 reqwest::Method::GET,
-                &format!("/api/meetings/{id}/ics"),
+                &format!("/api/meetings/{id}/calendar.ics"),
                 &[("Authorization", &format!("Bearer {tok}"))],
                 None,
             )
@@ -385,12 +477,17 @@ async fn ics_export(db: sqlx::PgPool) {
             r.text
         );
     }
-    let (st, _) = app
-        .get(&format!("/api/meetings/{id}/ics"), Some(&d.token))
+    // Quem não é dono nem convidado não fica a saber que a reunião existe.
+    let (st, body) = app
+        .get(&format!("/api/meetings/{id}/calendar.ics"), Some(&d.token))
         .await;
-    assert_eq!(st, 401);
+    assert_eq!(st, 404);
+    assert_denied("ics de reunião alheia", st, &body, "Plano");
     let (st, _) = app
-        .get(&format!("/api/meetings/{INVENTED_ID}/ics"), Some(&a.token))
+        .get(
+            &format!("/api/meetings/{INVENTED_ID}/calendar.ics"),
+            Some(&a.token),
+        )
         .await;
     assert_eq!(st, 404);
 }
@@ -410,7 +507,7 @@ async fn invitees_and_respond(db: sqlx::PgPool) {
         .await;
     let id = m["id"].as_str().unwrap();
     let inv = format!("/api/meetings/{id}/invitees");
-    let resp = format!("/api/meetings/{id}/respond");
+    let resp = format!("/api/meetings/{id}/invitees/me");
 
     let (st, list) = app.get(&inv, Some(&a.token)).await;
     assert_eq!(st, 200);
@@ -432,20 +529,20 @@ async fn invitees_and_respond(db: sqlx::PgPool) {
     assert_eq!(st, 404);
 
     let (st, _) = app
-        .post(&resp, Some(&c.token), json!({"status": "maybe"}))
+        .put(&resp, Some(&c.token), json!({"status": "maybe"}))
         .await;
     assert_eq!(st, 400);
     let (st, body) = app
-        .post(&resp, Some(&d.token), json!({"status": "declined"}))
+        .put(&resp, Some(&d.token), json!({"status": "declined"}))
         .await;
     assert_eq!(st, 400, "recusa sem motivo: {body}");
     let (st, body) = app
-        .post(&resp, Some(&c.token), json!({"status": "accepted"}))
+        .put(&resp, Some(&c.token), json!({"status": "accepted"}))
         .await;
     assert_eq!(st, 200);
     assert_eq!(body, json!({"ok": true}));
     let (st, _) = app
-        .post(
+        .put(
             &resp,
             Some(&d.token),
             json!({"status": "declined", "reason": " férias "}),
@@ -454,7 +551,7 @@ async fn invitees_and_respond(db: sqlx::PgPool) {
     assert_eq!(st, 200);
     // O anfitrião não é convidado: 404.
     let (st, _) = app
-        .post(&resp, Some(&a.token), json!({"status": "accepted"}))
+        .put(&resp, Some(&a.token), json!({"status": "accepted"}))
         .await;
     assert_eq!(st, 404);
 
@@ -485,7 +582,7 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
     let id = m["id"].as_str().unwrap();
 
     let (st, body) = app
-        .post(
+        .put(
             &format!("/api/meetings/{id}/minutes"),
             Some(&c.token),
             json!({"minutes": "  decisões  ", "transcript": "t"}),
@@ -493,7 +590,7 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200, "o convidado escreve a acta: {body}");
     let (st, _) = app
-        .post(
+        .put(
             &format!("/api/meetings/{id}/minutes"),
             Some(&d.token),
             json!({"minutes": "forjada"}),
@@ -513,7 +610,7 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
         .await;
     let code = s["code"].as_str().unwrap();
     let (st, _) = app
-        .post(
+        .put(
             &format!("/api/rooms/{code}/minutes"),
             Some(&a.token),
             json!({"minutes": "pela sala", "transcript": "tx"}),
@@ -521,22 +618,26 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200);
     let (st, _) = app
-        .post(
+        .put(
             &format!("/api/rooms/{code}/minutes"),
             Some(&d.token),
             json!({"minutes": "forjada"}),
         )
         .await;
     assert_eq!(st, 404);
-    // GET na rota de acta por sala não existe.
+    // A escrita é `PUT` (singleton): o `POST` antigo já não existe.
     let (st, _) = app
-        .get(&format!("/api/rooms/{code}/minutes"), Some(&a.token))
+        .post(
+            &format!("/api/rooms/{code}/minutes"),
+            Some(&a.token),
+            json!({"minutes": "pelo método antigo"}),
+        )
         .await;
     assert_eq!(st, 405);
 
-    // Notas: só quem PARTICIPOU (join) na sala.
+    // Leitura (`GET …/minutes`, antes `/notes`): só quem PARTICIPOU (join) na sala.
     let (st, _) = app
-        .get(&format!("/api/rooms/{code}/notes"), Some(&a.token))
+        .get(&format!("/api/rooms/{code}/minutes"), Some(&a.token))
         .await;
     assert_eq!(st, 401, "arrancar não é participar");
     let (st, _) = app
@@ -548,7 +649,7 @@ async fn minutes_by_id_and_by_room_and_notes(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200);
     let (st, notes) = app
-        .get(&format!("/api/rooms/{code}/notes"), Some(&a.token))
+        .get(&format!("/api/rooms/{code}/minutes"), Some(&a.token))
         .await;
     assert_eq!(st, 200);
     assert_eq!(
@@ -568,7 +669,7 @@ async fn agenda_crud_and_permissions(db: sqlx::PgPool) {
     let c = app.add_member(&a, "carla", "member").await;
     let d = app.add_member(&a, "dario", "member").await;
     let m = app.new_meeting(&a, "Agenda", &[&c.user_id]).await;
-    let base = format!("/api/meetings/{}/agenda", m["id"].as_str().unwrap());
+    let base = format!("/api/meetings/{}/agenda-items", m["id"].as_str().unwrap());
 
     let (st, list) = app.get(&base, Some(&c.token)).await;
     assert_eq!(st, 200);
@@ -700,7 +801,7 @@ async fn action_plan_crud_and_permissions(db: sqlx::PgPool) {
     assert_eq!(it["status"], "todo");
     assert_eq!(it["position"], 1);
     assert_eq!(it["when_date"], "2030-05-01");
-    let item = format!("/api/action-items/{}", it["id"].as_str().unwrap());
+    let item = format!("{items}/{}", it["id"].as_str().unwrap());
 
     // Convidado muda o estado, não o conteúdo.
     let (st, x) = app
@@ -729,7 +830,7 @@ async fn action_plan_crud_and_permissions(db: sqlx::PgPool) {
     assert_eq!(x["status"], "done");
     let (st, _) = app
         .patch(
-            &format!("/api/action-items/{INVENTED_ID}"),
+            &format!("{items}/{INVENTED_ID}"),
             Some(&a.token),
             json!({"status": "done"}),
         )
@@ -739,10 +840,36 @@ async fn action_plan_crud_and_permissions(db: sqlx::PgPool) {
     let (_, p) = app.get(&plan, Some(&a.token)).await;
     assert_eq!(p["items"].as_array().unwrap().len(), 1);
 
+    // O item tem de ser DESTA reunião: com o id de outra reunião do mesmo
+    // dono, 404 — e o item não muda.
+    let other = app.new_meeting(&a, "outra", &[]).await;
+    let foreign_path = format!(
+        "/api/meetings/{}/action-plan/items/{}",
+        other["id"].as_str().unwrap(),
+        it["id"].as_str().unwrap()
+    );
+    let (st, body) = app
+        .patch(&foreign_path, Some(&a.token), json!({"what": "desviado"}))
+        .await;
+    assert_eq!(st, 404, "item de outra reunião: {body}");
+    let (st, _) = app.delete(&foreign_path, Some(&a.token)).await;
+    assert_eq!(st, 404);
+
+    let (_, p) = app.get(&plan, Some(&a.token)).await;
+    assert_eq!(p["items"][0]["what"], "Assinar");
+
     let (st, _) = app.delete(&item, Some(&c.token)).await;
     assert_eq!(st, 403);
-    let (st, _) = app.delete(&item, Some(&a.token)).await;
-    assert_eq!(st, 200);
+    let r = app
+        .raw(
+            reqwest::Method::DELETE,
+            &item,
+            &[("Authorization", &format!("Bearer {}", a.token))],
+            None,
+        )
+        .await;
+    assert_eq!(r.status, 204);
+    assert_eq!(r.text, "", "204 sem corpo");
     let (st, _) = app.delete(&item, Some(&a.token)).await;
     assert_eq!(st, 404);
 }
@@ -763,12 +890,15 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
 
     let (_, ag) = app
         .post(
-            &format!("/api/meetings/{id}/agenda"),
+            &format!("/api/meetings/{id}/agenda-items"),
             Some(&b.token),
             json!({"topic": "tópico da B"}),
         )
         .await;
-    let ag_item = format!("/api/meetings/{id}/agenda/{}", ag["id"].as_str().unwrap());
+    let ag_item = format!(
+        "/api/meetings/{id}/agenda-items/{}",
+        ag["id"].as_str().unwrap()
+    );
 
     let checks: Vec<(u16, Value, &str)> = vec![
         {
@@ -776,8 +906,12 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
             (s, v, "DELETE")
         },
         {
+            let (s, v) = app.get(&format!("/api/meetings/{id}"), t).await;
+            (s, v, "GET")
+        },
+        {
             let (s, v) = app
-                .post(
+                .put(
                     &format!("/api/meetings/{id}/minutes"),
                     t,
                     json!({"minutes": "acta forjada"}),
@@ -786,13 +920,15 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
             (s, v, "minutes")
         },
         {
-            let (s, v) = app.get(&format!("/api/meetings/{id}/agenda"), t).await;
+            let (s, v) = app
+                .get(&format!("/api/meetings/{id}/agenda-items"), t)
+                .await;
             (s, v, "agenda")
         },
         {
             let (s, v) = app
                 .post(
-                    &format!("/api/meetings/{id}/agenda"),
+                    &format!("/api/meetings/{id}/agenda-items"),
                     t,
                     json!({"topic": "forjado"}),
                 )
@@ -836,13 +972,15 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
             (s, v, "action-plan items")
         },
         {
-            let (s, v) = app.get(&format!("/api/meetings/{id}/ics"), t).await;
+            let (s, v) = app
+                .get(&format!("/api/meetings/{id}/calendar.ics"), t)
+                .await;
             (s, v, "ics")
         },
         {
             let (s, v) = app
-                .post(
-                    &format!("/api/meetings/{id}/respond"),
+                .put(
+                    &format!("/api/meetings/{id}/invitees/me"),
                     t,
                     json!({"status": "accepted"}),
                 )
@@ -858,6 +996,9 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
     ];
     for (st, body, what) in checks {
         assert_denied(what, st, &body, leak);
+        // Não é só «não-2xx»: um 405 queria dizer que o teste bateu no método
+        // errado e não provou nada.
+        assert_ne!(st, 405, "{what}: método errado no teste");
     }
 
     // O estado da B sobreviveu a tudo.
@@ -866,7 +1007,7 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
     assert_eq!(list[0]["minutes"], "");
     assert!(list[0]["room_code"].is_null(), "A não arrancou a reunião");
     let (_, agenda) = app
-        .get(&format!("/api/meetings/{id}/agenda"), Some(&b.token))
+        .get(&format!("/api/meetings/{id}/agenda-items"), Some(&b.token))
         .await;
     assert_eq!(agenda[0]["done"], false);
     let (_, plan) = app
@@ -897,14 +1038,33 @@ async fn patch_action_item_refuses_session_from_other_org(db: sqlx::PgPool) {
             json!({"what": "segredo comercial da B"}),
         )
         .await;
+    let item_id = it["id"].as_str().unwrap();
+    // Pelo caminho da reunião da B...
     let (st, body) = app
         .patch(
-            &format!("/api/action-items/{}", it["id"].as_str().unwrap()),
+            &format!(
+                "/api/meetings/{}/action-plan/items/{item_id}",
+                m["id"].as_str().unwrap()
+            ),
             Some(&a.token),
             json!({"done": true}),
         )
         .await;
     assert!(!(200..300).contains(&st), "{st} {body}");
+    assert!(!body.to_string().contains("segredo comercial"), "{body}");
+    // ... e pelo caminho de uma reunião da própria A com o id do item da B.
+    let own = app.new_meeting(&a, "reunião da A", &[]).await;
+    let (st, body) = app
+        .patch(
+            &format!(
+                "/api/meetings/{}/action-plan/items/{item_id}",
+                own["id"].as_str().unwrap()
+            ),
+            Some(&a.token),
+            json!({"done": true}),
+        )
+        .await;
+    assert_eq!(st, 404, "{body}");
     assert!(!body.to_string().contains("segredo comercial"), "{body}");
 }
 
@@ -925,7 +1085,7 @@ async fn create_meeting_current_behavior_accepts_foreign_org_invitee(db: sqlx::P
     assert_eq!(ids(&list), vec![id]);
     assert_eq!(list[0]["title"], "convite atravessado");
     let (st, _) = app
-        .get(&format!("/api/meetings/{id}/agenda"), Some(&b.token))
+        .get(&format!("/api/meetings/{id}/agenda-items"), Some(&b.token))
         .await;
     assert_eq!(st, 200);
 }
@@ -947,22 +1107,211 @@ async fn quarantine_analytics(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 200);
+    let path = format!("/api/orgs/{}/analytics/quarantine", a.org());
     let (st, rows) = app
-        .get("/api/quarantine/analytics?period=week", Some(&a.token))
+        .get(&format!("{path}?period=week"), Some(&a.token))
         .await;
     assert_eq!(st, 200, "{rows}");
     assert_eq!(rows[0]["user_id"], c.user_id.as_str());
     assert_eq!(rows[0]["count"], 1);
-    // Membro sem admin: lista vazia (não erro).
-    let (st, rows) = app.get("/api/quarantine/analytics", Some(&c.token)).await;
-    assert_eq!(st, 200);
-    assert_eq!(rows, json!([]));
-    // org_id de outra org: 404.
-    let (st, _) = app
+    // Sem `period`: mês por omissão, e o mesmo resultado.
+    let (st, rows) = app.get(&path, Some(&a.token)).await;
+    assert_eq!(st, 200, "{rows}");
+    assert_eq!(rows[0]["user_id"], c.user_id.as_str());
+    // Membro sem papel de admin: 403.
+    let (st, body) = app.get(&path, Some(&c.token)).await;
+    assert_eq!(st, 403, "{body}");
+    assert_denied("quarentena para membro", st, &body, &c.user_id);
+    // Não-membro (admin de outra org) pelo caminho da A: 404, sem fuga.
+    let (st, body) = app.get(&path, Some(&b.token)).await;
+    assert_eq!(st, 404, "{body}");
+    assert_denied("quarentena da A para a B", st, &body, &c.user_id);
+    // Controlo positivo da B: a org dela responde, e vazia.
+    let (st, rows) = app
         .get(
-            &format!("/api/quarantine/analytics?org_id={}", b.org()),
-            Some(&a.token),
+            &format!("/api/orgs/{}/analytics/quarantine", b.org()),
+            Some(&b.token),
         )
         .await;
-    assert_eq!(st, 404);
+    assert_eq!(st, 200);
+    assert_eq!(rows, json!([]));
+}
+
+async fn quarantined(db: &sqlx::PgPool) -> Vec<(String, String)> {
+    sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid)>(
+        "SELECT user_id, meeting_id FROM meet_quarantine ORDER BY 1, 2",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(u, m)| (u.to_string(), m.to_string()))
+    .collect()
+}
+
+/// A lista de reuniões não escreve na base. Antes, cada `GET /api/meetings`
+/// varria a quarentena de TODAS as organizações (1,2-1,8 s com 287 000
+/// convidados) sem ler o resultado.
+#[sqlx::test(migrations = "./migrations")]
+async fn meeting_list_does_not_sweep_quarantine(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let c = app.add_member(&a, "carla", "member").await;
+    let (st, m) = app
+        .post(
+            "/api/meetings",
+            Some(&a.token),
+            json!({"title": "passada", "starts_at": (Utc::now() - Duration::hours(1)).to_rfc3339(),
+                   "invitee_ids": [c.user_id]}),
+        )
+        .await;
+    assert_eq!(st, 200, "{m}");
+    for token in [&a.token, &c.token] {
+        let (st, list) = app.get("/api/meetings", Some(token)).await;
+        assert_eq!(st, 200, "{list}");
+        assert_eq!(ids(&list), vec![m["id"].as_str().unwrap()]);
+    }
+    assert_eq!(quarantined(&app.db).await, vec![]);
+    // Controlo positivo: a mesma linha É candidata — a varredura global marca-a.
+    let n = delonix_server::quarantine_sweep(&app.db).await.unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(
+        quarantined(&app.db).await,
+        vec![(c.user_id.clone(), m["id"].as_str().unwrap().to_string())]
+    );
+}
+
+/// A analítica só marca o que ela própria lê: membros da org pedida, reuniões
+/// começadas no período. A outra org e o que ficou fora do período esperam
+/// pela tarefa de fundo. Quem responde sai e não volta a entrar.
+#[sqlx::test(migrations = "./migrations")]
+async fn quarantine_analytics_sweeps_only_its_org_and_period(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let b = app.new_org("beta.test").await;
+    let ca = app.add_member(&a, "carla", "member").await;
+    let da = app.add_member(&a, "dario", "member").await;
+    let cb = app.add_member(&b, "bruno", "member").await;
+    let meeting = |token: String, hours_ago: i64, invitees: Vec<String>| {
+        let app = &app;
+        async move {
+            let (st, m) = app
+                .post(
+                    "/api/meetings",
+                    Some(&token),
+                    json!({"title": "passada",
+                           "starts_at": (Utc::now() - Duration::hours(hours_ago)).to_rfc3339(),
+                           "invitee_ids": invitees}),
+                )
+                .await;
+            assert_eq!(st, 200, "{m}");
+            m["id"].as_str().unwrap().to_string()
+        }
+    };
+    let recent = meeting(
+        a.token.clone(),
+        1,
+        vec![ca.user_id.clone(), da.user_id.clone()],
+    )
+    .await;
+    let old = meeting(a.token.clone(), 24 * 20, vec![ca.user_id.clone()]).await;
+    let other_org = meeting(b.token.clone(), 1, vec![cb.user_id.clone()]).await;
+    let future = {
+        let (st, m) = app
+            .post(
+                "/api/meetings",
+                Some(&a.token),
+                json!({"title": "futura", "starts_at": (Utc::now() + Duration::hours(2)).to_rfc3339(),
+                       "invitee_ids": [ca.user_id]}),
+            )
+            .await;
+        assert_eq!(st, 200, "{m}");
+        m["id"].as_str().unwrap().to_string()
+    };
+
+    // O Dario responde antes de a analítica correr: não entra.
+    let (st, body) = app
+        .put(
+            &format!("/api/meetings/{recent}/invitees/me"),
+            Some(&da.token),
+            json!({"status": "accepted"}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+
+    // Um membro sem papel de admin é recusado ANTES de a base ser escrita.
+    let path = format!("/api/orgs/{}/analytics/quarantine", a.org());
+    let (st, _) = app
+        .get(&format!("{path}?period=week"), Some(&ca.token))
+        .await;
+    assert_eq!(st, 403);
+    assert_eq!(quarantined(&app.db).await, vec![]);
+
+    let (st, rows) = app
+        .get(&format!("{path}?period=week"), Some(&a.token))
+        .await;
+    assert_eq!(st, 200, "{rows}");
+    assert_eq!(
+        rows,
+        json!([{"user_id": ca.user_id, "username": "carla-alfa.test", "count": 1}])
+    );
+    assert_eq!(
+        quarantined(&app.db).await,
+        vec![(ca.user_id.clone(), recent.clone())]
+    );
+
+    // Mês: a reunião de há 20 dias entra agora, e conta.
+    let (st, rows) = app.get(&path, Some(&a.token)).await;
+    assert_eq!(st, 200, "{rows}");
+    assert_eq!(rows[0]["count"], 2, "{rows}");
+
+    // A org B e a reunião futura ficaram de fora; a varredura global apanha a B.
+    let mut expected = vec![
+        (ca.user_id.clone(), recent.clone()),
+        (ca.user_id.clone(), old.clone()),
+    ];
+    expected.sort();
+    assert_eq!(quarantined(&app.db).await, expected);
+    assert_eq!(delonix_server::quarantine_sweep(&app.db).await.unwrap(), 1);
+    let all = quarantined(&app.db).await;
+    assert!(all.contains(&(cb.user_id.clone(), other_org)), "{all:?}");
+    assert!(!all.iter().any(|(_, m)| *m == future), "{all:?}");
+    // Idempotente: a segunda passagem não acrescenta nada.
+    assert_eq!(delonix_server::quarantine_sweep(&app.db).await.unwrap(), 0);
+}
+
+/// A tarefa de fundo passa logo ao arrancar e pára quando o token é cancelado.
+#[sqlx::test(migrations = "./migrations")]
+async fn quarantine_sweeper_runs_and_stops_on_cancel(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let c = app.add_member(&a, "carla", "member").await;
+    let (st, m) = app
+        .post(
+            "/api/meetings",
+            Some(&a.token),
+            json!({"title": "passada", "starts_at": (Utc::now() - Duration::hours(1)).to_rfc3339(),
+                   "invitee_ids": [c.user_id]}),
+        )
+        .await;
+    assert_eq!(st, 200, "{m}");
+    let stop = tokio_util::sync::CancellationToken::new();
+    let task = tokio::spawn(delonix_server::run_quarantine_sweeper(
+        app.db.clone(),
+        std::time::Duration::from_secs(3600),
+        stop.clone(),
+    ));
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while quarantined(&app.db).await.is_empty() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "a primeira passagem não correu"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    stop.cancel();
+    tokio::time::timeout(std::time::Duration::from_secs(5), task)
+        .await
+        .expect("a tarefa não parou com o cancelamento")
+        .unwrap();
 }

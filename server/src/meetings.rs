@@ -43,6 +43,7 @@ pub struct Meeting {
 #[openapi(
     paths(
         list,
+        get_one,
         create,
         check_conflicts,
         delete,
@@ -245,19 +246,82 @@ async fn detect_conflicts(
 }
 
 /// Marca em quarentena quem não respondeu (ainda 'pending') a reuniões que
-/// já começaram. Idempotente. Corre periodicamente (cron) e também antes de
-/// leituras relevantes como backstop.
+/// já começaram, em toda a base. Idempotente. Corre só na tarefa de fundo
+/// (`run_quarantine_sweeper`): NUNCA num handler, porque o custo cresce com
+/// todos os convidados que nunca responderam (medido a 2026-09-17: 1,2-1,8 s
+/// com 287 000 convidados, e corria em cada `GET /api/meetings`).
+///
+/// O `NOT EXISTS` filtra antes de inserir o que já está em quarentena: o
+/// `ON CONFLICT` sozinho pagava uma inserção especulativa por linha repetida
+/// (48 000 por passagem). Fica na mesma para a corrida entre réplicas.
+///
+/// Não é incremental por `starts_at` de propósito: uma reunião criada com
+/// início no passado, ou remarcada para trás pela v1, nunca entraria numa
+/// janela «desde a última passagem».
 pub async fn quarantine_sweep(db: &sqlx::PgPool) -> Result<u64, ApiError> {
     let res = sqlx::query(
         "INSERT INTO meet_quarantine (user_id, meeting_id)
          SELECT i.user_id, i.meeting_id FROM meeting_invitees i
          JOIN meetings m ON m.id = i.meeting_id
          WHERE i.status = 'pending' AND m.starts_at < now()
+           AND NOT EXISTS (
+                 SELECT 1 FROM meet_quarantine q
+                 WHERE q.user_id = i.user_id AND q.meeting_id = i.meeting_id)
          ON CONFLICT DO NOTHING",
     )
     .execute(db)
     .await?;
     Ok(res.rows_affected())
+}
+
+/// A mesma marcação, limitada ao que `quarantine_analytics` lê: membros da
+/// organização e reuniões começadas nos últimos `days` dias. Deixa a
+/// analítica exacta sem esperar pela tarefa de fundo, a um custo que depende
+/// da organização e não da base inteira (5-26 ms nas orgs maiores da base
+/// semeada).
+async fn quarantine_sweep_org(db: &sqlx::PgPool, org_id: Uuid, days: i32) -> Result<u64, ApiError> {
+    let in_org = crate::org::quarantine_subject_in_org_sql("$1", "i.user_id");
+    let res = sqlx::query(&format!(
+        "INSERT INTO meet_quarantine (user_id, meeting_id)
+         SELECT i.user_id, i.meeting_id FROM meeting_invitees i
+         JOIN meetings m ON m.id = i.meeting_id
+         WHERE i.status = 'pending'
+           AND m.starts_at >= now() - make_interval(days => $2)
+           AND m.starts_at < now()
+           AND {in_org}
+           AND NOT EXISTS (
+                 SELECT 1 FROM meet_quarantine q
+                 WHERE q.user_id = i.user_id AND q.meeting_id = i.meeting_id)
+         ON CONFLICT DO NOTHING"
+    ))
+    .bind(org_id)
+    .bind(days)
+    .execute(db)
+    .await?;
+    Ok(res.rows_affected())
+}
+
+/// Tarefa de fundo da quarentena: uma passagem de `quarantine_sweep` a cada
+/// `every`, a primeira logo ao arrancar. Pára quando `stop` é cancelado —
+/// entre passagens; uma passagem em curso acaba antes de sair.
+pub async fn run_quarantine_sweeper(
+    db: sqlx::PgPool,
+    every: std::time::Duration,
+    stop: tokio_util::sync::CancellationToken,
+) {
+    let mut ticker = tokio::time::interval(every);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = stop.cancelled() => break,
+            _ = ticker.tick() => {}
+        }
+        match quarantine_sweep(&db).await {
+            Ok(n) if n > 0 => tracing::info!(added = n, "quarantine sweep"),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "quarantine sweep failed"),
+        }
+    }
 }
 
 /// A reunião criada (campos de `Meeting` ao nível de topo) mais os avisos de
@@ -555,20 +619,29 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<Vec<MeetingItem>>, ApiError> {
-    quarantine_sweep(&state.db).await?;
+    // Sem varredura da quarentena aqui: esta lista não lê `meet_quarantine`.
+    // Parte dos dois índices (`meetings_owner_idx`, `meeting_invitees_user_idx`)
+    // e só depois junta `meetings`: um `WHERE m.owner_id = $1 OR i.user_id IS NOT
+    // NULL` obriga a varrer a tabela inteira. O `UNION` tira o duplicado do dono
+    // que também é convidado.
     let items: Vec<MeetingItem> = sqlx::query_as(
         r#"
+        WITH mine AS (
+            SELECT id FROM meetings WHERE owner_id = $1
+            UNION
+            SELECT meeting_id FROM meeting_invitees WHERE user_id = $1
+        )
         SELECT m.id, m.owner_id, u.username AS owner_name, m.title, m.description,
                m.kind, m.starts_at, m.duration_min, m.room_code,
                (m.owner_id = $1) AS is_owner, m.minutes,
                m.room_ref, mr.name AS room_name,
                CASE WHEN m.owner_id = $1 THEN 'owner' ELSE COALESCE(i.status, 'pending') END AS my_status,
                m.recurrence_freq, m.recurrence_interval, m.recurrence_parent_id
-        FROM meetings m
+        FROM mine
+        JOIN meetings m ON m.id = mine.id
         JOIN users u ON u.id = m.owner_id
         LEFT JOIN meeting_invitees i ON i.meeting_id = m.id AND i.user_id = $1
         LEFT JOIN meeting_rooms mr ON mr.id = m.room_ref
-        WHERE m.owner_id = $1 OR i.user_id IS NOT NULL
         ORDER BY m.starts_at ASC
         "#,
     )
@@ -579,11 +652,11 @@ pub async fn list(
 }
 
 #[utoipa::path(
-    delete, path = "/api/meetings/{id}", tag = "meetings",
+    delete, path = "/api/meetings/{meeting_id}", tag = "meetings",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 204, description = "Apagada."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody, description = "não existe ou não é o dono"),
     )
@@ -592,7 +665,7 @@ pub async fn delete(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     let audience = crate::notifications::meeting_audience(&state, id, auth.user_id).await;
     let res = sqlx::query("DELETE FROM meetings WHERE id = $1 AND owner_id = $2")
         .bind(id)
@@ -603,7 +676,7 @@ pub async fn delete(
         return Err(ApiError::NotFound);
     }
     crate::notifications::meeting_cancelled(&state, audience).await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -619,9 +692,9 @@ pub struct MinutesReq {
 
 /// Guarda as MoM (notas AI) numa reunião. Dono ou convidado podem guardar.
 #[utoipa::path(
-    post, path = "/api/meetings/{id}/minutes", tag = "meetings",
+    put, path = "/api/meetings/{meeting_id}/minutes", tag = "meetings",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     request_body = MinutesReq,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada). O resumo AI é gerado em segundo plano."),
@@ -672,9 +745,9 @@ pub async fn save_minutes(
 /// certo (reuniões iniciadas a partir do calendário). Usado quando se grava
 /// a partir de dentro da chamada.
 #[utoipa::path(
-    post, path = "/api/rooms/{code}/minutes", tag = "meetings",
+    put, path = "/api/rooms/{room_code}/minutes", tag = "meetings",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala")),
+    params(("room_code" = String, Path, description = "Código da sala")),
     request_body = MinutesReq,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
@@ -726,9 +799,9 @@ pub struct RoomNotes {
 /// Ata e transcrição da reunião associada a uma sala — para o leitor da
 /// biblioteca de gravações. Só participantes da sala têm acesso.
 #[utoipa::path(
-    get, path = "/api/rooms/{code}/notes", tag = "meetings",
+    get, path = "/api/rooms/{room_code}/minutes", tag = "meetings",
     security(("session" = [])),
-    params(("code" = String, Path, description = "Código da sala")),
+    params(("room_code" = String, Path, description = "Código da sala")),
     responses(
         (status = 200, body = RoomNotes, description = "Ata da reunião mais recente da sala; campos vazios se a sala não tiver reunião"),
         (status = 401, body = crate::openapi::ErrorBody, description = "não participou na sala"),
@@ -777,14 +850,14 @@ pub struct StartResp {
 /// Arranca a reunião: cria a sala (se ainda não existe) e devolve o código.
 /// Reuniões de voz criam na mesma uma sala — o cliente entra sem vídeo.
 #[utoipa::path(
-    post, path = "/api/meetings/{id}/start", tag = "meetings",
+    post, path = "/api/meetings/{meeting_id}/start", tag = "meetings",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = StartResp),
         (status = 400, body = crate::openapi::ErrorBody, description = "um convidado tentou arrancar antes do anfitrião"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "não é dono nem convidado"),
-        (status = 404, body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não és dono nem convidado"),
     )
 )]
 pub async fn start(
@@ -874,12 +947,41 @@ pub async fn start(
     }))
 }
 
+/// Uma reunião (dono ou convidado). Recurso completo: existe `DELETE`, existe `GET`.
+#[utoipa::path(
+    get, path = "/api/meetings/{meeting_id}", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = Meeting),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não és dono nem convidado"),
+    )
+)]
+pub async fn get_one(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Meeting>, ApiError> {
+    let meeting: Option<Meeting> = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let meeting = meeting.ok_or(ApiError::NotFound)?;
+    if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(meeting))
+}
+
 /// Exportação iCalendar (roadmap "Google e Outlook Calendar"): um .ics por
 /// reunião — importa/abre no Google Calendar, Outlook, Apple Calendar, etc.
 #[utoipa::path(
-    get, path = "/api/meetings/{id}/ics", tag = "meetings",
+    get, path = "/api/meetings/{meeting_id}/calendar.ics", tag = "meetings",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = String, content_type = "text/calendar", description = "Um VEVENT iCalendar, como anexo `reuniao.ics`"),
         (status = 401, body = crate::openapi::ErrorBody, description = "não é dono nem convidado"),
@@ -898,7 +1000,8 @@ pub async fn ics(
     .fetch_one(&state.db)
     .await?;
     if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
-        return Err(ApiError::Unauthorized);
+        // Quem não é dono nem convidado não fica a saber que a reunião existe.
+        return Err(ApiError::NotFound);
     }
 
     let esc = |s: &str| {
@@ -949,7 +1052,7 @@ pub struct ConflictCheckReq {
 }
 
 #[utoipa::path(
-    post, path = "/api/meetings/conflicts", tag = "meetings",
+    post, path = "/api/meetings/check-conflicts", tag = "meetings",
     security(("session" = [])),
     request_body = ConflictCheckReq,
     responses(
@@ -995,9 +1098,9 @@ pub struct InviteeResponse {
 
 /// Lista as respostas dos convidados (só o anfitrião vê tudo).
 #[utoipa::path(
-    get, path = "/api/meetings/{id}/invitees", tag = "meetings",
+    get, path = "/api/meetings/{meeting_id}/invitees", tag = "meetings",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = Vec<InviteeResponse>),
         (status = 401, body = crate::openapi::ErrorBody, description = "não é o anfitrião"),
@@ -1041,9 +1144,9 @@ pub struct RespondReq {
 /// O convidado aceita ou recusa (recusar exige motivo). Ao recusar, o
 /// anfitrião é notificado em tempo real (se online) com o motivo.
 #[utoipa::path(
-    post, path = "/api/meetings/{id}/respond", tag = "meetings",
+    put, path = "/api/meetings/{meeting_id}/invitees/me", tag = "meetings",
     security(("session" = [])),
-    params(("id" = Uuid, Path, description = "Id da reunião")),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     request_body = RespondReq,
     responses(
         (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
@@ -1131,66 +1234,54 @@ pub struct AnalyticsQuery {
     #[serde(default = "default_period")]
     #[param(default = "month")]
     pub period: String,
-    /// Se dado, restringe a membros dessa organização (o pedinte tem de ser membro).
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
 }
 fn default_period() -> String {
     "month".into()
 }
 
-/// Ranking de quem mais fica em quarentena, no período pedido. Opcionalmente
-/// filtrado a uma organização (só membros dessa org).
+/// Ranking de quem mais fica em quarentena na organização, no período pedido.
+/// Só administradores da org.
 #[utoipa::path(
-    get, path = "/api/quarantine/analytics", tag = "meetings",
+    get, path = "/api/orgs/{org_id}/analytics/quarantine", tag = "meetings",
     security(("session" = [])),
-    params(AnalyticsQuery),
+    params(("org_id" = Uuid, Path), AnalyticsQuery),
     responses(
-        (status = 200, body = Vec<QuarantineRow>, description = "Até 100 linhas; vazio se o utilizador não administra nenhuma organização"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "com `org_id`: membro mas não administrador"),
-        (status = 404, body = crate::openapi::ErrorBody, description = "com `org_id`: não é membro"),
+        (status = 200, body = Vec<QuarantineRow>, description = "Até 100 linhas"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "membro sem papel de admin"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não é membro da organização"),
     )
 )]
 pub async fn quarantine_analytics(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
+    Path(org_id): Path<Uuid>,
     axum::extract::Query(q): axum::extract::Query<AnalyticsQuery>,
 ) -> Result<Json<Vec<QuarantineRow>>, ApiError> {
-    quarantine_sweep(&state.db).await?;
-    // Admin-only e escopado às orgs que o pedinte administra (nunca global
-    // cross-tenant): "todas" = todas as MINHAS orgs de admin.
-    let admin_orgs: Vec<Uuid> = match q.org_id {
-        Some(org_id) => {
-            crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-            vec![org_id]
-        }
-        None => crate::org::admin_orgs_of_user(&state, auth.user_id).await,
-    };
-    if admin_orgs.is_empty() {
-        return Ok(Json(vec![]));
-    }
-    let days: i64 = match q.period.as_str() {
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    let days: i32 = match q.period.as_str() {
         "week" => 7,
         "month" => 30,
         "quarter" => 90,
         "year" => 365,
         _ => 30,
     };
-    let rows: Vec<QuarantineRow> = sqlx::query_as(
+    // Depois da autorização: quem não é admin da org não põe a base a escrever.
+    quarantine_sweep_org(&state.db, org_id, days).await?;
+    let in_org = crate::org::quarantine_subject_in_org_sql("$2", "u.id");
+    let rows: Vec<QuarantineRow> = sqlx::query_as(&format!(
         "SELECT u.id AS user_id, u.username, COUNT(*) AS count
          FROM meet_quarantine mq
          JOIN users u ON u.id = mq.user_id
          JOIN meetings m ON m.id = mq.meeting_id
          WHERE m.starts_at >= now() - make_interval(days => $1::int)
-           AND EXISTS (
-                 SELECT 1 FROM org_members om
-                 WHERE om.org_id = ANY($2) AND om.user_id = u.id)
+           AND {in_org}
          GROUP BY u.id, u.username
          ORDER BY count DESC, u.username
-         LIMIT 100",
-    )
-    .bind(days as i32)
-    .bind(&admin_orgs)
+         LIMIT 100"
+    ))
+    .bind(days)
+    .bind(org_id)
     .fetch_all(&state.db)
     .await?;
     Ok(Json(rows))

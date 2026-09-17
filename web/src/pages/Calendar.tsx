@@ -700,12 +700,12 @@ function ActionPlanPanel({ meetingId, isOwner }: { meetingId: string; isOwner: b
 
   async function cycleStatus(itemId: string, current: string) {
     const next = current === 'todo' ? 'doing' : current === 'doing' ? 'done' : 'todo'
-    await patchActionItem(itemId, { status: next }).catch(() => {})
+    await patchActionItem(meetingId, itemId, { status: next }).catch(() => {})
     reload()
   }
 
   async function removeItem(itemId: string) {
-    await deleteActionItem(itemId).catch(() => {})
+    await deleteActionItem(meetingId, itemId).catch(() => {})
     reload()
   }
 

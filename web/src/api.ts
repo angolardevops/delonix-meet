@@ -213,14 +213,14 @@ export interface SsoCheckResult {
   enforce_sso: boolean
 }
 export async function ssoCheck(domain: string): Promise<SsoCheckResult> {
-  const res = await fetch(`/api/auth/sso/check?domain=${encodeURIComponent(domain)}`)
+  const res = await fetch(`/api/auth/sso/discovery?domain=${encodeURIComponent(domain)}`)
   if (!res.ok) return { sso_enabled: false, enforce_sso: false }
   return res.json()
 }
 
 /** Redireciona o browser para o IdP OIDC da organização. */
 export function ssoRedirect(domain: string) {
-  window.location.href = `/api/auth/sso/login?domain=${encodeURIComponent(domain)}`
+  window.location.href = `/api/auth/sso/authorize?domain=${encodeURIComponent(domain)}`
 }
 
 /**
@@ -264,7 +264,7 @@ export const getRoom = (code: string) => request<Room>(`/api/rooms/${code}`)
 export const joinRoom = (code: string) =>
   request<{ room: Room; room_token: string; scheduled?: boolean }>(`/api/rooms/${code}/join`, { method: 'POST' })
 
-export const iceServers = () => request<RTCConfiguration>('/api/ice')
+export const iceServers = () => request<RTCConfiguration>('/api/ice-servers')
 
 export interface ChatHistoryMsg {
   id: string
@@ -275,7 +275,7 @@ export interface ChatHistoryMsg {
 }
 
 export const roomChatHistory = (code: string) =>
-  request<ChatHistoryMsg[]>(`/api/rooms/${code}/chat`)
+  request<ChatHistoryMsg[]>(`/api/rooms/${code}/messages`)
 
 export interface Recording {
   id: string
@@ -366,7 +366,7 @@ export const listRecordings = (code: string) => request<Recording[]>(`/api/rooms
 export const recordingsLibrary = (signal?: AbortSignal) => request<RecordingItem[]>('/api/recordings', { signal })
 
 export const searchUsers = (q: string) =>
-  request<User[]>(`/api/users/search?q=${encodeURIComponent(q)}`)
+  request<User[]>(`/api/users?q=${encodeURIComponent(q)}`)
 
 /** Atualiza os próprios dados (username, password e/ou locale) e sincroniza o cache local. */
 // ---------- MFA (segundo factor por TOTP) ----------
@@ -382,7 +382,7 @@ export const mfaEstado = () => request<MfaEstado>('/api/users/me/mfa')
 
 /** Começa a inscrição. Devolve o segredo UMA vez — não há como o reler depois. */
 export const mfaInscrever = () =>
-  request<{ secret: string; otpauth_uri: string }>('/api/users/me/mfa/enrol', { method: 'POST' })
+  request<{ secret: string; otpauth_uri: string }>('/api/users/me/mfa/enroll', { method: 'POST' })
 
 /** Confirma com um código do autenticador. Devolve os códigos de recuperação,
  *  também UMA vez: a partir daqui só existe o hash deles. */
@@ -402,7 +402,7 @@ export const mfaDesactivar = (code: string) =>
 
 /** Segunda metade do login: troca o desafio + código pelos tokens de sessão. */
 export async function loginMfa(mfa_token: string, code: string): Promise<User> {
-  const t = await request<AuthOk>('/api/auth/mfa', {
+  const t = await request<AuthOk>('/api/auth/login/mfa', {
     method: 'POST',
     body: JSON.stringify({ mfa_token, code }),
   })
@@ -417,15 +417,15 @@ export async function updateMe(data: { username?: string; password?: string; loc
 }
 
 export const updateEmployee = (orgId: string, userId: string, data: { role?: string; title?: string; branch_id?: string | null }) =>
-  request<Employee>(`/api/orgs/${orgId}/employees/${userId}`, { method: 'PATCH', body: JSON.stringify(data) })
+  request<Employee>(`/api/orgs/${orgId}/members/${userId}`, { method: 'PATCH', body: JSON.stringify(data) })
 
 export const shareRecording = (id: string, userId: string) =>
-  request(`/api/recordings/${id}/share`, { method: 'POST', body: JSON.stringify({ user_id: userId }) })
+  request(`/api/recordings/${id}/shares`, { method: 'POST', body: JSON.stringify({ user_id: userId }) })
 
-export const listRecordingShares = (id: string) => request<User[]>(`/api/recordings/${id}/share`)
+export const listRecordingShares = (id: string) => request<User[]>(`/api/recordings/${id}/shares`)
 
 export const unshareRecording = (id: string, userId: string) =>
-  request(`/api/recordings/${id}/share/${userId}`, { method: 'DELETE' })
+  request(`/api/recordings/${id}/shares/${userId}`, { method: 'DELETE' })
 
 export interface ShareLink {
   id: string
@@ -436,16 +436,16 @@ export interface ShareLink {
 }
 
 export const getRecordingLink = (id: string) =>
-  request<ShareLink | null>(`/api/recordings/${id}/link`)
+  request<ShareLink | null>(`/api/recordings/${id}/public-link`)
 
 export const createRecordingLink = (id: string, opts: { password?: string; expires_at?: string | null }) =>
-  request<ShareLink>(`/api/recordings/${id}/link`, {
-    method: 'POST',
+  request<ShareLink>(`/api/recordings/${id}/public-link`, {
+    method: 'PUT',
     body: JSON.stringify(opts),
   })
 
 export const revokeRecordingLink = (id: string) =>
-  request(`/api/recordings/${id}/link`, { method: 'DELETE' })
+  request(`/api/recordings/${id}/public-link`, { method: 'DELETE' })
 
 export interface PublicShareInfo {
   recording_id: string
@@ -457,7 +457,7 @@ export interface PublicShareInfo {
 }
 
 export async function getPublicShare(token: string, password?: string): Promise<PublicShareInfo> {
-  const url = `/api/share/${token}${password ? `?password=${encodeURIComponent(password)}` : ''}`
+  const url = `/api/public/recordings/${token}${password ? `?password=${encodeURIComponent(password)}` : ''}`
   const res = await fetch(url, { credentials: 'same-origin' })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
@@ -467,7 +467,7 @@ export async function getPublicShare(token: string, password?: string): Promise<
 }
 
 export const inviteToRoom = (code: string, targets: string[], kind: 'video' | 'voice' = 'video') =>
-  request<{ ringing: string[]; offline: string[] }>(`/api/rooms/${code}/invite`, {
+  request<{ ringing: string[]; offline: string[] }>(`/api/rooms/${code}/invitations`, {
     method: 'POST',
     body: JSON.stringify({ targets, kind }),
   })
@@ -494,7 +494,7 @@ export const checkConflicts = (body: {
   duration_min: number
   invitee_ids: string[]
   room_ref?: string | null
-}) => request<Conflicts>('/api/meetings/conflicts', { method: 'POST', body: JSON.stringify(body) })
+}) => request<Conflicts>('/api/meetings/check-conflicts', { method: 'POST', body: JSON.stringify(body) })
 
 export const deleteMeeting = (id: string) => request(`/api/meetings/${id}`, { method: 'DELETE' })
 
@@ -502,12 +502,12 @@ export const startMeeting = (id: string) =>
   request<{ code: string; kind: 'video' | 'voice' }>(`/api/meetings/${id}/start`, { method: 'POST' })
 
 export const respondMeeting = (id: string, status: 'accepted' | 'declined', reason = '') =>
-  request(`/api/meetings/${id}/respond`, { method: 'POST', body: JSON.stringify({ status, reason }) })
+  request(`/api/meetings/${id}/invitees/me`, { method: 'PUT', body: JSON.stringify({ status, reason }) })
 
 export const meetingInvitees = (id: string) => request<InviteeResponse[]>(`/api/meetings/${id}/invitees`)
 
-export const quarantineAnalytics = (period: 'week' | 'month' | 'quarter' | 'year', orgId?: string) =>
-  request<QuarantineRow[]>(`/api/quarantine/analytics?period=${period}${orgId ? `&org_id=${orgId}` : ''}`)
+export const quarantineAnalytics = (period: 'week' | 'month' | 'quarter' | 'year', orgId: string) =>
+  request<QuarantineRow[]>(`/api/orgs/${orgId}/analytics/quarantine?period=${period}`)
 
 export const listMeetingRooms = (orgId: string) => request<MeetingRoom[]>(`/api/orgs/${orgId}/meeting-rooms`)
 export const createMeetingRoom = (orgId: string, name: string, location: string, capacity: number) =>
@@ -517,7 +517,7 @@ export const createMeetingRoom = (orgId: string, name: string, location: string,
   })
 
 export const saveMinutesByRoom = (code: string, minutes: string, transcript: string) =>
-  request(`/api/rooms/${code}/minutes`, { method: 'POST', body: JSON.stringify({ minutes, transcript }) })
+  request(`/api/rooms/${code}/minutes`, { method: 'PUT', body: JSON.stringify({ minutes, transcript }) })
 
 // ---------- Enterprise ----------
 
@@ -557,11 +557,11 @@ export const saveWhiteboard = (title: string, roomCode: string, pngBase64: strin
   })
 export const deleteWhiteboard = (id: string) => request(`/api/whiteboards/${id}`, { method: 'DELETE' })
 export const shareWhiteboard = (id: string, isPublic: boolean) =>
-  request<WhiteboardMeta>(`/api/whiteboards/${id}/share`, {
-    method: 'POST',
+  request<WhiteboardMeta>(`/api/whiteboards/${id}/public-link`, {
+    method: 'PUT',
     body: JSON.stringify({ public: isPublic }),
   })
-export const whiteboardPngUrl = (id: string) => `/api/whiteboards/${id}/png`
+export const whiteboardPngUrl = (id: string) => `/api/whiteboards/${id}/image`
 
 export interface Webhook {
   id: string
@@ -578,8 +578,8 @@ export const updateOrgSettings = (
   retentionDays: number,
   quotas?: Partial<OrgQuotas>,
 ) =>
-  request(`/api/orgs/${orgId}/settings`, {
-    method: 'POST',
+  request(`/api/orgs/${orgId}`, {
+    method: 'PATCH',
     body: JSON.stringify({ domain, retention_days: retentionDays, ...quotas }),
   })
 
@@ -699,14 +699,14 @@ export interface QosSample {
 
 /** Tempos de estabelecimento de UMA sessão (ver `callTimings.ts`). */
 export const postTimings = (code: string, t: import('./callTimings').Tempos) =>
-  request(`/api/rooms/${code}/timings`, { method: 'POST', body: JSON.stringify(t) })
+  request(`/api/rooms/${code}/join-timings`, { method: 'POST', body: JSON.stringify(t) })
 
 export const postQos = (code: string, s: QosSample) =>
-  request(`/api/rooms/${code}/qos`, { method: 'POST', body: JSON.stringify(s) })
+  request(`/api/rooms/${code}/quality-samples`, { method: 'POST', body: JSON.stringify(s) })
 
 /** Tradução de uma linha de legenda via LLM local (Ollama in-cluster). */
 export const translateCaption = (text: string, target: string) =>
-  request<{ text: string }>('/api/translate', { method: 'POST', body: JSON.stringify({ text, target }) })
+  request<{ text: string }>('/api/ai/translations', { method: 'POST', body: JSON.stringify({ text, target }) })
 
 export const myOrgs = (signal?: AbortSignal) => request<OrgSummary[]>('/api/orgs', { signal })
 export const orgStats = (orgId: string) => request<OrgStats>(`/api/orgs/${orgId}/stats`)
@@ -720,19 +720,19 @@ export interface AuditEntry {
 }
 /** Registos de auditoria da organização (só admins). */
 export const listAudit = (orgId: string, limit = 100) =>
-  request<AuditEntry[]>(`/api/orgs/${orgId}/audit?limit=${limit}`)
+  request<AuditEntry[]>(`/api/orgs/${orgId}/audit-events?limit=${limit}`)
 export const createOrg = (name: string) =>
   request<OrgSummary>('/api/orgs', { method: 'POST', body: JSON.stringify({ name }) })
 export const listBranches = (orgId: string) => request<Branch[]>(`/api/orgs/${orgId}/branches`)
 export const createBranch = (orgId: string, name: string, location: string) =>
   request<Branch>(`/api/orgs/${orgId}/branches`, { method: 'POST', body: JSON.stringify({ name, location }) })
-export const listEmployees = (orgId: string) => request<Employee[]>(`/api/orgs/${orgId}/employees`)
+export const listEmployees = (orgId: string) => request<Employee[]>(`/api/orgs/${orgId}/members`)
 export const addEmployee = (
   orgId: string,
   body: { email: string; username?: string; password?: string; title?: string; role?: string; branch_id?: string },
-) => request<Employee>(`/api/orgs/${orgId}/employees`, { method: 'POST', body: JSON.stringify(body) })
+) => request<Employee>(`/api/orgs/${orgId}/members`, { method: 'POST', body: JSON.stringify(body) })
 export const removeEmployee = (orgId: string, userId: string) =>
-  request(`/api/orgs/${orgId}/employees/${userId}`, { method: 'DELETE' })
+  request(`/api/orgs/${orgId}/members/${userId}`, { method: 'DELETE' })
 export const listGroups = (orgId: string) => request<Group[]>(`/api/orgs/${orgId}/groups`)
 export const createGroup = (orgId: string, name: string, memberIds: string[]) =>
   request<Group>(`/api/orgs/${orgId}/groups`, { method: 'POST', body: JSON.stringify({ name, member_ids: memberIds }) })
@@ -760,16 +760,16 @@ export interface OdooConfigSaveReq {
 }
 
 export const getOdooConfig = (orgId: string) =>
-  request<OdooConfig>(`/api/orgs/${orgId}/integration/odoo`)
+  request<OdooConfig>(`/api/orgs/${orgId}/integrations/odoo`)
 
 export const saveOdooConfig = (orgId: string, cfg: OdooConfigSaveReq) =>
-  request<{ ok: boolean }>(`/api/orgs/${orgId}/integration/odoo`, {
+  request<{ ok: boolean }>(`/api/orgs/${orgId}/integrations/odoo`, {
     method: 'PUT',
     body: JSON.stringify(cfg),
   })
 
 export const rotateOdooToken = (orgId: string) =>
-  request<{ token: string; prefix: string }>(`/api/orgs/${orgId}/integration/odoo/token`, {
+  request<{ token: string; prefix: string }>(`/api/orgs/${orgId}/integrations/odoo/rotate-token`, {
     method: 'POST',
   })
 
@@ -804,16 +804,16 @@ export interface StorageConfigSaveReq {
 }
 
 export const getPlatformStorage = () =>
-  request<StorageConfig>('/api/v1/platform/storage')
+  request<StorageConfig>('/api/operator/v1/storage')
 
 export const savePlatformStorage = (cfg: StorageConfigSaveReq) =>
-  request<{ ok: boolean }>('/api/v1/platform/storage', {
+  request<{ ok: boolean }>('/api/operator/v1/storage', {
     method: 'PUT',
     body: JSON.stringify(cfg),
   })
 
 export const testPlatformStorage = () =>
-  request<{ ok: boolean; type: string; message: string }>('/api/v1/platform/storage/test', {
+  request<{ ok: boolean; type: string; message: string }>('/api/operator/v1/storage/test', {
     method: 'POST',
   })
 
@@ -836,7 +836,7 @@ export async function tryRefreshToken(): Promise<boolean> {
   }
 }
 
-export const ackMissedCalls = () => request('/api/missed-calls/ack', { method: 'POST' })
+export const ackMissedCalls = () => request('/api/users/me/missed-calls/acknowledge', { method: 'POST' })
 
 export async function uploadRecording(code: string, blob: Blob, name: string): Promise<Recording> {
   const res = await fetch(`/api/rooms/${code}/recordings?name=${encodeURIComponent(name)}`, {
@@ -853,17 +853,17 @@ export interface RoomNotes {
   minutes: string
   transcript: string
 }
-export const roomNotes = (code: string) => request<RoomNotes>(`/api/rooms/${code}/notes`)
+export const roomNotes = (code: string) => request<RoomNotes>(`/api/rooms/${code}/minutes`)
 
 /** URL de objeto para reproduzir a gravação inline (o <video> não envia Bearer). */
 export async function recordingObjectUrl(rec: Recording): Promise<string> {
-  const res = await fetch(`/api/recordings/${rec.id}`, { headers: authHeader() })
+  const res = await fetch(`/api/recordings/${rec.id}/content`, { headers: authHeader() })
   if (!res.ok) throw new Error('failed to load recording')
   return URL.createObjectURL(await res.blob())
 }
 
 export async function downloadMeetingIcs(id: string, title: string): Promise<void> {
-  const res = await fetch(`/api/meetings/${id}/ics`, { headers: authHeader() })
+  const res = await fetch(`/api/meetings/${id}/calendar.ics`, { headers: authHeader() })
   if (!res.ok) throw new Error('ics failed')
   const url = URL.createObjectURL(await res.blob())
   const el = document.createElement('a')
@@ -875,7 +875,7 @@ export async function downloadMeetingIcs(id: string, title: string): Promise<voi
 
 export async function downloadRecording(rec: Recording): Promise<void> {
   // ?dl=1 → o servidor exige a permissão de download (RBAC: dono + admin da org).
-  const res = await fetch(`/api/recordings/${rec.id}?dl=1`, { headers: authHeader() })
+  const res = await fetch(`/api/recordings/${rec.id}/content?dl=1`, { headers: authHeader() })
   if (res.status === 401 || res.status === 403) throw new Error('Sem permissão para descarregar')
   if (!res.ok) throw new Error('download failed')
   const url = URL.createObjectURL(await res.blob())
@@ -902,14 +902,14 @@ export interface AgendaItem {
 }
 
 export async function listAgenda(meetingId: string): Promise<AgendaItem[]> {
-  return request<AgendaItem[]>(`/api/meetings/${meetingId}/agenda`)
+  return request<AgendaItem[]>(`/api/meetings/${meetingId}/agenda-items`)
 }
 
 export async function addAgendaItem(
   meetingId: string,
   item: { topic: string; description?: string; duration_min?: number },
 ): Promise<AgendaItem> {
-  return request<AgendaItem>(`/api/meetings/${meetingId}/agenda`, {
+  return request<AgendaItem>(`/api/meetings/${meetingId}/agenda-items`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(item),
@@ -921,7 +921,7 @@ export async function patchAgendaItem(
   itemId: string,
   patch: { topic?: string; description?: string; duration_min?: number; done?: boolean; position?: number },
 ): Promise<AgendaItem> {
-  return request<AgendaItem>(`/api/meetings/${meetingId}/agenda/${itemId}`, {
+  return request<AgendaItem>(`/api/meetings/${meetingId}/agenda-items/${itemId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
@@ -929,7 +929,7 @@ export async function patchAgendaItem(
 }
 
 export async function deleteAgendaItem(meetingId: string, itemId: string): Promise<void> {
-  await request(`/api/meetings/${meetingId}/agenda/${itemId}`, { method: 'DELETE' })
+  await request(`/api/meetings/${meetingId}/agenda-items/${itemId}`, { method: 'DELETE' })
 }
 
 // ---------- Plano de Ação 5W2H ----------
@@ -984,18 +984,19 @@ export async function addActionItem(
 }
 
 export async function patchActionItem(
+  meetingId: string,
   itemId: string,
   patch: Partial<Omit<ActionItem, 'id' | 'plan_id' | 'created_at' | 'updated_at'>>,
 ): Promise<ActionItem> {
-  return request<ActionItem>(`/api/action-items/${itemId}`, {
+  return request<ActionItem>(`/api/meetings/${meetingId}/action-plan/items/${itemId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   })
 }
 
-export async function deleteActionItem(itemId: string): Promise<void> {
-  await request(`/api/action-items/${itemId}`, { method: 'DELETE' })
+export async function deleteActionItem(meetingId: string, itemId: string): Promise<void> {
+  await request(`/api/meetings/${meetingId}/action-plan/items/${itemId}`, { method: 'DELETE' })
 }
 
 // ---------- SSO Config (admin) ----------

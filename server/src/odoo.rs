@@ -5,7 +5,7 @@
 //!   2. Gera um token de integração (`dlxo_<hex>`) e copia-o para o módulo
 //!      nk_delonix_meet no Odoo.
 //!   3. O módulo Odoo provisiona utilizadores via
-//!      `POST /api/v1/integration/odoo/provision` (token no header).
+//!      `POST /api/integrations/odoo/v1/provision` (token no header).
 //!   4. No login, o Delonix Meet valida a senha contra o Odoo (modo online)
 //!      ou usa o hash Argon2 em cache (modo offline). Uma alteração de senha
 //!      no Odoo sincroniza automaticamente no próximo login online.
@@ -33,7 +33,7 @@ fn gen_token() -> String {
 
 // ---------- extractor — token de integração Odoo ----------
 
-/// Extractor para endpoints `/api/v1/integration/odoo/*`.
+/// Extractor para endpoints `/api/integrations/odoo/v1/*`.
 /// Autentica pelo header `Authorization: Bearer dlxo_...`
 /// ou `X-Integration-Token: dlxo_...`.
 pub struct OdooTokenAuth {
@@ -60,7 +60,7 @@ impl FromRequestParts<Arc<AppState>> for OdooTokenAuth {
         // da org abria o provisionamento de directório, que reescreve membros e
         // papéis — um público e um poder que a chave nunca declarou. O módulo
         // `nk_delonix_meet` usa a `dlx_` só em `/api/v1/meetings` e
-        // `/api/v1/admin/orgs`; estas rotas são do token `dlxo_`.
+        // `/api/operator/v1/organizations`; estas rotas são do token `dlxo_`.
         if !raw.starts_with("dlxo_") {
             return Err(ApiError::Unauthorized);
         }
@@ -138,11 +138,11 @@ pub struct OdooConfigReq {
 
 // ---------- handlers BFF (sessão admin) ----------
 
-/// `GET /api/orgs/{org_id}/integration/odoo`
+/// `GET /api/orgs/{org_id}/integrations/odoo`
 ///
 /// Configuração da integração Odoo da organização (admin).
 #[utoipa::path(
-    get, path = "/api/orgs/{org_id}/integration/odoo", tag = "odoo",
+    get, path = "/api/orgs/{org_id}/integrations/odoo", tag = "odoo",
     security(("session" = [])),
     params(("org_id" = Uuid, Path)),
     responses(
@@ -168,12 +168,12 @@ pub async fn get_config(
     Ok(Json(cfg))
 }
 
-/// `PUT /api/orgs/{org_id}/integration/odoo`
+/// `PUT /api/orgs/{org_id}/integrations/odoo`
 ///
 /// Grava a configuração (admin). Na primeira gravação o autenticado fica
 /// registado como `odoo_admin_id`.
 #[utoipa::path(
-    put, path = "/api/orgs/{org_id}/integration/odoo", tag = "odoo",
+    put, path = "/api/orgs/{org_id}/integrations/odoo", tag = "odoo",
     security(("session" = [])),
     params(("org_id" = Uuid, Path)),
     request_body = OdooConfigReq,
@@ -233,11 +233,11 @@ pub struct OdooTokenResp {
     pub prefix: String,
 }
 
-/// `POST /api/orgs/{org_id}/integration/odoo/token` — gera/rota token
+/// `POST /api/orgs/{org_id}/integrations/odoo/rotate-token` — gera/rota token
 ///
 /// Invalida o token anterior e ACTIVA a integração (`odoo_enabled = true`).
 #[utoipa::path(
-    post, path = "/api/orgs/{org_id}/integration/odoo/token", tag = "odoo",
+    post, path = "/api/orgs/{org_id}/integrations/odoo/rotate-token", tag = "odoo",
     security(("session" = [])),
     params(("org_id" = Uuid, Path)),
     responses(
@@ -321,7 +321,7 @@ pub struct SkippedUser {
     pub reason: String,
 }
 
-/// `POST /api/v1/integration/odoo/provision`
+/// `POST /api/integrations/odoo/v1/provision`
 /// Chamado pelo módulo nk_delonix_meet para provisionar utilizadores.
 ///
 /// Cada entrada passa por `odoo_sso::upsert_member` — a MESMA regra de
@@ -336,7 +336,7 @@ pub struct SkippedUser {
 /// desta correcção. Duas cópias de uma regra de acesso acabam por divergir; por
 /// isso a cópia saiu, em vez de ser remendada.
 #[utoipa::path(
-    post, path = "/api/v1/integration/odoo/provision", tag = "odoo",
+    post, path = "/api/integrations/odoo/v1/provision", tag = "odoo",
     description = "Provisiona o directório de utilizadores do Odoo na organização do token.\n\n\
 Autentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), \
 em `Authorization: Bearer …` ou `X-Integration-Token: …`. Uma entrada cuja conta pertence a \
@@ -456,9 +456,9 @@ pub struct OdooDirectoryUser {
     pub role: String,
 }
 
-/// `GET /api/v1/integration/odoo/users` — lista utilizadores para o Odoo
+/// `GET /api/integrations/odoo/v1/users` — lista utilizadores para o Odoo
 #[utoipa::path(
-    get, path = "/api/v1/integration/odoo/users", tag = "odoo",
+    get, path = "/api/integrations/odoo/v1/users", tag = "odoo",
     description = "Membros ACTIVOS da organização do token (os arquivados não saem), por `username`.\n\n\
 Autentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), \
 em `Authorization: Bearer …` ou `X-Integration-Token: …`.",

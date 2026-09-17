@@ -1,7 +1,7 @@
 -- Delonix Meet — IVR de dial-in PSTN (FreeSWITCH / mod_lua)
 --
 -- Fluxo: atende a chamada → pede o PIN por DTMF → valida no control plane Rust
--- (/api/voice/ivr/validate, autenticado por segredo partilhado) → junta o
+-- (/internal/v1/voice/ivr/validate, autenticado por segredo partilhado) → junta o
 -- chamador à conferência da sala (nome = room_code). No fim, envia o CDR.
 --
 -- Segredos NUNCA em claro: lidos de variáveis globais do FreeSWITCH que, por sua
@@ -57,7 +57,7 @@ for try = 1, MAX_TRIES do
 
   if pin and #pin == PIN_LEN then
     local body = string.format('{"did_e164":"%s","pin":"%s"}', did, pin)
-    local resp = http_post("/api/voice/ivr/validate", body)
+    local resp = http_post("/internal/v1/voice/ivr/validate", body)
     room_code = json_str(resp, "room_code")
     voice_room_id = json_str(resp, "voice_room_id")
     sfu_rtp_port = json_str(resp, "sfu_rtp_port")
@@ -95,5 +95,5 @@ if voice_room_id and #voice_room_id > 0 then
   local cdr = string.format(
     '{"voice_room_id":"%s","caller_number":"%s","did_e164":"%s","duration_secs":%d}',
     voice_room_id, caller, did, duration)
-  http_post("/api/voice/ivr/cdr", cdr)
+  http_post("/internal/v1/voice/ivr/cdr", cdr)
 end
