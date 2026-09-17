@@ -21,7 +21,7 @@ use dashmap::DashMap;
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
-        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering::Relaxed},
+        atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, AtomicU8, Ordering::Relaxed},
         Arc, Weak,
     },
     time::{Duration, Instant},
@@ -70,6 +70,103 @@ type Result<T> = std::result::Result<T, webrtc::Error>;
 /// `subscribe_layer`).
 static NEXT_TRACK_SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// Recenseamento do que o SFU mantém VIVO — a prova de fuga, em vez de a
+/// inferir do RSS.
+///
+/// O RSS não distingue «o alocador ainda não devolveu a memória ao SO» de «há
+/// objectos Rust que ninguém larga», e os gauges de negócio (`sfu_pc_connected`,
+/// `sfu_subscriptions`) só contam o que o código ACHA que existe: um peer tirado
+/// da sala cuja `RTCPeerConnection` nunca fechou lê-se como zero. Aqui conta-se
+/// o que existe de facto:
+///
+/// - cada `RTCPeerConnection` fica registada por `Weak` — está viva enquanto
+///   houver QUALQUER `Arc` para ela (uma `Publication`, uma tarefa de RTCP);
+/// - `close_done` só passa a `true` quando o `close().await` REGRESSA, por isso
+///   um fecho pendurado conta como não fechado;
+/// - peers, publicações e tarefas de fundo contam-se por `Drop`.
+#[derive(Default)]
+struct Census {
+    pcs: std::sync::Mutex<Vec<PcEntry>>,
+    peers: Arc<AtomicI64>,
+    publications: Arc<AtomicI64>,
+    rtp_pumps: Arc<AtomicI64>,
+    rtcp_drains: Arc<AtomicI64>,
+    nego_loops: Arc<AtomicI64>,
+}
+
+struct PcEntry {
+    pc: Weak<RTCPeerConnection>,
+    close_done: Arc<AtomicBool>,
+}
+
+/// Contador RAII: +1 ao nascer, −1 no `Drop`. Vive dentro do objecto (ou da
+/// tarefa) que conta, por isso não há caminho de saída que o esqueça.
+struct Vivo(Arc<AtomicI64>);
+
+impl Vivo {
+    fn new(g: &Arc<AtomicI64>) -> Self {
+        g.fetch_add(1, Relaxed);
+        Self(g.clone())
+    }
+}
+
+impl Drop for Vivo {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Relaxed);
+    }
+}
+
+/// Fotografia do `Census`, lida por `/metrics` e pelos testes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CensusSnapshot {
+    /// `RTCPeerConnection`s do SFU ainda alocadas.
+    pub pc_alive: usize,
+    /// Dessas, quantas nunca chegaram ao fim de um `close()`.
+    pub pc_unclosed: usize,
+    /// Peers registados em salas (o que o SFU julga ter).
+    pub peers_in_rooms: usize,
+    pub peers_alive: i64,
+    pub publications_alive: i64,
+    pub rtp_pump_tasks: i64,
+    pub rtcp_drain_tasks: i64,
+    pub negotiation_tasks: i64,
+}
+
+impl CensusSnapshot {
+    /// Exposição Prometheus. O que interessa num alerta é
+    /// `pc_unclosed - peers_in_rooms > 0` sustentado: PCs que ninguém fecha.
+    pub fn render(&self) -> String {
+        format!(
+            "# HELP delonix_sfu_pc_alive RTCPeerConnections do SFU ainda alocadas (Weak vivo).\n\
+             # TYPE delonix_sfu_pc_alive gauge\n\
+             delonix_sfu_pc_alive {}\n\
+             # HELP delonix_sfu_pc_unclosed RTCPeerConnections alocadas cujo close() nunca regressou.\n\
+             # TYPE delonix_sfu_pc_unclosed gauge\n\
+             delonix_sfu_pc_unclosed {}\n\
+             # HELP delonix_sfu_peers_in_rooms Peers registados em salas do SFU.\n\
+             # TYPE delonix_sfu_peers_in_rooms gauge\n\
+             delonix_sfu_peers_in_rooms {}\n\
+             # HELP delonix_sfu_objects_alive Objectos do SFU vivos (contados por Drop).\n\
+             # TYPE delonix_sfu_objects_alive gauge\n\
+             delonix_sfu_objects_alive{{kind=\"peer\"}} {}\n\
+             delonix_sfu_objects_alive{{kind=\"publication\"}} {}\n\
+             # HELP delonix_sfu_tasks Tarefas de fundo do SFU vivas.\n\
+             # TYPE delonix_sfu_tasks gauge\n\
+             delonix_sfu_tasks{{kind=\"rtp_pump\"}} {}\n\
+             delonix_sfu_tasks{{kind=\"rtcp_drain\"}} {}\n\
+             delonix_sfu_tasks{{kind=\"negotiation\"}} {}\n",
+            self.pc_alive,
+            self.pc_unclosed,
+            self.peers_in_rooms,
+            self.peers_alive.max(0),
+            self.publications_alive.max(0),
+            self.rtp_pump_tasks.max(0),
+            self.rtcp_drain_tasks.max(0),
+            self.negotiation_tasks.max(0),
+        )
+    }
+}
+
 /// Uma track publicada por um participante, com fan-out para subscritores.
 /// Com simulcast, cada camada (rid `q`/`h`/`f`) é uma Publication distinta.
 struct Publication {
@@ -100,6 +197,7 @@ struct Publication {
     /// Esta publicação está a ser reencaminhada? O seletor de oradores põe a
     /// `false` os microfones fora do top-N. Vídeo e ecrã nunca são suprimidos.
     forwarding: AtomicBool,
+    _vivo: Vivo,
 }
 
 type Subscriber = (
@@ -363,6 +461,9 @@ struct SfuPeer {
     /// Camada sugerida pelo cliente por publicador (ver `wanted_rid`). Vazio =
     /// sem sugestão, e decide-se pelo tamanho da sala como sempre.
     quality_hints: Mutex<HashMap<Uuid, String>>,
+    /// `true` só depois de `pc.close().await` REGRESSAR (ver `Census`).
+    close_done: Arc<AtomicBool>,
+    _vivo: Vivo,
 }
 
 /// Mensagens da máquina de negociação de um peer.
@@ -541,6 +642,8 @@ pub struct SfuState {
     nego_cap: usize,
     /// Capacidade da fila de escrita de cada track em gravação (`REC_QUEUE_CAP`).
     rec_cap: usize,
+    /// O que está vivo de facto (ver `Census`).
+    census: Census,
 }
 
 /// Config de ICE que o SFU usa para se tornar alcançável de fora do cluster.
@@ -558,6 +661,10 @@ pub struct IceConfig {
     /// que é o que o K8s expõe. Configurável porque no MESMO host duas
     /// instâncias colidem — ver `SFU_UDP_MIN`/`SFU_UDP_MAX` e o R57.
     pub udp_ports: Option<(u16, u16)>,
+    /// Timeouts de ICE (desligado, falhado). `None` => os do webrtc-rs
+    /// (5 s / 25 s). Só os testes os encurtam, para chegar a `Failed` sem
+    /// esperar meio minuto.
+    pub ice_timeouts: Option<(Duration, Duration)>,
 }
 
 impl SfuState {
@@ -608,6 +715,38 @@ impl SfuState {
         if peer.nego_tx.try_send(msg).is_err() {
             crate::metrics::Metrics::bump(&self.metrics.nego_queue_dropped_total);
             tracing::warn!("fila de renegociação cheia — pedido descartado");
+        }
+    }
+
+    /// Fotografia do que o SFU mantém vivo. Poda as entradas mortas do registo
+    /// de PCs de caminho — é chamada por `/metrics`, portanto periodicamente.
+    pub async fn census(&self) -> CensusSnapshot {
+        let (pc_alive, pc_unclosed) = {
+            let mut pcs = match self.census.pcs.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            pcs.retain(|e| e.pc.strong_count() > 0);
+            let unclosed = pcs
+                .iter()
+                .filter(|e| !e.close_done.load(Relaxed))
+                .count();
+            (pcs.len(), unclosed)
+        };
+        let rooms: Vec<Arc<SfuRoom>> = self.rooms.iter().map(|r| r.value().clone()).collect();
+        let mut peers_in_rooms = 0;
+        for room in rooms {
+            peers_in_rooms += room.peers.lock().await.len();
+        }
+        CensusSnapshot {
+            pc_alive,
+            pc_unclosed,
+            peers_in_rooms,
+            peers_alive: self.census.peers.load(Relaxed),
+            publications_alive: self.census.publications.load(Relaxed),
+            rtp_pump_tasks: self.census.rtp_pumps.load(Relaxed),
+            rtcp_drain_tasks: self.census.rtcp_drains.load(Relaxed),
+            negotiation_tasks: self.census.nego_loops.load(Relaxed),
         }
     }
 }
@@ -693,6 +832,9 @@ fn new_api(ice: &IceConfig) -> Result<webrtc::api::API> {
 
     // SettingEngine: torna o SFU alcançável de fora do cluster.
     let mut settings = SettingEngine::default();
+    if let Some((desligado, falhado)) = ice.ice_timeouts {
+        settings.set_ice_timeouts(Some(desligado), Some(falhado), None);
+    }
     if let Some(ip) = ice.external_ip.as_deref().filter(|s| !s.is_empty()) {
         // NAT 1:1 — anuncia o IP externo (LB/nó) em vez do IP interno do pod.
         settings.set_nat_1to1_ips(vec![ip.to_string()], RTCIceCandidateType::Host);
@@ -785,6 +927,18 @@ impl SfuState {
             ..Default::default()
         };
         let pc = Arc::new(api.new_peer_connection(pc_config).await?);
+        let close_done = Arc::new(AtomicBool::new(false));
+        {
+            let mut pcs = match self.census.pcs.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            pcs.retain(|e| e.pc.strong_count() > 0);
+            pcs.push(PcEntry {
+                pc: Arc::downgrade(&pc),
+                close_done: close_done.clone(),
+            });
+        }
 
         let (nego_tx, nego_rx) = mpsc::channel(self.nego_cap());
         let peer = Arc::new(SfuPeer {
@@ -799,6 +953,8 @@ impl SfuState {
             quality: Quality::default(),
             video_interest: Mutex::new(None),
             quality_hints: Mutex::new(HashMap::new()),
+            close_done,
+            _vivo: Vivo::new(&self.census.peers),
         });
         room.peers.lock().await.insert(peer_id, peer.clone());
 
@@ -1017,6 +1173,7 @@ impl SfuState {
             // Arranca a reencaminhar: o seletor só suprime depois de ter
             // medições — nunca se corta áudio "por defeito".
             forwarding: AtomicBool::new(true),
+            _vivo: Vivo::new(&self.census.publications),
         });
         room.publications.lock().await.push(publication.clone());
 
@@ -1088,7 +1245,9 @@ impl SfuState {
         let this = self.clone();
         let is_audio = kind == "audio";
 
+        let vivo = Vivo::new(&self.census.rtp_pumps);
         tokio::spawn(async move {
+            let _vivo = vivo;
             // Socket PSTN criado só quando há mesmo um destino registado —
             // antes era um socket UDP por CADA publicação de áudio da
             // instância, mesmo sem PSTN configurado.
@@ -1411,7 +1570,10 @@ impl SfuState {
             crate::metrics::Metrics::dec(&self.metrics.sfu_degraded_subscribers);
         }
 
+        tracing::debug!(%room_id, %peer_id, "sfu pc close → a fechar");
         let _ = peer.pc.close().await;
+        peer.close_done.store(true, Relaxed);
+        tracing::debug!(%room_id, %peer_id, "sfu pc close → fechada");
 
         let empty = room.peers.lock().await.is_empty();
         let mut orphan_recording = None;
@@ -1806,7 +1968,9 @@ async fn subscribe_layer(
         let publication = publication.clone();
         let peer_weak = Arc::downgrade(sub_peer);
         let state = state.clone();
+        let vivo = Vivo::new(&state.census.rtcp_drains);
         tokio::spawn(async move {
+            let _vivo = vivo;
             while let Ok((packets, _)) = sender.read_rtcp().await {
                 let mut requalify = false;
                 for packet in packets {
@@ -2025,6 +2189,7 @@ async fn negotiation_loop(
     peer: Weak<SfuPeer>,
     mut rx: mpsc::Receiver<NegoMsg>,
 ) {
+    let _vivo = Vivo::new(&state.census.nego_loops);
     let mut deferred: VecDeque<String> = VecDeque::new();
     while let Some(msg) = rx.recv().await {
         let Some(p) = peer.upgrade() else { break };
