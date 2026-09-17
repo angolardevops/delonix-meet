@@ -126,6 +126,70 @@ async fn list_meetings_for_owner_and_invitee(db: sqlx::PgPool) {
     assert_eq!(list, json!([]));
 }
 
+/// A lista junta as reuniões de que se é dono com aquelas para que se foi
+/// convidado, por `starts_at`. Um dono que também está em `meeting_invitees`
+/// (a API filtra-o ao criar, mas a base não o impede) aparece UMA vez, como
+/// `owner` — nunca com o estado do convite.
+#[sqlx::test(migrations = "./migrations")]
+async fn list_meetings_merges_owned_and_invited_without_duplicates(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let c = app.add_member(&a, "carla", "member").await;
+    let d = app.add_member(&a, "dario", "member").await;
+    let mut ids_by_title = std::collections::HashMap::new();
+    for (owner, title, hours, invitees) in [
+        (&a, "da-alfa", 3, vec![c.user_id.as_str()]),
+        (&c, "da-carla", 1, vec![a.user_id.as_str()]),
+        (&d, "do-dario", 2, vec![]),
+    ] {
+        let (st, m) = app
+            .post(
+                "/api/meetings",
+                Some(&owner.token),
+                json!({"title": title, "starts_at": in_hours(hours), "invitee_ids": invitees}),
+            )
+            .await;
+        assert_eq!(st, 200, "{m}");
+        ids_by_title.insert(title, m["id"].as_str().unwrap().to_string());
+    }
+    let own = &ids_by_title["da-alfa"];
+    let theirs = &ids_by_title["da-carla"];
+    sqlx::query(
+        "INSERT INTO meeting_invitees (meeting_id, user_id, status) VALUES ($1::uuid, $2::uuid, 'declined')",
+    )
+    .bind(own)
+    .bind(&a.user_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE meeting_invitees SET status = 'accepted' WHERE meeting_id = $1::uuid AND user_id = $2::uuid",
+    )
+    .bind(own)
+    .bind(&c.user_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    let (st, list) = app.get("/api/meetings", Some(&a.token)).await;
+    assert_eq!(st, 200, "{list}");
+    assert_eq!(ids(&list), vec![theirs.clone(), own.clone()]);
+    assert_eq!(list[0]["is_owner"], false);
+    assert_eq!(list[0]["my_status"], "pending");
+    assert_eq!(list[0]["owner_name"], "carla-alfa.test");
+    assert_eq!(list[1]["is_owner"], true);
+    assert_eq!(list[1]["my_status"], "owner");
+
+    let (_, list) = app.get("/api/meetings", Some(&c.token)).await;
+    assert_eq!(ids(&list), vec![theirs.clone(), own.clone()]);
+    assert_eq!(list[0]["my_status"], "owner");
+    assert_eq!(list[1]["my_status"], "accepted");
+
+    // Só a de que é dono: não foi convidado para nenhuma.
+    let (_, list) = app.get("/api/meetings", Some(&d.token)).await;
+    assert_eq!(ids(&list), vec![ids_by_title["do-dario"].clone()]);
+}
+
 /// DÍVIDA: `meetings::generate_instances` tem um erro de um em
 /// `recurrence_count`. Com `count = 3` gera o pai + TRÊS filhas (4 ocorrências):
 /// o ramo `occurs.len() >= max - 1` só dispara depois de já ter empurrado
@@ -1071,4 +1135,183 @@ async fn quarantine_analytics(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200);
     assert_eq!(rows, json!([]));
+}
+
+async fn quarantined(db: &sqlx::PgPool) -> Vec<(String, String)> {
+    sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid)>(
+        "SELECT user_id, meeting_id FROM meet_quarantine ORDER BY 1, 2",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(u, m)| (u.to_string(), m.to_string()))
+    .collect()
+}
+
+/// A lista de reuniões não escreve na base. Antes, cada `GET /api/meetings`
+/// varria a quarentena de TODAS as organizações (1,2-1,8 s com 287 000
+/// convidados) sem ler o resultado.
+#[sqlx::test(migrations = "./migrations")]
+async fn meeting_list_does_not_sweep_quarantine(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let c = app.add_member(&a, "carla", "member").await;
+    let (st, m) = app
+        .post(
+            "/api/meetings",
+            Some(&a.token),
+            json!({"title": "passada", "starts_at": (Utc::now() - Duration::hours(1)).to_rfc3339(),
+                   "invitee_ids": [c.user_id]}),
+        )
+        .await;
+    assert_eq!(st, 200, "{m}");
+    for token in [&a.token, &c.token] {
+        let (st, list) = app.get("/api/meetings", Some(token)).await;
+        assert_eq!(st, 200, "{list}");
+        assert_eq!(ids(&list), vec![m["id"].as_str().unwrap()]);
+    }
+    assert_eq!(quarantined(&app.db).await, vec![]);
+    // Controlo positivo: a mesma linha É candidata — a varredura global marca-a.
+    let n = delonix_server::quarantine_sweep(&app.db).await.unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(
+        quarantined(&app.db).await,
+        vec![(c.user_id.clone(), m["id"].as_str().unwrap().to_string())]
+    );
+}
+
+/// A analítica só marca o que ela própria lê: membros da org pedida, reuniões
+/// começadas no período. A outra org e o que ficou fora do período esperam
+/// pela tarefa de fundo. Quem responde sai e não volta a entrar.
+#[sqlx::test(migrations = "./migrations")]
+async fn quarantine_analytics_sweeps_only_its_org_and_period(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let b = app.new_org("beta.test").await;
+    let ca = app.add_member(&a, "carla", "member").await;
+    let da = app.add_member(&a, "dario", "member").await;
+    let cb = app.add_member(&b, "bruno", "member").await;
+    let meeting = |token: String, hours_ago: i64, invitees: Vec<String>| {
+        let app = &app;
+        async move {
+            let (st, m) = app
+                .post(
+                    "/api/meetings",
+                    Some(&token),
+                    json!({"title": "passada",
+                           "starts_at": (Utc::now() - Duration::hours(hours_ago)).to_rfc3339(),
+                           "invitee_ids": invitees}),
+                )
+                .await;
+            assert_eq!(st, 200, "{m}");
+            m["id"].as_str().unwrap().to_string()
+        }
+    };
+    let recent = meeting(
+        a.token.clone(),
+        1,
+        vec![ca.user_id.clone(), da.user_id.clone()],
+    )
+    .await;
+    let old = meeting(a.token.clone(), 24 * 20, vec![ca.user_id.clone()]).await;
+    let other_org = meeting(b.token.clone(), 1, vec![cb.user_id.clone()]).await;
+    let future = {
+        let (st, m) = app
+            .post(
+                "/api/meetings",
+                Some(&a.token),
+                json!({"title": "futura", "starts_at": (Utc::now() + Duration::hours(2)).to_rfc3339(),
+                       "invitee_ids": [ca.user_id]}),
+            )
+            .await;
+        assert_eq!(st, 200, "{m}");
+        m["id"].as_str().unwrap().to_string()
+    };
+
+    // O Dario responde antes de a analítica correr: não entra.
+    let (st, body) = app
+        .put(
+            &format!("/api/meetings/{recent}/invitees/me"),
+            Some(&da.token),
+            json!({"status": "accepted"}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+
+    // Um membro sem papel de admin é recusado ANTES de a base ser escrita.
+    let path = format!("/api/orgs/{}/analytics/quarantine", a.org());
+    let (st, _) = app
+        .get(&format!("{path}?period=week"), Some(&ca.token))
+        .await;
+    assert_eq!(st, 403);
+    assert_eq!(quarantined(&app.db).await, vec![]);
+
+    let (st, rows) = app
+        .get(&format!("{path}?period=week"), Some(&a.token))
+        .await;
+    assert_eq!(st, 200, "{rows}");
+    assert_eq!(
+        rows,
+        json!([{"user_id": ca.user_id, "username": "carla-alfa.test", "count": 1}])
+    );
+    assert_eq!(
+        quarantined(&app.db).await,
+        vec![(ca.user_id.clone(), recent.clone())]
+    );
+
+    // Mês: a reunião de há 20 dias entra agora, e conta.
+    let (st, rows) = app.get(&path, Some(&a.token)).await;
+    assert_eq!(st, 200, "{rows}");
+    assert_eq!(rows[0]["count"], 2, "{rows}");
+
+    // A org B e a reunião futura ficaram de fora; a varredura global apanha a B.
+    let mut expected = vec![
+        (ca.user_id.clone(), recent.clone()),
+        (ca.user_id.clone(), old.clone()),
+    ];
+    expected.sort();
+    assert_eq!(quarantined(&app.db).await, expected);
+    assert_eq!(delonix_server::quarantine_sweep(&app.db).await.unwrap(), 1);
+    let all = quarantined(&app.db).await;
+    assert!(all.contains(&(cb.user_id.clone(), other_org)), "{all:?}");
+    assert!(!all.iter().any(|(_, m)| *m == future), "{all:?}");
+    // Idempotente: a segunda passagem não acrescenta nada.
+    assert_eq!(delonix_server::quarantine_sweep(&app.db).await.unwrap(), 0);
+}
+
+/// A tarefa de fundo passa logo ao arrancar e pára quando o token é cancelado.
+#[sqlx::test(migrations = "./migrations")]
+async fn quarantine_sweeper_runs_and_stops_on_cancel(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let c = app.add_member(&a, "carla", "member").await;
+    let (st, m) = app
+        .post(
+            "/api/meetings",
+            Some(&a.token),
+            json!({"title": "passada", "starts_at": (Utc::now() - Duration::hours(1)).to_rfc3339(),
+                   "invitee_ids": [c.user_id]}),
+        )
+        .await;
+    assert_eq!(st, 200, "{m}");
+    let stop = tokio_util::sync::CancellationToken::new();
+    let task = tokio::spawn(delonix_server::run_quarantine_sweeper(
+        app.db.clone(),
+        std::time::Duration::from_secs(3600),
+        stop.clone(),
+    ));
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while quarantined(&app.db).await.is_empty() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "a primeira passagem não correu"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    stop.cancel();
+    tokio::time::timeout(std::time::Duration::from_secs(5), task)
+        .await
+        .expect("a tarefa não parou com o cancelamento")
+        .unwrap();
 }
