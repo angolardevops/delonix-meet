@@ -1410,6 +1410,22 @@ pub(crate) fn recording_uploader_in_org_sql(org: &str, uploader: &str) -> String
     )
 }
 
+/// Subconsulta `(id, name)` da organização do autor `subject` que se MOSTRA a
+/// `viewer`: a que os dois partilham com `viewer` activo, se houver; senão a
+/// mais antiga do autor (activo ou não — é atribuição, não acesso, como em
+/// [`recording_uploader_in_org_sql`]). Uso: `LEFT JOIN LATERAL (<isto>) x ON true`.
+pub(crate) fn uploader_org_for_viewer_sql(subject: &str, viewer: &str) -> String {
+    format!(
+        "SELECT org.id, org.name FROM org_members om \
+         JOIN organizations org ON org.id = om.org_id \
+         WHERE om.user_id = {subject} \
+         ORDER BY EXISTS(SELECT 1 FROM org_members v WHERE v.org_id = om.org_id \
+                         AND v.user_id = {viewer} AND v.archived_at IS NULL) DESC, \
+                  om.created_at, org.id \
+         LIMIT 1"
+    )
+}
+
 /// user_ids dos membros de um grupo (para iniciar chamada de grupo).
 /// Organizações a que um utilizador pertence (para disparar webhooks dos
 /// eventos das suas reuniões/gravações).

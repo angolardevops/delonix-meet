@@ -537,11 +537,11 @@ async fn finalize_inner(
     room_id: Uuid,
     session: &RecordingSession,
 ) -> anyhow::Result<()> {
-    // Duração (G4): relógio de parede desde o início da sessão até aqui, ANTES
-    // do ffmpeg — o `finalize` é chamado quando a gravação pára. Não é a
-    // duração do media (não se sonda o ficheiro com ffprobe), por isso pode
-    // divergir alguns segundos; é o que se sabe sem mais um processo.
-    let duration_secs = i32::try_from(session.started.elapsed().as_secs()).ok();
+    // Duração estimada: relógio de parede desde o início da sessão até aqui,
+    // ANTES do ffmpeg — o `finalize` é chamado quando a gravação pára. Depois de
+    // compor, `media_probe` mede o ficheiro e substitui-a; sem ffprobe, fica a
+    // estimativa (pode divergir alguns segundos do media).
+    let duration_ms = i64::try_from(session.started.elapsed().as_millis()).ok();
     // Tracks com conteúdo real (ficheiros ~vazios ficam de fora).
     let mut videos: Vec<&RecTrackMeta> = Vec::new();
     let mut audios: Vec<&RecTrackMeta> = Vec::new();
@@ -689,25 +689,28 @@ async fn finalize_inner(
     let size = tokio::fs::metadata(&out).await?.len() as i64;
 
     // Nome amigável com o código da sala e a hora.
-    let code: Option<(String,)> = sqlx::query_as("SELECT code FROM rooms WHERE id = $1")
-        .bind(room_id)
-        .fetch_optional(&state.db)
-        .await?;
-    let code = code.map(|c| c.0).unwrap_or_default();
+    let room: Option<(String, String)> =
+        sqlx::query_as("SELECT code, format FROM rooms WHERE id = $1")
+            .bind(room_id)
+            .fetch_optional(&state.db)
+            .await?;
+    let (code, format) = room.unwrap_or_default();
+    let kind = delonix_meet_domain::content::recording::Kind::from_room_format(&format);
     let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M");
     let filename = format!("Reunião {code} — servidor — {stamp}.webm");
 
     let (rec_id,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, duration_secs, width, height)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, duration_ms, width, height, kind)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
     )
     .bind(room_id)
     .bind(session.by_user)
     .bind(&filename)
     .bind(size)
-    .bind(duration_secs)
+    .bind(duration_ms)
     .bind(dims.map(|d| d.0))
     .bind(dims.map(|d| d.1))
+    .bind(kind.as_str())
     .fetch_one(&state.db)
     .await?;
 
@@ -722,6 +725,9 @@ async fn finalize_inner(
         }
         Err(e) => return Err(e.into()),
     }
+    // Mede o ficheiro composto (duração real, fps, codecs, miniatura). Nunca
+    // falha a gravação: sem ffprobe ficam a estimativa e as dimensões da grelha.
+    crate::media_probe::probe_and_store(state, rec_id, &final_path).await;
     tracing::info!(%room_id, %rec_id, size, "server recording pronta na biblioteca");
     crate::notifications::recording_ready(state, session.by_user, rec_id, &filename, &code).await;
 

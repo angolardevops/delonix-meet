@@ -15,6 +15,7 @@ mod crypto;
 mod dlp;
 mod error;
 pub mod grpc;
+mod media_probe;
 mod meetings;
 mod meetings_v1;
 mod metrics;
@@ -31,6 +32,8 @@ mod presence;
 mod pubsub;
 mod rate_limit;
 mod recorder;
+mod recording_captions;
+mod recording_meta;
 mod recordings;
 mod redis_state;
 mod room_chat;
@@ -333,6 +336,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/rooms/{room_code}", get(rooms::get_room))
         .route("/api/rooms/{room_code}/join", post(rooms::join_room))
         .route("/api/rooms/{room_code}/messages", get(rooms::room_chat))
+        .route(
+            "/api/rooms/{room_code}/participants",
+            get(recording_meta::room_participants),
+        )
         .route("/api/rooms/{room_code}/invitations", post(rooms::invite_to_room))
         .route("/api/rooms/{room_code}/quality-samples", post(rooms::post_qos))
         // Tempos de estabelecimento (um por sessão) — ver callTimings.ts.
@@ -406,7 +413,34 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/recordings/{recording_id}/chapters/{chapter_id}",
-            get(recordings::get_chapter).delete(recordings::delete_chapter),
+            get(recordings::get_chapter)
+                .patch(recordings::update_chapter)
+                .delete(recordings::delete_chapter),
+        )
+        .route(
+            "/api/recordings/{recording_id}/publication",
+            axum::routing::put(recordings::publish).delete(recordings::unpublish),
+        )
+        .route("/api/recordings/{recording_id}/thumbnail", get(recording_meta::thumbnail))
+        .route("/api/recordings/{recording_id}/views", post(recording_meta::record_view))
+        .route(
+            "/api/recordings/{recording_id}/participants",
+            get(recording_meta::recording_participants),
+        )
+        .route("/api/recordings/{recording_id}/transcript", get(recording_meta::transcript))
+        .route("/api/recordings/{recording_id}/captions", get(recording_captions::list))
+        .route(
+            "/api/recordings/{recording_id}/captions/{lang}",
+            get(recording_captions::get)
+                .put(recording_captions::put)
+                .patch(recording_captions::patch)
+                .delete(recording_captions::delete)
+                // Um VTT de 2 MiB escapado em JSON passa o limite por omissão.
+                .layer(DefaultBodyLimit::max(recording_captions::MAX_CAPTION_BODY_BYTES)),
+        )
+        .route(
+            "/api/recordings/{recording_id}/captions/{lang}/vtt",
+            get(recording_captions::vtt),
         )
         .route(
             "/api/recordings/{recording_id}/comments",
