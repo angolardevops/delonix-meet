@@ -2035,7 +2035,9 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Regra (o que já vale).** O worker de transcrição entrega os segmentos com tempos e a língua detectada, e é o SERVIDOR que aplica o DLP a tudo o que chega (`ai-worker/job_source.py`, `transcriber.py`) — um worker que gravasse direto contornaria o DLP.
 
-**Ficheiros.** `ai-worker/{transcriber,job_source,transcribe_worker}.py`, `server/src/{recording_meta,recording_captions,recording_chapters}.rs`, `web/e2e/isolamento.mjs`.
+**Portão (segmentos).** `server/tests/grpc.rs` (`transcription_queue_lease_complete_and_dlp`: o DLP corre em cada segmento, os incoerentes saem, a confiança guardada é a média) e as tabelas de `domain::content::transcription`. Os campos novos do `CompleteJobRequest` (`segments`, `language`) são compatíveis no fio, mas partem quem constrói a mensagem em Rust com um literal: `tests/{grpc,notifications}.rs` usam `..Default::default()`.
+
+**Ficheiros.** `ai-worker/{transcriber,job_source,transcribe_worker}.py`, `server/proto/delonix/meet/transcription/v1/transcription.proto`, `server/src/{grpc,transcription,recording_meta,recording_captions,recording_chapters}.rs`, `server/crates/delonix-meet-domain/src/content/transcription.rs`, `server/tests/{grpc,notifications}.rs`, `web/e2e/isolamento.mjs`.
 
 ### R184 — Agendar uma reunião «videoaula» ou «gravar automaticamente» era ignorado: a sala nascia sempre normal, sem espera e sem gravação
 
