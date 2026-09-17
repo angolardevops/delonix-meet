@@ -653,10 +653,10 @@ async fn fetch_one(
     hours: i64,
 ) -> Result<Trunk, ApiError> {
     let r = fetch_record(state, org_id, id).await?;
-    Ok(assemble(state, org_id, vec![r], hours)
+    assemble(state, org_id, vec![r], hours)
         .await?
         .pop()
-        .ok_or(ApiError::NotFound)?)
+        .ok_or(ApiError::NotFound)
 }
 
 /// Uma operadora, com estado medido.
@@ -999,6 +999,11 @@ pub struct HistoryQuery {
     pub page_token: Option<String>,
 }
 
+/// (id, valid_from, price_per_min_e4, currency, created_at)
+type PriceRow = (Uuid, DateTime<Utc>, i64, String, DateTime<Utc>);
+/// (id, currency, aoa_per_unit_e6, valid_from, created_at)
+type RateRow = (Uuid, String, i64, DateTime<Utc>, DateTime<Utc>);
+
 #[derive(Serialize, Deserialize)]
 struct HistCursor {
     at: DateTime<Utc>,
@@ -1078,7 +1083,7 @@ pub async fn list_prices(
     };
     let size = page.size();
     let cursor: Option<HistCursor> = page.cursor()?;
-    let rows: Vec<(Uuid, DateTime<Utc>, i64, String, DateTime<Utc>)> = sqlx::query_as(
+    let rows: Vec<PriceRow> = sqlx::query_as(
         "SELECT id, valid_from, price_per_min_e4, currency, created_at FROM telephony_trunk_prices
           WHERE trunk_id = $1 AND org_id = $2
             AND ($3::timestamptz IS NULL OR (valid_from, id) < ($3, $4))
@@ -1238,7 +1243,7 @@ pub async fn list_rates(
     };
     let size = page.size();
     let cursor: Option<HistCursor> = page.cursor()?;
-    let rows: Vec<(Uuid, String, i64, DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as(
+    let rows: Vec<RateRow> = sqlx::query_as(
         "SELECT id, currency, aoa_per_unit_e6, valid_from, created_at FROM telephony_exchange_rates
           WHERE org_id = $1 AND ($2::timestamptz IS NULL OR (valid_from, id) < ($2, $3))
           ORDER BY valid_from DESC, id DESC LIMIT $4",
