@@ -14,3 +14,5 @@ chrono.workspace = true
 hex.workspace = true
 # Parsing de URL (puro, sem rede) para validar a forma de destinos.
 url = "2"
+# Base de fusos IANA compilada (validação do fuso do perfil). Pura: sem IO.
+chrono-tz = "0.10"
