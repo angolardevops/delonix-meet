@@ -657,6 +657,17 @@ async fn archived_member_cannot_read_comments_nor_see_library(db: sqlx::PgPool) 
     // O SUJEITO não se filtra: com o dono arquivado, o admin activo que resta
     // continua a chegar à gravação da empresa.
     let admin2 = app.add_member(&f.a, "rui", "admin").await;
+    // ADR-0008 §5: a org não fica sem Proprietário enquanto tiver humanos
+    // activos (o gatilho recusa). O dono sai depois de passar a propriedade.
+    sqlx::query(
+        "UPDATE org_members SET role_id = (SELECT id FROM org_roles WHERE org_id = $1::uuid AND system_key = 'owner')
+          WHERE org_id = $1::uuid AND user_id = $2::uuid",
+    )
+    .bind(f.a.org())
+    .bind(&admin2.user_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
     app.archive_member(f.a.org(), &f.a.user_id).await;
     let (st, p) = app.get(&base, Some(&admin2.token)).await;
     assert_eq!(st, 200, "{p}");
