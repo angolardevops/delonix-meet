@@ -28,6 +28,7 @@ mod odoo;
 mod odoo_sso;
 pub mod openapi;
 mod org;
+mod passkeys;
 mod presence;
 mod pubsub;
 mod rate_limit;
@@ -137,6 +138,8 @@ pub struct AppState {
     /// WebSockets de cada sessão de conta neste nó — terminar uma sessão
     /// fecha-os (ver `sessions`).
     pub session_kills: sessions::KillRegistry,
+    /// Chaves de acesso (ADR-0011). `None` sem `WEBAUTHN_RP_ID`/`_ORIGIN`.
+    pub webauthn: Option<Arc<webauthn_rs::prelude::Webauthn>>,
 }
 
 impl AppState {
@@ -201,6 +204,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Segunda metade do login quando o MFA está activo: troca o desafio
         // de curta duração + o código pelos tokens de sessão.
         .route("/login/mfa", post(auth::mfa_login))
+        // A chave de acesso como segundo factor (ADR-0011).
+        .route("/login/mfa/passkey-options", post(passkeys::login_options))
+        .route("/login/mfa/passkey", post(passkeys::login))
         .route("/refresh", post(auth::refresh))
         .route("/logout", post(auth::logout))
         // SSO / OIDC
@@ -367,6 +373,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/users/me/mfa/enroll", post(mfa::inscrever))
         .route("/api/users/me/mfa/activate", post(mfa::activar))
         .route("/api/users/me/mfa/disable", post(mfa::desactivar))
+        .route(
+            "/api/users/me/mfa/backup-codes/regenerate",
+            post(mfa::regenerar_codigos),
+        )
+        // «Segurança» e chaves de acesso (ADR-0011).
+        .route("/api/users/me/security", get(passkeys::security))
+        .route(
+            "/api/users/me/passkeys",
+            get(passkeys::list).post(passkeys::finish_registration),
+        )
+        .route(
+            "/api/users/me/passkeys/begin-registration",
+            post(passkeys::begin_registration),
+        )
+        .route(
+            "/api/users/me/passkeys/{passkey_id}",
+            get(passkeys::get_one).delete(passkeys::delete),
+        )
         // Centro de notificações pessoal (G8).
         .route("/api/users/me/notifications", get(notifications::list))
         .route(
@@ -840,6 +864,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         redis_bus: redis_bus.clone(),
         metrics,
         session_kills: sessions::KillRegistry::default(),
+        webauthn: passkeys::build(&config),
     });
 
     // Subscriber Redis: ouve mensagens de outros nós e entrega localmente.

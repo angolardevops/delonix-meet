@@ -199,13 +199,15 @@ pub struct AuthOk {
 
 /// Desafio do segundo factor: a password foi aceite mas a conta tem MFA
 /// activo, por isso ainda não há sessão. O `mfa_token` troca-se em
-/// `/api/auth/login/mfa`.
+/// `/api/auth/login/mfa` (código) ou `/api/auth/login/mfa/passkey` (chave).
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct MfaChallenge {
     /// Sempre `true`.
     pub mfa_required: bool,
     /// JWT `typ: "mfa"`, válido 5 minutos; não abre mais nenhum endpoint.
     pub mfa_token: String,
+    /// Factores que a conta tem: `totp` e/ou `passkey`.
+    pub methods: Vec<String>,
 }
 
 /// Resposta do login: sessão aberta OU desafio de MFA (sem discriminador — o
@@ -226,6 +228,10 @@ fn refresh_cookie(token: &str, secure: bool, max_age: i64) -> String {
 }
 
 /// Constrói a resposta de auth: define o cookie de refresh + devolve o access.
+pub(crate) fn auth_ok_response(state: &AppState, pair: TokenPair) -> Response {
+    auth_ok(state, pair)
+}
+
 fn auth_ok(state: &AppState, pair: TokenPair) -> Response {
     let cookie = refresh_cookie(
         &pair.refresh_token,
@@ -547,11 +553,20 @@ pub async fn login(
         // Devolve-se um desafio de curta duração, e os tokens só saem no
         // `/api/auth/login/mfa`. É o ponto todo do segundo factor — se a password
         // bastasse para obter o access token, o resto era teatro.
-        if crate::mfa::activo(&state.db, user.id).await? {
+        let factors = crate::mfa::factors(&state.db, user.id).await?;
+        if factors.any() {
             crate::audit::log(&state.db, None, user.id, "auth.mfa_challenge", &user.email).await;
+            let mut methods = Vec::new();
+            if factors.totp_enabled {
+                methods.push("totp".to_string());
+            }
+            if factors.passkeys > 0 {
+                methods.push("passkey".to_string());
+            }
             return Ok(Json(LoginResponse::MfaRequired(MfaChallenge {
                 mfa_required: true,
                 mfa_token: mfa_challenge_token(&state, user.id)?,
+                methods,
             }))
             .into_response());
         }
@@ -1453,11 +1468,13 @@ mod tests {
         let desafio = serde_json::to_value(LoginResponse::MfaRequired(MfaChallenge {
             mfa_required: true,
             mfa_token: "m".into(),
+            methods: vec!["totp".into()],
         }))
         .unwrap();
+        // `methods` acrescenta (ADR-0011); os dois campos de sempre ficam iguais.
         assert_eq!(
             desafio,
-            serde_json::json!({ "mfa_required": true, "mfa_token": "m" })
+            serde_json::json!({ "mfa_required": true, "mfa_token": "m", "methods": ["totp"] })
         );
     }
 
