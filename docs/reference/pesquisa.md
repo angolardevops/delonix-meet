@@ -8,9 +8,8 @@
 >
 > **Estado de cada peça:** «implementado» = servido e provado nesta linha
 > (`server/tests/search.rs`, `web/e2e/isolamento.mjs`); «fase 2» = mesmo mecanismo, a seguir.
-> **Caminhos:** as colecções respondem HOJE nos caminhos herdados (`/api/orgs/{org_id}/employees`,
-> `/api/orgs/{org_id}/audit`); mudam para `members`/`audit-events` com a reorganização de rotas,
-> sem alteração dos parâmetros nem da resposta.
+> **Caminhos:** os da reorganização de rotas já aplicada (`origin/integra/backend-fase2`,
+> `fe9faa8`): `/api/orgs/{org_id}/members`, `/api/orgs/{org_id}/audit-events`.
 
 ## 0. Resumo para a UI
 
@@ -342,7 +341,7 @@ Filtros: `mine` «Organizadas por mim», `invited` «Convidado» (`owner`); `pen
 `this_week`, `next_7_days` (`period`); `recurring` «Recorrentes», `with_minutes` «Com acta»
 (`content`). Ordem: `starts_at`.
 
-### 4.3 `members` — `GET /api/orgs/{org_id}/members` (hoje `/employees`) · implementado
+### 4.3 `members` — `GET /api/orgs/{org_id}/members` · implementado
 
 Visibilidade: membro activo da org; lista só membros activos. `q`: nome, email, cargo.
 
@@ -373,7 +372,7 @@ Visibilidade: membro activo da org do quadro. `q`: título, código da sala.
 Filtros: `mine` «Os meus» (`owner`); `public` «Com link público» (`sharing`); `this_week`,
 `this_month` (`period`). Ordem: `-created_at`.
 
-### 4.5 `audit_events` — `GET /api/orgs/{org_id}/audit-events` (hoje `/audit`) · implementado
+### 4.5 `audit_events` — `GET /api/orgs/{org_id}/audit-events` · implementado
 
 Visibilidade: admin activo da org; os eventos da org e os sem org cujo actor é (ou foi)
 membro — a regra do `audit::list`. `q`: acção, alvo, nome do actor.

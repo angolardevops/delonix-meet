@@ -482,7 +482,7 @@ async fn members_whiteboards_audit_stay_inside_the_org(db: sqlx::PgPool) {
 
     let (st, p) = app
         .get(
-            &format!("/api/orgs/{org}/employees?q=carl&group_by=role"),
+            &format!("/api/orgs/{org}/members?q=carl&group_by=role"),
             Some(&w.duarte.token),
         )
         .await;
@@ -490,7 +490,7 @@ async fn members_whiteboards_audit_stay_inside_the_org(db: sqlx::PgPool) {
     assert_eq!(ids(&p, "user_id"), vec![w.carla.user_id.clone()]);
     let (_, p) = app
         .get(
-            &format!("/api/orgs/{org}/employees?group_by=role"),
+            &format!("/api/orgs/{org}/members?group_by=role"),
             Some(&w.duarte.token),
         )
         .await;
@@ -502,8 +502,8 @@ async fn members_whiteboards_audit_stay_inside_the_org(db: sqlx::PgPool) {
         .unwrap();
     assert_eq!(admins["count"], 1);
     for path in [
-        format!("/api/orgs/{org}/employees?q=carla"),
-        format!("/api/orgs/{org}/audit?filters=logins"),
+        format!("/api/orgs/{org}/members?q=carla"),
+        format!("/api/orgs/{org}/audit-events?filters=logins"),
     ] {
         let (st, e) = app.get(&path, Some(&w.b.token)).await;
         assert!(st == 403 || st == 404, "{path}: {st} {e}");
@@ -512,14 +512,14 @@ async fn members_whiteboards_audit_stay_inside_the_org(db: sqlx::PgPool) {
     // Auditoria: só admin; filtros e grupos.
     let (st, _) = app
         .get(
-            &format!("/api/orgs/{org}/audit?filters=logins"),
+            &format!("/api/orgs/{org}/audit-events?filters=logins"),
             Some(&w.carla.token),
         )
         .await;
     assert_eq!(st, 403);
     let (st, p) = app
         .get(
-            &format!("/api/orgs/{org}/audit?filters=logins&group_by=actor"),
+            &format!("/api/orgs/{org}/audit-events?filters=logins&group_by=actor"),
             Some(&w.a.token),
         )
         .await;
@@ -530,7 +530,7 @@ async fn members_whiteboards_audit_stay_inside_the_org(db: sqlx::PgPool) {
         .all(|e| e["action"].as_str().unwrap().starts_with("auth.login")));
     let seen = all_pages(
         app,
-        &format!("/api/orgs/{org}/audit?order_by=-created_at"),
+        &format!("/api/orgs/{org}/audit-events?order_by=-created_at"),
         &w.a.token,
         "id",
     )
