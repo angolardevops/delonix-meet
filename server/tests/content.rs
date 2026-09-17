@@ -473,7 +473,10 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
     let (_, shares) = app.get(&format!("{base}/shares"), Some(&a.token)).await;
     assert_eq!(shares[0]["id"], c.user_id.as_str());
     let (st, body) = app.get(&format!("{base}/shares"), Some(&c.token)).await;
-    assert_eq!(st, 403, "vê (partilhada) mas não é o dono nem tem a capacidade");
+    assert_eq!(
+        st, 403,
+        "vê (partilhada) mas não é o dono nem tem a capacidade"
+    );
     assert_eq!(body["code"], "authz.missing_capability");
     assert_eq!(body["details"][0]["description"], "recordings.publish");
     // Com partilha, C vê inline (404 = autorizada) mas não descarrega.
