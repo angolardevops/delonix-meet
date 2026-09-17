@@ -1340,12 +1340,13 @@ async fn media_e_consentimento_sobrevivem_as_renegociacoes_do_sfu() {
 /// abriu entretanto. Correcção em `vendor/webrtc` (`[patch.crates-io]`).
 ///
 /// A armadilha que escondeu isto dos testes: a sonda só chega ao fecho se o
-/// par negociou `sdes:mid`. O cliente de teste não o registava e o webrtc-rs
-/// desistia antes de fechar; um browser (e o loadgen) negoceia-o sempre. Com
-/// as extensões de browser em `client_api`, este teste falhou 3/3 sem a
-/// correcção (6 a 63 pares em falta). O veredicto é por par (subscritor,
-/// publicador, tipo) e com RTP a passar: uma track negociada que não recebe
-/// nada é a avaria medida.
+/// par negociou `sdes:mid` para esse tipo de media. O cliente de teste chegou a
+/// não o registar (e depois só no vídeo), e o webrtc-rs desistia antes de
+/// fechar; um browser (e o loadgen) negoceia-o sempre. Com as extensões de
+/// browser em `client_api`, este teste falhou sem a correcção 3/3 numa base e
+/// 5/6 noutra — é de corrida, não é determinista. O veredicto é por par
+/// (subscritor, publicador, tipo) e com RTP a passar: uma track negociada que
+/// não recebe nada é a avaria medida.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn entradas_concorrentes_todos_recebem_todos() {
     const SALAS: usize = 4;
