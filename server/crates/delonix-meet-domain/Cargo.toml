@@ -15,3 +15,5 @@ chrono.workspace = true
 hex.workspace = true
 # Parsing de URL (puro, sem rede) para validar a forma de destinos.
 url = "2"
+# Corpos dos documentos do estúdio (ADR-0014 §5): validados e normalizados. Puro.
+serde_json.workspace = true
