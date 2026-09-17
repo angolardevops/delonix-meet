@@ -620,19 +620,28 @@ pub async fn list(
     auth: AuthUser,
 ) -> Result<Json<Vec<MeetingItem>>, ApiError> {
     // Sem varredura da quarentena aqui: esta lista não lê `meet_quarantine`.
+    // Parte dos dois índices (`meetings_owner_idx`, `meeting_invitees_user_idx`)
+    // e só depois junta `meetings`: um `WHERE m.owner_id = $1 OR i.user_id IS NOT
+    // NULL` obriga a varrer a tabela inteira. O `UNION` tira o duplicado do dono
+    // que também é convidado.
     let items: Vec<MeetingItem> = sqlx::query_as(
         r#"
+        WITH mine AS (
+            SELECT id FROM meetings WHERE owner_id = $1
+            UNION
+            SELECT meeting_id FROM meeting_invitees WHERE user_id = $1
+        )
         SELECT m.id, m.owner_id, u.username AS owner_name, m.title, m.description,
                m.kind, m.starts_at, m.duration_min, m.room_code,
                (m.owner_id = $1) AS is_owner, m.minutes,
                m.room_ref, mr.name AS room_name,
                CASE WHEN m.owner_id = $1 THEN 'owner' ELSE COALESCE(i.status, 'pending') END AS my_status,
                m.recurrence_freq, m.recurrence_interval, m.recurrence_parent_id
-        FROM meetings m
+        FROM mine
+        JOIN meetings m ON m.id = mine.id
         JOIN users u ON u.id = m.owner_id
         LEFT JOIN meeting_invitees i ON i.meeting_id = m.id AND i.user_id = $1
         LEFT JOIN meeting_rooms mr ON mr.id = m.room_ref
-        WHERE m.owner_id = $1 OR i.user_id IS NOT NULL
         ORDER BY m.starts_at ASC
         "#,
     )
