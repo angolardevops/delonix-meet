@@ -45,7 +45,7 @@ pub const MAX_SEGMENTS: usize = 50_000;
 const MAX_SEGMENT_CHARS: usize = 2_000;
 
 /// Um segmento da transcrição, na forma guardada em `transcript_segments`
-/// (migração 0051) e servida em `GET /api/recordings/{id}/transcript`.
+/// (migração 0052) e servida em `GET /api/recordings/{id}/transcript`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Segment {
     pub start_ms: i64,

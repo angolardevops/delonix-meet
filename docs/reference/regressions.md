@@ -1859,6 +1859,31 @@ portão existe para impedir, cometida ao escrevê-lo.
 
 **Ficheiros.** `server/vendor/webrtc-ice/src/agent/agent_internal.rs` (`send_role_conflict`), `server/Cargo.toml` (`[patch.crates-io]`), `server/Cargo.lock`, `server/src/sfu_e2e.rs`.
 
+### R158 — Portas UDP presas num servidor parado: a PC que falhava por ICE nunca acabava de fechar
+
+**Sintoma.** Depois de uma carga com o host saturado (30 salas × 4, perda de 64%, muitos `sfu create_offer failed error=connection closed`), o servidor já sem ninguém ficou >30 min com 359 sockets UDP abertos, com `delonix_sfu_peer_connections` e `delonix_sfu_subscriptions` a zero. Em corridas limpas os sockets fechavam em 90 s. Cada PC presa segura ~18 portas: o intervalo por omissão (50000–50200, 201 portas) esgota-se à 12.ª.
+
+**Causa raiz.** O handler de `on_peer_connection_state_change` chamava `remove_peer` → `pc.close()` quando o estado passava a `Failed`. O webrtc-rs 0.17.1 (`do_peer_connection_state_change`) segura um `tokio::Mutex` à volta do handler enquanto ele corre; o `close()` chega ao passo 11 (`update_connection_state` → `Closed`) e pede o MESMO mutex. Fica pendurado para sempre — e o peer já tinha saído da sala, por isso nenhum gauge o via e a saída do WebSocket mais tarde já não o encontrava para fechar.
+
+Ao lado, uma armadilha da mesma biblioteca: `RTCRtpSender::read` espera por `Notify::notify_waiters()` sem consultar a bandeira de paragem. Um `stop()` que chegue quando a tarefa não está a ler perde-se, e num sender que nunca enviou o `read_rtcp` seguinte nunca regressa. A tarefa de drenagem de RTCP segurava um `Arc<Publication>` (e com ele a PC do publicador) até esse `read_rtcp` falhar. Não se reproduziu no SFU (200 ciclos de subscrever/dessubscrever sem ficar nada vivo), mas a armadilha está fixada num teste.
+
+**Medição que o prova.** Recenseamento novo em `/metrics` (`delonix_sfu_pc_alive` por `Weak`, `delonix_sfu_pc_unclosed` = `close()` que nunca regressou, peers/publicações/tarefas contados por `Drop`). Servidor real, 8 clientes do gerador de carga congelados com `SIGSTOP` (WebSocket aberto, ICE morto → `Failed`), depois mortos: antes da correcção `peers_in_rooms=0`, `peer_connections=0`, mas `pc_alive=8 pc_unclosed=8`, 8 peers e 8 tarefas de negociação vivos e **144 sockets UDP**, iguais 120 s depois; com a correcção tudo a zero e 0 sockets 20 s depois do `Failed`.
+
+**Regra.**
+- NUNCA fechar (nem remover, que fecha) uma `RTCPeerConnection` de dentro de um callback dela. A remoção por `Failed` corre numa tarefa à parte, e só remove o peer se ainda for o mesmo `Arc` (`remove_peer_exact`).
+- Uma tarefa que vive de um sender ou receiver do webrtc-rs não pode depender só de a leitura falhar para terminar: segura `Weak`s e confirma periodicamente que a subscrição existe (`subscription_alive`, pergunta ao `subscribed` do peer, que sobrevive à troca de camada por `replace_track`).
+- Um `close()` acima de 10 s é um erro no log (`close_pc`), não silêncio.
+- Uma fuga de PC vê-se em `delonix_sfu_pc_unclosed - delonix_sfu_peers_in_rooms > 0` sustentado, não nos gauges de negócio.
+
+**Portão.**
+- `sfu_e2e::pc_que_falha_por_ice_fecha_e_nao_fica_viva` — o cliente desaparece sem avisar, ICE com timeouts curtos; exige que a PC do SFU feche e deixe de existir. Sem a correcção falha com `pc_alive: 2, pc_unclosed: 2, peers_in_rooms: 1`.
+- `sfu_e2e::churn_de_subscricoes_nao_deixa_nada_vivo` — 200 ciclos de interesse de vídeo; depois de todos saírem o censo tem de voltar a zero.
+- `sfu_e2e::webrtc_rs_read_rtcp_depois_de_stop_nao_regressa` — fixa a armadilha da biblioteca; se passar a falhar, o upstream corrigiu-a.
+
+**Não validado.** A liveness da tarefa de RTCP depois de uma troca de camada só se exercita quando passam 5 s sem RTCP, o que não acontece nos testes (os interceptors mandam Receiver Reports a cada segundo); está coberta por leitura de código, não por um teste que a force. Kubernetes com relay-only não se correu.
+
+**Ficheiros.** `server/src/sfu.rs` (`Census`, `close_pc`, `remove_peer_exact`, handler de estado, `subscribe_layer`, `subscription_alive`), `server/src/main.rs` (`/metrics`), `server/src/sfu_e2e.rs`.
+
 ### R160 — Segredos de integração em claro na base (S5): webhooks, SSO e WebDAV
 
 **Sintoma.** Nenhum visível. Quem lesse um dump, um backup ou uma réplica da base levava, em texto claro, o segredo HMAC de cada webhook (`org_webhooks.secret`), o `client_secret` OIDC de cada organização (`org_sso_configs.client_secret`) e a password do Nextcloud/WebDAV da plataforma (`platform_storage.webdav_password`) — credenciais de terceiros de todos os inquilinos. Auditoria 2026-09-16, S5 (`storage.rs:106`, `org.rs:1144`, `webhooks.rs:268`). A migração 0019 dizia «encriptado em repouso (app-level)» e a 0030 «cifrado se STORAGE_ENCRYPT=1»; nenhuma das duas era verdade.
@@ -1937,8 +1962,26 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Regra 4 — desligar a sala de espera não abre a porta a quem não tem entrada directa.** O token de sala separa `lobby` (sem entrada directa: espera sempre) de `wr` (a configuração da sala); só o segundo é substituível em runtime. Origem e cargo decidem-se no servidor e viajam assinados no token.
 
-**Adaptações nesta linha.** Router e crons em `lib.rs`. As migrações 0039 e 0048 da UI passam a 0049 e 0050. O `PeerRole` do R124 funde-se com o da UI (`role` + `can_admit` EFECTIVO: um co-anfitrião por papel continua a admitir).
+**Adaptações nesta linha.** Router e crons em `lib.rs`. As migrações 0039 e 0048 da UI passam a 0050 e 0051 (a 0049 é a dos convites pendentes, #88). O `PeerRole` do R124 funde-se com o da UI (`role` + `can_admit` EFECTIVO: um co-anfitrião por papel continua a admitir).
 
 **Portão.** `signaling` + `room_chat` (91 testes do hub, com a metade negativa de cada controlo e os 6 da conversa directa); `tests/room_chat.rs` contra Postgres real (a privada não volta a um terceiro; fios e reacções no histórico).
 
-**Ficheiros.** `server/src/{signaling,room_tools,room_chat,rooms,auth,org,users,pubsub,metrics,lib}.rs`, `server/migrations/0049_room_chat_threads_reactions.sql`, `server/migrations/0050_room_chat_direct.sql`, `server/tests/room_chat.rs`.
+**Ficheiros.** `server/src/{signaling,room_tools,room_chat,rooms,auth,org,users,pubsub,metrics,lib}.rs`, `server/migrations/0050_room_chat_threads_reactions.sql`, `server/migrations/0051_room_chat_direct.sql`, `server/tests/room_chat.rs`.
+
+### R189 — Um merge com dois blocos de conflito foi empurrado com o segundo por resolver
+
+**Sintoma.** Ao propagar a `main` (#89) pela pilha, o `HARNESS.md` da `backend/bw1-protocolo-sala` tinha dois blocos em conflito. O script de resolução tratou o primeiro e o commit seguiu com `<<<<<<< HEAD` … `>>>>>>>` na tabela de infraestrutura. Nenhum portão reparou: o `check-docs-drift.sh` lê as linhas que procura e não o ficheiro inteiro, e num `.md` nada compila. No mesmo passo, a bateria final correu sobre uma árvore com um merge PARADO em conflito, porque o script não parava quando o `git merge` falhava.
+
+**Regra.** Uma linha seguida que comece por `<<<<<<< ` ou `>>>>>>> ` é um conflito por resolver, e o `check-repo-hygiene.sh` falha com o ficheiro e a linha (controlo negativo feito: um bloco acrescentado ao `HARNESS.md` faz o portão falhar). Resolver conflitos por script: iterar até não restar NENHUM marcador, nunca só o primeiro índice. Uma bateria só conta sobre `git status` sem `UU`.
+
+**Ficheiros.** `scripts/check-repo-hygiene.sh`, `HARNESS.md`.
+
+### R230 — O directo multidestino só funcionava no primeiro destino
+
+**Sintoma.** Com 2 ou mais destinos, o segundo em diante era recusado pelo servidor RTMP (`unsupported video codec: 2`, medido com mediamtx a 2160p/16 Mbit pela sessão da frente E). O `montar_argumentos` punha `-c:v copy -c:a aac -b:a 128k -ar 44100` UMA vez, antes da primeira saída — e no ffmpeg as opções de saída valem só para a saída seguinte. As restantes saíam com os codecs por omissão do FLV: vídeo FLV1 re-codificado em software (o custo que o ADR-0003 existe para evitar) e áudio MP3. O teste existente só contava as saídas `flv`, não o que cada uma levava.
+
+**Prova.** ffmpeg real, a mesma entrada Matroska H.264+Opus por cano, dois ficheiros FLV: com os argumentos antigos, `ffprobe` dá `h264 aac` na 1.ª saída e `mp3 flv1` na 2.ª; com os novos, `h264 aac` nas duas.
+
+**Regra.** As opções de codec vêm de `opcoes_de_saida()` e repetem-se antes de CADA `-f flv`. Portão: `broadcast::testes::cada_saida_leva_as_suas_opcoes_de_codec` (1, 2 e 3 destinos; cada saída tem de ter o seu `-c:v copy`, `-c:a aac` e `-ar` desde a saída anterior). Continua por resolver, e é da frente E (ADR-0013): um destino pendurado congela os outros, porque é um só processo.
+
+**Ficheiros.** `server/src/broadcast.rs`.

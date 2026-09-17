@@ -1827,7 +1827,7 @@ async fn upload_measures_a_real_webm_when_ffmpeg_exists(db: sqlx::PgPool) {
 }
 
 // ---------------------------------------------------------------------------
-//  Migrações 0051–0053: conversão dos dados na forma antiga
+//  Migrações 0052–0054: conversão dos dados na forma antiga
 // ---------------------------------------------------------------------------
 
 #[sqlx::test(migrations = false)]
@@ -1839,7 +1839,7 @@ async fn migrations_convert_old_shape_data(db: sqlx::PgPool) {
         before
             .migrations
             .iter()
-            .filter(|m| m.version < 51)
+            .filter(|m| m.version < 52)
             .cloned()
             .collect(),
     );
