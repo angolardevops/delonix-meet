@@ -809,6 +809,7 @@ dependencies = [
  "hmac",
  "jsonwebtoken",
  "openidconnect",
+ "opus-rs",
  "rand 0.8.6",
  "rcgen",
  "redis",
@@ -2117,6 +2118,12 @@ dependencies = [
  "thiserror 1.0.69",
  "url",
 ]
+
+[[package]]
+name = "opus-rs"
+version = "0.1.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8380ecc3f3861651992dad78a8c135b3dcd94a3bcd279a733b5a078174742f6"
 
 [[package]]
 name = "ordered-float"

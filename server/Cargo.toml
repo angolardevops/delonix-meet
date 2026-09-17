@@ -73,6 +73,10 @@ redis = { version = "0.27", default-features = false, features = ["tokio-comp", 
 regex = "1.13.0"
 # Limpeza de material de chave em memória (ver signaling::Secret).
 zeroize = "1"
+# Ponte telefone↔sala (ADR-0010): Opus em Rust puro, sem libopus no sistema nem
+# na imagem distroless. Interoperabilidade com a libopus medida nos dois
+# sentidos (ADR-0010 §«Medições»).
+opus-rs = "=0.1.33"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
