@@ -262,6 +262,7 @@ pub async fn get_settings(
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "`telephony.sip_domain_taken`: o domínio decide a org das chamadas que entram, e é único."),
         (status = 422, body = crate::openapi::ErrorBody, description = "`secrets.encryption_unconfigured`"),
     )
 )]
@@ -336,7 +337,14 @@ pub async fn put_settings(
     .bind(&sealed)
     .bind(auth.user_id)
     .execute(&state.db)
-    .await?;
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::Database(d) if d.is_unique_violation() => ApiError::from(DomainError::conflict(
+            "telephony.sip_domain_taken",
+            "esse domínio SIP já está atribuído a outra organização",
+        )),
+        other => other.into(),
+    })?;
     let after = to_dto(read_row(&state, org_id).await?);
     crate::audit::log(
         &state.db,
