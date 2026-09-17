@@ -1750,11 +1750,11 @@
         "type": "object"
       },
       "LibraryResponse": {
-        "description": "Sem parâmetros: a lista inteira (forma herdada, lida pelo web). Com `q`,\n`page_size` ou `page_token`: uma página.",
+        "description": "Sem `page_size`/`page_token`: a lista (forma que a UI lê, também com `q` e\n`scope`). Com eles: uma página.",
         "oneOf": [
           {
             "items": {
-              "$ref": "#/components/schemas/RecordingItem"
+              "$ref": "#/components/schemas/RecordingLibraryItem"
             },
             "type": "array"
           },
@@ -3670,106 +3670,199 @@
         ],
         "type": "object"
       },
-      "RecordingChapter": {
+      "RecordingCaption": {
         "properties": {
-          "at_secs": {
-            "format": "int32",
-            "type": "integer"
-          },
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
-          "created_by": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "recording_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "recording_id",
-          "at_secs",
-          "title",
-          "created_by",
-          "created_at"
-        ],
-        "type": "object"
-      },
-      "RecordingChapterPage": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RecordingChapter"
-            },
-            "type": "array"
-          },
-          "next_page_token": {
+          "error": {
             "type": [
               "string",
               "null"
             ]
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
-      "RecordingChapterReq": {
-        "properties": {
-          "at_secs": {
-            "description": "Segundos desde o início; `0..=duration_secs` (ou `0..=172800` sem duração).",
-            "format": "int32",
-            "type": "integer"
           },
-          "title": {
-            "description": "1-120 caracteres, uma linha.",
+          "lang": {
+            "description": "BCP 47 curto (`pt`, `pt-AO`, `en`).",
             "type": "string"
-          }
-        },
-        "required": [
-          "at_secs",
-          "title"
-        ],
-        "type": "object"
-      },
-      "RecordingComment": {
-        "properties": {
-          "at_secs": {
-            "description": "Segundos desde o início; `null` = comentário sobre a gravação inteira.",
+          },
+          "progress_pct": {
             "format": "int32",
             "type": [
               "integer",
               "null"
             ]
           },
-          "author_id": {
+          "published_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recording_id": {
             "format": "uuid",
             "type": "string"
           },
-          "author_name": {
+          "source": {
+            "description": "`upload` | `transcript` | `translation`.",
             "type": "string"
           },
+          "status": {
+            "description": "`generating` | `draft` | `published` | `failed`.",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recording_id",
+          "lang",
+          "source",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "RecordingCaptionPatchReq": {
+        "properties": {
+          "status": {
+            "description": "`draft` | `published`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "RecordingCaptionPutReq": {
+        "properties": {
+          "publish": {
+            "description": "Publicar já (por omissão fica rascunho).",
+            "type": "boolean"
+          },
+          "vtt": {
+            "description": "WebVTT válido, até 2 MiB.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vtt"
+        ],
+        "type": "object"
+      },
+      "RecordingCaptionWithVtt": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RecordingCaption"
+          },
+          {
+            "properties": {
+              "vtt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "vtt"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "Metadados e o VTT."
+      },
+      "RecordingChapter": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "recording_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "source": {
+            "description": "`auto` (gerado da transcrição) | `manual`.",
+            "type": "string"
+          },
+          "t_ms": {
+            "description": "Milissegundos desde o início.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "recording_id",
+          "t_ms",
+          "title",
+          "source",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "RecordingChapterReq": {
+        "properties": {
+          "t_ms": {
+            "description": "Milissegundos; `0..=duration_ms` (ou `0..=172800000` sem duração).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "description": "1-200 caracteres, uma linha.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "t_ms",
+          "title"
+        ],
+        "type": "object"
+      },
+      "RecordingChapterUpdateReq": {
+        "properties": {
+          "t_ms": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RecordingComment": {
+        "properties": {
           "body": {
             "description": "Já censurado pelo DLP.",
             "type": "string"
+          },
+          "can_delete": {
+            "description": "Quem pede pode apagar: o autor, ou quem gere a gravação (moderação).",
+            "type": "boolean"
           },
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
           "edited_at": {
+            "description": "`null` se nunca foi editado.",
             "format": "date-time",
             "type": [
               "string",
@@ -3783,15 +3876,32 @@
           "recording_id": {
             "format": "uuid",
             "type": "string"
+          },
+          "t_ms": {
+            "description": "Instante do vídeo em ms; `null` = comentário à gravação inteira.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "user_id": {
+            "description": "Autor.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
           }
         },
         "required": [
           "id",
           "recording_id",
+          "user_id",
+          "username",
           "body",
-          "author_id",
-          "author_name",
-          "created_at"
+          "created_at",
+          "can_delete"
         ],
         "type": "object"
       },
@@ -3817,17 +3927,17 @@
       },
       "RecordingCommentReq": {
         "properties": {
-          "at_secs": {
-            "description": "Segundos desde o início; omisso = sobre a gravação inteira.",
-            "format": "int32",
+          "body": {
+            "description": "1-2000 caracteres (também depois do DLP).",
+            "type": "string"
+          },
+          "t_ms": {
+            "description": "Milissegundos desde o início; omisso ou `null` = sobre a gravação inteira.",
+            "format": "int64",
             "type": [
               "integer",
               "null"
             ]
-          },
-          "body": {
-            "description": "1-2000 caracteres. Passa pelo DLP antes de ser guardado.",
-            "type": "string"
           }
         },
         "required": [
@@ -3837,60 +3947,92 @@
       },
       "RecordingCommentUpdateReq": {
         "properties": {
-          "at_secs": {
-            "description": "Muda a marca temporal. Não se retira a marca por aqui.",
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
           "body": {
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "t_ms": {
+            "description": "Muda a marca temporal. Não se retira a marca por aqui.",
+            "format": "int64",
+            "type": [
+              "integer",
               "null"
             ]
           }
         },
         "type": "object"
       },
-      "RecordingItem": {
-        "description": "Item da biblioteca, enriquecido para a UI.",
+      "RecordingLibraryItem": {
+        "description": "Item da biblioteca com metadados de media, estados, contagens e publicação\n(`RecordingLibraryItem` da UI).",
         "properties": {
+          "audio_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "can_download": {
-            "description": "RBAC de download: só o dono da gravação e admins da org do dono podem\ndescarregar o ficheiro; os restantes só reproduzem.",
+            "description": "Só o dono e os admins activos da org do dono descarregam; os restantes reproduzem.",
             "type": "boolean"
           },
           "can_manage": {
-            "description": "Pode alterar título, categoria e capítulos (dono ou admin activo da org do dono).",
+            "description": "Pode editar nome, descrição, etiquetas, capítulos, legendas e publicar.",
             "type": "boolean"
           },
-          "category": {
-            "description": "`meeting` | `lecture` | `broadcast` | `other`.",
-            "type": "string"
+          "caption_languages": {
+            "description": "Línguas com legenda PUBLICADA.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "chapter_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "comment_count": {
+            "description": "Comentários vivos (os apagados não contam).",
+            "format": "int64",
+            "type": "integer"
           },
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
-          "duration_secs": {
-            "description": "Duração em segundos; `null` = não se sabe (gravação carregada pelo browser).",
-            "format": "int32",
+          "description": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "description": "Medidos com ffprobe; `null` = não foi possível medir.",
+            "format": "int64",
             "type": [
               "integer",
               "null"
             ]
           },
           "failure_reason": {
-            "description": "Causa em linguagem de utilizador. `None` quando `status = ready`.",
+            "description": "Causa em linguagem de utilizador. `null` quando não falhou.",
             "type": [
               "string",
               "null"
             ]
           },
           "filename": {
-            "description": "Nome do ficheiro (é o nome com que se descarrega).",
+            "description": "Nome da gravação: o que a UI mostra e com que se descarrega.",
             "type": "string"
+          },
+          "fps": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "has_thumbnail": {
+            "description": "Há miniatura em `GET /api/recordings/{recording_id}/thumbnail`.",
+            "type": "boolean"
           },
           "height": {
             "format": "int32",
@@ -3903,13 +4045,32 @@
             "format": "uuid",
             "type": "string"
           },
+          "kind": {
+            "description": "`meeting` | `training` | `broadcast` | `hybrid`.",
+            "type": "string"
+          },
           "owned": {
-            "description": "True se o utilizador atual é dono (participou/fez upload); false se só partilhada.",
+            "description": "True se quem pede participou na sala; false se só a vê por partilha,\npublicação ou papel.",
             "type": "boolean"
           },
-          "processing_state": {
-            "description": "Estado derivado: `ready` | `failed` | `transcribing` | `transcribed` |\n`transcription_failed`. Não há `processing`: a linha só nasce depois de\no ffmpeg acabar de compor.",
-            "type": "string"
+          "participant_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "progress_pct": {
+            "description": "Progresso do passo em curso, 0–100. `null` sem passo com progresso.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "published_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "room_code": {
             "type": "string"
@@ -3919,7 +4080,7 @@
             "type": "string"
           },
           "share_count": {
-            "description": "Nº de utilizadores com quem está partilhada (só relevante para o dono).",
+            "description": "Nº de utilizadores com quem está partilhada.",
             "format": "int64",
             "type": "integer"
           },
@@ -3934,16 +4095,36 @@
               "null"
             ]
           },
-          "status": {
-            "description": "`ready` = há ficheiro. `failed` = houve tentativa e não há nada.\n\nA entrada falhada existe para ser VISTA: antes, uma gravação que não\ncompunha desaparecia sem deixar rasto, e quem carregou em «gravar»\nficava a pensar que tinha um ficheiro algures. Ver migração 0036.",
+          "state": {
+            "description": "O `status`, com `published` quando está pronta e publicada.",
             "type": "string"
           },
-          "title": {
-            "description": "Título dado por quem gere a gravação; `null` = a UI mostra o `filename`.",
+          "status": {
+            "description": "`transcribing` | `ready` | `failed`. Esta linha não emite `processing`:\na linha só nasce depois de o ffmpeg acabar de compor.",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "transcribed_at": {
+            "format": "date-time",
             "type": [
               "string",
               "null"
             ]
+          },
+          "transcript_language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transcript_status": {
+            "description": "`none` | `transcribing` | `ready` | `failed`.",
+            "type": "string"
           },
           "uploader_id": {
             "format": "uuid",
@@ -3952,8 +4133,36 @@
           "uploader_name": {
             "type": "string"
           },
+          "uploader_org_id": {
+            "description": "Organização do autor (a que partilha com quem pede, se houver).",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uploader_org_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "video_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "view_count": {
+            "description": "Visualizações (uma por pessoa por dia).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "visibility": {
+            "description": "`private` | `org`.",
+            "type": "string"
+          },
           "width": {
-            "description": "Resolução do vídeo; `null` = não se sabe, ou só áudio.",
             "format": "int32",
             "type": [
               "integer",
@@ -3968,15 +4177,25 @@
           "uploader_id",
           "uploader_name",
           "filename",
-          "category",
           "size_bytes",
           "created_at",
           "owned",
           "share_count",
           "can_download",
-          "can_manage",
           "status",
-          "processing_state"
+          "state",
+          "kind",
+          "has_thumbnail",
+          "transcript_status",
+          "chapter_count",
+          "comment_count",
+          "view_count",
+          "participant_count",
+          "caption_languages",
+          "description",
+          "tags",
+          "visibility",
+          "can_manage"
         ],
         "type": "object"
       },
@@ -4000,11 +4219,11 @@
         "type": "object"
       },
       "RecordingPage": {
-        "description": "Página da biblioteca (com `q`, `page_size` ou `page_token`).",
+        "description": "Página da biblioteca (com `page_size` ou `page_token`).",
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/RecordingItem"
+              "$ref": "#/components/schemas/RecordingLibraryItem"
             },
             "type": "array"
           },
@@ -4018,6 +4237,56 @@
         "required": [
           "items"
         ],
+        "type": "object"
+      },
+      "RecordingParticipant": {
+        "properties": {
+          "joined_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "joined_at"
+        ],
+        "type": "object"
+      },
+      "RecordingParticipantPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecordingParticipant"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "RecordingPublicationReq": {
+        "properties": {
+          "visibility": {
+            "description": "Só `org`: publicar para os membros activos das organizações do autor.",
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "RecordingShareLink": {
@@ -4064,6 +4333,193 @@
         },
         "required": [
           "user_id"
+        ],
+        "type": "object"
+      },
+      "RecordingTranscript": {
+        "properties": {
+          "confidence": {
+            "description": "Média da confiança dos segmentos, 0–1.",
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "error": {
+            "description": "Razão da falha. Só quando `status = failed`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "progress_pct": {
+            "description": "Só enquanto `transcribing`, e só se houver quem o escreva.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "recording_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "segments": {
+            "description": "Vazio quando o worker entregou só o texto.",
+            "items": {
+              "$ref": "#/components/schemas/TranscriptSegment"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "`none` | `transcribing` | `ready` | `failed`.",
+            "type": "string"
+          },
+          "text": {
+            "description": "Texto inteiro (já censurado pelo DLP).",
+            "type": "string"
+          },
+          "transcribed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "recording_id",
+          "status",
+          "text",
+          "segments"
+        ],
+        "type": "object"
+      },
+      "RecordingUpdateReq": {
+        "properties": {
+          "description": {
+            "description": "0-8000 caracteres; `\"\"` apaga.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filename": {
+            "description": "Nome: 1-200 caracteres, uma linha.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tags": {
+            "description": "Até 20 etiquetas de 1-40 caracteres; normalizadas (sem `#`, minúsculas,\nsem repetidas). `[]` apaga.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RecordingUploadResult": {
+        "description": "Resposta do upload: a gravação e o que o servidor mediu no ficheiro.",
+        "properties": {
+          "audio_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "duration_ms": {
+            "description": "Medidos com ffprobe; `null` = não foi possível medir (nunca inventado).",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "filename": {
+            "type": "string"
+          },
+          "fps": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "has_thumbnail": {
+            "type": "boolean"
+          },
+          "height": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`meeting` | `training` | `broadcast` | `hybrid`.",
+            "type": "string"
+          },
+          "room_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "description": "`ready` (o upload só responde com o ficheiro escrito).",
+            "type": "string"
+          },
+          "uploader_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "video_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "width": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "room_id",
+          "uploader_id",
+          "filename",
+          "size_bytes",
+          "created_at",
+          "kind",
+          "status",
+          "has_thumbnail"
         ],
         "type": "object"
       },
@@ -4748,6 +5204,36 @@
         },
         "type": "object"
       },
+      "TranscriptSegment": {
+        "description": "Um segmento da transcrição com tempos.",
+        "properties": {
+          "confidence": {
+            "description": "0–1; `null` = o worker não a deu.",
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "end_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "start_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_ms",
+          "end_ms",
+          "text"
+        ],
+        "type": "object"
+      },
       "TranslateReq": {
         "properties": {
           "target": {
@@ -4850,25 +5336,6 @@
           "waiting_room": {
             "type": [
               "boolean",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "UpdateRecordingReq": {
-        "properties": {
-          "category": {
-            "description": "`meeting` | `lecture` | `broadcast` | `other`.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "title": {
-            "description": "1-120 caracteres, uma linha. `\"\"` apaga o título (a UI volta ao `filename`).",
-            "type": [
-              "string",
               "null"
             ]
           }
