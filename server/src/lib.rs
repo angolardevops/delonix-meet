@@ -52,6 +52,10 @@ mod voice;
 mod webhooks;
 mod whiteboards;
 
+/// A varredura da quarentena, exposta aos testes de integração sem abrir o
+/// módulo inteiro (os handlers já não a chamam — ver `meetings::quarantine_sweep`).
+pub use meetings::{quarantine_sweep, run_quarantine_sweeper};
+
 use axum::{
     extract::DefaultBodyLimit,
     http::HeaderValue,
@@ -921,21 +925,14 @@ pub async fn run() {
     }
 
     // Cron: sweep de quarentena a cada 5 min (marca não-respondentes de
-    // reuniões já começadas). Idempotente; as leituras fazem sweep na mesma.
-    {
-        let db = state.db.clone();
-        tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(Duration::from_secs(300));
-            loop {
-                ticker.tick().await;
-                match meetings::quarantine_sweep(&db).await {
-                    Ok(n) if n > 0 => tracing::info!(added = n, "quarantine sweep"),
-                    Ok(_) => {}
-                    Err(e) => tracing::warn!(error = %e, "quarantine sweep failed"),
-                }
-            }
-        });
-    }
+    // reuniões já começadas). Idempotente. Nenhum handler varre a base inteira:
+    // a analítica varre só a sua org e o seu período. Pára no shutdown.
+    let quarantine_stop = tokio_util::sync::CancellationToken::new();
+    let quarantine_sweeper = tokio::spawn(meetings::run_quarantine_sweeper(
+        state.db.clone(),
+        Duration::from_secs(300),
+        quarantine_stop.clone(),
+    ));
 
     // Cron: retenção de gravações (DLP-lite) a cada hora — apaga as que
     // passaram do prazo configurado por organização.
@@ -1107,11 +1104,14 @@ pub async fn run() {
         let state = state.clone();
         async move {
             shutdown_signal().await;
+            quarantine_stop.cancel();
             drenar(state).await;
         }
     })
     .await
     .unwrap();
+    // Uma passagem em curso acaba; nenhuma nova começa.
+    let _ = quarantine_sweeper.await;
 }
 
 /// Espera SIGTERM (K8s rollout/drain) ou Ctrl-C. Quando dispara, o axum PÁRA de

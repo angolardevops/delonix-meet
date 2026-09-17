@@ -246,19 +246,82 @@ async fn detect_conflicts(
 }
 
 /// Marca em quarentena quem não respondeu (ainda 'pending') a reuniões que
-/// já começaram. Idempotente. Corre periodicamente (cron) e também antes de
-/// leituras relevantes como backstop.
+/// já começaram, em toda a base. Idempotente. Corre só na tarefa de fundo
+/// (`run_quarantine_sweeper`): NUNCA num handler, porque o custo cresce com
+/// todos os convidados que nunca responderam (medido a 2026-09-17: 1,2-1,8 s
+/// com 287 000 convidados, e corria em cada `GET /api/meetings`).
+///
+/// O `NOT EXISTS` filtra antes de inserir o que já está em quarentena: o
+/// `ON CONFLICT` sozinho pagava uma inserção especulativa por linha repetida
+/// (48 000 por passagem). Fica na mesma para a corrida entre réplicas.
+///
+/// Não é incremental por `starts_at` de propósito: uma reunião criada com
+/// início no passado, ou remarcada para trás pela v1, nunca entraria numa
+/// janela «desde a última passagem».
 pub async fn quarantine_sweep(db: &sqlx::PgPool) -> Result<u64, ApiError> {
     let res = sqlx::query(
         "INSERT INTO meet_quarantine (user_id, meeting_id)
          SELECT i.user_id, i.meeting_id FROM meeting_invitees i
          JOIN meetings m ON m.id = i.meeting_id
          WHERE i.status = 'pending' AND m.starts_at < now()
+           AND NOT EXISTS (
+                 SELECT 1 FROM meet_quarantine q
+                 WHERE q.user_id = i.user_id AND q.meeting_id = i.meeting_id)
          ON CONFLICT DO NOTHING",
     )
     .execute(db)
     .await?;
     Ok(res.rows_affected())
+}
+
+/// A mesma marcação, limitada ao que `quarantine_analytics` lê: membros da
+/// organização e reuniões começadas nos últimos `days` dias. Deixa a
+/// analítica exacta sem esperar pela tarefa de fundo, a um custo que depende
+/// da organização e não da base inteira (5-26 ms nas orgs maiores da base
+/// semeada).
+async fn quarantine_sweep_org(db: &sqlx::PgPool, org_id: Uuid, days: i32) -> Result<u64, ApiError> {
+    let in_org = crate::org::quarantine_subject_in_org_sql("$1", "i.user_id");
+    let res = sqlx::query(&format!(
+        "INSERT INTO meet_quarantine (user_id, meeting_id)
+         SELECT i.user_id, i.meeting_id FROM meeting_invitees i
+         JOIN meetings m ON m.id = i.meeting_id
+         WHERE i.status = 'pending'
+           AND m.starts_at >= now() - make_interval(days => $2)
+           AND m.starts_at < now()
+           AND {in_org}
+           AND NOT EXISTS (
+                 SELECT 1 FROM meet_quarantine q
+                 WHERE q.user_id = i.user_id AND q.meeting_id = i.meeting_id)
+         ON CONFLICT DO NOTHING"
+    ))
+    .bind(org_id)
+    .bind(days)
+    .execute(db)
+    .await?;
+    Ok(res.rows_affected())
+}
+
+/// Tarefa de fundo da quarentena: uma passagem de `quarantine_sweep` a cada
+/// `every`, a primeira logo ao arrancar. Pára quando `stop` é cancelado —
+/// entre passagens; uma passagem em curso acaba antes de sair.
+pub async fn run_quarantine_sweeper(
+    db: sqlx::PgPool,
+    every: std::time::Duration,
+    stop: tokio_util::sync::CancellationToken,
+) {
+    let mut ticker = tokio::time::interval(every);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = stop.cancelled() => break,
+            _ = ticker.tick() => {}
+        }
+        match quarantine_sweep(&db).await {
+            Ok(n) if n > 0 => tracing::info!(added = n, "quarantine sweep"),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "quarantine sweep failed"),
+        }
+    }
 }
 
 /// A reunião criada (campos de `Meeting` ao nível de topo) mais os avisos de
@@ -556,7 +619,7 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<Vec<MeetingItem>>, ApiError> {
-    quarantine_sweep(&state.db).await?;
+    // Sem varredura da quarentena aqui: esta lista não lê `meet_quarantine`.
     let items: Vec<MeetingItem> = sqlx::query_as(
         r#"
         SELECT m.id, m.owner_id, u.username AS owner_name, m.title, m.description,
@@ -1186,31 +1249,30 @@ pub async fn quarantine_analytics(
     Path(org_id): Path<Uuid>,
     axum::extract::Query(q): axum::extract::Query<AnalyticsQuery>,
 ) -> Result<Json<Vec<QuarantineRow>>, ApiError> {
-    quarantine_sweep(&state.db).await?;
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-    let admin_orgs: Vec<Uuid> = vec![org_id];
-    let days: i64 = match q.period.as_str() {
+    let days: i32 = match q.period.as_str() {
         "week" => 7,
         "month" => 30,
         "quarter" => 90,
         "year" => 365,
         _ => 30,
     };
-    let rows: Vec<QuarantineRow> = sqlx::query_as(
+    // Depois da autorização: quem não é admin da org não põe a base a escrever.
+    quarantine_sweep_org(&state.db, org_id, days).await?;
+    let in_org = crate::org::quarantine_subject_in_org_sql("$2", "u.id");
+    let rows: Vec<QuarantineRow> = sqlx::query_as(&format!(
         "SELECT u.id AS user_id, u.username, COUNT(*) AS count
          FROM meet_quarantine mq
          JOIN users u ON u.id = mq.user_id
          JOIN meetings m ON m.id = mq.meeting_id
          WHERE m.starts_at >= now() - make_interval(days => $1::int)
-           AND EXISTS (
-                 SELECT 1 FROM org_members om
-                 WHERE om.org_id = ANY($2) AND om.user_id = u.id)
+           AND {in_org}
          GROUP BY u.id, u.username
          ORDER BY count DESC, u.username
-         LIMIT 100",
-    )
-    .bind(days as i32)
-    .bind(&admin_orgs)
+         LIMIT 100"
+    ))
+    .bind(days)
+    .bind(org_id)
     .fetch_all(&state.db)
     .await?;
     Ok(Json(rows))
