@@ -624,6 +624,31 @@
           "message": {
             "type": "string"
           },
+          "parent_id": {
+            "description": "Mensagem a que esta responde (fio), se houver.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reactions": {
+            "description": "Contagem de reacções por emoji (`{}` sem reacções)."
+          },
+          "to_user_id": {
+            "description": "Conversa directa: a conta que a recebe e o nome. `None` = pública.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "user_id": {
             "format": "uuid",
             "type": "string"
@@ -637,7 +662,8 @@
           "user_id",
           "username",
           "message",
-          "created_at"
+          "created_at",
+          "reactions"
         ],
         "type": "object"
       },

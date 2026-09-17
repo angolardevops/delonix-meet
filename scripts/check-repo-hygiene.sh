@@ -223,5 +223,16 @@ if [ -f scripts/.mutante-em-voo.json ]; then
   fail=1
 fi
 
-[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita"
+# R189 — um merge resolvido só no primeiro bloco deixou marcadores de conflito
+# num .md empurrado, e nenhum portão reparou (o docs-drift lê tabelas, não o
+# ficheiro inteiro). Linha a começar por `<<<<<<< ` ou `>>>>>>> ` num ficheiro
+# seguido é sempre um conflito por resolver — em código compila mal, em docs passa.
+marcadores=$(git grep -nE '^(<<<<<<< |>>>>>>> )' -- . ':!scripts/check-repo-hygiene.sh' 2>/dev/null || true)
+if [ -n "$marcadores" ]; then
+  echo "✗ higiene: marcadores de conflito por resolver em ficheiros seguidos:"
+  echo "$marcadores" | head -10 | sed 's/^/     /'
+  fail=1
+fi
+
+[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem marcadores de conflito; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita"
 exit $fail

@@ -477,6 +477,21 @@ pub async fn join_room(
         .await?;
     }
 
+    // Origem e cargo decidem-se AQUI, do lado do servidor, e viajam assinados
+    // no token: o cliente não tem como se declarar «sso» nem inventar um cargo.
+    let origin = if !authorized {
+        "guest"
+    } else if crate::users::is_sso_account(&state.db, auth.user_id).await {
+        "sso"
+    } else {
+        "password"
+    };
+    let title = if authorized {
+        crate::org::title_alongside(&state, room.owner_id, auth.user_id).await
+    } else {
+        None
+    };
+
     let now = Utc::now().timestamp();
     let room_token = sign_jwt(
         &state.config.jwt_secret,
@@ -492,6 +507,10 @@ pub async fn join_room(
             wait: room.waiting_room || !access.direct, // sem entrada direta → sala de espera
             adm: access.admitter, // anfitrião ou co-anfitrião persistido pode admitir
             is_bot: false,        // join normal de utilizador humano
+            origin: Some(origin.into()),
+            title,
+            lobby: Some(!access.direct),
+            wr: Some(room.waiting_room),
         },
     )?;
 
@@ -572,16 +591,24 @@ pub struct ChatMessage {
     pub username: String,
     pub message: String,
     pub created_at: DateTime<Utc>,
+    /// Mensagem a que esta responde (fio), se houver.
+    pub parent_id: Option<Uuid>,
+    /// Contagem de reacções por emoji (`{}` sem reacções).
+    pub reactions: serde_json::Value,
+    /// Conversa directa: a conta que a recebe e o nome. `None` = pública.
+    pub to_user_id: Option<Uuid>,
+    pub to_username: Option<String>,
 }
 
-/// Últimas 200 mensagens de chat de uma sala (requer autenticação + acesso).
-/// Sem acesso à sala devolve **403**. O código NÃO é normalizado.
+/// Últimas 200 mensagens de chat de uma sala, da mais antiga para a mais
+/// recente (requer autenticação + acesso). As conversas directas só voltam a
+/// quem as enviou e a quem as recebeu — o filtro é na consulta, não no cliente.
 #[utoipa::path(
     get, path = "/api/rooms/{room_code}/messages", tag = "rooms",
     security(("session" = [])),
     params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
     responses(
-        (status = 200, body = Vec<ChatMessage>, description = "Ordem cronológica ascendente."),
+        (status = 200, body = Vec<ChatMessage>, description = "Ordem cronológica ascendente. As conversas directas só aparecem a quem as enviou e a quem as recebeu."),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Sem acesso à sala.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
@@ -603,13 +630,23 @@ pub async fn room_chat(
     }
 
     let msgs: Vec<ChatMessage> = sqlx::query_as(
-        "SELECT id, user_id, username, message, created_at
-         FROM room_chat_messages
-         WHERE room_id = $1
-         ORDER BY created_at ASC
-         LIMIT 200",
+        "SELECT * FROM (
+             SELECT m.id, m.user_id, m.username, m.message, m.created_at, m.parent_id,
+                    COALESCE((SELECT jsonb_object_agg(r.emoji, r.n)
+                              FROM (SELECT emoji, count(*)::int AS n
+                                    FROM room_chat_reactions
+                                    WHERE message_id = m.id
+                                    GROUP BY emoji) r), '{}'::jsonb) AS reactions,
+                    m.to_user_id, m.to_username
+             FROM room_chat_messages m
+             WHERE m.room_id = $1
+               AND (m.to_user_id IS NULL OR m.user_id = $2 OR m.to_user_id = $2)
+             ORDER BY m.created_at DESC
+             LIMIT 200
+         ) ultimas ORDER BY created_at ASC",
     )
     .bind(room.id)
+    .bind(auth.user_id)
     .fetch_all(&state.db)
     .await?;
 

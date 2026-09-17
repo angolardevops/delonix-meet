@@ -624,6 +624,31 @@
           "message": {
             "type": "string"
           },
+          "parent_id": {
+            "description": "Mensagem a que esta responde (fio), se houver.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reactions": {
+            "description": "Contagem de reacções por emoji (`{}` sem reacções)."
+          },
+          "to_user_id": {
+            "description": "Conversa directa: a conta que a recebe e o nome. `None` = pública.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "user_id": {
             "format": "uuid",
             "type": "string"
@@ -637,7 +662,8 @@
           "user_id",
           "username",
           "message",
-          "created_at"
+          "created_at",
+          "reactions"
         ],
         "type": "object"
       },
@@ -13877,7 +13903,7 @@
                 }
               }
             },
-            "description": "Ordem cronológica ascendente."
+            "description": "Ordem cronológica ascendente. As conversas directas só aparecem a quem as enviou e a quem as recebeu."
           },
           "401": {
             "content": {
@@ -13915,7 +13941,7 @@
             "session": []
           }
         ],
-        "summary": "Últimas 200 mensagens de chat de uma sala (requer autenticação + acesso).\nSem acesso à sala devolve **403**. O código NÃO é normalizado.",
+        "summary": "Últimas 200 mensagens de chat de uma sala, da mais antiga para a mais\nrecente (requer autenticação + acesso). As conversas directas só voltam a\nquem as enviou e a quem as recebeu — o filtro é na consulta, não no cliente.",
         "tags": [
           "rooms"
         ]

@@ -1435,6 +1435,32 @@ pub async fn orgs_of_user(state: &AppState, user_id: Uuid) -> Vec<Uuid> {
     .unwrap_or_default()
 }
 
+/// Cargo (`org_members.title`) de `user_id` numa organização que partilha,
+/// como membro ACTIVO, com `owner_id` (o dono da sala). É o que a sala mostra
+/// ao lado do nome: o cargo só aparece a quem está na mesma organização, nunca
+/// o de outra empresa. Com várias orgs em comum, a primeira do dono — estável.
+pub(crate) async fn title_alongside(
+    state: &AppState,
+    owner_id: Uuid,
+    user_id: Uuid,
+) -> Option<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT b.title FROM org_members a
+         JOIN org_members b ON a.org_id = b.org_id
+         WHERE a.user_id = $1 AND b.user_id = $2
+           AND a.archived_at IS NULL AND b.archived_at IS NULL
+           AND b.title <> ''
+         ORDER BY a.created_at, a.org_id
+         LIMIT 1",
+    )
+    .bind(owner_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+}
+
 /// Utilizadores que partilham pelo menos uma organização com `user_id` (exclui
 /// o próprio). Base do isolamento multi-tenant em presença/pesquisa/chamadas.
 pub async fn org_co_members(state: &AppState, user_id: Uuid) -> Vec<Uuid> {
