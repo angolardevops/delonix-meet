@@ -727,10 +727,7 @@ impl SfuState {
                 Err(p) => p.into_inner(),
             };
             pcs.retain(|e| e.pc.strong_count() > 0);
-            let unclosed = pcs
-                .iter()
-                .filter(|e| !e.close_done.load(Relaxed))
-                .count();
+            let unclosed = pcs.iter().filter(|e| !e.close_done.load(Relaxed)).count();
             (pcs.len(), unclosed)
         };
         let rooms: Vec<Arc<SfuRoom>> = self.rooms.iter().map(|r| r.value().clone()).collect();
@@ -993,10 +990,14 @@ impl SfuState {
             // Guarda para o gauge não driftar: só conta um inc (no 1º Connected)
             // e um dec (no 1º estado terminal), independentemente de repetições.
             let counted = Arc::new(AtomicBool::new(false));
+            // `Weak`: a PC guarda este handler, e o handler não pode segurar o
+            // peer que segura a PC.
+            let este = Arc::downgrade(&peer);
             pc.on_peer_connection_state_change(Box::new(move |s| {
                 tracing::info!(%room_id, %peer_id, state = %s, "sfu pc state");
                 let state = state.clone();
                 let counted = counted.clone();
+                let este = este.clone();
                 Box::pin(async move {
                     match s {
                         RTCPeerConnectionState::Connected => {
@@ -1012,14 +1013,26 @@ impl SfuState {
                         _ => {}
                     }
                     if s == RTCPeerConnectionState::Failed {
-                        // A gravação em curso (se esta era a última pessoa) NÃO
-                        // pode ser descartada: fica no mapa de órfãs e o
-                        // `remove_peer` do signaling.rs finaliza-a.
-                        if let Some(session) = state.remove_peer(room_id, peer_id).await {
-                            tracing::warn!(%room_id, "sala esvaziou por falha de ICE — gravação guardada para finalização");
-                            crate::metrics::Metrics::bump(&state.metrics.sfu_recordings_orphaned_total);
-                            state.orphan_recordings.insert(room_id, session);
-                        }
+                        // NUNCA remover (e fechar) daqui dentro. O webrtc-rs
+                        // segura o mutex deste handler enquanto ele corre, e o
+                        // `close()` volta a pedi-lo para anunciar `Closed`: o
+                        // fecho ficava pendurado para sempre, com o peer já
+                        // fora da sala — gauges a zero, PC viva e portas UDP
+                        // presas (medido: 359 sockets num servidor parado).
+                        // Uma tarefa à parte corre depois de o handler regressar.
+                        tokio::spawn(async move {
+                            let Some(peer) = este.upgrade() else { return };
+                            // A gravação em curso (se esta era a última pessoa)
+                            // NÃO pode ser descartada: fica no mapa de órfãs e o
+                            // `remove_peer` do signaling.rs finaliza-a.
+                            if let Some(session) =
+                                state.remove_peer_exact(room_id, peer_id, Some(&peer)).await
+                            {
+                                tracing::warn!(%room_id, "sala esvaziou por falha de ICE — gravação guardada para finalização");
+                                crate::metrics::Metrics::bump(&state.metrics.sfu_recordings_orphaned_total);
+                                state.orphan_recordings.insert(room_id, session);
+                            }
+                        });
                     }
                 })
             }));
@@ -1530,12 +1543,32 @@ impl SfuState {
         room_id: Uuid,
         peer_id: Uuid,
     ) -> Option<crate::recorder::RecordingSession> {
+        self.remove_peer_exact(room_id, peer_id, None).await
+    }
+
+    /// `remove_peer`, mas com `only` só remove se o peer registado for ESSE
+    /// (`Arc::ptr_eq`). É o que usa a remoção diferida do handler de `Failed`:
+    /// entre a falha e a tarefa correr, o mesmo `peer_id` pode já ter voltado
+    /// a entrar (reconexão com lugar reservado) — e não se fecha a PC nova.
+    async fn remove_peer_exact(
+        self: &Arc<Self>,
+        room_id: Uuid,
+        peer_id: Uuid,
+        only: Option<&Arc<SfuPeer>>,
+    ) -> Option<crate::recorder::RecordingSession> {
         let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
             // Sala já desaparecida: pode haver uma gravação órfã à espera (o
             // handler de `Failed` da PC deixou-a aqui — ver orphan_recordings).
             return self.orphan_recordings.remove(&room_id).map(|(_, s)| s);
         };
-        let Some(peer) = room.peers.lock().await.remove(&peer_id) else {
+        let removido = {
+            let mut peers = room.peers.lock().await;
+            match (peers.get(&peer_id), only) {
+                (Some(atual), Some(esperado)) if !Arc::ptr_eq(atual, esperado) => None,
+                _ => peers.remove(&peer_id),
+            }
+        };
+        let Some(peer) = removido else {
             return self.orphan_recordings.remove(&room_id).map(|(_, s)| s);
         };
 
@@ -1570,10 +1603,7 @@ impl SfuState {
             crate::metrics::Metrics::dec(&self.metrics.sfu_degraded_subscribers);
         }
 
-        tracing::debug!(%room_id, %peer_id, "sfu pc close → a fechar");
-        let _ = peer.pc.close().await;
-        peer.close_done.store(true, Relaxed);
-        tracing::debug!(%room_id, %peer_id, "sfu pc close → fechada");
+        close_pc(&peer, room_id, peer_id).await;
 
         let empty = room.peers.lock().await.is_empty();
         let mut orphan_recording = None;
@@ -1851,6 +1881,28 @@ async fn speaker_selector(state: Arc<SfuState>, room_id: Uuid) {
     tracing::debug!(%room_id, "seletor de oradores terminado");
 }
 
+/// Um `close()` normal demora milissegundos; acima disto está pendurado.
+const PC_CLOSE_WARN: Duration = Duration::from_secs(10);
+
+/// Fecha a PC de um peer e marca-a no `Census`.
+///
+/// Não desiste ao fim do prazo — abandonar o futuro deixava a PC a meio do
+/// fecho, que é pior. Grita e continua à espera: um fecho pendurado é uma fuga
+/// de portas UDP (o intervalo por omissão tem 201) e tem de aparecer nos logs.
+async fn close_pc(peer: &Arc<SfuPeer>, room_id: Uuid, peer_id: Uuid) {
+    let close = peer.pc.close();
+    tokio::pin!(close);
+    if tokio::time::timeout(PC_CLOSE_WARN, &mut close)
+        .await
+        .is_err()
+    {
+        tracing::error!(%room_id, %peer_id, "sfu pc close() pendurado há mais de 10 s — PC e portas UDP presas");
+        let _ = close.await;
+        tracing::warn!(%room_id, %peer_id, "sfu pc close() pendurado acabou por regressar");
+    }
+    peer.close_done.store(true, Relaxed);
+}
+
 /// Pede um keyframe ao publicador (com rate-limit por publicação).
 async fn request_keyframe(publication: &Arc<Publication>, metrics: &Arc<crate::metrics::Metrics>) {
     if publication.kind != "video" && publication.kind != "screen" {
@@ -1953,7 +2005,7 @@ async fn subscribe_layer(
     }
     publication.touch_subs();
     crate::metrics::Metrics::inc(&state.metrics.sfu_subscriptions);
-    subscribed.insert(key, (publication.rid.clone(), sender.clone()));
+    subscribed.insert(key.clone(), (publication.rid.clone(), sender.clone()));
     drop(subscribed);
 
     // Drenar o RTCP do sender é OBRIGATÓRIO para os interceptors funcionarem —
@@ -1963,15 +2015,34 @@ async fn subscribe_layer(
     //    antigo ticker de 3 s que queimava bitrate para toda a gente);
     //  - Receiver Report → alimenta a escolha de camada (`Quality`), para o
     //    SFU descer de camada a quem está a perder pacotes.
+    //
+    // A tarefa NÃO segura a `Publication` (só o grupo publicador/tipo e um
+    // `Weak` do peer) e verifica periodicamente se a subscrição ainda existe.
+    // Não basta esperar que `read_rtcp` falhe: no webrtc-rs 0.17.1 um `stop()`
+    // que chegue quando a tarefa não está a ler perde-se, e num sender que
+    // nunca enviou a leitura fica pendurada para sempre (fixado em
+    // `sfu_e2e::webrtc_rs_read_rtcp_depois_de_stop_nao_regressa`). Com um
+    // `Arc<Publication>` isso segurava a PC do publicador para sempre.
     {
         let sender = sender.clone();
-        let publication = publication.clone();
+        let group = key.clone();
         let peer_weak = Arc::downgrade(sub_peer);
         let state = state.clone();
         let vivo = Vivo::new(&state.census.rtcp_drains);
         tokio::spawn(async move {
             let _vivo = vivo;
-            while let Ok((packets, _)) = sender.read_rtcp().await {
+            loop {
+                let packets =
+                    match tokio::time::timeout(RTCP_LIVENESS_CHECK, sender.read_rtcp()).await {
+                        Ok(Ok((packets, _))) => packets,
+                        Ok(Err(_)) => break,
+                        Err(_) => {
+                            if subscription_alive(&peer_weak, &group, &sender).await {
+                                continue;
+                            }
+                            break;
+                        }
+                    };
                 let mut requalify = false;
                 for packet in packets {
                     let any = packet.as_any();
@@ -1980,10 +2051,10 @@ async fn subscribe_layer(
                     {
                         // O sender sobrevive às trocas de camada: o keyframe
                         // pede-se à camada que o alimenta AGORA.
-                        let source = current_source(&state, room_id, &publication, sub_id)
-                            .await
-                            .unwrap_or_else(|| publication.clone());
-                        request_keyframe(&source, &state.metrics).await;
+                        if let Some(source) = current_source(&state, room_id, &group, sub_id).await
+                        {
+                            request_keyframe(&source, &state.metrics).await;
+                        }
                     } else if let Some(rr) = any.downcast_ref::<ReceiverReport>() {
                         let worst = rr
                             .reports
@@ -2021,19 +2092,44 @@ async fn subscribe_layer(
     Ok(())
 }
 
+/// Sem RTCP durante isto, a tarefa de drenagem confirma que a subscrição
+/// ainda existe (ver `subscribe_layer`). Um subscritor activo manda Receiver
+/// Reports a cada ~1 s, por isso numa subscrição viva isto quase não dispara.
+const RTCP_LIVENESS_CHECK: Duration = Duration::from_secs(5);
+
+/// A subscrição do peer a este (publicador, tipo) ainda é ESTE sender?
+///
+/// Pergunta-se ao peer e não à publicação: a troca de camada por
+/// `replace_track` muda o sender de publicação mas mantém-no no
+/// `subscribed` do peer — e é o `subscribed` que todos os caminhos de
+/// remoção limpam.
+async fn subscription_alive(
+    peer: &Weak<SfuPeer>,
+    group: &(Uuid, String),
+    sender: &Arc<RTCRtpSender>,
+) -> bool {
+    let Some(peer) = peer.upgrade() else {
+        return false;
+    };
+    let subscribed = peer.subscribed.lock().await;
+    subscribed
+        .get(group)
+        .is_some_and(|(_, s)| Arc::ptr_eq(s, sender))
+}
+
 /// Camada que alimenta hoje o subscritor `sub_id` no grupo (publicador, tipo)
-/// de `any_layer` — muda a cada `switch_layer`.
+/// `group` — muda a cada `switch_layer`.
 async fn current_source(
     state: &Arc<SfuState>,
     room_id: Uuid,
-    any_layer: &Arc<Publication>,
+    group: &(Uuid, String),
     sub_id: Uuid,
 ) -> Option<Arc<Publication>> {
     let room = state.rooms.get(&room_id).map(|r| r.clone())?;
     let publications = room.publications.lock().await.clone();
     for p in publications {
-        if p.publisher == any_layer.publisher
-            && p.kind == any_layer.kind
+        if p.publisher == group.0
+            && p.kind == group.1
             && p.subscribers.lock().await.contains_key(&sub_id)
         {
             return Some(p);
