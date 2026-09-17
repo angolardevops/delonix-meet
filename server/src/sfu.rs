@@ -66,6 +66,10 @@ use crate::signaling::{ClientMsg, ServerMsg};
 
 type Result<T> = std::result::Result<T, webrtc::Error>;
 
+/// Sufixo que torna único o id de cada track local de subscrição (ver
+/// `subscribe_layer`).
+static NEXT_TRACK_SEQ: AtomicU64 = AtomicU64::new(0);
+
 /// Uma track publicada por um participante, com fan-out para subscritores.
 /// Com simulcast, cada camada (rid `q`/`h`/`f`) é uma Publication distinta.
 struct Publication {
@@ -73,8 +77,9 @@ struct Publication {
     kind: String,
     /// Camada simulcast ("f" = full; publicações sem rid contam como "f").
     rid: String,
-    /// Subscritores: peer -> (track local que alimenta esse peer, sender para remover).
-    subscribers: Mutex<HashMap<Uuid, (Arc<TrackLocalStaticRTP>, Arc<RTCRtpSender>)>>,
+    /// Subscritores: peer -> (track local que alimenta esse peer, sender para
+    /// remover, renumeração que sobrevive às trocas de camada).
+    subscribers: Mutex<HashMap<Uuid, Subscriber>>,
     /// Versão do conjunto de subscritores. A bomba de RTP mantém um snapshot e
     /// só volta a pegar no `Mutex` quando isto muda — sem isto, o lock ficava
     /// retido através do `write_rtp().await` e UM subscritor lento bloqueava a
@@ -95,6 +100,105 @@ struct Publication {
     /// Esta publicação está a ser reencaminhada? O seletor de oradores põe a
     /// `false` os microfones fora do top-N. Vídeo e ecrã nunca são suprimidos.
     forwarding: AtomicBool,
+}
+
+type Subscriber = (
+    Arc<TrackLocalStaticRTP>,
+    Arc<RTCRtpSender>,
+    Arc<LayerRewriter>,
+);
+
+/// Numeração e relógio RTP de UMA subscrição de vídeo, contínuos através das
+/// trocas de camada simulcast.
+///
+/// Cada camada (`q`/`h`/`f`) chega com a sua numeração e o seu relógio RTP.
+/// Quando o SFU passa um subscritor de uma camada para outra no MESMO sender,
+/// o browser recebia números e timestamps a saltar para trás e descartava os
+/// fotogramas como antigos: o vídeo congelava depois da troca. Aqui cada
+/// subscrição reescreve `sequence_number` e `timestamp` para uma sequência
+/// única, rebaseada no primeiro pacote da camada nova.
+#[derive(Default)]
+struct LayerRewriter(std::sync::Mutex<RewriterState>);
+
+#[derive(Default)]
+struct RewriterState {
+    /// Fonte (camada) aceite; pacotes de outra fonte são descartados — é o
+    /// que evita que um pacote atrasado da camada antiga rebaseie a nova.
+    source: usize,
+    /// Fonte do último pacote reescrito (0 = ainda nenhum).
+    last_source: usize,
+    seq_off: u16,
+    ts_off: u32,
+    out_seq: u16,
+    out_ts: u32,
+}
+
+/// Intervalo de relógio inserido numa troca: ~1 fotograma a 30 fps (90 kHz).
+const SWITCH_TS_GAP: u32 = 3000;
+
+impl LayerRewriter {
+    fn new(source: usize) -> Self {
+        let rw = Self::default();
+        rw.expect(source);
+        rw
+    }
+
+    /// A partir de agora só a camada `source` alimenta esta subscrição.
+    fn expect(&self, source: usize) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).source = source;
+    }
+
+    /// Reescreve o cabeçalho; `false` = pacote de outra camada, não se envia.
+    fn rewrite(&self, source: usize, seq: &mut u16, ts: &mut u32) -> bool {
+        let mut st = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if source != st.source {
+            return false;
+        }
+        if st.last_source != source {
+            if st.last_source != 0 {
+                st.seq_off = st.out_seq.wrapping_add(1).wrapping_sub(*seq);
+                st.ts_off = st.out_ts.wrapping_add(SWITCH_TS_GAP).wrapping_sub(*ts);
+            }
+            st.last_source = source;
+            let new_seq = seq.wrapping_add(st.seq_off);
+            st.out_seq = new_seq;
+            st.out_ts = ts.wrapping_add(st.ts_off);
+        }
+        let new_seq = seq.wrapping_add(st.seq_off);
+        let new_ts = ts.wrapping_add(st.ts_off);
+        // Só avança o «último» com pacotes mais recentes (reordenação).
+        if new_seq.wrapping_sub(st.out_seq) < 0x8000 {
+            st.out_seq = new_seq;
+            st.out_ts = new_ts;
+        }
+        *seq = new_seq;
+        *ts = new_ts;
+        true
+    }
+}
+
+/// Cópia do pacote de vídeo SEM as extensões de cabeçalho do publicador.
+///
+/// Os ids das extensões (`a=extmap`) valem só na negociação onde foram
+/// acordados. O publicador e cada subscritor negociam em separado, e os ids não
+/// coincidem: reencaminhados crus, o `rid` do publicador chegava ao subscritor
+/// no id que ESTE usa para `transport-cc`; o interceptor TWCC do receptor não o
+/// conseguia ler («buffer too small»), a primeira leitura da track falhava e o
+/// `on_track` nunca disparava — subscrição negociada, RTP a sair, e nenhum
+/// vídeo (R156). No vídeo todas as extensões que o SFU aceita (mid, rid,
+/// repaired-rid, transport-cc) são por salto: o sender do subscritor volta a
+/// pôr as suas, com os ids certos.
+fn strip_hop_extensions(packet: &webrtc::rtp::packet::Packet) -> webrtc::rtp::packet::Packet {
+    let mut out = packet.clone();
+    out.header.extension = false;
+    out.header.extension_profile = 0;
+    out.header.extensions.clear();
+    out.header.extensions_padding = 0;
+    out
+}
+
+fn source_id(publication: &Arc<Publication>) -> usize {
+    Arc::as_ptr(publication) as usize
 }
 
 /// Medição de voz e renumeração de uma publicação de áudio. Vive à parte da
@@ -990,7 +1094,7 @@ impl SfuState {
             // instância, mesmo sem PSTN configurado.
             let mut pstn_socket: Option<tokio::net::UdpSocket> = None;
             // Snapshot dos subscritores: refrescado só quando a lista muda.
-            let mut targets: Vec<Arc<TrackLocalStaticRTP>> = Vec::new();
+            let mut targets: Vec<(Arc<TrackLocalStaticRTP>, Arc<LayerRewriter>)> = Vec::new();
             let mut targets_version = u64::MAX;
             let audio_level_id = publication.audio_level_id;
             loop {
@@ -1044,14 +1148,29 @@ impl SfuState {
                                 .lock()
                                 .await
                                 .values()
-                                .map(|(track, _)| track.clone())
+                                .map(|(track, _, rw)| (track.clone(), rw.clone()))
                                 .collect();
                             targets_version = version;
                         }
                         // Escritas FORA do lock: um subscritor lento atrasa-se a
                         // si próprio, não à sala inteira.
-                        for track in &targets {
-                            let _ = track.write_rtp(&packet).await;
+                        if is_audio {
+                            for (track, _) in &targets {
+                                let _ = track.write_rtp(&packet).await;
+                            }
+                        } else {
+                            let source = source_id(&publication);
+                            let hop = strip_hop_extensions(&packet);
+                            for (track, rw) in &targets {
+                                let mut out = hop.clone();
+                                if rw.rewrite(
+                                    source,
+                                    &mut out.header.sequence_number,
+                                    &mut out.header.timestamp,
+                                ) {
+                                    let _ = track.write_rtp(&out).await;
+                                }
+                            }
                         }
                     }
                     Err(_) => break, // track terminou
@@ -1206,7 +1325,7 @@ impl SfuState {
             .lock()
             .await
             .drain()
-            .map(|(id, (_, sender))| (id, sender))
+            .map(|(id, (_, sender, _))| (id, sender))
             .collect();
         publication.touch_subs();
         for _ in 0..subs.len() {
@@ -1644,11 +1763,19 @@ async fn subscribe_layer(
     } else {
         publication.publisher.to_string()
     };
+    // O id da track tem de ser ÚNICO por subscrição. O `add_track` do webrtc-rs
+    // reaproveita um transceiver parado cujo id inicial seja igual, e esse
+    // reaproveitamento falha sempre («new track must have the same envelope as
+    // previous»): voltar a uma camada já usada (f → h → f) deixava o
+    // subscritor sem vídeo desse participante até sair da sala.
     let local = Arc::new(TrackLocalStaticRTP::new(
         publication.remote.codec().capability.clone(),
         format!(
-            "{}-{}-{}",
-            publication.publisher, publication.kind, publication.rid
+            "{}-{}-{}-{}",
+            publication.publisher,
+            publication.kind,
+            publication.rid,
+            NEXT_TRACK_SEQ.fetch_add(1, Relaxed)
         ),
         stream_id,
     ));
@@ -1658,7 +1785,9 @@ async fn subscribe_layer(
         .await?;
     {
         let mut subs = publication.subscribers.lock().await;
-        subs.insert(sub_id, (local, sender.clone()));
+        // Numeração contínua através das trocas de camada: ver `LayerRewriter`.
+        let rw = Arc::new(LayerRewriter::new(source_id(publication)));
+        subs.insert(sub_id, (local, sender.clone(), rw));
     }
     publication.touch_subs();
     crate::metrics::Metrics::inc(&state.metrics.sfu_subscriptions);
@@ -1685,7 +1814,12 @@ async fn subscribe_layer(
                     if any.downcast_ref::<PictureLossIndication>().is_some()
                         || any.downcast_ref::<FullIntraRequest>().is_some()
                     {
-                        request_keyframe(&publication, &state.metrics).await;
+                        // O sender sobrevive às trocas de camada: o keyframe
+                        // pede-se à camada que o alimenta AGORA.
+                        let source = current_source(&state, room_id, &publication, sub_id)
+                            .await
+                            .unwrap_or_else(|| publication.clone());
+                        request_keyframe(&source, &state.metrics).await;
                     } else if let Some(rr) = any.downcast_ref::<ReceiverReport>() {
                         let worst = rr
                             .reports
@@ -1723,8 +1857,33 @@ async fn subscribe_layer(
     Ok(())
 }
 
-/// Troca a camada que um subscritor recebe de um dado (publicador, tipo):
-/// solta a antiga em todas as publicações do grupo, liga a nova, renegoceia.
+/// Camada que alimenta hoje o subscritor `sub_id` no grupo (publicador, tipo)
+/// de `any_layer` — muda a cada `switch_layer`.
+async fn current_source(
+    state: &Arc<SfuState>,
+    room_id: Uuid,
+    any_layer: &Arc<Publication>,
+    sub_id: Uuid,
+) -> Option<Arc<Publication>> {
+    let room = state.rooms.get(&room_id).map(|r| r.clone())?;
+    let publications = room.publications.lock().await.clone();
+    for p in publications {
+        if p.publisher == any_layer.publisher
+            && p.kind == any_layer.kind
+            && p.subscribers.lock().await.contains_key(&sub_id)
+        {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Troca a camada que um subscritor recebe de um dado (publicador, tipo).
+///
+/// Caminho normal: o MESMO sender passa a ser alimentado pela camada nova
+/// (`replace_track`) — sem renegociação, sem transceiver novo, sem imagem
+/// preta enquanto a oferta vai e vem. Se o `replace_track` recusar, cai no
+/// caminho antigo: remove a track e subscreve de novo (renegociando).
 #[allow(clippy::too_many_arguments)]
 async fn switch_layer(
     state: &Arc<SfuState>,
@@ -1736,20 +1895,73 @@ async fn switch_layer(
     old_sender: &Arc<RTCRtpSender>,
 ) {
     let key = (chosen.publisher, chosen.kind.clone());
-    {
-        let publications = room.publications.lock().await.clone();
-        for p in &publications {
-            if p.publisher == key.0 && p.kind == key.1 && !Arc::ptr_eq(p, chosen) {
-                if p.subscribers.lock().await.remove(&sub_id).is_some() {
-                    p.touch_subs();
-                    crate::metrics::Metrics::dec(&state.metrics.sfu_subscriptions);
+    let publications = room.publications.lock().await.clone();
+    let siblings: Vec<&Arc<Publication>> = publications
+        .iter()
+        .filter(|p| p.publisher == key.0 && p.kind == key.1 && !Arc::ptr_eq(p, chosen))
+        .collect();
+
+    // A track local da camada antiga dá o id e o stream que o cliente já conhece.
+    let mut old = None;
+    for p in &siblings {
+        if let Some((local, _, rw)) = p.subscribers.lock().await.get(&sub_id) {
+            old = Some((local.clone(), rw.clone()));
+            break;
+        }
+    }
+    if let Some((old_local, rw)) = old {
+        let local = Arc::new(TrackLocalStaticRTP::new(
+            chosen.remote.codec().capability.clone(),
+            old_local.id().to_owned(),
+            old_local.stream_id().to_owned(),
+        ));
+        // A porta à camada antiga fecha-se ANTES do `replace_track`, não depois.
+        // Depois, um pacote da camada antiga aceite pelo `LayerRewriter` (que já
+        // avançou a numeração) ia para a track antiga JÁ desligada do sender e
+        // perdia-se: o subscritor via um buraco na numeração exactamente na
+        // fronteira da troca (medido: 2 em 12 trocas a ~1 kpps). Assim, o que
+        // a camada antiga ainda escreve sai pelo sender ainda ligado a ela, e a
+        // nova só começa a escrever quando entra nos subscritores dela, abaixo.
+        // Se o `replace_track` recusar, o caminho de recurso cria uma subscrição
+        // nova com a sua própria numeração — este `rw` deixa de ser usado.
+        rw.expect(source_id(chosen));
+        match old_sender
+            .replace_track(Some(Arc::clone(&local) as Arc<dyn TrackLocal + Send + Sync>))
+            .await
+        {
+            Ok(()) => {
+                for p in &siblings {
+                    if p.subscribers.lock().await.remove(&sub_id).is_some() {
+                        p.touch_subs();
+                    }
                 }
+                chosen
+                    .subscribers
+                    .lock()
+                    .await
+                    .insert(sub_id, (local, old_sender.clone(), rw));
+                chosen.touch_subs();
+                if let Some(entry) = sub_peer.subscribed.lock().await.get_mut(&key) {
+                    entry.0 = chosen.rid.clone();
+                }
+                return;
             }
+            Err(e) => {
+                tracing::info!(%room_id, %sub_id, error = %e, "sfu replace_track recusado; troca com renegociação");
+            }
+        }
+    }
+
+    for p in &siblings {
+        if p.subscribers.lock().await.remove(&sub_id).is_some() {
+            p.touch_subs();
+            crate::metrics::Metrics::dec(&state.metrics.sfu_subscriptions);
         }
     }
     let _ = sub_peer.pc.remove_track(old_sender).await;
     sub_peer.subscribed.lock().await.remove(&key);
     if let Err(e) = subscribe_layer(state, room_id, chosen, sub_id, sub_peer).await {
+        crate::metrics::Metrics::bump(&state.metrics.sfu_layer_switch_failures_total);
         tracing::warn!(%room_id, %sub_id, error = %e, "sfu layer switch failed");
     }
 }
@@ -2160,6 +2372,54 @@ mod tests {
 
         // E o pedido seguinte volta a poder ser enviado.
         assert!(coalesce_renegotiate(&flag, || true));
+    }
+
+    #[test]
+    fn layer_switch_keeps_seq_and_ts_moving_forward() {
+        let rw = LayerRewriter::new(1);
+        let mut out = Vec::new();
+        for (seq, ts) in [(100u16, 9000u32), (101, 12000), (102, 15000)] {
+            let (mut s, mut t) = (seq, ts);
+            assert!(rw.rewrite(1, &mut s, &mut t));
+            out.push((s, t));
+        }
+        assert_eq!(out, vec![(100, 9000), (101, 12000), (102, 15000)]);
+
+        // Troca para uma camada com numeração e relógio MUITO atrás.
+        rw.expect(2);
+        let (mut s, mut t) = (103u16, 15000u32);
+        assert!(
+            !rw.rewrite(1, &mut s, &mut t),
+            "pacote atrasado da camada antiga não passa"
+        );
+        let (mut s, mut t) = (7u16, 50u32);
+        assert!(rw.rewrite(2, &mut s, &mut t));
+        assert_eq!((s, t), (103, 15000 + SWITCH_TS_GAP));
+        let (mut s, mut t) = (8u16, 3050u32);
+        assert!(rw.rewrite(2, &mut s, &mut t));
+        assert_eq!((s, t), (104, 18000 + SWITCH_TS_GAP));
+
+        // Voltar à primeira camada (f → h → f) continua para a frente.
+        rw.expect(1);
+        let (mut s, mut t) = (500u16, 90000u32);
+        assert!(rw.rewrite(1, &mut s, &mut t));
+        assert_eq!((s, t), (105, 18000 + 2 * SWITCH_TS_GAP));
+    }
+
+    #[test]
+    fn layer_rewriter_wraps_around() {
+        let rw = LayerRewriter::new(1);
+        let (mut s, mut t) = (u16::MAX, u32::MAX - 10);
+        assert!(rw.rewrite(1, &mut s, &mut t));
+        rw.expect(2);
+        let (mut s, mut t) = (40000u16, 1u32);
+        assert!(rw.rewrite(2, &mut s, &mut t));
+        assert_eq!(s, 0);
+        assert_eq!(t, (u32::MAX - 10).wrapping_add(SWITCH_TS_GAP));
+        // Reordenado (mais antigo) não recua o «último».
+        let (mut s, mut t) = (39999u16, 0u32);
+        assert!(rw.rewrite(2, &mut s, &mut t));
+        assert_eq!(s, u16::MAX);
     }
 
     #[test]
