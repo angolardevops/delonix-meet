@@ -6295,8 +6295,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "`{\"ok\": true}` (forma herdada)"
+          "204": {
+            "description": "Apagada."
           },
           "401": {
             "content": {
@@ -7378,7 +7378,7 @@
                 }
               }
             },
-            "description": "não é dono nem convidado"
+            "description": ""
           },
           "404": {
             "content": {
@@ -7388,7 +7388,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "não existe, ou não és dono nem convidado"
           }
         },
         "security": [

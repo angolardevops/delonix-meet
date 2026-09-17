@@ -76,7 +76,7 @@ async fn invitation_and_cancellation_notify_the_invitee_not_the_host(db: sqlx::P
     let (st, v) = app
         .delete(&format!("/api/meetings/{meeting_id}"), Some(&host.token))
         .await;
-    assert_eq!(st, 200, "{v}");
+    assert_eq!(st, 204, "{v}");
     let g = inbox(&app, &guest.token).await;
     assert_eq!(g["unread_count"], 2, "{g}");
     assert_eq!(g["items"][0]["kind"], "meeting.cancelled");

@@ -584,7 +584,7 @@ pub async fn list(
     security(("session" = [])),
     params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
-        (status = 200, description = "`{\"ok\": true}` (forma herdada)"),
+        (status = 204, description = "Apagada."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody, description = "não existe ou não é o dono"),
     )
@@ -593,7 +593,7 @@ pub async fn delete(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     let audience = crate::notifications::meeting_audience(&state, id, auth.user_id).await;
     let res = sqlx::query("DELETE FROM meetings WHERE id = $1 AND owner_id = $2")
         .bind(id)
@@ -604,7 +604,7 @@ pub async fn delete(
         return Err(ApiError::NotFound);
     }
     crate::notifications::meeting_cancelled(&state, audience).await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -784,8 +784,8 @@ pub struct StartResp {
     responses(
         (status = 200, body = StartResp),
         (status = 400, body = crate::openapi::ErrorBody, description = "um convidado tentou arrancar antes do anfitrião"),
-        (status = 401, body = crate::openapi::ErrorBody, description = "não é dono nem convidado"),
-        (status = 404, body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não és dono nem convidado"),
     )
 )]
 pub async fn start(

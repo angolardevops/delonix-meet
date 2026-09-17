@@ -235,11 +235,8 @@ async fn v1_recordings_list_scoped_to_org(db: sqlx::PgPool) {
     assert_eq!(r["id"], rec.as_str());
     assert_eq!(r["room_code"], room["code"]);
     assert_eq!(r["size_bytes"], 4);
-    // BUG registado (servidor, `src/apikeys.rs:636`): depois da reorganização
-    // `GET /api/recordings/{id}` devolve METADADOS; o ficheiro está em
-    // `/content`. O `download_url` da v1 ainda aponta para os metadados. Este
-    // teste caracteriza o comportamento actual e tem de mudar com a correcção.
-    assert_eq!(r["download_url"], format!("/api/recordings/{rec}"));
+    // O ficheiro vive em `/content`; `GET /api/recordings/{id}` são os metadados.
+    assert_eq!(r["download_url"], format!("/api/recordings/{rec}/content"));
     let (_, body) = v1(&app, reqwest::Method::GET, "/recordings", &kb, None).await;
     assert_eq!(body, json!({"recordings": []}));
 }

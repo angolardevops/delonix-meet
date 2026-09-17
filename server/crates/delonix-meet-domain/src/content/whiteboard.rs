@@ -41,7 +41,7 @@ pub fn sign(key: &[u8], id: Uuid, exp: i64) -> String {
 /// O caminho relativo do PNG assinado.
 pub fn signed_path(key: &[u8], id: Uuid, exp: i64) -> String {
     format!(
-        "/api/whiteboards/{id}/png?exp={exp}&sig={}",
+        "/api/whiteboards/{id}/image?exp={exp}&sig={}",
         sign(key, id, exp)
     )
 }
@@ -82,7 +82,7 @@ mod tests {
         assert!(verify(KEY, id(), &exp.to_string(), &sig, exp - 1));
         assert_eq!(
             signed_path(KEY, id(), exp),
-            format!("/api/whiteboards/{}/png?exp={exp}&sig={sig}", id())
+            format!("/api/whiteboards/{}/image?exp={exp}&sig={sig}", id())
         );
     }
 

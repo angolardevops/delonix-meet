@@ -22,12 +22,7 @@ use uuid::Uuid;
 
 use delonix_meet_core::DomainError;
 
-use crate::{
-    auth::AuthUser,
-    error::ApiError,
-    org::{orgs_of_user, role_in_org},
-    AppState,
-};
+use crate::{auth::AuthUser, error::ApiError, org::role_in_org, AppState};
 
 // ---------- Enums (persistidos como TEXT) ----------
 
@@ -185,15 +180,6 @@ pub(crate) async fn dial_in_for_room(
 fn gen_pin() -> String {
     let mut rng = rand::thread_rng();
     format!("{:06}", rng.gen_range(0..1_000_000))
-}
-
-/// Org "principal" do utilizador (a sala de voz pertence a esta org).
-async fn caller_org(state: &AppState, user_id: Uuid) -> Result<Uuid, ApiError> {
-    orgs_of_user(state, user_id)
-        .await
-        .first()
-        .copied()
-        .ok_or_else(|| ApiError::BadRequest("utilizador sem organização".into()))
 }
 
 /// A sala de conferência `room_code` é da organização `org_id`: o DONO da sala

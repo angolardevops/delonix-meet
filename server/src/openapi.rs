@@ -74,10 +74,10 @@ macro_rules! surface_doc {
     ($name:ident, $title:literal, $desc:literal) => {
         #[derive(OpenApi)]
         #[openapi(
-                    info(title = $title, description = $desc),
-                    components(schemas(ErrorBody, FieldViolation)),
-                    modifiers(&Security)
-                )]
+                                                    info(title = $title, description = $desc),
+                                                    components(schemas(ErrorBody, FieldViolation)),
+                                                    modifiers(&Security)
+                                                )]
         struct $name;
     };
 }

@@ -35,17 +35,9 @@ async fn get_raw(app: &TestApp, path: &str, token: Option<&str>) -> (u16, Option
     (st, ct, res.bytes().await.unwrap().to_vec())
 }
 
-/// BUG registado (servidor): o URL assinado ainda é emitido para a rota antiga
-/// `/api/whiteboards/{id}/png`, que deixou de existir na reorganização de rotas
-/// (`crates/delonix-meet-domain/src/content/whiteboard.rs:44`, `signed_path`).
-/// A imagem vive em `/image`, e um `<img>` com o URL emitido recebe 404.
-/// Enquanto não for corrigido, os testes da assinatura levam o URL para a rota
-/// nova — a assinatura cobre `(id, exp)`, não o caminho — e
-/// `signed_url_loads_without_session` caracteriza a falha. Quando o servidor
-/// emitir `/image`, esta função passa a ser a identidade e essa asserção tem de
-/// mudar.
+/// O URL assinado aponta para a rota da imagem (`/image`).
 fn on_image_route(url: &str) -> String {
-    url.replacen("/png?", "/image?", 1)
+    url.to_string()
 }
 
 fn png_bytes() -> Vec<u8> {
@@ -69,19 +61,15 @@ async fn signed_url_loads_without_session(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200, "{s}");
     let emitted = s["url"].as_str().unwrap().to_string();
-    // Caracterização do BUG (ver `on_image_route`): o URL emitido aponta para
-    // a rota que já não existe e, tal como sai, não carrega.
-    assert!(
-        emitted.starts_with(&format!("/api/whiteboards/{id}/png?exp=")),
-        "{emitted}"
-    );
-    let (st, _, _) = get_raw(&app, &emitted, None).await;
-    assert_eq!(st, 404, "a rota antiga `/png` saiu do router");
     let url = on_image_route(&emitted);
     assert!(
         url.starts_with(&format!("/api/whiteboards/{id}/image?exp=")),
         "{url}"
     );
+    // A rota antiga não existe (sem aliases).
+    let old = url.replacen("/image?", "/png?", 1);
+    let (st, _, _) = get_raw(&app, &old, None).await;
+    assert_eq!(st, 404, "a rota antiga `/png` saiu do router");
     let expires = chrono::DateTime::parse_from_rfc3339(s["expires_at"].as_str().unwrap()).unwrap();
     let ttl = expires.timestamp() - chrono::Utc::now().timestamp();
     assert!(

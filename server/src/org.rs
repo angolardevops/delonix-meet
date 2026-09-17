@@ -1421,18 +1421,6 @@ pub async fn orgs_of_user(state: &AppState, user_id: Uuid) -> Vec<Uuid> {
     .unwrap_or_default()
 }
 
-/// Organizações onde `user_id` é admin (para analytics/ações administrativas).
-pub async fn admin_orgs_of_user(state: &AppState, user_id: Uuid) -> Vec<Uuid> {
-    sqlx::query_as::<_, (Uuid,)>(
-        "SELECT org_id FROM org_members WHERE user_id = $1 AND role = 'admin' AND archived_at IS NULL",
-    )
-    .bind(user_id)
-    .fetch_all(&state.db)
-    .await
-    .map(|rows| rows.into_iter().map(|r| r.0).collect())
-    .unwrap_or_default()
-}
-
 /// Utilizadores que partilham pelo menos uma organização com `user_id` (exclui
 /// o próprio). Base do isolamento multi-tenant em presença/pesquisa/chamadas.
 pub async fn org_co_members(state: &AppState, user_id: Uuid) -> Vec<Uuid> {

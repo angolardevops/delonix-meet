@@ -633,7 +633,7 @@ pub async fn v1_recordings(
             size_bytes: size,
             created_at: created,
             room_code: code,
-            download_url: format!("/api/recordings/{id}"),
+            download_url: format!("/api/recordings/{id}/content"),
         })
         .collect();
     Ok(Json(V1RecordingList { recordings }))
@@ -1279,13 +1279,13 @@ mod tests {
                     size_bytes: 7,
                     created_at: t0,
                     room_code: "c".into(),
-                    download_url: format!("/api/recordings/{id}"),
+                    download_url: format!("/api/recordings/{id}/content"),
                 }],
             })
             .unwrap(),
             serde_json::json!({"recordings": [{
                 "id": id, "filename": "f", "size_bytes": 7, "created_at": t0,
-                "room_code": "c", "download_url": format!("/api/recordings/{id}"),
+                "room_code": "c", "download_url": format!("/api/recordings/{id}/content"),
             }]})
         );
         assert_eq!(

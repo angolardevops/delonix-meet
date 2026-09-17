@@ -290,9 +290,8 @@ async fn delete_meeting_only_by_owner(db: sqlx::PgPool) {
 
     let (st, _) = app.delete(&path, Some(&c.token)).await;
     assert_eq!(st, 404, "convidado não apaga");
-    let (st, body) = app.delete(&path, Some(&a.token)).await;
-    assert_eq!(st, 200);
-    assert_eq!(body, json!({"ok": true}));
+    let (st, _) = app.delete(&path, Some(&a.token)).await;
+    assert_eq!(st, 204);
     let (st, _) = app.delete(&path, Some(&a.token)).await;
     assert_eq!(st, 404);
     let (st, _) = app.get(&path, Some(&a.token)).await;
