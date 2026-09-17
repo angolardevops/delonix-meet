@@ -1326,6 +1326,10 @@ mod tests {
                     room_code: None,
                     created_at: t0,
                     minutes_ai_at: Some(t0),
+                    format: "meeting".into(),
+                    waiting_room: true,
+                    auto_record: false,
+                    record_quality: "1080p".into(),
                 }],
             })
             .unwrap(),
@@ -1333,6 +1337,8 @@ mod tests {
                 "id": id, "title": "t", "description": "d", "kind": "video",
                 "starts_at": t0, "duration_min": 30, "room_code": null,
                 "created_at": t0, "minutes_ai_at": t0,
+                "format": "meeting", "waiting_room": true, "auto_record": false,
+                "record_quality": "1080p",
             }]})
         );
         assert_eq!(
