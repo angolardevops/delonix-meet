@@ -465,7 +465,7 @@ impl KamailioRpc {
             .ok_or_else(|| PortError::Protocol("JSON-RPC sem result".into()))
     }
 
-    pub async fn status(&self) -> Result<SbcStatus, PortError> {
+    pub async fn sbc_status(&self) -> Result<SbcStatus, PortError> {
         let version = self.call("core.version").await?;
         let text = version
             .as_str()
@@ -585,7 +585,7 @@ impl SipControl for FreeswitchSipControl {
         };
         let (sbc, sbc_error) = match &self.kamailio {
             None => (None, Some("not_configured".to_string())),
-            Some(k) => match k.status().await {
+            Some(k) => match k.sbc_status().await {
                 Ok(s) => (Some(s), None),
                 Err(e) => (None, Some(e.to_string())),
             },
