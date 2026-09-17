@@ -26,19 +26,21 @@ import { useShell } from '../components/shellContext'
 import { DelonixSymbol, Icon } from '../ui/icons'
 import { Alert, Button, cx, IconButton, Spinner } from '../ui/kit'
 import '../ui/diagrams.css'
-import Canvas, { Sel, Tool, View } from './diagrams/Canvas'
-import { fileBase, parseJson, toBpmn, toJson, toPlantUml, toXmi } from './diagrams/exporters'
+import Canvas, { Multi, Sel, Tool, View } from './diagrams/Canvas'
+import { fileBase, parseJson, toBpmn, toC4PlantUml, toJson, toPlantUml, toXmi } from './diagrams/exporters'
 import { clampZoom, contentBox, fitView, laneOf, nodeBox, Pt } from './diagrams/geometry'
 import Inspector, { InspectorTab, tabsFor } from './diagrams/Inspector'
 import {
   canConnect,
   CLASSIFIERS,
+  CONTAINERS,
   DEdge,
   defaultEdgeType,
   DiagramDoc,
   DNode,
   EDGE_NOTATION,
   emptyDoc,
+  FLOW_NODES,
   makeNode,
   NODE_NOTATION,
   Notation,
@@ -51,13 +53,18 @@ import Palette, { paletteItemByKey } from './diagrams/Palette'
 import SaveDialog from './diagrams/SaveDialog'
 import { downloadBlob, downloadText, pngFromSvg, svgFromCanvas } from './diagrams/snapshot'
 import { getDiagram, putDiagram } from './diagrams/store'
-import { applyFix, fixAll, Issue, validate } from './diagrams/validate'
-import { example, hasExample } from './diagrams/examples'
+import { applyFix, fixAll, Issue, issueParams, validate } from './diagrams/validate'
+import { example, examplesFor } from './diagrams/examples'
+import { ensureCatalog } from './diagrams/catalog'
+import { loadCatalogLabels } from './diagrams/catalog/labels'
+import { useCatalogVersion } from './diagrams/catalog/useCatalog'
+import i18n from 'i18next'
+import { resolveLang } from '../i18n'
 
 type Load = { s: 'loading' } | { s: 'ready' } | { s: 'missing' } | { s: 'error' }
 type Persist = 'idle' | 'saving' | 'saved' | 'error'
 type Notice = { tone: 'success' | 'danger' | 'warning'; text: string; link?: boolean } | null
-type ExportKind = 'xmi' | 'plantuml' | 'bpmn' | 'svg' | 'png' | 'json'
+type ExportKind = 'xmi' | 'plantuml' | 'bpmn' | 'c4' | 'svg' | 'png' | 'json'
 
 const HISTORY_MAX = 100
 
@@ -66,10 +73,16 @@ function roomFromHash(): string {
   return m ? m[1] : ''
 }
 
-/** `?tipo=bpmn` escolhe a notação de um quadro novo; `?exemplo=1` começa do exemplo. */
-function startFromHash(): { notation: Notation; example: boolean } {
+/**
+ * `?tipo=bpmn` escolhe a notação de um quadro novo; `?exemplo=1` começa do
+ * (primeiro) exemplo dela, `?exemplo=cloud` de um exemplo pelo nome.
+ */
+function startFromHash(): { notation: Notation; example: string | null } {
   const tipo = location.hash.match(/[?&]tipo=([a-z]+)/)?.[1] as Notation | undefined
-  return { notation: tipo && NOTATIONS.includes(tipo) ? tipo : 'uml', example: /[?&]exemplo=1/.test(location.hash) }
+  const notation = tipo && NOTATIONS.includes(tipo) ? tipo : 'uml'
+  const asked = location.hash.match(/[?&]exemplo=([a-z0-9]+)/)?.[1]
+  const variants = examplesFor(notation)
+  return { notation, example: !asked ? null : asked === '1' ? variants[0] ?? null : variants.includes(asked) ? asked : null }
 }
 
 function isTyping(el: EventTarget | null): boolean {
@@ -81,6 +94,8 @@ function isTyping(el: EventTarget | null): boolean {
 export default function Diagram({ id }: { id: string | null }) {
   const { t } = useTranslation()
   const { setNavOpen } = useShell()
+  // Os rótulos e desenhos do catálogo chegam depois: re-desenha quando chegam.
+  useCatalogVersion()
   const [load, setLoad] = useState<Load>({ s: 'loading' })
   const [doc, setDoc] = useState<DiagramDoc | null>(null)
   const past = useRef<DiagramDoc[]>([])
@@ -92,6 +107,9 @@ export default function Diagram({ id }: { id: string | null }) {
   const [view, setView] = useState<View>({ x: 40, y: 40, k: 1 })
   const [tab, setTab] = useState<InspectorTab>('element')
   const [penColor, setPenColor] = useState<string>(PENS.ink)
+  const [penWidth, setPenWidth] = useState(2.5)
+  const [penOpacity, setPenOpacity] = useState(1)
+  const [multi, setMulti] = useState<Multi | null>(null)
   const [persist, setPersist] = useState<Persist>('idle')
   const [notice, setNotice] = useState<Notice>(null)
   const [saving, setSaving] = useState(false)
@@ -118,8 +136,8 @@ export default function Diagram({ id }: { id: string | null }) {
       fitted.current = false
       const start = startFromHash()
       const base = emptyDoc(uid('d'), t('diagrams.semTitulo'), start.notation, roomFromHash())
-      const sample = start.example ? example(start.notation, (k) => t(`diagrams.exemplos.${k}`)) : null
-      const fresh = sample ? { ...base, title: t(`diagrams.exemplos.${start.notation}.nome`), ...sample } : base
+      const sample = start.example ? example(start.example, (k) => t(`diagrams.exemplos.${k}`)) : null
+      const fresh = sample ? { ...base, title: t(`diagrams.exemplos.${start.example}.nome`), ...sample } : base
       loadedId.current = fresh.id
       setDoc(fresh)
       // Um exemplo abre com o elemento em destaque seleccionado, como o template.
@@ -152,6 +170,23 @@ export default function Diagram({ id }: { id: string | null }) {
       live = false
     }
   }, [id, t])
+
+  // Catálogo de arquitectura: carrega os grupos que o quadro usa e os rótulos
+  // (na língua activa e sempre que ela muda).
+  const catalogKeys = doc ? doc.nodes.map((n) => n.props.catalog).filter(Boolean).sort().join(',') : ''
+  const needsCatalog = doc?.notation === 'arch' || catalogKeys !== ''
+  useEffect(() => {
+    if (!needsCatalog) return
+    const failed = () => setNotice({ tone: 'danger', text: t('diagrams.catalogo.erro') })
+    loadCatalogLabels().catch(failed)
+    ensureCatalog(catalogKeys.split(',')).catch(failed)
+    const onLang = (lng: string) => {
+      const lang = resolveLang(lng)
+      if (lang) loadCatalogLabels(lang).catch(failed)
+    }
+    i18n.on('languageChanged', onLang)
+    return () => i18n.off('languageChanged', onLang)
+  }, [needsCatalog, catalogKeys, t])
 
   // Gravação automática, meio segundo depois da última alteração.
   useEffect(() => {
@@ -246,19 +281,46 @@ export default function Diagram({ id }: { id: string | null }) {
   // ---------------------------------------------------------------- derivados
   const notation: Notation = doc?.notation ?? 'uml'
   const issues = useMemo(() => (doc ? validate(doc, notation) : []), [doc, notation])
-  const typeLabel = useCallback((n: DNode) => t(`diagrams.tipos.${n.type}`), [t])
+  const typeLabel = useCallback(
+    (n: DNode) => (n.props.catalog && (n.type === 'resource' || n.type === 'resourceGroup') ? t(`diagramCatalog.itens.${n.props.catalog}`) : t(`diagrams.tipos.${n.type}`)),
+    [t],
+  )
   // Linha secundária das tarefas BPMN: o executor, ou o tipo («service task»).
+  // Linha secundária do C4 («[Contentor: Rust]») e do catálogo (tecnologia, ou o tipo quando o nome é outro).
   const subLabel = useCallback(
-    (n: DNode) =>
-      n.type !== 'task'
-        ? undefined
-        : n.props.implementation?.trim() || (n.props.taskKind && n.props.taskKind !== 'none' ? t(`diagrams.opcoes.tarefaCurta.${n.props.taskKind}`) : undefined),
+    (n: DNode) => {
+      const tech = n.props.technology?.trim()
+      switch (n.type) {
+        case 'task':
+          return n.props.implementation?.trim() || (n.props.taskKind && n.props.taskKind !== 'none' ? t(`diagrams.opcoes.tarefaCurta.${n.props.taskKind}`) : undefined)
+        case 'c4Person':
+        case 'c4System':
+          return t(`diagrams.c4.tag.${n.type}${n.props.external ? 'Ext' : ''}`)
+        case 'c4Container':
+        case 'c4Component':
+        case 'c4Code':
+          return tech ? t(`diagrams.c4.tag.${n.type}Tech`, { tech }) : t(`diagrams.c4.tag.${n.type}`)
+        case 'c4Boundary':
+          return t(`diagrams.c4.fronteira.${n.props.boundaryKind ?? 'system'}`)
+        case 'c4DeploymentNode':
+          return tech ? `[${tech}]` : undefined
+        case 'resource':
+        case 'resourceGroup': {
+          if (tech) return tech
+          const type = n.props.catalog ? t(`diagramCatalog.itens.${n.props.catalog}`) : ''
+          return type && type !== n.name.trim() ? type : undefined
+        }
+        default:
+          return undefined
+      }
+    },
     [t],
   )
 
   // ---------------------------------------------------------------- criar
   function defaultName(d: DiagramDoc, type: DNode['type'], key: string): string {
-    const base = t(`diagrams.novos.${key}`)
+    const base = key.includes('.') ? t(`diagramCatalog.itens.${key}`) : t(`diagrams.novos.${key}`)
+    if (!base) return ''
     const tight = CLASSIFIERS.has(type) || type === 'lifeline'
     const taken = new Set(d.nodes.map((n) => n.name))
     if (!taken.has(base)) return base
@@ -276,18 +338,26 @@ export default function Diagram({ id }: { id: string | null }) {
     const pos = at
       ? { x: at.x - probe.w / 2, y: at.y - (probe.h || 40) / 2 }
       : { x: (w / 2 - view.x) / view.k - probe.w / 2 + stagger, y: (h / 2 - view.y) / view.k - (probe.h || 60) / 2 + stagger }
-    const name = item.type === 'note' || item.type === 'annotation' ? '' : defaultName(doc, item.type, item.key)
+    const textual = item.type === 'note' || item.type === 'annotation' || item.type === 'flowAnnotation' || item.type === 'sticky'
+    const name = textual ? '' : defaultName(doc, item.type, item.key)
     const props = { ...item.props }
-    if (item.type === 'note' || item.type === 'annotation') props.text = t(`diagrams.novos.${item.key}`)
+    if (textual) props.text = t(`diagrams.novos.${item.key}`)
     if (item.type === 'pool') {
       props.lanes = [
         { id: uid('l'), name: t('diagrams.inspector.pistaN', { n: 1 }), size: 150 },
         { id: uid('l'), name: t('diagrams.inspector.pistaN', { n: 2 }), size: 150 },
       ]
     }
+    // Um evento de fronteira com uma actividade seleccionada prende-se à borda de baixo dela.
+    const host = selection?.kind === 'node' && !at && props.boundary ? doc.nodes.find((x) => x.id === selection.id && (x.type === 'task' || x.type === 'subProcess')) : undefined
+    if (host) {
+      const siblings = doc.nodes.filter((x) => x.type === 'intermediateEvent' && x.props.boundary && Math.abs(x.y + x.h / 2 - (host.y + host.h)) < 4).length
+      pos.x = host.x + host.w - probe.w / 2 - 22 - siblings * 42
+      pos.y = host.y + host.h - probe.h / 2
+    }
     const n = makeNode(item.type, Math.round(pos.x / 4) * 4, Math.round(pos.y / 4) * 4, name, props)
     // Contentores entram por baixo de tudo; o resto por cima.
-    const nodes = item.type === 'pool' || item.type === 'zone' || item.type === 'boundary' || item.type === 'package' ? [n, ...doc.nodes] : [...doc.nodes, n]
+    const nodes = CONTAINERS.has(item.type) ? [n, ...doc.nodes] : [...doc.nodes, n]
     commit({ ...doc, nodes })
     setSelection({ kind: 'node', id: n.id })
     setTab('element')
@@ -315,15 +385,22 @@ export default function Diagram({ id }: { id: string | null }) {
     if (item.kind === 'node') addNode(item)
     else if (item.kind === 'lane') addLane()
     else if (item.kind === 'edge') {
-      setTool((cur) => (cur.kind === 'edge' && cur.edge === item.edge ? { kind: 'select' } : { kind: 'edge', edge: item.edge }))
+      setTool((cur) => (cur.kind === 'edge' && cur.key === item.key ? { kind: 'select' } : { kind: 'edge', edge: item.edge, key: item.key }))
       setDrawer(null)
     } else if (item.kind === 'pen') setTool((cur) => (cur.kind === 'pen' ? { kind: 'select' } : { kind: 'pen' }))
     else if (item.kind === 'eraser') setTool((cur) => (cur.kind === 'eraser' ? { kind: 'select' } : { kind: 'eraser' }))
+    else if (item.kind === 'marker') setTool((cur) => (cur.kind === 'marker' ? { kind: 'select' } : { kind: 'marker' }))
+    else if (item.kind === 'lasso') setTool((cur) => (cur.kind === 'lasso' ? { kind: 'select' } : { kind: 'lasso' }))
+    else if (item.kind === 'shape') setTool((cur) => (cur.kind === 'shape' && cur.shape === item.shape ? { kind: 'select' } : { kind: 'shape', shape: item.shape }))
+    if (item.kind !== 'node') setMulti(null)
   }
 
-  function connect(from: DNode, to: DNode, offset: number) {
+  function connect(from: DNode, toNode: DNode, offset: number) {
+    let to = toNode
     if (!doc) return
     let type = tool.kind === 'edge' ? tool.edge : defaultEdgeType(from, to)
+    // Perdida e encontrada só têm uma linha de vida: a de onde se arrasta.
+    if (type === 'lostMessage' || type === 'foundMessage') to = from
     if (type === 'sequenceFlow') {
       const pa = laneOf(doc, from)?.pool.id
       const pb = laneOf(doc, to)?.pool.id
@@ -338,17 +415,25 @@ export default function Diagram({ id }: { id: string | null }) {
       })
       return
     }
-    if (from.id === to.id && type !== 'generalization' && type !== 'association' && type !== 'message') {
+    if (from.id === to.id && !['generalization', 'association', 'message', 'lostMessage', 'foundMessage', 'transition'].includes(type)) {
       return
     }
     const e: DEdge = { id: uid('e'), type, from: from.id, to: to.id, label: '' }
-    if (type === 'message' || type === 'reply') e.offset = offset
+    if (type === 'message' || type === 'reply' || type === 'lostMessage' || type === 'foundMessage') e.offset = offset
     commit({ ...doc, edges: [...doc.edges, e] })
     setSelection({ kind: 'edge', id: e.id })
     setNotice(null)
   }
 
   const removeSelection = useCallback(() => {
+    if (doc && multi) {
+      const ns = new Set(multi.nodes)
+      const ss = new Set(multi.strokes)
+      commit({ ...doc, nodes: doc.nodes.filter((n) => !ns.has(n.id)), edges: doc.edges.filter((e) => !ns.has(e.from) && !ns.has(e.to)), strokes: doc.strokes.filter((s) => !ss.has(s.id)) })
+      setMulti(null)
+      setSelection(null)
+      return
+    }
     if (!doc || !selection) return
     if (selection.kind === 'node') {
       commit({ ...doc, nodes: doc.nodes.filter((n) => n.id !== selection.id), edges: doc.edges.filter((e) => e.from !== selection.id && e.to !== selection.id) })
@@ -358,7 +443,7 @@ export default function Diagram({ id }: { id: string | null }) {
       commit({ ...doc, strokes: doc.strokes.filter((s) => s.id !== selection.id) })
     }
     setSelection(null)
-  }, [doc, selection, commit])
+  }, [doc, selection, multi, commit])
 
   const duplicate = useCallback(() => {
     if (!doc || selection?.kind !== 'node') return
@@ -418,8 +503,12 @@ export default function Diagram({ id }: { id: string | null }) {
       if (kind === 'xmi') downloadText((file = `${base}.xmi`), toXmi(doc), 'application/xml')
       if (kind === 'plantuml') downloadText((file = `${base}.puml`), toPlantUml(doc), 'text/plain')
       if (kind === 'bpmn') downloadText((file = `${base}.bpmn`), toBpmn(doc), 'application/xml')
+      if (kind === 'c4') downloadText((file = `${base}.c4.puml`), toC4PlantUml(doc, typeLabel), 'text/plain')
       if (kind === 'json') downloadText((file = `${base}.delonix-diagram.json`), toJson(doc), 'application/json')
       if (kind === 'svg' || kind === 'png') {
+        // O desenho dos grupos do catálogo tem de estar no ecrã antes de se copiar o SVG.
+        await ensureCatalog(doc.nodes.map((n) => n.props.catalog))
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
         const svg = svgFromCanvas(svgRef.current!, doc)
         if (kind === 'svg') downloadText((file = `${base}.svg`), svg, 'image/svg+xml')
         else downloadBlob((file = `${base}.png`), (await pngFromSvg(svg)).blob)
@@ -467,13 +556,14 @@ export default function Diagram({ id }: { id: string | null }) {
         e.preventDefault()
         duplicate()
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selection) {
+        if (selection || multi) {
           e.preventDefault()
           removeSelection()
         }
       } else if (e.key === 'Escape') {
         if (menu) setMenu(false)
         else if (drawer) setDrawer(null)
+        else if (multi) setMulti(null)
         else if (tool.kind !== 'select') setTool({ kind: 'select' })
         else setSelection(null)
       } else if (!mod && (e.key === '+' || e.key === '=')) zoomBy(1.2)
@@ -519,7 +609,13 @@ export default function Diagram({ id }: { id: string | null }) {
   const d = doc!
   const primaryExport: ExportKind = notation === 'uml' ? 'xmi' : notation === 'bpmn' ? 'bpmn' : 'svg'
   const formats: ExportKind[] =
-    notation === 'uml' ? ['xmi', 'plantuml', 'svg', 'png', 'json'] : notation === 'bpmn' ? ['bpmn', 'svg', 'png', 'json'] : ['svg', 'png', 'json']
+    notation === 'uml'
+      ? ['xmi', 'plantuml', 'svg', 'png', 'json']
+      : notation === 'bpmn'
+        ? ['bpmn', 'svg', 'png', 'json']
+        : notation === 'arch'
+          ? ['svg', 'c4', 'png', 'json']
+          : ['svg', 'png', 'json']
   const empty = d.nodes.length === 0 && d.strokes.length === 0
   const first = issues[0]
 
@@ -601,7 +697,7 @@ export default function Diagram({ id }: { id: string | null }) {
             {menu && (
               <div className="dg-menu" role="menu">
                 {formats.map((f) => (
-                  <button key={f} type="button" role="menuitem" onClick={() => void exportAs(f)}>
+                  <button key={f} type="button" role="menuitem" data-export={f} onClick={() => void exportAs(f)}>
                     {t(`diagrams.exportar.${f}`)}
                   </button>
                 ))}
@@ -652,7 +748,12 @@ export default function Diagram({ id }: { id: string | null }) {
             doc={d}
             tool={tool}
             penColor={penColor}
+            penWidth={penWidth}
+            penOpacity={penOpacity}
+            typeLabel={typeLabel}
             onPenColor={setPenColor}
+            onPenWidth={setPenWidth}
+            onPenOpacity={setPenOpacity}
             onPick={pick}
             onFind={(n) => {
               setSelection({ kind: 'node', id: n.id })
@@ -671,6 +772,13 @@ export default function Diagram({ id }: { id: string | null }) {
             view={view}
             svgRef={svgRef}
             penColor={penColor}
+            penWidth={penWidth}
+            penOpacity={penOpacity}
+            multi={multi}
+            onMulti={(m) => {
+              setMulti(m)
+              if (m) setTab('element')
+            }}
             typeLabel={typeLabel}
             subLabel={subLabel}
             onView={setView}
@@ -690,21 +798,23 @@ export default function Diagram({ id }: { id: string | null }) {
           {empty && (
             <div className="dg-hint" aria-live="polite">
               <p>{t(notation === 'free' ? 'diagrams.canvas.vazioLivre' : 'diagrams.canvas.vazio')}</p>
-              {hasExample(notation) && (
+              {examplesFor(notation).map((variant, _i, all) => (
                 <Button
+                  key={variant}
                   size="sm"
                   variant="outline"
                   icon="sparkles"
+                  data-example={variant}
                   onClick={() => {
-                    const sample = example(notation, (k) => t(`diagrams.exemplos.${k}`))
+                    const sample = example(variant, (k) => t(`diagrams.exemplos.${k}`))
                     if (!sample) return
-                    commit({ ...d, ...sample, title: d.title === t('diagrams.semTitulo') ? t(`diagrams.exemplos.${notation}.nome`) : d.title })
+                    commit({ ...d, ...sample, title: d.title === t('diagrams.semTitulo') ? t(`diagrams.exemplos.${variant}.nome`) : d.title })
                     fitted.current = false
                   }}
                 >
-                  {t('diagrams.canvas.exemplo')}
+                  {all.length > 1 ? t('diagrams.canvas.exemploDe', { nome: t(`diagrams.exemplos.${variant}.nome`) }) : t('diagrams.canvas.exemplo')}
                 </Button>
-              )}
+              ))}
             </div>
           )}
 
@@ -729,7 +839,7 @@ export default function Diagram({ id }: { id: string | null }) {
                 onClick={openValidation}
               >
                 <Icon name={issues.length === 0 ? 'check' : 'alert'} size={12} />
-                {issues.length === 0 ? t('diagrams.estado.valido') : t('diagrams.estado.problemaPrimeiro', { count: issues.length, primeiro: t(`diagrams.regras.${first.code}`, first.params) })}
+                {issues.length === 0 ? t('diagrams.estado.valido') : t('diagrams.estado.problemaPrimeiro', { count: issues.length, primeiro: t(`diagrams.regras.${first.code}`, issueParams(d, first, typeLabel)) })}
               </button>
             )}
           </div>
@@ -750,6 +860,7 @@ export default function Diagram({ id }: { id: string | null }) {
             selection={selection}
             tab={tab}
             issues={issues}
+            typeLabel={typeLabel}
             showValidation={showValidation}
             onTab={setTab}
             onChange={(next, key) => commit(next, undefined, key)}
@@ -758,6 +869,7 @@ export default function Diagram({ id }: { id: string | null }) {
               const n = s?.kind === 'node' ? d.nodes.find((x) => x.id === s.id) : undefined
               if (n) centreOn(n)
             }}
+            multi={multi}
             onDelete={removeSelection}
             onDuplicate={duplicate}
             onFix={fixOne}
@@ -773,7 +885,10 @@ export default function Diagram({ id }: { id: string | null }) {
           title={d.title}
           roomCode={d.roomCode}
           empty={empty}
-          makePng={async () => (await pngFromSvg(svgFromCanvas(svgRef.current!, d))).base64}
+          makePng={async () => {
+            await ensureCatalog(d.nodes.map((n) => n.props.catalog))
+            return (await pngFromSvg(svgFromCanvas(svgRef.current!, d))).base64
+          }}
           onClose={() => setSaving(false)}
           onSaved={onSaved}
         />
@@ -798,14 +913,14 @@ function summary(t: (k: string, o?: Record<string, unknown>) => string, d: Diagr
     u('pistas', pools.reduce((s, p) => s + (p.props.lanes?.length ?? 0), 0))
     u('elementos', d.nodes.filter((n) => NODE_NOTATION[n.type] === 'bpmn' && n.type !== 'pool').length)
   } else if (notation === 'arch') {
-    u('componentes', of(['service', 'database', 'queue', 'client', 'external']))
+    u('componentes', d.nodes.filter((n) => NODE_NOTATION[n.type] === 'arch' && !CONTAINERS.has(n.type)).length)
     u('ligacoes', edges('arch'))
   } else if (notation === 'flow') {
-    u('formas', of(['terminator', 'process', 'decision', 'io', 'document']))
+    u('formas', d.nodes.filter((n) => FLOW_NODES.has(n.type)).length)
     u('ligacoes', edges('flow'))
   } else {
     u('tracos', d.strokes.length)
-    u('textos', of(['text', 'note']))
+    u('textos', of(['text', 'note', 'sticky']))
   }
   return parts.join(' · ')
 }

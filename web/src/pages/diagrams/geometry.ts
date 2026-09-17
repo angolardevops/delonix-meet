@@ -3,7 +3,7 @@
  * piscinas e pistas, e a caixa do conteúdo (para «ajustar à página» e para
  * exportar). Puro — testável sem DOM.
  */
-import { CLASSIFIERS, DEdge, DiagramDoc, DNode, Lane, nodeById } from './model'
+import { CLASSIFIERS, DEdge, DiagramDoc, DNode, LABEL_BELOW, Lane, nodeById } from './model'
 
 export interface Box {
   x: number
@@ -38,9 +38,16 @@ export function classifierHeight(n: DNode): number {
   return head + attrBox + opBox
 }
 
+/** Altura de um objecto UML: cabeça com `nome: Classe` e os slots. */
+export function objectHeight(n: DNode): number {
+  const slots = n.props.attributes?.length ?? 0
+  return CLASS.pad * 2 + CLASS.name + (slots ? CLASS.pad * 2 + slots * CLASS.line : 0)
+}
+
 /** Caixa que o elemento ocupa (para seleccionar, ligar e enquadrar). */
 export function nodeBox(n: DNode): Box {
   if (CLASSIFIERS.has(n.type)) return { x: n.x, y: n.y, w: n.w, h: classifierHeight(n) }
+  if (n.type === 'object') return { x: n.x, y: n.y, w: n.w, h: objectHeight(n) }
   if (n.type === 'lifeline') return { x: n.x, y: n.y, w: n.w, h: n.h + (n.props.length ?? 240) }
   if (n.type === 'pool') return { x: n.x, y: n.y, w: n.w, h: poolHeight(n) }
   return { x: n.x, y: n.y, w: n.w, h: n.h }
@@ -58,9 +65,27 @@ export function poolHeight(pool: DNode): number {
 
 type Shape = 'rect' | 'ellipse' | 'diamond'
 
+const ELLIPSES: ReadonlySet<DNode['type']> = new Set([
+  'usecase',
+  'startEvent',
+  'intermediateEvent',
+  'endEvent',
+  'initialNode',
+  'activityFinal',
+  'flowFinal',
+  'stateInitial',
+  'stateFinal',
+  'history',
+  'providedInterface',
+  'requiredInterface',
+  'connector',
+  'sequentialStorage',
+])
+const DIAMONDS: ReadonlySet<DNode['type']> = new Set(['gateway', 'decision', 'decisionNode', 'choice'])
+
 function shapeOf(n: DNode): Shape {
-  if (n.type === 'usecase' || n.type === 'startEvent' || n.type === 'intermediateEvent' || n.type === 'endEvent') return 'ellipse'
-  if (n.type === 'gateway' || n.type === 'decision') return 'diamond'
+  if (ELLIPSES.has(n.type)) return 'ellipse'
+  if (DIAMONDS.has(n.type)) return 'diamond'
   return 'rect'
 }
 
@@ -102,6 +127,11 @@ export function edgeSegment(doc: Pick<DiagramDoc, 'nodes'>, e: DEdge): { a: Pt; 
     const bx = to.x + to.w / 2
     if (from.id === to.id) return { a: { x: ax, y }, b: { x: ax, y: y + 24 } }
     return { a: { x: ax, y }, b: { x: bx, y } }
+  }
+  if ((e.type === 'lostMessage' || e.type === 'foundMessage') && from.type === 'lifeline') {
+    const y = from.y + from.h + (e.offset ?? 40)
+    const x = from.x + from.w / 2
+    return e.type === 'lostMessage' ? { a: { x, y }, b: { x: x + 110, y } } : { a: { x: x - 110, y }, b: { x, y } }
   }
   if (from.id === to.id) {
     const b = nodeBox(from)
@@ -160,7 +190,20 @@ export function contentBox(doc: Pick<DiagramDoc, 'nodes' | 'strokes'>): Box | nu
     x0 = Math.min(x0, b.x)
     y0 = Math.min(y0, b.y)
     x1 = Math.max(x1, b.x + b.w)
-    y1 = Math.max(y1, b.y + b.h + (n.type === 'actor' || n.type.endsWith('Event') || n.type === 'gateway' || n.type === 'dataObject' ? 18 : 0))
+    const below = LABEL_BELOW.has(n.type) || n.type.endsWith('Event') || n.type === 'gateway' || n.type === 'dataObject'
+    x0 = Math.min(x0, below ? b.x + b.w / 2 - 55 : b.x)
+    x1 = Math.max(x1, below ? b.x + b.w / 2 + 55 : b.x + b.w)
+    y1 = Math.max(y1, b.y + b.h + (below ? 18 : 0))
+  }
+  if (Number.isFinite(x0)) {
+    // As mensagens perdidas/encontradas saem da linha de vida para o lado.
+    for (const e of (doc as Partial<DiagramDoc>).edges ?? []) {
+      if (e.type !== 'lostMessage' && e.type !== 'foundMessage') continue
+      const seg = edgeSegment(doc, e)
+      if (!seg) continue
+      x0 = Math.min(x0, seg.a.x - 8)
+      x1 = Math.max(x1, seg.b.x + 8)
+    }
   }
   for (const s of doc.strokes) {
     for (let i = 0; i < s.points.length; i += 2) {
@@ -190,6 +233,49 @@ export function clampZoom(k: number): number {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, k))
 }
 
+/** Ponto dentro de um polígono (pares x,y seguidos), por paridade de cruzamentos. */
+export function pointInPolygon(p: Pt, poly: number[]): boolean {
+  let inside = false
+  const n = poly.length / 2
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = poly[2 * i]
+    const yi = poly[2 * i + 1]
+    const xj = poly[2 * j]
+    const yj = poly[2 * j + 1]
+    if (yi > p.y !== yj > p.y && p.x < ((xj - xi) * (p.y - yi)) / (yj - yi) + xi) inside = !inside
+  }
+  return inside
+}
+
+/**
+ * O que um laço apanha: traços com a maioria dos pontos dentro, e elementos
+ * com o centro dentro.
+ */
+export function lassoPick(doc: Pick<DiagramDoc, 'nodes' | 'strokes'>, poly: number[]): { nodes: string[]; strokes: string[] } {
+  if (poly.length < 6) return { nodes: [], strokes: [] }
+  const strokes = doc.strokes
+    .filter((s) => {
+      let inside = 0
+      const total = s.points.length / 2
+      for (let i = 0; i < s.points.length; i += 2) if (pointInPolygon({ x: s.points[i], y: s.points[i + 1] }, poly)) inside++
+      return total > 0 && inside / total > 0.5
+    })
+    .map((s) => s.id)
+  const nodes = doc.nodes.filter((n) => pointInPolygon(center(nodeBox(n)), poly)).map((n) => n.id)
+  return { nodes, strokes }
+}
+
+/** Desloca elementos e traços escolhidos. */
+export function moveSelection<T extends Pick<DiagramDoc, 'nodes' | 'strokes'>>(doc: T, pick: { nodes: string[]; strokes: string[] }, dx: number, dy: number): T {
+  const ns = new Set(pick.nodes)
+  const ss = new Set(pick.strokes)
+  return {
+    ...doc,
+    nodes: doc.nodes.map((n) => (ns.has(n.id) ? { ...n, x: n.x + dx, y: n.y + dy } : n)),
+    strokes: doc.strokes.map((s) => (ss.has(s.id) ? { ...s, points: s.points.map((v, i) => v + (i % 2 ? dy : dx)) } : s)),
+  }
+}
+
 /** Distância de um ponto a um segmento (para apagar traços e tocar arestas). */
 export function distToSegment(p: Pt, a: Pt, b: Pt): number {
   const dx = b.x - a.x
@@ -197,6 +283,18 @@ export function distToSegment(p: Pt, a: Pt, b: Pt): number {
   const len = dx * dx + dy * dy
   const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len))
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+}
+
+/** A actividade a cuja borda um evento de fronteira está preso (a mais pequena que o toca). */
+export function attachedActivity(ev: DNode, activities: DNode[]): DNode | undefined {
+  const c = center(nodeBox(ev))
+  const r = ev.w / 2
+  return activities
+    .filter((a) => {
+      const b = nodeBox(a)
+      return c.x >= b.x - r && c.x <= b.x + b.w + r && c.y >= b.y - r && c.y <= b.y + b.h + r
+    })
+    .sort((a, b) => a.w * a.h - b.w * b.h)[0]
 }
 
 /** Mensagens dentro do intervalo vertical de um fragmento combinado. */

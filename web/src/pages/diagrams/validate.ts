@@ -8,11 +8,15 @@
  * escolha (nomear uma classe, desfazer um ciclo de herança, decidir para onde
  * vai uma tarefa sem saída), a regra avisa e não mexe.
  */
-import { center, nodeBox, poolOf } from './geometry'
+import { attachedActivity, center, contains, nodeBox, poolOf } from './geometry'
 import {
+  ACTIVITY_NODES,
   BPMN_FLOW_NODES,
   canConnect,
   CLASSIFIERS,
+  CONTAINERS,
+  EVENT_GATEWAYS,
+  FLOW_NODES,
   DEdge,
   defaultEdgeType,
   DiagramDoc,
@@ -24,6 +28,7 @@ import {
   normalizeMultiplicity,
   Notation,
   parseMember,
+  STATE_NODES,
 } from './model'
 
 export type Severity = 'error' | 'warning'
@@ -42,6 +47,14 @@ export type RuleCode =
   | 'umlArestaDuplicada'
   | 'umlActorIsolado'
   | 'umlMensagemSemNome'
+  | 'umlActividadeSemInicio'
+  | 'umlInicialComEntrada'
+  | 'umlFinalComSaida'
+  | 'umlDecisaoSaidas'
+  | 'umlDecisaoGuarda'
+  | 'umlEstadosSemInicial'
+  | 'umlEscolhaSaidas'
+  | 'umlEstadoInalcancavel'
   | 'bpmnSemInicio'
   | 'bpmnSemFim'
   | 'bpmnInicioComEntrada'
@@ -58,12 +71,21 @@ export type RuleCode =
   | 'bpmnForaDaPiscina'
   | 'bpmnGatewayEventos'
   | 'bpmnTarefaSemNome'
+  | 'bpmnFronteiraSolta'
+  | 'bpmnFronteiraComEntrada'
+  | 'bpmnGatewayInutil'
+  | 'bpmnGatewayEventosSaidas'
+  | 'bpmnLigacaoSemPar'
   | 'archSemNome'
   | 'archIsolado'
+  | 'c4RelSemTecnologia'
+  | 'c4RelSemDescricao'
+  | 'c4PessoaDentroFronteira'
   | 'flowSemInicio'
   | 'flowDecisaoSaidas'
   | 'flowDecisaoEtiquetas'
   | 'flowInalcancavel'
+  | 'flowConectorSemPar'
 
 export interface Issue {
   id: string
@@ -81,6 +103,21 @@ function issue(code: RuleCode, severity: Severity, elements: string[], params: R
 }
 
 const label = (n: DNode | undefined) => (n ? n.name.trim() || n.props.text?.trim() || n.id : '')
+
+/**
+ * Valores da frase de um problema, com os ids de elementos sem nome trocados
+ * pelo nome do TIPO («Decisão», «Nó inicial») — um id interno não diz nada a
+ * quem lê.
+ */
+export function issueParams(doc: Pick<DiagramDoc, 'nodes'>, is: Issue, typeLabel: (n: DNode) => string): Record<string, string> {
+  const byId = new Map(doc.nodes.map((n) => [n.id, n]))
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(is.params)) {
+    const n = byId.get(v)
+    out[k] = n ? typeLabel(n) : v
+  }
+  return out
+}
 
 /** Todas as regras da notação pedida (por omissão, a do separador activo). */
 export function validate(doc: DiagramDoc, notation: Notation = doc.notation): Issue[] {
@@ -112,7 +149,7 @@ function validateUml(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
   const nodes = doc.nodes.filter((n) => NODE_NOTATION[n.type] === 'uml')
   const edges = doc.edges.filter((e) => EDGE_NOTATION[e.type] === 'uml' && byId.has(e.from) && byId.has(e.to))
 
-  const named = new Set(['class', 'interface', 'enum', 'lifeline', 'actor', 'usecase'])
+  const named = new Set(['class', 'interface', 'enum', 'lifeline', 'actor', 'usecase', 'action', 'state', 'component', 'object', 'artifact', 'deviceNode'])
   for (const n of nodes) if (named.has(n.type) && !n.name.trim()) out.push(issue('umlNomeVazio', 'error', [n.id]))
 
   const seen = new Map<string, DNode>()
@@ -184,7 +221,7 @@ function validateUml(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
   }
   const dup = new Map<string, DEdge>()
   for (const e of edges) {
-    if (e.type === 'message' || e.type === 'reply') continue
+    if (e.type === 'message' || e.type === 'reply' || e.type === 'lostMessage' || e.type === 'foundMessage') continue
     const key = `${e.type}|${e.from}|${e.to}`
     const first = dup.get(key)
     if (first) out.push(issue('umlArestaDuplicada', 'warning', [e.id, first.id], { from: label(byId.get(e.from)), to: label(byId.get(e.to)) }, true))
@@ -193,6 +230,55 @@ function validateUml(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
   for (const n of nodes) {
     if (n.type !== 'actor') continue
     if (!edges.some((e) => e.from === n.id || e.to === n.id)) out.push(issue('umlActorIsolado', 'warning', [n.id], { name: label(n) }))
+  }
+  out.push(...validateBehaviour(nodes, edges))
+  return out
+}
+
+/** Actividades e máquinas de estados: pontos de entrada, saídas e alcance. */
+function validateBehaviour(nodes: DNode[], edges: DEdge[]): Issue[] {
+  const out: Issue[] = []
+  const flows = edges.filter((e) => e.type === 'controlFlow')
+  const trans = edges.filter((e) => e.type === 'transition')
+  const act = nodes.filter((n) => ACTIVITY_NODES.has(n.type))
+  const initials = act.filter((n) => n.type === 'initialNode')
+  if (act.some((n) => n.type === 'action') && initials.length === 0) out.push(issue('umlActividadeSemInicio', 'warning', [act.find((n) => n.type === 'action')!.id]))
+  const states = nodes.filter((n) => STATE_NODES.has(n.type))
+  const sInit = states.filter((n) => n.type === 'stateInitial')
+  if (states.some((n) => n.type === 'state' || n.type === 'compositeState') && sInit.length === 0) {
+    out.push(issue('umlEstadosSemInicial', 'warning', [states.find((n) => n.type === 'state' || n.type === 'compositeState')!.id]))
+  }
+  for (const [list, pool] of [[flows, act], [trans, states]] as const) {
+    for (const n of pool) {
+      const inc = list.filter((e) => e.to === n.id)
+      const outs = list.filter((e) => e.from === n.id)
+      if ((n.type === 'initialNode' || n.type === 'stateInitial') && inc.length > 0) out.push(issue('umlInicialComEntrada', 'error', [n.id], { name: label(n) }, true))
+      if ((n.type === 'activityFinal' || n.type === 'flowFinal' || n.type === 'stateFinal') && outs.length > 0) out.push(issue('umlFinalComSaida', 'error', [n.id], { name: label(n) }, true))
+      if (n.type === 'decisionNode') {
+        // Junção (várias entradas, uma saída) é válida; decisão pede ≥ 2 saídas.
+        const isMerge = inc.length >= 2 && outs.length === 1
+        if (!isMerge && outs.length < 2) out.push(issue('umlDecisaoSaidas', 'warning', [n.id], { name: label(n) }))
+        if (outs.length >= 2) for (const e of outs) if (!e.condition?.trim()) out.push(issue('umlDecisaoGuarda', 'warning', [e.id], { name: label(n) }))
+      }
+      if (n.type === 'choice' && outs.length < 2) out.push(issue('umlEscolhaSaidas', 'warning', [n.id], { name: label(n) }))
+    }
+  }
+  if (sInit.length > 0) {
+    const seen = new Set(sInit.map((n) => n.id))
+    const queue = [...seen]
+    while (queue.length) {
+      const id = queue.shift()!
+      for (const e of trans) if (e.from === id && !seen.has(e.to)) {
+        seen.add(e.to)
+        queue.push(e.to)
+      }
+    }
+    // Um estado dentro de um composto alcançado conta como alcançado pelo composto.
+    for (const n of states) {
+      if (seen.has(n.id) || n.type === 'stateInitial' || n.type === 'compositeState') continue
+      const inside = states.some((c) => c.type === 'compositeState' && seen.has(c.id) && contains(nodeBox(c), center(nodeBox(n))))
+      if (!inside) out.push(issue('umlEstadoInalcancavel', 'warning', [n.id], { name: label(n) }))
+    }
   }
   return out
 }
@@ -227,30 +313,44 @@ function validateBpmn(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
     }
   }
 
+  const activities = flowNodes.filter((n) => n.type === 'task' || n.type === 'subProcess')
   for (const n of flowNodes) {
     const inc = incoming(n.id)
     const outs = outgoing(n.id)
+    const boundary = n.type === 'intermediateEvent' && !!n.props.boundary
+    const linkCatch = n.type === 'intermediateEvent' && n.props.trigger === 'link' && !n.props.throwing
+    const linkThrow = n.type === 'intermediateEvent' && n.props.trigger === 'link' && !!n.props.throwing
+    // Uma actividade de compensação só corre pela associação ao evento de fronteira: não tem fluxo.
+    const compensation = (n.type === 'task' || n.type === 'subProcess') && !!n.props.compensation
     if (n.type === 'startEvent' && inc.length > 0) out.push(issue('bpmnInicioComEntrada', 'error', [n.id], { name: label(n) }, true))
     if (n.type === 'endEvent' && outs.length > 0) out.push(issue('bpmnFimComSaida', 'error', [n.id], { name: label(n) }, true))
-    if (n.type !== 'startEvent' && inc.length === 0) {
+    if (n.type !== 'startEvent' && inc.length === 0 && !boundary && !linkCatch && !compensation) {
       out.push(issue('bpmnSemEntrada', 'warning', [n.id], { name: label(n) }))
     }
-    if (n.type !== 'endEvent' && outs.length === 0) out.push(issue('bpmnSemSaida', 'warning', [n.id], { name: label(n) }))
+    if (n.type !== 'endEvent' && outs.length === 0 && !linkThrow && !compensation) out.push(issue('bpmnSemSaida', 'warning', [n.id], { name: label(n) }))
+    if (boundary) {
+      if (!attachedActivity(n, activities)) out.push(issue('bpmnFronteiraSolta', 'error', [n.id], { name: label(n) }))
+      if (inc.length > 0) out.push(issue('bpmnFronteiraComEntrada', 'error', [n.id], { name: label(n) }, true))
+    }
     if ((n.type === 'task' || n.type === 'subProcess') && !n.name.trim()) out.push(issue('bpmnTarefaSemNome', 'warning', [n.id]))
     if (hasPools && !poolOf(doc, n)) out.push(issue('bpmnForaDaPiscina', 'warning', [n.id], { name: label(n) }))
 
     if (n.type === 'gateway') {
       const kind = n.props.gatewayKind ?? 'exclusive'
-      if ((kind === 'exclusive' || kind === 'inclusive') && outs.length >= 2 && !outs.some((e) => e.isDefault)) {
+      if ((kind === 'exclusive' || kind === 'inclusive' || kind === 'complex') && outs.length >= 2 && !outs.some((e) => e.isDefault)) {
         out.push(issue('bpmnGatewaySemOmissao', 'warning', [n.id], { name: label(n) }, outs.some((e) => !e.condition?.trim())))
       }
       if (kind === 'parallel') {
         for (const e of outs) if (e.condition?.trim() || e.isDefault) out.push(issue('bpmnCondicaoEmParalelo', 'error', [e.id], { name: label(n) }, true))
       }
-      if (kind === 'eventBased') {
+      if ((inc.length + outs.length > 0) && inc.length <= 1 && outs.length <= 1) {
+        out.push(issue('bpmnGatewayInutil', 'warning', [n.id], { name: label(n) }))
+      }
+      if (EVENT_GATEWAYS.has(kind) && outs.length < 2) out.push(issue('bpmnGatewayEventosSaidas', 'error', [n.id], { name: label(n) }))
+      if (EVENT_GATEWAYS.has(kind)) {
         for (const e of outs) {
           const target = byId.get(e.to)!
-          const ok = target.type === 'intermediateEvent' || (target.type === 'task' && target.props.taskKind === 'receive')
+          const ok = (target.type === 'intermediateEvent' && !target.props.throwing && !target.props.boundary) || (target.type === 'task' && target.props.taskKind === 'receive')
           if (!ok) out.push(issue('bpmnGatewayEventos', 'error', [e.id], { name: label(n), target: label(target) }))
         }
       }
@@ -262,11 +362,17 @@ function validateBpmn(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
   for (const e of seq) {
     const a = byId.get(e.from)!
     if (e.isDefault && e.condition?.trim()) out.push(issue('bpmnOmissaoComCondicao', 'error', [e.id], { name: label(a) }, true))
-    const canDefault = (a.type === 'gateway' && (a.props.gatewayKind === 'exclusive' || a.props.gatewayKind === 'inclusive' || !a.props.gatewayKind)) || a.type === 'task' || a.type === 'subProcess'
+    const canDefault = (a.type === 'gateway' && (a.props.gatewayKind === 'exclusive' || a.props.gatewayKind === 'inclusive' || a.props.gatewayKind === 'complex' || !a.props.gatewayKind)) || a.type === 'task' || a.type === 'subProcess'
     if (e.isDefault && !canDefault) out.push(issue('bpmnOmissaoOrigem', 'error', [e.id], { name: label(a) }, true))
     const pa = poolOf(doc, a)
     const pb = poolOf(doc, byId.get(e.to)!)
     if (pa && pb && pa.id !== pb.id) out.push(issue('bpmnFluxoEntrePiscinas', 'error', [e.id], { from: label(pa), to: label(pb) }, true))
+  }
+  // Eventos de ligação: um «lançar» precisa de um «apanhar» com o mesmo nome, no mesmo processo.
+  const links = flowNodes.filter((n) => n.type === 'intermediateEvent' && n.props.trigger === 'link')
+  for (const n of links) {
+    const pair = links.find((m) => m.id !== n.id && !!m.props.throwing !== !!n.props.throwing && m.name.trim() === n.name.trim() && poolOf(doc, m)?.id === poolOf(doc, n)?.id)
+    if (!pair) out.push(issue('bpmnLigacaoSemPar', 'warning', [n.id], { name: label(n) }))
   }
   for (const e of doc.edges) {
     if (e.type !== 'messageFlow') continue
@@ -288,7 +394,24 @@ function validateBpmn(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
 
 function validateArch(doc: DiagramDoc): Issue[] {
   const out: Issue[] = []
-  const comps = doc.nodes.filter((n) => NODE_NOTATION[n.type] === 'arch' && n.type !== 'zone')
+  const byId = new Map(doc.nodes.map((n) => [n.id, n]))
+  for (const e of doc.edges) {
+    if (e.type !== 'c4Rel') continue
+    const a = byId.get(e.from)
+    const b = byId.get(e.to)
+    if (!a || !b) continue
+    const params = { from: label(a), to: label(b) }
+    if (!e.label.trim()) out.push(issue('c4RelSemDescricao', 'warning', [e.id], params))
+    // Entre contentores e componentes a tecnologia é o que o diagrama existe para dizer.
+    const technical = (n: DNode) => n.type === 'c4Container' || n.type === 'c4Component'
+    if ((technical(a) || technical(b)) && !e.technology?.trim()) out.push(issue('c4RelSemTecnologia', 'warning', [e.id], params))
+  }
+  const boundaries = doc.nodes.filter((n) => n.type === 'c4Boundary' && (n.props.boundaryKind ?? 'system') !== 'enterprise')
+  for (const p of doc.nodes.filter((n) => n.type === 'c4Person')) {
+    const inside = boundaries.find((b) => contains(nodeBox(b), center(nodeBox(p))))
+    if (inside) out.push(issue('c4PessoaDentroFronteira', 'warning', [p.id, inside.id], { name: label(p), boundary: label(inside) }))
+  }
+  const comps = doc.nodes.filter((n) => NODE_NOTATION[n.type] === 'arch' && !CONTAINERS.has(n.type))
   for (const n of comps) {
     if (!n.name.trim()) out.push(issue('archSemNome', 'warning', [n.id]))
     if (!doc.edges.some((e) => EDGE_NOTATION[e.type] === 'arch' && (e.from === n.id || e.to === n.id))) {
@@ -300,11 +423,21 @@ function validateArch(doc: DiagramDoc): Issue[] {
 
 function validateFlow(doc: DiagramDoc, byId: Map<string, DNode>): Issue[] {
   const out: Issue[] = []
-  const nodes = doc.nodes.filter((n) => NODE_NOTATION[n.type] === 'flow')
+  // Anotações não fazem parte do fluxo: nem contam como início, nem como inalcançáveis.
+  const nodes = doc.nodes.filter((n) => FLOW_NODES.has(n.type))
   if (nodes.length === 0) return out
   const edges = doc.edges.filter((e) => e.type === 'flow' && byId.has(e.from) && byId.has(e.to))
-  const starts = nodes.filter((n) => n.type === 'terminator' && !edges.some((e) => e.to === n.id))
-  if (starts.length === 0) out.push(issue('flowSemInicio', 'error', nodes[0] ? [nodes[0].id] : []))
+  // Um conector sem entrada continua o fluxo vindo de outro sítio (outra página ou outro ramo): também arranca.
+  const isConnector = (n: DNode) => n.type === 'connector' || n.type === 'offPageConnector'
+  const starts = nodes.filter((n) => (n.type === 'terminator' || isConnector(n)) && !edges.some((e) => e.to === n.id))
+  for (const n of nodes.filter((x) => x.type === 'connector')) {
+    // Na mesma página, um conector só serve se houver outro com o mesmo rótulo.
+    const pair = nodes.some((m) => m.id !== n.id && m.type === 'connector' && m.name.trim() === n.name.trim())
+    if (!pair) out.push(issue('flowConectorSemPar', 'warning', [n.id], { name: label(n) }))
+  }
+  if (!nodes.some((n) => n.type === 'terminator' && !edges.some((e) => e.to === n.id)) && !nodes.some((n) => n.type === 'offPageConnector' && !edges.some((e) => e.to === n.id))) {
+    out.push(issue('flowSemInicio', 'error', nodes[0] ? [nodes[0].id] : []))
+  }
   for (const n of nodes) {
     if (n.type !== 'decision') continue
     const outs = edges.filter((e) => e.from === n.id)
@@ -368,10 +501,16 @@ export function applyFix(doc: DiagramDoc, is: Issue, names: { start: string; end
     }
     case 'umlArestaDuplicada':
       return removeEdges(doc, new Set([first]))
+    case 'umlInicialComEntrada':
+      return { ...doc, edges: doc.edges.filter((e) => !((e.type === 'controlFlow' || e.type === 'transition') && e.to === first)) }
+    case 'umlFinalComSaida':
+      return { ...doc, edges: doc.edges.filter((e) => !((e.type === 'controlFlow' || e.type === 'transition') && e.from === first)) }
     case 'bpmnInicioComEntrada':
       return { ...doc, edges: doc.edges.filter((e) => !(e.type === 'sequenceFlow' && e.to === first)) }
     case 'bpmnFimComSaida':
       return { ...doc, edges: doc.edges.filter((e) => !(e.type === 'sequenceFlow' && e.from === first)) }
+    case 'bpmnFronteiraComEntrada':
+      return { ...doc, edges: doc.edges.filter((e) => !(e.type === 'sequenceFlow' && e.to === first)) }
     case 'bpmnSemInicio':
     case 'bpmnSemFim': {
       const target = byId.get(first)

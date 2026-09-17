@@ -9,7 +9,7 @@ import { ReactNode, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../../ui/icons'
 import { Button, cx, Field, IconButton, Select, TextArea, TextInput, Toggle } from '../../ui/kit'
-import type { Sel } from './Canvas'
+import type { Multi, Sel } from './Canvas'
 import { laneOf, laneTop, nodeBox, poolHeight } from './geometry'
 import {
   BPMN_FLOW_NODES,
@@ -19,7 +19,19 @@ import {
   DNode,
   edgeTypesFor,
   EdgeType,
+  BOUNDARY_KINDS,
+  BoundaryKind,
+  C4_ELEMENTS,
+  C4_SHAPES,
+  C4Shape,
+  DataRole,
+  EVENT_GATEWAYS,
   EventTrigger,
+  GATEWAY_KINDS,
+  TASK_KINDS,
+  THROWABLE,
+  TRIGGERS,
+  FRAGMENT_OPERATORS,
   FragmentOperator,
   GatewayKind,
   Lane,
@@ -29,8 +41,9 @@ import {
   TaskKind,
   uid,
 } from './model'
-import { FILLS } from './paint'
-import type { Issue } from './validate'
+import { FILLS, PEN_OPACITIES, PEN_WIDTHS, PENS, STICKY } from './paint'
+import { CATALOG_CONTAINERS, CATALOG_ITEMS, catalogGroupOf, catalogKey } from './catalog'
+import { Issue, issueParams } from './validate'
 
 export type InspectorTab = 'element' | 'style' | 'layers' | 'lanes' | 'validation'
 
@@ -66,6 +79,8 @@ export default function Inspector({
   selection,
   tab,
   issues,
+  typeLabel,
+  multi = null,
   showValidation = false,
   onTab,
   onChange,
@@ -81,6 +96,8 @@ export default function Inspector({
   selection: Sel | null
   tab: InspectorTab
   issues: Issue[]
+  typeLabel: (n: DNode) => string
+  multi?: Multi | null
   showValidation?: boolean
   onTab: (t: InspectorTab) => void
   onChange: Change
@@ -111,26 +128,30 @@ export default function Inspector({
 
       <div className="dg-inspector__body" role="tabpanel">
         {current === 'element' &&
-          (node ? (
-            <NodePanel doc={doc} n={node} onChange={onChange} onSelect={onSelect} onDelete={onDelete} onDuplicate={onDuplicate} />
-          ) : edge ? (
-            <EdgePanel doc={doc} e={edge} onChange={onChange} onDelete={onDelete} />
-          ) : stroke ? (
-            <Section title={t('diagrams.inspector.traco')}>
+          (multi ? (
+            <Section title={t('diagrams.inspector.seleccaoMultipla')}>
+              <p className="dg-muted">{t('diagrams.inspector.seleccaoResumo', { elementos: multi.nodes.length, tracos: multi.strokes.length })}</p>
+              <p className="dg-muted">{t('diagrams.inspector.seleccaoAjuda')}</p>
               <Button size="sm" variant="danger" icon="trash" onClick={onDelete}>
                 {t('diagrams.inspector.eliminar')}
               </Button>
             </Section>
+          ) : node ? (
+            <NodePanel doc={doc} n={node} onChange={onChange} onSelect={onSelect} onDelete={onDelete} onDuplicate={onDuplicate} />
+          ) : edge ? (
+            <EdgePanel doc={doc} e={edge} onChange={onChange} onDelete={onDelete} />
+          ) : stroke ? (
+            <StrokePanel doc={doc} s={stroke} onChange={onChange} onDelete={onDelete} />
           ) : (
             <p className="dg-empty">{t('diagrams.inspector.nada')}</p>
           ))}
         {current === 'element' && notation !== 'free' && (issues.length > 0 || (showValidation && notation !== 'bpmn')) && (
-          <ValidationPanel doc={doc} issues={issues} onSelect={onSelect} onFix={onFix} onFixAll={onFixAll} />
+          <ValidationPanel doc={doc} issues={issues} typeLabel={typeLabel} onSelect={onSelect} onFix={onFix} onFixAll={onFixAll} />
         )}
         {current === 'style' && <StylePanel doc={doc} n={node} onChange={onChange} />}
         {current === 'layers' && <LayersPanel doc={doc} notation={notation} selection={selection} onChange={onChange} onSelect={onSelect} />}
         {current === 'lanes' && <LanesPanel doc={doc} selected={node} onChange={onChange} onSelect={onSelect} />}
-        {current === 'validation' && <ValidationPanel doc={doc} issues={issues} onSelect={onSelect} onFix={onFix} onFixAll={onFixAll} />}
+        {current === 'validation' && <ValidationPanel doc={doc} issues={issues} typeLabel={typeLabel} onSelect={onSelect} onFix={onFix} onFixAll={onFixAll} />}
       </div>
       {footer}
     </div>
@@ -169,7 +190,7 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
     onChange(patchNode(doc, n.id, (x) => ({ ...x, props: { ...x.props, ...patch } })), key && `${n.id}:${key}`)
   const bpmn = NODE_NOTATION[n.type] === 'bpmn'
   const isEvent = n.type === 'startEvent' || n.type === 'intermediateEvent' || n.type === 'endEvent'
-  const nameIsText = n.type === 'note' || n.type === 'annotation'
+  const nameIsText = n.type === 'note' || n.type === 'annotation' || n.type === 'flowAnnotation' || n.type === 'sticky'
 
   return (
     <>
@@ -227,13 +248,54 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
         {n.type === 'fragment' && (
           <Field label={t('diagrams.inspector.operador')}>
             <Select value={n.props.operator ?? 'alt'} onChange={(e) => setProps({ operator: e.target.value as FragmentOperator })}>
-              {(['alt', 'opt', 'loop', 'par', 'break', 'critical'] as const).map((o) => (
+              {FRAGMENT_OPERATORS.map((o) => (
                 <option key={o} value={o}>
                   {o}
                 </option>
               ))}
             </Select>
           </Field>
+        )}
+        {n.type === 'object' && (
+          <>
+            <Field label={t('diagrams.inspector.instanciaDe')}>
+              <TextInput code list="dg-classes" value={n.props.instanceOf ?? ''} onChange={(e) => setProps({ instanceOf: e.target.value }, 'inst')} />
+            </Field>
+            <datalist id="dg-classes">
+              {doc.nodes.filter((x) => CLASSIFIERS.has(x.type) && x.name.trim()).map((x) => (
+                <option key={x.id} value={x.name.trim()} />
+              ))}
+            </datalist>
+            <MemberList
+              label={t('diagrams.inspector.slots')}
+              items={n.props.attributes ?? []}
+              placeholder={t('diagrams.inspector.novoSlot')}
+              addLabel={t('diagrams.inspector.acrescentarSlot')}
+              onItems={(v, k) => setProps({ attributes: v }, k)}
+            />
+          </>
+        )}
+        {n.type === 'state' && (
+          <MemberList
+            label={t('diagrams.inspector.actividadesInternas')}
+            items={n.props.attributes ?? []}
+            placeholder={t('diagrams.inspector.novaActividade')}
+            addLabel={t('diagrams.inspector.acrescentarActividade')}
+            onItems={(v, k) => setProps({ attributes: v }, k)}
+          />
+        )}
+        {n.type === 'history' && <Toggle label={t('diagrams.inspector.historicoProfundo')} checked={!!n.props.deep} onChange={(e) => setProps({ deep: e.target.checked })} />}
+        {(n.type === 'component' || n.type === 'deviceNode' || n.type === 'artifact') && (
+          <>
+            <Field label={t('diagrams.inspector.estereotipo')}>
+              <TextInput code list={`dg-st-${n.type}`} value={n.props.stereotype ?? ''} onChange={(e) => setProps({ stereotype: e.target.value.replace(/[«»<>]/g, '') }, 'st')} />
+            </Field>
+            <datalist id={`dg-st-${n.type}`}>
+              {(n.type === 'component' ? ['component', 'subsystem', 'service'] : n.type === 'deviceNode' ? ['device', 'executionEnvironment', 'container'] : ['artifact', 'file', 'library', 'executable']).map((x) => (
+                <option key={x} value={x} />
+              ))}
+            </datalist>
+          </>
         )}
         {n.type === 'lifeline' && (
           <Field label={t('diagrams.inspector.comprimento')}>
@@ -252,9 +314,17 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
               <Select
                 value={n.type}
                 onChange={(e) => {
-                  const type = e.target.value as DNode['type']
-                  const trigger = type === 'intermediateEvent' && (n.props.trigger ?? 'none') === 'none' ? 'timer' : n.props.trigger
-                  onChange(patchNode(doc, n.id, (x) => ({ ...x, type, props: { ...x.props, trigger } })))
+                  const type = e.target.value as 'startEvent' | 'intermediateEvent' | 'endEvent'
+                  const allowed = TRIGGERS[type]
+                  const trigger = allowed.includes(n.props.trigger ?? 'none') ? n.props.trigger : allowed[0]
+                  const intermediate = type === 'intermediateEvent'
+                  onChange(
+                    patchNode(doc, n.id, (x) => ({
+                      ...x,
+                      type,
+                      props: { ...x.props, trigger, throwing: intermediate ? x.props.throwing : undefined, boundary: intermediate ? x.props.boundary : undefined, nonInterrupting: intermediate ? x.props.nonInterrupting : undefined },
+                    })),
+                  )
                 }}
               >
                 {(['startEvent', 'intermediateEvent', 'endEvent'] as const).map((k) => (
@@ -265,16 +335,37 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
               </Select>
             </Field>
             <Field label={t('diagrams.inspector.gatilho')}>
-              <Select value={n.props.trigger ?? 'none'} onChange={(e) => setProps({ trigger: e.target.value as EventTrigger })}>
-                {(['none', 'message', 'timer', 'signal'] as const)
-                  .filter((k) => !(n.type === 'intermediateEvent' && k === 'none') && !(n.type === 'endEvent' && k === 'timer'))
-                  .map((k) => (
-                    <option key={k} value={k}>
-                      {t(`diagrams.opcoes.gatilho.${k}`)}
-                    </option>
-                  ))}
+              <Select
+                value={n.props.trigger ?? 'none'}
+                onChange={(e) => {
+                  const trigger = e.target.value as EventTrigger
+                  // Erro só existe como fronteira; lançar só onde o gatilho se pode lançar.
+                  setProps({ trigger, throwing: THROWABLE.has(trigger) ? n.props.throwing : undefined, boundary: trigger === 'error' ? true : n.props.boundary })
+                }}
+              >
+                {TRIGGERS[n.type as 'startEvent'].map((k) => (
+                  <option key={k} value={k}>
+                    {t(`diagrams.opcoes.gatilho.${k}`)}
+                  </option>
+                ))}
               </Select>
             </Field>
+            {n.type === 'intermediateEvent' && (
+              <>
+                {THROWABLE.has(n.props.trigger ?? 'none') && !n.props.boundary && (
+                  <Toggle label={t('diagrams.inspector.lanca')} checked={!!n.props.throwing} onChange={(e) => setProps({ throwing: e.target.checked })} />
+                )}
+                <Toggle
+                  label={t('diagrams.inspector.fronteira')}
+                  checked={!!n.props.boundary}
+                  disabled={n.props.trigger === 'error' || n.props.trigger === 'link'}
+                  onChange={(e) => setProps({ boundary: e.target.checked, throwing: e.target.checked ? undefined : n.props.throwing })}
+                />
+                {n.props.boundary && n.props.trigger !== 'error' && n.props.trigger !== 'compensation' && (
+                  <Toggle label={t('diagrams.inspector.naoInterrompe')} checked={!!n.props.nonInterrupting} onChange={(e) => setProps({ nonInterrupting: e.target.checked })} />
+                )}
+              </>
+            )}
           </>
         )}
         {(n.type === 'task' || n.type === 'subProcess') && (
@@ -293,7 +384,7 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
                   )
                 }}
               >
-                {(['none', 'user', 'service', 'script', 'manual', 'send', 'receive'] as const).map((k) => (
+                {TASK_KINDS.map((k) => (
                   <option key={k} value={k}>
                     {t(`diagrams.opcoes.tarefa.${k}`)}
                   </option>
@@ -307,7 +398,7 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
                   <TextInput code value={n.props.implementation ?? ''} onChange={(e) => setProps({ implementation: e.target.value }, 'impl')} />
                 </Field>
                 <Field label={t('diagrams.inspector.multiInstancia')}>
-                  <Select value={n.props.multiInstance ?? 'none'} onChange={(e) => setProps({ multiInstance: e.target.value as MultiInstance })}>
+                  <Select value={n.props.multiInstance ?? 'none'} onChange={(e) => setProps({ multiInstance: e.target.value as MultiInstance, loop: e.target.value === 'none' ? n.props.loop : false })}>
                     {(['none', 'parallel', 'sequential'] as const).map((k) => (
                       <option key={k} value={k}>
                         {t(`diagrams.opcoes.multi.${k}`)}
@@ -317,18 +408,94 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
                 </Field>
               </>
             )}
+            <Toggle
+              label={t('diagrams.inspector.ciclo')}
+              checked={!!n.props.loop}
+              onChange={(e) => setProps({ loop: e.target.checked, multiInstance: e.target.checked ? 'none' : n.props.multiInstance })}
+            />
+            <Toggle label={t('diagrams.inspector.compensacao')} checked={!!n.props.compensation} onChange={(e) => setProps({ compensation: e.target.checked })} />
+            {n.type === 'subProcess' && <Toggle label={t('diagrams.inspector.adHoc')} checked={!!n.props.adHoc} onChange={(e) => setProps({ adHoc: e.target.checked })} />}
           </>
         )}
         {n.type === 'gateway' && (
           <Field label={t('diagrams.inspector.tipo')}>
             <Select value={n.props.gatewayKind ?? 'exclusive'} onChange={(e) => setProps({ gatewayKind: e.target.value as GatewayKind })}>
-              {(['exclusive', 'parallel', 'inclusive', 'eventBased'] as const).map((k) => (
+              {GATEWAY_KINDS.map((k) => (
                 <option key={k} value={k}>
                   {t(`diagrams.opcoes.gateway.${k}`)}
                 </option>
               ))}
             </Select>
           </Field>
+        )}
+        {(C4_ELEMENTS.has(n.type) || n.type === 'c4DeploymentNode' || n.type === 'resource' || n.type === 'resourceGroup') && (
+          <>
+            {n.type !== 'c4Person' && n.type !== 'c4System' && (
+              <Field label={t('diagrams.inspector.tecnologia')}>
+                <TextInput code value={n.props.technology ?? ''} onChange={(e) => setProps({ technology: e.target.value }, 'tech')} />
+              </Field>
+            )}
+            <Field label={t('diagrams.inspector.descricao')}>
+              <TextArea rows={3} value={n.props.description ?? ''} onChange={(e) => setProps({ description: e.target.value }, 'desc')} />
+            </Field>
+          </>
+        )}
+        {(n.type === 'c4Container' || n.type === 'c4Component') && (
+          <Field label={t('diagrams.inspector.formaC4')}>
+            <Select value={n.props.c4Shape ?? 'app'} onChange={(e) => setProps({ c4Shape: e.target.value as C4Shape })}>
+              {C4_SHAPES.map((k) => (
+                <option key={k} value={k}>
+                  {t(`diagrams.opcoes.c4Forma.${k}`)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+        {(n.type === 'c4Person' || n.type === 'c4System' || n.type === 'c4Container' || n.type === 'c4Component') && (
+          <Toggle label={t('diagrams.inspector.externo')} checked={!!n.props.external} onChange={(e) => setProps({ external: e.target.checked })} />
+        )}
+        {n.type === 'c4Boundary' && (
+          <Field label={t('diagrams.inspector.tipo')}>
+            <Select value={n.props.boundaryKind ?? 'system'} onChange={(e) => setProps({ boundaryKind: e.target.value as BoundaryKind })}>
+              {BOUNDARY_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {t(`diagrams.opcoes.fronteira.${k}`)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+        {(n.type === 'resource' || n.type === 'resourceGroup') && catalogGroupOf(n.props.catalog) && (
+          <Field label={t('diagrams.inspector.tipo')}>
+            <Select
+              value={n.props.catalog}
+              onChange={(e) => setProps({ catalog: e.target.value })}
+            >
+              {CATALOG_ITEMS[catalogGroupOf(n.props.catalog)!]
+                .map((item) => catalogKey(catalogGroupOf(n.props.catalog)!, item))
+                // Trocar de tipo não pode transformar um contentor num cartão (ou o contrário).
+                .filter((k) => CATALOG_CONTAINERS.has(k) === (n.type === 'resourceGroup'))
+                .map((k) => (
+                  <option key={k} value={k}>
+                    {t(`diagramCatalog.itens.${k}`)}
+                  </option>
+                ))}
+            </Select>
+          </Field>
+        )}
+        {n.type === 'dataObject' && (
+          <>
+            <Field label={t('diagrams.inspector.papelDados')}>
+              <Select value={n.props.dataRole ?? 'none'} onChange={(e) => setProps({ dataRole: e.target.value as DataRole })}>
+                {(['none', 'input', 'output'] as const).map((k) => (
+                  <option key={k} value={k}>
+                    {t(`diagrams.opcoes.dados.${k}`)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Toggle label={t('diagrams.inspector.colecao')} checked={!!n.props.collection} onChange={(e) => setProps({ collection: e.target.checked })} />
+          </>
         )}
         {bpmn && n.type !== 'pool' && <LaneField doc={doc} n={n} onChange={onChange} />}
 
@@ -345,7 +512,7 @@ function NodePanel({ doc, n, onChange, onSelect, onDelete, onDuplicate }: { doc:
       {bpmn && BPMN_FLOW_NODES.has(n.type) ? (
         <FlowsPanel doc={doc} n={n} onChange={onChange} onSelect={onSelect} />
       ) : (
-        n.type !== 'text' && n.type !== 'pool' && <RelationsPanel doc={doc} n={n} onChange={onChange} onSelect={onSelect} />
+        n.type !== 'text' && n.type !== 'pool' && n.type !== 'sticky' && <RelationsPanel doc={doc} n={n} onChange={onChange} onSelect={onSelect} />
       )}
     </>
   )
@@ -488,7 +655,7 @@ function FlowsPanel({ doc, n, onChange, onSelect }: { doc: DiagramDoc; n: DNode;
   const byId = new Map(doc.nodes.map((x) => [x.id, x]))
   const outs = doc.edges.filter((e) => e.from === n.id && (e.type === 'sequenceFlow' || e.type === 'messageFlow'))
   const candidates = doc.nodes.filter((x) => x.id !== n.id && BPMN_FLOW_NODES.has(x.type))
-  const canDefault = n.type === 'task' || n.type === 'subProcess' || (n.type === 'gateway' && (n.props.gatewayKind ?? 'exclusive') !== 'parallel' && n.props.gatewayKind !== 'eventBased')
+  const canDefault = n.type === 'task' || n.type === 'subProcess' || (n.type === 'gateway' && (n.props.gatewayKind ?? 'exclusive') !== 'parallel' && !EVENT_GATEWAYS.has(n.props.gatewayKind ?? 'exclusive'))
 
   function create() {
     const to = byId.get(target)
@@ -587,8 +754,9 @@ function EdgePanel({ doc, e, onChange, onDelete }: { doc: DiagramDoc; e: DEdge; 
   const types = a && b ? edgeTypesFor(a, b) : [e.type]
   const assoc = e.type === 'association' || e.type === 'aggregation' || e.type === 'composition'
   const src = a?.type
-  const canCondition = e.type === 'sequenceFlow' && src !== 'startEvent' && !(src === 'gateway' && (a?.props.gatewayKind === 'parallel' || a?.props.gatewayKind === 'eventBased'))
-  const canDefault = e.type === 'sequenceFlow' && (src === 'task' || src === 'subProcess' || (src === 'gateway' && (a?.props.gatewayKind ?? 'exclusive') !== 'parallel' && a?.props.gatewayKind !== 'eventBased'))
+  const eventGw = src === 'gateway' && EVENT_GATEWAYS.has(a?.props.gatewayKind ?? 'exclusive')
+  const canCondition = e.type === 'controlFlow' || (e.type === 'sequenceFlow' && src !== 'startEvent' && !(src === 'gateway' && a?.props.gatewayKind === 'parallel') && !eventGw)
+  const canDefault = e.type === 'sequenceFlow' && (src === 'task' || src === 'subProcess' || (src === 'gateway' && (a?.props.gatewayKind ?? 'exclusive') !== 'parallel' && !eventGw))
 
   return (
     <Section
@@ -609,9 +777,14 @@ function EdgePanel({ doc, e, onChange, onDelete }: { doc: DiagramDoc; e: DEdge; 
           ))}
         </Select>
       </Field>
+      {(e.type === 'c4Rel' || e.type === 'sync' || e.type === 'async' || e.type === 'dataFlow') && (
+        <Field label={t('diagrams.inspector.tecnologia')}>
+          <TextInput code value={e.technology ?? ''} onChange={(ev) => set({ technology: ev.target.value }, 'tech')} />
+        </Field>
+      )}
       {e.type !== 'anchor' && (
-        <Field label={t('diagrams.inspector.etiqueta')}>
-          <TextInput value={e.label} onChange={(ev) => set({ label: ev.target.value }, 'label')} />
+        <Field label={t(e.type === 'c4Rel' ? 'diagrams.inspector.descricao' : 'diagrams.inspector.etiqueta')}>
+          <TextInput value={e.label} placeholder={e.type === 'transition' ? t('diagrams.inspector.transicaoAjuda') : undefined} onChange={(ev) => set({ label: ev.target.value }, 'label')} />
         </Field>
       )}
       {assoc && (
@@ -630,7 +803,7 @@ function EdgePanel({ doc, e, onChange, onDelete }: { doc: DiagramDoc; e: DEdge; 
         </div>
       )}
       {canCondition && (
-        <Field label={t('diagrams.inspector.condicao')}>
+        <Field label={t(e.type === 'controlFlow' ? 'diagrams.inspector.guarda' : 'diagrams.inspector.condicao')}>
           <TextInput code value={e.condition ?? ''} disabled={!!e.isDefault} onChange={(ev) => set({ condition: ev.target.value }, 'cond')} />
         </Field>
       )}
@@ -664,9 +837,66 @@ function EdgePanel({ doc, e, onChange, onDelete }: { doc: DiagramDoc; e: DEdge; 
 //  Estilo, camadas, pistas, validação
 // ---------------------------------------------------------------------------
 
+function StrokePanel({ doc, s, onChange, onDelete }: { doc: DiagramDoc; s: DiagramDoc['strokes'][number]; onChange: Change; onDelete: () => void }) {
+  const { t } = useTranslation()
+  const set = (patch: Partial<typeof s>, key?: string) => onChange({ ...doc, strokes: doc.strokes.map((x) => (x.id === s.id ? { ...x, ...patch } : x)) }, key && `${s.id}:${key}`)
+  return (
+    <Section title={t(s.shape ? `diagrams.paleta.itens.quick${s.shape[0].toUpperCase()}${s.shape.slice(1)}` : 'diagrams.inspector.traco')}>
+      <div className="dg-swatches" role="group" aria-label={t('diagrams.paleta.cores')}>
+        {Object.entries(PENS).map(([k, c]) => (
+          <button key={k} type="button" className="dg-swatch" style={{ background: c }} aria-pressed={s.color === c} aria-label={t(`diagrams.paleta.cor.${k}`)} title={t(`diagrams.paleta.cor.${k}`)} onClick={() => set({ color: c })} />
+        ))}
+      </div>
+      <Field label={t('diagrams.paleta.espessura')}>
+        <Select value={String(s.width)} onChange={(e) => set({ width: Number(e.target.value) })}>
+          {[...new Set([...PEN_WIDTHS, s.width])].sort((a, b) => a - b).map((w) => (
+            <option key={w} value={w}>
+              {t('diagrams.paleta.espessuraN', { n: w })}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field label={t('diagrams.paleta.opacidade')}>
+        <Select value={String(s.opacity ?? 1)} onChange={(e) => set({ opacity: Number(e.target.value) >= 1 ? undefined : Number(e.target.value) })}>
+          {[...new Set([...PEN_OPACITIES, s.opacity ?? 1])].sort((a, b) => b - a).map((o) => (
+            <option key={o} value={o}>
+              {t('diagrams.paleta.opacidadeN', { n: Math.round(o * 100) })}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <div className="dg-actions">
+        <Button size="sm" variant="ghost" icon="trash" onClick={onDelete}>
+          {t('diagrams.inspector.eliminar')}
+        </Button>
+      </div>
+    </Section>
+  )
+}
+
 function StylePanel({ doc, n, onChange }: { doc: DiagramDoc; n: DNode | undefined; onChange: Change }) {
   const { t } = useTranslation()
   if (!n) return <p className="dg-empty">{t('diagrams.inspector.nada')}</p>
+  if (n.type === 'sticky') {
+    return (
+      <Section title={t('diagrams.inspector.corPostit')}>
+        <div className="dg-swatches" role="group" aria-label={t('diagrams.inspector.corPostit')}>
+          {Object.entries(STICKY).map(([k, c]) => (
+            <button
+              key={k}
+              type="button"
+              className="dg-swatch"
+              style={{ background: c.fill }}
+              aria-pressed={(n.props.stickyColor ?? 'yellow') === k}
+              aria-label={t(`diagrams.inspector.coresPostit.${k}`)}
+              title={t(`diagrams.inspector.coresPostit.${k}`)}
+              onClick={() => onChange(patchNode(doc, n.id, (x) => ({ ...x, props: { ...x.props, stickyColor: k } })))}
+            />
+          ))}
+        </div>
+      </Section>
+    )
+  }
   return (
     <Section title={t('diagrams.inspector.preenchimento')}>
       <div className="dg-swatches" role="group" aria-label={t('diagrams.inspector.preenchimento')}>
@@ -783,7 +1013,7 @@ function LanesPanel({ doc, selected, onChange, onSelect }: { doc: DiagramDoc; se
   )
 }
 
-function ValidationPanel({ doc, issues, onSelect, onFix, onFixAll }: { doc: DiagramDoc; issues: Issue[]; onSelect: (s: Sel | null) => void; onFix: (i: Issue) => void; onFixAll: () => void }) {
+function ValidationPanel({ doc, issues, typeLabel, onSelect, onFix, onFixAll }: { doc: DiagramDoc; issues: Issue[]; typeLabel: (n: DNode) => string; onSelect: (s: Sel | null) => void; onFix: (i: Issue) => void; onFixAll: () => void }) {
   const { t } = useTranslation()
   const fixable = issues.filter((i) => i.fixable).length
   const selectFor = (i: Issue) => {
@@ -808,7 +1038,7 @@ function ValidationPanel({ doc, issues, onSelect, onFix, onFixAll }: { doc: Diag
           <li key={i.id} className={cx('dg-issue', i.severity === 'error' && 'is-error')}>
             <Icon name="alert" size={13} />
             <span className="dg-sr">{t(`diagrams.validacao.${i.severity === 'error' ? 'erro' : 'aviso'}`)}</span>
-            <span className="dg-issue__text">{t(`diagrams.regras.${i.code}`, i.params)}</span>
+            <span className="dg-issue__text">{t(`diagrams.regras.${i.code}`, issueParams(doc, i, typeLabel))}</span>
             <span className="dg-issue__actions">
               <button type="button" className="dg-link" onClick={() => selectFor(i)}>
                 {t('diagrams.validacao.ver')}

@@ -5,14 +5,17 @@
  * caminho do teclado e do toque); arrastar para o quadro põe-no onde cair.
  * Os itens de ligação escolhem a ferramenta de aresta.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../../ui/icons'
 import { cx, TextInput } from '../../ui/kit'
 import type { Tool } from './Canvas'
 import { PALETTE_MIME } from './Canvas'
-import { DiagramDoc, DNode, Notation, PALETTES, PaletteItem } from './model'
-import { PENS } from './paint'
+import { DiagramDoc, DNode, Notation, PaletteGroup, PALETTES, PaletteItem } from './model'
+import { PEN_OPACITIES, PEN_WIDTHS, PENS, STICKY } from './paint'
+import { CATALOG_GROUPS, CatalogGroup, catalogVisual, loadCatalogGroup } from './catalog'
+import { loadCatalogLabels } from './catalog/labels'
+import { useCatalogVersion } from './catalog/useCatalog'
 
 /** Glifos da paleta, desenhados como no template (viewBox 22×18). */
 const GLYPH: Record<string, string> = {
@@ -66,16 +69,178 @@ const GLYPH: Record<string, string> = {
   pen: 'M4 16l3-1 9-9-2-2-9 9zM12 6l2 2',
   eraser: 'M8 16h10M4 12l7-7 5 5-5 5H7z',
   text: 'M4 4h14M11 4v12M8 16h6',
+  // UML — mais ligações
+  aggregation: 'M2 9l3-3 3 3-3 3zM8 9h12',
+  realization: 'M11 16V7M11 2 6 8h10z',
+  dependency: 'M2 9h16M14 5l4 4-4 4',
+  activation: 'M11 1v3M8 4h6v10H8zM11 14v3',
+  selfMessage: 'M5 3v12M5 5h10v6H7M9 9l-2 2 2 2',
+  lostMessage: 'M2 9h13M17 9a2 2 0 1 0 0 .1',
+  foundMessage: 'M5 9a2 2 0 1 0 0 .1M7 9h13M16 5l4 4-4 4',
+  extend: 'M2 9h16M14 6l4 3-4 3',
+  ucGeneralization: 'M2 9h13M20 9l-6-4v8z',
+  // UML — actividade
+  initialNode: 'M11 4a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z',
+  activityFinal: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 6a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
+  flowFinal: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM6.5 4.5l9 9M15.5 4.5l-9 9',
+  action: 'M6 3h10a4 4 0 0 1 4 4v4a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4Z',
+  decisionNode: 'M11 3 17 9l-6 6-6-6z',
+  forkNode: 'M2 8h18v2H2zM6 3v5M16 3v5M11 10v5',
+  partition: 'M3 2h16v14H3zM3 6h16M11 2v14',
+  objectNode: 'M3 4h16v10H3z',
+  controlFlow: 'M2 9h16M14 5l4 4-4 4',
+  // UML — estados
+  state: 'M6 3h10a4 4 0 0 1 4 4v4a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4ZM2 8h18',
+  compositeState: 'M5 2h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V5a3 3 0 0 1 3-3ZM2 6h18M6 9h5v4H6z',
+  stateInitial: 'M11 4a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z',
+  stateFinal: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 6a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
+  choice: 'M11 3 17 9l-6 6-6-6z',
+  history: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM8.5 5.5v7M13.5 5.5v7M8.5 9h5',
+  transition: 'M2 12c4-8 12-8 16-2M15 6l3 4-4 1',
+  // UML — componentes e implantação
+  component: 'M4 3h15v12H4zM2 6h5v2.5H2zM2 10h5v2.5H2z',
+  port: 'M8 6h6v6H8zM2 9h6M14 9h6',
+  providedInterface: 'M2 9h9M15 5a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z',
+  requiredInterface: 'M2 9h9M17 4a5 5 0 0 0 0 10',
+  deviceNode: 'M2 6l4-4h14v11l-4 4M2 6h14v11H2zM16 6l4-4',
+  artifact: 'M4 2h10l4 4v10H4zM14 2v4h4',
+  usage: 'M2 9h16M14 5l4 4-4 4',
+  deploy: 'M2 9h16M14 5l4 4-4 4',
+  manifest: 'M2 9h16M14 5l4 4-4 4',
+  // UML — objectos
+  object: 'M2 3h18v12H2zM2 8h18M6 6h10',
+  link: 'M2 9h18',
+  // Livre — quadros-formas
+  marker: 'M5 13l7-9 5 4-7 9H5zM3 17h16',
+  lasso: 'M11 3c5 0 8 2 8 5s-3 5-8 5c-2 0-4-.4-5-1M6 12c-2 1-2 3 0 4',
+  quickRect: 'M3 3h16v12H3z',
+  quickEllipse: 'M11 3c5 0 8 2.7 8 6s-3 6-8 6-8-2.7-8-6 3-6 8-6Z',
+  quickArrow: 'M3 15 18 4M12 4h6v6',
+  quickLine: 'M3 15 19 3',
+  stickyYellow: 'M3 3h16v9l-4 4H3zM15 16v-4h4',
+  stickyPink: 'M3 3h16v9l-4 4H3zM15 16v-4h4',
+  stickyBlue: 'M3 3h16v9l-4 4H3zM15 16v-4h4',
+  stickyGreen: 'M3 3h16v9l-4 4H3zM15 16v-4h4',
+  stickyOrange: 'M3 3h16v9l-4 4H3zM15 16v-4h4',
+  // Arquitectura — C4
+  c4Person: 'M11 7a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4 17a4 4 0 0 1 4-8h6a4 4 0 0 1 4 8z',
+  c4PersonExt: 'M11 7a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4 17a4 4 0 0 1 4-8h6a4 4 0 0 1 4 8z',
+  c4System: 'M2 3h18v12H2zM6 8h10M6 11h6',
+  c4SystemExt: 'M2 3h18v12H2zM6 8h10M6 11h6',
+  c4Container: 'M3 3h16v12H3zM7 7h8M7 10h5',
+  c4ContainerDb: 'M11 2c4 0 7 1 7 2.4v9.2c0 1.4-3 2.4-7 2.4s-7-1-7-2.4V4.4C4 3 7 2 11 2ZM4 4.4c0 1.4 3 2.4 7 2.4s7-1 7-2.4',
+  c4ContainerQueue: 'M5 4h12a3 5 0 0 1 0 10H5a3 5 0 0 1 0-10ZM17 4a3 5 0 0 0 0 10',
+  c4ContainerWeb: 'M2 3h18v12H2zM2 6h18M4.5 4.5h.01M6.5 4.5h.01',
+  c4ContainerMobile: 'M7 1h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2ZM10 14h2',
+  c4Component: 'M4 4h14v10H4zM2 6h4M2 9h4',
+  c4Code: 'M8 5 3 9l5 4M14 5l5 4-5 4',
+  c4SystemBoundary: 'M2 2h18v14H2zM4 5h6',
+  c4ContainerBoundary: 'M2 2h18v14H2zM4 5h6',
+  c4DeploymentNode: 'M3 2h16v14H3zM3 5h16',
+  c4Rel: 'M2 9h16M14 5l4 4-4 4',
+  // BPMN — quadros-formas
+  catchMessage: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 4.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6ZM8.4 7.4h5.2v3.2H8.4zM8.4 7.4 11 9.2l2.6-1.8',
+  throwMessage: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 4.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6ZM8.4 7.4h5.2v3.2H8.4zM8.4 7.4 11 9.2l2.6-1.8M9 8.6h4M9 9.6h4',
+  catchSignal: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 4.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6ZM11 6.4l2.6 4.4H8.4z',
+  throwSignal: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 4.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6ZM11 6.4l2.6 4.4H8.4zM11 8v2',
+  conditionalEvent: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 4.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6ZM9 6.4h4v5.2H9zM9.6 8h2.8M9.6 9.8h2.8',
+  throwEscalation: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 4.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6ZM11 6.2l2 5-2-1.6-2 1.6z',
+  throwCompensation: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 4.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6ZM11 7v4l-2.6-2zM13.6 7v4L11 9z',
+  catchLink: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 4.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6ZM8.4 8h2.6V6.6L13.6 9 11 11.4V10H8.4z',
+  throwLink: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 4.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6ZM8.4 8h2.6V6.6L13.6 9 11 11.4V10H8.4zM9 9h3',
+  boundaryTimer: 'M2 12h18M11 5a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM11 7v2l1.4 1',
+  boundaryError: 'M2 12h18M11 5a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM9.6 10.6l1-3 .8 2 1-1.6-.8 3-.8-2z',
+  boundaryMessage: 'M2 12h18M11 5a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM9.4 8h3.2v2H9.4z',
+  messageEnd: 'M11 1.4a7.6 7.6 0 1 0 0 15.2 7.6 7.6 0 0 0 0-15.2ZM8.4 7.4h5.2v3.2H8.4z',
+  signalEnd: 'M11 1.4a7.6 7.6 0 1 0 0 15.2 7.6 7.6 0 0 0 0-15.2ZM11 6.2l2.8 4.6H8.2z',
+  errorEnd: 'M11 1.4a7.6 7.6 0 1 0 0 15.2 7.6 7.6 0 0 0 0-15.2ZM9 11.6l1.3-4.4 1.2 2.6 1.3-3-1.1 4.4-1.3-2.4z',
+  escalationEnd: 'M11 1.4a7.6 7.6 0 1 0 0 15.2 7.6 7.6 0 0 0 0-15.2ZM11 6l2 5.2-2-1.6-2 1.6z',
+  compensationEnd: 'M11 1.4a7.6 7.6 0 1 0 0 15.2 7.6 7.6 0 0 0 0-15.2ZM11 7v4l-2.6-2zM13.6 7v4L11 9z',
+  terminateEnd: 'M11 1.4a7.6 7.6 0 1 0 0 15.2 7.6 7.6 0 0 0 0-15.2ZM11 6a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
+  timerStart: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 5.6v3.4l2.2 1.4',
+  signalStart: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 6l3 5H8z',
+  conditionalStart: 'M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM9 6h4v6H9zM9.6 8h2.8M9.6 10h2.8',
+  sendTask: 'M2 3h18v12H2zM5 5.6h6v4H5zM5 5.6l3 2 3-2',
+  receiveTask: 'M2 3h18v12H2zM5 5.6h6v4H5zM5 5.6l3 2 3-2',
+  manualTask: 'M2 3h18v12H2zM5 10V8l2-2h2l-.6 1.2H12',
+  scriptTask: 'M2 3h18v12H2zM5 5h4c-1 1-1 2 0 3s1 2 0 3H5c1-1 1-2 0-3s-1-2 0-3Z',
+  businessRuleTask: 'M2 3h18v12H2zM5 5h7v5H5zM5 7h7M7.4 7v3',
+  callActivity: 'M2 3h18v12H2zM3.5 4.5h15v9h-15z',
+  loopTask: 'M2 3h18v12H2zM9 12.6a2.4 2.4 0 1 1 3.8 0M9 12.6H7.6',
+  multiParallel: 'M2 3h18v12H2zM9 10v4M11 10v4M13 10v4',
+  multiSequential: 'M2 3h18v12H2zM8.6 10.4h4.8M8.6 12h4.8M8.6 13.6h4.8',
+  compensationTask: 'M2 3h18v12H2zM11 10.4v3.2l-2.4-1.6zM13.4 10.4v3.2L11 12z',
+  adHocSubProcess: 'M2 3h18v12H2zM8 12c1-1.6 2-1.6 3 0s2 1.6 3 0',
+  complexGateway: 'M11 2 20 9l-9 7-9-7zM11 5.4v7.2M7.4 9h7.2M8.6 6.6l4.8 4.8M13.4 6.6l-4.8 4.8',
+  eventInstantiateGateway: 'M11 2 20 9l-9 7-9-7zM11 5.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8M11 7l1.3 1-.5 1.6h-1.6L9.7 8z',
+  eventParallelGateway: 'M11 2 20 9l-9 7-9-7zM11 5.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8M11 7v4M9 9h4',
+  dataStore: 'M11 2c4 0 7 1 7 2.4v9.2c0 1.4-3 2.4-7 2.4s-7-1-7-2.4V4.4C4 3 7 2 11 2ZM4 4.4c0 1.4 3 2.4 7 2.4s7-1 7-2.4M4 7c0 1.4 3 2.4 7 2.4s7-1 7-2.4',
+  dataInput: 'M4 2h9l5 4v10H4zM6 5h3V3.4L12 6 9 8.6V7H6z',
+  dataOutput: 'M4 2h9l5 4v10H4zM6 5h3V3.4L12 6 9 8.6V7H6zM7 6h3',
+  dataCollection: 'M4 2h9l5 4v10H4zM9 11v4M11 11v4M13 11v4',
+  group: 'M5 2h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V5a3 3 0 0 1 3-3Z',
+  sequenceFlow: 'M2 9h16M14 5l4 4-4 4',
+  messageFlow: 'M4 9a2 2 0 1 0 0 .1M6 9h2M10 9h2M14 9h3M17 6l3 3-3 3',
+  dataAssociation: 'M2 9h2M6 9h2M10 9h2M14 9h2M18 9h2',
+  // Fluxograma — quadros-formas
+  predefinedProcess: 'M2 4h18v10H2zM5 4v10M17 4v10',
+  preparation: 'M2 9l4-5h10l4 5-4 5H6z',
+  manualInput: 'M2 7l18-3v10H2z',
+  manualOperation: 'M2 4h18l-4 10H6z',
+  delay: 'M2 4h11a5 5 0 0 1 0 10H2z',
+  merge: 'M4 4h14l-7 10z',
+  loopLimit: 'M5 4h12l3 3v7H2V7z',
+  display: 'M2 9l4-5h11a4 5 0 0 1 0 10H6z',
+  multiDocument: 'M7 1h13v9M5 3h13v9M3 5h13v8c-3-1.6-6 2.4-13 .8z',
+  flowDatabase: 'M11 2c4 0 7 1 7 2.4v9.2c0 1.4-3 2.4-7 2.4s-7-1-7-2.4V4.4C4 3 7 2 11 2ZM4 4.4c0 1.4 3 2.4 7 2.4s7-1 7-2.4',
+  storedData: 'M6 4h14a3 5 0 0 0 0 10H6a3 5 0 0 1 0-10Z',
+  internalStorage: 'M3 3h16v12H3zM6 3v12M3 6h16',
+  sequentialStorage: 'M11 16a7 7 0 1 1 7-6.6V16z',
+  directAccessStorage: 'M5 4h12a3 5 0 0 1 0 10H5a3 5 0 0 1 0-10ZM17 4a3 5 0 0 0 0 10',
+  connector: 'M11 3a6 6 0 1 0 0 12 6 6 0 0 0 0-12Z',
+  offPageConnector: 'M5 2h12v9l-6 5-6-5z',
+  flowAnnotation: 'M6 2v14M6 2h12M6 16h12',
+  flowNote: 'M2 9h2M6 9h2M10 9h2M14 9h2M18 9h2',
 }
 
-const DASHED = new Set(['boundary', 'external', 'zone'])
+const DASHED = new Set(['c4SystemBoundary', 'c4ContainerBoundary', 'c4Rel', 'flowNote', 'group', 'messageFlow', 'dataAssociation', 'boundary', 'external', 'zone', 'partition', 'reply', 'realization', 'dependency', 'usage', 'deploy', 'manifest', 'extend'])
+
+const CLOSED_KEY = 'dx-diagram-palette-closed'
+
+function readClosed(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(CLOSED_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, boolean>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeClosed(v: Record<string, boolean>) {
+  try {
+    localStorage.setItem(CLOSED_KEY, JSON.stringify(v))
+  } catch {
+    /* sem armazenamento: o estado dura só esta visita */
+  }
+}
+
+/** Texto em que «Procurar elemento» procura dentro de um elemento do quadro. */
+export function searchableText(n: DNode, typeLabel: string): string[] {
+  const p = n.props
+  return [n.name, typeLabel, p.text ?? '', p.stereotype ?? '', p.instanceOf ?? '', p.implementation ?? '', p.description ?? '', p.technology ?? '', ...(p.attributes ?? []), ...(p.operations ?? [])]
+}
 
 export default function Palette({
   notation,
   doc,
   tool,
   penColor,
+  penWidth,
+  penOpacity,
+  typeLabel,
   onPenColor,
+  onPenWidth,
+  onPenOpacity,
   onPick,
   onFind,
 }: {
@@ -83,26 +248,58 @@ export default function Palette({
   doc: DiagramDoc
   tool: Tool
   penColor: string
+  penWidth: number
+  penOpacity: number
+  typeLabel: (n: DNode) => string
   onPenColor: (c: string) => void
+  onPenWidth: (w: number) => void
+  onPenOpacity: (o: number) => void
   onPick: (item: PaletteItem) => void
   onFind: (n: DNode) => void
 }) {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
+  const [closed, setClosed] = useState<Record<string, boolean>>(readClosed)
+  const q = query.trim().toLowerCase()
   const results = useMemo(() => {
-    const q = query.trim().toLowerCase()
     if (!q) return []
-    return doc.nodes
-      .filter((n) =>
-        [n.name, n.props.text ?? '', n.props.stereotype ?? '', ...(n.props.attributes ?? []), ...(n.props.operations ?? [])].some((s) => s.toLowerCase().includes(q)),
-      )
-      .slice(0, 12)
-  }, [doc.nodes, query])
+    return doc.nodes.filter((n) => searchableText(n, typeLabel(n)).some((s) => s.toLowerCase().includes(q))).slice(0, 12)
+  }, [doc.nodes, q, typeLabel])
+
+  useCatalogVersion()
+  const groups = PALETTES[notation]
+  // Itens do catálogo têm chave `grupo.item` e o rótulo na área `diagramCatalog`.
+  const itemLabel = (it: PaletteItem) => (it.key.includes('.') ? t(`diagramCatalog.itens.${it.key}`) : t(`diagrams.paleta.itens.${it.key}`))
+  const itemMatches = (g: PaletteGroup, it: PaletteItem) => {
+    if (!q) return true
+    const words = [itemLabel(it), t(`diagrams.paleta.grupos.${g.key}`)]
+    if (it.kind === 'node') words.push(t(`diagrams.tipos.${it.type}`))
+    if (it.kind === 'edge') words.push(t(`diagrams.arestas.${it.edge}`))
+    return words.some((w) => w.toLowerCase().includes(q))
+  }
+  const visible = groups.map((g) => ({ g, items: g.items.filter((it) => itemMatches(g, it)) })).filter((x) => x.items.length > 0)
+  const isClosed = (g: PaletteGroup) => (q ? false : closed[`${notation}:${g.key}`] ?? !!g.closed)
+  // O desenho de um grupo do catálogo só se pede quando o grupo está aberto (ou há pesquisa).
+  const openCatalog = notation === 'arch' ? groups.filter((g) => CATALOG_GROUPS.includes(g.key as CatalogGroup) && (q || !isClosed(g))).map((g) => g.key).join(',') : ''
+  useEffect(() => {
+    if (notation !== 'arch') return
+    loadCatalogLabels().catch(() => undefined)
+    for (const g of openCatalog.split(',').filter(Boolean)) loadCatalogGroup(g as CatalogGroup).catch(() => undefined)
+  }, [notation, openCatalog])
+  const toggle = (g: PaletteGroup) => {
+    const next = { ...closed, [`${notation}:${g.key}`]: !isClosed(g) }
+    setClosed(next)
+    writeClosed(next)
+  }
 
   const isActive = (it: PaletteItem) =>
-    (it.kind === 'edge' && tool.kind === 'edge' && tool.edge === it.edge) ||
+    (it.kind === 'edge' && tool.kind === 'edge' && (tool.key ? tool.key === it.key : tool.edge === it.edge)) ||
     (it.kind === 'pen' && tool.kind === 'pen') ||
-    (it.kind === 'eraser' && tool.kind === 'eraser')
+    (it.kind === 'eraser' && tool.kind === 'eraser') ||
+    (it.kind === 'marker' && tool.kind === 'marker') ||
+    (it.kind === 'lasso' && tool.kind === 'lasso') ||
+    (it.kind === 'shape' && tool.kind === 'shape' && tool.shape === it.shape)
+  const isTool = (it: PaletteItem) => it.kind !== 'node' && it.kind !== 'lane'
 
   return (
     <div className="dg-palette">
@@ -118,19 +315,20 @@ export default function Palette({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && results[0]) onFind(results[0])
+              else if (e.key === 'Enter' && visible[0]) onPick(visible[0].items[0])
               if (e.key === 'Escape') setQuery('')
             }}
           />
         </label>
-        {query.trim() && (
-          <ul className="dg-find__results" aria-live="polite">
+        {q && (
+          <ul className="dg-find__results" aria-live="polite" aria-label={t('diagrams.paleta.noQuadro')}>
             {results.length === 0 ? (
-              <li className="dg-find__none">{t('diagrams.paleta.semResultados')}</li>
+              <li className="dg-find__none">{visible.length === 0 ? t('diagrams.paleta.semResultados') : t('diagrams.paleta.soNaPaleta')}</li>
             ) : (
               results.map((n) => (
                 <li key={n.id}>
                   <button type="button" onClick={() => onFind(n)}>
-                    <span className="dg-find__type">{t(`diagrams.tipos.${n.type}`)}</span>
+                    <span className="dg-find__type">{typeLabel(n)}</span>
                     <span className="dg-find__name">{n.name || n.props.text || t('diagrams.semNome')}</span>
                   </button>
                 </li>
@@ -140,38 +338,49 @@ export default function Palette({
         )}
       </div>
 
-      {PALETTES[notation].map((g) => (
-        <section key={g.key} className="dg-group" aria-label={t(`diagrams.paleta.grupos.${g.key}`)}>
-          <h3 className="dg-group__title">{t(`diagrams.paleta.grupos.${g.key}`)}</h3>
-          <div className="dg-group__grid">
-            {g.items.map((it) => (
-              <button
-                key={it.key}
-                type="button"
-                className={cx('dg-item', isActive(it) && 'is-active')}
-                aria-pressed={it.kind === 'edge' || it.kind === 'pen' || it.kind === 'eraser' ? isActive(it) : undefined}
-                draggable={it.kind === 'node'}
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(PALETTE_MIME, `${notation}:${g.key}:${it.key}`)
-                  e.dataTransfer.effectAllowed = 'copy'
-                }}
-                onClick={() => onPick(it)}
-              >
-                <svg viewBox="0 0 22 18" width={17} height={15} fill="none" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={DASHED.has(it.key) ? '3 2' : undefined} aria-hidden="true">
-                  <path d={GLYPH[it.key] ?? GLYPH.process} />
-                </svg>
-                <span>{t(`diagrams.paleta.itens.${it.key}`)}</span>
+      {visible.map(({ g, items }) => {
+        const shut = isClosed(g)
+        const title = t(`diagrams.paleta.grupos.${g.key}`)
+        return (
+          <section key={g.key} className="dg-group" aria-label={title} data-palette-group={g.key}>
+            <h3 className="dg-group__title">
+              <button type="button" className="dg-group__toggle" aria-expanded={!shut} onClick={() => toggle(g)} disabled={!!q}>
+                <Icon name={shut ? 'chevronRight' : 'chevronDown'} size={11} />
+                <span>{title}</span>
+                <span className="dg-group__count dx-num">{items.length}</span>
               </button>
-            ))}
-          </div>
-        </section>
-      ))}
+            </h3>
+            {!shut && (
+              <div className="dg-group__grid">
+                {items.map((it) => (
+                  <button
+                    key={it.key}
+                    type="button"
+                    className={cx('dg-item', isActive(it) && 'is-active')}
+                    data-palette-item={it.key}
+                    aria-pressed={isTool(it) ? isActive(it) : undefined}
+                    draggable={it.kind === 'node'}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData(PALETTE_MIME, `${notation}:${g.key}:${it.key}`)
+                      e.dataTransfer.effectAllowed = 'copy'
+                    }}
+                    onClick={() => onPick(it)}
+                  >
+                    <PaletteGlyph it={it} />
+                    <span>{itemLabel(it)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )
+      })}
 
       {tool.kind === 'edge' && <p className="dg-help">{t('diagrams.paleta.ajudaAresta')}</p>}
       {tool.kind === 'select' && notation !== 'free' && <p className="dg-help">{t('diagrams.paleta.ajuda')}</p>}
 
       {notation === 'free' && (
-        <div className="dg-pens" role="group" aria-label={t('diagrams.paleta.cores')}>
+        <div className="dg-pens" role="group" aria-label={t('diagrams.paleta.cores')} data-pen-colors>
           {Object.entries(PENS).map(([key, color]) => (
             <button
               key={key}
@@ -188,7 +397,76 @@ export default function Palette({
           ))}
         </div>
       )}
+      {notation === 'free' && (
+        <>
+          <div className="dg-pens dg-pens--sizes" role="group" aria-label={t('diagrams.paleta.espessura')}>
+            {PEN_WIDTHS.map((w) => (
+              <button
+                key={w}
+                type="button"
+                className="dg-pen"
+                aria-pressed={penWidth === w && tool.kind !== 'marker'}
+                aria-label={t('diagrams.paleta.espessuraN', { n: w })}
+                title={t('diagrams.paleta.espessuraN', { n: w })}
+                disabled={tool.kind === 'marker'}
+                onClick={() => onPenWidth(w)}
+              >
+                <svg viewBox="0 0 20 20" width={18} height={18} aria-hidden="true">
+                  <path d="M3 13c4-6 9 2 14-4" fill="none" stroke="currentColor" strokeWidth={Math.min(8, w)} strokeLinecap="round" />
+                </svg>
+              </button>
+            ))}
+          </div>
+          <div className="dg-pens dg-pens--sizes" role="group" aria-label={t('diagrams.paleta.opacidade')}>
+            {PEN_OPACITIES.map((o) => (
+              <button
+                key={o}
+                type="button"
+                className="dg-pen"
+                aria-pressed={tool.kind !== 'marker' && penOpacity === o}
+                aria-label={t('diagrams.paleta.opacidadeN', { n: Math.round(o * 100) })}
+                title={t('diagrams.paleta.opacidadeN', { n: Math.round(o * 100) })}
+                disabled={tool.kind === 'marker'}
+                onClick={() => onPenOpacity(o)}
+              >
+                <span aria-hidden="true" style={{ color: penColor, opacity: o }} />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
+  )
+}
+
+function PaletteGlyph({ it }: { it: PaletteItem }) {
+  if (it.kind === 'node' && it.props?.catalog) {
+    const v = catalogVisual(it.props.catalog)
+    return (
+      <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden="true" className="dg-item__tile">
+        {!v ? (
+          <rect x={2} y={2} width={20} height={20} rx={4} fill="none" stroke="currentColor" strokeDasharray="3 2" />
+        ) : v.abbr ? (
+          <>
+            <rect x={1} y={1} width={22} height={22} rx={5} fill={v.bg} />
+            <text x={12} y={13} fontSize={v.abbr.length > 4 ? 5.5 : 7} fontWeight={700} fill={v.fg} textAnchor="middle" dominantBaseline="middle">
+              {v.abbr}
+            </text>
+          </>
+        ) : (
+          <>
+            <rect x={1} y={1} width={22} height={22} rx={5} fill={v.bg} />
+            <path d={v.glyph} transform="translate(4 4) scale(0.667)" fill="none" stroke={v.fg} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+          </>
+        )}
+      </svg>
+    )
+  }
+  const sticky = it.kind === 'node' && it.type === 'sticky' ? STICKY[it.props?.stickyColor ?? 'yellow'] : undefined
+  return (
+    <svg viewBox="0 0 22 18" width={17} height={15} fill={sticky ? sticky.fill : 'none'} stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={DASHED.has(it.key) ? '3 2' : undefined} aria-hidden="true">
+      <path d={GLYPH[it.key] ?? GLYPH.process} />
+    </svg>
   )
 }
 

@@ -21,13 +21,30 @@ const N = (id: string, type: NodeType, x: number, y: number, name: string, props
 }
 const E = (id: string, type: DEdge['type'], from: string, to: string, extra: Partial<DEdge> = {}): DEdge => ({ id, type, from, to, label: '', ...extra })
 
-export function hasExample(n: Notation): boolean {
-  return n === 'uml' || n === 'bpmn'
+/** Exemplos de cada notação, pela ordem em que se oferecem (o primeiro é o de `?exemplo=1`). */
+export const EXAMPLES: Record<Notation, string[]> = {
+  uml: ['uml'],
+  bpmn: ['bpmn'],
+  arch: ['c4', 'cloud'],
+  flow: ['flow'],
+  free: [],
 }
 
-export function example(n: Notation, tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> | null {
-  if (n === 'uml') return uml(tx)
-  if (n === 'bpmn') return bpmn(tx)
+export function examplesFor(n: Notation): string[] {
+  return EXAMPLES[n]
+}
+
+export function hasExample(n: Notation): boolean {
+  return EXAMPLES[n].length > 0
+}
+
+/** Um exemplo pelo nome (`uml`, `bpmn`, `flow`, `c4`, `cloud`). */
+export function example(variant: string, tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> | null {
+  if (variant === 'uml') return uml(tx)
+  if (variant === 'bpmn') return bpmn(tx)
+  if (variant === 'flow') return flow(tx)
+  if (variant === 'c4') return c4(tx)
+  if (variant === 'cloud') return cloud(tx)
   return null
 }
 
@@ -132,6 +149,104 @@ function bpmn(tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> {
       E('x_f12', 'sequenceFlow', 'x_reduce', 'x_end2'),
       E('x_f15', 'sequenceFlow', 'x_close', 'x_trans'),
       E('x_f13', 'sequenceFlow', 'x_trans', 'x_ready'),
+    ],
+  }
+}
+
+function flow(tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> {
+  const cx = 300
+  return {
+    nodes: [
+      N('x_title', 'text', 18, 4, tx('flow.titulo'), {}, [620, 34]),
+      N('x_start', 'terminator', cx - 70, 60, tx('flow.inicio')),
+      N('x_pick', 'manualInput', cx - 75, 140, tx('flow.escolher')),
+      N('x_prep', 'preparation', cx - 80, 230, tx('flow.preparar')),
+      N('x_dec', 'decision', cx - 60, 320, tx('flow.legendas')),
+      N('x_trans', 'predefinedProcess', cx + 120, 330, tx('flow.transcrever')),
+      N('x_merge', 'merge', cx - 30, 450, ''),
+      N('x_store', 'flowDatabase', cx + 150, 440, 'MinIO'),
+      N('x_show', 'display', cx - 75, 540, tx('flow.link')),
+      N('x_page', 'offPageConnector', cx - 22, 630, tx('flow.pagina')),
+      N('x_note', 'flowAnnotation', cx + 150, 230, '', { text: tx('flow.nota') }, [200, 50]),
+    ],
+    edges: [
+      E('x_f1', 'flow', 'x_start', 'x_pick'),
+      E('x_f2', 'flow', 'x_pick', 'x_prep'),
+      E('x_f3', 'flow', 'x_prep', 'x_dec'),
+      E('x_f4', 'flow', 'x_dec', 'x_trans', { label: tx('flow.nao') }),
+      E('x_f5', 'flow', 'x_dec', 'x_merge', { label: tx('flow.sim') }),
+      E('x_f6', 'flow', 'x_trans', 'x_merge'),
+      E('x_f7', 'flow', 'x_trans', 'x_store'),
+      E('x_f8', 'flow', 'x_merge', 'x_show'),
+      E('x_f9', 'flow', 'x_show', 'x_page'),
+      E('x_n1', 'flowNote', 'x_note', 'x_prep'),
+    ],
+  }
+}
+
+/** C4 · diagrama de contentores do Delonix Meet. */
+function c4(tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> {
+  return {
+    nodes: [
+      N('x_title', 'text', 18, 4, tx('c4.titulo'), {}, [720, 34]),
+      N('x_host', 'c4Person', 60, 60, tx('c4.anfitriao'), { description: tx('c4.anfitriaoDesc') }, [190, 150]),
+      N('x_guest', 'c4Person', 330, 60, tx('c4.convidado'), { description: tx('c4.convidadoDesc'), external: true }, [190, 150]),
+      N('x_sys', 'c4Boundary', 20, 250, 'Delonix Meet', { boundaryKind: 'system' }, [860, 330]),
+      N('x_web', 'c4Container', 50, 300, tx('c4.web'), { c4Shape: 'web', technology: 'React / TypeScript', description: tx('c4.webDesc') }, [230, 120]),
+      N('x_api', 'c4Container', 330, 300, 'meet-server', { technology: 'Rust / Axum', description: tx('c4.apiDesc'), emphasis: true }, [230, 120]),
+      N('x_sfu', 'c4Container', 620, 300, 'SFU', { technology: 'Rust / WebRTC', description: tx('c4.sfuDesc') }, [230, 120]),
+      N('x_db', 'c4Container', 190, 450, 'PostgreSQL', { c4Shape: 'db', technology: 'PostgreSQL 17', description: tx('c4.dbDesc') }, [220, 110]),
+      N('x_bus', 'c4Container', 480, 450, tx('c4.fila'), { c4Shape: 'queue', technology: 'Redis Streams', description: tx('c4.filaDesc') }, [240, 110]),
+      N('x_minio', 'c4System', 940, 300, 'MinIO', { external: true, description: tx('c4.minioDesc') }, [210, 120]),
+      N('x_odoo', 'c4System', 940, 460, 'Odoo', { external: true, description: tx('c4.odooDesc') }, [210, 110]),
+    ],
+    edges: [
+      E('x_r1', 'c4Rel', 'x_host', 'x_web', { label: tx('c4.usa'), technology: 'HTTPS' }),
+      E('x_r2', 'c4Rel', 'x_guest', 'x_web', { label: tx('c4.entra'), technology: 'HTTPS' }),
+      E('x_r3', 'c4Rel', 'x_web', 'x_api', { label: tx('c4.chama'), technology: 'JSON / WebSocket' }),
+      E('x_r4', 'c4Rel', 'x_web', 'x_sfu', { label: tx('c4.media'), technology: 'WebRTC' }),
+      E('x_r5', 'c4Rel', 'x_api', 'x_db', { label: tx('c4.le'), technology: 'SQL / TLS' }),
+      E('x_r6', 'c4Rel', 'x_api', 'x_bus', { label: tx('c4.publica'), technology: 'RESP3' }),
+      E('x_r7', 'c4Rel', 'x_sfu', 'x_minio', { label: tx('c4.grava'), technology: 'S3 API' }),
+      E('x_r8', 'c4Rel', 'x_api', 'x_odoo', { label: tx('c4.sso'), technology: 'OIDC' }),
+    ],
+  }
+}
+
+/** Cloud · o Delonix Meet em NGolaCloud: DKS, serviços geridos e observabilidade. */
+function cloud(tx: ExampleText): Pick<DiagramDoc, 'nodes' | 'edges'> {
+  const R = (id: string, catalog: string, x: number, y: number, name: string, props: NodeProps = {}, size?: [number, number]) =>
+    N(id, catalog === 'platform.dks' || catalog === 'platform.delonixNetVpc' || catalog === 'k8s.namespace' || catalog === 'cloud.region' ? 'resourceGroup' : 'resource', x, y, name, { catalog, ...props }, size)
+  return {
+    nodes: [
+      N('x_title', 'text', 18, 4, tx('cloud.titulo'), {}, [720, 34]),
+      R('x_users', 'network.internet', 20, 70, tx('cloud.utilizadores')),
+      R('x_region', 'cloud.region', 250, 50, tx('cloud.regiao'), {}, [900, 520]),
+      R('x_lb', 'cloud.loadBalancer', 280, 110, tx('cloud.entrada'), { technology: 'HAProxy / TLS' }),
+      R('x_vpc', 'platform.delonixNetVpc', 500, 90, 'meet-prod', { technology: '10.20.0.0/16' }, [620, 450]),
+      R('x_dks', 'platform.dks', 520, 140, 'dks-meet', { technology: 'Kubernetes 1.31' }, [380, 380]),
+      R('x_ns', 'k8s.namespace', 540, 190, 'meet', {}, [340, 310]),
+      R('x_ing', 'k8s.ingress', 560, 240, 'meet-ingress'),
+      R('x_svc', 'k8s.service', 560, 320, 'meet-server'),
+      R('x_pods', 'k8s.deployment', 560, 400, 'meet-server', { technology: tx('cloud.replicas') }),
+      R('x_sfu', 'k8s.statefulset', 560, 470, 'sfu'),
+      R('x_pg', 'platform.pgManaged', 930, 200, 'meet-db', { technology: 'PostgreSQL 17 · HA' }),
+      R('x_redis', 'platform.redisManaged', 930, 280, 'meet-cache'),
+      R('x_kafka', 'platform.kafkaManaged', 930, 360, 'meet-eventos'),
+      R('x_minio', 'platform.minio', 930, 440, 'gravacoes'),
+      R('x_obs', 'platform.observability', 280, 470, 'Prometheus / Grafana'),
+    ],
+    edges: [
+      E('x_c1', 'sync', 'x_users', 'x_lb', { technology: 'HTTPS' }),
+      E('x_c2', 'sync', 'x_lb', 'x_ing'),
+      E('x_c3', 'sync', 'x_ing', 'x_svc'),
+      E('x_c4', 'sync', 'x_svc', 'x_pods'),
+      E('x_c5', 'sync', 'x_pods', 'x_pg', { technology: 'SQL' }),
+      E('x_c6', 'sync', 'x_pods', 'x_redis'),
+      E('x_c7', 'async', 'x_pods', 'x_kafka', { label: tx('cloud.eventos') }),
+      E('x_c8', 'dataFlow', 'x_sfu', 'x_minio', { label: tx('cloud.gravacoes') }),
+      E('x_c9', 'dataFlow', 'x_pods', 'x_obs', { label: tx('cloud.metricas') }),
+      E('x_c10', 'sync', 'x_users', 'x_sfu', { technology: 'WebRTC' }),
     ],
   }
 }

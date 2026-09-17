@@ -310,6 +310,8 @@
   height: 14px;
   border-radius: 50%;
   background: currentColor;
+  /* A tinta preta tem de se ver sobre o cromado escuro. */
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 40%, transparent);
 }
 .dg-pen[aria-pressed='true'] {
   border-color: var(--accent);
@@ -344,6 +346,9 @@
   cursor: grabbing;
 }
 .dg-canvas.is-pen .dg-svg,
+.dg-canvas.is-marker .dg-svg,
+.dg-canvas.is-shape .dg-svg,
+.dg-canvas.is-lasso .dg-svg,
 .dg-canvas.is-edge .dg-svg {
   cursor: crosshair;
 }
@@ -382,7 +387,33 @@
   stroke-width: 14;
   pointer-events: stroke;
 }
-.dg-canvas:not(.is-eraser) .dg-stroke__hit {
+.dg-canvas:not(.is-eraser):not(.is-select):not(.is-lasso) .dg-stroke__hit {
+  pointer-events: none;
+}
+.dg-canvas.is-select .dg-stroke,
+.dg-canvas.is-lasso .dg-stroke {
+  cursor: move;
+}
+/* Laço e selecção múltipla (quadros-formas) */
+.dg-lasso {
+  fill: color-mix(in srgb, var(--accent) 8%, transparent);
+  stroke: var(--accent);
+  stroke-width: 1.2;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+.dg-multi {
+  fill: transparent;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+  cursor: move;
+}
+.dg-canvas.is-pen .dg-multi,
+.dg-canvas.is-marker .dg-multi,
+.dg-canvas.is-shape .dg-multi,
+.dg-canvas.is-eraser .dg-multi {
   pointer-events: none;
 }
 .dg-sel__box {
@@ -1114,4 +1145,42 @@ button.dg-chip {
   height: 26px;
   padding-block: 3px;
   font-size: 10.5px;
+}
+
+/* Grupos da paleta recolhíveis (quadros-formas) */
+.dg-group__title .dg-group__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dg-group__title .dg-group__toggle:disabled {
+  cursor: default;
+}
+.dg-group__title .dg-group__toggle:hover:not(:disabled) {
+  color: var(--text);
+}
+.dg-group__count {
+  margin-left: auto;
+  opacity: 0.7;
+}
+
+/* Caneta: mais cores, espessura e opacidade (quadros-formas) */
+.dg .dg-pens {
+  flex-wrap: wrap;
+}
+.dg-pens--sizes .dg-pen {
+  color: var(--text);
+}
+.dg-pen:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
