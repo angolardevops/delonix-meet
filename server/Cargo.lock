@@ -768,10 +768,12 @@ dependencies = [
 name = "delonix-meet-domain"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "delonix-meet-core",
  "hex",
  "serde",
+ "thiserror 2.0.18",
  "url",
  "uuid",
 ]

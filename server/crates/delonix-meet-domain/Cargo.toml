@@ -14,3 +14,6 @@ chrono.workspace = true
 hex.workspace = true
 # Parsing de URL (puro, sem rede) para validar a forma de destinos.
 url = "2"
+# Portas assíncronas da telefonia (ADR-0009): traits com `dyn` — sem IO.
+async-trait = "0.1"
+thiserror.workspace = true
