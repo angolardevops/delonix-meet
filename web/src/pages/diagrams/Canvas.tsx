@@ -10,9 +10,11 @@ import { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent,
 import { useTranslation } from 'react-i18next'
 import { cx } from '../../ui/kit'
 import { Box, center, clampZoom, contains, edgeSegment, lassoPick, moveSelection, nodeBox, Pt } from './geometry'
+import { GROUP_PAD } from './exporters'
+import { expandPick, groupOfItem, groupsOf, pickBox, pickSize, strokeBox, togglePick } from './groups'
 import { CONTAINERS, DiagramDoc, DNode, EdgeType, FIXED_SIZE, QuickShape, Stroke, uid } from './model'
 import { EdgeShape, NodeShape, strokeD, strokePath } from './shapes'
-import { FONT, MARKER } from './paint'
+import { FONT, INK, MARKER } from './paint'
 
 export type Sel = { kind: 'node' | 'edge' | 'stroke'; id: string }
 export type Tool =
@@ -23,8 +25,14 @@ export type Tool =
   | { kind: 'eraser' }
   | { kind: 'lasso' }
   | { kind: 'shape'; shape: QuickShape }
+  /** v5 — mini-barra: mover a selecção (M) e mão (H). Seleccionar (V) é `select`. */
+  | { kind: 'move' }
+  | { kind: 'hand' }
 
-/** Selecção múltipla (laço): elementos e traços. */
+/** Como se chegou à selecção múltipla (o inspector di-lo, como o template). */
+export type MultiVia = 'laco' | 'caixa' | 'clique'
+
+/** Selecção múltipla (laço, caixa, ⇧clique, grupo): elementos e traços. */
 export interface Multi {
   nodes: string[]
   strokes: string[]
@@ -73,6 +81,8 @@ type Gesture =
   | { t: 'shape'; a: Pt; b: Pt }
   | { t: 'lasso'; points: number[] }
   | { t: 'moveMulti'; start: Pt; pick: Multi; before: DiagramDoc; moved: boolean; dx: number; dy: number }
+  /** `click`: um contentor por baixo — um clique sem arrastar escolhe-o. */
+  | { t: 'box'; a: Pt; b: Pt; add: Multi | null; click?: string }
 
 const snap = (v: number) => Math.round(v / 4) * 4
 
@@ -113,7 +123,7 @@ export default function Canvas({
   onCommit: (next: DiagramDoc, before: DiagramDoc) => void
   onConnect: (from: DNode, to: DNode, offset: number) => void
   onDropPalette: (key: string, at: Pt) => void
-  onMulti: (m: Multi | null) => void
+  onMulti: (m: Multi | null, via?: MultiVia) => void
 }) {
   const { t } = useTranslation()
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -123,6 +133,8 @@ export default function Canvas({
   const [ink, setInk] = useState<number[] | null>(null)
   const [draft, setDraft] = useState<Stroke | null>(null)
   const [lasso, setLasso] = useState<number[] | null>(null)
+  const [marquee, setMarquee] = useState<{ a: Pt; b: Pt } | null>(null)
+  const lassoAdd = useRef<Multi | null>(null)
   const docRef = useRef(doc)
   docRef.current = doc
   const viewRef = useRef(view)
@@ -163,8 +175,36 @@ export default function Canvas({
     }
   }
 
+  /** A selecção corrente como `Multi` (a múltipla, ou o elemento/traço sozinho). */
+  function currentPick(): Multi | null {
+    if (multi) return multi
+    if (selection?.kind === 'node') return expandPick(docRef.current, { nodes: [selection.id], strokes: [] })
+    if (selection?.kind === 'stroke') return expandPick(docRef.current, { nodes: [], strokes: [selection.id] })
+    return null
+  }
+
+  /** ⇧clique: junta ou tira o item (ou o grupo dele) da selecção múltipla. */
+  function toggleItem(kind: 'node' | 'stroke', id: string) {
+    const next = togglePick(docRef.current, currentPick(), kind, id)
+    onSelect(null)
+    onMulti(pickSize(next) > 0 ? next : null, 'clique')
+  }
+
+  /** Clicar num membro de um grupo escolhe o grupo inteiro e começa a arrastá-lo. */
+  function pickGroupOf(e: ReactPointerEvent, kind: 'node' | 'stroke', id: string): boolean {
+    const g = groupOfItem(docRef.current, kind, id)
+    if (!g) return false
+    const pick = { nodes: [...g.nodes], strokes: [...g.strokes] }
+    onSelect(null)
+    onMulti(pick, 'clique')
+    startMove(e, pick)
+    return true
+  }
+
   function startNode(e: ReactPointerEvent, n: DNode) {
     if (e.button !== 0) return
+    // A mão desloca a vista por cima de tudo: o evento segue para o fundo.
+    if (tool.kind === 'hand') return
     e.stopPropagation()
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     const p = toWorld(e.clientX, e.clientY)
@@ -175,11 +215,37 @@ export default function Canvas({
       return
     }
     if (tool.kind === 'pen' || tool.kind === 'marker' || tool.kind === 'eraser' || tool.kind === 'shape') return
+    if (e.shiftKey && (tool.kind === 'select' || tool.kind === 'lasso')) {
+      toggleItem('node', n.id)
+      return
+    }
     if (multi && multi.nodes.includes(n.id)) {
       startMove(e, multi)
       return
     }
+    if (tool.kind === 'move') {
+      const cur = currentPick()
+      if (cur && cur.nodes.includes(n.id)) startMove(e, cur)
+      else if (!pickGroupOf(e, 'node', n.id)) {
+        onMulti(null)
+        onSelect({ kind: 'node', id: n.id })
+        startMove(e, { nodes: [n.id], strokes: [] })
+      }
+      return
+    }
     if (tool.kind === 'lasso') return
+    // v5: dentro de uma piscina (ou pacote, fronteira…) arrastar desenha a caixa
+    // de selecção — o template selecciona assim três tarefas da mesma piscina.
+    // O contentor escolhe-se com um clique e arrasta-se depois de escolhido.
+    if (CONTAINERS.has(n.type) && !(selection?.kind === 'node' && selection.id === n.id) && e.pointerType !== 'touch' && !groupOfItem(docRef.current, 'node', n.id)) {
+      onMulti(null)
+      onSelect(null)
+      gesture.current = { t: 'box', a: p, b: p, add: null, click: n.id }
+      setMarquee({ a: p, b: p })
+      capture(e)
+      return
+    }
+    if (pickGroupOf(e, 'node', n.id)) return
     onMulti(null)
     onSelect({ kind: 'node', id: n.id })
     const orig = new Map<string, Pt>([[n.id, { x: n.x, y: n.y }]])
@@ -225,11 +291,17 @@ export default function Canvas({
   }
 
   function startStroke(e: ReactPointerEvent, id: string) {
-    if (e.button !== 0 || (tool.kind !== 'select' && tool.kind !== 'lasso')) return
+    if (e.button !== 0 || (tool.kind !== 'select' && tool.kind !== 'lasso' && tool.kind !== 'move')) return
+    if (e.shiftKey && tool.kind !== 'move') {
+      e.stopPropagation()
+      toggleItem('stroke', id)
+      return
+    }
     if (multi && multi.strokes.includes(id)) {
       startMove(e, multi)
       return
     }
+    if (pickGroupOf(e, 'stroke', id)) return
     onMulti(null)
     onSelect({ kind: 'stroke', id })
     startMove(e, { nodes: [], strokes: [id] })
@@ -264,12 +336,25 @@ export default function Canvas({
       const q = { x: Math.round(p.x), y: Math.round(p.y) }
       gesture.current = { t: 'shape', a: q, b: q }
     } else if (tool.kind === 'lasso' && e.button === 0) {
-      onMulti(null)
+      if (!e.shiftKey) onMulti(null)
+      lassoAdd.current = e.shiftKey ? currentPick() : null
       gesture.current = { t: 'lasso', points: [Math.round(p.x), Math.round(p.y)] }
       setLasso([Math.round(p.x), Math.round(p.y)])
     } else if (tool.kind === 'eraser' && e.button === 0) {
       gesture.current = { t: 'erase' }
       eraseAt(e.clientX, e.clientY)
+    } else if (tool.kind === 'select' && e.button === 0 && e.pointerType !== 'touch') {
+      // v5: arrastar no fundo desenha a caixa de selecção (a mão, H, desloca).
+      const add = e.shiftKey ? currentPick() : null
+      if (!e.shiftKey) {
+        onSelect(null)
+        onMulti(null)
+      }
+      gesture.current = { t: 'box', a: p, b: p, add }
+      setMarquee({ a: p, b: p })
+    } else if (tool.kind === 'move' && e.button === 0 && currentPick()) {
+      startMove(e, currentPick()!)
+      return
     } else {
       if (tool.kind === 'select') {
         onSelect(null)
@@ -374,6 +459,11 @@ export default function Canvas({
         setLasso([...g.points])
         break
       }
+      case 'box': {
+        g.b = p()
+        setMarquee({ a: g.a, b: g.b })
+        break
+      }
       case 'moveMulti': {
         const q = p()
         const dx = snap(q.x - g.start.x)
@@ -438,9 +528,23 @@ export default function Canvas({
       }
       case 'lasso': {
         setLasso(null)
-        const pick = lassoPick(d, g.points)
-        onMulti(pick.nodes.length + pick.strokes.length > 0 ? pick : null)
+        const pick = merge(lassoAdd.current, expandPick(d, lassoPick(d, g.points)))
+        lassoAdd.current = null
+        onMulti(pickSize(pick) > 0 ? pick : null, 'laco')
         onSelect(null)
+        break
+      }
+      case 'box': {
+        setMarquee(null)
+        const r = rectOf(g.a, g.b)
+        // Um clique sem arrastar só limpa a selecção (já limpa ao carregar) — ou escolhe o contentor clicado.
+        if (r.w * viewRef.current.k < 4 && r.h * viewRef.current.k < 4) {
+          if (g.click) onSelect({ kind: 'node', id: g.click })
+          break
+        }
+        const pick = merge(g.add, expandPick(d, boxPick(d, r)))
+        onSelect(null)
+        onMulti(pickSize(pick) > 0 ? pick : null, 'caixa')
         break
       }
       case 'moveMulti':
@@ -472,6 +576,12 @@ export default function Canvas({
       aria-pressed={selection?.kind === 'node' && selection.id === n.id}
       className={cx('dg-node', tool.kind === 'edge' && 'is-target')}
       onPointerDown={(e) => startNode(e, n)}
+      onDoubleClick={() => {
+        // Dentro de um grupo, o duplo clique escolhe só o elemento (para o editar).
+        if (tool.kind !== 'select' || !groupOfItem(docRef.current, 'node', n.id)) return
+        onMulti(null)
+        onSelect({ kind: 'node', id: n.id })
+      }}
       onKeyDown={(e) => nodeKey(e, n)}
       onFocus={() => tool.kind === 'select' && onSelect({ kind: 'node', id: n.id })}
     >
@@ -509,6 +619,21 @@ export default function Canvas({
       >
         <g data-content transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
           {containers.map(renderNode)}
+          {groupsOf(doc).map((g) => {
+            // A moldura do grupo é parte do documento (sai no SVG/PNG): cores do papel, não classes.
+            const b = pickBox(doc, { nodes: g.nodes, strokes: g.strokes })
+            if (!b) return null
+            return (
+              <g key={g.id} data-group-id={g.id} pointerEvents="none">
+                <rect x={b.x - GROUP_PAD} y={b.y - GROUP_PAD} width={b.w + GROUP_PAD * 2} height={b.h + GROUP_PAD * 2} rx={4} fill="none" stroke={INK.muted} strokeWidth={1} strokeDasharray="6 4" />
+                {g.name.trim() && (
+                  <text x={b.x - GROUP_PAD + 2} y={b.y - GROUP_PAD - 5} fontSize={10.5} fontWeight={600} fill={INK.muted}>
+                    {g.name}
+                  </text>
+                )}
+              </g>
+            )
+          })}
           {doc.edges.map((e) => {
             const seg = edgeSegment(doc, e)
             if (!seg) return null
@@ -543,21 +668,48 @@ export default function Canvas({
           )}
           {draft && <path data-ui d={strokeD(draft)} fill="none" stroke={draft.color} strokeWidth={draft.width} strokeOpacity={draft.opacity} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />}
           {lasso && <path data-ui d={`${strokePath(lasso)}Z`} className="dg-lasso" pointerEvents="none" />}
+          {marquee && (() => {
+            const r = rectOf(marquee.a, marquee.b)
+            return <rect data-ui x={r.x} y={r.y} width={r.w} height={r.h} className="dg-lasso" pointerEvents="none" />
+          })()}
+          {multi &&
+            doc.nodes
+              .filter((n) => multi.nodes.includes(n.id))
+              .map((n) => {
+                // Realce de cada elemento escolhido (template: borda vermelha e anel de 2 px).
+                const b = nodeBox(n)
+                return (
+                  <g key={`hl-${n.id}`} data-ui pointerEvents="none">
+                    <rect x={b.x - 2} y={b.y - 2} width={b.w + 4} height={b.h + 4} fill="none" stroke={INK.accent} strokeOpacity={0.18} strokeWidth={4} vectorEffect="non-scaling-stroke" />
+                    <rect x={b.x} y={b.y} width={b.w} height={b.h} fill="none" stroke={INK.accent} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+                  </g>
+                )
+              })}
           {selBoxOf(doc, selection, multi) && (() => {
             const b = selBoxOf(doc, selection, multi)!
             return (
-              <rect
-                data-ui
-                x={b.x - 6}
-                y={b.y - 6}
-                width={b.w + 12}
-                height={b.h + 12}
-                className="dg-multi"
-                onPointerDown={(e) => {
-                  if (e.button !== 0 || (tool.kind !== 'select' && tool.kind !== 'lasso')) return
-                  startMove(e, multi ?? { nodes: [], strokes: selection?.kind === 'stroke' ? [selection.id] : [] })
-                }}
-              />
+              <g data-ui>
+                <rect
+                  x={b.x - 6}
+                  y={b.y - 6}
+                  width={b.w + 12}
+                  height={b.h + 12}
+                  className="dg-multi"
+                  onPointerDown={(e) => {
+                    if (e.button !== 0 || (tool.kind !== 'select' && tool.kind !== 'lasso' && tool.kind !== 'move')) return
+                    if (e.shiftKey) return
+                    startMove(e, multi ?? { nodes: [], strokes: selection?.kind === 'stroke' ? [selection.id] : [] })
+                  }}
+                />
+                {[
+                  [b.x - 6, b.y - 6],
+                  [b.x + b.w + 6, b.y - 6],
+                  [b.x - 6, b.y + b.h + 6],
+                  [b.x + b.w + 6, b.y + b.h + 6],
+                ].map(([hx, hy], i) => (
+                  <rect key={i} x={hx - 3.5 / view.k} y={hy - 3.5 / view.k} width={7 / view.k} height={7 / view.k} className="dg-multi__handle" />
+                ))}
+              </g>
             )
           })()}
           {selNode && selBox && tool.kind === 'select' && (
@@ -620,4 +772,26 @@ function selBoxOf(doc: DiagramDoc, selection: Sel | null, multi: Multi | null): 
     y1 = Math.max(y1, b.y + b.h)
   }
   return Number.isFinite(x0) ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null
+}
+
+const rectOf = (a: Pt, b: Pt): Box => ({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) })
+
+const merge = (a: Multi | null, b: Multi): Multi => (a ? { nodes: [...new Set([...a.nodes, ...b.nodes])], strokes: [...new Set([...a.strokes, ...b.strokes])] } : b)
+
+/** Caixa de selecção: entra o que tem o CENTRO lá dentro (a mesma regra do laço). */
+function boxPick(doc: DiagramDoc, r: Box): Multi {
+  const inside = (p: Pt) => contains(r, p)
+  return {
+    // Um contentor (piscina, pacote…) só entra inteiro: arrastar lá dentro escolhe o que tem dentro, não ele.
+    nodes: doc.nodes
+      .filter((n) => {
+        const b = nodeBox(n)
+        return CONTAINERS.has(n.type) ? inside({ x: b.x, y: b.y }) && inside({ x: b.x + b.w, y: b.y + b.h }) : inside(center(b))
+      })
+      .map((n) => n.id),
+    strokes: doc.strokes.filter((s) => {
+      const b = strokeBox(s.points)
+      return !!b && inside(center(b))
+    }).map((s) => s.id),
+  }
 }

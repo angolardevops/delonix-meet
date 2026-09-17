@@ -387,7 +387,7 @@
   stroke-width: 14;
   pointer-events: stroke;
 }
-.dg-canvas:not(.is-eraser):not(.is-select):not(.is-lasso) .dg-stroke__hit {
+.dg-canvas:not(.is-eraser):not(.is-select):not(.is-lasso):not(.is-move) .dg-stroke__hit {
   pointer-events: none;
 }
 .dg-canvas.is-select .dg-stroke,
@@ -402,12 +402,30 @@
   stroke-dasharray: 4 3;
   vector-effect: non-scaling-stroke;
 }
+/* v5: a caixa da selecção é a do template — tracejado de 1 px, véu a 5 % e
+   quatro alças brancas. Está sobre o PAPEL, por isso usa a tinta do papel. */
 .dg-multi {
-  fill: transparent;
-  stroke: var(--accent);
-  stroke-width: 1.5;
-  stroke-dasharray: 5 4;
+  fill: rgb(173 16 23 / 5%);
+  stroke: #ad1017;
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
   vector-effect: non-scaling-stroke;
+  cursor: move;
+}
+.dg-multi__handle {
+  fill: #fff;
+  stroke: #ad1017;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.dg-canvas.is-hand .dg-svg,
+.dg-canvas.is-hand .dg-node,
+.dg-canvas.is-hand .dg-edge {
+  cursor: grab;
+}
+.dg-canvas.is-move .dg-svg,
+.dg-canvas.is-move .dg-stroke {
   cursor: move;
 }
 .dg-canvas.is-pen .dg-multi,
@@ -1183,4 +1201,155 @@ button.dg-chip {
 .dg-pen:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* ---------------------------------------------------------------------------
+   v5 — mini-barra (seleccionar V · mover M · mão H · distribuir), barra
+   «N seleccionados» e ajuda de teclado. Sobre o papel: cores do template.
+   --------------------------------------------------------------------------- */
+.dg-minibar {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r-2);
+  background: #fff;
+  border: 1px solid #dedee1;
+  box-shadow: 0 1px 4px rgb(11 11 12 / 12%);
+}
+.dg-minibar__btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-2);
+  background: transparent;
+  color: #5c5c63;
+  cursor: pointer;
+}
+.dg-minibar__btn:hover:not(:disabled):not(.is-on) {
+  background: #f2f2f3;
+}
+.dg-minibar__btn.is-on {
+  background: #ad1017;
+  color: #fff;
+}
+.dg-minibar__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.dg-minibar__btn:focus-visible {
+  outline: 2px solid #ad1017;
+  outline-offset: 1px;
+}
+.dg-minibar__sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: #dedee1;
+}
+.dg .dg-chip.dg-keys {
+  flex: none;
+  background: #fff;
+  border-color: #dedee1;
+  color: #5c5c63;
+}
+/* A mensagem do topo não pode ficar por baixo da mini-barra em ecrã estreito. */
+@media (max-width: 760px) {
+  .dg-minibar {
+    top: auto;
+    bottom: 52px;
+  }
+  .dg .dg-chip.dg-keys {
+    display: none;
+  }
+}
+/* Inspector — «Selecção · N elementos». */
+.dg-selcard {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border-radius: var(--r-2);
+  background: var(--surface);
+  border: 1px solid var(--accent);
+}
+.dg-selcard__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.dg-selcard__head strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+.dg-selcard__via {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  color: var(--muted);
+}
+.dg-selcard__row {
+  display: flex;
+  gap: 5px;
+}
+.dg-selcard__btn {
+  flex: 1;
+  padding: 5px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  text-align: center;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dg-selcard__btn.is-primary {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #fff;
+}
+.dg-selcard__btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.dg-selcard__group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  border-radius: var(--r-2);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  font-size: 9.5px;
+}
+.dg-selcard__group > span:first-child {
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+.dg-selcard__group > .dx-num {
+  margin-left: auto;
+  font-size: 8.5px;
+  color: var(--muted);
+}
+.dg-selcard__members {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 12px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.dg-selcard__tools {
+  display: flex;
+  gap: 2px;
 }

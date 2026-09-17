@@ -19,15 +19,18 @@
  * MinIO / Nextcloud» (não há conector de escrita), guardar o modelo no
  * servidor e «Pôr no palco» (o Estúdio não tem ainda uma fonte de quadro).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { WhiteboardMeta } from '../api'
 import { useShell } from '../components/shellContext'
 import { DelonixSymbol, Icon } from '../ui/icons'
 import { Alert, Button, cx, IconButton, Spinner } from '../ui/kit'
 import '../ui/diagrams.css'
-import Canvas, { Multi, Sel, Tool, View } from './diagrams/Canvas'
+import Canvas, { Multi, MultiVia, Sel, Tool, View } from './diagrams/Canvas'
 import { fileBase, parseJson, toBpmn, toC4PlantUml, toJson, toPlantUml, toXmi } from './diagrams/exporters'
+import { alignPick, cleanGroups, distributePick, groupPick, groupsInPick, nextGroupName, pickBox, pickIsOneGroup, pickSize, renameGroup, ungroupPick, unitsOf } from './diagrams/groups'
+import { groupShortcut, type AlignMode, type Axis } from '../ui/arrange'
+import { SelectionBar, useGroupShortcutLabels } from '../ui/SelectionBar'
 import { clampZoom, contentBox, fitView, laneOf, nodeBox, Pt } from './diagrams/geometry'
 import Inspector, { InspectorTab, tabsFor } from './diagrams/Inspector'
 import {
@@ -94,6 +97,7 @@ function isTyping(el: EventTarget | null): boolean {
 export default function Diagram({ id }: { id: string | null }) {
   const { t } = useTranslation()
   const { setNavOpen } = useShell()
+  const groupKey = useGroupShortcutLabels().group
   // Os rótulos e desenhos do catálogo chegam depois: re-desenha quando chegam.
   useCatalogVersion()
   const [load, setLoad] = useState<Load>({ s: 'loading' })
@@ -110,6 +114,7 @@ export default function Diagram({ id }: { id: string | null }) {
   const [penWidth, setPenWidth] = useState(2.5)
   const [penOpacity, setPenOpacity] = useState(1)
   const [multi, setMulti] = useState<Multi | null>(null)
+  const [multiVia, setMultiVia] = useState<MultiVia>('clique')
   const [persist, setPersist] = useState<Persist>('idle')
   const [notice, setNotice] = useState<Notice>(null)
   const [saving, setSaving] = useState(false)
@@ -215,7 +220,8 @@ export default function Diagram({ id }: { id: string | null }) {
     if (!same) past.current = [...past.current, before ?? cur].slice(-HISTORY_MAX)
     lastKey.current = coalesce ? { key: coalesce, at: now } : null
     future.current = []
-    const stamped = { ...next, updatedAt: new Date().toISOString() }
+    // Um elemento apagado sai também dos grupos (e um grupo de um só desaparece).
+    const stamped = { ...cleanGroups(next), updatedAt: new Date().toISOString() }
     docRef.current = stamped
     setDoc(stamped)
     setHistoryTick((n) => n + 1)
@@ -455,6 +461,32 @@ export default function Diagram({ id }: { id: string | null }) {
     setSelection({ kind: 'node', id: copy.id })
   }, [doc, selection, commit])
 
+  // ---------------------------------------------------------------- selecção múltipla (v5)
+  const groupSelection = useCallback(() => {
+    if (!doc || !multi) return
+    const r = groupPick(doc, multi, nextGroupName(doc, (n) => t('diagrams.seleccao.grupoN', { n })))
+    if (!r) return
+    commit(r.doc)
+    setNotice({ tone: 'success', text: t('ui.seleccao.agrupados', { count: pickSize(multi) }) })
+  }, [doc, multi, commit, t])
+  const ungroupSelection = useCallback(() => {
+    if (!doc || !multi) return
+    const next = ungroupPick(doc, multi)
+    if (!next) return
+    commit(next)
+    setNotice({ tone: 'success', text: t('ui.seleccao.desagrupados') })
+  }, [doc, multi, commit, t])
+  const alignSelection = (mode: AlignMode) => {
+    if (!doc || !multi) return
+    const next = alignPick(doc, multi, mode)
+    if (next !== doc) commit(next)
+  }
+  const distributeSelection = (axis: Axis) => {
+    if (!doc || !multi) return
+    const next = distributePick(doc, multi, axis)
+    if (next !== doc) commit(next)
+  }
+
   function setNotation(n: Notation) {
     if (!doc || n === doc.notation) return
     commit({ ...doc, notation: n })
@@ -545,6 +577,18 @@ export default function Diagram({ id }: { id: string | null }) {
     const onKey = (e: KeyboardEvent) => {
       if (isTyping(e.target) || saving) return
       const mod = e.ctrlKey || e.metaKey
+      const grouping = groupShortcut(e)
+      if (grouping) {
+        e.preventDefault()
+        if (grouping === 'group') groupSelection()
+        else ungroupSelection()
+        return
+      }
+      if (!mod && !e.altKey && !e.shiftKey && ['v', 'm', 'h'].includes(e.key.toLowerCase())) {
+        const k = e.key.toLowerCase()
+        setTool(k === 'v' ? { kind: 'select' } : k === 'm' ? { kind: 'move' } : { kind: 'hand' })
+        return
+      }
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         if (e.shiftKey) redo()
@@ -618,6 +662,8 @@ export default function Diagram({ id }: { id: string | null }) {
           : ['svg', 'png', 'json']
   const empty = d.nodes.length === 0 && d.strokes.length === 0
   const first = issues[0]
+  const multiBox = multi ? pickBox(d, multi) : null
+  const units = multi ? unitsOf(d, multi).length : 0
 
   const outputs =
     notation === 'uml' || notation === 'bpmn' ? (
@@ -775,8 +821,9 @@ export default function Diagram({ id }: { id: string | null }) {
             penWidth={penWidth}
             penOpacity={penOpacity}
             multi={multi}
-            onMulti={(m) => {
+            onMulti={(m, via) => {
               setMulti(m)
+              if (via) setMultiVia(via)
               if (m) setTab('element')
             }}
             typeLabel={typeLabel}
@@ -794,6 +841,54 @@ export default function Diagram({ id }: { id: string | null }) {
               if (it?.kind === 'node') addNode(it, at)
             }}
           />
+
+          <div className="dg-minibar" role="toolbar" aria-label={t('diagrams.seleccao.ferramentas')}>
+            {(
+              [
+                ['select', 'selArrow', 'diagrams.seleccao.seleccionar'],
+                ['move', 'selMarquee', 'diagrams.seleccao.mover'],
+                ['hand', 'selHand', 'diagrams.seleccao.mao'],
+              ] as const
+            ).map(([kind, icon, label]) => (
+              <button
+                key={kind}
+                type="button"
+                className={cx('dg-minibar__btn', tool.kind === kind && 'is-on')}
+                aria-pressed={tool.kind === kind}
+                aria-label={t(label)}
+                title={t(label)}
+                data-tool={kind}
+                onClick={() => setTool({ kind })}
+              >
+                {kind === 'select' ? (
+                  <Icon name={icon} size={15} fill="currentColor" stroke="none" />
+                ) : (
+                  <Icon name={icon} size={15} strokeWidth={kind === 'move' ? 1.7 : 1.5} strokeDasharray={kind === 'move' ? '3.6 2.9' : undefined} />
+                )}
+              </button>
+            ))}
+            <span className="dg-minibar__sep" aria-hidden="true" />
+            <button type="button" className="dg-minibar__btn" aria-label={t('ui.seleccao.distribuirH')} title={t('ui.seleccao.distribuirH')} disabled={units < 3} onClick={() => distributeSelection('x')}>
+              <Icon name="selDistributeH" size={15} strokeWidth={1.7} />
+            </button>
+            <button type="button" className="dg-minibar__btn" aria-label={t('ui.seleccao.distribuirV')} title={t('ui.seleccao.distribuirV')} disabled={units < 3} onClick={() => distributeSelection('y')}>
+              <Icon name="selDistributeV" size={15} strokeWidth={1.7} />
+            </button>
+          </div>
+
+          {multi && multiBox && (
+            <SelectionBar
+              count={pickSize(multi)}
+              canGroup={pickSize(multi) >= 2 && !pickIsOneGroup(d, multi)}
+              canUngroup={groupsInPick(d, multi).length > 0}
+              onGroup={groupSelection}
+              onUngroup={ungroupSelection}
+              onAlign={alignSelection}
+              onDistribute={distributeSelection}
+              onDelete={removeSelection}
+              style={barPosition(multiBox, view, svgRef.current)}
+            />
+          )}
 
           {empty && (
             <div className="dg-hint" aria-live="polite">
@@ -842,6 +937,7 @@ export default function Diagram({ id }: { id: string | null }) {
                 {issues.length === 0 ? t('diagrams.estado.valido') : t('diagrams.estado.problemaPrimeiro', { count: issues.length, primeiro: t(`diagrams.regras.${first.code}`, issueParams(d, first, typeLabel)) })}
               </button>
             )}
+            <span className="dg-chip dg-keys dx-num">{t('diagrams.seleccao.ajudaTeclado', { grupo: groupKey })}</span>
           </div>
 
           <div className="dg-zoom" role="group" aria-label={t('diagrams.zoom.rotulo')}>
@@ -870,6 +966,12 @@ export default function Diagram({ id }: { id: string | null }) {
               if (n) centreOn(n)
             }}
             multi={multi}
+            multiVia={multiVia}
+            onGroup={groupSelection}
+            onUngroup={ungroupSelection}
+            onAlign={alignSelection}
+            onDistribute={distributeSelection}
+            onRenameGroup={(id, name) => commit(renameGroup(d, id, name), undefined, `grupo:${id}`)}
             onDelete={removeSelection}
             onDuplicate={duplicate}
             onFix={fixOne}
@@ -925,3 +1027,16 @@ function summary(t: (k: string, o?: Record<string, unknown>) => string, d: Diagr
   return parts.join(' · ')
 }
 
+/**
+ * Onde fica a barra «N seleccionados»: por baixo da caixa da selecção, alinhada
+ * à esquerda dela; por cima quando não cabe em baixo. Nunca sai da área.
+ */
+function barPosition(box: { x: number; y: number; w: number; h: number }, view: View, svg: SVGSVGElement | null): CSSProperties {
+  const W = svg?.clientWidth ?? 800
+  const H = svg?.clientHeight ?? 600
+  const left = Math.max(8, Math.min(W - 360, (box.x - 6) * view.k + view.x))
+  const below = (box.y + box.h + 6) * view.k + view.y + 8
+  const above = (box.y - 6) * view.k + view.y - 38
+  const top = below + 34 <= H - 48 ? below : above >= 8 ? above : Math.max(8, Math.min(H - 86, below))
+  return { left, top }
+}

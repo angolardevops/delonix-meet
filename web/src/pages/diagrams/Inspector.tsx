@@ -9,7 +9,10 @@ import { ReactNode, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../../ui/icons'
 import { Button, cx, Field, IconButton, Select, TextArea, TextInput, Toggle } from '../../ui/kit'
-import type { Multi, Sel } from './Canvas'
+import type { Multi, MultiVia, Sel } from './Canvas'
+import type { AlignMode, Axis } from '../../ui/arrange'
+import { useGroupShortcutLabels } from '../../ui/SelectionBar'
+import { groupsInPick, pickIsOneGroup, pickSize, unitsOf } from './groups'
 import { laneOf, laneTop, nodeBox, poolHeight } from './geometry'
 import {
   BPMN_FLOW_NODES,
@@ -81,6 +84,12 @@ export default function Inspector({
   issues,
   typeLabel,
   multi = null,
+  multiVia = 'clique',
+  onGroup,
+  onUngroup,
+  onAlign,
+  onDistribute,
+  onRenameGroup,
   showValidation = false,
   onTab,
   onChange,
@@ -98,6 +107,12 @@ export default function Inspector({
   issues: Issue[]
   typeLabel: (n: DNode) => string
   multi?: Multi | null
+  multiVia?: MultiVia
+  onGroup?: () => void
+  onUngroup?: () => void
+  onAlign?: (mode: AlignMode) => void
+  onDistribute?: (axis: Axis) => void
+  onRenameGroup?: (id: string, name: string) => void
   showValidation?: boolean
   onTab: (t: InspectorTab) => void
   onChange: Change
@@ -129,13 +144,19 @@ export default function Inspector({
       <div className="dg-inspector__body" role="tabpanel">
         {current === 'element' &&
           (multi ? (
-            <Section title={t('diagrams.inspector.seleccaoMultipla')}>
-              <p className="dg-muted">{t('diagrams.inspector.seleccaoResumo', { elementos: multi.nodes.length, tracos: multi.strokes.length })}</p>
-              <p className="dg-muted">{t('diagrams.inspector.seleccaoAjuda')}</p>
-              <Button size="sm" variant="danger" icon="trash" onClick={onDelete}>
-                {t('diagrams.inspector.eliminar')}
-              </Button>
-            </Section>
+            <SelectionPanel
+              doc={doc}
+              notation={notation}
+              multi={multi}
+              via={multiVia}
+              typeLabel={typeLabel}
+              onGroup={onGroup}
+              onUngroup={onUngroup}
+              onAlign={onAlign}
+              onDistribute={onDistribute}
+              onRenameGroup={onRenameGroup}
+              onDelete={onDelete}
+            />
           ) : node ? (
             <NodePanel doc={doc} n={node} onChange={onChange} onSelect={onSelect} onDelete={onDelete} onDuplicate={onDuplicate} />
           ) : edge ? (
@@ -155,6 +176,112 @@ export default function Inspector({
       </div>
       {footer}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+//  Selecção múltipla (template v5: «Selecção · N elementos»)
+// ---------------------------------------------------------------------------
+
+const ALIGN_ACTIONS: { mode: AlignMode; icon: string; label: string }[] = [
+  { mode: 'left', icon: 'selAlignLeft', label: 'ui.seleccao.alinharEsquerda' },
+  { mode: 'centerX', icon: 'selAlignCenter', label: 'ui.seleccao.alinharCentro' },
+  { mode: 'top', icon: 'selAlignTop', label: 'ui.seleccao.alinharTopo' },
+]
+
+function SelectionPanel({
+  doc,
+  notation,
+  multi,
+  via,
+  typeLabel,
+  onGroup,
+  onUngroup,
+  onAlign,
+  onDistribute,
+  onRenameGroup,
+  onDelete,
+}: {
+  doc: DiagramDoc
+  notation: Notation
+  multi: Multi
+  via: MultiVia
+  typeLabel: (n: DNode) => string
+  onGroup?: () => void
+  onUngroup?: () => void
+  onAlign?: (mode: AlignMode) => void
+  onDistribute?: (axis: Axis) => void
+  onRenameGroup?: (id: string, name: string) => void
+  onDelete: () => void
+}) {
+  const { t } = useTranslation()
+  const keys = useGroupShortcutLabels()
+  const count = pickSize(multi)
+  const nodes = doc.nodes.filter((n) => multi.nodes.includes(n.id))
+  const classes = notation === 'uml' && nodes.length > 0 && multi.strokes.length === 0 && nodes.every((n) => CLASSIFIERS.has(n.type))
+  const groups = groupsInPick(doc, multi)
+  const one = pickIsOneGroup(doc, multi)
+  const units = unitsOf(doc, multi).length
+  const viaLabel = via === 'laco' ? 'diagrams.seleccao.viaLaco' : via === 'caixa' ? 'diagrams.seleccao.viaCaixa' : 'diagrams.seleccao.viaClique'
+  const nameOf = (id: string) => {
+    const n = doc.nodes.find((x) => x.id === id)
+    return n ? n.name.trim() || n.props.text?.trim() || typeLabel(n) : ''
+  }
+  return (
+    <section className="dg-selcard" data-selcard aria-label={t(classes ? 'diagrams.seleccao.tituloClasses' : 'diagrams.seleccao.titulo', { count })}>
+      <div className="dg-selcard__head">
+        <strong>{t(classes ? 'diagrams.seleccao.tituloClasses' : 'diagrams.seleccao.titulo', { count })}</strong>
+        <span className="dg-selcard__via">{t(viaLabel)}</span>
+      </div>
+      <div className="dg-selcard__row">
+        <button type="button" className="dg-selcard__btn is-primary" disabled={count < 2 || !!one} onClick={onGroup}>
+          {t('diagrams.seleccao.agruparAtalho', { tecla: keys.group })}
+        </button>
+        <button type="button" className="dg-selcard__btn" disabled={groups.length === 0} onClick={onUngroup}>
+          {t('ui.seleccao.desagrupar')}
+        </button>
+      </div>
+      {groups.map((g) => {
+        const members = g.nodes.map(nameOf).filter(Boolean)
+        return (
+          <div key={g.id} className="dg-selcard__groupwrap">
+            <div className="dg-selcard__group">
+              <Icon name="selGroup" size={11} />
+              <span>{t('diagrams.seleccao.grupo', { nome: g.name.trim() || t('diagrams.semNome') })}</span>
+              <span className="dx-num">{g.nodes.length + g.strokes.length}</span>
+            </div>
+            <div className="dg-selcard__members">
+              {notation === 'bpmn' ? (
+                g.nodes.map((id) => {
+                  const n = doc.nodes.find((x) => x.id === id)
+                  return n ? <span key={id}>{`${nameOf(id)} · ${typeLabel(n)}`}</span> : null
+                })
+              ) : (
+                <span>{members.join(' · ')}</span>
+              )}
+              {g.strokes.length > 0 && <span>{t('diagrams.seleccao.tracos', { count: g.strokes.length })}</span>}
+            </div>
+          </div>
+        )
+      })}
+      {one && onRenameGroup && (
+        <Field label={t('diagrams.seleccao.nomeGrupo')}>
+          <TextInput value={one.name} maxLength={80} onChange={(e) => onRenameGroup(one.id, e.target.value)} />
+        </Field>
+      )}
+      <div className="dg-selcard__tools" role="group" aria-label={t('ui.seleccao.barra')}>
+        {ALIGN_ACTIONS.map((a) => (
+          <IconButton key={a.mode} icon={a.icon} bare label={t(a.label)} title={t(a.label)} disabled={units < 2} onClick={() => onAlign?.(a.mode)} />
+        ))}
+        <IconButton icon="selDistributeH" bare label={t('ui.seleccao.distribuirH')} title={t('ui.seleccao.distribuirH')} disabled={units < 3} onClick={() => onDistribute?.('x')} />
+        <IconButton icon="selDistributeV" bare label={t('ui.seleccao.distribuirV')} title={t('ui.seleccao.distribuirV')} disabled={units < 3} onClick={() => onDistribute?.('y')} />
+      </div>
+      <p className="dg-muted">{t('diagrams.inspector.seleccaoResumo', { elementos: multi.nodes.length, tracos: multi.strokes.length })}</p>
+      <p className="dg-muted">{groups.length > 0 ? t('diagrams.seleccao.ajudaGrupo') : t('diagrams.inspector.seleccaoAjuda')}</p>
+      <Button size="sm" variant="danger" icon="trash" onClick={onDelete}>
+        {t('diagrams.inspector.eliminar')}
+      </Button>
+    </section>
   )
 }
 

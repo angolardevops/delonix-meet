@@ -105,7 +105,14 @@ describe('grupos de selecção · exportações', () => {
 
   it('PlantUML: together { … } com as classes do grupo', () => {
     const p = toPlantUml(agrupado())
-    expect(p).toMatch(/' Núcleo <media>\ntogether \{\n {2}class "Session" as E\d+ \{\n {2}\}\n {2}class "Recording"[\s\S]*?\n\}\nclass "Solta"/)
+    expect(p).toContain("' group Núcleo <media>: Session, Recording, Transcript")
+    expect(p).toMatch(/\ntogether \{\n {2}class "Session" as E\d+ \{\n {2}\}\n {2}class "Recording"[\s\S]*?\n\}\nclass "Solta"/)
+    // Membros em pacotes diferentes: comentário sempre; together só dentro do mesmo pacote.
+    const d = agrupado()
+    d.nodes = d.nodes.map((n) => (n.id === 's' ? { ...n, props: { ...n.props, package: 'core' } } : n.id === 'r' || n.id === 't' ? { ...n, props: { ...n.props, package: 'media' } } : n))
+    const q = toPlantUml(d)
+    expect(q).toMatch(/package "media" \{\n {2}together \{\n {4}class "Recording"[\s\S]*?class "Transcript"[\s\S]*?\n {2}\}\n\}/)
+    expect(q).toMatch(/package "core" \{\n {2}class "Session"/)
   })
 
   it('BPMN: bpmn:group com categoria e forma no diagrama', () => {

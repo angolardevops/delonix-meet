@@ -573,25 +573,34 @@ export function toPlantUml(doc: DiagramDoc): string {
       }
       lines.push(`${ind}}`)
     }
+    // Grupos de selecção: o PlantUML não tem grupo sem semântica. Cada grupo fica
+    // escrito num comentário, e os membros que partilham o mesmo sítio (o mesmo
+    // pacote, ou soltos) saem dentro de `together { }`, que só os aproxima.
+    const selGroups = groupsOf(doc).filter((g) => g.nodes.some((id) => inClassBlock.has(id) && CLASSIFIERS.has(byId.get(id)!.type)))
+    for (const g of selGroups) {
+      const names = g.nodes.filter((id) => inClassBlock.has(id) && CLASSIFIERS.has(byId.get(id)!.type)).map((id) => byId.get(id)!.name.trim() || alias.get(id)!)
+      lines.push(`' group ${g.name.replace(/\n/g, ' ').trim()}: ${names.join(', ')}`)
+    }
+    const emit = (members: DNode[], ind: string) => {
+      const done = new Set<string>()
+      for (const g of selGroups) {
+        const together = members.filter((n) => g.nodes.includes(n.id))
+        if (together.length < 2) continue
+        lines.push(`${ind}together {`)
+        for (const m of together) {
+          done.add(m.id)
+          classifier(m, `${ind}  `)
+        }
+        lines.push(`${ind}}`)
+      }
+      for (const m of members) if (!done.has(m.id)) classifier(m, ind)
+    }
     for (const [name, members] of pkgs) {
       lines.push(`package ${puQuote(name)} {`)
-      for (const m of members) classifier(m, '  ')
+      emit(members, '  ')
       lines.push('}')
     }
-    // Classes soltas do mesmo grupo de selecção ficam juntas no desenho.
-    const together = new Set<string>()
-    for (const g of groupsOf(doc)) {
-      const members = loose.filter((n) => g.nodes.includes(n.id) && !together.has(n.id))
-      if (members.length === 0) continue
-      lines.push(`' ${g.name.replace(/\n/g, ' ').trim()}`)
-      lines.push('together {')
-      for (const m of members) {
-        together.add(m.id)
-        classifier(m, '  ')
-      }
-      lines.push('}')
-    }
-    for (const m of loose) if (!together.has(m.id)) classifier(m, '')
+    emit(loose, '')
     for (const n of classNodes) {
       if (n.type === 'note') lines.push(`note ${puQuote((n.props.text ?? n.name).trim())} as ${alias.get(n.id)}`)
     }
