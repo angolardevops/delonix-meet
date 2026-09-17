@@ -2047,9 +2047,11 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Não faz** (e o ecrã não o mostra): destinos de emissão e dial-in PSTN por reunião — são recursos da organização, sem `meeting_id`, e um campo para eles seria outro campo ignorado.
 
-**Portão.** Testes de `meetings`/`rooms` contra Postgres real (a sala arrancada de uma reunião com opções herda-as) e a validação por tabela em `SessionOptions::validate`.
+**Alterar depois de agendar, e a v1.** `PATCH /api/meetings/{meeting_id}` altera só as opções (só o anfitrião; `403 meeting.not_host` ao convidado, `404` a quem não chega; campos desconhecidos recusados, não ignorados) e a v1 aceita-as no create, no `PATCH` e devolve-as no `GET` e na lista. As duas superfícies chamam `meetings::patch_session_options`, que também as passa à sala já criada. `auto_record` numa sala E2EE é `422 meeting.auto_record_e2ee` — o gravador do servidor não tem a chave; recusa-se em vez de aceitar e não gravar. O `PATCH` da v1 valida o tecto de 200 convidados ANTES de escrever: antes gravava título, datas e opções e só depois respondia `400`. O `external_source` da lista é só o prefixo com forma de identificador (`odoo:…` → `odoo`); uma referência que não declara sistema lê-se `api` em vez de sair inteira pela BFF.
 
-**Ficheiros.** `server/src/{meetings,rooms,recorder}.rs`, `server/migrations/0063_meeting_session_options.sql`, `web/src/pages/calendar/ScheduleForm.tsx`.
+**Portão.** `server/tests/meeting_session_options.rs` (Postgres real: criar pela BFF e pela v1 com as mesmas regras, lista, `tentative`, a sala arrancada herda as opções, os dois `PATCH`, a gravação automática à entrada do anfitrião por `/ws`, e o `PATCH` v1 que valida antes de escrever) e a validação em `SessionOptions::validate`.
+
+**Ficheiros.** `server/src/{meetings,meetings_v1,apikeys,rooms,recorder}.rs`, `server/migrations/0063_meeting_session_options.sql`, `server/tests/meeting_session_options.rs`, `web/src/pages/calendar/ScheduleForm.tsx`.
 
 ### R189 — Um merge com dois blocos de conflito foi empurrado com o segundo por resolver
 
