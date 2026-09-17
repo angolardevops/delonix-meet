@@ -2469,7 +2469,7 @@
             "type": "boolean"
           },
           "odoo_url": {
-            "description": "Guardado sem `/` finais. Não é validado.",
+            "description": "Guardado sem `/` finais. Passa pela guarda de saída (`net_guard`): um\nendereço interno é recusado com 400, salvo `OUTBOUND_ALLOW_HOSTS`.",
             "type": [
               "string",
               "null"
@@ -5901,7 +5901,7 @@
                 }
               }
             },
-            "description": "`domain` em falta."
+            "description": "`domain` em falta, ou o emissor OIDC da organização aponta para um endereço interno (guarda de saída)."
           },
           "404": {
             "content": {
@@ -8505,6 +8505,16 @@
           "200": {
             "description": "`{\"ok\": true}` (forma herdada)"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`odoo_url` inválido ou a apontar para um endereço interno (guarda de saída, `OUTBOUND_ALLOW_HOSTS`)."
+          },
           "401": {
             "content": {
               "application/json": {
@@ -9996,7 +10006,7 @@
                 }
               }
             },
-            "description": "`issuer_url`/`client_id` em falta, ou `issuer_url` sem `https://`."
+            "description": "`issuer_url`/`client_id` em falta, ou `issuer_url` sem `https://`, ou a apontar para um endereço interno (guarda de saída, `OUTBOUND_ALLOW_HOSTS`)."
           },
           "401": {
             "content": {

@@ -219,7 +219,9 @@ async fn user_id_by_email(app: &TestApp, email: &str) -> Option<String> {
 /// entrar como o administrador de OUTRA organização.
 #[sqlx::test(migrations = "./migrations")]
 async fn sso_callback_refuses_account_of_another_org(db: sqlx::PgPool) {
-    let app = TestApp::spawn(db).await;
+    let app = // O IdP falso vive em 127.0.0.1: declarado como destino de saída, como
+    // um IdP on-prem (guarda anti-SSRF, R180).
+    TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
     let vitima = app.new_org("vitima.test").await;
     let atacante = app.new_org("atacante.test").await;
     let idp = FakeIdp::start().await;
@@ -256,7 +258,9 @@ async fn sso_callback_refuses_account_of_another_org(db: sqlx::PgPool) {
 /// juntava-a à org. Uma org só pode criar contas do seu próprio domínio.
 #[sqlx::test(migrations = "./migrations")]
 async fn sso_jit_only_creates_accounts_of_the_org_domain(db: sqlx::PgPool) {
-    let app = TestApp::spawn(db).await;
+    let app = // O IdP falso vive em 127.0.0.1: declarado como destino de saída, como
+    // um IdP on-prem (guarda anti-SSRF, R180).
+    TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
     let admin = app.new_org("gama.test").await;
     let idp = FakeIdp::start().await;
     wire_sso(&app, &admin, &idp).await;
@@ -296,7 +300,9 @@ async fn sso_jit_only_creates_accounts_of_the_org_domain(db: sqlx::PgPool) {
 /// dela, mesmo que o IdP ainda o tenha.
 #[sqlx::test(migrations = "./migrations")]
 async fn sso_refuses_archived_member(db: sqlx::PgPool) {
-    let app = TestApp::spawn(db).await;
+    let app = // O IdP falso vive em 127.0.0.1: declarado como destino de saída, como
+    // um IdP on-prem (guarda anti-SSRF, R180).
+    TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
     let admin = app.new_org("epsilon.test").await;
     let saiu = app.add_member(&admin, "saiu", "member").await;
     let fica = app.add_member(&admin, "fica", "member").await;

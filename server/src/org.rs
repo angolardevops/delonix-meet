@@ -1527,7 +1527,7 @@ pub async fn get_sso_config(
     request_body = SsoConfigReq,
     responses(
         (status = 200, description = "{\"ok\": true} (forma herdada)", body = serde_json::Value),
-        (status = 400, description = "`issuer_url`/`client_id` em falta, ou `issuer_url` sem `https://`.", body = crate::openapi::ErrorBody),
+        (status = 400, description = "`issuer_url`/`client_id` em falta, ou `issuer_url` sem `https://`, ou a apontar para um endereço interno (guarda de saída, `OUTBOUND_ALLOW_HOSTS`).", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
@@ -1549,12 +1549,14 @@ pub async fn upsert_sso_config(
             "issuer_url e client_id são obrigatórios".into(),
         ));
     }
-    // Validação mínima do issuer URL.
     if !issuer.starts_with("https://") {
         return Err(ApiError::BadRequest(
             "issuer_url deve começar por https://".into(),
         ));
     }
+    // O servidor vai buscar a descoberta OIDC a este URL: guarda anti-SSRF já
+    // ao gravar, para o erro chegar a quem configura e não a quem tenta entrar.
+    state.outbound.check_tenant_config_url(&issuer).await?;
 
     if req.client_secret.trim().is_empty() {
         // Atualizar sem tocar no segredo (rotação lazy).

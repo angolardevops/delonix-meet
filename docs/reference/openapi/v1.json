@@ -2469,7 +2469,7 @@
             "type": "boolean"
           },
           "odoo_url": {
-            "description": "Guardado sem `/` finais. Não é validado.",
+            "description": "Guardado sem `/` finais. Passa pela guarda de saída (`net_guard`): um\nendereço interno é recusado com 400, salvo `OUTBOUND_ALLOW_HOSTS`.",
             "type": [
               "string",
               "null"

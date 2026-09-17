@@ -1929,3 +1929,10 @@ Ao lado, uma armadilha da mesma biblioteca: `RTCRtpSender::read` espera por `Not
 **Regra.** `204` sem corpo quando apaga; `404 api_key.not_found` quando não há linha com esse id NESTA organização (não se confirma que existe noutra). O `web/src/api.ts` trata `204` desde `b36661f`. As asserções de `tests/organization.rs` mudaram com intenção (`200→204`, `200→404`).
 
 **Ficheiros.** `server/src/apikeys.rs` (`revoke`), `server/tests/{api_key_scopes,api_v1,organization}.rs`.
+
+### R180 — Só os webhooks tinham guarda anti-SSRF; o resto saía para onde o cliente mandasse (S4)
+
+**Sintoma.** A `validate_public_url` só era chamada pelos webhooks. Um admin de organização podia gravar `odoo_url = http://127.0.0.1:8069` (ou `169.254.169.254`) e o login seguinte de qualquer membro mandava a PASSWORD para lá; o emissor OIDC era descoberto com até 5 redirects e sem timeout; o `PROPFIND` do WebDAV e o Ollama também saíam sem guarda. Nos webhooks a validação e a ligação resolviam DNS em separado — um nome podia responder público ao teste e interno à ligação (rebinding). E `::ffff:127.0.0.1`, NAT64 e 6to4 não estavam na lista.
+
+**Regra.** Nenhum `reqwest::Client` fora do `net_guard` (catraca `clientes_reqwest=0`). URL de cliente → `state.outbound.tenant()` + `check_tenant_url` (ao ligar) / `check_tenant_config_url` (ao gravar: 400 com razão); URL do operador → `operator()` (rede privada sim, link-local/metadados não); OIDC → `outbound.oidc()`, que valida CADA pedido do fluxo (o `jwks_uri`
+**Ficheiros.** `server/crates/delonix-meet-core/src/egress.rs`, `server/src/net_guard.rs`, `server/src/{auth,apikeys,odoo,odoo_sso,org,storage,webhooks,ai,lib,config}.rs`, `server/tests/egress_guard.rs` (a provisão recusa antes de escrever; o login Odoo NÃO abre ligação a `127.0.0.1` sem allowlist e abre com ela; recusas ao gravar com controlo positivo).

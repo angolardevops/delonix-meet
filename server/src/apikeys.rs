@@ -979,7 +979,7 @@ async fn ensure_provisioning_user(state: &AppState) -> Result<Uuid, ApiError> {
     request_body = ProvisionOrgReq,
     responses(
         (status = 200, body = ProvisionedOrg),
-        (status = 400, description = "Nome vazio/longo, `odoo_db` sem `odoo_company_id`, ou `scopes` inválidos (`api_key.scopes_empty`, `api_key.unknown_scope`).", body = crate::openapi::ErrorBody),
+        (status = 400, description = "Nome vazio/longo, `odoo_db` sem `odoo_company_id`, `odoo_url`/`sso.issuer_url` a apontar para um endereço interno (guarda de saída), ou `scopes` inválidos (`api_key.scopes_empty`, `api_key.unknown_scope`).", body = crate::openapi::ErrorBody),
         (status = 401, description = "Segredo ausente, errado, ou provisionamento desactivado.", body = crate::openapi::ErrorBody),
         (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
     )
@@ -1007,6 +1007,24 @@ pub async fn v1_provision_org(
     }
     // Antes de criar a organização: um escopo inválido não deixa uma org a meio.
     let key_scopes = policy::scopes_for_new_key(req.scopes.as_deref())?;
+    // Os URLs para onde o servidor vai sair (login Odoo, descoberta OIDC) passam
+    // pela guarda anti-SSRF AQUI, antes de qualquer escrita (R180).
+    if let Some(u) = req
+        .odoo_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+    {
+        state.outbound.check_tenant_config_url(u).await?;
+    }
+    if let Some(i) = req
+        .sso
+        .as_ref()
+        .map(|s| s.issuer_url.trim())
+        .filter(|i| !i.is_empty())
+    {
+        state.outbound.check_tenant_config_url(i).await?;
+    }
 
     let service_user_id = ensure_provisioning_user(&state).await?;
 
