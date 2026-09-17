@@ -59,6 +59,9 @@ pub struct OdooUser {
     /// o `Option` — desserializar isto como String falha em contas sem email.
     #[serde(default)]
     pub email: Option<serde_json::Value>,
+    /// Ids dos `res.groups` (ADR-0008 §9). Ausente numa resposta antiga = não lidos.
+    #[serde(default)]
+    pub groups_id: Option<Vec<i64>>,
 }
 
 impl OdooUser {
@@ -80,7 +83,7 @@ const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 /// A leitura do directório completo é mais pesada que um login.
 const SYNC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// Só se relê a lista de utilizadores quando a última é mais velha que isto.
-const SYNC_MAX_AGE_SECS: i64 = 3600;
+pub(crate) const SYNC_MAX_AGE_SECS: i64 = 3600;
 
 /// Autentica no Odoo e devolve a sessão (uid + empresa + cookie).
 ///
@@ -190,7 +193,7 @@ pub async fn active_users(
             "args": [
                 [["active", "=", true], ["share", "=", false],
                  ["company_id", "=", session.company_id]],
-                ["login", "name", "email"]
+                ["login", "name", "email", "groups_id"]
             ],
             "kwargs": { "context": {} }
         }
@@ -223,6 +226,143 @@ pub async fn active_users(
     )
     .unwrap_or_default();
     Ok(users)
+}
+
+async fn call_kw(
+    out: &crate::net_guard::Outbound,
+    odoo_url: &str,
+    session: &OdooSession,
+    model: &str,
+    domain: serde_json::Value,
+    fields: serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
+    out.check_tenant_url(odoo_url).await?;
+    let body = serde_json::json!({
+        "jsonrpc": "2.0", "method": "call", "id": 1,
+        "params": {"model": model, "method": "search_read", "args": [domain, fields],
+                   "kwargs": {"context": {}}}
+    });
+    let json: serde_json::Value = tokio::time::timeout(
+        SYNC_TIMEOUT,
+        out.tenant()
+            .post(format!(
+                "{}/web/dataset/call_kw",
+                odoo_url.trim_end_matches('/')
+            ))
+            .header(
+                reqwest::header::COOKIE,
+                format!("session_id={}", session.session_id),
+            )
+            .json(&body)
+            .send(),
+    )
+    .await??
+    .json()
+    .await?;
+    if let Some(err) = json.get("error") {
+        anyhow::bail!("Odoo call_kw {model} falhou: {err}");
+    }
+    Ok(json
+        .get("result")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null))
+}
+
+/// Ids de `res.groups` → id externo (`modulo.nome`), por `ir.model.data`.
+/// Grupos sem id externo ficam de fora (não são mapeáveis).
+pub async fn group_external_ids(
+    out: &crate::net_guard::Outbound,
+    odoo_url: &str,
+    session: &OdooSession,
+    ids: &[i64],
+) -> anyhow::Result<std::collections::HashMap<i64, String>> {
+    if ids.is_empty() {
+        return Ok(Default::default());
+    }
+    let rows = call_kw(
+        out,
+        odoo_url,
+        session,
+        "ir.model.data",
+        serde_json::json!([["model", "=", "res.groups"], ["res_id", "in", ids]]),
+        serde_json::json!(["module", "name", "res_id"]),
+    )
+    .await?;
+    Ok(rows
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|r| {
+                    Some((
+                        r.get("res_id")?.as_i64()?,
+                        format!(
+                            "{}.{}",
+                            r.get("module")?.as_str()?,
+                            r.get("name")?.as_str()?
+                        ),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Departamento de cada utilizador (`hr.employee`). `Err` quando o módulo `hr`
+/// não existe ou não se lê — quem chama não mexe em departamentos nesse caso.
+pub async fn employee_departments(
+    out: &crate::net_guard::Outbound,
+    odoo_url: &str,
+    session: &OdooSession,
+) -> anyhow::Result<std::collections::HashMap<i32, (String, String)>> {
+    let rows = call_kw(
+        out,
+        odoo_url,
+        session,
+        "hr.employee",
+        serde_json::json!([
+            ["company_id", "=", session.company_id],
+            ["user_id", "!=", false]
+        ]),
+        serde_json::json!(["user_id", "department_id"]),
+    )
+    .await?;
+    let mut map = std::collections::HashMap::new();
+    for r in rows.as_array().into_iter().flatten() {
+        let user = r
+            .get("user_id")
+            .and_then(|u| u.get(0))
+            .and_then(|u| u.as_i64());
+        let dept = r.get("department_id").and_then(|d| d.as_array());
+        if let (Some(u), Some(d)) = (user, dept) {
+            if let (Some(id), Some(name)) = (
+                d.first().and_then(|x| x.as_i64()),
+                d.get(1).and_then(|x| x.as_str()),
+            ) {
+                map.insert(u as i32, (format!("hr.department:{id}"), name.to_string()));
+            }
+        }
+    }
+    Ok(map)
+}
+
+/// Uma conta nova pode nascer por esta entrada? Regras de entrada da org
+/// (ADR-0008 §11): criar na primeira entrada, e só para domínios aprovados.
+pub async fn may_create_account(state: &AppState, org_id: Uuid, email: &str) -> bool {
+    match crate::directory::entry_rules_of(&state.db, org_id).await {
+        Ok(rules) => {
+            if !rules.create_account_on_first_login {
+                return false;
+            }
+            let domain = email.rsplit('@').next().unwrap_or("");
+            rules.approved_domains.is_empty()
+                || rules
+                    .approved_domains
+                    .iter()
+                    .any(|d| d.eq_ignore_ascii_case(domain))
+        }
+        // Sem ler as regras, falha fechado para contas NOVAS.
+        Err(_) => false,
+    }
 }
 
 /// Garante a organização Delonix que projeta esta empresa Odoo.
@@ -407,19 +547,9 @@ pub async fn upsert_member(
     };
 
     // Nunca DESPROMOVE: um admin nomeado no Delonix não perde o papel só
-    // porque não é administrador no Odoo.
-    let role = if admin { "admin" } else { "member" };
-    sqlx::query(
-        "INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, $3)
-         ON CONFLICT (org_id, user_id) DO UPDATE
-         SET role = CASE WHEN org_members.role = 'admin' THEN 'admin'
-                         ELSE EXCLUDED.role END",
-    )
-    .bind(org_id)
-    .bind(user_id)
-    .bind(role)
-    .execute(&state.db)
-    .await?;
+    // porque não é administrador no Odoo. O papel é `role_id` (ADR-0008 §3): a
+    // pertença e a subida a admin vivem em `org.rs`.
+    crate::org::ensure_odoo_membership(state, org_id, user_id, admin).await?;
 
     Ok(user_id)
 }
@@ -495,7 +625,27 @@ pub fn spawn_directory_sync(
                 return;
             }
         };
+        // Grupos (id externo) e departamentos: leituras à parte. Se falham, o
+        // papel e o departamento não mudam (ausência de dado não é «saiu do grupo»).
+        let all_group_ids: Vec<i64> = users
+            .iter()
+            .flat_map(|u| u.groups_id.clone().unwrap_or_default())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let group_names = group_external_ids(&state.outbound, &odoo_url, &session, &all_group_ids)
+            .await
+            .map_err(|e| tracing::warn!(error = %e, %org_id, "grupos do Odoo não lidos"))
+            .ok();
+        let departments = employee_departments(&state.outbound, &odoo_url, &session)
+            .await
+            .map_err(
+                |e| tracing::info!(error = %e, %org_id, "departamentos do Odoo não lidos (hr)"),
+            )
+            .ok();
         let (mut ok, mut skipped) = (0usize, 0usize);
+        let (mut role_changes, mut conflicts) = (0usize, 0usize);
+        let mut present = Vec::new();
         for u in &users {
             let Some(email) = u.address() else {
                 skipped += 1; // sem endereço utilizável não há como entrar
@@ -506,18 +656,78 @@ pub fn spawn_directory_sync(
             } else {
                 u.name.clone()
             };
+            let exists: bool =
+                sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM users WHERE email = $1)")
+                    .bind(&email)
+                    .fetch_one(&state.db)
+                    .await
+                    .unwrap_or(true);
+            if !exists && !may_create_account(&state, org_id, &email).await {
+                skipped += 1;
+                continue;
+            }
             match upsert_member(&state, org_id, &email, &display, u.id, false).await {
-                Ok(_) => ok += 1,
+                Ok(user_id) => {
+                    ok += 1;
+                    present.push(user_id);
+                    let groups: Option<std::collections::BTreeSet<String>> =
+                        match (&group_names, &u.groups_id) {
+                            (Some(names), Some(ids)) => {
+                                Some(ids.iter().filter_map(|i| names.get(i).cloned()).collect())
+                            }
+                            _ => None,
+                        };
+                    let dept = departments.as_ref().and_then(|d| d.get(&u.id));
+                    match crate::org::apply_odoo_attributes(
+                        &state,
+                        org_id,
+                        user_id,
+                        groups.as_ref(),
+                        dept.map(|(r, n)| (r.as_str(), n.as_str())),
+                    )
+                    .await
+                    {
+                        Ok(crate::org::OdooApplied::RoleChanged) => role_changes += 1,
+                        Ok(crate::org::OdooApplied::Conflict) => conflicts += 1,
+                        Ok(crate::org::OdooApplied::Unchanged) => {}
+                        Err(e) => {
+                            tracing::warn!(error = %e, user = %u.login, "grupos/departamento não aplicados")
+                        }
+                    }
+                }
                 Err(e) => {
                     tracing::warn!(error = %e, user = %u.login, "utilizador Odoo não sincronizado");
                     skipped += 1;
                 }
             }
         }
-        let _ = sqlx::query("UPDATE organizations SET odoo_synced_at = now() WHERE id = $1")
-            .bind(org_id)
-            .execute(&state.db)
-            .await;
+        // A lista do Odoo é COMPLETA aqui (todos os internos activos da empresa).
+        let suspend = crate::directory::entry_rules_of(&state.db, org_id)
+            .await
+            .map(|r| r.suspend_on_odoo_exit)
+            .unwrap_or(false);
+        let suspended = if suspend {
+            crate::org::suspend_odoo_leavers(&state, org_id, &present)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, %org_id, "saídas do Odoo não aplicadas");
+                    0
+                })
+        } else {
+            0
+        };
+        let _ = sqlx::query(
+            "UPDATE organizations SET odoo_synced_at = now(), odoo_last_sync = $2 WHERE id = $1",
+        )
+        .bind(org_id)
+        .bind(
+            serde_json::json!({"source": "pull", "at": chrono::Utc::now(), "synced": ok,
+                "skipped": skipped, "role_changes": role_changes, "conflicts": conflicts,
+                "suspended": suspended, "groups_read": group_names.is_some(),
+                "departments_read": departments.is_some()}),
+        )
+        .execute(&state.db)
+        .await;
         tracing::info!(%org_id, sincronizados = ok, ignorados = skipped, "directório Odoo sincronizado");
     });
 }
@@ -565,6 +775,13 @@ pub async fn try_first_login(
             return None;
         }
     };
+
+    // Regras de entrada da org (ADR-0008 §11): criar conta na primeira entrada,
+    // e só para domínios aprovados.
+    if !may_create_account(state, org_id, email).await {
+        tracing::info!(%org_id, "primeira entrada pelo Odoo recusada pelas regras de entrada");
+        return None;
+    }
 
     // O email de entrada é a identidade: é o que o utilizador escreveu e o
     // que a sessão dele vai carregar. O `login` do Odoo pode ser outra coisa.
@@ -614,6 +831,7 @@ mod tests {
             login: login.into(),
             name: "X".into(),
             email: Some(email),
+            groups_id: None,
         }
     }
 

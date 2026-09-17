@@ -436,6 +436,9 @@ pub async fn v1_create_room(
         .chars()
         .take(120)
         .collect();
+    // `sessions.create` sobre o DONO da sala, na org da chave (ADR-0008 §1). A
+    // chave não ganha nem empresta capacidades.
+    crate::org::require_session_create(&state, key.owner_id, Some(key.org_id)).await?;
     let room = crate::rooms::insert_room(
         &state.db,
         key.owner_id,

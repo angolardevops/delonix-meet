@@ -10,7 +10,7 @@
 //! - `POST   /api/orgs/{org_id}/stream-destinations/{id}/rotate-key`  método personalizado: nova chave, devolvida UMA vez
 //! - `DELETE /api/orgs/{org_id}/stream-destinations/{id}`     `204`
 //!
-//! Só administradores da org. Um id de outra org e um id inexistente dão a
+//! Só quem tem `broadcast.manage_rtmp_keys` (o `admin` de sistema, como antes). Um id de outra org e um id inexistente dão a
 //! MESMA resposta (`404`).
 
 use axum::{
@@ -105,6 +105,19 @@ struct Cursor {
     id: Uuid,
 }
 
+/// `broadcast.manage_rtmp_keys` (ADR-0008 §4): o `admin` de sistema tem-na, como hoje.
+async fn require_rtmp_keys(state: &AppState, org_id: Uuid, user: Uuid) -> Result<(), ApiError> {
+    crate::org::require_capability(
+        state,
+        org_id,
+        user,
+        delonix_meet_domain::identity::authorization::Capability::BroadcastManageRtmpKeys,
+        delonix_meet_domain::identity::authorization::ResourceScope::Organization,
+    )
+    .await
+    .map(|_| ())
+}
+
 fn secret_box(state: &AppState) -> Result<&delonix_meet_core::secret_box::SecretBox, ApiError> {
     state.config.secret_box.as_deref().ok_or_else(|| {
         DomainError::precondition(
@@ -147,7 +160,7 @@ pub async fn list(
     Path(org_id): Path<Uuid>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<StreamDestinationPage>, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    require_rtmp_keys(&state, org_id, auth.user_id).await?;
     let page = PageRequest {
         page_size: q.page_size,
         page_token: q.page_token,
@@ -197,7 +210,7 @@ pub async fn create(
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateStreamDestinationReq>,
 ) -> Result<Response, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    require_rtmp_keys(&state, org_id, auth.user_id).await?;
     let kind = rules::Kind::parse(&req.kind)?;
     let label = rules::validate_label(&req.label)?;
     let url = rules::validate_url(&req.url)?;
@@ -274,7 +287,7 @@ pub async fn get_one(
     auth: AuthUser,
     Path((org_id, dest_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<StreamDestination>, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    require_rtmp_keys(&state, org_id, auth.user_id).await?;
     Ok(Json(fetch(&state, org_id, dest_id).await?))
 }
 
@@ -297,7 +310,7 @@ pub async fn update(
     Path((org_id, dest_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<UpdateStreamDestinationReq>,
 ) -> Result<Json<StreamDestination>, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    require_rtmp_keys(&state, org_id, auth.user_id).await?;
     // Valida tudo ANTES de escrever (sem escritas parciais).
     let label = req
         .label
@@ -353,7 +366,7 @@ pub async fn rotate_key(
     Path((org_id, dest_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<RotateKeyReq>,
 ) -> Result<Json<StreamDestinationWithKey>, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    require_rtmp_keys(&state, org_id, auth.user_id).await?;
     rules::validate_key(&req.stream_key)?;
     if req.stream_key.is_empty() {
         return Err(DomainError::invalid(
@@ -406,7 +419,7 @@ pub async fn delete(
     auth: AuthUser,
     Path((org_id, dest_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    require_rtmp_keys(&state, org_id, auth.user_id).await?;
     let r = sqlx::query("DELETE FROM stream_destinations WHERE id = $1 AND org_id = $2")
         .bind(dest_id)
         .bind(org_id)
