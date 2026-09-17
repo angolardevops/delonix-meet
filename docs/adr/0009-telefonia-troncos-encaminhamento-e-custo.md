@@ -84,7 +84,7 @@ chamar os bombeiros.
 | Porta (domínio) | Adaptador real | Falso (só testes) |
 |---|---|---|
 | `SipControl` | `telephony_esl::FreeswitchSipControl`: ESL `version`, `uptime s`, `show channels count`, `global_getvar outbound_codec_prefs`, `sofia xmlstatus gateway dlx-<id>`, `limit_usage hash delonix_trunk <id>`; «reiniciar» = `sofia profile <p> killgw` + `rescan`. SBC por JSON-RPC do Kamailio (`core.version`, `core.uptime`) pelo cliente `operator()` do `net_guard` | servidor ESL TCP em `tests/telephony.rs` |
-| `CallOriginator` | ESL `api originate {vars}[leg]sofia/gateway/dlx-A/N\|[leg]sofia/gateway/dlx-B/N &app` numa ligação própria; `+OK` = atendida (latência medida), `-ERR CAUSA` = não | o mesmo servidor ESL falso |
+| `CallOriginator` | ESL `bgapi originate {vars}[leg]sofia/gateway/dlx-A/N\|[leg]sofia/gateway/dlx-B/N &app` com `Job-UUID`, numa ligação própria que subscreve `CHANNEL_CREATE/PROGRESS/PROGRESS_MEDIA/ANSWER/HANGUP/HANGUP_COMPLETE` e `BACKGROUND_JOB` filtrados por `delonix_call_id`: entrega `CallEvent` (Dialing, Ringing, AttemptFailed, Answered, Ended) a um `CallEventSink`. `AfterAnswer::{TestTone, Conference, RoomBridge}` | o mesmo servidor ESL falso |
 | `CdrSource` | `telephony_cdr::FreeswitchJsonCdr` (formato `mod_json_cdr`) | payloads JSON nos testes |
 | `SmsGateways` | `sms::enqueue` (a regra do ADR-0005, extraída de `send_message`, sem cópia) | — |
 
@@ -144,7 +144,7 @@ gerados. O plano muda por org e a qualquer hora; ficheiros exigiam volume partil
   diz, `respond 403/404/503` para bloqueado / sem regra / sem tronco (nunca cai num plano por
   omissão).
 - `section=directory`, `purpose=gateways`: os gateways `dlx-<trunk_id>` de todos os troncos
-  activos, com a password decifrada — o perfil sofia usa `<domain name="all" parse="true"/>`.
+  activos, com a password decifrada — o perfil sofia usa `<domain name="delonix-trunks" parse="true"/>` (um nome, não `all`: ver §10).
   É a única saída de passwords em claro, e só no listener interno com o segredo.
 
 ### 8. SMS no mesmo ecrã
@@ -166,16 +166,40 @@ em `web/e2e/isolamento.mjs`. O pedido falava em `dial-plan:test`; seguiu-se a co
 
 | Peça | Estado | O que falta para ligar |
 |---|---|---|
-| FreeSWITCH com ESL (`mod_event_socket`) | **não provado** contra real | subir FreeSWITCH, `TELEPHONY_ESL_ADDR/PASSWORD`; confirmar o XML de `sofia xmlstatus gateway` e o `originate` com failover e `origination_uuid` |
-| `mod_json_cdr` | **não provado** contra real | `url=http://<interno>/internal/v1/telephony/call-records`, `cred=freeswitch:<VOICE_INTERNAL_SECRET>`, `encode-values=true`, `log-dir` |
-| `mod_xml_curl` (dialplan + gateways) | **não provado** contra real | binding `dialplan` e `directory`, `gateway-credentials`, perfil `external` com `<domain name="all" parse="true"/>`, `mod_hash` para `limit` |
-| Kamailio `jsonrpcs` | **não provado** contra real | `loadmodule "jsonrpcs.so"` + `xhttp`, `TELEPHONY_KAMAILIO_RPC_URL` |
+| FreeSWITCH com ESL (`mod_event_socket`) | **provado** contra `delonix-dev/freeswitch:1.11.3` (2026-09-17) | produção: FreeSWITCH fora do loopback, TLS/SRTP e NAT não foram provados |
+| `mod_json_cdr` | **provado**: CDR de cada perna chega, custo ao preço em vigor, reenvio → `200 duplicate` | `cred`, `encode=false`, `log-b-leg=true`, `log-dir` + `log-http-and-disk` (ver §10) |
+| `mod_xml_curl` (dialplan + gateways) | **provado**: gateways `dlx-*` carregados, chamada do PBX encaminhada pelo plano, `limit_execute` a recusar com o tronco cheio e a emergência a passar | perfil com `<domain name="delonix-trunks" parse="true"/>` (NÃO `all`, §10) |
+| Kamailio `jsonrpcs` | **não provado** (sem imagem) | `loadmodule "jsonrpcs.so"` + `xhttp`, `TELEPHONY_KAMAILIO_RPC_URL` |
 | Troncos das operadoras | inexistentes | contratos Unitel/Africell/Movicel/internacional; credenciais e IPs |
-| Ponte FreeSWITCH↔SFU | **não existe** (`sip-realidade.md` §3) | sem ela, `AfterAnswer::Conference` põe a pessoa na conferência do FreeSWITCH, não na reunião |
+| Ponte FreeSWITCH↔SFU | **não existe** (`sip-realidade.md` §3). `AfterAnswer::RoomBridge` está provado até ao INVITE `room-<sala>` chegar a um UA SIP na morada da ponte | a frente D tem de pôr um UA SIP na ponte; RTP cru exige recompilar com `mod_rtp` |
 | `rtpengine` | não medido | nada neste ADR lê o rtpengine; o ecrã mostra-o só se configurado |
 | Agente SMS: bateria e saldo | o agente (`sms-gateway/`) **não** os envia ainda | ler bateria (Android) e saldo (USSD) no agente |
 | Recibos de entrega SMS | não existem (ADR-0005) | `deliver_sm` |
 | Prefixos das operadoras | «A CONFIRMAR» (ADR-0005) | regulador |
+
+## 10. O que o FreeSWITCH real ensinou (2026-09-17, 1.11.3)
+
+Seis defeitos que os testes com ESL falso não podiam ver, todos corrigidos e com prova em
+`web/e2e/telefonia-freeswitch.mjs` (20/20) e `server/tests/telephony_freeswitch.rs` (4/4):
+
+1. **Gateways em `<users>` directo no domínio são ignorados em silêncio** pelo `mod_sofia`
+   (`parse_domain_tag` só lê `<user>` ou `<groups><group><users><user>`): 0 gateways, sem erro.
+2. **`<domain name="delonix-trunks" parse="true"/>` (um nome, não `all`: ver §10) só vê o directório ESTÁTICO**; um domínio com nome
+   passa pelo `xml_curl` (`purpose=gateways`).
+3. **`origination_uuid` global parte o failover**: a segunda perna reutiliza o uuid e falha com
+   `DESTINATION_OUT_OF_ORDER`. Vai só na primeira perna; as seguintes seguem-se por
+   `delonix_call_id` (filtro ESL e `hupall`).
+4. **Uma chamada atendida e desligada em menos de 1 s tem `billsec` 0**: atendida lê-se do
+   `answer_epoch`.
+5. **Dois inquilinos com o mesmo domínio SIP**: a chamada que entrou pelo PBX de uma org saiu
+   pelos troncos da outra. O domínio é único (`409 telephony.sip_domain_taken`).
+6. **O `CHANNEL_HANGUP_COMPLETE` de uma tentativa falhada chega DEPOIS do atendimento da
+   seguinte**: `AttemptFailed` sai no `CHANNEL_HANGUP`.
+
+Além disso: numa chamada pelo plano, o CDR que conta é o de cada **perna B** (tem
+`sip_gateway_name`; uma por tentativa, que é o que dá o ASR por operadora). Por isso o
+`json_cdr` corre com `log-b-leg=true`, as variáveis da org vão com `export`, e a perna A (o
+PBX) leva `delonix_cdr_skip=true`, que a ingestão aceita com `204`.
 
 ## Consequências
 

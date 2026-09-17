@@ -16,7 +16,7 @@
 //!   `limit_execute` para os canais máximos — excepto na emergência, que nunca
 //!   é travada por limite de canais —, gravação só quando a regra o diz).
 //! - `section=directory`, `purpose=gateways`: os gateways de todos os troncos
-//!   activos (o perfil sofia usa `<domain name="all" parse="true"/>`), com a
+//!   activos (o perfil sofia usa `<domain name="delonix-trunks" parse="true"/>`; `all` só lê o directório estático), com a
 //!   password decifrada — por isso só no listener interno e com o segredo.
 //!
 //! Autenticação: `VOICE_INTERNAL_SECRET` por HTTP Basic (`gateway-credentials`).
