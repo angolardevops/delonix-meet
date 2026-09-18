@@ -315,6 +315,20 @@ async fn issue_tokens(
     })
 }
 
+/// Emite uma sessão NOVA (tokens + cookie de refresh) para `user`, com a
+/// MESMA resposta que `register`/`login` devolvem. Usado por quem acaba de
+/// aceitar um convite de organização (`org::accept_invite`): a conta acabada
+/// de nascer entra logada, sem ter de fazer login a seguir.
+pub(crate) async fn login_response(
+    state: &AppState,
+    user: crate::users::UserPublic,
+    headers: &HeaderMap,
+    ip: String,
+) -> Result<Response, ApiError> {
+    let session = SessionMeta::fresh(headers, ip);
+    Ok(auth_ok(state, issue_tokens(state, user, session).await?))
+}
+
 /// Registo público = criar uma ORGANIZAÇÃO. O Delonix Meet não aceita contas
 /// individuais: cria-se a organização com o primeiro utilizador (admin), e o
 /// domínio do email do admin passa a ser o domínio da organização (único).

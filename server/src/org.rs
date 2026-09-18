@@ -4,11 +4,14 @@
 //! employees e grupos. Membros veem o diretório e podem iniciar chamadas.
 
 use axum::{
-    extract::{Path, State},
+    extract::{ConnectInfo, Path, State},
+    http::HeaderMap,
+    response::Response,
     Json,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -185,6 +188,10 @@ pub struct Employee {
     /// pode enviar: isso é a política da org.
     #[sqlx(default)]
     pub can_sms: bool,
+    /// Bloqueado (suspenso) por um admin — ver migração 0054. Distinto de ser
+    /// arquivado: continua membro, só sem acesso enquanto durar.
+    #[sqlx(default)]
+    pub suspended_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -202,8 +209,15 @@ pub async fn role_in_org(
     org_id: Uuid,
     user_id: Uuid,
 ) -> Result<Option<String>, ApiError> {
+    // `suspended_at IS NULL` aqui, no ÚNICO sítio de onde `require_admin` e
+    // `require_member` (e os três chamadores externos — sms_notify, sms,
+    // stream_destinations) derivam: um membro suspenso deixa de contar como
+    // membro para efeitos de autorização, sem deixar de o SER (não passa por
+    // `archived_at`, por isso reaparece de imediato ao ser reactivado — ver
+    // migração 0054).
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL",
+        "SELECT role FROM org_members
+         WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL AND suspended_at IS NULL",
     )
     .bind(org_id)
     .bind(user_id)
@@ -432,18 +446,13 @@ pub struct AddEmployeeReq {
     pub branch_id: Option<Uuid>,
 }
 
-pub async fn add_employee(
-    State(state): State<Arc<AppState>>,
-    auth: AuthUser,
-    Path(org_id): Path<Uuid>,
-    Json(req): Json<AddEmployeeReq>,
-) -> Result<Json<Employee>, ApiError> {
-    require_admin(&state, org_id, auth.user_id).await?;
-    let email = req.email.trim().to_lowercase();
-    if !email.contains('@') {
-        return Err(ApiError::BadRequest("email inválido".into()));
-    }
-    // Org-first: o email do colaborador tem de ser do domínio da organização.
+/// Org-first: o email de quem entra (colaborador OU convidado) tem de ser do
+/// domínio da organização. Orgs legadas sem domínio definido (`email_domain`
+/// vazio) não são restringidas. Partilhado por `add_employee` e as duas
+/// entradas de convite (`create_invite`, `bulk_create_invites`) — a mesma
+/// regra em três sítios já ficou esquecida uma vez (ver comentário sobre a
+/// R25/`ForeignOrg` abaixo); não duplicar de novo.
+async fn require_org_domain(state: &AppState, org_id: Uuid, email: &str) -> Result<(), ApiError> {
     let org_domain: Option<(String,)> =
         sqlx::query_as("SELECT email_domain FROM organizations WHERE id = $1")
             .bind(org_id)
@@ -456,6 +465,21 @@ pub async fn add_employee(
             )));
         }
     }
+    Ok(())
+}
+
+pub async fn add_employee(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<AddEmployeeReq>,
+) -> Result<Json<Employee>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+    let email = req.email.trim().to_lowercase();
+    if !email.contains('@') {
+        return Err(ApiError::BadRequest("email inválido".into()));
+    }
+    require_org_domain(&state, org_id, &email).await?;
     let role = req.role.as_deref().unwrap_or("member");
     if !matches!(role, "admin" | "member") {
         return Err(ApiError::BadRequest("role inválido".into()));
@@ -544,7 +568,8 @@ pub async fn add_employee(
     .await?;
 
     let emp: Employee = sqlx::query_as(
-        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name
+        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name,
+                  m.suspended_at
            FROM org_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN branches b ON b.id = m.branch_id
            WHERE m.org_id = $1 AND m.user_id = $2"#,
@@ -579,7 +604,8 @@ pub async fn list_employees(
                   (SELECT MAX(a.created_at) FROM audit_logs a WHERE a.actor_id = m.user_id) AS last_active,
                   CASE WHEN $2 OR m.user_id = $3 THEN m.phone_e164 END AS phone,
                   CASE WHEN $2 OR m.user_id = $3 THEN m.phone_source END AS phone_source,
-                  (m.phone_e164 IS NOT NULL AND NOT u.sms_contact_opt_out) AS can_sms
+                  (m.phone_e164 IS NOT NULL AND NOT u.sms_contact_opt_out) AS can_sms,
+                  m.suspended_at
            FROM org_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN branches b ON b.id = m.branch_id
            WHERE m.org_id = $1 AND m.archived_at IS NULL ORDER BY u.username"#,
@@ -597,6 +623,10 @@ pub struct UpdateEmployeeReq {
     pub role: Option<String>,
     pub title: Option<String>,
     pub branch_id: Option<Uuid>,
+    /// `Some(true)` suspende (bloqueia acesso, mantém o membro); `Some(false)`
+    /// reactiva; `None` não mexe. Ver migração 0054.
+    #[serde(default)]
+    pub suspended: Option<bool>,
 }
 
 pub async fn update_employee(
@@ -610,6 +640,13 @@ pub async fn update_employee(
         if !matches!(role.as_str(), "admin" | "member") {
             return Err(ApiError::BadRequest("role inválido".into()));
         }
+    }
+    // Mesma guarda de `remove_employee`: suspender-se a si próprio deixava um
+    // admin sem admins na org se fosse o único, e ninguém o reactivava.
+    if req.suspended == Some(true) && user_id == auth.user_id {
+        return Err(ApiError::BadRequest(
+            "não podes suspender o teu próprio acesso".into(),
+        ));
     }
     if let Some(role) = &req.role {
         sqlx::query("UPDATE org_members SET role = $1 WHERE org_id = $2 AND user_id = $3")
@@ -638,8 +675,47 @@ pub async fn update_employee(
                 .await?;
         }
     }
+    if let Some(suspended) = req.suspended {
+        if suspended {
+            sqlx::query(
+                "UPDATE org_members SET suspended_at = NOW(), suspended_by = $3
+                 WHERE org_id = $1 AND user_id = $2 AND suspended_at IS NULL",
+            )
+            .bind(org_id)
+            .bind(user_id)
+            .bind(auth.user_id)
+            .execute(&state.db)
+            .await?;
+            crate::audit::log(
+                &state.db,
+                Some(org_id),
+                auth.user_id,
+                "member.suspended",
+                &user_id.to_string(),
+            )
+            .await;
+        } else {
+            sqlx::query(
+                "UPDATE org_members SET suspended_at = NULL, suspended_by = NULL
+                 WHERE org_id = $1 AND user_id = $2",
+            )
+            .bind(org_id)
+            .bind(user_id)
+            .execute(&state.db)
+            .await?;
+            crate::audit::log(
+                &state.db,
+                Some(org_id),
+                auth.user_id,
+                "member.reactivated",
+                &user_id.to_string(),
+            )
+            .await;
+        }
+    }
     let emp: Employee = sqlx::query_as(
-        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name
+        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name,
+                  m.suspended_at
            FROM org_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN branches b ON b.id = m.branch_id
            WHERE m.org_id = $1 AND m.user_id = $2"#,
@@ -681,6 +757,534 @@ pub async fn remove_employee(
     )
     .await;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------- invites ----------
+//
+// Convite POR LINK — este produto não tem SMTP (grep por `smtp`/`lettre`/
+// `mailer` em server/ não devolve nada). O admin gera o link
+// (`create_invite`/`bulk_create_invites`), COPIA-O e envia-o pelo canal que
+// preferir; a UI diz isso mesmo. `add_employee` continua a existir para o
+// admin que quer definir a palavra-passe de alguém directamente
+// (break-glass); o convite é o caminho normal para "juntar alguém à
+// organização" sem o admin saber a palavra-passe de ninguém.
+//
+// Não há fusão de contas: se `accept_invite` encontra um `users` já com esse
+// email, recusa com 409 e manda a pessoa fazer login normal — juntar um
+// convite a uma conta existente é um problema de identidade próprio (que
+// conta e que sessão ganham?) que esta versão não resolve.
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct Invite {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub email: String,
+    pub role: String,
+    pub branch_id: Option<Uuid>,
+    pub branch_name: Option<String>,
+    pub title: String,
+    pub token: String,
+    pub invited_by: Uuid,
+    pub invited_by_name: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub accepted_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+const INVITE_SELECT: &str = r#"
+    SELECT i.id, i.org_id, i.email, i.role, i.branch_id, b.name AS branch_name, i.title,
+           i.token, i.invited_by, u.username AS invited_by_name,
+           i.created_at, i.expires_at, i.accepted_at, i.revoked_at
+    FROM org_invites i
+    JOIN users u ON u.id = i.invited_by
+    LEFT JOIN branches b ON b.id = i.branch_id
+"#;
+
+fn validate_invite_role(role: Option<&str>) -> Result<&str, ApiError> {
+    let role = role.unwrap_or("member");
+    if !matches!(role, "admin" | "member") {
+        return Err(ApiError::BadRequest("role inválido".into()));
+    }
+    Ok(role)
+}
+
+/// `true` se `email` já pertence a um membro ACTIVO (não arquivado) desta org
+/// — convidar alguém que já está dentro não faz sentido, e o índice parcial
+/// de `org_invites` só protege contra convites DUPLICADOS, não contra isto.
+async fn email_is_active_member(
+    state: &AppState,
+    org_id: Uuid,
+    email: &str,
+) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM org_members m JOIN users u ON u.id = m.user_id
+         WHERE m.org_id = $1 AND u.email = $2 AND m.archived_at IS NULL)",
+    )
+    .bind(org_id)
+    .bind(email)
+    .fetch_one(&state.db)
+    .await?)
+}
+
+/// Insere o convite e devolve-o já com `branch_name`/`invited_by_name`
+/// resolvidos — usado por `create_invite` e por cada linha de
+/// `bulk_create_invites`. O token é gerado com o MESMO gerador dos refresh
+/// tokens (`auth::new_refresh_token`, 32 bytes de `OsRng`): aqui não se
+/// guarda o hash porque o token É a chave de consulta pública, não um
+/// segredo comparado no servidor.
+async fn insert_invite(
+    state: &AppState,
+    org_id: Uuid,
+    email: &str,
+    role: &str,
+    branch_id: Option<Uuid>,
+    title: &str,
+    invited_by: Uuid,
+) -> Result<Invite, ApiError> {
+    let (token, _hash) = crate::auth::new_refresh_token();
+    let expires_at = Utc::now() + chrono::Duration::days(14);
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO org_invites (org_id, email, role, branch_id, title, token, invited_by, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+    )
+    .bind(org_id)
+    .bind(email)
+    .bind(role)
+    .bind(branch_id)
+    .bind(title)
+    .bind(&token)
+    .bind(invited_by)
+    .bind(expires_at)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| ApiError::from_unique(e, "já existe um convite pendente para este email"))?;
+
+    let invite: Invite = sqlx::query_as(&format!("{INVITE_SELECT} WHERE i.id = $1"))
+        .bind(id)
+        .fetch_one(&state.db)
+        .await?;
+    Ok(invite)
+}
+
+#[derive(Deserialize)]
+pub struct CreateInviteReq {
+    pub email: String,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub branch_id: Option<Uuid>,
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+/// `POST /api/orgs/{org_id}/invites` — gera um link de convite (admin-only).
+pub async fn create_invite(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<CreateInviteReq>,
+) -> Result<Json<Invite>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+    let email = req.email.trim().to_lowercase();
+    if !email.contains('@') {
+        return Err(ApiError::BadRequest("email inválido".into()));
+    }
+    require_org_domain(&state, org_id, &email).await?;
+    let role = validate_invite_role(req.role.as_deref())?;
+    if email_is_active_member(&state, org_id, &email).await? {
+        return Err(ApiError::Conflict(format!(
+            "{email} já é membro desta organização"
+        )));
+    }
+    let title = req.title.as_deref().unwrap_or("").trim();
+    let invite = insert_invite(
+        &state,
+        org_id,
+        &email,
+        role,
+        req.branch_id,
+        title,
+        auth.user_id,
+    )
+    .await?;
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "invite.created",
+        &email,
+    )
+    .await;
+    Ok(Json(invite))
+}
+
+#[derive(Deserialize)]
+pub struct BulkInviteRow {
+    pub email: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Nome de uma filial EXISTENTE desta org (comparado sem distinguir
+    /// maiúsculas/minúsculas); sem correspondência, fica sem filial — não é
+    /// erro, um CSV exportado de outro sítio raramente bate certo com os
+    /// nomes internos.
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct BulkInviteReq {
+    pub rows: Vec<BulkInviteRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BulkInviteResult {
+    pub email: String,
+    pub ok: bool,
+    pub error: Option<String>,
+    pub invite: Option<Invite>,
+}
+
+/// Resolve o nome de filial de uma linha de CSV contra as filiais EXISTENTES
+/// da org, sem distinguir maiúsculas/minúsculas. Sem correspondência (nome
+/// vazio, em branco, ou que não bate com nenhuma), devolve `None` — não é
+/// erro, é só "sem filial". Função pura (sem BD) para ser testável a sério.
+fn resolve_branch_by_name(branches: &[Branch], name: Option<&str>) -> Option<Uuid> {
+    let name = name?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    branches
+        .iter()
+        .find(|b| b.name.eq_ignore_ascii_case(name))
+        .map(|b| b.id)
+}
+
+/// Uma linha da importação. Erros devolvem-se como texto (não se propagam):
+/// `ApiError` implementa `Display` com a MESMA mensagem que iria para o
+/// cliente num pedido isolado (`#[error("{0}")]` do `thiserror`), por isso
+/// `e.to_string()` chega sem duplicar texto.
+async fn bulk_create_one(
+    state: &AppState,
+    org_id: Uuid,
+    row: &BulkInviteRow,
+    branches: &[Branch],
+    invited_by: Uuid,
+) -> Result<Invite, ApiError> {
+    let email = row.email.trim().to_lowercase();
+    if !email.contains('@') {
+        return Err(ApiError::BadRequest("email inválido".into()));
+    }
+    require_org_domain(state, org_id, &email).await?;
+    let role = validate_invite_role(row.role.as_deref())?;
+    let branch_id = resolve_branch_by_name(branches, row.branch.as_deref());
+    if email_is_active_member(state, org_id, &email).await? {
+        return Err(ApiError::Conflict(format!(
+            "{email} já é membro desta organização"
+        )));
+    }
+    let title = row.title.as_deref().unwrap_or("").trim();
+    insert_invite(state, org_id, &email, role, branch_id, title, invited_by).await
+}
+
+/// `POST /api/orgs/{org_id}/invites/bulk` — importação CSV (admin-only).
+/// Cada linha é independente (não é tudo-ou-nada, mesmo padrão de
+/// `MembersCard::applyToSelected` no frontend): uma linha malformada não
+/// bloqueia as restantes, e o admin vê exactamente qual falhou e porquê.
+pub async fn bulk_create_invites(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<BulkInviteReq>,
+) -> Result<Json<Vec<BulkInviteResult>>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+    if req.rows.len() > 500 {
+        return Err(ApiError::BadRequest(
+            "máximo de 500 linhas por importação".into(),
+        ));
+    }
+    let branches: Vec<Branch> = sqlx::query_as(
+        "SELECT id, org_id, name, location, created_at FROM branches WHERE org_id = $1",
+    )
+    .bind(org_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut out = Vec::with_capacity(req.rows.len());
+    for row in &req.rows {
+        let email = row.email.trim().to_lowercase();
+        match bulk_create_one(&state, org_id, row, &branches, auth.user_id).await {
+            Ok(invite) => out.push(BulkInviteResult {
+                email,
+                ok: true,
+                error: None,
+                invite: Some(invite),
+            }),
+            Err(e) => out.push(BulkInviteResult {
+                email,
+                ok: false,
+                error: Some(e.to_string()),
+                invite: None,
+            }),
+        }
+    }
+    let ok_count = out.iter().filter(|r| r.ok).count();
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "invite.bulk_imported",
+        &format!("{ok_count}/{} linhas", out.len()),
+    )
+    .await;
+    Ok(Json(out))
+}
+
+/// `GET /api/orgs/{org_id}/invites` — só os PENDENTES (admin-only): é o que
+/// alimenta a contagem "convidados" e a lista de convites por resolver.
+pub async fn list_invites(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<Vec<Invite>>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+    let invites: Vec<Invite> = sqlx::query_as(&format!(
+        "{INVITE_SELECT} WHERE i.org_id = $1 AND i.accepted_at IS NULL AND i.revoked_at IS NULL \
+         AND i.expires_at > NOW() ORDER BY i.created_at DESC"
+    ))
+    .bind(org_id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(invites))
+}
+
+/// `DELETE /api/orgs/{org_id}/invites/{invite_id}` — admin-only; só actua
+/// sobre um convite ainda pendente (404 se já foi aceite/revogado, ou não
+/// existe nesta org).
+pub async fn revoke_invite(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((org_id, invite_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+    let res = sqlx::query(
+        "UPDATE org_invites SET revoked_at = NOW()
+         WHERE id = $1 AND org_id = $2 AND accepted_at IS NULL AND revoked_at IS NULL",
+    )
+    .bind(invite_id)
+    .bind(org_id)
+    .execute(&state.db)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "invite.revoked",
+        &invite_id.to_string(),
+    )
+    .await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Estado de um convite, decidido por UMA função pura (sem BD, testável) —
+/// `get_invite_public` e `accept_invite` chamam-na em vez de repetirem a
+/// ordem de prioridade (revogado vence aceite vence expirado) cada uma à sua
+/// maneira, que é como duas rotas do mesmo recurso acabam a discordar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InviteState {
+    Pending,
+    Expired,
+    Revoked,
+    Accepted,
+}
+
+fn invite_state(
+    now: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    accepted_at: Option<DateTime<Utc>>,
+    revoked_at: Option<DateTime<Utc>>,
+) -> InviteState {
+    if revoked_at.is_some() {
+        InviteState::Revoked
+    } else if accepted_at.is_some() {
+        InviteState::Accepted
+    } else if now > expires_at {
+        InviteState::Expired
+    } else {
+        InviteState::Pending
+    }
+}
+
+/// Forma pública (SEM sessão) de um convite — nunca devolve `org_id`, `id`,
+/// `token` nem `invited_by`: quem tem o link já tem o token, e mais nada
+/// deve dar para adivinhar.
+#[derive(Debug, Serialize)]
+pub struct InvitePublic {
+    pub org_name: String,
+    pub email: String,
+    pub role: String,
+    pub title: String,
+    pub expired: bool,
+    pub revoked: bool,
+    pub accepted: bool,
+}
+
+/// `GET /api/invites/{token}` — SEM AUTENTICAÇÃO; o token é a própria chave
+/// de consulta (não há `org_id` no caminho). 404 se nenhum convite tiver
+/// este token — nunca se distingue de "expirado" aqui (isso o corpo diz).
+pub async fn get_invite_public(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+) -> Result<Json<InvitePublic>, ApiError> {
+    #[allow(clippy::type_complexity)]
+    let row: Option<(
+        String,
+        String,
+        String,
+        String,
+        DateTime<Utc>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+    )> = sqlx::query_as(
+        "SELECT o.name, i.email, i.role, i.title, i.expires_at, i.accepted_at, i.revoked_at
+         FROM org_invites i JOIN organizations o ON o.id = i.org_id
+         WHERE i.token = $1",
+    )
+    .bind(&token)
+    .fetch_optional(&state.db)
+    .await?;
+    let (org_name, email, role, title, expires_at, accepted_at, revoked_at) =
+        row.ok_or(ApiError::NotFound)?;
+    let status = invite_state(Utc::now(), expires_at, accepted_at, revoked_at);
+    Ok(Json(InvitePublic {
+        org_name,
+        email,
+        role,
+        title,
+        expired: status == InviteState::Expired,
+        revoked: status == InviteState::Revoked,
+        accepted: status == InviteState::Accepted,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct AcceptInviteReq {
+    pub username: String,
+    pub password: String,
+}
+
+/// `POST /api/invites/{token}/accept` — SEM AUTENTICAÇÃO. Cria a conta e o
+/// membro, consome o convite, e devolve `{ access_token, user }` — a MESMA
+/// forma que `auth::register` devolve — via `auth::login_response`, para a
+/// pessoa entrar logo a seguir sem ter de fazer login manualmente.
+pub async fn accept_invite(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+    Json(req): Json<AcceptInviteReq>,
+) -> Result<Response, ApiError> {
+    #[allow(clippy::type_complexity)]
+    let row: Option<(
+        Uuid,
+        Uuid,
+        String,
+        String,
+        Option<Uuid>,
+        String,
+        DateTime<Utc>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+    )> = sqlx::query_as(
+        "SELECT id, org_id, email, role, branch_id, title, expires_at, accepted_at, revoked_at
+         FROM org_invites WHERE token = $1",
+    )
+    .bind(&token)
+    .fetch_optional(&state.db)
+    .await?;
+    let (invite_id, org_id, email, role, branch_id, title, expires_at, accepted_at, revoked_at) =
+        row.ok_or(ApiError::NotFound)?;
+
+    match invite_state(Utc::now(), expires_at, accepted_at, revoked_at) {
+        InviteState::Revoked => return Err(ApiError::Conflict("este convite foi revogado".into())),
+        InviteState::Accepted => {
+            return Err(ApiError::Conflict("este convite já foi aceite".into()))
+        }
+        InviteState::Expired => return Err(ApiError::Conflict("este convite expirou".into())),
+        InviteState::Pending => {}
+    }
+
+    // Sem fusão de contas — ver comentário no topo da secção.
+    let existing: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM users WHERE email = $1")
+        .bind(&email)
+        .fetch_optional(&state.db)
+        .await?;
+    if existing.is_some() {
+        return Err(ApiError::Conflict(
+            "já existe uma conta com este email — inicia sessão e pede a um administrador \
+             para te adicionar"
+                .into(),
+        ));
+    }
+
+    let username = req.username.trim().to_string();
+    if username.len() < 2 {
+        return Err(ApiError::BadRequest(
+            "nome deve ter pelo menos 2 caracteres".into(),
+        ));
+    }
+    if !(8..=128).contains(&req.password.len()) {
+        return Err(ApiError::BadRequest(
+            "password deve ter 8-128 caracteres".into(),
+        ));
+    }
+    let hash = crate::auth::hash_password(&req.password)?;
+
+    let mut tx = state.db.begin().await?;
+    let user: crate::users::UserPublic = sqlx::query_as(
+        "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3)
+         RETURNING id, email, username, created_at, COALESCE(locale, 'pt') AS locale",
+    )
+    .bind(&email)
+    .bind(&username)
+    .bind(&hash)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| ApiError::from_unique(e, "email ou nome de utilizador já em uso"))?;
+
+    // Mesmo padrão do `role_id` de `add_employee`: resolvido a partir do
+    // papel de sistema correspondente ao `role` legado.
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, branch_id, role, role_id, title)
+         VALUES ($1, $2, $3, $4,
+                 (SELECT id FROM org_roles WHERE org_id = $1 AND is_system = TRUE
+                  AND name = CASE WHEN $4 = 'admin' THEN 'Administrador' ELSE 'Membro' END),
+                 $5)",
+    )
+    .bind(org_id)
+    .bind(user.id)
+    .bind(branch_id)
+    .bind(&role)
+    .bind(&title)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query("UPDATE org_invites SET accepted_at = NOW() WHERE id = $1")
+        .bind(invite_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    crate::audit::log(&state.db, Some(org_id), user.id, "invite.accepted", &email).await;
+
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
+    crate::auth::login_response(&state, user, &headers, ip).await
 }
 
 // ---------- groups ----------
@@ -1458,12 +2062,116 @@ pub async fn group_member_ids(state: &AppState, group_id: Uuid) -> Result<Vec<Uu
 
 #[cfg(test)]
 mod tests {
-    use super::slugify;
+    use super::*;
 
     #[test]
     fn slugify_basic() {
         assert_eq!(slugify("Kaeso Lda"), "kaeso-lda");
         assert_eq!(slugify("  Açores & Cia!  "), "a-ores-cia");
         assert_eq!(slugify("***"), "org");
+    }
+
+    // ---------- convites: lógica pura (sem BD) ----------
+    //
+    // Este ficheiro não tem, e nunca teve, um pool de BD de teste — os
+    // `#[cfg(test)]` de todo o `server/` são unitários e puros (ver
+    // `auth.rs`, `rbac.rs`, etc.). O caminho com BD real (criar convite,
+    // aceitar, importar CSV, suspender a bloquear `require_admin`) fica
+    // provado pelo smoke test ao vivo contra o servidor a correr — não por
+    // um teste que finge uma base de dados que este harness não tem.
+
+    #[test]
+    fn validate_invite_role_aceita_so_admin_e_member() {
+        assert_eq!(validate_invite_role(None).unwrap(), "member");
+        assert_eq!(validate_invite_role(Some("member")).unwrap(), "member");
+        assert_eq!(validate_invite_role(Some("admin")).unwrap(), "admin");
+        assert!(validate_invite_role(Some("owner")).is_err());
+        assert!(validate_invite_role(Some("")).is_err());
+    }
+
+    fn dummy_branch(name: &str) -> Branch {
+        Branch {
+            id: Uuid::new_v4(),
+            org_id: Uuid::new_v4(),
+            name: name.to_string(),
+            location: String::new(),
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn resolve_branch_by_name_ignora_maiusculas_e_espacos() {
+        let branches = vec![dummy_branch("Luanda"), dummy_branch("Benguela")];
+        let luanda_id = branches[0].id;
+        assert_eq!(
+            resolve_branch_by_name(&branches, Some("  luanda  ")),
+            Some(luanda_id)
+        );
+        assert_eq!(
+            resolve_branch_by_name(&branches, Some("LUANDA")),
+            Some(luanda_id)
+        );
+        assert_eq!(resolve_branch_by_name(&branches, Some("Huambo")), None);
+    }
+
+    #[test]
+    fn resolve_branch_by_name_vazio_ou_ausente_e_sem_filial() {
+        let branches = vec![dummy_branch("Luanda")];
+        assert_eq!(resolve_branch_by_name(&branches, None), None);
+        assert_eq!(resolve_branch_by_name(&branches, Some("")), None);
+        assert_eq!(resolve_branch_by_name(&branches, Some("   ")), None);
+    }
+
+    #[test]
+    fn invite_state_prioriza_revogado_sobre_aceite_sobre_expirado() {
+        let now = Utc::now();
+        let expires_future = now + chrono::Duration::days(1);
+        let expires_past = now - chrono::Duration::days(1);
+
+        assert_eq!(
+            invite_state(now, expires_future, None, None),
+            InviteState::Pending
+        );
+        assert_eq!(
+            invite_state(now, expires_past, None, None),
+            InviteState::Expired
+        );
+        assert_eq!(
+            invite_state(now, expires_future, Some(now), None),
+            InviteState::Accepted
+        );
+        assert_eq!(
+            invite_state(now, expires_future, None, Some(now)),
+            InviteState::Revoked
+        );
+        // Revogado vence mesmo se também estava aceite ou expirado — um
+        // convite revogado nunca deve voltar a ficar utilizável.
+        assert_eq!(
+            invite_state(now, expires_past, Some(now), Some(now)),
+            InviteState::Revoked
+        );
+        // Aceite vence expirado: um convite que JÁ foi usado não deve mostrar
+        // "expirou" (mensagem errada — o problema não é o prazo).
+        assert_eq!(
+            invite_state(now, expires_past, Some(now), None),
+            InviteState::Accepted
+        );
+    }
+
+    #[test]
+    fn invite_token_gerado_tem_entropia_e_e_unico() {
+        // Reusa o gerador dos refresh tokens (ver `insert_invite`): 32 bytes
+        // de OsRng, codificados em hex — 64 caracteres, sem colisões em mil
+        // gerações sucessivas.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let (token, _hash) = crate::auth::new_refresh_token();
+            assert_eq!(token.len(), 64);
+            assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+            assert!(
+                seen.insert(token),
+                "token repetido — RNG fraco ou reutilizado"
+            );
+        }
     }
 }

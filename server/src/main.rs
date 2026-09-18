@@ -347,6 +347,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/orgs/{org_id}/employees/{user_id}", axum::routing::delete(org::remove_employee).patch(org::update_employee))
         // Telefone do membro (o próprio ou admin) — ver sms::put_member_phone.
         .route("/api/orgs/{org_id}/employees/{user_id}/phone", axum::routing::put(sms::put_member_phone))
+        // Convites por link ("Utilizadores e convites", #26): sem SMTP, o
+        // admin copia o link e envia-o ele mesmo — ver org.rs "---- invites ----".
+        .route("/api/orgs/{org_id}/invites", get(org::list_invites).post(org::create_invite))
+        .route("/api/orgs/{org_id}/invites/bulk", post(org::bulk_create_invites))
+        .route("/api/orgs/{org_id}/invites/{invite_id}", axum::routing::delete(org::revoke_invite))
+        // Públicas (SEM sessão, sem `org_id` no caminho — o token é a chave):
+        // o mesmo padrão de `/api/share/{token}` acima.
+        .route("/api/invites/{token}", get(org::get_invite_public))
+        .route("/api/invites/{token}/accept", post(org::accept_invite))
         // Papéis e permissões (RBAC) — ver rbac.rs.
         .route("/api/orgs/{org_id}/roles", get(rbac::list_roles).post(rbac::create_role))
         .route(
