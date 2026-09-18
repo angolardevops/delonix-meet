@@ -375,7 +375,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/meetings/check-conflicts", post(meetings::check_conflicts))
         .route(
             "/api/meetings/{meeting_id}",
-            get(meetings::get_one).delete(meetings::delete),
+            get(meetings::get_one)
+                .patch(meetings::patch)
+                .delete(meetings::delete),
         )
         .route("/api/meetings/{meeting_id}/start", post(meetings::start))
         .route("/api/meetings/{meeting_id}/calendar.ics", get(meetings::ics))

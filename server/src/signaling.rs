@@ -3807,6 +3807,31 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
             let _ = tx.send(ServerMsg::Error {
                 message: "sfu unavailable".into(),
             });
+        } else if is_host && crate::recorder::auto_record_wanted(&state, room_id).await {
+            // Reunião agendada com «gravar automaticamente» (R184): o gravador
+            // do servidor arranca quando o anfitrião entra, e as tracks
+            // anexam-se à medida que são publicadas. Sem chave E2EE: a decisão
+            // já recusou as salas E2EE.
+            if state
+                .sfu
+                .start_recording(
+                    room_id,
+                    user_id,
+                    &username,
+                    None,
+                    &state.config.recordings_dir,
+                )
+                .await
+            {
+                tracing::info!(%room_id, "gravação automática iniciada");
+                state.hub.broadcast_all(
+                    room_id,
+                    ServerMsg::ServerRecording {
+                        active: true,
+                        by: username.clone(),
+                    },
+                );
+            }
         }
     }
     tracing::info!(%room_id, %peer_id, %username, sfu = sfu_mode, host = is_host, "peer joined");
