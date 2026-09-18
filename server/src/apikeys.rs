@@ -22,26 +22,14 @@ use delonix_meet_core::crypto::{ct_eq, sha256_hex};
 
 use delonix_meet_domain::identity::api_key as policy;
 pub use delonix_meet_domain::identity::api_key::Scope;
+use delonix_meet_store::identity::api_key as store;
 
 /// A linha de uma chave `dlx_` tal como está na base de dados. Procurada UMA
 /// vez por pedido: o `v1_rate_limit` precisa dela para escolher o balde, e o
-/// extractor reutiliza-a (vai nas extensões do pedido).
-#[derive(Clone, Debug, sqlx::FromRow)]
-pub struct KeyRecord {
-    pub id: Uuid,
-    pub org_id: Uuid,
-    pub created_by: Uuid,
-    pub scopes: Vec<String>,
-    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-impl KeyRecord {
-    /// A chave ainda não expirou.
-    pub fn is_usable(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
-        policy::ensure_not_expired(self.expires_at, now).is_ok()
-    }
-}
+/// extractor reutiliza-a (vai nas extensões do pedido). O tipo e a consulta
+/// vivem em `delonix-meet-store` (ADR-0006 §6 linha D) — aqui fica só o
+/// alias, para não mexer em todas as outras referências deste módulo.
+pub use delonix_meet_store::identity::api_key::StoredKey as KeyRecord;
 
 /// Resultado da procura da chave, guardado nas extensões do pedido. `None`
 /// quando não havia chave `dlx_` ou ela não existe.
@@ -64,13 +52,7 @@ pub async fn lookup_key(state: &AppState, headers: &HeaderMap) -> Result<KeyLook
     let Some(raw) = raw_key(headers) else {
         return Ok(KeyLookup(None));
     };
-    let row: Option<KeyRecord> = sqlx::query_as(
-        "SELECT id, org_id, created_by, scopes, expires_at, last_used_at
-         FROM org_api_keys WHERE key_hash = $1",
-    )
-    .bind(sha256_hex(&raw))
-    .fetch_optional(&state.db)
-    .await?;
+    let row = store::find_by_hash(&state.db, &sha256_hex(&raw)).await?;
     Ok(KeyLookup(row))
 }
 
@@ -116,16 +98,9 @@ impl FromRequestParts<Arc<AppState>> for ApiKeyAuth {
         // repete-se no SQL para que dois nós com a mesma leitura antiga não
         // escrevam os dois.
         if policy::should_record_use(key.last_used_at, now) {
-            if let Err(e) = sqlx::query(
-                "UPDATE org_api_keys SET last_used_at = now()
-                 WHERE id = $1
-                   AND (last_used_at IS NULL
-                        OR last_used_at <= now() - make_interval(secs => $2))",
-            )
-            .bind(key.id)
-            .bind(policy::LAST_USED_THROTTLE_SECS as f64)
-            .execute(&state.db)
-            .await
+            if let Err(e) =
+                store::touch_last_used(&state.db, key.id, policy::LAST_USED_THROTTLE_SECS as f64)
+                    .await
             {
                 // Não falha o pedido: o uso é informação, não autorização.
                 tracing::warn!(error = %e, key_id = %key.id, "last_used_at não registado");
@@ -184,7 +159,7 @@ pub struct V1ApiDoc;
 // ---------- Gestão das chaves (admin, sessão) ----------
 
 /// Chave de API como a lista a mostra. Nunca leva a chave nem o hash.
-#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ApiKeyInfo {
     pub id: Uuid,
     pub name: String,
@@ -197,6 +172,20 @@ pub struct ApiKeyInfo {
     pub scopes: Vec<String>,
     /// Ausente ⇒ não expira.
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl From<store::KeySummary> for ApiKeyInfo {
+    fn from(k: store::KeySummary) -> Self {
+        Self {
+            id: k.id,
+            name: k.name,
+            prefix: k.prefix,
+            created_at: k.created_at,
+            last_used_at: k.last_used_at,
+            scopes: k.scopes,
+            expires_at: k.expires_at,
+        }
+    }
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -240,18 +229,16 @@ async fn insert_key(
     let key = delonix_meet_core::crypto::prefixed_token("dlx_"); // 256 bits de entropia
     let prefix = key.chars().take(12).collect::<String>();
     let scopes: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
-    let (id,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO org_api_keys (org_id, name, prefix, key_hash, created_by, scopes, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+    let id = store::insert(
+        &state.db,
+        org_id,
+        name,
+        &prefix,
+        &sha256_hex(&key),
+        created_by,
+        &scopes,
+        expires_at,
     )
-    .bind(org_id)
-    .bind(name)
-    .bind(&prefix)
-    .bind(sha256_hex(&key))
-    .bind(created_by)
-    .bind(&scopes)
-    .bind(expires_at)
-    .fetch_one(&state.db)
     .await?;
     Ok((id, key, prefix))
 }
@@ -275,14 +262,8 @@ pub async fn list(
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<ApiKeyInfo>>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-    let keys: Vec<ApiKeyInfo> = sqlx::query_as(
-        "SELECT id, name, prefix, created_at, last_used_at, scopes, expires_at
-         FROM org_api_keys WHERE org_id = $1 ORDER BY created_at DESC",
-    )
-    .bind(org_id)
-    .fetch_all(&state.db)
-    .await?;
-    Ok(Json(keys))
+    let keys = store::list_for_org(&state.db, org_id).await?;
+    Ok(Json(keys.into_iter().map(ApiKeyInfo::from).collect()))
 }
 
 /// Emite uma chave `dlx_` nova (só admin). A chave completa só aparece nesta
@@ -350,13 +331,8 @@ pub async fn revoke(
     Path((org_id, key_id)): Path<(Uuid, Uuid)>,
 ) -> Result<axum::http::StatusCode, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
-    let deleted = sqlx::query("DELETE FROM org_api_keys WHERE id = $1 AND org_id = $2")
-        .bind(key_id)
-        .bind(org_id)
-        .execute(&state.db)
-        .await?
-        .rows_affected();
-    if deleted == 0 {
+    let deleted = store::delete(&state.db, key_id, org_id).await?;
+    if !deleted {
         return Err(delonix_meet_core::DomainError::not_found("api_key.not_found").into());
     }
     crate::audit::log(
