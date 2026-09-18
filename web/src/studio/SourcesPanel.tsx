@@ -8,7 +8,8 @@
 import { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, cx } from '../ui/kit'
-import type { CantoDoAvatar, EstadoDoAvatar, FormaDoAvatar, Recorte } from './compositor'
+import type { CantoDoAvatar, EstadoDaImagem, EstadoDoAvatar, FormaDoAvatar, Recorte } from './compositor'
+import { IMAGEM_INICIAL } from './compositor'
 
 /** Ordem fixa: 0 = superior-esquerdo … 3 = inferior-direito (o e2e conta com isto). */
 const CANTOS: { key: Exclude<CantoDoAvatar, 'livre'>; i18n: string }[] = [
@@ -56,24 +57,28 @@ export default function SourcesPanel({
   temCamara,
   recorte,
   avatar,
+  imagem,
   aPrepararRecorte,
   onEscolherEcra,
   onEcraInteiro,
   onAbrirRegiao,
   onAlternarCamara,
   onAvatar,
+  onImagem,
   onFundo,
 }: {
   temEcra: boolean
   temCamara: boolean
   recorte: Recorte
   avatar: EstadoDoAvatar
+  imagem: EstadoDaImagem
   aPrepararRecorte: boolean
   onEscolherEcra: () => void
   onEcraInteiro: () => void
   onAbrirRegiao: () => void
   onAlternarCamara: () => void
   onAvatar: (patch: Partial<EstadoDoAvatar>) => void
+  onImagem: (patch: Partial<EstadoDaImagem>) => void
   onFundo: (semFundo: boolean) => void
 }) {
   const { t } = useTranslation()
@@ -210,6 +215,51 @@ export default function SourcesPanel({
           </>
         )}
       </section>
+
+      {temCamara && (
+        <section className="st-group" data-studio-grupo="iluminacao" aria-labelledby="st-iluminacao-h">
+          <header className="st-group__head">
+            <h2 id="st-iluminacao-h" className="st-group__title">
+              {t('studio.iluminacao.titulo')}
+            </h2>
+            <span className="dx-spacer" />
+            <Button
+              size="sm"
+              variant="ghost"
+              data-studio="iluminacao-repor"
+              disabled={imagem.brilho === 0 && imagem.contraste === 0 && imagem.saturacao === 0}
+              onClick={() => onImagem({ ...IMAGEM_INICIAL })}
+            >
+              {t('studio.iluminacao.repor')}
+            </Button>
+          </header>
+          {(
+            [
+              ['brilho', t('studio.iluminacao.brilho')],
+              ['contraste', t('studio.iluminacao.contraste')],
+              ['saturacao', t('studio.iluminacao.saturacao')],
+            ] as const
+          ).map(([campo, rotulo]) => (
+            <div key={campo}>
+              <label className="st-label st-label--row" htmlFor={`st-${campo}`}>
+                <span>{rotulo}</span>
+                <span className="dx-num">{imagem[campo] > 0 ? `+${imagem[campo]}` : imagem[campo]}</span>
+              </label>
+              <input
+                id={`st-${campo}`}
+                className="st-range"
+                type="range"
+                min={-50}
+                max={50}
+                value={imagem[campo]}
+                data-studio={`iluminacao-${campo}`}
+                onChange={(e) => onImagem({ [campo]: Number(e.target.value) })}
+              />
+            </div>
+          ))}
+          <p className="st-note">{t('studio.iluminacao.nota')}</p>
+        </section>
+      )}
     </>
   )
 }

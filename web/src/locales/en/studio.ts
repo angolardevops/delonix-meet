@@ -82,6 +82,14 @@ export default {
       inferiorDireito: 'Bottom right corner',
     },
   },
+  iluminacao: {
+    titulo: 'Lighting and image',
+    repor: 'Reset',
+    brilho: 'Brightness',
+    contraste: 'Contrast',
+    saturacao: 'Saturation',
+    nota: 'Only affects your own camera — screen, whiteboard and guests stay as they are.',
+  },
   palco: {
     rotulo: 'Composition stage',
     vazio: 'Start by choosing what to record.',

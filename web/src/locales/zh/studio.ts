@@ -82,6 +82,14 @@ export default {
       inferiorDireito: '右下角',
     },
   },
+  iluminacao: {
+    titulo: '灯光与画面',
+    repor: '重置',
+    brilho: '亮度',
+    contraste: '对比度',
+    saturacao: '饱和度',
+    nota: '仅影响你自己的摄像头——屏幕、白板和嘉宾画面保持不变。',
+  },
   palco: {
     rotulo: '合成画布',
     vazio: '请先选择要录制的内容。',

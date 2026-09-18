@@ -82,6 +82,14 @@ export default {
       inferiorDireito: 'Canto inferior direito',
     },
   },
+  iluminacao: {
+    titulo: 'Iluminação e imagem',
+    repor: 'Repor',
+    brilho: 'Brilho',
+    contraste: 'Contraste',
+    saturacao: 'Saturação',
+    nota: 'Só sobre a tua câmara — o ecrã, o quadro e os convidados ficam como estão.',
+  },
   palco: {
     rotulo: 'Palco de composição',
     vazio: 'Começa por escolher o que gravar.',

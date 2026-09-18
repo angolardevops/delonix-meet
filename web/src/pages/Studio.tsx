@@ -22,7 +22,7 @@ import { Alert, Button, cx, IconButton, Spinner, StatusBadge } from '../ui/kit'
 import * as arquivo from '../studio/arquivo'
 import AudioPanel from '../studio/AudioPanel'
 import CenasPanel from '../studio/CenasPanel'
-import { AVATAR_INICIAL, CompositorDeAula, EstadoDoAvatar, Recorte, RECORTE_INTEIRO } from '../studio/compositor'
+import { AVATAR_INICIAL, CompositorDeAula, EstadoDaImagem, EstadoDoAvatar, IMAGEM_INICIAL, Recorte, RECORTE_INTEIRO } from '../studio/compositor'
 import Cronometro from '../studio/Cronometro'
 import { useDebito } from '../studio/debito'
 import type { SondagemNoPalco } from '../studio/desenho'
@@ -97,6 +97,7 @@ export default function Studio() {
   const [temEcra, setTemEcra] = useState(false)
   const [temCamara, setTemCamara] = useState(false)
   const [avatar, setAvatar] = useState<EstadoDoAvatar>({ ...AVATAR_INICIAL })
+  const [imagem, setImagem] = useState<EstadoDaImagem>({ ...IMAGEM_INICIAL })
   const [recorte, setRecorte] = useState<Recorte>({ ...RECORTE_INTEIRO })
   const [aRecortar, setARecortar] = useState(false)
   const [aPrepararRecorte, setAPrepararRecorte] = useState(false)
@@ -214,12 +215,16 @@ export default function Studio() {
     if (compRef.current) compRef.current.avatar = avatar
   }, [avatar])
   useEffect(() => {
+    if (compRef.current) compRef.current.imagem = imagem
+  }, [imagem])
+  useEffect(() => {
     if (compRef.current) compRef.current.recorte = recorte
   }, [recorte])
 
   const lerSegundos = useCallback(() => compRef.current?.segundos ?? 0, [])
   const lerBytes = useCallback(() => compRef.current?.bytesGravados ?? 0, [])
   const mudarAvatar = useCallback((patch: Partial<EstadoDoAvatar>) => setAvatar((a) => ({ ...a, ...patch })), [])
+  const mudarImagem = useCallback((patch: Partial<EstadoDaImagem>) => setImagem((i) => ({ ...i, ...patch })), [])
   const fecharRecorte = useCallback(() => setARecortar(false), [])
 
   const escolherEcra = useCallback(async () => {
@@ -627,6 +632,7 @@ export default function Studio() {
             temCamara={temCamara}
             recorte={recorte}
             avatar={avatar}
+            imagem={imagem}
             aPrepararRecorte={aPrepararRecorte}
             onEscolherEcra={() => void escolherEcra()}
             onEcraInteiro={() => {
@@ -636,6 +642,7 @@ export default function Studio() {
             onAbrirRegiao={() => setARecortar(true)}
             onAlternarCamara={() => void alternarCamara()}
             onAvatar={mudarAvatar}
+            onImagem={mudarImagem}
             onFundo={(semFundo) => (semFundo ? void ligarRecorteDeFundo() : pararRecorteDeFundo())}
           />
           <AudioPanel

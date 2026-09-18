@@ -73,6 +73,27 @@ export const AVATAR_INICIAL: EstadoDoAvatar = {
   y: 0.78,
 }
 
+/**
+ * Iluminação e imagem sobre a TUA câmara (nunca sobre ecrã, quadro ou
+ * convidados — cada um tem a sua própria fonte, sem ganho artificial). As
+ * três correm de -50 a 50, centradas em 0 = sem correcção; `filtroCss`
+ * converte para o que o `canvas 2d` entende.
+ */
+export interface EstadoDaImagem {
+  brilho: number
+  contraste: number
+  saturacao: number
+}
+
+export const IMAGEM_INICIAL: EstadoDaImagem = { brilho: 0, contraste: 0, saturacao: 0 }
+
+/** -50..50 → 50%..150%, o intervalo que `brightness()`/`contrast()`/`saturate()` esperam. */
+export function filtroCss(f: EstadoDaImagem): string {
+  const pct = (v: number) => `${Math.round(100 + Math.max(-50, Math.min(50, v)))}%`
+  if (f.brilho === 0 && f.contraste === 0 && f.saturacao === 0) return 'none'
+  return `brightness(${pct(f.brilho)}) contrast(${pct(f.contraste)}) saturate(${pct(f.saturacao)})`
+}
+
 /** Constraints do ecrã para GRAVAÇÃO — ver a nota no topo. */
 export const ECRA_PARA_GRAVACAO: DisplayMediaStreamOptions = {
   video: {
@@ -224,6 +245,7 @@ export class CompositorDeAula {
 
   recorte: Recorte = { ...RECORTE_INTEIRO }
   avatar: EstadoDoAvatar = { ...AVATAR_INICIAL }
+  imagem: EstadoDaImagem = { ...IMAGEM_INICIAL }
 
   /**
    * Fonte da pessoa recortada, quando o modo `recorte` está ligado. É um
@@ -529,7 +551,10 @@ export class CompositorDeAula {
   }
 
   private desenharCamaraEm(r: { x: number; y: number; w: number; h: number }): void {
+    this.ctx.save()
+    this.ctx.filter = filtroCss(this.imagem)
     this.desenharConteudo(this.camaraVideo, r, 'cover', true)
+    this.ctx.restore()
   }
 
   private desenharConvidado(c: ConvidadoNoPalco, r: { x: number; y: number; w: number; h: number }): void {
@@ -593,6 +618,7 @@ export class CompositorDeAula {
         const dh = fh * esc
         // Espelhado, como a pessoa se vê.
         this.ctx.save()
+        this.ctx.filter = filtroCss(this.imagem)
         this.ctx.translate(cx + dw / 2, H - dh)
         this.ctx.scale(-1, 1)
         this.ctx.drawImage(fonte, 0, 0, dw, dh)
@@ -609,6 +635,7 @@ export class CompositorDeAula {
     const dh = vh * escala
 
     this.ctx.save()
+    this.ctx.filter = filtroCss(this.imagem)
     this.ctx.beginPath()
     if (this.avatar.forma === 'circulo') {
       this.ctx.arc(cx, cy, lado / 2, 0, Math.PI * 2)

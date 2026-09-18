@@ -82,6 +82,14 @@ export default {
       inferiorDireito: 'Coin inférieur droit',
     },
   },
+  iluminacao: {
+    titulo: 'Éclairage et image',
+    repor: 'Réinitialiser',
+    brilho: 'Luminosité',
+    contraste: 'Contraste',
+    saturacao: 'Saturation',
+    nota: "Seulement sur ta caméra — l'écran, le tableau et les invités restent inchangés.",
+  },
   palco: {
     rotulo: 'Scène de composition',
     vazio: 'Commencez par choisir quoi enregistrer.',
