@@ -5,12 +5,13 @@
  */
 import { FormEvent, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { apiErrorMessage, updateMe, User } from '../api'
+import { apiErrorMessage, downloadMyData, updateMe, User } from '../api'
 import { getAppName, getLoginBg, setAppName, setLoginBg } from '../branding'
 import { currentLang, Lang, LANG_NAMES, LANGS, serverLocale, setLanguage } from '../i18n'
 import { applyTheme, storedTheme, Theme } from '../theme'
 import { Alert, Button, Dialog, Field, Segmented, Tabs, TextInput } from '../ui/kit'
 import MfaPanel from './MfaPanel'
+import SessionsPanel from './SessionsPanel'
 
 export type SettingsTab = 'account' | 'appearance' | 'security' | 'brand'
 
@@ -76,7 +77,15 @@ export default function SettingsDialog({
               <p className="dx-muted" style={{ margin: 0 }}>{t('shell.def.salaSempreEscura')}</p>
             </div>
           )}
-          {tab === 'security' && <MfaPanel />}
+          {tab === 'security' && (
+            <div className="settings-grid">
+              <MfaPanel />
+              <div>
+                <h3 className="dx-eyebrow" style={{ margin: '8px 0' }}>{t('shell.def.sessoesActivas')}</h3>
+                <SessionsPanel />
+              </div>
+            </div>
+          )}
           {tab === 'brand' && <Marca />}
         </div>
       </div>
@@ -91,6 +100,20 @@ function Conta({ user }: { user: User }) {
   const [confirm, setConfirm] = useState('')
   const [msg, setMsg] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [aExportar, setAExportar] = useState(false)
+  const [erroExportar, setErroExportar] = useState<string | null>(null)
+
+  async function exportar() {
+    setErroExportar(null)
+    setAExportar(true)
+    try {
+      await downloadMyData()
+    } catch (e) {
+      setErroExportar(apiErrorMessage(e, t('shell.def.exportarErro')))
+    } finally {
+      setAExportar(false)
+    }
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -130,6 +153,14 @@ function Conta({ user }: { user: User }) {
       <div>
         <Button type="submit" variant="primary" busy={busy}>
           {t('ui.guardar')}
+        </Button>
+      </div>
+      <div className="settings-section">
+        <h3 className="dx-eyebrow" style={{ margin: '8px 0 4px' }}>{t('shell.def.osMeusDados')}</h3>
+        <p className="dx-muted" style={{ margin: '0 0 8px' }}>{t('shell.def.exportarDadosDica')}</p>
+        {erroExportar && <Alert tone="danger">{erroExportar}</Alert>}
+        <Button type="button" variant="secondary" icon="download" busy={aExportar} onClick={exportar}>
+          {aExportar ? t('shell.def.aExportar') : t('shell.def.exportarDados')}
         </Button>
       </div>
     </form>

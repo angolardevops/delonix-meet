@@ -1,3 +1,4 @@
+mod account;
 mod actions;
 mod ai;
 mod ai_studio;
@@ -51,7 +52,7 @@ use axum::{
     http::HeaderValue,
     middleware,
     response::Response,
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use sqlx::postgres::PgPoolOptions;
@@ -185,6 +186,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/users/me/mfa/enrol", post(mfa::inscrever))
         .route("/api/users/me/mfa/activate", post(mfa::activar))
         .route("/api/users/me/mfa/disable", post(mfa::desactivar))
+        // "A minha conta": sessões activas e exportação dos próprios dados.
+        .route("/api/users/me/sessions", get(account::list_sessions))
+        .route("/api/users/me/sessions/{session_id}", delete(account::revoke_session))
+        .route("/api/users/me/export", get(account::export_my_data))
         // Consentimento de SMS da pessoa (contactos / reuniões) e os seus telefones.
         .route("/api/users/me/sms-preferences", get(sms::get_preferences).put(sms::put_preferences))
         // /api/mls NÃO está registado — de propósito. O `mls.rs` descreve a

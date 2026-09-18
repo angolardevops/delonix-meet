@@ -416,6 +416,46 @@ export async function updateMe(data: { username?: string; password?: string; loc
   return user
 }
 
+// ---------- A minha conta: sessões e exportação de dados ----------
+
+export interface AccountSession {
+  session_id: string
+  user_agent: string | null
+  ip_address: string | null
+  started_at: string
+  last_used_at: string
+  current: boolean
+}
+
+export const listSessions = () => request<AccountSession[]>('/api/users/me/sessions')
+
+export const revokeSession = (sessionId: string) =>
+  request<{ ok: boolean }>(`/api/users/me/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+
+export interface AccountDataExport {
+  generated_at: string
+  profile: User
+  organizations: { org_id: string; org_name: string; role: string; title: string }[]
+  rooms_owned: { id: string; code: string; name: string; created_at: string }[]
+  recordings: { id: string; room_id: string; filename: string; size_bytes: number; created_at: string }[]
+}
+
+/** Pede os próprios dados e desencadeia o download como ficheiro JSON — o
+ *  pedido precisa do Authorization header, por isso não pode ser um simples
+ *  link: busca-se o corpo e constrói-se o download no cliente. */
+export async function downloadMyData(): Promise<void> {
+  const data = await request<AccountDataExport>('/api/users/me/export')
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'delonix-meet-dados.json'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 export const updateEmployee = (orgId: string, userId: string, data: { role?: string; title?: string; branch_id?: string | null }) =>
   request<Employee>(`/api/orgs/${orgId}/employees/${userId}`, { method: 'PATCH', body: JSON.stringify(data) })
 
