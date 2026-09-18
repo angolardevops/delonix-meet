@@ -1401,6 +1401,44 @@
         ],
         "type": "object"
       },
+      "EmissaoEstado": {
+        "description": "Retrato do estado vivo de uma emissão (G1) — o que `GET\n/api/rooms/{room_code}/live/status` devolve.",
+        "properties": {
+          "bitrate_bps": {
+            "description": "Débito binário médio desde a última consulta (ou desde o arranque, na\nprimeira). `0` numa emissão recém-arrancada ou sem tráfego novo desde\na última amostra — não é sinal de falha por si só.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "bytes_enviados": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "desde": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "rotulos": {
+            "description": "Rótulos dos destinos desta emissão — não o estado de cada um: ver a\nnota em `Emissao::bytes`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "viva": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "rotulos",
+          "viva",
+          "bytes_enviados",
+          "bitrate_bps",
+          "desde"
+        ],
+        "type": "object"
+      },
       "Employee": {
         "properties": {
           "branch_id": {
@@ -2700,6 +2738,14 @@
       },
       "OrgSettingsReq": {
         "properties": {
+          "chat_retention_days": {
+            "description": "`null`/omisso = promessa por omissão (fim do dia UTC da última\nmensagem); como os outros campos deste pedido, o valor gravado é\nsempre o que vier aqui, não um `PATCH` parcial.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "domain": {
             "type": "string"
           },
@@ -2748,6 +2794,13 @@
       "OrgSettingsUpdated": {
         "description": "Resposta de `POST /api/orgs/{org_id}/settings`: os valores como ficaram\ngravados (domínio normalizado, retenção limitada a 0–3650).",
         "properties": {
+          "chat_retention_days": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "domain": {
             "type": "string"
           },
@@ -2957,6 +3010,14 @@
       },
       "OrgSummary": {
         "properties": {
+          "chat_retention_days": {
+            "description": "Retenção do chat da sala em dias corridos (G9); `null` = promessa por\nomissão (até ao fim do dia UTC da última mensagem).",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "domain": {
             "type": "string"
           },

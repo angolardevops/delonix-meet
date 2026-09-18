@@ -163,18 +163,63 @@ pub async fn apply(db: &PgPool, w: &ChatWrite) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Apaga o chat das salas cuja última mensagem é de um dia (UTC) já acabado —
-/// a retenção prometida na migração 0018. Devolve quantas mensagens saíram.
-pub async fn retention_sweep(db: &PgPool) -> Result<u64, sqlx::Error> {
-    let r = sqlx::query(
-        "DELETE FROM room_chat_messages m
-         USING (SELECT room_id FROM room_chat_messages
-                GROUP BY room_id
-                HAVING date_trunc('day', max(created_at) AT TIME ZONE 'UTC') + interval '1 day'
-                       <= (now() AT TIME ZONE 'UTC')) velhas
-         WHERE m.room_id = velhas.room_id",
+/// Apaga o chat das salas cujo prazo de retenção já passou. Por omissão é a
+/// promessa da migração 0018 — até ao fim do dia (UTC) da última mensagem.
+/// Uma organização com `chat_retention_days` definido (G9) troca esse prazo
+/// por N dias corridos a contar da última mensagem; uma dona em várias
+/// organizações usa a mais longa (nunca apaga cedo demais por ambiguidade —
+/// mesmo espírito do `retention_days` das gravações em `recorder.rs`).
+/// Devolve quantas mensagens saíram.
+///
+/// Duas consultas e não uma: a regra 1 do ADR-0004 §5 (a catraca de
+/// `check-arquitectura-catraca.sh`) proíbe `FROM org_members` fora de
+/// `org.rs` — a pertença lê-se por `org::chat_retention_days_for_owner`, uma
+/// vez por dono distinto, em vez de um `LATERAL JOIN` aqui.
+pub async fn retention_sweep(state: &crate::AppState) -> Result<u64, sqlx::Error> {
+    let candidatos: Vec<(Uuid, chrono::DateTime<chrono::Utc>, Uuid)> = sqlx::query_as(
+        "SELECT c.room_id, c.last_at, rooms.owner_id
+         FROM (SELECT room_id, max(created_at) AS last_at
+               FROM room_chat_messages GROUP BY room_id) c
+         JOIN rooms ON rooms.id = c.room_id",
     )
-    .execute(db)
+    .fetch_all(&state.db)
     .await?;
+
+    let agora = chrono::Utc::now();
+    let mut por_dono: std::collections::HashMap<Uuid, Option<i32>> =
+        std::collections::HashMap::new();
+    let mut a_apagar = Vec::new();
+    for (room_id, last_at, owner_id) in candidatos {
+        let dias = match por_dono.get(&owner_id) {
+            Some(d) => *d,
+            None => {
+                let d = crate::org::chat_retention_days_for_owner(state, owner_id).await?;
+                por_dono.insert(owner_id, d);
+                d
+            }
+        };
+        let expirou = match dias {
+            Some(d) => last_at + chrono::Duration::days(d as i64) <= agora,
+            None => {
+                let fim_do_dia = last_at
+                    .date_naive()
+                    .and_hms_opt(0, 0, 0)
+                    .expect("meia-noite existe sempre")
+                    .and_utc()
+                    + chrono::Duration::days(1);
+                fim_do_dia <= agora
+            }
+        };
+        if expirou {
+            a_apagar.push(room_id);
+        }
+    }
+    if a_apagar.is_empty() {
+        return Ok(0);
+    }
+    let r = sqlx::query("DELETE FROM room_chat_messages WHERE room_id = ANY($1)")
+        .bind(&a_apagar)
+        .execute(&state.db)
+        .await?;
     Ok(r.rows_affected())
 }

@@ -310,6 +310,7 @@ await recusado('A reporta QoS na sala da B', `/api/rooms/${salaB.code}/quality-s
   token: A.token, method: 'POST', body: { rtt_ms: 1, loss_pct: 0, up_kbps: 1 },
 })
 await recusado('anónimo vê metadados da sala da B', `/api/rooms/${salaB.code}`, {})
+await recusado('anónimo vê o estado do directo da sala da B', `/api/rooms/${salaB.code}/live/status`, {})
 
 // REUNIÕES, GRAVAÇÕES E QUADROS da org B (R96).
 //

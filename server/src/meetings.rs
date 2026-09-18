@@ -43,7 +43,7 @@ pub struct Meeting {
     pub options: SessionOptions,
 }
 
-/// Opções de sessão de uma reunião (R184, migração 0055). O contrato de dados
+/// Opções de sessão de uma reunião (R184, migração 0056). O contrato de dados
 /// é o `MeetingSessionOptions` da UI. As regras de forma são de
 /// `delonix_meet_domain::conferencing::session_options` — a BFF e a v1 chamam
 /// as mesmas (ADR-0004 §5, regra 8).

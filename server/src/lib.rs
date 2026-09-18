@@ -338,6 +338,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // ---- Salas ----
         .route("/api/rooms", post(rooms::create_room))
         .route("/api/rooms/{room_code}", get(rooms::get_room))
+        // Estado vivo da emissão (G1) — rótulos, bytes, débito. Ver o /live
+        // (WebSocket) mais abaixo, que é o que a alimenta.
+        .route(
+            "/api/rooms/{room_code}/live/status",
+            get(broadcast::estado_directo),
+        )
         .route("/api/rooms/{room_code}/join", post(rooms::join_room))
         .route("/api/rooms/{room_code}/messages", get(rooms::room_chat))
         .route(
@@ -1031,13 +1037,13 @@ pub async fn run() {
     // Cron: retenção do chat da sala (G9) — até ao fim do dia UTC da última
     // mensagem da sala, a promessa da migração 0018.
     {
-        let db = state.db.clone();
+        let state = state.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(3600));
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 ticker.tick().await;
-                match room_chat::retention_sweep(&db).await {
+                match room_chat::retention_sweep(&state).await {
                     Ok(n) if n > 0 => tracing::info!(apagadas = n, "chat retention sweep"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, "chat retention sweep failed"),
