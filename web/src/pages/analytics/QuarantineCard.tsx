@@ -1,8 +1,13 @@
 /**
  * Quarentena de reuniões: quem mais fica em quarentena por não responder
  * (aceitar ou recusar) a convites, por período. O âmbito é a organização
- * activa ou todas as que a pessoa administra — o servidor filtra, nunca vê
- * organizações de outros.
+ * activa — o servidor filtra, nunca vê organizações de outros.
+ *
+ * O selector «esta organização / todas as minhas» saiu com a renomeação de
+ * rotas de 2026-09-16: o `org_id` deixou de ser query opcional e passou a ser
+ * segmento do caminho (`/api/orgs/{org_id}/analytics/quarantine`), e com ele o
+ * servidor perdeu o modo «todas as minhas organizações». Um botão que já não
+ * tem endpoint por trás é pior do que botão nenhum.
  */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -14,16 +19,16 @@ import { RankList } from './RankList'
 
 type Period = 'week' | 'month' | 'quarter' | 'year'
 const PERIODS: Period[] = ['week', 'month', 'quarter', 'year']
-type Scope = 'org' | 'all'
 
 export function QuarantineCard({ orgId }: { orgId: string | null }) {
   const { t } = useTranslation()
   const [period, setPeriod] = useState<Period>('month')
-  const [scope, setScope] = useState<Scope>('org')
-  const effectiveOrg = scope === 'org' && orgId ? orgId : undefined
   const { state, reload } = useAsync(
-    () => quarantineAnalytics(period, effectiveOrg).catch(forbiddenAsMessage(t('analytics.semPermissao'))),
-    [period, effectiveOrg],
+    () =>
+      orgId
+        ? quarantineAnalytics(orgId, period).catch(forbiddenAsMessage(t('analytics.semPermissao')))
+        : Promise.resolve([]),
+    [orgId, period],
   )
 
   return (
@@ -37,17 +42,6 @@ export function QuarantineCard({ orgId }: { orgId: string | null }) {
             onChange={setPeriod}
             options={PERIODS.map((p) => ({ value: p, label: t(`analytics.quarentena.periodos.${p}`) }))}
           />
-          {orgId && (
-            <Segmented
-              label={t('analytics.quarentena.ambito')}
-              value={scope}
-              onChange={setScope}
-              options={[
-                { value: 'org', label: t('analytics.quarentena.estaOrg') },
-                { value: 'all', label: t('analytics.quarentena.todasOrgs') },
-              ]}
-            />
-          )}
         </div>
         <AsyncSection state={state} onRetry={reload}>
           {(rows) =>

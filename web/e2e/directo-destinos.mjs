@@ -108,7 +108,7 @@ const destinos = [
 
 // ------------------------------------------------------------------ emissão
 const q = new URLSearchParams({ token: join.json.room_token, destinos: JSON.stringify(destinos), codec: 'video/h264' })
-const ws = new WebSocket(`${WS}/api/rooms/${sala.code}/broadcast?${q}`)
+const ws = new WebSocket(`${WS}/api/rooms/${sala.code}/live?${q}`)
 const historico = [] // [ms, estadoValido, estadoInvalido, kbpsValido]
 let ultimo = null
 let erroDoServidor = null

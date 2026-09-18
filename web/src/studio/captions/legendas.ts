@@ -318,7 +318,7 @@ export function editarTextoDaCue(c: Cue, texto: string): Cue {
 //  Tradução
 // ---------------------------------------------------------------------------
 
-/** O servidor recusa textos acima disto (`ai.rs`, `POST /api/translate`). */
+/** O servidor recusa textos acima disto (`ai.rs`, `POST /api/ai/translations`). */
 export const LIMITE_TRADUCAO = 500
 
 /**
