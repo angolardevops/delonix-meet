@@ -38,6 +38,8 @@
   width: 100%;
   object-fit: cover;
   background: #000;
+}
+.phonecam__preview.is-mirrored {
   transform: scaleX(-1);
 }
 .phonecam__controls {

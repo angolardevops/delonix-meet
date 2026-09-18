@@ -15,6 +15,8 @@ export default {
   foco: 'Foco',
   exposicao: 'Exposição',
   lanterna: 'Lanterna',
+  bloquearAeAf: 'Bloquear AE/AF',
+  espelhar: 'Espelhar',
   semControlosAvancados: 'Este aparelho ou browser não expõe controlos de câmara avançados (zoom, foco, exposição).',
   erroControlo: 'Não foi possível aplicar o ajuste.',
   erroGravacao: 'Não foi possível começar a gravação de segurança.',

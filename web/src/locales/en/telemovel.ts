@@ -15,6 +15,8 @@ export default {
   foco: 'Focus',
   exposicao: 'Exposure',
   lanterna: 'Torch',
+  bloquearAeAf: 'Lock AE/AF',
+  espelhar: 'Mirror',
   semControlosAvancados: 'This device or browser does not expose advanced camera controls (zoom, focus, exposure).',
   erroControlo: 'Could not apply the adjustment.',
   erroGravacao: 'Could not start the safety recording.',

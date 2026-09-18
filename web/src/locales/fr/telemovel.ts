@@ -15,6 +15,8 @@ export default {
   foco: 'Mise au point',
   exposicao: 'Exposition',
   lanterna: 'Torche',
+  bloquearAeAf: 'Verrouiller AE/AF',
+  espelhar: 'Miroir',
   semControlosAvancados: "Cet appareil ou ce navigateur n'expose pas de contrôles de caméra avancés (zoom, mise au point, exposition).",
   erroControlo: "Impossible d'appliquer le réglage.",
   erroGravacao: "Impossible de démarrer l'enregistrement de sécurité.",

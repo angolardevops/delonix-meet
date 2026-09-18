@@ -12,7 +12,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Alert, Button, Spinner, StatusBadge } from '../ui/kit'
+import { Alert, Button, cx, Spinner, StatusBadge } from '../ui/kit'
 import { Icon } from '../ui/icons'
 import { useRoomCore } from '../room/useRoomCore'
 import { useLocalMedia } from '../room/useLocalMedia'
@@ -25,12 +25,16 @@ interface CapacidadesAlargadas extends MediaTrackCapabilities {
   focusDistance?: { min: number; max: number; step: number }
   exposureCompensation?: { min: number; max: number; step: number }
   torch?: boolean
+  exposureMode?: string[]
+  focusMode?: string[]
 }
 interface ConstraintsAlargadas extends MediaTrackConstraintSet {
   zoom?: number
   focusDistance?: number
   exposureCompensation?: number
   torch?: boolean
+  exposureMode?: string
+  focusMode?: string
 }
 
 export default function PhoneCamera({ code, onLeave }: { code: string; onLeave: () => void }) {
@@ -94,6 +98,11 @@ function OperadorDeCamara({
   const [foco, setFoco] = useState<number | null>(null)
   const [exposicao, setExposicao] = useState<number | null>(null)
   const [torch, setTorch] = useState(false)
+  // Espelhado por omissão: sempre foi o comportamento (frente ao operador,
+  // como um espelho de selfie); o toggle serve para desligar quando a câmara
+  // aponta para fora (traseira) e a orientação real é que interessa.
+  const [espelhado, setEspelhado] = useState(true)
+  const [aeAfBloqueado, setAeAfBloqueado] = useState(false)
   const [bateria, setBateria] = useState<{ nivel: number; aCarregar: boolean } | null>(null)
   const [gravando, setGravando] = useState(false)
   const [ficheiroSeguranca, setFicheiroSeguranca] = useState<{ url: string; nome: string } | null>(null)
@@ -141,6 +150,21 @@ function OperadorDeCamara({
     }
   }
 
+  function alternarAeAfBloqueado() {
+    const novo = !aeAfBloqueado
+    setAeAfBloqueado(novo)
+    const track = core.cameraTrackRef.current
+    const settings = track?.getSettings?.() as ConstraintsAlargadas | undefined
+    // Ao bloquear leva-se o valor actual — sem isto alguns browsers saltam
+    // para o extremo do intervalo em vez de ficar onde a imagem já estava boa.
+    void aplicar({
+      exposureMode: novo ? 'manual' : 'continuous',
+      focusMode: novo ? 'manual' : 'continuous',
+      ...(novo && settings?.exposureCompensation !== undefined ? { exposureCompensation: settings.exposureCompensation } : {}),
+      ...(novo && settings?.focusDistance !== undefined ? { focusDistance: settings.focusDistance } : {}),
+    })
+  }
+
   function iniciarGravacaoSeguranca() {
     const stream = core.localStreamRef.current
     if (!stream) return
@@ -171,7 +195,7 @@ function OperadorDeCamara({
       <div className={`phonecam__tally ${tally ? 'is-live' : ''}`}>
         {tally ? t('telemovel.tally.noAr') : t('telemovel.tally.emEspera')}
       </div>
-      <video ref={media.attachLocalVideo} className="phonecam__preview" autoPlay playsInline muted />
+      <video ref={media.attachLocalVideo} className={cx('phonecam__preview', espelhado && 'is-mirrored')} autoPlay playsInline muted />
 
       {erro && <Alert tone="danger">{erro}</Alert>}
 
@@ -240,6 +264,14 @@ function OperadorDeCamara({
             {t('telemovel.lanterna')}
           </Button>
         )}
+        {capacidades?.exposureMode?.includes('manual') && capacidades?.focusMode?.includes('manual') && (
+          <Button variant={aeAfBloqueado ? 'primary' : 'secondary'} size="sm" onClick={alternarAeAfBloqueado}>
+            {t('telemovel.bloquearAeAf')}
+          </Button>
+        )}
+        <Button variant={espelhado ? 'primary' : 'secondary'} size="sm" onClick={() => setEspelhado((v) => !v)}>
+          {t('telemovel.espelhar')}
+        </Button>
         {!capacidades?.zoom && !capacidades?.focusDistance && !capacidades?.exposureCompensation && (
           <p className="dx-muted phonecam__semControlo">{t('telemovel.semControlosAvancados')}</p>
         )}

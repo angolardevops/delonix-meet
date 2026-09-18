@@ -15,6 +15,8 @@ export default {
   foco: '对焦',
   exposicao: '曝光',
   lanterna: '手电筒',
+  bloquearAeAf: '锁定 AE/AF',
+  espelhar: '镜像',
   semControlosAvancados: '此设备或浏览器不支持高级摄像头控制（变焦、对焦、曝光）。',
   erroControlo: '无法应用此调整。',
   erroGravacao: '无法开始安全录制。',
