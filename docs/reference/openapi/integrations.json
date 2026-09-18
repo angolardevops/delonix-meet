@@ -5684,7 +5684,7 @@
             "type": "string"
           },
           "download_url": {
-            "description": "`/api/recordings/{id}` (rota da BFF, autenticada por sessão).",
+            "description": "`/api/recordings/{id}/content` (rota da BFF, autenticada por sessão).",
             "type": "string"
           },
           "filename": {

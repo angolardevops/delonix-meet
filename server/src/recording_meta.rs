@@ -191,6 +191,11 @@ pub async fn recording_participants(
     Query(q): Query<PageQuery>,
 ) -> Result<Json<ParticipantPage>, ApiError> {
     let rec = seen_item(&state, id, auth.user_id).await?;
+    // Mais estrito que seen_item: publicar dá reprodução, não a lista de
+    // quem esteve na reunião (ver AccessFacts::can_see_participants).
+    if !rec.facts().can_see_participants() {
+        return Err(ApiError::NotFound);
+    }
     Ok(Json(participants_of_room(&state, rec.room_id, q).await?))
 }
 
@@ -309,6 +314,11 @@ pub async fn transcript(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Transcript>, ApiError> {
     let rec = seen_item(&state, id, auth.user_id).await?;
+    // Mais estrito que seen_item: publicar dá reprodução, não a transcrição
+    // inteira (ver AccessFacts::can_see_transcript).
+    if !rec.facts().can_see_transcript() {
+        return Err(ApiError::NotFound);
+    }
     let status = rules::transcript_status(rec.processing());
     #[allow(clippy::type_complexity)]
     let (text, language, confidence, error): (

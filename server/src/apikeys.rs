@@ -593,7 +593,7 @@ pub struct V1Recording {
     pub size_bytes: i64,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub room_code: String,
-    /// `/api/recordings/{id}` (rota da BFF, autenticada por sessão).
+    /// `/api/recordings/{id}/content` (rota da BFF, autenticada por sessão).
     pub download_url: String,
 }
 
@@ -602,8 +602,12 @@ pub struct V1RecordingList {
     pub recordings: Vec<V1Recording>,
 }
 
-/// `GET /api/v1/recordings` — gravações da organização (membros), as 200 mais
-/// recentes.
+/// `GET /api/v1/recordings` — gravações **publicadas para a organização**
+/// (`visibility = org`, já publicadas), as 200 mais recentes. Uma chave
+/// representa a organização inteira, não um utilizador — por isso vê
+/// exactamente o que um colega qualquer veria na biblioteca "publicadas"
+/// (`AccessFacts::listed_in(Published, …)`), nunca uma gravação privada de
+/// outro membro só porque partilham organização.
 #[utoipa::path(
     get, path = "/api/v1/recordings", tag = "v1",
     security(("api_key" = ["recordings:read"])),
@@ -624,6 +628,7 @@ pub async fn v1_recordings(
          FROM recordings r
          JOIN rooms rm ON rm.id = r.room_id
          JOIN org_members m ON m.user_id = r.uploader_id AND m.org_id = $1
+         WHERE r.visibility = 'org' AND r.published_at IS NOT NULL
          ORDER BY r.created_at DESC LIMIT 200",
     )
     .bind(key.org_id)

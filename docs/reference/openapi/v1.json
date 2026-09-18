@@ -5684,7 +5684,7 @@
             "type": "string"
           },
           "download_url": {
-            "description": "`/api/recordings/{id}` (rota da BFF, autenticada por sessão).",
+            "description": "`/api/recordings/{id}/content` (rota da BFF, autenticada por sessão).",
             "type": "string"
           },
           "filename": {
@@ -7024,7 +7024,7 @@
             ]
           }
         ],
-        "summary": "`GET /api/v1/recordings` — gravações da organização (membros), as 200 mais\nrecentes.",
+        "summary": "`GET /api/v1/recordings` — gravações **publicadas para a organização**\n(`visibility = org`, já publicadas), as 200 mais recentes. Uma chave\nrepresenta a organização inteira, não um utilizador — por isso vê\nexactamente o que um colega qualquer veria na biblioteca \"publicadas\"\n(`AccessFacts::listed_in(Published, …)`), nunca uma gravação privada de\noutro membro só porque partilham organização.",
         "tags": [
           "v1"
         ]

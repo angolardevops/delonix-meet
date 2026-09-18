@@ -402,6 +402,25 @@ async fn publication_opens_to_active_org_members_only(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 201);
+    // Publicar dá reprodução, não a transcrição nem quem esteve na sala —
+    // um colega que nunca participou continua sem os ver (R230).
+    let (st, v) = app
+        .get(&format!("{item}/transcript"), Some(&f.duarte.token))
+        .await;
+    assert_eq!(st, 404, "publicar não abre a transcrição: {v}");
+    let (st, v) = app
+        .get(&format!("{item}/participants"), Some(&f.duarte.token))
+        .await;
+    assert_eq!(st, 404, "publicar não abre quem esteve na sala: {v}");
+    // Controlo: quem participou de facto continua a ver os dois.
+    let (st, _) = app
+        .get(&format!("{item}/transcript"), Some(&f.carla.token))
+        .await;
+    assert_eq!(st, 200, "participante continua a ver a transcrição");
+    let (st, _) = app
+        .get(&format!("{item}/participants"), Some(&f.carla.token))
+        .await;
+    assert_eq!(st, 200, "participante continua a ver quem esteve na sala");
 
     // Outra org: continua sem saber que existe.
     let (st, v) = app.get(&item, Some(&f.b.token)).await;
