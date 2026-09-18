@@ -5,13 +5,14 @@
  */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { updateEmployee } from '../../api'
 import type { Branch, Employee } from '../../api'
 import type { Async } from '../../components/AsyncSection'
-import { Alert, Avatar, Button, Card, IconButton, Tag } from '../../ui/kit'
+import { Alert, Avatar, Button, Card, Checkbox, IconButton, Select, Tag } from '../../ui/kit'
 import { SearchBar, SearchResults } from '../../ui/search/SearchResults'
 import { useResourceSearch } from '../../ui/search/useResourceSearch'
 import { AddMemberDialog, EditMemberDialog, RemoveMemberDialog } from './MemberDialogs'
-import { formatAgo, useLocaleTag } from './orgShared'
+import { formatAgo, orgErrorMessage, useLocaleTag } from './orgShared'
 import { membersFallback } from './search'
 
 export default function MembersCard({
@@ -34,11 +35,44 @@ export default function MembersCard({
   const [editing, setEditing] = useState<Employee | null>(null)
   const [removing, setRemoving] = useState<Employee | null>(null)
   const [notice, setNotice] = useState('')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkErr, setBulkErr] = useState('')
 
   const all = state.s === 'ready' ? state.d : []
   const reloadAll = () => {
     reload()
     rs.reload()
+  }
+  function toggleOne(id: string) {
+    setSelected((s) => {
+      const next = new Set(s)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  // Acções em massa: N pedidos PATCH ao mesmo endpoint que a edição de UMA
+  // pessoa já usa — não existe rota de lote no servidor, e inventar uma só
+  // para poupar N-1 pedidos não vale a complexidade. Cada falha isolada
+  // aparece com o nome; as que resultaram ficam aplicadas (não é tudo-ou-nada).
+  async function applyToSelected(data: { role?: string; branch_id?: string | null }) {
+    setBulkBusy(true)
+    setBulkErr('')
+    const alvo = all.filter((m) => selected.has(m.user_id) && m.user_id !== meId)
+    const falhas: string[] = []
+    for (const m of alvo) {
+      try {
+        await updateEmployee(orgId, m.user_id, data)
+      } catch (e) {
+        falhas.push(`${m.username}: ${orgErrorMessage(e, t, 'org.erro.guardar')}`)
+      }
+    }
+    setBulkBusy(false)
+    setSelected(new Set())
+    reloadAll()
+    if (falhas.length > 0) setBulkErr(falhas.join(' · '))
+    else setNotice(t('org.membro.massaAplicada', { count: alvo.length }))
   }
 
   return (
@@ -61,6 +95,61 @@ export default function MembersCard({
           <Alert tone="success">{notice}</Alert>
         </div>
       )}
+      {bulkErr && (
+        <div className="org-card-pad">
+          <Alert tone="danger">{bulkErr}</Alert>
+        </div>
+      )}
+      {selected.size > 0 && (
+        <div className="org-card-pad org-bulkbar" role="group" aria-label={t('org.membro.massaTitulo')}>
+          <span className="dx-num">{t('org.membro.massaContagem', { count: selected.size })}</span>
+          <label className="org-bulkbar__field">
+            <span className="dx-sr-only">{t('org.membro.massaPapel')}</span>
+            <Select
+              disabled={bulkBusy}
+              defaultValue=""
+              onChange={(e) => {
+                const v = e.target.value
+                if (v) void applyToSelected({ role: v })
+                e.target.value = ''
+              }}
+            >
+              <option value="" disabled>
+                {t('org.membro.massaPapel')}
+              </option>
+              <option value="admin">{t('org.papel.admin')}</option>
+              <option value="member">{t('org.papel.membro')}</option>
+            </Select>
+          </label>
+          {branches.length > 0 && (
+            <label className="org-bulkbar__field">
+              <span className="dx-sr-only">{t('org.membro.massaFilial')}</span>
+              <Select
+                disabled={bulkBusy}
+                defaultValue=""
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (v) void applyToSelected({ branch_id: v === '_sem_' ? null : v })
+                  e.target.value = ''
+                }}
+              >
+                <option value="" disabled>
+                  {t('org.membro.massaFilial')}
+                </option>
+                <option value="_sem_">{t('org.membro.semFilial')}</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </Select>
+            </label>
+          )}
+          <Button variant="ghost" size="sm" disabled={bulkBusy} onClick={() => setSelected(new Set())}>
+            {t('org.membro.massaLimpar')}
+          </Button>
+        </div>
+      )}
       <div className="org-results">
         <SearchResults
           rs={rs}
@@ -71,6 +160,15 @@ export default function MembersCard({
               <table className="dx-table org-table">
                 <thead>
                   <tr>
+                    <th scope="col">
+                      <Checkbox
+                        label={<span className="dx-sr-only">{t('org.membro.massaSeleccionarTodos')}</span>}
+                        checked={rows.length > 0 && rows.every((m) => selected.has(m.user_id))}
+                        onChange={(e) =>
+                          setSelected(e.target.checked ? new Set(rows.map((m) => m.user_id)) : new Set())
+                        }
+                      />
+                    </th>
                     <th scope="col">{t('org.coluna.pessoa')}</th>
                     <th scope="col">{t('org.coluna.papel')}</th>
                     <th scope="col">{t('org.coluna.cargo')}</th>
@@ -86,6 +184,15 @@ export default function MembersCard({
                     const self = m.user_id === meId
                     return (
                       <tr key={m.user_id}>
+                        <td>
+                          {!self && (
+                            <Checkbox
+                              label={<span className="dx-sr-only">{t('org.membro.massaSeleccionarA', { nome: m.username })}</span>}
+                              checked={selected.has(m.user_id)}
+                              onChange={() => toggleOne(m.user_id)}
+                            />
+                          )}
+                        </td>
                         <td>
                           <span className="org-person">
                             <Avatar name={m.username} size={28} />

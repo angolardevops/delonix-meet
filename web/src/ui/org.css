@@ -31,6 +31,15 @@
   align-items: center;
   gap: 4px;
 }
+.org-bulkbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.org-bulkbar__field {
+  display: inline-flex;
+}
 
 .org-search {
   display: flex;
