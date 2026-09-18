@@ -191,7 +191,7 @@ pub async fn create(
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateReq>,
 ) -> Result<Response, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::rbac::require_permission(&state, org_id, auth.user_id, "streaming.manage").await?;
     let key = secrets_key(&state)?;
     let label = valid_label(&req.label)?;
     let url = valid_url(&req.rtmp_url)?;
@@ -250,7 +250,7 @@ pub async fn update(
     Path((org_id, id)): Path<(Uuid, Uuid)>,
     Json(req): Json<UpdateReq>,
 ) -> Result<Json<StreamDestination>, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::rbac::require_permission(&state, org_id, auth.user_id, "streaming.manage").await?;
     let current = fetch(&state, org_id, id).await?;
     let label = match req.label.as_deref() {
         Some(l) => valid_label(l)?,
@@ -304,7 +304,7 @@ pub async fn delete(
     auth: AuthUser,
     Path((org_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::rbac::require_permission(&state, org_id, auth.user_id, "streaming.manage").await?;
     let removed: Option<(String,)> = sqlx::query_as(
         "DELETE FROM stream_destinations WHERE org_id = $1 AND id = $2 RETURNING label",
     )

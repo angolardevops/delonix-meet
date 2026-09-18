@@ -679,6 +679,111 @@ export interface Group {
   member_count: number
 }
 
+// ---------- Papéis e permissões (RBAC) ----------
+
+export interface PermissionCatalogEntry {
+  key: string
+  label: string
+}
+export interface PermissionGrant {
+  permission: string
+  requires_approval: boolean
+}
+export interface RbacRole {
+  id: string
+  name: string
+  is_system: boolean
+  parent_role_id: string | null
+  parent_role_name: string | null
+  member_count: number
+  /** Concessões directas deste papel. */
+  permissions: PermissionGrant[]
+  /** Concessões herdadas do pai (já não repetidas em `permissions`). */
+  inherited: PermissionGrant[]
+}
+export interface RbacRolesResp {
+  catalog: PermissionCatalogEntry[]
+  roles: RbacRole[]
+}
+export interface RbacPermissionInput {
+  permission: string
+  requires_approval?: boolean
+}
+export interface RbacPermissionRequest {
+  id: string
+  requester_id: string
+  requester_username: string
+  requester_email: string
+  permission: string
+  status: 'pending' | 'approved' | 'denied'
+  created_at: string
+  decided_at: string | null
+  expires_at: string | null
+}
+export interface MyPermissions {
+  admin: boolean
+  permissions: string[]
+  pending: string[]
+}
+
+export const listRoles = (orgId: string, signal?: AbortSignal) =>
+  request<RbacRolesResp>(`/api/orgs/${orgId}/roles`, { signal })
+
+export const createRole = (
+  orgId: string,
+  data: { name: string; parent_role_id?: string | null; permissions?: RbacPermissionInput[] },
+) => request<RbacRole>(`/api/orgs/${orgId}/roles`, { method: 'POST', body: JSON.stringify(data) })
+
+export const updateRole = (
+  orgId: string,
+  roleId: string,
+  data: { name?: string; parent_role_id?: string | null; permissions?: RbacPermissionInput[] },
+) => request<RbacRole>(`/api/orgs/${orgId}/roles/${roleId}`, { method: 'PATCH', body: JSON.stringify(data) })
+
+export const deleteRole = (orgId: string, roleId: string) =>
+  request<{ ok: boolean }>(`/api/orgs/${orgId}/roles/${roleId}`, { method: 'DELETE' })
+
+export const duplicateRole = (orgId: string, roleId: string) =>
+  request<RbacRole>(`/api/orgs/${orgId}/roles/${roleId}/duplicate`, { method: 'POST' })
+
+export const assignRole = (orgId: string, userId: string, roleId: string) =>
+  request<{ ok: boolean }>(`/api/orgs/${orgId}/employees/${userId}/role`, {
+    method: 'PUT',
+    body: JSON.stringify({ role_id: roleId }),
+  })
+
+export const listPermissionRequests = (orgId: string, signal?: AbortSignal) =>
+  request<RbacPermissionRequest[]>(`/api/orgs/${orgId}/permission-requests`, { signal })
+
+export const decidePermissionRequest = (orgId: string, requestId: string, approve: boolean) =>
+  request<{ ok: boolean }>(`/api/orgs/${orgId}/permission-requests/${requestId}/decide`, {
+    method: 'POST',
+    body: JSON.stringify({ approve }),
+  })
+
+export const myPermissions = (orgId: string) => request<MyPermissions>(`/api/orgs/${orgId}/permissions/me`)
+
+/** Descarrega a matriz de papéis e permissões como CSV. */
+export async function downloadRolesCsv(orgId: string): Promise<void> {
+  const res = await fetch(`/api/orgs/${orgId}/roles/export.csv`, {
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    credentials: 'same-origin',
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new ApiError(res.status, body, body?.error ?? res.statusText ?? 'request failed')
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'papeis-e-permissoes.csv'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 export interface WeekBucket {
   week_start: string
   count: number

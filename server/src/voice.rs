@@ -332,7 +332,7 @@ pub async fn create_did(
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateDidReq>,
 ) -> Result<Json<VoiceDid>, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
     let e164 = req.e164.trim();
     if !e164.starts_with('+') || e164.len() < 8 || e164.len() > 20 {
         return Err(ApiError::BadRequest(
@@ -373,7 +373,7 @@ pub async fn list_dids(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<VoiceDid>>, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
     let dids: Vec<VoiceDid> = sqlx::query_as(
         "SELECT id, org_id, e164, market, model, provider, active, created_at
          FROM voice_did WHERE org_id = $1 OR org_id IS NULL ORDER BY created_at DESC",
@@ -390,7 +390,7 @@ pub async fn list_cdr(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<VoiceCdr>>, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
     let rows: Vec<VoiceCdr> = sqlx::query_as(
         "SELECT id, direction, caller_number, did_e164, duration_secs, cost_estimate, started_at, ended_at
          FROM voice_cdr WHERE org_id = $1 ORDER BY started_at DESC LIMIT 500",
@@ -426,7 +426,7 @@ pub async fn billing_summary(
     Path(org_id): Path<Uuid>,
     axum::extract::Query(q): axum::extract::Query<BillingQuery>,
 ) -> Result<Json<BillingSummary>, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
     let days: i64 = match q.period.as_str() {
         "week" => 7,
         "quarter" => 90,

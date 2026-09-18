@@ -396,11 +396,25 @@ pub async fn register(
     .bind(&domain)
     .fetch_one(&mut *tx)
     .await?;
+
+    // Os dois papéis de sistema nascem com a organização — ver rbac.rs.
+    let (admin_role_id,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO org_roles (org_id, name, is_system) VALUES ($1, 'Administrador', TRUE) RETURNING id",
+    )
+    .bind(org_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    sqlx::query("INSERT INTO org_roles (org_id, name, is_system) VALUES ($1, 'Membro', TRUE)")
+        .bind(org_id)
+        .execute(&mut *tx)
+        .await?;
+
     sqlx::query(
-        "INSERT INTO org_members (org_id, user_id, role, title) VALUES ($1, $2, 'admin', 'Administrador')",
+        "INSERT INTO org_members (org_id, user_id, role, role_id, title) VALUES ($1, $2, 'admin', $3, 'Administrador')",
     )
     .bind(org_id)
     .bind(user.id)
+    .bind(admin_role_id)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -973,13 +987,20 @@ pub async fn sso_callback(
             })?;
 
             // Adicionar como membro da org (role = member; admins são promovidos manualmente).
+            let membro_role_id: Option<(Uuid,)> = sqlx::query_as(
+                "SELECT id FROM org_roles WHERE org_id = $1 AND is_system = TRUE AND name = 'Membro'",
+            )
+            .bind(entry.org_id)
+            .fetch_optional(&mut *tx)
+            .await?;
             sqlx::query(
-                "INSERT INTO org_members (org_id, user_id, role, title)
-                 VALUES ($1, $2, 'member', '')
+                "INSERT INTO org_members (org_id, user_id, role, role_id, title)
+                 VALUES ($1, $2, 'member', $3, '')
                  ON CONFLICT DO NOTHING",
             )
             .bind(entry.org_id)
             .bind(new_user.id)
+            .bind(membro_role_id.map(|(id,)| id))
             .execute(&mut *tx)
             .await?;
 

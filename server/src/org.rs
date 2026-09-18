@@ -321,12 +321,27 @@ pub async fn create_org(
     }
     let org = org.ok_or_else(|| ApiError::internal("could not allocate org slug"))?;
 
-    // O criador entra como admin.
-    sqlx::query("INSERT INTO org_members (org_id, user_id, role, title) VALUES ($1, $2, 'admin', 'Administrador')")
+    // Os dois papéis de sistema nascem com a organização — ver rbac.rs.
+    let (admin_role_id,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO org_roles (org_id, name, is_system) VALUES ($1, 'Administrador', TRUE) RETURNING id",
+    )
+    .bind(org.id)
+    .fetch_one(&state.db)
+    .await?;
+    sqlx::query("INSERT INTO org_roles (org_id, name, is_system) VALUES ($1, 'Membro', TRUE)")
         .bind(org.id)
-        .bind(auth.user_id)
         .execute(&state.db)
         .await?;
+
+    // O criador entra como admin.
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, role, role_id, title) VALUES ($1, $2, 'admin', $3, 'Administrador')",
+    )
+    .bind(org.id)
+    .bind(auth.user_id)
+    .bind(admin_role_id)
+    .execute(&state.db)
+    .await?;
 
     Ok(Json(org))
 }
@@ -509,8 +524,15 @@ pub async fn add_employee(
         }
     };
 
+    // `role_id` só é fixado na PRIMEIRA inserção (papel de sistema correspondente
+    // ao `role` legado); num re-convite (ON CONFLICT) fica como estava — não
+    // apaga um papel delegado já atribuído a este membro.
     sqlx::query(
-        "INSERT INTO org_members (org_id, user_id, branch_id, role, title) VALUES ($1, $2, $3, $4, $5)
+        "INSERT INTO org_members (org_id, user_id, branch_id, role, role_id, title)
+         VALUES ($1, $2, $3, $4,
+                 (SELECT id FROM org_roles WHERE org_id = $1 AND is_system = TRUE
+                  AND name = CASE WHEN $4 = 'admin' THEN 'Administrador' ELSE 'Membro' END),
+                 $5)
          ON CONFLICT (org_id, user_id) DO UPDATE SET branch_id = $3, role = $4, title = $5",
     )
     .bind(org_id)

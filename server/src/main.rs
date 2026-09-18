@@ -23,6 +23,7 @@ mod org;
 mod presence;
 mod pubsub;
 mod rate_limit;
+mod rbac;
 mod recorder;
 mod recording_captions;
 mod recording_chapters;
@@ -346,6 +347,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/orgs/{org_id}/employees/{user_id}", axum::routing::delete(org::remove_employee).patch(org::update_employee))
         // Telefone do membro (o próprio ou admin) — ver sms::put_member_phone.
         .route("/api/orgs/{org_id}/employees/{user_id}/phone", axum::routing::put(sms::put_member_phone))
+        // Papéis e permissões (RBAC) — ver rbac.rs.
+        .route("/api/orgs/{org_id}/roles", get(rbac::list_roles).post(rbac::create_role))
+        .route(
+            "/api/orgs/{org_id}/roles/{role_id}",
+            axum::routing::patch(rbac::update_role).delete(rbac::delete_role),
+        )
+        .route("/api/orgs/{org_id}/roles/{role_id}/duplicate", post(rbac::duplicate_role))
+        .route("/api/orgs/{org_id}/roles/export.csv", get(rbac::export_csv))
+        .route("/api/orgs/{org_id}/employees/{user_id}/role", axum::routing::put(rbac::assign_role))
+        .route("/api/orgs/{org_id}/permission-requests", get(rbac::list_permission_requests))
+        .route(
+            "/api/orgs/{org_id}/permission-requests/{request_id}/decide",
+            post(rbac::decide_permission_request),
+        )
+        .route("/api/orgs/{org_id}/permissions/me", get(rbac::my_permissions))
         .route("/api/orgs/{org_id}/groups", get(org::list_groups).post(org::create_group))
         .route("/api/orgs/{org_id}/meeting-rooms", get(org::list_meeting_rooms).post(org::create_meeting_room))
         .route("/api/orgs/{org_id}/stats", get(org::org_stats))
