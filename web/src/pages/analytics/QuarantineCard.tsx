@@ -1,12 +1,13 @@
 /**
  * Quarentena de reuniões: quem mais fica em quarentena por não responder
- * (aceitar ou recusar) a convites, por período. O âmbito é a organização
- * activa ou todas as que a pessoa administra — o servidor filtra, nunca vê
- * organizações de outros.
+ * (aceitar ou recusar) a convites, por período. O âmbito é UMA organização: a
+ * rota de analítica de quarentena passou a exigir o org_id no caminho, e a
+ * variante «todas as que a pessoa administra» deixou de existir no servidor
+ * com a reorganização de rotas de 2026-09-16 (6a854af).
  */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { quarantineAnalytics } from '../../api'
+import { quarantineAnalytics, QuarantineRow } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Card, Empty, Segmented } from '../../ui/kit'
 import { forbiddenAsMessage } from './format'
@@ -14,16 +15,16 @@ import { RankList } from './RankList'
 
 type Period = 'week' | 'month' | 'quarter' | 'year'
 const PERIODS: Period[] = ['week', 'month', 'quarter', 'year']
-type Scope = 'org' | 'all'
 
 export function QuarantineCard({ orgId }: { orgId: string | null }) {
   const { t } = useTranslation()
   const [period, setPeriod] = useState<Period>('month')
-  const [scope, setScope] = useState<Scope>('org')
-  const effectiveOrg = scope === 'org' && orgId ? orgId : undefined
   const { state, reload } = useAsync(
-    () => quarantineAnalytics(period, effectiveOrg).catch(forbiddenAsMessage(t('analytics.semPermissao'))),
-    [period, effectiveOrg],
+    () =>
+      orgId
+        ? quarantineAnalytics(orgId, period).catch(forbiddenAsMessage(t('analytics.semPermissao')))
+        : Promise.resolve([] as QuarantineRow[]),
+    [orgId, period],
   )
 
   return (
@@ -37,17 +38,6 @@ export function QuarantineCard({ orgId }: { orgId: string | null }) {
             onChange={setPeriod}
             options={PERIODS.map((p) => ({ value: p, label: t(`analytics.quarentena.periodos.${p}`) }))}
           />
-          {orgId && (
-            <Segmented
-              label={t('analytics.quarentena.ambito')}
-              value={scope}
-              onChange={setScope}
-              options={[
-                { value: 'org', label: t('analytics.quarentena.estaOrg') },
-                { value: 'all', label: t('analytics.quarentena.todasOrgs') },
-              ]}
-            />
-          )}
         </div>
         <AsyncSection state={state} onRetry={reload}>
           {(rows) =>

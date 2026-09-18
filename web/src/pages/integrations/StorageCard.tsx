@@ -122,7 +122,7 @@ function StorageForm({ initial, onSaved, usedText }: { initial: StorageConfig; o
     setBusy('manifest')
     setErr('')
     try {
-      const href = await authedBlobUrl('/api/v1/platform/storage/pvc-manifest')
+      const href = await authedBlobUrl('/api/operator/v1/storage/pvc-manifest')
       const a = document.createElement('a')
       a.href = href
       a.download = 'delonix-recordings-pv.yaml'

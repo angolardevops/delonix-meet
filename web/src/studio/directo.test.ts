@@ -62,7 +62,7 @@ describe('urlDoDirecto', () => {
 
   it('escapa o código da sala', () => {
     const u = urlDoDirecto({ protocol: 'https:', host: 'h' }, 'a/b?c', 't', [destino])
-    expect(u).toContain('/api/rooms/a%2Fb%3Fc/broadcast')
+    expect(u).toContain('/api/rooms/a%2Fb%3Fc/live')
   })
 
   it('apara espaços à volta do url e da chave de cada destino', () => {
