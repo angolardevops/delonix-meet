@@ -248,6 +248,7 @@ export default {
       musica: '音乐',
       video: '视频',
     },
+    porConvidado: '按嘉宾',
     carregarMusica: '上传音乐',
     tocarMusica: '播放',
     pausarMusica: '暂停',

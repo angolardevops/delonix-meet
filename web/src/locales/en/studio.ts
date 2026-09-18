@@ -248,6 +248,7 @@ export default {
       musica: 'Music',
       video: 'Video',
     },
+    porConvidado: 'Per guest',
     carregarMusica: 'Load music',
     tocarMusica: 'Play',
     pausarMusica: 'Pause',

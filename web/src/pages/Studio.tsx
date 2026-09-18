@@ -121,6 +121,9 @@ export default function Studio() {
   const [salaLigada, setSalaLigada] = useState<{ codigo: string; token: string } | null>(null)
   const [haSondagem, setHaSondagem] = useState(false)
   const [convidadosNoPalco, setConvidadosNoPalco] = useState(0)
+  const [fontesNoPalco, setFontesNoPalco] = useState<Fonte[]>([])
+  /** Fader por convidado — só existe para quem já esteve no palco nesta sessão. */
+  const [ganhosPorConvidado, setGanhosPorConvidado] = useState<Record<string, number>>({})
   /** Quem enche o ecrã em «Um a ecrã inteiro» — o corte da mesa de corte. */
   const [programaId, setProgramaId] = useState<string | null>(null)
   const [destinos, setDestinos] = useState<Destino[]>([
@@ -172,6 +175,11 @@ export default function Studio() {
   const aoPalco = useCallback((fontes: Fonte[]) => {
     compRef.current?.definirConvidados(fontes)
     setConvidadosNoPalco(fontes.length)
+    setFontesNoPalco(fontes)
+  }, [])
+  const mudarGanhoConvidado = useCallback((id: string, v: number) => {
+    compRef.current?.definirGanhoConvidado(id, v)
+    setGanhosPorConvidado((g) => ({ ...g, [id]: v }))
   }, [])
   const aSondagem = useCallback((s: SondagemNoPalco | null) => {
     if (compRef.current) compRef.current.sondagem = s
@@ -659,6 +667,9 @@ export default function Studio() {
             microfone={palco.microfone}
             musica={palco.musica}
             musicaATocar={palco.musicaATocar}
+            convidados={fontesNoPalco}
+            ganhosPorConvidado={ganhosPorConvidado}
+            onGanhoConvidado={mudarGanhoConvidado}
             onMistura={palco.mudarMistura}
             onMicrofone={palco.escolherMicrofone}
             onMusica={palco.carregarMusica}

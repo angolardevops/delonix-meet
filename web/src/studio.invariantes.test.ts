@@ -174,8 +174,12 @@ describe('a sala de convidados é OPCIONAL e carrega à parte', () => {
 describe('a mistura tem faders de verdade', () => {
   const c = () => readCodigo('web/src/studio/compositor.ts')
 
-  it('três GainNode, cada um ligado ao destino', () => {
-    expect(c().match(/this\.audioCtx\.createGain\(\)/g)?.length).toBe(3)
+  it('três GainNode de barramento, cada um ligado ao destino, mais um GainNode por convidado', () => {
+    // 3 fixos (palco/música/vídeo, criados uma vez em montarFluxo) + 1 padrão
+    // de código por convidado (criado sob procura em ligarConvidadoAoGrafo,
+    // um por convidado em tempo de execução, mas um só sítio no ficheiro) —
+    // o fader por convidado É um GainNode a mais, de propósito.
+    expect(c().match(/this\.audioCtx\.createGain\(\)/g)?.length).toBe(4)
     expect(c()).toContain('for (const g of [this.ganhoPalco, this.ganhoMusica, this.ganhoVideo]) g.connect(this.destino)')
   })
 
@@ -186,7 +190,10 @@ describe('a mistura tem faders de verdade', () => {
     expect(c()).toContain('this.micFonte.connect(this.ganhoPalco)')
     expect(c()).toContain('this.ecraFonte.connect(this.ganhoVideo)')
     expect(c()).toContain('this.musicaFonte.connect(this.ganhoMusica)')
-    expect(c()).toContain('c.audio.connect(this.ganhoPalco)')
+    // O convidado tem fader PRÓPRIO agora: a fonte liga ao gain dele, e é
+    // esse gain — não a fonte directamente — que liga ao barramento «Palco».
+    expect(c()).toContain('c.audio.connect(c.gain)')
+    expect(c()).toContain('c.gain.connect(this.ganhoPalco)')
   })
 
   it('a qualidade não muda com a gravação ou o directo a decorrer', () => {

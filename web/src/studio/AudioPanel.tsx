@@ -5,6 +5,7 @@
  */
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { Fonte } from '../room/compositor'
 import { Button, Select } from '../ui/kit'
 import type { Mistura } from './palco'
 import type { Microfone } from './usePalco'
@@ -17,20 +18,27 @@ export default function AudioPanel({
   microfone,
   musica,
   musicaATocar,
+  convidados,
+  ganhosPorConvidado,
   onMistura,
   onMicrofone,
   onMusica,
   onAlternarMusica,
+  onGanhoConvidado,
 }: {
   mistura: Mistura
   microfones: Microfone[]
   microfone: string
   musica: { nome: string } | null
   musicaATocar: boolean
+  /** Quem está no palco agora — um fader por cada um, além dos três barramentos. */
+  convidados: Fonte[]
+  ganhosPorConvidado: Record<string, number>
   onMistura: (patch: Partial<Mistura>) => void
   onMicrofone: (id: string) => void
   onMusica: (f: File | null) => void
   onAlternarMusica: () => void
+  onGanhoConvidado: (id: string, v: number) => void
 }) {
   const { t } = useTranslation()
   const ficheiro = useRef<HTMLInputElement>(null)
@@ -59,6 +67,34 @@ export default function AudioPanel({
           </label>
         ))}
       </div>
+
+      {convidados.length > 0 && (
+        <div className="st-faders st-faders--convidados">
+          <span className="st-label">{t('studio.audio.porConvidado')}</span>
+          {convidados.map((c) => {
+            const v = ganhosPorConvidado[c.id] ?? 1
+            return (
+              <label key={c.id} className="st-fader">
+                <span className="st-fader__name st-ellipsis" title={c.nome}>
+                  {c.nome}
+                </span>
+                <input
+                  type="range"
+                  className="st-range"
+                  min={0}
+                  max={150}
+                  step={1}
+                  value={Math.round(v * 100)}
+                  aria-valuetext={`${Math.round(v * 100)}%`}
+                  data-studio-fader-convidado={c.id}
+                  onChange={(e) => onGanhoConvidado(c.id, Number(e.target.value) / 100)}
+                />
+                <span className="dx-num st-fader__val">{Math.round(v * 100)}%</span>
+              </label>
+            )
+          })}
+        </div>
+      )}
 
       <label className="st-label" htmlFor="st-mic">
         {t('studio.audio.microfone')}

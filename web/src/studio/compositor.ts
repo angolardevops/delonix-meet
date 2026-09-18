@@ -17,6 +17,7 @@
 import type { Fonte } from '../room/compositor'
 import {
   type ConteudoDoPalco,
+  ganhoValido,
   type LayoutDoPalco,
   MISTURA_INICIAL,
   type Mistura,
@@ -147,6 +148,10 @@ interface ConvidadoNoPalco {
   stream: MediaStream | null
   video: HTMLVideoElement
   audio: MediaStreamAudioSourceNode | null
+  /** Fader próprio, entre `audio` e `ganhoPalco` — existe só enquanto o grafo existe. */
+  gain: GainNode | null
+  /** O que o fader deve valer mal o grafo (re)nasça — sobrevive a entrar/sair do palco. */
+  ganhoAlvo: number
 }
 
 /**
@@ -402,6 +407,7 @@ export class CompositorDeAula {
       c.video.pause()
       c.video.srcObject = null
       c.audio?.disconnect()
+      c.gain?.disconnect()
       this.convidados.delete(id)
     }
     for (const f of fontes) {
@@ -410,7 +416,7 @@ export class CompositorDeAula {
         const video = document.createElement('video')
         video.muted = true
         video.playsInline = true
-        c = { nome: f.nome, stream: null, video, audio: null }
+        c = { nome: f.nome, stream: null, video, audio: null, gain: null, ganhoAlvo: 1 }
         this.convidados.set(f.id, c)
       }
       c.nome = f.nome
@@ -430,9 +436,27 @@ export class CompositorDeAula {
   }
 
   private ligarConvidadoAoGrafo(c: ConvidadoNoPalco): void {
-    if (c.audio || !this.audioCtx || !this.ganhoPalco || !c.stream?.getAudioTracks().length) return
+    if (!this.audioCtx || !this.ganhoPalco) return
+    // O fader do convidado nasce uma vez por geração do grafo e sobrevive a
+    // uma troca de stream (reconexão) — só o `audio` (a fonte) é que se
+    // recria; recriar o `gain` também apagaria a posição do fader sem razão.
+    if (!c.gain) {
+      c.gain = this.audioCtx.createGain()
+      c.gain.gain.value = c.ganhoAlvo
+      c.gain.connect(this.ganhoPalco)
+    }
+    if (c.audio || !c.stream?.getAudioTracks().length) return
     c.audio = this.audioCtx.createMediaStreamSource(new MediaStream(c.stream.getAudioTracks()))
-    c.audio.connect(this.ganhoPalco)
+    c.audio.connect(c.gain)
+  }
+
+  /** Fader de UM convidado, entre a sua fonte e o barramento "Palco". */
+  definirGanhoConvidado(id: string, v: number): void {
+    const c = this.convidados.get(id)
+    if (!c) return
+    c.ganhoAlvo = ganhoValido(v, 1)
+    const agora = this.audioCtx?.currentTime ?? 0
+    c.gain?.gain.setTargetAtTime(c.ganhoAlvo, agora, 0.02)
   }
 
   // ---------------------------------------------------------------- quadro
@@ -982,6 +1006,8 @@ export class CompositorDeAula {
     for (const c of this.convidados.values()) {
       c.audio?.disconnect()
       c.audio = null
+      c.gain?.disconnect()
+      c.gain = null
     }
     if (this.musicaNoGrafo && this.musicaEl) {
       const aTocar = !this.musicaEl.paused

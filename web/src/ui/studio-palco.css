@@ -230,6 +230,14 @@
   height: 6px;
   margin: 0;
 }
+.st-faders--convidados {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.st-faders--convidados .st-fader {
+  /* Nomes de pessoas não cabem nos 42px dos três barramentos fixos. */
+  grid-template-columns: 84px minmax(0, 1fr);
+}
 .st-ellipsis {
   min-width: 0;
   overflow: hidden;
