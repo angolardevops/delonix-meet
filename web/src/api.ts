@@ -1900,6 +1900,79 @@ export const setSmsPolicy = (orgId: string, sendPolicy: SmsSendPolicy) =>
     body: JSON.stringify({ send_policy: sendPolicy }),
   })
 
+// ---------- SMS: gateways USB/telefone, dispositivos e encaminhamento ----------
+
+export interface SmsGateway {
+  id: string
+  name: string
+  prefix: string
+  created_at: string
+  last_seen_at: string | null
+  online: boolean
+}
+/** Devolvido só na criação — o token completo (`dlxg_...`) não volta a aparecer. */
+export interface CreatedSmsGateway {
+  id: string
+  name: string
+  prefix: string
+  token: string
+}
+export interface SmsDevice {
+  id: string
+  gateway_id: string
+  gateway_name: string
+  device_key: string
+  vendor_id: string
+  product_id: string
+  manufacturer: string | null
+  product: string | null
+  serial: string | null
+  kind: string
+  transport: string
+  port: string | null
+  capable: boolean
+  reason: string | null
+  operator_name: string | null
+  signal_percent: number | null
+  last_seen_at: string
+  online: boolean
+  selected: boolean
+}
+export interface SmsOperatorInfo {
+  operator: string
+  label: string
+  prefixes: string[]
+  configured: boolean
+}
+export interface SmsRoute {
+  device_id: string | null
+  operators: SmsOperatorInfo[]
+}
+
+export const listSmsGateways = (orgId: string, signal?: AbortSignal) =>
+  request<SmsGateway[]>(`/api/orgs/${orgId}/sms/gateways`, { signal })
+
+export const createSmsGateway = (orgId: string, name?: string) =>
+  request<CreatedSmsGateway>(`/api/orgs/${orgId}/sms/gateways`, {
+    method: 'POST',
+    body: JSON.stringify({ name: name ?? '' }),
+  })
+
+export const revokeSmsGateway = (orgId: string, gatewayId: string) =>
+  requestEmpty(`/api/orgs/${orgId}/sms/gateways/${gatewayId}`, { method: 'DELETE' })
+
+export const listSmsDevices = (orgId: string, signal?: AbortSignal) =>
+  request<SmsDevice[]>(`/api/orgs/${orgId}/sms/devices`, { signal })
+
+export const getSmsRoute = (orgId: string, signal?: AbortSignal) =>
+  request<SmsRoute>(`/api/orgs/${orgId}/sms/route`, { signal })
+
+export const putSmsRoute = (orgId: string, deviceId: string | null) =>
+  request<SmsRoute>(`/api/orgs/${orgId}/sms/route`, {
+    method: 'PUT',
+    body: JSON.stringify({ device_id: deviceId }),
+  })
+
 /** O próprio ou um admin. `phone: null` apaga (fica `manual`); `follow_directory` devolve o campo ao Odoo. */
 export const setMemberPhone = (
   orgId: string,
