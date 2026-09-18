@@ -75,6 +75,9 @@ export default {
     circulo: 'Cercle',
     rectangulo: 'Rectangle',
     formaIndisponivel: 'Sans fond, la forme est celle de la personne.',
+    dispositivo: 'Appareil',
+    dispositivoOmissao: 'Caméra par défaut du système',
+    camaraN: 'Caméra {{n}}',
     cantos: {
       superiorEsquerdo: 'Coin supérieur gauche',
       superiorDireito: 'Coin supérieur droit',

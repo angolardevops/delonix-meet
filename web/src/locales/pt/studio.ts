@@ -75,6 +75,9 @@ export default {
     circulo: 'Círculo',
     rectangulo: 'Rectângulo',
     formaIndisponivel: 'Sem fundo, a forma é a da pessoa.',
+    dispositivo: 'Dispositivo',
+    dispositivoOmissao: 'Câmara de omissão do sistema',
+    camaraN: 'Câmara {{n}}',
     cantos: {
       superiorEsquerdo: 'Canto superior esquerdo',
       superiorDireito: 'Canto superior direito',

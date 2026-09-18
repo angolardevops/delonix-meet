@@ -187,6 +187,8 @@ export class CompositorDeAula {
   private ecraFonte: MediaStreamAudioSourceNode | null = null
   /** Microfone escolhido; vazio = o de omissão do sistema. */
   microfoneId = ''
+  /** Câmara escolhida; vazio = a de omissão do sistema. */
+  camaraId = ''
 
   private musicaUrl: string | null = null
   private musicaEl: HTMLAudioElement | null = null
@@ -296,10 +298,10 @@ export class CompositorDeAula {
   /** Chamado quando o utilizador pára a partilha pelo aviso do browser. */
   aoPerderEcra: (() => void) | null = null
 
-  async ligarCamara(deviceId?: string): Promise<void> {
+  async ligarCamara(): Promise<void> {
     const s = await navigator.mediaDevices.getUserMedia({
       video: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
+        deviceId: this.camaraId ? { exact: this.camaraId } : undefined,
         width: { ideal: this.perfil.altura > 1080 ? 1920 : 1280 },
         height: { ideal: this.perfil.altura > 1080 ? 1080 : 720 },
       },
@@ -309,6 +311,12 @@ export class CompositorDeAula {
     this.camaraStream = s
     this.camaraVideo.srcObject = s
     await this.camaraVideo.play().catch(() => {})
+  }
+
+  /** Troca de câmara — se estiver ligada, reabre já na nova; senão só memoriza a escolha. */
+  async trocarCamara(deviceId: string): Promise<void> {
+    this.camaraId = deviceId
+    if (this.temCamara) await this.ligarCamara()
   }
 
   desligarCamara(): void {

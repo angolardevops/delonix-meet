@@ -209,6 +209,7 @@ const CHAVES = {
   sobreposicoes: 'dx_studio_sobreposicoes',
   mistura: 'dx_studio_mistura',
   microfone: 'dx_studio_microfone',
+  camara: 'dx_studio_camara',
 } as const
 
 /** Um `localStorage` que pode não existir (modo privado, Node) nunca parte o palco. */
@@ -285,6 +286,9 @@ export const guardarMistura = (m: Mistura) => escreverTexto(CHAVES.mistura, JSON
 
 export const lerMicrofone = () => lerTexto(CHAVES.microfone) ?? ''
 export const guardarMicrofone = (id: string) => escreverTexto(CHAVES.microfone, id)
+
+export const lerCamara = () => lerTexto(CHAVES.camara) ?? ''
+export const guardarCamara = (id: string) => escreverTexto(CHAVES.camara, id)
 
 // ------------------------------------------------------------------ formatos
 

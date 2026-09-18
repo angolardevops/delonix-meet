@@ -19,12 +19,14 @@ import * as banco from './cenas'
 import { AVATAR_INICIAL, CompositorDeAula, EstadoDoAvatar } from './compositor'
 import {
   ConteudoDoPalco,
+  guardarCamara,
   guardarLayout,
   guardarMicrofone,
   guardarMistura,
   guardarQualidade,
   guardarSobreposicoes,
   LayoutDoPalco,
+  lerCamara,
   lerLayout,
   lerMicrofone,
   lerMistura,
@@ -38,6 +40,11 @@ import {
 } from './palco'
 
 export interface Microfone {
+  id: string
+  nome: string
+}
+
+export interface Camara {
   id: string
   nome: string
 }
@@ -69,6 +76,8 @@ export function usePalco({
   const [mistura, setMisturaState] = useState<Mistura>(lerMistura)
   const [microfones, setMicrofones] = useState<Microfone[]>([])
   const [microfone, setMicrofoneState] = useState(lerMicrofone)
+  const [cameras, setCameras] = useState<Camara[]>([])
+  const [camara, setCamaraState] = useState(lerCamara)
   const [musica, setMusica] = useState<{ nome: string } | null>(null)
   const [musicaATocar, setMusicaATocar] = useState(false)
   const [cenas, setCenas] = useState<banco.CenaGuardada[]>([])
@@ -113,12 +122,13 @@ export function usePalco({
     if (!c) return
     c.aoMudarMusica = setMusicaATocar
     c.microfoneId = microfone
+    c.camaraId = camara
     return () => {
       c.aoMudarMusica = null
     }
-  }, [compRef, pronto, microfone])
+  }, [compRef, pronto, microfone, camara])
 
-  // ---- microfones: a lista actualiza-se quando se liga ou desliga um.
+  // ---- microfones e câmaras: a lista actualiza-se quando se liga ou desliga um.
   useEffect(() => {
     let vivo = true
     const ler = () =>
@@ -126,6 +136,7 @@ export function usePalco({
         .then((d) => {
           if (!vivo) return
           setMicrofones(d.mics.map((m, i) => ({ id: m.deviceId, nome: m.label || t('studio.audio.microfoneN', { n: i + 1 }) })))
+          setCameras(d.cams.map((c, i) => ({ id: c.deviceId, nome: c.label || t('studio.imagem.camaraN', { n: i + 1 }) })))
         })
         .catch(() => {})
     void ler()
@@ -224,6 +235,15 @@ export function usePalco({
     [compRef],
   )
 
+  const escolherCamara = useCallback(
+    (id: string) => {
+      setCamaraState(id)
+      guardarCamara(id)
+      void compRef.current?.trocarCamara(id)
+    },
+    [compRef],
+  )
+
   const carregarMusica = useCallback(
     (f: File | null) => {
       compRef.current?.definirMusica(f)
@@ -306,6 +326,9 @@ export function usePalco({
     microfones,
     microfone,
     escolherMicrofone,
+    cameras,
+    camara,
+    escolherCamara,
     musica,
     musicaATocar,
     carregarMusica,

@@ -75,6 +75,9 @@ export default {
     circulo: '圆形',
     rectangulo: '矩形',
     formaIndisponivel: '去除背景后，形状即为人物轮廓。',
+    dispositivo: '设备',
+    dispositivoOmissao: '系统默认摄像头',
+    camaraN: '摄像头 {{n}}',
     cantos: {
       superiorEsquerdo: '左上角',
       superiorDireito: '右上角',

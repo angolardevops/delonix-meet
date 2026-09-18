@@ -634,6 +634,8 @@ export default function Studio() {
             avatar={avatar}
             imagem={imagem}
             aPrepararRecorte={aPrepararRecorte}
+            cameras={palco.cameras}
+            camara={palco.camara}
             onEscolherEcra={() => void escolherEcra()}
             onEcraInteiro={() => {
               setRecorte({ ...RECORTE_INTEIRO })
@@ -641,6 +643,7 @@ export default function Studio() {
             }}
             onAbrirRegiao={() => setARecortar(true)}
             onAlternarCamara={() => void alternarCamara()}
+            onEscolherCamara={palco.escolherCamara}
             onAvatar={mudarAvatar}
             onImagem={mudarImagem}
             onFundo={(semFundo) => (semFundo ? void ligarRecorteDeFundo() : pararRecorteDeFundo())}

@@ -7,7 +7,8 @@
  */
 import { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button, cx } from '../ui/kit'
+import { Button, cx, Select } from '../ui/kit'
+import type { Camara } from './usePalco'
 import type { CantoDoAvatar, EstadoDaImagem, EstadoDoAvatar, FormaDoAvatar, Recorte } from './compositor'
 import { IMAGEM_INICIAL } from './compositor'
 
@@ -59,10 +60,13 @@ export default function SourcesPanel({
   avatar,
   imagem,
   aPrepararRecorte,
+  cameras,
+  camara,
   onEscolherEcra,
   onEcraInteiro,
   onAbrirRegiao,
   onAlternarCamara,
+  onEscolherCamara,
   onAvatar,
   onImagem,
   onFundo,
@@ -73,10 +77,13 @@ export default function SourcesPanel({
   avatar: EstadoDoAvatar
   imagem: EstadoDaImagem
   aPrepararRecorte: boolean
+  cameras: Camara[]
+  camara: string
   onEscolherEcra: () => void
   onEcraInteiro: () => void
   onAbrirRegiao: () => void
   onAlternarCamara: () => void
+  onEscolherCamara: (id: string) => void
   onAvatar: (patch: Partial<EstadoDoAvatar>) => void
   onImagem: (patch: Partial<EstadoDaImagem>) => void
   onFundo: (semFundo: boolean) => void
@@ -139,6 +146,29 @@ export default function SourcesPanel({
         >
           {temCamara ? t('studio.imagem.desligar') : t('studio.imagem.ligar')}
         </Button>
+
+        {cameras.length > 1 && (
+          <>
+            <label className="st-label" htmlFor="st-camara-dispositivo">
+              {t('studio.imagem.dispositivo')}
+            </label>
+            <Select
+              id="st-camara-dispositivo"
+              data-studio="camara-dispositivo"
+              value={camara}
+              onChange={(e) => onEscolherCamara(e.target.value)}
+            >
+              <option value="">{t('studio.imagem.dispositivoOmissao')}</option>
+              {cameras
+                .filter((c) => c.id)
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nome}
+                  </option>
+                ))}
+            </Select>
+          </>
+        )}
 
         {temCamara && (
           <>
