@@ -1,5 +1,6 @@
 import { CSSProperties, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { readJoinPrefs } from '../accountPrefs'
 import {
   audioConstraints,
   BackgroundEffect,
@@ -32,11 +33,12 @@ export function useLocalMedia(core: RoomCore) {
   const [micId, setMicId] = useState('')
   const [camId, setCamId] = useState('')
   const [speakerId, setSpeakerId] = useState('')
-  // Supressão de ruído por IA (RNNoise) — LIGADA por omissão. Se falhar, fica
-  // a track crua com a supressão nativa do browser.
-  const [noiseSuppression, setNoiseSuppression] = useState(true)
+  // Supressão de ruído por IA (RNNoise) — LIGADA por omissão, ou o que a
+  // pessoa escolheu em Definições ➜ Conta ➜ Preferências ao entrar. Se
+  // falhar, fica a track crua com a supressão nativa do browser.
+  const [noiseSuppression, setNoiseSuppression] = useState(() => readJoinPrefs().noiseSuppression)
 
-  const [bgMode, setBgMode] = useState<BgMode>('none')
+  const [bgMode, setBgMode] = useState<BgMode>(() => (readJoinPrefs().blurByDefault ? 'blur' : 'none'))
   const [bgImageUrl, setBgImageUrl] = useState('')
   const [bgBusy, setBgBusy] = useState(false)
   const [blurLevel, setBlurLevel] = useState<BlurLevel>('strong')

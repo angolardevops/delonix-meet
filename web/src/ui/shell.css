@@ -685,6 +685,14 @@ kbd {
   padding-top: 12px;
   margin-top: 4px;
 }
+.settings-whoami {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
 
 /* ------------------------------------------------------ chamada a entrar */
 .call-ring-stack {

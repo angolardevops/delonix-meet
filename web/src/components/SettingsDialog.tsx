@@ -5,11 +5,12 @@
  */
 import { FormEvent, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { readJoinPrefs, writeJoinPrefs } from '../accountPrefs'
 import { apiErrorMessage, downloadMyData, updateMe, User } from '../api'
 import { getAppName, getLoginBg, setAppName, setLoginBg } from '../branding'
-import { currentLang, Lang, LANG_NAMES, LANGS, serverLocale, setLanguage } from '../i18n'
+import { currentLang, intlLocale, Lang, LANG_NAMES, LANGS, serverLocale, setLanguage } from '../i18n'
 import { applyTheme, storedTheme, Theme } from '../theme'
-import { Alert, Button, Dialog, Field, Segmented, Tabs, TextInput } from '../ui/kit'
+import { Alert, Avatar, Button, Dialog, Field, Segmented, Tabs, TextInput, Toggle } from '../ui/kit'
 import MfaPanel from './MfaPanel'
 import SessionsPanel from './SessionsPanel'
 
@@ -94,7 +95,7 @@ export default function SettingsDialog({
 }
 
 function Conta({ user }: { user: User }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [username, setUsername] = useState(user.username)
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -102,6 +103,20 @@ function Conta({ user }: { user: User }) {
   const [busy, setBusy] = useState(false)
   const [aExportar, setAExportar] = useState(false)
   const [erroExportar, setErroExportar] = useState<string | null>(null)
+  const [prefs, setPrefs] = useState(readJoinPrefs)
+
+  // `created_at` já vem em todo login/registo/refresh (server/src/users.rs::UserPublic)
+  // — só falta no tipo `User` do cliente, que é mais estreito do que a resposta real.
+  const criadaEm = (user as { created_at?: string }).created_at
+  const dataEntrada = criadaEm
+    ? new Date(criadaEm).toLocaleDateString(intlLocale(i18n.language), { year: 'numeric', month: 'long', day: 'numeric' })
+    : null
+
+  function mudarPref(patch: Partial<ReturnType<typeof readJoinPrefs>>) {
+    const next = { ...prefs, ...patch }
+    setPrefs(next)
+    writeJoinPrefs(patch)
+  }
 
   async function exportar() {
     setErroExportar(null)
@@ -137,6 +152,13 @@ function Conta({ user }: { user: User }) {
 
   return (
     <form className="settings-grid" onSubmit={submit}>
+      <div className="settings-section settings-whoami">
+        <Avatar name={username || user.email} size={48} />
+        <div>
+          <strong>{username || user.email}</strong>
+          {dataEntrada && <p className="dx-muted" style={{ margin: '2px 0 0' }}>{t('shell.def.entrouEm', { data: dataEntrada })}</p>}
+        </div>
+      </div>
       <Field label={t('shell.def.email')}>
         <TextInput value={user.email} readOnly disabled />
       </Field>
@@ -154,6 +176,22 @@ function Conta({ user }: { user: User }) {
         <Button type="submit" variant="primary" busy={busy}>
           {t('ui.guardar')}
         </Button>
+      </div>
+      <div className="settings-section">
+        <h3 className="dx-eyebrow" style={{ margin: '8px 0 4px' }}>{t('shell.def.preferencias.titulo')}</h3>
+        <p className="dx-muted" style={{ margin: '0 0 8px' }}>{t('shell.def.preferencias.dica')}</p>
+        <Toggle
+          label={t('shell.def.preferencias.supressaoRuido')}
+          hint={t('shell.def.preferencias.supressaoRuidoDica')}
+          checked={prefs.noiseSuppression}
+          onChange={(e) => mudarPref({ noiseSuppression: e.target.checked })}
+        />
+        <Toggle
+          label={t('shell.def.preferencias.fundoDesfocado')}
+          hint={t('shell.def.preferencias.fundoDesfocadoDica')}
+          checked={prefs.blurByDefault}
+          onChange={(e) => mudarPref({ blurByDefault: e.target.checked })}
+        />
       </div>
       <div className="settings-section">
         <h3 className="dx-eyebrow" style={{ margin: '8px 0 4px' }}>{t('shell.def.osMeusDados')}</h3>
