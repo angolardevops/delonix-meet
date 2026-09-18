@@ -231,6 +231,15 @@ export default {
     dispensar: '忽略',
     duasPessoasAFalar: '有多人同时讲话 — 请轮流发言。',
     falamAoMesmoTempo: '{{nomes}} 正在同时讲话 — 请轮流发言。',
+    recarregar: '立即重新加载',
+    ligacao: {
+      instavelTitulo: '连接不稳定',
+      instavelTexto: '请继续正常使用 — 连接正在尝试自行恢复。',
+      aRestabelecerTitulo: '正在重新连接',
+      aRestabelecerTexto: '连接已中断。请继续讲话 — 没有任何内容丢失。',
+      falhouTitulo: '无法恢复连接',
+      falhouTexto: '页面将在片刻后自动重新加载。',
+    },
   },
   companion: {
     tituloSemAudio: '你已无音频入会',

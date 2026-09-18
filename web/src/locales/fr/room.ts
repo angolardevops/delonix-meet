@@ -231,6 +231,15 @@ export default {
     dispensar: 'Ignorer',
     duasPessoasAFalar: 'Plusieurs personnes parlent en même temps — laissez chacune parler.',
     falamAoMesmoTempo: '{{nomes}} parlent en même temps — laissez chacun parler.',
+    recarregar: 'Recharger maintenant',
+    ligacao: {
+      instavelTitulo: 'La connexion est instable',
+      instavelTexto: 'Continuez tranquillement — la connexion essaie de se rétablir toute seule.',
+      aRestabelecerTitulo: 'Reconnexion en cours',
+      aRestabelecerTexto: 'La connexion a été coupée. Continuez à parler — rien n\'a été perdu.',
+      falhouTitulo: 'Impossible de rétablir la connexion',
+      falhouTexto: 'La page va se recharger toute seule dans un instant.',
+    },
   },
   companion: {
     tituloSemAudio: 'Vous avez rejoint sans audio',

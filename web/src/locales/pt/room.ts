@@ -231,6 +231,15 @@ export default {
     dispensar: 'Dispensar',
     duasPessoasAFalar: 'Há pessoas a falar ao mesmo tempo — dá espaço a cada uma.',
     falamAoMesmoTempo: '{{nomes}} estão a falar ao mesmo tempo — dá espaço a cada um.',
+    recarregar: 'Recarregar agora',
+    ligacao: {
+      instavelTitulo: 'A ligação está instável',
+      instavelTexto: 'Pode continuar à vontade — a ligação tenta recuperar-se sozinha.',
+      aRestabelecerTitulo: 'A restabelecer a ligação',
+      aRestabelecerTexto: 'A ligação caiu. Continue a falar — nada se perdeu.',
+      falhouTitulo: 'Não foi possível restabelecer a ligação',
+      falhouTexto: 'A página vai recarregar-se sozinha dentro de instantes.',
+    },
   },
   companion: {
     tituloSemAudio: 'Entraste sem áudio',

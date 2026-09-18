@@ -231,6 +231,15 @@ export default {
     dispensar: 'Dismiss',
     duasPessoasAFalar: 'People are talking at the same time — give each one room.',
     falamAoMesmoTempo: '{{nomes}} are talking at the same time — give each one room.',
+    recarregar: 'Reload now',
+    ligacao: {
+      instavelTitulo: 'The connection is unstable',
+      instavelTexto: "Feel free to keep going — the connection is trying to recover on its own.",
+      aRestabelecerTitulo: 'Reconnecting',
+      aRestabelecerTexto: 'The connection dropped. Keep talking — nothing was lost.',
+      falhouTitulo: 'Could not restore the connection',
+      falhouTexto: 'The page will reload itself in a moment.',
+    },
   },
   companion: {
     tituloSemAudio: 'You joined without audio',

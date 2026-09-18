@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next'
+import type { CallState } from '../callRecovery'
 import type { PeerInfo, PollView } from '../signaling'
 import { Icon } from '../ui/icons'
-import { Avatar, Button, IconButton } from '../ui/kit'
+import { Avatar, Button, cx, IconButton } from '../ui/kit'
 import { PollCard } from './PollCard'
 
 /**
@@ -27,6 +28,7 @@ export function Notices({
   onUseAudioHere,
   recNotice,
   talkOverNames,
+  callState,
 }: {
   canAdmit: boolean
   waitingQueue: PeerInfo[]
@@ -46,8 +48,20 @@ export function Notices({
   recNotice: string
   /** `null` sem fala simultânea; texto vazio quando não há nomes. */
   talkOverNames: string | null
+  callState: CallState
 }) {
   const { t } = useTranslation()
+  // A reconexão já existe (callRecovery.ts) desde sempre — só nunca teve mais
+  // do que um ícone pequeno na barra de topo. Aqui é o cartão de verdade: diz
+  // que ninguém perdeu nada e, no pior caso, que a página se recarrega sozinha.
+  const recovery =
+    callState === 'degraded'
+      ? { tone: 'warn' as const, icon: 'wifi', title: 'room.avisos.ligacao.instavelTitulo', body: 'room.avisos.ligacao.instavelTexto' }
+      : callState === 'reconnecting' || callState === 'recovering'
+        ? { tone: 'warn' as const, icon: 'refresh', title: 'room.avisos.ligacao.aRestabelecerTitulo', body: 'room.avisos.ligacao.aRestabelecerTexto' }
+        : callState === 'failed'
+          ? { tone: 'danger' as const, icon: 'alert', title: 'room.avisos.ligacao.falhouTitulo', body: 'room.avisos.ligacao.falhouTexto' }
+          : null
   return (
     <div className="rm-notices" role="region" aria-live="assertive" aria-label={t('room.avisos.regiao')}>
       {canAdmit && waitingQueue.length > 0 && (
@@ -136,6 +150,23 @@ export function Notices({
             <Button size="sm" variant="primary" onClick={onUseAudioHere}>
               {t('room.companion.usarAudioAqui')}
             </Button>
+          </div>
+        </section>
+      )}
+
+      {recovery && (
+        <section className={cx('rm-notice', 'rm-notice--recovery', recovery.tone === 'danger' && 'is-danger')} role="status">
+          <div className="rm-notice__row">
+            <Icon name={recovery.icon} />
+            <span className="rm-notice__who">
+              <strong>{t(recovery.title)}</strong>
+              <small className="dx-muted">{t(recovery.body)}</small>
+            </span>
+            {recovery.tone === 'danger' && (
+              <Button size="sm" variant="primary" onClick={() => location.reload()}>
+                {t('room.avisos.recarregar')}
+              </Button>
+            )}
           </div>
         </section>
       )}

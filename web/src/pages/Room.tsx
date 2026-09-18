@@ -479,6 +479,7 @@ export default function Room({
                 onUseAudioHere={session.dismissCompanion}
                 recNotice={recording.recNotice}
                 talkOverNames={talkOverNames}
+                callState={session.callState}
               />
             </div>
             {/* A barra vive na coluna principal: o painel lateral ocupa a altura toda

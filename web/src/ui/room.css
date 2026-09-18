@@ -756,6 +756,12 @@ div.rm-only-narrow,
 .rm-notice--companion {
   border-color: var(--live);
 }
+.rm-notice--recovery {
+  border-color: var(--warning);
+}
+.rm-notice--recovery.is-danger {
+  border-color: var(--danger);
+}
 .rm-notice__head {
   display: flex;
   align-items: center;
