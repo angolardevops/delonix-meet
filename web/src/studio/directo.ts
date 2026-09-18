@@ -171,7 +171,7 @@ export function urlDoDirecto(
     ),
     codec: CODEC_DIRECTO,
   })
-  return `${esquema}//${base.host}/api/rooms/${encodeURIComponent(codigo)}/broadcast?${q}`
+  return `${esquema}//${base.host}/api/rooms/${encodeURIComponent(codigo)}/live?${q}`
 }
 
 export interface OpcoesDoDirecto {

@@ -124,7 +124,7 @@ export default function SharePage({ token }: { token: string }) {
             </dl>
             <a
               className="dx-btn dx-btn--primary dx-btn--lg dx-btn--block"
-              href={`/api/share/${token}/download${password ? `?password=${encodeURIComponent(password)}` : ''}`}
+              href={`/api/public/recordings/${token}/content${password ? `?password=${encodeURIComponent(password)}` : ''}`}
               download={estado.info.filename}
             >
               <Icon name="download" />

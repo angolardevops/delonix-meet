@@ -126,24 +126,24 @@ await permitido('B lê a própria sala', `/api/rooms/${salaB.code}`, { token: B.
 
 console.log('\n--- org A contra recursos da org B ---')
 await recusado('A lê stats da org B', `/api/orgs/${B.orgId}/stats`, { token: A.token })
-await recusado('A lista empregados da org B', `/api/orgs/${B.orgId}/employees`, { token: A.token })
+await recusado('A lista empregados da org B', `/api/orgs/${B.orgId}/members`, { token: A.token })
 await recusado('A lista filiais da org B', `/api/orgs/${B.orgId}/branches`, { token: A.token })
 await recusado('A lista grupos da org B', `/api/orgs/${B.orgId}/groups`, { token: A.token })
 await recusado('A lista salas presenciais da org B', `/api/orgs/${B.orgId}/meeting-rooms`, { token: A.token })
 await recusado('A lista webhooks da org B', `/api/orgs/${B.orgId}/webhooks`, { token: A.token })
 await recusado('A lista chaves de API da org B', `/api/orgs/${B.orgId}/api-keys`, { token: A.token })
-await recusado('A lê a config Odoo da org B', `/api/orgs/${B.orgId}/integration/odoo`, { token: A.token })
+await recusado('A lê a config Odoo da org B', `/api/orgs/${B.orgId}/integrations/odoo`, { token: A.token })
 await recusado('A lista DIDs de voz da org B', `/api/orgs/${B.orgId}/voice/dids`, { token: A.token })
-await recusado('A lista CDR de voz da org B', `/api/orgs/${B.orgId}/voice/cdr`, { token: A.token })
+await recusado('A lista CDR de voz da org B', `/api/orgs/${B.orgId}/voice/call-records`, { token: A.token })
 
 console.log('\n--- escrita cross-tenant ---')
-await recusado('A altera definições da org B', `/api/orgs/${B.orgId}/settings`, {
-  token: A.token, method: 'POST', body: { hide_org_creation: true },
+await recusado('A altera definições da org B', `/api/orgs/${B.orgId}`, {
+  token: A.token, method: 'PATCH', body: { hide_org_creation: true },
 })
-await recusado('A roda o token Odoo da org B', `/api/orgs/${B.orgId}/integration/odoo/token`, {
+await recusado('A roda o token Odoo da org B', `/api/orgs/${B.orgId}/integrations/odoo/rotate-token`, {
   token: A.token, method: 'POST', body: {},
 })
-await recusado('A remove um empregado da org B', `/api/orgs/${B.orgId}/employees/${B.userId}`, {
+await recusado('A remove um empregado da org B', `/api/orgs/${B.orgId}/members/${B.userId}`, {
   token: A.token, method: 'DELETE',
 })
 
@@ -152,8 +152,8 @@ await recusado('A remove um empregado da org B', `/api/orgs/${B.orgId}/employees
 // `main.rs`) com o inventário do que se TESTA — o mesmo método que apanhou os
 // testes ponta-a-ponta que nunca corriam (R72).
 console.log('\n--- as seis que faltavam ---')
-await recusado('A lê a trilha de auditoria da org B', `/api/orgs/${B.orgId}/audit`, { token: A.token })
-await recusado('A verifica a cadeia de auditoria da org B', `/api/orgs/${B.orgId}/audit/verify`, {
+await recusado('A lê a trilha de auditoria da org B', `/api/orgs/${B.orgId}/audit-events`, { token: A.token })
+await recusado('A verifica a cadeia de auditoria da org B', `/api/orgs/${B.orgId}/audit-events/verification`, {
   token: A.token,
 })
 await recusado('A lê a configuração de SSO da org B', `/api/orgs/${B.orgId}/sso`, { token: A.token })
@@ -249,7 +249,7 @@ if (destinoB.status === 201 && destinoB.json?.id) {
   // trama de texto depois do upgrade (ver `ws_directo`).
   const recusaDoDirecto = (roomToken, code, destinos) => new Promise((resolve) => {
     const q = new URLSearchParams({ token: roomToken, destinos: JSON.stringify(destinos), codec: 'video/h264' })
-    const ws = new WebSocket(`${WS}/api/rooms/${code}/broadcast?${q}`)
+    const ws = new WebSocket(`${WS}/api/rooms/${code}/live?${q}`)
     const t = setTimeout(() => { ws.close(); resolve('(sem resposta)') }, 8000)
     ws.on('message', (d) => {
       const m = JSON.parse(d.toString())
@@ -320,10 +320,10 @@ if (vB === 'joined') ok('B (dono) entra directo na sua própria sala (controlo p
 else nok('B entra directo na sua sala', `respondeu "${vB}" — se o dono não entra, o teste acima não prova nada`)
 
 console.log('\n--- o que o código NÃO abre ---')
-await recusado('A lê o chat da sala da B', `/api/rooms/${salaB.code}/chat`, { token: A.token })
+await recusado('A lê o chat da sala da B', `/api/rooms/${salaB.code}/messages`, { token: A.token })
 await recusado('A lista gravações da sala da B', `/api/rooms/${salaB.code}/recordings`, { token: A.token })
-await recusado('A lê notas da sala da B', `/api/rooms/${salaB.code}/notes`, { token: A.token })
-await recusado('A reporta QoS na sala da B', `/api/rooms/${salaB.code}/qos`, {
+await recusado('A lê notas da sala da B', `/api/rooms/${salaB.code}/minutes`, { token: A.token })
+await recusado('A reporta QoS na sala da B', `/api/rooms/${salaB.code}/quality-samples`, {
   token: A.token, method: 'POST', body: { rtt_ms: 1, loss_pct: 0, up_kbps: 1 },
 })
 await recusado('anónimo vê metadados da sala da B', `/api/rooms/${salaB.code}`, {})
@@ -362,8 +362,8 @@ const reuniaoB = await req('/api/meetings', {
 })
 if (reuniaoB.status >= 200 && reuniaoB.status < 300 && reuniaoB.json?.id) {
   const m = reuniaoB.json.id
-  // `/api/meetings/{id}` só tem DELETE e `/minutes` só tem POST — um GET
-  // devolve 405, que o helper contava como recusa sem provar nada. Foi o
+  // `/api/meetings/{meeting_id}/minutes` só tem GET e PUT — um POST devolve
+  // 405, que o helper contava como recusa sem provar nada. Foi o
   // CONTROLO POSITIVO abaixo que deu por isso: «B lê a sua própria reunião»
   // devolvia 405 também. Sem ele, duas asserções verdes mediam o router, não a
   // autorização.
@@ -371,14 +371,14 @@ if (reuniaoB.status >= 200 && reuniaoB.status < 300 && reuniaoB.json?.id) {
     token: A.token, method: 'DELETE',
   })
   await recusado('A escreve a ACTA da reunião da B', `/api/meetings/${m}/minutes`, {
-    token: A.token, method: 'POST', body: { markdown: 'acta forjada' },
+    token: A.token, method: 'PUT', body: { markdown: 'acta forjada' },
   })
-  await recusado('A lê a agenda da reunião da B', `/api/meetings/${m}/agenda`, { token: A.token })
+  await recusado('A lê a agenda da reunião da B', `/api/meetings/${m}/agenda-items`, { token: A.token })
   await recusado('A lê os convidados da reunião da B', `/api/meetings/${m}/invitees`, { token: A.token })
   await recusado('A lê o plano de acção da reunião da B', `/api/meetings/${m}/action-plan`, { token: A.token })
-  await recusado('A descarrega o ICS da reunião da B', `/api/meetings/${m}/ics`, { token: A.token })
-  await recusado('A responde ao convite da reunião da B', `/api/meetings/${m}/respond`, {
-    token: A.token, method: 'POST', body: { status: 'accepted' },
+  await recusado('A descarrega o ICS da reunião da B', `/api/meetings/${m}/calendar.ics`, { token: A.token })
+  await recusado('A responde ao convite da reunião da B', `/api/meetings/${m}/invitees/me`, {
+    token: A.token, method: 'PUT', body: { status: 'accepted' },
   })
   await recusado('A ARRANCA a reunião da B', `/api/meetings/${m}/start`, {
     token: A.token, method: 'POST', body: {},
@@ -412,9 +412,9 @@ const quadroB = await req('/api/whiteboards', {
 })
 if (quadroB.status >= 200 && quadroB.status < 300 && quadroB.json?.id) {
   const q = quadroB.json.id
-  await recusado('A descarrega o PNG do quadro da B', `/api/whiteboards/${q}/png`, { token: A.token })
-  await recusado('A PARTILHA o quadro da B por link', `/api/whiteboards/${q}/share`, {
-    token: A.token, method: 'POST', body: { public: true },
+  await recusado('A descarrega o PNG do quadro da B', `/api/whiteboards/${q}/image`, { token: A.token })
+  await recusado('A PARTILHA o quadro da B por link', `/api/whiteboards/${q}/public-link`, {
+    token: A.token, method: 'PUT', body: { public: true },
   })
   await recusado('A apaga o quadro da B', `/api/whiteboards/${q}`, {
     token: A.token, method: 'DELETE',
@@ -496,20 +496,20 @@ if (gravB) {
 // Recursos ligados à SALA da org B, com o código real dela. O código é uma
 // capability para VER metadados e PEDIR entrada — não para escrever.
 console.log('\n--- o que o código da sala NÃO autoriza a escrever ---')
-await recusado('A convida gente para a sala da B', `/api/rooms/${salaB.code}/invite`, {
+await recusado('A convida gente para a sala da B', `/api/rooms/${salaB.code}/invitations`, {
   token: A.token, method: 'POST', body: { user_ids: [] },
 })
 await recusado('A lê a acta da sala da B', `/api/rooms/${salaB.code}/minutes`, { token: A.token })
 await recusado('A escreve a acta da sala da B', `/api/rooms/${salaB.code}/minutes`, {
-  token: A.token, method: 'POST', body: { markdown: 'acta forjada' },
+  token: A.token, method: 'PUT', body: { markdown: 'acta forjada' },
 })
-await recusado('A reporta tempos de chamada na sala da B', `/api/rooms/${salaB.code}/timings`, {
+await recusado('A reporta tempos de chamada na sala da B', `/api/rooms/${salaB.code}/join-timings`, {
   token: A.token, method: 'POST', body: { join_ms: 1 },
 })
-await recusado('A partilha uma gravação alheia com alguém', `/api/recordings/${inventado}/share`, {
+await recusado('A partilha uma gravação alheia com alguém', `/api/recordings/${inventado}/shares`, {
   token: A.token, method: 'POST', body: { user_id: inventado },
 })
-await recusado('A revoga a partilha de uma gravação alheia', `/api/recordings/${inventado}/share/${inventado}`, {
+await recusado('A revoga a partilha de uma gravação alheia', `/api/recordings/${inventado}/shares/${inventado}`, {
   token: A.token, method: 'DELETE',
 })
 
@@ -518,15 +518,17 @@ await recusado('A revoga a partilha de uma gravação alheia', `/api/recordings/
 // que o resto deste ficheiro e está dito: um `404` aqui não distingue «não é
 // tua» de «não existe». O caminho por id fica coberto pela sala
 // (`/api/rooms/{code}/recordings`, acima), que usa um id REAL da org B.
-await recusado('A descarrega uma gravação por id inventado', `/api/recordings/${inventado}`, {
+await recusado('A descarrega uma gravação por id inventado', `/api/recordings/${inventado}/content`, {
   token: A.token,
 })
-await recusado('A cria link de partilha de uma gravação alheia', `/api/recordings/${inventado}/link`, {
-  token: A.token, method: 'POST', body: {},
+await recusado('A cria link de partilha de uma gravação alheia', `/api/recordings/${inventado}/public-link`, {
+  token: A.token, method: 'PUT', body: {},
 })
-await recusado('A mexe num item de acção por id inventado', `/api/action-items/${inventado}`, {
-  token: A.token, method: 'PATCH', body: { done: true },
-})
+await recusado(
+  'A mexe num item de acção por id inventado',
+  `/api/meetings/${inventado}/action-plan/items/${inventado}`,
+  { token: A.token, method: 'PATCH', body: { done: true } },
+)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // S1–S3 da auditoria de 2026-09-16 (docs/auditoria-2026-09-16-backend.md).
@@ -543,14 +545,14 @@ console.log('\n--- S1: registar-se não faz de ninguém administrador da platafo
 // dito. O administrador da plataforma é declarado na configuração do servidor
 // (`PLATFORM_ADMIN_USER_IDS`) e o utilizador deste teste só nasce depois do
 // arranque; o caminho positivo é provado em `storage::tests`.
-await recusadoNaPorta('admin de org recém-registado LÊ o armazenamento da plataforma', '/api/v1/platform/storage', {
+await recusadoNaPorta('admin de org recém-registado LÊ o armazenamento da plataforma', '/api/operator/v1/storage', {
   token: A.token,
 })
-await recusadoNaPorta('admin de org recém-registado ESCREVE o armazenamento da plataforma', '/api/v1/platform/storage', {
+await recusadoNaPorta('admin de org recém-registado ESCREVE o armazenamento da plataforma', '/api/operator/v1/storage', {
   token: A.token, method: 'PUT',
   body: { storage_type: 'webdav', webdav_url: 'http://169.254.169.254/', webdav_user: 'x' },
 })
-await recusadoNaPorta('admin de org recém-registado dispara o teste de ligação (PROPFIND)', '/api/v1/platform/storage/test', {
+await recusadoNaPorta('admin de org recém-registado dispara o teste de ligação (PROPFIND)', '/api/operator/v1/storage/test', {
   token: A.token, method: 'POST', body: {},
 })
 
@@ -563,7 +565,7 @@ const chaveA = await req(`/api/orgs/${A.orgId}/api-keys`, {
 })
 if (chaveA.status >= 200 && chaveA.status < 300 && chaveA.json?.key) {
   const novoEmail = `novo-${marca}@alfa${marca}.local`
-  const prov = await req('/api/v1/integration/odoo/provision', {
+  const prov = await req('/api/integrations/odoo/v1/provision', {
     token: chaveA.json.key, method: 'POST',
     body: {
       company: `Org alfa${marca}`,
@@ -577,7 +579,7 @@ if (chaveA.status >= 200 && chaveA.status < 300 && chaveA.json?.key) {
   if (prov.status >= 200 && prov.status < 300) ok(`a sincronização corre para o resto do lote → ${prov.status}`)
   else nok('a sincronização corre para o resto do lote', `devolveu ${prov.status}: ${JSON.stringify(prov.json).slice(0, 160)}`)
 
-  const empA = await req(`/api/orgs/${A.orgId}/employees`, { token: A.token })
+  const empA = await req(`/api/orgs/${A.orgId}/members`, { token: A.token })
   const emails = Array.isArray(empA.json) ? empA.json.map((e) => e.email) : []
   if (!emails.includes(B.email)) ok('o administrador da org B NÃO entrou na org A')
   else nok('o administrador da org B NÃO entrou na org A', `está na lista de empregados da A: ${JSON.stringify(emails)}`)
@@ -601,7 +603,7 @@ console.log('\n--- S3: um membro ARQUIVADO perde o acesso da organização ---')
 const dominioA = A.email.split('@')[1]
 async function colaborador(nome, role) {
   const email = `${nome}-${marca}@${dominioA}`
-  const r = await req(`/api/orgs/${A.orgId}/employees`, {
+  const r = await req(`/api/orgs/${A.orgId}/members`, {
     token: A.token, method: 'POST',
     body: { email, username: `${nome}-${marca}`, password: PW, role, title: nome },
   })
@@ -621,16 +623,16 @@ const gravacaoA = upload.ok ? (await upload.json()).id : null
 if (!gravacaoA) nok('A carrega uma gravação para o teste S3', `devolveu ${upload.status}`)
 
 const pesquisaPorA = async (token) => {
-  const r = await req(`/api/users/search?q=${encodeURIComponent(`admin-alfa${marca}`)}`, { token })
+  const r = await req(`/api/users?q=${encodeURIComponent(`admin-alfa${marca}`)}`, { token })
   return Array.isArray(r.json) && r.json.some((u) => u.id === A.userId)
 }
 
 // ANTES
-await permitido('C (membro activo) lê o chat da sala da A', `/api/rooms/${salaA.code}/chat`, { token: C.token })
+await permitido('C (membro activo) lê o chat da sala da A', `/api/rooms/${salaA.code}/messages`, { token: C.token })
 if (await pesquisaPorA(C.token)) ok('C (membro activo) encontra o admin da A na pesquisa')
 else nok('C (membro activo) encontra o admin da A na pesquisa', 'não encontrou — o controlo positivo falhou')
 if (gravacaoA) {
-  await permitido('D (admin activo) descarrega a gravação da A', `/api/recordings/${gravacaoA}?dl=1`, { token: D.token })
+  await permitido('D (admin activo) descarrega a gravação da A', `/api/recordings/${gravacaoA}/content?dl=1`, { token: D.token })
 }
 await permitido('controlo: a chave da A cria reunião com C como anfitriã', '/api/v1/meetings', {
   token: chaveA.json?.key, method: 'POST',
@@ -638,15 +640,15 @@ await permitido('controlo: a chave da A cria reunião com C como anfitriã', '/a
 })
 
 // ARQUIVAR
-await permitido('A arquiva C', `/api/orgs/${A.orgId}/employees/${C.userId}`, { token: A.token, method: 'DELETE' })
-await permitido('A arquiva D', `/api/orgs/${A.orgId}/employees/${D.userId}`, { token: A.token, method: 'DELETE' })
+await permitido('A arquiva C', `/api/orgs/${A.orgId}/members/${C.userId}`, { token: A.token, method: 'DELETE' })
+await permitido('A arquiva D', `/api/orgs/${A.orgId}/members/${D.userId}`, { token: A.token, method: 'DELETE' })
 
 // DEPOIS
-await recusado('C ARQUIVADA lê o chat da sala da A', `/api/rooms/${salaA.code}/chat`, { token: C.token })
+await recusado('C ARQUIVADA lê o chat da sala da A', `/api/rooms/${salaA.code}/messages`, { token: C.token })
 if (!(await pesquisaPorA(C.token))) ok('C ARQUIVADA já não encontra o admin da A na pesquisa')
 else nok('C ARQUIVADA já não encontra o admin da A na pesquisa', 'o directório da ex-organização continua visível')
 if (gravacaoA) {
-  await recusado('D ARQUIVADO descarrega a gravação da A', `/api/recordings/${gravacaoA}?dl=1`, { token: D.token })
+  await recusado('D ARQUIVADO descarrega a gravação da A', `/api/recordings/${gravacaoA}/content?dl=1`, { token: D.token })
 }
 await recusado('a chave da A cria reunião com C ARQUIVADA como anfitriã', '/api/v1/meetings', {
   token: chaveA.json?.key, method: 'POST',
