@@ -1,16 +1,21 @@
-//! Gravações de reuniões: upload (webm), biblioteca por utilizador,
-//! partilha só-leitura e download; metadados e estado (G4), capítulos e
-//! comentários (G5), pesquisa na transcrição (G6).
+//! Gravações de reuniões: upload (webm), biblioteca por utilizador, partilha
+//! só-leitura e download; metadados (nome, descrição, etiquetas), publicação
+//! para a organização, capítulos e comentários, e pesquisa.
+//!
+//! **O contrato de dados é o da UI nova** (R183): milissegundos, `kind`,
+//! `status`/`state`/`transcript_status`, contagens, línguas de legenda e
+//! `visibility`. A estrutura (uma superfície, envelope de erro, 404-antes-de-403)
+//! é a desta linha. Os sub-recursos do leitor vivem em `recording_meta.rs`
+//! (miniatura, visualizações, participantes, transcrição) e em
+//! `recording_captions.rs` (legendas); a medição com ffprobe em `media_probe.rs`.
 //!
 //! O ficheiro fica no disco (`config.recordings_dir`, de `RECORDINGS_DIR`);
-//! a base de dados guarda os metadados. Acesso: quem participou na sala
-//! (`room_participants`), quem fez o upload, ou com quem foi partilhada
-//! (`recording_shares`). Partilha é sempre só-leitura (download).
+//! a base de dados guarda os metadados.
 //!
 //! **Uma regra de acesso.** As rotas por id lêem os factos com [`load_item`] e
 //! decidem com `delonix_meet_domain::content::recording::AccessFacts` —
-//! reproduzir, descarregar, gerir, comentar. Um membro arquivado (S3) perde
-//! todas de uma vez, porque deixaram de ser cópias.
+//! reproduzir, descarregar, gerir, comentar, publicar. Um membro arquivado (S3)
+//! perde todas de uma vez, porque deixaram de ser cópias.
 
 use axum::{
     body::Bytes,
@@ -26,7 +31,7 @@ use delonix_meet_core::{
 };
 use delonix_meet_domain::content::recording as rules;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use uuid::Uuid;
 
 use crate::{auth::AuthUser, error::ApiError, rooms::Room, users::UserPublic, AppState};
@@ -57,9 +62,12 @@ pub struct WebmBytes(Vec<u8>);
         public_share_download,
         get_metadata,
         update,
+        publish,
+        unpublish,
         list_chapters,
         create_chapter,
         get_chapter,
+        update_chapter,
         delete_chapter,
         list_comments,
         create_comment,
@@ -69,13 +77,15 @@ pub struct WebmBytes(Vec<u8>);
     ),
     components(schemas(
         Recording,
+        UploadResult,
         RecordingItem,
         RecordingPage,
         LibraryResponse,
         UpdateRecordingReq,
+        PublicationReq,
         Chapter,
-        ChapterPage,
         CreateChapterReq,
+        UpdateChapterReq,
         Comment,
         CommentPage,
         CreateCommentReq,
@@ -98,54 +108,99 @@ pub struct Recording {
     pub created_at: DateTime<Utc>,
 }
 
-/// Item da biblioteca, enriquecido para a UI.
+/// Resposta do upload: a gravação e o que o servidor mediu no ficheiro.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = RecordingUploadResult)]
+pub struct UploadResult {
+    pub id: Uuid,
+    pub room_id: Uuid,
+    pub uploader_id: Uuid,
+    pub filename: String,
+    pub size_bytes: i64,
+    pub created_at: DateTime<Utc>,
+    /// `meeting` | `training` | `broadcast` | `hybrid`.
+    pub kind: String,
+    /// `ready` (o upload só responde com o ficheiro escrito).
+    pub status: String,
+    /// Medidos com ffprobe; `null` = não foi possível medir (nunca inventado).
+    pub duration_ms: Option<i64>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub fps: Option<f32>,
+    pub video_codec: Option<String>,
+    pub audio_codec: Option<String>,
+    pub has_thumbnail: bool,
+}
+
+/// Item da biblioteca com metadados de media, estados, contagens e publicação
+/// (`RecordingLibraryItem` da UI).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(as = RecordingLibraryItem)]
 pub struct RecordingItem {
     pub id: Uuid,
     pub room_id: Uuid,
     pub room_code: String,
     pub uploader_id: Uuid,
     pub uploader_name: String,
-    /// Nome do ficheiro (é o nome com que se descarrega).
+    /// Nome da gravação: o que a UI mostra e com que se descarrega.
     pub filename: String,
-    /// Título dado por quem gere a gravação; `null` = a UI mostra o `filename`.
-    pub title: Option<String>,
-    /// `meeting` | `lecture` | `broadcast` | `other`.
-    pub category: String,
-    /// Duração em segundos; `null` = não se sabe (gravação carregada pelo browser).
-    pub duration_secs: Option<i32>,
-    /// Resolução do vídeo; `null` = não se sabe, ou só áudio.
-    pub width: Option<i32>,
-    pub height: Option<i32>,
     pub size_bytes: i64,
     pub created_at: DateTime<Utc>,
-    /// True se o utilizador atual é dono (participou/fez upload); false se só partilhada.
+    /// True se quem pede participou na sala; false se só a vê por partilha,
+    /// publicação ou papel.
     pub owned: bool,
-    /// Nº de utilizadores com quem está partilhada (só relevante para o dono).
+    /// Nº de utilizadores com quem está partilhada.
     pub share_count: i64,
-    /// RBAC de download: só o dono da gravação e admins da org do dono podem
-    /// descarregar o ficheiro; os restantes só reproduzem.
+    /// Só o dono e os admins activos da org do dono descarregam; os restantes reproduzem.
     pub can_download: bool,
-    /// Pode alterar título, categoria e capítulos (dono ou admin activo da org do dono).
-    pub can_manage: bool,
-    /// `ready` = há ficheiro. `failed` = houve tentativa e não há nada.
-    ///
-    /// A entrada falhada existe para ser VISTA: antes, uma gravação que não
-    /// compunha desaparecia sem deixar rasto, e quem carregou em «gravar»
-    /// ficava a pensar que tinha um ficheiro algures. Ver migração 0036.
+    /// `transcribing` | `ready` | `failed`. Esta linha não emite `processing`:
+    /// a linha só nasce depois de o ffmpeg acabar de compor.
     pub status: String,
-    /// Causa em linguagem de utilizador. `None` quando `status = ready`.
+    /// Causa em linguagem de utilizador. `null` quando não falhou.
     pub failure_reason: Option<String>,
-    /// Estado derivado: `ready` | `failed` | `transcribing` | `transcribed` |
-    /// `transcription_failed`. Não há `processing`: a linha só nasce depois de
-    /// o ffmpeg acabar de compor.
-    pub processing_state: String,
+    /// O `status`, com `published` quando está pronta e publicada.
+    pub state: String,
+    /// Progresso do passo em curso, 0–100. `null` sem passo com progresso.
+    pub progress_pct: Option<i16>,
+    /// `meeting` | `training` | `broadcast` | `hybrid`.
+    pub kind: String,
+    /// Medidos com ffprobe; `null` = não foi possível medir.
+    pub duration_ms: Option<i64>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub fps: Option<f32>,
+    pub video_codec: Option<String>,
+    pub audio_codec: Option<String>,
+    /// Há miniatura em `GET /api/recordings/{recording_id}/thumbnail`.
+    pub has_thumbnail: bool,
+    /// `none` | `transcribing` | `ready` | `failed`.
+    pub transcript_status: String,
+    pub transcript_language: Option<String>,
+    pub transcribed_at: Option<DateTime<Utc>>,
+    pub chapter_count: i64,
+    /// Comentários vivos (os apagados não contam).
+    pub comment_count: i64,
+    /// Visualizações (uma por pessoa por dia).
+    pub view_count: i64,
+    pub participant_count: i64,
+    /// Línguas com legenda PUBLICADA.
+    pub caption_languages: Vec<String>,
+    pub description: String,
+    pub tags: Vec<String>,
+    /// `private` | `org`.
+    pub visibility: String,
+    pub published_at: Option<DateTime<Utc>>,
+    /// Pode editar nome, descrição, etiquetas, capítulos, legendas e publicar.
+    pub can_manage: bool,
+    /// Organização do autor (a que partilha com quem pede, se houver).
+    pub uploader_org_id: Option<Uuid>,
+    pub uploader_org_name: Option<String>,
     /// Excerto com os termos marcados entre `«` e `»`. Só numa pesquisa (`q`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
 }
 
-/// Página da biblioteca (com `q`, `page_size` ou `page_token`).
+/// Página da biblioteca (com `page_size` ou `page_token`).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RecordingPage {
     pub items: Vec<RecordingItem>,
@@ -153,8 +208,8 @@ pub struct RecordingPage {
     pub next_page_token: Option<String>,
 }
 
-/// Sem parâmetros: a lista inteira (forma herdada, lida pelo web). Com `q`,
-/// `page_size` ou `page_token`: uma página.
+/// Sem `page_size`/`page_token`: a lista (forma que a UI lê, também com `q` e
+/// `scope`). Com eles: uma página.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum LibraryResponse {
@@ -165,35 +220,54 @@ pub enum LibraryResponse {
 /// Uma linha da biblioteca com os factos de acesso de quem pede.
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct ItemRow {
-    id: Uuid,
-    room_id: Uuid,
+    pub(crate) id: Uuid,
+    pub(crate) room_id: Uuid,
     room_code: String,
     uploader_id: Uuid,
     uploader_name: String,
-    filename: String,
-    title: Option<String>,
-    category: String,
-    duration_secs: Option<i32>,
-    width: Option<i32>,
-    height: Option<i32>,
+    pub(crate) filename: String,
     size_bytes: i64,
-    created_at: DateTime<Utc>,
-    status: String,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) status: String,
     failure_reason: Option<String>,
     transcribed: bool,
     transcription_failed: bool,
     lease_active: bool,
+    kind: String,
+    pub(crate) duration_ms: Option<i64>,
+    width: Option<i32>,
+    height: Option<i32>,
+    fps: Option<f32>,
+    video_codec: Option<String>,
+    audio_codec: Option<String>,
+    pub(crate) has_thumbnail: bool,
+    pub(crate) progress_pct: Option<i16>,
+    transcript_language: Option<String>,
+    pub(crate) transcribed_at: Option<DateTime<Utc>>,
+    description: String,
+    tags: Vec<String>,
+    visibility: String,
+    published_at: Option<DateTime<Utc>>,
+    published: bool,
     is_uploader: bool,
     participant: bool,
     shared: bool,
     org_admin: bool,
     active_member: bool,
     archived_member: bool,
+    published_to_my_org: bool,
     share_count: i64,
+    chapter_count: i64,
+    comment_count: i64,
+    view_count: i64,
+    participant_count: i64,
+    caption_languages: Vec<String>,
+    uploader_org_id: Option<Uuid>,
+    uploader_org_name: Option<String>,
 }
 
 impl ItemRow {
-    fn facts(&self) -> rules::AccessFacts {
+    pub(crate) fn facts(&self) -> rules::AccessFacts {
         rules::AccessFacts {
             is_uploader: self.is_uploader,
             participant: self.participant,
@@ -201,19 +275,30 @@ impl ItemRow {
             org_admin: self.org_admin,
             active_member: self.active_member,
             archived_member: self.archived_member,
+            published_to_my_org: self.published_to_my_org,
         }
     }
 
-    fn into_item(self, snippet: Option<String>) -> RecordingItem {
-        let facts = self.facts();
-        let processing_state = rules::processing_state(rules::ProcessingFacts {
+    pub(crate) fn processing(&self) -> rules::ProcessingFacts<'_> {
+        rules::ProcessingFacts {
             status: &self.status,
             transcribed: self.transcribed,
             transcription_failed: self.transcription_failed,
             lease_active: self.lease_active,
-        })
-        .as_str()
-        .to_string();
+        }
+    }
+
+    /// Há ficheiro (a gravação não falhou).
+    pub(crate) fn has_file(&self) -> bool {
+        self.processing().has_file()
+    }
+
+    fn into_item(self, snippet: Option<String>) -> RecordingItem {
+        let facts = self.facts();
+        let file = rules::file_status(self.processing());
+        let transcript_status = rules::transcript_status(self.processing())
+            .as_str()
+            .to_string();
         RecordingItem {
             id: self.id,
             room_id: self.room_id,
@@ -221,21 +306,39 @@ impl ItemRow {
             uploader_id: self.uploader_id,
             uploader_name: self.uploader_name,
             filename: self.filename,
-            title: self.title,
-            category: self.category,
-            duration_secs: self.duration_secs,
-            width: self.width,
-            height: self.height,
             size_bytes: self.size_bytes,
             created_at: self.created_at,
             // `owned` foi sempre «participou na sala» (ver o teste de conteúdo).
             owned: self.participant,
             share_count: self.share_count,
             can_download: facts.can_download(),
-            can_manage: facts.can_manage(),
-            status: self.status,
+            status: file.as_str().to_string(),
             failure_reason: self.failure_reason,
-            processing_state,
+            state: rules::display_state(file, self.published).to_string(),
+            progress_pct: self.progress_pct,
+            kind: self.kind,
+            duration_ms: self.duration_ms,
+            width: self.width,
+            height: self.height,
+            fps: self.fps,
+            video_codec: self.video_codec,
+            audio_codec: self.audio_codec,
+            has_thumbnail: self.has_thumbnail,
+            transcript_status,
+            transcript_language: self.transcript_language,
+            transcribed_at: self.transcribed_at,
+            chapter_count: self.chapter_count,
+            comment_count: self.comment_count,
+            view_count: self.view_count,
+            participant_count: self.participant_count,
+            caption_languages: self.caption_languages,
+            description: self.description,
+            tags: self.tags,
+            visibility: self.visibility,
+            published_at: self.published_at,
+            can_manage: facts.can_manage(),
+            uploader_org_id: self.uploader_org_id,
+            uploader_org_name: self.uploader_org_name,
             snippet,
         }
     }
@@ -246,22 +349,40 @@ impl ItemRow {
 /// A pertença lê-se UMA vez, numa só junção: admin activo, membro activo e
 /// membro arquivado de uma organização do dono. O dono (`o`) não se filtra por
 /// `archived_at` — a gravação de quem saiu continua da empresa (S3); quem pede
-/// (`me`) sim, pela regra do domínio.
-const ITEM_SELECT: &str = r#"
+/// (`me`) sim, pela regra do domínio. `published_to_my_org` reusa o
+/// `active_member` dessa junção: publicar não abre uma segunda leitura de
+/// pertença que pudesse divergir.
+static ITEM_SELECT: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        r#"
 SELECT r.id, r.room_id, rm.code AS room_code, r.uploader_id, u.username AS uploader_name,
-       r.filename, r.title, r.category, r.duration_secs, r.width, r.height,
-       r.size_bytes, r.created_at, r.status, r.failure_reason,
+       r.filename, r.size_bytes, r.created_at, r.status, r.failure_reason,
        (r.transcribed_at IS NOT NULL) AS transcribed,
        (r.transcription_failed_at IS NOT NULL) AS transcription_failed,
        (r.transcription_lease_token IS NOT NULL
         AND r.transcription_lease_expires_at >= now()) AS lease_active,
+       r.kind, r.duration_ms, r.width, r.height, r.fps, r.video_codec, r.audio_codec,
+       r.has_thumbnail, r.progress_pct, r.transcript_language, r.transcribed_at,
+       r.description, r.tags, r.visibility, r.published_at,
+       (r.published_at IS NOT NULL) AS published,
        (r.uploader_id = $1) AS is_uploader,
        EXISTS(SELECT 1 FROM room_participants p
                WHERE p.room_id = r.room_id AND p.user_id = $1) AS participant,
        EXISTS(SELECT 1 FROM recording_shares s
                WHERE s.recording_id = r.id AND s.user_id = $1) AS shared,
        m.org_admin, m.active_member, m.archived_member,
-       (SELECT COUNT(*) FROM recording_shares sc WHERE sc.recording_id = r.id) AS share_count
+       (r.visibility = 'org' AND r.published_at IS NOT NULL AND m.active_member)
+           AS published_to_my_org,
+       (SELECT COUNT(*) FROM recording_shares sc WHERE sc.recording_id = r.id) AS share_count,
+       (SELECT COUNT(*) FROM recording_chapters ch WHERE ch.recording_id = r.id) AS chapter_count,
+       (SELECT COUNT(*) FROM recording_comments cm
+         WHERE cm.recording_id = r.id AND cm.deleted_at IS NULL) AS comment_count,
+       (SELECT COUNT(*) FROM recording_views v WHERE v.recording_id = r.id) AS view_count,
+       (SELECT COUNT(*) FROM room_participants pp WHERE pp.room_id = r.room_id) AS participant_count,
+       COALESCE((SELECT array_agg(cap.lang ORDER BY cap.lang) FROM recording_captions cap
+                  WHERE cap.recording_id = r.id AND cap.status = 'published'),
+                '{{}}'::text[]) AS caption_languages,
+       uo.id AS uploader_org_id, uo.name AS uploader_org_name
   FROM recordings r
   JOIN rooms rm ON rm.id = r.room_id
   JOIN users u ON u.id = r.uploader_id
@@ -272,13 +393,27 @@ SELECT r.id, r.room_id, rm.code AS room_code, r.uploader_id, u.username AS uploa
         FROM org_members me JOIN org_members o ON o.org_id = me.org_id
        WHERE me.user_id = $1 AND o.user_id = r.uploader_id
   ) m
-"#;
+  LEFT JOIN LATERAL ({uploader_org}) uo ON true
+"#,
+        uploader_org = crate::org::uploader_org_for_viewer_sql("r.uploader_id", "$1"),
+    )
+});
 
-/// A visibilidade da biblioteca sobre as colunas de [`ITEM_SELECT`] (alias `i`).
-/// É `AccessFacts::can_view` escrita em SQL, porque filtra ANTES de paginar;
-/// o teste `library_hides_from_archived_member` prova que as duas concordam.
-const LIBRARY_VISIBLE: &str =
-    "(i.is_uploader OR i.participant OR i.shared) AND NOT (i.archived_member AND NOT i.active_member)";
+/// «Departed» (S3) sobre as colunas de [`ITEM_SELECT`] (alias `i`).
+const NOT_DEPARTED: &str = "NOT (i.archived_member AND NOT i.active_member)";
+
+/// A biblioteca `mine` em SQL: `AccessFacts::listed_in(Mine, _)`. Filtra ANTES de
+/// paginar; o teste `library_scopes_agree_with_access_facts` prova que concordam.
+static LIBRARY_VISIBLE_MINE: LazyLock<String> =
+    LazyLock::new(|| format!("(i.is_uploader OR i.participant OR i.shared) AND {NOT_DEPARTED}"));
+
+/// A biblioteca `published` em SQL: `AccessFacts::listed_in(Published, published)`.
+static LIBRARY_VISIBLE_PUBLISHED: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "i.published AND (i.is_uploader OR i.participant OR i.shared OR i.published_to_my_org) \
+         AND {NOT_DEPARTED}"
+    )
+});
 
 /// A gravação `id` com os factos de acesso de `user_id`. `None` = não existe.
 pub(crate) async fn load_item(
@@ -287,7 +422,7 @@ pub(crate) async fn load_item(
     user_id: Uuid,
 ) -> Result<Option<ItemRow>, ApiError> {
     Ok(
-        sqlx::query_as::<_, ItemRow>(&format!("{ITEM_SELECT} WHERE r.id = $2"))
+        sqlx::query_as::<_, ItemRow>(&format!("{} WHERE r.id = $2", *ITEM_SELECT))
             .bind(user_id)
             .bind(id)
             .fetch_optional(&state.db)
@@ -297,7 +432,11 @@ pub(crate) async fn load_item(
 
 /// A gravação para quem a pode ver de alguma forma. Não existir e não chegar
 /// lá dão a MESMA resposta (`404`): não se confirma que existe.
-async fn seen_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemRow, ApiError> {
+pub(crate) async fn seen_item(
+    state: &AppState,
+    id: Uuid,
+    user_id: Uuid,
+) -> Result<ItemRow, ApiError> {
     match load_item(state, id, user_id).await? {
         Some(row) if row.facts().can_see() => Ok(row),
         _ => Err(ApiError::NotFound),
@@ -305,7 +444,11 @@ async fn seen_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemRow,
 }
 
 /// Como [`seen_item`], e além disso tem de a poder gerir (`403` se só a vê).
-async fn managed_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemRow, ApiError> {
+pub(crate) async fn managed_item(
+    state: &AppState,
+    id: Uuid,
+    user_id: Uuid,
+) -> Result<ItemRow, ApiError> {
     let row = seen_item(state, id, user_id).await?;
     if !row.facts().can_manage() {
         return Err(DomainError::forbidden("recording.not_manager")
@@ -327,7 +470,17 @@ async fn owned_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemRow
     Ok(row)
 }
 
-async fn room_by_code(state: &AppState, code: &str) -> Result<Room, ApiError> {
+/// Uma gravação sem ficheiro (falhada) não se publica, não se vê, não conta
+/// visualizações.
+pub(crate) fn no_file() -> ApiError {
+    DomainError::conflict(
+        "recording.no_file",
+        "esta gravação falhou e não tem ficheiro",
+    )
+    .into()
+}
+
+pub(crate) async fn room_by_code(state: &AppState, code: &str) -> Result<Room, ApiError> {
     let room: Room = sqlx::query_as(&format!(
         "SELECT {} FROM rooms WHERE code = $1",
         crate::rooms::ROOM_COLUMNS
@@ -338,7 +491,11 @@ async fn room_by_code(state: &AppState, code: &str) -> Result<Room, ApiError> {
     Ok(room)
 }
 
-async fn is_participant(state: &AppState, room_id: Uuid, user_id: Uuid) -> Result<bool, ApiError> {
+pub(crate) async fn is_participant(
+    state: &AppState,
+    room_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, ApiError> {
     let row: Option<(i32,)> =
         sqlx::query_as("SELECT 1 FROM room_participants WHERE room_id = $1 AND user_id = $2")
             .bind(room_id)
@@ -351,22 +508,31 @@ async fn is_participant(state: &AppState, room_id: Uuid, user_id: Uuid) -> Resul
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct UploadQuery {
-    /// Nome de apresentação; omissão `<código>-<AAAAMMDD-HHMMSS>.webm`.
+    /// Nome da gravação (1-200 caracteres, uma linha); omissão `<código>-<AAAAMMDD-HHMMSS>.webm`.
     #[serde(default)]
     pub name: Option<String>,
+    /// Tipo de sessão declarado (o estúdio envia `broadcast`): `meeting` |
+    /// `training` | `broadcast` | `hybrid`. Omissão: o formato da sala.
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 /// Carrega uma gravação da sala. O corpo é o ficheiro **em bruto** (não
 /// multipart); o `Content-Type` não é verificado. Máximo 512 MiB. Só quem
-/// participou na sala pode carregar — senão **401**, não 403.
+/// participou na sala pode carregar.
+///
+/// Mede o ficheiro com ffprobe antes de responder (duração, resolução, fps,
+/// codecs, miniatura), cada passo com tecto de tempo. Sem ffprobe/ffmpeg, ou
+/// com um ficheiro que não reconhecem, os campos vêm `null` e
+/// `has_thumbnail = false` — o upload nunca falha por isso.
 #[utoipa::path(
     post, path = "/api/rooms/{room_code}/recordings", tag = "recordings",
     security(("session" = [])),
     params(("room_code" = String, Path, description = "Código da sala."), UploadQuery),
     request_body(content = inline(WebmBytes), content_type = "video/webm", description = "Ficheiro webm em bruto."),
     responses(
-        (status = 200, body = Recording),
-        (status = 400, description = "Corpo vazio.", body = crate::openapi::ErrorBody),
+        (status = 200, body = UploadResult),
+        (status = 400, description = "Corpo vazio; `recording.invalid_kind`; `recording.invalid_filename`.", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
         (status = 403, description = "`room.not_participant`: não participou na sala.", body = crate::openapi::ErrorBody),
         (status = 404, description = "Sala inexistente.", body = crate::openapi::ErrorBody),
@@ -380,7 +546,7 @@ pub async fn upload(
     Path(code): Path<String>,
     Query(q): Query<UploadQuery>,
     body: Bytes,
-) -> Result<Json<Recording>, ApiError> {
+) -> Result<Json<UploadResult>, ApiError> {
     if body.is_empty() {
         return Err(ApiError::BadRequest("empty recording".into()));
     }
@@ -394,24 +560,33 @@ pub async fn upload(
             .with_message("só quem participou na sala")
             .into());
     }
+    // Valida tudo ANTES de contar a quota ou escrever.
+    let kind = match q.kind.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
+        None => rules::Kind::from_room_format(&room.format),
+        Some(k) => rules::Kind::parse(k)?,
+    };
+    let name = q
+        .name
+        .as_deref()
+        .filter(|n| !n.trim().is_empty())
+        .map(rules::validate_filename)
+        .transpose()?;
     // Quota de armazenamento (G3): antes de escrever a linha ou o ficheiro.
     crate::usage::enforce_recording_quota(&state, auth.user_id, body.len() as i64).await?;
 
     let stamp = Utc::now().format("%Y%m%d-%H%M%S");
-    let display = q
-        .name
-        .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| format!("{}-{stamp}.webm", room.code));
+    let display = name.unwrap_or_else(|| format!("{}-{stamp}.webm", room.code));
 
     let rec: Recording = sqlx::query_as(
-        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes)
-         VALUES ($1, $2, $3, $4)
+        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, kind)
+         VALUES ($1, $2, $3, $4, $5)
          RETURNING id, room_id, uploader_id, filename, size_bytes, created_at",
     )
     .bind(room.id)
     .bind(auth.user_id)
     .bind(&display)
     .bind(body.len() as i64)
+    .bind(kind.as_str())
     .fetch_one(&state.db)
     .await?;
 
@@ -419,12 +594,31 @@ pub async fn upload(
     tokio::fs::create_dir_all(dir)
         .await
         .map_err(ApiError::internal)?;
-    tokio::fs::write(dir.join(format!("{}.webm", rec.id)), &body)
+    let path = dir.join(format!("{}.webm", rec.id));
+    tokio::fs::write(&path, &body)
         .await
         .map_err(ApiError::internal)?;
 
+    // Mede antes de responder: quem carrega recebe já a duração e a resolução.
+    let probed = crate::media_probe::probe_and_store(&state, rec.id, &path).await;
     tracing::info!(room = %room.code, id = %rec.id, size = body.len(), "recording stored");
-    Ok(Json(rec))
+    Ok(Json(UploadResult {
+        id: rec.id,
+        room_id: rec.room_id,
+        uploader_id: rec.uploader_id,
+        filename: rec.filename,
+        size_bytes: rec.size_bytes,
+        created_at: rec.created_at,
+        kind: kind.as_str().to_string(),
+        status: "ready".into(),
+        duration_ms: probed.info.duration_ms,
+        width: probed.info.width,
+        height: probed.info.height,
+        fps: probed.info.fps,
+        video_codec: probed.info.video_codec,
+        audio_codec: probed.info.audio_codec,
+        has_thumbnail: probed.has_thumbnail,
+    }))
 }
 
 /// Gravações de uma sala específica (painel dentro da reunião).
@@ -464,10 +658,14 @@ pub async fn list(
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct LibraryQuery {
-    /// Pesquisa de texto no título, no nome do ficheiro e na transcrição. Cada
-    /// palavra conta como prefixo e todas têm de aparecer. Só letras e dígitos.
+    /// Pesquisa de texto no nome, nas etiquetas, na descrição e na transcrição.
+    /// Cada palavra conta como prefixo e todas têm de aparecer. Só letras e dígitos.
     pub q: Option<String>,
-    /// 1-100, omissão 50. Com este parâmetro (ou `q`/`page_token`) a resposta é uma página.
+    /// `mine` (omissão): carregou, participou ou foi-lhe partilhada.
+    /// `published`: as publicadas que vê — incluindo as da organização em que
+    /// não participou.
+    pub scope: Option<String>,
+    /// 1-100, omissão 50. Com este parâmetro (ou `page_token`) a resposta é uma página.
     pub page_size: Option<u32>,
     pub page_token: Option<String>,
 }
@@ -478,24 +676,24 @@ struct LibraryCursor {
     id: Uuid,
 }
 
-/// Biblioteca do utilizador: gravações onde participou + partilhadas consigo.
+/// Biblioteca do utilizador.
 ///
-/// **Duas formas, de propósito.** Sem parâmetros devolve a lista inteira, como
-/// sempre — é o que o web lê hoje (`recordingsLibrary`), e trocá-la no mesmo
-/// PR partia a página. Com `q`, `page_size` ou `page_token` devolve uma página
-/// (`items` + `next_page_token`), por `created_at` descendente — também numa
-/// pesquisa, para o cursor ser estável; a relevância só decide o `snippet`.
-/// A forma sem limite é dívida e sai quando o web passar a paginar.
+/// **Duas formas.** Sem `page_size`/`page_token` devolve a lista (a UI lê-a
+/// assim, também com `q` e `scope`). Com eles devolve uma página (`items` +
+/// `next_page_token`), por `created_at` descendente — também numa pesquisa, para
+/// o cursor ser estável; a relevância só decide o `snippet`. A forma sem limite
+/// é dívida herdada e sai quando a UI paginar.
 ///
-/// Um membro arquivado (S3) deixa de ver as gravações da ex-organização.
+/// Um membro arquivado (S3) deixa de ver as gravações da ex-organização,
+/// incluindo as publicadas.
 #[utoipa::path(
     get, path = "/api/recordings", tag = "recordings",
     security(("session" = [])),
     params(LibraryQuery),
     responses(
         (status = 200, body = LibraryResponse,
-         description = "Sem parâmetros: `RecordingItem[]` (todas). Com `q`/`page_size`/`page_token`: `RecordingPage`. Inclui as falhadas (`status = failed`)."),
-        (status = 400, body = crate::openapi::ErrorBody, description = "`page_token` inválido, ou `q` sem nenhuma letra ou dígito (`recording.invalid_query`)."),
+         description = "Sem `page_size`/`page_token`: `RecordingLibraryItem[]`. Com eles: `RecordingPage`. Inclui as falhadas (`status = failed`)."),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`page.invalid_token`; `recording.invalid_query` (`q` sem nenhuma letra ou dígito); `recording.invalid_scope`."),
         (status = 401, body = crate::openapi::ErrorBody),
     )
 )]
@@ -504,19 +702,7 @@ pub async fn library(
     auth: AuthUser,
     Query(q): Query<LibraryQuery>,
 ) -> Result<Json<LibraryResponse>, ApiError> {
-    if q.q.is_none() && q.page_size.is_none() && q.page_token.is_none() {
-        let rows: Vec<ItemRow> = sqlx::query_as(&format!(
-            "SELECT * FROM ({ITEM_SELECT}) i WHERE {LIBRARY_VISIBLE}
-              ORDER BY i.created_at DESC, i.id DESC"
-        ))
-        .bind(auth.user_id)
-        .fetch_all(&state.db)
-        .await?;
-        return Ok(Json(LibraryResponse::List(
-            rows.into_iter().map(|r| r.into_item(None)).collect(),
-        )));
-    }
-
+    let scope = rules::LibraryScope::parse(q.scope.as_deref())?;
     // Um `q` vazio não filtra; um `q` só com pontuação é erro do cliente, não
     // «tudo» nem «nada» em silêncio.
     let tsquery = match q.q.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
@@ -529,50 +715,64 @@ pub async fn library(
             .with_field("q", "letras e dígitos")
         })?),
     };
+    let paged = q.page_size.is_some() || q.page_token.is_some();
     let page = PageRequest {
         page_size: q.page_size,
         page_token: q.page_token,
     };
     let size = page.size();
     let cursor: Option<LibraryCursor> = page.cursor()?;
-    // Duas instruções distintas (com e sem texto) em vez de `$2 IS NULL OR …`:
+    let visible = match scope {
+        rules::LibraryScope::Mine => &*LIBRARY_VISIBLE_MINE,
+        rules::LibraryScope::Published => &*LIBRARY_VISIBLE_PUBLISHED,
+    };
+    // Duas instruções distintas (com e sem texto) em vez de `$5 IS NULL OR …`:
     // um plano genérico com o OR deixava de usar o índice GIN.
     let search = if tsquery.is_some() {
         "r.search_vector @@ to_tsquery('simple', $5)"
     } else {
         "$5::text IS NULL"
     };
+    // `LIMIT NULL` = sem limite: a forma lista.
     let rows: Vec<ItemRow> = sqlx::query_as(&format!(
-        "SELECT * FROM ({ITEM_SELECT}
+        "SELECT * FROM ({select}
             WHERE {search}
               AND ($2::timestamptz IS NULL OR (r.created_at, r.id) < ($2, $3))
          ) i
-         WHERE {LIBRARY_VISIBLE}
+         WHERE {visible}
          ORDER BY i.created_at DESC, i.id DESC
-         LIMIT $4"
+         LIMIT $4",
+        select = *ITEM_SELECT,
     ))
     .bind(auth.user_id)
     .bind(cursor.as_ref().map(|c| c.at))
     .bind(cursor.as_ref().map(|c| c.id).unwrap_or_default())
-    .bind(size as i64 + 1)
+    .bind(paged.then_some(size as i64 + 1))
     .bind(tsquery.as_deref())
     .fetch_all(&state.db)
     .await?;
-    let p = Page::from_overfetch(rows, size, |r| LibraryCursor {
-        at: r.created_at,
-        id: r.id,
-    });
+    let (rows, next_page_token) = if paged {
+        let p = Page::from_overfetch(rows, size, |r| LibraryCursor {
+            at: r.created_at,
+            id: r.id,
+        });
+        (p.items, p.next_page_token)
+    } else {
+        (rows, None)
+    };
 
-    // O excerto só para a página devolvida (≤ 100 linhas): o `ts_headline`
-    // relê o texto inteiro, e fazê-lo antes do LIMIT seria por cada candidata.
+    // O excerto só para as linhas devolvidas: o `ts_headline` relê o texto
+    // inteiro, e fazê-lo antes do LIMIT seria por cada candidata.
     let mut snippets: std::collections::HashMap<Uuid, String> = Default::default();
     if let Some(tsq) = &tsquery {
-        let ids: Vec<Uuid> = p.items.iter().map(|r| r.id).collect();
+        let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
         let found: Vec<(Uuid, String)> = sqlx::query_as(
             r#"SELECT r.id, ts_headline('simple',
-                        CASE WHEN to_tsvector('simple', r.transcript) @@ q.q
-                             THEN r.transcript
-                             ELSE coalesce(r.title, '') || ' ' || r.filename END,
+                        CASE WHEN to_tsvector('simple', coalesce(r.transcript, '')) @@ q.q
+                               THEN r.transcript
+                             WHEN to_tsvector('simple', r.description) @@ q.q
+                               THEN r.description
+                             ELSE r.filename || ' ' || recording_tags_text(r.tags) END,
                         q.q,
                         'MaxFragments=1, MaxWords=18, MinWords=6, StartSel="«", StopSel="»"')
                  FROM recordings r, to_tsquery('simple', $2) AS q(q)
@@ -584,17 +784,21 @@ pub async fn library(
         .await?;
         snippets.extend(found);
     }
-    Ok(Json(LibraryResponse::Page(RecordingPage {
-        items: p
-            .items
-            .into_iter()
-            .map(|r| {
-                let snippet = snippets.remove(&r.id);
-                r.into_item(snippet)
-            })
-            .collect(),
-        next_page_token: p.next_page_token,
-    })))
+    let items: Vec<RecordingItem> = rows
+        .into_iter()
+        .map(|r| {
+            let snippet = snippets.remove(&r.id);
+            r.into_item(snippet)
+        })
+        .collect();
+    Ok(Json(if paged {
+        LibraryResponse::Page(RecordingPage {
+            items,
+            next_page_token,
+        })
+    } else {
+        LibraryResponse::List(items)
+    }))
 }
 
 /// `?dl=1` pede o ficheiro para DESCARREGAR (attachment); sem isso, é para
@@ -611,7 +815,7 @@ pub struct DownloadQuery {
 
 /// O ficheiro webm de uma gravação, para reproduzir ou descarregar (`?dl=1`).
 ///
-/// Os metadados em JSON estão em `GET /api/recordings/{id}/metadata`: este
+/// Os metadados em JSON estão em `GET /api/recordings/{recording_id}`: este
 /// caminho é o `src` do leitor de vídeo e o link de download do web, e não
 /// muda de representação.
 #[utoipa::path(
@@ -1095,9 +1299,10 @@ pub async fn shares(
     Ok(Json(users))
 }
 
-// ---------- Metadados (G4) ----------
+// ---------- Metadados ----------
 
-/// Metadados de uma gravação — o mesmo item da biblioteca.
+/// Uma gravação da biblioteca, para o leitor em página inteira (substitui o
+/// `/details` do servidor da UI).
 #[utoipa::path(
     get, path = "/api/recordings/{recording_id}", tag = "recordings",
     security(("session" = [])),
@@ -1119,14 +1324,18 @@ pub async fn get_metadata(
 }
 
 #[derive(Deserialize, Default, utoipa::ToSchema)]
+#[schema(as = RecordingUpdateReq)]
 pub struct UpdateRecordingReq {
-    /// 1-120 caracteres, uma linha. `""` apaga o título (a UI volta ao `filename`).
-    pub title: Option<String>,
-    /// `meeting` | `lecture` | `broadcast` | `other`.
-    pub category: Option<String>,
+    /// Nome: 1-200 caracteres, uma linha.
+    pub filename: Option<String>,
+    /// 0-8000 caracteres; `""` apaga.
+    pub description: Option<String>,
+    /// Até 20 etiquetas de 1-40 caracteres; normalizadas (sem `#`, minúsculas,
+    /// sem repetidas). `[]` apaga.
+    pub tags: Option<Vec<String>>,
 }
 
-/// Altera título e categoria. Só o dono ou um admin activo da org do dono.
+/// Altera nome, descrição e etiquetas. Só o dono ou um admin activo da org do dono.
 #[utoipa::path(
     patch, path = "/api/recordings/{recording_id}", tag = "recordings",
     security(("session" = [])),
@@ -1134,7 +1343,7 @@ pub struct UpdateRecordingReq {
     request_body = UpdateRecordingReq,
     responses(
         (status = 200, body = RecordingItem),
-        (status = 400, body = crate::openapi::ErrorBody, description = "`recording.invalid_title` / `recording.invalid_category`"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`recording.invalid_filename` / `recording.invalid_description` / `recording.invalid_tags`. Nada é escrito."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody, description = "Vê a gravação mas não a gere (`recording.not_manager`)."),
         (status = 404, body = crate::openapi::ErrorBody),
@@ -1148,26 +1357,28 @@ pub async fn update(
 ) -> Result<Json<RecordingItem>, ApiError> {
     managed_item(&state, id, auth.user_id).await?;
     // Valida tudo ANTES de escrever (sem escritas parciais).
-    let title = req
-        .title
+    let filename = req
+        .filename
         .as_deref()
-        .map(rules::validate_title)
+        .map(rules::validate_filename)
         .transpose()?;
-    let category = req
-        .category
+    let description = req
+        .description
         .as_deref()
-        .map(rules::Category::parse)
+        .map(rules::validate_description)
         .transpose()?;
+    let tags = req.tags.as_deref().map(rules::normalize_tags).transpose()?;
     sqlx::query(
         "UPDATE recordings
-            SET title = CASE WHEN $2 THEN $3 ELSE title END,
-                category = COALESCE($4, category)
+            SET filename = COALESCE($2, filename),
+                description = COALESCE($3, description),
+                tags = COALESCE($4, tags)
           WHERE id = $1",
     )
     .bind(id)
-    .bind(title.is_some())
-    .bind(title.flatten())
-    .bind(category.map(|c| c.as_str()))
+    .bind(filename)
+    .bind(description)
+    .bind(tags)
     .execute(&state.db)
     .await?;
     crate::audit::log(
@@ -1183,36 +1394,143 @@ pub async fn update(
     ))
 }
 
-// ---------- Capítulos (G5) ----------
+// ---------- Publicação ----------
+
+#[derive(Deserialize, utoipa::ToSchema)]
+#[schema(as = RecordingPublicationReq)]
+pub struct PublicationReq {
+    /// Só `org`: publicar para os membros activos das organizações do autor.
+    #[serde(default = "default_visibility")]
+    pub visibility: String,
+}
+
+fn default_visibility() -> String {
+    "org".into()
+}
+
+/// Publica a gravação para a organização do autor (singleton). Idempotente:
+/// publicar outra vez mantém o `published_at` original.
+///
+/// Publicada, os membros ACTIVOS de uma organização do autor vêem-na e
+/// reproduzem-na (`scope=published`); não a descarregam nem a gerem.
+#[utoipa::path(
+    put, path = "/api/recordings/{recording_id}/publication", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path)),
+    request_body = PublicationReq,
+    responses(
+        (status = 200, body = RecordingItem, description = "A gravação, com `visibility = org` e `state = published`."),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`recording.invalid_visibility`"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`recording.not_manager`"),
+        (status = 404, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "`recording.no_file`: a gravação falhou e não tem ficheiro."),
+    )
+)]
+pub async fn publish(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PublicationReq>,
+) -> Result<Json<RecordingItem>, ApiError> {
+    let rec = managed_item(&state, id, auth.user_id).await?;
+    let visibility = rules::parse_publication_visibility(&req.visibility)?;
+    if !rec.has_file() {
+        return Err(no_file());
+    }
+    sqlx::query(
+        "UPDATE recordings SET visibility = $2, published_at = COALESCE(published_at, now())
+          WHERE id = $1",
+    )
+    .bind(id)
+    .bind(visibility)
+    .execute(&state.db)
+    .await?;
+    crate::audit::log(
+        &state.db,
+        None,
+        auth.user_id,
+        "recording.published",
+        &id.to_string(),
+    )
+    .await;
+    Ok(Json(
+        seen_item(&state, id, auth.user_id).await?.into_item(None),
+    ))
+}
+
+/// Retira a publicação: a gravação volta a privada.
+#[utoipa::path(
+    delete, path = "/api/recordings/{recording_id}/publication", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path)),
+    responses(
+        (status = 204, description = "Voltou a privada."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`recording.not_manager`"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "Sem acesso, ou não estava publicada (`recording.not_published`)."),
+    )
+)]
+pub async fn unpublish(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    managed_item(&state, id, auth.user_id).await?;
+    let r = sqlx::query(
+        "UPDATE recordings SET visibility = 'private', published_at = NULL
+          WHERE id = $1 AND published_at IS NOT NULL",
+    )
+    .bind(id)
+    .execute(&state.db)
+    .await?;
+    if r.rows_affected() == 0 {
+        return Err(DomainError::not_found("recording.not_published")
+            .with_message("a gravação não estava publicada")
+            .into());
+    }
+    crate::audit::log(
+        &state.db,
+        None,
+        auth.user_id,
+        "recording.unpublished",
+        &id.to_string(),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------- Capítulos ----------
 
 #[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 #[schema(as = RecordingChapter)]
 pub struct Chapter {
     pub id: Uuid,
     pub recording_id: Uuid,
-    pub at_secs: i32,
+    /// Milissegundos desde o início.
+    pub t_ms: i64,
     pub title: String,
-    pub created_by: Uuid,
+    /// `auto` (gerado da transcrição) | `manual`.
+    pub source: String,
     pub created_at: DateTime<Utc>,
 }
 
-const CHAPTER_COLUMNS: &str = "id, recording_id, at_secs, title, created_by, created_at";
-
-#[derive(Serialize, utoipa::ToSchema)]
-#[schema(as = RecordingChapterPage)]
-pub struct ChapterPage {
-    pub items: Vec<Chapter>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_page_token: Option<String>,
-}
+const CHAPTER_COLUMNS: &str = "id, recording_id, t_ms, title, source, created_at";
 
 #[derive(Deserialize, utoipa::ToSchema)]
 #[schema(as = RecordingChapterReq)]
 pub struct CreateChapterReq {
-    /// Segundos desde o início; `0..=duration_secs` (ou `0..=172800` sem duração).
-    pub at_secs: i32,
-    /// 1-120 caracteres, uma linha.
+    /// Milissegundos; `0..=duration_ms` (ou `0..=172800000` sem duração).
+    pub t_ms: i64,
+    /// 1-200 caracteres, uma linha.
     pub title: String,
+}
+
+#[derive(Deserialize, Default, utoipa::ToSchema)]
+#[schema(as = RecordingChapterUpdateReq)]
+pub struct UpdateChapterReq {
+    pub t_ms: Option<i64>,
+    pub title: Option<String>,
 }
 
 #[derive(Deserialize, utoipa::IntoParams)]
@@ -1223,20 +1541,26 @@ pub struct PageQuery {
     pub page_token: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct ChapterCursor {
-    at: i32,
-    id: Uuid,
+/// Dois capítulos no mesmo instante: `409`, com código.
+fn chapter_write_error(e: sqlx::Error) -> ApiError {
+    match &e {
+        sqlx::Error::Database(db) if db.is_unique_violation() => DomainError::conflict(
+            "recording.chapter_timestamp_taken",
+            "já existe um capítulo nesse instante",
+        )
+        .into(),
+        _ => e.into(),
+    }
 }
 
-/// Capítulos, por marca temporal. Quem vê a gravação.
+/// Capítulos, por marca temporal. Quem vê a gravação. É o índice inteiro: uma
+/// gravação tem no máximo 100 capítulos, e a lista nunca passa disso.
 #[utoipa::path(
     get, path = "/api/recordings/{recording_id}/chapters", tag = "recordings",
     security(("session" = [])),
-    params(("recording_id" = Uuid, Path), PageQuery),
+    params(("recording_id" = Uuid, Path)),
     responses(
-        (status = 200, body = ChapterPage),
-        (status = 400, body = crate::openapi::ErrorBody, description = "page_token inválido"),
+        (status = 200, body = Vec<Chapter>, description = "Por `t_ms`; no máximo 100."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
@@ -1245,39 +1569,20 @@ pub async fn list_chapters(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
-    Query(q): Query<PageQuery>,
-) -> Result<Json<ChapterPage>, ApiError> {
+) -> Result<Json<Vec<Chapter>>, ApiError> {
     seen_item(&state, id, auth.user_id).await?;
-    let page = PageRequest {
-        page_size: q.page_size,
-        page_token: q.page_token,
-    };
-    let size = page.size();
-    let cursor: Option<ChapterCursor> = page.cursor()?;
     let rows: Vec<Chapter> = sqlx::query_as(&format!(
         "SELECT {CHAPTER_COLUMNS} FROM recording_chapters
-          WHERE recording_id = $1
-            AND ($2::int IS NULL OR (at_secs, id) > ($2, $3))
-          ORDER BY at_secs, id
-          LIMIT $4"
+          WHERE recording_id = $1 ORDER BY t_ms LIMIT $2"
     ))
     .bind(id)
-    .bind(cursor.as_ref().map(|c| c.at))
-    .bind(cursor.as_ref().map(|c| c.id).unwrap_or_default())
-    .bind(size as i64 + 1)
+    .bind(rules::MAX_CHAPTERS)
     .fetch_all(&state.db)
     .await?;
-    let p = Page::from_overfetch(rows, size, |c| ChapterCursor {
-        at: c.at_secs,
-        id: c.id,
-    });
-    Ok(Json(ChapterPage {
-        items: p.items,
-        next_page_token: p.next_page_token,
-    }))
+    Ok(Json(rows))
 }
 
-/// Cria um capítulo. Só o dono ou um admin activo da org do dono.
+/// Cria um capítulo manual. Só o dono ou um admin activo da org do dono.
 #[utoipa::path(
     post, path = "/api/recordings/{recording_id}/chapters", tag = "recordings",
     security(("session" = [])),
@@ -1289,6 +1594,7 @@ pub async fn list_chapters(
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody, description = "`recording.not_manager`"),
         (status = 404, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "`recording.chapter_timestamp_taken`"),
         (status = 422, body = crate::openapi::ErrorBody, description = "`recording.too_many_chapters` (máx. 100)"),
     )
 )]
@@ -1300,21 +1606,22 @@ pub async fn create_chapter(
 ) -> Result<Response, ApiError> {
     let rec = managed_item(&state, id, auth.user_id).await?;
     let title = rules::validate_chapter_title(&req.title)?;
-    let at_secs = rules::validate_at_secs(req.at_secs, rec.duration_secs)?;
+    let t_ms = rules::validate_t_ms(req.t_ms, rec.duration_ms)?;
     // O tecto e a inserção numa só instrução.
     let chapter: Option<Chapter> = sqlx::query_as(&format!(
-        "INSERT INTO recording_chapters (recording_id, at_secs, title, created_by)
-         SELECT $1, $2, $3, $4
+        "INSERT INTO recording_chapters (recording_id, t_ms, title, source, created_by)
+         SELECT $1, $2, $3, 'manual', $4
           WHERE (SELECT COUNT(*) FROM recording_chapters WHERE recording_id = $1) < $5
          RETURNING {CHAPTER_COLUMNS}"
     ))
     .bind(id)
-    .bind(at_secs)
+    .bind(t_ms)
     .bind(&title)
     .bind(auth.user_id)
     .bind(rules::MAX_CHAPTERS)
     .fetch_optional(&state.db)
-    .await?;
+    .await
+    .map_err(chapter_write_error)?;
     let chapter = chapter.ok_or_else(|| {
         DomainError::precondition(
             "recording.too_many_chapters",
@@ -1341,6 +1648,21 @@ pub async fn create_chapter(
         .into_response())
 }
 
+async fn fetch_chapter(
+    state: &AppState,
+    recording_id: Uuid,
+    chapter_id: Uuid,
+) -> Result<Chapter, ApiError> {
+    sqlx::query_as(&format!(
+        "SELECT {CHAPTER_COLUMNS} FROM recording_chapters WHERE id = $1 AND recording_id = $2"
+    ))
+    .bind(chapter_id)
+    .bind(recording_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)
+}
+
 /// Um capítulo. Quem vê a gravação.
 #[utoipa::path(
     get, path = "/api/recordings/{recording_id}/chapters/{chapter_id}", tag = "recordings",
@@ -1358,14 +1680,62 @@ pub async fn get_chapter(
     Path((id, chapter_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Chapter>, ApiError> {
     seen_item(&state, id, auth.user_id).await?;
-    let chapter: Option<Chapter> = sqlx::query_as(&format!(
-        "SELECT {CHAPTER_COLUMNS} FROM recording_chapters WHERE id = $1 AND recording_id = $2"
+    Ok(Json(fetch_chapter(&state, id, chapter_id).await?))
+}
+
+/// Corrige um capítulo. Corrigir torna-o `manual`: uma geração automática
+/// futura já não lhe toca.
+#[utoipa::path(
+    patch, path = "/api/recordings/{recording_id}/chapters/{chapter_id}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path), ("chapter_id" = Uuid, Path)),
+    request_body = UpdateChapterReq,
+    responses(
+        (status = 200, body = Chapter),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`recording.invalid_chapter_title` / `recording.invalid_timestamp`"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`recording.not_manager`"),
+        (status = 404, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "`recording.chapter_timestamp_taken`"),
+    )
+)]
+pub async fn update_chapter(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((id, chapter_id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<UpdateChapterReq>,
+) -> Result<Json<Chapter>, ApiError> {
+    let rec = managed_item(&state, id, auth.user_id).await?;
+    fetch_chapter(&state, id, chapter_id).await?;
+    let title = req
+        .title
+        .as_deref()
+        .map(rules::validate_chapter_title)
+        .transpose()?;
+    let t_ms = req
+        .t_ms
+        .map(|t| rules::validate_t_ms(t, rec.duration_ms))
+        .transpose()?;
+    // 'manual' só quando algo mudou de facto: um PATCH sem campos (resave da
+    // UI, retry) não pode converter em silêncio um capítulo automático,
+    // tirando-o para sempre da geração futura (ver o comentário da rota).
+    let chapter: Chapter = sqlx::query_as(&format!(
+        "UPDATE recording_chapters
+            SET t_ms = COALESCE($3, t_ms), title = COALESCE($4, title),
+                source = CASE WHEN $3 IS NOT NULL OR $4 IS NOT NULL
+                              THEN 'manual' ELSE source END
+          WHERE id = $1 AND recording_id = $2
+         RETURNING {CHAPTER_COLUMNS}"
     ))
     .bind(chapter_id)
     .bind(id)
+    .bind(t_ms)
+    .bind(title)
     .fetch_optional(&state.db)
-    .await?;
-    Ok(Json(chapter.ok_or(ApiError::NotFound)?))
+    .await
+    .map_err(chapter_write_error)?
+    .ok_or(ApiError::NotFound)?;
+    Ok(Json(chapter))
 }
 
 /// Apaga um capítulo. Só o dono ou um admin activo da org do dono.
@@ -1405,31 +1775,63 @@ pub async fn delete_chapter(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ---------- Comentários (G5) ----------
+// ---------- Comentários ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[schema(as = RecordingComment)]
 pub struct Comment {
     pub id: Uuid,
     pub recording_id: Uuid,
-    /// Segundos desde o início; `null` = comentário sobre a gravação inteira.
-    pub at_secs: Option<i32>,
+    /// Autor.
+    pub user_id: Uuid,
+    pub username: String,
+    /// Instante do vídeo em ms; `null` = comentário à gravação inteira.
+    pub t_ms: Option<i64>,
     /// Já censurado pelo DLP.
     pub body: String,
-    pub author_id: Uuid,
-    pub author_name: String,
     pub created_at: DateTime<Utc>,
+    /// `null` se nunca foi editado.
     pub edited_at: Option<DateTime<Utc>>,
+    /// Quem pede pode apagar: o autor, ou quem gere a gravação (moderação).
+    pub can_delete: bool,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct CommentRow {
+    id: Uuid,
+    recording_id: Uuid,
+    user_id: Uuid,
+    username: String,
+    t_ms: Option<i64>,
+    body: String,
+    created_at: DateTime<Utc>,
+    edited_at: Option<DateTime<Utc>>,
+}
+
+impl CommentRow {
+    fn into_comment(self, facts: &rules::AccessFacts, viewer: Uuid) -> Comment {
+        Comment {
+            can_delete: facts.can_delete_comment(self.user_id == viewer),
+            id: self.id,
+            recording_id: self.recording_id,
+            user_id: self.user_id,
+            username: self.username,
+            t_ms: self.t_ms,
+            body: self.body,
+            created_at: self.created_at,
+            edited_at: self.edited_at,
+        }
+    }
 }
 
 /// Comentários vivos (os apagados nunca saem), com o nome do autor.
-const COMMENT_SELECT: &str = "SELECT c.id, c.recording_id, c.at_secs, c.body, c.author_id,
-        u.username AS author_name, c.created_at, c.edited_at
-   FROM recording_comments c JOIN users u ON u.id = c.author_id
+const COMMENT_SELECT: &str = "SELECT c.id, c.recording_id, c.user_id, u.username, c.t_ms,
+        c.body, c.created_at, c.edited_at
+   FROM recording_comments c JOIN users u ON u.id = c.user_id
   WHERE c.deleted_at IS NULL";
 
 /// A chave de ordem das sem marca temporal: no fim.
-const NO_TIMESTAMP_KEY: i32 = i32::MAX;
+const NO_TIMESTAMP_KEY: i64 = i64::MAX;
 
 #[derive(Serialize, utoipa::ToSchema)]
 #[schema(as = RecordingCommentPage)]
@@ -1442,11 +1844,11 @@ pub struct CommentPage {
 #[derive(Deserialize, utoipa::ToSchema)]
 #[schema(as = RecordingCommentReq)]
 pub struct CreateCommentReq {
-    /// 1-2000 caracteres. Passa pelo DLP antes de ser guardado.
+    /// 1-2000 caracteres (também depois do DLP).
     pub body: String,
-    /// Segundos desde o início; omisso = sobre a gravação inteira.
+    /// Milissegundos desde o início; omisso ou `null` = sobre a gravação inteira.
     #[serde(default)]
-    pub at_secs: Option<i32>,
+    pub t_ms: Option<i64>,
 }
 
 #[derive(Deserialize, Default, utoipa::ToSchema)]
@@ -1454,14 +1856,23 @@ pub struct CreateCommentReq {
 pub struct UpdateCommentReq {
     pub body: Option<String>,
     /// Muda a marca temporal. Não se retira a marca por aqui.
-    pub at_secs: Option<i32>,
+    pub t_ms: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct CommentCursor {
-    k: i32,
+    k: i64,
     at: DateTime<Utc>,
     id: Uuid,
+}
+
+/// Valida, censura (DLP) e volta a validar: a censura pode alongar o texto, e
+/// o que se guarda tem de caber no mesmo tecto que o cliente conhece.
+fn clean_comment_body(raw: &str) -> Result<String, ApiError> {
+    let body = rules::validate_comment_body(raw)?;
+    // DLP antes de qualquer byte chegar à base: um comentário é lido por toda
+    // a gente que vê a gravação, e pode sair num export.
+    Ok(rules::validate_comment_body(&crate::dlp::censor(&body))?)
 }
 
 /// Comentários, por marca temporal (os sem marca no fim) e depois por criação.
@@ -1472,7 +1883,7 @@ struct CommentCursor {
     params(("recording_id" = Uuid, Path), PageQuery),
     responses(
         (status = 200, body = CommentPage),
-        (status = 400, body = crate::openapi::ErrorBody, description = "page_token inválido"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`page.invalid_token`"),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
     )
@@ -1483,19 +1894,20 @@ pub async fn list_comments(
     Path(id): Path<Uuid>,
     Query(q): Query<PageQuery>,
 ) -> Result<Json<CommentPage>, ApiError> {
-    seen_item(&state, id, auth.user_id).await?;
+    let rec = seen_item(&state, id, auth.user_id).await?;
+    let facts = rec.facts();
     let page = PageRequest {
         page_size: q.page_size,
         page_token: q.page_token,
     };
     let size = page.size();
     let cursor: Option<CommentCursor> = page.cursor()?;
-    let rows: Vec<Comment> = sqlx::query_as(&format!(
+    let rows: Vec<CommentRow> = sqlx::query_as(&format!(
         "{COMMENT_SELECT}
             AND c.recording_id = $1
-            AND ($2::int IS NULL
-                 OR (COALESCE(c.at_secs, {NO_TIMESTAMP_KEY}), c.created_at, c.id) > ($2, $3, $4))
-          ORDER BY COALESCE(c.at_secs, {NO_TIMESTAMP_KEY}), c.created_at, c.id
+            AND ($2::bigint IS NULL
+                 OR (COALESCE(c.t_ms, {NO_TIMESTAMP_KEY}), c.created_at, c.id) > ($2, $3, $4))
+          ORDER BY COALESCE(c.t_ms, {NO_TIMESTAMP_KEY}), c.created_at, c.id
           LIMIT $5"
     ))
     .bind(id)
@@ -1506,12 +1918,16 @@ pub async fn list_comments(
     .fetch_all(&state.db)
     .await?;
     let p = Page::from_overfetch(rows, size, |c| CommentCursor {
-        k: c.at_secs.unwrap_or(NO_TIMESTAMP_KEY),
+        k: c.t_ms.unwrap_or(NO_TIMESTAMP_KEY),
         at: c.created_at,
         id: c.id,
     });
     Ok(Json(CommentPage {
-        items: p.items,
+        items: p
+            .items
+            .into_iter()
+            .map(|c| c.into_comment(&facts, auth.user_id))
+            .collect(),
         next_page_token: p.next_page_token,
     }))
 }
@@ -1520,7 +1936,7 @@ async fn fetch_comment(
     state: &AppState,
     recording_id: Uuid,
     comment_id: Uuid,
-) -> Result<Comment, ApiError> {
+) -> Result<CommentRow, ApiError> {
     sqlx::query_as(&format!(
         "{COMMENT_SELECT} AND c.id = $1 AND c.recording_id = $2"
     ))
@@ -1529,16 +1945,6 @@ async fn fetch_comment(
     .fetch_optional(&state.db)
     .await?
     .ok_or(ApiError::NotFound)
-}
-
-/// Um comentário escrito por outra pessoa não se altera nem se apaga.
-fn require_author(comment: &Comment, user_id: Uuid) -> Result<(), ApiError> {
-    if comment.author_id != user_id {
-        return Err(DomainError::forbidden("recording.not_comment_author")
-            .with_message("só quem escreveu o comentário o altera ou apaga")
-            .into());
-    }
-    Ok(())
 }
 
 /// Comenta a gravação, com ou sem marca temporal. O texto passa pelo DLP.
@@ -1561,25 +1967,24 @@ pub async fn create_comment(
     Json(req): Json<CreateCommentReq>,
 ) -> Result<Response, ApiError> {
     let rec = seen_item(&state, id, auth.user_id).await?;
-    let body = rules::validate_comment_body(&req.body)?;
-    let at_secs = req
-        .at_secs
-        .map(|a| rules::validate_at_secs(a, rec.duration_secs))
+    let body = clean_comment_body(&req.body)?;
+    let t_ms = req
+        .t_ms
+        .map(|t| rules::validate_t_ms(t, rec.duration_ms))
         .transpose()?;
-    // DLP antes de qualquer byte chegar à base: um comentário é lido por toda
-    // a gente que vê a gravação, e pode sair num export.
-    let body = crate::dlp::censor(&body);
     let (comment_id,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO recording_comments (recording_id, at_secs, body, author_id)
+        "INSERT INTO recording_comments (recording_id, t_ms, body, user_id)
          VALUES ($1, $2, $3, $4) RETURNING id",
     )
     .bind(id)
-    .bind(at_secs)
+    .bind(t_ms)
     .bind(&body)
     .bind(auth.user_id)
     .fetch_one(&state.db)
     .await?;
-    let comment = fetch_comment(&state, id, comment_id).await?;
+    let comment = fetch_comment(&state, id, comment_id)
+        .await?
+        .into_comment(&rec.facts(), auth.user_id);
     let location = format!("/api/recordings/{id}/comments/{comment_id}");
     Ok((
         StatusCode::CREATED,
@@ -1605,11 +2010,16 @@ pub async fn get_comment(
     auth: AuthUser,
     Path((id, comment_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Comment>, ApiError> {
-    seen_item(&state, id, auth.user_id).await?;
-    Ok(Json(fetch_comment(&state, id, comment_id).await?))
+    let rec = seen_item(&state, id, auth.user_id).await?;
+    Ok(Json(
+        fetch_comment(&state, id, comment_id)
+            .await?
+            .into_comment(&rec.facts(), auth.user_id),
+    ))
 }
 
-/// Altera o texto ou a marca temporal. Só o autor.
+/// Altera o texto ou a marca temporal. Só o autor (quem gere modera apagando,
+/// não reescrevendo o que outra pessoa disse).
 #[utoipa::path(
     patch, path = "/api/recordings/{recording_id}/comments/{comment_id}", tag = "recordings",
     security(("session" = [])),
@@ -1631,40 +2041,44 @@ pub async fn update_comment(
 ) -> Result<Json<Comment>, ApiError> {
     let rec = seen_item(&state, id, auth.user_id).await?;
     let comment = fetch_comment(&state, id, comment_id).await?;
-    require_author(&comment, auth.user_id)?;
-    let body = req
-        .body
-        .as_deref()
-        .map(rules::validate_comment_body)
-        .transpose()?
-        .map(|b| crate::dlp::censor(&b));
-    let at_secs = req
-        .at_secs
-        .map(|a| rules::validate_at_secs(a, rec.duration_secs))
+    if comment.user_id != auth.user_id {
+        return Err(DomainError::forbidden("recording.not_comment_author")
+            .with_message("só quem escreveu o comentário o altera")
+            .into());
+    }
+    let body = req.body.as_deref().map(clean_comment_body).transpose()?;
+    let t_ms = req
+        .t_ms
+        .map(|t| rules::validate_t_ms(t, rec.duration_ms))
         .transpose()?;
     sqlx::query(
         "UPDATE recording_comments
-            SET body = COALESCE($3, body), at_secs = COALESCE($4, at_secs), edited_at = now()
+            SET body = COALESCE($3, body), t_ms = COALESCE($4, t_ms), edited_at = now()
           WHERE id = $1 AND recording_id = $2 AND deleted_at IS NULL",
     )
     .bind(comment_id)
     .bind(id)
     .bind(body)
-    .bind(at_secs)
+    .bind(t_ms)
     .execute(&state.db)
     .await?;
-    Ok(Json(fetch_comment(&state, id, comment_id).await?))
+    Ok(Json(
+        fetch_comment(&state, id, comment_id)
+            .await?
+            .into_comment(&rec.facts(), auth.user_id),
+    ))
 }
 
-/// Apaga (logicamente) um comentário. Só o autor. Apagar outra vez dá `404`.
+/// Apaga (logicamente) um comentário: o autor, ou quem gere a gravação
+/// (moderação). Apagar outra vez dá `404`.
 #[utoipa::path(
     delete, path = "/api/recordings/{recording_id}/comments/{comment_id}", tag = "recordings",
     security(("session" = [])),
     params(("recording_id" = Uuid, Path), ("comment_id" = Uuid, Path)),
     responses(
-        (status = 204, description = "Apagado (deixa de aparecer)."),
+        (status = 204, description = "Apagado (deixa de aparecer; fica na base com `deleted_at`)."),
         (status = 401, body = crate::openapi::ErrorBody),
-        (status = 403, body = crate::openapi::ErrorBody, description = "`recording.not_comment_author`"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`recording.comment_delete_forbidden`: nem autor nem quem gere."),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -1673,9 +2087,16 @@ pub async fn delete_comment(
     auth: AuthUser,
     Path((id, comment_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
-    seen_item(&state, id, auth.user_id).await?;
+    let rec = seen_item(&state, id, auth.user_id).await?;
     let comment = fetch_comment(&state, id, comment_id).await?;
-    require_author(&comment, auth.user_id)?;
+    if !rec
+        .facts()
+        .can_delete_comment(comment.user_id == auth.user_id)
+    {
+        return Err(DomainError::forbidden("recording.comment_delete_forbidden")
+            .with_message("só quem escreveu o comentário ou quem gere a gravação o apaga")
+            .into());
+    }
     let r = sqlx::query(
         "UPDATE recording_comments SET deleted_at = now()
           WHERE id = $1 AND recording_id = $2 AND deleted_at IS NULL",
@@ -1686,6 +2107,16 @@ pub async fn delete_comment(
     .await?;
     if r.rows_affected() == 0 {
         return Err(ApiError::NotFound);
+    }
+    if comment.user_id != auth.user_id {
+        crate::audit::log(
+            &state.db,
+            None,
+            auth.user_id,
+            "recording.comment_moderated",
+            &comment_id.to_string(),
+        )
+        .await;
     }
     Ok(StatusCode::NO_CONTENT)
 }

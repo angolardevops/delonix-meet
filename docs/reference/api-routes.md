@@ -79,6 +79,7 @@
 |---|---|
 | `GET/POST /api/meetings` | igual |
 | — | `GET /api/meetings/{meeting_id}` (**novo**: recurso completo) |
+| — | `PATCH /api/meetings/{meeting_id}` (**novo**, R184: só as opções de sessão, só o anfitrião) |
 | `DELETE /api/meetings/{id}` | `DELETE /api/meetings/{meeting_id}` (`204`) |
 | `POST /api/meetings/conflicts` | `POST /api/meetings/check-conflicts` |
 | `POST /api/meetings/{id}/start` | `POST /api/meetings/{meeting_id}/start` |
@@ -121,9 +122,35 @@
 | `GET/POST /api/recordings/{id}/share` | `GET/POST /api/recordings/{recording_id}/shares` |
 | `DELETE /api/recordings/{id}/share/{user_id}` | `DELETE /api/recordings/{recording_id}/shares/{user_id}` |
 | `GET/POST/DELETE /api/recordings/{id}/link` | `GET/PUT/DELETE /api/recordings/{recording_id}/public-link` |
-| `…/chapters`, `…/comments` | iguais (com `{recording_id}`) |
+| `…/chapters`, `…/comments` | iguais (com `{recording_id}`); payloads em `t_ms` (R183) |
 | `GET /api/share/{token}` | `GET /api/public/recordings/{token}` |
 | `GET /api/share/{token}/download` | `GET /api/public/recordings/{token}/content` |
+
+**R183 — o contrato de dados da UI nova, nos caminhos desta linha.** A coluna «Antes» é
+o servidor da branch da UI (`integra/validacao-l2`); o que não tem par era novo.
+
+| Antes (servidor da UI) | Depois |
+|---|---|
+| `GET /api/recordings/{id}/details` | `GET /api/recordings/{recording_id}` (o mesmo `RecordingLibraryItem`) |
+| `GET /api/recordings?q=&scope=mine\|published` | igual (lista); com `page_size`/`page_token`, página |
+| `POST /api/recordings/{id}/publish` `{visibility:"org"}` | `PUT /api/recordings/{recording_id}/publication` → `200` item |
+| `POST /api/recordings/{id}/unpublish` | `DELETE /api/recordings/{recording_id}/publication` → `204` (`404 recording.not_published`) |
+| `GET /api/recordings/{id}/thumbnail` | `GET /api/recordings/{recording_id}/thumbnail` |
+| `POST /api/recordings/{id}/views` | `POST /api/recordings/{recording_id}/views` → `204` |
+| `GET /api/recordings/{id}/participants` | `GET /api/recordings/{recording_id}/participants` |
+| `GET /api/rooms/{code}/participants` | `GET /api/rooms/{room_code}/participants` |
+| `GET /api/recordings/{id}/transcript` | `GET /api/recordings/{recording_id}/transcript` |
+| `PATCH /api/recordings/{id}/chapters/{chapter_id}` | `PATCH /api/recordings/{recording_id}/chapters/{chapter_id}` |
+| `GET /api/recordings/{id}/captions` | `GET /api/recordings/{recording_id}/captions` |
+| `GET\|PUT\|PATCH\|DELETE /api/recordings/{id}/captions/{lang}` | `GET\|PUT\|PATCH\|DELETE /api/recordings/{recording_id}/captions/{lang}` (`PUT` → `201`+`Location` ao criar, `200` ao substituir) |
+| `GET /api/recordings/{id}/captions/{lang}/vtt` | `GET /api/recordings/{recording_id}/captions/{lang}/vtt` |
+| `POST /api/recordings/{id}/captions/generate`, `POST …/chapters/generate` | **por portar** (dependem do cliente Ollama; sem rota nem stub até lá) |
+
+Erros com código: `recording.not_manager` (403), `recording.comment_delete_forbidden` (403),
+`recording.no_file` (409), `recording.chapter_timestamp_taken` (409),
+`recording.caption_not_ready` (409), `recording.too_many_chapters` / `recording.too_many_captions` (422),
+`recording.invalid_{filename,description,tags,kind,visibility,scope,timestamp,chapter_title,comment,caption_lang,caption_status,vtt}` e
+`recording.caption_too_large` (400). Quem não chega à gravação recebe sempre `404` antes de qualquer outro.
 
 ### Quadros
 | Antes | Depois |

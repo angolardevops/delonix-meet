@@ -291,6 +291,8 @@ async fn transcription_completed_over_grpc_notifies_the_uploader(db: sqlx::PgPoo
         lease_token: job.lease_token.clone(),
         transcript: "olá".into(),
         minutes: String::new(),
+        // Um worker que só entrega o texto (sem segmentos nem língua, R183).
+        ..Default::default()
     })
     .await
     .unwrap();

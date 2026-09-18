@@ -9,7 +9,7 @@ use delonix_meet_protocol::{
     telephony::v1::{ivr_service_client::IvrServiceClient, ValidatePinRequest},
     transcription::v1::{
         transcription_service_client::TranscriptionServiceClient, ClaimJobRequest,
-        CompleteJobRequest, FailJobRequest,
+        CompleteJobRequest, FailJobRequest, TranscriptSegment,
     },
 };
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
@@ -98,6 +98,7 @@ async fn transcription_queue_lease_complete_and_dlp(db: sqlx::PgPool) {
             lease_token: "nao-e-meu".into(),
             transcript: "x".into(),
             minutes: String::new(),
+            ..Default::default()
         })
         .await
         .unwrap_err();
@@ -109,9 +110,51 @@ async fn transcription_queue_lease_complete_and_dlp(db: sqlx::PgPool) {
         lease_token: job.lease_token.clone(),
         transcript: format!("a chave é {secret} e acabou"),
         minutes: "# Acta".into(),
+        // Segmentos (R183): o DLP corre em cada um; os incoerentes saem; a
+        // confiança da transcrição é a média dos que a têm.
+        segments: vec![
+            TranscriptSegment {
+                start_ms: 2500,
+                end_ms: 4000,
+                text: format!("é {secret}"),
+                confidence: Some(0.6),
+            },
+            TranscriptSegment {
+                start_ms: 0,
+                end_ms: 2400,
+                text: "a chave".into(),
+                confidence: Some(0.8),
+            },
+            TranscriptSegment {
+                start_ms: 5000,
+                end_ms: 4000,
+                text: "fim antes do início".into(),
+                confidence: None,
+            },
+        ],
+        language: "pt".into(),
     })
     .await
     .unwrap();
+    let (segments, language, confidence): (serde_json::Value, Option<String>, Option<f32>) =
+        sqlx::query_as(
+            "SELECT transcript_segments, transcript_language, transcript_confidence
+               FROM recordings WHERE id = $1",
+        )
+        .bind(rec)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let segs = segments.as_array().unwrap();
+    assert_eq!(segs.len(), 2, "o segmento incoerente sai: {segments}");
+    assert_eq!(segs[0]["text"], "a chave", "por ordem de início");
+    assert_eq!(segs[0]["start_ms"], 0);
+    assert!(
+        !segments.to_string().contains(&secret),
+        "o DLP corre nos segmentos: {segments}"
+    );
+    assert_eq!(language.as_deref(), Some("pt"));
+    assert!((confidence.unwrap() - 0.7).abs() < 1e-4, "{confidence:?}");
     let (transcript, done): (String, bool) = sqlx::query_as(
         "SELECT transcript, transcribed_at IS NOT NULL FROM recordings WHERE id = $1",
     )
@@ -125,6 +168,70 @@ async fn transcription_queue_lease_complete_and_dlp(db: sqlx::PgPool) {
         "o DLP tem de correr antes da base: {transcript}"
     );
     assert!(transcript.contains("CENSURADA"));
+}
+
+/// R230: o DLP tem de correr ANTES do corte a `MAX_SEGMENT_CHARS` (2000) —
+/// se corresse depois, uma chave a atravessar essa fronteira ficava partida
+/// ao meio e a expressão regular deixava de a reconhecer.
+#[sqlx::test(migrations = "./migrations")]
+async fn dlp_runs_before_truncating_a_segment_that_straddles_the_limit(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let (rec, _code) = seed_recording(&app).await;
+    let addr = spawn_grpc(app.state.clone()).await;
+    let mut c = TranscriptionServiceClient::new(plaintext(addr).await);
+
+    let job = c
+        .claim_job(ClaimJobRequest {
+            worker_id: "gpu-1".into(),
+            lease_seconds: 600,
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .job
+        .expect("havia uma gravação na fila");
+
+    // 1970 caracteres de enchimento + uma chave de 35 — a chave começa no
+    // 1970 e acaba no 2004, atravessando o corte de 2000 (por isso um corte
+    // ANTES da censura apanhava só metade da chave, e a expressão regular
+    // deixava de bater certo com o fragmento).
+    let secret = format!("sk-{}", "a".repeat(32));
+    let text = format!("{}{secret}", "x".repeat(1970));
+    assert!(
+        text.len() > 2000,
+        "o texto tem de exceder MAX_SEGMENT_CHARS"
+    );
+
+    c.complete_job(CompleteJobRequest {
+        recording_id: job.recording_id.clone(),
+        lease_token: job.lease_token.clone(),
+        transcript: String::new(),
+        minutes: String::new(),
+        segments: vec![TranscriptSegment {
+            start_ms: 0,
+            end_ms: 1000,
+            text,
+            confidence: Some(0.9),
+        }],
+        language: "pt".into(),
+    })
+    .await
+    .unwrap();
+
+    let (segments,): (serde_json::Value,) =
+        sqlx::query_as("SELECT transcript_segments FROM recordings WHERE id = $1")
+            .bind(rec)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(
+        !segments.to_string().contains(&secret),
+        "a chave sobreviveu ao corte sem ser censurada: {segments}"
+    );
+    assert!(
+        segments.to_string().contains("CENSURADA"),
+        "a censura tinha de deixar o marcador: {segments}"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

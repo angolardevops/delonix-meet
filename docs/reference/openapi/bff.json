@@ -890,81 +890,88 @@
         "type": "object"
       },
       "CreateMeetingReq": {
-        "properties": {
-          "description": {
-            "type": "string"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptions"
           },
-          "duration_min": {
-            "default": 30,
-            "description": "5-1440 minutos.",
-            "format": "int32",
-            "type": "integer"
-          },
-          "invitee_ids": {
-            "items": {
-              "format": "uuid",
-              "type": "string"
+          {
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "duration_min": {
+                "default": 30,
+                "description": "5-1440 minutos.",
+                "format": "int32",
+                "type": "integer"
+              },
+              "invitee_ids": {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "default": "video",
+                "description": "`video` (omissão) | `voice`.",
+                "type": "string"
+              },
+              "recurrence_byday": {
+                "description": "Dias da semana para freq=weekly: \"MON,WED,FRI\"",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_count": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "recurrence_freq": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_interval": {
+                "default": 1,
+                "format": "int32",
+                "type": "integer"
+              },
+              "recurrence_until": {
+                "format": "date",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "room_ref": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "starts_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "title": {
+                "description": "1-140 caracteres (depois de `trim`).",
+                "type": "string"
+              }
             },
-            "type": "array"
-          },
-          "kind": {
-            "default": "video",
-            "description": "`video` (omissão) | `voice`.",
-            "type": "string"
-          },
-          "recurrence_byday": {
-            "description": "Dias da semana para freq=weekly: \"MON,WED,FRI\"",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_count": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "recurrence_freq": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_interval": {
-            "default": 1,
-            "format": "int32",
-            "type": "integer"
-          },
-          "recurrence_until": {
-            "format": "date",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "room_ref": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "starts_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "title": {
-            "description": "1-140 caracteres (depois de `trim`).",
-            "type": "string"
+            "required": [
+              "title",
+              "starts_at"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "title",
-          "starts_at"
-        ],
-        "type": "object"
+        ]
       },
       "CreateMeetingResp": {
         "allOf": [
@@ -1781,11 +1788,11 @@
         "type": "object"
       },
       "LibraryResponse": {
-        "description": "Sem parâmetros: a lista inteira (forma herdada, lida pelo web). Com `q`,\n`page_size` ou `page_token`: uma página.",
+        "description": "Sem `page_size`/`page_token`: a lista (forma que a UI lê, também com `q` e\n`scope`). Com eles: uma página.",
         "oneOf": [
           {
             "items": {
-              "$ref": "#/components/schemas/RecordingItem"
+              "$ref": "#/components/schemas/RecordingLibraryItem"
             },
             "type": "array"
           },
@@ -1945,269 +1952,335 @@
         "type": "object"
       },
       "Meeting": {
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "type": "string"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptions",
+            "description": "Opções de sessão (R184): passam à sala quando ela nasce."
           },
-          "description": {
-            "type": "string"
-          },
-          "duration_min": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "minutes": {
-            "type": "string"
-          },
-          "owner_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "recurrence_byday": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_count": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "recurrence_freq": {
-            "description": "`daily` | `weekly` | `monthly` | `yearly`, ou `null` se não recorrente.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_interval": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "recurrence_parent_id": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_until": {
-            "format": "date",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "room_code": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "room_ref": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "starts_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "transcript": {
-            "type": "string"
+          {
+            "properties": {
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "duration_min": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "minutes": {
+                "type": "string"
+              },
+              "owner_id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "recurrence_byday": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_count": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "recurrence_freq": {
+                "description": "`daily` | `weekly` | `monthly` | `yearly`, ou `null` se não recorrente.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_interval": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "recurrence_parent_id": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_until": {
+                "format": "date",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "room_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "room_ref": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "starts_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "transcript": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "owner_id",
+              "title",
+              "description",
+              "kind",
+              "starts_at",
+              "duration_min",
+              "created_at",
+              "recurrence_interval"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "id",
-          "owner_id",
-          "title",
-          "description",
-          "kind",
-          "starts_at",
-          "duration_min",
-          "created_at",
-          "recurrence_interval"
+        ]
+      },
+      "MeetingDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Meeting"
+          },
+          {
+            "properties": {
+              "external_source": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "invitee_count": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "my_status": {
+                "description": "`owner` | `pending` | `accepted` | `declined` | `tentative`.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "my_status",
+              "invitee_count"
+            ],
+            "type": "object"
+          }
         ],
-        "type": "object"
+        "description": "`GET /api/meetings/{meeting_id}` e `PATCH`: a reunião, as opções e o que a\nlista também dá (`my_status`, `invitee_count`, `external_source`)."
       },
       "MeetingItem": {
-        "description": "Reunião enriquecida para a UI do calendário.",
-        "properties": {
-          "description": {
-            "type": "string"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptions"
           },
-          "duration_min": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "is_owner": {
-            "type": "boolean"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "minutes": {
-            "type": "string"
-          },
-          "my_status": {
-            "description": "A minha resposta enquanto convidado: 'owner' | 'pending' | 'accepted' | 'declined'.",
-            "type": "string"
-          },
-          "owner_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "owner_name": {
-            "type": "string"
-          },
-          "recurrence_freq": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_interval": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "recurrence_parent_id": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "room_code": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "room_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "room_ref": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "starts_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
+          {
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "duration_min": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "external_source": {
+                "description": "Sistema de origem (`odoo`, …), `api` sem sistema declarado, ou `null`\nse a reunião não veio de uma integração com `external_ref`.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "invitee_count": {
+                "description": "Convidados (sem o anfitrião), qualquer que seja a resposta.",
+                "format": "int64",
+                "type": "integer"
+              },
+              "is_owner": {
+                "type": "boolean"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "minutes": {
+                "type": "string"
+              },
+              "my_status": {
+                "description": "A minha resposta enquanto convidado: `owner` | `pending` | `accepted` | `declined` | `tentative`.",
+                "type": "string"
+              },
+              "owner_id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "owner_name": {
+                "type": "string"
+              },
+              "recurrence_freq": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_interval": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "recurrence_parent_id": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "room_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "room_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "room_ref": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "starts_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "owner_id",
+              "owner_name",
+              "title",
+              "description",
+              "kind",
+              "starts_at",
+              "duration_min",
+              "is_owner",
+              "minutes",
+              "my_status",
+              "recurrence_interval",
+              "invitee_count"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "id",
-          "owner_id",
-          "owner_name",
-          "title",
-          "description",
-          "kind",
-          "starts_at",
-          "duration_min",
-          "is_owner",
-          "minutes",
-          "my_status",
-          "recurrence_interval"
         ],
-        "type": "object"
+        "description": "Reunião enriquecida para a UI do calendário."
       },
       "MeetingResp": {
-        "properties": {
-          "duration_min": {
-            "format": "int32",
-            "type": "integer"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptions"
           },
-          "existing": {
-            "description": "`true` quando o pedido reencontrou uma reunião já existente pela\n`external_ref` em vez de criar uma nova.",
-            "type": "boolean"
-          },
-          "external_ref": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "host_email": {
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "invitees": {
-            "description": "Convidados efectivamente registados (email -> id do utilizador).",
-            "items": {
-              "$ref": "#/components/schemas/InviteeResp"
+          {
+            "properties": {
+              "duration_min": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "existing": {
+                "description": "`true` quando o pedido reencontrou uma reunião já existente pela\n`external_ref` em vez de criar uma nova.",
+                "type": "boolean"
+              },
+              "external_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "host_email": {
+                "type": "string"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "invitees": {
+                "description": "Convidados efectivamente registados (email -> id do utilizador).",
+                "items": {
+                  "$ref": "#/components/schemas/InviteeResp"
+                },
+                "type": "array"
+              },
+              "join_url": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "room_code": {
+                "type": "string"
+              },
+              "skipped": {
+                "description": "Emails NÃO registados e porquê. Nunca falha o pedido por causa de um\nconvidado — o link tem de sair na mesma.",
+                "items": {
+                  "$ref": "#/components/schemas/SkippedInvitee"
+                },
+                "type": "array"
+              },
+              "starts_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
             },
-            "type": "array"
-          },
-          "join_url": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "room_code": {
-            "type": "string"
-          },
-          "skipped": {
-            "description": "Emails NÃO registados e porquê. Nunca falha o pedido por causa de um\nconvidado — o link tem de sair na mesma.",
-            "items": {
-              "$ref": "#/components/schemas/SkippedInvitee"
-            },
-            "type": "array"
-          },
-          "starts_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
+            "required": [
+              "id",
+              "title",
+              "starts_at",
+              "duration_min",
+              "kind",
+              "room_code",
+              "join_url",
+              "host_email",
+              "invitees",
+              "skipped",
+              "existing"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "id",
-          "title",
-          "starts_at",
-          "duration_min",
-          "kind",
-          "room_code",
-          "join_url",
-          "host_email",
-          "invitees",
-          "skipped",
-          "existing"
-        ],
-        "type": "object"
+        ]
       },
       "MeetingRoom": {
         "properties": {
@@ -3076,46 +3149,85 @@
         ],
         "type": "object"
       },
-      "PatchMeetingReq": {
+      "PatchMeetingOptionsReq": {
+        "additionalProperties": false,
+        "description": "`PATCH /api/meetings/{meeting_id}` — só as opções de sessão (R184). Campos\nfora destes são recusados, não ignorados: um título mandado aqui não muda\nnada e o cliente tem de o saber.",
         "properties": {
-          "description": {
+          "auto_record": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "format": {
             "type": [
               "string",
               "null"
             ]
           },
-          "duration_min": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "invitees": {
-            "description": "Se presente, **substitui** o conjunto de convidados. O estado de\nresposta (aceite/recusado) de quem se mantém é preservado.",
-            "items": {
-              "$ref": "#/components/schemas/InviteeReq"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "starts_at": {
-            "format": "date-time",
+          "record_quality": {
             "type": [
               "string",
               "null"
             ]
           },
-          "title": {
+          "waiting_room": {
             "type": [
-              "string",
+              "boolean",
               "null"
             ]
           }
         },
         "type": "object"
+      },
+      "PatchMeetingReq": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptionsPatch",
+            "description": "Opções de sessão; a ausente fica como está. Passam também à sala."
+          },
+          {
+            "properties": {
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "duration_min": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "invitees": {
+                "description": "Se presente, **substitui** o conjunto de convidados. O estado de\nresposta (aceite/recusado) de quem se mantém é preservado.",
+                "items": {
+                  "$ref": "#/components/schemas/InviteeReq"
+                },
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "starts_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ]
       },
       "PersonalRoom": {
         "allOf": [
@@ -3619,106 +3731,199 @@
         ],
         "type": "object"
       },
-      "RecordingChapter": {
+      "RecordingCaption": {
         "properties": {
-          "at_secs": {
-            "format": "int32",
-            "type": "integer"
-          },
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
-          "created_by": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "recording_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "recording_id",
-          "at_secs",
-          "title",
-          "created_by",
-          "created_at"
-        ],
-        "type": "object"
-      },
-      "RecordingChapterPage": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RecordingChapter"
-            },
-            "type": "array"
-          },
-          "next_page_token": {
+          "error": {
             "type": [
               "string",
               "null"
             ]
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
-      "RecordingChapterReq": {
-        "properties": {
-          "at_secs": {
-            "description": "Segundos desde o início; `0..=duration_secs` (ou `0..=172800` sem duração).",
-            "format": "int32",
-            "type": "integer"
           },
-          "title": {
-            "description": "1-120 caracteres, uma linha.",
+          "lang": {
+            "description": "BCP 47 curto (`pt`, `pt-AO`, `en`).",
             "type": "string"
-          }
-        },
-        "required": [
-          "at_secs",
-          "title"
-        ],
-        "type": "object"
-      },
-      "RecordingComment": {
-        "properties": {
-          "at_secs": {
-            "description": "Segundos desde o início; `null` = comentário sobre a gravação inteira.",
+          },
+          "progress_pct": {
             "format": "int32",
             "type": [
               "integer",
               "null"
             ]
           },
-          "author_id": {
+          "published_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recording_id": {
             "format": "uuid",
             "type": "string"
           },
-          "author_name": {
+          "source": {
+            "description": "`upload` | `transcript` | `translation`.",
             "type": "string"
           },
+          "status": {
+            "description": "`generating` | `draft` | `published` | `failed`.",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recording_id",
+          "lang",
+          "source",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "RecordingCaptionPatchReq": {
+        "properties": {
+          "status": {
+            "description": "`draft` | `published`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "RecordingCaptionPutReq": {
+        "properties": {
+          "publish": {
+            "description": "Publicar já (por omissão fica rascunho).",
+            "type": "boolean"
+          },
+          "vtt": {
+            "description": "WebVTT válido, até 2 MiB.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vtt"
+        ],
+        "type": "object"
+      },
+      "RecordingCaptionWithVtt": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RecordingCaption"
+          },
+          {
+            "properties": {
+              "vtt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "vtt"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "Metadados e o VTT."
+      },
+      "RecordingChapter": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "recording_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "source": {
+            "description": "`auto` (gerado da transcrição) | `manual`.",
+            "type": "string"
+          },
+          "t_ms": {
+            "description": "Milissegundos desde o início.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "recording_id",
+          "t_ms",
+          "title",
+          "source",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "RecordingChapterReq": {
+        "properties": {
+          "t_ms": {
+            "description": "Milissegundos; `0..=duration_ms` (ou `0..=172800000` sem duração).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "description": "1-200 caracteres, uma linha.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "t_ms",
+          "title"
+        ],
+        "type": "object"
+      },
+      "RecordingChapterUpdateReq": {
+        "properties": {
+          "t_ms": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RecordingComment": {
+        "properties": {
           "body": {
             "description": "Já censurado pelo DLP.",
             "type": "string"
+          },
+          "can_delete": {
+            "description": "Quem pede pode apagar: o autor, ou quem gere a gravação (moderação).",
+            "type": "boolean"
           },
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
           "edited_at": {
+            "description": "`null` se nunca foi editado.",
             "format": "date-time",
             "type": [
               "string",
@@ -3732,15 +3937,32 @@
           "recording_id": {
             "format": "uuid",
             "type": "string"
+          },
+          "t_ms": {
+            "description": "Instante do vídeo em ms; `null` = comentário à gravação inteira.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "user_id": {
+            "description": "Autor.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
           }
         },
         "required": [
           "id",
           "recording_id",
+          "user_id",
+          "username",
           "body",
-          "author_id",
-          "author_name",
-          "created_at"
+          "created_at",
+          "can_delete"
         ],
         "type": "object"
       },
@@ -3766,17 +3988,17 @@
       },
       "RecordingCommentReq": {
         "properties": {
-          "at_secs": {
-            "description": "Segundos desde o início; omisso = sobre a gravação inteira.",
-            "format": "int32",
+          "body": {
+            "description": "1-2000 caracteres (também depois do DLP).",
+            "type": "string"
+          },
+          "t_ms": {
+            "description": "Milissegundos desde o início; omisso ou `null` = sobre a gravação inteira.",
+            "format": "int64",
             "type": [
               "integer",
               "null"
             ]
-          },
-          "body": {
-            "description": "1-2000 caracteres. Passa pelo DLP antes de ser guardado.",
-            "type": "string"
           }
         },
         "required": [
@@ -3786,60 +4008,92 @@
       },
       "RecordingCommentUpdateReq": {
         "properties": {
-          "at_secs": {
-            "description": "Muda a marca temporal. Não se retira a marca por aqui.",
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
           "body": {
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "t_ms": {
+            "description": "Muda a marca temporal. Não se retira a marca por aqui.",
+            "format": "int64",
+            "type": [
+              "integer",
               "null"
             ]
           }
         },
         "type": "object"
       },
-      "RecordingItem": {
-        "description": "Item da biblioteca, enriquecido para a UI.",
+      "RecordingLibraryItem": {
+        "description": "Item da biblioteca com metadados de media, estados, contagens e publicação\n(`RecordingLibraryItem` da UI).",
         "properties": {
+          "audio_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "can_download": {
-            "description": "RBAC de download: só o dono da gravação e admins da org do dono podem\ndescarregar o ficheiro; os restantes só reproduzem.",
+            "description": "Só o dono e os admins activos da org do dono descarregam; os restantes reproduzem.",
             "type": "boolean"
           },
           "can_manage": {
-            "description": "Pode alterar título, categoria e capítulos (dono ou admin activo da org do dono).",
+            "description": "Pode editar nome, descrição, etiquetas, capítulos, legendas e publicar.",
             "type": "boolean"
           },
-          "category": {
-            "description": "`meeting` | `lecture` | `broadcast` | `other`.",
-            "type": "string"
+          "caption_languages": {
+            "description": "Línguas com legenda PUBLICADA.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "chapter_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "comment_count": {
+            "description": "Comentários vivos (os apagados não contam).",
+            "format": "int64",
+            "type": "integer"
           },
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
-          "duration_secs": {
-            "description": "Duração em segundos; `null` = não se sabe (gravação carregada pelo browser).",
-            "format": "int32",
+          "description": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "description": "Medidos com ffprobe; `null` = não foi possível medir.",
+            "format": "int64",
             "type": [
               "integer",
               "null"
             ]
           },
           "failure_reason": {
-            "description": "Causa em linguagem de utilizador. `None` quando `status = ready`.",
+            "description": "Causa em linguagem de utilizador. `null` quando não falhou.",
             "type": [
               "string",
               "null"
             ]
           },
           "filename": {
-            "description": "Nome do ficheiro (é o nome com que se descarrega).",
+            "description": "Nome da gravação: o que a UI mostra e com que se descarrega.",
             "type": "string"
+          },
+          "fps": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "has_thumbnail": {
+            "description": "Há miniatura em `GET /api/recordings/{recording_id}/thumbnail`.",
+            "type": "boolean"
           },
           "height": {
             "format": "int32",
@@ -3852,13 +4106,32 @@
             "format": "uuid",
             "type": "string"
           },
+          "kind": {
+            "description": "`meeting` | `training` | `broadcast` | `hybrid`.",
+            "type": "string"
+          },
           "owned": {
-            "description": "True se o utilizador atual é dono (participou/fez upload); false se só partilhada.",
+            "description": "True se quem pede participou na sala; false se só a vê por partilha,\npublicação ou papel.",
             "type": "boolean"
           },
-          "processing_state": {
-            "description": "Estado derivado: `ready` | `failed` | `transcribing` | `transcribed` |\n`transcription_failed`. Não há `processing`: a linha só nasce depois de\no ffmpeg acabar de compor.",
-            "type": "string"
+          "participant_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "progress_pct": {
+            "description": "Progresso do passo em curso, 0–100. `null` sem passo com progresso.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "published_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "room_code": {
             "type": "string"
@@ -3868,7 +4141,7 @@
             "type": "string"
           },
           "share_count": {
-            "description": "Nº de utilizadores com quem está partilhada (só relevante para o dono).",
+            "description": "Nº de utilizadores com quem está partilhada.",
             "format": "int64",
             "type": "integer"
           },
@@ -3883,16 +4156,36 @@
               "null"
             ]
           },
-          "status": {
-            "description": "`ready` = há ficheiro. `failed` = houve tentativa e não há nada.\n\nA entrada falhada existe para ser VISTA: antes, uma gravação que não\ncompunha desaparecia sem deixar rasto, e quem carregou em «gravar»\nficava a pensar que tinha um ficheiro algures. Ver migração 0036.",
+          "state": {
+            "description": "O `status`, com `published` quando está pronta e publicada.",
             "type": "string"
           },
-          "title": {
-            "description": "Título dado por quem gere a gravação; `null` = a UI mostra o `filename`.",
+          "status": {
+            "description": "`transcribing` | `ready` | `failed`. Esta linha não emite `processing`:\na linha só nasce depois de o ffmpeg acabar de compor.",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "transcribed_at": {
+            "format": "date-time",
             "type": [
               "string",
               "null"
             ]
+          },
+          "transcript_language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transcript_status": {
+            "description": "`none` | `transcribing` | `ready` | `failed`.",
+            "type": "string"
           },
           "uploader_id": {
             "format": "uuid",
@@ -3901,8 +4194,36 @@
           "uploader_name": {
             "type": "string"
           },
+          "uploader_org_id": {
+            "description": "Organização do autor (a que partilha com quem pede, se houver).",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uploader_org_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "video_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "view_count": {
+            "description": "Visualizações (uma por pessoa por dia).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "visibility": {
+            "description": "`private` | `org`.",
+            "type": "string"
+          },
           "width": {
-            "description": "Resolução do vídeo; `null` = não se sabe, ou só áudio.",
             "format": "int32",
             "type": [
               "integer",
@@ -3917,15 +4238,25 @@
           "uploader_id",
           "uploader_name",
           "filename",
-          "category",
           "size_bytes",
           "created_at",
           "owned",
           "share_count",
           "can_download",
-          "can_manage",
           "status",
-          "processing_state"
+          "state",
+          "kind",
+          "has_thumbnail",
+          "transcript_status",
+          "chapter_count",
+          "comment_count",
+          "view_count",
+          "participant_count",
+          "caption_languages",
+          "description",
+          "tags",
+          "visibility",
+          "can_manage"
         ],
         "type": "object"
       },
@@ -3949,11 +4280,11 @@
         "type": "object"
       },
       "RecordingPage": {
-        "description": "Página da biblioteca (com `q`, `page_size` ou `page_token`).",
+        "description": "Página da biblioteca (com `page_size` ou `page_token`).",
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/RecordingItem"
+              "$ref": "#/components/schemas/RecordingLibraryItem"
             },
             "type": "array"
           },
@@ -3967,6 +4298,56 @@
         "required": [
           "items"
         ],
+        "type": "object"
+      },
+      "RecordingParticipant": {
+        "properties": {
+          "joined_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "joined_at"
+        ],
+        "type": "object"
+      },
+      "RecordingParticipantPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecordingParticipant"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "RecordingPublicationReq": {
+        "properties": {
+          "visibility": {
+            "description": "Só `org`: publicar para os membros activos das organizações do autor.",
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "RecordingShareLink": {
@@ -4016,6 +4397,193 @@
         ],
         "type": "object"
       },
+      "RecordingTranscript": {
+        "properties": {
+          "confidence": {
+            "description": "Média da confiança dos segmentos, 0–1.",
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "error": {
+            "description": "Razão da falha. Só quando `status = failed`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "progress_pct": {
+            "description": "Só enquanto `transcribing`, e só se houver quem o escreva.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "recording_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "segments": {
+            "description": "Vazio quando o worker entregou só o texto.",
+            "items": {
+              "$ref": "#/components/schemas/TranscriptSegment"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "`none` | `transcribing` | `ready` | `failed`.",
+            "type": "string"
+          },
+          "text": {
+            "description": "Texto inteiro (já censurado pelo DLP).",
+            "type": "string"
+          },
+          "transcribed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "recording_id",
+          "status",
+          "text",
+          "segments"
+        ],
+        "type": "object"
+      },
+      "RecordingUpdateReq": {
+        "properties": {
+          "description": {
+            "description": "0-8000 caracteres; `\"\"` apaga.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filename": {
+            "description": "Nome: 1-200 caracteres, uma linha.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tags": {
+            "description": "Até 20 etiquetas de 1-40 caracteres; normalizadas (sem `#`, minúsculas,\nsem repetidas). `[]` apaga.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RecordingUploadResult": {
+        "description": "Resposta do upload: a gravação e o que o servidor mediu no ficheiro.",
+        "properties": {
+          "audio_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "duration_ms": {
+            "description": "Medidos com ffprobe; `null` = não foi possível medir (nunca inventado).",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "filename": {
+            "type": "string"
+          },
+          "fps": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "has_thumbnail": {
+            "type": "boolean"
+          },
+          "height": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`meeting` | `training` | `broadcast` | `hybrid`.",
+            "type": "string"
+          },
+          "room_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "description": "`ready` (o upload só responde com o ficheiro escrito).",
+            "type": "string"
+          },
+          "uploader_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "video_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "width": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "room_id",
+          "uploader_id",
+          "filename",
+          "size_bytes",
+          "created_at",
+          "kind",
+          "status",
+          "has_thumbnail"
+        ],
+        "type": "object"
+      },
       "RegisterReq": {
         "properties": {
           "email": {
@@ -4045,7 +4613,7 @@
             "type": "string"
           },
           "status": {
-            "description": "`accepted` | `declined`.",
+            "description": "`accepted` | `declined` | `tentative`.",
             "type": "string"
           }
         },
@@ -4216,6 +4784,60 @@
         ],
         "type": "object"
       },
+      "SessionOptions": {
+        "description": "Opções de sessão de uma reunião (R184, migração 0056). O contrato de dados\né o `MeetingSessionOptions` da UI. As regras de forma são de\n`delonix_meet_domain::conferencing::session_options` — a BFF e a v1 chamam\nas mesmas (ADR-0004 §5, regra 8).",
+        "properties": {
+          "auto_record": {
+            "description": "O gravador do SERVIDOR arranca sozinho quando o anfitrião entra na sala\n(topologia SFU; nunca numa sala E2EE; só se a sala ainda não tiver\ngravação).",
+            "type": "boolean"
+          },
+          "format": {
+            "default": "meeting",
+            "description": "`meeting` (omissão) | `training` (abre salas de grupo) | `broadcast` | `hybrid`.",
+            "type": "string"
+          },
+          "record_quality": {
+            "default": "1080p",
+            "description": "`2160p` | `1080p` (omissão) | `720p` | `audio`. É a TELA da composição\nem grelha e o tecto de resolução de um só orador (que só é reduzida,\nnunca ampliada); `audio` deixa o vídeo fora da gravação.",
+            "type": "string"
+          },
+          "waiting_room": {
+            "description": "Toda a gente passa pela sala de espera, convidados incluídos.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "SessionOptionsPatch": {
+        "description": "Alteração parcial das opções de sessão: o campo ausente fica como está.",
+        "properties": {
+          "auto_record": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "record_quality": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "waiting_room": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "SkippedInvitee": {
         "properties": {
           "email": {
@@ -4316,22 +4938,30 @@
         "type": "object"
       },
       "StartResp": {
-        "description": "Resposta de `POST /api/meetings/{id}/start`.",
-        "properties": {
-          "code": {
-            "description": "Código da sala a que o cliente se liga.",
-            "type": "string"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptions",
+            "description": "As opções com que a sala foi (ou já tinha sido) criada."
           },
-          "kind": {
-            "description": "`video` | `voice`.",
-            "type": "string"
+          {
+            "properties": {
+              "code": {
+                "description": "Código da sala a que o cliente se liga.",
+                "type": "string"
+              },
+              "kind": {
+                "description": "`video` | `voice`.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "kind"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "code",
-          "kind"
         ],
-        "type": "object"
+        "description": "Resposta de `POST /api/meetings/{id}/start`."
       },
       "StatusResp": {
         "description": "Estado público da instalação.",
@@ -4635,6 +5265,36 @@
         },
         "type": "object"
       },
+      "TranscriptSegment": {
+        "description": "Um segmento da transcrição com tempos.",
+        "properties": {
+          "confidence": {
+            "description": "0–1; `null` = o worker não a deu.",
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "end_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "start_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_ms",
+          "end_ms",
+          "text"
+        ],
+        "type": "object"
+      },
       "TranslateReq": {
         "properties": {
           "target": {
@@ -4737,25 +5397,6 @@
           "waiting_room": {
             "type": [
               "boolean",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "UpdateRecordingReq": {
-        "properties": {
-          "category": {
-            "description": "`meeting` | `lecture` | `broadcast` | `other`.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "title": {
-            "description": "1-120 caracteres, uma linha. `\"\"` apaga o título (a UI volta ao `filename`).",
-            "type": [
-              "string",
               "null"
             ]
           }
@@ -4932,6 +5573,9 @@
       "V1MeetingSummary": {
         "description": "Reunião vista pelo sync de calendário v1.",
         "properties": {
+          "auto_record": {
+            "type": "boolean"
+          },
           "created_at": {
             "format": "date-time",
             "type": "string"
@@ -4942,6 +5586,10 @@
           "duration_min": {
             "format": "int32",
             "type": "integer"
+          },
+          "format": {
+            "description": "Opções de sessão (R184): `meeting|training|broadcast|hybrid`.",
+            "type": "string"
           },
           "id": {
             "format": "uuid",
@@ -4959,6 +5607,10 @@
               "null"
             ]
           },
+          "record_quality": {
+            "description": "`2160p|1080p|720p|audio`.",
+            "type": "string"
+          },
           "room_code": {
             "type": [
               "string",
@@ -4971,6 +5623,9 @@
           },
           "title": {
             "type": "string"
+          },
+          "waiting_room": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -4980,7 +5635,11 @@
           "kind",
           "starts_at",
           "duration_min",
-          "created_at"
+          "created_at",
+          "format",
+          "waiting_room",
+          "auto_record",
+          "record_quality"
         ],
         "type": "object"
       },
@@ -5025,7 +5684,7 @@
             "type": "string"
           },
           "download_url": {
-            "description": "`/api/recordings/{id}` (rota da BFF, autenticada por sessão).",
+            "description": "`/api/recordings/{id}/content` (rota da BFF, autenticada por sessão).",
             "type": "string"
           },
           "filename": {
@@ -6298,7 +6957,7 @@
                 }
               }
             },
-            "description": "título, `kind` ou duração inválidos"
+            "description": "título, `kind` ou duração inválidos; `meeting.invalid_format` / `meeting.invalid_record_quality`"
           },
           "401": {
             "content": {
@@ -6444,7 +7103,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Meeting"
+                  "$ref": "#/components/schemas/MeetingDetail"
                 }
               }
             },
@@ -6477,6 +7136,102 @@
           }
         ],
         "summary": "Uma reunião (dono ou convidado). Recurso completo: existe `DELETE`, existe `GET`.",
+        "tags": [
+          "meetings"
+        ]
+      },
+      "patch": {
+        "operationId": "patch",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchMeetingOptionsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingDetail"
+                }
+              }
+            },
+            "description": "A reunião como ficou."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`meeting.invalid_format` / `meeting.invalid_record_quality`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`meeting.not_host`: é convidado, não anfitrião"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não existe, ou não é dono nem convidado"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "campo desconhecido no corpo; ou `meeting.auto_record_e2ee`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Altera as opções de sessão de uma reunião. Só o anfitrião. Se a sala já\nexiste, as opções passam-lhe logo: a sala de espera vale para as entradas\nseguintes, e a gravação automática para a próxima vez que o anfitrião\nentrar numa sala ainda sem gravação.",
         "tags": [
           "meetings"
         ]
@@ -7392,7 +8147,7 @@
             "session": []
           }
         ],
-        "summary": "O convidado aceita ou recusa (recusar exige motivo). Ao recusar, o\nanfitrião é notificado em tempo real (se online) com o motivo.",
+        "summary": "O convidado aceita, recusa (exige motivo) ou responde «talvez» (`tentative`,\nsem motivo; conta como presença possível nos conflitos e continua a ser\nchamado no arranque). Ao recusar, o\nanfitrião é notificado em tempo real (se online) com o motivo.",
         "tags": [
           "meetings"
         ]
@@ -12145,11 +12900,11 @@
     },
     "/api/recordings": {
       "get": {
-        "description": "**Duas formas, de propósito.** Sem parâmetros devolve a lista inteira, como\nsempre — é o que o web lê hoje (`recordingsLibrary`), e trocá-la no mesmo\nPR partia a página. Com `q`, `page_size` ou `page_token` devolve uma página\n(`items` + `next_page_token`), por `created_at` descendente — também numa\npesquisa, para o cursor ser estável; a relevância só decide o `snippet`.\nA forma sem limite é dívida e sai quando o web passar a paginar.\n\nUm membro arquivado (S3) deixa de ver as gravações da ex-organização.",
+        "description": "**Duas formas.** Sem `page_size`/`page_token` devolve a lista (a UI lê-a\nassim, também com `q` e `scope`). Com eles devolve uma página (`items` +\n`next_page_token`), por `created_at` descendente — também numa pesquisa, para\no cursor ser estável; a relevância só decide o `snippet`. A forma sem limite\né dívida herdada e sai quando a UI paginar.\n\nUm membro arquivado (S3) deixa de ver as gravações da ex-organização,\nincluindo as publicadas.",
         "operationId": "library",
         "parameters": [
           {
-            "description": "Pesquisa de texto no título, no nome do ficheiro e na transcrição. Cada\npalavra conta como prefixo e todas têm de aparecer. Só letras e dígitos.",
+            "description": "Pesquisa de texto no nome, nas etiquetas, na descrição e na transcrição.\nCada palavra conta como prefixo e todas têm de aparecer. Só letras e dígitos.",
             "in": "query",
             "name": "q",
             "required": false,
@@ -12158,7 +12913,16 @@
             }
           },
           {
-            "description": "1-100, omissão 50. Com este parâmetro (ou `q`/`page_token`) a resposta é uma página.",
+            "description": "`mine` (omissão): carregou, participou ou foi-lhe partilhada.\n`published`: as publicadas que vê — incluindo as da organização em que\nnão participou.",
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "1-100, omissão 50. Com este parâmetro (ou `page_token`) a resposta é uma página.",
             "in": "query",
             "name": "page_size",
             "required": false,
@@ -12186,7 +12950,7 @@
                 }
               }
             },
-            "description": "Sem parâmetros: `RecordingItem[]` (todas). Com `q`/`page_size`/`page_token`: `RecordingPage`. Inclui as falhadas (`status = failed`)."
+            "description": "Sem `page_size`/`page_token`: `RecordingLibraryItem[]`. Com eles: `RecordingPage`. Inclui as falhadas (`status = failed`)."
           },
           "400": {
             "content": {
@@ -12196,7 +12960,7 @@
                 }
               }
             },
-            "description": "`page_token` inválido, ou `q` sem nenhuma letra ou dígito (`recording.invalid_query`)."
+            "description": "`page.invalid_token`; `recording.invalid_query` (`q` sem nenhuma letra ou dígito); `recording.invalid_scope`."
           },
           "401": {
             "content": {
@@ -12214,7 +12978,7 @@
             "session": []
           }
         ],
-        "summary": "Biblioteca do utilizador: gravações onde participou + partilhadas consigo.",
+        "summary": "Biblioteca do utilizador.",
         "tags": [
           "recordings"
         ]
@@ -12239,7 +13003,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RecordingItem"
+                  "$ref": "#/components/schemas/RecordingLibraryItem"
                 }
               }
             },
@@ -12271,7 +13035,7 @@
             "session": []
           }
         ],
-        "summary": "Metadados de uma gravação — o mesmo item da biblioteca.",
+        "summary": "Uma gravação da biblioteca, para o leitor em página inteira (substitui o\n`/details` do servidor da UI).",
         "tags": [
           "recordings"
         ]
@@ -12293,7 +13057,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateRecordingReq"
+                "$ref": "#/components/schemas/RecordingUpdateReq"
               }
             }
           },
@@ -12304,7 +13068,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RecordingItem"
+                  "$ref": "#/components/schemas/RecordingLibraryItem"
                 }
               }
             },
@@ -12318,7 +13082,7 @@
                 }
               }
             },
-            "description": "`recording.invalid_title` / `recording.invalid_category`"
+            "description": "`recording.invalid_filename` / `recording.invalid_description` / `recording.invalid_tags`. Nada é escrito."
           },
           "401": {
             "content": {
@@ -12356,15 +13120,15 @@
             "session": []
           }
         ],
-        "summary": "Altera título e categoria. Só o dono ou um admin activo da org do dono.",
+        "summary": "Altera nome, descrição e etiquetas. Só o dono ou um admin activo da org do dono.",
         "tags": [
           "recordings"
         ]
       }
     },
-    "/api/recordings/{recording_id}/chapters": {
+    "/api/recordings/{recording_id}/captions": {
       "get": {
-        "operationId": "list_chapters",
+        "operationId": "list",
         "parameters": [
           {
             "in": "path",
@@ -12374,25 +13138,6 @@
               "format": "uuid",
               "type": "string"
             }
-          },
-          {
-            "description": "1-100, omissão 50.",
-            "in": "query",
-            "name": "page_size",
-            "required": false,
-            "schema": {
-              "format": "int32",
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "page_token",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
           }
         ],
         "responses": {
@@ -12400,21 +13145,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RecordingChapterPage"
+                  "items": {
+                    "$ref": "#/components/schemas/RecordingCaption"
+                  },
+                  "type": "array"
                 }
               }
             },
-            "description": ""
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "page_token inválido"
+            "description": "Por `lang`; no máximo 50."
           },
           "401": {
             "content": {
@@ -12442,7 +13180,502 @@
             "session": []
           }
         ],
-        "summary": "Capítulos, por marca temporal. Quem vê a gravação.",
+        "summary": "Legendas da gravação, por língua. Quem vê: só as publicadas; quem gere: todas.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/captions/{lang}": {
+      "delete": {
+        "operationId": "delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "BCP 47 curto.",
+            "in": "path",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Apagada."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_manager`"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Apaga a legenda de uma língua. Só quem gere a gravação.",
+        "tags": [
+          "recordings"
+        ]
+      },
+      "get": {
+        "operationId": "get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "BCP 47 curto.",
+            "in": "path",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingCaptionWithVtt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Inexistente, sem acesso, ou não publicada para quem só vê."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Uma legenda: metadados e o VTT.",
+        "tags": [
+          "recordings"
+        ]
+      },
+      "patch": {
+        "operationId": "patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "BCP 47 curto.",
+            "in": "path",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordingCaptionPatchReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingCaption"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.invalid_caption_status`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_manager`"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.caption_not_ready`: a gerar ou falhada."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Publica ou volta a rascunho. Só quem gere a gravação.",
+        "tags": [
+          "recordings"
+        ]
+      },
+      "put": {
+        "operationId": "put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "BCP 47 curto.",
+            "in": "path",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordingCaptionPutReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingCaption"
+                }
+              }
+            },
+            "description": "Substituída."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingCaption"
+                }
+              }
+            },
+            "description": "Criada.",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.invalid_caption_lang` / `recording.invalid_vtt` (a mensagem diz a linha) / `recording.caption_too_large`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_manager`"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.too_many_captions` (máx. 50 línguas)"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Envia (ou substitui) a legenda de uma língua. Só quem gere a gravação.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/captions/{lang}/vtt": {
+      "get": {
+        "operationId": "vtt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "BCP 47 curto.",
+            "in": "path",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/vtt": {
+                "schema": {
+                  "description": "Texto WebVTT em bruto (só para o spec).",
+                  "type": "string"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.caption_not_ready`: a gerar ou falhada (só quem gere as vê)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O VTT como `text/vtt`, para o `<track>` do leitor.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/chapters": {
+      "get": {
+        "operationId": "list_chapters",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RecordingChapter"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Por `t_ms`; no máximo 100."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Capítulos, por marca temporal. Quem vê a gravação. É o índice inteiro: uma\ngravação tem no máximo 100 capítulos, e a lista nunca passa disso.",
         "tags": [
           "recordings"
         ]
@@ -12528,6 +13761,16 @@
             },
             "description": ""
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.chapter_timestamp_taken`"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -12544,7 +13787,7 @@
             "session": []
           }
         ],
-        "summary": "Cria um capítulo. Só o dono ou um admin activo da org do dono.",
+        "summary": "Cria um capítulo manual. Só o dono ou um admin activo da org do dono.",
         "tags": [
           "recordings"
         ]
@@ -12681,6 +13924,110 @@
         "tags": [
           "recordings"
         ]
+      },
+      "patch": {
+        "operationId": "update_chapter",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "chapter_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordingChapterUpdateReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingChapter"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.invalid_chapter_title` / `recording.invalid_timestamp`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_manager`"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.chapter_timestamp_taken`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Corrige um capítulo. Corrigir torna-o `manual`: uma geração automática\nfutura já não lhe toca.",
+        "tags": [
+          "recordings"
+        ]
       }
     },
     "/api/recordings/{recording_id}/comments": {
@@ -12735,7 +14082,7 @@
                 }
               }
             },
-            "description": "page_token inválido"
+            "description": "`page.invalid_token`"
           },
           "401": {
             "content": {
@@ -12876,7 +14223,7 @@
         ],
         "responses": {
           "204": {
-            "description": "Apagado (deixa de aparecer)."
+            "description": "Apagado (deixa de aparecer; fica na base com `deleted_at`)."
           },
           "401": {
             "content": {
@@ -12896,7 +14243,7 @@
                 }
               }
             },
-            "description": "`recording.not_comment_author`"
+            "description": "`recording.comment_delete_forbidden`: nem autor nem quem gere."
           },
           "404": {
             "content": {
@@ -12914,7 +14261,7 @@
             "session": []
           }
         ],
-        "summary": "Apaga (logicamente) um comentário. Só o autor. Apagar outra vez dá `404`.",
+        "summary": "Apaga (logicamente) um comentário: o autor, ou quem gere a gravação\n(moderação). Apagar outra vez dá `404`.",
         "tags": [
           "recordings"
         ]
@@ -13072,7 +14419,7 @@
             "session": []
           }
         ],
-        "summary": "Altera o texto ou a marca temporal. Só o autor.",
+        "summary": "Altera o texto ou a marca temporal. Só o autor (quem gere modera apagando,\nnão reescrevendo o que outra pessoa disse).",
         "tags": [
           "recordings"
         ]
@@ -13080,7 +14427,7 @@
     },
     "/api/recordings/{recording_id}/content": {
       "get": {
-        "description": "Os metadados em JSON estão em `GET /api/recordings/{id}/metadata`: este\ncaminho é o `src` do leitor de vídeo e o link de download do web, e não\nmuda de representação.",
+        "description": "Os metadados em JSON estão em `GET /api/recordings/{recording_id}`: este\ncaminho é o `src` do leitor de vídeo e o link de download do web, e não\nmuda de representação.",
         "operationId": "download",
         "parameters": [
           {
@@ -13163,6 +14510,92 @@
           }
         ],
         "summary": "O ficheiro webm de uma gravação, para reproduzir ou descarregar (`?dl=1`).",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/participants": {
+      "get": {
+        "operationId": "recording_participants",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "1-100, omissão 50.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingParticipantPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`page.invalid_token`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Quem esteve na sala da gravação, por ordem de entrada.",
         "tags": [
           "recordings"
         ]
@@ -13370,6 +14803,162 @@
           }
         ],
         "summary": "Cria (ou substitui) um link público de partilha. Substituir roda o token:\no link anterior deixa de funcionar.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/publication": {
+      "delete": {
+        "operationId": "unpublish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Voltou a privada."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_manager`"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem acesso, ou não estava publicada (`recording.not_published`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Retira a publicação: a gravação volta a privada.",
+        "tags": [
+          "recordings"
+        ]
+      },
+      "put": {
+        "description": "Publicada, os membros ACTIVOS de uma organização do autor vêem-na e\nreproduzem-na (`scope=published`); não a descarregam nem a gerem.",
+        "operationId": "publish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordingPublicationReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingLibraryItem"
+                }
+              }
+            },
+            "description": "A gravação, com `visibility = org` e `state = published`."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.invalid_visibility`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_manager`"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.no_file`: a gravação falhou e não tem ficheiro."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Publica a gravação para a organização do autor (singleton). Idempotente:\npublicar outra vez mantém o `published_at` original.",
         "tags": [
           "recordings"
         ]
@@ -13604,6 +15193,182 @@
           }
         ],
         "summary": "Remove a partilha com um utilizador (só o dono).",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/thumbnail": {
+      "get": {
+        "operationId": "thumbnail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "description": "JPEG em bruto (só para o spec).",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem acesso, ou a gravação não tem miniatura (ffmpeg ausente, só áudio, ficheiro ilegível)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Miniatura JPEG gerada pelo servidor na medição (`has_thumbnail`).",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/transcript": {
+      "get": {
+        "operationId": "transcript",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingTranscript"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Texto e segmentos com tempos da transcrição.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/views": {
+      "post": {
+        "operationId": "record_view",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Registada (ou já estava, hoje)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.no_file`: gravação falhada, não há o que ver."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Regista uma visualização: uma por pessoa por dia (repetir no mesmo dia\nnão conta duas vezes).",
         "tags": [
           "recordings"
         ]
@@ -14181,6 +15946,92 @@
         ]
       }
     },
+    "/api/rooms/{room_code}/participants": {
+      "get": {
+        "operationId": "room_participants",
+        "parameters": [
+          {
+            "description": "Código da sala.",
+            "in": "path",
+            "name": "room_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "1-100, omissão 50.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingParticipantPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`page.invalid_token`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sala inexistente, ou quem pede não participou nela."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Quem esteve na sala, por ordem de entrada. Só para quem também esteve: uma\nsala que não existe e uma onde não se esteve dão o mesmo `404`.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
     "/api/rooms/{room_code}/quality-samples": {
       "post": {
         "operationId": "post_qos",
@@ -14321,6 +16172,7 @@
         ]
       },
       "post": {
+        "description": "Mede o ficheiro com ffprobe antes de responder (duração, resolução, fps,\ncodecs, miniatura), cada passo com tecto de tempo. Sem ffprobe/ffmpeg, ou\ncom um ficheiro que não reconhecem, os campos vêm `null` e\n`has_thumbnail = false` — o upload nunca falha por isso.",
         "operationId": "upload",
         "parameters": [
           {
@@ -14333,9 +16185,18 @@
             }
           },
           {
-            "description": "Nome de apresentação; omissão `<código>-<AAAAMMDD-HHMMSS>.webm`.",
+            "description": "Nome da gravação (1-200 caracteres, uma linha); omissão `<código>-<AAAAMMDD-HHMMSS>.webm`.",
             "in": "query",
             "name": "name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tipo de sessão declarado (o estúdio envia `broadcast`): `meeting` |\n`training` | `broadcast` | `hybrid`. Omissão: o formato da sala.",
+            "in": "query",
+            "name": "kind",
             "required": false,
             "schema": {
               "type": "string"
@@ -14360,7 +16221,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Recording"
+                  "$ref": "#/components/schemas/RecordingUploadResult"
                 }
               }
             },
@@ -14374,7 +16235,7 @@
                 }
               }
             },
-            "description": "Corpo vazio."
+            "description": "Corpo vazio; `recording.invalid_kind`; `recording.invalid_filename`."
           },
           "401": {
             "content": {
@@ -14425,7 +16286,7 @@
             "session": []
           }
         ],
-        "summary": "Carrega uma gravação da sala. O corpo é o ficheiro **em bruto** (não\nmultipart); o `Content-Type` não é verificado. Máximo 512 MiB. Só quem\nparticipou na sala pode carregar — senão **401**, não 403.",
+        "summary": "Carrega uma gravação da sala. O corpo é o ficheiro **em bruto** (não\nmultipart); o `Content-Type` não é verificado. Máximo 512 MiB. Só quem\nparticipou na sala pode carregar.",
         "tags": [
           "recordings"
         ]

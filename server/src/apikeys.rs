@@ -593,7 +593,7 @@ pub struct V1Recording {
     pub size_bytes: i64,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub room_code: String,
-    /// `/api/recordings/{id}` (rota da BFF, autenticada por sessão).
+    /// `/api/recordings/{id}/content` (rota da BFF, autenticada por sessão).
     pub download_url: String,
 }
 
@@ -602,8 +602,12 @@ pub struct V1RecordingList {
     pub recordings: Vec<V1Recording>,
 }
 
-/// `GET /api/v1/recordings` — gravações da organização (membros), as 200 mais
-/// recentes.
+/// `GET /api/v1/recordings` — gravações **publicadas para a organização**
+/// (`visibility = org`, já publicadas), as 200 mais recentes. Uma chave
+/// representa a organização inteira, não um utilizador — por isso vê
+/// exactamente o que um colega qualquer veria na biblioteca "publicadas"
+/// (`AccessFacts::listed_in(Published, …)`), nunca uma gravação privada de
+/// outro membro só porque partilham organização.
 #[utoipa::path(
     get, path = "/api/v1/recordings", tag = "v1",
     security(("api_key" = ["recordings:read"])),
@@ -624,6 +628,7 @@ pub async fn v1_recordings(
          FROM recordings r
          JOIN rooms rm ON rm.id = r.room_id
          JOIN org_members m ON m.user_id = r.uploader_id AND m.org_id = $1
+         WHERE r.visibility = 'org' AND r.published_at IS NOT NULL
          ORDER BY r.created_at DESC LIMIT 200",
     )
     .bind(key.org_id)
@@ -668,6 +673,12 @@ pub struct V1MeetingSummary {
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// Presente ⇒ a ata AI já foi gerada.
     pub minutes_ai_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Opções de sessão (R184): `meeting|training|broadcast|hybrid`.
+    pub format: String,
+    pub waiting_room: bool,
+    pub auto_record: bool,
+    /// `2160p|1080p|720p|audio`.
+    pub record_quality: String,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -696,20 +707,26 @@ pub async fn v1_meetings(
     axum::extract::Query(q): axum::extract::Query<MeetingsQuery>,
 ) -> Result<Json<V1MeetingList>, ApiError> {
     key.require(Scope::MeetingsRead)?;
-    #[allow(clippy::type_complexity)]
-    let rows: Vec<(
-        Uuid,
-        String,
-        String,
-        String,
-        chrono::DateTime<chrono::Utc>,
-        i32,
-        Option<String>,
-        chrono::DateTime<chrono::Utc>,
-        Option<chrono::DateTime<chrono::Utc>>,
-    )> = sqlx::query_as(
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: Uuid,
+        title: String,
+        description: String,
+        kind: String,
+        starts_at: chrono::DateTime<chrono::Utc>,
+        duration_min: i32,
+        room_code: Option<String>,
+        created_at: chrono::DateTime<chrono::Utc>,
+        minutes_ai_at: Option<chrono::DateTime<chrono::Utc>>,
+        format: String,
+        waiting_room: bool,
+        auto_record: bool,
+        record_quality: String,
+    }
+    let rows: Vec<Row> = sqlx::query_as(
         "SELECT m.id, m.title, m.description, m.kind, m.starts_at, m.duration_min,
-                m.room_code, m.created_at, m.minutes_ai_at
+                m.room_code, m.created_at, m.minutes_ai_at,
+                m.format, m.waiting_room, m.auto_record, m.record_quality
          FROM meetings m
          WHERE EXISTS (SELECT 1 FROM org_members om
                        WHERE om.org_id = $1 AND om.user_id = m.owner_id)
@@ -723,29 +740,21 @@ pub async fn v1_meetings(
     .await?;
     let meetings: Vec<V1MeetingSummary> = rows
         .into_iter()
-        .map(
-            |(
-                id,
-                title,
-                description,
-                kind,
-                starts_at,
-                duration_min,
-                room_code,
-                created_at,
-                minutes_ai_at,
-            )| V1MeetingSummary {
-                id,
-                title,
-                description,
-                kind,
-                starts_at,
-                duration_min,
-                room_code,
-                created_at,
-                minutes_ai_at,
-            },
-        )
+        .map(|r| V1MeetingSummary {
+            id: r.id,
+            title: r.title,
+            description: r.description,
+            kind: r.kind,
+            starts_at: r.starts_at,
+            duration_min: r.duration_min,
+            room_code: r.room_code,
+            created_at: r.created_at,
+            minutes_ai_at: r.minutes_ai_at,
+            format: r.format,
+            waiting_room: r.waiting_room,
+            auto_record: r.auto_record,
+            record_quality: r.record_quality,
+        })
         .collect();
     Ok(Json(V1MeetingList { meetings }))
 }
@@ -1322,6 +1331,10 @@ mod tests {
                     room_code: None,
                     created_at: t0,
                     minutes_ai_at: Some(t0),
+                    format: "meeting".into(),
+                    waiting_room: true,
+                    auto_record: false,
+                    record_quality: "1080p".into(),
                 }],
             })
             .unwrap(),
@@ -1329,6 +1342,8 @@ mod tests {
                 "id": id, "title": "t", "description": "d", "kind": "video",
                 "starts_at": t0, "duration_min": 30, "room_code": null,
                 "created_at": t0, "minutes_ai_at": t0,
+                "format": "meeting", "waiting_room": true, "auto_record": false,
+                "record_quality": "1080p",
             }]})
         );
         assert_eq!(

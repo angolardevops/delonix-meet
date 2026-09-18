@@ -890,81 +890,88 @@
         "type": "object"
       },
       "CreateMeetingReq": {
-        "properties": {
-          "description": {
-            "type": "string"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptions"
           },
-          "duration_min": {
-            "default": 30,
-            "description": "5-1440 minutos.",
-            "format": "int32",
-            "type": "integer"
-          },
-          "invitee_ids": {
-            "items": {
-              "format": "uuid",
-              "type": "string"
+          {
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "duration_min": {
+                "default": 30,
+                "description": "5-1440 minutos.",
+                "format": "int32",
+                "type": "integer"
+              },
+              "invitee_ids": {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "default": "video",
+                "description": "`video` (omissão) | `voice`.",
+                "type": "string"
+              },
+              "recurrence_byday": {
+                "description": "Dias da semana para freq=weekly: \"MON,WED,FRI\"",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_count": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "recurrence_freq": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_interval": {
+                "default": 1,
+                "format": "int32",
+                "type": "integer"
+              },
+              "recurrence_until": {
+                "format": "date",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "room_ref": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "starts_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "title": {
+                "description": "1-140 caracteres (depois de `trim`).",
+                "type": "string"
+              }
             },
-            "type": "array"
-          },
-          "kind": {
-            "default": "video",
-            "description": "`video` (omissão) | `voice`.",
-            "type": "string"
-          },
-          "recurrence_byday": {
-            "description": "Dias da semana para freq=weekly: \"MON,WED,FRI\"",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_count": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "recurrence_freq": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_interval": {
-            "default": 1,
-            "format": "int32",
-            "type": "integer"
-          },
-          "recurrence_until": {
-            "format": "date",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "room_ref": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "starts_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "title": {
-            "description": "1-140 caracteres (depois de `trim`).",
-            "type": "string"
+            "required": [
+              "title",
+              "starts_at"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "title",
-          "starts_at"
-        ],
-        "type": "object"
+        ]
       },
       "CreateMeetingResp": {
         "allOf": [
@@ -1781,11 +1788,11 @@
         "type": "object"
       },
       "LibraryResponse": {
-        "description": "Sem parâmetros: a lista inteira (forma herdada, lida pelo web). Com `q`,\n`page_size` ou `page_token`: uma página.",
+        "description": "Sem `page_size`/`page_token`: a lista (forma que a UI lê, também com `q` e\n`scope`). Com eles: uma página.",
         "oneOf": [
           {
             "items": {
-              "$ref": "#/components/schemas/RecordingItem"
+              "$ref": "#/components/schemas/RecordingLibraryItem"
             },
             "type": "array"
           },
@@ -1945,269 +1952,335 @@
         "type": "object"
       },
       "Meeting": {
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "type": "string"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptions",
+            "description": "Opções de sessão (R184): passam à sala quando ela nasce."
           },
-          "description": {
-            "type": "string"
-          },
-          "duration_min": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "minutes": {
-            "type": "string"
-          },
-          "owner_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "recurrence_byday": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_count": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "recurrence_freq": {
-            "description": "`daily` | `weekly` | `monthly` | `yearly`, ou `null` se não recorrente.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_interval": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "recurrence_parent_id": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_until": {
-            "format": "date",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "room_code": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "room_ref": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "starts_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "transcript": {
-            "type": "string"
+          {
+            "properties": {
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "duration_min": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "minutes": {
+                "type": "string"
+              },
+              "owner_id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "recurrence_byday": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_count": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "recurrence_freq": {
+                "description": "`daily` | `weekly` | `monthly` | `yearly`, ou `null` se não recorrente.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_interval": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "recurrence_parent_id": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_until": {
+                "format": "date",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "room_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "room_ref": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "starts_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "transcript": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "owner_id",
+              "title",
+              "description",
+              "kind",
+              "starts_at",
+              "duration_min",
+              "created_at",
+              "recurrence_interval"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "id",
-          "owner_id",
-          "title",
-          "description",
-          "kind",
-          "starts_at",
-          "duration_min",
-          "created_at",
-          "recurrence_interval"
+        ]
+      },
+      "MeetingDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Meeting"
+          },
+          {
+            "properties": {
+              "external_source": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "invitee_count": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "my_status": {
+                "description": "`owner` | `pending` | `accepted` | `declined` | `tentative`.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "my_status",
+              "invitee_count"
+            ],
+            "type": "object"
+          }
         ],
-        "type": "object"
+        "description": "`GET /api/meetings/{meeting_id}` e `PATCH`: a reunião, as opções e o que a\nlista também dá (`my_status`, `invitee_count`, `external_source`)."
       },
       "MeetingItem": {
-        "description": "Reunião enriquecida para a UI do calendário.",
-        "properties": {
-          "description": {
-            "type": "string"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptions"
           },
-          "duration_min": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "is_owner": {
-            "type": "boolean"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "minutes": {
-            "type": "string"
-          },
-          "my_status": {
-            "description": "A minha resposta enquanto convidado: 'owner' | 'pending' | 'accepted' | 'declined'.",
-            "type": "string"
-          },
-          "owner_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "owner_name": {
-            "type": "string"
-          },
-          "recurrence_freq": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_interval": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "recurrence_parent_id": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "room_code": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "room_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "room_ref": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "starts_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
+          {
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "duration_min": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "external_source": {
+                "description": "Sistema de origem (`odoo`, …), `api` sem sistema declarado, ou `null`\nse a reunião não veio de uma integração com `external_ref`.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "invitee_count": {
+                "description": "Convidados (sem o anfitrião), qualquer que seja a resposta.",
+                "format": "int64",
+                "type": "integer"
+              },
+              "is_owner": {
+                "type": "boolean"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "minutes": {
+                "type": "string"
+              },
+              "my_status": {
+                "description": "A minha resposta enquanto convidado: `owner` | `pending` | `accepted` | `declined` | `tentative`.",
+                "type": "string"
+              },
+              "owner_id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "owner_name": {
+                "type": "string"
+              },
+              "recurrence_freq": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_interval": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "recurrence_parent_id": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "room_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "room_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "room_ref": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "starts_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "owner_id",
+              "owner_name",
+              "title",
+              "description",
+              "kind",
+              "starts_at",
+              "duration_min",
+              "is_owner",
+              "minutes",
+              "my_status",
+              "recurrence_interval",
+              "invitee_count"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "id",
-          "owner_id",
-          "owner_name",
-          "title",
-          "description",
-          "kind",
-          "starts_at",
-          "duration_min",
-          "is_owner",
-          "minutes",
-          "my_status",
-          "recurrence_interval"
         ],
-        "type": "object"
+        "description": "Reunião enriquecida para a UI do calendário."
       },
       "MeetingResp": {
-        "properties": {
-          "duration_min": {
-            "format": "int32",
-            "type": "integer"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptions"
           },
-          "existing": {
-            "description": "`true` quando o pedido reencontrou uma reunião já existente pela\n`external_ref` em vez de criar uma nova.",
-            "type": "boolean"
-          },
-          "external_ref": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "host_email": {
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "invitees": {
-            "description": "Convidados efectivamente registados (email -> id do utilizador).",
-            "items": {
-              "$ref": "#/components/schemas/InviteeResp"
+          {
+            "properties": {
+              "duration_min": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "existing": {
+                "description": "`true` quando o pedido reencontrou uma reunião já existente pela\n`external_ref` em vez de criar uma nova.",
+                "type": "boolean"
+              },
+              "external_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "host_email": {
+                "type": "string"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "invitees": {
+                "description": "Convidados efectivamente registados (email -> id do utilizador).",
+                "items": {
+                  "$ref": "#/components/schemas/InviteeResp"
+                },
+                "type": "array"
+              },
+              "join_url": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "room_code": {
+                "type": "string"
+              },
+              "skipped": {
+                "description": "Emails NÃO registados e porquê. Nunca falha o pedido por causa de um\nconvidado — o link tem de sair na mesma.",
+                "items": {
+                  "$ref": "#/components/schemas/SkippedInvitee"
+                },
+                "type": "array"
+              },
+              "starts_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
             },
-            "type": "array"
-          },
-          "join_url": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "room_code": {
-            "type": "string"
-          },
-          "skipped": {
-            "description": "Emails NÃO registados e porquê. Nunca falha o pedido por causa de um\nconvidado — o link tem de sair na mesma.",
-            "items": {
-              "$ref": "#/components/schemas/SkippedInvitee"
-            },
-            "type": "array"
-          },
-          "starts_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
+            "required": [
+              "id",
+              "title",
+              "starts_at",
+              "duration_min",
+              "kind",
+              "room_code",
+              "join_url",
+              "host_email",
+              "invitees",
+              "skipped",
+              "existing"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "id",
-          "title",
-          "starts_at",
-          "duration_min",
-          "kind",
-          "room_code",
-          "join_url",
-          "host_email",
-          "invitees",
-          "skipped",
-          "existing"
-        ],
-        "type": "object"
+        ]
       },
       "MeetingRoom": {
         "properties": {
@@ -3076,46 +3149,85 @@
         ],
         "type": "object"
       },
-      "PatchMeetingReq": {
+      "PatchMeetingOptionsReq": {
+        "additionalProperties": false,
+        "description": "`PATCH /api/meetings/{meeting_id}` — só as opções de sessão (R184). Campos\nfora destes são recusados, não ignorados: um título mandado aqui não muda\nnada e o cliente tem de o saber.",
         "properties": {
-          "description": {
+          "auto_record": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "format": {
             "type": [
               "string",
               "null"
             ]
           },
-          "duration_min": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "invitees": {
-            "description": "Se presente, **substitui** o conjunto de convidados. O estado de\nresposta (aceite/recusado) de quem se mantém é preservado.",
-            "items": {
-              "$ref": "#/components/schemas/InviteeReq"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "starts_at": {
-            "format": "date-time",
+          "record_quality": {
             "type": [
               "string",
               "null"
             ]
           },
-          "title": {
+          "waiting_room": {
             "type": [
-              "string",
+              "boolean",
               "null"
             ]
           }
         },
         "type": "object"
+      },
+      "PatchMeetingReq": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptionsPatch",
+            "description": "Opções de sessão; a ausente fica como está. Passam também à sala."
+          },
+          {
+            "properties": {
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "duration_min": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "invitees": {
+                "description": "Se presente, **substitui** o conjunto de convidados. O estado de\nresposta (aceite/recusado) de quem se mantém é preservado.",
+                "items": {
+                  "$ref": "#/components/schemas/InviteeReq"
+                },
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "starts_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ]
       },
       "PersonalRoom": {
         "allOf": [
@@ -3619,106 +3731,199 @@
         ],
         "type": "object"
       },
-      "RecordingChapter": {
+      "RecordingCaption": {
         "properties": {
-          "at_secs": {
-            "format": "int32",
-            "type": "integer"
-          },
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
-          "created_by": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "recording_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "recording_id",
-          "at_secs",
-          "title",
-          "created_by",
-          "created_at"
-        ],
-        "type": "object"
-      },
-      "RecordingChapterPage": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RecordingChapter"
-            },
-            "type": "array"
-          },
-          "next_page_token": {
+          "error": {
             "type": [
               "string",
               "null"
             ]
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
-      "RecordingChapterReq": {
-        "properties": {
-          "at_secs": {
-            "description": "Segundos desde o início; `0..=duration_secs` (ou `0..=172800` sem duração).",
-            "format": "int32",
-            "type": "integer"
           },
-          "title": {
-            "description": "1-120 caracteres, uma linha.",
+          "lang": {
+            "description": "BCP 47 curto (`pt`, `pt-AO`, `en`).",
             "type": "string"
-          }
-        },
-        "required": [
-          "at_secs",
-          "title"
-        ],
-        "type": "object"
-      },
-      "RecordingComment": {
-        "properties": {
-          "at_secs": {
-            "description": "Segundos desde o início; `null` = comentário sobre a gravação inteira.",
+          },
+          "progress_pct": {
             "format": "int32",
             "type": [
               "integer",
               "null"
             ]
           },
-          "author_id": {
+          "published_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recording_id": {
             "format": "uuid",
             "type": "string"
           },
-          "author_name": {
+          "source": {
+            "description": "`upload` | `transcript` | `translation`.",
             "type": "string"
           },
+          "status": {
+            "description": "`generating` | `draft` | `published` | `failed`.",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recording_id",
+          "lang",
+          "source",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "RecordingCaptionPatchReq": {
+        "properties": {
+          "status": {
+            "description": "`draft` | `published`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "RecordingCaptionPutReq": {
+        "properties": {
+          "publish": {
+            "description": "Publicar já (por omissão fica rascunho).",
+            "type": "boolean"
+          },
+          "vtt": {
+            "description": "WebVTT válido, até 2 MiB.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vtt"
+        ],
+        "type": "object"
+      },
+      "RecordingCaptionWithVtt": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RecordingCaption"
+          },
+          {
+            "properties": {
+              "vtt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "vtt"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "Metadados e o VTT."
+      },
+      "RecordingChapter": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "recording_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "source": {
+            "description": "`auto` (gerado da transcrição) | `manual`.",
+            "type": "string"
+          },
+          "t_ms": {
+            "description": "Milissegundos desde o início.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "recording_id",
+          "t_ms",
+          "title",
+          "source",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "RecordingChapterReq": {
+        "properties": {
+          "t_ms": {
+            "description": "Milissegundos; `0..=duration_ms` (ou `0..=172800000` sem duração).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "description": "1-200 caracteres, uma linha.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "t_ms",
+          "title"
+        ],
+        "type": "object"
+      },
+      "RecordingChapterUpdateReq": {
+        "properties": {
+          "t_ms": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RecordingComment": {
+        "properties": {
           "body": {
             "description": "Já censurado pelo DLP.",
             "type": "string"
+          },
+          "can_delete": {
+            "description": "Quem pede pode apagar: o autor, ou quem gere a gravação (moderação).",
+            "type": "boolean"
           },
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
           "edited_at": {
+            "description": "`null` se nunca foi editado.",
             "format": "date-time",
             "type": [
               "string",
@@ -3732,15 +3937,32 @@
           "recording_id": {
             "format": "uuid",
             "type": "string"
+          },
+          "t_ms": {
+            "description": "Instante do vídeo em ms; `null` = comentário à gravação inteira.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "user_id": {
+            "description": "Autor.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
           }
         },
         "required": [
           "id",
           "recording_id",
+          "user_id",
+          "username",
           "body",
-          "author_id",
-          "author_name",
-          "created_at"
+          "created_at",
+          "can_delete"
         ],
         "type": "object"
       },
@@ -3766,17 +3988,17 @@
       },
       "RecordingCommentReq": {
         "properties": {
-          "at_secs": {
-            "description": "Segundos desde o início; omisso = sobre a gravação inteira.",
-            "format": "int32",
+          "body": {
+            "description": "1-2000 caracteres (também depois do DLP).",
+            "type": "string"
+          },
+          "t_ms": {
+            "description": "Milissegundos desde o início; omisso ou `null` = sobre a gravação inteira.",
+            "format": "int64",
             "type": [
               "integer",
               "null"
             ]
-          },
-          "body": {
-            "description": "1-2000 caracteres. Passa pelo DLP antes de ser guardado.",
-            "type": "string"
           }
         },
         "required": [
@@ -3786,60 +4008,92 @@
       },
       "RecordingCommentUpdateReq": {
         "properties": {
-          "at_secs": {
-            "description": "Muda a marca temporal. Não se retira a marca por aqui.",
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
           "body": {
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "t_ms": {
+            "description": "Muda a marca temporal. Não se retira a marca por aqui.",
+            "format": "int64",
+            "type": [
+              "integer",
               "null"
             ]
           }
         },
         "type": "object"
       },
-      "RecordingItem": {
-        "description": "Item da biblioteca, enriquecido para a UI.",
+      "RecordingLibraryItem": {
+        "description": "Item da biblioteca com metadados de media, estados, contagens e publicação\n(`RecordingLibraryItem` da UI).",
         "properties": {
+          "audio_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "can_download": {
-            "description": "RBAC de download: só o dono da gravação e admins da org do dono podem\ndescarregar o ficheiro; os restantes só reproduzem.",
+            "description": "Só o dono e os admins activos da org do dono descarregam; os restantes reproduzem.",
             "type": "boolean"
           },
           "can_manage": {
-            "description": "Pode alterar título, categoria e capítulos (dono ou admin activo da org do dono).",
+            "description": "Pode editar nome, descrição, etiquetas, capítulos, legendas e publicar.",
             "type": "boolean"
           },
-          "category": {
-            "description": "`meeting` | `lecture` | `broadcast` | `other`.",
-            "type": "string"
+          "caption_languages": {
+            "description": "Línguas com legenda PUBLICADA.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "chapter_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "comment_count": {
+            "description": "Comentários vivos (os apagados não contam).",
+            "format": "int64",
+            "type": "integer"
           },
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
-          "duration_secs": {
-            "description": "Duração em segundos; `null` = não se sabe (gravação carregada pelo browser).",
-            "format": "int32",
+          "description": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "description": "Medidos com ffprobe; `null` = não foi possível medir.",
+            "format": "int64",
             "type": [
               "integer",
               "null"
             ]
           },
           "failure_reason": {
-            "description": "Causa em linguagem de utilizador. `None` quando `status = ready`.",
+            "description": "Causa em linguagem de utilizador. `null` quando não falhou.",
             "type": [
               "string",
               "null"
             ]
           },
           "filename": {
-            "description": "Nome do ficheiro (é o nome com que se descarrega).",
+            "description": "Nome da gravação: o que a UI mostra e com que se descarrega.",
             "type": "string"
+          },
+          "fps": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "has_thumbnail": {
+            "description": "Há miniatura em `GET /api/recordings/{recording_id}/thumbnail`.",
+            "type": "boolean"
           },
           "height": {
             "format": "int32",
@@ -3852,13 +4106,32 @@
             "format": "uuid",
             "type": "string"
           },
+          "kind": {
+            "description": "`meeting` | `training` | `broadcast` | `hybrid`.",
+            "type": "string"
+          },
           "owned": {
-            "description": "True se o utilizador atual é dono (participou/fez upload); false se só partilhada.",
+            "description": "True se quem pede participou na sala; false se só a vê por partilha,\npublicação ou papel.",
             "type": "boolean"
           },
-          "processing_state": {
-            "description": "Estado derivado: `ready` | `failed` | `transcribing` | `transcribed` |\n`transcription_failed`. Não há `processing`: a linha só nasce depois de\no ffmpeg acabar de compor.",
-            "type": "string"
+          "participant_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "progress_pct": {
+            "description": "Progresso do passo em curso, 0–100. `null` sem passo com progresso.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "published_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "room_code": {
             "type": "string"
@@ -3868,7 +4141,7 @@
             "type": "string"
           },
           "share_count": {
-            "description": "Nº de utilizadores com quem está partilhada (só relevante para o dono).",
+            "description": "Nº de utilizadores com quem está partilhada.",
             "format": "int64",
             "type": "integer"
           },
@@ -3883,16 +4156,36 @@
               "null"
             ]
           },
-          "status": {
-            "description": "`ready` = há ficheiro. `failed` = houve tentativa e não há nada.\n\nA entrada falhada existe para ser VISTA: antes, uma gravação que não\ncompunha desaparecia sem deixar rasto, e quem carregou em «gravar»\nficava a pensar que tinha um ficheiro algures. Ver migração 0036.",
+          "state": {
+            "description": "O `status`, com `published` quando está pronta e publicada.",
             "type": "string"
           },
-          "title": {
-            "description": "Título dado por quem gere a gravação; `null` = a UI mostra o `filename`.",
+          "status": {
+            "description": "`transcribing` | `ready` | `failed`. Esta linha não emite `processing`:\na linha só nasce depois de o ffmpeg acabar de compor.",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "transcribed_at": {
+            "format": "date-time",
             "type": [
               "string",
               "null"
             ]
+          },
+          "transcript_language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transcript_status": {
+            "description": "`none` | `transcribing` | `ready` | `failed`.",
+            "type": "string"
           },
           "uploader_id": {
             "format": "uuid",
@@ -3901,8 +4194,36 @@
           "uploader_name": {
             "type": "string"
           },
+          "uploader_org_id": {
+            "description": "Organização do autor (a que partilha com quem pede, se houver).",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uploader_org_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "video_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "view_count": {
+            "description": "Visualizações (uma por pessoa por dia).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "visibility": {
+            "description": "`private` | `org`.",
+            "type": "string"
+          },
           "width": {
-            "description": "Resolução do vídeo; `null` = não se sabe, ou só áudio.",
             "format": "int32",
             "type": [
               "integer",
@@ -3917,15 +4238,25 @@
           "uploader_id",
           "uploader_name",
           "filename",
-          "category",
           "size_bytes",
           "created_at",
           "owned",
           "share_count",
           "can_download",
-          "can_manage",
           "status",
-          "processing_state"
+          "state",
+          "kind",
+          "has_thumbnail",
+          "transcript_status",
+          "chapter_count",
+          "comment_count",
+          "view_count",
+          "participant_count",
+          "caption_languages",
+          "description",
+          "tags",
+          "visibility",
+          "can_manage"
         ],
         "type": "object"
       },
@@ -3949,11 +4280,11 @@
         "type": "object"
       },
       "RecordingPage": {
-        "description": "Página da biblioteca (com `q`, `page_size` ou `page_token`).",
+        "description": "Página da biblioteca (com `page_size` ou `page_token`).",
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/RecordingItem"
+              "$ref": "#/components/schemas/RecordingLibraryItem"
             },
             "type": "array"
           },
@@ -3967,6 +4298,56 @@
         "required": [
           "items"
         ],
+        "type": "object"
+      },
+      "RecordingParticipant": {
+        "properties": {
+          "joined_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "joined_at"
+        ],
+        "type": "object"
+      },
+      "RecordingParticipantPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecordingParticipant"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "RecordingPublicationReq": {
+        "properties": {
+          "visibility": {
+            "description": "Só `org`: publicar para os membros activos das organizações do autor.",
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "RecordingShareLink": {
@@ -4016,6 +4397,193 @@
         ],
         "type": "object"
       },
+      "RecordingTranscript": {
+        "properties": {
+          "confidence": {
+            "description": "Média da confiança dos segmentos, 0–1.",
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "error": {
+            "description": "Razão da falha. Só quando `status = failed`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "progress_pct": {
+            "description": "Só enquanto `transcribing`, e só se houver quem o escreva.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "recording_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "segments": {
+            "description": "Vazio quando o worker entregou só o texto.",
+            "items": {
+              "$ref": "#/components/schemas/TranscriptSegment"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "`none` | `transcribing` | `ready` | `failed`.",
+            "type": "string"
+          },
+          "text": {
+            "description": "Texto inteiro (já censurado pelo DLP).",
+            "type": "string"
+          },
+          "transcribed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "recording_id",
+          "status",
+          "text",
+          "segments"
+        ],
+        "type": "object"
+      },
+      "RecordingUpdateReq": {
+        "properties": {
+          "description": {
+            "description": "0-8000 caracteres; `\"\"` apaga.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filename": {
+            "description": "Nome: 1-200 caracteres, uma linha.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tags": {
+            "description": "Até 20 etiquetas de 1-40 caracteres; normalizadas (sem `#`, minúsculas,\nsem repetidas). `[]` apaga.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RecordingUploadResult": {
+        "description": "Resposta do upload: a gravação e o que o servidor mediu no ficheiro.",
+        "properties": {
+          "audio_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "duration_ms": {
+            "description": "Medidos com ffprobe; `null` = não foi possível medir (nunca inventado).",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "filename": {
+            "type": "string"
+          },
+          "fps": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "has_thumbnail": {
+            "type": "boolean"
+          },
+          "height": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`meeting` | `training` | `broadcast` | `hybrid`.",
+            "type": "string"
+          },
+          "room_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "description": "`ready` (o upload só responde com o ficheiro escrito).",
+            "type": "string"
+          },
+          "uploader_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "video_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "width": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "room_id",
+          "uploader_id",
+          "filename",
+          "size_bytes",
+          "created_at",
+          "kind",
+          "status",
+          "has_thumbnail"
+        ],
+        "type": "object"
+      },
       "RegisterReq": {
         "properties": {
           "email": {
@@ -4045,7 +4613,7 @@
             "type": "string"
           },
           "status": {
-            "description": "`accepted` | `declined`.",
+            "description": "`accepted` | `declined` | `tentative`.",
             "type": "string"
           }
         },
@@ -4216,6 +4784,60 @@
         ],
         "type": "object"
       },
+      "SessionOptions": {
+        "description": "Opções de sessão de uma reunião (R184, migração 0056). O contrato de dados\né o `MeetingSessionOptions` da UI. As regras de forma são de\n`delonix_meet_domain::conferencing::session_options` — a BFF e a v1 chamam\nas mesmas (ADR-0004 §5, regra 8).",
+        "properties": {
+          "auto_record": {
+            "description": "O gravador do SERVIDOR arranca sozinho quando o anfitrião entra na sala\n(topologia SFU; nunca numa sala E2EE; só se a sala ainda não tiver\ngravação).",
+            "type": "boolean"
+          },
+          "format": {
+            "default": "meeting",
+            "description": "`meeting` (omissão) | `training` (abre salas de grupo) | `broadcast` | `hybrid`.",
+            "type": "string"
+          },
+          "record_quality": {
+            "default": "1080p",
+            "description": "`2160p` | `1080p` (omissão) | `720p` | `audio`. É a TELA da composição\nem grelha e o tecto de resolução de um só orador (que só é reduzida,\nnunca ampliada); `audio` deixa o vídeo fora da gravação.",
+            "type": "string"
+          },
+          "waiting_room": {
+            "description": "Toda a gente passa pela sala de espera, convidados incluídos.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "SessionOptionsPatch": {
+        "description": "Alteração parcial das opções de sessão: o campo ausente fica como está.",
+        "properties": {
+          "auto_record": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "record_quality": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "waiting_room": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "SkippedInvitee": {
         "properties": {
           "email": {
@@ -4316,22 +4938,30 @@
         "type": "object"
       },
       "StartResp": {
-        "description": "Resposta de `POST /api/meetings/{id}/start`.",
-        "properties": {
-          "code": {
-            "description": "Código da sala a que o cliente se liga.",
-            "type": "string"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptions",
+            "description": "As opções com que a sala foi (ou já tinha sido) criada."
           },
-          "kind": {
-            "description": "`video` | `voice`.",
-            "type": "string"
+          {
+            "properties": {
+              "code": {
+                "description": "Código da sala a que o cliente se liga.",
+                "type": "string"
+              },
+              "kind": {
+                "description": "`video` | `voice`.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "kind"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "code",
-          "kind"
         ],
-        "type": "object"
+        "description": "Resposta de `POST /api/meetings/{id}/start`."
       },
       "StatusResp": {
         "description": "Estado público da instalação.",
@@ -4635,6 +5265,36 @@
         },
         "type": "object"
       },
+      "TranscriptSegment": {
+        "description": "Um segmento da transcrição com tempos.",
+        "properties": {
+          "confidence": {
+            "description": "0–1; `null` = o worker não a deu.",
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "end_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "start_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_ms",
+          "end_ms",
+          "text"
+        ],
+        "type": "object"
+      },
       "TranslateReq": {
         "properties": {
           "target": {
@@ -4737,25 +5397,6 @@
           "waiting_room": {
             "type": [
               "boolean",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "UpdateRecordingReq": {
-        "properties": {
-          "category": {
-            "description": "`meeting` | `lecture` | `broadcast` | `other`.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "title": {
-            "description": "1-120 caracteres, uma linha. `\"\"` apaga o título (a UI volta ao `filename`).",
-            "type": [
-              "string",
               "null"
             ]
           }
@@ -4932,6 +5573,9 @@
       "V1MeetingSummary": {
         "description": "Reunião vista pelo sync de calendário v1.",
         "properties": {
+          "auto_record": {
+            "type": "boolean"
+          },
           "created_at": {
             "format": "date-time",
             "type": "string"
@@ -4942,6 +5586,10 @@
           "duration_min": {
             "format": "int32",
             "type": "integer"
+          },
+          "format": {
+            "description": "Opções de sessão (R184): `meeting|training|broadcast|hybrid`.",
+            "type": "string"
           },
           "id": {
             "format": "uuid",
@@ -4959,6 +5607,10 @@
               "null"
             ]
           },
+          "record_quality": {
+            "description": "`2160p|1080p|720p|audio`.",
+            "type": "string"
+          },
           "room_code": {
             "type": [
               "string",
@@ -4971,6 +5623,9 @@
           },
           "title": {
             "type": "string"
+          },
+          "waiting_room": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -4980,7 +5635,11 @@
           "kind",
           "starts_at",
           "duration_min",
-          "created_at"
+          "created_at",
+          "format",
+          "waiting_room",
+          "auto_record",
+          "record_quality"
         ],
         "type": "object"
       },
@@ -5025,7 +5684,7 @@
             "type": "string"
           },
           "download_url": {
-            "description": "`/api/recordings/{id}` (rota da BFF, autenticada por sessão).",
+            "description": "`/api/recordings/{id}/content` (rota da BFF, autenticada por sessão).",
             "type": "string"
           },
           "filename": {
