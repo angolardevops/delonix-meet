@@ -212,6 +212,13 @@ function SessaoDaSala({
       return n
     })
 
+  /** Pôr/tirar do palco avisa o próprio par — é a luz de tally da câmara-telemóvel. */
+  const alternarNoPalco = (id: string) => {
+    const aoVivo = !noPalco.has(id)
+    alternar(setNoPalco, id)
+    core.signal.send({ type: 'tally', to: id, live: aoVivo })
+  }
+
   const pessoa = convidados.find((p) => p.peerId === escolhido) ?? null
   const link = `${location.origin}${location.pathname}#/r/${codigo}`
   const perguntasAbertas = ferramentas.questions.filter((q) => !q.answered)
@@ -316,7 +323,7 @@ function SessaoDaSala({
                   size="sm"
                   disabled={!pessoa}
                   data-studio="por-no-palco"
-                  onClick={() => pessoa && alternar(setNoPalco, pessoa.peerId)}
+                  onClick={() => pessoa && alternarNoPalco(pessoa.peerId)}
                 >
                   {pessoa && noPalco.has(pessoa.peerId) ? t('studio.sala.tirarDoPalco') : t('studio.sala.porNoPalco')}
                 </Button>

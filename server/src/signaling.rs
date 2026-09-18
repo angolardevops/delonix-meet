@@ -124,6 +124,13 @@ pub enum ClientMsg {
     ForceCam {
         to: Uuid,
     },
+    /// O Estúdio pôs/tirou este par do palco (câmara-telemóvel companion) —
+    /// ver studio::SourcesPanel e a página do telemóvel. Anfitrião-only,
+    /// dirigido só ao par: não é estado da sala, é um aviso "estás no ar".
+    Tally {
+        to: Uuid,
+        live: bool,
+    },
     /// Liga/desliga o chat para quem não é anfitrião.
     ChatToggle {
         on: bool,
@@ -539,6 +546,10 @@ pub enum ServerMsg {
     ForceMuted, // para o alvo: foste silenciado
     /// Para o alvo: a câmara foi desligada por quem manda.
     ForceCamOff,
+    /// Para o alvo: o Estúdio pôs/tirou-o do palco — a luz de tally.
+    Tally {
+        live: bool,
+    },
     /// Para TODOS: silenciar geral. Cada cliente silencia-se a si próprio —
     /// o servidor não tem microfones. `allow_unmute` diz se o botão de voltar
     /// a ligar continua a funcionar.
@@ -2964,6 +2975,11 @@ impl SignalingHub {
                     self.send_to(room_id, to, ServerMsg::ForceCamOff);
                 }
             }
+            ClientMsg::Tally { to, live } => {
+                if self.is_host(room_id, peer_id) {
+                    self.send_to(room_id, to, ServerMsg::Tally { live });
+                }
+            }
             ClientMsg::MuteAll { allow_unmute } => {
                 if self.is_host(room_id, peer_id) {
                     // O estado fica na SALA e não só na mensagem: quem entrar
@@ -4631,6 +4647,40 @@ mod tests {
             None,
         );
         assert!(rx_a.try_recv().is_err());
+    }
+
+    /// A luz de tally da câmara-telemóvel: só o anfitrião a liga, e só chega
+    /// ao próprio par — não é difundida à sala.
+    #[tokio::test]
+    async fn tally_e_dirigida_ao_par_e_so_o_anfitriao_a_manda() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (host, tx_h, _rx_h) = peer();
+        let (a, tx_a, mut rx_a) = peer();
+        let (b, tx_b, mut rx_b) = peer();
+        hub.join(room, host, host, "host".into(), true, true, false, tx_h);
+        hub.join(room, a, a, "a".into(), false, false, false, tx_a);
+        hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+        drain(&mut rx_a);
+        drain(&mut rx_b);
+
+        // Não-anfitrião não acende a luz de ninguém.
+        hub.handle(room, a, ClientMsg::Tally { to: b, live: true }, None);
+        assert!(rx_b.try_recv().is_err());
+
+        hub.handle(room, host, ClientMsg::Tally { to: b, live: true }, None);
+        assert!(matches!(
+            rx_b.recv().await.unwrap(),
+            ServerMsg::Tally { live: true }
+        ));
+        // Não é difundida — quem não é o alvo não recebe nada.
+        assert!(rx_a.try_recv().is_err());
+
+        hub.handle(room, host, ClientMsg::Tally { to: b, live: false }, None);
+        assert!(matches!(
+            rx_b.recv().await.unwrap(),
+            ServerMsg::Tally { live: false }
+        ));
     }
 
     // ---------- Reclamação de lugar (R91) ----------

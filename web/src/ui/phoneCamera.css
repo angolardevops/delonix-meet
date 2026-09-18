@@ -1,0 +1,96 @@
+/*
+ * "Telemóvel como câmara" — página mínima pensada para o ecrã do telefone
+ * (vertical, toque grande). Sempre em escuro: é um monitor de operação.
+ */
+.phonecam,
+.phonecam-wait {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: #0b0c0e;
+  color: #f4f4f5;
+  display: flex;
+  flex-direction: column;
+}
+.phonecam-wait {
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+.phonecam__tally {
+  flex: none;
+  padding: 10px 16px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.4px;
+  background: #2a2c30;
+  color: #a0a0a6;
+}
+.phonecam__tally.is-live {
+  background: #ad1017;
+  color: #fff;
+}
+.phonecam__preview {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  object-fit: cover;
+  background: #000;
+  transform: scaleX(-1);
+}
+.phonecam__controls {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #17181b;
+}
+.phonecam__slider {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #c8c8cc;
+}
+.phonecam__slider input[type='range'] {
+  width: 100%;
+}
+.phonecam__semControlo {
+  margin: 0;
+  font-size: 12px;
+}
+.phonecam__footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 16px 14px;
+  background: #17181b;
+}
+.phonecam__seguranca {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.phonecam__bateria {
+  font-size: 12px;
+}
+.phonecam__nota {
+  flex: none;
+  margin: 0;
+  padding: 0 16px 12px;
+  font-size: 10.5px;
+}
+
+@media (min-width: 640px) {
+  .phonecam {
+    max-width: 480px;
+    margin: 0 auto;
+  }
+}

@@ -1,0 +1,28 @@
+export default {
+  aLigar: '正在连接会议室…',
+  naEspera: '等待准入…',
+  erro: {
+    denied: '会议室拒绝了加入请求。',
+    kicked: '你已被移出此会议室。',
+    notfound: '该会议室不存在。',
+    'e2ee-pass': '启用端到端加密的会议室不接受此连接。',
+  },
+  tally: {
+    noAr: '直播中',
+    emEspera: '待命中',
+  },
+  zoom: '变焦',
+  foco: '对焦',
+  exposicao: '曝光',
+  lanterna: '手电筒',
+  semControlosAvancados: '此设备或浏览器不支持高级摄像头控制（变焦、对焦、曝光）。',
+  erroControlo: '无法应用此调整。',
+  erroGravacao: '无法开始安全录制。',
+  gravarSeguranca: '安全录制',
+  pararSeguranca: '停止录制',
+  aGravarLocal: '正在手机本地录制',
+  descarregarSeguranca: '下载',
+  sair: '离开',
+  nota: '只要演播室需要你的摄像头，此屏幕就会保持连接。请保持屏幕常亮。',
+  aCarregar: '· 充电中',
+}

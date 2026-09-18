@@ -79,6 +79,7 @@ export type ServerMsg =
   | { type: 'denied' }
   | { type: 'force-muted' }
   | { type: 'force-cam-off' }
+  | { type: 'tally'; live: boolean }
   | { type: 'muted-all'; by: string; allow_unmute: boolean }
   | { type: 'host-changed'; from: string; to: string }
   | { type: 'kicked' }
@@ -120,6 +121,7 @@ export type ClientMsg =
   | { type: 'promote-admit'; to: string; allowed: boolean }
   | { type: 'force-mute'; to: string }
   | { type: 'force-cam'; to: string }
+  | { type: 'tally'; to: string; live: boolean }
   | { type: 'mute-all'; allow_unmute: boolean }
   | { type: 'chat-toggle'; on: boolean }
   | { type: 'transfer-host'; to: string }

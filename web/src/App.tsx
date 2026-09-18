@@ -17,6 +17,7 @@ import Home from './pages/Home'
 
 const Room = lazy(() => import('./pages/Room'))
 const Lobby = lazy(() => import('./pages/Lobby'))
+const PhoneCamera = lazy(() => import('./pages/PhoneCamera'))
 const Calendar = lazy(() => import('./pages/Calendar'))
 const Analytics = lazy(() => import('./pages/Analytics'))
 const Recordings = lazy(() => import('./pages/Recordings'))
@@ -45,6 +46,7 @@ type Route =
   | { kind: NavKey }
   | { kind: 'room'; code: string; voice: boolean }
   | { kind: 'lobby'; code: string }
+  | { kind: 'telemovel'; code: string }
   | { kind: 'share'; token: string }
   | { kind: 'diagram'; id: string | null }
   | { kind: 'player'; id: string }
@@ -57,6 +59,8 @@ function parseHash(): Route {
   if (room) return { kind: 'room', code: room[1], voice: !!room[2] }
   const lobby = h.match(/^#\/lobby\/([a-z-]+)$/)
   if (lobby) return { kind: 'lobby', code: lobby[1] }
+  const telemovel = h.match(/^#\/telemovel\/([a-z-]+)$/)
+  if (telemovel) return { kind: 'telemovel', code: telemovel[1] }
   const share = h.match(/^#\/share\/([a-f0-9]+)$/)
   if (share) return { kind: 'share', token: share[1] }
   const diagram = h.match(/^#\/whiteboards\/diagram(?:\/([A-Za-z0-9_-]+))?(?:\?.*)?$/)
@@ -120,7 +124,7 @@ export default function App() {
   if (!user) {
     return (
       <Login
-        pendingRoom={route.kind === 'room' || route.kind === 'lobby' ? route.code : null}
+        pendingRoom={route.kind === 'room' || route.kind === 'lobby' || route.kind === 'telemovel' ? route.code : null}
         onLogin={(u) => {
           setUser(u)
           if (location.hash.startsWith('#/login')) location.hash = '/'
@@ -161,6 +165,10 @@ export default function App() {
               onLeave={() => (location.hash = '/')}
               onSwitch={(c) => enterRoom(c)}
             />
+          </RouteFallback>
+        ) : route.kind === 'telemovel' ? (
+          <RouteFallback>
+            <PhoneCamera key={route.code} code={route.code} onLeave={() => (location.hash = '/')} />
           </RouteFallback>
         ) : (
           <Shell

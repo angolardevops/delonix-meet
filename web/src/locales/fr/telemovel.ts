@@ -1,0 +1,28 @@
+export default {
+  aLigar: 'Connexion à la salle…',
+  naEspera: "En attente d'admission…",
+  erro: {
+    denied: "La salle a refusé l'entrée.",
+    kicked: 'Tu as été retiré de cette salle.',
+    notfound: "Cette salle n'existe pas.",
+    'e2ee-pass': 'Les salles chiffrées de bout en bout ne peuvent pas accepter cette connexion.',
+  },
+  tally: {
+    noAr: 'À L’ANTENNE',
+    emEspera: 'en attente',
+  },
+  zoom: 'Zoom',
+  foco: 'Mise au point',
+  exposicao: 'Exposition',
+  lanterna: 'Torche',
+  semControlosAvancados: "Cet appareil ou ce navigateur n'expose pas de contrôles de caméra avancés (zoom, mise au point, exposition).",
+  erroControlo: "Impossible d'appliquer le réglage.",
+  erroGravacao: "Impossible de démarrer l'enregistrement de sécurité.",
+  gravarSeguranca: 'Enregistrement de sécurité',
+  pararSeguranca: "Arrêter l'enregistrement",
+  aGravarLocal: 'enregistrement sur le téléphone',
+  descarregarSeguranca: 'Télécharger',
+  sair: 'Quitter',
+  nota: "Cet écran reste connecté tant que le Studio a besoin de ta caméra. Laisse l'écran allumé.",
+  aCarregar: '· en charge',
+}
