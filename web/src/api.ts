@@ -456,8 +456,11 @@ export async function downloadMyData(): Promise<void> {
   URL.revokeObjectURL(url)
 }
 
-export const updateEmployee = (orgId: string, userId: string, data: { role?: string; title?: string; branch_id?: string | null }) =>
-  request<Employee>(`/api/orgs/${orgId}/members/${userId}`, { method: 'PATCH', body: JSON.stringify(data) })
+export const updateEmployee = (
+  orgId: string,
+  userId: string,
+  data: { role?: string; title?: string; branch_id?: string | null; suspended?: boolean },
+) => request<Employee>(`/api/orgs/${orgId}/members/${userId}`, { method: 'PATCH', body: JSON.stringify(data) })
 
 export const shareRecording = (id: string, userId: string) =>
   request(`/api/recordings/${id}/shares`, { method: 'POST', body: JSON.stringify({ user_id: userId }) })
@@ -671,6 +674,8 @@ export interface Employee extends Partial<EmployeeSmsFields> {
   branch_id: string | null
   branch_name: string | null
   last_active?: string | null
+  /** Bloqueado por um admin (suspenso); continua membro. Ver migração 0054. */
+  suspended_at: string | null
 }
 export interface Group {
   id: string
@@ -879,6 +884,99 @@ export const addEmployee = (
 ) => request<Employee>(`/api/orgs/${orgId}/members`, { method: 'POST', body: JSON.stringify(body) })
 export const removeEmployee = (orgId: string, userId: string) =>
   request(`/api/orgs/${orgId}/members/${userId}`, { method: 'DELETE' })
+
+// ---------- Convites por link ("Utilizadores e convites") ----------
+//
+// Sem SMTP no servidor: o link não é enviado por email, é gerado e o admin
+// copia-o e partilha-o pelo canal que preferir — ver InviteDialog.tsx.
+
+export interface Invite {
+  id: string
+  org_id: string
+  email: string
+  role: 'admin' | 'member'
+  branch_id: string | null
+  branch_name: string | null
+  title: string
+  token: string
+  invited_by: string
+  invited_by_name: string
+  created_at: string
+  expires_at: string
+  accepted_at: string | null
+  revoked_at: string | null
+}
+
+export const listInvites = (orgId: string) => request<Invite[]>(`/api/orgs/${orgId}/invites`)
+
+export const createInvite = (
+  orgId: string,
+  body: { email: string; role?: string; branch_id?: string; title?: string },
+) => request<Invite>(`/api/orgs/${orgId}/invites`, { method: 'POST', body: JSON.stringify(body) })
+
+export interface BulkInviteRow {
+  email: string
+  title?: string
+  role?: string
+  /** Nome de uma filial existente da org (comparado sem maiúsculas/minúsculas). */
+  branch?: string
+}
+export interface BulkInviteResult {
+  email: string
+  ok: boolean
+  error: string | null
+  invite: Invite | null
+}
+export const bulkCreateInvites = (orgId: string, rows: BulkInviteRow[]) =>
+  request<BulkInviteResult[]>(`/api/orgs/${orgId}/invites/bulk`, { method: 'POST', body: JSON.stringify({ rows }) })
+
+export const revokeInvite = (orgId: string, inviteId: string) =>
+  request(`/api/orgs/${orgId}/invites/${inviteId}`, { method: 'DELETE' })
+
+/** Forma pública de um convite (sem sessão) — nunca traz `org_id`/`id`/`token`. */
+export interface InvitePublic {
+  org_name: string
+  email: string
+  role: string
+  title: string
+  expired: boolean
+  revoked: boolean
+  accepted: boolean
+}
+
+/** Sem sessão — como `getPublicShare`, `fetch` cru em vez de `request()` (não
+ *  se quer a dança de renovação de sessão numa página que ninguém autenticou). */
+export async function getInvitePublic(token: string): Promise<InvitePublic> {
+  const res = await fetch(`/api/invites/${token}`, { credentials: 'same-origin' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw Object.assign(new Error(body.error ?? 'request failed'), { status: res.status })
+  }
+  return res.json()
+}
+
+/**
+ * Aceita o convite: cria a conta, entra na organização, e devolve a pessoa já
+ * LOGADA — `saveSession` é a MESMA função que `registerOrg`/`login` usam, por
+ * isso o resto da app (rota, `currentUser()`) não distingue esta entrada de
+ * um registo normal.
+ */
+export async function acceptInvite(token: string, body: { username: string; password: string }): Promise<User> {
+  const res = await fetch(`/api/invites/${token}/accept`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({ error: res.statusText }))
+    throw new ApiError(res.status, b, b?.error ?? res.statusText ?? 'request failed')
+  }
+  const t: AuthOk = await res.json()
+  saveSession(t)
+  return t.user
+}
+
 export const listGroups = (orgId: string) => request<Group[]>(`/api/orgs/${orgId}/groups`)
 export const createGroup = (orgId: string, name: string, memberIds: string[]) =>
   request<Group>(`/api/orgs/${orgId}/groups`, { method: 'POST', body: JSON.stringify({ name, member_ids: memberIds }) })

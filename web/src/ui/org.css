@@ -71,6 +71,19 @@
 
 /* Presença: ponto verde (online) ou cinzento, com anel da superfície. */
 
+.org-invites {
+  border-top: 1px solid var(--border);
+}
+.org-invites__title {
+  margin: 10px 0 0;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--muted);
+}
+.org-invites .org-simple {
+  padding: 0;
+}
+
 /* Lista simples (filiais, grupos, salas). */
 .org-simple {
   list-style: none;
@@ -126,6 +139,16 @@
 .org-form__foot {
   display: flex;
   justify-content: flex-end;
+}
+.org-form__file {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+.org-csv-erro {
+  color: var(--danger);
 }
 .org-inline {
   display: grid;
