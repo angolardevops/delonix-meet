@@ -788,6 +788,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "delonix-meet-store"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "delonix-meet-core",
+ "delonix-meet-domain",
+ "serde",
+ "sqlx",
+ "uuid",
+]
+
+[[package]]
 name = "delonix-server"
 version = "0.1.0"
 dependencies = [
@@ -801,6 +813,7 @@ dependencies = [
  "delonix-meet-core",
  "delonix-meet-domain",
  "delonix-meet-protocol",
+ "delonix-meet-store",
  "futures-util",
  "hex",
  "hmac",
