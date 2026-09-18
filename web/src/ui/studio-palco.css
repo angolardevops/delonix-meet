@@ -442,6 +442,10 @@
 .st-guest.is-live {
   border-color: var(--live);
 }
+.st-guest.is-programa {
+  border-color: var(--record);
+  box-shadow: 0 0 0 1px var(--record);
+}
 .st-guest__video {
   position: absolute;
   inset: 0;
@@ -484,9 +488,14 @@
   color: var(--stage);
   font-size: var(--t-xs);
 }
+.st-guest__badge--programa {
+  right: auto;
+  left: 4px;
+  background: var(--record);
+}
 .st-guests__actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   align-items: center;
   gap: 6px;
 }

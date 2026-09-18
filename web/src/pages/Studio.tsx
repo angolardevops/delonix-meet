@@ -121,6 +121,8 @@ export default function Studio() {
   const [salaLigada, setSalaLigada] = useState<{ codigo: string; token: string } | null>(null)
   const [haSondagem, setHaSondagem] = useState(false)
   const [convidadosNoPalco, setConvidadosNoPalco] = useState(0)
+  /** Quem enche o ecrã em «Um a ecrã inteiro» — o corte da mesa de corte. */
+  const [programaId, setProgramaId] = useState<string | null>(null)
   const [destinos, setDestinos] = useState<Destino[]>([
     { url: 'rtmp://a.rtmp.youtube.com/live2', chave: '', rotulo: 'YouTube' },
   ])
@@ -220,6 +222,9 @@ export default function Studio() {
   useEffect(() => {
     if (compRef.current) compRef.current.recorte = recorte
   }, [recorte])
+  useEffect(() => {
+    if (compRef.current) compRef.current.programaId = programaId
+  }, [programaId])
 
   const lerSegundos = useCallback(() => compRef.current?.segundos ?? 0, [])
   const lerBytes = useCallback(() => compRef.current?.bytesGravados ?? 0, [])
@@ -742,6 +747,8 @@ export default function Studio() {
                   obterCamara={obterCamara}
                   onLigacao={setSalaLigada}
                   onPalco={aoPalco}
+                  programaId={programaId}
+                  onPrograma={setProgramaId}
                   onSondagem={aSondagem}
                   separadorInicial={ecraDeTelemovel() ? 'chat' : 'convidados'}
                 />

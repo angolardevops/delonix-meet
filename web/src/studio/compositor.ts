@@ -202,6 +202,13 @@ export class CompositorDeAula {
   /** O que enche o palco e como se arruma. Lidos a cada frame. */
   layout: LayoutDoPalco = 'solo'
   conteudo: ConteudoDoPalco = 'fontes'
+  /**
+   * Em `layout: 'solo'`, qual convidado vai para o ecrã inteiro — o «corte»
+   * da mesa de corte. `null`, ou um id que já não está no palco, cai para o
+   * mais antigo ainda montado (o comportamento de sempre, antes de existir
+   * escolha do operador).
+   */
+  programaId: string | null = null
   sobreposicoes: Sobreposicoes = { ...SOBREPOSICOES_INICIAIS }
   /** Momento em que o rodapé foi ligado — dá a animação de entrada. */
   rodapeDesde = 0
@@ -478,8 +485,8 @@ export class CompositorDeAula {
       if (this.conteudo === 'quadro') this.desenharConteudo(this.quadro, todo, 'contain')
       else if (this.temEcra) this.desenharEcraEm(todo)
       else {
-        const primeiro = [...this.convidados.values()][0]
-        if (primeiro) this.desenharConvidado(primeiro, todo)
+        const alvo = (this.programaId && this.convidados.get(this.programaId)) || [...this.convidados.values()][0]
+        if (alvo) this.desenharConvidado(alvo, todo)
       }
       if (this.avatar.visivel && this.temCamara) this.desenharAvatar(W, H)
     } else {

@@ -37,6 +37,9 @@ export interface PropsDaSala {
   /** A sala e o token com que o directo emite; `null` ao desligar. */
   onLigacao: (l: { codigo: string; token: string } | null) => void
   onPalco: (fontes: Fonte[]) => void
+  /** Quem enche o ecrã em `layout: 'solo'` — o corte da mesa de corte (MVP: um clique, sem pré-visualização à parte). */
+  programaId: string | null
+  onPrograma: (id: string | null) => void
   onSondagem: (s: SondagemNoPalco | null) => void
   /** Separador inicial: no telemóvel abre no chat. */
   separadorInicial?: Separador
@@ -86,6 +89,7 @@ export default function SalaDoEstudio(props: PropsDaSala) {
         onSair={() => {
           props.onLigacao(null)
           props.onPalco([])
+          props.onPrograma(null)
           props.onSondagem(null)
           setCodigo('')
         }}
@@ -128,6 +132,8 @@ function SessaoDaSala({
   obterCamara,
   onLigacao,
   onPalco,
+  programaId,
+  onPrograma,
   onSondagem,
   onSair,
   separadorInicial = 'convidados',
@@ -147,11 +153,13 @@ function SessaoDaSala({
   const ligada = ligacao.estado === 'ligada'
   const convidados = core.peers.filter((p) => !p.is_bot)
 
-  // Quem saiu da sala sai do palco e da pré-escuta.
+  // Quem saiu da sala sai do palco, da pré-escuta e, se era o programa, do ecrã.
   useEffect(() => {
     const ids = new Set(core.peers.map((p) => p.peerId))
     setNoPalco((s) => (([...s].every((id) => ids.has(id)) ? s : new Set([...s].filter((id) => ids.has(id))))))
     setPreEscuta((s) => (([...s].every((id) => ids.has(id)) ? s : new Set([...s].filter((id) => ids.has(id))))))
+    if (programaId && !ids.has(programaId)) onPrograma(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [core.peers])
 
   // O palco recebe as fontes pela ORDEM em que foram postas lá.
@@ -189,10 +197,11 @@ function SessaoDaSala({
   useEffect(
     () => () => {
       onPalco([])
+      onPrograma(null)
       onSondagem(null)
       onLigacao(null)
     },
-    [onPalco, onSondagem, onLigacao],
+    [onPalco, onPrograma, onSondagem, onLigacao],
   )
 
   // SFU: vídeo inteiro de quem está no palco, a camada baixa para as miniaturas.
@@ -310,6 +319,7 @@ function SessaoDaSala({
                       pessoa={p}
                       escolhido={escolhido === p.peerId}
                       noPalco={noPalco.has(p.peerId)}
+                      programa={programaId === p.peerId}
                       aOuvir={noPalco.has(p.peerId) || preEscuta.has(p.peerId)}
                       onEscolher={() => setEscolhido(p.peerId)}
                     />
@@ -328,6 +338,15 @@ function SessaoDaSala({
                   {pessoa && noPalco.has(pessoa.peerId) ? t('studio.sala.tirarDoPalco') : t('studio.sala.porNoPalco')}
                 </Button>
                 <Button
+                  variant={pessoa && programaId === pessoa.peerId ? 'secondary' : 'primary'}
+                  size="sm"
+                  disabled={!pessoa || !noPalco.has(pessoa.peerId) || programaId === pessoa.peerId}
+                  data-studio="tornar-programa"
+                  onClick={() => pessoa && onPrograma(pessoa.peerId)}
+                >
+                  {pessoa && programaId === pessoa.peerId ? t('studio.sala.jaEPrograma') : t('studio.sala.tornarPrograma')}
+                </Button>
+                <Button
                   variant="outline"
                   size="sm"
                   icon="volume"
@@ -339,6 +358,7 @@ function SessaoDaSala({
                   {t('studio.sala.preEscuta')}
                 </Button>
               </div>
+              <p className="st-note">{t('studio.sala.notaPrograma')}</p>
               <p className="st-note">{t('studio.sala.notaPreEscuta')}</p>
             </div>
           )}
@@ -384,12 +404,14 @@ function Convidado({
   pessoa,
   escolhido,
   noPalco,
+  programa,
   aOuvir,
   onEscolher,
 }: {
   pessoa: RemotePeer
   escolhido: boolean
   noPalco: boolean
+  programa: boolean
   aOuvir: boolean
   onEscolher: () => void
 }) {
@@ -407,7 +429,7 @@ function Convidado({
       type="button"
       role="option"
       aria-selected={escolhido}
-      className={cx('st-guest', escolhido && 'is-selected', noPalco && 'is-live')}
+      className={cx('st-guest', escolhido && 'is-selected', noPalco && 'is-live', programa && 'is-programa')}
       data-studio="convidado"
       onClick={onEscolher}
     >
@@ -421,6 +443,7 @@ function Convidado({
         {aOuvir && <Icon name="volume" size={11} />}
         {pessoa.username}
       </span>
+      {programa && <span className="st-guest__badge st-guest__badge--programa dx-num">{t('studio.sala.programa')}</span>}
       {noPalco && <span className="st-guest__badge dx-num">{t('studio.sala.noPalco')}</span>}
     </button>
   )
