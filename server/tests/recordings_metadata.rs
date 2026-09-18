@@ -692,6 +692,20 @@ async fn chapters_crud_bounds_uniqueness_and_access(db: sqlx::PgPool) {
     assert_eq!(st, 200, "{v}");
     assert_eq!(v["t_ms"], 310_000);
     assert_eq!(v["source"], "manual", "corrigido à mão deixa de ser auto");
+
+    // PATCH sem campos (resave, retry) não converte um capítulo auto em
+    // manual — só uma correcção de facto o faz (R230).
+    sql(
+        app,
+        "UPDATE recording_chapters SET source = 'auto' WHERE id = $1::uuid",
+        location.rsplit('/').next().unwrap(),
+    )
+    .await;
+    let (st, v) = app.patch(&location, Some(&f.a.token), json!({})).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["source"], "auto", "PATCH vazio não mexe na origem");
+    assert_eq!(v["t_ms"], 310_000, "nem no resto");
+
     let (st, v) = app
         .patch(&location, Some(&f.a.token), json!({"t_ms": 999_999}))
         .await;

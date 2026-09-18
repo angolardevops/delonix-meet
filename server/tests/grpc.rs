@@ -170,6 +170,70 @@ async fn transcription_queue_lease_complete_and_dlp(db: sqlx::PgPool) {
     assert!(transcript.contains("CENSURADA"));
 }
 
+/// R230: o DLP tem de correr ANTES do corte a `MAX_SEGMENT_CHARS` (2000) —
+/// se corresse depois, uma chave a atravessar essa fronteira ficava partida
+/// ao meio e a expressão regular deixava de a reconhecer.
+#[sqlx::test(migrations = "./migrations")]
+async fn dlp_runs_before_truncating_a_segment_that_straddles_the_limit(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let (rec, _code) = seed_recording(&app).await;
+    let addr = spawn_grpc(app.state.clone()).await;
+    let mut c = TranscriptionServiceClient::new(plaintext(addr).await);
+
+    let job = c
+        .claim_job(ClaimJobRequest {
+            worker_id: "gpu-1".into(),
+            lease_seconds: 600,
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .job
+        .expect("havia uma gravação na fila");
+
+    // 1970 caracteres de enchimento + uma chave de 35 — a chave começa no
+    // 1970 e acaba no 2004, atravessando o corte de 2000 (por isso um corte
+    // ANTES da censura apanhava só metade da chave, e a expressão regular
+    // deixava de bater certo com o fragmento).
+    let secret = format!("sk-{}", "a".repeat(32));
+    let text = format!("{}{secret}", "x".repeat(1970));
+    assert!(
+        text.len() > 2000,
+        "o texto tem de exceder MAX_SEGMENT_CHARS"
+    );
+
+    c.complete_job(CompleteJobRequest {
+        recording_id: job.recording_id.clone(),
+        lease_token: job.lease_token.clone(),
+        transcript: String::new(),
+        minutes: String::new(),
+        segments: vec![TranscriptSegment {
+            start_ms: 0,
+            end_ms: 1000,
+            text,
+            confidence: Some(0.9),
+        }],
+        language: "pt".into(),
+    })
+    .await
+    .unwrap();
+
+    let (segments,): (serde_json::Value,) =
+        sqlx::query_as("SELECT transcript_segments FROM recordings WHERE id = $1")
+            .bind(rec)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(
+        !segments.to_string().contains(&secret),
+        "a chave sobreviveu ao corte sem ser censurada: {segments}"
+    );
+    assert!(
+        segments.to_string().contains("CENSURADA"),
+        "a censura tinha de deixar o marcador: {segments}"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn failed_job_returns_to_queue_until_not_retryable(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
