@@ -2250,6 +2250,18 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 
 **Ficheiros.** `server/src/recordings.rs`, `server/tests/recordings_metadata.rs`.
 
+### R232 — Uma chave de API da v1 listava as gravações privadas de qualquer membro da organização
+
+**Sintoma.** `GET /api/v1/recordings` devolvia todas as gravações cujo autor é membro da organização da chave, incluindo as que o autor nunca publicou. Na BFF, um colega só vê as gravações de outra pessoa quando ela as publica para a organização (R235); pela v1, a mesma organização via tudo.
+
+**Causa raiz.** A consulta juntava `recordings` a `org_members` pelo autor e parava aí. Uma chave representa a ORGANIZAÇÃO inteira, não um utilizador com relação directa à gravação — e a regra de «o que a organização vê» (`AccessFacts::listed_in(Published, …)`) não estava na consulta.
+
+**Regra.** A v1 lista só as gravações publicadas para a organização (`visibility = 'org'` e `published_at` preenchido): exactamente o que um colega qualquer vê na biblioteca «publicadas», nunca uma gravação privada de outro membro só porque partilham organização. É uma mudança de comportamento para integrações que contavam com a lista inteira: passam a ver uma gravação quando o autor a publica.
+
+**Portão.** `server/tests/api_v1.rs::v1_recordings_list_scoped_to_org`: a privada fica fora, a publicada aparece, a outra organização continua sem nenhuma.
+
+**Ficheiros.** `server/src/apikeys.rs`, `server/tests/api_v1.rs`.
+
 ### R240 — O `/asr` do whisper aceitava qualquer ligação, sem autenticação nenhuma
 
 **Sintoma.** O `whisper-server` publica `WebSocket /asr?lang=…` e está no MESMO ingress público do resto. A ligação era aceite sem verificar nada: quem alcançasse o endereço tinha transcrição por GPU à borla, e podia esgotar o modelo partilhado com ligações de propósito. A mesma ligação devolvia ao cliente a mensagem crua de qualquer excepção Python (`str(e)[:200]`) — caminhos e nomes internos incluídos, que é reconhecimento grátis para quem provoca o erro de propósito.
