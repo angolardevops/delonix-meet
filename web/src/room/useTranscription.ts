@@ -193,7 +193,7 @@ export function useTranscription(core: RoomCore) {
       const token = accessTokenValue()
       if (!token) return
       void fetch(`/api/rooms/${code}/minutes`, {
-        method: 'POST',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ minutes: buildMoM(linesRef.current, t, locale), transcript: linesRef.current.join('\n') }),
         keepalive: true,

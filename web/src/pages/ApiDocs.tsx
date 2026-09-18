@@ -59,7 +59,7 @@ function endpoints(base: string): Endpoint[] {
     },
     {
       metodo: 'GET',
-      caminho: '/api/v1/rooms/{code}',
+      caminho: '/api/v1/rooms/{room_code}',
       desc: 'publico.api.metadadosSala',
       resposta: sala,
       curl: (b) => [`curl ${b}/api/v1/rooms/${CODIGO} \\`, `  -H "${AUTH}: Bearer ${CHAVE}"`].join('\n'),
@@ -76,7 +76,7 @@ function endpoints(base: string): Endpoint[] {
             size_bytes: 12345678,
             created_at: '2026-07-07T20:00:00Z',
             room_code: CODIGO,
-            download_url: '/api/recordings/…',
+            download_url: '/api/recordings/…/content',
           },
         ],
       },
@@ -84,10 +84,10 @@ function endpoints(base: string): Endpoint[] {
     },
     {
       metodo: 'GET',
-      caminho: '/api/v1/org',
+      caminho: '/api/v1/organization',
       desc: 'publico.api.infoOrg',
       resposta: { id: '…', name: 'acme', email_domain: 'acme.example', domain: 'meet.acme.example', members: 42 },
-      curl: (b) => [`curl ${b}/api/v1/org \\`, `  -H "${AUTH}: Bearer ${CHAVE}"`].join('\n'),
+      curl: (b) => [`curl ${b}/api/v1/organization \\`, `  -H "${AUTH}: Bearer ${CHAVE}"`].join('\n'),
     },
   ]
 }

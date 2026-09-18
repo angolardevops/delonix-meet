@@ -88,7 +88,7 @@ chk(t.first_audio_ms===null || t.first_audio_ms>=0, 'first_audio_ms coerente')
 chk(t.ice_restarts===0 && t.reconnects===0, 'chamada limpa: zero reinícios e zero recuperações')
 
 // O arnês não usa o Room.tsx, por isso reporta-se aqui o que a app reportaria.
-await j(`${API}/api/rooms/${sala.code}/timings`,{token:tok,method:'POST',body:JSON.stringify(t)})
+await j(`${API}/api/rooms/${sala.code}/join-timings`,{token:tok,method:'POST',body:JSON.stringify(t)})
 await sleep(500)
 const n = Number(sql(`SELECT count(*) FROM call_timings WHERE room_id='${sala.code?sala.id:''}'`))
 chk(n===1, `persistido: ${n} registo em call_timings`)
@@ -96,7 +96,7 @@ const guardado = sql(`SELECT join_ms||'/'||ws_ms FROM call_timings WHERE room_id
 chk(guardado===`${t.join_ms}/${t.ws_ms}`, `valores gravados batem certo: ${guardado}`)
 
 console.log('\n--- um cliente a inventar não destrói a média ---')
-await j(`${API}/api/rooms/${sala.code}/timings`,{token:tok,method:'POST',body:JSON.stringify({join_ms:999999999, ws_ms:-5, ice_restarts:99999})})
+await j(`${API}/api/rooms/${sala.code}/join-timings`,{token:tok,method:'POST',body:JSON.stringify({join_ms:999999999, ws_ms:-5, ice_restarts:99999})})
 const abs = sql(`SELECT join_ms||'/'||ws_ms||'/'||ice_restarts FROM call_timings WHERE room_id='${sala.id}' ORDER BY id DESC LIMIT 1`)
 chk(abs==='600000/0/1000', `valores absurdos são presos: ${abs}`)
 

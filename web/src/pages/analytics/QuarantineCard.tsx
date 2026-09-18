@@ -1,12 +1,19 @@
 /**
  * Quarentena de reuniões: quem mais fica em quarentena por não responder
  * (aceitar ou recusar) a convites, por período. O âmbito é a organização
- * activa ou todas as que a pessoa administra — o servidor filtra, nunca vê
- * organizações de outros.
+ * activa — o servidor filtra, nunca vê organizações de outros.
+ *
+ * LACUNA CONHECIDA (renomeação de 2026-09-16): o antigo
+ * `/api/quarantine/analytics?org_id=` (GET) aceitava o `org_id` como query
+ * OPCIONAL, e sem ele agregava todas as organizações que a pessoa administra.
+ * O novo `/api/orgs/{org_id}/analytics/quarantine` (GET) tem o `org_id` como
+ * segmento OBRIGATÓRIO e não tem forma cruzada. Enquanto não houver endpoint
+ * para o âmbito «todas», esse âmbito não faz pedido nenhum — em vez de chamar
+ * um caminho que daria 404 garantido.
  */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { quarantineAnalytics } from '../../api'
+import { quarantineAnalytics, QuarantineRow } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Card, Empty, Segmented } from '../../ui/kit'
 import { forbiddenAsMessage } from './format'
@@ -20,9 +27,12 @@ export function QuarantineCard({ orgId }: { orgId: string | null }) {
   const { t } = useTranslation()
   const [period, setPeriod] = useState<Period>('month')
   const [scope, setScope] = useState<Scope>('org')
-  const effectiveOrg = scope === 'org' && orgId ? orgId : undefined
+  const effectiveOrg = scope === 'org' && orgId ? orgId : null
   const { state, reload } = useAsync(
-    () => quarantineAnalytics(period, effectiveOrg).catch(forbiddenAsMessage(t('analytics.semPermissao'))),
+    () =>
+      effectiveOrg
+        ? quarantineAnalytics(period, effectiveOrg).catch(forbiddenAsMessage(t('analytics.semPermissao')))
+        : Promise.resolve([] as QuarantineRow[]),
     [period, effectiveOrg],
   )
 

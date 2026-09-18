@@ -52,7 +52,7 @@ sql(`UPDATE organizations SET email_domain='' WHERE id='${A.orgId}'`)
 chk(sql(`SELECT COALESCE(email_domain,'∅') FROM organizations WHERE id='${A.orgId}'`) === '', 'org do atacante ficou com email_domain vazio (legada)')
 
 // Controlo positivo: numa org legada, adicionar uma conta NOVA continua a funcionar.
-const novo = await j(`/api/orgs/${A.orgId}/employees`, {
+const novo = await j(`/api/orgs/${A.orgId}/members`, {
   token: A.token, method: 'POST',
   body: { email: `${m}-novo@qualquer.local`, username: `${m}-novo`, password: PW, role: 'member' },
 })
@@ -60,7 +60,7 @@ chk(novo.s >= 200 && novo.s < 300, 'controlo positivo: a org legada ainda adicio
 
 // Ataque: puxar o admin da org B (conta que já pertence a outra org).
 const antes = sql(`SELECT count(*) FROM org_members WHERE user_id='${V.userId}' AND org_id='${A.orgId}'`)
-const r = await j(`/api/orgs/${A.orgId}/employees`, { token: A.token, method: 'POST', body: { email: V.email, role: 'admin' } })
+const r = await j(`/api/orgs/${A.orgId}/members`, { token: A.token, method: 'POST', body: { email: V.email, role: 'admin' } })
 chk(r.s === 409, 'add_employee recusa a conta de outra organização', `devolveu ${r.s}: ${JSON.stringify(r.j).slice(0, 140)}`)
 
 const depois = sql(`SELECT count(*) FROM org_members WHERE user_id='${V.userId}' AND org_id='${A.orgId}'`)
