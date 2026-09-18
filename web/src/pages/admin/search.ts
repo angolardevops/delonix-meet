@@ -1,7 +1,7 @@
 /**
  * Fontes de pesquisa da Administração e dos Contactos.
  *
- * - `members`: recurso do servidor; sem ele, `GET /employees` inteiro.
+ * - `members`: recurso do servidor; sem ele, `GET /members` inteiro.
  * - organizações e grupos: o servidor ainda não os descreve (nem na fase 2 do
  *   contrato) — lista inteira no browser.
  * - auditoria: SEM alternativa local. A lista de sempre é cortada (`limit`),

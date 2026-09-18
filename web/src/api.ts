@@ -1646,7 +1646,7 @@ export async function serverStatus(signal?: AbortSignal): Promise<ServerStatus> 
 }
 
 /**
- * `GET /api/orgs/{org}/audit/verify` — recalcula a cadeia de hashes do registo
+ * `GET /api/orgs/{org_id}/audit-events/verification` — recalcula a cadeia de hashes do registo
  * de auditoria (migração 0037). Só admins. `intact: false` diz em que registo
  * a cadeia partiu.
  */
@@ -1771,7 +1771,7 @@ export interface SmsMessage {
   created_by: string | null
 }
 
-/** Campos que `GET /api/orgs/{id}/employees` acrescenta a cada `Employee`. */
+/** Campos que `GET /api/orgs/{org_id}/members` acrescenta a cada `Employee`. */
 export interface EmployeeSmsFields {
   /** Só para admin ou o próprio; `null` para colegas. */
   phone: string | null
@@ -1835,7 +1835,7 @@ export const setMemberPhone = (
   change: { phone: string | null } | { follow_directory: true },
 ) =>
   request<{ user_id: string; phone: string | null; phone_source: 'manual' | null }>(
-    `/api/orgs/${orgId}/employees/${userId}/phone`,
+    `/api/orgs/${orgId}/members/${userId}/phone`,
     { method: 'PUT', body: JSON.stringify(change) },
   )
 
