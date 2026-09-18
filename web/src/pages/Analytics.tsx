@@ -1,6 +1,6 @@
 /**
  * Análise (`#/analytics`): uso e qualidade da organização activa, tal como o
- * servidor os agrega (`/api/orgs/:id/stats`, só administradores), e a
+ * servidor os agrega (`/api/orgs/{org_id}/stats`, só administradores), e a
  * quarentena de convites por período.
  *
  * A GESTÃO da organização (membros, filiais, grupos, auditoria, retenção,

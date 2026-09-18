@@ -2,7 +2,7 @@
  * Entrar ou criar organização.
  *
  * O SSO decide-se pelo DOMÍNIO do email e decide-o o servidor
- * (`/api/auth/sso/check`): o botão só aparece quando o domínio tem um
+ * (`/api/auth/sso/discovery`): o botão só aparece quando o domínio tem um
  * fornecedor de identidade, e com `enforce_sso` a palavra-passe sai do ecrã —
  * o servidor recusa-a na mesma (`auth.rs` `login`), e mostrar um campo que não
  * serve era convidar a pessoa a falhar.
