@@ -72,9 +72,13 @@
   --font-display: 'Archivo Black', 'Archivo', sans-serif;
   --font-mono: 'DM Mono', ui-monospace, monospace;
 
-  /* Raios: 2 nos controlos, 3 nas superfícies, 8 na barra de controlos. */
+  /* Raios: 2 nos controlos, 4 nas superfícies, 8 na barra de controlos —
+   * a escala documentada no próprio ecrã 15 («Raios (2 · 4 · 8)»). O nome
+   * `--r-3` ficou da leitura inicial (media 3px em várias superfícies
+   * individuais do template); o valor é 4px, confirmado contra a escala
+   * declarada — não se renomeia a variável só por isso (dezenas de sítios). */
   --r-2: 2px;
-  --r-3: 3px;
+  --r-3: 4px;
   --r-8: 8px;
 
   /* Espaçamento — a escala do template (4 · 8 · 14 · 24). */
