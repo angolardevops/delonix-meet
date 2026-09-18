@@ -1,8 +1,9 @@
 /**
- * Registo de auditoria da organização (`/audit`, só admin).
+ * Registo de auditoria da organização (`/audit-events`, só admin).
  *
  * O selo «imutável» não é um adjectivo: cada registo leva o hash do anterior
- * (migração 0037) e `/audit/verify` recalcula a cadeia inteira no servidor. O
+ * (migração 0037) e `/audit-events/verification` recalcula a cadeia inteira no
+ * servidor. O
  * selo diz o que essa verificação devolveu — intacta, ou em que registo partiu.
  *
  * Pesquisa: com o recurso `audit_events` no servidor, o painel estilo Odoo
