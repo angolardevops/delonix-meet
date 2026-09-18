@@ -21,12 +21,14 @@ import { parseRoomCode } from '../roomCode'
 import { Icon } from '../ui/icons'
 import { Alert, cx } from '../ui/kit'
 import '../ui/home.css'
+import '../ui/tour.css'
 import { calendarHash } from './calendar/dates'
 import { Greeting, TodayStamp } from './home/Clock'
 import RecentRecordings from './home/RecentRecordings'
 import SideColumn from './home/SideColumn'
 import Upcoming from './home/Upcoming'
 import { useOdooCalendar } from './home/useOdooCalendar'
+import TourOverlay from '../tour/TourOverlay'
 
 type Format = 'normal' | 'training'
 
@@ -125,7 +127,7 @@ export default function Home() {
           <div className="home-main">
             <section className="home-actions" aria-label={t('home.accoes.rotulo')}>
               <div className="quick-actions">
-                <div className={cx('qa-tile qa-tile--primary', creating && 'qa-tile--busy')} ref={optionsRef}>
+                <div className={cx('qa-tile qa-tile--primary', creating && 'qa-tile--busy')} ref={optionsRef} data-tour="iniciar">
                   <button
                     type="button"
                     className="qa-tile__hit"
@@ -175,7 +177,7 @@ export default function Home() {
                   )}
                 </div>
 
-                <button type="button" className="qa-tile" onClick={() => (location.hash = calendarHash.schedule())}>
+                <button type="button" className="qa-tile" data-tour="agendar" onClick={() => (location.hash = calendarHash.schedule())}>
                   <Icon name="calendar" size={14} />
                   <span className="qa-tile__text">
                     <strong>{t('home.accoes.agendar')}</strong>
@@ -219,7 +221,7 @@ export default function Home() {
                   </span>
                 </form>
 
-                <button type="button" className="qa-tile qa-tile--live" onClick={() => navigate('studio')}>
+                <button type="button" className="qa-tile qa-tile--live" data-tour="estudio" onClick={() => navigate('studio')}>
                   <Icon name="live" size={14} />
                   <span className="qa-tile__text">
                     <strong>{t('consola.inicio.novoEstudio')}</strong>
@@ -242,6 +244,7 @@ export default function Home() {
           <SideColumn />
         </div>
       </div>
+      <TourOverlay />
     </>
   )
 }

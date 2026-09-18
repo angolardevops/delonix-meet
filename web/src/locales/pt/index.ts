@@ -22,5 +22,6 @@ import nitidez from './nitidez'
 import search from './search'
 import rbac from './rbac'
 import telemovel from './telemovel'
+import tour from './tour'
 
-export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico, consola, diagrams, editor, player, nitidez, search, rbac, telemovel }
+export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico, consola, diagrams, editor, player, nitidez, search, rbac, telemovel, tour }
