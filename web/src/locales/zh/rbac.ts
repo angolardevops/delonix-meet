@@ -48,4 +48,9 @@ export default {
     approved: '已批准',
     denied: '已拒绝',
   },
+  capacidadeRotulos: {
+    voiceManage: '管理电话 — 号码、通话详单和账单',
+    smsManage: '管理短信 — 网关、路由和策略',
+    streamingManage: '管理直播推流目的地',
+  },
 }

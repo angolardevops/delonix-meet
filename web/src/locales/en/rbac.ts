@@ -48,4 +48,9 @@ export default {
     approved: 'Approved',
     denied: 'Denied',
   },
+  capacidadeRotulos: {
+    voiceManage: 'Manage telephony — numbers, CDR and billing',
+    smsManage: 'Manage SMS — gateways, routing and policy',
+    streamingManage: 'Manage live streaming destinations',
+  },
 }

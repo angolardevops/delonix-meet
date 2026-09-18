@@ -76,6 +76,30 @@ export default function RolesDialog({ orgId, onClose }: { orgId: string; onClose
   )
 }
 
+/**
+ * O catálogo de `server/src/rbac.rs::PERMISSIONS` devolve um rótulo fixo em
+ * português — não há aí nenhum mecanismo de i18n (é código, não conteúdo).
+ * Para as chaves conhecidas troca-se por uma tradução local; uma capacidade
+ * nova, ainda sem entrada em `rbac.capacidadeRotulos`, cai no rótulo do
+ * servidor em vez de desaparecer.
+ */
+const CAPABILITY_I18N_KEY: Record<string, string> = {
+  'voice.manage': 'voiceManage',
+  'sms.manage': 'smsManage',
+  'streaming.manage': 'streamingManage',
+}
+
+function capabilityLabel(t: (key: string) => string, c: { key: string; label: string }): string {
+  const leaf = CAPABILITY_I18N_KEY[c.key]
+  return leaf ? t(`rbac.capacidadeRotulos.${leaf}`) : c.label
+}
+
+/** Igual a `capabilityLabel`, a partir da chave crua — para quando só se tem o `permission` de uma concessão. */
+function capabilityLabelFor(t: (key: string) => string, catalog: { key: string; label: string }[], permission: string): string {
+  const c = catalog.find((x) => x.key === permission)
+  return c ? capabilityLabel(t, c) : permission
+}
+
 function glyphFor(role: RbacRole, permission: string): { text: string; title: string } {
   const direct = role.permissions.find((p) => p.permission === permission)
   if (direct) return { text: direct.requires_approval ? '✓⚑' : '✓', title: 'rbac.matrizConcedido' }
@@ -163,7 +187,7 @@ function RolesTab({
             <tbody>
               {data.catalog.map((c) => (
                 <tr key={c.key}>
-                  <td>{c.label}</td>
+                  <td>{capabilityLabel(t, c)}</td>
                   {data.roles.map((r) => {
                     const g = glyphFor(r, c.key)
                     return (
@@ -292,7 +316,7 @@ function RoleForm({
       <div className="rbac-permlist">
         {catalog.map((c) => (
           <div key={c.key} className="rbac-permlist__row">
-            <Checkbox label={c.label} checked={grants.has(c.key)} onChange={() => toggle(c.key)} />
+            <Checkbox label={capabilityLabel(t, c)} checked={grants.has(c.key)} onChange={() => toggle(c.key)} />
             {grants.has(c.key) && (
               <Checkbox
                 label={t('rbac.requerAprovacao')}
@@ -395,13 +419,13 @@ function RoleDetail({
         <ul className="rbac-cap-list">
           {role.permissions.map((p) => (
             <li key={p.permission}>
-              {catalog.find((c) => c.key === p.permission)?.label ?? p.permission}
+              {capabilityLabelFor(t, catalog, p.permission)}
               {p.requires_approval && <span className="dx-muted"> · {t('rbac.requerAprovacao')}</span>}
             </li>
           ))}
           {role.inherited.map((p) => (
             <li key={p.permission} className="dx-muted">
-              {catalog.find((c) => c.key === p.permission)?.label ?? p.permission} · {t('rbac.herdado')}
+              {capabilityLabelFor(t, catalog, p.permission)} · {t('rbac.herdado')}
               {p.requires_approval && ` · ${t('rbac.requerAprovacao')}`}
             </li>
           ))}

@@ -48,4 +48,9 @@ export default {
     approved: 'Approuvé',
     denied: 'Refusé',
   },
+  capacidadeRotulos: {
+    voiceManage: 'Gérer la téléphonie — numéros, CDR et facturation',
+    smsManage: 'Gérer les SMS — passerelles, routage et politique',
+    streamingManage: 'Gérer les destinations de diffusion en direct',
+  },
 }

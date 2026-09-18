@@ -48,4 +48,13 @@ export default {
     approved: 'Aprovado',
     denied: 'Negado',
   },
+  // Rótulos traduzidos para o catálogo fixo de `server/src/rbac.rs::PERMISSIONS`
+  // (mapeados por `capabilityI18nKey` em RolesDialog.tsx — o `label` que o
+  // servidor devolve fica só de reserva para uma capacidade nova ainda sem
+  // tradução aqui).
+  capacidadeRotulos: {
+    voiceManage: 'Gerir telefonia — números, CDR e facturação',
+    smsManage: 'Gerir SMS — gateways, encaminhamento e política',
+    streamingManage: 'Gerir destinos de emissão em directo',
+  },
 }
