@@ -99,13 +99,18 @@ pub async fn complete(
     // texto, e é deles que saem as legendas.
     let transcript = crate::dlp::censor(delivery.transcript);
     let minutes = crate::dlp::censor(delivery.minutes);
-    let segments: Vec<rules::Segment> = rules::sanitize_segments(delivery.segments)
+    // Censura ANTES de truncar: sanitize_segments corta a MAX_SEGMENT_CHARS,
+    // e um padrão (chave, cartão) que atravesse esse corte deixa de bater
+    // certo com a expressão regular depois de partido ao meio.
+    let censored: Vec<rules::Segment> = delivery
+        .segments
         .into_iter()
         .map(|mut s| {
             s.text = crate::dlp::censor(&s.text);
             s
         })
         .collect();
+    let segments: Vec<rules::Segment> = rules::sanitize_segments(censored);
     let confidence = rules::mean_confidence(&segments);
     let language = rules::sanitize_language(delivery.language);
     let segments_json = serde_json::to_value(&segments).map_err(ApiError::internal)?;

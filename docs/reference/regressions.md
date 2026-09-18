@@ -2260,7 +2260,9 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 
 **Portão.** `server/tests/api_v1.rs::v1_recordings_list_scoped_to_org`: a privada fica fora, a publicada aparece, a outra organização continua sem nenhuma.
 
-**Ficheiros.** `server/src/apikeys.rs`, `server/tests/api_v1.rs`.
+**Dois achados menores da mesma revisão.** (1) Os segmentos da transcrição eram cortados a 2000 caracteres ANTES de o DLP correr: uma chave ou um cartão a atravessar essa fronteira ficava partido ao meio e a expressão regular deixava de o reconhecer. Censura-se o texto bruto primeiro e corta-se depois (`transcription::complete`; portão `tests/grpc.rs::dlp_runs_before_truncating_a_segment_that_straddles_the_limit`). (2) `PATCH …/chapters/{chapter_id}` marcava sempre `source = 'manual'`, mesmo com um corpo vazio (resave, retry): um capítulo automático perdia a elegibilidade para a geração seguinte sem nenhuma correcção ter acontecido. Só passa a manual quando `t_ms` ou `title` vêm no pedido (portão em `tests/recording_chapter_generation.rs`).
+
+**Ficheiros.** `server/src/{apikeys,transcription,recording_chapters}.rs`, `server/tests/{api_v1,grpc,recording_chapter_generation}.rs`.
 
 ### R240 — O `/asr` do whisper aceitava qualquer ligação, sem autenticação nenhuma
 

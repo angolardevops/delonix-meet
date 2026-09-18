@@ -111,7 +111,8 @@ pub struct PatchChapterReq {
 }
 
 /// `PATCH /api/recordings/{id}/chapters/{chapter_id}` — corrigir um capítulo
-/// torna-o manual (a próxima geração automática já não lhe toca).
+/// torna-o manual (a próxima geração automática já não lhe toca). Um corpo
+/// sem `t_ms` nem `title` não corrige nada e deixa a origem como está.
 #[utoipa::path(
     patch, path = "/api/recordings/{recording_id}/chapters/{chapter_id}", tag = "recordings",
     security(("session" = [])),
@@ -139,9 +140,13 @@ pub async fn patch(
         check_t_ms(t, a.duration_ms)?;
     }
     let title = req.title.as_deref().map(clean_title).transpose()?;
+    // `manual` só quando algo mudou de facto: um PATCH sem campos (resave da
+    // UI, retry) não pode converter em silêncio um capítulo automático,
+    // tirando-o para sempre da geração futura (R232).
     let ch: Chapter = sqlx::query_as(&format!(
         "UPDATE recording_chapters SET t_ms = COALESCE($3, t_ms), title = COALESCE($4, title),
-                source = 'manual'
+                source = CASE WHEN $3 IS NOT NULL OR $4 IS NOT NULL
+                              THEN 'manual' ELSE source END
          WHERE recording_id = $1 AND id = $2 RETURNING {CHAPTER_COLS}"
     ))
     .bind(id)

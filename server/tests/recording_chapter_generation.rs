@@ -7,7 +7,9 @@
 //! - `POST …/chapters/generate` — a resposta do modelo sem capítulos
 //!   utilizáveis dá `503`, NÃO apaga os automáticos que havia e NÃO marca a
 //!   gravação como gerada; os manuais nunca se apagam; uma geração a decorrer
-//!   recusa a segunda com `409`.
+//!   recusa a segunda com `409`;
+//! - `PATCH …/chapters/{chapter_id}` sem campos não converte um capítulo
+//!   automático em manual (R232).
 mod common;
 
 use common::fake_ollama::{FakeOllama, Reply};
@@ -189,6 +191,33 @@ async fn bad_answer_fails_without_marking_and_good_answer_keeps_manual(db: sqlx:
             (60000, "Migração".to_string(), "auto".to_string()),
         ]
     );
+
+    // PATCH sem campos (resave, retry) não converte um capítulo automático em
+    // manual — só uma correcção de facto o faz (R232).
+    let auto = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["t_ms"] == 60000)
+        .unwrap_or_else(|| panic!("o capítulo dos 60 s não veio na lista: {list}"));
+    let one = format!(
+        "/api/recordings/{}/chapters/{}",
+        r.rec,
+        auto["id"].as_str().unwrap()
+    );
+    let (st, v) = app.patch(&one, Some(&a.token), json!({})).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["source"], "auto", "PATCH vazio não mexe na origem");
+    assert_eq!(v["t_ms"], 60000, "nem no resto");
+    let (st, v) = app
+        .patch(
+            &one,
+            Some(&a.token),
+            json!({"title": "Migração para Outubro"}),
+        )
+        .await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["source"], "manual", "corrigir torna-o manual");
 }
 
 #[sqlx::test(migrations = "./migrations")]
