@@ -337,7 +337,7 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
     // `https://https://...` em `apikeys::room_link`.
     assert_eq!(
         body,
-        json!({"ok": true, "domain": "https://meet.alfa.test", "retention_days": 3650})
+        json!({"ok": true, "domain": "https://meet.alfa.test", "retention_days": 3650, "chat_retention_days": null})
     );
     let (st, body) = app
         .patch(
@@ -349,8 +349,22 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
     assert_eq!(st, 200, "{body}");
     assert_eq!(
         body,
-        json!({"ok": true, "domain": "meet.alfa.test", "retention_days": 3650})
+        json!({"ok": true, "domain": "meet.alfa.test", "retention_days": 3650, "chat_retention_days": null})
     );
+    // G9: chat_retention_days grava e persiste (visível em GET /api/orgs).
+    // max_rooms repete-se: este endpoint substitui o registo inteiro, e a
+    // quota de 1 sala continua a ser exercida mais abaixo.
+    let (st, body) = app
+        .patch(
+            &format!("/api/orgs/{org}"),
+            t,
+            json!({"domain": "meet.alfa.test", "retention_days": 3650, "chat_retention_days": 7, "max_rooms": 1}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["chat_retention_days"], 7);
+    let (_, orgs) = app.get("/api/orgs", t).await;
+    assert_eq!(orgs[0]["chat_retention_days"], 7);
     let (st, _) = app
         .patch(
             &format!("/api/orgs/{org}"),
