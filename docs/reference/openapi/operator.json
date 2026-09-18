@@ -1394,6 +1394,44 @@
         ],
         "type": "object"
       },
+      "EmissaoEstado": {
+        "description": "Retrato do estado vivo de uma emissão (G1) — o que `GET\n/api/rooms/{room_code}/live/status` devolve.",
+        "properties": {
+          "bitrate_bps": {
+            "description": "Débito binário médio desde a última consulta (ou desde o arranque, na\nprimeira). `0` numa emissão recém-arrancada ou sem tráfego novo desde\na última amostra — não é sinal de falha por si só.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "bytes_enviados": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "desde": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "rotulos": {
+            "description": "Rótulos dos destinos desta emissão — não o estado de cada um: ver a\nnota em `Emissao::bytes`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "viva": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "rotulos",
+          "viva",
+          "bytes_enviados",
+          "bitrate_bps",
+          "desde"
+        ],
+        "type": "object"
+      },
       "Employee": {
         "properties": {
           "branch_id": {
