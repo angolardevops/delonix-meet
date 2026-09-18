@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ApiError, currentUser, getRoom, isAbort, listMeetings, netProbe, roomWaiting, type WaitingPeer } from '../api'
+import { ApiError, currentUser, getRoom, isAbort, listMeetingsWithOptions, netProbe, roomWaiting, type RecordQuality, type WaitingPeer } from '../api'
 import { SONDAGENS, type AmostraRede } from './qualidadePrevista'
 import { audioConstraints, listDevices, videoConstraints } from '../media'
 import { MicMix } from './micMix'
@@ -16,6 +16,10 @@ export interface PrejoinInfo {
   topology: string
   /** Hora marcada (ISO) da reunião agendada nesta sala, se houver. */
   startsAt: string | null
+  /** A reunião agendada tem gravação automática ligada. */
+  autoRecord: boolean
+  /** Qualidade da gravação automática, só quando `autoRecord`. */
+  recordQuality: RecordQuality | null
 }
 
 /**
@@ -111,15 +115,17 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
           owner: room.owner_id === currentUser()?.id,
           topology: room.topology,
           startsAt: null,
+          autoRecord: false,
+          recordQuality: null,
         }
         setInfo(base)
-        const meetings = await listMeetings(ctrl.signal).catch((e) => {
+        const meetings = await listMeetingsWithOptions(ctrl.signal).catch((e) => {
           if (!isAbort(e)) console.warn('[prejoin] reuniões indisponíveis', e)
           return []
         })
         if (cancelled) return
         const m = reuniaoMaisProxima(meetings, code, Date.now())
-        if (m) setInfo({ ...base, startsAt: m.starts_at })
+        if (m) setInfo({ ...base, startsAt: m.starts_at, autoRecord: m.auto_record, recordQuality: m.auto_record ? m.record_quality : null })
       })
       .catch(() => {})
     return () => {

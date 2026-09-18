@@ -100,6 +100,29 @@ div.rm-only-narrow,
   color: var(--muted);
   font-size: 10.5px;
 }
+.rm-top__record {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--record);
+  border-radius: var(--r-2);
+  background: color-mix(in srgb, var(--record) 18%, transparent);
+  color: var(--record-text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.rm-top__record::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--record);
+}
 .rm-top__e2ee {
   display: inline-flex;
   align-items: center;

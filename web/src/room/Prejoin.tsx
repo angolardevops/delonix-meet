@@ -1,7 +1,7 @@
 import { ReactNode, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { intlLocale } from '../i18n'
-import { currentUser } from '../api'
+import { currentUser, type RecordQuality } from '../api'
 import { DelonixSymbol, Icon } from '../ui/icons'
 import { Alert, AvatarStack, Button, Checkbox, cx } from '../ui/kit'
 import { metaCurta, metaLonga, videoMeta } from './mediaMeta'
@@ -13,6 +13,11 @@ import type { Prejoin as PrejoinState } from './usePrejoin'
 
 /** Dispositivos que o browser inventa por cima dos reais: misturá-los duplicava o mesmo microfone. */
 const PSEUDO = new Set(['', 'default', 'communications'])
+
+/** `RecordQuality` do servidor para o sufixo das chaves `gravacaoQualidade*`. */
+function qualidadeChave(q: RecordQuality): string {
+  return q === 'audio' ? 'Audio' : q
+}
 
 function DeviceOption({
   selected,
@@ -104,6 +109,12 @@ export function Prejoin({
         </span>
         <h1 className="rm-top__title">{info?.name || t('room.preEntrada.titulo')}</h1>
         <span className="rm-top__meta dx-num">{hora ? t('room.preEntrada.horaSala', { hora, code }) : t('room.preEntrada.sala', { code })}</span>
+        <span className="dx-spacer" />
+        {info?.autoRecord && info.recordQuality && (
+          <span className="rm-top__record">
+            {t('room.preEntrada.gravacaoAutomatica', { qualidade: t(`room.preEntrada.gravacaoQualidade${qualidadeChave(info.recordQuality)}`) })}
+          </span>
+        )}
       </header>
 
       <div className="rm-prejoin__body">
