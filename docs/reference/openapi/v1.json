@@ -4785,7 +4785,7 @@
         "type": "object"
       },
       "SessionOptions": {
-        "description": "Opções de sessão de uma reunião (R184, migração 0055). O contrato de dados\né o `MeetingSessionOptions` da UI. As regras de forma são de\n`delonix_meet_domain::conferencing::session_options` — a BFF e a v1 chamam\nas mesmas (ADR-0004 §5, regra 8).",
+        "description": "Opções de sessão de uma reunião (R184, migração 0056). O contrato de dados\né o `MeetingSessionOptions` da UI. As regras de forma são de\n`delonix_meet_domain::conferencing::session_options` — a BFF e a v1 chamam\nas mesmas (ADR-0004 §5, regra 8).",
         "properties": {
           "auto_record": {
             "description": "O gravador do SERVIDOR arranca sozinho quando o anfitrião entra na sala\n(topologia SFU; nunca numa sala E2EE; só se a sala ainda não tiver\ngravação).",
