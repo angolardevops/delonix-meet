@@ -1806,7 +1806,7 @@ pub(crate) async fn sync_member_phone_from_directory(
 }
 
 /// O telefone do próprio em cada org activa (para o perfil).
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct MemberPhone {
     pub org_id: Uuid,
     pub org_name: String,

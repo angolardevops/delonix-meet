@@ -218,7 +218,7 @@ fn check_lang(lang: &str) -> Result<(), ApiError> {
 
 // ---------- rotas ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct CaptionMeta {
     pub recording_id: Uuid,
     pub lang: String,
@@ -236,7 +236,7 @@ pub struct CaptionMeta {
 const META_COLS: &str =
     "recording_id, lang, source, status, progress_pct, error, created_at, updated_at, published_at";
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CaptionFull {
     #[serde(flatten)]
     pub meta: CaptionMeta,
@@ -281,6 +281,17 @@ async fn meta_of(state: &AppState, rec: Uuid, lang: &str) -> Result<CaptionMeta,
 }
 
 /// `GET /api/recordings/{id}/captions`.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/captions", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação.")),
+    responses(
+        (status = 200, body = Vec<CaptionMeta>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -299,6 +310,17 @@ pub async fn list(
 }
 
 /// `GET /api/recordings/{id}/captions/{lang}` — metadados e o VTT.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/captions/{lang}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação."), ("lang" = String, Path, description = "Língua BCP-47 (ex.: pt, en).")),
+    responses(
+        (status = 200, body = CaptionFull),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -310,6 +332,17 @@ pub async fn get(
 }
 
 /// `GET /api/recordings/{id}/captions/{lang}/vtt` — `text/vtt` para o `<track>`.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/captions/{lang}/vtt", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação."), ("lang" = String, Path, description = "Língua BCP-47 (ex.: pt, en).")),
+    responses(
+        (status = 200, body = String, content_type = "text/vtt", description = "A legenda em WebVTT."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn vtt(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -331,7 +364,7 @@ pub async fn vtt(
     ))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct PutCaptionReq {
     pub vtt: String,
     /// Publicar já (por omissão fica rascunho).
@@ -340,6 +373,19 @@ pub struct PutCaptionReq {
 }
 
 /// `PUT /api/recordings/{id}/captions/{lang}` — envia (ou substitui) um VTT.
+#[utoipa::path(
+    put, path = "/api/recordings/{recording_id}/captions/{lang}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação."), ("lang" = String, Path, description = "Língua BCP-47 (ex.: pt, en).")),
+    request_body = PutCaptionReq,
+    responses(
+        (status = 200, body = CaptionMeta),
+        (status = 400, body = crate::openapi::ErrorBody, description = "VTT inválido ou grande demais."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn put(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -373,13 +419,26 @@ pub async fn put(
     Ok(Json(meta))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct PatchCaptionReq {
     /// `draft` | `published`.
     pub status: String,
 }
 
 /// `PATCH /api/recordings/{id}/captions/{lang}` — publicar ou despublicar.
+#[utoipa::path(
+    patch, path = "/api/recordings/{recording_id}/captions/{lang}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação."), ("lang" = String, Path, description = "Língua BCP-47 (ex.: pt, en).")),
+    request_body = PatchCaptionReq,
+    responses(
+        (status = 200, body = CaptionMeta),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn patch(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -415,6 +474,17 @@ pub async fn patch(
 }
 
 /// `DELETE /api/recordings/{id}/captions/{lang}`.
+#[utoipa::path(
+    delete, path = "/api/recordings/{recording_id}/captions/{lang}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação."), ("lang" = String, Path, description = "Língua BCP-47 (ex.: pt, en).")),
+    responses(
+        (status = 204, description = "Legenda apagada."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn delete(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -433,7 +503,7 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct GenerateCaptionReq {
     /// Língua pedida. Omitida = a da transcrição.
     #[serde(default)]
@@ -446,6 +516,20 @@ pub struct GenerateCaptionReq {
 /// - Noutra língua: tradução segmento a segmento pelo LLM local, em segundo
 ///   plano — `202` + a legenda em `generating`; o progresso lê-se em
 ///   `GET …/captions/{lang}`.
+#[utoipa::path(
+    post, path = "/api/recordings/{recording_id}/captions/generate", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação.")),
+    request_body = GenerateCaptionReq,
+    responses(
+        (status = 201, body = CaptionMeta, description = "Na língua da transcrição: rascunho construído dos segmentos."),
+        (status = 202, body = CaptionMeta, description = "Noutra língua: tradução em segundo plano; o progresso lê-se na legenda."),
+        (status = 409, body = crate::openapi::ErrorBody, description = "Sem transcrição com tempos, ou uma geração já a decorrer."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn generate(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -675,3 +759,17 @@ mod tests {
         assert_eq!(primary("pt-AO"), "pt");
     }
 }
+
+/// Documentação OpenAPI das legendas (`openapi.rs` junta-a).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(list, get, vtt, put, patch, delete, generate),
+    components(schemas(
+        CaptionMeta,
+        CaptionFull,
+        PutCaptionReq,
+        PatchCaptionReq,
+        GenerateCaptionReq
+    ))
+)]
+pub struct ApiDoc;

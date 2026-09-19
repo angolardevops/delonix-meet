@@ -74,14 +74,14 @@ impl StudioTask {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct StudioSegmentReq {
     pub start_ms: i64,
     pub end_ms: i64,
     pub text: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct StudioReq {
     pub task: String,
     #[serde(default)]
@@ -439,7 +439,7 @@ pub(crate) async fn run_task(
 
 // ---------- estado ----------
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, utoipa::ToSchema)]
 pub(crate) struct AiStatus {
     pub configured: bool,
     pub reachable: bool,
@@ -503,6 +503,16 @@ pub(crate) async fn probe_status(
 ///   "model_installed": bool|null, "error": string|null}` — sempre `200` para um
 ///   membro: é um estado, e a causa vai em `error`;
 /// - `401` sem sessão · `404` não é membro (não se confirma que a org existe).
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/ai/status", tag = "studio",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = AiStatus, description = "Sempre 200 para um membro: é um estado, e a causa vai em `error`."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn status(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -536,6 +546,20 @@ pub async fn status(
 /// - `400` corpo inválido · `401` sem sessão · `404` não é membro · `429` (+
 ///   `Retry-After`) a organização já tem as suas tarefas a correr · `503` IA
 ///   indisponível ou resposta inutilizável, com a causa em `{"error": string}`.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/ai/suggestions", tag = "studio",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = StudioReq,
+    responses(
+        (status = 200, body = serde_json::Value, description = "`summary` → `{summary, chapters}`; `publication` → `{title, description, tags}`; `fillers` → `{terms}`. Nada se guarda."),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 429, body = crate::openapi::ErrorBody, description = "A organização já tem as suas tarefas a correr (`Retry-After`)."),
+        (status = 503, body = crate::openapi::ErrorBody, description = "IA local indisponível ou resposta inutilizável."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn suggestions(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -876,3 +900,11 @@ mod tests {
         assert!(try_acquire_slot(a, 2).is_none());
     }
 }
+
+/// Documentação OpenAPI da IA local do Estúdio (`openapi.rs` junta-a).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(status, suggestions),
+    components(schemas(AiStatus, StudioReq, StudioSegmentReq))
+)]
+pub struct ApiDoc;

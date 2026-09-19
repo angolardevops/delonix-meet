@@ -354,7 +354,7 @@ pub enum Role {
 
 /// Como é que esta pessoa chegou à sala. Derivado no SERVIDOR (token de sala),
 /// nunca declarado pelo cliente.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Origin {
     /// Conta gerida por um fornecedor de identidade (OIDC ou Odoo).
@@ -1182,7 +1182,7 @@ struct WaitingPeer {
 
 /// Quem está na sala de espera, visto por um anfitrião antes de entrar
 /// (`GET /api/rooms/{code}/waiting`).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct WaitingView {
     pub peer_id: Uuid,
     pub username: String,

@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::{auth::AuthUser, error::ApiError, AppState};
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct SessionInfo {
     pub session_id: Uuid,
     pub user_agent: Option<String>,
@@ -52,6 +52,14 @@ struct SessionRow {
 /// Lista as sessões activas (uma por `session_id` não revogado e não
 /// expirado) — cada refresh roda o `token_hash`, mas mantém o `session_id`,
 /// por isso há exactamente uma linha viva por dispositivo ligado.
+#[utoipa::path(
+    get, path = "/api/users/me/sessions", tag = "users",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = Vec<SessionInfo>),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_sessions(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -85,6 +93,16 @@ pub async fn list_sessions(
 /// Termina uma sessão à distância (ex.: "não reconheço este telemóvel").
 /// Revoga a linha viva do `session_id`: o próximo refresh desse dispositivo
 /// falha e ele tem de voltar a autenticar-se.
+#[utoipa::path(
+    delete, path = "/api/users/me/sessions/{session_id}", tag = "users",
+    security(("session" = [])),
+    params(("session_id" = Uuid, Path, description = "Sessão a revogar.")),
+    responses(
+        (status = 204, description = "Sessão revogada."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn revoke_session(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -150,6 +168,14 @@ struct DataExport {
 /// gravações próprias — tudo lido das tabelas reais, para descarregar como
 /// ficheiro. Não é um relatório de compliance formal, é o que a conta
 /// realmente guarda sobre a pessoa.
+#[utoipa::path(
+    get, path = "/api/users/me/export", tag = "users",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = serde_json::Value, description = "Os dados pessoais, como anexo JSON."),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn export_my_data(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -220,3 +246,11 @@ mod tests {
         assert_eq!(current_session_hash(&HeaderMap::new()), None);
     }
 }
+
+/// Documentação OpenAPI de «A minha conta» (`openapi.rs` junta-a).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(list_sessions, revoke_session, export_my_data),
+    components(schemas(SessionInfo))
+)]
+pub struct ApiDoc;

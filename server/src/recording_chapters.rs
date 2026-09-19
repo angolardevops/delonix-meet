@@ -86,7 +86,7 @@ async fn by_id(state: &AppState, rec: Uuid, chapter: Uuid) -> Result<Chapter, Ap
     .ok_or(ApiError::NotFound)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct PatchChapterReq {
     #[serde(default)]
     pub t_ms: Option<i64>,
@@ -96,6 +96,20 @@ pub struct PatchChapterReq {
 
 /// `PATCH /api/recordings/{id}/chapters/{chapter_id}` — corrigir um capítulo
 /// torna-o manual (a próxima geração automática já não lhe toca).
+#[utoipa::path(
+    patch, path = "/api/recordings/{recording_id}/chapters/{chapter_id}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação."), ("chapter_id" = Uuid, Path, description = "Capítulo.")),
+    request_body = PatchChapterReq,
+    responses(
+        (status = 200, body = serde_json::Value, description = "O capítulo: `{id, recording_id, t_ms, title, source, ...}`. Corrigir um capítulo torna-o manual."),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "Já existe um capítulo nesse instante."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn patch(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -328,6 +342,19 @@ pub(crate) async fn generate_for(
 ///
 /// Síncrono com tecto de 300 s: é o LLM local, e o resultado é o que o ecrã
 /// mostra a seguir. Sem transcrição → `409`; sem LLM → `503`.
+#[utoipa::path(
+    post, path = "/api/recordings/{recording_id}/chapters/generate", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação.")),
+    responses(
+        (status = 200, body = Vec<serde_json::Value>, description = "Os capítulos depois de gerar; os manuais nunca se apagam."),
+        (status = 409, body = crate::openapi::ErrorBody, description = "Sem transcrição."),
+        (status = 503, body = crate::openapi::ErrorBody, description = "IA local indisponível."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn generate(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -444,3 +471,8 @@ mod tests {
         assert!(d.contains("[02:4"), "o fim da sessão desapareceu do prompt");
     }
 }
+
+/// Documentação OpenAPI da edição e geração de capítulos (`openapi.rs` junta-a).
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(patch, generate), components(schemas(PatchChapterReq)))]
+pub struct ApiDoc;

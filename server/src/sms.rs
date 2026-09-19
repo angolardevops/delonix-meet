@@ -251,7 +251,12 @@ pub struct GatewayInfo {
         send_message,
         agent_put_devices,
         agent_claim,
-        agent_result
+        agent_result,
+        get_policy,
+        put_policy,
+        put_member_phone,
+        get_preferences,
+        put_preferences
     ),
     components(schemas(
         OperatorInfo,
@@ -269,7 +274,13 @@ pub struct GatewayInfo {
         DevicesResp,
         ClaimedMessage,
         ClaimResp,
-        ResultReq
+        ResultReq,
+        PolicyBody,
+        PhoneReq,
+        PhoneResp,
+        SmsPreferences,
+        SmsPreferencesReq,
+        crate::org::MemberPhone
     ))
 )]
 pub struct ApiDoc;
@@ -1213,7 +1224,7 @@ pub(crate) async fn find_by_idempotency_key(
 //  Política da org: quem envia SMS a contactos
 // ============================================================
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PolicyBody {
     /// `admins` | `members`.
     send_policy: String,
@@ -1221,6 +1232,16 @@ pub struct PolicyBody {
 
 /// `GET /api/orgs/{org_id}/sms/policy` — qualquer membro lê (a UI decide se
 /// mostra «Enviar SMS»); só o admin muda.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/sms/policy", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = PolicyBody, description = "Qualquer membro lê; a UI decide se mostra «Enviar SMS»."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_policy(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1238,6 +1259,19 @@ pub async fn get_policy(
 /// `PUT /api/orgs/{org_id}/sms/policy` `{send_policy}` — singleton, só admin.
 /// Um valor desconhecido é RECUSADO: é uma permissão, e ignorá-lo em silêncio
 /// deixava o admin a julgar que a tinha mudado.
+#[utoipa::path(
+    put, path = "/api/orgs/{org_id}/sms/policy", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = PolicyBody,
+    responses(
+        (status = 200, body = PolicyBody),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`send_policy` desconhecido: é recusado, não ignorado."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn put_policy(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1275,7 +1309,7 @@ pub async fn put_policy(
 //  Telefone do membro e consentimento
 // ============================================================
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct PhoneReq {
     /// Número (qualquer forma que `normalize_msisdn` aceite) ou `null` para apagar.
     #[serde(default)]
@@ -1285,7 +1319,7 @@ pub struct PhoneReq {
     follow_directory: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct PhoneResp {
     user_id: Uuid,
     phone: Option<String>,
@@ -1295,6 +1329,19 @@ pub struct PhoneResp {
 /// `PUT /api/orgs/{org_id}/members/{user_id}/phone` — o próprio ou um admin.
 /// A validação é a mesma do envio (`normalize_msisdn`): não se guarda um número
 /// que o encaminhamento não sabe usar.
+#[utoipa::path(
+    put, path = "/api/orgs/{org_id}/members/{user_id}/phone", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização."), ("user_id" = Uuid, Path, description = "Membro.")),
+    request_body = PhoneReq,
+    responses(
+        (status = 200, body = PhoneResp),
+        (status = 400, body = crate::openapi::ErrorBody, description = "Número que o encaminhamento não sabe usar."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn put_member_phone(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1342,7 +1389,7 @@ pub async fn put_member_phone(
     Ok(Json(resp))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct SmsPreferences {
     contact_opt_out: bool,
     meeting_opt_out: bool,
@@ -1350,7 +1397,7 @@ pub struct SmsPreferences {
     phones: Vec<crate::org::MemberPhone>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct SmsPreferencesReq {
     contact_opt_out: Option<bool>,
     meeting_opt_out: Option<bool>,
@@ -1370,6 +1417,14 @@ async fn load_preferences(state: &AppState, user_id: Uuid) -> Result<SmsPreferen
 }
 
 /// `GET /api/users/me/sms-preferences`
+#[utoipa::path(
+    get, path = "/api/users/me/sms-preferences", tag = "sms",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = SmsPreferences),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_preferences(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1379,6 +1434,15 @@ pub async fn get_preferences(
 
 /// `PUT /api/users/me/sms-preferences` — o consentimento é da PESSOA, vale em
 /// todas as orgs, e só ela o muda (não há rota de admin para isto).
+#[utoipa::path(
+    put, path = "/api/users/me/sms-preferences", tag = "sms",
+    security(("session" = [])),
+    request_body = SmsPreferencesReq,
+    responses(
+        (status = 200, body = SmsPreferences),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn put_preferences(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

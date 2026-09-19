@@ -133,7 +133,7 @@ async fn org_id_by_sip_domain(state: &AppState, domain: &str) -> Option<Uuid> {
 
 // ---------- Tipos de saída ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct VoiceExtensionInfo {
     pub id: Uuid,
     pub org_id: Uuid,
@@ -155,7 +155,7 @@ const SELECT_EXTENSION_INFO: &str =
 
 /// Resposta de criação/regeneração: inclui a password SIP em claro, UMA VEZ —
 /// o mesmo padrão de revelação única que `apikeys::CreatedKey` já usa.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct CreatedExtension {
     #[serde(flatten)]
     pub extension: VoiceExtensionInfo,
@@ -171,7 +171,7 @@ pub struct CreatedExtension {
 //  Gestão (admin da org, sessão) — mesma permissão que os DIDs de voz.
 // ============================================================
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateExtensionReq {
     pub member_id: Uuid,
     pub extension: String,
@@ -181,6 +181,20 @@ pub struct CreateExtensionReq {
 
 /// Cria um ramal para um membro da org (admin). Gera credenciais SIP novas e
 /// devolve a password em claro UMA VEZ.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/extensions", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    request_body = CreateExtensionReq,
+    responses(
+        (status = 200, body = CreatedExtension, description = "A palavra-passe SIP sai UMA vez."),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "O número de ramal já existe na organização."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_extension(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -297,6 +311,17 @@ pub async fn create_extension(
 }
 
 /// Lista os ramais da org (admin). Nunca devolve hash nem HA1.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/extensions", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = Vec<VoiceExtensionInfo>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_extensions(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -312,7 +337,7 @@ pub async fn list_extensions(
     Ok(Json(rows))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateExtensionReq {
     #[serde(default)]
     pub label: Option<String>,
@@ -323,6 +348,19 @@ pub struct UpdateExtensionReq {
 /// Atualiza rótulo/estado (admin). O número e as credenciais SIP não se
 /// mudam aqui — reatribuir um número é apagar e criar de novo (evita um
 /// ramal "meio migrado" entre dois membros).
+#[utoipa::path(
+    patch, path = "/api/orgs/{org_id}/extensions/{id}", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização."), ("id" = Uuid, Path, description = "Ramal.")),
+    request_body = UpdateExtensionReq,
+    responses(
+        (status = 200, body = VoiceExtensionInfo),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn update_extension(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -364,6 +402,17 @@ pub async fn update_extension(
 
 /// Regenera a password SIP de um ramal (admin) — mesma revelação única que a
 /// criação. O `sip_username` (AOR) não muda; só a credencial.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/extensions/{id}/regenerate-password", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização."), ("id" = Uuid, Path, description = "Ramal.")),
+    responses(
+        (status = 200, body = CreatedExtension, description = "A nova palavra-passe SIP sai UMA vez; a anterior deixa de servir."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn regenerate_extension_password(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -417,6 +466,17 @@ pub async fn regenerate_extension_password(
 }
 
 /// Apaga um ramal (admin).
+#[utoipa::path(
+    delete, path = "/api/orgs/{org_id}/extensions/{id}", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização."), ("id" = Uuid, Path, description = "Ramal.")),
+    responses(
+        (status = 204, description = "Ramal apagado."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn delete_extension(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -654,12 +714,12 @@ pub async fn ivr_resolve_extension(
 // directa, não entra numa sala do SFU. Nenhuma UI ou mensagem adicionada
 // aqui pode sugerir o contrário — a mesma disciplina do cabeçalho acima.
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct AssignExtensionDidReq {
     pub did_id: Uuid,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExtensionDidInfo {
     pub did_id: Uuid,
     pub e164: String,
@@ -671,6 +731,19 @@ pub struct ExtensionDidInfo {
 /// sem IVR. Rejeita: DID inexistente/inactivo, DID do pool partilhado ou de
 /// outra org, DID já atribuído a outro ramal, DID em uso por uma voice_room
 /// activa (ver o comentário sobre não-atomicidade na migração 0065).
+#[utoipa::path(
+    put, path = "/api/orgs/{org_id}/extensions/{id}/did", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização."), ("id" = Uuid, Path, description = "Ramal.")),
+    request_body = AssignExtensionDidReq,
+    responses(
+        (status = 200, body = ExtensionDidInfo),
+        (status = 409, body = crate::openapi::ErrorBody, description = "O DID já está atribuído."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn assign_extension_did(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -765,6 +838,17 @@ pub async fn assign_extension_did(
 /// `DELETE /api/orgs/{org_id}/extensions/{id}/did` (admin) — desatribui o DID
 /// de um ramal; o número volta a ficar livre para outro ramal ou para uma
 /// sala de voz efémera. Idempotente: sem DID atribuído, não é um erro.
+#[utoipa::path(
+    delete, path = "/api/orgs/{org_id}/extensions/{id}/did", tag = "voice",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização."), ("id" = Uuid, Path, description = "Ramal.")),
+    responses(
+        (status = 204, description = "DID desatribuído."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn unassign_extension_did(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1073,3 +1157,28 @@ mod tests {
         assert!(body.contains("user/ramal_abc123@acme.ramais.delonix.meet"));
     }
 }
+
+/// Documentação OpenAPI dos ramais (`openapi.rs` junta-a). Os três
+/// callbacks `/api/voice/ivr/*` do `mod_xml_curl` do FreeSWITCH ficam de fora:
+/// são máquina-a-máquina, por segredo partilhado, e respondem XML.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        list_extensions,
+        create_extension,
+        update_extension,
+        regenerate_extension_password,
+        delete_extension,
+        assign_extension_did,
+        unassign_extension_did
+    ),
+    components(schemas(
+        VoiceExtensionInfo,
+        CreatedExtension,
+        CreateExtensionReq,
+        UpdateExtensionReq,
+        AssignExtensionDidReq,
+        ExtensionDidInfo
+    ))
+)]
+pub struct ApiDoc;

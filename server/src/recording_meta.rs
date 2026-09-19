@@ -146,7 +146,7 @@ pub(crate) fn normalize_tags(raw: &[String]) -> Result<Vec<String>, ApiError> {
 
 // ---------- publicação ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct PublishReq {
     /// Só `org` por agora: publicar para a organização do autor.
     #[serde(default = "default_visibility")]
@@ -158,6 +158,18 @@ fn default_visibility() -> String {
 }
 
 /// `POST /api/recordings/{id}/publish` — publica para a organização do autor.
+#[utoipa::path(
+    post, path = "/api/recordings/{recording_id}/publish", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação.")),
+    request_body = PublishReq,
+    responses(
+        (status = 200, body = crate::recordings::RecordingItem),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn publish(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -194,6 +206,17 @@ pub async fn publish(
 }
 
 /// `POST /api/recordings/{id}/unpublish` — volta a privada.
+#[utoipa::path(
+    post, path = "/api/recordings/{recording_id}/unpublish", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação.")),
+    responses(
+        (status = 200, body = crate::recordings::RecordingItem),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn unpublish(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -219,6 +242,17 @@ pub async fn unpublish(
 // ---------- miniatura e visualizações ----------
 
 /// `GET /api/recordings/{id}/thumbnail` — JPEG gerado pelo servidor.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/thumbnail", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação.")),
+    responses(
+        (status = 200, body = Vec<u8>, content_type = "image/jpeg", description = "Miniatura JPEG gerada pelo servidor."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn thumbnail(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -239,6 +273,17 @@ pub async fn thumbnail(
 
 /// `POST /api/recordings/{id}/views` — regista uma visualização (uma por
 /// pessoa por dia; repetir no mesmo dia não conta duas vezes).
+#[utoipa::path(
+    post, path = "/api/recordings/{recording_id}/views", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação.")),
+    responses(
+        (status = 204, description = "Visualização registada (no máximo uma por pessoa e período)."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn record_view(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -261,7 +306,7 @@ pub async fn record_view(
 
 // ---------- participantes ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Participant {
     pub user_id: Uuid,
     pub username: String,
@@ -293,6 +338,17 @@ async fn participants_of_room(
 }
 
 /// `GET /api/recordings/{id}/participants` — quem esteve na sala da gravação.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/participants", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação."), ("page_size" = Option<u32>, Query, description = "Itens por página."), ("page_token" = Option<String>, Query, description = "Cursor da página seguinte.")),
+    responses(
+        (status = 200, body = serde_json::Value, description = "Página `{items: [Participant], next_page_token}`."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn recording_participants(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -304,6 +360,17 @@ pub async fn recording_participants(
 }
 
 /// `GET /api/rooms/{code}/participants` — só para quem esteve na sala.
+#[utoipa::path(
+    get, path = "/api/rooms/{room_code}/participants", tag = "rooms",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala."), ("page_size" = Option<u32>, Query, description = "Itens por página."), ("page_token" = Option<String>, Query, description = "Cursor da página seguinte.")),
+    responses(
+        (status = 200, body = serde_json::Value, description = "Página `{items: [Participant], next_page_token}`."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn room_participants(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -317,7 +384,7 @@ pub async fn room_participants(
 // ---------- transcrição ----------
 
 /// Um segmento da transcrição (forma guardada pelo ai-worker, migração 0054).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct Segment {
     pub start_ms: i64,
     pub end_ms: i64,
@@ -343,7 +410,7 @@ pub(crate) fn parse_segments(v: serde_json::Value) -> Vec<Segment> {
     out
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct Transcript {
     pub recording_id: Uuid,
     /// `none` | `transcribing` | `ready` | `failed`.
@@ -412,6 +479,17 @@ pub(crate) async fn load_transcript(
 }
 
 /// `GET /api/recordings/{id}/transcript` — texto e segmentos com tempos.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/transcript", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação.")),
+    responses(
+        (status = 200, body = Transcript),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn transcript(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -520,3 +598,19 @@ mod tests {
         assert!(check_t_ms(99_999_999, None).is_ok());
     }
 }
+
+/// Documentação OpenAPI do leitor de gravações (`openapi.rs` junta-a).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        publish,
+        unpublish,
+        thumbnail,
+        record_view,
+        recording_participants,
+        room_participants,
+        transcript
+    ),
+    components(schemas(PublishReq, Participant, Segment, Transcript))
+)]
+pub struct ApiDoc;

@@ -65,6 +65,7 @@ pub struct WebmBytes(Vec<u8>);
 #[derive(utoipa::OpenApi)]
 #[openapi(
     paths(
+        details,
         upload,
         list,
         library,
@@ -847,6 +848,16 @@ pub async fn library(
 }
 
 /// Uma gravação da biblioteca, para o leitor em página inteira.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/details", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação.")),
+    responses(
+        (status = 200, body = RecordingItem, description = "Uma gravação da biblioteca, para o leitor em página inteira."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn details(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

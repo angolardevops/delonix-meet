@@ -137,6 +137,13 @@ fn parts() -> Vec<utoipa::openapi::OpenApi> {
         crate::odoo::V1ApiDoc::openapi(),
         crate::apikeys::V1ApiDoc::openapi(),
         crate::storage::ApiDoc::openapi(),
+        crate::account::ApiDoc::openapi(),
+        crate::ai_studio::ApiDoc::openapi(),
+        crate::net_probe::ApiDoc::openapi(),
+        crate::ramais::ApiDoc::openapi(),
+        crate::recording_meta::ApiDoc::openapi(),
+        crate::recording_captions::ApiDoc::openapi(),
+        crate::recording_chapters::ApiDoc::openapi(),
     ]
 }
 

@@ -65,6 +65,15 @@ fn clamp_bytes(pedido: Option<usize>) -> usize {
         .clamp(1, MAX_PROBE_BYTES)
 }
 
+#[utoipa::path(
+    get, path = "/api/net-probe", tag = "platform",
+    security(("session" = [])),
+    params(("bytes" = Option<usize>, Query, description = "Quantos bytes de ruído devolver (limitado).")),
+    responses(
+        (status = 200, body = Vec<u8>, content_type = "application/octet-stream", description = "Ruído incompressível, para medir a descarga."),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn download(auth: AuthUser, Query(q): Query<ProbeQuery>) -> Result<Response, ApiError> {
     if !LIMITER.check(&auth.user_id.to_string()) {
         return Err(ApiError::TooManyRequests);
@@ -80,6 +89,16 @@ pub async fn download(auth: AuthUser, Query(q): Query<ProbeQuery>) -> Result<Res
     Ok(r)
 }
 
+#[utoipa::path(
+    post, path = "/api/net-probe", tag = "platform",
+    security(("session" = [])),
+    request_body(content = Vec<u8>, content_type = "application/octet-stream"),
+    responses(
+        (status = 200, body = serde_json::Value, description = "Quantos bytes chegaram e em quanto tempo, para medir a subida."),
+        (status = 413, body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn upload(auth: AuthUser, body: Body) -> Result<Json<serde_json::Value>, ApiError> {
     if !LIMITER.check(&auth.user_id.to_string()) {
         return Err(ApiError::TooManyRequests);
@@ -123,3 +142,8 @@ mod tests {
         );
     }
 }
+
+/// Documentação OpenAPI da sondagem de rede (`openapi.rs` junta-a).
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(download, upload))]
+pub struct ApiDoc;

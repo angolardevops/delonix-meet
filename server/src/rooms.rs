@@ -49,6 +49,7 @@ pub const ROOM_COLUMNS: &str =
 #[derive(utoipa::OpenApi)]
 #[openapi(
     paths(
+        room_waiting,
         create_room,
         get_room,
         join_room,
@@ -697,6 +698,17 @@ pub async fn room_chat(
 ///
 /// A fila vive na memória do pod da sala: chama-se com `?room={code}` para o
 /// balanceador (hash por `$arg_room`) mandar o pedido a esse pod.
+#[utoipa::path(
+    get, path = "/api/rooms/{room_code}/waiting", tag = "rooms",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala."), ("room" = Option<String>, Query, description = "O mesmo código: chave de afinidade do balanceador (a fila vive na memória do pod da sala).")),
+    responses(
+        (status = 200, body = Vec<crate::signaling::WaitingView>, description = "Quem espera, para o anfitrião ou co-anfitrião decidir antes de entrar."),
+        (status = 403, body = crate::openapi::ErrorBody, description = "Tem acesso à sala mas não admite."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn room_waiting(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
