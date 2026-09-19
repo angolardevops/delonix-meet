@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { applyTheme, storedTheme, Theme } from '../theme'
 
@@ -6,6 +6,12 @@ import { applyTheme, storedTheme, Theme } from '../theme'
 export default function ThemePicker() {
   const { t } = useTranslation()
   const [theme, setTheme] = useState<Theme>(storedTheme)
+
+  useEffect(() => {
+    const on = () => setTheme(storedTheme())
+    window.addEventListener('dx-theme', on)
+    return () => window.removeEventListener('dx-theme', on)
+  }, [])
 
   function pick(next: Theme) {
     setTheme(next)

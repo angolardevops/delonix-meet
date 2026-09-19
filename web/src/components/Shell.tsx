@@ -109,7 +109,7 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
     { key: 'appearance', label: t('settings.appearance') },
     { key: 'account', label: t('settings.account') },
     { key: 'security', label: t('settings.security', 'Segurança') },
-    { key: 'brand', label: 'Marca' },
+    { key: 'brand', label: t('settings.brand') },
   ]
 
   return (
@@ -337,9 +337,22 @@ function AppBar({
 }) {
   const { t, i18n } = useTranslation()
   const [theme, setTheme] = useState<Theme>(storedTheme)
+  const [now, setNow] = useState(() => new Date())
   const locale = i18n.language.startsWith('en') ? 'en-GB' : i18n.language.startsWith('fr') ? 'fr-FR' : 'pt-PT'
-  const now = new Date()
   const dateLabel = `${now.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' })} · ${now.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`
+
+  useEffect(() => {
+    const on = () => setTheme(storedTheme())
+    window.addEventListener('dx-theme', on)
+    return () => window.removeEventListener('dx-theme', on)
+  }, [])
+
+  // A `.app-bar` mostrava a hora de quando a sessão abriu, sem nunca actualizar
+  // (achado 4.6). Um minuto chega — não é um relógio de segundos.
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000)
+    return () => clearInterval(id)
+  }, [])
 
   function toggleTheme() {
     const next = theme === 'default' ? 'delonix-light' : 'default'
