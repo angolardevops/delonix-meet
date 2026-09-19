@@ -824,6 +824,9 @@ button.link:hover {
 .btn-new:hover:not(:disabled) { filter: brightness(1.1); }
 .btn-new:disabled { opacity: 0.6; cursor: not-allowed; }
 .btn-new.small { padding: 0.42rem 0.8rem; font-size: 0.86rem; margin-top: 0; }
+/* Mesmo modificador, mas para quem já usa o kit (<Btn className="small">) —
+   ver docs/reference/design-system.md §3. */
+.btn-sm.small { height: auto; padding: 0.42rem 0.8rem; font-size: 0.86rem; }
 
 .empty-state {
   display: flex; flex-direction: column; align-items: center; gap: 0.8rem;
@@ -1042,14 +1045,6 @@ button.link:hover {
 
 /* Contentor com altura fixa para o canvas responsivo do Chart.js. */
 .chart-canvas-wrap { position: relative; height: 260px; width: 100%; }
-
-.tabs { display: flex; gap: 0.3rem; border-bottom: 1px solid var(--border); }
-.tab {
-  background: none; color: var(--muted); padding: 0.6rem 1rem;
-  border-bottom: 2px solid transparent; border-radius: 0; font-size: 0.95rem;
-}
-.tab:hover { color: var(--text); }
-.tab.active { color: var(--accent-text); border-bottom-color: var(--accent); }
 
 .emp-list { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 1rem; }
 .emp-row {
@@ -3377,27 +3372,8 @@ button.link:hover {
   }
 }
 
-/* ── Event Modal Tabs ───────────────────────────────────────────────────────── */
-.event-tabs {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  margin: 0.4rem -1.2rem 0.8rem;
-  padding: 0 1.2rem;
-}
-.event-tab {
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-2);
-  cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 500;
-  padding: 0.45rem 0.9rem;
-  transition: color 0.15s, border-color 0.15s;
-  &:hover { color: var(--text); }
-  &.active { color: var(--accent-hi); border-bottom-color: var(--accent-hi); }
-}
+/* Abas do modal de evento — migradas para .dx-tabs (components/ui.tsx). */
+.event-modal .dx-tabs { margin: 0.4rem -1.2rem 0.8rem; }
 
 /* ── Agenda Panel ───────────────────────────────────────────────────────────── */
 .agenda-panel { display: flex; flex-direction: column; gap: 0.6rem; }
@@ -3942,6 +3918,70 @@ button.link:hover {
 .layout-ico { font-size: 1.05rem; width: 22px; text-align: center; flex: none; }
 
 /* ============================================================
+   Kit partilhado — Menu / SplitButton / Tabs (components/ui.tsx)
+   Generaliza o padrão acima (.layout-menu/.layout-opt) e o de
+   .nav-account-menu num popover único, reutilizável em qualquer
+   página. Ainda sem consumidores — nasce aqui para o Início e a
+   Sala convergirem no mesmo menu em vez de cada um ter o seu.
+   ============================================================ */
+.dx-menu {
+  position: absolute; z-index: 60; min-width: 240px; padding: 6px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2); animation: cmd-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.dx-menu-bottom { top: calc(100% + 8px); }
+.dx-menu-top { bottom: calc(100% + 8px); }
+.dx-menu-start { left: 0; }
+.dx-menu-end { right: 0; }
+.dx-menu-item {
+  display: flex; align-items: center; gap: 0.65rem; width: 100%;
+  padding: 0.55rem 0.6rem; border-radius: var(--radius-sm); background: none; border: none;
+  color: var(--text); text-align: left; cursor: pointer; transition: background 0.12s;
+}
+.dx-menu-item:hover:not(:disabled) { background: var(--surface-3); }
+.dx-menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
+.dx-menu-item.active {
+  background: color-mix(in oklab, var(--accent-2, #eda33b) 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent-2, #eda33b) 34%, transparent);
+}
+.dx-menu-item-danger { color: var(--accent); }
+.dx-menu-item-icon { display: inline-flex; width: 22px; flex: none; justify-content: center; }
+.dx-menu-item-icon svg { width: 16px; height: 16px; }
+.dx-menu-item-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.dx-menu-item-text strong { font-size: 0.86rem; font-weight: 600; }
+.dx-menu-item-text small { font-size: 0.74rem; color: var(--muted); }
+.dx-menu-sep { height: 1px; background: var(--border); margin: 5px 4px; }
+
+/* Botão dividido: ação principal + seta que abre um .dx-menu.
+   SEM overflow:hidden no wrapper — cortaria o próprio menu, que é filho
+   posicionado (achado ao testar: o menu existia no DOM mas nunca aparecia).
+   O recorte em pílula vem do border-radius em cada metade. */
+.dx-split { position: relative; display: inline-flex; height: var(--ctl-h); box-shadow: 0 8px 18px -10px color-mix(in oklab, var(--accent) 55%, transparent); }
+.dx-split-main {
+  display: inline-flex; align-items: center; gap: 0.5rem; border: none; padding: 0 0.9rem;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  background: linear-gradient(135deg, var(--accent-hi, var(--accent)), var(--accent));
+  color: #fff; font-family: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer;
+}
+.dx-split-main:disabled { opacity: 0.6; cursor: not-allowed; }
+.dx-split-caret {
+  border: none; border-left: 1px solid rgba(255, 255, 255, 0.22); padding: 0 0.55rem;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--accent); color: #fff; cursor: pointer; display: inline-flex; align-items: center;
+}
+.dx-split-caret:disabled { opacity: 0.6; cursor: not-allowed; }
+.dx-split-menu { min-width: 288px; }
+
+/* Abas de painel (ex.: painel lateral da Sala) */
+.dx-tabs { display: flex; gap: 4px; background: var(--surface-2); border-radius: var(--radius-md); padding: 3px; }
+.dx-tab { flex: 1; text-align: center; background: none; border: none; color: var(--muted); font-size: 0.82rem; font-weight: 600; padding: 0.45rem 0; border-radius: var(--radius-sm); cursor: pointer; }
+.dx-tab.active { background: var(--surface-3); color: var(--text); }
+
+.dx-menu-item:focus-visible, .dx-tab:focus-visible, .dx-split-caret:focus-visible, .dx-split-main:focus-visible {
+  outline: none; box-shadow: var(--ring);
+}
+
+/* ============================================================
    Login split-panel (tela do template NgolaCloud)
    ============================================================ */
 .auth-page.auth-split { display: flex; align-items: stretch; justify-content: center; gap: 0; }
@@ -4222,7 +4262,15 @@ button.link:hover {
 .lobby-admit,
 .integ-tab,
 .auth-tab,
-.tool-section .btn-sm.ghost {
+.tool-section .btn-sm.ghost,
+/* Juntam-se aqui à unificação: eram botões de ação/secundária com o seu
+   próprio raio e padding por página (4/5/6px, 0.42/0.45/0.5rem…) — a mesma
+   ideia ("Nova filial", "Hoje", "Reunião agora", "Entrar" numa linha) com
+   três tamanhos diferentes consoante o ecrã. */
+.btn-new,
+.btn-today,
+.btn-meet-now,
+.dash-enter {
   height: var(--ctl-h);
   padding: 0 12px;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
@@ -4373,14 +4421,10 @@ body { -webkit-font-smoothing: antialiased; }
   display: grid; place-items: center; cursor: pointer; font-size: 0.85rem;
 }
 .app-bar-icon:hover { border-color: var(--accent); color: var(--accent-text); }
-.app-bar-new {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 14px; border-radius: var(--radius-sm);
-  background: var(--accent); color: #fff; font-weight: 600; font-size: 0.83rem;
-  border: none; cursor: pointer;
-}
-.app-bar-new:hover { filter: brightness(1.1); }
-.app-bar-new:disabled { opacity: 0.6; cursor: default; filter: none; }
+/* "Nova reunião" passou a .dx-split (kit partilhado, ver components/ui.tsx):
+   ação principal + seta que abre o menu com sala de espera/E2EE/treino —
+   antes eram três chips soltas na Home (`home-extra`, agora removido). */
+.dx-split-main { flex: 1; }
 /* Campo de código: input e botão fundidos numa só peça (como no template). */
 .app-bar-join {
   display: flex; align-items: center; overflow: hidden;
@@ -4404,9 +4448,14 @@ body { -webkit-font-smoothing: antialiased; }
    em qualquer sítio, incluindo dentro da gaveta nova (achado 3.1.4). O que
    esconde a versão da barra é agora `.qa-bar`, na camada do lote 2. */
 
-/* ---- 4. Páginas e cartões densos --------------------------- */
-.page, .home { padding: 22px 26px; }
-.home { max-width: 1200px; }
+/* ---- 4. Início — registo mais espaçoso (proposta de redesign, 13/09) ------
+   Diverge de propósito do ponto 1 acima: só para o Início, não para a Sala
+   nem para o rail. Cantos maiores, mais respiração, badges de ícone com cor —
+   decisão explícita do utilizador de trocar densidade por elegância aqui. */
+.page, .home { padding: 28px 34px; }
+/* 1200px deixava metade de um ecrã largo em branco à direita — os cartões
+   maiores do registo espaçoso tornaram isso mais visível. */
+.home { max-width: 1600px; }
 .page-head { margin-bottom: 14px; }
 .page-head h1, .dash-greet h1 { font-size: 1.45rem; letter-spacing: -0.02em; }
 .dash-greet { margin-bottom: 0; }
@@ -4414,19 +4463,19 @@ body { -webkit-font-smoothing: antialiased; }
 .dash-greet .home-sub { font-size: 0.85rem; margin: 4px 0 0; }
 
 .dash-grid {
-  display: grid; grid-template-columns: 1.45fr 1fr; gap: 12px; margin-top: 16px;
+  display: grid; grid-template-columns: 1.45fr 1fr; gap: 20px; margin-top: 24px;
 }
 .dash-card {
   background: var(--surface); border: 1px solid var(--border);
   padding: 0; overflow: hidden;
-  border-radius: var(--radius-md); box-shadow: var(--shadow);
+  border-radius: 12px; box-shadow: var(--shadow);
 }
 .dash-card-head {
   display: flex; justify-content: space-between; align-items: center;
-  margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border);
+  margin: 0; padding: 16px 18px; border-bottom: 1px solid var(--border);
 }
-.dash-card-head h2 { font-size: 0.83rem; font-weight: 600; }
-.dash-card-head h2 svg { width: 15px; height: 15px; }
+.dash-card-head h2 { font-size: 0.88rem; font-weight: 600; }
+.dash-card-head h2 svg { width: 16px; height: 16px; }
 /* Links funcionais em índigo: o dourado é da MARCA (wordmark, landing) e
    perde significado se também marcar navegação. */
 button.link { color: var(--accent-text); margin-top: 0; }
@@ -4435,49 +4484,51 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
 .dash-card-head .link { font-size: 0.78rem; }
 /* Ação de linha: discreta por omissão, ganha o acento ao passar o rato. */
 .dash-enter {
-  padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-sm);
+  padding: 6px 14px; font-size: 0.78rem; font-weight: 600; border-radius: var(--radius-sm);
   background: var(--accent); color: #fff; border: none;
 }
 .dash-enter:hover { filter: brightness(1.1); background: var(--accent); }
-.dash-empty { padding: 14px; margin: 0; font-size: 0.82rem; }
+.dash-empty { padding: 18px; margin: 0; font-size: 0.82rem; }
 .dash-row {
-  padding: 9px 14px; gap: 12px;
+  padding: 12px 18px; gap: 14px;
   border-top: none; border-bottom: 1px solid var(--border-soft);
 }
 .dash-row:last-child { border-bottom: none; }
 .dash-row:hover { background: var(--surface-2); }
-.dash-row-main strong { font-size: 0.83rem; font-weight: 600; }
-.dash-meta { font-size: 0.72rem; color: var(--muted-2); }
-.dash-secure { font-family: var(--font-mono); font-size: 0.7rem; margin-top: 14px; }
+.dash-row-main strong { font-size: 0.87rem; font-weight: 600; }
+.dash-meta { font-size: 0.76rem; color: var(--muted-2); }
+.dash-secure { font-family: var(--font-mono); font-size: 0.72rem; margin-top: 22px; }
 
-/* Atalhos: cartões de 4 colunas, como os "quick cards" do template. */
-.home-shortcuts { grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; }
+/* Hora da reunião, em pílula — como no mockup, em vez de texto corrido
+   (a hora vive num <span class="mono"> dentro de .dash-meta, ver Home.tsx). */
+.dash-meta .mono {
+  display: inline-flex; align-items: center; font-size: 0.74rem;
+  background: var(--accent-soft); color: var(--accent-text);
+  border-radius: 6px; padding: 2px 6px;
+}
+
+/* Atalhos: cartões de 4 colunas, como os "quick cards" do template, com
+   badge de ícone colorido por categoria (calendário/gravações/quadros/org). */
+.home-shortcuts { grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 22px; }
 .shortcut-tile {
   flex-direction: column; align-items: flex-start; gap: 0;
-  padding: 12px 14px; border-radius: var(--radius-md); box-shadow: var(--shadow);
+  padding: 16px 18px; border-radius: 12px; box-shadow: var(--shadow);
 }
 .shortcut-tile:hover { border-color: var(--accent); transform: none; }
-.shortcut-ic { width: auto; height: auto; background: none; color: var(--accent-text); margin-bottom: 6px; }
-.shortcut-ic svg { width: 16px; height: 16px; }
-.shortcut-txt strong { font-size: 0.83rem; font-weight: 600; }
-.shortcut-txt small { font-size: 0.72rem; color: var(--muted-2); }
+.shortcut-ic {
+  width: 36px; height: 36px; flex: none; display: flex; align-items: center; justify-content: center;
+  border-radius: 8px; background: var(--accent-soft); color: var(--accent-text); margin-bottom: 10px;
+}
+.shortcut-ic svg { width: 17px; height: 17px; }
+.shortcut-tile[data-tone="gold"] .shortcut-ic { background: color-mix(in oklab, var(--accent-2, #eda33b) 18%, transparent); color: var(--accent-2, #eda33b); }
+.shortcut-tile[data-tone="success"] .shortcut-ic { background: color-mix(in oklab, var(--success, #3fbf7a) 18%, transparent); color: var(--success, #3fbf7a); }
+.shortcut-txt strong { font-size: 0.87rem; font-weight: 600; }
+.shortcut-txt small { font-size: 0.76rem; color: var(--muted-2); }
 @media (max-width: 1000px) { .home-shortcuts { grid-template-columns: repeat(2, 1fr); } }
 
-/* A ação primária e o campo de código migraram para a barra de topo;
-   na Home ficam só as variantes (sala de espera, E2EE, treino). */
+/* A ação primária e o campo de código migraram para a barra de topo; a Home
+   já não tem grupo de variantes próprio — vivem no menu de QuickActions. */
 .home .home-actions { display: none; }
-.home-extra { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
-/* `.chip-outline` é a forma do template: contorno neutro que passa a acento
-   no hover. Vale para .link também, para não partir usos antigos. */
-.home-extra .chip-outline,
-.home-extra .link {
-  padding: 4px 11px; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: var(--surface); color: var(--muted); font-size: 0.78rem;
-  text-decoration: none; white-space: nowrap;
-}
-.home-extra .chip-outline:hover:not(:disabled),
-.home-extra .link:hover { border-color: var(--accent); color: var(--accent-text); }
-.home-extra .chip-outline:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ---- 5. Superfícies: borda fina, sombra mínima -------------- */
 .dash-card, .kpi-card, .rec-card, .rec-item, .wb-card, .shortcut-tile, .quality-card {
@@ -4755,7 +4806,8 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
   flex-direction: column; align-items: stretch; gap: 8px;
   padding: 4px 12px 10px; border-bottom: 1px solid var(--sb-line); margin-bottom: 6px;
 }
-.qa-drawer .app-bar-new { width: 100%; justify-content: center; padding: 9px 14px; }
+.qa-drawer .dx-split { width: 100%; }
+.qa-drawer .dx-split-main { justify-content: center; padding: 9px 14px; }
 .qa-drawer .app-bar-join { width: 100%; }
 .qa-drawer .app-bar-join input { width: 100%; }
 .qa-drawer .app-bar-err { font-size: 0.76rem; }
@@ -5227,7 +5279,8 @@ button.link:disabled { color: var(--muted-2); cursor: default; text-decoration: 
     gap: 8px;
     margin: 0 0 18px;
   }
-  .qa-home .app-bar-new { flex: 1 1 100%; justify-content: center; padding: 11px 14px; font-size: 0.95rem; }
+  .qa-home .dx-split { flex: 1 1 100%; }
+  .qa-home .dx-split-main { justify-content: center; padding: 11px 14px; font-size: 0.95rem; }
   .qa-home .app-bar-join { flex: 1 1 100%; display: flex; }
   .qa-home .app-bar-join input { flex: 1 1 auto; min-width: 0; }
 }

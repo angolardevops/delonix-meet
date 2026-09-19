@@ -2,7 +2,6 @@ import { ReactNode, useCallback, useState } from 'react'
 import AsyncSection, { useLoad } from '../components/AsyncSection'
 import { useTranslation } from 'react-i18next'
 import {
-  createRoom,
   downloadMeetingIcs,
   listMeetings,
   listWhiteboards,
@@ -27,7 +26,9 @@ export default function Home({
   onNavigate: (k: NavKey) => void
 }) {
   const { t, i18n } = useTranslation()
-  const [creating, setCreating] = useState(false)
+  // Erro de entrar numa reunião JÁ agendada (cartão "Próximas reuniões") —
+  // criar uma nova reunião passou a viver só em QuickActions (Shell.tsx),
+  // que tem o seu próprio erro (`app-bar-err`).
   const [error, setError] = useState('')
 
   // Cada secção carrega e falha por si (achados 4.1/4.2). Antes eram três
@@ -53,19 +54,6 @@ export default function Home({
   const locale = i18n.language.startsWith('en') ? 'en-GB' : 'pt-PT'
   const hour = new Date().getHours()
   const greetKey = hour < 12 ? 'dash.greetMorning' : hour < 19 ? 'dash.greetAfternoon' : 'dash.greetEvening'
-
-  async function newMeeting(waitingRoom = false, e2ee = false, format: 'normal' | 'training' = 'normal') {
-    setError('')
-    setCreating(true)
-    try {
-      const label = format === 'training' ? 'Treino' : 'Reunião'
-      const room = await createRoom(`${label} de ${user.username}`, 'sfu', waitingRoom, e2ee, format)
-      onEnterRoom(room.code)
-    } catch (err) {
-      setError((err as Error).message)
-      setCreating(false)
-    }
-  }
 
   async function enterMeeting(m: Meeting) {
     setError('')
@@ -104,47 +92,21 @@ export default function Home({
         <p className="home-sub">{t('dash.greetSub')}</p>
       </header>
 
+      {/* Sala de espera / E2EE / treino: já não são chips soltas aqui — vivem
+          no menu do botão "Nova reunião" (QuickActions, Shell.tsx), junto da
+          própria ação, em vez de um segundo grupo de controlos ao lado. */}
       <QuickActions variant="home" onEnterRoom={onEnterRoom} username={user.username} />
-
-      {/* Chips outline, etiqueta curta: a explicação vive no tooltip. Eram
-          frases inteiras que ocupavam meia linha do dashboard. */}
-      <div className="home-extra">
-        <button
-          className="chip-outline"
-          disabled={creating}
-          title={t('dash.waitingRoomHint')}
-          onClick={() => void newMeeting(true)}
-        >
-          {t('dash.waitingRoom')}
-        </button>
-        <button
-          className="chip-outline"
-          disabled={creating}
-          title={t('dash.e2eeHint')}
-          onClick={() => void newMeeting(false, true)}
-        >
-          {t('dash.e2ee')}
-        </button>
-        <button
-          className="chip-outline"
-          disabled={creating}
-          title={t('dash.trainingHint', 'Ativa as salas de grupo (breakouts)')}
-          onClick={() => void newMeeting(false, false, 'training')}
-        >
-          {t('dash.training', 'Reunião de treino')}
-        </button>
-      </div>
       {error && <div className="error">{error}</div>}
 
       {/* Atalhos para as áreas principais — a Home é a porta de entrada. */}
       <div className="home-shortcuts">
         {([
           { k: 'calendar', ic: <CalendarIcon />, l: t('nav.calendar'), d: t('dash.scCalendar') },
-          { k: 'recordings', ic: <FilmIcon />, l: t('nav.recordings'), d: t('dash.scRecs') },
-          { k: 'whiteboards', ic: <NoteIcon />, l: t('nav.whiteboards'), d: t('dash.scWb') },
+          { k: 'recordings', ic: <FilmIcon />, l: t('nav.recordings'), d: t('dash.scRecs'), tone: 'gold' },
+          { k: 'whiteboards', ic: <NoteIcon />, l: t('nav.whiteboards'), d: t('dash.scWb'), tone: 'success' },
           { k: 'directory', ic: <PeopleIcon />, l: t('nav.org'), d: t('dash.scOrg') },
-        ] as { k: NavKey; ic: ReactNode; l: string; d: string }[]).map((s) => (
-          <button key={s.k} className="shortcut-tile" onClick={() => onNavigate(s.k)}>
+        ] as { k: NavKey; ic: ReactNode; l: string; d: string; tone?: string }[]).map((s) => (
+          <button key={s.k} className="shortcut-tile" data-tone={s.tone} onClick={() => onNavigate(s.k)}>
             <span className="shortcut-ic">{s.ic}</span>
             <span className="shortcut-txt">
               <strong>{s.l}</strong>

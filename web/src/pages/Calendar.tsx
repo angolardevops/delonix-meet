@@ -32,6 +32,7 @@ import {
   User,
 } from '../api'
 import { CalendarIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, ClockIcon, CloseIcon, DoorIcon, EditIcon, PlusIcon, RepeatIcon, TrashIcon, VideoIcon, VoiceCallIcon } from '../icons'
+import { Btn, IconBtn, Tabs } from '../components/ui'
 
 /** Carrega as salas presenciais de todas as organizações do utilizador. */
 async function loadAllRooms(): Promise<MeetingRoom[]> {
@@ -495,9 +496,9 @@ function MeetingPopover({
             ? <span className="meet-popover-role owner">{t('organized')}</span>
             : <span className="meet-popover-role">{t('organizedBy', { name: m.owner_name })}</span>}
         </div>
-        <button className="btn-sm meet-popover-open" onClick={() => onOpen(m)}>
+        <Btn className="meet-popover-open" onClick={() => onOpen(m)}>
           {m.kind === 'voice' ? <VoiceCallIcon /> : <VideoIcon />} {t('tabDetails')}
-        </button>
+        </Btn>
       </div>
     </div>
   )
@@ -543,10 +544,10 @@ function AgendaView({
                   <strong>{m.title}{m.recurrence_freq && <span className="ev-recur" title={t('recur')}><RepeatIcon /></span>}</strong>
                   <small>{m.duration_min} min · {m.is_owner ? t('organized') : t('organizedBy', { name: m.owner_name })}{m.description ? ` · ${m.description}` : ''}</small>
                 </span>
-                <button className="btn-sm" onClick={() => onStart(m)}>
+                <Btn onClick={() => onStart(m)}>
                   {m.kind === 'voice' ? <VoiceCallIcon /> : <VideoIcon />}{m.is_owner ? t('start') : t('join')}
-                </button>
-                {m.is_owner && <button className="icon-btn" title={t('room.preEntrada.cancelar')} onClick={() => onRemove(m)}><TrashIcon /></button>}
+                </Btn>
+                {m.is_owner && <IconBtn title={t('room.preEntrada.cancelar')} onClick={() => onRemove(m)}><TrashIcon /></IconBtn>}
               </div>
             ))}
           </div>
@@ -639,9 +640,9 @@ function AgendaPanel({ meetingId, isOwner }: { meetingId: string; isOwner: boole
             onChange={(e) => setNewDuration(Number(e.target.value))}
             title={t('agendaDurLabel')}
           />
-          <button className="btn-sm" disabled={adding || !newTopic.trim()} onClick={() => void add()}>
+          <Btn disabled={adding || !newTopic.trim()} onClick={() => void add()}>
             <PlusIcon /> {t('agendaAdd')}
-          </button>
+          </Btn>
         </div>
       )}
     </div>
@@ -729,8 +730,8 @@ function ActionPlanPanel({ meetingId, isOwner }: { meetingId: string; isOwner: b
               placeholder={t('actionGoalPlaceholder')}
               autoFocus
             />
-            <button className="btn-sm" disabled={savingGoal} onClick={() => void saveGoal()}>{tRaw('common.save')}</button>
-            <button className="btn-sm ghost" onClick={() => setEditingGoal(false)}>{t('cancel')}</button>
+            <Btn disabled={savingGoal} onClick={() => void saveGoal()}>{tRaw('common.save')}</Btn>
+            <Btn variant="ghost" onClick={() => setEditingGoal(false)}>{t('cancel')}</Btn>
           </div>
         ) : (
           <span className="action-plan-meta-value" onClick={() => isOwner && setEditingGoal(true)}>
@@ -808,9 +809,9 @@ function ActionPlanPanel({ meetingId, isOwner }: { meetingId: string; isOwner: b
                 <td><input placeholder={t('actionHowPh')} value={newItem.how} onChange={(e) => setNewItem((p) => ({ ...p, how: e.target.value }))} /></td>
                 <td><input placeholder={t('actionResPh')} value={newItem.resources} onChange={(e) => setNewItem((p) => ({ ...p, resources: e.target.value }))} /></td>
                 <td colSpan={isOwner ? 2 : 1}>
-                  <button className="btn-sm" disabled={addingItem || !newItem.what.trim()} onClick={() => void addItem()}>
+                  <Btn disabled={addingItem || !newItem.what.trim()} onClick={() => void addItem()}>
                     <PlusIcon /> {t('agendaAdd')}
-                  </button>
+                  </Btn>
                 </td>
               </tr>
             )}
@@ -885,12 +886,15 @@ function EventModal({
         </div>
         {meeting.room_name && <p className="event-room"><DoorIcon /> {tr('physRoom')}<strong>{meeting.room_name}</strong></p>}
 
-        {/* Tabs */}
-        <div className="event-tabs">
-          <button className={`event-tab${tab === 'details' ? ' active' : ''}`} onClick={() => setTab('details')}>{tr('tabDetails')}</button>
-          <button className={`event-tab${tab === 'agenda' ? ' active' : ''}`} onClick={() => setTab('agenda')}>{tr('tabAgenda')}</button>
-          <button className={`event-tab${tab === 'actions' ? ' active' : ''}`} onClick={() => setTab('actions')}>{tr('tabActions')}</button>
-        </div>
+        <Tabs
+          tabs={[
+            { key: 'details', label: tr('tabDetails') },
+            { key: 'agenda', label: tr('tabAgenda') },
+            { key: 'actions', label: tr('tabActions') },
+          ]}
+          active={tab}
+          onChange={setTab}
+        />
 
         {/* Tab: Detalhes */}
         {tab === 'details' && (
@@ -906,8 +910,8 @@ function EventModal({
                   <>
                     <p className="muted small">{tr('inviteConfirm')}</p>
                     <div className="event-actions">
-                      <button className="btn-sm" disabled={busy} onClick={() => void respond('accepted')}>{tr('accept')}</button>
-                      <button className="btn-sm ghost" disabled={busy} onClick={() => setDeclining(true)}>{tr('decline')}</button>
+                      <Btn disabled={busy} onClick={() => void respond('accepted')}>{tr('accept')}</Btn>
+                      <Btn variant="ghost" disabled={busy} onClick={() => setDeclining(true)}>{tr('decline')}</Btn>
                     </div>
                   </>
                 )}
@@ -915,8 +919,8 @@ function EventModal({
                   <div className="decline-form">
                     <input placeholder={tr('declineReason')} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
                     <div className="event-actions">
-                      <button className="btn-sm danger" disabled={busy || !reason.trim()} onClick={() => void respond('declined')}>{tr('confirmDecline')}</button>
-                      <button className="btn-sm ghost" onClick={() => setDeclining(false)}>{tr('back')}</button>
+                      <Btn variant="danger" disabled={busy || !reason.trim()} onClick={() => void respond('declined')}>{tr('confirmDecline')}</Btn>
+                      <Btn variant="ghost" onClick={() => setDeclining(false)}>{tr('back')}</Btn>
                     </div>
                   </div>
                 )}
@@ -972,7 +976,7 @@ function EventModal({
             <CalendarIcon /> {tr('ics')}
           </button>
           {meeting.is_owner && (
-            <button className="btn-sm ghost" onClick={() => onRemove(meeting)}><TrashIcon /> {tr('cancel')}</button>
+            <Btn variant="ghost" onClick={() => onRemove(meeting)}><TrashIcon /> {tr('cancel')}</Btn>
           )}
         </div>
       </div>
@@ -1097,7 +1101,7 @@ function ScheduleModal({
           <label>{t('schedDate')}<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
           <label>{t('schedTime')}<input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></label>
           <label>{t('schedDuration')}
-            <select value={duration} onChange={(e) => setDuration(Number(e.target.value))}>
+            <select className="dx-select" value={duration} onChange={(e) => setDuration(Number(e.target.value))}>
               {[15, 30, 45, 60, 90, 120].map((d) => <option key={d} value={d}>{d} min</option>)}
             </select>
           </label>
@@ -1106,7 +1110,7 @@ function ScheduleModal({
         {rooms.length > 0 && (
           <label className="set-label">
             {t('schedRoom')}
-            <select value={roomRef} onChange={(e) => setRoomRef(e.target.value)}>
+            <select className="dx-select" value={roomRef} onChange={(e) => setRoomRef(e.target.value)}>
               <option value="">{t('schedNoRoom')}</option>
               {rooms.map((r) => (
                 <option key={r.id} value={r.id}>{r.name}{r.location ? ` · ${r.location}` : ''}</option>
@@ -1119,7 +1123,7 @@ function ScheduleModal({
         <div className="rrule-block">
           <label className="set-label">
             {t('schedRepeat')}
-            <select value={rrFreq} onChange={(e) => setRrFreq(e.target.value as RecurrenceFreq | '')}>
+            <select className="dx-select" value={rrFreq} onChange={(e) => setRrFreq(e.target.value as RecurrenceFreq | '')}>
               <option value="">{t('schedNoRepeat')}</option>
               <option value="daily">{t('schedDaily')}</option>
               <option value="weekly">{t('schedWeekly')}</option>
@@ -1266,9 +1270,9 @@ function ScheduleModal({
         )}
 
         {error && <div className="error">{error}</div>}
-        <button className="primary" disabled={busy || roomConflict}>
+        <Btn variant="submit" disabled={busy || roomConflict}>
           {busy ? t('schedBusy') : roomConflict ? t('schedUnavailable') : t('schedSubmit')}
-        </button>
+        </Btn>
       </form>
     </div>
   )
