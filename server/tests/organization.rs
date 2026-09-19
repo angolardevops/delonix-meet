@@ -1130,34 +1130,47 @@ async fn provision(
     r.json()
 }
 
+/// Estes quatro testes provisionam uma colaboradora NOVA (nunca criada pelo
+/// BFF) via Odoo — não `app.add_member`. Uma conta LOCAL (criada pelo BFF)
+/// não pode ser reclamada por uma sincronização Odoo (R25,
+/// `odoo_sso::upsert_member`, "já existe uma conta local..."); é o directório
+/// que a faz nascer, como acontece a sério.
+fn odoo_email(admin_email: &str, local: &str) -> String {
+    format!("{local}@{}", admin_email.split('@').nth(1).unwrap())
+}
+
+fn find_by_email<'a>(list: &'a Value, email: &str) -> &'a Value {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["email"] == email)
+        .unwrap_or_else(|| panic!("{email} não está na lista: {list}"))
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn odoo_sync_absent_phone_field_does_not_touch_existing_phone(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let t = Some(a.token.as_str());
-    let carla = app.add_member(&a, "carla", "member").await;
     let token = odoo_token(&app, a.org(), t).await;
+    let email = odoo_email(&a.email, "carla");
 
-    // Primeira sincronização: o directório traz um número.
+    // Primeira sincronização: cria a colaboradora e traz um número.
     let resp = provision(
         &app,
         &token,
         &a.email,
-        json!([{"odoo_uid": 1, "name": "Carla", "email": carla.email, "mobile_phone": "923 000 111"}]),
+        json!([{"odoo_uid": 501, "name": "Carla", "email": email, "mobile_phone": "923 000 111"}]),
     )
     .await;
+    assert_eq!(resp["created"], 1, "{resp}");
     assert!(
         resp["phones_rejected"].as_array().unwrap().is_empty(),
         "{resp}"
     );
     let (st, list) = app.get(&org_path(a.org(), "members"), t).await;
     assert_eq!(st, 200);
-    let row = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["user_id"] == carla.user_id)
-        .unwrap();
+    let row = find_by_email(&list, &email);
     assert_eq!(row["phone"], "+244923000111");
     assert_eq!(row["phone_source"], "odoo");
 
@@ -1166,20 +1179,16 @@ async fn odoo_sync_absent_phone_field_does_not_touch_existing_phone(db: sqlx::Pg
         &app,
         &token,
         &a.email,
-        json!([{"odoo_uid": 1, "name": "Carla", "email": carla.email}]),
+        json!([{"odoo_uid": 501, "name": "Carla", "email": email}]),
     )
     .await;
+    assert_eq!(resp["updated"], 1, "{resp}");
     assert!(
         resp["phones_rejected"].as_array().unwrap().is_empty(),
         "{resp}"
     );
     let (_, list) = app.get(&org_path(a.org(), "members"), t).await;
-    let row = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["user_id"] == carla.user_id)
-        .unwrap();
+    let row = find_by_email(&list, &email);
     assert_eq!(
         row["phone"], "+244923000111",
         "campo ausente não apaga o número"
@@ -1192,23 +1201,19 @@ async fn odoo_sync_false_or_empty_phone_clears_directory_number(db: sqlx::PgPool
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let t = Some(a.token.as_str());
-    let carla = app.add_member(&a, "carla", "member").await;
     let token = odoo_token(&app, a.org(), t).await;
+    let email = odoo_email(&a.email, "carla");
 
-    provision(
+    let resp = provision(
         &app,
         &token,
         &a.email,
-        json!([{"odoo_uid": 1, "name": "Carla", "email": carla.email, "mobile_phone": "923000111"}]),
+        json!([{"odoo_uid": 502, "name": "Carla", "email": email, "mobile_phone": "923000111"}]),
     )
     .await;
+    assert_eq!(resp["created"], 1, "{resp}");
     let (_, list) = app.get(&org_path(a.org(), "members"), t).await;
-    let row = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["user_id"] == carla.user_id)
-        .unwrap();
+    let row = find_by_email(&list, &email);
     assert_eq!(row["phone"], "+244923000111");
 
     // O Odoo manda `false` num campo vazio: apaga o que lá estava.
@@ -1216,7 +1221,7 @@ async fn odoo_sync_false_or_empty_phone_clears_directory_number(db: sqlx::PgPool
         &app,
         &token,
         &a.email,
-        json!([{"odoo_uid": 1, "name": "Carla", "email": carla.email, "mobile_phone": false, "work_phone": ""}]),
+        json!([{"odoo_uid": 502, "name": "Carla", "email": email, "mobile_phone": false, "work_phone": ""}]),
     )
     .await;
     assert!(
@@ -1224,12 +1229,7 @@ async fn odoo_sync_false_or_empty_phone_clears_directory_number(db: sqlx::PgPool
         "{resp}"
     );
     let (_, list) = app.get(&org_path(a.org(), "members"), t).await;
-    let row = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["user_id"] == carla.user_id)
-        .unwrap();
+    let row = find_by_email(&list, &email);
     assert!(row["phone"].is_null(), "{row}");
     assert!(row["phone_source"].is_null(), "{row}");
 }
@@ -1239,13 +1239,28 @@ async fn odoo_sync_never_overwrites_a_manual_phone(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let t = Some(a.token.as_str());
-    let carla = app.add_member(&a, "carla", "member").await;
     let token = odoo_token(&app, a.org(), t).await;
+    let email = odoo_email(&a.email, "carla");
+
+    // Cria a colaboradora via Odoo, sem telefone.
+    let resp = provision(
+        &app,
+        &token,
+        &a.email,
+        json!([{"odoo_uid": 503, "name": "Carla", "email": email}]),
+    )
+    .await;
+    assert_eq!(resp["created"], 1, "{resp}");
+    let (_, list) = app.get(&org_path(a.org(), "members"), t).await;
+    let user_id = find_by_email(&list, &email)["user_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // O próprio (ou um admin) escreve o número à mão.
     let (st, body) = app
         .put(
-            &org_path(a.org(), &format!("members/{}/phone", carla.user_id)),
+            &org_path(a.org(), &format!("members/{user_id}/phone")),
             t,
             json!({"phone": "923111222"}),
         )
@@ -1258,7 +1273,7 @@ async fn odoo_sync_never_overwrites_a_manual_phone(db: sqlx::PgPool) {
         &app,
         &token,
         &a.email,
-        json!([{"odoo_uid": 1, "name": "Carla", "email": carla.email, "mobile_phone": "923999888"}]),
+        json!([{"odoo_uid": 503, "name": "Carla", "email": email, "mobile_phone": "923999888"}]),
     )
     .await;
     assert!(
@@ -1266,12 +1281,7 @@ async fn odoo_sync_never_overwrites_a_manual_phone(db: sqlx::PgPool) {
         "{resp}"
     );
     let (_, list) = app.get(&org_path(a.org(), "members"), t).await;
-    let row = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["user_id"] == carla.user_id)
-        .unwrap();
+    let row = find_by_email(&list, &email);
     assert_eq!(row["phone"], "+244923111222", "{row}");
     assert_eq!(row["phone_source"], "manual");
 }
@@ -1281,8 +1291,8 @@ async fn odoo_sync_reports_unusable_numbers_in_phones_rejected(db: sqlx::PgPool)
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let t = Some(a.token.as_str());
-    let carla = app.add_member(&a, "carla", "member").await;
     let token = odoo_token(&app, a.org(), t).await;
+    let email = odoo_email(&a.email, "carla");
 
     // Um número que o encaminhamento não serve (não é angolano): nem grava
     // nem apaga, e sai no relatório para o operador ver.
@@ -1290,18 +1300,14 @@ async fn odoo_sync_reports_unusable_numbers_in_phones_rejected(db: sqlx::PgPool)
         &app,
         &token,
         &a.email,
-        json!([{"odoo_uid": 1, "name": "Carla", "email": carla.email, "mobile_phone": "+351 912 345 678"}]),
+        json!([{"odoo_uid": 504, "name": "Carla", "email": email, "mobile_phone": "+351 912 345 678"}]),
     )
     .await;
+    assert_eq!(resp["created"], 1, "{resp}");
     let rejected = resp["phones_rejected"].as_array().unwrap();
     assert_eq!(rejected.len(), 1, "{resp}");
-    assert_eq!(rejected[0]["email"], carla.email.as_str());
+    assert_eq!(rejected[0]["email"], email.as_str());
     let (_, list) = app.get(&org_path(a.org(), "members"), t).await;
-    let row = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["user_id"] == carla.user_id)
-        .unwrap();
+    let row = find_by_email(&list, &email);
     assert!(row["phone"].is_null(), "{row}");
 }

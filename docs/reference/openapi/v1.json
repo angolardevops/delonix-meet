@@ -951,6 +951,18 @@
               "null"
             ]
           },
+          "sms_invite": {
+            "description": "Avisar os convidados por SMS ao agendar (sms_notify).",
+            "type": "boolean"
+          },
+          "sms_reminder_min": {
+            "description": "Lembrete por SMS N minutos antes (5–1440). Nulo = sem lembrete.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "starts_at": {
             "format": "date-time",
             "type": "string"
@@ -975,6 +987,17 @@
             "properties": {
               "conflicts": {
                 "$ref": "#/components/schemas/Conflicts"
+              },
+              "sms": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MeetingSmsReport",
+                    "description": "Só presente quando o pedido trouxe opções de SMS."
+                  }
+                ]
               }
             },
             "required": [
@@ -1171,6 +1194,25 @@
         "required": [
           "ok",
           "room_deleted"
+        ],
+        "type": "object"
+      },
+      "Delivery": {
+        "properties": {
+          "queued": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/SkippedRecipient"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "queued",
+          "skipped"
         ],
         "type": "object"
       },
@@ -1447,12 +1489,30 @@
               "null"
             ]
           },
+          "can_sms": {
+            "description": "Tem número e não desligou os SMS de contactos. Não diz se QUEM PERGUNTA\npode enviar: isso é a política da org.",
+            "type": "boolean"
+          },
           "email": {
             "type": "string"
           },
           "last_active": {
             "description": "Último evento de auditoria do membro (login, etc.). Só preenchido na listagem.",
             "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "description": "Telefone E.164 do membro NESTA org. Só o vê um admin ou o próprio; para\nos colegas vai `null` e basta-lhes `can_sms`. Só preenchido na listagem.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "description": "`odoo` | `manual` | `null` — quem escreveu o número (ver migração 0053).",
             "type": [
               "string",
               "null"
@@ -1477,7 +1537,8 @@
           "username",
           "email",
           "role",
-          "title"
+          "title",
+          "can_sms"
         ],
         "type": "object"
       },
@@ -2239,6 +2300,58 @@
         ],
         "type": "object"
       },
+      "MeetingSmsReport": {
+        "description": "O que o agendamento devolve sobre SMS.",
+        "properties": {
+          "invite": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Delivery"
+              }
+            ]
+          },
+          "reminder_min": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "MemberPhone": {
+        "description": "O telefone do próprio em cada org activa (para o perfil).",
+        "properties": {
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "org_name": {
+            "type": "string"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "org_id",
+          "org_name"
+        ],
+        "type": "object"
+      },
       "Message": {
         "properties": {
           "body": {
@@ -2247,6 +2360,13 @@
           "created_at": {
             "format": "date-time",
             "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "device_id": {
             "format": "uuid",
@@ -2268,6 +2388,13 @@
             "format": "uuid",
             "type": "string"
           },
+          "meeting_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "operator": {
             "type": [
               "string",
@@ -2275,6 +2402,18 @@
             ]
           },
           "provider_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "purpose": {
+            "description": "`direct` (admin, número escrito) | `contact` | `meeting_invite` | `meeting_reminder`.",
+            "type": "string"
+          },
+          "recipient_user_id": {
+            "description": "O contacto resolvido no servidor; `null` no modo `to`.",
+            "format": "uuid",
             "type": [
               "string",
               "null"
@@ -2309,7 +2448,8 @@
           "segments",
           "route",
           "status",
-          "created_at"
+          "created_at",
+          "purpose"
         ],
         "type": "object"
       },
@@ -2622,12 +2762,18 @@
           "is_admin": {
             "type": "boolean"
           },
+          "mobile_phone": {
+            "description": "Telemóvel do directório. `serde_json::Value` e não `String`: o Odoo\nmanda `false` num campo vazio, e um integrador antigo nem manda o\ncampo — só `Value` distingue ausente de `false`/`\"\"` (ver `sms::DirectoryField`)."
+          },
           "name": {
             "type": "string"
           },
           "odoo_uid": {
             "format": "int32",
             "type": "integer"
+          },
+          "work_phone": {
+            "description": "Telefone de serviço; usado se `mobile_phone` não der um número utilizável."
           }
         },
         "required": [
@@ -3148,6 +3294,58 @@
         ],
         "description": "A sala pessoal, o link para a partilhar e o dial-in, se houver."
       },
+      "PhoneReq": {
+        "properties": {
+          "follow_directory": {
+            "description": "`true` apaga e devolve o campo à sincronização do directório.",
+            "type": "boolean"
+          },
+          "phone": {
+            "description": "Número (qualquer forma que `normalize_msisdn` aceite) ou `null` para apagar.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "PhoneResp": {
+        "properties": {
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "type": "object"
+      },
+      "PolicyBody": {
+        "properties": {
+          "send_policy": {
+            "description": "`admins` | `members`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "send_policy"
+        ],
+        "type": "object"
+      },
       "ProvisionOrgReq": {
         "properties": {
           "email_domain": {
@@ -3254,6 +3452,13 @@
             "format": "uuid",
             "type": "string"
           },
+          "phones_rejected": {
+            "description": "Telefones do directório que não foram gravados (nenhum número utilizável\nentre `mobile_phone`/`work_phone`). Aditivo à v1.",
+            "items": {
+              "$ref": "#/components/schemas/SkippedUser"
+            },
+            "type": "array"
+          },
           "skipped": {
             "description": "Entradas do directório que NÃO foram aplicadas, com a razão. Aditivo à\nv1: um integrador antigo ignora o campo, e continua a receber `created`\ne `updated` com o mesmo significado.",
             "items": {
@@ -3270,7 +3475,8 @@
           "org_id",
           "created",
           "updated",
-          "skipped"
+          "skipped",
+          "phones_rejected"
         ],
         "type": "object"
       },
@@ -4207,11 +4413,22 @@
             "type": "string"
           },
           "to": {
-            "type": "string"
+            "description": "Modo admin: número escrito à mão.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "description": "Modo contacto: o servidor resolve o número do membro. O cliente NUNCA\nmanda o número neste modo.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "to",
           "body"
         ],
         "type": "object"
@@ -4231,6 +4448,23 @@
         ],
         "type": "object"
       },
+      "SkippedRecipient": {
+        "properties": {
+          "reason": {
+            "description": "Código estável: `sms.recipient_opted_out`, `sms.recipient_no_phone`,\n`sms.recipient_not_member`, `sms.too_many_recipients`, `sms.no_route`,\n`sms.invalid_body`.",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "reason"
+        ],
+        "type": "object"
+      },
       "SkippedUser": {
         "properties": {
           "email": {
@@ -4244,6 +4478,46 @@
           "email",
           "reason"
         ],
+        "type": "object"
+      },
+      "SmsPreferences": {
+        "properties": {
+          "contact_opt_out": {
+            "type": "boolean"
+          },
+          "meeting_opt_out": {
+            "type": "boolean"
+          },
+          "phones": {
+            "description": "O telefone do próprio em cada org activa (editável por `PUT\n/api/orgs/{org_id}/members/{user_id}/phone`).",
+            "items": {
+              "$ref": "#/components/schemas/MemberPhone"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contact_opt_out",
+          "meeting_opt_out",
+          "phones"
+        ],
+        "type": "object"
+      },
+      "SmsPreferencesReq": {
+        "properties": {
+          "contact_opt_out": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "meeting_opt_out": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "SsoCheck": {
