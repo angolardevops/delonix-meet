@@ -1,0 +1,39 @@
+<!--
+  Delonix Meet — directório dinâmico do FreeSWITCH (mod_xml_curl), só para os
+  RAMAIS internos (Fase 1, ver server/src/ramais.rs). NÃO faz parte do dial-in
+  PSTN (esse continua a usar o dialplan estático em dialplan/public/).
+
+  O que isto liga: quando um softphone faz REGISTER no perfil "internal"
+  (ver sip_profiles/internal.xml), o FreeSWITCH pede aqui os dados do
+  utilizador em vez de os ler de um directório XML estático — a "base de
+  dados" É o control plane Rust (voice_extensions, migração 0055).
+
+  ATENÇÃO — não verificado contra uma instância real (ver o aviso no topo de
+  server/src/ramais.rs): os nomes exactos dos campos que este módulo envia no
+  POST variam com a versão do FreeSWITCH. Antes de produção, activar
+  `debug="true"` abaixo, fazer um REGISTER de teste, e confirmar nos logs que
+  os campos `user`/`domain` chegam como o backend espera — ajustar
+  `ivr_directory` em ramais.rs se não.
+
+  O segredo (`X-Voice-Secret`) vai por `?secret=` no URL porque a build stock
+  do mod_xml_curl não deixa configurar cabeçalhos HTTP arbitrários — ver o
+  comentário em ramais.rs::ivr_directory sobre esse custo (pode acabar em
+  logs de acesso). Se a instância de produção usar uma build com suporte a
+  cabeçalhos extra, preferir isso e remover o `?secret=` da URL.
+-->
+<configuration name="xml_curl.conf" description="Delonix — directório dinâmico dos ramais">
+  <bindings>
+    <binding name="delonix_ramais_directory">
+      <param name="gateway-url"
+             value="$${delonix_control_url}/api/voice/ivr/directory?secret=$${delonix_voice_secret}"
+             bindings="directory"/>
+      <param name="method" value="POST"/>
+      <!-- Timeout curto: um REGISTER não deve ficar pendurado à espera do
+           control plane — falha rápido e o softphone retenta. -->
+      <param name="timeout" value="5"/>
+      <!-- debug="true" em dev/staging para inspeccionar os campos do POST nos
+           logs do FreeSWITCH antes de confiar nisto em produção. -->
+      <param name="debug" value="false"/>
+    </binding>
+  </bindings>
+</configuration>

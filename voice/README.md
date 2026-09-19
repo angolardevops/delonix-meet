@@ -50,6 +50,54 @@ A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Z
 4. Introduzir o PIN → deve entrar na conferência. Confirmar o CDR em
    `GET /api/orgs/{org}/voice/cdr`.
 
+## Ramais internos — chamada ramal-a-ramal (Fase 1, `server/src/ramais.rs`)
+
+Infra-as-code de um segundo fluxo, PARALELO ao dial-in PSTN acima e que não o
+toca: um "ramal" é uma conta SIP permanente (1:1 com um `org_member`, número
+curto atribuído, migração `0055_ramais.sql`) para chamadas **só entre ramais
+da MESMA organização**. Sem PSTN, sem ponte para salas de vídeo — ambas são
+fases seguintes do mesmo plano.
+
+```
+Softphone A (ramal 101, acme.ramais.delonix.meet)
+     │ REGISTER + INVITE 102           DIRECTAMENTE ao FreeSWITCH — o
+     ▼                                  Kamailio NÃO entra neste caminho
+FreeSWITCH — perfil "internal" (porta DELONIX_RAMAIS_SIP_PORT, default 5070)
+     1) REGISTER → mod_xml_curl → POST /api/voice/ivr/directory  ──► Control plane
+                                  (a1-hash do digest SIP)          ◄── XML directory
+     2) INVITE 102 → dialplan "delonix_ramais" → ramais_dial.lua
+        → POST /api/voice/ivr/resolve-extension  ──────────────────► Control plane
+          (domínio do chamador + "102")                            ◄── sip_username
+     3) bridge(user/<sip_username_de_102>@acme.ramais.delonix.meet)
+```
+
+Porquê o Kamailio fica de fora: ver o comentário no topo de
+`kamailio/kamailio.cfg` — hoje é um SBC puro para o trunk (sem usrloc/
+registrar/auth_db/DB), e dar-lhe isso era maior risco do que esta fase pede.
+
+| Caminho | Papel |
+|---|---|
+| `freeswitch/sip_profiles/internal.xml` | Perfil Sofia dos ramais — porta própria, realm por org (`challenge-realm=auto_from`) |
+| `freeswitch/autoload_configs/xml_curl.conf.xml` | Directório dinâmico (REGISTER) — consulta o control plane em vez de um XML estático |
+| `freeswitch/dialplan/default/00_delonix_extensions.xml` | Contexto `delonix_ramais`: números de 3–5 dígitos → `ramais_dial.lua` |
+| `freeswitch/scripts/ramais_dial.lua` | Traduz (domínio do chamador, número curto) → AOR registado, e faz o bridge |
+
+**HA1, não Argon2, para o digest SIP.** `voice_extensions.sip_password_hash`
+(Argon2) é só a segurança em repouso da nossa própria base — o protocolo SIP
+Digest (RFC 2617) exige `HA1 = MD5(sip_username:domínio:password)`, guardado
+à parte (`sip_ha1`) porque nenhum hash genérico serve para validar um desafio
+digest. MD5 aqui não é escolha nossa — é o que o protocolo pede.
+
+**O que NÃO foi possível verificar aqui** (sem uma instância FreeSWITCH real):
+os nomes exactos dos campos que o `mod_xml_curl` desta versão envia no POST
+de directório, e o comportamento de `challenge-realm=auto_from` com um realm
+que varia por organização. Ambos ficam documentados nos ficheiros de
+configuração respectivos (`xml_curl.conf.xml`, `sip_profiles/internal.xml`) —
+antes de produção, activar `debug="true"` e confirmar contra um REGISTER
+real. Tudo o resto (modelo de dados, API REST de gestão, geração/regeneração
+de credenciais, UI de administração) foi corrido e verificado contra um
+Postgres real neste repositório.
+
 ## ⚠️ Integração que falta: ponte FreeSWITCH ↔ SFU (sub-fase 2b)
 Nesta sub-fase, os chamadores PSTN entram numa **conferência do FreeSWITCH**
 (`mod_conference`) — falam entre si. Para que o áudio PSTN e o áudio **WebRTC** (SFU

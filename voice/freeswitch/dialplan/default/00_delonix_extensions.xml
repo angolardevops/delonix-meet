@@ -1,0 +1,25 @@
+<!--
+  Delonix Meet — dialplan dos RAMAIS internos (Fase 1, ver server/src/ramais.rs).
+  Drop-in em /etc/freeswitch/dialplan/default/. Contexto 'delonix_ramais'
+  (ver sip_profiles/internal.xml) — nunca o 'public' do dial-in PSTN.
+
+  Só números curtos (3–5 dígitos): um ramal nunca disca directamente para o
+  exterior por aqui — não há gateway/trunk configurado neste contexto, então
+  qualquer outra coisa simplesmente não bate em nenhuma extensão (FreeSWITCH
+  rejeita com "no route"). Isso não é um acidente: é a fronteira desta fase.
+-->
+<include>
+  <context name="delonix_ramais">
+    <extension name="delonix_ramal_a_ramal">
+      <condition field="destination_number" expression="^\d{3,5}$">
+        <action application="set" data="rtp_secure_media=mandatory"/>
+        <action application="set" data="hangup_after_bridge=true"/>
+        <!-- A tradução (número curto → AOR registado) e o bridge acontecem
+             no Lua: precisam de escopar a busca à ORG do chamador (o número
+             curto não é único fora dela) antes de discar. -->
+        <action application="lua" data="ramais_dial.lua"/>
+        <action application="hangup"/>
+      </condition>
+    </extension>
+  </context>
+</include>

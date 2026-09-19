@@ -1,0 +1,58 @@
+<!--
+  Delonix Meet — perfil Sofia "internal", SÓ para os ramais (Fase 1, ver
+  server/src/ramais.rs). Substitui o perfil "internal" da imagem base do
+  FreeSWITCH (que traz utilizadores de demonstração estáticos) — este fala
+  com o control plane Rust via mod_xml_curl (xml_curl.conf.xml).
+
+  Porcaquê uma porta DISTINTA da do Kamailio (que já ocupa 5060/5061 no
+  `network_mode: host` — ver docker-compose.voice.yml): softphones dos ramais
+  registam-se DIRECTAMENTE aqui, sem passar pelo Kamailio. O Kamailio fica
+  inteiramente dedicado ao trunk PSTN, tal como estava antes desta mudança —
+  ver o comentário no topo de kamailio.cfg sobre porquê essa fronteira NÃO
+  foi tocada nesta fase.
+
+  O domínio de cada REGISTER (ex.: acme.ramais.delonix.meet) é o que
+  distingue as orgs — dois ramais "101" de orgs diferentes não colidem porque
+  vivem em domínios diferentes (ver sip_domain_for_org em ramais.rs).
+-->
+<include>
+  <profile name="internal">
+    <domains>
+      <!-- 'parse=false': os domínios não vêm de directory/*.xml estático —
+           vêm todos, dinamicamente, do mod_xml_curl. -->
+      <domain name="all" alias="false" parse="false"/>
+    </domains>
+    <settings>
+      <param name="debug" value="0"/>
+      <param name="sip-trace" value="no"/>
+      <param name="rfc2833-pt" value="101"/>
+      <!-- Distinta da porta do Kamailio (5060/5061) — ver o comentário acima. -->
+      <param name="sip-port" value="$${delonix_ramais_sip_port}"/>
+      <param name="dialplan" value="XML"/>
+      <!-- Contexto 'delonix_ramais': isola o dialplan dos ramais do contexto
+           'public' do dial-in PSTN — nunca se misturam nem partilham regras. -->
+      <param name="context" value="delonix_ramais"/>
+      <param name="dtmf-duration" value="2000"/>
+      <param name="inbound-codec-prefs" value="$${global_codec_prefs}"/>
+      <param name="outbound-codec-prefs" value="$${global_codec_prefs}"/>
+      <param name="rtp-timer-name" value="soft"/>
+      <param name="rtp-ip" value="$${local_ip_v4}"/>
+      <param name="sip-ip" value="$${local_ip_v4}"/>
+      <!-- Realm do digest = domínio pedido no REGISTER, não um valor fixo —
+           é o que faz o HA1 calculado por org (sip_domain_for_org) bater.
+           NÃO verificado contra uma instância real; ver o aviso no topo de
+           server/src/ramais.rs. -->
+      <param name="challenge-realm" value="auto_from"/>
+      <param name="auth-calls" value="true"/>
+      <param name="accept-blind-reg" value="false"/>
+      <param name="accept-blind-auth" value="false"/>
+      <param name="multiple-registrations" value="false"/>
+      <!-- SRTP obrigatório — mesma exigência não-negociável do resto de voice/. -->
+      <param name="rtp-secure-media" value="mandatory"/>
+      <!-- Sem ACL de rede aqui de propósito: esta fase autentica por SIP
+           Digest (auth-calls=true), não por origem — um ramal pode estar em
+           qualquer rede. Restringir por IP/ACL fica para quando houver um
+           acl.conf.xml próprio neste repo (não existe ainda). -->
+    </settings>
+  </profile>
+</include>
