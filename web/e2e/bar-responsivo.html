@@ -8,8 +8,9 @@
 <body>
 <div class="dx-stage rm-room">
   <div class="rm-shell">
-    <div class="rm-body"><div class="rm-main"></div></div>
-    <div id="barra" style="display: contents"></div>
+    <!-- Como na sala: a barra vive DENTRO da coluna principal (`.rm-main` é o contentor
+         das @container queries que tiram os painéis da barra em ecrã estreito). -->
+    <div class="rm-body"><div class="rm-main"><div id="barra" style="display: contents"></div></div></div>
   </div>
 </div>
 <script src="/barra.js"></script>
