@@ -2,7 +2,7 @@
 #  Delonix Meet — orquestração de ambientes (dev / prod)
 #
 #  Um comando por ambiente, pronto a usar:
-#     make dev     → sobe infra + backend + frontend (dev), imprime URLs
+#     make dev     → sobe infra + backend + frontend + nginx (dev), imprime URLs
 #     make prod    → deploy de produção (segredos + build + publish + smoke)
 #
 #  `make` (sem alvo) ou `make help` lista tudo.
@@ -25,6 +25,10 @@ RUNDIR     := $(ROOT)/.dev
 VOICE_SECRET ?= dev-voice-secret-abc123
 # Certificados TLS/SRTP da voz (dev: self-signed no repo, gitignored).
 VOICE_TLS_DIR ?= $(ROOT)/voice/tls
+# Nginx standalone de dev (termina TLS para https://meet.delonix.local; ver
+# deploy/nginx-dev.conf.template). Path próprio, nunca /etc/nginx/sites-*.
+NGINX_DEV_CONF := $(RUNDIR)/nginx-dev.conf
+NGINX_DEV_PID  := $(RUNDIR)/nginx-dev.pid
 export PATH := $(NODE_BIN):$(PATH)
 
 # ---- Kubernetes / kind ----
@@ -57,7 +61,11 @@ help: ## Mostra esta ajuda
 #  DEV — ambiente completo pronto a usar
 # ============================================================
 .PHONY: dev
-dev: infra api-bg web-bg ## Sobe infra + backend + frontend (dev) e imprime URLs
+dev: infra api-bg web-bg nginx-dev ## Sobe infra + backend + frontend (dev) + nginx local e imprime URLs
+	@# Dono do hostname: `make dev` aponta meet.delonix.local para 127.0.0.1
+	@# (nginx-dev, abaixo). `make stage` aponta o MESMO hostname para o VIP do
+	@# kind — os dois nunca correm ao mesmo tempo com o nome certo; o último a
+	@# rodar é que fica com o /etc/hosts.
 	@if grep -q 'meet\.delonix\.local' /etc/hosts; then \
 	  sudo sed -i 's/.*meet\.delonix\.local.*/127.0.0.1 meet.delonix.local/' /etc/hosts; \
 	else \
@@ -65,9 +73,8 @@ dev: infra api-bg web-bg ## Sobe infra + backend + frontend (dev) e imprime URLs
 	fi
 	@printf "\n$(G)✔ Ambiente de DEV pronto.$(Z)\n"
 	@printf "   API:      $(API_URL)\n"
-	@printf "   App:      $(G)http://localhost:$(WEB_PORT)$(Z)  ← abre AQUI (câmara/mic funcionam em localhost)\n"
-	@printf "   HTTPS:    $(G)https://meet.delonix.local$(Z)  (nginx local → 127.0.0.1:8180)\n"
-	@printf "   $(Y)Câmara por IP na rede$(Z) exige HTTPS: usa o Nginx ($(Y)make prod$(Z) → https://<ip>) ou $(Y)make web-https$(Z).\n"
+	@printf "   App:      $(G)http://localhost:$(WEB_PORT)$(Z)  ← câmara/mic OK (localhost já é contexto seguro)\n"
+	@printf "   HTTPS:    $(G)https://meet.delonix.local$(Z)  (nginx local de dev → Vite :$(WEB_PORT); câmara/mic OK por IP/hostname na rede)\n"
 	@printf "   Logs:  $(Y)make logs$(Z)   ·   Parar:  $(Y)make stop$(Z)\n"
 
 .PHONY: infra
@@ -110,6 +117,30 @@ web-bg: ## Arranca o Vite dev (HMR) em background — HTTP em localhost (context
 web-https: ## Vite dev em HTTPS (basic-ssl) — para acesso por IP na rede com câmara
 	@cd web && [ -d node_modules ] || npm ci; PORT=$(WEB_PORT) npm run dev
 
+.PHONY: nginx-dev
+nginx-dev: certs ## Sobe nginx local de dev (só https://meet.delonix.local → Vite; ver deploy/nginx-dev.conf.template)
+	@printf "$(C)▶ nginx (dev, https://meet.delonix.local)$(Z)\n"
+	@if ! command -v nginx >/dev/null 2>&1; then \
+	  printf "$(Y)  ! nginx não encontrado — a instalar (sudo apt-get install -y nginx)$(Z)\n"; \
+	  sudo apt-get update -qq && sudo apt-get install -y nginx; \
+	fi
+	@mkdir -p $(RUNDIR)
+	@sed -e 's#__ROOT__#$(ROOT)#g' -e 's#__WEB_PORT__#$(WEB_PORT)#g' \
+	  deploy/nginx-dev.conf.template > $(NGINX_DEV_CONF)
+	@sudo nginx -t -c $(NGINX_DEV_CONF)
+	@if [ -f $(NGINX_DEV_PID) ]; then sudo kill -QUIT $$(cat $(NGINX_DEV_PID)) 2>/dev/null || true; sleep 1; fi
+	@sudo nginx -c $(NGINX_DEV_CONF)
+	@# --resolve em vez de depender do /etc/hosts: este target pode correr ANTES
+	@# de `dev` escrever meet.delonix.local no /etc/hosts (é prerequisito dele).
+	@for i in $$(seq 1 10); do sleep 0.5; \
+	  [ "$$(curl -sk -o /dev/null -w '%{http_code}' --resolve meet.delonix.local:443:127.0.0.1 https://meet.delonix.local/ 2>/dev/null)" != "000" ] && break; \
+	  [ $$i = 10 ] && { printf "$(Y)  ✗ nginx não respondeu em :443 (ver $(RUNDIR)/nginx-dev-error.log)$(Z)\n"; exit 1; }; done
+	@printf "$(G)  ✓ nginx a correr (https://meet.delonix.local)$(Z)\n"
+
+.PHONY: nginx-dev-stop
+nginx-dev-stop: ## Para o nginx local de dev
+	@[ -f $(NGINX_DEV_PID) ] && sudo kill -QUIT $$(cat $(NGINX_DEV_PID)) 2>/dev/null; rm -f $(NGINX_DEV_PID); true
+
 .PHONY: api
 api: infra ## Backend em FOREGROUND (dev) — Ctrl-C para parar
 	@cd server && DELONIX_ALLOW_INSECURE=1 VOICE_INTERNAL_SECRET=$(VOICE_SECRET) cargo run
@@ -119,7 +150,7 @@ web: ## Frontend em FOREGROUND (vite HMR, HTTP localhost) — Ctrl-C para parar
 	@cd web && [ -d node_modules ] || npm ci; NO_HTTPS=1 PORT=$(WEB_PORT) npm run dev
 
 .PHONY: stop
-stop: ## Para o backend + frontend de dev (mantém a infra)
+stop: nginx-dev-stop ## Para o backend + frontend + nginx de dev (mantém a infra)
 	@printf "$(C)▶ a parar dev$(Z)\n"
 	@# Usa o pid gravado ao arrancar; fallback para pkill com bracket trick (não se auto-mata).
 	@if [ -f $(RUNDIR)/api.pid ]; then kill $$(cat $(RUNDIR)/api.pid) 2>/dev/null || true; rm -f $(RUNDIR)/api.pid; \
@@ -137,7 +168,7 @@ down: stop ## Para TODA a stack Delonix: dev (processos + docker compose + voice
 	@printf "$(G)  ✓ stack completa parada (kind continua; 'make destroy' para o k8s)$(Z)\n"
 
 .PHONY: kill
-kill: ## Para TUDO (processos locais + docker + k8s) — estado zero até 'make dev' ou 'make stage'
+kill: nginx-dev-stop ## Para TUDO (processos locais + docker + k8s) — estado zero até 'make dev' ou 'make stage'
 	@printf "$(C)▶ a parar processos locais (backend + frontend)...$(Z)\n"
 	@if [ -f $(RUNDIR)/api.pid ]; then kill $$(cat $(RUNDIR)/api.pid) 2>/dev/null || true; rm -f $(RUNDIR)/api.pid; fi
 	@if [ -f $(RUNDIR)/web.pid ]; then kill $$(cat $(RUNDIR)/web.pid) 2>/dev/null || true; rm -f $(RUNDIR)/web.pid; fi
@@ -152,12 +183,13 @@ kill: ## Para TUDO (processos locais + docker + k8s) — estado zero até 'make 
 	@kubectl scale statefulset --all -n delonix-meet --replicas=0 2>/dev/null || true
 	@printf "$(G)  ✓ TUDO parado. Nada corre até fazer 'make dev' (local) ou 'make stage' (k8s).$(Z)\n"
 
-.PHONY: logs logs-api logs-web
+.PHONY: logs logs-api logs-web logs-nginx
 logs: ## Segue os logs do backend + frontend (dev)
 	@mkdir -p $(RUNDIR) && touch $(RUNDIR)/api.log $(RUNDIR)/web.log
 	@tail -n 40 -f $(RUNDIR)/api.log $(RUNDIR)/web.log
 logs-api: ; @mkdir -p $(RUNDIR) && touch $(RUNDIR)/api.log && tail -n 60 -f $(RUNDIR)/api.log
 logs-web: ; @mkdir -p $(RUNDIR) && touch $(RUNDIR)/web.log && tail -n 60 -f $(RUNDIR)/web.log
+logs-nginx: ; @mkdir -p $(RUNDIR) && touch $(RUNDIR)/nginx-dev-error.log $(RUNDIR)/nginx-dev-access.log && tail -n 60 -f $(RUNDIR)/nginx-dev-error.log $(RUNDIR)/nginx-dev-access.log
 
 # ============================================================
 #  BUILD / TEST / MIGRATE

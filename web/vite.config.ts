@@ -123,6 +123,11 @@ export default defineConfig(({ command }) => {
     server: {
       host: '0.0.0.0',
       port: Number(process.env.PORT) || 5173,
+      // O Vite 6 recusa (403) pedidos com um Host que não seja localhost/IP —
+      // protecção contra DNS rebinding. `meet.delonix.local` chega aqui via
+      // proxy do nginx de dev (`make nginx-dev`), nunca directo da rede, por
+      // isso é seguro autorizá-lo.
+      allowedHosts: ['meet.delonix.local'],
       // COOP+COEP: tornam a página "cross-origin isolated" → ativam
       // SharedArrayBuffer → o WASM multi-thread do ONNX Runtime (RVM) e do
       // MediaPipe arranca. O nginx de produção já os põe
