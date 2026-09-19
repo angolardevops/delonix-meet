@@ -778,6 +778,229 @@ export const addEmployee = (
 export const removeEmployee = (orgId: string, userId: string) =>
   request(`/api/orgs/${orgId}/members/${userId}`, { method: 'DELETE' })
 
+// ---------- Papéis, capacidades, aprovações e convites (ADR-0008) ----------
+//
+// O servidor é a fonte de verdade: o catálogo de capacidades é FECHADO e cada
+// uma diz se é imposta (`enforced`) — uma não imposta só aceita o valor por
+// omissão e a UI mostra-a bloqueada. Sem SMTP: um convite devolve o link UMA
+// vez (`token`), e a UI entrega-o (ver InviteDialog.tsx).
+
+export type CapabilityValue = 'allow' | 'deny' | 'inherit' | 'requires_approval'
+
+export interface CapabilityItem {
+  code: string
+  label: string
+  hint: string
+  group: string
+  group_label: string
+  enforced: boolean
+  enforced_at: string[]
+  system_only: boolean
+  approval_supported: boolean
+}
+export interface CapabilityCatalog {
+  catalog_version: number
+  items: CapabilityItem[]
+  values: string[]
+}
+export const capabilityCatalog = () => request<CapabilityCatalog>('/api/capabilities')
+
+export interface OrgRole {
+  id: string
+  key?: string | null
+  name: string
+  description: string
+  system: boolean
+  member_count: number
+  inherits_from?: string | null
+  scope: { kind: string; department_id?: string | null; department_name?: string | null }
+  updated_at: string
+}
+export interface SodWarning {
+  code: string
+  rule_id: string
+  rule_name: string
+}
+export interface OrgPage<T> {
+  items: T[]
+  next_page_token?: string | null
+}
+export const listOrgRoles = (orgId: string, signal?: AbortSignal) =>
+  request<OrgPage<OrgRole>>(`/api/orgs/${orgId}/roles?page_size=100`, { signal })
+
+export const createOrgRole = (orgId: string, data: { name: string; description?: string; inherits_from?: string | null }) =>
+  request<OrgRole & { warnings: SodWarning[] }>(`/api/orgs/${orgId}/roles`, { method: 'POST', body: JSON.stringify(data) })
+
+export const updateOrgRole = (
+  orgId: string,
+  roleId: string,
+  data: { name?: string; description?: string; inherits_from?: string | null },
+) => request<OrgRole & { warnings: SodWarning[] }>(`/api/orgs/${orgId}/roles/${roleId}`, { method: 'PATCH', body: JSON.stringify(data) })
+
+/** `reassign_to` só é preciso quando há pessoas com o papel (`role.reassignment_required`). */
+export const deleteOrgRole = (orgId: string, roleId: string, reassignTo?: string) =>
+  request<void>(`/api/orgs/${orgId}/roles/${roleId}${reassignTo ? `?reassign_to=${encodeURIComponent(reassignTo)}` : ''}`, {
+    method: 'DELETE',
+  })
+
+export const duplicateOrgRole = (orgId: string, roleId: string, name?: string) =>
+  request<OrgRole & { warnings: SodWarning[] }>(`/api/orgs/${orgId}/roles/${roleId}/duplicate`, {
+    method: 'POST',
+    body: JSON.stringify(name ? { name } : {}),
+  })
+
+export interface RoleCapabilityRow {
+  capability: string
+  value: CapabilityValue
+  locked: boolean
+  locked_reason?: string | null
+  organization: string
+  own_department: string
+}
+export interface RoleCapabilities {
+  role_id: string
+  catalog_version: number
+  items: RoleCapabilityRow[]
+  warnings: SodWarning[]
+}
+export const roleCapabilities = (orgId: string, roleId: string, signal?: AbortSignal) =>
+  request<RoleCapabilities>(`/api/orgs/${orgId}/roles/${roleId}/capabilities`, { signal })
+
+export const putRoleCapabilities = (orgId: string, roleId: string, values: Record<string, CapabilityValue>) =>
+  request<RoleCapabilities>(`/api/orgs/${orgId}/roles/${roleId}/capabilities`, {
+    method: 'PUT',
+    body: JSON.stringify({ values }),
+  })
+
+export interface PermissionMatrix {
+  catalog_version: number
+  member_total: number
+  roles: { id: string; key?: string | null; name: string; member_count: number }[]
+  rows: {
+    capability: string
+    label: string
+    group: string
+    group_label: string
+    hint: string
+    enforced: boolean
+    values: Record<string, string>
+    effective: Record<string, string>
+  }[]
+}
+export const permissionMatrix = (orgId: string, signal?: AbortSignal) =>
+  request<PermissionMatrix>(`/api/orgs/${orgId}/permission-matrix`, { signal })
+
+export const assignOrgRole = (orgId: string, userId: string, roleId: string) =>
+  request<{ changed: boolean }>(`/api/orgs/${orgId}/members/${userId}/role`, {
+    method: 'PUT',
+    body: JSON.stringify({ role_id: roleId }),
+  })
+
+/** Pedidos de aprovação: uma capacidade `requires_approval` cria um pedido em vez de executar. */
+export interface ApprovalRequest {
+  id: string
+  org_id: string
+  requester_id: string
+  requester_name: string
+  capability: string
+  action: string
+  status: string
+  reason: string
+  target: Record<string, unknown>
+  created_at: string
+  expires_at: string
+  decided_at?: string | null
+}
+export const listApprovalRequests = (orgId: string, status = 'pending', signal?: AbortSignal) =>
+  request<OrgPage<ApprovalRequest>>(`/api/orgs/${orgId}/approval-requests?status=${encodeURIComponent(status)}&page_size=100`, { signal })
+
+export const decideApprovalRequest = (orgId: string, requestId: string, approve: boolean, reason?: string) =>
+  request<ApprovalRequest>(`/api/orgs/${orgId}/approval-requests/${requestId}/${approve ? 'approve' : 'reject'}`, {
+    method: 'POST',
+    body: JSON.stringify(reason ? { reason } : {}),
+  })
+
+export interface OrgInvitation {
+  id: string
+  org_id: string
+  email: string
+  role_id: string
+  role_name: string
+  department_name?: string | null
+  external: boolean
+  status: string
+  expires_at: string
+  created_at: string
+  delivery: string
+}
+export interface OrgInvitationWithToken extends OrgInvitation {
+  token: string
+}
+export const listInvitations = (orgId: string, status = 'pending', signal?: AbortSignal) =>
+  request<OrgPage<OrgInvitation>>(`/api/orgs/${orgId}/invitations?status=${encodeURIComponent(status)}&page_size=100`, { signal })
+
+export const createInvitation = (orgId: string, data: { email: string; role_id: string; expires_in_hours?: number }) =>
+  request<OrgInvitationWithToken>(`/api/orgs/${orgId}/invitations`, {
+    method: 'POST',
+    body: JSON.stringify({ ...data, delivery: 'manual' }),
+  })
+
+export const resendInvitation = (orgId: string, invitationId: string) =>
+  request<OrgInvitationWithToken>(`/api/orgs/${orgId}/invitations/${invitationId}/resend`, { method: 'POST' })
+
+export const revokeInvitation = (orgId: string, invitationId: string) =>
+  request<void>(`/api/orgs/${orgId}/invitations/${invitationId}`, { method: 'DELETE' })
+
+/** O link que o admin copia: o token só existe na resposta que o criou. */
+export const invitationLink = (token: string) => `${location.origin}${location.pathname}#/invite/${token}`
+
+/** Quem tem sessão aceita o convite (o token é a credencial, de uso único). */
+export const acceptInvitation = (token: string) =>
+  request<{ org_id: string; role_id: string; access_expires_at?: string | null }>('/api/invitations/accept', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  })
+
+export interface DirectoryEntry {
+  id: string
+  kind: string
+  name: string
+  email: string
+  status: string
+  role_id: string
+  role_name: string
+  user_id?: string | null
+  suspension_reason?: string | null
+}
+export const listDirectory = (orgId: string, filters?: string, signal?: AbortSignal) =>
+  request<{ items: DirectoryEntry[]; total: number }>(
+    `/api/orgs/${orgId}/users?page_size=100${filters ? `&filters=${encodeURIComponent(filters)}` : ''}`,
+    { signal },
+  )
+
+export interface BulkActionResult {
+  action: string
+  succeeded: number
+  failed: number
+  results: { id: string; ok: boolean; changed: boolean; code?: string | null; message?: string | null }[]
+}
+export const bulkUserAction = (
+  orgId: string,
+  data: { action: 'suspend' | 'reactivate' | 'change_role'; user_ids: string[]; role_id?: string },
+) => request<BulkActionResult>(`/api/orgs/${orgId}/users/bulk-actions`, { method: 'POST', body: JSON.stringify(data) })
+
+export interface ImportReport {
+  dry_run: boolean
+  invited: number
+  updated: number
+  unchanged: number
+  errors: number
+  lines: { line: number; email: string; outcome: string; message?: string | null; token?: string | null }[]
+}
+/** `csv` é o texto do ficheiro; `dry_run` valida sem gravar. */
+export const importUsersCsv = (orgId: string, csv: string, dryRun: boolean) =>
+  request<ImportReport>(`/api/orgs/${orgId}/users/imports`, { method: 'POST', body: JSON.stringify({ csv, dry_run: dryRun }) })
+
 export const listGroups = (orgId: string) => request<Group[]>(`/api/orgs/${orgId}/groups`)
 export const createGroup = (orgId: string, name: string, memberIds: string[]) =>
   request<Group>(`/api/orgs/${orgId}/groups`, { method: 'POST', body: JSON.stringify({ name, member_ids: memberIds }) })
