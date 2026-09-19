@@ -420,6 +420,200 @@
         },
         "type": "object"
       },
+      "AiFillersSuggestion": {
+        "description": "`task = fillers`.",
+        "properties": {
+          "terms": {
+            "description": "≤ 20; só termos que existem na transcrição como palavras inteiras.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "terms"
+        ],
+        "type": "object"
+      },
+      "AiPublicationSuggestion": {
+        "description": "`task = publication`.",
+        "properties": {
+          "description": {
+            "description": "≤ 1000 caracteres.",
+            "type": "string"
+          },
+          "tags": {
+            "description": "≤ 8, com as regras das etiquetas da gravação.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "description": "≤ 100 caracteres.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "description",
+          "tags"
+        ],
+        "type": "object"
+      },
+      "AiStatus": {
+        "properties": {
+          "configured": {
+            "description": "Há `OLLAMA_URL`.",
+            "type": "boolean"
+          },
+          "error": {
+            "description": "A mesma razão, para pessoas. `null` quando está pronto.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "description": "O modelo do Estúdio (`OLLAMA_MODEL_STUDIO`).",
+            "type": "string"
+          },
+          "model_installed": {
+            "description": "`null` quando não se chegou a perguntar (não configurado ou sem resposta).",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "reachable": {
+            "description": "O Ollama respondeu.",
+            "type": "boolean"
+          },
+          "ready": {
+            "description": "Pronto a usar: configurado, alcançável e com o modelo instalado.",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Porque não está pronto: `not_configured` | `url_rejected` |\n`unreachable` | `timeout` | `model_missing` | `upstream_error` |\n`bad_response`. `null` quando está pronto.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "configured",
+          "reachable",
+          "model",
+          "ready"
+        ],
+        "type": "object"
+      },
+      "AiSuggestedChapter": {
+        "properties": {
+          "t_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "t_ms",
+          "title"
+        ],
+        "type": "object"
+      },
+      "AiSuggestion": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AiSummarySuggestion"
+          },
+          {
+            "$ref": "#/components/schemas/AiPublicationSuggestion"
+          },
+          {
+            "$ref": "#/components/schemas/AiFillersSuggestion"
+          }
+        ]
+      },
+      "AiSuggestionReq": {
+        "properties": {
+          "language": {
+            "description": "Língua da transcrição (código curto: `pt`, `en`, `pt-PT`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "segments": {
+            "description": "1-5000 segmentos, ≤ 2000 caracteres cada, ≤ 400 000 no total, ≥ 40 de texto.",
+            "items": {
+              "$ref": "#/components/schemas/AiSuggestionSegment"
+            },
+            "type": "array"
+          },
+          "task": {
+            "description": "`summary` | `publication` | `fillers`.",
+            "type": "string"
+          },
+          "title": {
+            "description": "Título de trabalho (≤ 200 caracteres, uma linha).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "type": "object"
+      },
+      "AiSuggestionSegment": {
+        "properties": {
+          "end_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "start_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_ms",
+          "end_ms",
+          "text"
+        ],
+        "type": "object"
+      },
+      "AiSummarySuggestion": {
+        "description": "`task = summary`.",
+        "properties": {
+          "chapters": {
+            "description": "Dentro da duração da transcrição; pode vir vazio.",
+            "items": {
+              "$ref": "#/components/schemas/AiSuggestedChapter"
+            },
+            "type": "array"
+          },
+          "summary": {
+            "description": "Texto simples, ≤ 2000 caracteres.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "chapters"
+        ],
+        "type": "object"
+      },
       "ApiCreateRoomReq": {
         "properties": {
           "e2ee": {
@@ -3788,6 +3982,22 @@
         ],
         "type": "object"
       },
+      "RecordingCaptionGenerateReq": {
+        "properties": {
+          "lang": {
+            "description": "Língua pedida (BCP 47 curto). Omitida: a da transcrição.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "replace": {
+            "description": "Substituir uma legenda que já existe nessa língua (enviada, rascunho ou\npublicada). Sem isto, `409 recording.caption_exists`: gerar não apaga o\ntrabalho de uma pessoa por engano. Uma legenda `failed` substitui-se\nsempre.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "RecordingCaptionPatchReq": {
         "properties": {
           "status": {
@@ -3869,6 +4079,59 @@
           "title",
           "source",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "RecordingChapterGeneration": {
+        "description": "O estado da última geração de capítulos de uma gravação.",
+        "properties": {
+          "chapter_count": {
+            "description": "Capítulos automáticos gravados. Só com `succeeded`.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_code": {
+            "description": "Só com `failed`: `ai.bad_response`, `ai.timeout`, `ai.model_missing`,\n`ai.unreachable`, `ai.interrupted`, `internal`, …",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recording_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "`idle` (nunca pedida) | `running` | `succeeded` | `failed`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recording_id",
+          "status"
         ],
         "type": "object"
       },
@@ -5298,7 +5561,7 @@
       "TranslateReq": {
         "properties": {
           "target": {
-            "description": "Língua de destino: `pt` | `en` | `fr` | `es` | `de`. Outra dá 400.",
+            "description": "Língua de destino: `pt` | `en` | `fr` | `es` | `de` | `zh`. Outra dá 400.",
             "type": "string"
           },
           "text": {
@@ -8535,6 +8798,169 @@
         "summary": "Definições da organização (só admin): domínio de produção + retenção.\nO domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a\nretenção (>0) apaga gravações mais antigas que N dias. Quotas negativas ou\nomissas ficam ilimitadas; valores de voz fora do enum são ignorados.",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/ai/status": {
+      "get": {
+        "operationId": "get_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiStatus"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo da organização (não se confirma que existe)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Estado da IA local para o Estúdio da organização. Sempre `200` para um\nmembro: é um estado, e a causa vai em `reason`.",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/ai/suggestions": {
+      "post": {
+        "operationId": "suggestions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiSuggestionReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiSuggestion"
+                }
+              }
+            },
+            "description": "`summary` → `{summary, chapters}`; `publication` → `{title, description, tags}`; `fillers` → `{terms}`."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`ai.invalid_body` / `ai.invalid_task` / `ai.invalid_language` / `ai.invalid_title` / `ai.invalid_segments` / `ai.transcript_too_large` / `ai.transcript_too_short`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo da organização."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`ai.busy`: a organização já tem os seus trabalhos do modelo a correr.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`ai.not_configured` / `ai.url_rejected` / `ai.unreachable` / `ai.timeout` / `ai.model_missing` / `ai.upstream_error` / `ai.bad_response`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Uma sugestão do modelo local sobre a transcrição enviada. Nada se guarda:\n`200` com a proposta, não `201`.",
+        "tags": [
+          "ai"
         ]
       }
     },
@@ -13186,6 +13612,177 @@
         ]
       }
     },
+    "/api/recordings/{recording_id}/captions/generate": {
+      "post": {
+        "operationId": "generate_caption",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordingCaptionGenerateReq"
+              }
+            }
+          },
+          "description": "Pode ir vazio: a língua da transcrição.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingCaption"
+                }
+              }
+            },
+            "description": "Na língua da transcrição, substituindo (`replace: true`)."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingCaption"
+                }
+              }
+            },
+            "description": "Na língua da transcrição: criada já, rascunho (`source = transcript`).",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingCaption"
+                }
+              }
+            },
+            "description": "Noutra língua: `status = generating`, `source = translation`; o progresso lê-se em `Location`.",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.invalid_generate_body` / `recording.invalid_caption_lang` / `recording.caption_lang_required` / `ai.unsupported_language` / `recording.caption_too_large`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_manager`"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.no_transcript` / `recording.caption_exists` / `recording.caption_generation_running`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.too_many_captions`"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`ai.busy`",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Só para tradução: `ai.not_configured` / `ai.url_rejected` / `ai.unreachable` / `ai.timeout` / `ai.model_missing` / `ai.upstream_error` / `ai.bad_response`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Gera a legenda de uma língua a partir da transcrição. Só quem gere a gravação.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
     "/api/recordings/{recording_id}/captions/{lang}": {
       "delete": {
         "operationId": "delete",
@@ -13788,6 +14385,186 @@
           }
         ],
         "summary": "Cria um capítulo manual. Só o dono ou um admin activo da org do dono.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/chapters/generate": {
+      "post": {
+        "operationId": "generate_chapters",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingChapterGeneration"
+                }
+              }
+            },
+            "description": "Aceite: `status = running`. O resultado lê-se em `Location`.",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_manager`"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.no_transcript` / `recording.chapter_generation_running`"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`ai.busy`",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`ai.not_configured` / `ai.url_rejected` / `ai.unreachable` / `ai.timeout` / `ai.model_missing` / `ai.upstream_error` / `ai.bad_response`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Gera (ou volta a gerar) os capítulos automáticos a partir da transcrição.\nOs manuais ficam. Assíncrono: `202` e o estado em `…/chapters/generation`.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/chapters/generation": {
+      "get": {
+        "operationId": "chapter_generation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingChapterGeneration"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.not_manager`"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Estado da geração de capítulos. Só quem gere a gravação.",
         "tags": [
           "recordings"
         ]
