@@ -89,7 +89,7 @@ pub async fn revoke_session(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(session_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     let result = sqlx::query(
         "UPDATE refresh_tokens SET revoked = TRUE
          WHERE session_id = $1 AND user_id = $2 AND NOT revoked",
@@ -109,7 +109,7 @@ pub async fn revoke_session(
         &session_id.to_string(),
     )
     .await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -156,15 +156,8 @@ pub async fn export_my_data(
 ) -> Result<Response, ApiError> {
     let profile = crate::users::fetch_public(&state.db, auth.user_id).await?;
 
-    let organizations: Vec<ExportOrgMembership> = sqlx::query_as(
-        "SELECT o.id AS org_id, o.name AS org_name, m.role, m.title
-         FROM org_members m JOIN organizations o ON o.id = m.org_id
-         WHERE m.user_id = $1
-         ORDER BY o.name",
-    )
-    .bind(auth.user_id)
-    .fetch_all(&state.db)
-    .await?;
+    let organizations: Vec<ExportOrgMembership> =
+        crate::org::memberships_for_export(&state, auth.user_id).await?;
 
     let rooms_owned: Vec<ExportRoom> = sqlx::query_as(
         "SELECT id, code, name, created_at FROM rooms WHERE owner_id = $1 ORDER BY created_at DESC",

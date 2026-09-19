@@ -368,6 +368,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(broadcast::estado_directo),
         )
         .route("/api/rooms/{room_code}/join", post(rooms::join_room))
+        // Anfitrião/co-anfitrião espreita a sala de espera antes de entrar
+        // (`?room={code}` é a chave de afinidade do balanceador).
+        .route("/api/rooms/{room_code}/waiting", get(rooms::room_waiting))
         .route("/api/rooms/{room_code}/messages", get(rooms::room_chat))
         .route("/api/rooms/{room_code}/invitations", post(rooms::invite_to_room))
         .route("/api/rooms/{room_code}/quality-samples", post(rooms::post_qos))
@@ -443,6 +446,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(recordings::get_metadata).patch(recordings::update),
         )
         .route("/api/recordings/{recording_id}/content", get(recordings::download))
+        .route("/api/recordings/{recording_id}/details", get(recordings::details))
         .route(
             "/api/recordings/{recording_id}/chapters",
             get(recordings::list_chapters).post(recordings::create_chapter),
@@ -573,6 +577,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/members/{user_id}",
             axum::routing::patch(org::update_employee).delete(org::remove_employee),
         )
+        // Convites por link (sem SMTP: o admin copia o link) — ver org.rs "---- invites ----".
+        .route("/api/orgs/{org_id}/invites", get(org::list_invites).post(org::create_invite))
+        .route("/api/orgs/{org_id}/invites/bulk", post(org::bulk_create_invites))
+        .route(
+            "/api/orgs/{org_id}/invites/{invite_id}",
+            axum::routing::delete(org::revoke_invite),
+        )
+        // Públicas (SEM sessão, sem `org_id` no caminho — o token é a chave).
+        .route("/api/invites/{token}", get(org::get_invite_public))
+        .route("/api/invites/{token}/accept", post(org::accept_invite))
         // Papéis e permissões (RBAC) — ver rbac.rs.
         .route("/api/orgs/{org_id}/roles", get(rbac::list_roles).post(rbac::create_role))
         .route(
@@ -1123,6 +1137,20 @@ pub async fn run() {
             loop {
                 ticker.tick().await;
                 recorder::retention_sweep(&state).await;
+            }
+        });
+    }
+
+    // Cron: gravações — as presas em `processing` por um pod que morreu passam
+    // a `failed`.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(300));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                recorder::fail_stale_processing(&state).await;
             }
         });
     }

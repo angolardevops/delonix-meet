@@ -1468,12 +1468,10 @@ pub async fn ws_directo(
     let mut resolvidos: std::collections::HashMap<Uuid, (String, String, String, String)> =
         std::collections::HashMap::new();
     if !ids_guardados.is_empty() {
-        let org_id: Option<Uuid> = sqlx::query_scalar(
-            "SELECT org_id FROM org_members WHERE user_id = $1 AND archived_at IS NULL LIMIT 1",
-        )
-        .bind(user_id)
-        .fetch_optional(&state.db)
-        .await?;
+        let org_id: Option<Uuid> = crate::org::orgs_of_user(&state, user_id)
+            .await
+            .first()
+            .copied();
         let Some(org_id) = org_id else {
             return recusa(
                 ws,

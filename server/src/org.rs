@@ -386,6 +386,110 @@ pub(crate) async fn insert_member_tx(
     Ok(())
 }
 
+/// Como `insert_member_tx`, com o papel RBAC (`role_id`) já atribuído — o
+/// criador de uma organização nasce com o papel de sistema «Administrador».
+pub(crate) async fn insert_member_with_role_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_id: Uuid,
+    user_id: Uuid,
+    role: &str,
+    role_id: Uuid,
+    title: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, role, role_id, title) VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .bind(role)
+    .bind(role_id)
+    .bind(title)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// `(role, role_id)` de um membro ACTIVO (não arquivado) da organização.
+/// `None` = não é membro. Fonte única para o RBAC (`rbac.rs`).
+pub(crate) async fn active_member_roles(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<(String, Option<Uuid>)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT role, role_id FROM org_members WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+}
+
+/// Quantos membros activos têm este papel RBAC.
+pub(crate) async fn count_members_with_role_id(
+    state: &AppState,
+    role_id: Uuid,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM org_members WHERE role_id = $1 AND archived_at IS NULL",
+    )
+    .bind(role_id)
+    .fetch_one(&state.db)
+    .await
+}
+
+/// Passa todos os membros com o papel `from` para o papel `to` (apagar um papel).
+pub(crate) async fn reassign_role_id_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    from: Uuid,
+    to: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE org_members SET role_id = $1 WHERE role_id = $2")
+        .bind(to)
+        .bind(from)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Atribui um papel RBAC a um membro activo; `false` = não é membro activo.
+pub(crate) async fn set_member_role_id(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+    role_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    let r = sqlx::query(
+        "UPDATE org_members SET role_id = $1 WHERE org_id = $2 AND user_id = $3 AND archived_at IS NULL",
+    )
+    .bind(role_id)
+    .bind(org_id)
+    .bind(user_id)
+    .execute(&state.db)
+    .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// As organizações de que `user_id` é membro activo, com o seu papel e cargo
+/// (exportação dos próprios dados, `account.rs`).
+pub(crate) async fn memberships_for_export<T>(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<Vec<T>, sqlx::Error>
+where
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+{
+    sqlx::query_as(
+        "SELECT o.id AS org_id, o.name AS org_name, m.role, m.title
+         FROM org_members m JOIN organizations o ON o.id = m.org_id
+         WHERE m.user_id = $1 AND m.archived_at IS NULL
+         ORDER BY o.name",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+}
+
 pub(crate) fn slugify(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.to_lowercase().chars() {
@@ -1381,7 +1485,7 @@ pub async fn revoke_invite(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path((org_id, invite_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     require_admin(&state, org_id, auth.user_id).await?;
     let res = sqlx::query(
         "UPDATE org_invites SET revoked_at = NOW()
@@ -1402,7 +1506,7 @@ pub async fn revoke_invite(
         &invite_id.to_string(),
     )
     .await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 /// Estado de um convite, decidido por UMA função pura (sem BD, testável) —

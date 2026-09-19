@@ -430,7 +430,7 @@ export interface AccountSession {
 export const listSessions = () => request<AccountSession[]>('/api/users/me/sessions')
 
 export const revokeSession = (sessionId: string) =>
-  request<{ ok: boolean }>(`/api/users/me/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+  request<void>(`/api/users/me/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
 
 export interface AccountDataExport {
   generated_at: string
@@ -746,13 +746,13 @@ export const updateRole = (
 ) => request<RbacRole>(`/api/orgs/${orgId}/roles/${roleId}`, { method: 'PATCH', body: JSON.stringify(data) })
 
 export const deleteRole = (orgId: string, roleId: string) =>
-  request<{ ok: boolean }>(`/api/orgs/${orgId}/roles/${roleId}`, { method: 'DELETE' })
+  request<void>(`/api/orgs/${orgId}/roles/${roleId}`, { method: 'DELETE' })
 
 export const duplicateRole = (orgId: string, roleId: string) =>
   request<RbacRole>(`/api/orgs/${orgId}/roles/${roleId}/duplicate`, { method: 'POST' })
 
 export const assignRole = (orgId: string, userId: string, roleId: string) =>
-  request<{ ok: boolean }>(`/api/orgs/${orgId}/members/${userId}/role`, {
+  request<void>(`/api/orgs/${orgId}/members/${userId}/role`, {
     method: 'PUT',
     body: JSON.stringify({ role_id: roleId }),
   })
@@ -761,7 +761,7 @@ export const listPermissionRequests = (orgId: string, signal?: AbortSignal) =>
   request<RbacPermissionRequest[]>(`/api/orgs/${orgId}/permission-requests`, { signal })
 
 export const decidePermissionRequest = (orgId: string, requestId: string, approve: boolean) =>
-  request<{ ok: boolean }>(`/api/orgs/${orgId}/permission-requests/${requestId}/decide`, {
+  request<void>(`/api/orgs/${orgId}/permission-requests/${requestId}/decide`, {
     method: 'POST',
     body: JSON.stringify({ approve }),
   })

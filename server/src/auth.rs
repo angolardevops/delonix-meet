@@ -483,14 +483,14 @@ pub async fn register(
             .bind(org_id)
             .execute(&mut *tx)
             .await?;
-            sqlx::query(
-                "INSERT INTO org_members (org_id, user_id, role, role_id, title) VALUES ($1, $2, 'admin', $3, $4)",
+            crate::org::insert_member_with_role_tx(
+                &mut tx,
+                org_id,
+                user.id,
+                "admin",
+                admin_role_id,
+                "Administrador",
             )
-            .bind(org_id)
-            .bind(user.id)
-            .bind(admin_role_id)
-            .bind("Administrador")
-            .execute(&mut *tx)
             .await?;
             (org_id, "org.created", name)
         }

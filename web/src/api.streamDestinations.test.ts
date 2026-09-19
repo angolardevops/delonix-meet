@@ -47,22 +47,22 @@ describe('destinos de directo guardados', () => {
   })
 
   it('criar manda a chave UMA vez, no corpo; alterar sem chave não a manda', async () => {
-    const recurso = { id: 'd-1', key_set: true }
+    const recurso = { id: 'd-1', has_key: true }
     responder(
       new Response(JSON.stringify(recurso), { status: 201 }),
       new Response(JSON.stringify(recurso), { status: 200 }),
     )
-    await createStreamDestination('org-1', { label: 'Canal', rtmp_url: 'rtmp://x/live', stream_key: 'k-1' })
+    await createStreamDestination('org-1', { kind: 'youtube', label: 'Canal', url: 'rtmp://x/live', stream_key: 'k-1' })
     expect(pedidos[0].init.method).toBe('POST')
-    expect(JSON.parse(String(pedidos[0].init.body))).toEqual({ label: 'Canal', rtmp_url: 'rtmp://x/live', stream_key: 'k-1' })
+    expect(JSON.parse(String(pedidos[0].init.body))).toEqual({ kind: 'youtube', label: 'Canal', url: 'rtmp://x/live', stream_key: 'k-1' })
     await updateStreamDestination('org-1', 'd-1', { label: 'Outro' })
     expect(pedidos[1].init.method).toBe('PATCH')
     expect(String(pedidos[1].init.body)).not.toContain('stream_key')
   })
 
   it('listar vai ao caminho da organização', async () => {
-    responder(new Response('[]', { status: 200 }))
-    await expect(listStreamDestinations('org-9')).resolves.toEqual([])
+    responder(new Response(JSON.stringify({ items: [] }), { status: 200 }))
+    await expect(listStreamDestinations('org-9')).resolves.toEqual({ items: [] })
     expect(pedidos[0].url).toBe('/api/orgs/org-9/stream-destinations')
   })
 })

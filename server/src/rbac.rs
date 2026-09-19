@@ -101,13 +101,7 @@ pub async fn require_permission(
     user_id: Uuid,
     permission: &str,
 ) -> Result<(), ApiError> {
-    let row: Option<(String, Option<Uuid>)> = sqlx::query_as(
-        "SELECT role, role_id FROM org_members WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL",
-    )
-    .bind(org_id)
-    .bind(user_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let row = crate::org::active_member_roles(&state, org_id, user_id).await?;
     let Some((role, role_id)) = row else {
         return Err(ApiError::NotFound);
     };
@@ -167,13 +161,7 @@ pub async fn my_permissions(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let row: Option<(String, Option<Uuid>)> = sqlx::query_as(
-        "SELECT role, role_id FROM org_members WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL",
-    )
-    .bind(org_id)
-    .bind(auth.user_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let row = crate::org::active_member_roles(&state, org_id, auth.user_id).await?;
     let Some((role, role_id)) = row else {
         return Err(ApiError::NotFound);
     };
@@ -262,12 +250,7 @@ async fn load_role(state: &AppState, org_id: Uuid, role_id: Uuid) -> Result<Role
         }
         None => None,
     };
-    let member_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM org_members WHERE role_id = $1 AND archived_at IS NULL",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await?;
+    let member_count: (i64,) = (crate::org::count_members_with_role_id(&state, id).await?,);
 
     let direct: Vec<(String, bool)> = sqlx::query_as(
         "SELECT permission, requires_approval FROM org_role_permissions WHERE role_id = $1",
@@ -559,7 +542,7 @@ pub async fn delete_role(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path((org_id, role_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let existing: Option<(bool,)> =
         sqlx::query_as("SELECT is_system FROM org_roles WHERE id = $1 AND org_id = $2")
@@ -583,11 +566,7 @@ pub async fn delete_role(
     .await?;
 
     let mut tx = state.db.begin().await?;
-    sqlx::query("UPDATE org_members SET role_id = $1 WHERE role_id = $2")
-        .bind(membro_id.0)
-        .bind(role_id)
-        .execute(&mut *tx)
-        .await?;
+    crate::org::reassign_role_id_tx(&mut tx, role_id, membro_id.0).await?;
     // Qualquer papel filho perde a herança deste (fica sem pai, não em cadeia partida).
     sqlx::query("UPDATE org_roles SET parent_role_id = NULL WHERE parent_role_id = $1")
         .bind(role_id)
@@ -607,7 +586,7 @@ pub async fn delete_role(
         &role_id.to_string(),
     )
     .await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 pub async fn duplicate_role(
@@ -693,7 +672,7 @@ pub async fn assign_role(
     auth: AuthUser,
     Path((org_id, user_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<AssignRoleReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let role_exists: Option<(Uuid,)> =
         sqlx::query_as("SELECT id FROM org_roles WHERE id = $1 AND org_id = $2")
@@ -704,15 +683,8 @@ pub async fn assign_role(
     if role_exists.is_none() {
         return Err(ApiError::BadRequest("papel inexistente".into()));
     }
-    let updated = sqlx::query(
-        "UPDATE org_members SET role_id = $1 WHERE org_id = $2 AND user_id = $3 AND archived_at IS NULL",
-    )
-    .bind(req.role_id)
-    .bind(org_id)
-    .bind(user_id)
-    .execute(&state.db)
-    .await?;
-    if updated.rows_affected() == 0 {
+    let updated = crate::org::set_member_role_id(&state, org_id, user_id, req.role_id).await?;
+    if !updated {
         return Err(ApiError::NotFound);
     }
     crate::audit::log(
@@ -723,7 +695,7 @@ pub async fn assign_role(
         &format!("{user_id} -> {}", req.role_id),
     )
     .await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------
@@ -773,7 +745,7 @@ pub async fn decide_permission_request(
     auth: AuthUser,
     Path((org_id, request_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<DecideRequestReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let status = if req.approve { "approved" } else { "denied" };
     let expires_at = req
@@ -806,7 +778,7 @@ pub async fn decide_permission_request(
         &request_id.to_string(),
     )
     .await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------
