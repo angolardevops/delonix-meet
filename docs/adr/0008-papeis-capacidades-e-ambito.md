@@ -379,7 +379,7 @@ do `GET /api/public/settings`, que já existe; o servidor não esconde rotas por
 
 ## Estado da implementação (2026-09-17, ramo `delonix-meet-backend/v3-rbac-utilizadores`)
 
-- Implementado como decidido acima; migrações 0055–0058 (números de trabalho: o #93 das gravações ocupa 0052–0054); regressões R190–R194.
+- Implementado como decidido acima; migrações 0053–0056 (números de trabalho: renumeradas nesta sessão contra a `main` de 2026-09-19, que já tinha `chat_retention_days` em 0052); regressões R190–R194.
 - **Não imposto nesta frente** (e por isso não configurável): as capacidades de sessão excepto
   `sessions.create`, `recordings.record_4k`, `recordings.delete` (não há rota que apague),
   `broadcast.highlight_questions`, as três de estúdio; os limites de duração e de resolução.
