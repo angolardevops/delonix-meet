@@ -3,8 +3,12 @@
 //! funciona para quem tem direito — senão o teste mediria uma avaria.
 mod common;
 
-use common::{assert_denied, Account, TestApp};
+use common::{assert_denied, Account, TestApp, PASSWORD};
 use serde_json::{json, Value};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use uuid::Uuid;
 
 const VOICE_SECRET: &str = "segredo-da-media-0123456789";
@@ -364,4 +368,145 @@ async fn odoo_list_users_excludes_archived_members(db: sqlx::PgPool) {
     );
     assert!(text.contains(&stays.email), "{body}");
     assert!(text.contains(&admin.email), "{body}");
+}
+
+// ---------------------------------------------------------------------------
+//  Sincronização do directório: fallback sem telefone (Odoo sem módulo `hr`)
+// ---------------------------------------------------------------------------
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Um «Odoo» falso que autentica QUALQUER credencial e conta as chamadas
+/// `call_kw`: a primeira pede `mobile_phone`/`work_phone` e é recusada (como
+/// um Odoo sem o módulo `hr`); a segunda, sem esses campos, tem sucesso — é o
+/// fallback de `odoo_sso::search_users`.
+async fn odoo_falso_sem_modulo_hr() -> (u16, Arc<AtomicUsize>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let call_kw_count = Arc::new(AtomicUsize::new(0));
+    let conta = call_kw_count.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = listener.accept().await else {
+                return;
+            };
+            let conta = conta.clone();
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = Vec::new();
+                let mut tmp = [0u8; 4096];
+                let (head_end, content_length) = loop {
+                    let n = match s.read(&mut tmp).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => n,
+                    };
+                    buf.extend_from_slice(&tmp[..n]);
+                    if let Some(pos) = find_subslice(&buf, b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&buf[..pos]);
+                        let cl = head
+                            .lines()
+                            .find_map(|l| {
+                                let lower = l.to_ascii_lowercase();
+                                lower.strip_prefix("content-length:").map(|v| {
+                                    v.trim().parse::<usize>().unwrap_or(0)
+                                })
+                            })
+                            .unwrap_or(0);
+                        break (pos + 4, cl);
+                    }
+                };
+                while buf.len() < head_end + content_length {
+                    match s.read(&mut tmp).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => buf.extend_from_slice(&tmp[..n]),
+                    }
+                }
+                let head_text = String::from_utf8_lossy(&buf[..head_end]).to_string();
+                let path = head_text
+                    .lines()
+                    .next()
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("")
+                    .to_string();
+                let body_text =
+                    String::from_utf8_lossy(&buf[head_end..head_end + content_length]).to_string();
+
+                let corpo = if path == "/web/session/authenticate" {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"uid":1,"company_id":1,"name":"Carla",
+                        "is_admin":true,
+                        "user_companies":{"allowed_companies":{"1":{"name":"Alfa"}}}}}"#
+                        .to_string()
+                } else if path == "/web/dataset/call_kw" {
+                    conta.fetch_add(1, Ordering::SeqCst);
+                    if body_text.contains("mobile_phone") {
+                        r#"{"jsonrpc":"2.0","id":1,"error":{"code":200,"message":"Invalid field mobile_phone in res.users"}}"#.to_string()
+                    } else {
+                        r#"{"jsonrpc":"2.0","id":1,"result":[{"id":7,"login":"carla@alfa.test","name":"Carla","email":"carla@alfa.test"}]}"#.to_string()
+                    }
+                } else {
+                    "{}".to_string()
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nset-cookie: session_id=fake-session\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{corpo}",
+                    corpo.len()
+                );
+                let _ = s.write_all(resp.as_bytes()).await;
+            });
+        }
+    });
+    (port, call_kw_count)
+}
+
+/// Aponta a org de `who` para o Odoo em `url`, como `egress_guard::apontar_odoo`.
+async fn apontar_odoo(app: &TestApp, org: &str, user_id: &str, url: &str) {
+    sqlx::query(
+        "UPDATE organizations SET odoo_enabled = TRUE, odoo_url = $1, odoo_db = 'prod' WHERE id = $2::uuid",
+    )
+    .bind(url)
+    .bind(org)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE users SET odoo_org_id = $1::uuid WHERE id = $2::uuid")
+        .bind(org)
+        .bind(user_id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+}
+
+/// Um Odoo sem o módulo `hr` recusa `mobile_phone`/`work_phone` em
+/// `res.users` — `search_users` tem de repetir sem esses campos em vez de
+/// deixar a sincronização do directório inteira por fazer.
+#[sqlx::test(migrations = "./migrations")]
+async fn directory_sync_falls_back_without_phone_fields_when_odoo_refuses(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let a = app.new_org("hr-odoo.ao").await;
+    let (port, call_kw_count) = odoo_falso_sem_modulo_hr().await;
+    apontar_odoo(&app, a.org(), &a.user_id, &format!("http://127.0.0.1:{port}")).await;
+
+    let (st, _) = app
+        .post(
+            "/api/auth/login",
+            None,
+            json!({"email": a.email, "password": PASSWORD}),
+        )
+        .await;
+    assert_eq!(st, 200, "login por Odoo tinha de ter sucesso");
+
+    // `spawn_directory_sync` corre em segundo plano: espera as DUAS tentativas
+    // de `call_kw` (com telefones, recusada; sem eles, aceite).
+    for _ in 0..50 {
+        if call_kw_count.load(Ordering::SeqCst) >= 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        call_kw_count.load(Ordering::SeqCst),
+        2,
+        "search_users tinha de tentar com telefones e depois sem eles"
+    );
 }
