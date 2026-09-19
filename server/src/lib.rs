@@ -21,6 +21,7 @@ mod metrics;
 mod mfa;
 mod mls;
 pub mod net_guard;
+mod net_probe;
 pub mod nodes;
 mod notifications;
 mod odoo;
@@ -126,6 +127,8 @@ pub struct AppState {
     /// Envios de SMS por organização (ADR-0005). Um SMS custa dinheiro: é o
     /// travão contra um admin comprometido ou um script descontrolado.
     pub sms_send_limiter: RateLimiter,
+    /// Sondagens de rede por conta (`net_probe`) — cada uma move até 4 MiB.
+    pub net_probe_limiter: RateLimiter,
     /// Anti-força-bruta do código MFA na activação e na desactivação (por
     /// conta). Só conta falhas; trava também o código certo (R131).
     pub mfa_limiter: RateLimiter,
@@ -335,6 +338,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // ---- Salas ----
         .route("/api/rooms", post(rooms::create_room))
         .route("/api/rooms/{room_code}", get(rooms::get_room))
+        .route("/api/rooms/{room_code}/waiting", get(rooms::waiting))
         // Estado vivo da emissão (G1) — rótulos, bytes, débito. Ver o /live
         // (WebSocket) mais abaixo, que é o que a alimenta.
         .route(
@@ -369,6 +373,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         // Tradução de legendas em tempo real via LLM local (ai.rs / Ollama).
         .route("/api/ai/translations", post(ai::translate_caption))
+        // Sonda de rede pré-entrada: descarga e subida contra este servidor.
+        // Sem afinidade por sala — qualquer pod responde.
+        .route(
+            "/api/net-probe",
+            get(net_probe::download)
+                .post(net_probe::upload)
+                .layer(DefaultBodyLimit::max(net_probe::MAX_PROBE_BYTES)),
+        )
         // ---- Reuniões, agenda e plano de acção 5W2H ----
         .route("/api/meetings", get(meetings::list).post(meetings::create))
         .route("/api/meetings/check-conflicts", post(meetings::check_conflicts))
@@ -792,6 +804,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
         sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
+        net_probe_limiter: RateLimiter::new(30, Duration::from_secs(60)),
         mfa_limiter: RateLimiter::new(5, Duration::from_secs(300)),
         outbound,
         config: config.clone(),

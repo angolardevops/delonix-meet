@@ -50,6 +50,7 @@ pub const ROOM_COLUMNS: &str =
     paths(
         create_room,
         get_room,
+        waiting,
         join_room,
         ice_servers,
         room_chat,
@@ -65,7 +66,9 @@ pub const ROOM_COLUMNS: &str =
         InviteReq,
         InviteResp,
         TimingsReq,
-        QosSample
+        QosSample,
+        crate::signaling::WaitingView,
+        crate::signaling::Origin
     ))
 )]
 pub struct ApiDoc;
@@ -312,6 +315,46 @@ pub async fn get_room(
     // ao vivo faz-se no join_room (não-membros vão para a sala de espera).
     let _ = auth;
     Ok(Json(room))
+}
+
+/// Espreitar a sala de espera ANTES de entrar (só dono ou co-anfitrião de
+/// admissões — `403` aos outros, `404` a quem não conhece o código).
+///
+/// A fila vive na memória do `SignalingHub` deste POD (ADR-0001: uma sala,
+/// um pod), por isso o pedido tem de chegar ao MESMO pod que serve o `/ws`
+/// da sala — daí o `?room=` no pedido, para o `upstream-hash-by: $arg_room`
+/// do ingress dedicado (ver `deploy/k8s/04-ingress.yaml`) rotear os dois
+/// pedidos para o mesmo sítio. Sem essa rota no ingress, um cluster com mais
+/// de um pod responde sempre "ninguém à espera", mesmo com gente a esperar
+/// noutro pod — por isso não é opcional, é parte do contrato desta rota.
+#[utoipa::path(
+    get, path = "/api/rooms/{room_code}/waiting", tag = "rooms",
+    security(("session" = [])),
+    params(
+        ("room_code" = String, Path, description = "Código da sala (`abc-defg-hij`)."),
+        ("room" = Option<String>, Query, description = "Igual a `room_code` — chave de afinidade do ingress."),
+    ),
+    responses(
+        (status = 200, body = Vec<crate::signaling::WaitingView>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Vê a sala mas não admite (`room.not_admitter`).", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn waiting(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(code): Path<String>,
+) -> Result<Json<Vec<crate::signaling::WaitingView>>, ApiError> {
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(code.to_lowercase())
+        .fetch_one(&state.db)
+        .await?;
+    let access = room_access(&state, auth.user_id, &room).await?;
+    if !access.admitter {
+        return Err(delonix_meet_core::DomainError::forbidden("room.not_admitter").into());
+    }
+    Ok(Json(state.hub.waiting_list(room.id)))
 }
 
 /// Resultado da verificação de acesso a uma sala.

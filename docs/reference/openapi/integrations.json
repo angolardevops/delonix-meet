@@ -3046,6 +3046,17 @@
         ],
         "type": "object"
       },
+      "Origin": {
+        "description": "Como é que esta pessoa chegou à sala. Derivado no SERVIDOR (token de sala),\nnunca declarado pelo cliente.",
+        "enum": [
+          "sso",
+          "password",
+          "guest",
+          "pstn",
+          "bot"
+        ],
+        "type": "string"
+      },
       "ParticipantConflict": {
         "properties": {
           "meeting_id": {
@@ -3147,6 +3158,11 @@
           }
         ],
         "description": "A sala pessoal, o link para a partilhar e o dial-in, se houver."
+      },
+      "ProbeBytes": {
+        "description": "Marcador só para o spec — o corpo é binário puro, sem forma.",
+        "format": "binary",
+        "type": "string"
       },
       "ProvisionOrgReq": {
         "properties": {
@@ -4785,6 +4801,25 @@
         },
         "type": "object"
       },
+      "UploadProbeResult": {
+        "properties": {
+          "bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "server_ms": {
+            "description": "Tempo a LER o corpo, medido no servidor — o que o browser não consegue\nmedir sozinho (o \"enviado\" dele não é o \"recebido\" do servidor).",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bytes",
+          "server_ms"
+        ],
+        "type": "object"
+      },
       "UsageBucket": {
         "properties": {
           "bytes": {
@@ -5328,6 +5363,44 @@
           "room_code",
           "pin",
           "media_backend"
+        ],
+        "type": "object"
+      },
+      "WaitingView": {
+        "description": "Quem está na sala de espera, visto por um anfitrião antes de entrar\n(`GET /api/rooms/{code}/waiting`).",
+        "properties": {
+          "origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Origin"
+              }
+            ]
+          },
+          "peer_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "since": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer_id",
+          "username",
+          "since"
         ],
         "type": "object"
       },

@@ -3046,6 +3046,17 @@
         ],
         "type": "object"
       },
+      "Origin": {
+        "description": "Como é que esta pessoa chegou à sala. Derivado no SERVIDOR (token de sala),\nnunca declarado pelo cliente.",
+        "enum": [
+          "sso",
+          "password",
+          "guest",
+          "pstn",
+          "bot"
+        ],
+        "type": "string"
+      },
       "ParticipantConflict": {
         "properties": {
           "meeting_id": {
@@ -3147,6 +3158,11 @@
           }
         ],
         "description": "A sala pessoal, o link para a partilhar e o dial-in, se houver."
+      },
+      "ProbeBytes": {
+        "description": "Marcador só para o spec — o corpo é binário puro, sem forma.",
+        "format": "binary",
+        "type": "string"
       },
       "ProvisionOrgReq": {
         "properties": {
@@ -4785,6 +4801,25 @@
         },
         "type": "object"
       },
+      "UploadProbeResult": {
+        "properties": {
+          "bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "server_ms": {
+            "description": "Tempo a LER o corpo, medido no servidor — o que o browser não consegue\nmedir sozinho (o \"enviado\" dele não é o \"recebido\" do servidor).",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bytes",
+          "server_ms"
+        ],
+        "type": "object"
+      },
       "UsageBucket": {
         "properties": {
           "bytes": {
@@ -5328,6 +5363,44 @@
           "room_code",
           "pin",
           "media_backend"
+        ],
+        "type": "object"
+      },
+      "WaitingView": {
+        "description": "Quem está na sala de espera, visto por um anfitrião antes de entrar\n(`GET /api/rooms/{code}/waiting`).",
+        "properties": {
+          "origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Origin"
+              }
+            ]
+          },
+          "peer_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "since": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer_id",
+          "username",
+          "since"
         ],
         "type": "object"
       },
@@ -7524,6 +7597,139 @@
         "summary": "Arranca a reunião: cria a sala (se ainda não existe) e devolve o código.\nReuniões de voz criam na mesma uma sala — o cliente entra sem vídeo.",
         "tags": [
           "meetings"
+        ]
+      }
+    },
+    "/api/net-probe": {
+      "get": {
+        "operationId": "download",
+        "parameters": [
+          {
+            "description": "Bytes a devolver; por omissão 256 KiB, tecto 4 MiB.",
+            "in": "query",
+            "name": "bytes",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "description": "Marcador só para o spec — o corpo é binário puro, sem forma.",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`net_probe.invalid_bytes`: fora de 1..=4194304."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Mais de 30 sondagens por conta no último minuto."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Sonda de descarga: devolve `bytes` de enchimento. O cliente mede o tempo\ndesde o pedido até ao fim da resposta — por isso `Cache-Control: no-store`\né obrigatório, uma resposta em cache mediria a rede local, não o servidor.",
+        "tags": [
+          "diagnostico"
+        ]
+      },
+      "post": {
+        "operationId": "upload",
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "description": "Marcador só para o spec — o corpo é binário puro, sem forma.",
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "description": "Até 4 MiB; o conteúdo é ignorado.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadProbeResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão."
+          },
+          "413": {
+            "description": "Corpo acima de 4 MiB."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Mais de 30 sondagens por conta no último minuto."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Sonda de subida. Recebe o corpo em bruto directamente (não pelo\nextractor `Bytes`, que já teria consumido o corpo antes deste código\ncorrer): o relógio arranca mesmo antes de ler, para medir a leitura em\nsi, não o tempo de fila do servidor.",
+        "tags": [
+          "diagnostico"
         ]
       }
     },
@@ -14428,6 +14634,86 @@
         "summary": "Carrega uma gravação da sala. O corpo é o ficheiro **em bruto** (não\nmultipart); o `Content-Type` não é verificado. Máximo 512 MiB. Só quem\nparticipou na sala pode carregar — senão **401**, não 403.",
         "tags": [
           "recordings"
+        ]
+      }
+    },
+    "/api/rooms/{room_code}/waiting": {
+      "get": {
+        "description": "A fila vive na memória do `SignalingHub` deste POD (ADR-0001: uma sala,\num pod), por isso o pedido tem de chegar ao MESMO pod que serve o `/ws`\nda sala — daí o `?room=` no pedido, para o `upstream-hash-by: $arg_room`\ndo ingress dedicado (ver `deploy/k8s/04-ingress.yaml`) rotear os dois\npedidos para o mesmo sítio. Sem essa rota no ingress, um cluster com mais\nde um pod responde sempre \"ninguém à espera\", mesmo com gente a esperar\nnoutro pod — por isso não é opcional, é parte do contrato desta rota.",
+        "operationId": "waiting",
+        "parameters": [
+          {
+            "description": "Código da sala (`abc-defg-hij`).",
+            "in": "path",
+            "name": "room_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Igual a `room_code` — chave de afinidade do ingress.",
+            "in": "query",
+            "name": "room",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WaitingView"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Vê a sala mas não admite (`room.not_admitter`)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Espreitar a sala de espera ANTES de entrar (só dono ou co-anfitrião de\nadmissões — `403` aos outros, `404` a quem não conhece o código).",
+        "tags": [
+          "rooms"
         ]
       }
     },
