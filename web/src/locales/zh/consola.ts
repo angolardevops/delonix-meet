@@ -78,7 +78,7 @@ export default {
   ramais: {
     titulo: '内部分机',
     eyebrow: '分机对分机通话',
-    aviso: '仅限本组织内部网络中分机之间的通话。分机目前还不能接听外线（PSTN）来电，也不能接入视频会议室——这些是本计划后续阶段的内容。',
+    aviso: '本组织内部网络中分机之间的通话。已分配号码的分机（见"号码"一列）也可以直接接听外线来电——无需 PIN，无需菜单。任何分机都不能接入视频会议室——这是本计划后续阶段的内容。',
     semRamais: '该组织暂无分机。',
     colMembro: '成员',
     colExtensao: '分机号',
@@ -109,6 +109,15 @@ export default {
     password: 'SIP 密码',
     dominio: 'SIP 域名',
     concluido: '完成',
+    did: {
+      col: '号码（PSTN）',
+      escolherNumero: '选择号码…',
+      atribuir: '为分机 {{extensao}} 分配号码',
+      atribuirBotao: '分配',
+      desatribuir: '取消分配',
+      desatribuirConfirmar: '取消分机 {{extensao}} 的号码分配？该号码将可用于其他分机或语音房间。',
+      erro: '无法分配/取消分配号码。',
+    },
   },
   chamadas: {
     titulo: '通话',

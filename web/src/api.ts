@@ -1868,6 +1868,8 @@ export interface VoiceDid {
   provider: string
   active: boolean
   created_at: string
+  /** Ramal a que este número está atribuído (Fase 2 — ver Extension), ou null se livre. */
+  extension_id: string | null
 }
 export interface VoiceCdr {
   id: string
@@ -1943,6 +1945,23 @@ export const regenerateExtensionPassword = (orgId: string, id: string) =>
   request<ExtensionCreated>(`/api/orgs/${orgId}/extensions/${id}/regenerate-password`, { method: 'POST' })
 export const deleteExtension = (orgId: string, id: string) =>
   requestEmpty(`/api/orgs/${orgId}/extensions/${id}`, { method: 'DELETE' })
+
+// ---------- Fase 2: ramal alcançável do PSTN via DID dedicado ----------
+// Só voz directa (bridge ao ramal, sem PIN) — continua SEM ponte para salas
+// de reunião em vídeo. Ver server/src/ramais.rs para a fronteira exacta.
+
+export interface ExtensionDidInfo {
+  did_id: string
+  e164: string
+}
+
+export const assignExtensionDid = (orgId: string, id: string, didId: string) =>
+  request<ExtensionDidInfo>(`/api/orgs/${orgId}/extensions/${id}/did`, {
+    method: 'PUT',
+    body: JSON.stringify({ did_id: didId }),
+  })
+export const unassignExtensionDid = (orgId: string, id: string) =>
+  requestEmpty(`/api/orgs/${orgId}/extensions/${id}/did`, { method: 'DELETE' })
 
 /** Tecto de upload de uma gravação no servidor (recordings.rs MAX_RECORDING_BYTES). */
 export const MAX_RECORDING_UPLOAD_BYTES = 512 * 1024 * 1024

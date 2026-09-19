@@ -78,7 +78,7 @@ export default {
   ramais: {
     titulo: 'Ramais internos',
     eyebrow: 'chamada ramal-a-ramal',
-    aviso: 'Só chamadas ENTRE ramais desta organização, pela rede interna. Um ramal ainda não recebe chamadas do exterior (PSTN) nem entra numa sala de reunião em vídeo — são fases seguintes deste plano.',
+    aviso: 'Chamadas entre ramais desta organização, pela rede interna. Um ramal com um número atribuído (ver coluna "Número") também recebe chamadas de fora directamente — sem PIN, sem menu. Nenhum ramal entra numa sala de reunião em vídeo — é fase seguinte deste plano.',
     semRamais: 'Ainda não há ramais nesta organização.',
     colMembro: 'Pessoa',
     colExtensao: 'Ramal',
@@ -109,6 +109,15 @@ export default {
     password: 'Password SIP',
     dominio: 'Domínio SIP',
     concluido: 'Concluído',
+    did: {
+      col: 'Número (PSTN)',
+      escolherNumero: 'Escolher número…',
+      atribuir: 'Atribuir número ao ramal {{extensao}}',
+      atribuirBotao: 'Atribuir',
+      desatribuir: 'Desatribuir',
+      desatribuirConfirmar: 'Desatribuir o número do ramal {{extensao}}? Passa a ficar disponível para outro ramal ou sala de voz.',
+      erro: 'Não foi possível atribuir/desatribuir o número.',
+    },
   },
   chamadas: {
     titulo: 'Chamadas',

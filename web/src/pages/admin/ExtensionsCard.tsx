@@ -1,12 +1,15 @@
 /**
  * Ramais internos (`server/src/ramais.rs`): chamada ramal-a-ramal pela rede
- * interna, ligada ao FreeSWITCH que já serve o dial-in PSTN (`voice/`) — mas
- * sem qualquer ligação a esse dial-in. Fase 1 do plano: SÓ interno.
+ * interna, ligada ao FreeSWITCH que já serve o dial-in PSTN (`voice/`).
+ * Fase 1: SÓ interno. Fase 2 (esta): um ramal pode receber um DID dedicado
+ * e passar a tocar directamente para quem lhe ligar do exterior — sem PIN,
+ * sem IVR.
  *
  * O aviso no topo não é decoração — segue a mesma disciplina que `VoiceCard`
- * já aplica à ponte FreeSWITCH↔SFU em falta: um ramal não recebe chamadas do
- * exterior (falta a ponte PSTN↔ramal) nem entra numa sala de vídeo (falta a
- * ponte ramal↔reunião). As duas são fases seguintes do mesmo plano.
+ * já aplica à ponte FreeSWITCH↔SFU em falta: mesmo com um DID atribuído, um
+ * ramal continua sem ponte para uma sala de reunião em vídeo — quem lhe liga
+ * fala com a pessoa do ramal, não entra na reunião. Isso é fase seguinte do
+ * mesmo plano, e nenhum texto aqui deve sugerir o contrário.
  *
  * A password SIP só existe em claro na resposta de criação/regeneração — o
  * mesmo padrão de revelação única que `SmsGatewayCard` já usa para o token de
@@ -15,14 +18,18 @@
 import { FormEvent, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  assignExtensionDid,
   createExtension,
   deleteExtension,
   Employee,
   Extension,
   ExtensionCreated,
   listExtensions,
+  listVoiceDids,
   regenerateExtensionPassword,
+  unassignExtensionDid,
   updateExtension,
+  VoiceDid,
 } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Alert, Button, Card, Dialog, Select, StatusBadge, TextInput } from '../../ui/kit'
@@ -31,6 +38,7 @@ import { orgErrorMessage, refusalAware } from './orgShared'
 export default function ExtensionsCard({ orgId, people }: { orgId: string; people: Employee[] }) {
   const { t } = useTranslation()
   const extensions = useAsync((signal) => refusalAware(listExtensions(orgId, signal), t), [orgId])
+  const dids = useAsync((signal) => refusalAware(listVoiceDids(orgId, signal), t), [orgId])
   const [creating, setCreating] = useState(false)
   const [reveal, setReveal] = useState<ExtensionCreated | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -40,6 +48,13 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
     const taken = new Set(list.map((e) => e.member_id))
     return people.filter((p) => !taken.has(p.user_id))
   }
+
+  // Números desta org (não do pool partilhado), ainda sem ramal — os únicos
+  // que se podem atribuir (mesma regra que o servidor aplica em
+  // ramais.rs::assign_extension_did: um número do pool partilhado, org_id
+  // nulo, fica disponível para todas as orgs e não entra aqui).
+  const assignableDids = (list: VoiceDid[]) => list.filter((d) => d.active && d.org_id === orgId && !d.extension_id)
+  const didForExtension = (list: VoiceDid[], extensionId: string) => list.find((d) => d.extension_id === extensionId)
 
   async function toggleActive(e: Extension) {
     setBusyId(e.id)
@@ -82,6 +97,33 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
     }
   }
 
+  async function assignDid(e: Extension, didId: string) {
+    setBusyId(e.id)
+    setErr('')
+    try {
+      await assignExtensionDid(orgId, e.id, didId)
+      dids.reload()
+    } catch (x) {
+      setErr(orgErrorMessage(x, t, 'consola.ramais.did.erro'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function unassignDid(e: Extension) {
+    if (!window.confirm(t('consola.ramais.did.desatribuirConfirmar', { extensao: e.extension }))) return
+    setBusyId(e.id)
+    setErr('')
+    try {
+      await unassignExtensionDid(orgId, e.id)
+      dids.reload()
+    } catch (x) {
+      setErr(orgErrorMessage(x, t, 'consola.ramais.did.erro'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   return (
     <Card title={t('consola.ramais.titulo')} eyebrow={t('consola.ramais.eyebrow')} flush className="org-voice" as="section">
       <div className="org-card-pad">
@@ -102,6 +144,7 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
                     <th scope="col">{t('consola.ramais.colExtensao')}</th>
                     <th scope="col">{t('consola.ramais.colRotulo')}</th>
                     <th scope="col">{t('consola.ramais.colEstado')}</th>
+                    <th scope="col">{t('consola.ramais.did.col')}</th>
                     <th scope="col">
                       <span className="dx-sr-only">{t('consola.voz.registo')}</span>
                     </th>
@@ -120,6 +163,16 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
                         <StatusBadge tone={e.active ? 'success' : 'neutral'}>
                           {e.active ? t('consola.ramais.activo') : t('consola.ramais.inactivo')}
                         </StatusBadge>
+                      </td>
+                      <td>
+                        <DidCell
+                          extension={e}
+                          assignedDid={dids.state.s === 'ready' ? didForExtension(dids.state.d, e.id) : undefined}
+                          assignable={dids.state.s === 'ready' ? assignableDids(dids.state.d) : []}
+                          busy={busyId === e.id}
+                          onAssign={(didId) => assignDid(e, didId)}
+                          onUnassign={() => unassignDid(e)}
+                        />
                       </td>
                       <td className="org-row-actions">
                         <Button size="sm" variant="secondary" busy={busyId === e.id} onClick={() => toggleActive(e)}>
@@ -164,6 +217,75 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
       )}
       {reveal && <RevealDialog created={reveal} onClose={() => setReveal(null)} />}
     </Card>
+  )
+}
+
+/**
+ * Célula de DID de um ramal (Fase 2): mostra o número atribuído com botão de
+ * desatribuir, ou — se houver números desta org por atribuir — um selector
+ * compacto + botão de atribuir. Sem números disponíveis, mostra só o traço
+ * neutro (mesmo padrão de "sem dados" que o resto da tabela usa).
+ */
+function DidCell({
+  extension,
+  assignedDid,
+  assignable,
+  busy,
+  onAssign,
+  onUnassign,
+}: {
+  extension: Extension
+  assignedDid: VoiceDid | undefined
+  assignable: VoiceDid[]
+  busy: boolean
+  onAssign: (didId: string) => void
+  onUnassign: () => void
+}) {
+  const { t } = useTranslation()
+  const [choice, setChoice] = useState('')
+
+  if (assignedDid) {
+    return (
+      <span className="org-simple__main">
+        <strong className="dx-num">{assignedDid.e164}</strong>
+        <Button size="sm" variant="secondary" busy={busy} onClick={onUnassign}>
+          {t('consola.ramais.did.desatribuir')}
+        </Button>
+      </span>
+    )
+  }
+
+  if (assignable.length === 0) {
+    return <span className="dx-muted">—</span>
+  }
+
+  return (
+    <span className="org-inline" aria-label={t('consola.ramais.did.atribuir', { extensao: extension.extension })}>
+      <Select
+        value={choice}
+        onChange={(e) => setChoice(e.target.value)}
+        aria-label={t('consola.ramais.did.escolherNumero')}
+      >
+        <option value="">{t('consola.ramais.did.escolherNumero')}</option>
+        {assignable.map((d) => (
+          <option key={d.id} value={d.id}>
+            {d.e164}
+          </option>
+        ))}
+      </Select>
+      <Button
+        size="sm"
+        variant="secondary"
+        busy={busy}
+        disabled={!choice}
+        onClick={() => {
+          onAssign(choice)
+          setChoice('')
+        }}
+      >
+        {t('consola.ramais.did.atribuirBotao')}
+      </Button>
+    </span>
   )
 }
 

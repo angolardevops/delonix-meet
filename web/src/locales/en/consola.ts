@@ -78,7 +78,7 @@ export default {
   ramais: {
     titulo: 'Internal extensions',
     eyebrow: 'extension-to-extension calling',
-    aviso: 'Only calls BETWEEN extensions of this organisation, over the internal network. An extension does not yet receive calls from outside (PSTN) or join a video meeting room — those are later phases of this plan.',
+    aviso: "Calls between extensions of this organisation, over the internal network. An extension with a number assigned (see the \"Number\" column) also receives calls from outside directly — no PIN, no menu. No extension joins a video meeting room — that is a later phase of this plan.",
     semRamais: 'This organisation has no extensions yet.',
     colMembro: 'Person',
     colExtensao: 'Extension',
@@ -109,6 +109,15 @@ export default {
     password: 'SIP password',
     dominio: 'SIP domain',
     concluido: 'Done',
+    did: {
+      col: 'Number (PSTN)',
+      escolherNumero: 'Choose a number…',
+      atribuir: 'Assign a number to extension {{extensao}}',
+      atribuirBotao: 'Assign',
+      desatribuir: 'Unassign',
+      desatribuirConfirmar: 'Unassign the number from extension {{extensao}}? It becomes available for another extension or voice room.',
+      erro: 'Could not assign/unassign the number.',
+    },
   },
   chamadas: {
     titulo: 'Calls',

@@ -78,7 +78,7 @@ export default {
   ramais: {
     titulo: 'Postes internes',
     eyebrow: 'appels poste à poste',
-    aviso: "Seulement des appels ENTRE postes de cette organisation, sur le réseau interne. Un poste ne reçoit pas encore d'appels de l'extérieur (RTC) et n'entre pas dans une salle de réunion vidéo — ce sont des phases suivantes de ce plan.",
+    aviso: "Appels entre postes de cette organisation, sur le réseau interne. Un poste avec un numéro attribué (voir la colonne « Numéro ») reçoit aussi des appels de l'extérieur directement — sans code PIN, sans menu. Aucun poste n'entre dans une salle de réunion vidéo — c'est une phase suivante de ce plan.",
     semRamais: "Cette organisation n'a encore aucun poste.",
     colMembro: 'Personne',
     colExtensao: 'Poste',
@@ -109,6 +109,15 @@ export default {
     password: 'Mot de passe SIP',
     dominio: 'Domaine SIP',
     concluido: 'Terminé',
+    did: {
+      col: 'Numéro (RTC)',
+      escolherNumero: 'Choisir un numéro…',
+      atribuir: 'Attribuer un numéro au poste {{extensao}}',
+      atribuirBotao: 'Attribuer',
+      desatribuir: 'Désattribuer',
+      desatribuirConfirmar: "Désattribuer le numéro du poste {{extensao}} ? Il redevient disponible pour un autre poste ou une salle vocale.",
+      erro: "Impossible d'attribuer/désattribuer le numéro.",
+    },
   },
   chamadas: {
     titulo: 'Appels',
