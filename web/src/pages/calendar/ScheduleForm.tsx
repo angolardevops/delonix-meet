@@ -10,7 +10,7 @@
  * fixo da organização (endpoint voice/dids), não algo que se define por
  * reunião. Mostrá-los aqui seria um campo que o servidor ignora — pior do
  * que não o ter. `format`/`waiting_room`/`auto_record`/`record_quality` (R184,
- * migração 0046) são diferentes: vivem na própria reunião e chegam à sala no
+ * migração 0063) são diferentes: vivem na própria reunião e chegam à sala no
  * arranque, por isso têm campo neste formulário.
  */
 import { FormEvent, KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from 'react'

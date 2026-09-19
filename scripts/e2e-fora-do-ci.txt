@@ -16,3 +16,5 @@ editor.mjs · Grava com câmara/microfone falsos e exporta com WebCodecs no Chro
 estudio-palco.mjs · Dois browsers (estúdio e convidado) com media falsa através do SFU real; precisa de API com SFU e Vite a correr. Corre-se à mão na validação do Estúdio.
 nitidez-imersivo.mjs · precisa de GPU (WebGL2) e de duas pessoas com media real; o runner do CI é headless sem GPU
 palco-imersivo.mjs · banco de ensaio de desempenho com GPU (GPU=egl|nvidia|swiftshader); mede, não afirma, e depende do ferro
+quadros-formas.mjs · Precisa de API e Vite reais em execução e de um utilizador com sessão; percorre cinco contextos de diagramas com exportações e recargas (IndexedDB) em dois viewports, o que o job de e2e não faz. Corre-se à mão ao mexer nas formas dos quadros; o comando está no cabeçalho do ficheiro.
+v5-seleccao-diagramas.mjs · Precisa de API e Vite reais e de um utilizador com sessão; exercita selecção múltipla, grupos, laço e exportações num Chromium real. Corre-se à mão ao mexer na selecção dos diagramas; o comando está no cabeçalho do ficheiro.

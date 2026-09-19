@@ -2020,6 +2020,18 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Ficheiros.** `server/src/{signaling,room_tools,room_chat,rooms,auth,org,users,pubsub,metrics,lib}.rs`, `server/migrations/0050_room_chat_threads_reactions.sql`, `server/migrations/0051_room_chat_direct.sql`, `server/tests/room_chat.rs`.
 
+### R184 — Agendar uma reunião «videoaula» ou «gravar automaticamente» era ignorado: a sala nascia sempre normal, sem espera e sem gravação
+
+**Sintoma.** O formulário de agendar mostrava formato (reunião, videoaula, emissão, híbrida), sala de espera, «gravar automaticamente» e qualidade da gravação, mas `meetings::start` criava SEMPRE uma sala `normal`, sem sala de espera e sem gravação: a pessoa marcava uma emissão com gravação a 1080p e entrava numa reunião comum, sem que nada avisasse que os campos tinham sido descartados. Um campo que o cliente escreve e o sistema ignora é pior do que um campo que não existe.
+
+**Regra.** As opções vivem na PRÓPRIA reunião (`meetings.format`, `waiting_room`, `auto_record`, `record_quality`, migração 0063) e passam à sala no arranque (`rooms.auto_record`, `rooms.record_quality`, onde o gravador do servidor as lê). A validação é do servidor (`SessionOptions::validate`): `format` fora de `meeting|training|broadcast|hybrid` e `record_quality` fora de `2160p|1080p|720p|audio` dão 400 antes de gravar — nunca se corta em silêncio para um valor por omissão. As duas listas repetem-se em `CHECK` na base como segunda linha. A resposta «tentativa» ao convite (`meeting_invitees.status`) entra no mesmo passo.
+
+**Não faz** (e o ecrã não o mostra): destinos de emissão e dial-in PSTN por reunião — são recursos da organização, sem `meeting_id`, e um campo para eles seria outro campo ignorado.
+
+**Portão.** Testes de `meetings`/`rooms` contra Postgres real (a sala arrancada de uma reunião com opções herda-as) e a validação por tabela em `SessionOptions::validate`.
+
+**Ficheiros.** `server/src/{meetings,rooms,recorder}.rs`, `server/migrations/0063_meeting_session_options.sql`, `web/src/pages/calendar/ScheduleForm.tsx`.
+
 ### R189 — Um merge com dois blocos de conflito foi empurrado com o segundo por resolver
 
 **Sintoma.** Ao propagar a `main` (#89) pela pilha, o `HARNESS.md` da `backend/bw1-protocolo-sala` tinha dois blocos em conflito. O script de resolução tratou o primeiro e o commit seguiu com `<<<<<<< HEAD` … `>>>>>>>` na tabela de infraestrutura. Nenhum portão reparou: o `check-docs-drift.sh` lê as linhas que procura e não o ficheiro inteiro, e num `.md` nada compila. No mesmo passo, a bateria final correu sobre uma árvore com um merge PARADO em conflito, porque o script não parava quando o `git merge` falhava.
