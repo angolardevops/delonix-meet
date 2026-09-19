@@ -1909,6 +1909,41 @@ export const listVoiceCdr = (orgId: string, signal?: AbortSignal) =>
 export const voiceBilling = (orgId: string, period: VoicePeriod = 'month', signal?: AbortSignal) =>
   request<VoiceBilling>(`/api/orgs/${orgId}/voice/billing?period=${period}`, { signal })
 
+// ---------- Ramais internos (extensão SIP — chamada ramal-a-ramal, Fase 1) ----------
+// Só interno: SEM PSTN e SEM ponte para salas de reunião (fases seguintes do
+// mesmo plano). Ver server/src/ramais.rs para a fronteira exata.
+
+export interface Extension {
+  id: string
+  org_id: string
+  member_id: string
+  member_username: string
+  member_email: string
+  extension: string
+  sip_username: string
+  label: string
+  active: boolean
+  created_at: string
+}
+/** Resposta de criação/regeneração: só existe UMA VEZ — copiar para o softphone. */
+export interface ExtensionCreated extends Extension {
+  sip_password: string
+  sip_domain: string
+}
+
+export const listExtensions = (orgId: string, signal?: AbortSignal) =>
+  request<Extension[]>(`/api/orgs/${orgId}/extensions`, { signal })
+export const createExtension = (
+  orgId: string,
+  body: { member_id: string; extension: string; label?: string },
+) => request<ExtensionCreated>(`/api/orgs/${orgId}/extensions`, { method: 'POST', body: JSON.stringify(body) })
+export const updateExtension = (orgId: string, id: string, body: { label?: string; active?: boolean }) =>
+  request<Extension>(`/api/orgs/${orgId}/extensions/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
+export const regenerateExtensionPassword = (orgId: string, id: string) =>
+  request<ExtensionCreated>(`/api/orgs/${orgId}/extensions/${id}/regenerate-password`, { method: 'POST' })
+export const deleteExtension = (orgId: string, id: string) =>
+  requestEmpty(`/api/orgs/${orgId}/extensions/${id}`, { method: 'DELETE' })
+
 /** Tecto de upload de uma gravação no servidor (recordings.rs MAX_RECORDING_BYTES). */
 export const MAX_RECORDING_UPLOAD_BYTES = 512 * 1024 * 1024
 

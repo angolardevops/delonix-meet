@@ -25,6 +25,7 @@ import { Button, Empty, Select } from '../ui/kit'
 import AuditCard from './admin/AuditCard'
 import CapacityRow from './admin/CapacityRow'
 import CreateOrgDialog from './admin/CreateOrgDialog'
+import ExtensionsCard from './admin/ExtensionsCard'
 import MembersCard from './admin/MembersCard'
 import OrgsCard from './admin/OrgsCard'
 import { RetentionCard, StorageCard } from './admin/PolicyCards'
@@ -148,6 +149,7 @@ function AdminBody({
           <MembersCard orgId={org.id} meId={user.id} state={people.state} reload={reloadMembers} branches={branchList} />
           <RolesCard orgId={org.id} />
           <VoiceCard orgId={org.id} />
+          <ExtensionsCard orgId={org.id} people={peopleList} />
           <SmsGatewayCard orgId={org.id} />
         </div>
         <div className="org-admin__side">
