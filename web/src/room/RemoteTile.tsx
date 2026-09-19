@@ -1,5 +1,6 @@
 import { CSSProperties, memo, useEffect, useRef } from 'react'
-import { CloseIcon, MicOffIcon } from '../icons'
+import { useTranslation } from 'react-i18next'
+import { BotIcon, CloseIcon, HandIcon, MicOffIcon, PinIcon, VoiceCallIcon } from '../icons'
 
 /**
  * O mosaico de um participante — extraído de `Room.tsx` e MEMOIZADO
@@ -29,6 +30,10 @@ export interface RemotePeer {
   stream: MediaStream | null
   is_pstn?: boolean
   is_bot?: boolean
+  /** O socket caiu e o lugar está reservado (R91). O retrato fica no sítio,
+   *  esbatido, em vez de desaparecer — uma quebra de rede deixa de parecer
+   *  que a pessoa saiu e voltou a entrar. */
+  reconnecting?: boolean
 }
 
 export function peerColor(name: string): string {
@@ -67,6 +72,7 @@ export function RemoteTileBase({
   onMute: (peerId: string) => void
   onKick: (peerId: string) => void
 }) {
+  const { t } = useTranslation()
   const ref = useRef<HTMLVideoElement>(null)
   useEffect(() => {
     if (ref.current && ref.current.srcObject !== peer.stream) {
@@ -80,10 +86,24 @@ export function RemoteTileBase({
   const hasAudio = !!peer.stream?.getAudioTracks().length && peer.micOn
   return (
     <div
-      className={speaking ? 'tile speaking' : 'tile'}
+      className={[
+        'tile',
+        speaking ? 'speaking' : '',
+        peer.reconnecting ? 'reconnecting' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      // Identidade estável do retrato, para quem o lê de fora: testes de
+      // interface e leitores de ecrã. Antes um teste distinguia o retrato local
+      // do remoto por o TEXTO conter «eu» — e isso partiu-se quando os glifos
+      // decorativos passaram a SVG (R88), porque um `<svg>` não tem
+      // `textContent`. Uma asserção sobre texto decorativo quebra-se sempre que
+      // a decoração muda; um atributo não.
+      data-peer="remoto"
+      data-peer-id={peer.peerId}
       style={style}
       onDoubleClick={() => onPin?.(peer.peerId)}
-      title="Duplo-clique para fixar/desafixar no palco"
+      title={t('room.espera.duploCliqueParaFixar')}
     >
       <video ref={ref} autoPlay playsInline muted style={{ display: hasVideo ? undefined : 'none' }} />
       {!hasVideo && (
@@ -94,29 +114,30 @@ export function RemoteTileBase({
       <button
         className={pinned ? 'tile-pin pinned' : 'tile-pin'}
         onClick={() => onPin?.(peer.peerId)}
-        title={pinned ? 'Desafixar do palco' : 'Fixar no palco'}
+        title={pinned ? t('room.desafixarDoPalcoTile') : t('room.fixarNoPalcoTile')}
       >
-        📌
+        <PinIcon />
       </button>
-      {peer.hand && <span className="hand-badge">✋</span>}
+      {peer.hand && <span className="hand-badge"><HandIcon /></span>}
       {/* Indicador de mic muted no canto superior direito (estilo Meet). */}
       {!hasAudio && (
-        <span className="tile-mic-status" aria-label="microfone desativado">
+        <span className="tile-mic-status" aria-label={t('room.microfoneDesativado')}>
           <MicOffIcon />
         </span>
       )}
+      {peer.reconnecting && <span className="tile-reconnecting">{t('room.aVoltar')}</span>}
       <span className="tile-name">
         {hasAudio && speaking && <SpeakingBars />}
         {peer.username}
         {peer.host ? ' · anfitrião' : ''}
-        {peer.is_pstn ? ' · 📞 PSTN' : peer.is_bot ? ' · 🤖 AI Bot' : ''}
+        {peer.is_pstn ? <> · <VoiceCallIcon /> PSTN</> : peer.is_bot ? <> · <BotIcon /> AI Bot</> : null}
       </span>
       {isHost && !peer.host && (
         <div className="host-actions">
-          <button title="Silenciar" onClick={() => onMute(peer.peerId)}>
+          <button title={t('lobby.mute')} onClick={() => onMute(peer.peerId)}>
             <MicOffIcon />
           </button>
-          <button title="Remover da reunião" onClick={() => onKick(peer.peerId)}>
+          <button title={t('lobby.remove')} onClick={() => onKick(peer.peerId)}>
             <CloseIcon />
           </button>
         </div>

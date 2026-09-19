@@ -1,0 +1,7 @@
+# Só para gerar os stubs (ai-worker/gen_protos.sh) — nunca entra na imagem final.
+# grpcio e protobuf fixados IGUAIS aos de requirements.txt: sem isto o pip do
+# estágio `protos` resolve o grpcio mais recente (medido: 1.84.0) e o build
+# deixa de ser reprodutível.
+grpcio-tools==1.66.2
+grpcio==1.66.2
+protobuf==5.27.5

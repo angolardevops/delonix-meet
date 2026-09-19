@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import LanguageToggle from '../components/LanguageToggle'
+import { BrandLockup } from '../components/BrandMark'
+import { GlobeIcon, LockIcon, ShieldIcon, TrophyIcon } from '../icons'
 
 type Feature = { t: string; d: string }
 type FaqItem = { q: string; a: string }
@@ -91,7 +93,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
       <header className="land-top">
         <div className="land-top-inner">
           <span className="brand-text land-brand">
-            <img src="/logo.svg" alt="" className="brand-logo" /> Delonix <span>Meet</span>
+            <BrandLockup />
           </span>
           <nav className="land-nav">
             <button className="land-link" onClick={() => goto('ai')}>{t('land.nav.ai')}</button>
@@ -136,9 +138,9 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
               ))}
             </div>
             <span className="chip float a">✓ {t('land.hero.chipA')}</span>
-            <span className="chip float b">🌍 {t('land.hero.chipB')}</span>
-            <span className="chip float c">🔒 {t('land.hero.chipC')}</span>
-            <span className="chip float d">🏆 {t('land.hero.chipD')}</span>
+            <span className="chip float b"><GlobeIcon /> {t('land.hero.chipB')}</span>
+            <span className="chip float c"><LockIcon /> {t('land.hero.chipC')}</span>
+            <span className="chip float d"><TrophyIcon /> {t('land.hero.chipD')}</span>
           </div>
         </div>
       </section>
@@ -150,7 +152,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
             <p className="eyebrow">{t('land.ai.eyebrow')}</p>
             <h2>{t('land.ai.title')}</h2>
             <p className="land-section-sub left">{t('land.ai.sub')}</p>
-            <span className="ai-sov-badge">🛡 {t('land.ai.badge')}</span>
+            <span className="ai-sov-badge"><ShieldIcon /> {t('land.ai.badge')}</span>
           </div>
           <div className="ai-points">
             {aiPoints.map((p, i) => (
@@ -306,7 +308,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
         <div className="foot-grid">
           <div className="foot-brand">
             <span className="brand-text">
-              <img src="/logo.svg" alt="" className="brand-logo" /> Delonix <span>Meet</span>
+              <BrandLockup />
             </span>
             <p>{t('land.footer.tag')}</p>
             <a className="link small-link" href="#/status">{t('land.statusLink')}</a>

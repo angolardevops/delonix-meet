@@ -81,3 +81,41 @@ describe('a sessão só termina quando o servidor o diz', () => {
     expect(localStorage.getItem('dx_user')).not.toBeNull()   // continua autenticado
   })
 })
+
+describe('renovação de sessão concorrente (R98)', () => {
+  // O servidor ROTA o refresh token: usá-lo revoga-o e emite um par novo. Duas
+  // renovações ao mesmo tempo mandam o MESMO cookie — a primeira roda-o, a
+  // segunda encontra-o revogado e leva 401, e o cliente faz logout. Ou seja: o
+  // utilizador é posto na página de entrada por ter feito duas coisas ao mesmo
+  // tempo.
+  //
+  // Este esboço reproduz a rotação: o SEGUNDO `POST /api/auth/refresh` devolve
+  // 401, como o servidor faria. Sem a guarda de concorrência, uma das duas
+  // chamadas rebenta com «session expired».
+  it('duas chamadas que levam 401 renovam UMA vez, e as duas sobrevivem', async () => {
+    memoria.set('dx_user', JSON.stringify({ id: 'u1', username: 'eu' }))
+    let refreshes = 0
+    let acessoValido = false
+
+    vi.stubGlobal('fetch', async (url: string) => {
+      const u = String(url)
+      if (u.includes('/api/auth/refresh')) {
+        refreshes++
+        // A rotação: só a PRIMEIRA renovação serve. Assim é o servidor.
+        if (refreshes > 1) return { ok: false, status: 401, json: async () => ({}) }
+        // Lenta de propósito: é a janela em que a segunda chamada entraria.
+        await new Promise((r) => setTimeout(r, 25))
+        acessoValido = true
+        return { ok: true, status: 200, json: async () => ({ access_token: 'novo', user: { id: 'u1' } }) }
+      }
+      if (!acessoValido) return { ok: false, status: 401, json: async () => ({}) }
+      return { ok: true, status: 200, json: async () => ({ meetings: [] }) }
+    })
+
+    // As duas partem juntas, como acontece depois de um F5.
+    const [a, b] = await Promise.allSettled([listMeetings(), listMeetings()])
+    expect(a.status).toBe('fulfilled')
+    expect(b.status).toBe('fulfilled')
+    expect(refreshes).toBe(1)
+  })
+})

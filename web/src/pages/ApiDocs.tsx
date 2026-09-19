@@ -1,44 +1,45 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { BrandLockup, BrandMark } from '../components/BrandMark'
 
 /** Documentação pública da API REST do Delonix Meet (#/api-docs). */
 export default function ApiDocs() {
+  const { t } = useTranslation()
   const base = `${location.origin}`
   return (
     <div className="apidoc-page">
       <div className="apidoc-wrap">
         <header className="apidoc-head">
-          <img src="/logo.svg" alt="" className="brand-logo big" />
+          <BrandMark big />
           <h1>
-            Delonix <span>Meet</span> · API REST
+            <BrandLockup suffix="· API REST" />
           </h1>
           <p className="muted">
-            Integra o Delonix Meet noutras plataformas: cria salas, obtém links de reunião e lista
-            gravações — tudo por HTTP, autenticado com uma chave de API da tua organização.
+            
+            {t('api.integraODelonixMeet')}
           </p>
         </header>
 
-        <Section title="Autenticação">
-          <p>
-            Todas as chamadas <code>/api/v1</code> exigem uma <strong>chave de API</strong> da organização
-            (gera-a em <em>Análises → Chaves de API</em>, como administrador). Envia-a num destes headers:
+        <Section title={t('api.autenticacao')}>
+          <p>{t('api.todasAsChamadas')}<code>/api/v1</code>  {t('api.exigemUma')} <strong>{t('api.chaveDeApi')}</strong>  {t('api.daOrganizacaoGeraA')} <em>{t('api.caminhoChaves')}</em>{t('api.comoAdministradorEnviaA')}
           </p>
           <Code>{`Authorization: Bearer dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 # ou
 X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
           <p className="muted small">
-            A chave só é mostrada uma vez, na criação. Guarda-a em segredo — quem a tiver age em nome da
-            tua organização. Podes revogá-la a qualquer momento.
+            
+            {t('api.aChaveSoE')}
           </p>
         </Section>
 
-        <Section title="Base URL">
+        <Section title={t('api.baseUrl')}>
           <Code>{`${base}/api/v1`}</Code>
         </Section>
 
         <Endpoint
           method="POST"
           path="/api/v1/rooms"
-          desc="Cria uma sala de reunião e devolve o código + link de entrada."
+          desc={t('api.criaSala')}
           body={`{
   "name": "Sync semanal",   // opcional
   "e2ee": false,             // opcional — encriptação ponta-a-ponta
@@ -60,7 +61,7 @@ X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
         <Endpoint
           method="GET"
           path="/api/v1/rooms/{code}"
-          desc="Metadados de uma sala existente."
+          desc={t('api.metadadosSala')}
           resp={`{ "code": "abc-defg-hij", "name": "...", "e2ee": false, "waiting_room": false, "join_url": "..." }`}
           curl={`curl ${base}/api/v1/rooms/abc-defg-hij -H "Authorization: Bearer dlx_..."`}
         />
@@ -68,7 +69,7 @@ X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
         <Endpoint
           method="GET"
           path="/api/v1/recordings"
-          desc="Lista as gravações da organização (até 200, mais recentes primeiro)."
+          desc={t('api.listaGravacoes')}
           resp={`{
   "recordings": [
     { "id": "…", "filename": "…", "size_bytes": 12345678,
@@ -81,26 +82,21 @@ X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
 
         <Endpoint
           method="GET"
-          path="/api/v1/org"
-          desc="Informação da organização a que a chave pertence."
+          path="/api/v1/organization"
+          desc={t('api.infoOrg')}
           resp={`{ "id": "…", "name": "Acme", "email_domain": "acme.com", "domain": "meet.acme.com", "members": 42 }`}
-          curl={`curl ${base}/api/v1/org -H "Authorization: Bearer dlx_..."`}
+          curl={`curl ${base}/api/v1/organization -H "Authorization: Bearer dlx_..."`}
         />
 
-        <Section title="Webhooks (eventos)">
-          <p>
-            Além da API, a organização pode receber <strong>webhooks</strong> em Slack, Teams, Mattermost ou
-            num endpoint genérico (configura em <em>Análises → Webhooks</em>). Eventos:
+        <Section title={t('api.webhooks')}>
+          <p>{t('api.alemDaApi')}<strong>webhooks</strong>  {t('api.emSlackTeamsMattermost')} <em>{t('api.caminhoWebhooks')}</em>{t('api.eventos')}
           </p>
           <ul className="apidoc-list">
-            <li><code>meeting.created</code> — reunião agendada</li>
-            <li><code>meeting.started</code> — reunião iniciada (com <code>join_url</code>)</li>
-            <li><code>recording.ready</code> — gravação disponível</li>
+            <li><code>meeting.created</code>  {t('api.reuniaoAgendada')}</li>
+            <li><code>meeting.started</code>  {t('api.reuniaoIniciadaCom')} <code>join_url</code>)</li>
+            <li><code>recording.ready</code>  {t('api.gravacaoDisponivel')}</li>
           </ul>
-          <p>
-            No destino <strong>genérico</strong>, o payload JSON vem assinado com HMAC-SHA256 (chave = o
-            segredo do webhook) no header <code>X-Delonix-Signature: sha256=…</code> — valida-o para
-            garantir a autenticidade.
+          <p>{t('api.noDestino')}<strong>genérico</strong>{t('api.oPayloadJsonVem')} <code>X-Delonix-Signature: sha256=…</code>  {t('api.validaOParaGarantir')}
           </p>
           <Code>{`{
   "event": "meeting.started",
@@ -110,16 +106,16 @@ X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
 }`}</Code>
         </Section>
 
-        <Section title="Códigos de estado">
+        <Section title={t('api.codigosDeEstado')}>
           <ul className="apidoc-list">
-            <li><code>200</code> — sucesso</li>
-            <li><code>401</code> — chave de API em falta ou inválida</li>
-            <li><code>404</code> — recurso não encontrado</li>
-            <li><code>409</code> — conflito (ex.: domínio já registado)</li>
+            <li><code>200</code>  {t('api.sucesso')}</li>
+            <li><code>401</code>  {t('api.chaveDeApiEm')}</li>
+            <li><code>404</code>  {t('api.recursoNaoEncontrado')}</li>
+            <li><code>409</code>  {t('api.conflitoExDominioJa')}</li>
           </ul>
         </Section>
 
-        <a className="link" href="#/">← Voltar ao Delonix Meet</a>
+        <a className="link" href="#/">{t('api.voltarAoDelonixMeet')}</a>
       </div>
     </div>
   )
@@ -149,6 +145,7 @@ function Endpoint({
 }: {
   method: string; path: string; desc: string; body?: string; resp: string; curl: string
 }) {
+  const { t } = useTranslation()
   return (
     <section className="apidoc-section apidoc-endpoint">
       <div className="apidoc-ep-head">
@@ -156,10 +153,10 @@ function Endpoint({
         <code className="apidoc-path">{path}</code>
       </div>
       <p>{desc}</p>
-      {body && (<><h4>Corpo</h4><Code>{body}</Code></>)}
-      <h4>Resposta</h4>
+      {body && (<><h4>{t('api.corpo')}</h4><Code>{body}</Code></>)}
+      <h4>{t('api.resposta')}</h4>
       <Code>{resp}</Code>
-      <h4>Exemplo (curl)</h4>
+      <h4>{t('api.exemploCurl')}</h4>
       <Code>{curl}</Code>
     </section>
   )

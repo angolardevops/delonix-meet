@@ -15,6 +15,18 @@ export function setAppName(name: string) {
   window.dispatchEvent(new Event('dx-branding'))
 }
 
+/**
+ * A aplicação foi renomeada por quem a usa? (R100)
+ *
+ * Decide qual marca se desenha. Enquanto o nome for o de origem, a marca é o
+ * logótipo desenhado; a partir do momento em que alguém lhe chama outra coisa,
+ * mostrar o globo Delonix é mostrar a marca ERRADA — e era o que cinco ecrãs
+ * faziam, por fixarem `/logo.svg` sem olhar para o nome.
+ */
+export function isMarcaDeOrigem(): boolean {
+  return getAppName() === DEFAULT_NAME
+}
+
 /** Devolve [primeira palavra, resto] para estilizar a 2ª parte (ex.: "Meet"). */
 export function appNameParts(): [string, string] {
   const name = getAppName()

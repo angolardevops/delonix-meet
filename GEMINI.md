@@ -38,7 +38,7 @@
 Complete feature inventory — do not implement these again, they exist:
 
 ✅ **Auth:** Org-first registration (creates org+admin), JWT access tokens (15min), refresh tokens (HttpOnly cookie `dlx_refresh`), token rotation, logout revocation  
-✅ **Multi-tenant:** Organizations, branches, employee groups, cross-org isolation enforced on every endpoint  
+✅ **Multi-tenant:** Organizations, branches, employee groups, cross-org isolation enforced per handler and proven on org routes by `web/e2e/isolamento.mjs`. Audit 2026-09-16 S1–S3 closed in #76 (R121): platform admin is `PLATFORM_ADMIN_USER_IDS`, Odoo sync goes through `upsert_member` (R25), archived members lose access. Still open: `add_employee` links existing accounts by email, S4–S6. RLS only on `employee_groups` (ADR-0002)  
 ✅ **SFU:** Rust WebRTC SFU (webrtc-rs), simulcast (q/h/f layers), screen share as separate track, server-side E2EE decrypt for recording  
 ✅ **Room features:** Google Meet-style grid, stage/audience view, split-pill mic/camera controls, whiteboard (persistent), breakout rooms (full), host controls (lock/share-only/kick), closed captions, reactions, raise hand, recording  
 ✅ **In-room tools:** Meeting timer, anonymous polls, Q&A with upvotes  
@@ -49,7 +49,7 @@ Complete feature inventory — do not implement these again, they exist:
 ✅ **Recordings:** Library, viewer (player + transcript + MoM + tasks), card/table toggle, read-only share  
 ✅ **Admin analytics:** 30-day KPIs, weekly series, top organizers, kind split, SSO/SCIM stubs  
 ✅ **Webhooks:** Slack/Teams/Mattermost/generic + HMAC signing, SSRF guard, events: meeting.created/started/recording.ready  
-✅ **API keys:** Per-org, hashed, with scopes  
+✅ **API keys:** Per-org, hashed — **no scopes, no expiry** (audit S6)  
 ✅ **PWA:** manifest + service worker  
 ✅ **Themes:** Delonix (dark default), NgolaCloud (light warm), NgolaCloud-dark, Kaeso (flat corporate)  
 ✅ **i18n:** PT/EN on Landing, Shell, Login, Home, Analytics, Roadmap  
@@ -79,7 +79,7 @@ The workspace pins `reqwest = { version = "0.12", features = ["rustls-tls"] }`. 
 ## Security invariants — never break these
 
 1. **Fail-closed:** Server panics on startup without strong `JWT_SECRET`/`TURN_SECRET`/`DATABASE_URL`. `DELONIX_ALLOW_INSECURE=1` only in dev.
-2. **Cross-org isolation:** `rooms::can_access_room` and `org::org_co_members`/`admin_orgs_of_user` scope ALL data to the user's org(s). Never return cross-org data.
+2. **Cross-org isolation:** `rooms::can_access_room` and `org::role_in_org`/`org_co_members`/`admin_orgs_of_user` scope ALL data to the user's org(s). Never return cross-org data. **Membership is decided in `org.rs`, which filters `archived_at IS NULL`** — never a hand-written `FROM org_members` elsewhere. **Admin of some org is never platform admin** — platform admins are the UUIDs in `PLATFORM_ADMIN_USER_IDS` (fail-closed).
 3. **Room tokens:** Short-lived JWT (5 min), scope = 1 room. Rejected WS without valid token.
 4. **SSRF:** Webhook hosts validated (block private/loopback/link-local/metadata) on create AND delivery. No redirects.
 5. **Rate limiting:** Login lockout 8 attempts/5min; `/api/v1` rate-limited by IP; WS rate-limited per socket.
@@ -165,6 +165,8 @@ cargo build --release
 - `sqlx::query` / `sqlx::query_as::<_, T>` (runtime API — no compile-time verification; a wrong column name fails at runtime, not at build)
 - Handlers return `Result<impl IntoResponse, AppError>`
 - New modules: declare in `main.rs` (`mod new_module;`) + register routes in router
+- **Call the rule, never copy it** (ADR-0004 §5, counted by `scripts/check-arquitectura-catraca.sh` — no count may rise): membership → `org::`; auth → an existing extractor; outbound HTTP → `state.outbound` from `net_guard` (`tenant()` + `check_tenant_url` for client-chosen URLs, `operator()` + `check_operator_url` for operator-configured ones); crypto → the existing function; exports → `pub(crate)`, never `*_pub`; no new `{"ok": true}`; no session auth inside `/api/v1`
+- **Language boundary (2026-09-03):** NEW identifiers in English; comments, docs and user-facing text in Portuguese. Existing code is not renamed for this
 - Migrations: `server/migrations/NNNN_name.sql` with sequential prefix
 
 ### TypeScript
@@ -197,6 +199,12 @@ cargo build --release
 
 ---
 
+## Backend organization — state and target
+
+- **State (2026-09-16):** ONE crate (`delonix-server`), 34 flat modules, an **18-module dependency cycle**, SQL inside handlers (302 runtime queries), rules copied between BFF and v1 that already diverged. **No gRPC, no OpenAPI.** Evidence: `docs/auditoria-2026-09-16-backend.md`.
+- **Target:** `docs/adr/0004-organizacao-alvo-do-backend.md` (**Proposed**) — http→service→store layers; workspace `delonix-meet-{core,protocol,store,identity,integrations,media,realtime,api,server}`; one API surface per audience (BFF `/api`, tenant `/api/v1`, operator, Odoo integration); gRPC only machine-to-machine (voice/IVR, ai-worker/whisper), never browser→server. Migration order (§6) is not skipped.
+- **Reviewer subagents:** `.claude/agents/delonix-meet-{architecture,api,security,rust,webrtc,frontend,devops,product}.md`. **Skills:** `.claude/skills/delonix-meet{,-backend,-api}/`.
+
 ## Specialized reviewers (see docs/ai-reviewers.md)
 
 | Persona | Invoke for |
@@ -218,7 +226,7 @@ cargo build --release
 - **Transcription is host-gated + distributed:** only the host toggles it (`TranscriptionToggle` → broadcast `Transcription`); EVERY client transcribes its own mic and broadcasts `transcript`. Engine: Web Speech (Chrome — but sends audio to Google) with automatic fallback to **local Whisper WASM** on `network` error. Prefer local for sovereignty. The transcription panel is host-only (does not open for everyone when enabled).
 - **`/ws` needs a DEDICATED Service** (`delonix-server-ws`) — sharing it with `/api`/`/rtc` makes ingress-nginx merge the backends and DROP `upstream-hash-by` → affinity lost → one-way media.
 - **SFU initial offer is sent in the `SfuCall` CONSTRUCTOR**, not gated by an internal `signal.on('joined')` (the call is created *inside* the `joined` handler, so a constructor listener would miss the already-fired event → dead media). And a **waiting guest must NOT build the `SfuCall`** (stale offer → glare loop → flood → reload after admit).
-- **K8s media is relay-only** (`FORCE_TURN_RELAY=1` → `iceTransportPolicy:relay` on `/api/ice` and SFU `RTCConfiguration`) with a reachable coturn (stage: on the HOST via `deploy/run-host-coturn.sh`). Without it ICE connects but the tile stays black. Do NOT enable on local (systemd, same host). Open issue: unstable TURN allocation (`438 Stale nonce`).
+- **K8s media is relay-only** (`FORCE_TURN_RELAY=1` → `iceTransportPolicy:relay` on `/api/ice-servers` and SFU `RTCConfiguration`) with a reachable coturn (stage: on the HOST via `deploy/run-host-coturn.sh`). Without it ICE connects but the tile stays black. Do NOT enable on local (systemd, same host). Open issue: unstable TURN allocation (`438 Stale nonce`).
 - **`.dockerignore` must NOT exclude `web/dist`** (`Dockerfile.web.stage` copies it); `vite.config.ts` reads dev certs only in `serve`.
 - **Server is authoritative** for shared room actions: `wb-close`, `Presenting`/clear-presentation on stop-share are broadcast/validated in `signaling.rs`; the client does not decide alone.
-- **Reference:** stable knowledge base in `docs/reference/architecture.md`; **regressions never to reintroduce in `docs/reference/regressions.md` (R1–R24)**; autonomous reviewer subagents in `agents/`.
+- **Reference:** stable knowledge base in `docs/reference/architecture.md`; **regressions never to reintroduce in `docs/reference/regressions.md` (R1–R24)**; reviewer subagents in `.claude/agents/delonix-meet-*.md`; target architecture in ADR-0004.

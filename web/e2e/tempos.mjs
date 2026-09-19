@@ -39,9 +39,47 @@ const url=`${APP}/e2e/harness.html?token=${encodeURIComponent(jr.room_token)}&co
 
 const ps=[]
 for(let i=0;i<2;i++){const c=await b.newContext();const p=await c.newPage();await p.goto(url,{waitUntil:'domcontentloaded',timeout:120000});ps.push(p)}
-for(let k=0;k<30;k++){ await sleep(1500); const v=await Promise.all(ps.map(p=>p.evaluate(()=>window.__dlx.tempos?.resumo?.()??null))); if(v.every(x=>x&&x.join_ms!==null)) break }
+// A espera tem de dizer se ESGOTOU (R90). A versão anterior saía do ciclo em
+// silêncio ao fim de 45 s e caía na asserção seguinte, que reportava
+// `join_ms medido: null` — uma frase que faz parecer que o produto mediu mal,
+// quando o que aconteceu foi o teste ter lido cedo demais num runner lento.
+// «Ainda não chegou» e «veio errado» são diagnósticos diferentes e não podem
+// partilhar a mesma mensagem.
+// O CI declara `E2E_TIMEOUT_FACTOR=4` porque sabe que o runner é lento — e este
+// teste era o único do trabalho que o IGNORAVA (o `estudio.mjs`, ao lado, honra-o).
+// Medido numa das três falhas seguidas que isto provocou:
+//
+//   {"join_ms":null,"ws_ms":30,"ice_gathering_ms":74840,
+//    "first_audio_ms":185,"first_video_ms":215,"ice_restarts":2} (esperou 90000 ms)
+//
+// A media CHEGOU — áudio a 185 ms, vídeo a 215 ms. O que estourou foi a recolha
+// de candidatos ICE: 74,8 s, contra os 377 ms de uma máquina normal. É o mesmo
+// esfomeamento do R65, agora pior, e é a razão pela qual o factor existe: «um
+// portão que falha ao acaso perde a credibilidade toda» (comentário do CI).
+const FATOR = Number(process.env.E2E_TIMEOUT_FACTOR) || 1
+const ESPERA_MAX_MS = 90000 * FATOR, PASSO_MS = 1500
+let pronto = false, esperou = 0
+for (let k = 0; k < ESPERA_MAX_MS / PASSO_MS; k++) {
+  await sleep(PASSO_MS); esperou += PASSO_MS
+  const v = await Promise.all(ps.map(p => p.evaluate(() => window.__dlx.tempos?.resumo?.() ?? null)))
+  if (v.every(x => x && x.join_ms !== null)) { pronto = true; break }
+}
 const t = await ps[0].evaluate(()=>window.__dlx.tempos.resumo())
-console.log('  tempos medidos:', JSON.stringify(t))
+console.log('  tempos medidos:', JSON.stringify(t), `(esperou ${esperou} ms)`)
+if (!pronto) {
+  console.log(`  ✗ os tempos NÃO ficaram prontos em ${ESPERA_MAX_MS} ms — o que segue mede uma leitura incompleta, não o produto`)
+  // «Não ficou pronto» tem duas causas MUITO diferentes, e a mensagem tem de
+  // dizer qual: ou o produto não ligou, ou a máquina esfomeou o agente de ICE.
+  // Sem esta linha, três falhas seguidas leram-se como «o produto está
+  // partido» quando o áudio tinha chegado em 185 ms.
+  if (typeof t.ice_gathering_ms === 'number' && t.ice_gathering_ms > 10000) {
+    console.log(
+      `      a recolha de ICE levou ${t.ice_gathering_ms} ms (o normal é < 500). ` +
+      `A media chegou (áudio ${t.first_audio_ms} ms, vídeo ${t.first_video_ms} ms): ` +
+      `isto é a MÁQUINA a esfomear o agente de ICE, não o produto. Sobe E2E_TIMEOUT_FACTOR.`,
+    )
+  }
+}
 await b.close()
 
 chk(typeof t.join_ms==='number' && t.join_ms>0, `join_ms medido: ${t.join_ms} ms`)
@@ -50,7 +88,7 @@ chk(t.first_audio_ms===null || t.first_audio_ms>=0, 'first_audio_ms coerente')
 chk(t.ice_restarts===0 && t.reconnects===0, 'chamada limpa: zero reinícios e zero recuperações')
 
 // O arnês não usa o Room.tsx, por isso reporta-se aqui o que a app reportaria.
-await j(`${API}/api/rooms/${sala.code}/timings`,{token:tok,method:'POST',body:JSON.stringify(t)})
+await j(`${API}/api/rooms/${sala.code}/join-timings`,{token:tok,method:'POST',body:JSON.stringify(t)})
 await sleep(500)
 const n = Number(sql(`SELECT count(*) FROM call_timings WHERE room_id='${sala.code?sala.id:''}'`))
 chk(n===1, `persistido: ${n} registo em call_timings`)
@@ -58,7 +96,7 @@ const guardado = sql(`SELECT join_ms||'/'||ws_ms FROM call_timings WHERE room_id
 chk(guardado===`${t.join_ms}/${t.ws_ms}`, `valores gravados batem certo: ${guardado}`)
 
 console.log('\n--- um cliente a inventar não destrói a média ---')
-await j(`${API}/api/rooms/${sala.code}/timings`,{token:tok,method:'POST',body:JSON.stringify({join_ms:999999999, ws_ms:-5, ice_restarts:99999})})
+await j(`${API}/api/rooms/${sala.code}/join-timings`,{token:tok,method:'POST',body:JSON.stringify({join_ms:999999999, ws_ms:-5, ice_restarts:99999})})
 const abs = sql(`SELECT join_ms||'/'||ws_ms||'/'||ice_restarts FROM call_timings WHERE room_id='${sala.id}' ORDER BY id DESC LIMIT 1`)
 chk(abs==='600000/0/1000', `valores absurdos são presos: ${abs}`)
 

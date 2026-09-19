@@ -11,6 +11,21 @@ Este diretório contém os manifestos e configurações para realizar o deploy d
 *   `04-ingress.yaml`: Configuração do Nginx Ingress Controller, com anotações específicas para suportar a atualização para WebSockets (`/ws`, `/rtc`).
 *   `helm-values/`: Configurações personalizadas para o deploy das bases de dados em High Availability através de Helm.
 
+## Edições (saas, enterprise) — overlays
+
+Esta pasta é a **base** e continua a ser o que `make stage`/`make prod` aplicam,
+sem alteração. As edições do ADR-0006 são overlays kustomize **ao lado**, em
+[`../k8s-overlays/`](../k8s-overlays/):
+
+*   `k8s-overlays/saas`: `DELONIX_EDITION=saas`, Job de migração (`args: [migrate]`), Redis obrigatório, HPA.
+*   `k8s-overlays/enterprise`: `DELONIX_EDITION=enterprise`, `REGISTRATION_MODE=invite`, `TENANCY_MODE=single`, uma réplica.
+*   `k8s-overlays/components/edition-common`: Service `delonix-server-internal` (8181 interno + 9180 gRPC, ClusterIP, **nunca** num Ingress), NetworkPolicy, mTLS por cert-manager, `startupProbe`, rootfs só-de-leitura, `LOG_FORMAT=json`.
+
+Não estão em `deploy/k8s/overlays/` porque o kustomize recusa um overlay dentro
+da própria base («cycle detected»). Portão: `bash scripts/check-k8s-render.sh`
+(renderiza a base e os dois overlays, e falha se uma porta interna chegar a um
+Ingress ou se o `/ws` perder a afinidade do ADR-0001).
+
 ## Alta Disponibilidade (HA) de Estado e Dados
 
 Para cenários de produção, não recomendamos StatefulSets isolados. O `Makefile` recorre aos *charts* oficiais da Bitnami para instanciar:

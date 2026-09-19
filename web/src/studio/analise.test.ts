@@ -136,4 +136,38 @@ describe('trocosSemPausas', () => {
     const soma = trocosSemPausas(a).reduce((x, t) => x + (t.fim - t.inicio), 0)
     expect(soma).toBeCloseTo(a.duracao - a.poupanca, 5)
   })
+  // As duas fronteiras que o teste por MUTAÇÃO encontrou sem guarda
+  // (`scripts/mutantes.mjs`): a bateria ficava verde com o código alterado.
+
+  // MUTAÇÃO SOBREVIVENTE: `fim - inicio >= minimo` → `>`.
+  // Uma pausa com EXACTAMENTE a duração mínima deixava de contar — e a
+  // duração mínima é precisamente o número que o utilizador escreve no cursor.
+  it('uma pausa com exactamente a duração mínima CONTA', async () => {
+    // Silêncio de 1,00 s. Com `margem: 0` não há encolhimento, por isso o que
+    // chega ao teste do mínimo é 1,00 s certo — a fronteira.
+    esboçarAudioContext(fabricar(6, [[2, 3]]))
+    const { analisarPausas } = await import('./analise')
+    const a = await analisarPausas(blobFalso, { minimo: 1, margem: 0 })
+    expect(a.pausas.length).toBe(1)
+  })
+
+  it('e uma pausa MAIS CURTA do que o mínimo continua a não contar', async () => {
+    esboçarAudioContext(fabricar(6, [[2, 2.5]]))
+    const { analisarPausas } = await import('./analise')
+    const a = await analisarPausas(blobFalso, { minimo: 1, margem: 0 })
+    expect(a.pausas).toEqual([])
+  })
+
+  // MUTAÇÃO SOBREVIVENTE: `for (let j = 0; j <= n; j++)` → `<`.
+  // O último bloco de análise deixava de ser visitado, e com ele o silêncio que
+  // vai até ao FIM da gravação — que é o caso mais comum de todos, porque toda
+  // a gente deixa uns segundos de silêncio antes de parar de gravar.
+  it('um silêncio que vai até ao fim da gravação é encontrado', async () => {
+    esboçarAudioContext(fabricar(6, [[4, 6]]))
+    const { analisarPausas } = await import('./analise')
+    const a = await analisarPausas(blobFalso, { minimo: 1, margem: 0 })
+    expect(a.pausas.length).toBe(1)
+    expect(a.pausas[0].fim).toBeGreaterThan(5.5)
+  })
+
 })

@@ -76,7 +76,63 @@ if [ "$macros" -eq 0 ]; then
   done
 fi
 
+# 5) O harness só pode citar revisores e skills que EXISTEM. Foi drift a sério:
+#    durante meses o HARNESS.md e o AGENTS.md mandaram invocar seis revisores em
+#    `agents/` que nunca estiveram no git (o `.claude/` inteiro era ignorado, e
+#    `agents/` nunca foi criado). Um agente que segue o harness procurava-os,
+#    não os encontrava, e seguia sem revisão — sem erro nenhum que o dissesse.
+#    Verifica: (a) cada `delonix-meet-*` citado existe como agente ou skill;
+#    (b) o nome no frontmatter bate com o ficheiro; (c) as ligações relativas
+#    dentro de `.claude/` resolvem; (d) ninguém volta a citar o `agents/` antigo.
+if ! python3 - <<'PYEOF'
+import glob, os, re, sys
+falha = False
+agentes = {os.path.basename(p)[:-3] for p in glob.glob('.claude/agents/*.md')}
+skills = {os.path.basename(os.path.dirname(p)) for p in glob.glob('.claude/skills/*/SKILL.md')}
+# Os crates `delonix-meet-*` partilham o prefixo: os planeados (árvore do ADR-0004,
+# `├── delonix-meet-x/`) e os que já existirem num Cargo.toml não são revisores.
+crates = set(re.findall(r'(delonix-meet-[a-z]+)/', open('docs/adr/0004-organizacao-alvo-do-backend.md', encoding='utf-8').read()))
+# O ADR-0006 refina a lista (tabela `| \`delonix-meet-x\` |`) — os crates dele também não são revisores.
+crates |= set(re.findall(r'\| `(delonix-meet-[a-z]+)` \|', open('docs/adr/0006-backend-enterprise-contextos-edicoes-e-entrega.md', encoding='utf-8').read()))
+for toml in glob.glob('server/**/Cargo.toml', recursive=True):
+    crates |= set(re.findall(r'name\s*=\s*"(delonix-meet-[a-z]+)"', open(toml, encoding='utf-8').read()))
+
+for p in sorted(glob.glob('.claude/agents/*.md')) + sorted(glob.glob('.claude/skills/*/SKILL.md')):
+    texto = open(p, encoding='utf-8').read()
+    esperado = os.path.basename(p)[:-3] if '/agents/' in p else os.path.basename(os.path.dirname(p))
+    m = re.search(r'^name:\s*(\S+)', texto, re.M)
+    if not m or m.group(1) != esperado:
+        print(f"✗ drift: {p} tem 'name: {m.group(1) if m else '∅'}' mas devia ser '{esperado}'")
+        falha = True
+    for alvo in re.findall(r'\]\(([^)#\s]+)(?:#[^)]*)?\)', texto):
+        if re.match(r'^[a-z]+:', alvo):
+            continue
+        if not os.path.exists(os.path.normpath(os.path.join(os.path.dirname(p), alvo))):
+            print(f"✗ drift: {p} liga a '{alvo}', que não existe")
+            falha = True
+
+docs = ['HARNESS.md', 'AGENTS.md', 'GEMINI.md', '.cursorrules', '.clinerules',
+        '.github/copilot-instructions.md'] + glob.glob('docs/**/*.md', recursive=True) \
+       + glob.glob('.claude/**/*.md', recursive=True)
+for p in docs:
+    if not os.path.exists(p):
+        continue
+    texto = open(p, encoding='utf-8').read()
+    for nome in sorted(set(re.findall(r'\bdelonix-meet-[a-z]+\b', texto))):
+        if nome not in agentes and nome not in skills and nome not in crates:
+            print(f"✗ drift: {p} cita '{nome}', que não existe em .claude/agents/ nem em .claude/skills/")
+            falha = True
+    for n, linha in enumerate(texto.splitlines(), 1):
+        if re.search(r'(?<![.\w/])agents/(?!worktrees|launch\.json)', linha):
+            print(f"✗ drift: {p}:{n} cita 'agents/' — os revisores estão em .claude/agents/")
+            falha = True
+sys.exit(1 if falha else 0)
+PYEOF
+then
+  fail=1
+fi
+
 if [ "$fail" = 0 ]; then
-  echo "✓ docs em sincronia com o código (módulos + migrações + versões + SQL)"
+  echo "✓ docs em sincronia com o código (módulos + migrações + versões + SQL + revisores e skills)"
 fi
 exit $fail

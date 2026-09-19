@@ -24,6 +24,19 @@ describe('2.1 · nenhum relógio bate na raiz da sala', () => {
     expect(sala()).toContain("from '../room/Clocks'")
   })
 
+  it('a duração ainda sabe DE ONDE conta', () => {
+    // A extracção dos relógios levou consigo o efeito que escrevia
+    // `joinedAtRef` e deixou ficar a declaração e o uso. O contador passou a
+    // contar desde 1970 — mostrava `496594:12:29` em vez de `00:37`.
+    //
+    // Os testes acima não deram por nada: verificavam que o relógio SAIU da
+    // raiz, não que continuava a saber quando a reunião começou. É essa a
+    // metade que faltava.
+    expect(sala()).toContain('joinedAtRef.current = Date.now()')
+    // E a folha recusa-se a inventar um número quando não lhe dizem a hora.
+    expect(read('web/src/room/Clocks.tsx')).toContain('if (!startedAt) return null')
+  })
+
   it('o fecho automático de sondagens tica sem renderizar', () => {
     // Precisa do TIQUE, não de um render: lê o relógio do sistema dentro do
     // próprio intervalo e dispara. Se voltar a depender de estado, a sala

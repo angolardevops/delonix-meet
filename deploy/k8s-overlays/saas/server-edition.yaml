@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-server
+  namespace: delonix-meet
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          env:
+            - name: DELONIX_EDITION
+              value: saas
+            - name: REGISTRATION_MODE
+              value: open
+            - name: TENANCY_MODE
+              value: multi
+            # As migrações NÃO correm no arranque: correm no Job
+            # delonix-server-migrate. Com várias réplicas a arrancar ao mesmo
+            # tempo, cada uma a migrar era uma corrida pelo lock.
+            - name: DELONIX_MIGRATE
+              value: "0"
+            # Redis OBRIGATÓRIO em SaaS (ADR-0006 §2: «obrigatório com mais de
+            # 1 réplica»). `optional: false` impede o pod de arrancar se a chave
+            # faltar no ConfigMap; o valor vazio é apanhado pelo
+            # scripts/check-k8s-render.sh.
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: delonix-config
+                  key: REDIS_URL
+                  optional: false

@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+# ============================================================
+#  O que as edições saas e enterprise têm em comum no Kubernetes
+#  (ADR-0006 §3 e §4). Usado por deploy/k8s-overlays/{saas,enterprise}.
+#
+#  PORQUE `deploy/k8s-overlays/` e não `deploy/k8s/overlays/` (o caminho do
+#  ADR-0006 §4): a base É `deploy/k8s/`, e o kustomize recusa um overlay DENTRO
+#  da sua própria base («cycle detected: candidate root … contains visited
+#  root»). Pô-los lá dentro obrigava a mover os manifestos da base para
+#  `deploy/k8s/base/`, o que parte ~60 referências (Makefile, docs,
+#  check-room-affinity.sh, role kind_host). Medido a 2026-09-16 com kubectl
+#  v1.36.4 / kustomize v5.8.1.
+#
+#  - listener interno :8181 (/internal/v1/voice/ivr/*, /metrics) e gRPC :9180
+#    num Service PRÓPRIO (delonix-server-internal), que nenhum Ingress
+#    referencia — guardado por scripts/check-k8s-render.sh;
+#  - NetworkPolicy que só deixa chegar ao :8181/:9180 quem precisa;
+#  - mTLS do gRPC por cert-manager (CA interna, sem passo manual);
+#  - startupProbe, readOnlyRootFilesystem, LOG_FORMAT=json.
+#
+#  A base (deploy/k8s/) fica INTACTA: `make stage`/`make prod` continuam a
+#  aplicar exactamente o que aplicavam. O /ws, o Service delonix-server-ws e o
+#  upstream-hash-by:$arg_room vêm da base sem alteração (ADR-0001).
+# ============================================================
+resources:
+  - internal-service.yaml
+  - networkpolicy.yaml
+  - grpc-mtls.yaml
+
+patches:
+  - path: server-patch.yaml

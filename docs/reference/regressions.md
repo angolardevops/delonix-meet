@@ -1,6 +1,6 @@
 # Regressões conhecidas — NÃO reintroduzir
 
-> Cada entrada aqui já quebrou produção/demos pelo menos uma vez. São armadilhas onde a "correção óbvia" reintroduz o bug. Antes de mexer no código relacionado, lê a entrada. Revisores (`agents/*`) devem verificar estas explicitamente no diff.
+> Cada entrada aqui já quebrou produção/demos pelo menos uma vez. São armadilhas onde a "correção óbvia" reintroduz o bug. Antes de mexer no código relacionado, lê a entrada. Revisores (`.claude/agents/delonix-meet-*`) devem verificar estas explicitamente no diff.
 
 Formato: **Sintoma** → **Causa raiz** → **Regra** (o que nunca fazer) → ficheiros.
 
@@ -398,7 +398,7 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Causa raiz:** os dois lados acrescentaram um bloco no fim do ficheiro começado pela MESMA linha decorativa (`/* ====…`). O git tratou essa linha como contexto partilhado e abriu o conflito **depois** dela — por isso nenhum dos lados contém o seu próprio abre-comentário. Pior: o `}` final também era contexto partilhado, e ficou a fechar só um dos blocos, deixando a última regra do outro lado aberta.
 - **Regra:** quando um conflito abre a meio de um comentário ou de um bloco, **não se resolve escolhendo linhas** — reconstrói-se cada lado inteiro, com o seu próprio cabeçalho e o seu próprio fecho, e valida-se com o compilador da linguagem (aqui `npx sass`), não com a leitura.
 - **Sinal de alarme:** conflito cujo primeiro `<<<<<<<` está imediatamente a seguir a uma linha que os dois lados também têm.
-- **E uma armadilha no script que resolve o conflito, encontrada em paralelo noutro ramo:** um regex `<<<<<<< HEAD\n(.*?)\n=======` sobre o catálogo de regressões falha, porque há entradas que **citam** os marcadores a meio de uma frase. Marcadores a sério só contam **no início da linha** — o padrão tem de ser ancorado, ou o script resolve o sítio errado.
+- **E uma armadilha no script que resolve o conflito, encontrada em paralelo noutro ramo:** um regex `n(.*?)\n=======` sobre o catálogo de regressões falha, porque há entradas que **citam** os marcadores a meio de uma frase. Marcadores a sério só contam **no início da linha** — o padrão tem de ser ancorado, ou o script resolve o sítio errado.
 - **Ficheiros:** `web/src/styles.scss`.
 
 ### R56 — Ter corrido `make certs` mudava se os testes de browser corriam de todo
@@ -632,3 +632,1397 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** **cada substituição tem o seu `assert`.** Um script que altera N sítios e verifica um só reporta sucesso com N-1 por fazer. E depois de formatar, qualquer alvo escrito antes da formatação é suspeito.
 - **Como foi apanhado:** por o log do servidor mostrar a mensagem antiga depois de o teste do módulo passar. Os testes de unidade cobriam o `Display` da recusa nova — que existia — mas não o handler, que nunca a usou.
 - **Ficheiros:** `server/src/broadcast.rs`.
+
+### R83 — Um corte de seis segundos no servidor deixava a reunião inteira presa numa mensagem técnica
+- **Medido:** com uma chamada estabelecida, `SIGKILL` ao servidor e ressurreição seis segundos depois. O participante ficava com **«Erro: Internal Server Error»** no ecrã da reunião — e assim permanecia, com o servidor já de volta. Reproduzido em todas as corridas.
+- **Causa raiz:** o `catch` que envolve o arranque da sala em `Room.tsx` fazia `setStatus(\`Erro: ${err.message}\`)` e parava ali. Sem nova tentativa, uma falha transitória no arranque é indistinguível de uma permanente — e o texto que sobrava era a mensagem do protocolo HTTP, que não é uma frase que se mostre a alguém numa reunião.
+- **Regra:** montar a sala passa a ter **nova tentativa com recuo** (seis, reutilizando o `backoffDelay` que já existia), com um estado legível a dizer a tentativa em curso; só depois de as esgotar aparece uma frase terminal que diz o que fazer. O contador vive FORA da função, senão cada tentativa reinicia-o e o recuo nunca cresce.
+- **O que NÃO ficou resolvido, e é a parte que interessa:** a recuperação da **sinalização** depois de uma morte abrupta é **inconstante**. Quatro corridas contra o mesmo commit deram uma falha, um êxito e duas sem terminar no prazo. Quando falha, o sintoma é pior do que o erro que se corrigiu: a sala parece saudável e o participante está **surdo** — um convidado novo pede entrada e o pedido nunca chega. A causa não está estabelecida.
+- **Porque é que o teste não entra no CI:** um portão que falha ao acaso perde a credibilidade toda (R62). Fica declarado em cabeçalho, com o comando para o correr à mão, até a causa ser conhecida.
+- **Duas asserções que este teste teve e que passavam em VAZIO:** «a página recarregou» — a recuperação por nova tentativa não recarrega, e exigi-lo dava falha com o produto já correcto; e «a sala está aberta e tem retratos» — o DOM não muda quando o socket cai, por isso a condição já era verdadeira com o servidor morto (mediu-se «0,0 s de recuperação»). A prova que não engana é **funcional**: entra outra pessoa, e o anfitrião tem de a ver, admitir e passar a vê-la.
+- **Ficheiros:** `web/src/pages/Room.tsx`, `web/e2e/morte-abrupta.mjs`.
+
+### R84 — a chave sai do índice, fica no histórico, e o portão passa a dizer que está tudo bem
+- **Sintoma:** nenhum. É esse o problema. O `check-repo-hygiene.sh` ficou **verde** no minuto seguinte a 3b80b8a, e a exposição não tinha mudado nada.
+- **Causa:** os pontos 1 e 2 do portão liam o **índice** (`git ls-files`, `git grep`), que é o que sai num clone *hoje*. O `git rm --cached` tira do índice e **não** tira do histórico: as duas chaves continuam alcançáveis em quatro commits, e o repositório é público. Um `git log` de qualquer pessoa chega lá.
+- **A leitura que faltava, e o que ela destapou:** a auditoria de 2026-08-25 registou **uma** chave. Ao ler o histórico em vez do índice apareceu a **segunda** — `meet.delonix.local.key`, de 98f5b28, três dias mais velha do que a wildcard. Uma leitura anterior do histórico não é o histórico.
+- **Regra:** o ponto 6 lê `git rev-list --objects --all`. Todo o caminho de chave encontrado tem de estar em `scripts/leaked-keys-accepted.txt` **com a razão e a data escritas** — o mesmo padrão do `rustsec-accepted.txt`: o portão não impede a decisão, impede a decisão **silenciosa**. Ambas as chaves estão lá, registadas como QUEIMADAS, com o raio de dano medido e a decisão de não reescrever o histórico escrita por extenso.
+- **O limite, dito e não subentendido:** a busca é por **caminho**, não por conteúdo. Uma chave colada dentro de um ficheiro qualquer do histórico não é apanhada — ler todos os blobs não cabe num portão de CI. Preferimos escrevê-lo a dar uma garantia que não temos.
+- **Ficheiros:** `scripts/check-repo-hygiene.sh`, `scripts/leaked-keys-accepted.txt`.
+
+### R85 — a página de preços vendia o que a árvore não tinha
+- **Sintoma:** «SSO SAML e SCIM» num plano **pago**, nos três idiomas. Zero linhas de código para qualquer um dos dois: as **únicas** ocorrências das duas palavras em toda a árvore eram as próprias strings de marketing. Mais quatro entradas do roteiro com `done: true` para coisas que não existiam — SVC, estimativa de banda no servidor, códigos de segurança E2EE verificáveis, e um SDK público. E, no plano de topo, um **SLA de 99,99 %** numa plataforma sem SLO, sem error budget, sem teste de carga e sem teste de caos.
+- **Causa:** a copy foi escrita contra o **roteiro** e não contra a árvore, e ninguém a voltou a ler. Não é desonestidade — é o que acontece quando nada relê.
+- **Regra:** `scripts/check-capability-claims.sh`. Se um termo guardado (SAML, SCIM, WebAuthn, passkey, SVC, SDK, webinar, MinIO/S3) aparecer numa linha que diz que a capacidade **foi entregue** — `done: true` no roteiro, ou a lista `features:` de um plano — tem de existir código fora dos ficheiros de locale. Prometer está bem; **dar por entregue** é o que isto recusa.
+- **O SLA precisou de regra própria, e a primeira versão estava errada:** guardar a palavra «SLA» recusava também «SLA negociado em contrato», que é um termo comercial e não diz nada sobre o software. O que exige prova é o **número**: uma percentagem é uma promessa que a plataforma tem de conseguir cumprir e demonstrar. O portão passou a guardar o número, não a palavra — e foi ele que encontrou o 99,99 %, que a revisão humana tinha deixado passar duas vezes.
+- **Limite honesto:** isto prova que uma capacidade não é vendida com **zero** código por trás. Não prova que o código está completo, alcançável ou autorizado — um stub com o nome certo satisfazia-o. Apanha a falha que aconteceu de facto.
+- **Ficheiros:** `scripts/check-capability-claims.sh`, `web/src/locales/{pt,en,fr}.ts`, `web/src/pages/Analytics.tsx`.
+
+### R86 — No telemóvel não se conseguia desligar a chamada
+- **Medido** (2026-09-03, arnês com o CSS compilado a sério): a 375 px a `.controls-bar` transbordava **318 px**, a 320 px transbordava **373 px**. O botão de **desligar** ficava inteiramente fora do ecrã, e com ele o grupo da direita — pessoas, chat, notas, ferramentas. Sair de uma reunião no telemóvel só era possível fechando o separador, que é o gesto que a máquina de recuperação lê como quebra de rede e tenta reverter.
+- **Causa raiz:** a barra é `grid: 1fr auto 1fr` e a única regra abaixo dos 900 px escondia o código da sala. Nada envolvia, nada deslizava, nada colapsava. Nove controlos não cabem em 375 px e ninguém tinha dito ao CSS o que fazer nesse caso.
+- **Causa a montante, e é a que interessa:** o tamanho do controlo estava fixado com `width: 38px !important` na camada da consola. Qualquer camada posterior teria de escalar para `!important` também — e a seguir a próxima. O `!important` não era o remédio da cascata, era o que a tornava intratável. Passou a **variável** (`--ctrl-size`), e a regra dos 44 px ao toque não precisa de um único `!important`.
+- **Regra:** há três acções sem as quais não se opera uma reunião — microfone, câmara e desligar. Em ecrã estreito ficam **fixas**: não deslizam, não encolhem, não entram em menu. Tudo o resto partilha tiras que deslizam, com máscara de desvanecimento — nada se perde e um botão cortado a meio deixa de parecer avaria.
+- **O atalho que NÃO serve:** pôr a barra inteira em `overflow-x`. O botão de sair continua escondido, só que atrás de um gesto que ninguém adivinha. **Esconder por transbordo é esconder.**
+- **Duas linhas e não um menu «mais»:** um menu poria pessoas e chat atrás de mais um toque, e são os dois painéis mais usados. Duas linhas cabem — medido a 320 px, a largura mais estreita que ainda se vende.
+- **Sobre a medição, que quase saiu errada:** a emulação de viewport do navegador **não** mexia no `innerWidth` da página — dava 693 px com o ecrã a 375. Se tivesse acreditado nela, teria concluído que estava tudo bem. O portão fixa a viewport com Playwright, que é a única que se verificou fiável.
+- **Portão:** `web/e2e/bar-responsivo.mjs`, no CI. Compila a folha a sério e mede a 320/375/414/768/1440. Visto a falhar (3 larguras) com a camada responsiva desligada e a recuperar com ela.
+- **Ficheiros:** `web/src/styles.scss`, `web/e2e/bar-responsivo.{mjs,html}`, `.github/workflows/ci.yml`.
+
+### R87 — O cartão de convite tapava o vídeo a reunião inteira
+- **Sintoma:** «A tua reunião está pronta» aparecia em **todas** as capturas da sala, inclusive com painéis abertos, a tapar o canto inferior esquerdo do vídeo. No telemóvel ocupava metade do ecrã.
+- **Causa:** só fechava por clique explícito no X ou em «Adicionar participantes». Não fechava ao fim de tempo nenhum, não fechava quando entrava a segunda pessoa — que é precisamente o instante em que deixa de fazer sentido —, e não fechava ao abrir um painel.
+- **Regra:** um cartão que interrompe fecha-se sozinho no momento em que perde a razão de ser. Três saídas: alguém entrou, abriu-se um painel, ou passaram 20 s. O `sessionStorage` continua a impedir que volte na mesma sessão.
+- **Ficheiros:** `web/src/pages/Room.tsx`.
+
+### R88 — A mesma barra falava duas linguagens visuais
+- **Sintoma:** o ecrã da sala usava emoji como iconografia — ⏳ no temporizador, 📊 nas sondagens, ❓ no Q&A, 🛡 no código de segurança, 📌 no fixar, 🔊 no testar som — **a par** do conjunto SVG do `icons.tsx`, no mesmo sítio e por vezes na mesma barra. Nenhum dos três concorrentes usa um único emoji como ícone de interface; é o sinal isolado que mais faz um produto parecer projecto pessoal.
+- **A regra já existia e faltava-lhe cobertura:** o cabeçalho do `icons.tsx` diz desde sempre «o emoji fica onde é CONTEÚDO — as reações da sala —, nunca onde é controlo». O portão que a impunha (`lote2`, 3.2.5) cobria **5 ficheiros** da consola e nenhum da sala.
+- **A contagem inicial estava errada, e isso importa:** a primeira leitura deu «171 emoji». Ao separar o que é conteúdo legítimo — `REACTION_EMOJIS`, `CHAT_EMOJIS`, nomes de teclas em `<kbd>` — e os que só aparecem em comentários a documentar conversões antigas, sobravam **154**, e destes só **~58 em JSX**, que são os que podem receber um SVG. Os restantes vivem em strings de notificação e em rótulos tipográficos (`↖↗↙↘` para cantos) onde um SVG não cabe. Contar antes de converter evitou trocar reações por ícones.
+- **O buraco no portão, que quase passou:** a asserção era `>\s*([^<>{}\n]{1,4})\s*<` — no máximo **quatro** caracteres entre tags. O caso mais comum é o glifo SEGUIDO do rótulo: `>📊 Sondagens<` tem mais de quatro e **escapava**. O portão dava verde com o defeito à frente. Só apareceu ao tentar vê-lo falhar de propósito, que é a única forma de saber se um portão guarda alguma coisa (R71). Alargado para 120, apanhou logo mais **oito** que ninguém tinha visto.
+- **Regra:** o portão 3.2.5 passou de 5 para **11 ficheiros**, incluindo `Room.tsx`, `RemoteTile.tsx` e `Lobby.tsx`. Onde um SVG não cabe — `<option>`, atributos `title` — o glifo fica, e no `<option>` passou a entidade HTML.
+- **O que fica de fora, declarado:** `Landing.tsx`, `Analytics.tsx` e `Studio.tsx` ainda têm glifos em **arrays de dados** (listas de funcionalidades, rótulos de canto). Convertê-los mexe na forma dos dados e não na marcação — é outro trabalho, e está escrito aqui para não passar por esquecimento.
+- **Ficheiros:** `web/src/icons.tsx` (+11 ícones), `web/src/pages/Room.tsx`, `web/src/room/RemoteTile.tsx`, `web/src/pages/Lobby.tsx`, `web/src/components/MfaPanel.tsx`, `web/src/App.tsx`, `web/src/lote2.invariantes.test.ts`.
+
+### R89 — A folha de estilos usava a cor de marca da Google
+- **Sintoma:** `#ea4335` com o comentário «vermelho Meet exato», no botão de desligar, no microfone silenciado e no ponto de gravação. Sete ocorrências entre a cor e o seu tom de *hover*.
+- **Porque é defeito e não detalhe:** o §37 do mandato diz para não copiar identidade alheia, e a `--danger` da casa (`#e05252`) já existia três camadas abaixo — era ela que efectivamente vencia na cascata em quase todos os sítios. A cor da Google estava lá a fazer de conta, e a **vencer mesmo** no ponto de gravação.
+- **Regra:** portão 3.2.6 — a folha não pode conter a paleta de marca do Meet, do Teams nem do Zoom. Guarda-se a paleta **alheia**, não «cores literais» em geral: a folha tem centenas delas e proibi-las todas seria um portão que ninguém põe verde.
+- **Ficheiros:** `web/src/styles.scss`, `web/src/lote2.invariantes.test.ts`.
+
+### R90 — Um portão que falha num teste DIFERENTE de cada vez não guarda nada
+- **Sintoma:** três corridas do job `isolamento` sobre o mesmo código, **três falhas diferentes**, nenhuma a repetir: o corte do Estúdio («não encurtou»), a sala («dois retratos» → 1) e os tempos de chamada (`join_ms: null`). O reteste da segunda passou. O histórico mostra o mesmo job vermelho a 2026-08-26, antes deste trabalho.
+- **Porque é grave e não é ruído:** pela regra da casa (R62), um portão que falha ao acaso perde a credibilidade toda. Um que falha num sítio diferente de cada vez é pior: treina toda a gente a carregar em «repetir» e a partir daí o vermelho deixa de ser informação. Todos os outros portões dependem deste job para significar alguma coisa.
+- **Não eram três problemas — eram três causas, e só uma era tempo.**
+
+  **(1) `reuniao.mjs` — esperar por uma condição e afirmar outra.** Esperava-se por «1 retrato sem “eu”» e afirmava-se «2 retratos no total», com **duas leituras separadas** do DOM. Entre elas o DOM muda. O CI apanhou-a a dar `juntaram = true` com **um único retrato** na lista — uma contradição impossível de depurar a partir do relatório. Pior: quando o retrato local perdia o texto por um instante (um `<svg>` não tem `textContent` — R88), a espera casava com o retrato ERRADO e devolvia cedo.
+
+  **Regra:** espera-se pela condição que se vai afirmar, e a fotografia tira-se **dentro** da espera, para ser a mesma que a satisfez. Nunca duas idas ao DOM.
+
+  **(2) A identidade do retrato passou a ser um atributo.** Distinguir local de remoto por o texto conter «eu» é uma asserção sobre **decoração**, e quebra-se — em silêncio, dando verde — sempre que a decoração muda. Os retratos ganharam `data-peer="local|remoto"` e `data-peer-id`. Provado: com o atributo sabotado no produto, o teste passa a recusar (`remotos:0` com `total:2`); a versão anterior dava **verde** ao mesmo produto partido.
+
+  **(3) `tempos.mjs` — a espera esgotava em silêncio.** Ao fim de 45 s o ciclo saía sem dizer nada e a asserção seguinte reportava `join_ms medido: null`, uma frase que faz parecer que o produto mediu mal quando o teste é que leu cedo demais. «Ainda não chegou» e «veio errado» são diagnósticos diferentes e não podem partilhar a mesma mensagem. A espera passou a declarar-se, e o tempo que esperou aparece no relatório.
+
+  **(4) O Estúdio NÃO era tempo — e a primeira explicação estava errada.** Assumi lentidão do runner e pus o prazo a escalar com `E2E_TIMEOUT_FACTOR` (que o job do backend já usava e este não). **Falhou na mesma com o prazo a 360 s**, o que descarta lentidão. O prazo maior fica — é correcto por si — mas não era a causa.
+
+  **A causa ficou estabelecida** (2026-09-05), e o diagnóstico novo é que a deu: `duração 5.86s — não desceu abaixo de 2,9s`, ou seja o corte corre e **não corta**, com a duração original intacta. Não é prazo nem WebM sem cabeçalho: é o que o `escolherPerfil` do `editor.ts` já documentava — **sem GPU o corte cai para software e não termina em tempo útil**, nem com o prazo a 360 s. A asserção do corte passou a ser condicional a haver encoder acelerado, PERGUNTADO ao browser em vez de assumido, e onde não há diz-se que não se verificou e porquê. Não se pôs o `estudio.mjs` fora do CI: ele tem outras trinta asserções que protegem o Estúdio, e perdê-las para acomodar uma seria trocar cobertura por silêncio.
+
+  O texto que segue foi escrito antes de a causa se saber, e fica como registo do que se assumiu: «não encurtou» cobre três coisas que mandam investigar sítios diferentes — duração **ilegível** (`Infinity`/`NaN`, ou seja um WebM sem cabeçalho de duração, defeito do que se PRODUZ e não do corte), duração **igual** à original (o corte não correu), ou duração diferente mas acima do alvo (cortou o troço errado). O diagnóstico passou a distingui-las. **Fica em aberto, com o instrumento para o fechar** — que é mais honesto do que uma correcção que não corrige.
+
+  A lição que se repete: **assumir a causa e corrigir sem prova custa uma volta inteira.** Foi o mesmo erro que a dica do timeout cometia — apontar um remédio sem ter medido o problema.
+  **(5) E a dica do timeout apontava o remédio ERRADO.** O próprio PR que corrige isto apanhou uma quinta instância, desta vez no job do BACKEND: `sfu_e2e::media_flows_both_ways` estourou o prazo e a mensagem disse «se for lentidão do ambiente, sobe `E2E_TIMEOUT_FACTOR`» — mas o estado impresso ao lado dizia `ice=Failed` nos **dois** pares. `Failed` é terminal: mais prazo não liga um ICE que já desistiu, e a dica mandou investigar tempo quando a causa está na rede do ambiente (UDP bloqueado, sem candidatos de host). **Uma mensagem que aponta o remédio errado custa mais do que uma que não aponta nenhum.** A dica passou a depender do estado observado, com teste que a vê mudar nos dois casos.
+- **O que isto não resolve, dito por inteiro:** cinco causas fechadas não provam que o CI ficou estável. Provam que estas cinco estão fechadas. A estabilidade mede-se em corridas repetidas ao longo do tempo, e essa medição ainda não existe.
+- **Uma armadilha em que caí a escrever o próprio teste desta correcção:** o `#[tokio::test]` foi colado DENTRO de outra função de teste. Compila — é uma função aninhada — e o `cargo test` diz `ok` com **0 testes a correr**. É o R72 outra vez, agora em Rust: só se apanha ao ver o nome do teste na saída, nunca ao ver a suite verde.
+- **Ficheiros:** `web/e2e/reuniao.mjs`, `web/e2e/tempos.mjs`, `web/e2e/estudio.mjs`, `web/src/room/RemoteTile.tsx`, `web/src/pages/Room.tsx`, `server/src/sfu_e2e.rs`, `.github/workflows/ci.yml`.
+
+### R91 — Um F5 a meio da reunião devolvia o convidado à sala de espera
+- **Sintoma medido:** um participante admitido que recarregue a página cai **outra vez** na sala de espera e fica à espera de ser admitido de novo. Reproduzido com dois browsers contra servidor real: `caiu na SALA DE ESPERA: À espera que o anfitrião te deixe entrar…`.
+- **Causa raiz:** o `peer_id` nasce por SOCKET (`Uuid::new_v4()` no `handle_socket`). Quando o socket cai, o `leave` corre de imediato e leva com ele tudo o que era estado de execução: o papel, as autorizações de partilha, o lugar de apresentador, e a própria admissão. O servidor não tinha como saber que quem voltou é quem estava.
+- **O que já existia e cobria PARTE do problema:** o co-anfitrião é persistido em `room_admitters` (migração 0017) precisamente «para reconexões», e o dono da sala volta sempre a entrar directo. Por isso o defeito **não se vê** no anfitrião — e foi isso que fez a primeira versão do teste passar com a correcção desligada.
+- **Correcção:** o lugar passa a ficar **reservado** durante uma janela (`RECONNECT_GRACE_SECS`, 45 s por omissão). Quem entra recebe um segredo opaco de 32 bytes, guardado em `sessionStorage`; ao voltar, envia-o em `?reconnect=` e herda o `peer_id`, o papel e a admissão. Os outros veem `peer-reconnecting` em vez de `peer-left`: o retrato fica no sítio, esbatido, em vez de desaparecer e reaparecer.
+- **O que NÃO se herda, e é deliberado:** nada de media. O socket é novo, a `RTCPeerConnection` é nova, e a negociação faz-se do zero — tentar reaproveitar estado de media reabriria o glare que o R13 fechou.
+- **Quatro recusas que o segredo tem de fazer, todas testadas:** segredo vazio, segredo errado, segredo de OUTRA sala, e segredo de alguém que está **vivo** (um segredo copiado não expulsa o dono do lugar). Sem a última, quem copiasse o segredo entrava por cima de quem estava lá.
+- **Porque não se reutiliza o token de sala:** esse é uma capability sobre a SALA — quem o tiver entra como quem quiser. Este é sobre o LUGAR, e é o que autoriza herdar o papel de anfitrião. Confundir os dois dá promoção a anfitrião por conhecer um link.
+- **Sair não é cair:** o cliente apaga o segredo no `leaveRoom`. Sem isso, quem sai de propósito continuaria a ocupar lugar na sala durante a janela inteira.
+- **A armadilha, e repetiu-se TRÊS vezes:** a asserção passava com a correcção desligada. Primeiro por testar o **anfitrião**, que volta a entrar de qualquer maneira. Depois por ler o DOM antes de o servidor responder, apanhando a barra montada sem o aviso de espera ainda renderizado. Só à terceira — convidado de outra organização, com tempo para assentar — é que o teste ficou a **discriminar**. Uma correcção sem uma asserção que a distinga do seu contrário não está provada, por mais código que tenha.
+- **Portão:** `web/e2e/reentrada.mjs`, no CI. Visto a falhar com a reclamação desligada no cliente.
+- **Ficheiros:** `server/src/signaling.rs`, `server/src/config.rs`, `server/src/main.rs`, `server/src/metrics.rs`, `server/src/apikeys.rs`, `web/src/signaling.ts`, `web/src/pages/Room.tsx`, `web/src/room/RemoteTile.tsx`, `web/src/styles.scss`, `web/e2e/reentrada.mjs`.
+
+### R92 — Faltavam cinco controlos de anfitrião, e a contagem que os motivou estava errada
+- **A contagem errada, primeiro:** o relatório de lacunas dizia «2 controlos de anfitrião contra ~15». **Está errado e vale a pena a correcção**, porque uma lacuna exagerada leva a construir o que já existe. Medido contra a árvore: existem **13** — `ForceMute`, `Kick`, `RoomLock`, `HostShareOnly`, `ShareGrant`, `Admit`/`Deny`, `TranscriptionToggle`, `ServerRecord`, `Presenting`, `RemoteControl`, breakouts, sondagens/Q&A/temporizador, e a co-admissão persistida em `room_admitters`.
+- **O que faltava mesmo,** medido com `grep` em servidor e cliente (zero ocorrências de cada): silenciar TODOS, desligar a câmara de alguém, fechar o chat, transferir o papel de anfitrião, e impedir que quem foi silenciado se volte a ligar.
+- **A decisão que NÃO se tomou, e porquê:** o plano previa um modelo de capacidades a substituir o `is_host`. Não se fez. O padrão existente funciona, está testado, e generalizá-lo agora seria YAGNI (§52 do mandato) — o modelo justifica-se quando chegarem os papéis de webinar (painelista, assistente), não antes. A Regra 0 da arquitectura diz o mesmo: não se refactoriza código que funciona sem justificação escrita.
+- **Regra 1 — o estado vive na SALA, não na mensagem.** «Silenciar todos sem voltar a ligar» e «chat fechado» ficam no `Room` e entram no `RoomSettings` que quem chega a meio recebe. Sem isso, alguém que entrasse depois falava numa sala que o anfitrião julgava fechada.
+- **Regra 2 — a recusa é do SERVIDOR.** O chat fechado é imposto no handler do `Chat`, não escondendo a caixa de texto: esconder um botão não impede ninguém de enviar a mensagem pelo socket. É a invariante 8 do AGENTS.md, e o teste envia a mensagem à socket com o chat fechado para o provar.
+- **Regra 3 — o anfitrião continua a falar com o chat fechado.** Um moderador sem voz não modera.
+- **Regra 4 — a troca de anfitrião é atómica**, sob o mesmo lock. Um instante com dois anfitriões, ou com nenhum, e «nenhum» numa sala com sala de espera activa tranca lá toda a gente.
+- **Os controlos novos NÃO são descartáveis** numa fila cheia: se um «silenciar todos» pudesse cair, alguém ficava com o microfone aberto numa sala que o anfitrião julgava fechada. A classificação é uma lista de permissões, por isso já estavam certos — e agora está afirmado por teste.
+- **A armadilha, e é a mesma família do R69:** o teste «um participante não se promove a anfitrião» pedia `b → b` e **passava com a guarda removida**. A razão está no próprio código: transferir para si próprio põe `is_host` a `true` e logo a `false` na mesma passagem — o resultado é igual com e sem guarda. Só com um TERCEIRO participante (`b` promove `c`) é que a asserção passou a distinguir. Foi apanhado a desligar as três guardas uma a uma: duas ficaram vermelhas, esta ficou verde.
+- **Ficheiros:** `server/src/signaling.rs`, `web/src/signaling.ts`, `web/src/pages/Room.tsx`, `web/src/styles.scss`.
+
+### R93 — Uma bateria verde deixou de ser prova, e havia como medir isso
+- **O padrão que motivou isto:** cinco correcções seguidas foram entregues com testes que davam VERDE com o produto partido (R69, R71, R90, R91, R92). Quatro dessas foram apanhadas por acaso, ao tentar ver o portão falhar. Não é distração pontual — é o modo de falha dominante deste trabalho, e a partir de certo ponto «218 testes verdes» deixa de ser uma afirmação com conteúdo.
+- **A medição:** `scripts/mutantes.mjs` aplica mutações pequenas e semanticamente reais ao CÓDIGO (`>=`→`>`, `&&`→`||`, `===`→`!==`, uma de cada vez) e corre a bateria. Uma mutação **morta** significa que algum teste deu por ela; uma que **sobrevive** é uma linha que ninguém defende.
+- **Primeira medição, contra os seis módulos de decisão pura:** 57 mutações, **46 mortas, 11 sobreviveram** — 81 %. Depois de fechar as lacunas: **52 mortas, 5 equivalentes, 0 por explicar** — 91 %, e os 5 restantes com razão escrita.
+- **O que as 6 lacunas reais eram, e nenhuma era trivial:**
+  1. **`callQuality`: um `NaN` do `getStats()` entrava nas contas.** A guarda `typeof v === 'number' && Number.isFinite(v)` não tinha teste — e `typeof NaN === 'number'` é `true`. Um NaN numa métrica não rebenta: propaga-se para a pontuação, a média e o gráfico, e **mostra-se**.
+  2. **A escolha do par de candidatos não tinha teste nenhum** — três mutações sobreviviam na mesma linha. É a fonte do `turnRelay`, que a consola mostra ao utilizador e o `/metrics` publica.
+  3. **Um orçamento de banda ZERO era tratado como «sem banda»** em vez de «desconhecido», degradando tudo ao mínimo. Um `0` vindo de uma API que ainda não mediu é a primeira coisa que acontece.
+  4. **Uma duração de 0 ms virava `null`** — e um `null` num painel lê-se como «não medido», não como zero.
+  5. **Uma pausa com EXACTAMENTE a duração mínima era descartada** no Estúdio — e a duração mínima é precisamente o número que o utilizador escreve no cursor.
+  6. **Um silêncio até ao fim da gravação** não tinha teste, e é o caso mais comum de todos.
+- **O ledger de equivalentes** (`scripts/mutantes-equivalentes.txt`) segue o padrão do `rotas-publicas.txt`: um sobrevivente sem razão escrita é indistinguível de um esquecimento, e sem ele as mesmas cinco linhas voltam a ser investigadas daqui a três meses. Um dos cinco revelou **lógica morta** — a sentinela `j === n` em `analise.ts` só pode marcar um início que a linha seguinte descarta.
+- **A armadilha, dentro da própria auditoria:** os meus primeiros três testes do par de candidatos passavam E os mutantes sobreviviam. A razão: o arnês muta UMA ocorrência de cada vez, e eu tinha trocado as duas à mão ao verificar. Os `===` sobreviviam porque os pares dos testes não definiam `selected`/`nominated` — com `undefined`, tanto `=== true` como `!== true` deixam a cadeia `||` verdadeira. **Só um par que se declara explicitamente não-escolhido distingue as duas versões.**
+- **O que isto NÃO cobre, dito por inteiro:** seis módulos de decisão pura, não a sala, não o SFU, não o Rust. São os mais baratos de mutar (sem rede, sem DOM, sem relógio) e por isso os primeiros — não os únicos que interessam.
+- **Ficheiros:** `scripts/mutantes.mjs`, `scripts/mutantes-equivalentes.txt`, `web/src/mutantes.lacunas.test.ts`, `web/src/studio/analise.test.ts`.
+
+### R94 — Oito autorizações de anfitrião podiam ser removidas sem um teste dar por isso
+- **Como se soube:** o `scripts/mutantes-rust.mjs` desliga as guardas de autorização do `signaling.rs` **uma a uma** — troca `if self.is_host(…)` por `if true` — e corre a bateria. Primeira medição: **13 guardas, 5 defendidas, 8 SEM TESTE**.
+- **Porque isto é grave e não é dívida de testes:** a invariante 8 do AGENTS.md afirma que os controlos do anfitrião são validados no servidor e nunca confiados ao cliente. Essa afirmação é sobre treze `if` espalhados por 2 800 linhas, e oito deles podiam desaparecer com a suite verde. Uma invariante que ninguém verifica é uma intenção.
+- **As oito:** fechar sondagem, conceder partilha de ecrã, abrir o quadro a todos, ligar a transcrição, trancar a sala, restringir a partilha ao anfitrião, desligar a câmara de alguém, fechar o chat.
+- **A mais perigosa:** `ShareGrant`. Sem a guarda, um participante **concede a si próprio** a permissão de partilha que o anfitrião lhe negou — a mensagem leva `to`, e nada obrigava esse `to` a não ser ele mesmo.
+- **Duas eram código escrito DOIS DIAS ANTES** (`ForceCam` e `ChatToggle`, R92), com testes ao lado. O teste do chat verificava a anfitriã a fechá-lo e a recusa do envio — e nunca um participante a tentar fechá-lo.
+- **O padrão comum a todas as oito, e é o que se leva daqui:** o teste que existia verificava **quem PODE a usar** o controlo, nunca **quem NÃO PODE a tentar**. «Funciona para o anfitrião» e «é recusado ao participante» são duas afirmações diferentes, e só a segunda é a autorização. Um controlo com teste só da primeira metade está tão desprotegido como um sem teste nenhum — com a agravante de parecer coberto.
+- **Porque o arnês do Rust muta guardas e não operadores:** em Rust cada mutação custa uma recompilação. Mutar operadores seria horas para um relatório cheio de equivalentes; mutar as treze guardas dá treze perguntas, todas com significado de segurança, em minutos.
+- **Depois:** 13 de 13 defendidas.
+- **Ficheiros:** `scripts/mutantes-rust.mjs`, `server/src/signaling.rs`.
+
+### R95 — Seis rotas de organização nunca tinham sido testadas contra outro inquilino
+- **Como se soube:** comparando o inventário do que EXISTE (`grep` às rotas `/api/orgs/{org_id}/*` do `main.rs` — 19) com o inventário do que se TESTA (o `isolamento.mjs` — 13). Mesmo método que apanhou os testes ponta-a-ponta que nunca corriam (R72): dois `grep` e a diferença é a lista.
+- **As seis:** ler a trilha de auditoria de outra empresa, verificar-lhe a cadeia de hash, ler a configuração de SSO, ler a facturação de voz, **apagar-lhe uma chave de API** e **apagar-lhe um webhook**.
+- **Nenhuma estava vulnerável. Nenhuma estava provada.** A diferença importa: o `check-route-auth.sh` garante que cada rota tem extractor de **autenticação** — sabe QUEM é. Não diz nada sobre **autorização** — se o handler confere que esse quem pertence à organização do caminho. São duas metades, e só havia portão para a primeira.
+- **O que a sabotagem mostrou, e é a medida do raio de dano:** com o `require_admin` a devolver sempre `Ok`, a org A lê a trilha de auditoria da B **com nomes de actores e acções**, verifica-lhe a cadeia, lê o SSO, e apaga-lhe a chave de API e o webhook. Doze asserções ficam vermelhas.
+- **Um `404` sozinho não prova autorização.** Nos dois `DELETE`, testar com um UUID ao acaso daria `404` — que o helper conta como recusa — sem provar coisa nenhuma: só que o recurso não existe. A versão que vale é B **criar** o recurso, A tentar apagá-lo, e a asserção final ser **«o recurso da B continua lá»**. Foi essa que apanhou a destruição quando a guarda caiu; a do código de estado teria passado na mesma se o handler apagasse e devolvesse 404.
+- **As recusas devolvem `404` e não `403`**, deliberadamente: um `403` confirmaria que a organização existe.
+- **Portão:** `scripts/check-isolamento-cobertura.sh`, no CI. Visto a recusar uma rota de organização acrescentada sem cobertura.
+- **Ficheiros:** `web/e2e/isolamento.mjs`, `scripts/check-isolamento-cobertura.sh`, `.github/workflows/ci.yml`.
+
+### R96 — Vinte e uma rotas de recurso por ID nunca tinham sido pedidas com o token errado
+- **Como se soube:** a mesma comparação de inventários do R95, agora aplicada aos recursos POR ID. Existiam **32 rotas não-públicas** de sala, reunião, gravação e quadro; o teste de isolamento tocava em **8**.
+- **A regra que decide o que é grave:** uma **sala é uma capability** — quem sabe o código vê os metadados e pede para entrar, e isso está no topo do `isolamento.mjs` desde sempre. Um **recurso por ID não é**: a acta de uma reunião, o ficheiro de uma gravação e o PNG de um quadro não têm código para partilhar, e o `id` é opaco. Confundir os dois faz parecer aceitável o que não é.
+- **O que a extensão do teste encontrou, e é um defeito a sério:** `POST /api/rooms/{code}/minutes` corria a consulta da reunião **antes de qualquer autorização** e devolvia `200 {"ok":false","reason":"no meeting for room"}` a quem apenas soubesse o código, de outra organização. Nada era escrito — o delegado `save_minutes` autoriza —, mas a resposta já dizia **se a sala tinha reunião agendada**, e um `200` num pedido não autorizado é o padrão que o `/v2/apply` já tinha ensinado a não repetir. Corrigido: a autorização entra na própria consulta e as duas hipóteses («não há reunião» e «não é tua») passam a dar o mesmo `404`.
+- **Duas armadilhas apanhadas pelo CONTROLO POSITIVO, e é ele que salva o teste:**
+  1. `/api/meetings/{id}` só tem `DELETE` e `/minutes` só tem `POST`. Um `GET` devolve **405**, que o helper contava como recusa — duas asserções verdes a medir o router, não a autorização. Só se deu por isso porque o controlo positivo («B lê a sua própria reunião») **também** devolveu 405.
+  2. Dois `POST` devolviam **422** por corpo mal formado (`response` em vez de `status`, `shared` em vez de `public`). Recusados por validação, não por autorização.
+- **Um `404` num id inventado não prova nada** — só que o recurso não existe. Onde o recurso se pode fabricar (reunião, quadro), o teste cria-o com a org B, tenta destruí-lo com a A, e afirma que **continua lá**. Onde não se pode (gravações, que precisam de uma chamada a sério), está escrito que a prova é mais fraca.
+- **Portão:** o `check-isolamento-cobertura.sh` passou a cobrir também os recursos por ID — 53 rotas ao todo. Foi ele que encontrou mais sete que eu tinha deixado de fora depois de julgar a lista completa.
+- **Ficheiros:** `web/e2e/isolamento.mjs`, `scripts/check-isolamento-cobertura.sh`, `server/src/meetings.rs`.
+
+### R97 — O mesmo erro duas vezes, e cinco camadas construídas por cima dele
+- **O erro:** um teste que usa Playwright colocado ANTES do `npx playwright install` do próprio job. Morre com `Executable doesn't exist at .../chrome-headless-shell`.
+- **Duas vezes em dois dias:** o portão da barra responsiva no job `frontend` (R86), e o teste de reentrada no job `isolamento` (R91). Nos dois casos a causa é a mesma e a correcção foi a mesma.
+- **Porque é fácil de repetir:** o `npm ci` dá a sensação de ter instalado tudo. Traz a **biblioteca** do Playwright; os browsers vêm de um comando à parte. E o sintoma não aponta para a causa — parece um problema de ambiente, não uma linha fora de ordem. A segunda vez foi ainda mais fácil porque o job `isolamento` **já tinha** um `playwright install`: bastou pôr o passo novo vinte linhas acima dele.
+- **O que custou de verdade, e é a parte que interessa:** empurrei o R91 e **não verifiquei o CI dele**. Depois construí **cinco PRs por cima**. Os seis estiveram vermelhos no mesmo sítio durante quatro iterações, e só apareceu ao ir fundir a pilha. Corrigir o mesmo erro duas vezes é distração; construir cinco camadas sobre ele sem olhar é **processo**.
+- **Regra:** um PR empurrado sem se ver o CI dele é trabalho por verificar, não trabalho feito — e uma pilha faz herdar o vermelho para cima em silêncio.
+- **E houve uma TERCEIRA, na mesma linha, ao corrigir a segunda:** ao mover o passo para depois do `playwright install`, ele apanhou o `working-directory: web` do passo vizinho. Neste job os e2e correm da raiz e o caminho já diz `web/e2e/` — com o working-directory, o Node procura `web/web/e2e/reentrada.mjs` e morre com `MODULE_NOT_FOUND`. Três erros seguidos na mesma linha de CI, cada um encontrado só quando o anterior deixou de tapar o seguinte.
+- **E a CAUSA VERDADEIRA, que só apareceu à quarta:** o `npx playwright install chromium` do job `isolamento` corria na **raiz**, onde não há `node_modules`. O npx descarregava o Playwright mais recente e instalava os browsers **dessa** versão, enquanto os testes usam a do `web/node_modules`. O aviso estava no log e passou despercebido: `npm warn exec The following package was not found and will be installed: playwright@1.63.0`. O job `frontend` nunca teve o problema porque tem `defaults.run.working-directory: web` — foi por isso que o portão da barra funcionou e este não. Estava latente desde que o passo existe; só começou a doer quando o Playwright a montante subiu de versão.
+- **Porque é que as três primeiras correcções pareceram certas:** as quatro causas dão o **mesmo sintoma**, `Executable doesn't exist`. Cada correcção tapava a anterior e o erro reaparecia igual, o que se lê como «não ficou bem corrigido» em vez de «é outra coisa». A lição: quando a mesma mensagem volta depois de uma correcção que se acredita certa, a hipótese a testar não é «corrigi mal» — é **«há mais do que uma causa»**.
+- **E uma QUINTA, que não é de browsers:** o passo apontava a `localhost:5174` e o vite é arrancado **dentro** do bloco `run:` do passo do MFA — o meu vinha antes. `ERR_CONNECTION_REFUSED`, que se lê como «o vite não subiu» quando o que aconteceu foi correr cedo demais. Cinco problemas seguidos com a mesma linha de CI, e só o quinto tinha uma mensagem diferente dos outros quatro.
+- **O que isto diz sobre passos de CI que dependem de serviços:** o vite não vive num passo próprio; nasce e morre dentro de um `run:`. Isso não se vê de fora, e um passo novo colocado «logo a seguir» pode cair fora do que julga estar dentro. O portão passou a exigir que um `APP=…:PORTA` tenha um `vite --port PORTA` (ou `vite preview --port`) antes, **no mesmo job**.
+- **A lição sobre mover código:** um passo movido não leva só o que está seleccionado. Leva a POSIÇÃO, e com ela tudo o que a posição implicava — neste caso um `working-directory` que pertencia ao vizinho e que ninguém olhou porque não fazia parte do que se copiou.
+- **Portão:** `scripts/check-browser-antes-do-e2e.sh`, e verifica TRÊS coisas porque o mesmo passo errou nas duas: (1) para cada JOB, todo o teste de `web/e2e/` que importa `@playwright/test` corre depois de um `playwright install` **nesse mesmo job** — um noutro job não vale, que foi a suposição que falhou da primeira vez; (2) um passo cujo comando diz `node web/e2e/…` **não** tem `working-directory: web`; (3) o `playwright install` corre onde **está** o `node_modules`. Visto a recusar as três versões do erro.
+- **O portão foi reescrito com um parser de YAML** depois de a primeira versão, feita com expressões regulares, atribuir passos ao job errado. Um portão que reporta o sítio errado é pior do que nenhum: manda procurar onde não está.
+- **Ficheiros:** `scripts/check-browser-antes-do-e2e.sh`, `.github/workflows/ci.yml`.
+
+### R98 — Duas renovações de sessão ao mesmo tempo punham o utilizador na página de entrada
+- **Sintoma:** depois de um `F5`, o utilizador aparece na página de entrada. A sessão não expirou — foi **revogada por ele próprio**.
+- **Causa raiz:** o servidor **rota** o refresh token (`UPDATE refresh_tokens SET revoked = TRUE` a cada uso, `auth.rs`), e o cliente não tinha guarda de concorrência. Duas chamadas que levem 401 quase ao mesmo instante chamam `refreshSession()` as duas com o **mesmo** cookie: a primeira roda-o, a segunda encontra-o revogado, leva 401, e o `refreshSession` faz `logout()` mais `dx-auth-expired`.
+- **Quando acontece a sério:** logo depois de um refresh da página, quando várias chamadas partem em paralelo com o token de acesso já expirado. Numa máquina rápida a primeira renovação acaba antes de a segunda chamada falhar e não se vê; numa lenta — ou numa **rede** lenta, que é o caso normal do nosso mercado — sobrepõem-se. Há dois chamadores independentes: o `request()` a retomar um 401, e o `tryRefreshToken()` que o cliente de presença usa antes de cada reconexão de WebSocket.
+- **Como foi encontrado, e é a parte que interessa:** o `web/e2e/reentrada.mjs` passava em local e falhava **sempre** no runner do CI. Durante **seis rondas** tratei-o como um problema do ambiente do teste — e cinco vezes era mesmo (browsers em falta duas vezes, caminho duplicado, `install` na raiz, vite ainda não arrancado, R97). À sexta pu-lo fora do CI com razão escrita. Só ao ir investigar a razão é que se viu que a sexta era **o produto a dizer a verdade**.
+- **A lição:** «passa aqui e falha no CI» é uma hipótese sobre o AMBIENTE, e é a mais provável — mas não é a única. Uma máquina lenta não inventa defeitos: **expõe corridas que a rápida esconde**. Quando as diferenças de ambiente estão todas fechadas e o sintoma fica, o candidato seguinte é o produto.
+- **Correcção:** uma promessa partilhada — quem chegar enquanto uma renovação decorre espera pela mesma, em vez de começar outra.
+- **Portão:** teste em `api.guardas.test.ts` com o esboço a **rotar** como o servidor (a segunda renovação devolve 401). Sem a guarda, uma das duas chamadas rebenta com «session expired»; visto a falhar. E o `reentrada.mjs` volta ao CI, que é onde tinha de estar.
+- **Ficheiros:** `web/src/api.ts`, `web/src/api.guardas.test.ts`, `.github/workflows/ci.yml`, `scripts/e2e-fora-do-ci.txt`.
+
+### R99 — O ecrã principal do produto não existia em inglês nem em francês
+- **Medido:** o `Room.tsx` — 4 300 linhas, a sala, o ecrã onde uma reunião acontece — tinha **zero** chamadas a `t()`. Não era uma tradução incompleta: era uma sala que só existia em português, com 164 literais visíveis directamente na marcação.
+- **A minha contagem anterior estava errada e vale a pena dizer porquê:** reportei «147 `t()` e 96 literais» num relatório anterior. O `grep -o 't('` estava a contar `getContext('2d')`, `import('../webrtc')` e `document.querySelector(...)`. Um `grep` que casa o nome de uma função sem a fronteira de palavra mede outra coisa — e a conclusão que dele saiu («i18n incompleto») era mais benigna do que a realidade («i18n ausente»).
+- **O produto vende-se como lusófono E internacional.** Com a landing, o login e a consola traduzidos e a SALA não, um utilizador inglês percorre o produto em inglês até ao momento em que entra numa reunião — e a partir daí está tudo em português. É o pior sítio possível para a tradução parar.
+- **Feito:** espaço `room` com **145 chaves** em `pt`, `en` e `fr`, agrupadas por painel (pré-entrada, espera, pessoas, chat, ferramentas, definições, fundos, barra, quadro). 163 substituições no `Room.tsx`, mais o `useTranslation()` no componente principal e nos três sub-componentes que o ficheiro define (`DeviceControl`, `Whiteboard`, `PresentationTile`) — cada componente precisa do seu, e o compilador foi quem os apontou.
+- **As traduções são minhas, não de tradutor.** São defensáveis para interface, mas uma revisão por falante nativo de francês é trabalho por fazer, e está dito no PR em vez de escondido.
+- **Portão:** `lote2`, 3.2.7, e guarda duas coisas — que não voltem a entrar literais visíveis fora do `t()`, e que os três locales tenham **exactamente** as mesmas chaves. A segunda metade importa tanto como a primeira: uma chave só em `pt` mostra-se ao utilizador inglês como o identificador cru, que é pior do que a frase em português. Visto a recusar as duas.
+- **O que fica de fora, declarado:** 86 literais nos outros 20 ficheiros (`MfaPanel` 18, `ApiDocs` 15, `Shell` 9, `SharePage` 9, …). O portão cobre a sala; os outros seguem o mesmo padrão.
+- **Ficheiros:** `web/src/pages/Room.tsx`, `web/src/locales/{pt,en,fr}.ts`, `web/src/lote2.invariantes.test.ts`.
+### R100 — A marca-branca estava feita a meio: renomear a aplicação deixava o logótipo alheio em cinco ecrãs
+- **O que se via primeiro, e era o menor dos dois problemas:** duas marcas para a mesma aplicação. O globo de `/logo.svg` na landing, no lobby, no estado, no legal e nos docs; e um quadrado com a inicial no rail da consola. Incoerente, mas inofensivo.
+- **O defeito a sério só aparece ao RENOMEAR.** O `branding.ts` deixa quem usa o produto pôr-lhe outro nome. O quadrado adapta-se — usa a inicial do nome configurado. Os cinco ecrãs com `<img src="/logo.svg">` **não olhavam para o nome**: continuavam a mostrar o globo Delonix. Uma instalação renomeada mostrava a marca **de outra empresa** em metade do produto.
+- **Porque é que não se via:** a funcionalidade de renomear existe e funciona — o nome muda em todo o lado. É só o SÍMBOLO que não acompanha, e ninguém testa uma instalação renomeada.
+- **A lição sobre o que se lê num relatório:** eu tinha isto anotado como «a landing usa um glifo, a app usa um quadrado — escolher um». Se tivesse agido pelo relatório, teria escolhido um dos dois e **fixado o defeito**: escolher o globo quebra a marca-branca por inteiro; escolher o quadrado deita fora o logótipo. A resposta certa não era escolher — era **decidir em função do nome**, e isso só se vê a olhar para o `branding.ts`.
+- **Feito:** um componente `BrandMark` único nos seis sítios. Desenha o logótipo enquanto o nome for o de origem, e o quadrado com a inicial a partir do momento em que deixar de ser. Reage ao evento `dx-branding`, como o resto do sistema de marca. A variante `big` — que o `.brand-logo` tinha e o quadrado não — passou a existir para os dois.
+- **Portão:** `lote2`, 3.2.8, com duas metades: nenhum dos seis ecrãs desenha `/logo.svg` à mão, e o `BrandMark` **decide pelo nome** e não por uma constante. A segunda impede o caso mais fácil de errar — um invólucro que devolve sempre o logótipo teria passado a primeira e deixado o defeito de pé, agora escondido atrás de um nome tranquilizador.
+- **Ficheiros:** `web/src/components/BrandMark.tsx`, `web/src/branding.ts`, `web/src/components/Shell.tsx`, `web/src/pages/{Status,Legal,Lobby,Landing,ApiDocs}.tsx`, `web/src/styles.scss`.
+
+### R101 — Corrigi o símbolo da marca e deixei o nome escrito à mão ao lado
+- **Continuação directa do R100, e é uma correcção minha incompleta.** O `BrandMark` fez o símbolo seguir o nome configurado. Mas o NOME continuava escrito à mão mesmo ao lado dele — `<BrandMark /> Delonix <span>Meet</span>` — na landing (×2), no lobby, no legal, no estado e nos docs.
+- **O resultado era pior do que antes da correcção:** uma instalação renomeada passava a mostrar o símbolo novo colado ao nome antigo. Antes havia uma incoerência; depois havia uma contradição.
+- **Como apareceu:** ao inventariar os literais que faltavam traduzir. As ocorrências de `Delonix` apareceram na lista como «texto por traduzir» — e não são: o nome de uma marca não se traduz, **configura-se**. Foi a lista errada que revelou o problema certo.
+- **E escapou-me uma à primeira:** converti quatro páginas e deixei o `Legal.tsx`, que tem exactamente o mesmo padrão. Só apareceu ao correr um `grep` pelo padrão em vez de confiar na lista que eu próprio tinha feito.
+- **Feito:** `BrandLockup` — símbolo e nome da mesma fonte, com um `suffix` opcional para os cabeçalhos que acrescentam algo («— Estado do serviço», «· API REST»).
+- **Portão:** `lote2`, 3.2.8, terceira asserção — nenhuma das sete páginas escreve `Delonix <span>`. Deliberadamente estreito: proíbe o LOCKUP escrito à mão, não o nome dentro de uma frase, que é problema de i18n e resolve-se por interpolação.
+- **Ficheiros:** `web/src/components/BrandMark.tsx`, `web/src/pages/{Landing,Lobby,Legal,Status,ApiDocs}.tsx`, `web/src/lote2.invariantes.test.ts`.
+
+### R102 — W2.5 fechado: zero texto de interface fora do `t()` em todo o `web/src`
+- **Depois da sala (R99) sobravam 47** strings de interface em 14 ficheiros — MFA, docs da API, partilha de gravação, definições, notificações, estado.
+- **A contagem que eu tinha era 86 e estava alta:** o regex do relatório apanhava strings de uma palavra só. O portão exige um ESPAÇO — o que distingue uma frase de um identificador — e com esse critério eram 67, dos quais 20 eram marca ou código (`Delonix`, `X-Delonix-Signature`, `sha256`, `NFS`). Texto a sério: **47**.
+- **Oito já tinham chave.** O `pt.ts` tem 634 entradas, e «A carregar…», «Cancelar», «Email», «Silenciar» e outras já lá estavam. Criar chaves novas para elas teria duplicado o dicionário — a diferença entre inventariar e traduzir.
+- **Quatro espaços de nomes novos** (`api`, `mfa`, `share`, `status`) e 39 chaves em pt/en/fr.
+- **O hook não vai onde o ficheiro começa, vai onde o `t` é usado.** Vários ficheiros definem mais do que um componente, e a primeira tentativa pôs o `useTranslation()` no primeiro de cada um — o compilador respondeu com «`t` is declared but never read» num sítio e «cannot find name `t`» noutro. A colocação passou a ser guiada pelas linhas que o `tsc` aponta, em ciclo, até parar.
+- **O portão passou a cobrir `web/src` INTEIRO**, com a lista de ficheiros DERIVADA da árvore. A alternativa — acrescentar ficheiros a uma lista à mão — fica desactualizada no dia em que alguém cria um ficheiro novo, e o portão passa a proteger menos do que diz. Provado com um literal posto num ficheiro que nunca esteve em lista nenhuma.
+- **O que fica de fora, e é deliberado:** marca (`Delonix`, que se **configura** — R100/R101) e identificadores técnicos (`X-Delonix-Signature`, `sha256`, `NFS`, `WebDAV`). Nenhum deles se traduz.
+- **Ficheiros:** 14 `.tsx`, `web/src/locales/{pt,en,fr}.ts`, `web/src/lote2.invariantes.test.ts`.
+### R103 — No telemóvel, começar uma reunião exigia abrir o menu
+- **Medido nas capturas:** na Home em 375px não há forma de criar nem de entrar numa reunião. O bloco «Nova reunião · Introduz um código · Participar» vive na barra do topo, e abaixo dos 900px a barra passa-o para a gaveta. A acção principal do produto ficava atrás de um toque no menu — num ecrã com **metade da altura vazia**.
+- **Duas decisões deliberadas por trás disto, e nenhuma estava errada:** (1) a 3.1.4 diz que as acções **mudam-se** para a gaveta em vez de desaparecerem — e tem teste; (2) o `Home.tsx` diz por comentário que as acções foram **movidas** para a barra, para não duplicarem. As duas são defensáveis.
+- **O que ninguém considerou foi o CORPO da página.** A escolha foi sempre entre barra e gaveta. Com a barra a esvaziar-se em ecrã estreito e o corpo a ficar vazio, o sítio óbvio nunca entrou na conversa.
+- **Correcção:** o MESMO componente (`QuickActions`, que o teste 3.1.4 já exigia que fosse um só) ganha uma terceira variante e aparece no corpo da Home — escondido acima dos 900px, onde a barra já o tem, e visível abaixo, no mesmo limiar em que a barra o larga. **Não é duplicação: é o mesmo bloco a viver onde é alcançável em cada largura.**
+- **O que NÃO se fez, e porquê:** o relatório de UI dizia «quatro cartões duplicam o rail — remover». Não se removeram. No telemóvel o rail é uma gaveta escondida, e esses quatro atalhos são a única navegação visível; removê-los por serem redundantes **em ecrã largo** partia o ecrã estreito. Ver antes de apagar.
+- **Verificado por captura nas duas larguras**, não só por asserção: em 375px o botão aparece a toda a largura sobre o campo de código; em 1280px o corpo fica exactamente como estava.
+- **Portão:** `lote2`, 3.1.4 — a regra tem duas metades e as duas foram vistas a falhar: escondido acima dos 900px, e **visível abaixo**. Sem a segunda, esconder nas duas larguras passaria.
+- **Ficheiros:** `web/src/components/Shell.tsx`, `web/src/pages/Home.tsx`, `web/src/styles.scss`, `web/src/lote2.invariantes.test.ts`.
+
+### R104 — A sala falava, e ninguém que não visse a ouvia
+- **Três defeitos de acessibilidade na sala, todos com a mesma forma: informação que existe no ecrã e não chega a quem não o vê.**
+  1. **Os avisos que exigem decisão apareciam em silêncio.** «Alguém quer entrar», «pedido de controlo remoto», «pedido de partilha», sondagem — quatro cartões com `role="dialog"`, que **não anuncia nada**: só rotula. Um anfitrião com leitor de ecrã não sabia que tinha gente à porta. Passaram a viver numa região `aria-live="assertive"` — interrompem de propósito, porque um convidado à espera não pode esperar pela próxima pausa na leitura.
+  2. **A linha de estado não era anunciada.** «O anfitrião silenciou o teu microfone» era escrito no ecrã e mais nada: quem não vê ficava silenciado sem saber porquê. Passou a `role="status"` com `aria-live="polite"` — informa, não interrompe.
+  3. **O Esc não fechava os painéis da sala.** Chat, pessoas, ferramentas e definições fechavam-se só no ×, o que obriga quem navega por teclado a percorrer o painel inteiro. O resto da consola já o fazia — a sala era a excepção. E o foco **volta a quem abriu**: fechar sem devolver o foco deixa o leitor de ecrã no `<body>` e perde-se o sítio.
+- **O que NÃO se fez, e é deliberado:** não se prende o foco dentro dos painéis. Um `<aside>` não é um modal, e prender lá dentro impediria de chegar aos controlos da chamada — que é precisamente o que não se pode tirar a ninguém.
+- **E o meu relatório estava errado numa afirmação:** «Esc fecha nada». Fechava em seis sítios — gaveta, menu de conta, notificações, tour, paleta e o emoji do chat. O `grep` que produziu essa frase tinha as aspas partidas e devolvia zero. **A sala é que era a excepção**, e a frase certa é muito mais estreita do que a que escrevi.
+- **O PONTO CEGO dos dois portões anteriores:** o de emoji (R88) e o de i18n (R99/R102) olham para **JSX** — texto entre tags e atributos. Não olhavam para strings passadas a **funções**. Havia **46 mensagens de estado em português fixo**, duas delas com emoji, invisíveis para ambos. Isso passou a importar mais desde que a linha de estado é anunciada: **anunciar português a quem escolheu inglês é pior do que não anunciar**.
+- **Portão:** `lote2` — nenhuma chamada a `setStatus`/`setErr`/`setError`/`setMsg` leva um literal em português. Visto a falhar, e apanhou logo uma que a minha própria conversão tinha deixado para trás (a que tinha o 🎮: a chave ficou sem o emoji e o texto não casou).
+- **Ficheiros:** `web/src/pages/Room.tsx`, `web/src/components/Shell.tsx`, `web/src/pages/{Analytics,SharePage}.tsx`, `web/src/locales/{pt,en,fr}.ts`, `web/src/lote2.invariantes.test.ts`.
+
+### R105 — O portão dos emoji só via metade da consola, e a régua do i18n cortava aos 80 caracteres
+
+**Sintoma.** O portão 3.2.5 dava verde com 20 pictogramas colados a texto ainda
+espalhados por cinco ficheiros da consola (`Analytics`, `Home`, `Landing`,
+`Room`, `RemoteTile`), e o portão 3.2.7 dava verde com três frases longas
+literais por traduzir.
+
+**Causa.** Duas réguas escolhidas de cabeça em vez de derivadas do porquê. O
+padrão de emoji cobria um intervalo que deixava de fora `U+FE0F` — o selector de
+variação que faz de `⚙` um `⚙️` — e o de i18n só olhava para literais entre 3 e
+80 caracteres, por eu ter presumido que texto de interface é curto. As três
+frases que escaparam tinham 96, 118 e 141 caracteres.
+
+**Regra.** A régua vem do PORQUÊ, não de um intervalo confortável. O emoji é
+recusado como iconografia porque **rende conforme o sistema operativo do
+visitante e não herda `currentColor`** — logo o padrão é «pictograma», incluindo
+o selector de variação, e não «bloco Unicode X a Y». O texto de interface é
+recusado fora do `t()` porque **um utilizador francês não o lê** — e uma frase
+longa é lida por ele tanto como uma curta; o tecto sobe para 300.
+
+**Portão.** `web/src/lote2.invariantes.test.ts`, testes 3.2.5 (`EMOJI =
+/[\u{1F300}-\u{1FAFF}\u{FE0F}]/u` sobre 16 ficheiros de consola, saltando os
+blocos `REACTION_EMOJIS`/`CHAT_EMOJIS` e os comentários) e 3.2.7 (literais de
+3 a 300 caracteres). Provado vermelho antes de verde: as duas primeiras corridas
+listaram 20 e 2 sítios reais.
+
+**A quarta versão, e o pior dos quatro defeitos.** Depois de convertidos os 20,
+o portão continuava a dar verde por cima de **223 linhas**. A regra era «a partir
+de uma linha que mencione `REACTION_EMOJIS`, ignora até um `]`» — e a linha
+`{REACTION_EMOJIS.map((e) => (` está a meio do JSX da barra de controlo; o `]`
+que a fechava só aparecia 223 linhas abaixo. Toda a barra ficava fora do portão,
+com dois emoji e duas frases por traduzir lá dentro. A isenção passou a valer
+para a **linha** que nomeia a constante — uma linha, nunca um intervalo — e para
+o corpo das declarações, delimitado por contagem de parênteses rectos.
+
+**Onde `<option>` está em causa:** um `<option>` não aceita um `<svg>` dentro. Aí
+o pictograma **sai** e fica só o texto — não se troca por um ícone que o browser
+descarta em silêncio.
+
+**Ficheiros.** `web/src/icons.tsx` (`KeyIcon`, `GlobeIcon`, `BotIcon`,
+`ThumbIcon`), `web/src/pages/{Analytics,Home,Landing,Room}.tsx`,
+`web/src/room/RemoteTile.tsx`, `web/src/locales/{pt,en,fr}.ts`,
+`web/src/lote2.invariantes.test.ts`.
+
+### R106 — Um arnês de mutação morto a meio deixava o produto sabotado na árvore
+
+**Sintoma.** Depois de o `scripts/mutantes.mjs` ser interrompido por um timeout,
+o `web/src/layerPolicy.ts` ficou na árvore de trabalho com um `&&` trocado por
+`||` — a sabotagem que o arnês injecta de propósito. Foi encontrada por acaso, ao
+ler um `git status` antes de um commit. Um `git add -A` tê-la-ia empurrado.
+
+**Causa.** O restauro do ficheiro estava só no caminho normal, entre a escrita do
+mutante e a corrida seguinte. Qualquer morte no meio — Ctrl-C, `kill`, timeout do
+CI, a máquina a desligar-se — saltava-o.
+
+**A tentativa que não chegou.** Um `process.on('SIGTERM', restaurar)` parece a
+correcção óbvia e não é: o arnês passa a vida dentro de um `execSync` (a bateria
+de testes), e o Node só corre o handler quando essa chamada síncrona regressa —
+minutos depois, ou nunca. Medido: um SIGTERM ao arnês do Rust deixou-o vivo mais
+de dois minutos com o `signaling.rs` mutado. E um SIGKILL não corre handler
+nenhum.
+
+**Regra.** A rede não pode viver na memória do processo que morre. O original vai
+para um **marcador em disco ANTES** de o mutante ir para o ficheiro, e cada
+corrida começa por devolver o que encontrar lá. Sobrevive a SIGKILL, a queda de
+máquina e a bateria descarregada.
+
+**Portão.** `scripts/check-repo-hygiene.sh` recusa um commit com
+`scripts/.mutante-em-voo.json` presente e nomeia o ficheiro em risco. Provado
+vermelho: com o marcador escrito à mão, o portão aponta o ficheiro; sem ele,
+verde. E a recuperação foi provada a sério — ficheiro sabotado + marcador, o
+arnês a arrancar escreveu `corrida anterior morreu a meio — … restaurado` e
+devolveu-o.
+
+**Ficheiros.** `scripts/mutantes.mjs`, `scripts/mutantes-rust.mjs`,
+`scripts/check-repo-hygiene.sh`, `.gitignore`.
+
+### R107 — O «zero texto fora do `t()`» era verdade só para nós de texto
+
+**Sintoma.** O R102 fechou o lote do i18n com «zero texto de interface fora do
+`t()` em todo o `web/src`», e o portão dava verde. Medido de outra maneira: **112
+frases visíveis** ainda em português duro — 64 no `Room.tsx` e 21 no resto da
+árvore. Entre elas o título de *todos* os botões da barra de controlo
+(«Desativar microfone (Ctrl+D)», «Partilhar ecrã», «Levantar a mão»), os avisos
+que o leitor de ecrã anuncia («Foste removido da reunião», «O anfitrião silenciou
+toda a gente»), e mensagens de erro («Erro ao convidar. Tenta novamente.»).
+
+**Causa.** O portão procurava `>frase<` — nós de texto JSX — mais três
+atributos. Uma frase dentro de uma **expressão** nunca lhe passou à frente:
+
+```tsx
+title={micOn ? 'Desativar microfone (Ctrl+D)' : 'Ativar microfone (Ctrl+D)'}
+setStatus('O anfitrião recusou a tua entrada')
+```
+
+Não é um caso raro — é como se escreve metade da interface de uma sala, onde
+quase tudo tem dois estados.
+
+**Regra.** O portão procura a FRASE, não o sítio onde ela está. Uma frase
+distingue-se de um identificador pelo que uma pessoa lê: começa por maiúscula,
+tem pelo menos um espaço, e tem uma palavra de três letras minúsculas. Isso deixa
+de fora `'grid'`, `'room-topo'`, `'POST'` e os nomes de eventos sem ter de saber
+onde cada literal é usado. As chamadas ao `t()` são retiradas antes de procurar —
+são a solução, não o problema.
+
+**Nomes próprios** ficam de fora **um a um, com razão escrita** dentro do portão
+(`Microsoft Teams`, `Google Meet`, `API / Signaling`) — nunca por a regra ser
+afrouxada. Um nome de produto não se traduz; uma frase sim.
+
+**Portão.** `web/src/lote2.invariantes.test.ts`, teste «nenhum ficheiro tem
+frases visíveis dentro de expressões» — árvore inteira, não só o `Room.tsx`.
+Provado vermelho antes de verde (85 frases listadas) e provado outra vez depois:
+devolver `'Base de dados'` ao `Status.tsx` põe-no a vermelho.
+
+**E ainda não era tudo — mais duas famílias na mesma passagem.**
+
+*Nós de texto MISTURADOS com expressões.* A regra dos nós de texto usava a classe
+`[^<>{}\n]`, que **exclui `{`**. Um nó como `Notas AI {transcribing && <span/>}`
+ou `A IA segmenta-te localmente… {bgBusy ? t(…) : ''}` era invisível para ela.
+Dezasseis assim. A regra passou a **retirar as expressões** — respeitando o
+encaixe das chavetas — e a julgar o que sobra como prosa.
+
+*Atributos inventados.* A regra verificava três atributos **por nome**: `title`,
+`placeholder`, `aria-label`. Mas quem escreve um componente inventa os seus —
+`label=`, `desc=`, `data-tip=` — e todos acabam no ecrã ou no leitor de ecrã.
+Onze escaparam assim, incluindo o rótulo de leitor de ecrã de **cinco botões da
+barra de controlo**. A regra deixou de nomear atributos.
+
+**O que fica de fora, e é honesto dizê-lo.** Uma frase que comece por minúscula
+(`'nova password'` num `placeholder`) continua a passar. A maiúscula inicial é o
+que distingue uma frase de um `className` como `'brand-square big'` — sem ela, o
+portão acusa 162 literais dos quais a esmagadora maioria são nomes de classe, e
+um portão que grita por tudo é ignorado tal como um portão cego. Fica registado
+como limite conhecido, não como problema resolvido.
+
+**Lição, e é a mesma pela quinta vez.** Um portão construído sobre a FORMA que o
+defeito tinha da última vez erra na forma seguinte — R88, R99, R102, R105 e agora
+esta. O que dura é a regra escrita a partir do PORQUÊ: aqui, «um utilizador
+francês não lê isto», que não faz distinção entre um nó de texto e um ternário.
+
+**Ficheiros.** `web/src/pages/{Room,SharePage,Status}.tsx`,
+`web/src/components/{MfaPanel,PasswordInput,PresenceProvider,Shell}.tsx`,
+`web/src/room/RemoteTile.tsx`, `web/src/locales/{pt,en,fr}.ts`,
+`web/src/lote2.invariantes.test.ts`.
+
+### R108 — W3.5: quem sai do separador da reunião perdia a reunião
+
+**Lacuna, não regressão.** Numa reunião de trabalho ninguém fica no separador da
+reunião: vai ao documento, ao terminal, ao email. O Meet e o Teams põem uma
+janela pequena por cima de tudo; a sala não tinha nada — o PiP existia só no
+visualizador de gravações.
+
+**Como está feito.** A decisão de **quem** aparece na janela saiu do componente
+para `web/src/pipPolicy.ts`, puro e testado à parte, pela mesma razão do
+`layerPolicy.ts`: corre dezenas de vezes por reunião e não precisa de DOM. A
+ordem vem do que a pessoa foi lá fazer — apresentação, depois afixado, depois
+quem fala, depois o último que falou, depois qualquer um com câmara. O próprio
+nunca é candidato.
+
+**A guarda que não é óbvia:** `deveTrocarFonte`. Numa conversa a três,
+`escolherFontePip` alterna de cara a cada frase, e a janela ficaria a piscar de
+segundo a segundo — o browser faz um corte visível em cada troca. Por isso só se
+troca quando a fonte actual **deixou de servir**: desligou a câmara, saiu, ou
+alguém começou a apresentar.
+
+**As três armadilhas que fazem o PiP falhar em silêncio**, todas com portão:
+
+1. **`display: none` no vídeo escondido.** É a forma óbvia de o esconder e é a
+   única que o browser trata como «não tem imagem» — o pedido é recusado sem
+   erro visível. Esconde-se com 1×1 e `opacity: 0`.
+2. **Botão onde o browser não suporta.** Firefox e o Safari de iOS não têm
+   `pictureInPictureEnabled`. Um botão que não faz nada é pior do que botão
+   nenhum: a pessoa carrega, não acontece nada, e conclui que o produto está
+   partido.
+3. **Recusa engolida.** O `requestPictureInPicture` rejeita se já houver uma
+   janela noutro separador. Um `catch {}` vazio aqui era o R104 outra vez — o
+   produto sabe que falhou e a pessoa não.
+
+**Gestos.** Não há «abre sozinha quando mudo de separador»: essa permissão está
+reservada a PWAs instaladas. O pedido exige um gesto E que o elemento já tenha
+imagem — por isso a fonte é escolhida e ligada no clique, não no efeito que só
+corre depois de o estado mudar.
+
+**Portões.** `web/src/pipPolicy.test.ts` (18 testes; **9 mutações, 9 mortas**) e
+`web/src/pip.invariantes.test.ts` (6 portões de forma). As três armadilhas foram
+sabotadas uma a uma e as três puseram testes a vermelho.
+
+**O que NÃO está provado.** Nenhum destes testes abre uma janela: o
+`requestPictureInPicture` não corre em jsdom. Prova-se que a decisão está certa e
+que as armadilhas não voltam a entrar — não que a janela abre no Chrome. Falta
+uma passagem à mão num browser real, e está dito assim no PR.
+
+**Ficheiros.** `web/src/pipPolicy.ts`, `web/src/pipPolicy.test.ts`,
+`web/src/pip.invariantes.test.ts`, `web/src/pages/Room.tsx`,
+`web/src/icons.tsx` (`PipIcon`), `web/src/locales/{pt,en,fr}.ts`,
+`scripts/mutantes.mjs`.
+
+### R109 — O controlo remoto dizia-se «ativo» e não encaminhava um único clique
+
+**Sintoma.** Quem partilhava o ecrã via um botão «Solicitar Controlo Remoto». Ao
+carregar, o dono do ecrã recebia um diálogo a pedir consentimento. Ao aceitar, o
+outro lado recebia:
+
+> **Pedido aceite — controlo remoto da tela partilhada ativo**
+
+Não estava. Não há uma linha em todo o repositório que encaminhe um clique, uma
+tecla ou uma coordenada para a máquina do outro. O handshake acaba na mensagem.
+
+**A parte que interessa não é o botão.** É o **consentimento que não quer dizer
+nada**. A pessoa foi informada de que estava a entregar o controlo da sua
+máquina, disse que sim, e passou a comportar-se em conformidade — parou de
+mexer, esperou que o outro agisse, ou (pior) ficou a achar que alguém tem acesso
+ao seu teclado. Uma funcionalidade que não existe é uma lacuna; um consentimento
+que não faz nada é um dano.
+
+**Causa.** A sinalização foi construída primeiro — e bem — e a mensagem de
+sucesso foi escrita a descrever o que a sinalização *iria* permitir, não o que
+permitia. Ninguém voltou a ler.
+
+**Porque é que não se «corrige a implementar».** Um browser **não consegue**
+injectar rato ou teclado no sistema operativo de outra máquina. Não é uma API em
+falta na nossa implementação: é a fronteira da sandbox, e é ela que faz do
+browser um sítio seguro para abrir uma reunião. O Zoom e o Teams fazem-no porque
+instalam uma aplicação **nativa** com permissões de injecção de input. Controlo
+remoto a sério = um agente nativo, com a superfície de segurança que isso traz —
+uma porta para o teclado da vítima é exactamente o que um atacante quer. Isso é
+um projecto com ADR próprio, não uma tarefa.
+
+**Regra.** Uma capacidade pode ser PROMETIDA (roadmap sem `done`) e não pode ser
+ANUNCIADA COMO ACTIVA sem código por trás. A promessa fica; a promessa cumprida
+sai. `web/src/capabilities.ts` passa a ser o único sítio onde isto se liga:
+enquanto `AGENTE_CONTROLO_REMOTO` for `false`, o botão não aparece e um pedido
+que chegue de um cliente antigo é **recusado automaticamente** — antes de abrir
+qualquer diálogo. A sinalização fica intacta: é a base correcta, já testada.
+
+**Portão.** `web/src/capabilities.invariantes.test.ts`. Três testes, e o terceiro
+é o que interessa a prazo: **se alguém ligar a bandeira sem construir o agente, o
+portão passa a exigir que exista encaminhamento de input** — e falha. Provado
+vermelho nas duas direcções: ligar a bandeira põe-no a vermelho; devolver o
+diálogo ao pedido põe-no a vermelho.
+
+**Limite honesto.** Isto prova que ESTA capacidade não se anuncia sem código.
+Não varre o produto à procura de outras mensagens de sucesso que mintam — o
+`check-capability-claims.sh` cobre as afirmações de marketing (roadmap com `done`
+e listas de preço), e este cobre a de runtime que já falhou. Uma varredura geral
+por mensagens de sucesso continua por fazer.
+
+**Ficheiros.** `web/src/capabilities.ts`,
+`web/src/capabilities.invariantes.test.ts`, `web/src/pages/Room.tsx`,
+`docs/competitive-positioning.md`.
+
+### R110 — A busca por texto por traduzir nunca olhou para crases
+
+**Sintoma.** Doze frases visíveis continuavam em português duro depois do R107,
+entre elas o aviso que uma pessoa lê justamente quando a rede está má:
+
+```tsx
+`Sem ligação ao servidor — a tentar de novo (${tentativas}/${MAX_TENTATIVAS})…`
+`Quadro branco partilhado por ${m.by}`
+`Transcrição iniciada por ${m.by} — a tua fala é captada`
+```
+
+**Causa.** Todas as versões do portão procuraram literais entre plicas. Uma
+frase com um valor lá dentro escreve-se com **crases** — e é precisamente a
+frase que tem um valor lá dentro que costuma ser a mais importante: o nome de
+quem partilhou, o número da tentativa, o estado da ligação.
+
+**Regra.** A interpolação é retirada antes de julgar. O que interessa é a prosa
+à volta dela — é ela que um utilizador francês não lê. As chaves passam a levar
+parâmetros (`{{nome}}`, `{{n}}/{{total}}`), que é como o i18next já sabe fazer.
+
+**Portão.** `web/src/lote2.invariantes.test.ts`, teste «nenhum TEMPLATE LITERAL
+leva uma frase escrita à mão». Provado vermelho: devolver o template ao
+`Quadro branco partilhado por` põe-no a vermelho.
+
+**Sexta vez.** R88, R99, R102, R105, R107 e agora esta. A causa nunca é a mesma
+forma — é sempre a mesma decisão: escrever o portão a partir da forma que o
+defeito tinha da última vez. Aqui a regra que teria evitado as seis está escrita
+desde o R107 e não foi aplicada até ao fim: **procurar a FRASE, em qualquer
+forma que o TypeScript tenha de a escrever** — plica, crase, nó de texto,
+atributo.
+
+**Ficheiros.** `web/src/pages/Room.tsx`,
+`web/src/components/{PresenceProvider,Shell}.tsx`,
+`web/src/locales/{pt,en,fr}.ts`, `web/src/lote2.invariantes.test.ts`.
+
+### R111 — Em sala mesh, «parar partilha» não parava a captura do ecrã
+
+**Sintoma.** Numa sala com `topology: "mesh"`, carregar no botão de parar
+partilha repunha a câmara — e **deixava o browser a capturar o ecrã**, com o
+aviso «está a partilhar o seu ecrã» aceso. A pessoa acreditava que tinha parado.
+
+**Causa.** Os dois caminhos guardam o stream do `getDisplayMedia` em sítios
+diferentes, e só um deles o parava:
+
+- **SFU** — o ecrã é uma track ADICIONAL, e o stream fica em `presentation`. Ao
+  parar, `presentation?.stream.getTracks().forEach(stop)` apanha tudo. Correcto.
+- **Mesh** — o ecrã **substitui** a câmara por `replaceVideoTrack`. O stream não
+  fica em `presentation` nem em lado nenhum: passada a chamada, a única
+  referência era a variável local `display`, já fora de alcance. Nada o parava.
+
+Só parava por acidente: se a pessoa usasse o botão **do browser**, o
+`screenTrack.onended` disparava. Pelo nosso botão, não.
+
+**Segundo defeito, na mesma função.** O `SCREEN_CONSTRAINTS` pede áudio do
+sistema — por isso o browser mostra a caixa «partilhar áudio do separador». No
+mesh não há para onde o enviar: o ecrã viaja no lugar da câmara e não há uma
+segunda track a publicar. A pessoa marcava a caixa, a track era criada, ninguém a
+publicava e ninguém a parava. **É o consentimento vazio do R109 em ponto
+pequeno**: uma caixa que se marca e não faz nada.
+
+**Regra.** Quem adquire uma captura é dono de a parar, e o dono tem de ser
+alcançável a partir do sítio onde se pára. No mesh isso passou a ser o
+`displayStreamRef`. O áudio que o mesh não pode publicar é parado **e
+explicado** — não descartado em silêncio.
+
+**Portão.** `web/src/partilhaEcra.invariantes.test.ts`. Quatro testes: os dois
+caminhos param, o áudio órfão é parado com aviso, e o caminho SFU **continua** a
+publicar áudio do sistema — este último para que a promessa «partilha de ecrã com
+áudio do sistema» não se torne falsa nos dois caminhos em vez de um. Provado
+vermelho nos três sítios.
+
+**O que NÃO está provado.** Não abri dois browsers. O que se prova é que as
+tracks são paradas e que o aviso existe — não que o indicador do Chrome apaga.
+Isso é uma verificação à mão, e continua por fazer.
+
+**Ficheiros.** `web/src/pages/Room.tsx`,
+`web/src/partilhaEcra.invariantes.test.ts`, `web/src/locales/{pt,en,fr}.ts`.
+
+### R112 — Sete versões depois, o portão do i18n deixou de ser uma expressão regular
+
+**O que ainda escapava.** Depois de seis gerações do portão, **76 frases**
+visíveis continuavam sem passar pelo `t()` — e não eram cantos: a página inteira
+de documentação da API, a explicação da E2EE («Com a frase errada não vês nem
+ouves os outros…»), a do MFA, a das legendas com LLM local, e o aviso de ligação
+insegura do `App.tsx` («câmara, microfone e chamadas NÃO funcionam»).
+
+**A causa, e é a mesma das seis vezes anteriores.** Uma expressão regular **não
+sabe o que é JSX**. Sabe o que é `>` e `<` — e por isso confunde um genérico
+`useState<Foo>` com uma tag, não distingue `className` de `aria-label`, e não vê
+que um nó de texto continua depois de uma expressão. A exigência de **maiúscula
+inicial** existia só para calar esse ruído: medido, sem ela a regex acusava
+**400 sítios, quase todos código**. E era essa exigência que deixava passar
+`, como administrador). Envia-a num destes headers:` — meia frase, mas frase.
+
+**A regra.** O portão passou a usar o **parser do TypeScript**. Um `JsxText` é
+texto que aparece no ecrã, por definição. Um `JsxAttribute` tem um nome que se
+pode ler. Não há heurística sobre a forma da linha, e por isso não há forma
+seguinte por onde fugir.
+
+E a lista de atributos passou a fazer o **contrário** do que fazia: nomeia os que
+**chegam** a uma pessoa (`title`, `alt`, `label`, `desc`, `data-tip`, `aria-*`,
+…) em vez dos que não chegam. Um atributo novo entrava em silêncio na versão
+antiga; nesta, entra no portão.
+
+**O que fica de fora, e porquê.** O parser cobre JSX. Strings passadas a funções
+(`setStatus('…')`) e template literals continuam a ser cobertos pelos dois
+portões de expressão que já existiam — esses não são JSX e o parser não os
+distingue de código. São três portões complementares, não um a substituir outro.
+
+**Ledger.** Dezasseis nomes e fragmentos técnicos ficam de fora **um a um, com a
+razão ao lado** — `kubectl apply`, `X-Delonix-Signature: sha256=…`, `TrueNAS /
+NFS`, e os nomes dos idiomas, que se escrevem **no** idioma. Nunca por a regra
+ser afrouxada.
+
+**Efeito colateral apanhado a tempo.** Ao mover as frases para os locales, um
+`🔌` foi com elas — e o portão dos emoji só olha para `.tsx`. Passar um problema
+para onde o portão não olha não é resolvê-lo: virou `PlugIcon`.
+
+**Portão.** `web/src/lote2.invariantes.test.ts`, teste «nenhum JSX tem texto de
+interface fora do t() (parser, não regex)». Provado vermelho nas duas formas que
+as seis versões anteriores deixaram passar em alturas diferentes: devolver um nó
+de texto (`Esbater fundo`) e devolver um `aria-label`.
+
+**Ficheiros.** `web/src/lote2.invariantes.test.ts` (três portões de regex
+substituídos por um de parser), `web/src/App.tsx`,
+`web/src/components/{MfaPanel,PresenceProvider,Shell}.tsx`,
+`web/src/pages/{Analytics,ApiDocs,Recordings,Room,SharePage,Status}.tsx`,
+`web/src/room/RemoteTile.tsx`, `web/src/icons.tsx` (`PlugIcon`),
+`web/src/locales/{pt,en,fr}.ts`.
+
+### R113 — O francês tinha vinte chaves a menos, e ninguém falhava
+
+**Sintoma.** Um utilizador francês via `admin.ssoTitle`, `recordings.searchPh` e
+mais dezoito **identificadores crus** no ecrã — o painel de SSO inteiro e metade
+das gravações. Uma chave em falta no i18next não falha nem avisa: mostra o nome
+da chave.
+
+**Causa.** O portão de paridade olhava **só para o bloco `room`** — foi escrito
+quando o problema era a sala (R99) e nunca cresceu com o ficheiro. Fora desse
+bloco, os três locales podiam divergir à vontade. E divergiam: além das 20 em
+falta, o francês tinha quatro chaves órfãs num bloco `rec` que nada lê.
+
+**Segundo defeito, encontrado a MEDIR e não a olhar.** O francês tinha, no mesmo
+botão onde o português diz «Reunião E2EE» (14 caracteres), a frase «🔒 Créer une
+réunion E2EE (chiffrée de bout en bout, avec phrase secrète)» — 62. E o mesmo em
+«Sala de espera». Um rótulo que quadruplica não cabe onde cabia, e **ninguém dá
+por isso sem abrir a aplicação em francês** — que é precisamente o que eu tinha
+escrito duas vezes como «não validado».
+
+**Regra.** Paridade em **todas** as chaves, não num bloco. E uma tradução mais de
+2,2× mais longa (+12 caracteres) do que o original é tratada como defeito: o
+limiar deixa passar a expansão normal do francês e do inglês, que é real e ronda
+os 20 %, e apanha quem escreveu uma explicação onde devia estar um rótulo.
+
+**Terceiro.** O portão dos emoji passou a olhar também para os locales — o R112
+mostrou que uma frase com emoji mudada para lá deixa de ser vista. A fronteira é
+entre **iconografia** e **prosa**, e é o porquê que a traça: um emoji no início
+de um rótulo está no lugar de um ícone (`🚪 Sala presencial`, `📅 .ics` →
+`DoorIcon`, `CalendarIcon`); um emoji dentro de uma frase é tom («Tudo pronto!
+🎉») ou aponta para um glifo que o próprio browser desenha («clica no cadeado 🔒
+na barra de endereço») — e aí trocá-lo por um ícone nosso tornaria a frase menos
+útil. Não há regra de posição a adivinhar: há uma lista curta, com a razão ao
+lado.
+
+**Portão.** `web/src/lote2.invariantes.test.ts` — paridade total (>900 chaves),
+divergência de comprimento, e emoji nos locales. Os três sabotados, os três a
+vermelho.
+
+**Ficheiros.** `web/src/locales/{pt,en,fr}.ts`, `web/src/pages/Calendar.tsx`,
+`web/src/lote2.invariantes.test.ts`.
+
+### R115 — O módulo que cifra a media não tinha um único teste
+
+**Sintoma (ausência, não avaria).** `web/src/e2ee.ts` é o que cumpre a promessa
+mais destacada do produto — «nem o SFU nem qualquer intermediário consegue
+ver/ouvir». Não tinha **um** teste. Nem de derivação de chave, nem de ida e
+volta, nem de recusa.
+
+**Porque é que passou despercebido.** A lógica vive dentro de uma **string**
+(`WORKER_SRC`): é o código que corre no Worker, e um Worker recebe texto. Isso
+põe-na fora do alcance do TypeScript, do lint e da cobertura — um erro de sintaxe
+lá dentro só apareceria quando alguém entrasse numa sala E2EE. Uma string não
+compila.
+
+**Como se testa sem browser.** A string é **extraída do próprio ficheiro** e
+avaliada em Node, com a WebCrypto do Node — que é a mesma API. Não se copia o
+código para o teste: um teste sobre uma **cópia** prova que a cópia funciona, e é
+assim que se deixa de ver a divergência.
+
+**O que ficou provado.** O offset do header (10/3/1 — se mudar, os frames deixam
+de ser desempacotáveis e o sintoma é vídeo preto, não um erro); o **fail-closed**
+nos dois sentidos; a ida e volta byte a byte; o código da sala como **sal** (sem
+ele, a mesma frase-chave em duas reuniões daria a mesma chave, e gravar uma
+serviria para abrir a outra); a frase errada a não decifrar; e o **header
+autenticado** — mexer num byte do header em claro invalida o frame, que é a razão
+de ele ir como `additionalData`.
+
+**O defeito que só apareceu a sabotar.** A guarda de frame curto é
+`data.byteLength <= offset`. Trocada por `<`, sobreviveu aos oito primeiros
+testes: um keyframe de **exactamente** 10 bytes é só header, e com `<` sairia um
+frame com ciphertext vazio, tag e IV — 28 bytes de nada. O teste usava 8 bytes,
+que está do mesmo lado da fronteira nas duas versões. É o off-by-one de sempre, e
+só se vê a atacar a condição.
+
+**Não provado.** Isto não corre num Worker nem numa `RTCPeerConnection`. Prova as
+decisões — que é onde os defeitos desta família vivem —, não a ligação aos
+`RTCRtpSender`.
+
+**Ficheiros.** `web/src/e2ee.test.ts`.
+### R117 — Um código TOTP continuava a servir na janela seguinte à sua
+
+**Sintoma.** O `web/e2e/mfa.mjs` falhou no CI com:
+
+```
+✗ replay entre operações
+    HTTP 200 — o código da activação foi reaceite
+```
+
+O código usado para **activar** o MFA foi aceite outra vez, minutos depois, para
+**iniciar sessão**. Não era uma falha intermitente do teste: era o produto a
+dizer a verdade, e o teste a apanhá-la só quando o relógio ajudava.
+
+**Causa.** O anti-replay guarda o último passo temporal usado (`last_step`) e
+exige que o seguinte **avance**:
+
+```sql
+UPDATE user_mfa SET last_step = $2 WHERE user_id = $1
+  AND (last_step IS NULL OR last_step < $2)
+```
+
+A barreira está certa. O que estava errado era **de onde vinha o `$2`**: do
+relógio (`agora() / STEP_SECS`), e não do código.
+
+O `SKEW_STEPS` aceita, de propósito, um código do passo N apresentado durante o
+passo N±1 — é o que tolera relógios dessincronizados. Só que, apresentado durante
+N+1, esse código registava `last_step = N+1`, e a comparação passava a ser
+`N < N+1` → **verdadeiro**. O mesmo código servia duas vezes, com até trinta
+segundos de folga sobre a sua própria janela.
+
+Ou seja: o anti-replay funcionava **excepto** no caso que existe para impedir —
+um código apanhado por cima do ombro e usado logo a seguir.
+
+**Porque é que parecia intermitente.** O teste só falha quando as duas chamadas
+caem em passos diferentes. Se caírem no mesmo, `N < N` é falso e a rejeição
+acontece pela razão certa. É uma corrida contra a fronteira dos 30 segundos, e
+por isso passou muitas vezes.
+
+**Regra.** O passo vem do **código**, nunca do relógio. O `verifica` foi
+**apagado**: a função devolvia um `bool`, e um `bool` obriga quem chama a
+descobrir o passo por outro meio — que é exactamente como o defeito nasceu.
+Ficou só o `passo_do_codigo`, que devolve `Option<i64>`. Apagar a forma que
+causou o erro vale mais do que documentá-la.
+
+**Tempo constante mantido.** Continuam a percorrer-se todos os passos e todos os
+bytes; o passo encontrado acumula-se com uma **máscara** (`-(bate as i64)`) e não
+com um `if`, para o tempo de resposta não revelar qual acertou. O `+1` interno
+distingue «passo 0» — um instante real, 1970 — de «nenhum».
+
+**Portão.** `o_passo_vem_do_codigo_e_nao_do_relogio`: o mesmo código apresentado
+em N-1, N e N+1 tem de devolver **sempre N**. Provado vermelho a repor o passo do
+relógio.
+
+**Ficheiros.** `server/src/mfa.rs`.
+### R114 — Entrar pelo telemóvel e pelo portátil dava um ciclo de eco
+
+**Lacuna, e uma afirmação a corrigir.** A matriz competitiva dava o *companion
+mode* como feito, «via QoS + múltiplos joins». Era outra maneira de dizer «entrar
+duas vezes funciona» — e funcionava: as duas sessões entravam, ambas com
+microfone e ambas com altifalante. No mesmo espaço físico isso é um ciclo de
+realimentação, e o ruído não é problema de quem o causa: é de **toda a gente na
+reunião**, que é o pior tipo de defeito de UX.
+
+O companion mode existe porque é útil — o telemóvel serve de comando, de segunda
+câmara, de vista da apresentação. O que não pode é o áudio duplicar.
+
+**Quem decide.** O **servidor**. O cliente não tem como saber que a outra sessão
+é dele: uma heurística no cliente («já vi este nome no roster») falharia com dois
+homónimos e falharia sempre que alguém mudasse o nome. O `Hub::join` compara o
+`user_id` **dentro do lock de escrita** — se fosse uma pergunta separada antes do
+join, duas entradas simultâneas do mesmo utilizador podiam ambas ler «não está» e
+entrar as duas com microfone.
+
+**O `F5` não é um segundo dispositivo.** Um lugar reservado por queda de socket
+(R91) tem `disconnected_at` e **não** conta: trancar o áudio a quem volta de uma
+quebra de rede seria o oposto exacto do que o R91 foi resolver.
+
+**Mudo nos dois sentidos.** Só calar o microfone não chega — o altifalante deste
+dispositivo a tocar a reunião ao pé do microfone do outro fecha o ciclo na mesma.
+O `<audio>` é **silenciado, não desmontado**: pela mesma razão do `AudioSink`, o
+elemento fica ligado ao stream para que ligar o som seja instantâneo.
+
+**E a pessoa fica a saber.** Um dispositivo mudo sem explicação é indistinguível
+de um produto partido — e é essa a queixa que se recebe, nunca a causa. O aviso
+fica no ecrã **até a pessoa decidir** (não é uma notificação que passa: é um
+estado), e o botão «usar o áudio aqui» devolve-lhe a decisão, dizendo o que fazer
+ao outro dispositivo.
+
+**E desliga-se sozinho.** Uma funcionalidade que se liga sozinha e não se
+desliga sozinha é meia funcionalidade: quem fechasse o portátil ficava com o
+telemóvel mudo e um aviso a falar de um aparelho que já não está lá. Quando a
+outra sessão sai, o servidor manda `CompanionEnded` — e **só quando resta uma**:
+com três sessões, sair uma deixa duas, e duas ainda fazem eco. Essa distinção
+entre «resta UMA» e «resta ALGUMA» foi encontrada a sabotar: com `>= 1` os testes
+continuavam verdes, porque nenhum tinha três sessões. Tem-no agora.
+
+**Portões.** Rust: `segunda_sessao_da_mesma_conta_entra_como_companion` e
+`reentrar_depois_de_uma_queda_nao_e_companion`,
+`quando_a_outra_sessao_sai_o_companion_termina` e
+`com_tres_sessoes_sair_uma_nao_desliga_o_companion` (144 testes). Frontend:
+`web/src/companion.invariantes.test.ts`, seis portões, e o `web/e2e/companion.mjs`
+que entra duas vezes com a mesma conta pela interface real. Sabotado nos cinco sítios
+que importam — ignorar o `disconnected_at`, nunca detectar, não calar o
+microfone, não calar o altifalante, não passar a bandeira ao `AudioSink` — e
+vermelho em todos.
+
+**O e2e foi provado a vermelho, no CI, contra a stack a sério.** Com o cliente a
+ignorar a bandeira do servidor (`if (false && m.companion)`), a corrida deu:
+
+```
+· telemóvel: {"aviso":false,"audios":1,"todosMudos":false}
+✗ o telemóvel É AVISADO de que a conta já está na reunião
+=== 2 FALHARAM ===
+```
+
+E com o código certo:
+
+```
+· telemóvel: {"aviso":true,"audios":1,"todosMudos":true}
+✓ o telemóvel É AVISADO de que a conta já está na reunião
+```
+
+O `audios: 1` nos dois é o que impede o verde em vazio: sem roster não haveria
+`<audio>` nenhum, e um `every` sobre lista vazia devolve `true`.
+
+**Não provado.** Nada disto abre dois browsers com microfones reais. Prova-se a
+decisão e o silenciamento; não se prova a ausência de eco numa sala com duas
+máquinas — isso é uma verificação à mão e continua por fazer.
+
+**Ficheiros.** `server/src/signaling.rs` (`Entrada`, `companion` no `Joined`),
+`web/src/signaling.ts`, `web/src/pages/Room.tsx`, `web/src/styles.scss`,
+`web/src/companion.invariantes.test.ts`, `web/src/locales/{pt,en,fr}.ts`,
+`docs/competitive-positioning.md`.
+
+### R119 — Um symlink para a minha máquina entrou na `main`
+
+**Sintoma.** Quem clonasse o repositório ficava com
+
+```
+web/node_modules -> /tmp/wtp2/web/node_modules
+```
+
+um link pendurado para um caminho que não existe em máquina nenhuma além da
+minha. Entrou pelo PR #54 e ficou lá durante cinco PRs.
+
+**Causa, em duas metades.** A primeira sou eu: uso worktrees em `/tmp` e ligo o
+`node_modules` de todos ao de um, para não instalar cinco vezes. Um `git add -A
+web` levou o symlink junto com o trabalho.
+
+A segunda é a que interessa a prazo: **o `.gitignore` tinha `web/node_modules/`,
+com barra final.** A barra faz o padrão casar **só com um directório** — e um
+symlink não é um directório. A linha que existia exactamente para impedir isto
+não o impediu, e ninguém tinha razão para desconfiar dela.
+
+**Porque é que o CI não deu por nada.** O `npm ci` substitui a pasta e segue. O
+verde do CI não é prova de que uma checkout limpa funciona: o CI **repara** este
+caso ao passar por ele.
+
+**Regra.** Nenhum caminho versionado aponta para fora da árvore. A regra é geral
+e não sobre `node_modules`: um symlink **relativo e interno** é legítimo; um
+**absoluto**, ou um que **suba acima da raiz**, é a máquina de alguém a entrar no
+repositório.
+
+**Portão.** `scripts/check-repo-hygiene.sh`. O alvo lê-se do **índice**
+(`git cat-file -p :caminho`) e não do `HEAD` — um symlink acabado de adicionar
+ainda não está em commit nenhum, e era assim que ele entrava. O `cat` **não
+serve**: segue o link e devolve vazio quando o alvo não existe, que é exactamente
+o caso mau. A primeira versão deste portão falhou por isso e deu zero achados
+nos dois testes de sabotagem.
+
+Provado nos três casos: absoluto → vermelho, a subir → vermelho, relativo interno
+→ passa.
+
+**Ficheiros.** `.gitignore`, `scripts/check-repo-hygiene.sh`, e a remoção de
+`web/node_modules` do índice.
+### R116 — O directo tinha testes de contrato e nenhum de ciclo de vida
+
+**Como apareceu.** A pôr o `src/studio/directo.ts` no arnês de mutação: **7 das 8
+mutações sobreviviam**. A bateria ficava verde com o browser dado como capaz sem
+saber H.264, com pedaços vazios a ir para a rede, com envios num socket fechado,
+e com as três decisões de fase invertidas.
+
+**Causa.** O `directo.test.ts` cobria o **contrato** — o codec (que é a decisão
+inteira do ADR-0003) e a construção do URL. São os testes certos para o que
+guardam, e não tocam no ciclo de vida. E é no ciclo de vida que este módulo falha
+**em silêncio**: enviar num socket fechado atira dentro de um `then` sem `catch`,
+e enviar um pedaço vazio é largura de banda a troco de nada.
+
+**O que passou a estar defendido**, cada um com o seu porquê:
+
+- **`MediaRecorder` sem H.264** (Firefox) tem de recusar. Deixá-lo arrancar dava
+  um directo que o servidor teria de reencodificar — a decisão que o ADR-0003
+  recusou.
+- **Pedaço vazio** não vai para a rede, e não conta bytes.
+- **Socket já fechado**: nem envio nem contagem.
+- **Socket que fecha ENTRE o pedaço e o `arrayBuffer()`** — o `arrayBuffer` é
+  assíncrono, e é por isso que a guarda é dupla. Sem a segunda, o `send` atira.
+- **`parar()` fecha com 1000** e volta a «parado».
+- **O socket a cair leva a «erro», não a «parado»** — a distinção é o que a
+  interface mostra: «parado» foi decisão da pessoa, «erro» é uma emissão que caiu
+  e que ela tem de saber que caiu.
+- **Um fecho tardio depois de `parar()` não põe «erro» no ecrã** — o `parar()`
+  fecha o socket e o `onclose` chega a seguir.
+- **`parar()` sem nunca ter começado não atira** — foi o último sobrevivente: sem
+  o `g &&`, lê `.state` de `null` dentro de um `onClick`, onde um erro não
+  tratado passa despercebido até alguém abrir a consola.
+
+Nada disto precisa de rede nem de câmara: o `MediaRecorder` e o `WebSocket` são
+substituídos por duplos com a mesma forma. O que se prova são as decisões.
+
+**Portão.** `src/studio/directo.ts` entrou nos alvos do `scripts/mutantes.mjs`.
+**8 mutações, 8 mortas.**
+
+**Ficheiros.** `web/src/studio/directo.test.ts`, `scripts/mutantes.mjs`.
+
+### R118 — O único teste de media que ignorava o `E2E_TIMEOUT_FACTOR`
+
+**Sintoma.** Três corridas seguidas do CI a falhar no `web/e2e/tempos.mjs`, num
+PR que só mexia em testes do estúdio e no catálogo:
+
+```
+✗ os tempos NÃO ficaram prontos em 90000 ms
+✗ join_ms medido: null ms
+```
+
+A leitura fácil — «o produto não liga» — estava errada, e o próprio relatório
+tinha a resposta uma linha acima:
+
+```
+{"join_ms":null,"ws_ms":30,"ice_gathering_ms":74840,
+ "first_audio_ms":185,"first_video_ms":215,"ice_restarts":2} (esperou 90000 ms)
+```
+
+**A media chegou**: áudio a 185 ms, vídeo a 215 ms. O que estourou foi a recolha
+de candidatos ICE — **74 840 ms**, contra os ~377 ms de uma máquina normal. É o
+esfomeamento do R65 outra vez, duas ordens de grandeza pior.
+
+**Causa.** O CI declara `E2E_TIMEOUT_FACTOR=4` precisamente porque sabe que o
+runner é lento, e escreve porquê: *«um portão que falha ao acaso perde a
+credibilidade toda»*. O `tempos.mjs` era **o único teste do trabalho a
+ignorá-lo** — o `estudio.mjs`, ao lado no mesmo job, honra-o.
+
+**Regra.** Quem espera por uma ligação de media lê o factor do ambiente. E a
+mensagem de esgotamento passa a **distinguir as duas causas**: se a recolha de
+ICE passou dos 10 s e a media chegou, diz-se que foi a máquina a esfomear o
+agente — não o produto. Sem essa linha, três falhas leram-se como avaria.
+
+**Portão.** `web/src/e2eFator.invariantes.test.ts`.
+
+**E o portão falhou à primeira, pela razão mais instrutiva.** A versão 1
+procurava a palavra `E2E_TIMEOUT_FACTOR` no ficheiro — e **sobreviveu** a tirar o
+factor do `tempos.mjs`, porque o comentário logo acima continuava a mencioná-lo.
+Media a presença de uma palavra, não o comportamento. A versão 2 tira os
+comentários primeiro e exige a **leitura do ambiente**
+(`process.env.E2E_TIMEOUT_FACTOR`), não a menção. É exactamente a falha que este
+portão existe para impedir, cometida ao escrevê-lo.
+
+**Ficheiros.** `web/e2e/tempos.mjs`, `web/src/e2eFator.invariantes.test.ts`.
+
+### R120 — Um AudioWorklet pequeno de mais parte em produção, e funciona em dev
+
+**Sintoma.** Nenhum, em desenvolvimento — e é esse o perigo. Um `import('./x.js?url')` para um módulo de AudioWorklet novo (o noise gate a seguir ao RNNoise) resolvia para um `data:text/javascript;base64,...`, e `audioContext.audioWorklet.addModule(url)` engolia isso sem se queixar, no dev server.
+
+**Causa raiz.** O Vite inlinha em `data:` qualquer asset `?url` abaixo de 4 KB por omissão (`assetsInlineLimit`). O ficheiro do gate tem 3131 bytes — abaixo do limiar. O `rnnoiseWorklet.js` (do pacote `@sapphi-red/web-noise-suppressor`) nunca tinha mostrado este problema só por ser maior, não por o padrão de import estar certo. Em produção, o CSP (`deploy/nginx-delonix.conf`) declara `worker-src 'self' blob:` e `script-src 'self' 'wasm-unsafe-eval'` — **sem `data:`** — e um browser que respeite CSP recusa carregar o worklet a partir desse URL. O `addModule()` falha, a promise rejeita, e sem um `.catch()` a apanhar especificamente isto o utilizador fica sem o gate e sem aviso nenhum — o RNNoise continua a funcionar (é um ficheiro maior, nunca inlinado), por isso a chamada não fica muda; só perde a etapa nova, em silêncio.
+
+**Regra.** Um módulo de AudioWorklet (ou Worker) importado via `?url` precisa de ficar **sempre** como ficheiro à parte, nunca inline — independentemente do tamanho. Configurou-se `build.assetsInlineLimit` como função em `vite.config.ts` a excluir qualquer `*Worklet.js` da inlining. **Não chega testar em dev**: o dev server não aplica o CSP de produção, por isso o sintoma só existe atrás do nginx real — exactamente o gap que o R73 (`Vary` e o service worker) já tinha ensinado desta app.
+
+**Como se apanhou.** Por inspecionar o `dist/` a olho depois do build (`head -c 300` no ficheiro emitido) em vez de confiar em "o build passou e os testes ficaram verdes" — nenhum teste automático desta app corre atrás de um nginx com CSP real.
+
+**Ficheiros.** `web/vite.config.ts`, `web/src/noiseGateWorklet.js`.
+
+### R121 — Três regras de acesso escritas em mais de um sítio, e a cópia que decidia estava errada
+
+**Sintoma.** Nenhum para quem usa o produto como deve — e é o pior tipo. Provado ao vivo (2026-09-16, contra servidor e Postgres reais, com o `isolamento.mjs` escrito ANTES da correcção, 8 falhas):
+
+- **S1.** Qualquer pessoa que se registasse lia e reescrevia o armazenamento das gravações de TODA a plataforma, e o `/platform/storage/test` punha o servidor a fazer `PROPFIND` a um URL à escolha dela (SSRF — o teste antigo contava o `400` da ligação falhada como «recusa»).
+- **S2.** Uma org com uma chave `dlx_` listava no «directório Odoo» o email do admin de OUTRA org: a conta era renomeada, marcada como gerida, e entrava na org do atacante como admin.
+- **S3.** Um funcionário arquivado continuava a ler o chat das salas, a encontrar colegas na pesquisa, e (se admin) a descarregar gravações da ex-empresa; a chave da org criava reuniões com ele como anfitrião.
+
+**Causa raiz.** A mesma nas três: a regra existia CERTA num sítio e ERRADA numa cópia.
+- S1: «admin da plataforma» = «admin de qualquer org» (`storage.rs`), quando o `register` cria SEMPRE um admin.
+- S2: `odoo::provision` tinha o seu próprio «liga por email», sem a guarda de autoridade que `odoo_sso::upsert_member` já tinha desde a R25.
+- S3: 17 verificações de pertença escritas à mão sem `archived_at IS NULL`, que `org::role_in_org` e `org::org_co_members` já filtravam.
+
+**Regra.**
+- Administrador da plataforma é uma lista EXPLÍCITA de UUIDs (`PLATFORM_ADMIN_USER_IDS`), nunca derivada de `org_members`. UUID e não email: sem verificação de email, um endereço declarado antes de a conta existir podia ser registado por outro. Falta de papel é `403` (`ApiError::Forbidden`), não `401` — o web lê `401` como sessão caducada.
+- Uma sincronização de directório passa SEMPRE por `upsert_member`. A cópia saiu em vez de ser remendada. Contas recusadas vão em `skipped` com a razão, sem falhar o lote.
+- «Colega» e «admin que pede» são membros ACTIVOS. O SUJEITO não se filtra quando o dado é da organização: a gravação de quem saiu continua a ser descarregável pelo admin activo (retenção, eDiscovery); a auditoria e a retenção continuam a contar quem saiu.
+
+**Armadilha que o controlo positivo apanhou.** `/api/users/search` e `recordings::shares` devolviam SEMPRE `500` («no column found for name: locale» — o SQL de runtime não verifica colunas na compilação). A asserção «a arquivada já não encontra ninguém» passava ANTES da correcção — não por estar certa, mas porque a rota rebentava. Sem o «antes» positivo, o teste mediria uma avaria.
+
+**Portão.** `web/e2e/isolamento.mjs` (secções S1–S3, com controlo positivo antes de cada recusa); `storage::tests`; a metade positiva do S1 (utilizador declarado → `200`) foi verificada ao vivo com o servidor reiniciado com a variável, e não está automatizada — o utilizador do teste só nasce depois do arranque.
+
+**Ficheiros.** `server/src/{storage,config,error,odoo,rooms,users,recordings,meetings_v1}.rs`, `web/src/pages/Analytics.tsx`, `web/e2e/isolamento.mjs`, `docs/deployment.md`, `deploy/delonix.env.example`.
+
+### R122 — `add_employee` capturava uma conta de outra organização (a 4.ª cópia da mesma regra)
+
+**Sintoma.** Nenhum para a vítima. O admin de uma organização **legada** (com `email_domain` vazio) chamava `POST /api/orgs/{org}/employees` com o email de alguém de outra empresa e, com `role: "admin"`, tornava-se colega dessa pessoa: via as salas dela (`room_access` conta `org_mate`), encontrava-a na pesquisa, e podia ligar-lhe. Provado ao vivo a 2026-09-16 — a vítima entrava na org do atacante com `role=admin`.
+
+**Causa raiz.** A regra «tornar-me colega de alguém» estava escrita em quatro sítios, e a auditoria de 2026-09-16 (R121) só fechou três. `add_employee` liga uma conta EXISTENTE por email e tinha a sua própria noção de fronteira: o `email_domain` da org. Mas o `email_domain` é `''` nas organizações anteriores à migração 0010 (e nunca é editável pela API), e nesse caso a verificação de domínio é **saltada por inteiro** — não havia segunda barreira. É a mesma classe da S2: saber o email de alguém não pode puxá-lo para o nosso inquilino.
+
+**Regra.** A mesma `ForeignOrg` do `meetings_v1::resolve_org_user` e da R25: `add_employee` recusa (`409`) uma conta que já seja membro ACTIVO de outra org. Re-adicionar alguém que já é membro DESTA org continua a funcionar (mudar papel/filial) — a guarda é só o *outro* org. Ligar uma conta a uma segunda organização é acto do dono, não efeito de um admin escrever o email dela.
+
+**Porque não foi apanhado por um teste black-box.** Os domínios são únicos por org (índice de 0010), por isso, num sistema novo, A nunca pode adicionar um email do domínio de B — a verificação de domínio trata disso, com ou sem esta correcção. Um teste ao nível da API passaria nos dois estados, e um teste que passa com e sem a correcção é um falso portão (R51/R94). A guarda nova só é alcançável na org legada, que a API não cria: o teste ataca a base directamente (esvazia o `email_domain` por SQL), como a auditoria. Verificado a falhar no binário SEM a correcção e a passar COM ela.
+
+**Portão.** `web/e2e/captura-empregado.mjs` (ataque directo à base, no job `isolamento` do CI).
+
+**Ficheiros.** `server/src/org.rs` (`add_employee`), `web/e2e/captura-empregado.mjs`, `.github/workflows/ci.yml`.
+
+### R123 — O portão de autorização não via o segundo handler de uma rota
+
+**Sintoma.** Nenhum visível, e é isso o problema. `scripts/check-route-auth.sh` dava verde com uma rota como `.route("/api/users/me", get(users::me).patch(<handler sem autenticação>))`. Medido a 2026-09-16 com o controlo negativo: trocar `update_me` por um handler público → portão antigo **verde**, portão corrigido **vermelho**.
+
+**Causa raiz.** O corpo de cada `.route(…)` lia-se com uma regex preguiçosa, `\.route\(\s*"…"\s*,(.*?)\)\s*(?=[,.\n])`, que pára no primeiro `)` seguido de `.`. Em `get(a).patch(b)` o corpo capturado era só `get(a`: o `b` encadeado nunca era inspeccionado. Eram **26 handlers** fora do portão — todos os `PATCH`/`PUT`/`DELETE`/`POST` escritos a seguir a um `get(…)` (`update_me`, `webhooks::create`, `sso` PUT/DELETE, `recordings` link, …). Nenhum estava de facto sem autenticação; nenhum estava provado.
+
+**Regra.** Um portão que lê código lê-o por estrutura, não por regex preguiçosa: o corpo de `.route(` é o texto entre parêntesis EQUILIBRADOS. E um portão novo nasce com o controlo negativo do caso que o originou (R51/R94) — aqui, o handler público encadeado.
+
+**Portão.** `scripts/check-route-auth.sh` (parser equilibrado); o `scripts/check-openapi.sh` usa o mesmo, e foi ao contar operações que a diferença apareceu (94 contadas pela regex vs 120 montadas).
+
+**Ficheiros.** `scripts/check-route-auth.sh`, `scripts/check-openapi.sh`.
+
+### R124 — «Permitir admissão» enviava uma mensagem que o servidor recusava
+
+**Sintoma.** O anfitrião carregava no escudo ao lado de um participante («permitir admissão»), o crachá não mudava e o participante nunca via a sala de espera. No socket do anfitrião chegava `{"type":"error","message":"invalid message"}`.
+
+**Causa raiz.** Uma funcionalidade a meio, nas duas pontas. O web enviava `promote-admit` e esperava `admit-role`/`peer-role` (`web/src/signaling.ts`), mas o `ClientMsg` do servidor não tinha a variante: a desserialização falhava. Do lado de dentro também faltava metade: a tabela `room_admitters` (0017) era LIDA no token (`adm` → `can_admit`) mas nunca ESCRITA (`rooms::set_room_admitter` sem chamadores), e o `can_admit` não autorizava nada — `decide_waiting` só aceitava o anfitrião e a sala de espera só ia para anfitriões.
+
+**Regra.** Uma mensagem do protocolo tem as duas pontas no mesmo commit, e um teste de formato (`promote_admit_wire_format`) prova que a forma que o web envia desserializa. O papel muda em memória no hub (síncrono, sob o lock); a persistência é IO e corre FORA do lock, no loop do socket. A sala de espera vai para quem PODE admitir (`broadcast_admitters`, com evento Redis próprio), e quem volta com o papel persistido é avisado (`admit-role`) — o cliente só assume esse poder para o anfitrião.
+
+**Portão.** `signaling::tests::{host_promotes_co_admitter_who_can_then_admit, persisted_co_admitter_is_told_its_role_on_join, promote_admit_wire_format}`. Não verificado em browser nem a persistência ponta-a-ponta por WebSocket.
+
+**Ficheiros.** `server/src/{signaling,pubsub,lib}.rs`.
+
+### R125 — `PATCH /api/action-items/{id}` vazio devolvia o item a qualquer conta
+
+**Sintoma.** Nenhum para a vítima. Uma conta autenticada de OUTRA organização que soubesse o id de um item do plano de acção (5W2H) fazia `PATCH /api/action-items/{id}` com `{}` e recebia `200` com o item inteiro: o quê, porquê, quem, recursos. Provado ao vivo a 2026-09-16 contra Postgres real (`tests/security.rs`, que falhou com `200` antes da correcção).
+
+**Causa raiz.** A autorização dependia do CONTEÚDO do pedido: os campos de edição exigiam o anfitrião, e o `status` exigia ser membro — mas um pedido sem nenhum dos dois não passava por verificação nenhuma e seguia para o `SELECT` final, que devolve o item. Encontrado ao documentar o handler para o OpenAPI (ADR-0006 §3), não por teste.
+
+**Regra.** A verificação de acesso ao RECURSO vem primeiro e é incondicional; o que o pedido quer alterar só pode ACRESCENTAR exigências (anfitrião para editar), nunca decidir se há verificação. E valida-se antes de escrever: no `patch_agenda_item` vizinho, um tópico inválido dava `400` depois de o `done` já estar gravado.
+
+**Portão.** `server/tests/security.rs::action_item_patch_does_not_leak_to_other_org` (controlo positivo: o dono lê o item pelo mesmo PATCH vazio).
+
+**Ficheiros.** `server/src/actions.rs`, `server/tests/security.rs`.
+
+### R150 — Colaborador adicionado sem password nascia com `changeme123`
+
+**Sintoma.** Nenhum para a vítima. `POST /api/orgs/{org}/employees` sem `password` criava a conta com a password FIXA `changeme123`. Quem soubesse o email de um colaborador recém-adicionado entrava como ele até à primeira mudança de password. Provado a 2026-09-16 contra Postgres real (`login` com `changeme123` → `200` com sessão).
+
+**Causa raiz.** Um valor por omissão escrito como conveniência (`unwrap_or("changeme123")`) numa credencial. A validação de password corria sobre ele e passava — tem 11 caracteres.
+
+**Regra.** Nenhuma credencial tem valor por omissão conhecido. Sem password indicada gera-se uma aleatória (`core::crypto::random_hex`), devolvida UMA vez ao admin em `temporary_password` para a entregar; com password indicada, o campo não aparece.
+
+**Portão.** `server/tests/security.rs::added_employee_without_password_does_not_get_a_known_password`.
+
+**Ficheiros.** `server/src/org.rs`.
+
+### R151 — Uma chave de API ocupava contas de outro domínio pela v1
+
+**Sintoma.** `POST /api/v1/meetings` da org A com `host_email: ninguem@beta.test` (domínio da org B) criava a conta como membro da A. Quando a B tentava adicionar a pessoa, recebia `409` («já pertence a outra organização», R122) — a identidade ficava presa na A. Os convidados desconhecidos tinham o mesmo efeito.
+
+**Causa raiz.** `meetings_v1::resolve_org_user` recusava contas de OUTRA org (`ForeignOrg`) mas criava as que não existiam — e juntava contas órfãs — sem olhar para o domínio da organização, que é a fronteira que o registo e o `add_employee` já impõem.
+
+**Regra.** Criar ou juntar uma conta por email só dentro do domínio da organização (`organizations.email_domain`; numa org legada sem domínio não há regra a aplicar). Anfitrião fora do domínio → `422 meeting.host_outside_org_domain`; convidado → `skipped` com a razão.
+
+**Portão.** `server/tests/api_v1.rs::v1_meeting_refuses_to_create_accounts_outside_org_domain` (controlo positivo: anfitrião novo do próprio domínio continua a nascer; a org dona do domínio adiciona a pessoa sem conflito).
+
+**Ficheiros.** `server/src/meetings_v1.rs`.
+
+### R152 — `GET /api/orgs` mostrava a org a um membro arquivado
+
+**Sintoma.** Um colaborador arquivado deixava de alcançar as rotas da organização (S3) mas continuava a vê-la em `GET /api/orgs`, com o papel antigo, e o `member_count` contava os arquivados.
+
+**Causa raiz.** A 18.ª verificação de pertença escrita à mão sem `archived_at IS NULL` — a mesma classe da S3, num `JOIN` que a auditoria não apanhou por estar dentro de `org.rs`.
+
+**Regra.** A da S3: «membro» é membro ACTIVO, também nas listagens e contagens.
+
+**Portão.** `server/tests/organization.rs::my_orgs_hides_org_from_archived_member`.
+
+**Ficheiros.** `server/src/org.rs`.
+
+### R153 — Falta de permissão respondia 401, e o web renovava a sessão por nada
+
+**Sintoma.** Um membro sem papel de admin (ou um participante sem acesso a uma sala, ou um convidado que não é anfitrião) recebia `401`. O `web/src/api.ts` lê `401` como «a sessão caducou»: chamava `/api/auth/refresh`, repetia o pedido, levava outro `401` e só então mostrava o erro — dois pedidos a mais por clique, e um erro que dizia «sessão» quando o problema era papel.
+
+**Causa raiz.** `org::require_admin`, o acesso a sala em `rooms.rs`, as guardas de `whiteboards.rs` e `actions.rs` usavam `ApiError::Unauthorized` para falta de PERMISSÃO. O `error.rs` já tinha `Forbidden` com o comentário a explicar exactamente isto; faltava usá-lo.
+
+**Regra.** `401` é só «não sei quem és». Sem o papel: `403`. Recurso de outra organização ou reunião de que não és membro: `404` — não se confirma que existe. 22 asserções dos testes de caracterização mudaram com intenção (18× `401→403`, 3× `401→404`), e o OpenAPI descreve os três casos em separado.
+
+**Ficheiros.** `server/src/{org,rooms,whiteboards,actions}.rs`, `server/tests/{content,organization,scheduling}.rs`. Por fazer: as mesmas guardas em `meetings.rs` e `recordings.rs` (esta última foi reescrita no G4–G6 com 403/404).
+### R130 — O SSO de uma organização abria sessão em contas de OUTRA organização
+
+**Sintoma.** Nenhum para a vítima. O administrador de uma organização configura o IdP OIDC dela (`PUT /api/orgs/{id}/sso`) — e portanto controla o email que esse IdP afirma. Bastava o IdP devolver `admin@outra-org` para o `/api/auth/sso/callback` responder `302` com uma sessão da vítima. O mesmo callback criava contas de QUALQUER domínio e juntava-as à org, e reabria a porta a membros arquivados. Provado a 2026-09-16 contra Postgres real e um IdP OIDC falso (discovery, JWKS, id_token RS256): antes da correcção, `left: (302, Some("<id da vítima>"))`.
+
+**Causa raiz.** O callback tratava o email do id_token como prova de pertença: `SELECT … FROM users WHERE email = $1` e, se existisse, abria sessão; se não, criava e juntava. A assinatura do id_token prova só que o IdP da org o disse — e esse IdP é escolhido por quem administra a org.
+
+**Regra.** Família R25/R122, na forma mais restritiva (`auth::sso_login_decision`): o SSO da org X só (a) abre sessão numa conta que seja membro ACTIVO de X, ou (b) cria conta nova se o domínio do email for o `email_domain` (não vazio) de X. Conta existente fora de X → `403 sso.account_not_in_org`; conta nova de outro domínio → `403 sso.email_domain_mismatch`. Nunca se junta uma conta existente à org pelo SSO. A recusa fica na auditoria (`auth.sso_refused`).
+
+**Portão.** `server/tests/security_identity.rs::{sso_callback_refuses_account_of_another_org, sso_jit_only_creates_accounts_of_the_org_domain, sso_refuses_archived_member}` (controlo positivo em cada: o membro activo entra, o JIT do próprio domínio cria), e `auth::tests::sso_login_decision_is_the_most_restrictive_rule`. Não validado contra um IdP real (Google, Entra, Okta); o `email_verified` do id_token continua sem ser lido.
+
+**Ficheiros.** `server/src/auth.rs`, `server/tests/security_identity.rs`, `server/Cargo.toml` (`rsa` em dev-dependencies, para a chave do IdP falso gerada em memória).
+
+### R131 — A activação e a desactivação do MFA aceitavam tentativas ilimitadas
+
+**Sintoma.** Nenhum para a vítima. Com uma sessão roubada, `POST /api/users/me/mfa/disable` aceitava quantos códigos errados o atacante quisesse — seis dígitos adivinham-se, e acertar desliga o segundo factor. O `activate` tinha o mesmo oráculo sem travão. Provado a 2026-09-16 contra Postgres real: a sexta tentativa errada devolvia `left: 401, right: 429`.
+
+**Causa raiz.** O passo MFA do LOGIN (`/api/auth/mfa`) tinha travão por conta desde o início (`login_limiter`, chave `mfa:{user}`); os dois endpoints da sessão, escritos depois, não o herdaram. Não havia teste que contasse tentativas fora do login.
+
+**Regra.** Todo o endpoint que verifica um segredo curto (código MFA, PIN) tem travão por conta, e o travão pergunta ANTES de verificar (`RateLimiter::is_blocked`) — senão o código certo passa durante o bloqueio e o travão só atrasa quem adivinha. Só as falhas contam (`check` depois da falha, como o `voice_pin_limiter`): quem acerta à primeira nunca gasta tentativas. `mfa_limiter`: 5 falhas em 5 min, partilhado entre activar e desactivar → `429` com `Retry-After`.
+
+**Portão.** `server/tests/security_identity.rs::{mfa_activate_locks_after_five_failures, mfa_disable_locks_after_five_failures}` (controlo positivo: noutra conta, 4 falhas não bloqueiam e o código certo activa; o código de recuperação desactiva), `mfa_login_step_is_limited_per_account` (guarda do travão que já existia), e `rate_limit::tests::is_blocked_*`. O limitador é em memória por pod: com N réplicas o orçamento é N×5 — o mesmo limite dos outros travões (`rate_limit.rs`).
+
+**Ficheiros.** `server/src/{mfa,rate_limit,lib}.rs`, `server/tests/security_identity.rs`, `HARNESS.md`.
+
+### R132 — Contas de domínio com SSO exclusivo não tinham travão por conta no login
+
+**Sintoma.** Nenhum visível. `POST /api/auth/login` para uma conta cujo domínio exige SSO respondia sempre `400` («exige login via SSO») — antes do travão por conta, por isso nunca `429`. Provado a 2026-09-16 contra Postgres real: dez tentativas seguidas davam `left: 400, right: 429`.
+
+**Causa raiz.** A ordem das verificações no `auth::login`: o `is_sso_enforced` corria primeiro e respondia sem passar pelo `login_limiter`. O risco medido é baixo — a recusa depende do DOMÍNIO, não da conta, e o `/api/auth/sso/check` já diz publicamente que o domínio exige SSO; não há password a adivinhar por aqui. Mas é uma resposta sem travão num endpoint de credenciais, e a próxima verificação específica que alguém lá puser herdava o mesmo defeito.
+
+**Regra.** No login, o travão por conta é a PRIMEIRA coisa que responde; nenhuma resposta dependente da conta ou do domínio sai antes dele.
+
+**Portão.** `server/tests/security_identity.rs::login_rate_limit_applies_to_sso_enforced_accounts` (controlo positivo: a recusa `400` do SSO exclusivo continua a ser dita até ao limite).
+
+**Ficheiros.** `server/src/auth.rs`, `server/tests/security_identity.rs`.
+### R140 — Dial-in PSTN ligado à sala de conferência de OUTRA organização
+
+**Sintoma.** Nenhum para a vítima. O admin (ou qualquer membro) da org A fazia `POST /api/voice/rooms` com o `room_code` de uma sala da org B e recebia `200` com um PIN e um número de dial-in da SUA org. Quem ligasse para esse número com esse PIN era validado pelo IVR (`/api/voice/ivr/validate` e o gRPC `IvrService.ValidatePin`, que partilham `voice::validate_pin`) e posto dentro da reunião de B. Provado a 2026-09-16 contra Postgres real: `tests/security_voice_odoo.rs` falhou com `devolveu 200: {"dial_in_number":"+244222100001",…,"pin":"197966","room_code":"ifa-mrjw-nei"}` antes da correcção.
+
+**Causa raiz.** `create_room` normalizava o código e gravava-o sem o procurar em `rooms` — a própria documentação do handler dizia «NÃO é verificado contra as salas». A fronteira multi-tenant do módulo era o par (DID, PIN), mas o ALVO desse par era texto livre escolhido por quem pede.
+
+**Regra.** A sala de voz só se liga a uma sala cujo DONO é membro ACTIVO da organização de quem pede (`org::role_in_org`, sem `org_members` novo em `voice.rs`). Das regras do `rooms::room_access` é a mais restritiva: convite na agenda e co-anfitrião dão acesso a uma PESSOA, não tornam a sala num recurso da org. Inexistente e alheia dão a mesma resposta, `404` `voice.room_not_found` — não se revela que o código existe.
+
+**Portão.** `server/tests/security_voice_odoo.rs::voice_room_for_another_orgs_room_code_is_refused` (controlo positivo: B liga a sua sala e o IVR HTTP devolve-a; A continua a ligar a sua). O caminho gRPC não é testado de novo: a correcção está na criação, a montante das duas validações. Não verificado com FreeSWITCH nem chamada PSTN real.
+
+**Ficheiros.** `server/src/voice.rs`, `server/tests/security_voice_odoo.rs`, `docs/reference/openapi/bff.json`.
+
+### R141 — Qualquer membro encerrava a sala de voz de outro, e um admin de org escrevia no pool partilhado de DIDs
+
+**Sintoma.** (1) `POST /api/voice/rooms/{id}/close` dava `200` a qualquer membro da org dona: um colega cortava a chamada PSTN de todos os participantes da sala de voz de outra pessoa. (2) `POST /api/orgs/{org}/voice/dids` com `{"e164": …}` (modelo `shared` por omissão, sem `org_scoped`) gravava o número com `org_id = NULL` — o POOL PARTILHADO que `create_room` usa para o dial-in de TODAS as organizações. Qualquer conta que se registe é admin da sua org, portanto qualquer pessoa injectava números no dial-in dos outros. Provado a 2026-09-16 contra Postgres real: `um membro qualquer encerrou a sala de voz: {"ok":true}` e `um admin de org escreveu no pool partilhado: {…,"org_id":null,…}`.
+
+**Causa raiz.** O fecho só perguntava «é membro da org?» (a documentação do handler dizia-o por escrito), e o inventário de DIDs confundia «admin da org» com «dono da plataforma» — a mesma confusão que a S1 do R121 fechou no armazenamento.
+
+**Regra.** Encerrar uma sala de voz é do CRIADOR ou de um admin da org dona (`org::role_in_org`); outro membro recebe `403` `voice.room_close_forbidden`, e quem não é membro continua a receber `404`. Escrever no pool partilhado exige o administrador da PLATAFORMA (`storage::require_platform_admin`, agora `pub(crate)` em vez de copiado); o admin de org recebe `403` `voice.shared_did_requires_platform_admin` e cria DIDs só da sua org (`org_scoped: true` ou `model: dedicated`). A recusa corre antes de escrever. Sem consumidor no web (nenhum ecrã chama estas rotas), por isso a mudança do omisso não parte nada visível.
+
+**Não fechado.** Um admin de org continua a poder registar QUALQUER número +E.164 para a sua org — não há prova de posse do número (exigiria o fornecedor SIP). O efeito fica confinado à sua org, mas ocupa o número (índice único) e o `409` revela que um número já está no inventário.
+
+**Portão.** `server/tests/security_voice_odoo.rs::{voice_room_close_requires_creator_or_org_admin, shared_did_pool_requires_platform_admin}` (controlos positivos: a criadora e o admin encerram; o admin de org cria DIDs da sua org; o administrador da plataforma escreve no pool).
+
+**Ficheiros.** `server/src/{voice,storage}.rs`, `server/tests/security_voice_odoo.rs`, `docs/reference/openapi/bff.json`.
+
+### R142 — A chave de API do inquilino (`dlx_`) abria as rotas da integração Odoo
+
+**Sintoma.** `GET /api/v1/integration/odoo/users` e `POST /api/v1/integration/odoo/provision` aceitavam, além do token de integração `dlxo_`, a chave de API `dlx_` da organização. Uma chave emitida para ler salas e reuniões (`/api/v1/org`, `/rooms`, `/meetings`) listava o directório de membros e provisionava contas e papéis — incluindo com a integração Odoo DESACTIVADA, porque o ramo `dlx_` não olhava para `odoo_enabled`. Foi este o vector da S2 (R121). Provado a 2026-09-16 contra Postgres real: `dlx_ lista o directório Odoo: devia ser recusado e devolveu 200: [{"email":"admin@zeta-odoo.ao",…,"role":"admin"}]`.
+
+**Causa raiz.** O `OdooTokenAuth` tinha dois ramos, e o segundo justificava-se por um fluxo («a auto-provisão via `/admin/orgs` gera uma `dlx_` que o módulo usa directamente») que o módulo não segue: medido a 2026-09-16 em `kaeso-18/nokubiko/nk_delonix_meet` (e nas outras árvores do módulo no workspace), a `dlx_` só é usada em `/api/v1/admin/orgs` e `/api/v1/meetings`; nenhuma chama `/integration/odoo/*`. Duas credenciais com públicos diferentes (inquilino vs integração) numa mesma porta.
+
+**Decisão de compatibilidade — explícita.** A descrição OpenAPI das duas rotas DOCUMENTAVA a `dlx_` como aceite («a chave `dlx_` da organização também é aceite»), embora o `api-contract.md` e o `HARNESS.md` já dissessem `dlxo_`. A aceitação é retirada sem período de transição nem flag: um integrador que siga a descrição antiga passa a receber `401` e tem de emitir o token em `POST /api/orgs/{org}/integration/odoo/token`. Não se encontrou nenhum consumidor real; se aparecer, a correcção é do lado dele, não reabrir a porta.
+
+**Regra.** O extractor de uma superfície aceita a credencial DESSA superfície e mais nenhuma. `OdooTokenAuth` recusa (`401`) tudo o que não seja `dlxo_`, antes de consultar a base.
+
+**Portão.** `server/tests/security_voice_odoo.rs::odoo_integration_routes_refuse_tenant_api_key` (controlos positivos: a mesma `dlx_` abre `/api/v1/org`; o `dlxo_` abre as duas rotas). `web/e2e/isolamento.mjs` S2 passa a atacar com o `dlxo_` — com a `dlx_` o ataque já nem chegava ao `upsert_member`.
+
+**Ficheiros.** `server/src/odoo.rs`, `server/tests/{security_voice_odoo,api_v1}.rs` (o `odoo_provision_does_not_capture_accounts` passa a autenticar com `dlxo_`), `web/e2e/isolamento.mjs`, `docs/reference/openapi/v1.json`.
+
+### R143 — O directório do Odoo recebia membros ARQUIVADOS como se ainda estivessem na empresa
+
+**Sintoma.** `GET /api/v1/integration/odoo/users` devolvia todos os registos de `org_members` da organização, incluindo os arquivados (`archived_at` preenchido por `remove_employee`). O Odoo via quem saiu da empresa como membro activo, com o papel que tinha (`admin` incluído). Aberto na skill `delonix-meet-backend` desde o R121. Provado a 2026-09-16 contra Postgres real: `o membro arquivado continua no directório: [… {"email":"saiu@eta-odoo.ao", …}]`.
+
+**Causa raiz.** A regra S3 do R121 («colega e quem pede são membros ACTIVOS») foi aplicada às cópias que decidiam acesso; esta listagem tinha a sua própria query sobre `org_members` e ficou de fora — o padrão que a catraca `pertenca_org_fora_de_org_rs` mede.
+
+**Regra.** O directório entregue a uma integração é o de membros ACTIVOS. O filtro `archived_at IS NULL` entra na query existente (não soma uma ocorrência nova de `org_members` fora de `org.rs`). O destino é um helper em `org.rs` que devolva email/username/`odoo_uid`/papel (ADR-0004 §6 passo 3); não foi criado aqui porque `org.rs` estava a ser editado por outra sessão.
+
+**Portão.** `server/tests/security_voice_odoo.rs::odoo_list_users_excludes_archived_members` (controlo positivo: o mesmo membro aparece antes de ser arquivado; o activo e o admin continuam depois).
+
+**Ficheiros.** `server/src/odoo.rs`, `server/tests/security_voice_odoo.rs`, `docs/reference/openapi/v1.json`.
+
+### R156 — A câmara ligada não aparecia nos outros participantes depois de uma troca de camada
+
+**Sintoma.** Reportado pelo dono do produto: «a imagem da câmara ligada não aparece nas telas de outros participantes». Nos logs, `sfu layer switch failed` com `new track must have the same envelope as previous`, a seguir `sfu subscribe failed`, e a PC do subscritor em `failed`. Acontecia sempre que um subscritor voltava a uma camada simulcast que já tinha usado (`f → h → f`) — o que o `layerPolicy.ts` faz a cada redimensionamento de tile, aba em segundo plano ou perda medida.
+
+**Causa raiz.** Quatro defeitos empilhados; cada correcção destapou o seguinte.
+1. **Transceiver parado reaproveitado.** A troca removia a track e subscrevia de novo com o MESMO id (`<pub>-video-f`). O `add_track` do webrtc-rs 0.17 reaproveita um transceiver parado cujo id seja igual, e o `replace_track` interno recusa porque o `track_encodings` está vazio — falha sempre, não por corrida.
+2. **Numeração e relógio crus.** Com a troca a fazer-se no MESMO sender (`replace_track`), cada camada chega com a sua numeração e o seu relógio RTP. O receptor via-os recuar e descartava os fotogramas: vídeo congelado depois da troca (medido com browsers: 20 fps → 0–2).
+3. **Extensões de cabeçalho do publicador reencaminhadas.** Os ids de `a=extmap` só valem na negociação onde foram acordados, e o publicador e cada subscritor negoceiam em separado. Medido com clientes webrtc-rs: o `rid` do publicador (id 2, 1 byte) chegava ao subscritor no id que este usa para `transport-cc`; o interceptor TWCC falhava a leitura (`buffer too small`), a primeira leitura da track falhava e o `on_track` nunca disparava — subscrição negociada, RTP a sair do SFU, nenhum vídeo. Existia antes das trocas; só não havia um teste com simulcast real para o ver.
+4. **Pacote perdido na fronteira.** Com o `LayerRewriter` a fechar a camada antiga DEPOIS do `replace_track`, um pacote dela já aceite (e com a numeração já avançada) ia para a track antiga, já desligada, e perdia-se: buraco na numeração exactamente na troca (medido a ~1 kpps: 2 fronteiras em 12).
+
+**Regra.**
+- A troca de camada faz-se no MESMO sender (`replace_track`), sem renegociar. A remoção + nova subscrição é só o recurso quando o `replace_track` recusa. Um id de track de subscrição é ÚNICO (`NEXT_TRACK_SEQ`) — nunca derivado só de publicador/tipo/rid.
+- Cada subscrição de vídeo tem um `LayerRewriter`: numeração contígua e relógio sempre a avançar através das trocas; pacotes de outra camada são recusados. A porta à camada antiga fecha-se ANTES do `replace_track`.
+- O vídeo reencaminhado vai SEM as extensões de cabeçalho do publicador (`strip_hop_extensions`); o sender do subscritor põe as suas. Não «optimizar» tirando a cópia.
+- O PLI de um subscritor vai para a camada que o alimenta AGORA (`current_source`), não para a da subscrição original.
+
+**Portão.** `sfu_e2e::troca_de_camada_simulcast_sem_renegociar_e_com_rtp_continuo` — publicador webrtc-rs com simulcast real (três encodings, numeração e relógio próprios, camada marcada no payload), subscritor a pedir `f → h → f → q → f` pela mensagem `video-interest` do browser. Verificado a falhar contra a base `4ff5249` em três pontos distintos: sem nenhuma correcção, o subscritor nunca recebe vídeo (defeito 3); só com a correcção das extensões, a troca #1 renegoceia (transceivers 3 → 4) e, com essa asserção desligada, a troca #2 (`h → f`) sai com `sfu layer switch failed` (defeito 1); com `e0184f5` sem o `LayerRewriter`, `timestamp recuou: 3000093000 (f) → 1500096000 (h)` (defeito 2). O defeito 4 é uma corrida: o teste publica a 200 pacotes/s por camada para a tornar provável, mas não a apanha de forma determinista.
+
+**Observabilidade.** `delonix_sfu_layer_switch_failures_total` (novo) — cada unidade é um subscritor sem o vídeo de alguém; tem de estar a zero. Antes só existia num `warn`.
+
+**Não validado.** Com browsers reais depois das quatro correcções (a máquina estava a carga 40–70 e o ICE caía por CPU). Se o defeito 3 também tirava vídeo a um subscritor Chrome/Firefox (os ids que o Chrome propõe não são os do SFU, mas o browser pode tolerar a extensão errada) não foi medido. O áudio continua a ser reencaminhado com as extensões do publicador (leva o nível de voz): não se mediu se colide com os ids do subscritor.
+
+**Ficheiros.** `server/src/sfu.rs` (`switch_layer`, `subscribe_layer`, `LayerRewriter`, `strip_hop_extensions`, `current_source`), `server/src/metrics.rs`, `server/src/sfu_e2e.rs`.
+
+### R157 — A câmara aparecia e sumia: o browser perdia o consentimento ICE ~5 s depois de ligar
+
+**Sintoma.** Continuação do reporte da R156 («a imagem da câmara ligada não aparece nas telas de outros participantes»), com a R156 já corrigida. Com dois Chromium: um dos participantes (quase sempre o que entra em segundo lugar, às vezes o primeiro) liga o ICE, recebe umas centenas de pacotes de vídeo e **~5 s depois** passa a `disconnected`; o ICE restart do `callRecovery.ts` não recupera e acaba em `failed`. No servidor o agente ICE desse peer continua `Connected` e o log enche-se de `[controlled]: inbound isControlled && a.isControlling == false`. Parecia que o SFU deixava de enviar; não deixava — deixava de RESPONDER.
+
+**Causa raiz.** Os dois lados ficavam com o papel ICE CONTROLLED, e o webrtc-ice não resolve conflitos de papel.
+1. O libwebrtc actual (medido no Chrome 151.0.7922.34) passa a CONTROLLED sempre que aplica `setLocalDescription(answer)` estando CONTROLLING (`JsepTransportController::SetLocalDescription_n`: `if (ice_role_ == ICEROLE_CONTROLLING) SetIceRole_n(type == kOffer ? CONTROLLING : CONTROLLED)`). O browser oferta primeiro (fica controlling) e o SFU oferta logo a seguir para o subscrever a quem já está na sala (e outra vez a cada câmara/ecrã) — o browser responde e muda de papel.
+2. Entre dois libwebrtc isto resolve-se sozinho pelo conflito de papel da RFC 8445 §7.3.1.1 (tiebreaker ou erro 487). O webrtc-ice 0.17.1 — e a 0.17.2 — num agente controlled que recebe `ICE-CONTROLLED` **descarta o pedido sem responder** (`handle_inbound`) e ignora 487. As verificações de consentimento do browser (RFC 7675) ficavam sem resposta e o browser declarava a ligação morta. Metade das vezes o browser safava-se sozinho (o tiebreaker dele perdia contra um pedido do SFU e voltava a controlling); a outra metade respondia 487 ao SFU, que o ignorava — daí «às vezes funciona».
+3. O ICE restart do cliente não saía do impasse pela mesma razão: o browser oferta o restart já controlled, e o SFU continua controlled.
+
+**Medição que o prova.** Agente webrtc-ice instrumentado (papel, tiebreaker e USERNAME de cada pedido): o Chrome da Teresa manda `ICE-CONTROLLING` às 00:20:53.267 e `ICE-CONTROLLED` às 00:20:53.385 — ~70 ms depois de aplicar a resposta à oferta do SFU (00:20:53.345); a Ana muda às 00:20:54.494, depois da renegociação dela. No log do Chrome (`--enable-logging --v=1`) aparecem `Got role conflict; switching to controlling role` / `Sending STUN BINDING error response: reason=Role Conflict` para as portas do SFU. Não é o caminho de envio do SFU: nenhum lock nem tarefa parada (CPU ~2 %), e os clientes webrtc-rs do teste de carga (que não mudam de papel) nunca o viram.
+
+**Onde nasce.** Não num commit deste repositório. Reproduzido na `origin/main` (`4ff5249`, UI antiga, 3/3 corridas a falhar, 284 pedidos descartados numa corrida com `webrtc_ice=debug`), na `delonix-meet-backend/sfu-troca-camada` e na `frontend/ui-template-rebuild` (`9f09319`, UI nova, 3/3). A oferta do SFU depois da do browser existe desde `3537eba` (o primeiro commit); o gatilho é o comportamento do libwebrtc. Em que versão do Chrome essa regra entrou não foi determinado.
+
+**Regra.**
+- Um agente ICE nosso NUNCA descarta em silêncio um pedido autenticado com o mesmo papel que o dele: responde 487 com MESSAGE-INTEGRITY. É o que manda o browser inverter o papel (`Connection::OnConnectionRequestErrorResponse` → `NotifyRoleConflict`). O SFU não troca de papel.
+- O patch vive em `server/vendor/webrtc-ice` (0.17.1 intacto no commit `34be6f8`, a alteração no seguinte, só em `agent_internal.rs`). Actualizar o webrtc-rs obriga a reaplicar o patch ou a provar, com os testes abaixo, que o upstream já o faz.
+- ICE-lite no SFU também resolvia (o Chrome fica controlling contra um lite), mas é incompatível com o relay-only do Kubernetes (`FORCE_TURN_RELAY=1`): um agente lite só usa candidatos host. Por isso não foi essa a correcção.
+
+**Portão.**
+- `sfu_e2e::conflito_de_papel_ice_recebe_487_autenticado` — sonda STUN pelo par seleccionado, com as credenciais reais: papel certo → sucesso autenticado (controlo); `ICE-CONTROLLED` → 487 autenticado. Sem o patch falha em `Silencio`.
+- `sfu_e2e::media_e_consentimento_sobrevivem_as_renegociacoes_do_sfu` — dois peers, 24 s de media nos dois sentidos, renegociação do SFU logo após cada ligação e a meio; a cada 4 s exige PC `connected`, RTP a subir nos dois sentidos, sucesso ao consentimento e 487 ao conflito. Sem o patch falha na janela 1. Âmbito: o cliente webrtc-rs não muda de papel ao responder, a inversão do browser é encenada pela sonda.
+- Dois Chromium com câmara falsa (script da sessão em `.worktrees/delonix-meet/sfu-envio-run/cruzado.mjs`, fora do repo): 5/5 corridas de 60 s com `framesDecoded` a subir nos dois sentidos em todas as amostras, na UI antiga (base desta branch) e 5/5 na UI nova (`frontend/ui-template-rebuild` + estes commits), com TURN desligado e o Chrome restrito à interface por omissão; mais 2/2 na UI nova com TURN e todas as interfaces, e o script das trocas de camada (janela 480↔1440) sem quedas. Sem o patch: 3/3 a falhar em cada base.
+
+**Não validado.** Firefox e Safari (não usam o libwebrtc para o papel ICE da mesma forma; o 487 é RFC, deviam tratá-lo). Kubernetes com relay-only (`FORCE_TURN_RELAY=1`): o mecanismo é o mesmo mas não se correu. Chrome 153.0.8010.12 só uma corrida de 60 s na UI nova (estável, e o SFU respondeu 487 durante ela — o 153 também muda de papel).
+
+**Ficheiros.** `server/vendor/webrtc-ice/src/agent/agent_internal.rs` (`send_role_conflict`), `server/Cargo.toml` (`[patch.crates-io]`), `server/Cargo.lock`, `server/src/sfu_e2e.rs`.
+
+### R158 — Portas UDP presas num servidor parado: a PC que falhava por ICE nunca acabava de fechar
+
+**Sintoma.** Depois de uma carga com o host saturado (30 salas × 4, perda de 64%, muitos `sfu create_offer failed error=connection closed`), o servidor já sem ninguém ficou >30 min com 359 sockets UDP abertos, com `delonix_sfu_peer_connections` e `delonix_sfu_subscriptions` a zero. Em corridas limpas os sockets fechavam em 90 s. Cada PC presa segura ~18 portas: o intervalo por omissão (50000–50200, 201 portas) esgota-se à 12.ª.
+
+**Causa raiz.** O handler de `on_peer_connection_state_change` chamava `remove_peer` → `pc.close()` quando o estado passava a `Failed`. O webrtc-rs 0.17.1 (`do_peer_connection_state_change`) segura um `tokio::Mutex` à volta do handler enquanto ele corre; o `close()` chega ao passo 11 (`update_connection_state` → `Closed`) e pede o MESMO mutex. Fica pendurado para sempre — e o peer já tinha saído da sala, por isso nenhum gauge o via e a saída do WebSocket mais tarde já não o encontrava para fechar.
+
+Ao lado, uma armadilha da mesma biblioteca: `RTCRtpSender::read` espera por `Notify::notify_waiters()` sem consultar a bandeira de paragem. Um `stop()` que chegue quando a tarefa não está a ler perde-se, e num sender que nunca enviou o `read_rtcp` seguinte nunca regressa. A tarefa de drenagem de RTCP segurava um `Arc<Publication>` (e com ele a PC do publicador) até esse `read_rtcp` falhar. Não se reproduziu no SFU (200 ciclos de subscrever/dessubscrever sem ficar nada vivo), mas a armadilha está fixada num teste.
+
+**Medição que o prova.** Recenseamento novo em `/metrics` (`delonix_sfu_pc_alive` por `Weak`, `delonix_sfu_pc_unclosed` = `close()` que nunca regressou, peers/publicações/tarefas contados por `Drop`). Servidor real, 8 clientes do gerador de carga congelados com `SIGSTOP` (WebSocket aberto, ICE morto → `Failed`), depois mortos: antes da correcção `peers_in_rooms=0`, `peer_connections=0`, mas `pc_alive=8 pc_unclosed=8`, 8 peers e 8 tarefas de negociação vivos e **144 sockets UDP**, iguais 120 s depois; com a correcção tudo a zero e 0 sockets 20 s depois do `Failed`.
+
+**Regra.**
+- NUNCA fechar (nem remover, que fecha) uma `RTCPeerConnection` de dentro de um callback dela. A remoção por `Failed` corre numa tarefa à parte, e só remove o peer se ainda for o mesmo `Arc` (`remove_peer_exact`).
+- Uma tarefa que vive de um sender ou receiver do webrtc-rs não pode depender só de a leitura falhar para terminar: segura `Weak`s e confirma periodicamente que a subscrição existe (`subscription_alive`, pergunta ao `subscribed` do peer, que sobrevive à troca de camada por `replace_track`).
+- Um `close()` acima de 10 s é um erro no log (`close_pc`), não silêncio.
+- Uma fuga de PC vê-se em `delonix_sfu_pc_unclosed - delonix_sfu_peers_in_rooms > 0` sustentado, não nos gauges de negócio.
+
+**Portão.**
+- `sfu_e2e::pc_que_falha_por_ice_fecha_e_nao_fica_viva` — o cliente desaparece sem avisar, ICE com timeouts curtos; exige que a PC do SFU feche e deixe de existir. Sem a correcção falha com `pc_alive: 2, pc_unclosed: 2, peers_in_rooms: 1`.
+- `sfu_e2e::churn_de_subscricoes_nao_deixa_nada_vivo` — 200 ciclos de interesse de vídeo; depois de todos saírem o censo tem de voltar a zero.
+- `sfu_e2e::webrtc_rs_read_rtcp_depois_de_stop_nao_regressa` — fixa a armadilha da biblioteca; se passar a falhar, o upstream corrigiu-a.
+
+**Não validado.** A liveness da tarefa de RTCP depois de uma troca de camada só se exercita quando passam 5 s sem RTCP, o que não acontece nos testes (os interceptors mandam Receiver Reports a cada segundo); está coberta por leitura de código, não por um teste que a force. Kubernetes com relay-only não se correu.
+
+**Ficheiros.** `server/src/sfu.rs` (`Census`, `close_pc`, `remove_peer_exact`, handler de estado, `subscribe_layer`, `subscription_alive`), `server/src/main.rs` (`/metrics`), `server/src/sfu_e2e.rs`.
+
+### R160 — Segredos de integração em claro na base (S5): webhooks, SSO e WebDAV
+
+**Sintoma.** Nenhum visível. Quem lesse um dump, um backup ou uma réplica da base levava, em texto claro, o segredo HMAC de cada webhook (`org_webhooks.secret`), o `client_secret` OIDC de cada organização (`org_sso_configs.client_secret`) e a password do Nextcloud/WebDAV da plataforma (`platform_storage.webdav_password`) — credenciais de terceiros de todos os inquilinos. Auditoria 2026-09-16, S5 (`storage.rs:106`, `org.rs:1144`, `webhooks.rs:268`). A migração 0019 dizia «encriptado em repouso (app-level)» e a 0030 «cifrado se STORAGE_ENCRYPT=1»; nenhuma das duas era verdade.
+
+**Causa raiz.** Os três handlers faziam `bind` do valor recebido directamente na coluna. Não podem ser hash (o servidor volta a usá-los), e a `core::secret_box` — que já cifrava a chave RTMP dos destinos de emissão — não era usada aqui.
+
+**Regra.** Novo `server/src/secrets_at_rest.rs`, único caminho para estas colunas: `seal` na escrita (aad `<tabela>.<coluna>:<id da linha>`; o id do webhook nasce antes do `INSERT`), `open` onde o segredo se usa — assinatura em `webhooks::attempt` (disparo e reenvio), `auth::sso_login`/`sso_callback`, PROPFIND de `storage::test_storage`. Nenhuma resposta devolve o segredo: o `GET /api/orgs/{org_id}/sso` ganha `has_client_secret` (o storage já tinha `webdav_password_set`; o webhook já não serializava `secret`).
+
+**Decisões de compatibilidade — explícitas.**
+- Sem `DATA_ENCRYPTION_KEYS` (produção sem chaves): escrever um segredo NÃO vazio é `422 secrets.encryption_unconfigured`, nada é gravado. Criar um webhook SEM segredo (Slack/Teams/Mattermost, ou `generic` sem assinatura), guardar o SSO sem `client_secret` e o storage sem password continuam a funcionar sem chaves.
+- O herdado em claro lê-se sempre, com ou sem chaves. Um valor `enc:v1:` sem chaves, ou que não abre (chave retirada, valor copiado de outra linha), é erro interno com log `error` — `500` no teste WebDAV e no OIDC; no webhook a entrega fica `failed` e **não** se envia sem assinatura.
+- Migração: `secrets_at_rest::reseal_legacy` corre no arranque e de hora a hora (`lib.rs`). Com chaves, cifra os herdados em lotes de 200 com `UPDATE … WHERE coluna = <valor lido>` (não pisa uma escrita concorrente), idempotente; sem chaves, só avisa quantos continuam em claro.
+- Um texto herdado que por acaso comece por `enc:v1:` seria lido como cifrado e falharia. Não se tratou.
+
+**Portão.** `server/tests/secrets_at_rest.rs` (Postgres real + receptor HTTP em 127.0.0.1): coluna `enc:v1:` sem o texto claro nas três; HMAC recebido válido com o segredo ORIGINAL; `Authorization: Basic` do PROPFIND com a password original; nenhuma resposta traz o segredo nem o cifrado; herdado inserido por SQL serve antes e depois da tarefa, que cifra (1,1,1) e na segunda passagem 0; sem chaves 422 nas três escritas com segredo e 200 sem ele, herdado serve, cifrado sem chave falha fechado; cifrado copiado para outro webhook dá `failed` sem envio, e o `client_secret` da org A não abre com o contexto da org B. Prova de que morde: com `seal` a devolver o texto claro (o comportamento anterior), 4 dos 6 testes falham em «não está cifrado».
+
+**Não validado.** O fluxo OIDC completo contra um IdP (o teste prova o aad que `auth.rs` usa, não um `sso_login` real — a discovery exige `https://`). **Fica aberto:** `apikeys.rs` (provisão de org pela integração, `sso.client_secret`) continua a gravar o `client_secret` em claro — não era ficheiro desta sessão; deve chamar `org::seal_sso_client_secret`. Até lá a leitura funciona e a tarefa horária cifra-o.
+
+**Ficheiros.** `server/src/{secrets_at_rest,webhooks,org,auth,storage,lib}.rs`, `server/tests/secrets_at_rest.rs`, `docs/reference/openapi/{bff,v1}.json`.
+
+### R170 — Uma chave `dlx_` era um cheque em branco: sem escopos, sem expiração, e o limite era do IP (S6)
+
+**Sintoma.** Uma chave emitida para o sync de calendário (ler reuniões) também criava salas, punha bots em salas com a sala de espera contornada, listava gravações e cancelava reuniões — e servia para sempre. O `HARNESS.md` chegou a afirmar «hash + scopes». O limite da v1 era por IP: duas integrações da mesma organização atrás do mesmo NAT partilhavam 120 pedidos/min, e a mais faladora deixava a outra a receber `429` com um `Retry-After: 60` constante.
+
+**Causa raiz.** `org_api_keys` não tinha onde guardar escopos nem expiração, e o `ApiKeyAuth` só devolvia `org_id`/`owner_id`. O `v1_rate_limit` corria antes da autenticação e só conhecia o IP.
+
+**Regra.**
+- **Catálogo fixo** em `delonix_meet_domain::identity::api_key::Scope`: `org:read`, `rooms:read`, `rooms:write`, `bots:join`, `meetings:read`, `meetings:write`, `recordings:read`. Sem `*`. Uma chave guarda a lista EXPLÍCITA: um escopo novo no catálogo não chega às chaves existentes.
+- **Um só ponto de decisão:** `key.require(Scope::…)?` na primeira linha de cada handler v1 → `403 api_key.scope_missing` com o escopo em `details`. O teste `cada_rota_v1_exige_o_seu_escopo` percorre as 11 rotas nas duas direcções (sem o escopo → 403; só com ele → 2xx): um handler que esqueça o `require` falha ali.
+- **Expiração:** `expires_at` opcional, futuro e ≤ 2 anos. Expirada → `401 api_key.expired` (distinto de desconhecida/revogada, que continua `401 auth.unauthenticated`).
+- **Compatibilidade — decisão explícita:** (1) as chaves anteriores à migração 0046 recebem o catálogo inteiro (o `DEFAULT` só existe durante o `ALTER` e cai logo a seguir); (2) uma chave criada **sem `scopes`**, pela BFF ou pelo provisionamento `POST /api/v1/admin/orgs`, recebe também o catálogo inteiro. O cliente web e o módulo Odoo não enviam `scopes`; tornar o omisso mais restritivo dentro da v1 partia integrações que se criam hoje sem mudar nada do lado delas, e a v1 só quebra com v2. Quem quer menos privilégio pede a lista; `[]` é recusado (`api_key.scopes_empty`).
+- **Limite por chave:** o middleware procura a chave UMA vez (segue nas extensões para o extractor). Balde = a chave, se existe e não expirou; o IP em todos os outros casos — um hash do que vier no cabeçalho dava um balde novo por chave inventada e anulava o limite. `429` com `Retry-After` = o que falta da janela, arredondado para cima e nunca 0. A `/api/ice` passa a `ip_rate_limit` (só IP): autentica por sessão, e um balde escolhido por uma `dlx_` que a rota nem lê deixava contorná-lo.
+- **`last_used_at`:** no máximo uma escrita por minuto por chave, com a guarda repetida no SQL para dois nós não escreverem os dois.
+
+**Portão.** `server/tests/api_key_scopes.rs` (Postgres real): `cada_rota_v1_exige_o_seu_escopo`, `sem_meetings_write_o_post_e_403_e_com_ele_200`, `criacao_valida_escopos_e_expiracao_e_a_lista_mostra_os`, `chave_expirada_e_401_api_key_expired`, `last_used_at_no_maximo_uma_escrita_por_minuto`, `chave_anterior_a_migracao_continua_a_servir` (desfaz as colunas, grava a chave com o INSERT antigo, aplica o SQL da 0046 e percorre as 11 rotas), `chave_provisionada_serve_os_fluxos_do_odoo`, `limite_por_chave_isola_duas_chaves_do_mesmo_ip`. Unitários no domínio e em `apikeys::tests::migracao_0046_da_as_chaves_antigas_o_catalogo_inteiro`.
+
+**Ficheiros.** `server/crates/delonix-meet-domain/src/identity/api_key.rs`, `server/migrations/0046_api_key_scopes.sql`, `server/src/{apikeys,meetings_v1,rate_limit,lib}.rs`, `server/tests/{api_key_scopes,api_v1,organization}.rs`, `docs/reference/openapi/{bff,v1}.json`.
+
+### R171 — Revogar uma chave que não existia respondia `{"ok": true}`
+
+**Sintoma.** `DELETE /api/orgs/{org}/api-keys/{id}` devolvia `200 {"ok": true}` para uma chave inexistente ou de OUTRA organização — o teste de isolamento chegava a afirmar «responde ok mas não apaga nada». Quem revogava uma chave comprometida com o id errado era informado de que tinha corrido bem.
+
+**Regra.** `204` sem corpo quando apaga; `404 api_key.not_found` quando não há linha com esse id NESTA organização (não se confirma que existe noutra). O `web/src/api.ts` trata `204` desde `b36661f`. As asserções de `tests/organization.rs` mudaram com intenção (`200→204`, `200→404`).
+
+**Ficheiros.** `server/src/apikeys.rs` (`revoke`), `server/tests/{api_key_scopes,api_v1,organization}.rs`.
+
+### R180 — Só os webhooks tinham guarda anti-SSRF; o resto saía para onde o cliente mandasse (S4)
+
+**Sintoma.** A `validate_public_url` só era chamada pelos webhooks. Um admin de organização podia gravar `odoo_url = http://127.0.0.1:8069` (ou `169.254.169.254`) e o login seguinte de qualquer membro mandava a PASSWORD para lá; o emissor OIDC era descoberto com até 5 redirects e sem timeout; o `PROPFIND` do WebDAV e o Ollama também saíam sem guarda. Nos webhooks a validação e a ligação resolviam DNS em separado — um nome podia responder público ao teste e interno à ligação (rebinding). E `::ffff:127.0.0.1`, NAT64 e 6to4 não estavam na lista.
+
+**Regra.** Nenhum `reqwest::Client` fora do `net_guard` (catraca `clientes_reqwest=0`). URL de cliente → `state.outbound.tenant()` + `check_tenant_url` (ao ligar) / `check_tenant_config_url` (ao gravar: 400 com razão); URL do operador → `operator()` (rede privada sim, link-local/metadados não); OIDC → `outbound.oidc()`, que valida CADA pedido do fluxo (o `jwks_uri`
+**Ficheiros.** `server/crates/delonix-meet-core/src/egress.rs`, `server/src/net_guard.rs`, `server/src/{auth,apikeys,odoo,odoo_sso,org,storage,webhooks,ai,lib,config}.rs`, `server/tests/egress_guard.rs` (a provisão recusa antes de escrever; o login Odoo NÃO abre ligação a `127.0.0.1` sem allowlist e abre com ela; recusas ao gravar com controlo positivo).
+
+### R181 — Respostas `{"ok": true}` que não diziam nada, e recusas de permissão em 401
+
+**Sintoma.** 18 rotas respondiam `200 {"ok": true}` — incluindo `DELETE` de coisas que não existiam (arquivar um id inventado, apagar um webhook de OUTRA organização, revogar um link que não havia), que diziam «ok» sem ter feito nada. Nas mesmas zonas, a falta de permissão ainda saía como `401` (gravações: partilhas, links, download; reuniões: arrancar, acta, notas, lista de convidados), que o web lê como sessão perdida e tenta renovar (a classe do R153). E o download de uma gravação FALHADA devolvia `400` com o motivo da falha ANTES de verificar o acesso: uma conta de outra organização lia o `failure_reason`. Partilhar com um id de utilizador inexistente dava `500` (chave estrangeira).
+
+**Regra.** `respostas_ok_true=0` na catraca. Apagar → `204`, e `404` quando não havia linha NESTA organização/recurso. `PUT` de configuração (Odoo, SSO, armazenamento) devolve o recurso como o `GET`; `PUT` do RSVP devolve o convidado; acta → `204`; telemetria (`join-timings`, `quality-samples`) → `204`; logout e desactivar MFA → `204`; acknowledge de chamadas perdidas → `{"updated": n}`; partilhar → `201` + `Location` (ou `200` se já estava). Acesso a gravação: `seen_item` primeiro (404 a quem não chega, antes de qualquer outra resposta), depois `403 recording.not_owner` / `recording.download_forbidden`; partilhar e links são do dono ACTIVO (`AccessFacts::can_share`). Reuniões: `404` a quem não é dono nem convidado, `403 meeting.not_host` ao convidado. Quadros: `404` fora da organização, `403 whiteboard.not_manager` dentro. Mantêm `401` só as credenciais que não são a sessão (password do link público, token de sala do directo).
+
+**Ficheiros.** `server/src/{actions,auth,meetings,mfa,odoo,org,presence,recordings,rooms,storage,webhooks,whiteboards}.rs`, `server/crates/delonix-meet-domain/src/content/recording.rs` (`can_share`), `server/tests/{content,identity,organization,recordings_metadata,scheduling,security_identity}.rs` (asserções mudadas com intenção, cada uma com o controlo), `web/src/api.ts`, `web/e2e/mfa.mjs`, `scripts/arquitectura-baseline.txt`.
+
+### R182 — O chat da sala nunca era gravado, a mensagem «privada» ia para a sala toda, e o protocolo da UI nova era descartado em silêncio
+
+**Sintoma.** Três coisas, medidas no levantamento UI↔API de 2026-09-17:
+1. `GET /api/rooms/{room_code}/messages` devolvia sempre `[]`. A tabela `room_chat_messages` existia desde a 0018 e nenhum código a escrevia; e a leitura, com `ORDER BY created_at ASC LIMIT 200`, devolvia as primeiras 200 mensagens, não as últimas.
+2. A UI nova enviava `chat{to}` para uma conversa privada. `ClientMsg::Chat` só tinha `text`, o `to` era ignorado pelo serde, e a mensagem era difundida à sala toda. É exposição de dados.
+3. Cerca de 20 mensagens que a UI nova envia pelo `/ws` existiam só no `server/` da branch da UI e eram descartadas pelo `signaling.rs` desta linha sem erro: fios e reacções, `set-role`, `spotlight`, `admit-all`, sala de espera em runtime, `qa-hide`/`qa-spotlight`, `breakouts-broadcast`, e as páginas, cursores e permissões do quadro. A moderação e o quadro pareciam funcionar e não faziam nada.
+
+Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; commits `c153b7a`, `cd8458a`, `0c87e62`), mas essa linha tem o seu próprio servidor.
+
+**Regra 1 — a escrita do chat não entra no caminho quente.** O handler corre com o lock da sala (R16). A mensagem vai para uma fila LIMITADA (`room_chat::ChatStore`, `try_send`), consumida por uma tarefa própria e por ordem. Fila cheia descarta e conta (`delonix_chat_persist_dropped_total`); a sala recebe a mensagem na mesma. A retenção prometida na 0018 é cumprida por `room_chat::retention_sweep`, num cron horário (G9).
+
+**Regra 2 — uma privada só existe para o par.** Vai só ao destinatário (`send_to`) e o `chat-sent` volta a quem envia. Responder a uma privada continua privado. Um terceiro não lhe responde nem reage, e recebe o mesmo erro de uma mensagem inexistente. O histórico filtra na CONSULTA (`to_user_id IS NULL OR user_id = me OR to_user_id = me`): nem o anfitrião lê privadas alheias.
+
+**Regra 3 — o que se esconde a um público não lhe é enviado.** Uma pergunta de Q&A escondida não sai para quem não é anfitrião. As duas vistas vão por difusões SEM sobreposição (`broadcast_hosts` + `broadcast_non_hosts`, com o evento Redis `BroadcastNonHosts`), para a ordem de chegada não decidir qual das vistas o anfitrião fica a ver.
+
+**Regra 4 — desligar a sala de espera não abre a porta a quem não tem entrada directa.** O token de sala separa `lobby` (sem entrada directa: espera sempre) de `wr` (a configuração da sala); só o segundo é substituível em runtime. Origem e cargo decidem-se no servidor e viajam assinados no token.
+
+**Adaptações nesta linha.** Router e crons em `lib.rs`. As migrações 0039 e 0048 da UI passam a 0050 e 0051 (a 0049 é a dos convites pendentes, #88). O `PeerRole` do R124 funde-se com o da UI (`role` + `can_admit` EFECTIVO: um co-anfitrião por papel continua a admitir).
+
+**Portão.** `signaling` + `room_chat` (91 testes do hub, com a metade negativa de cada controlo e os 6 da conversa directa); `tests/room_chat.rs` contra Postgres real (a privada não volta a um terceiro; fios e reacções no histórico).
+
+**Ficheiros.** `server/src/{signaling,room_tools,room_chat,rooms,auth,org,users,pubsub,metrics,lib}.rs`, `server/migrations/0050_room_chat_threads_reactions.sql`, `server/migrations/0051_room_chat_direct.sql`, `server/tests/room_chat.rs`.
+
+### R189 — Um merge com dois blocos de conflito foi empurrado com o segundo por resolver
+
+**Sintoma.** Ao propagar a `main` (#89) pela pilha, o `HARNESS.md` da `backend/bw1-protocolo-sala` tinha dois blocos em conflito. O script de resolução tratou o primeiro e o commit seguiu com `<<<<<<< HEAD` … `>>>>>>>` na tabela de infraestrutura. Nenhum portão reparou: o `check-docs-drift.sh` lê as linhas que procura e não o ficheiro inteiro, e num `.md` nada compila. No mesmo passo, a bateria final correu sobre uma árvore com um merge PARADO em conflito, porque o script não parava quando o `git merge` falhava.
+
+**Regra.** Uma linha seguida que comece por `<<<<<<< ` ou `>>>>>>> ` é um conflito por resolver, e o `check-repo-hygiene.sh` falha com o ficheiro e a linha (controlo negativo feito: um bloco acrescentado ao `HARNESS.md` faz o portão falhar). Resolver conflitos por script: iterar até não restar NENHUM marcador, nunca só o primeiro índice. Uma bateria só conta sobre `git status` sem `UU`.
+
+**Ficheiros.** `scripts/check-repo-hygiene.sh`, `HARNESS.md`.
+
+### R230 — O directo multidestino só funcionava no primeiro destino
+
+**Sintoma.** Com 2 ou mais destinos, o segundo em diante era recusado pelo servidor RTMP (`unsupported video codec: 2`, medido com mediamtx a 2160p/16 Mbit pela sessão da frente E). O `montar_argumentos` punha `-c:v copy -c:a aac -b:a 128k -ar 44100` UMA vez, antes da primeira saída — e no ffmpeg as opções de saída valem só para a saída seguinte. As restantes saíam com os codecs por omissão do FLV: vídeo FLV1 re-codificado em software (o custo que o ADR-0003 existe para evitar) e áudio MP3. O teste existente só contava as saídas `flv`, não o que cada uma levava.
+
+**Prova.** ffmpeg real, a mesma entrada Matroska H.264+Opus por cano, dois ficheiros FLV: com os argumentos antigos, `ffprobe` dá `h264 aac` na 1.ª saída e `mp3 flv1` na 2.ª; com os novos, `h264 aac` nas duas.
+
+**Regra.** As opções de codec vêm de `opcoes_de_saida()` e repetem-se antes de CADA `-f flv`. Portão: `broadcast::testes::cada_saida_leva_as_suas_opcoes_de_codec` (1, 2 e 3 destinos; cada saída tem de ter o seu `-c:v copy`, `-c:a aac` e `-ar` desde a saída anterior). Continua por resolver, e é da frente E (ADR-0013): um destino pendurado congela os outros, porque é um só processo.
+
+**Ficheiros.** `server/src/broadcast.rs`.
+
+### R190 — «É admin» era uma string comparada em 52 sítios; não havia dono, papéis nem capacidades (ADR-0008)
+
+**Sintoma.** `org_members.role` só tinha `admin | member`. Quem criava a org não era distinguível de outro admin, um admin podia arquivar o criador, e nenhum papel intermédio (gestor de emissão, formador) existia sem dar tudo. Três módulos decidiam por texto (`voice.rs:444`, `recordings.rs:269`, `odoo_sso.rs:415`).
+
+**Regra.**
+- **Catálogo fechado** `delonix_meet_domain::identity::authorization::Capability` (19, `CATALOG_VERSION = 1`), policy pura `can()`, valores `allow | deny | inherit | requires_approval`. Capacidade com `enforced: false` só aceita o valor por omissão (`422 authz.capability_not_enforced`); `org.administer` nunca num papel personalizado.
+- **Ponto único** `org::require_capability` (uma query sobre `org_role_effective_capabilities`, calculada pela policy na transacção de cada escrita de papéis). `require_admin` = `org.administer`. Estranho → `404`; sem capacidade → `403 authz.missing_capability` (antes `permission_denied`).
+- **Papéis de sistema imutáveis** com a semântica de hoje: `owner`/`admin` tudo, `member` só `sessions.create` e `recordings.record_4k`, `external_guest` nada.
+- **Pontos migrados:** membros (`admin.manage_accounts`), auditoria (`admin.view_audit`), destinos de emissão (`broadcast.manage_rtmp_keys`), directo com destinos guardados (`broadcast.public_destinations` + limite do papel), definições (`admin.change_retention`), salas/reuniões BFF e v1 (`sessions.create`), partilhas e link público (`recordings.publish` dentro de `owned_item`: dono activo OU a capacidade; vê sem ela → `403 authz.missing_capability`, não vê → `404`; alargamento intencional a `owner`/`admin`), facto `org_admin` da biblioteca (`recordings.view_others`).
+- **Catraca nova** `verificacoes_papel_por_string_fora_de_org_rs` (medida sobre a base com o #90: 2 — `voice.rs:444` e `whiteboards.rs:360`).
+
+**Portão.** `server/tests/rbac.rs` (`migrated_points_keep_their_status_table`, `no_escalation`, `system_roles_and_unenforced_fields_are_locked`, `materialized_decisions_equal_policy`, `department_scoped_role`, `sessions_create_is_enforced`, `recordings_publish_and_view_others`, `new_routes_are_isolated`, `seeded_system_defaults_match_the_domain`) e unitários de tabela em `authorization/tests.rs`.
+
+**Ficheiros.** `server/crates/delonix-meet-domain/src/identity/authorization{.rs,/tests.rs}`, `server/migrations/0055_org_roles.sql`, `server/src/{org,roles,audit,stream_destinations,broadcast,recordings,rooms,meetings,meetings_v1,apikeys}.rs`, `scripts/check-arquitectura-catraca.sh`.
+
+### R191 — Uma escrita herdada de `role = 'member'` esmagava em silêncio um papel personalizado
+
+**Sintoma.** Com `role_id` como fonte, os escritores herdados (`add_employee … DO UPDATE SET role`, `update_employee`, o «nunca despromove» da sincronização Odoo) voltavam a escrever o texto e deixavam `role_id` e `role` a dizer coisas diferentes.
+
+**Regra.** `role` é derivado de `role_id` por gatilho num só sentido (0055). `INSERT` só com `role` recebe o papel de sistema; `UPDATE` que mude `role` sem mudar `role_id` levanta excepção. Os escritores que alteram papel chamam `org::set_system_role`. O último dono activo (com humanos activos) é protegido no serviço (`409 role.last_owner`) e por um gatilho de restrição adiado. O utilizador de serviço nunca é dono nem ocupa lugar.
+
+**Portão.** `tests/rbac.rs::legacy_role_update_cannot_overwrite_role_id`, `last_owner_and_owner_assignment`, `no_legacy_role_updates_in_source` (varre `src/`).
+
+### R192 — «Requer aprovação» tem de criar um pedido e nunca executar; a aprovação serve uma vez e para um alvo
+
+**Regra.** `approval_requests` ligados a `(capacidade, acção, SHA-256 do alvo canónico)`; consumo atómico (`UPDATE … WHERE status = 'approved' AND expires_at > now() RETURNING`); mudar papel, departamento ou estado de quem pediu invalida o pendente e o aprovado; sem auto-aprovação; sweeper de expiração; auditoria de cada passo.
+
+**Portão.** `tests/rbac.rs::requires_approval_flow`, `approval_is_consumed_once_under_concurrency`.
+
+### R193 — O convite é a credencial: token em hash, uso único, sem capturar contas de outra org
+
+**Regra.** Só o SHA-256 do token é guardado; aceitar faz `SELECT … FOR UPDATE` e consome na mesma transacção; o correio da sessão tem de coincidir (defesa em profundidade — o registo não verifica o correio); rate-limit por IP; conta activa noutra org só entra como `external_guest`; reenviar roda o token; `removed`/`odoo_exit` voltam por convite, nunca por «reactivar». Sem SMTP: `delivery_channel: manual`.
+
+**Portão.** `tests/directory.rs::invitation_acceptance_rules`, e o bloco ADR-0008 de `web/e2e/isolamento.mjs`.
+
+### R194 — Duas activações concorrentes passavam o tecto de lugares
+
+**Regra.** O tecto (`organizations.max_seats`, só o operador o fixa) verifica-se com `SELECT … FROM organizations … FOR UPDATE` dentro da transacção que activa (convite aceite, reactivação, `add_employee` novo). O uso mede-se na hora (sem contador): activos humanos que não são `external_guest`.
+
+**Portão.** `tests/directory.rs::seats` (duas reactivações em simultâneo com um lugar livre → uma entra, a outra `seats.limit_reached`).

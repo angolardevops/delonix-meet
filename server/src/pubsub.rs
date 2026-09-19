@@ -53,6 +53,16 @@ pub enum RedisRoomEvent {
         node_id: Uuid,
         msg: crate::signaling::ServerMsg,
     },
+    /// Sala de espera: anfitriões E co-anfitriões de admissões.
+    BroadcastAdmitters {
+        node_id: Uuid,
+        msg: crate::signaling::ServerMsg,
+    },
+    /// Toda a gente que NÃO é anfitrião.
+    BroadcastNonHosts {
+        node_id: Uuid,
+        msg: crate::signaling::ServerMsg,
+    },
 }
 
 // ---------- Bus ----------

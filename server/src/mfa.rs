@@ -13,7 +13,6 @@
 
 use axum::{extract::State, Json};
 use hmac::{Hmac, Mac};
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use std::sync::Arc;
@@ -107,42 +106,57 @@ pub fn totp(segredo: &[u8], instante: u64, passo: u64, digitos: u32) -> String {
 /// diferente, e isso chega para distinguir «o primeiro dígito está certo» —
 /// numa rede rápida, seis dígitos caem em muito menos tentativas do que o
 /// milhão que deviam custar.
-pub fn verifica(segredo: &[u8], codigo: &str, agora: u64) -> bool {
+/// Como o `verifica`, mas diz **qual** o passo temporal a que o código
+/// pertence.
+///
+/// A diferença não é cosmética, e custou o R117. O anti-replay guarda o último
+/// passo usado e exige que o seguinte AVANCE. Enquanto o passo era lido do
+/// relógio (`agora / STEP_SECS`) em vez de vir do código, um código do passo N
+/// apresentado já dentro do passo N+1 — coisa que o `SKEW_STEPS` aceita de
+/// propósito, para tolerar relógios dessincronizados — registava `last_step =
+/// N+1` e passava a barreira `N < N+1`. Ou seja: o código continuava a servir
+/// **depois** da sua própria janela, que é exactamente o que o anti-replay
+/// existia para impedir.
+///
+/// Continua sem short-circuit: percorrem-se SEMPRE todos os passos e todos os
+/// bytes. O passo encontrado acumula-se com uma máscara em vez de um `if`, para
+/// o tempo de resposta não revelar qual deles acertou.
+pub fn passo_do_codigo(segredo: &[u8], codigo: &str, agora: u64) -> Option<i64> {
     let codigo = codigo.trim();
     if codigo.len() != DIGITS as usize || !codigo.bytes().all(|b| b.is_ascii_digit()) {
-        return false;
+        return None;
     }
     let passo_actual = (agora / STEP_SECS) as i64;
     let mut valido = false;
+    // `+1` para distinguir «passo 0» de «nenhum»: o passo 0 é um instante real
+    // (1970) e um `0` como sentinela confundiria os dois.
+    let mut encontrado_mais_um: i64 = 0;
     for d in -SKEW_STEPS..=SKEW_STEPS {
-        let passo = (passo_actual + d).max(0) as u64;
+        let passo = (passo_actual + d).max(0);
         // Via `totp` e não `hotp` de propósito: é a mesma função que os
         // vectores do RFC 6238 verificam nos testes, por isso o que se compara
         // aqui é EXACTAMENTE o que ali ficou provado.
-        let esperado = totp(segredo, passo * STEP_SECS, STEP_SECS, DIGITS);
-        // Sem short-circuit: percorrem-se SEMPRE todos os passos e todos os
-        // bytes, para o tempo de resposta não revelar quantos acertaram.
-        valido |= igual_em_tempo_constante(esperado.as_bytes(), codigo.as_bytes());
+        let esperado = totp(segredo, passo as u64 * STEP_SECS, STEP_SECS, DIGITS);
+        let bate = igual_em_tempo_constante(esperado.as_bytes(), codigo.as_bytes());
+        valido |= bate;
+        // Máscara: `0` quando não bate, `-1` (todos os bits) quando bate.
+        let mascara = -(bate as i64);
+        encontrado_mais_um |= mascara & (passo + 1);
     }
-    valido
+    if valido {
+        Some(encontrado_mais_um - 1)
+    } else {
+        None
+    }
 }
 
 pub fn igual_em_tempo_constante(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diferenca = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diferenca |= x ^ y;
-    }
-    diferenca == 0
+    delonix_meet_core::crypto::ct_eq(a, b)
 }
 
 /// Segredo novo de 160 bits — o tamanho que o RFC 4226 §4 recomenda para SHA-1.
 pub fn segredo_novo() -> Vec<u8> {
-    let mut s = vec![0u8; 20];
-    rand::thread_rng().fill(&mut s[..]);
-    s
+    delonix_meet_core::crypto::random_bytes::<20>().to_vec()
 }
 
 /// URI `otpauth://` que os autenticadores lêem de um código QR.
@@ -179,8 +193,8 @@ fn percent(s: &str) -> String {
 pub fn codigos_de_recuperacao() -> Vec<String> {
     (0..10)
         .map(|_| {
-            let mut b = [0u8; 7]; // 7 bytes ⇒ 12 chars base32; corta-se a 10
-            rand::thread_rng().fill(&mut b[..]);
+            // 7 bytes ⇒ 12 chars base32; corta-se a 10
+            let b = delonix_meet_core::crypto::random_bytes::<7>();
             let s = base32_encode(&b);
             format!("{}-{}", &s[..5], &s[5..10])
         })
@@ -198,7 +212,15 @@ fn agora() -> u64 {
         .unwrap_or(0)
 }
 
-#[derive(Serialize)]
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(estado, inscrever, activar, desactivar),
+    components(schemas(EstadoMfa, Inscricao, CodigoReq, CodigosRecuperacao))
+)]
+pub struct ApiDoc;
+
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct EstadoMfa {
     pub enabled: bool,
     /// Inscrito mas por confirmar — o autenticador já tem o segredo, falta a prova.
@@ -206,6 +228,15 @@ pub struct EstadoMfa {
     pub backup_codes_left: i64,
 }
 
+/// Estado do MFA de quem está autenticado.
+#[utoipa::path(
+    get, path = "/api/users/me/mfa", tag = "mfa",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = EstadoMfa),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn estado(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -228,7 +259,7 @@ pub async fn estado(
     }))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct Inscricao {
     /// Segredo em base32, para quem escreve à mão em vez de ler o QR.
     pub secret: String,
@@ -242,6 +273,16 @@ pub struct Inscricao {
 /// recomeçar quando o QR foi lido para o autenticador errado. Depois de
 /// confirmado, recusa: trocar o segredo de uma conta com MFA activo sem provar
 /// posse do actual seria uma forma de o desligar sem o saber.
+#[utoipa::path(
+    post, path = "/api/users/me/mfa/enroll", tag = "mfa",
+    security(("session" = [])),
+    responses(
+        (status = 200, description = "Segredo novo (mostrado uma vez) e URI `otpauth://` para o QR.", body = Inscricao),
+        (status = 400, description = "O MFA já está activo nesta conta.", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "A conta já não existe.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn inscrever(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -276,12 +317,13 @@ pub async fn inscrever(
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CodigoReq {
+    /// Código TOTP de 6 dígitos (ou, na desactivação, também um código de recuperação).
     pub code: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct CodigosRecuperacao {
     /// Mostrados UMA vez. Só o hash fica guardado.
     pub backup_codes: Vec<String>,
@@ -289,6 +331,17 @@ pub struct CodigosRecuperacao {
 
 /// Confirma a inscrição com um código do autenticador e devolve os códigos de
 /// recuperação — a única vez em que são visíveis.
+#[utoipa::path(
+    post, path = "/api/users/me/mfa/activate", tag = "mfa",
+    security(("session" = [])),
+    request_body = CodigoReq,
+    responses(
+        (status = 200, description = "MFA activo; os códigos de recuperação só aparecem aqui.", body = CodigosRecuperacao),
+        (status = 400, description = "Não há inscrição em curso, ou o MFA já está activo.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida ou código TOTP errado.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Cinco códigos errados em 5 minutos nesta conta (partilhado com a desactivação). Durante o bloqueio, também o código certo é recusado.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn activar(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -305,15 +358,18 @@ pub async fn activar(
     if enabled_at.is_some() {
         return Err(ApiError::BadRequest("O MFA já está activo.".into()));
     }
+    travao(&state, auth.user_id)?;
     let segredo = base32_decode(&b32).ok_or(ApiError::Unauthorized)?;
-    if !verifica(&segredo, &req.code, agora()) {
-        return Err(ApiError::Unauthorized);
-    }
+    let Some(passo_usado) = passo_do_codigo(&segredo, &req.code, agora()) else {
+        return Err(falhou(&state, auth.user_id));
+    };
     let codigos = codigos_de_recuperacao();
     let mut tx = state.db.begin().await?;
     sqlx::query("UPDATE user_mfa SET enabled_at = now(), last_step = $2 WHERE user_id = $1")
         .bind(auth.user_id)
-        .bind((agora() / STEP_SECS) as i64)
+        // O passo do CÓDIGO, não o do relógio: é o que impede o mesmo código de
+        // servir outra vez na janela seguinte (R117).
+        .bind(passo_usado)
         .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM user_mfa_backup_codes WHERE user_id = $1")
@@ -339,13 +395,24 @@ pub async fn activar(
 /// Desactiva o MFA. Exige um código VÁLIDO (TOTP ou de recuperação): sem isso,
 /// um token de sessão roubado bastava para o desligar — e o segundo factor
 /// existe precisamente para o caso de a sessão estar comprometida.
+#[utoipa::path(
+    post, path = "/api/users/me/mfa/disable", tag = "mfa",
+    security(("session" = [])),
+    request_body = CodigoReq,
+    responses(
+        (status = 204, description = "MFA desactivado."),
+        (status = 401, description = "Sessão inválida, código errado/já usado, ou MFA não inscrito.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Cinco códigos errados em 5 minutos nesta conta (partilhado com a activação). Durante o bloqueio, também um código válido é recusado.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn desactivar(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Json(req): Json<CodigoReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<axum::http::StatusCode, ApiError> {
+    travao(&state, auth.user_id)?;
     if !consome_codigo(&state, auth.user_id, &req.code).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(falhou(&state, auth.user_id));
     }
     sqlx::query("DELETE FROM user_mfa WHERE user_id = $1")
         .bind(auth.user_id)
@@ -356,7 +423,33 @@ pub async fn desactivar(
         .execute(&state.db)
         .await?;
     crate::audit::log(&state.db, None, auth.user_id, "auth.mfa_disabled", "").await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+/// Chave do travão de força bruta do MFA desta conta.
+fn chave_do_travao(user_id: Uuid) -> String {
+    format!("mfa-self:{user_id}")
+}
+
+/// Recusa já se a conta esgotou as falhas da janela (R131). Corre ANTES de
+/// verificar o código: um código certo durante o bloqueio também é recusado,
+/// senão o travão só atrasava quem adivinha e acertava.
+fn travao(state: &AppState, user_id: Uuid) -> Result<(), ApiError> {
+    if state.mfa_limiter.is_blocked(&chave_do_travao(user_id)) {
+        tracing::warn!(%user_id, "MFA: falhas a mais na janela — a bloquear");
+        return Err(ApiError::TooManyRequests);
+    }
+    Ok(())
+}
+
+/// Regista uma falha e devolve o erro a responder. Só as FALHAS contam: quem
+/// acerta à primeira nunca gasta tentativas.
+fn falhou(state: &AppState, user_id: Uuid) -> ApiError {
+    if state.mfa_limiter.check(&chave_do_travao(user_id)) {
+        ApiError::Unauthorized
+    } else {
+        ApiError::TooManyRequests
+    }
 }
 
 /// Está o MFA activo nesta conta?
@@ -392,8 +485,7 @@ pub async fn consome_codigo(
 
     if let Some(segredo) = base32_decode(&b32) {
         let t = agora();
-        if verifica(&segredo, codigo, t) {
-            let passo = (t / STEP_SECS) as i64;
+        if let Some(passo) = passo_do_codigo(&segredo, codigo, t) {
             // Anti-replay: o passo tem de AVANÇAR. O UPDATE condicional é a
             // barreira — duas tentativas em paralelo, só uma actualiza a linha.
             let afectadas = sqlx::query(
@@ -480,6 +572,49 @@ mod tests {
     // Vectores do RFC 6238 Apêndice B (semente SHA-1 = "12345678901234567890").
     // É a verificação independente que uma implementação de cripto precisa:
     // não prova que o código é bonito, prova que é O ALGORITMO.
+    /// O anti-replay guarda o último passo usado. Se esse passo vier do
+    /// RELÓGIO e não do CÓDIGO, um código do passo N apresentado já dentro do
+    /// passo N+1 — coisa que o `SKEW_STEPS` aceita de propósito — regista N+1 e
+    /// passa a barreira `N < N+1`. O código servia depois da sua própria
+    /// janela, que é o oposto do que o anti-replay existe para fazer (R117).
+    #[test]
+    fn o_passo_vem_do_codigo_e_nao_do_relogio() {
+        let s = base32_decode("JBSWY3DPEHPK3PXP").unwrap();
+        let t = 1_700_000_000u64;
+        let passo_n = (t / STEP_SECS) as i64;
+        let codigo = totp(&s, t, STEP_SECS, DIGITS);
+
+        // Dentro da sua própria janela: o passo é N.
+        assert_eq!(passo_do_codigo(&s, &codigo, t), Some(passo_n));
+
+        // Uma janela DEPOIS, o `SKEW_STEPS` ainda o aceita — e tem de continuar
+        // a dizer N. Antes desta correcção dizia N+1, e era isso que o deixava
+        // passar duas vezes.
+        assert_eq!(
+            passo_do_codigo(&s, &codigo, t + STEP_SECS),
+            Some(passo_n),
+            "o código é do passo N, mesmo apresentado no passo N+1"
+        );
+
+        // E uma janela ANTES, pela mesma razão.
+        assert_eq!(passo_do_codigo(&s, &codigo, t - STEP_SECS), Some(passo_n));
+
+        // Fora do skew, não é aceite de todo.
+        assert_eq!(passo_do_codigo(&s, &codigo, t + 3 * STEP_SECS), None);
+    }
+
+    /// O passo 0 é um instante real (1970). Um `0` como sentinela de «não
+    /// encontrado» confundiria os dois — daí o `+1` interno.
+    #[test]
+    fn o_passo_zero_distingue_se_de_nao_encontrado() {
+        let s = base32_decode("JBSWY3DPEHPK3PXP").unwrap();
+        let codigo = totp(&s, 0, STEP_SECS, DIGITS);
+        assert_eq!(passo_do_codigo(&s, &codigo, 0), Some(0));
+        // E `None` continua a ser distinguível de `Some(0)`: um código que não
+        // bate não devolve o passo zero por acidente.
+        assert_eq!(passo_do_codigo(&s, "999999", 0), None);
+    }
+
     #[test]
     fn totp_bate_com_os_vectores_do_rfc6238() {
         let semente = b"12345678901234567890";
@@ -506,7 +641,7 @@ mod tests {
         let s = segredo_novo();
         let agora = 1_700_000_000u64;
         let codigo = totp(&s, agora, STEP_SECS, DIGITS);
-        assert!(verifica(&s, &codigo, agora));
+        assert!(passo_do_codigo(&s, &codigo, agora).is_some());
     }
 
     #[test]
@@ -514,28 +649,26 @@ mod tests {
         let s = segredo_novo();
         let agora = 1_700_000_000u64;
         // ±30 s: relógio de telemóvel ligeiramente à frente ou atrás.
-        assert!(verifica(
-            &s,
-            &totp(&s, agora - STEP_SECS, STEP_SECS, DIGITS),
-            agora
-        ));
-        assert!(verifica(
-            &s,
-            &totp(&s, agora + STEP_SECS, STEP_SECS, DIGITS),
-            agora
-        ));
+        assert!(
+            passo_do_codigo(&s, &totp(&s, agora - STEP_SECS, STEP_SECS, DIGITS), agora).is_some()
+        );
+        assert!(
+            passo_do_codigo(&s, &totp(&s, agora + STEP_SECS, STEP_SECS, DIGITS), agora).is_some()
+        );
         // ±60 s já não. Cada passo extra multiplica por três a janela de
         // adivinhação de um código de seis dígitos.
-        assert!(!verifica(
+        assert!(passo_do_codigo(
             &s,
             &totp(&s, agora - 3 * STEP_SECS, STEP_SECS, DIGITS),
             agora
-        ));
-        assert!(!verifica(
+        )
+        .is_none());
+        assert!(passo_do_codigo(
             &s,
             &totp(&s, agora + 3 * STEP_SECS, STEP_SECS, DIGITS),
             agora
-        ));
+        )
+        .is_none());
     }
 
     #[test]
@@ -543,7 +676,7 @@ mod tests {
         let s = segredo_novo();
         let agora = 1_700_000_000u64;
         for mau in ["", "12345", "1234567", "abcdef", "12 45 6", "١٢٣٤٥٦"] {
-            assert!(!verifica(&s, mau, agora), "aceitou {mau:?}");
+            assert!(passo_do_codigo(&s, mau, agora).is_none(), "aceitou {mau:?}");
         }
     }
 
@@ -552,7 +685,7 @@ mod tests {
         let agora = 1_700_000_000u64;
         let a = segredo_novo();
         let b = segredo_novo();
-        assert!(!verifica(&a, &totp(&b, agora, STEP_SECS, DIGITS), agora));
+        assert!(passo_do_codigo(&a, &totp(&b, agora, STEP_SECS, DIGITS), agora).is_none());
     }
 
     #[test]

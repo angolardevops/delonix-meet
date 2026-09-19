@@ -364,7 +364,7 @@ function ViewerBody({
               className="secondary small"
               onClick={() => {
                 const a = document.createElement('a')
-                a.href = `/api/recordings/${rec.id}?dl=1`
+                a.href = `/api/recordings/${rec.id}/content?dl=1`
                 a.download = rec.filename
                 a.click()
               }}
@@ -655,7 +655,7 @@ function ShareModal({ rec, onClose }: { rec: RecordingItem; onClose: () => void 
 
         {/* ---- Partilha com utilizadores ---- */}
         <p className="muted small">
-          <Trans i18nKey="recordings.directShareHint"><strong>ver e descarregar</strong></Trans>
+          <Trans i18nKey="recordings.directShareHint"><strong>{t('recordings.verEDescarregar')}</strong></Trans>
         </p>
         <input
           placeholder={t('recordings.searchUsers')}

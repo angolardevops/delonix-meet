@@ -1,0 +1,17 @@
+[package]
+name = "delonix-meet-protocol"
+description = "Contratos do Delonix Meet gerados a partir de server/proto (gRPC interno)."
+version.workspace = true
+edition.workspace = true
+
+# Só geração de código: tipos prost e stubs tonic. Sem sqlx/axum/reqwest/redis.
+[dependencies]
+prost = "0.14"
+tonic = { version = "0.14", default-features = false, features = ["codegen"] }
+tonic-prost = "0.14"
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+# protoc vendorizado: o build não depende de um protoc instalado no host, no
+# runner do CI ou na imagem rust:1-bookworm.
+protoc-bin-vendored = "3"

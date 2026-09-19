@@ -37,22 +37,36 @@ export function directoSuportado(): boolean {
   return typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(MIME_DIRECTO)
 }
 
-/** Monta o URL do WebSocket. Separado para ser testável sem rede. */
+/**
+ * Monta o URL do WebSocket. Separado para ser testável sem rede.
+ *
+ * Um ARRAY de destinos, não um só — é o multi-canal tipo StreamYard: uma só
+ * ligação, um só `MediaRecorder` a codificar uma vez, e é o `ffmpeg` do
+ * servidor que reparte para N plataformas (`montar_argumentos` em
+ * `broadcast.rs` já sabia fazer isto; só faltava a query aceitar mais que um).
+ * Vai como JSON porque um WebSocket não tem corpo — a query é o único sítio,
+ * e um array cresce sem inventar `destino2`/`chave2` por cada plataforma a
+ * mais.
+ */
 export function urlDoDirecto(
   base: { protocol: string; host: string },
   codigo: string,
   token: string,
-  destino: Destino,
+  destinos: Destino[],
 ): string {
   const esquema = base.protocol === 'https:' ? 'wss:' : 'ws:'
   const q = new URLSearchParams({
     token,
-    destino: destino.url.trim(),
-    chave: destino.chave.trim(),
+    destinos: JSON.stringify(
+      destinos.map((d) => ({
+        url: d.url.trim(),
+        chave: d.chave.trim(),
+        ...(d.rotulo ? { rotulo: d.rotulo } : {}),
+      })),
+    ),
     codec: CODEC_DIRECTO,
   })
-  if (destino.rotulo) q.set('rotulo', destino.rotulo)
-  return `${esquema}//${base.host}/api/rooms/${encodeURIComponent(codigo)}/broadcast?${q}`
+  return `${esquema}//${base.host}/api/rooms/${encodeURIComponent(codigo)}/live?${q}`
 }
 
 export interface OpcoesDoDirecto {
@@ -96,7 +110,7 @@ export class Directo {
     stream: MediaStream,
     codigo: string,
     token: string,
-    destino: Destino,
+    destinos: Destino[],
     opcoes: OpcoesDoDirecto = {},
   ): Promise<void> {
     if (this.socket) throw new Error('já está no ar')
@@ -105,7 +119,7 @@ export class Directo {
     }
     this.anunciar({ fase: 'a-ligar' })
 
-    const url = urlDoDirecto(location, codigo, token, destino)
+    const url = urlDoDirecto(location, codigo, token, destinos)
     const socket = new WebSocket(url)
     socket.binaryType = 'arraybuffer'
     this.socket = socket

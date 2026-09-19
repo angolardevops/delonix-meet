@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { BrandLockup } from '../components/BrandMark'
 
 /** Termos de Utilização + Política de Privacidade — página pública, sem autenticação.
  *  Conteúdo honesto para self-hosted: quem opera a instância é o responsável pelo
@@ -11,7 +12,7 @@ export default function Legal() {
     <div className="legal-page">
       <header className="legal-head">
         <a href="#/" className="brand-text">
-          <img src="/logo.svg" alt="" className="brand-logo" /> Delonix <span>Meet</span>
+          <BrandLockup />
         </a>
         <a className="link small-link" href="#/login">{t('legal.back')}</a>
       </header>

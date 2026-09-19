@@ -302,3 +302,125 @@ export const ThemeIcon = () => (
     <path d="M12 2a10 10 0 0 1 0 20 10 10 0 0 0 0-20Z" opacity=".35" />
   </svg>
 )
+
+// ---------------------------------------------------------------------------
+//  Ícones da SALA (R88). Estes lugares eram emoji — 🔒 ⓘ 🏆 🔊 ➤ 📊 ❓ 🛡 💾 —
+//  a par do conjunto SVG que já existia ao lado, na mesma barra. As razões são
+//  as mesmas do bloco de controlo acima: um emoji renderiza diferente por
+//  sistema operativo, NÃO herda `currentColor` e não escala com o resto.
+//
+//  A regra da casa mantém-se e é a que decide o que fica: o emoji fica onde é
+//  CONTEÚDO — as reações da sala, o selector de emoji do chat, os nomes de
+//  teclas em <kbd> —, nunca onde é CONTROLO ou rótulo de secção.
+// ---------------------------------------------------------------------------
+
+export const LockIcon = () => (
+  <svg {...base}>
+    <path d="M12 1a5 5 0 0 1 5 5v3h1a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V11a2 2 0 0 1 2-2h1V6a5 5 0 0 1 5-5Zm3 8V6a3 3 0 1 0-6 0v3h6Zm-3 5a2 2 0 0 0-1 3.73V19h2v-1.27A2 2 0 0 0 12 14Z" />
+  </svg>
+)
+
+export const InfoIcon = () => (
+  <svg {...base}>
+    <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 15h-2v-6h2v6Zm0-8h-2V7h2v2Z" />
+  </svg>
+)
+
+export const TrophyIcon = () => (
+  <svg {...base}>
+    <path d="M18 4h3v3a4 4 0 0 1-3.4 3.96A6 6 0 0 1 13 14.92V18h3v2H8v-2h3v-3.08a6 6 0 0 1-4.6-3.96A4 4 0 0 1 3 7V4h3V3h12v1Zm0 2v4.83A2 2 0 0 0 19 7V6h-1ZM6 6H5v1a2 2 0 0 0 1 1.83V6Z" />
+  </svg>
+)
+
+export const SpeakerIcon = () => (
+  <svg {...base}>
+    <path d="M4 9h3l5-4v14l-5-4H4V9Zm12.5 3a3.5 3.5 0 0 0-2-3.16v6.32A3.5 3.5 0 0 0 16.5 12Zm-2 6.7a6 6 0 0 0 0-13.4V3.23a8 8 0 0 1 0 17.54V18.7Z" />
+  </svg>
+)
+
+export const SendIcon = () => (
+  <svg {...base}>
+    <path d="M3 20.5v-6l9-2.5-9-2.5v-6l18 8.5-18 8.5Z" />
+  </svg>
+)
+
+export const ChartIcon = () => (
+  <svg {...base}>
+    <path d="M4 20V10h4v10H4Zm6 0V4h4v16h-4Zm6 0v-7h4v7h-4Z" />
+  </svg>
+)
+
+export const HelpIcon = () => (
+  <svg {...base}>
+    <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 17h-2v-2h2v2Zm1.8-7.2-.9.92c-.62.62-.9 1.1-.9 2.28h-2v-.5c0-.88.36-1.68.9-2.22l1.24-1.26A1.96 1.96 0 0 0 12 7.5a2 2 0 0 0-2 2H8a4 4 0 1 1 6.8 2.8Z" />
+  </svg>
+)
+
+export const ShieldIcon = () => (
+  <svg {...base}>
+    <path d="M12 1 3 5v6c0 5.05 3.84 9.77 9 11 5.16-1.23 9-5.95 9-11V5l-9-4Zm-1.4 14.6L7 12l1.4-1.4 2.2 2.2 4.6-4.6L16.6 9.6l-6 6Z" />
+  </svg>
+)
+
+export const SaveIcon = () => (
+  <svg {...base}>
+    <path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4Zm-5 16a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm3-10H6V5h9v4Z" />
+  </svg>
+)
+
+/** Espessura de traço no quadro branco. Eram `─` e `━`: legíveis, mas um
+ *  controlo com um caractere lá dentro herda a fonte e não a cor do botão. */
+export const StrokeThinIcon = () => (
+  <svg {...base}><rect x="3" y="11" width="18" height="1.5" rx="0.75" /></svg>
+)
+export const StrokeThickIcon = () => (
+  <svg {...base}><rect x="3" y="9.5" width="18" height="5" rx="2.5" /></svg>
+)
+
+export const PinIcon = () => (
+  <svg {...base}>
+    <path d="M14 4V2H6v2h1v6l-2 2v2h5v6l1 2 1-2v-6h5v-2l-2-2V4h1Z" />
+  </svg>
+)
+
+export const FullscreenIcon = () => (
+  <svg {...base}>
+    <path d="M4 9V4h5v2H6v3H4Zm11-5h5v5h-2V6h-3V4ZM4 15h2v3h3v2H4v-5Zm14 0h2v5h-5v-2h3v-3Z" />
+  </svg>
+)
+
+// Os três que faltavam para tirar os últimos pictogramas da consola (R105).
+export const KeyIcon = () => (
+  <svg {...base}>
+    <path d="M12.65 10A6 6 0 1 0 7 14a5.9 5.9 0 0 0 5.65-4H17v4h2v-4h2v-4H12.65ZM7 14a2 2 0 1 1 0-4 2 2 0 0 1 0 4Z" />
+  </svg>
+)
+export const GlobeIcon = () => (
+  <svg {...base}>
+    <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm6.9 6h-2.95a15.7 15.7 0 0 0-1.4-3.6A8 8 0 0 1 18.9 8ZM12 4.1c.65.94 1.16 2 1.5 3.9h-3c.34-1.9.85-2.96 1.5-3.9ZM4.26 14A8 8 0 0 1 4 12c0-.7.1-1.36.26-2h3.4a16.6 16.6 0 0 0 0 4h-3.4Zm.84 2h2.95c.33 1.3.8 2.5 1.4 3.6A8 8 0 0 1 5.1 16Zm2.95-8H5.1a8 8 0 0 1 4.35-3.6A15.7 15.7 0 0 0 8.05 8ZM12 19.9c-.65-.94-1.16-2-1.5-3.9h3c-.34 1.9-.85 2.96-1.5 3.9Zm1.9-5.9h-3.8a14.9 14.9 0 0 1 0-4h3.8a14.9 14.9 0 0 1 0 4Zm.65 5.6c.6-1.1 1.07-2.3 1.4-3.6h2.95a8 8 0 0 1-4.35 3.6ZM16.34 14a16.6 16.6 0 0 0 0-4h3.4A8 8 0 0 1 20 12c0 .7-.1 1.36-.26 2h-3.4Z" />
+  </svg>
+)
+export const BotIcon = () => (
+  <svg {...base}>
+    <path d="M12 2a1.5 1.5 0 0 1 1.5 1.5V5H18a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3h4.5V3.5A1.5 1.5 0 0 1 12 2ZM8.5 10a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3ZM9 15h6v1.5H9V15Z" />
+  </svg>
+)
+export const ThumbIcon = () => (
+  <svg {...base}>
+    <path d="M2 10h4v11H2V10Zm6 11V10l5-8 1.2.6a2 2 0 0 1 1 2.3L14.4 9H20a2 2 0 0 1 2 2.3l-1.3 7A2 2 0 0 1 18.7 21H8Z" />
+  </svg>
+)
+
+/** Janela flutuante (Picture-in-Picture): o ecrã com a janelinha ao canto. */
+export const PipIcon = () => (
+  <svg {...base}>
+    <path d="M19 11h-8v6h8v-6Zm4 8V5a2 2 0 0 0-2-2H3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2Zm-2 .02H3V4.98h18v14.04Z" />
+  </svg>
+)
+
+/** Ficha eléctrica — «testar ligação» a um serviço externo. */
+export const PlugIcon = () => (
+  <svg {...base}>
+    <path d="M16 7V3h-2v4h-4V3H8v4H7v6a5 5 0 0 0 4 4.9V22h2v-4.1A5 5 0 0 0 17 13V7h-1Z" />
+  </svg>
+)

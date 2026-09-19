@@ -33,40 +33,67 @@
 | tower-http | CORS + tracing (features `cors`, `trace`). Os cabeçalhos de segurança NÃO vêm daqui — são postos à mão em `main.rs` (`nosniff`, `DENY`, HSTS) e no nginx; e não há camada de compressão. |
 
 **Ficheiros principais:**
-- `main.rs` — bootstrap, router, estado global (`AppState`), cron jobs (retention sweep)
+- `lib.rs` — bootstrap (`run`), router, estado global (`AppState`), cron jobs (retention sweep). `main.rs` só chama `delonix_server::run()` (ADR-0004 §6 passo 1)
+- **Workspace (ADR-0006 §1)** — `server/crates/delonix-meet-core` (sem IO: `crypto`, `DomainError` com código estável, paginação por cursor, edições) e `server/crates/delonix-meet-domain` (sem IO: contexto `identity` — `validation`, `registration`). O pacote da raiz é o monólito em transição; `scripts/check-crate-deps.sh` impõe a regra da dependência.
+- **Edições e listeners (ADR-0006 §2–§4)** — `DELONIX_EDITION` (`saas` por omissão = comportamento histórico | `enterprise` | `personal`), `REGISTRATION_MODE` (`open`/`domain`/`invite`/`closed`) + `REGISTRATION_DOMAINS`, `TENANCY_MODE` (`multi`/`single`); `INTERNAL_BIND_ADDR` tira `/metrics` e `/internal/v1/voice/ivr/*` do router público para um listener interno; `UI_DIR` serve a SPA; `DELONIX_MIGRATE=0` + `delonix-server migrate` (Job); `LOG_FORMAT=json`. O `GET /api/public/settings` publica `edition` e `capabilities`.
 - `config.rs` — lê env vars, **fail-closed sem segredos fortes** (panic no arranque)
 - `auth.rs` — registo (cria org+admin), login, refresh, logout, room tokens
-- `org.rs` — multi-tenant: organizations, branches, org_members, employee groups, salas presenciais, quotas, stats, SSO stubs
-- `rooms.rs` — CRUD salas, `can_access_room` (isolamento cross-org), `insert_room` (helper reutilizado)
-- `sfu.rs` — SFU Rust: Hub, Room, Publication, simulcast, PLI, gravação RTP→IVF/OGG
-- `signaling.rs` — WebSocket `/ws` (room token): transporte SFU (offer/answer/ice) + moderação (admit/kick/lock/host-*) + chat/breakout-*/media
+- `org.rs` — multi-tenant: organizations, branches, org_members, employee groups, salas presenciais, quotas, stats, SSO stubs. **Ponto único de autorização (ADR-0008 §4):** `require_capability` (uma query: pertença activa + `org_role_effective_capabilities`), `require_admin` = `org.administer`, `require_session_create`, e TODAS as escritas de papel/estado/departamento da pertença (`set_member_role_tx`, `set_system_role`, `archive_member_tx`, `reactivate_member_tx`, `activate_membership_tx`), lugares medidos com `FOR UPDATE` na org, directório de pessoas e aplicação dos grupos do Odoo
+- `rooms.rs` — CRUD salas, `can_access_room` (isolamento cross-org), `insert_room` (helper reutilizado); sala pessoal (G2; migração 0047): `ensure_personal_room` cria-a na primeira leitura com `ON CONFLICT` sobre o índice único parcial `rooms_personal_owner_uidx` (idempotente sob concorrência), `update_personal_room`, `rotate_personal_room_code` (o código antigo deixa de existir). A sala pessoal NÃO tem regras de acesso próprias
+- `sfu.rs` — SFU Rust: Hub, Room, Publication, simulcast, PLI, gravação RTP→IVF/OGG. `Census`: o que está VIVO de facto (PCs por `Weak`, `close()` que nunca regressou, peers/publicações/tarefas por `Drop`) em `/metrics` — é aí que se vê uma fuga, não nos gauges de negócio (R158)
+- `signaling.rs` — WebSocket `/ws` (room token): transporte SFU (offer/answer/ice) + moderação (admit/kick/lock/host-*, `set-role`, `spotlight`, `admit-all`, sala de espera em runtime) + chat (fios, reacções, conversa directa só ao par) + breakout-* (incl. `breakouts-broadcast`) + media; papéis, origem e cargo no `PeerInfo`, decididos no servidor (R182)
 - `room_tools.rs` — contexto de colaboração in-room extraído de `signaling.rs`: sondagens, Q&A, temporizador, quadro branco (`impl SignalingHub::handle_tool_msg`)
+- `room_chat.rs` — chat da sala persistido fora do caminho quente (`ChatStore`: fila limitada + tarefa própria, métricas de descarte e falha), fios (`parent_id`) e reacções (`room_chat_reactions`; migração 0050), conversa directa (`to_user_id`; migração 0051; o histórico só a devolve ao par) e retenção até ao fim do dia UTC da última mensagem (cron horário, G9). Ver R182
 - `presence.rs` — WebSocket `/rtc` (access token), chamadas WhatsApp-style: call-start/accept/decline/cancel, ring de reunião agendada
 - `meetings.rs` — calendário, conflitos, quarentena, MoM, transcrição, webhooks de meeting
-- `recordings.rs` — biblioteca de gravações, partilha read-only, sweep de retenção
-- `recorder.rs` — gravação server-side: RTP→IVF(VP8)+OGG(Opus), ffmpeg post-stop (VP9+Opus webm), E2EE via decrypt_e2ee()
-- `broadcast.rs` — emissão em directo para RTMP (ADR-0003): o browser compõe e codifica em H.264, o servidor REMULTIPLEXA (`-c:v copy`, `-c:a aac`). Recusa E2EE, codec não copiável, chave vazia e acima do tecto (`MAX_DIRECTOS`). Rota WS `/api/rooms/{code}/broadcast`; registo por sala
-- `webhooks.rs` — CRUD webhooks org, fire() best-effort (Slack/Teams/Mattermost/generic+HMAC), SSRF guard
-- `whiteboards.rs` — CRUD quadro branco persistente
-- `voice.rs` — PSTN (stub, aguarda operador)
-- `apikeys.rs` — API keys por org (hash + scopes)
-- `audit.rs` — auditoria IMUTÁVEL e verificável: cada linha inclui o hash da anterior, numa cadeia por organização (migração 0037). Editar ou apagar uma linha parte a cadeia e é detectável em `/api/orgs/{id}/audit/verify` — mesmo por quem não confia em quem administra a base de dados, que é o adversário que interessa. Gatilhos recusam UPDATE/DELETE; a cadeia é a defesa que sobrevive a quem os possa remover. Ver R61
+- `recordings.rs` — biblioteca de gravações, partilha read-only, metadados e `processing_state` derivado (G4), capítulos e comentários (G5), pesquisa `?q=` com FTS `simple` + `snippet` (G6; migração 0045). UMA regra de acesso: `load_item` lê os factos numa só junção de pertença e `domain::content::recording::AccessFacts` decide reproduzir/descarregar/gerir/comentar — um membro arquivado (S3) perde tudo. `GET /api/recordings` sem parâmetros continua a lista inteira (o web lê-a assim); com `q`/`page_size`/`page_token` é uma página. O ficheiro vai para `config.recordings_dir`. Testes: `server/tests/recordings_metadata.rs`
+- `recorder.rs` — gravação server-side: RTP→IVF(VP8)+OGG(Opus), ffmpeg post-stop (VP9+Opus webm), E2EE via decrypt_e2ee(); ao inserir grava `duration_secs` (relógio de parede da sessão, não ffprobe) e `width`/`height` (grelha do xstack, ou cabeçalho IVF no remux)
+- `broadcast.rs` — emissão em directo para RTMP (ADR-0003): o browser compõe e codifica em H.264, o servidor REMULTIPLEXA (`-c:v copy`, `-c:a aac`). Multi-canal tipo StreamYard: um `ffmpeg` com N destinos (`destinos` na query, JSON), tecto próprio `MAX_DESTINOS_POR_DIRECTO` (por emissão) distinto do `MAX_DIRECTOS` (por nó/sala). Recusa E2EE, codec não copiável, chave vazia e acima de qualquer um dos dois tectos. Rota WS `/api/rooms/{code}/live`; registo por sala
+- `net_guard.rs` — o único dono dos clientes HTTP de saída (`state.outbound`): `tenant()` para URLs de clientes (webhooks, `odoo_url`, emissor OIDC — só endereços públicos, salvo `OUTBOUND_ALLOW_HOSTS`) e `operator()` para os do operador (WebDAV, Ollama — rede privada sim, metadados da cloud não). A guarda corre no resolver de DNS de cada ligação (sem janela de rebinding), sem redirects, com timeouts; `check_*_url` para IPs literais e para o 400 ao gravar; `oidc()` valida cada pedido do fluxo OIDC. Política pura em `core::egress` (S4)
+- `webhooks.rs` — CRUD webhooks org, fire() best-effort (Slack/Teams/Mattermost/generic+HMAC), destino pela guarda de `net_guard`; registo de entregas (G7; migração 0043): cada envio fica em `webhook_deliveries` (`pending` antes, `succeeded`/`failed` com código, tempo e erro limpo de URLs depois; sem segredo nem assinatura), `GET …/webhooks/{hook_id}/deliveries[/{delivery_id}]` paginado e `POST …/redeliver` (método personalizado: `202` + `Location`, mesmo payload ao URL actual com a guarda reaplicada, 10/min por webhook → `429`); varredor horário fecha as `pending` abandonadas e apaga as de mais de 30 dias. Regras em `domain::integration::webhook_delivery`
+- `whiteboards.rs` — CRUD quadro branco persistente; URL assinado do PNG (G11): `POST /api/whiteboards/{id}/signed-url` → `{url, expires_at}` (≤15 min, só para quem já vê o quadro); `GET …/png?exp=&sig=` serve SEM sessão (HMAC-SHA256 sobre `(id, exp)` com subchave `core::crypto::derive_key(JWT_SECRET, …)`, tempo constante; adulterado/expirado/inexistente → `404`). Sem `sig`, o PNG com sessão é o de sempre. Regras em `domain::content::whiteboard`. Testes: `server/tests/whiteboard_signed_url.rs`
+- `voice.rs` — PSTN: plano de controlo (DIDs, CDR, facturação, IVR por segredo partilhado em `/internal/v1/voice/ivr/*`); a media depende do operador SIP. O IVR é máquina-a-máquina e, no destino, sai da árvore pública para gRPC (ADR-0004 §4)
+- `sms.rs` — gateway de SMS (ADR-0005): consola da org em `/api/orgs/{org_id}/sms/*` (só admin), superfície do agente USB em `/api/integrations/sms-agent/v1/*` (token `dlxg_`, extractor `SmsGatewayAuth`), encaminhamento pelo plano de numeração angolano (prefixos **por confirmar**) e worker dos operadores que pára no drain. Entrega no máximo uma vez
+- `sms_codec.rs` — o ÚNICO sítio que codifica SMS: GSM 03.38/UCS-2, segmentação, PDU SMS-SUBMIT para `AT+CMGS`. Puro, sem I/O
+- `sms_smpp.rs` — cliente SMPP 3.4 de saída (`bind_transmitter`/`submit_sm`/`unbind`) para Unitel/Movicel/Africell; credenciais em `SMS_*_SMPP`. Provado contra SMSC falso, **nunca contra um operador**; sem recibos nem TLS
+- `crypto.rs` — sha256 de token e token aleatório (`random_token`). Código novo chama isto; a catraca conta as cópias fora dele
+- `apikeys.rs` — chaves de API por org (hash, escopos de um catálogo fixo em `delonix_meet_domain::identity::api_key`, expiração opcional — S6 fechada, R170) **e** os handlers `v1_*` da API pública, apesar do nome (ADR-0004 §3 separa-os)
+- `roles.rs` — papéis e permissões (ADR-0008): catálogo `GET /api/capabilities`, CRUD de papéis personalizados (os de sistema `owner`/`admin`/`member`/`external_guest` são imutáveis), matriz (JSON/CSV), `recompute_effective_tx` (a policy do domínio materializada na mesma transacção de cada escrita), simulação só de leitura (`authorization/evaluations`), `members/me/capabilities`, atribuição sem escalada, SoD (regras, violações, aceitar risco) e conflitos de papel vindos do Odoo
+- `approvals.rs` — pedidos de aprovação (ADR-0008 §6): ligados a `(capacidade, acção, SHA-256 do alvo canónico)`, consumo atómico de uso único (24 h), invalidação quando muda o papel/estado de quem pediu, sweeper de expiração; aprovar exige `allow` na capacidade e nunca pelo próprio
+- `directory.rs` — utilizadores e convites (ADR-0008 §7, §11): directório (membros + convites pendentes, `q`/`filters`/`group_by`/`order_by`, keyset), `search/schemas/users`, acções em massa por item, importação CSV idempotente, departamentos, convites (token só em hash, uso único, aceitação com rate-limit; sem SMTP — `delivery_channel: manual`), lugares (`seats`, `seats/release`, tecto do operador), aprovisionamento e regras de entrada (`hr.attendance` indisponível)
+- `audit.rs` — auditoria IMUTÁVEL e verificável: cada linha inclui o hash da anterior, numa cadeia por organização (migração 0037). Editar ou apagar uma linha parte a cadeia e é detectável em `/api/orgs/{id}/audit-events/verification` — mesmo por quem não confia em quem administra a base de dados, que é o adversário que interessa. Gatilhos recusam UPDATE/DELETE; a cadeia é a defesa que sobrevive a quem os possa remover. Ver R61
+- `openapi.rs` — OpenAPI 3.1 gerado do código com `utoipa` (ADR-0006 §3): `GET /api/openapi.json` (BFF, instável) e `/api/v1/openapi.json` (estável), `delonix-server openapi bff|v1` sem base nem configuração. Cada módulo declara o seu `ApiDoc` com `#[utoipa::path]` nos handlers e entra em `bff_parts`/`v1_parts`. O spec commitado em `docs/reference/openapi/` tem de ser igual ao gerado, e as operações montadas sem documentação são uma catraca (`scripts/check-openapi.sh`)
 - `rate_limit.rs` — rate limit por IP/conta (DashMap, lockout login 8/5min)
 - `error.rs` — `AppError` unificado → HTTP status + JSON body
 - `metrics.rs` — contadores atómicos de observabilidade (WS, SFU, saturação das filas) expostos em `/metrics` (Prometheus). Das filas: `delonix_ws_queue_high_water` (marca de água — a folga real face a `WS_QUEUE_CAP`), `delonix_ws_queue_dropped_total` (efémeros perdidos), `delonix_ws_slow_consumer_kills_total` (sockets fechados por transbordo) e `delonix_nego_queue_dropped_total`. Marca de água e não profundidade instantânea: um gauge somado entre sockets vaza quando uma task de escrita morre a meio
-- `users.rs` — perfis de utilizador (perfil público, `me`, update, pesquisa)
+- `users.rs` — perfis de utilizador (perfil público, `me`, update, pesquisa); «a minha sala» (G2): `GET|PATCH /api/users/me/room`, `POST /api/users/me/room/rotate-code` (nasce com sala de espera; o `PATCH` recusa campos desconhecidos; `dial_in` só leitura via `voice::dial_in_for_room`, da org do dono, e não acompanha a rotação do código). Regras em `domain::conferencing::personal_room`. Testes: `server/tests/personal_room.rs`
+- `usage.rs` — armazenamento usado e quota (G3; migração 0047): `GET /api/orgs/{org_id}/storage-usage` (admin; membro `403`, outra org `404`) e `GET /api/users/me/storage-usage`; `enforce_recording_quota` recusa o upload de gravações com `422 storage.quota_exceeded` ANTES de escrever linha ou ficheiro (não é transaccional: uploads simultâneos podem passar o tecto por um ficheiro). Uma gravação conta para a org do autor (activo ou arquivado) — `org::recording_uploader_in_org_sql`, o mesmo predicado das estatísticas. `organizations.max_storage_bytes` NULL = ilimitado; não há rota para o alterar. Regra em `domain::organization::storage_quota`. Testes: `server/tests/storage_usage.rs`
 - `actions.rs` — agenda de reunião (tópicos com execução) + Plano de Ação 5W2H
-- `mfa.rs` — segundo factor por TOTP (RFC 6238) e códigos de recuperação. O algoritmo é implementado aqui em vez de por dependência nova: HMAC-SHA-1, base64 e argon2 já eram dependências, e o RFC traz **vectores de teste oficiais** — uma verificação independente melhor do que confiar numa crate. Um código válido é CONSUMIDO, não só verificado (`last_step`, e `used_at` nos de recuperação): sem isso um TOTP apanhado por cima do ombro servia outra vez durante 30 s. Ver R53
-- `mls.rs` — MLS key agreement para E2EE em grupo (key packages, welcome)
+- `mfa.rs` — segundo factor por TOTP (RFC 6238) e códigos de recuperação. O algoritmo é implementado aqui em vez de por dependência nova: HMAC-SHA-1, base64 e argon2 já eram dependências, e o RFC traz **vectores de teste oficiais** — uma verificação independente melhor do que confiar numa crate. Um código válido é CONSUMIDO, não só verificado (`last_step`, e `used_at` nos de recuperação): sem isso um TOTP apanhado por cima do ombro servia outra vez durante 30 s. Ver R53. A activação e a desactivação têm travão por conta (`mfa_limiter`, 5 falhas em 5 min, só as falhas contam) que recusa também o código CERTO durante o bloqueio — ver R131; o passo MFA do login usa o `login_limiter`
+- `mls.rs` — rascunho de MLS (key packages, welcome) **NÃO montado**: `#![allow(dead_code)]` e router fora do `main.rs`. Esteve montado sem autenticação (R41); o `check-route-auth.sh` impede que volte assim. Não é capacidade activa
 - `dlp.rs` — DLP (censura/redação de conteúdo sensível)
 - `pubsub.rs` — Redis pub/sub para entrega cross-nó (presença/sinalização)
 - `redis_state.rs` — estado in-room em Redis (whiteboard, timer, sondagens, settings) partilhado entre pods
 - `ai.rs` — IA local via Ollama in-cluster: tradução de legendas em tempo real e resumo da ata. Fail-open sem `OLLAMA_URL` (o MoM cai para as regras do cliente); o texto das reuniões nunca sai para uma cloud externa
-- `odoo.rs` — integração Odoo (módulo `nk_delonix_meet`): token `dlxo_<hex>`, provisionamento de utilizadores via `/api/v1/integration/odoo/provision`, descoberta da config Odoo de um utilizador (`org_odoo_config`)
+- `odoo.rs` — integração Odoo (módulo `nk_delonix_meet`): token `dlxo_<hex>`, provisionamento de utilizadores via `/api/integrations/odoo/v1/provision`, descoberta da config Odoo de um utilizador (`org_odoo_config`)
 - `odoo_sso.rs` — **login com conta Odoo**: autentica em `/web/session/authenticate`, cria a organização a partir da EMPRESA do utilizador (chave `(odoo_db, company_id)`) e sincroniza em segundo plano todos os utilizadores internos activos. Fail-closed sem `PLATFORM_ODOO_URL`/`PLATFORM_ODOO_DB`
 - `meetings_v1.rs` — recurso `meetings` da API pública v1 (POST/PATCH/DELETE): cria REUNIÃO + sala com anfitrião humano (`host_email`) e convidados por email, idempotente por `external_ref`. É o que a integração de calendário usa — `/api/v1/rooms` cria salas sem anfitrião nem convidados, e ninguém consegue ser admitido nelas
-- `sfu_e2e.rs` — testes ponta-a-ponta do SFU com `RTCPeerConnection`s reais no papel de browser (media a fluir nos dois sentidos + R13/glare). Só compila em `#[cfg(test)]`
-- `storage.rs` — armazenamento remoto da plataforma (TrueNAS NFS / Nextcloud WebDAV); registo único em `platform_storage`, gerido pelo admin global
+- `sfu_e2e.rs` — testes ponta-a-ponta do SFU com `RTCPeerConnection`s reais no papel de browser (media a fluir nos dois sentidos + R13/glare + R156/troca de camada com simulcast real + R157/conflito de papel ICE com sonda STUN). Só compila em `#[cfg(test)]`
+- `grpc.rs` — gRPC INTERNO (ADR-0006 §3), `GRPC_BIND_ADDR`, mTLS obrigatório (`GRPC_TLS_CERT/KEY/CLIENT_CA`; texto claro só com `DELONIX_ALLOW_INSECURE=1`), `grpc.health.v1` + reflection. `IvrService` e `TranscriptionService` são adaptadores finos: chamam `voice::validate_pin`/`record_cdr` e `transcription::*`, as mesmas funções do HTTP. Contratos em `server/proto/delonix/meet/*/v1`, gerados pelo crate `delonix-meet-protocol` (protoc vendorizado), `scripts/check-proto.sh` (buf lint/breaking). Nunca para o browser
+- `stream_destinations.rs` — destinos de emissão em directo guardados por organização (G1; migração 0042): CRUD com `broadcast.manage_rtmp_keys` (ADR-0008) e o contrato novo (`201` + `Location`, `204`, paginação por cursor, `rotate-key` como método personalizado), chave RTMP cifrada com `core::secret_box` (contexto = id da linha) e devolvida só na criação e na rotação; `resolve_for_broadcast` decifra-a no servidor para o `ws_directo` (`destination_ids` + `org_id`, com `broadcast.public_destinations` e o limite de destinos do papel — ADR-0008), sem ela voltar ao browser. Regras de forma em `domain::content::stream_destination`
+- `nodes.rs` — inventário de nós de media (G10; migração 0048): cada pod faz upsert de um batimento a cada 15 s (salas, pares, WebSockets, directos, a drenar, `NODE_PEER_CAPACITY`); `GET /api/operator/v1/nodes` — primeira rota da superfície de OPERADOR (ADR-0004 §4), só `PLATFORM_ADMIN_USER_IDS`, `404 operator.surface_disabled` na edição pessoal — devolve o estado DERIVADO da idade do batimento (`serving`/`draining`/`unreachable`, regra em `domain::operations::media_node`)
+- `notifications.rs` — centro de notificações PESSOAL (G8; migração 0044): `GET/PATCH/DELETE /api/users/me/notifications[/{id}]` e `POST …/mark-all-read` (`{"updated": n}`), paginação por cursor mais recentes primeiro com `unread_count`; um id de outra pessoa dá `404` (não é rota de org, fica fora do `isolamento.mjs`). Produtores best-effort — convite e cancelamento de reunião (`meetings.rs`, só colegas de org do anfitrião), reunião a começar (auto-ring), chamada perdida (`presence::ring_users`), gravação do servidor pronta (`recorder.rs`), transcrição entregue (`transcription::complete`) — e push `{"type":"notification"}` pelo `PresenceHub::notify` (local ou Redis). Regras (tipos, textos, link só relativo, coalescência por `dedupe_key`, retenção 90/180 dias com varredor de 6 h) em `domain::notification`
+- `transcription.rs` — fila de transcrição com reserva (`FOR UPDATE SKIP LOCKED`, token, prazo, tentativas; migração 0041): o ai-worker reserva, transcreve e entrega, e o texto passa pelo `dlp::censor` antes da base. O cliente é o `ai-worker/` (Python: `job_source.py` com `GrpcJobSource`, stubs gerados de `server/proto` no build da imagem por `ai-worker/gen_protos.sh`, nunca versionados); o modo `DATABASE_URL` que escrevia na base por baixo do DLP está deprecado. Portão: `python3 -m unittest discover -s ai-worker/tests` (ciclo, sem GPU) e `bash ai-worker/tests/it_grpc.sh` (contra o servidor real: DLP, falha definitiva e mTLS). Sem `ReportProgress` no contrato: a reserva (`LEASE_SECONDS`, máx. 7200) tem de cobrir a gravação mais longa
+- `ui.rs` — a SPA servida pelo próprio binário quando há `UI_DIR` (edição pessoal / enterprise pequeno, ADR-0006 §4): COOP/COEP/CORP e CSP iguais às do nginx, `/assets/*` imutável, `index.html`/`sw.js` sem cache, fallback SPA que NUNCA engole um 404 de `/api/`, `/ws` ou `/rtc`
+- `secrets_at_rest.rs` — segredos de integração EM REPOUSO (S5, R160): `seal`/`open` sobre a `core::secret_box` com aad `<tabela>.<coluna>:<id>` para `org_webhooks.secret`, `org_sso_configs.client_secret` e `platform_storage.webdav_password`. Escrever sem `DATA_ENCRYPTION_KEYS` → `422 secrets.encryption_unconfigured`; o herdado em claro lê-se com ou sem chaves; `reseal_legacy` cifra-o no arranque e de hora a hora
+- `storage.rs` — armazenamento remoto da plataforma (TrueNAS NFS / Nextcloud WebDAV); registo único em `platform_storage`. Só o administrador da PLATAFORMA — os UUIDs em `PLATFORM_ADMIN_USER_IDS` (fail-closed, `403` para os restantes). Antes era «admin de qualquer org», e o registo cria sempre um admin (S1, fechada no #76, R121)
+
+### Organização do backend — estado e destino
+
+- **Estado (2026-09-16):** UM crate (`delonix-server`), 34 módulos planos, um **ciclo de 18 módulos**, handlers com SQL dentro (302 queries de runtime), regras copiadas entre BFF e v1 que já divergiram. **Não há gRPC nem OpenAPI.** Evidência: [`docs/auditoria-2026-09-16-backend.md`](docs/auditoria-2026-09-16-backend.md).
+- **Destino:** [ADR-0004](docs/adr/0004-organizacao-alvo-do-backend.md) (**Aceite**, §3 refinado pelo [ADR-0006](docs/adr/0006-backend-enterprise-contextos-edicoes-e-entrega.md): contextos de domínio, edições SaaS/enterprise/pessoal, gRPC interno, entrega K8s e `delonix-runtime`) — camadas http→service→store, workspace `delonix-meet-{core,protocol,store,identity,integrations,media,realtime,api,server}`, uma superfície de API por público, gRPC só máquina-a-máquina. A ordem de migração (§6) não se salta: segurança → `lib.rs` → testes com Postgres → partir o ciclo → serviços → v1/OpenAPI → crates → gRPC.
+- **Já vale para código novo** (ADR-0004 §5), contado por `scripts/check-arquitectura-catraca.sh`: nada de `org_members` fora de `org.rs`, `Authorization` lido à mão, cliente `reqwest` novo, cripto copiada, funções `*_pub`, `{"ok": true}`, nem sessão dentro de `/api/v1`, nem autorização por comparação do texto do papel fora de `org.rs` (ADR-0008).
+- **Skills:** `.claude/skills/delonix-meet` (entrada), `delonix-meet-backend`, `delonix-meet-api`.
 
 ### Frontend — `web/src/` (React + TypeScript + Vite)
 | Ficheiro/pasta | Função |
@@ -77,11 +104,12 @@
 | `webrtc.ts` | `SfuCall`: RTCPeerConnection, simulcast, screen share, `enhanceOpus()` (munge SDP recebido), QoS getStats |
 | `presence.ts` | `PresenceProvider`: WS `/rtc`, modal de chamada, toasts de recusa |
 | `e2ee.ts` | Insertable Streams AES-256-GCM, chave PBKDF2, worker |
-| `media.ts` | `BackgroundEffect` (blur/RVM ONNX), `HeadTracker` (parallax 3D), `Transcriber` (Web Speech + Whisper fallback), `MeetingRecorder`, `LevelWatcher` |
+| `media.ts` | `Denoiser` (RNNoise → noise gate → nivelador → limitador, cadeia de voz "estúdio"; ver `noiseGateWorklet.js`), `BackgroundEffect` (blur/RVM ONNX), `HeadTracker` (parallax 3D), `Transcriber` (Web Speech + Whisper fallback), `MeetingRecorder`, `LevelWatcher` |
 | `whisperWorker.ts` | Whisper-tiny ONNX em worker, modelo self-hosted, env.allowRemoteModels=false |
 | `matte.ts` | Matting RVM (fundo virtual com segmentação) |
 | `i18n.ts` | i18next PT/EN, persist `dx_lang` |
-| `pages/Room.tsx` | Sala: grelha↔palco, controls, breakouts, host controls, whiteboard, polls, Q&A, CC, timer, gravação |
+| `pages/Room.tsx` | Sala: grelha↔palco, controls, breakouts, host controls, whiteboard, polls, Q&A, CC, timer, gravação, multicâmara (painel `multicamOpen`, host-only) |
+| `room/compositor.ts` | `RoomCompositor` — compõe N câmaras (local + convidados remotos, via SFU) num canvas por cena (`solo`/`lado-a-lado`/`grelha`), para o `Directo` ou gravação. Irmão do `studio/compositor.ts` (esse é ecrã+câmara fixos, solo; este é participantes dinâmicos, painel). `participantesVisiveis`/`calcularRects` são puros e testados sem DOM |
 | `pages/Landing.tsx` | Página pública (unauth na raiz) |
 | `pages/Calendar.tsx` | Calendário mês/semana/agenda, agendamento, conflitos, ics |
 | `pages/Recordings.tsx` | Biblioteca, viewer, tarefas do MoM |
@@ -92,7 +120,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0038) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0056) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 
@@ -102,7 +130,7 @@
 
 ### ✅ Feito e funcional
 - Auth org-first: registo cria org+admin; login; refresh cookie HttpOnly; logout revoga
-- Multi-tenant: isolamento cross-org em todos os endpoints (rooms, presence, search, analytics)
+- Multi-tenant: isolamento cross-org por handler (rooms, presence, search, analytics), provado por `web/e2e/isolamento.mjs` nas rotas de org. S2 e S3 da auditoria de 2026-09-16 fechadas no #76 (R121). ⚠ Continua aberto: `org::add_employee` liga uma conta existente por email, limitado só pelo domínio (e o registo não verifica emails). RLS só em `employee_groups` (ADR-0002)
 - SFU Rust: simulcast (q/h/f), screen share como track separada, E2EE server-side (decrypt), gravação server-side (VP9+Opus webm, ffmpeg composite multi-publicador)
 - Sala de reunião: grelha Meet-style, palco com speaker detection, controles estilo Google Meet (pill dividida mic/câmara), whiteboard, breakouts (rename/add/move/timer/return-all), host controls (lock, share-only), CC (legendas partilhadas), reações, mão levantada, gravação
 - Ferramentas in-room: timer, sondagens anónimas, Q&A com upvote
@@ -113,7 +141,7 @@
 - Recordings: biblioteca, viewer (player+transcrição+MoM+tarefas), toggle cards/tabela, partilha read-only
 - Analytics admin: KPIs 30d, série semanal, top organizadores, kind split, duração média, postura SSO/SCIM (stubs)
 - Webhooks: Slack/Teams/Mattermost/generic+HMAC, SSRF guard, events: meeting.created/started/recording.ready
-- API keys por org (hash + scopes)
+- API keys por org (hash; escopos por rota, `expires_at` opcional, rate-limit por chave — R170)
 - PWA: manifest + service worker
 - Temas: Delonix (dark), NgolaCloud (claro quente), NgolaCloud-dark, Kaeso (corporativo flat)
 - i18n PT/EN (Landing, Shell, Login, Home, Analytics, Roadmap — Room/Calendar/Recordings/Directory por traduzir)
@@ -204,7 +232,7 @@ Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **
 ## 6. Invariantes de segurança (nunca quebrar)
 
 1. **Segredos fail-closed:** `config.rs` faz panic sem `JWT_SECRET`/`TURN_SECRET`/`DATABASE_URL` fortes. `DELONIX_ALLOW_INSECURE=1` só em dev.
-2. **Isolamento multi-tenant:** `rooms::can_access_room` e `org::org_co_members`/`admin_orgs_of_user` escopam TUDO à(s) org(s) do utilizador. Nunca devolver dados cross-org.
+2. **Isolamento multi-tenant:** `rooms::can_access_room` e `org::role_in_org`/`org_co_members`/`admin_orgs_of_user` escopam TUDO à(s) org(s) do utilizador. Nunca devolver dados cross-org. **A pertença decide-se em `org.rs`, que filtra `archived_at IS NULL`** — uma verificação escrita à mão noutro módulo foi exactamente como um membro arquivado manteve acesso (auditoria S3). **«Admin de alguma org» nunca é admin da plataforma** — são os UUIDs de `PLATFORM_ADMIN_USER_IDS` (S1, R121).
 3. **Room tokens de curta duração:** JWT separado, âmbito = 1 sala, expira em 5 min. Sem room token válido → WS recusado.
 4. **SSRF em webhooks:** validar host (bloquear IPs privados/loopback/link-local/metadata) na criação E na entrega. Sem redirects.
 5. **Rate limit:** lockout por conta no login (8/5min); rate limit por IP em `/api/v1`; WS com rate limit por socket.
@@ -215,6 +243,8 @@ Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **
 10. **Uma conta tem UMA autoridade de autenticação, explícita:** `users.odoo_org_id` — a org que a gere, gravada quando a conta nasce de um Odoo e nunca reescrita por outra. NULL = conta local, autenticada localmente. **Nunca** resolver o provedor de autenticação por email nem por pertença a org (`LIMIT 1` sem ordem = escolher a autoridade por sorteio). E uma sincronização de directório **nunca reclama uma conta que já existe** — nem de outra org, nem local. As duas metades são precisas; fechar só uma deixa a porta entreaberta. Ver R25.
 
 11. **Nenhuma fila de saída sem limite.** `WS_QUEUE_CAP` (default 512, por socket `/ws` e `/rtc`) e `NEGO_QUEUE_CAP` (default 64, renegociação do SFU por peer). Uma fila ilimitada transformava um consumidor lento — que na nossa rede-alvo é o caso NORMAL, não a excepção — num OOM que levava consigo todas as salas do pod. Cheia, descarta-se só o efémero e auto-substituível (`ServerMsg::is_droppable`: legenda parcial, traço de quadro, reacção) e conta-se; com protocolo ou estado fecha-se o socket e o cliente reentra. Nunca `send().await` nestes caminhos (os emissores correm dentro do lock do `DashMap` — R16): é sempre `try_send`. Ver R32/R33.
+
+12. **Segredos de terceiros nunca em claro na base (R160):** um segredo que o servidor volta a USAR (webhook, SSO, WebDAV, chave RTMP) guarda-se com `secrets_at_rest::seal`/`core::secret_box`, abre-se só onde se usa, e nenhuma resposta o devolve — no máximo `has_*`. Sem chaves, a escrita é recusada, nunca gravada em claro.
 
 ---
 
@@ -250,9 +280,9 @@ cargo build --release    # depois de migração nova, SEMPRE rebuild antes de re
 
 ### Rust
 - `AppError` para todos os erros de handler — nunca `unwrap()` em código de produção
-- Pool Postgres via `Extension<PgPool>` injetado pelo axum
+- Estado via `State(state): State<Arc<AppState>>` (pool em `state.db`); não há `Extension<PgPool>`
 - `sqlx::query` / `sqlx::query_as::<_, T>` — **API de runtime**, sem verificação
-  em compile time. É o estado real: 118 chamadas, zero macros `query!`. A
+  em compile time. É o estado real: 302 chamadas (2026-09-16), zero macros `query!`. A
   consequência tem de ser dita: um nome de coluna errado passa a compilação e
   só falha em execução, por isso qualquer alteração de esquema exige o teste
   que percorre o caminho. A alternativa (`query!` + `cargo sqlx prepare`)
@@ -261,6 +291,9 @@ cargo build --release    # depois de migração nova, SEMPRE rebuild antes de re
 - Handlers async retornam `Result<impl IntoResponse, AppError>`
 - Migrações em `server/migrations/` com prefixo numérico sequencial (`0001_`, `0002_`, …)
 - Novos módulos: declarar em `main.rs` (`mod novo_modulo;`) + registar rotas no router
+- **Código novo chama a regra, não a copia** (ADR-0004 §5): pertença → `org::`; autenticação → um extractor de `auth.rs`/`apikeys.rs`/`odoo.rs`; pedidos de saída → `state.outbound` do `net_guard` (`tenant()` + `check_tenant_url` se o URL vem do cliente, `operator()` + `check_operator_url` se vem do operador); cripto → a função que existe; exportar → `pub(crate)`, nunca `*_pub`. A catraca da arquitectura falha se alguma contagem subir
+- **Rota nova:** checklist da skill `delonix-meet-api` — `201`/`204` em vez de `{"ok": true}`, listagem com limite e cursor, recurso completo, uma autenticação por superfície
+- **Língua:** identificadores NOVOS em inglês; comentários, documentação e mensagens ao utilizador em português (regra de fronteira de 2026-09-03). O código existente não se renomeia por isso — renomeia-se quando mudar de crate
 
 ### TypeScript/React
 - Componentes funcionais + hooks
@@ -304,18 +337,20 @@ Ver `docs/competitive-positioning.md` para análise completa. Resumo:
 
 ## 10. Painel de revisores especializados
 
-**Subagentes autónomos** em `agents/` (invocar via Agent/`@nome`) — especialistas Delonix, cada um com o catálogo de regressões (`docs/reference/regressions.md`) no radar. Usar PROACTIVAMENTE nas áreas respetivas:
+**Subagentes em `.claude/agents/delonix-meet-*.md`** (versionados com o código; invocar via Agent/`@nome`). Prefixo `delonix-meet-` porque no workspace `delonix-*` sem `-meet` é o MOTOR. Cada um tem a pergunta que faz a tudo, o radar de regressões (`docs/reference/regressions.md`) e um relatório com as duas metades — o provado e o não validado. Usar PROACTIVAMENTE nas áreas respectivas:
 
-| Agente | Especialidade | Invocar para (ficheiros) |
+| Agente | Especialidade | Invocar para |
 |---|---|---|
-| **delonix-code** | Rust supremo (nível criador): safety, ownership/lifetimes, async Tokio, unsafe, perf hot-path RTP | `server/src/*.rs` (sobretudo `sfu.rs`, `recorder.rs`, `signaling.rs`) |
-| **delonix-devops** | Platform engineering: K8s, Docker, Ansible, Terraform, coturn/rede WebRTC, ingress, metallb, afinidade, media | `deploy/`, `deploy/k8s/`, Dockerfiles, Makefile, TURN |
-| **delonix-frontend** | Frontend supremo: React/TS/CSS4/HTML5/JS + UX Meet/Teams/Zoom | `web/src/**` (`Room.tsx`, `webrtc.ts`, `presence.ts`, `styles/`) |
-| **delonix-security-compliance** | Segurança (cripto/E2EE/TLS/DTLS/JWT/SSRF/rate-limit/cross-org) + compliance (eDiscovery/DLP/SCIM/audit/BNA/LGPD) | `auth.rs`, `e2ee.ts`, `webhooks.rs`, `config.rs`, `org.rs`, endpoints novos |
-| **webrtc-sfu-reviewer** | WebRTC/SFU (Justin Uberti): ICE, simulcast, codecs, media num-só-sentido | `sfu.rs`, `webrtc.ts`, `e2ee.ts`, `recorder.rs` |
-| **competitive-strategist** | Posicionamento vs Zoom/Teams/Meet, priorização de roadmap | features novas, decisões de produto |
+| **delonix-meet-architecture** | Organização do backend: cópias, camadas, ciclo de módulos, nomes, ADR-0004 | qualquer ficheiro novo ou movido em `server/src/`, refactor, crates |
+| **delonix-meet-api** | Contrato: superfícies, rota nova, estado HTTP, erro, paginação, idempotência, OpenAPI, gRPC | `main.rs` (router), `/api/v1`, SDK/mobile/integrações |
+| **delonix-meet-security** | Auth, isolamento entre orgs, autoridade de conta (R25), SSRF, segredos, E2EE, MFA, auditoria, BNA/LGPD | `auth.rs`, `org.rs`, `apikeys.rs`, `odoo*.rs`, `storage.rs`, `webhooks.rs`, `net_guard.rs`, `mfa.rs`, `e2ee.ts`, rotas novas |
+| **delonix-meet-rust** | Async Tokio, locks através de `.await`, filas limitadas, tarefas de fundo, hot path | `sfu.rs`, `signaling.rs`, `recorder.rs`, `presence.rs`, `redis_state.rs` |
+| **delonix-meet-webrtc** | Negociação/glare, ICE/TURN, simulcast, oradores, gravação, directo | `sfu.rs`, `webrtc.ts`, `e2ee.ts`, `recorder.rs`, `broadcast.rs` |
+| **delonix-meet-frontend** | React/TS, kit `ui.tsx`, temas, i18n, ecrã estreito, acessibilidade | `web/src/**` |
+| **delonix-meet-devops** | K8s, imagens, afinidade por sala, coturn, probes/drain, CI | `deploy/`, Dockerfiles, Makefile, `.github/` |
+| **delonix-meet-product** | Posicionamento, roadmap, o que se pode vender | features novas, preços, landing, roadmap |
 
-Personas adicionais (invocar em prompt, perfis em `docs/ai-reviewers.md`): **Lars Bak** (WASM/Worker), **Lea Verou** (CSS/a11y), **Zoom Reliability Architect** (fallback/TURN/redes degradadas).
+Personas de inspiração (Graydon Hoare, Justin Uberti, Adam Langley, …) continuam em `docs/ai-reviewers.md` como template para prompts em ferramentas sem subagentes.
 
 ---
 
@@ -341,11 +376,13 @@ Personas adicionais (invocar em prompt, perfis em `docs/ai-reviewers.md`): **Lar
 - **Oferta SFU na CONSTRUÇÃO (`webrtc.ts`):** a `SfuCall` envia o `sfu-offer` inicial no construtor, NÃO num `signal.on('joined')` interno. Porquê: a `SfuCall` é criada *dentro* do handler `joined` (o `callHolder` em `Room.tsx` adia a criação até `joined`), portanto um listener registado no construtor perderia o evento que já disparou → sem oferta → sem `pc connected`/`track published` → media morta. Regressão já custou uma sessão — não voltar a "gatear" a oferta pelo `joined`.
 - **Convidado em espera NÃO monta a SFU (`Room.tsx` `callHolder`):** enquanto aguarda admissão, o convidado não pode criar `SfuCall` — senão gera oferta stale → glare/rollback em loop → flood → o rate-limit derruba → reload após admitir. A `SfuCall` só nasce no handler `joined` (após admissão real). `callHolder.start()` é idempotente (`if callRef.current || cancelled return`).
 - **`.dockerignore` NÃO pode excluir `web/dist`:** o `Dockerfile.web.stage` faz `COPY web/dist` (usa o build local); excluir `web/dist` parte o `make stage`. Excluir sim: `server/target`, `web/node_modules`, `web/public/{ort,ort-rvm,models/*}`, `deploy/*.env`, `agents/worktrees` (contexto Docker de 4.5GB→<1MB; sem isto o cache serve imagem stale e o Rust não recompila).
-- **Media K8s = relay-only via coturn (`FORCE_TURN_RELAY=1`):** em K8s o IP do pod (10.244.x) é inalcançável de fora e os host candidates do SFU não transportam media → sem relay-only o ICE "liga" mas fica preto. `FORCE_TURN_RELAY=1` põe `iceTransportPolicy:relay` no `/api/ice` E no `RTCConfiguration` do SFU; exige coturn alcançável (em stage: no HOST via `deploy/run-host-coturn.sh`, `TURN_HOST=172.30.0.1:3478`). Em local (systemd, mesmo host) NÃO ligar — host candidates chegam. **Aberto:** alocação TURN instável (`438 Stale nonce`/`allocation timeout`) → ver [[k8s-media-turn]] / `docs/reference/regressions.md`. Não é `/rtc` (presença = Redis, sem afinidade nem relay).
+- **Media K8s = relay-only via coturn (`FORCE_TURN_RELAY=1`):** em K8s o IP do pod (10.244.x) é inalcançável de fora e os host candidates do SFU não transportam media → sem relay-only o ICE "liga" mas fica preto. `FORCE_TURN_RELAY=1` põe `iceTransportPolicy:relay` no `/api/ice-servers` E no `RTCConfiguration` do SFU; exige coturn alcançável (em stage: no HOST via `deploy/run-host-coturn.sh`, `TURN_HOST=172.30.0.1:3478`). Em local (systemd, mesmo host) NÃO ligar — host candidates chegam. **Aberto:** alocação TURN instável (`438 Stale nonce`/`allocation timeout`) → ver [[k8s-media-turn]] / `docs/reference/regressions.md`. Não é `/rtc` (presença = Redis, sem afinidade nem relay).
 - **Servidor é autoritativo em ações de sala partilhadas:** `wb-open`/`wb-close` (quadro branco abre/fecha em TODOS; abrir só apresentador/anfitrião), `Presenting`/limpar apresentação ao parar screen-share, e abrir o painel de transcrição são difundidos/validados pelo servidor (`signaling.rs`) — o cliente NÃO decide sozinho. O painel de transcrição é host-only (não abre para todos ao ligar). **Partilha de ecrã de não-anfitrião exige `share-grant` do anfitrião** (grants por sala no hub; `ScreenShare` sem grant → Error — não confiar no cliente); fluxo: `share-request` → cartão Permitir/Negar no anfitrião → grant → partilha arranca no requerente. Controlo remoto: `remote-control request` só é entregue a quem está a apresentar (`presenter` por sala no hub).
 - **Glare são DUAS metades:** adiar a oferta no servidor (`NegoMsg`) NÃO chega — o `rollback` do cliente descarta a oferta dele, por isso o cliente tem de **RE-OFERTAR** depois de responder. Guardado por `sfu_e2e.rs` + `glare.test.ts`. Ver R13.
 - **Negociação SFU = canal único por peer (`NegoMsg`):** ofertas do cliente (ecrã, câmara), respostas e renegociações do servidor passam TODAS pela `negotiation_loop`. O webrtc-rs **não tem rollback** (nem implícito nem explícito a partir de `have-local-offer`), por isso uma oferta do cliente que chegue com a nossa pendente é **adiada**, nunca aplicada fora de estado — era aí que a partilha de ecrã se perdia em silêncio. Ver R13.
 - **Sem PLI periódico:** keyframes só a pedido (subscrição nova, troca de camada, PLI/FIR reencaminhado do subscritor, rate-limit 1 s). O antigo ticker de 3 s por camada queimava bitrate para sempre. Ver R14.
+- **Troca de camada = MESMO sender, RTP reescrito, extensões fora:** `replace_track` (nunca remover + subscrever com o mesmo id de track), `LayerRewriter` por subscrição (numeração contígua, relógio a avançar, porta à camada antiga fechada ANTES do `replace_track`), e o vídeo reencaminhado sem as extensões de cabeçalho do publicador — os ids de `extmap` não coincidem entre negociações. Guardado por `sfu_e2e.rs`. Ver R156.
+- **Conflito de papel ICE = 487, nunca silêncio:** o Chrome passa a CONTROLLED ao responder a cada oferta do SFU; o `server/vendor/webrtc-ice` (patch sobre o 0.17.1) responde 487 autenticado para o browser voltar a controlling. Sem ele o browser perde o consentimento ~5 s depois de ligar. Actualizar o webrtc-rs = reaplicar o patch ou provar que o upstream já o faz. ICE-lite não serve (relay-only em K8s). Guardado por `sfu_e2e.rs`. Ver R157.
 - **Camada simulcast é reavaliada:** `reevaluate_peer` decide a partir do tamanho da sala **e** da perda reportada por RTCP (`Quality`). Chamada em cada entrada/saída e em cada mudança de nível de perda. Ver R15.
 - **`touch_subs()` a seguir a QUALQUER alteração de subscritores:** a bomba de RTP usa um snapshot invalidado por `subs_version` (escritas fora do lock). Esquecer isto = media a ir para quem saiu. Ver R16.
 - **Áudio remoto vive no `AudioSink`, nunca dentro de um tile:** esconder um tile não pode silenciar ninguém. Ver R19.
@@ -355,4 +392,4 @@ Personas adicionais (invocar em prompt, perfis em `docs/ai-reviewers.md`): **Lar
 - **Seleção de oradores (top-N):** o SFU só reencaminha os 3 microfones mais ativos. Três armadilhas que silenciam gente: renumerar SEMPRE o áudio (`AudioMeter::next_seq` — sem isso a supressão parece perda e baixa o vídeo), decair a energia por TEMPO e não por pacote (com DTX quem se cala não envia nada e ficaria preso no top-N), e NUNCA suprimir microfones sem a extensão RFC 6464 negociada. Gravação, PSTN e áudio de ecrã recebem sempre tudo. Ver R22.
 - **`video-interest` é enviado SEMPRE que o conjunto muda** — a página visível quando pagina, TODOS os peers quando não pagina. "Deixar de enviar" não significa "todos": o servidor ficaria com a última página. Ver R23.
 - **Desligar a câmara liberta-a mesmo** (`disableVideo` → `replaceTrack(null)` + `track.stop()`), reutilizando o `videoSender` guardado — criar transceiver novo por religação faz crescer a SDP e perde o simulcast. Ver R24.
-- **Harness:** manter `HARNESS.md`, `AGENTS.md`, `GEMINI.md` coerentes; a referência estável está em `docs/reference/architecture.md` (+ `docs/reference/regressions.md` = regressões a não reintroduzir); revisores autónomos em `agents/`.
+- **Harness:** manter `HARNESS.md`, `AGENTS.md`, `GEMINI.md` coerentes; a referência estável está em `docs/reference/architecture.md` (+ `docs/reference/regressions.md` = regressões a não reintroduzir); revisores em `.claude/agents/delonix-meet-*.md` e skills em `.claude/skills/delonix-meet*/`; a arquitectura-alvo em `docs/adr/0004-organizacao-alvo-do-backend.md`.

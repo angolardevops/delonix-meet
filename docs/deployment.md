@@ -35,6 +35,37 @@ Guia único para pôr o Delonix Meet a correr, do portátil ao cluster. Escolhe 
 
 Se hesitas: **zero-touch**. Faz o que as secções 5 e 6 fazem à mão.
 
+### Edições e alvos de entrega
+
+Um só binário, três perfis ([ADR-0006 §2](adr/0006-backend-enterprise-contextos-edicoes-e-entrega.md)).
+A edição fixa os defaults (`DELONIX_EDITION`, `REGISTRATION_MODE`, `TENANCY_MODE`);
+o alvo decide o manifesto.
+
+| Edição | Alvo | Manifesto | Aplica-se com | Validado como |
+|---|---|---|---|---|
+| saas | Kubernetes | [`deploy/k8s-overlays/saas`](../deploy/k8s-overlays/saas/kustomization.yaml) | `kubectl apply -k` | `bash scripts/check-k8s-render.sh`: render + portas internas fora do ingress + ADR-0001 + deriva do HPA. **Sem** `kubectl apply --dry-run` (precisa de API server) |
+| enterprise | Kubernetes | [`deploy/k8s-overlays/enterprise`](../deploy/k8s-overlays/enterprise/kustomization.yaml) | `kubectl apply -k` | idem |
+| enterprise | um host, `delonix-runtime` | [`deploy/delonix/meet-stack.yaml`](../deploy/delonix/meet-stack.yaml) | `delonix apply -f` | `delonix manifest validate --strict`, `delonix plan`, `delonix apply --dry-run` |
+| personal | um host, `delonix-runtime` | [`deploy/delonix/meet-stack-personal.yaml`](../deploy/delonix/meet-stack-personal.yaml) | `delonix apply -f` | idem |
+| saas | PaaS NgolaCloud | [`deploy/delonix/meet-application.yaml`](../deploy/delonix/meet-application.yaml) | `delonixctl apply -f` | parse + `validate` + `expand` contra o `delonix-orchestrator` de `origin/main`. **Não aplica hoje:** o PaaS não injecta `env.from_secret` ([detalhe](../deploy/delonix/README.md#o-que-ainda-não-fecha--ler-antes-de-aplicar)) |
+| todas | Kubernetes, sem edição | [`deploy/k8s`](../deploy/k8s/kustomization.yaml) (base) | `make stage` / `make prod` | inalterado: `check-room-affinity.sh` |
+
+Nenhum destes foi aplicado num cluster, host ou PaaS vivo no momento em que a
+tabela foi escrita (2026-09-16). Os overlays vivem em `deploy/k8s-overlays/` e
+não em `deploy/k8s/overlays/`: o kustomize recusa um overlay dentro da própria
+base.
+
+O que muda entre edições no Kubernetes, além das três variáveis:
+
+| | base (`deploy/k8s`) | overlay saas | overlay enterprise |
+|---|---|---|---|
+| Réplicas | 3 | 3 + HPA 2–8 | 1 |
+| Migrações | no arranque | `Job` `delonix-server-migrate` (`args: [migrate]`), `DELONIX_MIGRATE=0` | no arranque (`DELONIX_MIGRATE=1`) |
+| Redis | do ConfigMap | obrigatório (`configMapKeyRef`, `optional: false`) | opcional |
+| Listener interno `:8181` e gRPC `:9180` | não | Service `delonix-server-internal` (ClusterIP, sem ingress), NetworkPolicy, mTLS por cert-manager | idem |
+| `LOG_FORMAT` | omissão (text) | json | json |
+| `startupProbe`, rootfs só-de-leitura | não | sim | sim |
+
 ### O que é preciso saber sobre a arquitectura
 
 ```
@@ -114,9 +145,10 @@ openssl rand -hex 24   # → password do Postgres
 
 | Variável | Descrição |
 |---|---|
-| `PROVISIONING_SECRET` | Autoriza `POST /api/v1/admin/orgs`. Vazio = endpoint desligado |
+| `PROVISIONING_SECRET` | Autoriza `POST /api/operator/v1/organizations`. Vazio = endpoint desligado |
+| `PLATFORM_ADMIN_USER_IDS` | UUIDs (separados por vírgula) dos administradores da PLATAFORMA — os únicos que leem e alteram o armazenamento das gravações (`/api/operator/v1/storage*`). Vazio = ninguém (fail-closed). UUID e não email, porque o registo não verifica emails. Obter com `SELECT id FROM users WHERE email = '…'` depois de a conta existir. Um valor que não seja UUID impede o arranque |
 | `PLATFORM_ODOO_URL` / `PLATFORM_ODOO_DB` | Login com conta Odoo ([§7](#7-integração-odoo)). Vazias = desligado |
-| `WEBHOOK_ALLOW_HOSTS` | Hosts isentos da guarda anti-SSRF dos webhooks, por nome exacto. Necessário para um Odoo on-prem em rede privada |
+| `OUTBOUND_ALLOW_HOSTS` | Hosts isentos da guarda anti-SSRF para URLs escritos por clientes (webhooks, `odoo_url` da organização, emissor OIDC), por nome exacto — nunca redes. Necessário para um Odoo ou IdP on-prem em rede privada. O host de `PLATFORM_ODOO_URL` entra sozinho. Os destinos do operador (WebDAV, `OLLAMA_URL`) não precisam: alcançam a rede privada, só os metadados da cloud (link-local) ficam recusados |
 | `OLLAMA_URL` | LLM local para atas e legendas. Vazio = MoM por regras (fail-open) |
 | `OLLAMA_MODEL_SUMMARY` / `OLLAMA_MODEL_TRANSLATE` | modelos (ex. `qwen2.5:7b` / `qwen2.5:1.5b`) |
 | `VOICE_INTERNAL_SECRET` | API interna de IVR (PSTN). Vazio = desligada |
@@ -237,6 +269,19 @@ com afinidade por sala ([§4](#4-a-rede-de-media-a-parte-que-mais-falha)), e
 Detalhe em [deploy/k8s/README.md](../deploy/k8s/README.md) e no
 [runbook §5.3](ops/platform-engineering.md).
 
+Com edição (saas ou enterprise), aplicar o overlay em vez da base — ver
+[Edições e alvos de entrega](#edições-e-alvos-de-entrega):
+
+```bash
+bash scripts/check-k8s-render.sh               # render + fronteiras, sem cluster
+kubectl apply -k deploy/k8s-overlays/saas
+kubectl -n delonix-meet wait --for=condition=complete job/delonix-server-migrate --timeout=10m
+```
+
+O overlay pressupõe o cert-manager instalado (emite o mTLS do gRPC) e um
+namespace `monitoring` para o scrape do `:8181/metrics`. Com o FreeSWITCH fora
+do cluster, a NetworkPolicy precisa de uma regra `ipBlock` para o IP dele.
+
 ---
 
 ## 7. Integração Odoo
@@ -282,8 +327,8 @@ videochamada num evento de calendário.
 1. **No Delonix:** definir `PROVISIONING_SECRET` e reiniciar.
 2. **No Odoo:** Definições → Delonix Meet → URL base + segredo de provisionamento
    → **Provisionar**. Isso cria a organização e guarda a chave `dlx_...`.
-3. Se o Odoo estiver em rede privada e quiseres o webhook de aceleração das atas,
-   acrescentar o host a `WEBHOOK_ALLOW_HOSTS`.
+3. Se o Odoo estiver em rede privada (o login por conta Odoo e o webhook de aceleração das atas saem do servidor para ele),
+   acrescentar o host a `OUTBOUND_ALLOW_HOSTS`.
 
 A API usada é `POST /api/v1/meetings` — que cria uma **reunião** (anfitrião +
 convidados), não uma sala solta. A distinção importa: uma sala criada por

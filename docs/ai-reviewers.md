@@ -264,16 +264,19 @@ Para decisões de **recursos computacionais e performance** (o pedido explícito
 
 ---
 
-## Personas como subagentes invocáveis (`agents/`)
+## Personas como subagentes invocáveis (`.claude/agents/`)
 
-As personas de revisão existem também como **subagentes autónomos** do agentes de IA (correm com contexto próprio, ao contrário dos slash commands que correm em linha):
+As personas deste painel inspiram os **subagentes versionados** em `.claude/agents/delonix-meet-*.md` (correm com contexto próprio). Os nomes antigos (`rust-perf-reviewer`, `webrtc-sfu-reviewer`, `k8s-scale-reviewer`, `security-reviewer`, `competitive-strategist`) nunca existiram no git — ver a auditoria de 2026-09-16 §2.5.
 
-| Subagente | Persona | Invocar para |
+| Subagente | Persona de inspiração | Invocar para |
 |---|---|---|
-| `rust-perf-reviewer` | Graydon Hoare | `server/src/*.rs`, hot path RTP |
-| `webrtc-sfu-reviewer` | Justin Uberti | `sfu.rs`, `webrtc.ts`, media |
-| `k8s-scale-reviewer` | Brendan Burns | `deploy/`, `deploy/k8s/`, scaling |
-| `security-reviewer` | Adam Langley | `auth.rs`, `e2ee.ts`, `webhooks.rs` |
-| `competitive-strategist` | Estratega de produto | features novas, roadmap |
+| `delonix-meet-architecture` | — (ADR-0004) | organização do backend, cópias, camadas, crates |
+| `delonix-meet-api` | Steve Bazyl | contrato de API, `/api/v1`, OpenAPI, gRPC |
+| `delonix-meet-rust` | Graydon Hoare | `server/src/*.rs`, hot path RTP, async |
+| `delonix-meet-webrtc` | Justin Uberti | `sfu.rs`, `webrtc.ts`, media |
+| `delonix-meet-devops` | Brendan Burns | `deploy/`, `deploy/k8s/`, scaling |
+| `delonix-meet-security` | Adam Langley + Teams Compliance Architect | `auth.rs`, `e2ee.ts`, `webhooks.rs`, isolamento |
+| `delonix-meet-frontend` | Lars Bak (Workers/WASM) | `web/src/**` |
+| `delonix-meet-product` | Zoom Platform Architect | features novas, roadmap, o que se vende |
 
-Em Gemini/Codex/Copilot, invocar a mesma persona por prompt (ver "Como usar este painel" no topo).
+Em Gemini/Codex/Copilot, invocar a mesma persona por prompt (ver "Como usar este painel" no topo), ou colar o ficheiro do subagente como contexto.

@@ -1,2 +1,9 @@
 faster-whisper==1.0.3
+# Cliente do gRPC interno (TranscriptionService). O grpcio e o grpcio-tools de
+# requirements-build.txt têm de estar na MESMA versão: o stub gerado recusa um
+# runtime mais antigo do que o gerador.
+grpcio==1.66.2
+protobuf==5.27.5
+# Só o modo legado (DATABASE_URL, DEPRECADO — ADR-0006 §3). Importado apenas
+# nesse modo; sai quando o modo sair.
 psycopg2-binary==2.9.9

@@ -1,0 +1,23 @@
+# Mutações que SOBREVIVEM por serem equivalentes, cada uma com a razão.
+#
+# Existe pela mesma razão que o `rotas-publicas.txt` e o `e2e-fora-do-ci.txt`:
+# uma excepção sem razão escrita é indistinguível de um esquecimento. Sem isto,
+# quem correr o `mutantes.mjs` daqui a três meses volta a investigar as mesmas
+# cinco linhas e chega às mesmas conclusões.
+#
+# Um mutante EQUIVALENTE é uma alteração que não muda o comportamento
+# observável — não é uma lacuna de teste, é uma linha onde as duas versões
+# fazem o mesmo. Escrever um teste para o «apanhar» seria escrever um teste que
+# não pode falhar.
+#
+# Formato: <ficheiro>:<linha> · <operador> · <razão>
+
+src/callTimings.ts:88 · || vira && · `a === undefined || b === undefined` protege o `b - a` seguinte. Com `&&`, um único marco em falta passa a guarda — mas a linha a seguir é `b >= a ? ... : null`, e qualquer comparação com `undefined` é falsa. O resultado é `null` nos dois caminhos. A guarda é clareza, não correcção.
+
+src/callQuality.ts:136 · && vira || · O filtro do `transport` devolve `selectedCandidatePairId`. Com `||`, um `transport` sem esse campo passa a corresponder — e devolve `undefined`, que é exactamente o que o `?.` já devolvia. O `selectedPairId != null` a seguir trata os dois casos da mesma maneira. Para distinguir seria preciso uma entrada NÃO-`transport` com um `selectedCandidatePairId` em string, que o WebRTC não produz.
+
+src/callQuality.ts:142 · || vira && · A cadeia é `state === 'succeeded' || selected === true || nominated === true`, e o mutante troca o SEGUNDO `||`. Quando o estado já é `succeeded` — o caso normal e o único que os browsers produzem em conjunto com o recuo — a cadeia curto-circuita antes de lá chegar. Distinguir exigiria um par com `selected`/`nominated` a `true` e `state` diferente de `succeeded`, combinação que nenhuma implementação emite.
+
+src/layerPolicy.ts:166 · <= vira < · `if (custo() <= budget) break` seguido de `while (custo() > budget && …)`. Na igualdade exacta, o `<` não sai do ciclo — mas o `while` interno também não corre, porque `custo() > budget` é falso. O resultado é idêntico; só se desperdiçam iterações. A guarda externa é uma optimização, não uma decisão.
+
+src/studio/analise.ts:106 · <= vira < · A iteração-sentinela `j === n` força `calado = true`. Se houvesse um silêncio aberto, é a linha 114 (`if (inicio !== null) empurrar(…, n * janela, …)`) que o fecha — não a sentinela. Se NÃO houvesse, a sentinela põe `inicio = n` e a linha 114 chama `empurrar` com um intervalo de largura zero, que o `>= minimo` recusa sempre. Nos dois casos o resultado é o mesmo. NOTA: isto quer dizer que a sentinela é lógica MORTA — vale uma simplificação, não um teste.

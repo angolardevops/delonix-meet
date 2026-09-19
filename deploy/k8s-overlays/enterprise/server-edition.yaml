@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-server
+  namespace: delonix-meet
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: server
+          env:
+            - name: DELONIX_EDITION
+              value: enterprise
+            - name: REGISTRATION_MODE
+              value: invite
+            - name: TENANCY_MODE
+              value: single
+            # Uma réplica: as migrações correm no arranque, protegidas pelo
+            # startupProbe de 5 min do components/edition-common.
+            - name: DELONIX_MIGRATE
+              value: "1"
+            # Redis é OPCIONAL nesta edição. O REDIS_URL continua a vir do
+            # ConfigMap da base; sem Redis no cluster, retirar essa chave do
+            # delonix-config (não a pôr vazia aqui).

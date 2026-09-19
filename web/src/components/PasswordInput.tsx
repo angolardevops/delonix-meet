@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 /** Campo de password com alternância mostrar/ocultar (oculto por defeito). */
 export default function PasswordInput({
@@ -18,6 +19,7 @@ export default function PasswordInput({
   minLength?: number
   className?: string
 }) {
+  const { t } = useTranslation()
   const [show, setShow] = useState(false)
   return (
     <div className={`pw-field ${className ?? ''}`}>
@@ -34,8 +36,8 @@ export default function PasswordInput({
         type="button"
         className="pw-toggle"
         onClick={() => setShow((s) => !s)}
-        aria-label={show ? 'Ocultar password' : 'Mostrar password'}
-        title={show ? 'Ocultar' : 'Mostrar'}
+        aria-label={show ? t('common.ocultarPassword') : t('common.mostrarPassword')}
+        title={show ? t('common.ocultarPassword') : t('common.mostrarPassword')}
       >
         {show ? (
           // olho cortado

@@ -51,6 +51,9 @@ pub struct Metrics {
     /// Trocas de camada simulcast (cumulativo): sobe quando a sala cresce/encolhe
     /// ou quando a rede de um subscritor degrada.
     pub sfu_layer_switches_total: AtomicU64,
+    /// Trocas de camada que FALHARAM (cumulativo). Cada uma é um subscritor que
+    /// ficou sem o vídeo desse participante (R156). Tem de estar a zero.
+    pub sfu_layer_switch_failures_total: AtomicU64,
     /// Subscritores atualmente a receber uma camada ABAIXO do normal por perda
     /// de pacotes. >0 sustentado = rede dos clientes (ou do relay) em apuros.
     pub sfu_degraded_subscribers: AtomicI64,
@@ -64,6 +67,13 @@ pub struct Metrics {
     pub sfu_offers_deferred_total: AtomicU64,
     /// Gravações recuperadas de salas que esvaziaram por falha de ligação.
     pub sfu_recordings_orphaned_total: AtomicU64,
+    /// Lugares reclamados depois de o socket cair (R91). É a medida directa de
+    /// quantas quebras deixaram de custar uma reentrada pela sala de espera.
+    pub seats_reclaimed_total: AtomicU64,
+    /// Lugares reservados que EXPIRARAM sem ninguém os reclamar. A razão entre
+    /// os dois diz se a janela está bem dimensionada: muitos a expirar e ou a
+    /// janela é curta, ou as pessoas estão mesmo a sair.
+    pub seats_expired_total: AtomicU64,
     /// Microfones fora do top-N de oradores (áudio não reencaminhado). É a
     /// medida directa da poupança de downlink de voz.
     pub sfu_audio_suppressed: AtomicI64,
@@ -110,6 +120,11 @@ pub struct Metrics {
     /// problema é a máquina, não a rede, e sem isto conta como «rede má».
     pub qos_cpu_limited_total: AtomicU64,
 
+    /// Escritas de chat (mensagem ou reacção) descartadas por a fila de
+    /// persistência estar cheia — a sala recebeu-as, o histórico não.
+    pub chat_persist_dropped_total: AtomicU64,
+    /// Escritas de chat que a base de dados recusou.
+    pub chat_persist_failed_total: AtomicU64,
     /// Pacotes RTP perdidos por a fila de escrita da gravação estar cheia.
     /// `> 0` significa gravação DEGRADADA: o disco não acompanhou. Existe
     /// porque a alternativa — bloquear o executor até o disco alcançar — é
@@ -169,6 +184,9 @@ impl Metrics {
              # HELP delonix_sfu_layer_switches_total Trocas de camada simulcast.\n\
              # TYPE delonix_sfu_layer_switches_total counter\n\
              delonix_sfu_layer_switches_total {}\n\
+             # HELP delonix_sfu_layer_switch_failures_total Trocas de camada falhadas (subscritor sem vídeo).\n\
+             # TYPE delonix_sfu_layer_switch_failures_total counter\n\
+             delonix_sfu_layer_switch_failures_total {}\n\
              # HELP delonix_sfu_degraded_subscribers Subscritores a receber camada reduzida por perda.\n\
              # TYPE delonix_sfu_degraded_subscribers gauge\n\
              delonix_sfu_degraded_subscribers {}\n\
@@ -184,6 +202,12 @@ impl Metrics {
              # HELP delonix_sfu_recordings_orphaned_total Gravações recuperadas de salas caídas.\n\
              # TYPE delonix_sfu_recordings_orphaned_total counter\n\
              delonix_sfu_recordings_orphaned_total {}\n\
+             # HELP delonix_seats_reclaimed_total Lugares reclamados após quebra do socket.\n\
+             # TYPE delonix_seats_reclaimed_total counter\n\
+             delonix_seats_reclaimed_total {}\n\
+             # HELP delonix_seats_expired_total Lugares reservados que expiraram sem reclamação.\n\
+             # TYPE delonix_seats_expired_total counter\n\
+             delonix_seats_expired_total {}\n\
              # HELP delonix_sfu_audio_suppressed Microfones fora do top-N de oradores.\n\
              # TYPE delonix_sfu_audio_suppressed gauge\n\
              delonix_sfu_audio_suppressed {}\n\
@@ -232,6 +256,12 @@ impl Metrics {
              # HELP delonix_join_slow_total Entradas acima de 5 s (a cauda que se sente).\n\
              # TYPE delonix_join_slow_total counter\n\
              delonix_join_slow_total {}\n\
+             # HELP delonix_chat_persist_dropped_total Escritas de chat descartadas por fila cheia.\n\
+             # TYPE delonix_chat_persist_dropped_total counter\n\
+             delonix_chat_persist_dropped_total {}\n\
+             # HELP delonix_chat_persist_failed_total Escritas de chat recusadas pela base de dados.\n\
+             # TYPE delonix_chat_persist_failed_total counter\n\
+             delonix_chat_persist_failed_total {}\n\
              # HELP delonix_uptime_seconds Uptime do processo em segundos.\n\
              # TYPE delonix_uptime_seconds gauge\n\
              delonix_uptime_seconds {}\n",
@@ -242,11 +272,14 @@ impl Metrics {
             self.sfu_peers_total.load(Relaxed),
             g(self.sfu_subscriptions.load(Relaxed)),
             self.sfu_layer_switches_total.load(Relaxed),
+            self.sfu_layer_switch_failures_total.load(Relaxed),
             g(self.sfu_degraded_subscribers.load(Relaxed)),
             self.sfu_keyframes_requested_total.load(Relaxed),
             self.sfu_renegotiations_failed_total.load(Relaxed),
             self.sfu_offers_deferred_total.load(Relaxed),
             self.sfu_recordings_orphaned_total.load(Relaxed),
+            self.seats_reclaimed_total.load(Relaxed),
+            self.seats_expired_total.load(Relaxed),
             g(self.sfu_audio_suppressed.load(Relaxed)),
             g(self.ws_queue_high_water.load(Relaxed)),
             self.ws_queue_dropped_total.load(Relaxed),
@@ -263,6 +296,8 @@ impl Metrics {
             self.join_total.load(Relaxed),
             self.join_ms_sum.load(Relaxed),
             self.join_slow_total.load(Relaxed),
+            self.chat_persist_dropped_total.load(Relaxed),
+            self.chat_persist_failed_total.load(Relaxed),
             uptime_secs,
         )
     }

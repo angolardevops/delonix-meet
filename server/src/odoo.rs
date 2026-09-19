@@ -5,7 +5,7 @@
 //!   2. Gera um token de integração (`dlxo_<hex>`) e copia-o para o módulo
 //!      nk_delonix_meet no Odoo.
 //!   3. O módulo Odoo provisiona utilizadores via
-//!      `POST /api/v1/integration/odoo/provision` (token no header).
+//!      `POST /api/integrations/odoo/v1/provision` (token no header).
 //!   4. No login, o Delonix Meet valida a senha contra o Odoo (modo online)
 //!      ou usa o hash Argon2 em cache (modo offline). Uma alteração de senha
 //!      no Odoo sincroniza automaticamente no próximo login online.
@@ -16,9 +16,7 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Utc};
-use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -26,27 +24,16 @@ use crate::{auth::AuthUser, error::ApiError, AppState};
 
 // ---------- helpers ----------
 
-pub fn sha256_hex_pub(s: &str) -> String {
-    hex::encode(Sha256::digest(s.as_bytes()))
-}
+use delonix_meet_core::crypto::sha256_hex;
 
-fn sha256_hex(s: &str) -> String {
-    sha256_hex_pub(s)
-}
-
-pub fn gen_token_pub() -> String {
-    gen_token()
-}
-
+/// Token de integração Odoo: `dlxo_` + 256 bits.
 fn gen_token() -> String {
-    let mut b = [0u8; 32];
-    OsRng.fill_bytes(&mut b);
-    format!("dlxo_{}", hex::encode(b))
+    delonix_meet_core::crypto::prefixed_token("dlxo_")
 }
 
 // ---------- extractor — token de integração Odoo ----------
 
-/// Extractor para endpoints `/api/v1/integration/odoo/*`.
+/// Extractor para endpoints `/api/integrations/odoo/v1/*`.
 /// Autentica pelo header `Authorization: Bearer dlxo_...`
 /// ou `X-Integration-Token: dlxo_...`.
 pub struct OdooTokenAuth {
@@ -65,55 +52,73 @@ impl FromRequestParts<Arc<AppState>> for OdooTokenAuth {
             .get("x-integration-token")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
-            .or_else(|| {
-                parts
-                    .headers
-                    .get(axum::http::header::AUTHORIZATION)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|h| h.strip_prefix("Bearer "))
-                    .map(|s| s.to_string())
-            })
+            .or_else(|| crate::auth::bearer_token(&parts.headers).map(str::to_string))
             .ok_or(ApiError::Unauthorized)?;
 
-        let hash = sha256_hex(&raw);
-
-        // Aceitar dlxo_ (token de integração Odoo) OU dlx_ (API key da org).
-        // O fluxo de auto-provisão via /admin/orgs gera uma dlx_ key que o
-        // módulo nk_delonix_meet usa diretamente sem passo extra de token.
-        let org_id: Option<Uuid> = if raw.starts_with("dlxo_") {
-            sqlx::query_scalar(
-                "SELECT id FROM organizations
-                 WHERE odoo_token_hash = $1 AND odoo_enabled = TRUE",
-            )
-            .bind(&hash)
-            .fetch_optional(&state.db)
-            .await?
-        } else if raw.starts_with("dlx_") {
-            // `org_api_keys` NÃO tem coluna de revogação — revogar é apagar a
-            // linha (ver apikeys::revoke). Filtrar por `revoked_at IS NULL`
-            // rebentava com "column does not exist" (500) e deixava TODO o
-            // caminho /api/v1/integration/odoo/* inacessível com chave dlx_.
-            sqlx::query_scalar("SELECT org_id FROM org_api_keys WHERE key_hash = $1")
-                .bind(&hash)
-                .fetch_optional(&state.db)
-                .await?
-        } else {
+        // Só o token de integração `dlxo_`. A chave `dlx_` do inquilino também
+        // era aceite aqui (R142): uma credencial emitida para a superfície v1
+        // da org abria o provisionamento de directório, que reescreve membros e
+        // papéis — um público e um poder que a chave nunca declarou. O módulo
+        // `nk_delonix_meet` usa a `dlx_` só em `/api/v1/meetings` e
+        // `/api/operator/v1/organizations`; estas rotas são do token `dlxo_`.
+        if !raw.starts_with("dlxo_") {
             return Err(ApiError::Unauthorized);
-        };
+        }
+        let hash = sha256_hex(&raw);
+        let org_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM organizations
+             WHERE odoo_token_hash = $1 AND odoo_enabled = TRUE",
+        )
+        .bind(&hash)
+        .fetch_optional(&state.db)
+        .await?;
 
         let org_id = org_id.ok_or(ApiError::Unauthorized)?;
         Ok(OdooTokenAuth { org_id })
     }
 }
 
+// ---------- documentação OpenAPI ----------
+
+/// Rotas da BFF deste módulo: configuração da integração (admin) e as
+/// configurações públicas da página de login.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(get_config, save_config, rotate_token, public_settings),
+    components(schemas(
+        OdooConfig,
+        OdooConfigReq,
+        OdooTokenResp,
+        PublicSettings,
+        PublicCapabilities
+    ))
+)]
+pub struct ApiDoc;
+
+/// Rotas da API pública v1 deste módulo, usadas pelo módulo Odoo
+/// `nk_delonix_meet`.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(provision, list_users),
+    components(schemas(
+        ProvisionReq,
+        OdooUserEntry,
+        ProvisionResult,
+        SkippedUser,
+        OdooDirectoryUser
+    ))
+)]
+pub struct V1ApiDoc;
+
 // ---------- DTO da configuração ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct OdooConfig {
     pub org_id: Uuid,
     pub odoo_enabled: bool,
     pub odoo_url: Option<String>,
     pub odoo_db: Option<String>,
+    /// Primeiros 12 caracteres do token (`dlxo_…`); o token nunca volta a sair.
     pub odoo_token_prefix: Option<String>,
     pub odoo_admin_id: Option<Uuid>,
     pub odoo_synced_at: Option<DateTime<Utc>>,
@@ -121,9 +126,11 @@ pub struct OdooConfig {
     pub hide_sso_button: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct OdooConfigReq {
     pub odoo_enabled: bool,
+    /// Guardado sem `/` finais. Passa pela guarda de saída (`net_guard`): um
+    /// endereço interno é recusado com 400, salvo `OUTBOUND_ALLOW_HOSTS`.
     pub odoo_url: Option<String>,
     pub odoo_db: Option<String>,
     pub hide_org_creation: bool,
@@ -132,7 +139,19 @@ pub struct OdooConfigReq {
 
 // ---------- handlers BFF (sessão admin) ----------
 
-/// `GET /api/orgs/{org_id}/integration/odoo`
+/// `GET /api/orgs/{org_id}/integrations/odoo`
+///
+/// Configuração da integração Odoo da organização (admin).
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/integrations/odoo", tag = "odoo",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = OdooConfig),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_config(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -150,19 +169,40 @@ pub async fn get_config(
     Ok(Json(cfg))
 }
 
-/// `PUT /api/orgs/{org_id}/integration/odoo`
+/// `PUT /api/orgs/{org_id}/integrations/odoo`
+///
+/// Grava a configuração (admin). Na primeira gravação o autenticado fica
+/// registado como `odoo_admin_id`.
+#[utoipa::path(
+    put, path = "/api/orgs/{org_id}/integrations/odoo", tag = "odoo",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    request_body = OdooConfigReq,
+    responses(
+        (status = 200, body = OdooConfig, description = "A configuração como ficou gravada (a mesma forma do `GET`)."),
+        (status = 400, description = "`odoo_url` inválido ou a apontar para um endereço interno (guarda de saída, `OUTBOUND_ALLOW_HOSTS`).", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn save_config(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
     Json(req): Json<OdooConfigReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<OdooConfig>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
 
     let url = req
         .odoo_url
         .as_deref()
-        .map(|u| u.trim_end_matches('/').to_string());
+        .map(|u| u.trim().trim_end_matches('/').to_string())
+        .filter(|u| !u.is_empty());
+    // O servidor manda passwords a este URL (login por conta Odoo): guarda
+    // anti-SSRF ao gravar (S4).
+    if let Some(u) = &url {
+        state.outbound.check_tenant_config_url(u).await?;
+    }
 
     sqlx::query(
         "UPDATE organizations
@@ -189,15 +229,36 @@ pub async fn save_config(
         "",
     )
     .await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    get_config(State(state), auth, Path(org_id)).await
 }
 
-/// `POST /api/orgs/{org_id}/integration/odoo/token` — gera/rota token
+/// Token de integração acabado de gerar. É a única vez que sai em claro.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OdooTokenResp {
+    /// `dlxo_<hex>`, para colar no módulo `nk_delonix_meet`.
+    pub token: String,
+    /// Primeiros 12 caracteres, o que fica visível na configuração.
+    pub prefix: String,
+}
+
+/// `POST /api/orgs/{org_id}/integrations/odoo/rotate-token` — gera/rota token
+///
+/// Invalida o token anterior e ACTIVA a integração (`odoo_enabled = true`).
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/integrations/odoo/rotate-token", tag = "odoo",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = OdooTokenResp),
+        (status = 401, description = "Sessão inválida OU membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro da organização.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn rotate_token(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<OdooTokenResp>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
 
     let token = gen_token();
@@ -226,23 +287,30 @@ pub async fn rotate_token(
         "",
     )
     .await;
-    Ok(Json(
-        serde_json::json!({ "token": token, "prefix": prefix }),
-    ))
+    Ok(Json(OdooTokenResp { token, prefix }))
 }
 
 // ---------- provisioning (Odoo → Delonix Meet) ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct OdooUserEntry {
     pub odoo_uid: i32,
     pub name: String,
     pub email: String,
     #[serde(default)]
     pub is_admin: bool,
+    /// Ids externos dos grupos (`modulo.nome`) — mapeiam papéis (ADR-0008 §9).
+    /// Ausente = não enviados: o papel não muda.
+    #[serde(default)]
+    pub groups: Option<Vec<String>>,
+    /// Departamento no Odoo (`hr.department`): o id e o nome.
+    #[serde(default)]
+    pub department_id: Option<i64>,
+    #[serde(default)]
+    pub department_name: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ProvisionReq {
     /// Nome da empresa Odoo (actualiza o nome da org se a org ainda tem o nome
     /// padrão ou se force_name=true).
@@ -251,17 +319,63 @@ pub struct ProvisionReq {
     pub admin_email: String,
     #[serde(default)]
     pub users: Vec<OdooUserEntry>,
+    /// `true` = a lista é o directório COMPLETO: com «suspender ao sair do Odoo»
+    /// activo, quem não vem nela é suspenso (`odoo_exit`).
+    #[serde(default)]
+    pub full_directory: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ProvisionResult {
     pub org_id: Uuid,
     pub created: usize,
     pub updated: usize,
+    /// Entradas do directório que NÃO foram aplicadas, com a razão. Aditivo à
+    /// v1: um integrador antigo ignora o campo, e continua a receber `created`
+    /// e `updated` com o mesmo significado.
+    pub skipped: Vec<SkippedUser>,
+    /// Papéis mudados por grupo do Odoo.
+    pub role_changes: usize,
+    /// Conflitos de papel criados (a decidir na consola).
+    pub role_conflicts: usize,
+    /// Suspensos por saída do Odoo (`full_directory`).
+    pub suspended: usize,
 }
 
-/// `POST /api/v1/integration/odoo/provision`
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SkippedUser {
+    pub email: String,
+    pub reason: String,
+}
+
+/// `POST /api/integrations/odoo/v1/provision`
 /// Chamado pelo módulo nk_delonix_meet para provisionar utilizadores.
+///
+/// Cada entrada passa por `odoo_sso::upsert_member` — a MESMA regra de
+/// autoridade que o login por conta Odoo já aplicava (R25): uma conta gerida
+/// por outra organização, ou uma conta local, NUNCA é reclamada por uma
+/// sincronização de directório.
+///
+/// Esta função tinha a sua própria cópia do «liga por email», sem essa regra:
+/// qualquer org com uma chave `dlx_` listava o endereço de alguém de outra
+/// empresa, reescrevia-lhe o nome, marcava a conta como gerida e punha-a na
+/// sua org — até como admin. Auditoria 2026-09-16, S2, provado ao vivo antes
+/// desta correcção. Duas cópias de uma regra de acesso acabam por divergir; por
+/// isso a cópia saiu, em vez de ser remendada.
+#[utoipa::path(
+    post, path = "/api/integrations/odoo/v1/provision", tag = "odoo",
+    description = "Provisiona o directório de utilizadores do Odoo na organização do token.\n\n\
+Autentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), \
+em `Authorization: Bearer …` ou `X-Integration-Token: …`. Uma entrada cuja conta pertence a \
+outra organização ou é local não é aplicada e vem em `skipped`.",
+    security(("api_key" = [])),
+    request_body = ProvisionReq,
+    responses(
+        (status = 200, body = ProvisionResult),
+        (status = 401, description = "Token em falta, desconhecido, integração desactivada, ou chave `dlx_` (não é o token desta rota).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Rate-limit da v1 por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn provision(
     State(state): State<Arc<AppState>>,
     odoo: OdooTokenAuth,
@@ -270,6 +384,7 @@ pub async fn provision(
     let org_id = odoo.org_id;
     let mut created = 0usize;
     let mut updated = 0usize;
+    let mut skipped = Vec::new();
     let admin_email = req.admin_email.trim().to_lowercase();
 
     // Actualizar nome da org para o nome da empresa Odoo
@@ -281,76 +396,117 @@ pub async fn provision(
             .await;
     }
 
+    let (mut role_changes, mut role_conflicts) = (0usize, 0usize);
+    let mut present = Vec::new();
     for u in &req.users {
         let email = u.email.trim().to_lowercase();
-        let existing: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM users WHERE email = $1")
-            .bind(&email)
-            .fetch_optional(&state.db)
-            .await?;
+        let existed: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
+                .bind(&email)
+                .fetch_one(&state.db)
+                .await?;
+        let admin = email == admin_email || u.is_admin;
+        // Regras de entrada (ADR-0008 §11): uma conta NOVA só nasce se a org o permite.
+        if !existed && !crate::odoo_sso::may_create_account(&state, org_id, &email).await {
+            skipped.push(SkippedUser {
+                email,
+                reason: "as regras de entrada da organização não criam esta conta".into(),
+            });
+            continue;
+        }
 
-        let user_id = if let Some((uid,)) = existing {
+        let user_id = match crate::odoo_sso::upsert_member(
+            &state,
+            org_id,
+            &email,
+            u.name.trim(),
+            u.odoo_uid,
+            admin,
+        )
+        .await
+        {
+            Ok(id) => id,
+            // Recusa de AUTORIDADE: a conta não é desta org. Salta a entrada e
+            // diz porquê — falhar o lote inteiro deixava o directório legítimo
+            // por sincronizar por causa de um único endereço.
+            Err(ApiError::Conflict(reason)) => {
+                skipped.push(SkippedUser { email, reason });
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        present.push(user_id);
+        let groups: Option<std::collections::BTreeSet<String>> = u.groups.as_ref().map(|g| {
+            g.iter()
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect()
+        });
+        let dept_ref = u.department_id.map(|d| format!("hr.department:{d}"));
+        let dept = match (&dept_ref, u.department_name.as_deref().map(str::trim)) {
+            (Some(r), Some(n)) if !n.is_empty() => Some((r.as_str(), n)),
+            _ => None,
+        };
+        match crate::org::apply_odoo_attributes(&state, org_id, user_id, groups.as_ref(), dept)
+            .await?
+        {
+            crate::org::OdooApplied::RoleChanged => role_changes += 1,
+            crate::org::OdooApplied::Conflict => role_conflicts += 1,
+            crate::org::OdooApplied::Unchanged => {}
+        }
+
+        if existed {
+            // O nome acompanha o Odoo, mas só numa conta que ESTA org gere (o
+            // `upsert_member` acabou de o garantir) e sem roubar um nome de
+            // utilizador que já é de outra pessoa.
             sqlx::query(
-                "UPDATE users SET username = $1, odoo_uid = $2, odoo_managed = TRUE
-                 WHERE id = $3",
+                "UPDATE users SET username = $1
+                 WHERE id = $2 AND odoo_org_id = $3 AND username <> $1
+                   AND NOT EXISTS (SELECT 1 FROM users WHERE username = $1 AND id <> $2)",
             )
             .bind(u.name.trim())
-            .bind(u.odoo_uid)
-            .bind(uid)
+            .bind(user_id)
+            .bind(org_id)
             .execute(&state.db)
             .await?;
             updated += 1;
-            uid
         } else {
-            // Utilizador criado sem password — requer login online via Odoo
-            // para obter o hash em cache antes de poder usar modo offline.
-            let (uid,): (Uuid,) = sqlx::query_as(
-                "INSERT INTO users (email, username, password_hash, odoo_uid, odoo_managed)
-                 VALUES ($1, $2, '', $3, TRUE) RETURNING id",
-            )
-            .bind(&email)
-            .bind(u.name.trim())
-            .bind(u.odoo_uid)
-            .fetch_one(&state.db)
-            .await
-            .map_err(|e| match &e {
-                sqlx::Error::Database(db) if db.is_unique_violation() => {
-                    ApiError::Conflict(format!("email {email} já em uso"))
-                }
-                _ => e.into(),
-            })?;
             created += 1;
-            uid
-        };
-
-        // O integrador e qualquer is_admin=true ficam como admin na org
-        let role = if email == admin_email || u.is_admin {
-            "admin"
-        } else {
-            "member"
-        };
-        sqlx::query(
-            "INSERT INTO org_members (org_id, user_id, role)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role",
-        )
-        .bind(org_id)
-        .bind(user_id)
-        .bind(role)
-        .execute(&state.db)
-        .await?;
+        }
     }
 
-    sqlx::query("UPDATE organizations SET odoo_synced_at = now() WHERE id = $1")
-        .bind(org_id)
-        .execute(&state.db)
-        .await?;
+    let suspended = if req.full_directory
+        && crate::directory::entry_rules_of(&state.db, org_id)
+            .await?
+            .suspend_on_odoo_exit
+    {
+        crate::org::suspend_odoo_leavers(&state, org_id, &present).await?
+    } else {
+        0
+    };
+    sqlx::query(
+        "UPDATE organizations SET odoo_synced_at = now(), odoo_last_sync = $2 WHERE id = $1",
+    )
+    .bind(org_id)
+    .bind(
+        serde_json::json!({"source": "provision", "at": chrono::Utc::now(), "created": created,
+            "updated": updated, "skipped": skipped.len(), "role_changes": role_changes,
+            "conflicts": role_conflicts, "suspended": suspended,
+            "groups_read": req.users.iter().any(|u| u.groups.is_some()),
+            "full_directory": req.full_directory}),
+    )
+    .execute(&state.db)
+    .await?;
 
     crate::audit::log(
         &state.db,
         Some(org_id),
         Uuid::nil(),
         "odoo.provision",
-        &format!("created={created} updated={updated}"),
+        &format!(
+            "created={created} updated={updated} skipped={}",
+            skipped.len()
+        ),
     )
     .await;
 
@@ -358,19 +514,51 @@ pub async fn provision(
         org_id,
         created,
         updated,
+        skipped,
+        role_changes,
+        role_conflicts,
+        suspended,
     }))
 }
 
-/// `GET /api/v1/integration/odoo/users` — lista utilizadores para o Odoo
+/// Membro da organização, como o Odoo o vê.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OdooDirectoryUser {
+    pub id: Uuid,
+    pub email: String,
+    pub username: String,
+    /// `null` se a conta não veio do Odoo.
+    pub odoo_uid: Option<i32>,
+    /// Papel na organização (`admin` | `member`).
+    pub role: String,
+}
+
+/// `GET /api/integrations/odoo/v1/users` — lista utilizadores para o Odoo
+#[utoipa::path(
+    get, path = "/api/integrations/odoo/v1/users", tag = "odoo",
+    description = "Membros ACTIVOS da organização do token (os arquivados não saem), por `username`.\n\n\
+Autentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), \
+em `Authorization: Bearer …` ou `X-Integration-Token: …`.",
+    security(("api_key" = [])),
+    responses(
+        (status = 200, body = Vec<OdooDirectoryUser>),
+        (status = 401, description = "Token em falta, desconhecido, integração desactivada, ou chave `dlx_` (não é o token desta rota).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Rate-limit da v1 por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list_users(
     State(state): State<Arc<AppState>>,
     odoo: OdooTokenAuth,
-) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+) -> Result<Json<Vec<OdooDirectoryUser>>, ApiError> {
+    // Só membros ACTIVOS (R143, a S3 do R121 aplicada ao directório): quem
+    // saiu da empresa não volta ao Odoo como membro. O filtro entra na query
+    // que já existia — um helper em `org.rs` com email/username/odoo_uid é o
+    // destino (ADR-0004 §6 passo 3), não uma segunda cópia aqui.
     let rows = sqlx::query_as::<_, (Uuid, String, String, Option<i32>, String)>(
         "SELECT u.id, u.email, u.username, u.odoo_uid, m.role
          FROM users u
          JOIN org_members m ON m.user_id = u.id
-         WHERE m.org_id = $1
+         WHERE m.org_id = $1 AND m.archived_at IS NULL
          ORDER BY u.username",
     )
     .bind(odoo.org_id)
@@ -379,14 +567,12 @@ pub async fn list_users(
 
     Ok(Json(
         rows.into_iter()
-            .map(|(id, email, username, odoo_uid, role)| {
-                serde_json::json!({
-                    "id": id,
-                    "email": email,
-                    "username": username,
-                    "odoo_uid": odoo_uid,
-                    "role": role,
-                })
+            .map(|(id, email, username, odoo_uid, role)| OdooDirectoryUser {
+                id,
+                email,
+                username,
+                odoo_uid,
+                role,
             })
             .collect(),
     ))
@@ -394,11 +580,48 @@ pub async fn list_users(
 
 // ---------- configurações públicas da plataforma ----------
 
+/// Configurações públicas da instalação.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct PublicSettings {
+    /// Esconder «criar organização»: alguma org Odoo o pediu, ou tenancy `single`.
+    pub hide_org_creation: bool,
+    pub hide_sso_button: bool,
+    /// `saas` | `enterprise` | `personal`.
+    #[schema(value_type = String)]
+    pub edition: delonix_meet_core::edition::Edition,
+    /// `open` | `domain` | `invite` | `closed`.
+    #[schema(value_type = String)]
+    pub registration_mode: delonix_meet_core::edition::RegistrationMode,
+    /// `registration_mode` é `open` ou `domain`.
+    pub registration_open: bool,
+    /// `multi` | `single`.
+    #[schema(value_type = String)]
+    pub tenancy_mode: delonix_meet_core::edition::TenancyMode,
+    pub capabilities: PublicCapabilities,
+}
+
+/// O que ESTA instalação faz — cada flag lê a configuração que a liga.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct PublicCapabilities {
+    pub odoo_login: bool,
+    pub ai: bool,
+    pub pstn_dial_in: bool,
+    pub livestream: bool,
+    pub multi_organization: bool,
+    pub operator_surface: bool,
+}
+
 /// `GET /api/public/settings` — sem autenticação; usado na página de login.
 /// Agrega flags de todas as orgs com integração Odoo activa.
+#[utoipa::path(
+    get, path = "/api/public/settings", tag = "odoo",
+    responses(
+        (status = 200, body = PublicSettings),
+    )
+)]
 pub async fn public_settings(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<PublicSettings>, ApiError> {
     let row: Option<(Option<bool>, Option<bool>)> = sqlx::query_as(
         "SELECT BOOL_OR(hide_org_creation), BOOL_OR(hide_sso_button)
          FROM organizations WHERE odoo_enabled = TRUE",
@@ -410,10 +633,32 @@ pub async fn public_settings(
         .map(|(a, b)| (a.unwrap_or(false), b.unwrap_or(false)))
         .unwrap_or((false, false));
 
-    Ok(Json(serde_json::json!({
-        "hide_org_creation": hide_org,
-        "hide_sso_button": hide_sso,
-    })))
+    use delonix_meet_core::edition::{RegistrationMode, TenancyMode};
+    let c = &state.config;
+    let registration_open = matches!(
+        c.registration_mode,
+        RegistrationMode::Open | RegistrationMode::Domain
+    );
+    // `capabilities` diz ao frontend o que ESTA instalação faz, para não
+    // mostrar um botão para uma capacidade desligada. Cada linha lê a
+    // configuração que liga a capacidade — nenhuma é afirmada sem código por
+    // trás (check-capability-claims.sh).
+    Ok(Json(PublicSettings {
+        hide_org_creation: hide_org || c.tenancy_mode == TenancyMode::Single,
+        hide_sso_button: hide_sso,
+        edition: c.edition,
+        registration_mode: c.registration_mode,
+        registration_open,
+        tenancy_mode: c.tenancy_mode,
+        capabilities: PublicCapabilities {
+            odoo_login: c.platform_odoo_url.is_some() && c.platform_odoo_db.is_some(),
+            ai: c.ollama_url.is_some(),
+            pstn_dial_in: !c.voice_internal_secret.is_empty(),
+            livestream: c.max_directos > 0,
+            multi_organization: c.tenancy_mode == TenancyMode::Multi,
+            operator_surface: c.edition.operator_surface(),
+        },
+    }))
 }
 
 // ---------- descoberta da config Odoo de um utilizador ----------

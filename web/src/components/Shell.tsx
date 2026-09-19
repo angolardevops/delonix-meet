@@ -11,6 +11,7 @@ import PasswordInput from './PasswordInput'
 import MfaPanel from './MfaPanel'
 import OnboardingTour from './OnboardingTour'
 import { CalendarIcon, ChevronDownIcon, ClockIcon, CloseIcon, FilmIcon, HomeIcon, MenuIcon, NoteIcon, PeopleIcon, RecordIcon, SearchIcon, SettingsIcon, StageIcon, ThemeIcon } from '../icons'
+import { BrandMark } from './BrandMark'
 
 export type NavKey = 'home' | 'directory' | 'recordings' | 'calendar' | 'analytics' | 'roadmap' | 'whiteboards' | 'studio'
 
@@ -74,10 +75,10 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
       if (password) patch.password = password
       await updateMe(patch)
       setPassword('')
-      setMsg('✓ Guardado')
+      setMsg(t('room.sala.guardado'))
       setTimeout(() => setMsg(''), 3000)
     } catch (e) {
-      setMsg((e as Error).message || 'Falha ao guardar')
+      setMsg((e as Error).message || t('common.falhaAoGuardar'))
     } finally {
       setSaving(false)
     }
@@ -158,17 +159,14 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
           {tab === 'account' && (
             <section className="settings-group">
               <div className="account-edit">
-                <label className="set-label">
-                  Nome de utilizador
-                  <input value={username} onChange={(e) => setUsername(e.target.value)} maxLength={40} />
+                <label className="set-label">{t('login.username')}<input value={username} onChange={(e) => setUsername(e.target.value)} maxLength={40} />
                 </label>
-                <label className="set-label">
-                  Nova password <small className="muted">(deixa vazio para manter)</small>
-                  <PasswordInput value={password} onChange={setPassword} placeholder="mín. 8 caracteres" autoComplete="new-password" minLength={8} />
+                <label className="set-label">{t('settings.novaPassword')}<small className="muted">{t('settings.deixaVazioParaManter')}</small>
+                  <PasswordInput value={password} onChange={setPassword} placeholder={t('settings.min8Caracteres')} autoComplete="new-password" minLength={8} />
                 </label>
                 <div className="account-actions">
                   <button className="btn-sm primary" disabled={!dirty || saving} onClick={() => void saveAccount()}>
-                    {saving ? 'A guardar…' : 'Guardar alterações'}
+                    {saving ? t('common.aGuardar') : t('common.guardarAlteracoes')}
                   </button>
                   {msg && <span className="account-msg">{msg}</span>}
                 </div>
@@ -186,8 +184,8 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
           {tab === 'brand' && (
             <>
               <section className="settings-group">
-                <h3>Nome da aplicação</h3>
-                <small className="muted">Substitui «Delonix Meet» no cabeçalho e no login.</small>
+                <h3>{t('settings.nomeDaApp')}</h3>
+                <small className="muted">{t('settings.substituiNome')}</small>
                 <div className="brand-row">
                   <input
                     className="brand-name-input"
@@ -200,7 +198,7 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
                     className="btn-sm primary"
                     onClick={() => {
                       setAppName(appName)
-                      setMsg('✓ Nome atualizado')
+                      setMsg(t('room.sala.nomeAtualizado'))
                       setTimeout(() => setMsg(''), 2500)
                     }}
                   >
@@ -209,14 +207,14 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
                 </div>
               </section>
               <section className="settings-group">
-                <h3>Fundo do login</h3>
-                <small className="muted">Imagem de fundo do ecrã de entrada (mostrada desfocada).</small>
+                <h3>{t('settings.fundoDoLogin')}</h3>
+                <small className="muted">{t('settings.fundoDoLoginNota')}</small>
                 {bg && (
                   <div className="brand-bg-preview" style={{ backgroundImage: `url(${bg})` }} />
                 )}
                 <div className="brand-row">
                   <label className="btn-sm">
-                    {bg ? 'Trocar imagem' : 'Escolher imagem'}
+                    {bg ? t('common.trocarImagem') : t('common.escolherImagem')}
                     <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => onPickBg(e.target.files?.[0] ?? null)} />
                   </label>
                   {bg && (
@@ -241,7 +239,20 @@ export function SettingsModal({ user, onClose, onLogout }: { user: User; onClose
  * existir no telemóvel (achado 3.1.4). São duas instâncias com estado próprio;
  * só uma está visível de cada vez, por isso não há foco duplicado.
  */
-function QuickActions({
+/**
+ * As acções rápidas, num componente só (3.1.4). Usadas em três sítios:
+ *
+ *   `bar`    — a barra do topo, em ecrã largo
+ *   `drawer` — a gaveta, quando a barra encolhe (a decisão de 3.1.4: as acções
+ *              MUDAM-SE, não desaparecem)
+ *   `home`   — o corpo da Home (R103)
+ *
+ * O terceiro existe porque a escolha original foi entre barra e gaveta, e o
+ * CORPO da página nunca esteve em cima da mesa. No telemóvel isso deixava a
+ * acção principal do produto — começar ou entrar numa reunião — atrás de um
+ * toque no menu, num ecrã que tinha metade da altura vazia.
+ */
+export function QuickActions({
   onEnterRoom,
   username,
   onDone,
@@ -250,7 +261,7 @@ function QuickActions({
   onEnterRoom: (code: string, voice?: boolean) => void
   username: string
   onDone?: () => void
-  variant: 'bar' | 'drawer'
+  variant: 'bar' | 'drawer' | 'home'
 }) {
   const { t } = useTranslation()
   const [code, setCode] = useState('')
@@ -261,7 +272,7 @@ function QuickActions({
     setErr('')
     setCreating(true)
     try {
-      const room = await createRoom(`Reunião de ${username}`, 'sfu', false, false, 'normal')
+      const room = await createRoom(t('common.reuniaoDe', { nome: username }), 'sfu', false, false, 'normal')
       onDone?.()
       onEnterRoom(room.code)
     } catch (e) {
@@ -477,7 +488,7 @@ export default function Shell({
           <button className="nav-burger" onClick={toggleCollapse} aria-label={t('nav.toggle')} title={t('nav.toggle')}>
             <MenuIcon />
           </button>
-          <span className="brand-square" aria-hidden="true">{(brand[0] || 'D').trim().charAt(0).toUpperCase()}</span>
+          <BrandMark />
           <span className="brand-text">
             {brand[0]} <span>{brand[1]}</span>
           </span>

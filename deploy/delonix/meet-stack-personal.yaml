@@ -1,0 +1,104 @@
+# ============================================================
+#  Delonix Meet — edição PESSOAL num só host, sobre o delonix-runtime.
+#  ADR-0006 §2/§4: sem Redis, sem nginx à frente — o próprio binário serve a
+#  SPA a partir de UI_DIR. Usa os MESMOS *.secrets.env do meet-stack.yaml.
+#
+#    # a SPA construída (web/dist) numa pasta do host:
+#    (cd web && npm ci && npm run build) && sudo install -d /srv/delonix-meet/ui \
+#      && sudo cp -r web/dist/. /srv/delonix-meet/ui/
+#    delonix manifest validate -f deploy/delonix/meet-stack-personal.yaml --strict
+#    delonix plan              -f deploy/delonix/meet-stack-personal.yaml
+#    delonix apply             -f deploy/delonix/meet-stack-personal.yaml
+#
+#  No meet-server.secrets.env desta edição, NÃO pôr REDIS_URL.
+#  O TLS termina num proxy do host à frente de 127.0.0.1:8180 (o WebRTC
+#  exige HTTPS fora de localhost).
+# ============================================================
+apiVersion: core.delonix.io/v1alpha1
+kind: Stack
+metadata:
+  name: delonix-meet-personal
+  namespace: delonix-meet
+spec:
+  networks:
+    - name: meet-net
+      spec:
+        driver: bridge
+
+  volumes:
+    - name: meet-pgdata
+      spec: { driver: local }
+    - name: meet-recordings
+      spec: { driver: local }
+
+  secrets:
+    - name: meet-db
+      spec: { fromEnvFile: meet-db.secrets.env }
+    - name: meet-server
+      spec: { fromEnvFile: meet-server.secrets.env }
+    - name: meet-coturn
+      spec: { fromEnvFile: meet-coturn.secrets.env }
+
+  containers:
+    - name: meet-postgres
+      spec:
+        image: postgres:17-alpine
+        restartPolicy: always
+        network: meet-net
+        networkAlias: [meet-postgres]
+        secret: [meet-db]
+        volumes: ["meet-pgdata:/var/lib/postgresql/data"]
+        memory: 512M
+        cpus: "1.0"
+
+    - name: meet-coturn
+      spec:
+        image: coturn/coturn:4.6-alpine
+        restartPolicy: always
+        network: host
+        secret: [meet-coturn]
+        secretFiles: true
+        command:
+          - "-n"
+          - "-c"
+          - "/run/secrets/TURN_CONFIG"
+          - "--listening-port=3478"
+          - "--realm=delonix-meet"
+          - "--use-auth-secret"
+          - "--no-tls"
+          - "--no-dtls"
+          - "--min-port=49160"
+          - "--max-port=49200"
+        memory: 128M
+        cpus: "0.5"
+
+    - name: meet-server
+      spec:
+        image: delonix-server:latest
+        restartPolicy: always
+        network: meet-net
+        networkAlias: [delonix-server]
+        ports:
+          - "127.0.0.1:8180:8180"
+          - "0.0.0.0:50000-50200:50000-50200/udp"
+        env:
+          - "DELONIX_EDITION=personal"
+          # REGISTRATION_MODE e TENANCY_MODE ficam com o default da edição:
+          # `closed` depois do primeiro utilizador, org pessoal implícita.
+          - "DELONIX_MIGRATE=1"
+          - "LOG_FORMAT=json"
+          - "BIND_ADDR=0.0.0.0:8180"
+          # A SPA servida pelo binário (sem contentor web).
+          - "UI_DIR=/srv/ui"
+          - "SFU_UDP_MIN=50000"
+          - "SFU_UDP_MAX=50200"
+          - "RECORDINGS_DIR=/var/lib/delonix/recordings"
+        secret: [meet-server]
+        volumes:
+          - "meet-recordings:/var/lib/delonix/recordings"
+          - "/srv/delonix-meet/ui:/srv/ui:ro"
+        readOnly: true
+        tmpfs: ["/tmp"]
+        capDrop: ["ALL"]
+        memory: 768M
+        cpus: "2.0"

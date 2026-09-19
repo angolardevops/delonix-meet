@@ -1,0 +1,2 @@
+# Valores reais dos segredos do delonix-runtime — nunca no repo.
+*.secrets.env

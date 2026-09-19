@@ -1,12 +1,14 @@
 # ============================================================
 #  CI do Delonix Meet.
 #
-#  Nota que poupa meia hora a quem vier a seguir: **nenhum job precisa de
-#  Postgres**. O backend usa a API de RUNTIME do sqlx (`query`, `query_as`),
+#  Nota que poupa meia hora a quem vier a seguir: o BUILD não precisa de
+#  Postgres. O backend usa a API de RUNTIME do sqlx (`query`, `query_as`),
 #  não as macros `query!`, por isso não há verificação de SQL em compile time
 #  e não é preciso `DATABASE_URL` nem `.sqlx/` no build. Isso é uma limitação
-#  real — um nome de coluna errado só falha em execução — e está escrita como
-#  tal no HARNESS.md; aqui é o que torna o CI simples e rápido.
+#  real — um nome de coluna errado só falha em execução — e é exactamente por
+#  isso que os TESTES precisam: os de integração em `server/tests/`
+#  (ADR-0004 §6 passo 2) correm cada caso numa base própria (`#[sqlx::test]`)
+#  e são o que apanha a coluna errada antes da produção.
 # ============================================================
 name: CI
 
@@ -31,6 +33,17 @@ jobs:
   backend:
     name: Backend (Rust)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: delonix
+          POSTGRES_PASSWORD: delonix_dev
+          POSTGRES_DB: delonix_meet
+        ports: ['5435:5432']
+        options: >-
+          --health-cmd "pg_isready -U delonix -d delonix_meet"
+          --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -54,10 +67,22 @@ jobs:
       - name: Testes
         env:
           E2E_TIMEOUT_FACTOR: 4
-        run: cargo test --manifest-path server/Cargo.toml --release
+          # Testes de integração (server/tests/): cada `#[sqlx::test]` cria e
+          # migra a sua própria base neste servidor. Sem a variável falham —
+          # não passam a verde por não terem corrido.
+          DATABASE_URL: postgres://delonix:delonix_dev@localhost:5435/delonix_meet
+        # --test-threads=4: cada binário de testes partilha uma pool de ligações;
+        # sem tecto, os testes esperam ligações e falham por PoolTimedOut num
+        # runner de 2 vCPU, não por o produto estar partido.
+        run: cargo test --manifest-path server/Cargo.toml --release --workspace -- --test-threads=4
 
       - name: Build de release
         run: cargo build --manifest-path server/Cargo.toml --release
+
+      # Aqui e não no job de fitness: gerar o spec corre o binário, e este job
+      # já o compilou.
+      - name: Contrato OpenAPI (spec gerado = commitado; catraca da cobertura)
+        run: mkdir -p ~/.cache && bash scripts/check-openapi.sh
 
   frontend:
     name: Frontend (TypeScript/React)
@@ -81,6 +106,19 @@ jobs:
       - name: Testes (vitest — guarda as regressões R1/R2/R13)
         run: node_modules/.bin/vitest run
 
+      # O `npm ci` traz a BIBLIOTECA do Playwright, não os browsers. Sem este
+      # passo o portão abaixo morre com «Executable doesn't exist» — passou-me
+      # ao princípio porque na máquina de desenvolvimento já lá estavam. O job
+      # `isolamento` faz o mesmo, pela mesma razão.
+      - name: Browser para o portão de layout
+        run: npx playwright install chromium
+
+      # Corre da RAIZ, como os outros e2e: o Node resolve `@playwright/test` a
+      # partir da pasta do script (web/e2e → web/node_modules), não do cwd.
+      - name: Barra da sala em ecrã estreito (R86 — desligar tem de caber)
+        working-directory: .
+        run: node web/e2e/bar-responsivo.mjs
+
       - name: Build de produção
         run: npm run build
 
@@ -93,6 +131,9 @@ jobs:
       - name: Higiene do repo (chaves, artefactos, dumps, migrações)
         run: bash scripts/check-repo-hygiene.sh
 
+      - name: Capacidades vendidas (nada se vende sem código por trás)
+        run: bash scripts/check-capability-claims.sh
+
       - name: Drift documental (módulos, migrações, versões, SQL)
         run: bash scripts/check-docs-drift.sh
 
@@ -101,6 +142,27 @@ jobs:
 
       - name: Afinidade por sala (ADR-0001 / regressão R3)
         run: bash scripts/check-room-affinity.sh
+
+      - name: Manifestos K8s renderizam; portas internas fora do ingress (ADR-0006 §4)
+        run: bash scripts/check-k8s-render.sh
+
+      - name: Catraca da arquitectura (ADR-0004 — nenhuma cópia nova)
+        run: bash scripts/check-arquitectura-catraca.sh
+
+      - name: Regra da dependência entre crates (ADR-0006 §1)
+        run: bash scripts/check-crate-deps.sh
+
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+      - name: Contratos gRPC (buf lint + breaking contra a main)
+        run: bash scripts/check-proto.sh
+
+      - name: Cobertura do isolamento (R95 — toda a rota de org é exercitada)
+        run: bash scripts/check-isolamento-cobertura.sh
+
+      - name: Browsers antes dos e2e (R97 — o mesmo erro, duas vezes)
+        run: bash scripts/check-browser-antes-do-e2e.sh
 
       # O check-tenant-rls.sh exige um cluster vivo e faz skip sem ele. Não é
       # executado aqui de propósito: um teste que faz skip em silêncio no CI
@@ -140,6 +202,13 @@ jobs:
   isolamento:
     name: Isolamento, MFA, gravação e drain
     runs-on: ubuntu-latest
+    # O mesmo factor que o job do backend já usa: os testes de media e de
+    # WebCodecs correm num runner partilhado de 2 vCPU, onde o que na máquina de
+    # desenvolvimento leva segundos pode levar minutos. Um portão que falha por
+    # o runner estar lento não distingue produto partido de máquina ocupada —
+    # e treina toda a gente a carregar em «repetir» (R90).
+    env:
+      E2E_TIMEOUT_FACTOR: 4
     services:
       postgres:
         image: postgres:17-alpine
@@ -195,6 +264,13 @@ jobs:
       - name: Auditoria imutável (ataque directo à base de dados)
         run: PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/auditoria.mjs
 
+      # add_employee não pode capturar uma conta de outra org. A guarda só é
+      # alcançável numa org LEGADA (email_domain vazio, que a API não cria), por
+      # isso o teste esvazia o domínio por SQL e tenta a captura — como a
+      # auditoria, ataca a base directamente. Ver S7 / R122.
+      - name: Captura por add_employee (org legada, ataque directo à base)
+        run: PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/captura-empregado.mjs
+
       # O MFA precisa do mesmo servidor a correr. O teste implementa o TOTP em
       # JavaScript de propósito: é uma segunda implementação independente do
       # RFC 6238, e vê-la concordar com a de Rust vale muito mais do que ver a
@@ -206,10 +282,24 @@ jobs:
       # E o mesmo visto pelo UTILIZADOR. O backend estar certo não faz um
       # produto: sem interface, o MFA existe para quem sabe fazer POSTs. É este
       # teste que separa as duas coisas.
+      # `working-directory: web` NÃO é decoração. Sem ele o `npx` corre na raiz,
+      # onde não há `node_modules`, DESCARREGA o Playwright mais recente e
+      # instala os browsers DESSA versão — enquanto os testes usam o
+      # `web/node_modules`, que espera outra. O aviso está no log e passou
+      # despercebido durante meses:
+      #
+      #   npm warn exec The following package was not found and will be
+      #   installed: playwright@1.63.0
+      #   WARNING: It looks like you are running 'npx playwright install'
+      #   without first installing your project's dependencies.
+      #
+      # O sintoma é «Executable doesn't exist», que se lê como «faltou
+      # instalar» quando o que faltou foi instalar NO SÍTIO CERTO. O job
+      # `frontend` nunca teve o problema porque tem
+      # `defaults.run.working-directory: web`.
       - name: Chromium para o teste de interface
         run: npx playwright install chromium
         working-directory: web
-
       - name: Interface do MFA (Chromium real)
         run: |
           (cd web && NO_HTTPS=1 npx vite --port 5174 > /tmp/vite.log 2>&1 &)
@@ -241,6 +331,20 @@ jobs:
           # Uma gravação que falha tem de ser VISTA — e as três vistas da
           # biblioteca não podem oferecer acções sobre ela (R59).
           APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
+          # A REENTRADA volta ao CI (R98). Esteve fora seis rondas por falhar só
+          # no runner — e a causa era o PRODUTO: duas renovações de sessão
+          # concorrentes revogavam-se uma à outra e punham o utilizador na
+          # página de entrada. Aqui dentro porque precisa do vite, e depois do
+          # `tempos.mjs`, que precisa da máquina quieta.
+          APP=http://localhost:5174 API=http://localhost:8180 node web/e2e/reentrada.mjs
+          # O ESTÚDIO grava ecrã, recorta região e corta — nada disso se prova
+          # em unidades. O teste captura o ecrã a sério, mede a variação de
+          # pixéis para saber que o canvas não está preto, e verifica a DURAÇÃO
+          # do ficheiro cortado, não a existência dele.
+          echo '::group::Estudio (Chromium real)'
+          BASE=http://localhost:5174 node web/e2e/estudio.mjs 2>&1
+          echo "estudio.mjs terminou com $?"
+          echo '::endgroup::'
           # O DRAIN vai por último: manda SIGTERM ao servidor e espera que ele
           # feche. Qualquer teste depois deste ficaria sem servidor.
           # O ESTÚDIO grava ecrã, recorta região e corta. Nada disso se prova em
@@ -252,6 +356,11 @@ jobs:
           # admitir → retrato remoto. É a promessa central do produto e não
           # havia teste nenhum a cobri-la ponta a ponta.
           APP=http://localhost:5174 node web/e2e/reuniao.mjs
+          # A MESMA pessoa entra duas vezes — portátil e telemóvel. A segunda
+          # sessão tem de entrar SEM áudio: dois microfones e dois altifalantes
+          # da mesma pessoa no mesmo espaço físico realimentam-se, e o ruído é
+          # de toda a gente na reunião, não só de quem o causa (R114).
+          APP=http://localhost:5174 node web/e2e/companion.mjs
           BASE=http://localhost:5174 node web/e2e/estudio.mjs
           # A GAVETA a 375px e o anel de foco vivem em `transform` e `outline`,
           # que só um motor de browser resolve.

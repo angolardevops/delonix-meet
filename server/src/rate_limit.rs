@@ -1,8 +1,8 @@
 use axum::{
     extract::{ConnectInfo, Request, State},
-    http::HeaderMap,
+    http::{header::RETRY_AFTER, HeaderMap, HeaderValue},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use dashmap::DashMap;
 use std::{
@@ -11,7 +11,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{error::ApiError, AppState};
+use crate::{
+    apikeys::{lookup_key, KeyLookup},
+    error::ApiError,
+    AppState,
+};
 
 /// Fixed-window in-memory rate limiter, keyed by an arbitrary string (IP ou
 /// conta). Suficiente para uma instância; trocar por Redis ao escalar.
@@ -31,18 +35,41 @@ impl RateLimiter {
     }
 
     pub fn check(&self, key: &str) -> bool {
+        self.acquire(key).is_ok()
+    }
+
+    /// Como `check`, mas a recusa diz quanto falta para a janela abrir — o
+    /// valor real do `Retry-After`, não uma constante.
+    pub fn acquire(&self, key: &str) -> Result<(), Duration> {
         let now = Instant::now();
         let mut entry = self.hits.entry(key.to_string()).or_insert((now, 0));
         let (window_start, count) = *entry;
-        if now.duration_since(window_start) > self.window {
+        let elapsed = now.duration_since(window_start);
+        if elapsed > self.window {
             *entry = (now, 1);
-            return true;
+            return Ok(());
         }
         if count >= self.limit {
-            return false;
+            return Err(self.window - elapsed);
         }
         *entry = (window_start, count + 1);
-        true
+        Ok(())
+    }
+
+    /// A chave está esgotada NESTA janela? Não conta como tentativa.
+    ///
+    /// É o par do `check` para os limitadores que só contam FALHAS (MFA,
+    /// R131): pergunta-se antes de verificar, e só a falha chama `check`. Sem
+    /// esta pergunta prévia, o código certo passava durante o bloqueio — e um
+    /// travão que deixa passar a resposta certa não trava a força bruta.
+    pub fn is_blocked(&self, key: &str) -> bool {
+        match self.hits.get(key) {
+            Some(e) => {
+                let (window_start, count) = *e;
+                Instant::now().duration_since(window_start) <= self.window && count >= self.limit
+            }
+            None => false,
+        }
     }
 }
 
@@ -131,16 +158,63 @@ pub async fn auth_rate_limit(
     Ok(next.run(request).await)
 }
 
-/// Applied to /api/v1/* — protege a superfície autenticada por chave de API.
+/// `429` com o `Retry-After` real (segundos inteiros, arredondados para cima,
+/// nunca 0 — um `Retry-After: 0` convida a repetir já).
+fn too_many(retry_in: Duration) -> Response {
+    let mut res = ApiError::TooManyRequests.into_response();
+    let secs = retry_in.as_secs() + u64::from(retry_in.subsec_nanos() > 0);
+    res.headers_mut()
+        .insert(RETRY_AFTER, HeaderValue::from(secs.max(1)));
+    res
+}
+
+/// Balde do limitador da v1 para este pedido: a chave, quando é uma chave
+/// válida e não expirada; o IP em todos os outros casos.
+///
+/// Porque não o hash do que vier no cabeçalho: quem inventasse uma chave
+/// diferente em cada pedido teria um balde novo em cada pedido, e o limite
+/// deixava de existir. Só uma chave que existe ganha balde próprio.
+pub fn v1_bucket(lookup: &KeyLookup, ip: &str) -> String {
+    match &lookup.0 {
+        Some(k) if k.is_usable(chrono::Utc::now()) => format!("apikey:{}", k.id),
+        _ => ip.to_string(),
+    }
+}
+
+/// Applied to /api/v1/* — limite POR CHAVE (ADR-0004 §4).
+///
+/// Uma organização atrás de um NAT pode ter várias integrações, cada uma com a
+/// sua chave: por IP, a mais faladora esgotava o orçamento das outras. A chave
+/// é procurada aqui uma vez e segue nas extensões para o `ApiKeyAuth`, que não
+/// a volta a procurar.
 pub async fn v1_rate_limit(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let ip = client_ip(request.headers(), addr.ip());
+    let lookup = lookup_key(&state, request.headers()).await?;
+    if let Err(retry_in) = state.v1_limiter.acquire(&v1_bucket(&lookup, &ip)) {
+        return Ok(too_many(retry_in));
+    }
+    request.extensions_mut().insert(lookup);
+    Ok(next.run(request).await)
+}
+
+/// Applied to /api/ice-servers — limite por IP, partilhando o orçamento do
+/// `v1_limiter`. Separado do `v1_rate_limit` de propósito: a `/api/ice-servers`
+/// autentica por sessão, e escolher o balde por uma chave `dlx_` que a rota
+/// nem lê deixava contornar o limite com várias chaves.
+pub async fn ip_rate_limit(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
     let ip = client_ip(request.headers(), addr.ip());
-    if !state.v1_limiter.check(&ip) {
-        return Err(ApiError::TooManyRequests);
+    if let Err(retry_in) = state.v1_limiter.acquire(&ip) {
+        return Ok(too_many(retry_in));
     }
     Ok(next.run(request).await)
 }
@@ -214,6 +288,28 @@ mod tests {
     }
 
     #[test]
+    fn is_blocked_does_not_count_and_follows_check() {
+        let limiter = RateLimiter::new(2, Duration::from_secs(60));
+        for _ in 0..10 {
+            assert!(!limiter.is_blocked("u"), "perguntar não gasta tentativas");
+        }
+        assert!(limiter.check("u"));
+        assert!(!limiter.is_blocked("u"));
+        assert!(limiter.check("u"));
+        assert!(limiter.is_blocked("u"), "esgotado ao fim de 2");
+        assert!(!limiter.is_blocked("outra"));
+    }
+
+    #[test]
+    fn is_blocked_ends_with_the_window() {
+        let limiter = RateLimiter::new(1, Duration::from_millis(10));
+        assert!(limiter.check("u"));
+        assert!(limiter.is_blocked("u"));
+        std::thread::sleep(Duration::from_millis(15));
+        assert!(!limiter.is_blocked("u"));
+    }
+
+    #[test]
     fn different_keys_do_not_interfere() {
         let limiter = RateLimiter::new(1, Duration::from_secs(60));
         assert!(limiter.check("10.0.0.1"));
@@ -223,6 +319,30 @@ mod tests {
             limiter.check("acct:user@example.com"),
             "account key is independent"
         );
+    }
+
+    #[test]
+    fn acquire_diz_quanto_falta_da_janela() {
+        let limiter = RateLimiter::new(1, Duration::from_secs(60));
+        assert!(limiter.acquire("k").is_ok());
+        std::thread::sleep(Duration::from_millis(20));
+        let falta = limiter.acquire("k").unwrap_err();
+        assert!(falta < Duration::from_secs(60), "{falta:?}");
+        assert!(falta > Duration::from_secs(59), "{falta:?}");
+    }
+
+    #[test]
+    fn retry_after_arredonda_para_cima_e_nunca_e_zero() {
+        let h = |d| {
+            too_many(d).headers()[RETRY_AFTER]
+                .to_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(h(Duration::from_millis(59_001)), "60");
+        assert_eq!(h(Duration::from_secs(12)), "12");
+        assert_eq!(h(Duration::ZERO), "1");
+        assert_eq!(too_many(Duration::ZERO).status(), 429);
     }
 
     #[test]

@@ -64,18 +64,22 @@ await page.waitForTimeout(4000)
 
 const visto = await page.evaluate(() => ({
   tiles: document.querySelectorAll('.tile').length,
+  remotos: document.querySelectorAll('.tile[data-peer="remoto"]').length,
   nomes: [...document.querySelectorAll('.tile')].map((t) => (t.textContent || '').trim().slice(0, 24)),
   videos: document.querySelectorAll('video').length,
 }))
 console.log(`  · observado: ${JSON.stringify(visto)}`)
-// `.tile` cobre o retrato LOCAL e os remotos — o de quem está sozinho diz
-// «eu». Contar `.tile` e chamar-lhe «remotos» foi o que fez este teste dar
-// verde a medir a própria pessoa.
-const remotosSozinho = visto.nomes.filter((n) => !/\beu\b/i.test(n)).length
+// `.tile` cobre o retrato LOCAL e os remotos. Contar `.tile` e chamar-lhe
+// «remotos» foi o que fez este teste dar verde a medir a própria pessoa.
+//
+// A distinção passou a ser o atributo `data-peer` e não o texto conter «eu»
+// (R90): o texto do retrato mudou quando os glifos passaram a SVG e um `<svg>`
+// não tem `textContent`. Uma asserção sobre decoração quebra-se quando a
+// decoração muda — e pior, quebra-se em SILÊNCIO, dando verde.
 ok(
-  visto.tiles === 1 && remotosSozinho === 0,
-  'sozinho: vê-se a si (1 retrato, «eu») e NENHUM remoto',
-  `tiles=${visto.tiles} remotos=${remotosSozinho} ${JSON.stringify(visto.nomes)}`,
+  visto.tiles === 1 && visto.remotos === 0,
+  'sozinho: vê-se a si (1 retrato) e NENHUM remoto',
+  `tiles=${visto.tiles} remotos=${visto.remotos} ${JSON.stringify(visto.nomes)}`,
 )
 
 // E agora a metade que impede ESTE teste de passar em vazio: se o selector não
@@ -118,20 +122,46 @@ await admitir.waitFor({ timeout: 30000 }).catch(() => {})
 ok(await admitir.isVisible().catch(() => false), 'o cartão da sala de espera oferece Admitir')
 await admitir.click().catch(() => {})
 
-const juntaram = await page
+// Esperar por UMA condição e afirmar OUTRA, com duas idas ao DOM, é uma corrida
+// (R90). A versão anterior esperava por «1 retrato sem "eu"» e depois afirmava
+// «2 retratos no total», lendo o DOM outra vez. Entre as duas leituras o DOM
+// muda — e o CI apanhou-a a dar `juntaram = true` com um único retrato na lista,
+// que é uma contradição impossível de depurar a partir do relatório.
+//
+// Duas correcções, e são independentes:
+//
+//  1. Espera-se pela condição que se vai AFIRMAR (dois retratos), não por uma
+//     aproximação dela.
+//  2. O retrato é identificado por `data-peer`, não por o texto conter «eu». O
+//     texto do retrato mudou quando os glifos passaram a SVG (R88) e um `<svg>`
+//     não tem `textContent` — uma asserção que depende de texto decorativo
+//     quebra-se sempre que a decoração muda.
+//  3. A fotografia é tirada DENTRO da espera, por isso é a mesma que satisfez a
+//     condição. Não há segunda leitura para divergir.
+const apanhado = await page
   .waitForFunction(
-    () =>
-      [...document.querySelectorAll('.tile')].filter((t) => !/\beu\b/i.test(t.textContent || '')).length === 1,
+    () => {
+      const tiles = [...document.querySelectorAll('.tile')]
+      const remotos = tiles.filter((t) => t.getAttribute('data-peer') === 'remoto')
+      if (tiles.length !== 2 || remotos.length !== 1) return null
+      return { total: tiles.length, remotos: remotos.length,
+               nomes: tiles.map((t) => (t.textContent || '').trim().slice(0, 20)) }
+    },
     null,
     { timeout: 90000 },
   )
-  .then(() => true)
-  .catch(() => false)
-const finais = await page.evaluate(() =>
-  [...document.querySelectorAll('.tile')].map((t) => (t.textContent || '').trim().slice(0, 20)),
-)
-ok(juntaram, 'admitido, o convidado aparece como retrato REMOTO no ecrã do anfitrião', JSON.stringify(finais))
-ok(finais.length === 2, 'e a sala mostra dois retratos: eu e ele', `${finais.length}`)
+  .then((h) => h.jsonValue())
+  .catch(() => null)
+
+// Se a espera esgotou, diz-se o que ESTAVA lá — senão o relatório não distingue
+// «o convidado não entrou» de «o teste leu cedo demais».
+const finais = apanhado ?? (await page.evaluate(() => ({
+  total: document.querySelectorAll('.tile').length,
+  remotos: document.querySelectorAll('.tile[data-peer="remoto"]').length,
+  nomes: [...document.querySelectorAll('.tile')].map((t) => (t.textContent || '').trim().slice(0, 20)),
+})))
+ok(apanhado !== null, 'admitido, o convidado aparece como retrato REMOTO no ecrã do anfitrião', JSON.stringify(finais))
+ok(finais.total === 2, 'e a sala mostra dois retratos: eu e ele', `${finais.total}`)
 
 await browser.close()
 console.log(`\n=== ${falhas === 0 ? 'TODAS PASSARAM' : `${falhas} FALHARAM`} ===`)

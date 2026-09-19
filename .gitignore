@@ -2,7 +2,7 @@
 server/target/
 
 # Node
-web/node_modules/
+web/node_modules
 web/dist/
 
 # Flutter
@@ -61,3 +61,23 @@ backups/
 # Credenciais de ambiente (12-factor — nunca no repo)
 deploy/ansible/.env.*
 deploy/ansible/vault/
+
+# Configuração local de ferramentas de agente (fica na máquina, não no repo).
+# EXCEPTO os agentes e as skills: são o painel de revisores e os playbooks do
+# harness, e têm de viajar com o código que descrevem. Ignorá-los foi o que
+# deixou o HARNESS.md a mandar invocar seis revisores em `agents/` que nunca
+# existiram no git (auditoria 2026-09-16 §2.5).
+.claude/*
+!.claude/agents/
+!.claude/skills/
+CLAUDE.md
+
+# CSS compilado pelo portão da barra (web/e2e/bar-responsivo.mjs)
+web/e2e/room.css
+.mutante-em-voo.json
+
+# Stubs gRPC do ai-worker — gerados de server/proto por ai-worker/gen_protos.sh
+ai-worker/gen/
+
+# Estado de trabalho local dos testes (ai-worker/tests/it_grpc.sh)
+.cache/

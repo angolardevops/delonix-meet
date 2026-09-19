@@ -35,7 +35,7 @@ for(let i=0;i<4;i++) await j(`${API}/api/auth/login`,{method:'POST',body:JSON.st
 await new Promise(r=>setTimeout(r,600))
 
 console.log('--- cadeia intacta ---')
-let v=(await j(`${API}/api/orgs/${org}/audit/verify`,{token:tok})).j
+let v=(await j(`${API}/api/orgs/${org}/audit-events/verification`,{token:tok})).j
 chk(v?.intact===true, `cadeia intacta com ${v?.entries} registos`)
 chk(v?.broken_at_seq===null, 'sem quebras assinaladas')
 
@@ -54,19 +54,19 @@ sql('ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_append_only')
 // partida e o teste seguinte mediria a minha distracção, não o produto.
 const acaoOriginal = sql(`SELECT action FROM audit_logs WHERE id=${alvo}`)
 sql(`UPDATE audit_logs SET action='acção-inocente' WHERE id=${alvo}`)
-v=(await j(`${API}/api/orgs/${org}/audit/verify`,{token:tok})).j
+v=(await j(`${API}/api/orgs/${org}/audit-events/verification`,{token:tok})).j
 chk(v?.intact===false, 'ALTERAR uma linha é DETECTADO')
 chk(/ALTERADO/i.test(v?.detail||''), `e o relatório diz o quê: "${v?.detail}"`)
 chk(typeof v?.broken_at_seq==='number', `e onde: registo nº ${v?.broken_at_seq}`)
 
 // Repõe e testa a remoção de uma linha do meio.
 sql(`UPDATE audit_logs SET action='${acaoOriginal}' WHERE id=${alvo}`)
-v=(await j(`${API}/api/orgs/${org}/audit/verify`,{token:tok})).j
+v=(await j(`${API}/api/orgs/${org}/audit-events/verification`,{token:tok})).j
 chk(v?.intact===true, 'reposto o conteúdo original, a cadeia volta a fechar')
 
 const meio=sql(`SELECT id FROM audit_logs WHERE audit_chain_key(org_id)='${org}' ORDER BY seq OFFSET 1 LIMIT 1`)
 sql(`DELETE FROM audit_logs WHERE id=${meio}`)
-v=(await j(`${API}/api/orgs/${org}/audit/verify`,{token:tok})).j
+v=(await j(`${API}/api/orgs/${org}/audit-events/verification`,{token:tok})).j
 chk(v?.intact===false, 'APAGAR uma linha do meio é DETECTADO')
 chk(/apagou|Falta/i.test(v?.detail||''), `e diz que faltam registos: "${v?.detail}"`)
 sql('ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_append_only')
@@ -78,7 +78,7 @@ const uid=sql(`INSERT INTO users (email, username, password_hash) VALUES ('${e2}
 sql(`INSERT INTO org_members (org_id, user_id, role) VALUES ('${org}','${uid}','member')`)
 sql(`INSERT INTO audit_logs (org_id, actor_id, actor_name, action, target) VALUES ('${org}','${uid}','saiu${m2}','org.settings_changed','teste')`)
 sql(`DELETE FROM users WHERE id='${uid}'`)
-const lista=(await j(`${API}/api/orgs/${org}/audit?limit=200`,{token:tok})).j
+const lista=(await j(`${API}/api/orgs/${org}/audit-events?limit=200`,{token:tok})).j
 const sobrevivente=Array.isArray(lista)&&lista.find(x=>x.action==='org.settings_changed')
 chk(!!sobrevivente, 'o evento de uma conta APAGADA continua na trilha')
 chk(sobrevivente?.actor===`saiu${m2}`, `e mantém o nome que o actor tinha então: "${sobrevivente?.actor}"`)

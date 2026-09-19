@@ -1,0 +1,104 @@
+# ============================================================
+#  Delonix Meet — edição SAAS no PaaS NgolaCloud (ADR-0006 §4).
+#  Carga ACIMA do PaaS: aplica-se pela API, nunca por Ansible nem por SSH ao
+#  host (CLAUDE.md do workspace, §1).
+#
+#    delonixctl apply -f deploy/delonix/meet-application.yaml
+#
+#  Esquema: `kind: Application` (delonix.io/v1) tal como está em
+#  delonix-paas origin/main 000d873 — crates/delonix-orchestrator/src/manifest.rs
+#  (ApplicationSpec) e docs/MANIFEST.md. Nenhum campo aqui foi inventado.
+#
+#  ⚠ ANTES DE APLICAR, ler deploy/delonix/README.md §«PaaS — o que ainda não
+#  fecha». Em resumo, medido no código do PaaS a 2026-09-16:
+#   1. `env[].from_secret` é validado mas NÃO é injectado (expand.rs: «Diferido
+#      … Pilar 5»). Sem JWT_SECRET/TURN_SECRET o servidor é fail-closed e NÃO
+#      arranca. É um BLOQUEIO, não uma nota.
+#   2. A `Route` do PaaS não tem hash por sala. O ADR-0001 só se cumpre com UMA
+#      instância do servidor — por isso min = max = 1, e não há HPA aqui.
+#   3. As migrações correm no arranque (DELONIX_MIGRATE=1): a Application não
+#      expande num Job, e com uma instância não há corrida.
+#
+#  Segredos (criar ANTES, fora deste ficheiro, um Secret por chave, com o nome
+#  que o `from_secret` referencia): meet-jwt-secret, meet-turn-secret,
+#  meet-provisioning-secret, meet-voice-internal-secret.
+# ============================================================
+apiVersion: delonix.io/v1
+kind: Application
+metadata:
+  name: delonix-server
+  labels:
+    app: delonix-meet
+    component: server
+spec:
+  build:
+    # Imagem construída a partir de Dockerfile.server e publicada no registo.
+    builder: dockerfile
+    dockerfile: Dockerfile.server
+  runtime:
+    # ADR-0001: o SFU vive em memória por instância e a Route do PaaS não
+    # encaminha por sala. Mais do que 1 instância parte as salas ao meio.
+    instances: { min: 1, max: 1 }
+    resources: { cpu: "2", memory: 1Gi }
+    health:
+      path: /health
+      port: 8180
+      # O arranque inclui as migrações: dar-lhe tempo antes do portão de saúde.
+      timeout: 300s
+  env:
+    - { name: DELONIX_EDITION, value: saas }
+    - { name: REGISTRATION_MODE, value: open }
+    - { name: TENANCY_MODE, value: multi }
+    - { name: DELONIX_MIGRATE, value: "1" }
+    - { name: LOG_FORMAT, value: json }
+    - { name: BIND_ADDR, value: "0.0.0.0:8180" }
+    - { name: RECORDINGS_DIR, value: /var/lib/delonix/recordings }
+    - { name: SFU_UDP_MIN, value: "50000" }
+    - { name: SFU_UDP_MAX, value: "50200" }
+    # TURN: o coturn é o preset do PaaS (`delonixctl app create --preset coturn`).
+    # Tem de ser o endereço ALCANÇÁVEL PELO BROWSER (R4).
+    - { name: TURN_HOST, value: "CHANGE_ME:3478" }
+    - { name: SFU_EXTERNAL_IP, value: CHANGE_ME }
+    # Dados geridos: a connection-string vem do addon (injectada pelo expander).
+    - { name: DATABASE_URL, from_addon: meet-pg }
+    - { name: REDIS_URL, from_addon: meet-redis }
+    # Segredos: referência a Secrets existentes. Ver o aviso 1 no topo.
+    - { name: JWT_SECRET, from_secret: meet-jwt-secret }
+    - { name: TURN_SECRET, from_secret: meet-turn-secret }
+    - { name: PROVISIONING_SECRET, from_secret: meet-provisioning-secret }
+    - { name: VOICE_INTERNAL_SECRET, from_secret: meet-voice-internal-secret }
+  addons:
+    - { name: meet-pg, type: postgres, version: "17" }
+    - { name: meet-redis, type: redis }
+  volumes:
+    # O único estado local do servidor (ADR-0006 §4).
+    - { name: recordings, mount: /var/lib/delonix/recordings }
+  # A media do SFU é UDP e o ingress L7 não a transporta (MANIFEST.md, `publish`).
+  publish:
+    - "50000-50200:50000-50200/udp"
+  release:
+    strategy: rolling
+---
+apiVersion: delonix.io/v1
+kind: Application
+metadata:
+  name: delonix-web
+  labels:
+    app: delonix-meet
+    component: web
+spec:
+  build:
+    builder: dockerfile
+    dockerfile: Dockerfile.web
+  runtime:
+    # Estático: pode escalar. O nginx faz proxy de /api, /ws e /rtc para
+    # delonix-server:8180 — o nome da Application acima.
+    instances: { min: 2, max: 4, target_cpu: 70 }
+    resources: { cpu: 250m, memory: 128Mi }
+    health: { path: /, port: 8080 }
+  network:
+    ingress:
+      domains: [meet.ngolacloud.com]
+      tls: auto
+  release:
+    strategy: rolling

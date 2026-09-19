@@ -116,7 +116,7 @@ Exportar dados do Zoom/Teams/Meet para outro sistema é difícil por design.
 | Hardware rooms | ✅ | ✅ | ✅ | Não planeado |
 | Live captions (API) | ✅ | ✅ | ✅ | Whisper local (feito) |
 | MLS key agreement | ✅ (Zoom) | ⚠️ | ❌ | Roadmap |
-| Remote desktop control | ✅ | ✅ | ❌ | Roadmap |
+| Remote desktop control | ✅ | ✅ | ❌ | **Recusado até haver agente nativo** — o handshake de sinalização existe e está testado; o encaminhamento de input não existe e NÃO PODE existir só no browser (ver `web/src/capabilities.ts` e R109) |
 | DLP / information protection | ❌ (⚠️Teams) | ✅ | ❌ | Roadmap |
 
 ---
@@ -152,7 +152,11 @@ Exportar dados do Zoom/Teams/Meet para outro sistema é difícil por design.
 
 ### De Meet
 - ✅ Grid layout adaptativo (best-fit 16:9) — feito
-- ✅ Companion mode (participar em dois dispositivos) — via QoS + múltiplos joins
+- ✅ Companion mode (participar em dois dispositivos) — **feito de verdade desde R114**: o
+  servidor reconhece a segunda sessão da MESMA conta e ela entra sem microfone e sem som,
+  com o aviso a explicar porquê e um botão para trazer o áudio para aqui. Antes disto a
+  linha dizia «via QoS + múltiplos joins», que era outra maneira de dizer «entrar duas
+  vezes funciona» — e funcionava, com um ciclo de eco.
 - ✅ Tile view com speaker detection — feito
 - ✅ Controles estilo pill dividida mic/câmara — feito
 - Smart framing por software (face detection → crop automático) — roadmap

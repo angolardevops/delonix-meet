@@ -8,6 +8,17 @@
 //
 // Uso:  BASE=http://127.0.0.1:5174 node e2e/estudio.mjs
 import { chromium } from '@playwright/test'
+
+// O corte por WebCodecs cai para SOFTWARE quando o runner não tem aceleração,
+// e aí um vídeo de 5 s pode levar bem mais do que os 90 s deste limite. Foi uma
+// das três falhas que puseram o job `isolamento` a falhar num teste diferente
+// de cada vez (R90) — e a única que não era um defeito de asserção, era mesmo
+// tempo a mais num runner partilhado.
+//
+// Mesmo idioma do `sfu_e2e.rs`: um limite generoso E ajustável, em vez de
+// calibrado para a máquina de quem o escreveu. O CI põe o factor a 4.
+const FATOR = Number(process.env.E2E_TIMEOUT_FACTOR) || 1
+const LIMITE_CORTE = 90000 * FATOR
 import { criarConta, entrar } from './sessao.mjs'
 
 const BASE = process.env.BASE ?? process.env.APP ?? 'http://127.0.0.1:5174'
@@ -246,7 +257,35 @@ console.log('\ncorte')
 {
   const suporta = await page.evaluate(() => typeof VideoEncoder === 'function' && typeof MediaStreamTrackProcessor === 'function')
   ok('o browser tem WebCodecs (o caminho de pouco recurso)', suporta)
-  if (suporta) {
+
+  // TER WebCodecs não é o mesmo que ter ACELERAÇÃO. O `editor.ts` documenta-o e
+  // mede-o: sem GPU, o corte cai para software e um troço de dois segundos não
+  // acaba em 90 s — nem em 360 s, verificado no runner do CI com o
+  // `E2E_TIMEOUT_FACTOR` a 4.
+  //
+  // Por isso a asserção passa a ser condicional, e a condição é PERGUNTADA ao
+  // browser em vez de assumida — o mesmo que o `escolherPerfil` faz. Onde há
+  // hardware, o corte tem de encurtar; onde não há, diz-se que não se
+  // verificou e porquê.
+  //
+  // A alternativa que NÃO se escolheu: pôr o `estudio.mjs` inteiro fora do CI.
+  // Ele tem outras trinta asserções que passam e protegem o Estúdio — perdê-las
+  // todas para acomodar uma seria trocar cobertura por silêncio.
+  const temHardware = suporta && await page.evaluate(async () => {
+    try {
+      const r = await VideoEncoder.isConfigSupported({
+        codec: 'vp8', width: 1920, height: 1080, framerate: 30,
+        bitrate: 3_000_000, hardwareAcceleration: 'prefer-hardware',
+      })
+      return !!r.supported
+    } catch { return false }
+  })
+  if (suporta && !temHardware) {
+    console.log('  --    sem encoder acelerado neste ambiente — o corte cai para software e não')
+    console.log('  --    termina em tempo útil (ver escolherPerfil em web/src/studio/editor.ts).')
+    console.log('  --    As asserções de CORTE ficam por verificar; o resto do Estúdio corre.')
+  }
+  if (suporta && temHardware) {
     // Espera que a duração seja conhecida — um WebM de MediaRecorder chega
     // muitas vezes com `Infinity` até se procurar até ao fim.
     const dur = await page
@@ -274,10 +313,26 @@ console.log('\ncorte')
         .waitForFunction(() => {
           const v = document.querySelector('.studio-preview')
           return v && Number.isFinite(v.duration) && v.duration > 0 && v.duration < 2.9 ? v.duration : null
-        }, null, { timeout: 90000 })
+        }, null, { timeout: LIMITE_CORTE })
         .then((h) => h.jsonValue())
         .catch(() => null)
-      ok('o corte produz um ficheiro mais curto', nova !== null, nova ? `${nova.toFixed(2)}s (pedidos ~2s)` : 'não encurtou')
+      // «não encurtou» não distingue as três coisas que podem ter acontecido, e
+      // cada uma manda investigar noutro sítio (R90):
+      //   · duração ILEGÍVEL (Infinity/NaN) — o WebM saiu sem cabeçalho de
+      //     duração, que é um defeito do que se PRODUZ, não do corte;
+      //   · duração igual à original — o corte não correu;
+      //   · duração diferente mas ≥ 2,9 s — cortou o troço errado.
+      // Subir o prazo não resolve nenhuma das três, e foi o que a primeira
+      // tentativa de correcção assumiu, sem prova.
+      const diag = nova !== null ? null : await page.evaluate(() => {
+        const v = document.querySelector('.studio-preview')
+        if (!v) return 'sem elemento .studio-preview'
+        const d = v.duration
+        if (!Number.isFinite(d)) return `duração ILEGÍVEL (${d}) — WebM sem cabeçalho de duração`
+        return `duração ${d.toFixed(2)}s — não desceu abaixo de 2,9s`
+      })
+      ok('o corte produz um ficheiro mais curto', nova !== null,
+         nova ? `${nova.toFixed(2)}s (pedidos ~2s)` : diag)
       if (nova) ok('e com a duração pedida (±0,6s)', Math.abs(nova - 2) < 0.6, `${nova.toFixed(2)}s`)
 
       const temAudio = await page.locator('.studio-preview').evaluate((v) => {

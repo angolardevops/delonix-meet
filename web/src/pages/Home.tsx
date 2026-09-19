@@ -14,7 +14,8 @@ import {
   WhiteboardMeta,
 } from '../api'
 import { NavKey } from '../components/Shell'
-import { CalendarIcon, FilmIcon, NoteIcon, PeopleIcon, PlayIcon } from '../icons'
+import { CalendarIcon, FilmIcon, LockIcon, MicIcon, NoteIcon, PeopleIcon, PlayIcon } from '../icons'
+import { QuickActions } from '../components/Shell'
 
 export default function Home({
   user,
@@ -90,12 +91,20 @@ export default function Home({
 
   return (
     <div className="home">
-      {/* A data e as ações primárias (nova reunião / entrar por código) vivem
-          agora na barra de topo do Shell — aqui ficam só as variantes. */}
+      {/* A data e as ações primárias vivem na barra de topo do Shell — em ecrã
+          LARGO. Abaixo dos 900px a barra passa-as para a gaveta (decisão 3.1.4),
+          e a Home ficava sem a acção principal do produto visível: começar ou
+          entrar numa reunião exigia um toque no menu, num ecrã com metade da
+          altura vazia.
+          Por isso o mesmo componente aparece AQUI, e o CSS mostra-o só onde a
+          barra não o tem. Não é duplicação: é o mesmo bloco a viver no sítio
+          onde é alcançável em cada largura (R103). */}
       <header className="dash-greet">
         <h1>{t(greetKey, { name: user.username })}</h1>
         <p className="home-sub">{t('dash.greetSub')}</p>
       </header>
+
+      <QuickActions variant="home" onEnterRoom={onEnterRoom} username={user.username} />
 
       {/* Chips outline, etiqueta curta: a explicação vive no tooltip. Eram
           frases inteiras que ocupavam meia linha do dashboard. */}
@@ -167,12 +176,12 @@ export default function Home({
                 <span className="dash-meta">
                   {fmtDay(m.starts_at) && <span>{fmtDay(m.starts_at)} · </span>}
                   <span className="mono">{fmtTime(m.starts_at)}</span> · {m.duration_min} min
-                  {m.kind === 'voice' ? ' · 🎙' : ''}
+                  {m.kind === 'voice' ? <> · <MicIcon /></> : null}
                 </span>
               </div>
               <button
                 className="icon-btn"
-                title="Adicionar ao calendário (Google/Outlook — .ics)"
+                title={t('cal.adicionarAoCalendario')}
                 onClick={() => void downloadMeetingIcs(m.id, m.title).catch(() => {})}
               >
                 <CalendarIcon />
@@ -250,7 +259,7 @@ export default function Home({
         )}
       </div>
 
-      <p className="dash-secure">🔒 {t('dash.secure')}</p>
+      <p className="dash-secure"><LockIcon /> {t('dash.secure')}</p>
     </div>
   )
 }

@@ -1,0 +1,161 @@
+# ============================================================
+#  Delonix Meet — edição ENTERPRISE num só host, sobre o delonix-runtime.
+#  ADR-0006 §4: alvo `delonix-runtime (um host)`. Edição pessoal: ver
+#  meet-stack-personal.yaml.
+#
+#  Preparar (uma vez):
+#    cp meet-db.secrets.env.example      meet-db.secrets.env
+#    cp meet-server.secrets.env.example  meet-server.secrets.env
+#    cp meet-coturn.secrets.env.example  meet-coturn.secrets.env
+#    $EDITOR *.secrets.env         # substituir TODOS os CHANGE_ME
+#    delonix build -f Dockerfile.server -t delonix-server:latest .   # na raiz do repo
+#    delonix build -f Dockerfile.web    -t delonix-web:latest    .
+#
+#  Verificar sem tocar no host, e aplicar:
+#    delonix manifest validate -f deploy/delonix/meet-stack.yaml --strict
+#    delonix plan              -f deploy/delonix/meet-stack.yaml
+#    delonix apply             -f deploy/delonix/meet-stack.yaml
+#
+#  Os `*.secrets.env` são lidos da pasta DESTE manifesto e estão no
+#  .gitignore desta pasta. Nenhum segredo vive neste ficheiro.
+#
+#  Topologia:
+#    browser ─TLS─▶ proxy do host (nginx/Caddy, docs/deployment.md §5.3)
+#                     └─▶ 127.0.0.1:8080  meet-web (nginx, SPA + /api /ws /rtc)
+#                                           └─▶ delonix-server:8180 (rede meet-net)
+#    media ──UDP──▶ coturn (rede do host, 3478 + 49160-49200)
+#               └─▶ SFU UDP 50000-50200 publicado no host
+#    FreeSWITCH do host ─▶ 127.0.0.1:8181 (/internal/v1/voice/ivr/*, /metrics)
+#
+#  Uma réplica do servidor: a afinidade por sala do ADR-0001 é trivialmente
+#  verdadeira (só há um SFU). Para mais de um servidor, é Kubernetes.
+# ============================================================
+apiVersion: core.delonix.io/v1alpha1
+kind: Stack
+metadata:
+  name: delonix-meet
+  namespace: delonix-meet
+spec:
+  networks:
+    - name: meet-net
+      spec:
+        driver: bridge
+
+  volumes:
+    - name: meet-pgdata
+      spec: { driver: local }
+    - name: meet-redisdata
+      spec: { driver: local }
+    # Gravações: o ÚNICO estado local do servidor (ADR-0006 §4). Entra nos backups.
+    - name: meet-recordings
+      spec: { driver: local }
+
+  secrets:
+    # POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+    - name: meet-db
+      spec: { fromEnvFile: meet-db.secrets.env }
+    # DATABASE_URL, JWT_SECRET, TURN_SECRET, TURN_HOST, SFU_EXTERNAL_IP, …
+    - name: meet-server
+      spec: { fromEnvFile: meet-server.secrets.env }
+    # TURN_CONFIG = static-auth-secret=<o MESMO TURN_SECRET do servidor>
+    - name: meet-coturn
+      spec: { fromEnvFile: meet-coturn.secrets.env }
+
+  containers:
+    - name: meet-postgres
+      spec:
+        image: postgres:17-alpine
+        restartPolicy: always
+        network: meet-net
+        networkAlias: [meet-postgres]
+        # Sem `ports`: o Postgres não sai da rede meet-net.
+        secret: [meet-db]
+        volumes: ["meet-pgdata:/var/lib/postgresql/data"]
+        memory: 1G
+        cpus: "1.0"
+
+    # Opcional nesta edição (ADR-0006 §2). Com UMA réplica o servidor não
+    # precisa dele; retirar este item e o REDIS_URL do meet-server.secrets.env.
+    - name: meet-redis
+      spec:
+        image: redis:7-alpine
+        restartPolicy: always
+        network: meet-net
+        networkAlias: [meet-redis]
+        command: ["redis-server", "--appendonly", "yes"]
+        volumes: ["meet-redisdata:/data"]
+        memory: 256M
+        cpus: "0.5"
+
+    # TURN na rede do HOST: tem de ser alcançável pelo browser (R4). O segredo
+    # chega como FICHEIRO (/run/secrets/TURN_CONFIG), nunca no argv.
+    - name: meet-coturn
+      spec:
+        image: coturn/coturn:4.6-alpine
+        restartPolicy: always
+        network: host
+        secret: [meet-coturn]
+        secretFiles: true
+        command:
+          - "-n"
+          - "-c"
+          - "/run/secrets/TURN_CONFIG"
+          - "--listening-port=3478"
+          - "--realm=delonix-meet"
+          - "--use-auth-secret"
+          - "--no-tls"
+          - "--no-dtls"
+          - "--min-port=49160"
+          - "--max-port=49200"
+        memory: 256M
+        cpus: "1.0"
+
+    - name: meet-server
+      spec:
+        image: delonix-server:latest
+        restartPolicy: always
+        network: meet-net
+        # O nginx da imagem delonix-web faz proxy_pass para delonix-server:8180.
+        networkAlias: [delonix-server]
+        ports:
+          # Listener interno, SÓ no loopback do host (FreeSWITCH local, scrape).
+          - "127.0.0.1:8181:8181"
+          # Media do SFU (SFU_UDP_MIN/MAX). Tem de ser alcançável pelo coturn
+          # e pelos clientes; o firewall do host decide a exposição.
+          - "0.0.0.0:50000-50200:50000-50200/udp"
+        env:
+          - "DELONIX_EDITION=enterprise"
+          - "REGISTRATION_MODE=invite"
+          - "TENANCY_MODE=single"
+          # Um host, uma réplica: migra no arranque.
+          - "DELONIX_MIGRATE=1"
+          - "LOG_FORMAT=json"
+          - "BIND_ADDR=0.0.0.0:8180"
+          - "INTERNAL_BIND_ADDR=0.0.0.0:8181"
+          # gRPC DESLIGADO por omissão (ADR-0006 §3). Para o ligar: montar os
+          # certificados e definir GRPC_BIND_ADDR, GRPC_TLS_CERT, GRPC_TLS_KEY e
+          # GRPC_CLIENT_CA — ver deploy/delonix/README.md.
+          - "SFU_UDP_MIN=50000"
+          - "SFU_UDP_MAX=50200"
+          - "RECORDINGS_DIR=/var/lib/delonix/recordings"
+          - "REDIS_URL=redis://meet-redis:6379"
+        secret: [meet-server]
+        volumes: ["meet-recordings:/var/lib/delonix/recordings"]
+        readOnly: true
+        tmpfs: ["/tmp"]
+        capDrop: ["ALL"]
+        memory: 1G
+        cpus: "2.0"
+
+    - name: meet-web
+      spec:
+        image: delonix-web:latest
+        restartPolicy: always
+        network: meet-net
+        # Só no loopback: o TLS termina no proxy do host (o WebRTC exige HTTPS).
+        ports: ["127.0.0.1:8080:8080"]
+        readOnly: true
+        tmpfs: ["/tmp"]
+        capDrop: ["ALL"]
+        memory: 128M
+        cpus: "0.5"

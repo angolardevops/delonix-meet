@@ -31,7 +31,7 @@ import {
   downloadMeetingIcs,
   User,
 } from '../api'
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, ClockIcon, CloseIcon, EditIcon, PlusIcon, RepeatIcon, TrashIcon, VideoIcon, VoiceCallIcon } from '../icons'
+import { CalendarIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, ClockIcon, CloseIcon, DoorIcon, EditIcon, PlusIcon, RepeatIcon, TrashIcon, VideoIcon, VoiceCallIcon } from '../icons'
 
 /** Carrega as salas presenciais de todas as organizações do utilizador. */
 async function loadAllRooms(): Promise<MeetingRoom[]> {
@@ -546,7 +546,7 @@ function AgendaView({
                 <button className="btn-sm" onClick={() => onStart(m)}>
                   {m.kind === 'voice' ? <VoiceCallIcon /> : <VideoIcon />}{m.is_owner ? t('start') : t('join')}
                 </button>
-                {m.is_owner && <button className="icon-btn" title="Cancelar" onClick={() => onRemove(m)}><TrashIcon /></button>}
+                {m.is_owner && <button className="icon-btn" title={t('room.preEntrada.cancelar')} onClick={() => onRemove(m)}><TrashIcon /></button>}
               </div>
             ))}
           </div>
@@ -700,12 +700,12 @@ function ActionPlanPanel({ meetingId, isOwner }: { meetingId: string; isOwner: b
 
   async function cycleStatus(itemId: string, current: string) {
     const next = current === 'todo' ? 'doing' : current === 'doing' ? 'done' : 'todo'
-    await patchActionItem(itemId, { status: next }).catch(() => {})
+    await patchActionItem(meetingId, itemId, { status: next }).catch(() => {})
     reload()
   }
 
   async function removeItem(itemId: string) {
-    await deleteActionItem(itemId).catch(() => {})
+    await deleteActionItem(meetingId, itemId).catch(() => {})
     reload()
   }
 
@@ -883,7 +883,7 @@ function EventModal({
             </div>
           </div>
         </div>
-        {meeting.room_name && <p className="event-room">{tr('physRoom')}<strong>{meeting.room_name}</strong></p>}
+        {meeting.room_name && <p className="event-room"><DoorIcon /> {tr('physRoom')}<strong>{meeting.room_name}</strong></p>}
 
         {/* Tabs */}
         <div className="event-tabs">
@@ -969,7 +969,7 @@ function EventModal({
             className="btn-sm ghost"
             onClick={() => void downloadMeetingIcs(meeting.id, meeting.title).catch(() => {})}
           >
-            {tr('ics')}
+            <CalendarIcon /> {tr('ics')}
           </button>
           {meeting.is_owner && (
             <button className="btn-sm ghost" onClick={() => onRemove(meeting)}><TrashIcon /> {tr('cancel')}</button>

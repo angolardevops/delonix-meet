@@ -21,7 +21,7 @@ use dashmap::DashMap;
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
-        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering::Relaxed},
+        atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, AtomicU8, Ordering::Relaxed},
         Arc, Weak,
     },
     time::{Duration, Instant},
@@ -66,6 +66,107 @@ use crate::signaling::{ClientMsg, ServerMsg};
 
 type Result<T> = std::result::Result<T, webrtc::Error>;
 
+/// Sufixo que torna único o id de cada track local de subscrição (ver
+/// `subscribe_layer`).
+static NEXT_TRACK_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Recenseamento do que o SFU mantém VIVO — a prova de fuga, em vez de a
+/// inferir do RSS.
+///
+/// O RSS não distingue «o alocador ainda não devolveu a memória ao SO» de «há
+/// objectos Rust que ninguém larga», e os gauges de negócio (`sfu_pc_connected`,
+/// `sfu_subscriptions`) só contam o que o código ACHA que existe: um peer tirado
+/// da sala cuja `RTCPeerConnection` nunca fechou lê-se como zero. Aqui conta-se
+/// o que existe de facto:
+///
+/// - cada `RTCPeerConnection` fica registada por `Weak` — está viva enquanto
+///   houver QUALQUER `Arc` para ela (uma `Publication`, uma tarefa de RTCP);
+/// - `close_done` só passa a `true` quando o `close().await` REGRESSA, por isso
+///   um fecho pendurado conta como não fechado;
+/// - peers, publicações e tarefas de fundo contam-se por `Drop`.
+#[derive(Default)]
+struct Census {
+    pcs: std::sync::Mutex<Vec<PcEntry>>,
+    peers: Arc<AtomicI64>,
+    publications: Arc<AtomicI64>,
+    rtp_pumps: Arc<AtomicI64>,
+    rtcp_drains: Arc<AtomicI64>,
+    nego_loops: Arc<AtomicI64>,
+}
+
+struct PcEntry {
+    pc: Weak<RTCPeerConnection>,
+    close_done: Arc<AtomicBool>,
+}
+
+/// Contador RAII: +1 ao nascer, −1 no `Drop`. Vive dentro do objecto (ou da
+/// tarefa) que conta, por isso não há caminho de saída que o esqueça.
+struct Vivo(Arc<AtomicI64>);
+
+impl Vivo {
+    fn new(g: &Arc<AtomicI64>) -> Self {
+        g.fetch_add(1, Relaxed);
+        Self(g.clone())
+    }
+}
+
+impl Drop for Vivo {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Relaxed);
+    }
+}
+
+/// Fotografia do `Census`, lida por `/metrics` e pelos testes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CensusSnapshot {
+    /// `RTCPeerConnection`s do SFU ainda alocadas.
+    pub pc_alive: usize,
+    /// Dessas, quantas nunca chegaram ao fim de um `close()`.
+    pub pc_unclosed: usize,
+    /// Peers registados em salas (o que o SFU julga ter).
+    pub peers_in_rooms: usize,
+    pub peers_alive: i64,
+    pub publications_alive: i64,
+    pub rtp_pump_tasks: i64,
+    pub rtcp_drain_tasks: i64,
+    pub negotiation_tasks: i64,
+}
+
+impl CensusSnapshot {
+    /// Exposição Prometheus. O que interessa num alerta é
+    /// `pc_unclosed - peers_in_rooms > 0` sustentado: PCs que ninguém fecha.
+    pub fn render(&self) -> String {
+        format!(
+            "# HELP delonix_sfu_pc_alive RTCPeerConnections do SFU ainda alocadas (Weak vivo).\n\
+             # TYPE delonix_sfu_pc_alive gauge\n\
+             delonix_sfu_pc_alive {}\n\
+             # HELP delonix_sfu_pc_unclosed RTCPeerConnections alocadas cujo close() nunca regressou.\n\
+             # TYPE delonix_sfu_pc_unclosed gauge\n\
+             delonix_sfu_pc_unclosed {}\n\
+             # HELP delonix_sfu_peers_in_rooms Peers registados em salas do SFU.\n\
+             # TYPE delonix_sfu_peers_in_rooms gauge\n\
+             delonix_sfu_peers_in_rooms {}\n\
+             # HELP delonix_sfu_objects_alive Objectos do SFU vivos (contados por Drop).\n\
+             # TYPE delonix_sfu_objects_alive gauge\n\
+             delonix_sfu_objects_alive{{kind=\"peer\"}} {}\n\
+             delonix_sfu_objects_alive{{kind=\"publication\"}} {}\n\
+             # HELP delonix_sfu_tasks Tarefas de fundo do SFU vivas.\n\
+             # TYPE delonix_sfu_tasks gauge\n\
+             delonix_sfu_tasks{{kind=\"rtp_pump\"}} {}\n\
+             delonix_sfu_tasks{{kind=\"rtcp_drain\"}} {}\n\
+             delonix_sfu_tasks{{kind=\"negotiation\"}} {}\n",
+            self.pc_alive,
+            self.pc_unclosed,
+            self.peers_in_rooms,
+            self.peers_alive.max(0),
+            self.publications_alive.max(0),
+            self.rtp_pump_tasks.max(0),
+            self.rtcp_drain_tasks.max(0),
+            self.negotiation_tasks.max(0),
+        )
+    }
+}
+
 /// Uma track publicada por um participante, com fan-out para subscritores.
 /// Com simulcast, cada camada (rid `q`/`h`/`f`) é uma Publication distinta.
 struct Publication {
@@ -73,8 +174,9 @@ struct Publication {
     kind: String,
     /// Camada simulcast ("f" = full; publicações sem rid contam como "f").
     rid: String,
-    /// Subscritores: peer -> (track local que alimenta esse peer, sender para remover).
-    subscribers: Mutex<HashMap<Uuid, (Arc<TrackLocalStaticRTP>, Arc<RTCRtpSender>)>>,
+    /// Subscritores: peer -> (track local que alimenta esse peer, sender para
+    /// remover, renumeração que sobrevive às trocas de camada).
+    subscribers: Mutex<HashMap<Uuid, Subscriber>>,
     /// Versão do conjunto de subscritores. A bomba de RTP mantém um snapshot e
     /// só volta a pegar no `Mutex` quando isto muda — sem isto, o lock ficava
     /// retido através do `write_rtp().await` e UM subscritor lento bloqueava a
@@ -95,6 +197,106 @@ struct Publication {
     /// Esta publicação está a ser reencaminhada? O seletor de oradores põe a
     /// `false` os microfones fora do top-N. Vídeo e ecrã nunca são suprimidos.
     forwarding: AtomicBool,
+    _vivo: Vivo,
+}
+
+type Subscriber = (
+    Arc<TrackLocalStaticRTP>,
+    Arc<RTCRtpSender>,
+    Arc<LayerRewriter>,
+);
+
+/// Numeração e relógio RTP de UMA subscrição de vídeo, contínuos através das
+/// trocas de camada simulcast.
+///
+/// Cada camada (`q`/`h`/`f`) chega com a sua numeração e o seu relógio RTP.
+/// Quando o SFU passa um subscritor de uma camada para outra no MESMO sender,
+/// o browser recebia números e timestamps a saltar para trás e descartava os
+/// fotogramas como antigos: o vídeo congelava depois da troca. Aqui cada
+/// subscrição reescreve `sequence_number` e `timestamp` para uma sequência
+/// única, rebaseada no primeiro pacote da camada nova.
+#[derive(Default)]
+struct LayerRewriter(std::sync::Mutex<RewriterState>);
+
+#[derive(Default)]
+struct RewriterState {
+    /// Fonte (camada) aceite; pacotes de outra fonte são descartados — é o
+    /// que evita que um pacote atrasado da camada antiga rebaseie a nova.
+    source: usize,
+    /// Fonte do último pacote reescrito (0 = ainda nenhum).
+    last_source: usize,
+    seq_off: u16,
+    ts_off: u32,
+    out_seq: u16,
+    out_ts: u32,
+}
+
+/// Intervalo de relógio inserido numa troca: ~1 fotograma a 30 fps (90 kHz).
+const SWITCH_TS_GAP: u32 = 3000;
+
+impl LayerRewriter {
+    fn new(source: usize) -> Self {
+        let rw = Self::default();
+        rw.expect(source);
+        rw
+    }
+
+    /// A partir de agora só a camada `source` alimenta esta subscrição.
+    fn expect(&self, source: usize) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).source = source;
+    }
+
+    /// Reescreve o cabeçalho; `false` = pacote de outra camada, não se envia.
+    fn rewrite(&self, source: usize, seq: &mut u16, ts: &mut u32) -> bool {
+        let mut st = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if source != st.source {
+            return false;
+        }
+        if st.last_source != source {
+            if st.last_source != 0 {
+                st.seq_off = st.out_seq.wrapping_add(1).wrapping_sub(*seq);
+                st.ts_off = st.out_ts.wrapping_add(SWITCH_TS_GAP).wrapping_sub(*ts);
+            }
+            st.last_source = source;
+            let new_seq = seq.wrapping_add(st.seq_off);
+            st.out_seq = new_seq;
+            st.out_ts = ts.wrapping_add(st.ts_off);
+        }
+        let new_seq = seq.wrapping_add(st.seq_off);
+        let new_ts = ts.wrapping_add(st.ts_off);
+        // Só avança o «último» com pacotes mais recentes (reordenação).
+        if new_seq.wrapping_sub(st.out_seq) < 0x8000 {
+            st.out_seq = new_seq;
+            st.out_ts = new_ts;
+        }
+        *seq = new_seq;
+        *ts = new_ts;
+        true
+    }
+}
+
+/// Cópia do pacote de vídeo SEM as extensões de cabeçalho do publicador.
+///
+/// Os ids das extensões (`a=extmap`) valem só na negociação onde foram
+/// acordados. O publicador e cada subscritor negociam em separado, e os ids não
+/// coincidem: reencaminhados crus, o `rid` do publicador chegava ao subscritor
+/// no id que ESTE usa para `transport-cc`; o interceptor TWCC do receptor não o
+/// conseguia ler («buffer too small»), a primeira leitura da track falhava e o
+/// `on_track` nunca disparava — subscrição negociada, RTP a sair, e nenhum
+/// vídeo (R156). No vídeo todas as extensões que o SFU aceita (mid, rid,
+/// repaired-rid, transport-cc) são por salto: o sender do subscritor volta a
+/// pôr as suas, com os ids certos.
+fn strip_hop_extensions(packet: &webrtc::rtp::packet::Packet) -> webrtc::rtp::packet::Packet {
+    let mut out = packet.clone();
+    out.header.extension = false;
+    out.header.extension_profile = 0;
+    out.header.extensions.clear();
+    out.header.extensions_padding = 0;
+    out
+}
+
+fn source_id(publication: &Arc<Publication>) -> usize {
+    Arc::as_ptr(publication) as usize
 }
 
 /// Medição de voz e renumeração de uma publicação de áudio. Vive à parte da
@@ -259,6 +461,9 @@ struct SfuPeer {
     /// Camada sugerida pelo cliente por publicador (ver `wanted_rid`). Vazio =
     /// sem sugestão, e decide-se pelo tamanho da sala como sempre.
     quality_hints: Mutex<HashMap<Uuid, String>>,
+    /// `true` só depois de `pc.close().await` REGRESSAR (ver `Census`).
+    close_done: Arc<AtomicBool>,
+    _vivo: Vivo,
 }
 
 /// Mensagens da máquina de negociação de um peer.
@@ -437,6 +642,8 @@ pub struct SfuState {
     nego_cap: usize,
     /// Capacidade da fila de escrita de cada track em gravação (`REC_QUEUE_CAP`).
     rec_cap: usize,
+    /// O que está vivo de facto (ver `Census`).
+    census: Census,
 }
 
 /// Config de ICE que o SFU usa para se tornar alcançável de fora do cluster.
@@ -454,6 +661,10 @@ pub struct IceConfig {
     /// que é o que o K8s expõe. Configurável porque no MESMO host duas
     /// instâncias colidem — ver `SFU_UDP_MIN`/`SFU_UDP_MAX` e o R57.
     pub udp_ports: Option<(u16, u16)>,
+    /// Timeouts de ICE (desligado, falhado). `None` => os do webrtc-rs
+    /// (5 s / 25 s). Só os testes os encurtam, para chegar a `Failed` sem
+    /// esperar meio minuto.
+    pub ice_timeouts: Option<(Duration, Duration)>,
 }
 
 impl SfuState {
@@ -504,6 +715,35 @@ impl SfuState {
         if peer.nego_tx.try_send(msg).is_err() {
             crate::metrics::Metrics::bump(&self.metrics.nego_queue_dropped_total);
             tracing::warn!("fila de renegociação cheia — pedido descartado");
+        }
+    }
+
+    /// Fotografia do que o SFU mantém vivo. Poda as entradas mortas do registo
+    /// de PCs de caminho — é chamada por `/metrics`, portanto periodicamente.
+    pub async fn census(&self) -> CensusSnapshot {
+        let (pc_alive, pc_unclosed) = {
+            let mut pcs = match self.census.pcs.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            pcs.retain(|e| e.pc.strong_count() > 0);
+            let unclosed = pcs.iter().filter(|e| !e.close_done.load(Relaxed)).count();
+            (pcs.len(), unclosed)
+        };
+        let rooms: Vec<Arc<SfuRoom>> = self.rooms.iter().map(|r| r.value().clone()).collect();
+        let mut peers_in_rooms = 0;
+        for room in rooms {
+            peers_in_rooms += room.peers.lock().await.len();
+        }
+        CensusSnapshot {
+            pc_alive,
+            pc_unclosed,
+            peers_in_rooms,
+            peers_alive: self.census.peers.load(Relaxed),
+            publications_alive: self.census.publications.load(Relaxed),
+            rtp_pump_tasks: self.census.rtp_pumps.load(Relaxed),
+            rtcp_drain_tasks: self.census.rtcp_drains.load(Relaxed),
+            negotiation_tasks: self.census.nego_loops.load(Relaxed),
         }
     }
 }
@@ -589,6 +829,9 @@ fn new_api(ice: &IceConfig) -> Result<webrtc::api::API> {
 
     // SettingEngine: torna o SFU alcançável de fora do cluster.
     let mut settings = SettingEngine::default();
+    if let Some((desligado, falhado)) = ice.ice_timeouts {
+        settings.set_ice_timeouts(Some(desligado), Some(falhado), None);
+    }
     if let Some(ip) = ice.external_ip.as_deref().filter(|s| !s.is_empty()) {
         // NAT 1:1 — anuncia o IP externo (LB/nó) em vez do IP interno do pod.
         settings.set_nat_1to1_ips(vec![ip.to_string()], RTCIceCandidateType::Host);
@@ -681,6 +924,18 @@ impl SfuState {
             ..Default::default()
         };
         let pc = Arc::new(api.new_peer_connection(pc_config).await?);
+        let close_done = Arc::new(AtomicBool::new(false));
+        {
+            let mut pcs = match self.census.pcs.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            pcs.retain(|e| e.pc.strong_count() > 0);
+            pcs.push(PcEntry {
+                pc: Arc::downgrade(&pc),
+                close_done: close_done.clone(),
+            });
+        }
 
         let (nego_tx, nego_rx) = mpsc::channel(self.nego_cap());
         let peer = Arc::new(SfuPeer {
@@ -695,8 +950,17 @@ impl SfuState {
             quality: Quality::default(),
             video_interest: Mutex::new(None),
             quality_hints: Mutex::new(HashMap::new()),
+            close_done,
+            _vivo: Vivo::new(&self.census.peers),
         });
-        room.peers.lock().await.insert(peer_id, peer.clone());
+        let substituido = room.peers.lock().await.insert(peer_id, peer.clone());
+        if let Some(antigo) = substituido {
+            // Não é alcançável hoje (o lugar reservado só é reclamado depois do
+            // `remove_peer` do socket antigo), mas largar o `SfuPeer` não fecha
+            // a PC — o webrtc-rs não fecha no `Drop` — e as portas ficavam presas.
+            tracing::error!(%room_id, %peer_id, "sfu add_peer substituiu um peer ainda registado — a fechar a PC antiga");
+            close_pc(&antigo, room_id, peer_id).await;
+        }
 
         // Trickle ICE: servidor -> cliente.
         {
@@ -733,10 +997,14 @@ impl SfuState {
             // Guarda para o gauge não driftar: só conta um inc (no 1º Connected)
             // e um dec (no 1º estado terminal), independentemente de repetições.
             let counted = Arc::new(AtomicBool::new(false));
+            // `Weak`: a PC guarda este handler, e o handler não pode segurar o
+            // peer que segura a PC.
+            let este = Arc::downgrade(&peer);
             pc.on_peer_connection_state_change(Box::new(move |s| {
                 tracing::info!(%room_id, %peer_id, state = %s, "sfu pc state");
                 let state = state.clone();
                 let counted = counted.clone();
+                let este = este.clone();
                 Box::pin(async move {
                     match s {
                         RTCPeerConnectionState::Connected => {
@@ -752,14 +1020,26 @@ impl SfuState {
                         _ => {}
                     }
                     if s == RTCPeerConnectionState::Failed {
-                        // A gravação em curso (se esta era a última pessoa) NÃO
-                        // pode ser descartada: fica no mapa de órfãs e o
-                        // `remove_peer` do signaling.rs finaliza-a.
-                        if let Some(session) = state.remove_peer(room_id, peer_id).await {
-                            tracing::warn!(%room_id, "sala esvaziou por falha de ICE — gravação guardada para finalização");
-                            crate::metrics::Metrics::bump(&state.metrics.sfu_recordings_orphaned_total);
-                            state.orphan_recordings.insert(room_id, session);
-                        }
+                        // NUNCA remover (e fechar) daqui dentro. O webrtc-rs
+                        // segura o mutex deste handler enquanto ele corre, e o
+                        // `close()` volta a pedi-lo para anunciar `Closed`: o
+                        // fecho ficava pendurado para sempre, com o peer já
+                        // fora da sala — gauges a zero, PC viva e portas UDP
+                        // presas (medido: 359 sockets num servidor parado).
+                        // Uma tarefa à parte corre depois de o handler regressar.
+                        tokio::spawn(async move {
+                            let Some(peer) = este.upgrade() else { return };
+                            // A gravação em curso (se esta era a última pessoa)
+                            // NÃO pode ser descartada: fica no mapa de órfãs e o
+                            // `remove_peer` do signaling.rs finaliza-a.
+                            if let Some(session) =
+                                state.remove_peer_exact(room_id, peer_id, Some(&peer)).await
+                            {
+                                tracing::warn!(%room_id, "sala esvaziou por falha de ICE — gravação guardada para finalização");
+                                crate::metrics::Metrics::bump(&state.metrics.sfu_recordings_orphaned_total);
+                                state.orphan_recordings.insert(room_id, session);
+                            }
+                        });
                     }
                 })
             }));
@@ -913,6 +1193,7 @@ impl SfuState {
             // Arranca a reencaminhar: o seletor só suprime depois de ter
             // medições — nunca se corta áudio "por defeito".
             forwarding: AtomicBool::new(true),
+            _vivo: Vivo::new(&self.census.publications),
         });
         room.publications.lock().await.push(publication.clone());
 
@@ -984,13 +1265,15 @@ impl SfuState {
         let this = self.clone();
         let is_audio = kind == "audio";
 
+        let vivo = Vivo::new(&self.census.rtp_pumps);
         tokio::spawn(async move {
+            let _vivo = vivo;
             // Socket PSTN criado só quando há mesmo um destino registado —
             // antes era um socket UDP por CADA publicação de áudio da
             // instância, mesmo sem PSTN configurado.
             let mut pstn_socket: Option<tokio::net::UdpSocket> = None;
             // Snapshot dos subscritores: refrescado só quando a lista muda.
-            let mut targets: Vec<Arc<TrackLocalStaticRTP>> = Vec::new();
+            let mut targets: Vec<(Arc<TrackLocalStaticRTP>, Arc<LayerRewriter>)> = Vec::new();
             let mut targets_version = u64::MAX;
             let audio_level_id = publication.audio_level_id;
             loop {
@@ -1044,14 +1327,29 @@ impl SfuState {
                                 .lock()
                                 .await
                                 .values()
-                                .map(|(track, _)| track.clone())
+                                .map(|(track, _, rw)| (track.clone(), rw.clone()))
                                 .collect();
                             targets_version = version;
                         }
                         // Escritas FORA do lock: um subscritor lento atrasa-se a
                         // si próprio, não à sala inteira.
-                        for track in &targets {
-                            let _ = track.write_rtp(&packet).await;
+                        if is_audio {
+                            for (track, _) in &targets {
+                                let _ = track.write_rtp(&packet).await;
+                            }
+                        } else {
+                            let source = source_id(&publication);
+                            let hop = strip_hop_extensions(&packet);
+                            for (track, rw) in &targets {
+                                let mut out = hop.clone();
+                                if rw.rewrite(
+                                    source,
+                                    &mut out.header.sequence_number,
+                                    &mut out.header.timestamp,
+                                ) {
+                                    let _ = track.write_rtp(&out).await;
+                                }
+                            }
                         }
                     }
                     Err(_) => break, // track terminou
@@ -1206,7 +1504,7 @@ impl SfuState {
             .lock()
             .await
             .drain()
-            .map(|(id, (_, sender))| (id, sender))
+            .map(|(id, (_, sender, _))| (id, sender))
             .collect();
         publication.touch_subs();
         for _ in 0..subs.len() {
@@ -1252,12 +1550,34 @@ impl SfuState {
         room_id: Uuid,
         peer_id: Uuid,
     ) -> Option<crate::recorder::RecordingSession> {
+        self.remove_peer_exact(room_id, peer_id, None).await
+    }
+
+    /// `remove_peer`, mas com `only` só remove se o peer registado for ESSE
+    /// (`Arc::ptr_eq`). É o que usa a remoção diferida do handler de `Failed`:
+    /// entre a falha e a tarefa correr, o mesmo `peer_id` pode já ter voltado
+    /// a entrar (reconexão com lugar reservado) — e não se fecha a PC nova.
+    async fn remove_peer_exact(
+        self: &Arc<Self>,
+        room_id: Uuid,
+        peer_id: Uuid,
+        only: Option<&Arc<SfuPeer>>,
+    ) -> Option<crate::recorder::RecordingSession> {
         let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
             // Sala já desaparecida: pode haver uma gravação órfã à espera (o
             // handler de `Failed` da PC deixou-a aqui — ver orphan_recordings).
             return self.orphan_recordings.remove(&room_id).map(|(_, s)| s);
         };
-        let Some(peer) = room.peers.lock().await.remove(&peer_id) else {
+        let removido = {
+            let mut peers = room.peers.lock().await;
+            match (peers.get(&peer_id), only) {
+                // Outro peer com o mesmo id: não é connosco, e a gravação órfã
+                // (se houver) pertence a quem sair a seguir, não a esta tarefa.
+                (Some(atual), Some(esperado)) if !Arc::ptr_eq(atual, esperado) => return None,
+                _ => peers.remove(&peer_id),
+            }
+        };
+        let Some(peer) = removido else {
             return self.orphan_recordings.remove(&room_id).map(|(_, s)| s);
         };
 
@@ -1292,7 +1612,7 @@ impl SfuState {
             crate::metrics::Metrics::dec(&self.metrics.sfu_degraded_subscribers);
         }
 
-        let _ = peer.pc.close().await;
+        close_pc(&peer, room_id, peer_id).await;
 
         let empty = room.peers.lock().await.is_empty();
         let mut orphan_recording = None;
@@ -1570,6 +1890,28 @@ async fn speaker_selector(state: Arc<SfuState>, room_id: Uuid) {
     tracing::debug!(%room_id, "seletor de oradores terminado");
 }
 
+/// Um `close()` normal demora milissegundos; acima disto está pendurado.
+const PC_CLOSE_WARN: Duration = Duration::from_secs(10);
+
+/// Fecha a PC de um peer e marca-a no `Census`.
+///
+/// Não desiste ao fim do prazo — abandonar o futuro deixava a PC a meio do
+/// fecho, que é pior. Grita e continua à espera: um fecho pendurado é uma fuga
+/// de portas UDP (o intervalo por omissão tem 201) e tem de aparecer nos logs.
+async fn close_pc(peer: &Arc<SfuPeer>, room_id: Uuid, peer_id: Uuid) {
+    let close = peer.pc.close();
+    tokio::pin!(close);
+    if tokio::time::timeout(PC_CLOSE_WARN, &mut close)
+        .await
+        .is_err()
+    {
+        tracing::error!(%room_id, %peer_id, "sfu pc close() pendurado há mais de 10 s — PC e portas UDP presas");
+        let _ = close.await;
+        tracing::warn!(%room_id, %peer_id, "sfu pc close() pendurado acabou por regressar");
+    }
+    peer.close_done.store(true, Relaxed);
+}
+
 /// Pede um keyframe ao publicador (com rate-limit por publicação).
 async fn request_keyframe(publication: &Arc<Publication>, metrics: &Arc<crate::metrics::Metrics>) {
     if publication.kind != "video" && publication.kind != "screen" {
@@ -1644,11 +1986,19 @@ async fn subscribe_layer(
     } else {
         publication.publisher.to_string()
     };
+    // O id da track tem de ser ÚNICO por subscrição. O `add_track` do webrtc-rs
+    // reaproveita um transceiver parado cujo id inicial seja igual, e esse
+    // reaproveitamento falha sempre («new track must have the same envelope as
+    // previous»): voltar a uma camada já usada (f → h → f) deixava o
+    // subscritor sem vídeo desse participante até sair da sala.
     let local = Arc::new(TrackLocalStaticRTP::new(
         publication.remote.codec().capability.clone(),
         format!(
-            "{}-{}-{}",
-            publication.publisher, publication.kind, publication.rid
+            "{}-{}-{}-{}",
+            publication.publisher,
+            publication.kind,
+            publication.rid,
+            NEXT_TRACK_SEQ.fetch_add(1, Relaxed)
         ),
         stream_id,
     ));
@@ -1658,11 +2008,13 @@ async fn subscribe_layer(
         .await?;
     {
         let mut subs = publication.subscribers.lock().await;
-        subs.insert(sub_id, (local, sender.clone()));
+        // Numeração contínua através das trocas de camada: ver `LayerRewriter`.
+        let rw = Arc::new(LayerRewriter::new(source_id(publication)));
+        subs.insert(sub_id, (local, sender.clone(), rw));
     }
     publication.touch_subs();
     crate::metrics::Metrics::inc(&state.metrics.sfu_subscriptions);
-    subscribed.insert(key, (publication.rid.clone(), sender.clone()));
+    subscribed.insert(key.clone(), (publication.rid.clone(), sender.clone()));
     drop(subscribed);
 
     // Drenar o RTCP do sender é OBRIGATÓRIO para os interceptors funcionarem —
@@ -1672,20 +2024,46 @@ async fn subscribe_layer(
     //    antigo ticker de 3 s que queimava bitrate para toda a gente);
     //  - Receiver Report → alimenta a escolha de camada (`Quality`), para o
     //    SFU descer de camada a quem está a perder pacotes.
+    //
+    // A tarefa NÃO segura a `Publication` (só o grupo publicador/tipo e um
+    // `Weak` do peer) e verifica periodicamente se a subscrição ainda existe.
+    // Não basta esperar que `read_rtcp` falhe: no webrtc-rs 0.17.1 um `stop()`
+    // que chegue quando a tarefa não está a ler perde-se, e num sender que
+    // nunca enviou a leitura fica pendurada para sempre (fixado em
+    // `sfu_e2e::webrtc_rs_read_rtcp_depois_de_stop_nao_regressa`). Com um
+    // `Arc<Publication>` isso segurava a PC do publicador para sempre.
     {
         let sender = sender.clone();
-        let publication = publication.clone();
+        let group = key.clone();
         let peer_weak = Arc::downgrade(sub_peer);
         let state = state.clone();
+        let vivo = Vivo::new(&state.census.rtcp_drains);
         tokio::spawn(async move {
-            while let Ok((packets, _)) = sender.read_rtcp().await {
+            let _vivo = vivo;
+            loop {
+                let packets =
+                    match tokio::time::timeout(RTCP_LIVENESS_CHECK, sender.read_rtcp()).await {
+                        Ok(Ok((packets, _))) => packets,
+                        Ok(Err(_)) => break,
+                        Err(_) => {
+                            if subscription_alive(&peer_weak, &group, &sender).await {
+                                continue;
+                            }
+                            break;
+                        }
+                    };
                 let mut requalify = false;
                 for packet in packets {
                     let any = packet.as_any();
                     if any.downcast_ref::<PictureLossIndication>().is_some()
                         || any.downcast_ref::<FullIntraRequest>().is_some()
                     {
-                        request_keyframe(&publication, &state.metrics).await;
+                        // O sender sobrevive às trocas de camada: o keyframe
+                        // pede-se à camada que o alimenta AGORA.
+                        if let Some(source) = current_source(&state, room_id, &group, sub_id).await
+                        {
+                            request_keyframe(&source, &state.metrics).await;
+                        }
                     } else if let Some(rr) = any.downcast_ref::<ReceiverReport>() {
                         let worst = rr
                             .reports
@@ -1723,8 +2101,58 @@ async fn subscribe_layer(
     Ok(())
 }
 
-/// Troca a camada que um subscritor recebe de um dado (publicador, tipo):
-/// solta a antiga em todas as publicações do grupo, liga a nova, renegoceia.
+/// Sem RTCP durante isto, a tarefa de drenagem confirma que a subscrição
+/// ainda existe (ver `subscribe_layer`). Um subscritor activo manda Receiver
+/// Reports a cada ~1 s, por isso numa subscrição viva isto quase não dispara.
+const RTCP_LIVENESS_CHECK: Duration = Duration::from_secs(5);
+
+/// A subscrição do peer a este (publicador, tipo) ainda é ESTE sender?
+///
+/// Pergunta-se ao peer e não à publicação: a troca de camada por
+/// `replace_track` muda o sender de publicação mas mantém-no no
+/// `subscribed` do peer — e é o `subscribed` que todos os caminhos de
+/// remoção limpam.
+async fn subscription_alive(
+    peer: &Weak<SfuPeer>,
+    group: &(Uuid, String),
+    sender: &Arc<RTCRtpSender>,
+) -> bool {
+    let Some(peer) = peer.upgrade() else {
+        return false;
+    };
+    let subscribed = peer.subscribed.lock().await;
+    subscribed
+        .get(group)
+        .is_some_and(|(_, s)| Arc::ptr_eq(s, sender))
+}
+
+/// Camada que alimenta hoje o subscritor `sub_id` no grupo (publicador, tipo)
+/// `group` — muda a cada `switch_layer`.
+async fn current_source(
+    state: &Arc<SfuState>,
+    room_id: Uuid,
+    group: &(Uuid, String),
+    sub_id: Uuid,
+) -> Option<Arc<Publication>> {
+    let room = state.rooms.get(&room_id).map(|r| r.clone())?;
+    let publications = room.publications.lock().await.clone();
+    for p in publications {
+        if p.publisher == group.0
+            && p.kind == group.1
+            && p.subscribers.lock().await.contains_key(&sub_id)
+        {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Troca a camada que um subscritor recebe de um dado (publicador, tipo).
+///
+/// Caminho normal: o MESMO sender passa a ser alimentado pela camada nova
+/// (`replace_track`) — sem renegociação, sem transceiver novo, sem imagem
+/// preta enquanto a oferta vai e vem. Se o `replace_track` recusar, cai no
+/// caminho antigo: remove a track e subscreve de novo (renegociando).
 #[allow(clippy::too_many_arguments)]
 async fn switch_layer(
     state: &Arc<SfuState>,
@@ -1736,20 +2164,73 @@ async fn switch_layer(
     old_sender: &Arc<RTCRtpSender>,
 ) {
     let key = (chosen.publisher, chosen.kind.clone());
-    {
-        let publications = room.publications.lock().await.clone();
-        for p in &publications {
-            if p.publisher == key.0 && p.kind == key.1 && !Arc::ptr_eq(p, chosen) {
-                if p.subscribers.lock().await.remove(&sub_id).is_some() {
-                    p.touch_subs();
-                    crate::metrics::Metrics::dec(&state.metrics.sfu_subscriptions);
+    let publications = room.publications.lock().await.clone();
+    let siblings: Vec<&Arc<Publication>> = publications
+        .iter()
+        .filter(|p| p.publisher == key.0 && p.kind == key.1 && !Arc::ptr_eq(p, chosen))
+        .collect();
+
+    // A track local da camada antiga dá o id e o stream que o cliente já conhece.
+    let mut old = None;
+    for p in &siblings {
+        if let Some((local, _, rw)) = p.subscribers.lock().await.get(&sub_id) {
+            old = Some((local.clone(), rw.clone()));
+            break;
+        }
+    }
+    if let Some((old_local, rw)) = old {
+        let local = Arc::new(TrackLocalStaticRTP::new(
+            chosen.remote.codec().capability.clone(),
+            old_local.id().to_owned(),
+            old_local.stream_id().to_owned(),
+        ));
+        // A porta à camada antiga fecha-se ANTES do `replace_track`, não depois.
+        // Depois, um pacote da camada antiga aceite pelo `LayerRewriter` (que já
+        // avançou a numeração) ia para a track antiga JÁ desligada do sender e
+        // perdia-se: o subscritor via um buraco na numeração exactamente na
+        // fronteira da troca (medido: 2 em 12 trocas a ~1 kpps). Assim, o que
+        // a camada antiga ainda escreve sai pelo sender ainda ligado a ela, e a
+        // nova só começa a escrever quando entra nos subscritores dela, abaixo.
+        // Se o `replace_track` recusar, o caminho de recurso cria uma subscrição
+        // nova com a sua própria numeração — este `rw` deixa de ser usado.
+        rw.expect(source_id(chosen));
+        match old_sender
+            .replace_track(Some(Arc::clone(&local) as Arc<dyn TrackLocal + Send + Sync>))
+            .await
+        {
+            Ok(()) => {
+                for p in &siblings {
+                    if p.subscribers.lock().await.remove(&sub_id).is_some() {
+                        p.touch_subs();
+                    }
                 }
+                chosen
+                    .subscribers
+                    .lock()
+                    .await
+                    .insert(sub_id, (local, old_sender.clone(), rw));
+                chosen.touch_subs();
+                if let Some(entry) = sub_peer.subscribed.lock().await.get_mut(&key) {
+                    entry.0 = chosen.rid.clone();
+                }
+                return;
             }
+            Err(e) => {
+                tracing::info!(%room_id, %sub_id, error = %e, "sfu replace_track recusado; troca com renegociação");
+            }
+        }
+    }
+
+    for p in &siblings {
+        if p.subscribers.lock().await.remove(&sub_id).is_some() {
+            p.touch_subs();
+            crate::metrics::Metrics::dec(&state.metrics.sfu_subscriptions);
         }
     }
     let _ = sub_peer.pc.remove_track(old_sender).await;
     sub_peer.subscribed.lock().await.remove(&key);
     if let Err(e) = subscribe_layer(state, room_id, chosen, sub_id, sub_peer).await {
+        crate::metrics::Metrics::bump(&state.metrics.sfu_layer_switch_failures_total);
         tracing::warn!(%room_id, %sub_id, error = %e, "sfu layer switch failed");
     }
 }
@@ -1813,6 +2294,7 @@ async fn negotiation_loop(
     peer: Weak<SfuPeer>,
     mut rx: mpsc::Receiver<NegoMsg>,
 ) {
+    let _vivo = Vivo::new(&state.census.nego_loops);
     let mut deferred: VecDeque<String> = VecDeque::new();
     while let Some(msg) = rx.recv().await {
         let Some(p) = peer.upgrade() else { break };
@@ -2160,6 +2642,54 @@ mod tests {
 
         // E o pedido seguinte volta a poder ser enviado.
         assert!(coalesce_renegotiate(&flag, || true));
+    }
+
+    #[test]
+    fn layer_switch_keeps_seq_and_ts_moving_forward() {
+        let rw = LayerRewriter::new(1);
+        let mut out = Vec::new();
+        for (seq, ts) in [(100u16, 9000u32), (101, 12000), (102, 15000)] {
+            let (mut s, mut t) = (seq, ts);
+            assert!(rw.rewrite(1, &mut s, &mut t));
+            out.push((s, t));
+        }
+        assert_eq!(out, vec![(100, 9000), (101, 12000), (102, 15000)]);
+
+        // Troca para uma camada com numeração e relógio MUITO atrás.
+        rw.expect(2);
+        let (mut s, mut t) = (103u16, 15000u32);
+        assert!(
+            !rw.rewrite(1, &mut s, &mut t),
+            "pacote atrasado da camada antiga não passa"
+        );
+        let (mut s, mut t) = (7u16, 50u32);
+        assert!(rw.rewrite(2, &mut s, &mut t));
+        assert_eq!((s, t), (103, 15000 + SWITCH_TS_GAP));
+        let (mut s, mut t) = (8u16, 3050u32);
+        assert!(rw.rewrite(2, &mut s, &mut t));
+        assert_eq!((s, t), (104, 18000 + SWITCH_TS_GAP));
+
+        // Voltar à primeira camada (f → h → f) continua para a frente.
+        rw.expect(1);
+        let (mut s, mut t) = (500u16, 90000u32);
+        assert!(rw.rewrite(1, &mut s, &mut t));
+        assert_eq!((s, t), (105, 18000 + 2 * SWITCH_TS_GAP));
+    }
+
+    #[test]
+    fn layer_rewriter_wraps_around() {
+        let rw = LayerRewriter::new(1);
+        let (mut s, mut t) = (u16::MAX, u32::MAX - 10);
+        assert!(rw.rewrite(1, &mut s, &mut t));
+        rw.expect(2);
+        let (mut s, mut t) = (40000u16, 1u32);
+        assert!(rw.rewrite(2, &mut s, &mut t));
+        assert_eq!(s, 0);
+        assert_eq!(t, (u32::MAX - 10).wrapping_add(SWITCH_TS_GAP));
+        // Reordenado (mais antigo) não recua o «último».
+        let (mut s, mut t) = (39999u16, 0u32);
+        assert!(rw.rewrite(2, &mut s, &mut t));
+        assert_eq!(s, u16::MAX);
     }
 
     #[test]

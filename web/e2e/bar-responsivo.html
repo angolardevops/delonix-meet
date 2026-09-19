@@ -1,0 +1,50 @@
+<!doctype html><html data-theme="dark"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/room.css">
+<style>
+  html,body{margin:0;background:var(--bg);height:100%}
+  .rule{position:fixed;top:0;left:0;right:0;font:11px/1.6 monospace;color:#8fa;background:#000a;padding:2px 6px;z-index:9}
+  .room-page{height:100%;display:flex;flex-direction:column;justify-content:flex-end}
+</style></head>
+<body class="room-page">
+<div class="rule" id="rule"></div>
+<footer class="controls-bar">
+  <div class="bar-left"><span class="clock">12:04</span><span class="sep">|</span><span class="room-code">dap-jcus-dtb</span></div>
+  <div class="bar-center">
+    <div class="ctrl-group ctrl-group-devices">
+      <button class="ctrl" aria-label="Desativar microfone" data-action="mic">M</button>
+      <button class="ctrl" aria-label="Desativar câmara" data-action="cam">C</button>
+    </div>
+    <div class="ctrl-group ctrl-group-session">
+      <button class="ctrl" aria-label="Legendas"><span class="cc-badge">CC</span></button>
+      <button class="ctrl" aria-label="Reações">☺</button>
+      <button class="ctrl" aria-label="Partilhar ecrã">▣</button>
+      <button class="ctrl" aria-label="Levantar a mão">✋</button>
+      <button class="ctrl" aria-label="Gravar">◉</button>
+      <button class="ctrl" aria-label="Mais">⋮</button>
+    </div>
+    <button class="ctrl hangup" aria-label="Sair da chamada">☎</button>
+  </div>
+  <div class="bar-right">
+    <button class="ctrl plain" aria-label="Quadro">✎</button>
+    <button class="ctrl plain" aria-label="Ferramentas">⚒</button>
+    <button class="ctrl plain" aria-label="Notas">▤</button>
+    <button class="ctrl plain" aria-label="Pessoas">👤</button>
+    <button class="ctrl plain" aria-label="Chat">💬</button>
+  </div>
+</footer>
+<script>
+function report(){
+  const bar=document.querySelector('.controls-bar');
+  const hang=document.querySelector('.ctrl.hangup');
+  const h=hang.getBoundingClientRect(), b=bar.getBoundingClientRect();
+  const visivel = h.left>=0 && h.right<=window.innerWidth+0.5;
+  const cs=getComputedStyle(hang);
+  document.getElementById('rule').textContent =
+    `viewport ${window.innerWidth}px · desligar ${visivel?'VISÍVEL':'FORA DO ECRÃ'} `+
+    `(x ${h.left.toFixed(0)}–${h.right.toFixed(0)}) · alvo ${cs.width}×${cs.height} · bar ${b.width.toFixed(0)}px`;
+  window.__diag={visivel,left:h.left,right:h.right,w:cs.width,h:cs.height,vw:window.innerWidth};
+}
+report(); addEventListener('resize',report);
+</script>
+</body></html>

@@ -34,9 +34,9 @@ Odoo (nk_delonix_meet)                     Delonix Meet
 | Peça | Estado |
 |---|---|
 | API keys por org com scopes (`apikeys.rs`) | ✅ existe |
-| Provisão de org via segredo de plataforma (`POST /api/v1/admin/orgs`) | ✅ existe (PR #1) |
+| Provisão de org via segredo de plataforma (`POST /api/operator/v1/organizations`) | ✅ existe (PR #1) |
 | `GET /api/v1/meetings?since=<iso>` com API key (lista da org, incremental) | ⬜ adicionar |
-| `GET /api/v1/meetings/{id}/notes` (title/minutes/transcript + `minutes_ai_at`) | ⬜ adicionar |
+| `GET /api/v1/meetings/{id}/minutes` (title/minutes/transcript + `minutes_ai_at`) | ⬜ adicionar |
 | Evento webhook `meeting.mom_ready` (dispara após spawn_mom_summary concluir) | ⬜ adicionar a `webhooks.rs` |
 
 `minutes_ai_at` (timestamp em `meetings`) permite ao Odoo saber se o MoM já é a

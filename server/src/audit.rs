@@ -14,8 +14,8 @@
 //! `delonix_audit_write_failures_total`, para uma trilha partida ser alertável
 //! em vez de ficar num aviso que ninguém lê.
 //!
-//! Leitura: `GET /api/orgs/{org_id}/audit` (admins da org).
-//! Verificação: `GET /api/orgs/{org_id}/audit/verify`.
+//! Leitura: `GET /api/orgs/{org_id}/audit-events` (admins da org).
+//! Verificação: `GET /api/orgs/{org_id}/audit-events/verification`.
 
 use axum::{
     extract::{Path, Query, State},
@@ -27,7 +27,8 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{auth::AuthUser, error::ApiError, org::require_admin_pub, AppState};
+use crate::{auth::AuthUser, error::ApiError, AppState};
+use delonix_meet_domain::identity::authorization::{Capability, ResourceScope};
 
 /// Escreve um evento de auditoria. Não propaga erro — mas falha ALTO.
 pub async fn log(db: &PgPool, org_id: Option<Uuid>, actor_id: Uuid, action: &str, target: &str) {
@@ -94,8 +95,16 @@ pub async fn log_com_metricas(
     }
 }
 
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(list, verify),
+    components(schemas(AuditEntry, VerificacaoCadeia))
+)]
+pub struct ApiDoc;
+
 /// Resultado da verificação da cadeia de uma organização.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct VerificacaoCadeia {
     /// A cadeia está intacta?
     pub intact: bool,
@@ -185,17 +194,38 @@ pub async fn verificar_cadeia(db: &PgPool, org_id: Uuid) -> Result<VerificacaoCa
     })
 }
 
-/// `GET /api/orgs/{org_id}/audit/verify` — só admins da org.
+/// `GET /api/orgs/{org_id}/audit-events/verification` — só admins da org.
+///
+/// Uma cadeia partida NÃO é erro HTTP: responde 200 com `intact: false` e o
+/// `seq` onde a quebra começa.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/audit-events/verification", tag = "audit",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = VerificacaoCadeia),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Sem `admin.view_audit` (`authz.missing_capability`).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn verify(
     State(state): State<Arc<AppState>>,
     Path(org_id): Path<Uuid>,
     auth: AuthUser,
 ) -> Result<Json<VerificacaoCadeia>, ApiError> {
-    require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::org::require_capability(
+        &state,
+        org_id,
+        auth.user_id,
+        Capability::AdminViewAudit,
+        ResourceScope::Organization,
+    )
+    .await?;
     Ok(Json(verificar_cadeia(&state.db, org_id).await?))
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct AuditEntry {
     pub id: i64,
     pub actor: String,
@@ -204,20 +234,42 @@ pub struct AuditEntry {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct AuditQuery {
+    /// Máximo de eventos (1–500, por omissão 100).
     #[serde(default)]
     pub limit: Option<i64>,
 }
 
-/// Últimos eventos de auditoria da org (só admins).
+/// Últimos eventos de auditoria da org (só admins), mais recentes primeiro.
+/// Inclui os eventos sem org cujo actor é membro da organização.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/audit-events", tag = "audit",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização."), AuditQuery),
+    responses(
+        (status = 200, body = Vec<AuditEntry>),
+        (status = 400, description = "`limit` não numérico.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Sem `admin.view_audit` (`authz.missing_capability`).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list(
     State(state): State<Arc<AppState>>,
     Path(org_id): Path<Uuid>,
     Query(q): Query<AuditQuery>,
     auth: AuthUser,
 ) -> Result<Json<Vec<AuditEntry>>, ApiError> {
-    require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::org::require_capability(
+        &state,
+        org_id,
+        auth.user_id,
+        Capability::AdminViewAudit,
+        ResourceScope::Organization,
+    )
+    .await?;
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     // LEFT JOIN e `actor_name` como recuo: com o INNER JOIN anterior, apagar
     // uma conta fazia os eventos DELA desaparecerem da vista do administrador —

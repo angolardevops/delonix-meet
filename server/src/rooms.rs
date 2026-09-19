@@ -18,12 +18,15 @@ use crate::{
     AppState,
 };
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+/// Sala de conferência. O `code` (`abc-defg-hij`) é a credencial de acesso
+/// por link, estilo Meet.
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Room {
     pub id: Uuid,
     pub code: String,
     pub name: String,
     pub owner_id: Uuid,
+    /// `mesh` | `sfu`.
     pub topology: String,
     pub waiting_room: bool,
     pub e2ee: bool,
@@ -31,6 +34,41 @@ pub struct Room {
     pub format: String,
     pub created_at: DateTime<Utc>,
 }
+
+/// Lista de colunas que cobre **todos** os campos de `Room` — usar sempre que
+/// se hidrata `Room` (`SELECT`, `INSERT ... RETURNING`). O `FromRow` derivado
+/// faz `try_get` por campo: uma coluna em falta é um erro de RUNTIME, não de
+/// compilação. Esta lista estava copiada à mão em NOVE sítios (sete neste
+/// ficheiro, mais um em `apikeys.rs` e um em `recordings.rs`) — o mesmo padrão
+/// que partiu `meetings::start`/`ics` na migração 0022 (ver ADR-0004, Fase 3).
+pub const ROOM_COLUMNS: &str =
+    "id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at";
+
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        create_room,
+        get_room,
+        join_room,
+        ice_servers,
+        room_chat,
+        invite_to_room,
+        post_timings,
+        post_qos
+    ),
+    components(schemas(
+        Room,
+        CreateRoomReq,
+        JoinRoomResp,
+        ChatMessage,
+        InviteReq,
+        InviteResp,
+        TimingsReq,
+        QosSample
+    ))
+)]
+pub struct ApiDoc;
 
 /// Meet-style room code: `abc-defg-hij`, unambiguous lowercase letters.
 pub fn generate_room_code() -> String {
@@ -44,9 +82,11 @@ pub fn generate_room_code() -> String {
     format!("{}-{}-{}", part(3), part(4), part(3))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateRoomReq {
+    /// 1–100 caracteres (depois de `trim`).
     pub name: String,
+    /// `mesh` | `sfu` (omissão `sfu`).
     #[serde(default)]
     pub topology: Option<String>,
     #[serde(default)]
@@ -72,10 +112,10 @@ pub async fn insert_room(
 ) -> Result<Room, ApiError> {
     for _ in 0..5 {
         let code = generate_room_code();
-        let res: Result<Room, sqlx::Error> = sqlx::query_as(
+        let res: Result<Room, sqlx::Error> = sqlx::query_as(&format!(
             "INSERT INTO rooms (code, name, owner_id, topology, waiting_room, e2ee, format) VALUES ($1, $2, $3, $4, $5, $6, $7)
-             RETURNING id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at",
-        )
+             RETURNING {ROOM_COLUMNS}"
+        ))
         .bind(&code)
         .bind(name)
         .bind(owner_id)
@@ -94,6 +134,123 @@ pub async fn insert_room(
     Err(ApiError::internal("could not allocate room code"))
 }
 
+// ---------- Sala pessoal («a minha sala», G2) ----------
+//
+// Uma sala como as outras (as regras de acesso são as de `room_access`), com
+// `is_personal = true`. As regras de forma estão em
+// `delonix_meet_domain::conferencing::personal_room`.
+
+/// Quantas vezes se tenta um código novo quando o sorteado já existe.
+const CODE_ATTEMPTS: usize = 5;
+
+async fn find_personal_room(db: &sqlx::PgPool, owner_id: Uuid) -> Result<Option<Room>, ApiError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {ROOM_COLUMNS} FROM rooms WHERE owner_id = $1 AND is_personal"
+    ))
+    .bind(owner_id)
+    .fetch_optional(db)
+    .await?)
+}
+
+/// A sala pessoal de `owner_id`, criada na primeira chamada.
+///
+/// Idempotente sob concorrência. O árbitro é o índice único parcial
+/// `rooms_personal_owner_uidx` (migração 0047): dois pedidos simultâneos tentam
+/// ambos inserir, um ganha, e o outro não insere nada (`ON CONFLICT DO
+/// NOTHING`) e lê a linha do vencedor. Uma colisão de CÓDIGO é outro índice, e
+/// repete com um código novo — como `insert_room`.
+pub(crate) async fn ensure_personal_room(
+    db: &sqlx::PgPool,
+    owner_id: Uuid,
+    default_name: &str,
+) -> Result<Room, ApiError> {
+    use delonix_meet_domain::conferencing::personal_room as rules;
+    if let Some(room) = find_personal_room(db, owner_id).await? {
+        return Ok(room);
+    }
+    for _ in 0..CODE_ATTEMPTS {
+        let res: Result<Option<Room>, sqlx::Error> = sqlx::query_as(&format!(
+            "INSERT INTO rooms (code, name, owner_id, topology, waiting_room, e2ee, format, is_personal)
+             VALUES ($1, $2, $3, $4, $5, false, 'normal', true)
+             ON CONFLICT (owner_id) WHERE is_personal DO NOTHING
+             RETURNING {ROOM_COLUMNS}"
+        ))
+        .bind(generate_room_code())
+        .bind(default_name)
+        .bind(owner_id)
+        .bind(rules::DEFAULT_TOPOLOGY)
+        .bind(rules::DEFAULT_WAITING_ROOM)
+        .fetch_optional(db)
+        .await;
+        match res {
+            Ok(Some(room)) => return Ok(room),
+            // Outro pedido criou-a entre a leitura e a escrita.
+            Ok(None) => {
+                return find_personal_room(db, owner_id)
+                    .await?
+                    .ok_or_else(|| ApiError::internal("sala pessoal desapareceu a meio"))
+            }
+            Err(sqlx::Error::Database(dbe)) if dbe.is_unique_violation() => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(ApiError::internal("could not allocate room code"))
+}
+
+/// Altera nome e/ou sala de espera da sala pessoal (que tem de existir).
+pub(crate) async fn update_personal_room(
+    db: &sqlx::PgPool,
+    owner_id: Uuid,
+    name: Option<&str>,
+    waiting_room: Option<bool>,
+) -> Result<Room, ApiError> {
+    sqlx::query_as(&format!(
+        "UPDATE rooms SET name = COALESCE($2, name), waiting_room = COALESCE($3, waiting_room)
+          WHERE owner_id = $1 AND is_personal RETURNING {ROOM_COLUMNS}"
+    ))
+    .bind(owner_id)
+    .bind(name)
+    .bind(waiting_room)
+    .fetch_optional(db)
+    .await?
+    .ok_or(ApiError::NotFound)
+}
+
+/// Dá um código novo à sala pessoal (que tem de existir). O antigo deixa de
+/// existir no mesmo `UPDATE`: `GET /api/rooms/{antigo}` passa a `404`.
+pub(crate) async fn rotate_personal_room_code(
+    db: &sqlx::PgPool,
+    owner_id: Uuid,
+) -> Result<Room, ApiError> {
+    for _ in 0..CODE_ATTEMPTS {
+        let res: Result<Option<Room>, sqlx::Error> = sqlx::query_as(&format!(
+            "UPDATE rooms SET code = $2 WHERE owner_id = $1 AND is_personal RETURNING {ROOM_COLUMNS}"
+        ))
+        .bind(owner_id)
+        .bind(generate_room_code())
+        .fetch_optional(db)
+        .await;
+        match res {
+            Ok(Some(room)) => return Ok(room),
+            Ok(None) => return Err(ApiError::NotFound),
+            Err(sqlx::Error::Database(dbe)) if dbe.is_unique_violation() => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(ApiError::internal("could not allocate room code"))
+}
+
+/// Cria uma sala; o autenticado fica dono.
+#[utoipa::path(
+    post, path = "/api/rooms", tag = "rooms",
+    security(("session" = [])),
+    request_body = CreateRoomReq,
+    responses(
+        (status = 200, body = Room),
+        (status = 400, description = "Nome fora de 1–100, `topology` ou `format` inválidos.", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -115,6 +272,8 @@ pub async fn create_room(
             "format must be 'normal' or 'training'".into(),
         ));
     }
+    // `sessions.create` (ADR-0008 §1): o poder de criar, avaliado sobre o dono.
+    crate::org::require_session_create(&state, auth.user_id, None).await?;
     let room = insert_room(
         &state.db,
         auth.user_id,
@@ -128,17 +287,28 @@ pub async fn create_room(
     Ok(Json(room))
 }
 
+/// Metadados de uma sala. O código é a credencial: qualquer sessão válida que
+/// o conheça lê os metadados (o controlo de entrada faz-se no `join`). O código
+/// é normalizado para minúsculas.
+#[utoipa::path(
+    get, path = "/api/rooms/{room_code}", tag = "rooms",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala (`abc-defg-hij`).")),
+    responses(
+        (status = 200, body = Room),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(code): Path<String>,
 ) -> Result<Json<Room>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at FROM rooms WHERE code = $1",
-    )
-    .bind(code.to_lowercase())
-    .fetch_one(&state.db)
-    .await?;
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(code.to_lowercase())
+        .fetch_one(&state.db)
+        .await?;
     // O código da sala é a credencial (capability, estilo Meet): quem o conhece
     // pode ver os metadados e pedir para entrar. O controlo de acesso à REUNIÃO
     // ao vivo faz-se no join_room (não-membros vão para a sala de espera).
@@ -179,10 +349,16 @@ pub async fn room_access(
     // Uma única consulta devolve os sinais: colega de org (→ authorized),
     // convidado na agenda desta sala (→ direct) e co-anfitrião persistido
     // (→ direct + admitter, entra sem esperar e pode admitir outros).
+    //
+    // «Colega» é membro ACTIVO dos dois lados — a mesma regra de
+    // `org::org_co_members`. Sem o filtro, um funcionário arquivado continuava
+    // a ler chat, notas e gravações das salas da ex-empresa (auditoria
+    // 2026-09-16, S3, provado ao vivo antes desta correcção).
     let (org_mate, invitee, admitter): (bool, bool, bool) = sqlx::query_as(
         r#"SELECT
              EXISTS(SELECT 1 FROM org_members a JOIN org_members b ON a.org_id = b.org_id
-                    WHERE a.user_id = $1 AND b.user_id = $2),
+                    WHERE a.user_id = $1 AND b.user_id = $2
+                      AND a.archived_at IS NULL AND b.archived_at IS NULL),
              EXISTS(SELECT 1 FROM meeting_invitees mi JOIN meetings m ON m.id = mi.meeting_id
                     WHERE m.room_code = $3 AND mi.user_id = $1),
              EXISTS(SELECT 1 FROM room_admitters WHERE room_id = $4 AND user_id = $1)"#,
@@ -238,20 +414,45 @@ pub async fn can_access_room(
     Ok(room_access(state, user_id, room).await?.authorized)
 }
 
+/// Resposta do `join`: a sala e o token de sala para o WebSocket.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct JoinRoomResp {
+    pub room: Room,
+    /// JWT de sala (`typ = room`), de curta duração; a única credencial que o
+    /// `/ws` aceita. Leva `wait` (vai para a sala de espera) e `adm` (pode admitir).
+    pub room_token: String,
+    /// `/ws?token=<room_token>`.
+    pub ws_path: String,
+    /// Existe uma reunião agendada para esta sala (senão é chamada instantânea).
+    pub scheduled: bool,
+}
+
 /// Exchange an access token for a short-lived, signed **room token** — the
 /// only credential the signaling WebSocket accepts. Scoped to one room and
 /// expiring in minutes, it prevents room hijacking with stolen/old URLs.
+///
+/// Troca a sessão por um token de sala. Nunca recusa quem tem o código: quem
+/// não é dono, convidado na agenda nem co-anfitrião recebe um token com
+/// `wait = true` (sala de espera). O código é normalizado para minúsculas.
+#[utoipa::path(
+    post, path = "/api/rooms/{room_code}/join", tag = "rooms",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala.")),
+    responses(
+        (status = 200, body = JoinRoomResp),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn join_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(code): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at FROM rooms WHERE code = $1",
-    )
-    .bind(code.to_lowercase())
-    .fetch_one(&state.db)
-    .await?;
+) -> Result<Json<JoinRoomResp>, ApiError> {
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(code.to_lowercase())
+        .fetch_one(&state.db)
+        .await?;
     // Quem tem o código pode entrar (link-join estilo Meet), MAS só entra DIRETO
     // quem é dono ou está na AGENDA da reunião (convidado explícito). Um colega
     // de organização que apenas recebeu o link — ou um externo — vai para a SALA
@@ -278,6 +479,21 @@ pub async fn join_room(
         .await?;
     }
 
+    // Origem e cargo decidem-se AQUI, do lado do servidor, e viajam assinados
+    // no token: o cliente não tem como se declarar «sso» nem inventar um cargo.
+    let origin = if !authorized {
+        "guest"
+    } else if crate::users::is_sso_account(&state.db, auth.user_id).await {
+        "sso"
+    } else {
+        "password"
+    };
+    let title = if authorized {
+        crate::org::title_alongside(&state, room.owner_id, auth.user_id).await
+    } else {
+        None
+    };
+
     let now = Utc::now().timestamp();
     let room_token = sign_jwt(
         &state.config.jwt_secret,
@@ -293,6 +509,10 @@ pub async fn join_room(
             wait: room.waiting_room || !access.direct, // sem entrada direta → sala de espera
             adm: access.admitter, // anfitrião ou co-anfitrião persistido pode admitir
             is_bot: false,        // join normal de utilizador humano
+            origin: Some(origin.into()),
+            title,
+            lobby: Some(!access.direct),
+            wr: Some(room.waiting_room),
         },
     )?;
 
@@ -305,16 +525,29 @@ pub async fn join_room(
             .fetch_one(&state.db)
             .await?;
 
-    Ok(Json(json!({
-        "room": room,
-        "room_token": room_token,
-        "ws_path": format!("/ws?token={room_token}"),
-        "scheduled": scheduled,
-    })))
+    Ok(Json(JoinRoomResp {
+        room,
+        ws_path: format!("/ws?token={room_token}"),
+        room_token,
+        scheduled,
+    }))
 }
 
 /// Time-limited TURN credentials (coturn `use-auth-secret` / REST API spec):
 /// username = expiry unix ts, password = base64(HMAC-SHA1(secret, username)).
+///
+/// Configuração ICE para o `RTCPeerConnection`: STUN + TURN com credenciais
+/// válidas por 1 hora. Rate-limit por IP (partilha o limitador da v1).
+#[utoipa::path(
+    get, path = "/api/ice-servers", tag = "rooms",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = serde_json::Value,
+         description = "`RTCConfiguration`: `{\"iceServers\": [{\"urls\": [\"stun:…\"]}, {\"urls\": [\"turn:…\"], \"username\": \"<expiry>\", \"credential\": \"<base64>\"}]}`, com `\"iceTransportPolicy\": \"relay\"` só quando o servidor força relay."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 429, description = "Rate-limit por IP.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn ice_servers(
     State(state): State<Arc<AppState>>,
     _auth: AuthUser,
@@ -353,42 +586,69 @@ pub async fn ice_servers(
 
 // ---------- Chat persistente ----------
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ChatMessage {
     pub id: Uuid,
     pub user_id: Uuid,
     pub username: String,
     pub message: String,
     pub created_at: DateTime<Utc>,
+    /// Mensagem a que esta responde (fio), se houver.
+    pub parent_id: Option<Uuid>,
+    /// Contagem de reacções por emoji (`{}` sem reacções).
+    pub reactions: serde_json::Value,
+    /// Conversa directa: a conta que a recebe e o nome. `None` = pública.
+    pub to_user_id: Option<Uuid>,
+    pub to_username: Option<String>,
 }
 
-/// Últimas 200 mensagens de chat de uma sala (requer autenticação + acesso).
+/// Últimas 200 mensagens de chat de uma sala, da mais antiga para a mais
+/// recente (requer autenticação + acesso). As conversas directas só voltam a
+/// quem as enviou e a quem as recebeu — o filtro é na consulta, não no cliente.
+#[utoipa::path(
+    get, path = "/api/rooms/{room_code}/messages", tag = "rooms",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    responses(
+        (status = 200, body = Vec<ChatMessage>, description = "Ordem cronológica ascendente. As conversas directas só aparecem a quem as enviou e a quem as recebeu."),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Sem acesso à sala.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn room_chat(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(code): Path<String>,
 ) -> Result<Json<Vec<ChatMessage>>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
-         FROM rooms WHERE code = $1",
-    )
-    .bind(&code)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(&code)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
     if !can_access_room(&state, auth.user_id, &room).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
 
     let msgs: Vec<ChatMessage> = sqlx::query_as(
-        "SELECT id, user_id, username, message, created_at
-         FROM room_chat_messages
-         WHERE room_id = $1
-         ORDER BY created_at ASC
-         LIMIT 200",
+        "SELECT * FROM (
+             SELECT m.id, m.user_id, m.username, m.message, m.created_at, m.parent_id,
+                    COALESCE((SELECT jsonb_object_agg(r.emoji, r.n)
+                              FROM (SELECT emoji, count(*)::int AS n
+                                    FROM room_chat_reactions
+                                    WHERE message_id = m.id
+                                    GROUP BY emoji) r), '{}'::jsonb) AS reactions,
+                    m.to_user_id, m.to_username
+             FROM room_chat_messages m
+             WHERE m.room_id = $1
+               AND (m.to_user_id IS NULL OR m.user_id = $2 OR m.to_user_id = $2)
+             ORDER BY m.created_at DESC
+             LIMIT 200
+         ) ultimas ORDER BY created_at ASC",
     )
     .bind(room.id)
+    .bind(auth.user_id)
     .fetch_all(&state.db)
     .await?;
 
@@ -397,30 +657,53 @@ pub async fn room_chat(
 
 // ---------- Convidar membros para sala em curso ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct InviteReq {
+    /// 1–50 utilizadores. Só contam colegas activos de organização (o próprio
+    /// e estranhos são filtrados em silêncio).
     pub targets: Vec<Uuid>,
+    /// `video` | `voice` (omissão `video`).
     #[serde(default)]
     pub kind: Option<String>,
 }
 
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct InviteResp {
+    /// Destinatários com dispositivo ligado, a tocar.
+    pub ringing: Vec<Uuid>,
+    /// Destinatários sem ligação: ficam com chamada perdida.
+    pub offline: Vec<Uuid>,
+}
+
+/// Faz tocar os dispositivos de colegas de organização para a sala em curso.
+/// Sem acesso à sala devolve **403**. O código NÃO é normalizado.
+#[utoipa::path(
+    post, path = "/api/rooms/{room_code}/invitations", tag = "rooms",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    request_body = InviteReq,
+    responses(
+        (status = 200, body = InviteResp),
+        (status = 400, description = "`kind` inválido, `targets` fora de 1–50, ou nenhum destinatário válido depois do filtro.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Sem acesso à sala.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn invite_to_room(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(code): Path<String>,
     Json(req): Json<InviteReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
-         FROM rooms WHERE code = $1",
-    )
-    .bind(&code)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+) -> Result<Json<InviteResp>, ApiError> {
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(&code)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
     if !can_access_room(&state, auth.user_id, &room).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
 
     let kind = req.kind.as_deref().unwrap_or("video");
@@ -467,10 +750,7 @@ pub async fn invite_to_room(
     )
     .await;
 
-    Ok(Json(serde_json::json!({
-        "ringing": ringing,
-        "offline": offline,
-    })))
+    Ok(Json(InviteResp { ringing, offline }))
 }
 
 /// Amostra de qualidade reportada pelo CLIENTE.
@@ -484,7 +764,7 @@ pub async fn invite_to_room(
 /// app em cache antiga continua a reportar só os três originais, e a amostra
 /// dele continua a contar. Exigi-los perderia exactamente as amostras das
 /// sessões mais problemáticas.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct QosSample {
     pub rtt_ms: Option<i32>,
     pub loss_pct: f32,
@@ -557,7 +837,7 @@ fn clamp_candidate_pair(v: Option<String>) -> Option<String> {
 /// Todos os campos são `Option` e vêm do cliente: um marco que não aconteceu é
 /// `null`, e `null` significa «não sei», que é diferente de zero. Zero seria
 /// uma medição («foi instantâneo») e enviesava as médias para baixo.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct TimingsReq {
     #[serde(default)]
     pub join_ms: Option<i32>,
@@ -575,23 +855,35 @@ pub struct TimingsReq {
     pub reconnects: Option<i32>,
 }
 
-/// `POST /api/rooms/{code}/timings` — uma vez por sessão.
+/// `POST /api/rooms/{code}/join-timings` — uma vez por sessão.
+///
+/// Valores limitados a 10 minutos (`ice_restarts`/`reconnects` a 1000) antes
+/// de gravar. Sem acesso à sala devolve **401**, não 403.
+#[utoipa::path(
+    post, path = "/api/rooms/{room_code}/join-timings", tag = "rooms",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    request_body = TimingsReq,
+    responses(
+        (status = 204, description = "Amostra aceite."),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Sem acesso à sala.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn post_timings(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(code): Path<String>,
     Json(t): Json<TimingsReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
-         FROM rooms WHERE code = $1",
-    )
-    .bind(&code)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+) -> Result<axum::http::StatusCode, ApiError> {
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(&code)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
     if !can_access_room(&state, auth.user_id, &room).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
 
     // Tecto de 10 minutos: acima disto não é um tempo de entrada, é um cliente
@@ -628,29 +920,39 @@ pub async fn post_timings(
             crate::metrics::Metrics::bump(&m.join_slow_total);
         }
     }
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 /// Recebe uma amostra de qualidade (QoS) do cliente durante a chamada (~1/30s).
 /// Alimenta o cartão "Qualidade das chamadas" do admin (org_stats). Valores
 /// clampados; autorização igual à do resto da sala (can_access_room).
+/// Sem acesso à sala devolve **401**, não 403.
+#[utoipa::path(
+    post, path = "/api/rooms/{room_code}/quality-samples", tag = "rooms",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala (sensível a maiúsculas).")),
+    request_body = QosSample,
+    responses(
+        (status = 204, description = "Amostra aceite."),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Sem acesso à sala.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn post_qos(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(code): Path<String>,
     Json(s): Json<QosSample>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
-         FROM rooms WHERE code = $1",
-    )
-    .bind(&code)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+) -> Result<axum::http::StatusCode, ApiError> {
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(&code)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
     if !can_access_room(&state, auth.user_id, &room).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(ApiError::Forbidden);
     }
 
     let rtt = s.rtt_ms.map(|v| v.clamp(0, 10_000));
@@ -713,7 +1015,7 @@ pub async fn post_qos(
         crate::metrics::Metrics::bump(&m.qos_cpu_limited_total);
     }
 
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]

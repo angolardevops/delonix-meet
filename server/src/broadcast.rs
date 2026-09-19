@@ -17,8 +17,11 @@
 
 use std::fmt;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
+use chrono::{DateTime, Utc};
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::Mutex;
@@ -60,6 +63,10 @@ pub enum Recusa {
     Tecto { activas: usize, maximo: usize },
     /// Nenhum destino, ou um destino sem chave.
     SemDestino,
+    /// Mais destinos do que o nó admite numa só emissão (multi-canal tipo
+    /// StreamYard, mas com tecto — cada destino a mais é mais uma ligação TCP
+    /// e mais banda de saída do mesmo pod).
+    DemasiadosDestinos { pedidos: usize, maximo: usize },
     /// O servidor não tem ffmpeg. É configuração em falta, não erro do
     /// utilizador — e dizê-lo pelo nome poupa uma investigação inteira a quem
     /// recebe a queixa. Mesma forma que o `causa_legivel` do recorder.
@@ -87,6 +94,11 @@ impl fmt::Display for Recusa {
                 "este nó já tem {activas} emissões em directo (máximo {maximo})"
             ),
             Recusa::SemDestino => f.write_str("não foi indicado nenhum destino com chave"),
+            Recusa::DemasiadosDestinos { pedidos, maximo } => write!(
+                f,
+                "pediram-se {pedidos} destinos para a mesma emissão; este nó aceita no \
+                 máximo {maximo} de cada vez"
+            ),
             Recusa::SemFfmpeg => f.write_str(
                 "O servidor não tem o ffmpeg instalado, e sem ele não consegue emitir em \
                  directo. É uma configuração em falta no servidor — comunica-o a quem o \
@@ -116,6 +128,7 @@ pub fn pode_emitir(
     destinos: &[Destino],
     activas: usize,
     maximo: usize,
+    maximo_destinos: usize,
 ) -> Result<(), Recusa> {
     if e2ee_ligado {
         return Err(Recusa::E2ee);
@@ -127,6 +140,12 @@ pub fn pode_emitir(
     }
     if destinos.is_empty() || destinos.iter().any(|d| d.chave.expose().trim().is_empty()) {
         return Err(Recusa::SemDestino);
+    }
+    if destinos.len() > maximo_destinos {
+        return Err(Recusa::DemasiadosDestinos {
+            pedidos: destinos.len(),
+            maximo: maximo_destinos,
+        });
     }
     if activas >= maximo {
         return Err(Recusa::Tecto { activas, maximo });
@@ -172,6 +191,24 @@ pub fn montar_argumentos(destinos: &[Destino], threads: u32) -> Vec<String> {
         "matroska".into(),
         "-i".into(),
         "pipe:0".into(),
+    ];
+    // As opções de codec do ffmpeg valem para a saída SEGUINTE e só para ela.
+    // Postas uma vez, antes da primeira, o segundo destino em diante saía com
+    // os codecs por omissão do FLV (FLV1 + MP3) — re-codificação em software e
+    // recusa pelo servidor RTMP (`unsupported video codec: 2`, medido com
+    // mediamtx). Por isso repetem-se antes de CADA saída (R230).
+    for d in destinos {
+        a.extend(opcoes_de_saida());
+        a.push("-f".into());
+        a.push("flv".into());
+        a.push(alvo(d));
+    }
+    a
+}
+
+/// As opções de codec de UMA saída FLV.
+fn opcoes_de_saida() -> [String; 8] {
+    [
         // O VÍDEO É COPIADO. É a decisão inteira do ADR: sem isto o pod
         // codificaria H.264 em software e saturaria o core que serve a chamada.
         "-c:v".into(),
@@ -184,13 +221,7 @@ pub fn montar_argumentos(destinos: &[Destino], threads: u32) -> Vec<String> {
         "128k".into(),
         "-ar".into(),
         "44100".into(),
-    ];
-    for d in destinos {
-        a.push("-f".into());
-        a.push("flv".into());
-        a.push(alvo(d));
-    }
-    a
+    ]
 }
 
 /// Uma emissão a decorrer.
@@ -198,6 +229,18 @@ pub struct Emissao {
     filho: Child,
     entrada: Arc<Mutex<Option<ChildStdin>>>,
     pub rotulos: Vec<String>,
+    /// Bytes empurrados para o ffmpeg desde `arrancar` (G1). É o total do
+    /// PROCESSO, não de um destino: um só ffmpeg remultiplexa para todos os
+    /// destinos desta emissão (ver o cabeçalho do módulo), por isso um
+    /// destino individual não tem saúde nem taxa próprias — herdam as da
+    /// emissão. Medir por destino exigiria um processo por destino, mudança
+    /// de arquitectura fora do âmbito daqui.
+    bytes: AtomicU64,
+    desde: DateTime<Utc>,
+    /// Última amostra `(instante, bytes)`, para a taxa RECENTE de `estado()`
+    /// em vez da média desde o início — o instante do arranque é uma amostra
+    /// pobre para uma emissão de uma hora consultada ao minuto 55.
+    ultima_amostra: Mutex<(Instant, u64)>,
 }
 
 impl fmt::Debug for Emissao {
@@ -205,8 +248,25 @@ impl fmt::Debug for Emissao {
         f.debug_struct("Emissao")
             .field("rotulos", &self.rotulos)
             .field("pid", &self.filho.id())
+            .field("bytes", &self.bytes.load(Ordering::Relaxed))
             .finish()
     }
+}
+
+/// Retrato do estado vivo de uma emissão (G1) — o que `GET
+/// /api/rooms/{room_code}/live/status` devolve.
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct EmissaoEstado {
+    /// Rótulos dos destinos desta emissão — não o estado de cada um: ver a
+    /// nota em `Emissao::bytes`.
+    pub rotulos: Vec<String>,
+    pub viva: bool,
+    pub bytes_enviados: u64,
+    /// Débito binário médio desde a última consulta (ou desde o arranque, na
+    /// primeira). `0` numa emissão recém-arrancada ou sem tráfego novo desde
+    /// a última amostra — não é sinal de falha por si só.
+    pub bitrate_bps: u64,
+    pub desde: DateTime<Utc>,
 }
 
 impl Emissao {
@@ -224,10 +284,14 @@ impl Emissao {
         cmd.kill_on_drop(true);
         let mut filho = cmd.spawn()?;
         let entrada = filho.stdin.take();
+        let agora = Instant::now();
         Ok(Self {
             filho,
             entrada: Arc::new(Mutex::new(entrada)),
             rotulos: destinos.iter().map(|d| d.rotulo.clone()).collect(),
+            bytes: AtomicU64::new(0),
+            desde: Utc::now(),
+            ultima_amostra: Mutex::new((agora, 0)),
         })
     }
 
@@ -237,11 +301,42 @@ impl Emissao {
     pub async fn escrever(&self, dados: &[u8]) -> std::io::Result<()> {
         let mut guarda = self.entrada.lock().await;
         match guarda.as_mut() {
-            Some(stdin) => stdin.write_all(dados).await,
+            Some(stdin) => {
+                let r = stdin.write_all(dados).await;
+                if r.is_ok() {
+                    self.bytes.fetch_add(dados.len() as u64, Ordering::Relaxed);
+                }
+                r
+            }
             None => Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "a emissão já foi fechada",
             )),
+        }
+    }
+
+    /// Retrato do estado vivo (G1): bytes totais e débito desde a última
+    /// consulta. Chamar isto avança a amostra — duas consultas seguidas sem
+    /// tráfego entre elas dão `bitrate_bps: 0`, não o mesmo valor repetido.
+    pub async fn estado(&mut self) -> EmissaoEstado {
+        let bytes = self.bytes.load(Ordering::Relaxed);
+        let agora = Instant::now();
+        let mut amostra = self.ultima_amostra.lock().await;
+        let (t_anterior, bytes_anteriores) = *amostra;
+        let decorrido = agora.saturating_duration_since(t_anterior).as_secs_f64();
+        let bitrate_bps = if decorrido > 0.0 {
+            (((bytes.saturating_sub(bytes_anteriores)) as f64 * 8.0) / decorrido) as u64
+        } else {
+            0
+        };
+        *amostra = (agora, bytes);
+        drop(amostra);
+        EmissaoEstado {
+            rotulos: self.rotulos.clone(),
+            viva: self.viva(),
+            bytes_enviados: bytes,
+            bitrate_bps,
+            desde: self.desde,
         }
     }
 
@@ -325,7 +420,7 @@ mod testes {
     #[test]
     fn uma_sala_com_e2ee_e_recusada_com_razao() {
         let d = [destino("yt", "abc")];
-        let r = pode_emitir(true, "video/h264", &d, 0, 4).expect_err("tinha de recusar");
+        let r = pode_emitir(true, "video/h264", &d, 0, 4, 4).expect_err("tinha de recusar");
         assert_eq!(r, Recusa::E2ee);
         // A razão tem de explicar o porquê E dizer o que fazer.
         let texto = r.to_string();
@@ -339,7 +434,7 @@ mod testes {
         // de ser a do E2EE — é a que muda a decisão de quem criou a sala.
         let d: [Destino; 0] = [];
         assert_eq!(
-            pode_emitir(true, "video/vp8", &d, 99, 1).unwrap_err(),
+            pode_emitir(true, "video/vp8", &d, 99, 1, 4).unwrap_err(),
             Recusa::E2ee
         );
     }
@@ -348,7 +443,7 @@ mod testes {
     fn um_codec_que_nao_se_copia_e_recusado_em_vez_de_produzir_lixo() {
         let d = [destino("yt", "abc")];
         for mime in ["video/vp8", "video/vp9", "video/av1", ""] {
-            let r = pode_emitir(false, mime, &d, 0, 4).expect_err("{mime} tinha de recusar");
+            let r = pode_emitir(false, mime, &d, 0, 4, 4).expect_err("{mime} tinha de recusar");
             assert!(matches!(r, Recusa::Codec { .. }), "{mime}: {r:?}");
         }
     }
@@ -357,7 +452,7 @@ mod testes {
     fn o_h264_passa_com_os_dois_nomes_que_os_browsers_usam() {
         let d = [destino("yt", "abc")];
         for mime in ["video/H264", "video/h264", "video/avc"] {
-            assert!(pode_emitir(false, mime, &d, 0, 4).is_ok(), "{mime}");
+            assert!(pode_emitir(false, mime, &d, 0, 4, 4).is_ok(), "{mime}");
         }
     }
 
@@ -369,7 +464,7 @@ mod testes {
         for chave in ["", "   "] {
             let d = [destino("yt", chave)];
             assert_eq!(
-                pode_emitir(false, "video/h264", &d, 0, 4).unwrap_err(),
+                pode_emitir(false, "video/h264", &d, 0, 4, 4).unwrap_err(),
                 Recusa::SemDestino
             );
         }
@@ -387,14 +482,46 @@ mod testes {
     #[test]
     fn o_tecto_de_emissoes_e_imposto() {
         let d = [destino("yt", "abc")];
-        assert!(pode_emitir(false, "video/h264", &d, 1, 2).is_ok());
+        assert!(pode_emitir(false, "video/h264", &d, 1, 2, 4).is_ok());
         assert_eq!(
-            pode_emitir(false, "video/h264", &d, 2, 2).unwrap_err(),
+            pode_emitir(false, "video/h264", &d, 2, 2, 4).unwrap_err(),
             Recusa::Tecto {
                 activas: 2,
                 maximo: 2
             }
         );
+    }
+
+    #[test]
+    fn varios_destinos_dentro_do_tecto_passam_juntos() {
+        // O "multi-canal tipo StreamYard": vários destinos NA MESMA emissão,
+        // não uma emissão por destino — é a diferença entre este tecto e o
+        // `max_directos` (esse é por SALA, não por destino).
+        let d = [
+            destino("yt", "k1"),
+            destino("tw", "k2"),
+            destino("fb", "k3"),
+        ];
+        assert!(pode_emitir(false, "video/h264", &d, 0, 4, 4).is_ok());
+    }
+
+    #[test]
+    fn destinos_a_mais_para_o_tecto_do_no_sao_recusados_com_razao() {
+        let d = [
+            destino("yt", "k1"),
+            destino("tw", "k2"),
+            destino("fb", "k3"),
+        ];
+        let r = pode_emitir(false, "video/h264", &d, 0, 4, 2).unwrap_err();
+        assert_eq!(
+            r,
+            Recusa::DemasiadosDestinos {
+                pedidos: 3,
+                maximo: 2
+            }
+        );
+        let texto = r.to_string();
+        assert!(texto.contains('3') && texto.contains('2'), "{texto}");
     }
 
     // ------------------------------------------------------------- argumentos
@@ -428,6 +555,37 @@ mod testes {
     fn cada_destino_ganha_a_sua_saida_flv() {
         let a = montar_argumentos(&[destino("yt", "k1"), destino("tw", "k2")], 2);
         assert_eq!(a.iter().filter(|x| *x == "flv").count(), 2);
+    }
+
+    /// R230: as opções de codec valem só para a saída seguinte. Cada `-f flv`
+    /// tem de ter, desde a saída anterior (ou desde o `-i`), o seu próprio
+    /// `-c:v copy` e `-c:a aac` — senão o 2.º destino sai em FLV1/MP3.
+    #[test]
+    fn cada_saida_leva_as_suas_opcoes_de_codec() {
+        for n in 1..=3 {
+            let destinos: Vec<Destino> = (0..n).map(|i| destino("d", &format!("k{i}"))).collect();
+            let a = montar_argumentos(&destinos, 2);
+            let mut inicio = a.iter().position(|x| x == "pipe:0").unwrap() + 1;
+            let mut saidas = 0;
+            for (i, w) in a.windows(2).enumerate() {
+                if w[0] == "-f" && w[1] == "flv" {
+                    let troco = &a[inicio..i];
+                    let par = |k: &str, v: &str| troco.windows(2).any(|p| p[0] == k && p[1] == v);
+                    assert!(
+                        par("-c:v", "copy"),
+                        "saída {saidas} de {n} sem -c:v copy: {a:?}"
+                    );
+                    assert!(
+                        par("-c:a", "aac"),
+                        "saída {saidas} de {n} sem -c:a aac: {a:?}"
+                    );
+                    assert!(par("-ar", "44100"), "saída {saidas} de {n} sem -ar: {a:?}");
+                    saidas += 1;
+                    inicio = i + 3; // depois de `-f flv <alvo>`
+                }
+            }
+            assert_eq!(saidas, n);
+        }
     }
 
     #[test]
@@ -496,6 +654,32 @@ mod testes {
     }
 
     #[tokio::test]
+    async fn o_estado_conta_bytes_e_reflecte_os_rotulos_ate_parar() {
+        let prog = sorvedouro();
+        let mut e = Emissao::arrancar(
+            &[destino("yt", "k"), destino("fb", "k2")],
+            1,
+            prog.to_str().unwrap(),
+        )
+        .expect("arrancou");
+        let s0 = e.estado().await;
+        assert_eq!(s0.rotulos, vec!["yt".to_string(), "fb".to_string()]);
+        assert_eq!(s0.bytes_enviados, 0);
+        assert!(s0.viva);
+
+        e.escrever(b"12345").await.expect("devia aceitar");
+        let s1 = e.estado().await;
+        assert_eq!(s1.bytes_enviados, 5);
+
+        e.escrever(b"1234567890").await.expect("devia aceitar");
+        let s2 = e.estado().await;
+        assert_eq!(s2.bytes_enviados, 15, "acumula, não substitui");
+
+        let st = e.parar().await.expect("devia terminar");
+        assert!(st.success());
+    }
+
+    #[tokio::test]
     async fn escrever_depois_de_parar_devolve_erro_em_vez_de_pendurar() {
         let prog = sorvedouro();
         let e =
@@ -541,6 +725,14 @@ impl Registo {
         self.activas.lock().await.contains_key(&sala)
     }
 
+    /// Retrato do estado vivo da emissão da sala (G1). `None` = não há
+    /// emissão activa — quem chama devolve 404, não um `EmissaoEstado` vazio.
+    pub async fn estado(&self, sala: Uuid) -> Option<EmissaoEstado> {
+        let mut m = self.activas.lock().await;
+        let e = m.get_mut(&sala)?;
+        Some(e.estado().await)
+    }
+
     /// Regista uma emissão. Devolve `false` se a sala já tinha uma — quem
     /// chama trata isso como recusa, não como sucesso silencioso.
     pub async fn inserir(&self, sala: Uuid, e: Emissao) -> bool {
@@ -575,8 +767,10 @@ impl Registo {
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::response::Response;
+use axum::Json;
 use serde::Deserialize;
 
+use crate::auth::AuthUser;
 use crate::error::ApiError;
 use crate::AppState;
 
@@ -584,19 +778,45 @@ use crate::AppState;
 pub struct DirectoQuery {
     /// Token de sala, o mesmo que o `/ws` usa — curto e com âmbito.
     pub token: String,
-    /// URL base do destino (sem a chave).
-    pub destino: String,
-    /// Chave de emissão. Vem na query porque um WebSocket não tem corpo; é
-    /// por isso que a rota EXIGE o token de sala e nunca regista a query.
-    pub chave: String,
+    /// Os destinos, como JSON: `[{"url":"...","chave":"...","rotulo":"..."}]`.
+    ///
+    /// Um array e não N parâmetros nomeados (`destino1`, `chave1`,
+    /// `destino2`…): um WebSocket não tem corpo, a query é o único lugar, e
+    /// um array cresce para o multi-canal (tipo StreamYard) sem inventar
+    /// esquema novo por cada plataforma a mais. O parsing é manual (ver
+    /// `ws_directo`) e não `#[derive(Deserialize)]` num `Vec<DestinoBruto>`
+    /// directo no extractor: um JSON malformado tem de dar a MESMA recusa
+    /// legível pós-upgrade que as outras regras — um erro do extractor do
+    /// axum falha ANTES do upgrade, e é exactamente o que o comentário em
+    /// `ws_directo` explica que fica invisível para o browser.
+    #[serde(default = "sem_destinos")]
+    pub destinos: String,
+    /// Destinos GUARDADOS da organização (G1), por id, separados por vírgula.
+    /// A chave decifra-se no servidor e nunca volta ao browser. Exige
+    /// `org_id` e que quem emite seja administrador activo dessa organização.
     #[serde(default)]
-    pub rotulo: Option<String>,
+    pub destination_ids: Option<String>,
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
     /// MIME do vídeo que o browser vai empurrar, para se poder recusar ANTES
     /// de arrancar o ffmpeg.
     pub codec: String,
 }
 
-/// `GET /api/rooms/{code}/broadcast` (upgrade para WebSocket).
+fn sem_destinos() -> String {
+    "[]".into()
+}
+
+/// A forma solta que chega na query, antes de a chave virar `Secret`.
+#[derive(Deserialize)]
+struct DestinoBruto {
+    url: String,
+    chave: String,
+    #[serde(default)]
+    rotulo: Option<String>,
+}
+
+/// `GET /api/rooms/{code}/live` (upgrade para WebSocket).
 ///
 /// O browser compõe, codifica em H.264 e empurra pedaços de WebM por aqui; o
 /// servidor remultiplexa para RTMP. Ver o ADR-0003.
@@ -621,12 +841,6 @@ pub async fn ws_directo(
         return Err(ApiError::Unauthorized);
     }
 
-    let destinos = vec![Destino {
-        url: q.destino.clone(),
-        chave: Secret::new(q.chave.clone()),
-        rotulo: q.rotulo.clone().unwrap_or_else(|| "directo".into()),
-    }];
-
     // As regras correm ANTES de gastar um processo — mas a recusa é ENTREGUE
     // depois do upgrade, e é uma distinção que se descobre a testar.
     //
@@ -636,6 +850,76 @@ pub async fn ws_directo(
     // ponta-a-ponta…» chegava ao cliente como «não foi possível ligar» — ou
     // seja, a recusa mais importante do ADR-0003 era invisível a quem a devia
     // ler. Por isso aceita-se o upgrade e manda-se a razão numa trama de texto.
+    // O JSON dos destinos segue a MESMA regra: um parse malformado tem de
+    // chegar como razão legível, não como um 400 antes do upgrade.
+    let mut destinos: Vec<Destino> = match serde_json::from_str::<Vec<DestinoBruto>>(&q.destinos) {
+        Ok(brutos) => brutos
+            .into_iter()
+            .map(|b| Destino {
+                url: b.url,
+                chave: Secret::new(b.chave),
+                rotulo: b.rotulo.unwrap_or_else(|| "directo".into()),
+            })
+            .collect(),
+        Err(e) => {
+            let m = format!("os destinos vieram malformados: {e}");
+            return Ok(ws.on_upgrade(move |socket| recusar(socket, m)));
+        }
+    };
+
+    // Destinos guardados (G1): a chave sai da base cifrada e só é aberta aqui.
+    if let Some(csv) = q
+        .destination_ids
+        .as_deref()
+        .filter(|c| !c.trim().is_empty())
+    {
+        let ids: Result<Vec<Uuid>, _> = csv.split(',').map(|p| p.trim().parse::<Uuid>()).collect();
+        let resolvidos = match (ids, q.org_id) {
+            (Ok(ids), Some(org_id)) => {
+                // `broadcast.public_destinations` (ADR-0008 §4) e o limite de
+                // destinos em simultâneo do papel (§8).
+                match crate::org::require_capability_for(
+                    &state,
+                    org_id,
+                    claims.sub,
+                    delonix_meet_domain::identity::authorization::Capability::BroadcastPublicDestinations,
+                    delonix_meet_domain::identity::authorization::ResourceScope::Organization,
+                    &crate::org::Action {
+                        name: "broadcast.start_saved_destinations",
+                        target: serde_json::json!({"org_id": org_id, "room": codigo.to_lowercase(), "destination_ids": ids}),
+                    },
+                )
+                .await
+                {
+                    Ok(grant) => match crate::org::role_destination_limit(&state, grant.role_id).await {
+                        Ok(Some(max)) if ids.len() > max as usize => Err(format!(
+                            "o seu papel permite {max} destinos em simultâneo e pediu {}",
+                            ids.len()
+                        )),
+                        Err(_) => Err("não foi possível ler o limite do papel".to_string()),
+                        _ => crate::stream_destinations::resolve_for_broadcast(&state, org_id, &ids)
+                            .await
+                            .map_err(|_| "um ou mais destinos guardados não existem, não estão prontos, ou a chave não abre".to_string()),
+                    },
+                    Err(ApiError::Domain(e)) if e.code == "authz.approval_required" => Err(e.message),
+                    Err(_) => Err("sem a capacidade broadcast.public_destinations nesta organização".to_string()),
+                }
+            }
+            (Err(_), _) => {
+                Err("destination_ids malformado (UUIDs separados por vírgula)".to_string())
+            }
+            (_, None) => Err("destination_ids exige org_id".to_string()),
+        };
+        match resolvidos {
+            Ok(v) => destinos.extend(v.into_iter().map(|(url, chave, rotulo)| Destino {
+                url,
+                chave: Secret::new(chave),
+                rotulo,
+            })),
+            Err(m) => return Ok(ws.on_upgrade(move |socket| recusar(socket, m))),
+        }
+    }
+
     let activas = state.directos.quantas().await;
     let mut motivo: Option<String> = match pode_emitir(
         e2ee,
@@ -643,6 +927,7 @@ pub async fn ws_directo(
         &destinos,
         activas,
         state.config.max_directos,
+        state.config.max_destinos_por_directo,
     ) {
         Err(r) => {
             tracing::warn!(sala = %codigo, motivo = ?r, "directo recusado");
@@ -733,3 +1018,47 @@ async fn bombear(mut socket: WebSocket, state: Arc<AppState>, sala: Uuid, codigo
         None => tracing::info!(sala = %codigo, bytes, "directo já tinha sido parado"),
     }
 }
+
+// ---------------------------------------------------------------------------
+//  Rota: estado vivo da emissão (G1)
+// ---------------------------------------------------------------------------
+
+/// `GET /api/rooms/{room_code}/live/status` — estado vivo da emissão desta
+/// sala: rótulos dos destinos, bytes enviados, débito binário recente.
+/// `404` se a sala não existe ou não está em directo agora.
+///
+/// Sem controlo de acesso além da sessão: o código da sala já é a
+/// credencial (a mesma nota de `get_room`, em `rooms.rs`) — quem o conhece
+/// vê os metadados, não só quem entra na chamada.
+#[utoipa::path(
+    get, path = "/api/rooms/{room_code}/live/status", tag = "rooms",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala (`abc-defg-hij`).")),
+    responses(
+        (status = 200, body = EmissaoEstado),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A sala não existe, ou não está em directo agora.", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn estado_directo(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(codigo): Path<String>,
+) -> Result<Json<EmissaoEstado>, ApiError> {
+    let _ = auth;
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM rooms WHERE code = $1")
+        .bind(codigo.to_lowercase())
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    state
+        .directos
+        .estado(id)
+        .await
+        .map(Json)
+        .ok_or(ApiError::NotFound)
+}
+
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(estado_directo), components(schemas(EmissaoEstado)))]
+pub struct ApiDoc;

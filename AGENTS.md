@@ -21,7 +21,7 @@ Princípios: **self-hosted first** · **security by design** · **enterprise sem
 ## 3. Invariantes de segurança (NUNCA quebrar)
 
 1. **Segredos fail-closed**: `config.rs` faz panic sem `JWT_SECRET`/`TURN_SECRET`/`DATABASE_URL` fortes. `DELONIX_ALLOW_INSECURE=1` só em dev.
-2. **Isolamento multi-tenant**: `rooms::can_access_room` / `room_access` e `org::*` escopam TUDO à(s) org(s) do utilizador. Nunca devolver dados cross-org.
+2. **Isolamento multi-tenant**: `rooms::can_access_room` / `room_access` e `org::*` escopam TUDO à(s) org(s) do utilizador. Nunca devolver dados cross-org. **A pertença decide-se em `org.rs` (filtra `archived_at IS NULL`)**, nunca num `FROM org_members` local; «admin de alguma org» nunca é admin da plataforma. S1–S3 da auditoria de 2026-09-16 fechadas no #76 (R121); o administrador da plataforma é `PLATFORM_ADMIN_USER_IDS`.
 3. **Room tokens curtos**: JWT separado, âmbito = 1 sala, expira em minutos. Sem token válido → WS recusado.
 4. **SSRF em webhooks**: validar host (bloquear privados/loopback/link-local/metadata) na criação E na entrega. Sem redirects.
 5. **Rate limit**: lockout de login por conta; rate limit por IP em `/api/v1`; WS com token bucket por socket (600 burst / 300 sustained — tolera a rajada de ICE).
@@ -31,6 +31,8 @@ Princípios: **self-hosted first** · **security by design** · **enterprise sem
 9. **Uma conta tem UMA autoridade de autenticação, explícita**: `users.odoo_org_id` — a org que a gere, gravada quando a conta nasce de um Odoo e nunca reescrita por outra. NULL = conta local. Nunca resolver o provedor de autenticação por email nem por pertença a org (`LIMIT 1` sem ordem = autoridade por sorteio), e uma sincronização de directório nunca reclama uma conta que já existe — nem de outra org, nem local. Ver R25.
 
 ## 4. Arquitetura — decisões não óbvias
+
+- **Organização do backend** (medida a 2026-09-16, [`docs/auditoria-2026-09-16-backend.md`](docs/auditoria-2026-09-16-backend.md)): UM crate, 34 módulos planos, ciclo de 18 módulos, SQL nos handlers, regras copiadas entre BFF e v1 que já divergiram; **sem gRPC nem OpenAPI**. Destino em [ADR-0004](docs/adr/0004-organizacao-alvo-do-backend.md) (**Aceite**) e [ADR-0006](docs/adr/0006-backend-enterprise-contextos-edicoes-e-entrega.md): camadas http→service→store, workspace `delonix-meet-*`, uma superfície de API por público, gRPC só máquina-a-máquina (voz/IVR, ai-worker) e nunca browser→servidor. A ordem de migração (§6) não se salta.
 
 - **SFU próprio** (`sfu.rs`), não LiveKit/mediasoup — binário único, controlo total do pipeline RTP para E2EE + gravação side-car. Custo: simulcast/congestion à mão.
 - **SFU é in-memory por pod.** O Redis propaga **sinalização/presença**, NÃO RTP. Em multi-réplica, TODOS os pares de uma sala têm de cair no MESMO pod → **afinidade por sala** no ingress (`upstream-hash-by: $arg_room`; o cliente envia `/ws?...&room=CODE`). Sem isto: media num só sentido, admissão e partilha de ecrã falham.
@@ -53,24 +55,28 @@ Portas dev: backend `8180`, frontend `5173`, Postgres `5435`, Redis `6379`, cotu
 
 ## 6. Padrões de código
 
-**Rust**: `AppError` para todos os erros de handler — nunca `unwrap()` em produção. `sqlx::query`/`query_as::<_, T>` — API de runtime, **sem** verificação em compile time (118 chamadas, zero macros): um nome de coluna errado só falha em execução. Migrações `server/migrations/NNNN_*.sql` sequenciais. Novo módulo → declarar em `main.rs` + registar rotas.
+**Rust**: `AppError` para todos os erros de handler — nunca `unwrap()` em produção. `sqlx::query`/`query_as::<_, T>` — API de runtime, **sem** verificação em compile time (302 chamadas, zero macros): um nome de coluna errado só falha em execução. Migrações `server/migrations/NNNN_*.sql` sequenciais. Novo módulo → declarar em `main.rs` + registar rotas. **Código novo chama a regra, não a copia** (ADR-0004 §5; `scripts/check-arquitectura-catraca.sh` falha se uma contagem subir): pertença → `org::`, auth → extractor existente, saída HTTP → `state.outbound` (`net_guard`: `tenant()` + `check_tenant_url` se o URL vem do cliente), cripto → a função que existe, `pub(crate)` e nunca `*_pub`, nada de `{"ok": true}`, nada de sessão em `/api/v1`. **Rota nova** → checklist da skill `delonix-meet-api`. **Identificadores novos em inglês**; comentários e docs em português (regra de 2026-09-03).
 
 **TS/React**: componentes funcionais + hooks; estado global via Context; mensagens WS tipadas (discriminant union); tokens CSS via custom properties (nunca hardcode de cor); i18n `useTranslation()`. **Nunca `var()` para dimensões de tiles** (transições congelam em background) — dimensões inline por tile. **Controlos novos = kit `web/src/components/ui.tsx`** (`Btn`/`IconBtn`/`Card`/`Field`/`SelectCtl`/`Switch`); zero `border-radius`/`height` hardcoded (tokens 4/6/8px + `--ctl-h` 30px); temas = mapas em `styles/tokens.scss` sob `[data-theme=…]` — ver `docs/reference/design-system.md`. **Camada CONSOLA (27/07)** no fim de `styles.scss`: densidade via `html { font-size: 15px }`, rail de navegação escuro nos DOIS temas (tokens `--sb-*`), `.app-bar` no topo do conteúdo (a Home já não duplica «Nova reunião»/código), páginas de altura total usam `height: 100%` e não `100vh`.
 
-## 7. Painel de revisores
+## 7. Painel de revisores e skills
 
-**Subagentes autónomos** em `agents/` (invocar via Agent/`@`) — especialistas Delonix, cada um com o catálogo de regressões no radar:
+**Skills** (`.claude/skills/`): `delonix-meet` (ponto de entrada e encaminhamento) · `delonix-meet-backend` (organização do Rust, helpers canónicos, catraca, segurança fechada e aberta, ordem de migração) · `delonix-meet-api` (superfícies, checklist de rota nova, gRPC).
+
+**Subagentes** em `.claude/agents/` (versionados com o código; invocar via Agent/`@`). Prefixo `delonix-meet-` porque no workspace `delonix-*` sem `-meet` é o MOTOR:
 
 | Agente | Domínio | Invocar para |
 |---|---|---|
-| **delonix-code** | Rust supremo (nível criador): safety, ownership, async Tokio, perf hot-path | `server/src/*.rs`, sobretudo `sfu.rs`/`recorder.rs`/`signaling.rs` |
-| **delonix-devops** | Platform eng.: K8s, Docker, Ansible, Terraform, coturn/rede, afinidade, media | `deploy/`, `deploy/k8s/`, Dockerfiles, ingress, TURN |
-| **delonix-frontend** | Frontend supremo: React/TS/CSS4/HTML5/JS + UX Meet/Teams/Zoom | `web/src/**`, `Room.tsx`, `webrtc.ts`, `styles/` |
-| **delonix-security-compliance** | Segurança (cripto/E2EE/auth/SSRF) + compliance (eDiscovery/DLP/SCIM/BNA/LGPD) | `auth.rs`, `e2ee.ts`, `webhooks.rs`, `config.rs`, endpoints novos |
-| **webrtc-sfu-reviewer** | WebRTC/SFU (Justin Uberti): ICE, simulcast, codecs, media num-só-sentido | `sfu.rs`, `webrtc.ts`, `e2ee.ts`, `recorder.rs` |
-| **competitive-strategist** | Posicionamento vs Zoom/Teams/Meet, priorização de roadmap | features novas, decisões de produto |
+| **delonix-meet-architecture** | Cópias, camadas, ciclo de módulos, nomes, ADR-0004 | ficheiro novo/movido em `server/src/`, refactor, crates |
+| **delonix-meet-api** | Superfícies, rota nova, estado HTTP, erro, paginação, OpenAPI, gRPC | router em `main.rs`, `/api/v1`, SDK/mobile |
+| **delonix-meet-security** | Auth, isolamento, autoridade de conta (R25), SSRF, segredos, E2EE, BNA/LGPD | `auth.rs`, `org.rs`, `apikeys.rs`, `odoo*.rs`, `storage.rs`, `e2ee.ts`, rotas novas |
+| **delonix-meet-rust** | Async Tokio, locks/`.await`, filas limitadas, tarefas de fundo, hot path | `sfu.rs`, `signaling.rs`, `recorder.rs`, `redis_state.rs` |
+| **delonix-meet-webrtc** | Negociação/glare, ICE/TURN, simulcast, oradores, gravação, directo | `sfu.rs`, `webrtc.ts`, `e2ee.ts`, `recorder.rs`, `broadcast.rs` |
+| **delonix-meet-frontend** | React/TS, kit `ui.tsx`, temas, i18n, ecrã estreito, a11y | `web/src/**` |
+| **delonix-meet-devops** | K8s, imagens, afinidade, coturn, probes/drain, CI | `deploy/`, Dockerfiles, Makefile, `.github/` |
+| **delonix-meet-product** | Posicionamento, roadmap, o que se pode vender | features novas, preços, landing |
 
-Personas adicionais (invocar em prompt quando útil): **Lars Bak** (WASM/Worker — `whisperWorker.ts`), **Zoom Reliability Architect** (redes degradadas, fallback TURN). Perfis completos em [`docs/ai-reviewers.md`](docs/ai-reviewers.md).
+Personas de inspiração para ferramentas sem subagentes: [`docs/ai-reviewers.md`](docs/ai-reviewers.md).
 
 ## 8. Gotchas conhecidos
 

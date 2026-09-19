@@ -33,51 +33,52 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Utc};
-use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{apikeys::ApiKeyAuth, error::ApiError, meetings::Meeting, AppState};
-
-/// Lista de colunas de `meetings` que cobre **todos** os campos de `Meeting`.
-/// O `FromRow` derivado faz `try_get` de cada campo — uma coluna em falta é um
-/// erro em runtime, não em compilação. Ter a lista num sítio só evita repetir
-/// o erro que a migração 0022 introduziu em `start`/`ics`.
-const MEETING_COLS: &str = "id, owner_id, title, description, kind, starts_at, duration_min, \
-     room_code, created_at, room_ref, minutes, transcript, recurrence_freq, \
-     recurrence_interval, recurrence_until, recurrence_count, recurrence_byday, \
-     recurrence_parent_id";
+use crate::{
+    apikeys::{ApiKeyAuth, Scope},
+    error::ApiError,
+    meetings::{Meeting, MEETING_COLUMNS as MEETING_COLS},
+    AppState,
+};
 
 // ---------- DTOs ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct InviteeReq {
     pub email: String,
     #[serde(default)]
     pub name: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateMeetingReq {
     /// Referência do sistema chamador. Opcional, mas **sem ela não há
     /// idempotência** — recomendada para qualquer integração de calendário.
     #[serde(default)]
     pub external_ref: Option<String>,
+    /// Obrigatório; cortado a 120 caracteres.
     pub title: String,
     #[serde(default)]
     pub description: String,
     pub starts_at: DateTime<Utc>,
+    /// 1-1440 minutos.
     #[serde(default = "default_duration")]
+    #[schema(default = 30)]
     pub duration_min: i32,
     /// Email do anfitrião. **Obrigatório**: é ele que fica `owner_id` da sala
     /// e o único que pode admitir convidados (ver `signaling::decide_waiting`).
     pub host_email: String,
     #[serde(default)]
     pub host_name: Option<String>,
+    /// No máximo 200.
     #[serde(default)]
     pub invitees: Vec<InviteeReq>,
+    /// `video` (omissão) | `voice`.
     #[serde(default = "default_kind")]
+    #[schema(default = "video")]
     pub kind: String,
     #[serde(default)]
     pub e2ee: bool,
@@ -92,7 +93,7 @@ fn default_kind() -> String {
     "video".into()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct PatchMeetingReq {
     #[serde(default)]
     pub title: Option<String>,
@@ -108,7 +109,7 @@ pub struct PatchMeetingReq {
     pub invitees: Option<Vec<InviteeReq>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct MeetingResp {
     pub id: Uuid,
     pub external_ref: Option<String>,
@@ -129,17 +130,43 @@ pub struct MeetingResp {
     pub existing: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct InviteeResp {
     pub email: String,
     pub user_id: Uuid,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct SkippedInvitee {
     pub email: String,
     pub reason: String,
 }
+
+/// Resposta de `DELETE /api/v1/meetings/{id}`.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct DeleteMeetingResp {
+    /// Sempre `true`.
+    pub ok: bool,
+    /// `false` quando a sala foi mantida por ter gravações (ou a reunião não
+    /// tinha sala).
+    pub room_deleted: bool,
+}
+
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as à v1).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(get_one, create, patch, ring, delete),
+    components(schemas(
+        InviteeReq,
+        CreateMeetingReq,
+        PatchMeetingReq,
+        MeetingResp,
+        InviteeResp,
+        SkippedInvitee,
+        DeleteMeetingResp
+    ))
+)]
+pub struct ApiDoc;
 
 // ---------- resolução de utilizadores por email ----------
 
@@ -149,6 +176,11 @@ enum Resolved {
     /// arrastamos para cá: uma chave de API não pode capturar utilizadores de
     /// outro tenant só por saber o endereço.
     ForeignOrg,
+    /// O email é de um domínio que NÃO é o da organização da chave, e a conta
+    /// não existe (ou é órfã). Criá-la aqui era ocupar a identidade de alguém
+    /// de outra empresa: a conta nascia membro desta org, e a empresa dona do
+    /// domínio já não a conseguia adicionar (409, R122) (R151).
+    OutsideDomain,
     Invalid,
 }
 
@@ -222,9 +254,7 @@ async fn unique_username(db: &sqlx::PgPool, base: &str) -> String {
     }
     // Último recurso: sufixo aleatório (colisão é praticamente impossível e o
     // INSERT trata a corrida na mesma).
-    let mut b = [0u8; 4];
-    OsRng.fill_bytes(&mut b);
-    format!("{base} {}", hex::encode(b))
+    format!("{base} {}", delonix_meet_core::crypto::random_hex(4))
 }
 
 /// Resolve um email para um utilizador membro de `org_id`, criando-o se ainda
@@ -242,6 +272,16 @@ async fn resolve_org_user(
     let Some(email) = normalize_email(email) else {
         return Ok(Resolved::Invalid);
     };
+    // Domínio da org da chave. Vazio numa org LEGADA (anterior à 0010): aí não
+    // há regra de domínio a aplicar, e o comportamento mantém-se.
+    let org_domain: String =
+        sqlx::query_scalar("SELECT email_domain FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_optional(&state.db)
+            .await?
+            .unwrap_or_default();
+    let in_org_domain =
+        org_domain.is_empty() || email.split('@').nth(1) == Some(org_domain.as_str());
 
     let existing: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM users WHERE email = $1")
         .bind(&email)
@@ -250,8 +290,14 @@ async fn resolve_org_user(
 
     let user_id = match existing {
         Some((uid,)) => {
+            // Membro ACTIVO. Um membro arquivado desta org cai no ramo seguinte
+            // (tem pertença, ainda que arquivada) e sai como `ForeignOrg`: a
+            // integração de calendário não pode pôr como anfitrião, nem
+            // convidar com entrada directa, quem a empresa arquivou — e também
+            // não o desarquiva por efeito lateral (auditoria 2026-09-16, S3).
             let is_member: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2)",
+                "SELECT EXISTS(SELECT 1 FROM org_members
+                               WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL)",
             )
             .bind(org_id)
             .bind(uid)
@@ -268,8 +314,14 @@ async fn resolve_org_user(
             if has_any_org {
                 return Ok(Resolved::ForeignOrg);
             }
+            // Conta órfã (sem org nenhuma): só a juntamos se o email for do
+            // domínio desta org — a mesma regra de uma conta nova.
+            if !in_org_domain {
+                return Ok(Resolved::OutsideDomain);
+            }
             uid
         }
+        None if !in_org_domain => return Ok(Resolved::OutsideDomain),
         None => {
             let username = unique_username(
                 &state.db,
@@ -391,6 +443,10 @@ async fn add_invitees(
                 email: inv.email.trim().to_lowercase(),
                 reason: "o utilizador pertence a outra organização".into(),
             }),
+            Resolved::OutsideDomain => skipped.push(SkippedInvitee {
+                email: inv.email.trim().to_lowercase(),
+                reason: "o email não é do domínio da organização e não tem conta".into(),
+            }),
             Resolved::Invalid => skipped.push(SkippedInvitee {
                 email: inv.email.trim().to_lowercase(),
                 reason: "email inválido".into(),
@@ -437,13 +493,54 @@ async fn email_of(state: &AppState, user_id: Uuid) -> String {
 
 // ---------- handlers ----------
 
+/// `GET /api/v1/meetings/{meeting_id}` — uma reunião da organização da chave,
+/// na mesma forma que a criação devolve.
+#[utoipa::path(
+    get, path = "/api/v1/meetings/{meeting_id}", tag = "meetings",
+    security(("api_key" = ["meetings:read"])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = MeetingResp),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:read`"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe ou é de outra organização"),
+    )
+)]
+pub async fn get_one(
+    State(state): State<Arc<AppState>>,
+    key: ApiKeyAuth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<MeetingResp>, ApiError> {
+    key.require(Scope::MeetingsRead)?;
+    let meeting = meeting_in_org(&state, key.org_id, id).await?;
+    let host_email = email_of(&state, meeting.owner_id).await;
+    Ok(Json(
+        build_resp(&state, key.org_id, &meeting, host_email, Vec::new(), false).await?,
+    ))
+}
+
 /// `POST /api/v1/meetings` — cria (ou reencontra) uma reunião agendada com
 /// sala, anfitrião e convidados.
+#[utoipa::path(
+    post, path = "/api/v1/meetings", tag = "meetings",
+    security(("api_key" = ["meetings:write"])),
+    request_body = CreateMeetingReq,
+    responses(
+        (status = 200, body = MeetingResp, description = "Criada, ou reencontrada pela `external_ref` (`existing: true`)"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`title` vazio, `kind`, `duration_min`, `host_email` inválidos ou mais de 200 convidados"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a `external_ref` aponta para uma reunião que já não se resolve na organização"),
+        (status = 409, body = crate::openapi::ErrorBody, description = "o anfitrião pertence a outra organização"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
+    )
+)]
 pub async fn create(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
     Json(req): Json<CreateMeetingReq>,
 ) -> Result<Json<MeetingResp>, ApiError> {
+    key.require(Scope::MeetingsWrite)?;
     let title: String = req.title.trim().chars().take(120).collect();
     if title.is_empty() {
         return Err(ApiError::BadRequest("title é obrigatório".into()));
@@ -508,11 +605,20 @@ pub async fn create(
                     "o anfitrião pertence a outra organização".into(),
                 ))
             }
+            Resolved::OutsideDomain => {
+                return Err(delonix_meet_core::DomainError::precondition(
+                    "meeting.host_outside_org_domain",
+                    "o anfitrião não tem conta e o email não é do domínio da organização",
+                )
+                .into())
+            }
             Resolved::Invalid => return Err(ApiError::BadRequest("host_email inválido".into())),
         };
 
     // A sala nasce já aqui (e não só no `start`) porque o chamador precisa do
     // link para o gravar no evento de calendário dele.
+    // `sessions.create` sobre o anfitrião, na org da chave (ADR-0008 §1).
+    crate::org::require_session_create(&state, host_id, Some(key.org_id)).await?;
     let room = crate::rooms::insert_room(
         &state.db,
         host_id,
@@ -599,12 +705,27 @@ pub async fn create(
 }
 
 /// `PATCH /api/v1/meetings/{id}` — reagendar / renomear / actualizar convidados.
+#[utoipa::path(
+    patch, path = "/api/v1/meetings/{meeting_id}", tag = "meetings",
+    security(("api_key" = ["meetings:write"])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    request_body = PatchMeetingReq,
+    responses(
+        (status = 200, body = MeetingResp),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`title` vazio, `duration_min` fora de 1-1440 ou mais de 200 convidados"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
+    )
+)]
 pub async fn patch(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
     Path(id): Path<Uuid>,
     Json(req): Json<PatchMeetingReq>,
 ) -> Result<Json<MeetingResp>, ApiError> {
+    key.require(Scope::MeetingsWrite)?;
     let current = meeting_in_org(&state, key.org_id, id).await?;
 
     let title: Option<String> = match &req.title {
@@ -714,11 +835,25 @@ pub async fn patch(
 /// Reutiliza a mesma mecânica para o comportamento ser idêntico nos dois
 /// casos, incluindo o `register_call` — sem ele, quem atende cairia na sala
 /// de espera em vez de entrar directo.
+#[utoipa::path(
+    post, path = "/api/v1/meetings/{meeting_id}/ring", tag = "meetings",
+    security(("api_key" = ["meetings:write"])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = serde_json::Value, description = "Com alvos: `{ringing: [uuid], offline: [uuid], room_code, join_url}`. Sem convidados por chamar: `{ringing: [], offline: [], reason, join_url}` (sem `room_code`)."),
+        (status = 400, body = crate::openapi::ErrorBody, description = "a reunião ainda não tem sala"),
+        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
+    )
+)]
 pub async fn ring(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    key.require(Scope::MeetingsWrite)?;
     let meeting = meeting_in_org(&state, key.org_id, id).await?;
     let Some(room_code) = meeting.room_code.clone() else {
         return Err(ApiError::BadRequest(
@@ -732,30 +867,9 @@ pub async fn ring(
         .await?
         .unwrap_or_default();
 
-    // Quem já está na sala não deve ser incomodado.
-    let already_in: std::collections::HashSet<Uuid> =
-        match sqlx::query_as::<_, (Uuid,)>("SELECT id FROM rooms WHERE code = $1")
-            .bind(&room_code)
-            .fetch_optional(&state.db)
-            .await?
-        {
-            Some((rid,)) => state.hub.users_in_room(rid),
-            None => Default::default(),
-        };
-
-    let invitees: Vec<(Uuid,)> = sqlx::query_as(
-        "SELECT user_id FROM meeting_invitees
-         WHERE meeting_id = $1 AND status <> 'declined'",
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await?;
-
-    let targets: std::collections::HashSet<Uuid> = invitees
-        .into_iter()
-        .map(|(uid,)| uid)
-        .filter(|uid| !already_in.contains(uid) && *uid != meeting.owner_id)
-        .collect();
+    // Mesma mecânica do arranque manual (meetings::start) e do auto-ring por
+    // cron (meetings::ring_upcoming_meetings) — ver ADR-0004, Fase 3.
+    let targets = crate::meetings::invitees_to_ring(&state, id, meeting.owner_id, &room_code).await;
 
     if targets.is_empty() {
         return Ok(Json(serde_json::json!({
@@ -765,15 +879,12 @@ pub async fn ring(
         })));
     }
 
-    state
-        .presence
-        .register_call(room_code.clone(), meeting.owner_id, targets.clone());
-    let (ringing, offline) = crate::presence::ring_users(
+    let (ringing, offline) = crate::meetings::register_and_ring(
         &state,
+        &room_code,
         meeting.owner_id,
         &owner_name,
         targets,
-        &room_code,
         &meeting.kind,
         &meeting.title,
     )
@@ -797,11 +908,24 @@ pub async fn ring(
 /// e sido cancelada no calendário depois, e uma gravação é um artefacto que o
 /// utilizador espera manter (a FK `recordings.room_id` é ON DELETE CASCADE —
 /// apagar a sala apagaria o registo da gravação).
+#[utoipa::path(
+    delete, path = "/api/v1/meetings/{meeting_id}", tag = "meetings",
+    security(("api_key" = ["meetings:write"])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = DeleteMeetingResp),
+        (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
+        (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
+    )
+)]
 pub async fn delete(
     State(state): State<Arc<AppState>>,
     key: ApiKeyAuth,
     Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeleteMeetingResp>, ApiError> {
+    key.require(Scope::MeetingsWrite)?;
     let meeting = meeting_in_org(&state, key.org_id, id).await?;
 
     sqlx::query("DELETE FROM meetings WHERE id = $1")
@@ -830,10 +954,10 @@ pub async fn delete(
     )
     .await;
 
-    Ok(Json(serde_json::json!({
-        "ok": true,
-        "room_deleted": room_deleted,
-    })))
+    Ok(Json(DeleteMeetingResp {
+        ok: true,
+        room_deleted,
+    }))
 }
 
 #[cfg(test)]

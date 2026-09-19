@@ -1,23 +1,30 @@
 //! Gravações de reuniões: upload (webm), biblioteca por utilizador,
-//! partilha só-leitura e download.
+//! partilha só-leitura e download; metadados e estado (G4), capítulos e
+//! comentários (G5), pesquisa na transcrição (G6).
 //!
-//! O ficheiro fica no disco (`RECORDINGS_DIR`, por omissão `./recordings`);
+//! O ficheiro fica no disco (`config.recordings_dir`, de `RECORDINGS_DIR`);
 //! a base de dados guarda os metadados. Acesso: quem participou na sala
 //! (`room_participants`), quem fez o upload, ou com quem foi partilhada
 //! (`recording_shares`). Partilha é sempre só-leitura (download).
+//!
+//! **Uma regra de acesso.** As rotas por id lêem os factos com [`load_item`] e
+//! decidem com `delonix_meet_domain::content::recording::AccessFacts` —
+//! reproduzir, descarregar, gerir, comentar. Um membro arquivado (S3) perde
+//! todas de uma vez, porque deixaram de ser cópias.
 
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2,
-};
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
-    http::header,
-    response::IntoResponse,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use chrono::{DateTime, Utc};
+use delonix_meet_core::{
+    page::{Page, PageRequest},
+    DomainError,
+};
+use delonix_meet_domain::content::recording as rules;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -26,13 +33,62 @@ use crate::{auth::AuthUser, error::ApiError, rooms::Room, users::UserPublic, App
 
 pub const MAX_RECORDING_BYTES: usize = 512 * 1024 * 1024;
 
-fn recordings_dir() -> std::path::PathBuf {
-    std::env::var("RECORDINGS_DIR")
-        .unwrap_or_else(|_| "recordings".into())
-        .into()
-}
+/// Ficheiro webm em bruto (só para o spec).
+#[derive(utoipa::ToSchema)]
+#[schema(value_type = String, format = Binary)]
+#[allow(dead_code)]
+pub struct WebmBytes(Vec<u8>);
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+/// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        upload,
+        list,
+        library,
+        download,
+        share,
+        shares,
+        unshare,
+        get_link,
+        create_link,
+        revoke_link,
+        public_share,
+        public_share_download,
+        get_metadata,
+        update,
+        list_chapters,
+        create_chapter,
+        get_chapter,
+        delete_chapter,
+        list_comments,
+        create_comment,
+        get_comment,
+        update_comment,
+        delete_comment
+    ),
+    components(schemas(
+        Recording,
+        RecordingItem,
+        RecordingPage,
+        LibraryResponse,
+        UpdateRecordingReq,
+        Chapter,
+        ChapterPage,
+        CreateChapterReq,
+        Comment,
+        CommentPage,
+        CreateCommentReq,
+        UpdateCommentReq,
+        ShareReq,
+        ShareLink,
+        CreateLinkReq,
+        PublicShareResp
+    ))
+)]
+pub struct ApiDoc;
+
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Recording {
     pub id: Uuid,
     pub room_id: Uuid,
@@ -43,14 +99,24 @@ pub struct Recording {
 }
 
 /// Item da biblioteca, enriquecido para a UI.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RecordingItem {
     pub id: Uuid,
     pub room_id: Uuid,
     pub room_code: String,
     pub uploader_id: Uuid,
     pub uploader_name: String,
+    /// Nome do ficheiro (é o nome com que se descarrega).
     pub filename: String,
+    /// Título dado por quem gere a gravação; `null` = a UI mostra o `filename`.
+    pub title: Option<String>,
+    /// `meeting` | `lecture` | `broadcast` | `other`.
+    pub category: String,
+    /// Duração em segundos; `null` = não se sabe (gravação carregada pelo browser).
+    pub duration_secs: Option<i32>,
+    /// Resolução do vídeo; `null` = não se sabe, ou só áudio.
+    pub width: Option<i32>,
+    pub height: Option<i32>,
     pub size_bytes: i64,
     pub created_at: DateTime<Utc>,
     /// True se o utilizador atual é dono (participou/fez upload); false se só partilhada.
@@ -60,6 +126,8 @@ pub struct RecordingItem {
     /// RBAC de download: só o dono da gravação e admins da org do dono podem
     /// descarregar o ficheiro; os restantes só reproduzem.
     pub can_download: bool,
+    /// Pode alterar título, categoria e capítulos (dono ou admin activo da org do dono).
+    pub can_manage: bool,
     /// `ready` = há ficheiro. `failed` = houve tentativa e não há nada.
     ///
     /// A entrada falhada existe para ser VISTA: antes, uma gravação que não
@@ -68,12 +136,213 @@ pub struct RecordingItem {
     pub status: String,
     /// Causa em linguagem de utilizador. `None` quando `status = ready`.
     pub failure_reason: Option<String>,
+    /// Estado derivado: `ready` | `failed` | `transcribing` | `transcribed` |
+    /// `transcription_failed`. Não há `processing`: a linha só nasce depois de
+    /// o ffmpeg acabar de compor.
+    pub processing_state: String,
+    /// Excerto com os termos marcados entre `«` e `»`. Só numa pesquisa (`q`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+}
+
+/// Página da biblioteca (com `q`, `page_size` ou `page_token`).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RecordingPage {
+    pub items: Vec<RecordingItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_page_token: Option<String>,
+}
+
+/// Sem parâmetros: a lista inteira (forma herdada, lida pelo web). Com `q`,
+/// `page_size` ou `page_token`: uma página.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub enum LibraryResponse {
+    List(Vec<RecordingItem>),
+    Page(RecordingPage),
+}
+
+/// Uma linha da biblioteca com os factos de acesso de quem pede.
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct ItemRow {
+    id: Uuid,
+    room_id: Uuid,
+    room_code: String,
+    uploader_id: Uuid,
+    uploader_name: String,
+    filename: String,
+    title: Option<String>,
+    category: String,
+    duration_secs: Option<i32>,
+    width: Option<i32>,
+    height: Option<i32>,
+    size_bytes: i64,
+    created_at: DateTime<Utc>,
+    status: String,
+    failure_reason: Option<String>,
+    transcribed: bool,
+    transcription_failed: bool,
+    lease_active: bool,
+    is_uploader: bool,
+    participant: bool,
+    shared: bool,
+    org_admin: bool,
+    active_member: bool,
+    archived_member: bool,
+    share_count: i64,
+}
+
+impl ItemRow {
+    fn facts(&self) -> rules::AccessFacts {
+        rules::AccessFacts {
+            is_uploader: self.is_uploader,
+            participant: self.participant,
+            shared: self.shared,
+            org_admin: self.org_admin,
+            active_member: self.active_member,
+            archived_member: self.archived_member,
+        }
+    }
+
+    fn into_item(self, snippet: Option<String>) -> RecordingItem {
+        let facts = self.facts();
+        let processing_state = rules::processing_state(rules::ProcessingFacts {
+            status: &self.status,
+            transcribed: self.transcribed,
+            transcription_failed: self.transcription_failed,
+            lease_active: self.lease_active,
+        })
+        .as_str()
+        .to_string();
+        RecordingItem {
+            id: self.id,
+            room_id: self.room_id,
+            room_code: self.room_code,
+            uploader_id: self.uploader_id,
+            uploader_name: self.uploader_name,
+            filename: self.filename,
+            title: self.title,
+            category: self.category,
+            duration_secs: self.duration_secs,
+            width: self.width,
+            height: self.height,
+            size_bytes: self.size_bytes,
+            created_at: self.created_at,
+            // `owned` foi sempre «participou na sala» (ver o teste de conteúdo).
+            owned: self.participant,
+            share_count: self.share_count,
+            can_download: facts.can_download(),
+            can_manage: facts.can_manage(),
+            status: self.status,
+            failure_reason: self.failure_reason,
+            processing_state,
+            snippet,
+        }
+    }
+}
+
+/// Uma linha por gravação, com os factos de acesso de `$1` (quem pede).
+///
+/// A pertença lê-se UMA vez, numa só junção: admin activo, membro activo e
+/// membro arquivado de uma organização do dono. O dono (`o`) não se filtra por
+/// `archived_at` — a gravação de quem saiu continua da empresa (S3); quem pede
+/// (`me`) sim, pela regra do domínio.
+const ITEM_SELECT: &str = r#"
+SELECT r.id, r.room_id, rm.code AS room_code, r.uploader_id, u.username AS uploader_name,
+       r.filename, r.title, r.category, r.duration_secs, r.width, r.height,
+       r.size_bytes, r.created_at, r.status, r.failure_reason,
+       (r.transcribed_at IS NOT NULL) AS transcribed,
+       (r.transcription_failed_at IS NOT NULL) AS transcription_failed,
+       (r.transcription_lease_token IS NOT NULL
+        AND r.transcription_lease_expires_at >= now()) AS lease_active,
+       (r.uploader_id = $1) AS is_uploader,
+       EXISTS(SELECT 1 FROM room_participants p
+               WHERE p.room_id = r.room_id AND p.user_id = $1) AS participant,
+       EXISTS(SELECT 1 FROM recording_shares s
+               WHERE s.recording_id = r.id AND s.user_id = $1) AS shared,
+       m.org_admin, m.active_member, m.archived_member,
+       (SELECT COUNT(*) FROM recording_shares sc WHERE sc.recording_id = r.id) AS share_count
+  FROM recordings r
+  JOIN rooms rm ON rm.id = r.room_id
+  JOIN users u ON u.id = r.uploader_id
+  CROSS JOIN LATERAL (
+      SELECT COALESCE(bool_or(me.archived_at IS NULL AND EXISTS (
+                 SELECT 1 FROM org_role_effective_capabilities vo
+                  WHERE vo.role_id = me.role_id AND vo.capability = 'recordings.view_others'
+                    AND vo.org_decision = 'allow')), false) AS org_admin,
+             COALESCE(bool_or(me.archived_at IS NULL), false) AS active_member,
+             COALESCE(bool_or(me.archived_at IS NOT NULL), false) AS archived_member
+        FROM org_members me JOIN org_members o ON o.org_id = me.org_id
+       WHERE me.user_id = $1 AND o.user_id = r.uploader_id
+  ) m
+"#;
+
+/// A visibilidade da biblioteca sobre as colunas de [`ITEM_SELECT`] (alias `i`).
+/// É `AccessFacts::can_view` escrita em SQL, porque filtra ANTES de paginar;
+/// o teste `library_hides_from_archived_member` prova que as duas concordam.
+const LIBRARY_VISIBLE: &str =
+    "(i.is_uploader OR i.participant OR i.shared) AND NOT (i.archived_member AND NOT i.active_member)";
+
+/// A gravação `id` com os factos de acesso de `user_id`. `None` = não existe.
+pub(crate) async fn load_item(
+    state: &AppState,
+    id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<ItemRow>, ApiError> {
+    Ok(
+        sqlx::query_as::<_, ItemRow>(&format!("{ITEM_SELECT} WHERE r.id = $2"))
+            .bind(user_id)
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?,
+    )
+}
+
+/// A gravação para quem a pode ver de alguma forma. Não existir e não chegar
+/// lá dão a MESMA resposta (`404`): não se confirma que existe.
+async fn seen_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemRow, ApiError> {
+    match load_item(state, id, user_id).await? {
+        Some(row) if row.facts().can_see() => Ok(row),
+        _ => Err(ApiError::NotFound),
+    }
+}
+
+/// Como [`seen_item`], e além disso tem de a poder gerir (`403` se só a vê).
+async fn managed_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemRow, ApiError> {
+    let row = seen_item(state, id, user_id).await?;
+    if !row.facts().can_manage() {
+        return Err(DomainError::forbidden("recording.not_manager")
+            .with_message("só o dono da gravação ou um administrador da organização a altera")
+            .into());
+    }
+    Ok(row)
+}
+
+/// Como [`seen_item`], e além disso tem de a poder publicar (partilhas e link
+/// público): o dono activo (`can_share`), OU quem tem `recordings.publish` numa
+/// organização activa do dono (ADR-0008 §1 — poder sobre gravações de OUTROS).
+/// Vê a gravação sem nenhum dos dois → `403 authz.missing_capability`; não a vê
+/// → `404` (de `seen_item`).
+async fn owned_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemRow, ApiError> {
+    let row = seen_item(state, id, user_id).await?;
+    if row.facts().can_share() {
+        return Ok(row);
+    }
+    let cap = delonix_meet_domain::identity::authorization::Capability::RecordingsPublish;
+    if crate::org::has_capability_over_colleague(state, user_id, row.uploader_id, cap).await? {
+        return Ok(row);
+    }
+    Err(DomainError::forbidden("authz.missing_capability")
+        .with_message("só o dono da gravação, ou quem tem recordings.publish, a partilha")
+        .with_field("capability", cap.as_str())
+        .into())
 }
 
 async fn room_by_code(state: &AppState, code: &str) -> Result<Room, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at FROM rooms WHERE code = $1",
-    )
+    let room: Room = sqlx::query_as(&format!(
+        "SELECT {} FROM rooms WHERE code = $1",
+        crate::rooms::ROOM_COLUMNS
+    ))
     .bind(code.to_lowercase())
     .fetch_one(&state.db)
     .await?;
@@ -90,29 +359,32 @@ async fn is_participant(state: &AppState, room_id: Uuid, user_id: Uuid) -> Resul
     Ok(row.is_some())
 }
 
-/// Acesso a uma gravação: participou na sala, fez upload, ou foi-lhe partilhada.
-async fn can_access(state: &AppState, rec: &Recording, user_id: Uuid) -> Result<bool, ApiError> {
-    if rec.uploader_id == user_id {
-        return Ok(true);
-    }
-    if is_participant(state, rec.room_id, user_id).await? {
-        return Ok(true);
-    }
-    let shared: Option<(i32,)> =
-        sqlx::query_as("SELECT 1 FROM recording_shares WHERE recording_id = $1 AND user_id = $2")
-            .bind(rec.id)
-            .bind(user_id)
-            .fetch_optional(&state.db)
-            .await?;
-    Ok(shared.is_some())
-}
-
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct UploadQuery {
+    /// Nome de apresentação; omissão `<código>-<AAAAMMDD-HHMMSS>.webm`.
     #[serde(default)]
     pub name: Option<String>,
 }
 
+/// Carrega uma gravação da sala. O corpo é o ficheiro **em bruto** (não
+/// multipart); o `Content-Type` não é verificado. Máximo 512 MiB. Só quem
+/// participou na sala pode carregar — senão **401**, não 403.
+#[utoipa::path(
+    post, path = "/api/rooms/{room_code}/recordings", tag = "recordings",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala."), UploadQuery),
+    request_body(content = inline(WebmBytes), content_type = "video/webm", description = "Ficheiro webm em bruto."),
+    responses(
+        (status = 200, body = Recording),
+        (status = 400, description = "Corpo vazio.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`room.not_participant`: não participou na sala.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Sala inexistente.", body = crate::openapi::ErrorBody),
+        (status = 422, description = "`storage.quota_exceeded`: a gravação não cabe na quota de armazenamento de uma organização do autor. Nada é escrito.", body = crate::openapi::ErrorBody),
+        (status = 413, description = "Corpo acima de 512 MiB (rejeitado pelo axum, texto simples)."),
+    )
+)]
 pub async fn upload(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -129,8 +401,12 @@ pub async fn upload(
     let room = room_by_code(&state, &code).await?;
     // Só quem participou na sala pode carregar gravações dela.
     if !is_participant(&state, room.id, auth.user_id).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(DomainError::forbidden("room.not_participant")
+            .with_message("só quem participou na sala")
+            .into());
     }
+    // Quota de armazenamento (G3): antes de escrever a linha ou o ficheiro.
+    crate::usage::enforce_recording_quota(&state, auth.user_id, body.len() as i64).await?;
 
     let stamp = Utc::now().format("%Y%m%d-%H%M%S");
     let display = q
@@ -150,8 +426,8 @@ pub async fn upload(
     .fetch_one(&state.db)
     .await?;
 
-    let dir = recordings_dir();
-    tokio::fs::create_dir_all(&dir)
+    let dir = &state.config.recordings_dir;
+    tokio::fs::create_dir_all(dir)
         .await
         .map_err(ApiError::internal)?;
     tokio::fs::write(dir.join(format!("{}.webm", rec.id)), &body)
@@ -163,6 +439,18 @@ pub async fn upload(
 }
 
 /// Gravações de uma sala específica (painel dentro da reunião).
+/// Só para participantes da sala — senão `403 room.not_participant`.
+#[utoipa::path(
+    get, path = "/api/rooms/{room_code}/recordings", tag = "recordings",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala.")),
+    responses(
+        (status = 200, body = Vec<Recording>, description = "Mais recentes primeiro."),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`room.not_participant`: não participou na sala.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn list(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -170,7 +458,9 @@ pub async fn list(
 ) -> Result<Json<Vec<Recording>>, ApiError> {
     let room = room_by_code(&state, &code).await?;
     if !is_participant(&state, room.id, auth.user_id).await? {
-        return Err(ApiError::Unauthorized);
+        return Err(DomainError::forbidden("room.not_participant")
+            .with_message("só quem participou na sala")
+            .into());
     }
     let recs: Vec<Recording> = sqlx::query_as(
         "SELECT id, room_id, uploader_id, filename, size_bytes, created_at
@@ -182,108 +472,208 @@ pub async fn list(
     Ok(Json(recs))
 }
 
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct LibraryQuery {
+    /// Pesquisa de texto no título, no nome do ficheiro e na transcrição. Cada
+    /// palavra conta como prefixo e todas têm de aparecer. Só letras e dígitos.
+    pub q: Option<String>,
+    /// 1-100, omissão 50. Com este parâmetro (ou `q`/`page_token`) a resposta é uma página.
+    pub page_size: Option<u32>,
+    pub page_token: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LibraryCursor {
+    at: DateTime<Utc>,
+    id: Uuid,
+}
+
 /// Biblioteca do utilizador: gravações onde participou + partilhadas consigo.
+///
+/// **Duas formas, de propósito.** Sem parâmetros devolve a lista inteira, como
+/// sempre — é o que o web lê hoje (`recordingsLibrary`), e trocá-la no mesmo
+/// PR partia a página. Com `q`, `page_size` ou `page_token` devolve uma página
+/// (`items` + `next_page_token`), por `created_at` descendente — também numa
+/// pesquisa, para o cursor ser estável; a relevância só decide o `snippet`.
+/// A forma sem limite é dívida e sai quando o web passar a paginar.
+///
+/// Um membro arquivado (S3) deixa de ver as gravações da ex-organização.
+#[utoipa::path(
+    get, path = "/api/recordings", tag = "recordings",
+    security(("session" = [])),
+    params(LibraryQuery),
+    responses(
+        (status = 200, body = LibraryResponse,
+         description = "Sem parâmetros: `RecordingItem[]` (todas). Com `q`/`page_size`/`page_token`: `RecordingPage`. Inclui as falhadas (`status = failed`)."),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`page_token` inválido, ou `q` sem nenhuma letra ou dígito (`recording.invalid_query`)."),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn library(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-) -> Result<Json<Vec<RecordingItem>>, ApiError> {
-    let items: Vec<RecordingItem> = sqlx::query_as(
-        r#"
-        SELECT r.id, r.room_id, rm.code AS room_code,
-               r.uploader_id, u.username AS uploader_name,
-               r.filename, r.size_bytes, r.created_at,
-               r.status, r.failure_reason,
-               (p.user_id IS NOT NULL) AS owned,
-               COALESCE(sc.n, 0) AS share_count,
-               (r.uploader_id = $1 OR EXISTS(
-                  SELECT 1 FROM org_members me
-                  JOIN org_members o ON o.org_id = me.org_id
-                  WHERE me.user_id = $1 AND me.role = 'admin' AND o.user_id = r.uploader_id
-               )) AS can_download
-        FROM recordings r
-        JOIN rooms rm ON rm.id = r.room_id
-        JOIN users u ON u.id = r.uploader_id
-        LEFT JOIN room_participants p ON p.room_id = r.room_id AND p.user_id = $1
-        LEFT JOIN recording_shares s ON s.recording_id = r.id AND s.user_id = $1
-        LEFT JOIN (
-            SELECT recording_id, COUNT(*) AS n FROM recording_shares GROUP BY recording_id
-        ) sc ON sc.recording_id = r.id
-        WHERE p.user_id IS NOT NULL OR s.user_id IS NOT NULL OR r.uploader_id = $1
-        ORDER BY r.created_at DESC
-        "#,
-    )
+    Query(q): Query<LibraryQuery>,
+) -> Result<Json<LibraryResponse>, ApiError> {
+    if q.q.is_none() && q.page_size.is_none() && q.page_token.is_none() {
+        let rows: Vec<ItemRow> = sqlx::query_as(&format!(
+            "SELECT * FROM ({ITEM_SELECT}) i WHERE {LIBRARY_VISIBLE}
+              ORDER BY i.created_at DESC, i.id DESC"
+        ))
+        .bind(auth.user_id)
+        .fetch_all(&state.db)
+        .await?;
+        return Ok(Json(LibraryResponse::List(
+            rows.into_iter().map(|r| r.into_item(None)).collect(),
+        )));
+    }
+
+    // Um `q` vazio não filtra; um `q` só com pontuação é erro do cliente, não
+    // «tudo» nem «nada» em silêncio.
+    let tsquery = match q.q.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        None => None,
+        Some(text) => Some(rules::search_query(text).ok_or_else(|| {
+            DomainError::invalid(
+                "recording.invalid_query",
+                "a pesquisa tem de ter pelo menos uma letra ou dígito",
+            )
+            .with_field("q", "letras e dígitos")
+        })?),
+    };
+    let page = PageRequest {
+        page_size: q.page_size,
+        page_token: q.page_token,
+    };
+    let size = page.size();
+    let cursor: Option<LibraryCursor> = page.cursor()?;
+    // Duas instruções distintas (com e sem texto) em vez de `$2 IS NULL OR …`:
+    // um plano genérico com o OR deixava de usar o índice GIN.
+    let search = if tsquery.is_some() {
+        "r.search_vector @@ to_tsquery('simple', $5)"
+    } else {
+        "$5::text IS NULL"
+    };
+    let rows: Vec<ItemRow> = sqlx::query_as(&format!(
+        "SELECT * FROM ({ITEM_SELECT}
+            WHERE {search}
+              AND ($2::timestamptz IS NULL OR (r.created_at, r.id) < ($2, $3))
+         ) i
+         WHERE {LIBRARY_VISIBLE}
+         ORDER BY i.created_at DESC, i.id DESC
+         LIMIT $4"
+    ))
     .bind(auth.user_id)
+    .bind(cursor.as_ref().map(|c| c.at))
+    .bind(cursor.as_ref().map(|c| c.id).unwrap_or_default())
+    .bind(size as i64 + 1)
+    .bind(tsquery.as_deref())
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(items))
+    let p = Page::from_overfetch(rows, size, |r| LibraryCursor {
+        at: r.created_at,
+        id: r.id,
+    });
+
+    // O excerto só para a página devolvida (≤ 100 linhas): o `ts_headline`
+    // relê o texto inteiro, e fazê-lo antes do LIMIT seria por cada candidata.
+    let mut snippets: std::collections::HashMap<Uuid, String> = Default::default();
+    if let Some(tsq) = &tsquery {
+        let ids: Vec<Uuid> = p.items.iter().map(|r| r.id).collect();
+        let found: Vec<(Uuid, String)> = sqlx::query_as(
+            r#"SELECT r.id, ts_headline('simple',
+                        CASE WHEN to_tsvector('simple', r.transcript) @@ q.q
+                             THEN r.transcript
+                             ELSE coalesce(r.title, '') || ' ' || r.filename END,
+                        q.q,
+                        'MaxFragments=1, MaxWords=18, MinWords=6, StartSel="«", StopSel="»"')
+                 FROM recordings r, to_tsquery('simple', $2) AS q(q)
+                WHERE r.id = ANY($1)"#,
+        )
+        .bind(&ids)
+        .bind(tsq)
+        .fetch_all(&state.db)
+        .await?;
+        snippets.extend(found);
+    }
+    Ok(Json(LibraryResponse::Page(RecordingPage {
+        items: p
+            .items
+            .into_iter()
+            .map(|r| {
+                let snippet = snippets.remove(&r.id);
+                r.into_item(snippet)
+            })
+            .collect(),
+        next_page_token: p.next_page_token,
+    })))
 }
 
 /// `?dl=1` pede o ficheiro para DESCARREGAR (attachment); sem isso, é para
 /// REPRODUZIR inline. Descarregar exige RBAC (dono + admin da org); reproduzir
 /// basta ter acesso (participante/partilhado/dono).
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct DownloadQuery {
+    /// `1` = descarregar (`attachment`, exige dono ou admin da org do dono);
+    /// outro valor ou ausente = reproduzir `inline` (basta ter acesso).
     #[serde(default)]
     pub dl: Option<i32>,
 }
 
-/// RBAC de download: dono da gravação, ou admin de uma org a que o dono pertence.
-async fn can_download(state: &AppState, rec: &Recording, user_id: Uuid) -> Result<bool, ApiError> {
-    if rec.uploader_id == user_id {
-        return Ok(true);
-    }
-    let is_admin: bool = sqlx::query_scalar(
-        r#"SELECT EXISTS(
-             SELECT 1 FROM org_members me
-             JOIN org_members o ON o.org_id = me.org_id
-             WHERE me.user_id = $1 AND me.role = 'admin' AND o.user_id = $2
-           )"#,
+/// O ficheiro webm de uma gravação, para reproduzir ou descarregar (`?dl=1`).
+///
+/// Os metadados em JSON estão em `GET /api/recordings/{id}/metadata`: este
+/// caminho é o `src` do leitor de vídeo e o link de download do web, e não
+/// muda de representação.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/content", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path), DownloadQuery),
+    responses(
+        (status = 200, body = inline(WebmBytes), content_type = "video/webm",
+         description = "`Content-Disposition: inline`, ou `attachment` com `dl=1`."),
+        (status = 400, description = "A gravação falhou e não tem ficheiro (mensagem = causa). Só para quem chega à gravação.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`recording.download_forbidden`: chega à gravação mas não pode descarregar (`dl=1`).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Gravação inexistente, sem acesso (inclui membro arquivado), ou ficheiro em falta no disco.", body = crate::openapi::ErrorBody),
     )
-    .bind(user_id)
-    .bind(rec.uploader_id)
-    .fetch_one(&state.db)
-    .await?;
-    Ok(is_admin)
-}
-
+)]
 pub async fn download(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
     Query(q): Query<DownloadQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let rec: Recording = sqlx::query_as(
-        "SELECT id, room_id, uploader_id, filename, size_bytes, created_at FROM recordings WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await?;
+    // Quem não chega à gravação recebe o 404 de «não existe» ANTES de qualquer
+    // outra resposta: o `400` de gravação falhada levava o motivo da falha a
+    // utilizadores de outra organização.
+    let rec = seen_item(&state, id, auth.user_id).await?;
     // Uma gravação falhada não tem ficheiro. Sem esta guarda, o pedido descia
     // até ao `File::open` e voltava um 500 opaco — quando a resposta honesta é
     // dizer que não há nada para descarregar, e porquê.
-    let (status, motivo): (String, Option<String>) =
-        sqlx::query_as("SELECT status, failure_reason FROM recordings WHERE id = $1")
-            .bind(id)
-            .fetch_one(&state.db)
-            .await?;
-    if status != "ready" {
-        return Err(ApiError::BadRequest(motivo.unwrap_or_else(|| {
-            "Esta gravação falhou e não tem ficheiro.".into()
-        })));
+    if rec.status != "ready" {
+        return Err(ApiError::BadRequest(rec.failure_reason.unwrap_or_else(
+            || "Esta gravação falhou e não tem ficheiro.".into(),
+        )));
     }
 
+    let facts = rec.facts();
     let as_download = q.dl.unwrap_or(0) == 1;
-    if as_download {
-        // Ficheiro para guardar: exige a permissão de download (RBAC).
-        if !can_download(&state, &rec, auth.user_id).await? {
-            return Err(ApiError::Unauthorized);
-        }
-    } else if !can_access(&state, &rec, auth.user_id).await? {
-        // Reprodução inline: basta ter acesso à gravação.
-        return Err(ApiError::Unauthorized);
+    // Ficheiro para guardar: exige a permissão de download (RBAC).
+    // Reprodução inline: basta ter acesso à gravação.
+    let allowed = if as_download {
+        facts.can_download()
+    } else {
+        facts.can_view()
+    };
+    if !allowed {
+        // Chega a ela (`seen_item`) mas não tem esta permissão.
+        return Err(DomainError::forbidden("recording.download_forbidden")
+            .with_message("só o dono ou um administrador da organização descarrega o ficheiro")
+            .into());
     }
 
-    let path = recordings_dir().join(format!("{}.webm", rec.id));
+    let path = state.config.recordings_dir.join(format!("{}.webm", rec.id));
     let data = tokio::fs::read(&path)
         .await
         .map_err(|_| ApiError::NotFound)?;
@@ -301,32 +691,45 @@ pub async fn download(
     ))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
+#[schema(as = RecordingShareReq)]
 pub struct ShareReq {
+    /// Utilizador com quem partilhar (só-leitura). Não é verificado que exista
+    /// nem que seja da mesma organização.
     pub user_id: Uuid,
 }
 
 /// Partilha só-leitura de uma gravação com outro utilizador.
-/// Apenas quem fez o upload (o "dono") pode partilhar.
+/// Apenas quem fez o upload (o "dono") pode partilhar. Idempotente.
+#[utoipa::path(
+    post, path = "/api/recordings/{recording_id}/shares", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path)),
+    request_body = ShareReq,
+    responses(
+        (status = 201, body = crate::users::UserPublic, description = "Partilha criada. `Location: /api/recordings/{recording_id}/shares/{user_id}`."),
+        (status = 200, body = crate::users::UserPublic, description = "Já estava partilhada com essa pessoa (idempotente)."),
+        (status = 400, description = "Partilhar consigo próprio.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`authz.missing_capability` (`recordings.publish`): vê a gravação mas não é o dono activo nem tem a capacidade.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A gravação não existe ou não lhe chega; ou o utilizador destino não existe.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn share(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
     Json(req): Json<ShareReq>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let rec: Recording = sqlx::query_as(
-        "SELECT id, room_id, uploader_id, filename, size_bytes, created_at FROM recordings WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await?;
-    if rec.uploader_id != auth.user_id {
-        return Err(ApiError::Unauthorized);
-    }
+) -> Result<Response, ApiError> {
+    owned_item(&state, id, auth.user_id).await?;
     if req.user_id == auth.user_id {
         return Err(ApiError::BadRequest("cannot share with yourself".into()));
     }
-    sqlx::query(
+    // Antes era um 500 (chave estrangeira) para um id que não existe.
+    let target = crate::users::fetch_public(&state.db, req.user_id)
+        .await
+        .map_err(|_| ApiError::NotFound)?;
+    let res = sqlx::query(
         "INSERT INTO recording_shares (recording_id, user_id, shared_by) VALUES ($1, $2, $3)
          ON CONFLICT (recording_id, user_id) DO NOTHING",
     )
@@ -335,35 +738,52 @@ pub async fn share(
     .bind(auth.user_id)
     .execute(&state.db)
     .await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    if res.rows_affected() == 0 {
+        return Ok(Json(target).into_response());
+    }
+    let location = format!("/api/recordings/{id}/shares/{}", req.user_id);
+    Ok((
+        StatusCode::CREATED,
+        [(header::LOCATION, location)],
+        Json(target),
+    )
+        .into_response())
 }
 
-/// Remove a partilha com um utilizador.
+/// Remove a partilha com um utilizador (só o dono).
+#[utoipa::path(
+    delete, path = "/api/recordings/{recording_id}/shares/{user_id}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path), ("user_id" = Uuid, Path)),
+    responses(
+        (status = 204, description = "Partilha removida."),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`authz.missing_capability` (`recordings.publish`).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A gravação não existe/não lhe chega, ou não estava partilhada com essa pessoa.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn unshare(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path((id, user_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT uploader_id FROM recordings WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?;
-    match owner {
-        Some((uploader,)) if uploader == auth.user_id => {}
-        Some(_) => return Err(ApiError::Unauthorized),
-        None => return Err(ApiError::NotFound),
-    }
-    sqlx::query("DELETE FROM recording_shares WHERE recording_id = $1 AND user_id = $2")
+) -> Result<StatusCode, ApiError> {
+    owned_item(&state, id, auth.user_id).await?;
+    let res = sqlx::query("DELETE FROM recording_shares WHERE recording_id = $1 AND user_id = $2")
         .bind(id)
         .bind(user_id)
         .execute(&state.db)
         .await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    if res.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------- Links públicos de partilha ----------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+/// Link público de uma gravação. O hash da password nunca sai.
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = RecordingShareLink)]
 pub struct ShareLink {
     pub id: Uuid,
     pub recording_id: Uuid,
@@ -372,45 +792,49 @@ pub struct ShareLink {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
+#[schema(as = RecordingLinkReq)]
 pub struct CreateLinkReq {
+    /// Password opcional; vazia = sem password.
     #[serde(default)]
     pub password: Option<String>,
     #[serde(default)]
     pub expires_at: Option<DateTime<Utc>>,
 }
 
+/// 128 bits do SO, em hexadecimal (32 caracteres — a mesma forma do UUID sem
+/// hífens que se usava antes, por isso os links já emitidos continuam válidos).
 fn gen_token() -> String {
-    Uuid::new_v4().to_string().replace('-', "")
+    delonix_meet_core::crypto::random_hex(16)
 }
 
-/// Cria (ou substitui) um link público de partilha.
+/// Cria (ou substitui) um link público de partilha. Substituir roda o token:
+/// o link anterior deixa de funcionar.
+#[utoipa::path(
+    put, path = "/api/recordings/{recording_id}/public-link", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path)),
+    request_body = CreateLinkReq,
+    responses(
+        (status = 200, body = ShareLink),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`authz.missing_capability` (`recordings.publish`): vê a gravação mas não é o dono activo nem tem a capacidade.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn create_link(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
     Json(req): Json<CreateLinkReq>,
 ) -> Result<Json<ShareLink>, ApiError> {
-    let rec: Option<(Uuid,)> = sqlx::query_as("SELECT uploader_id FROM recordings WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?;
-    match rec {
-        Some((uploader,)) if uploader == auth.user_id => {}
-        Some(_) => return Err(ApiError::Unauthorized),
-        None => return Err(ApiError::NotFound),
-    }
+    owned_item(&state, id, auth.user_id).await?;
 
     let password_hash = if let Some(ref pw) = req.password {
         if pw.is_empty() {
             None
         } else {
-            let salt = SaltString::generate(&mut OsRng);
-            let hash = Argon2::default()
-                .hash_password(pw.as_bytes(), &salt)
-                .map_err(ApiError::internal)?
-                .to_string();
-            Some(hash)
+            Some(crate::auth::hash_password(pw)?)
         }
     } else {
         None
@@ -448,20 +872,23 @@ pub async fn create_link(
 }
 
 /// Devolve o link público existente de uma gravação (sem expor password_hash).
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/public-link", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Option<ShareLink>, description = "`null` se não houver link."),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`authz.missing_capability` (`recordings.publish`): vê a gravação mas não é o dono activo nem tem a capacidade.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn get_link(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Option<ShareLink>>, ApiError> {
-    let rec: Option<(Uuid,)> = sqlx::query_as("SELECT uploader_id FROM recordings WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?;
-    match rec {
-        Some((uploader,)) if uploader == auth.user_id => {}
-        Some(_) => return Err(ApiError::Unauthorized),
-        None => return Err(ApiError::NotFound),
-    }
+    owned_item(&state, id, auth.user_id).await?;
     let link: Option<ShareLink> = sqlx::query_as(
         "SELECT id, recording_id, token, expires_at, created_at
          FROM recording_share_links WHERE recording_id = $1",
@@ -472,25 +899,31 @@ pub async fn get_link(
     Ok(Json(link))
 }
 
-/// Revoga o link público de partilha.
+/// Revoga o link público de partilha. Idempotente.
+#[utoipa::path(
+    delete, path = "/api/recordings/{recording_id}/public-link", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path)),
+    responses(
+        (status = 204, description = "Link revogado."),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`authz.missing_capability` (`recordings.publish`).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A gravação não existe/não lhe chega, ou não tinha link.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn revoke_link(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let rec: Option<(Uuid,)> = sqlx::query_as("SELECT uploader_id FROM recordings WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?;
-    match rec {
-        Some((uploader,)) if uploader == auth.user_id => {}
-        Some(_) => return Err(ApiError::Unauthorized),
-        None => return Err(ApiError::NotFound),
-    }
-    sqlx::query("DELETE FROM recording_share_links WHERE recording_id = $1")
+) -> Result<StatusCode, ApiError> {
+    owned_item(&state, id, auth.user_id).await?;
+    let res = sqlx::query("DELETE FROM recording_share_links WHERE recording_id = $1")
         .bind(id)
         .execute(&state.db)
         .await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
     crate::audit::log(
         &state.db,
         None,
@@ -499,21 +932,46 @@ pub async fn revoke_link(
         &id.to_string(),
     )
     .await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct PublicShareQuery {
+    /// Password do link, se tiver. Vai na query string.
     #[serde(default)]
     pub password: Option<String>,
 }
 
+/// Metadados de uma gravação partilhada por link público.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct PublicShareResp {
+    pub recording_id: Uuid,
+    pub filename: String,
+    pub size_bytes: i64,
+    pub created_at: DateTime<Utc>,
+    /// `/api/share/<token>/download`.
+    pub download_url: String,
+    pub has_password: bool,
+}
+
 /// Acesso público a uma gravação via token (sem autenticação).
+///
+/// Link expirado responde como inexistente (404).
+#[utoipa::path(
+    get, path = "/api/public/recordings/{token}", tag = "recordings",
+    params(("token" = String, Path, description = "Token do link público."), PublicShareQuery),
+    responses(
+        (status = 200, body = PublicShareResp),
+        (status = 401, description = "O link tem password e a dada (ou a sua falta) não confere.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Token inexistente ou expirado.", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn public_share(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
     Query(q): Query<PublicShareQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<PublicShareResp>, ApiError> {
     let row: Option<(
         Uuid,
         Option<String>,
@@ -544,24 +1002,33 @@ pub async fn public_share(
 
     // Verificar password.
     if let Some(ref hash) = password_hash {
+        // Um hash ilegível na base conta como password errada (falha fechado).
         let pw = q.password.as_deref().unwrap_or("");
-        let parsed = PasswordHash::new(hash).map_err(ApiError::internal)?;
-        Argon2::default()
-            .verify_password(pw.as_bytes(), &parsed)
-            .map_err(|_| ApiError::Unauthorized)?;
+        if !crate::auth::verify_password(pw, hash) {
+            return Err(ApiError::Unauthorized);
+        }
     }
 
-    Ok(Json(serde_json::json!({
-        "recording_id": rec_id,
-        "filename": filename,
-        "size_bytes": size_bytes,
-        "created_at": created_at,
-        "download_url": format!("/api/share/{token}/download"),
-        "has_password": password_hash.is_some(),
-    })))
+    Ok(Json(PublicShareResp {
+        recording_id: rec_id,
+        filename,
+        size_bytes,
+        created_at,
+        download_url: format!("/api/public/recordings/{token}/content"),
+        has_password: password_hash.is_some(),
+    }))
 }
 
 /// Download via link público (sem autenticação — token é a credencial).
+#[utoipa::path(
+    get, path = "/api/public/recordings/{token}/content", tag = "recordings",
+    params(("token" = String, Path, description = "Token do link público."), PublicShareQuery),
+    responses(
+        (status = 200, body = inline(WebmBytes), content_type = "video/webm", description = "Sempre `Content-Disposition: attachment`."),
+        (status = 401, description = "Password em falta ou errada.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Token inexistente, expirado, ou sem ficheiro (gravação falhada).", body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn public_share_download(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
@@ -584,14 +1051,14 @@ pub async fn public_share_download(
         }
     }
     if let Some(ref hash) = password_hash {
+        // Um hash ilegível na base conta como password errada (falha fechado).
         let pw = q.password.as_deref().unwrap_or("");
-        let parsed = PasswordHash::new(hash).map_err(ApiError::internal)?;
-        Argon2::default()
-            .verify_password(pw.as_bytes(), &parsed)
-            .map_err(|_| ApiError::Unauthorized)?;
+        if !crate::auth::verify_password(pw, hash) {
+            return Err(ApiError::Unauthorized);
+        }
     }
 
-    let path = recordings_dir().join(format!("{rec_id}.webm"));
+    let path = state.config.recordings_dir.join(format!("{rec_id}.webm"));
     let data = tokio::fs::read(&path)
         .await
         .map_err(|_| ApiError::NotFound)?;
@@ -609,22 +1076,27 @@ pub async fn public_share_download(
 }
 
 /// Lista com quem uma gravação está partilhada (só o dono).
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/shares", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Vec<crate::users::UserPublic>),
+        (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "`authz.missing_capability` (`recordings.publish`): vê a gravação mas não é o dono activo nem tem a capacidade.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
 pub async fn shares(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<UserPublic>>, ApiError> {
-    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT uploader_id FROM recordings WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?;
-    match owner {
-        Some((uploader,)) if uploader == auth.user_id => {}
-        Some(_) => return Err(ApiError::Unauthorized),
-        None => return Err(ApiError::NotFound),
-    }
+    owned_item(&state, id, auth.user_id).await?;
     let users = sqlx::query_as::<_, UserPublic>(
-        "SELECT u.id, u.email, u.username, u.created_at FROM recording_shares s
+        // `locale` é campo de `UserPublic` — sem ele, sempre 500 (ver users::search).
+        "SELECT u.id, u.email, u.username, u.created_at, COALESCE(u.locale, 'pt') AS locale
+         FROM recording_shares s
          JOIN users u ON u.id = s.user_id
          WHERE s.recording_id = $1 ORDER BY u.username",
     )
@@ -632,4 +1104,599 @@ pub async fn shares(
     .fetch_all(&state.db)
     .await?;
     Ok(Json(users))
+}
+
+// ---------- Metadados (G4) ----------
+
+/// Metadados de uma gravação — o mesmo item da biblioteca.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = RecordingItem),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "Inexistente, ou sem acesso (inclui membro arquivado).", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn get_metadata(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<RecordingItem>, ApiError> {
+    Ok(Json(
+        seen_item(&state, id, auth.user_id).await?.into_item(None),
+    ))
+}
+
+#[derive(Deserialize, Default, utoipa::ToSchema)]
+pub struct UpdateRecordingReq {
+    /// 1-120 caracteres, uma linha. `""` apaga o título (a UI volta ao `filename`).
+    pub title: Option<String>,
+    /// `meeting` | `lecture` | `broadcast` | `other`.
+    pub category: Option<String>,
+}
+
+/// Altera título e categoria. Só o dono ou um admin activo da org do dono.
+#[utoipa::path(
+    patch, path = "/api/recordings/{recording_id}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path)),
+    request_body = UpdateRecordingReq,
+    responses(
+        (status = 200, body = RecordingItem),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`recording.invalid_title` / `recording.invalid_category`"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "Vê a gravação mas não a gere (`recording.not_manager`)."),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn update(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<UpdateRecordingReq>,
+) -> Result<Json<RecordingItem>, ApiError> {
+    managed_item(&state, id, auth.user_id).await?;
+    // Valida tudo ANTES de escrever (sem escritas parciais).
+    let title = req
+        .title
+        .as_deref()
+        .map(rules::validate_title)
+        .transpose()?;
+    let category = req
+        .category
+        .as_deref()
+        .map(rules::Category::parse)
+        .transpose()?;
+    sqlx::query(
+        "UPDATE recordings
+            SET title = CASE WHEN $2 THEN $3 ELSE title END,
+                category = COALESCE($4, category)
+          WHERE id = $1",
+    )
+    .bind(id)
+    .bind(title.is_some())
+    .bind(title.flatten())
+    .bind(category.map(|c| c.as_str()))
+    .execute(&state.db)
+    .await?;
+    crate::audit::log(
+        &state.db,
+        None,
+        auth.user_id,
+        "recording.updated",
+        &id.to_string(),
+    )
+    .await;
+    Ok(Json(
+        seen_item(&state, id, auth.user_id).await?.into_item(None),
+    ))
+}
+
+// ---------- Capítulos (G5) ----------
+
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = RecordingChapter)]
+pub struct Chapter {
+    pub id: Uuid,
+    pub recording_id: Uuid,
+    pub at_secs: i32,
+    pub title: String,
+    pub created_by: Uuid,
+    pub created_at: DateTime<Utc>,
+}
+
+const CHAPTER_COLUMNS: &str = "id, recording_id, at_secs, title, created_by, created_at";
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = RecordingChapterPage)]
+pub struct ChapterPage {
+    pub items: Vec<Chapter>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_page_token: Option<String>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+#[schema(as = RecordingChapterReq)]
+pub struct CreateChapterReq {
+    /// Segundos desde o início; `0..=duration_secs` (ou `0..=172800` sem duração).
+    pub at_secs: i32,
+    /// 1-120 caracteres, uma linha.
+    pub title: String,
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct PageQuery {
+    /// 1-100, omissão 50.
+    pub page_size: Option<u32>,
+    pub page_token: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ChapterCursor {
+    at: i32,
+    id: Uuid,
+}
+
+/// Capítulos, por marca temporal. Quem vê a gravação.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/chapters", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path), PageQuery),
+    responses(
+        (status = 200, body = ChapterPage),
+        (status = 400, body = crate::openapi::ErrorBody, description = "page_token inválido"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn list_chapters(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Query(q): Query<PageQuery>,
+) -> Result<Json<ChapterPage>, ApiError> {
+    seen_item(&state, id, auth.user_id).await?;
+    let page = PageRequest {
+        page_size: q.page_size,
+        page_token: q.page_token,
+    };
+    let size = page.size();
+    let cursor: Option<ChapterCursor> = page.cursor()?;
+    let rows: Vec<Chapter> = sqlx::query_as(&format!(
+        "SELECT {CHAPTER_COLUMNS} FROM recording_chapters
+          WHERE recording_id = $1
+            AND ($2::int IS NULL OR (at_secs, id) > ($2, $3))
+          ORDER BY at_secs, id
+          LIMIT $4"
+    ))
+    .bind(id)
+    .bind(cursor.as_ref().map(|c| c.at))
+    .bind(cursor.as_ref().map(|c| c.id).unwrap_or_default())
+    .bind(size as i64 + 1)
+    .fetch_all(&state.db)
+    .await?;
+    let p = Page::from_overfetch(rows, size, |c| ChapterCursor {
+        at: c.at_secs,
+        id: c.id,
+    });
+    Ok(Json(ChapterPage {
+        items: p.items,
+        next_page_token: p.next_page_token,
+    }))
+}
+
+/// Cria um capítulo. Só o dono ou um admin activo da org do dono.
+#[utoipa::path(
+    post, path = "/api/recordings/{recording_id}/chapters", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path)),
+    request_body = CreateChapterReq,
+    responses(
+        (status = 201, body = Chapter, headers(("Location" = String))),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`recording.invalid_chapter_title` / `recording.invalid_timestamp`"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`recording.not_manager`"),
+        (status = 404, body = crate::openapi::ErrorBody),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`recording.too_many_chapters` (máx. 100)"),
+    )
+)]
+pub async fn create_chapter(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<CreateChapterReq>,
+) -> Result<Response, ApiError> {
+    let rec = managed_item(&state, id, auth.user_id).await?;
+    let title = rules::validate_chapter_title(&req.title)?;
+    let at_secs = rules::validate_at_secs(req.at_secs, rec.duration_secs)?;
+    // O tecto e a inserção numa só instrução.
+    let chapter: Option<Chapter> = sqlx::query_as(&format!(
+        "INSERT INTO recording_chapters (recording_id, at_secs, title, created_by)
+         SELECT $1, $2, $3, $4
+          WHERE (SELECT COUNT(*) FROM recording_chapters WHERE recording_id = $1) < $5
+         RETURNING {CHAPTER_COLUMNS}"
+    ))
+    .bind(id)
+    .bind(at_secs)
+    .bind(&title)
+    .bind(auth.user_id)
+    .bind(rules::MAX_CHAPTERS)
+    .fetch_optional(&state.db)
+    .await?;
+    let chapter = chapter.ok_or_else(|| {
+        DomainError::precondition(
+            "recording.too_many_chapters",
+            format!(
+                "uma gravação tem no máximo {} capítulos",
+                rules::MAX_CHAPTERS
+            ),
+        )
+    })?;
+    crate::audit::log(
+        &state.db,
+        None,
+        auth.user_id,
+        "recording.chapter_created",
+        &id.to_string(),
+    )
+    .await;
+    let location = format!("/api/recordings/{id}/chapters/{}", chapter.id);
+    Ok((
+        StatusCode::CREATED,
+        [(header::LOCATION, location)],
+        Json(chapter),
+    )
+        .into_response())
+}
+
+/// Um capítulo. Quem vê a gravação.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/chapters/{chapter_id}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path), ("chapter_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Chapter),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn get_chapter(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((id, chapter_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Chapter>, ApiError> {
+    seen_item(&state, id, auth.user_id).await?;
+    let chapter: Option<Chapter> = sqlx::query_as(&format!(
+        "SELECT {CHAPTER_COLUMNS} FROM recording_chapters WHERE id = $1 AND recording_id = $2"
+    ))
+    .bind(chapter_id)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(Json(chapter.ok_or(ApiError::NotFound)?))
+}
+
+/// Apaga um capítulo. Só o dono ou um admin activo da org do dono.
+#[utoipa::path(
+    delete, path = "/api/recordings/{recording_id}/chapters/{chapter_id}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path), ("chapter_id" = Uuid, Path)),
+    responses(
+        (status = 204, description = "Apagado."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`recording.not_manager`"),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn delete_chapter(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((id, chapter_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    managed_item(&state, id, auth.user_id).await?;
+    let r = sqlx::query("DELETE FROM recording_chapters WHERE id = $1 AND recording_id = $2")
+        .bind(chapter_id)
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+    crate::audit::log(
+        &state.db,
+        None,
+        auth.user_id,
+        "recording.chapter_deleted",
+        &chapter_id.to_string(),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------- Comentários (G5) ----------
+
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[schema(as = RecordingComment)]
+pub struct Comment {
+    pub id: Uuid,
+    pub recording_id: Uuid,
+    /// Segundos desde o início; `null` = comentário sobre a gravação inteira.
+    pub at_secs: Option<i32>,
+    /// Já censurado pelo DLP.
+    pub body: String,
+    pub author_id: Uuid,
+    pub author_name: String,
+    pub created_at: DateTime<Utc>,
+    pub edited_at: Option<DateTime<Utc>>,
+}
+
+/// Comentários vivos (os apagados nunca saem), com o nome do autor.
+const COMMENT_SELECT: &str = "SELECT c.id, c.recording_id, c.at_secs, c.body, c.author_id,
+        u.username AS author_name, c.created_at, c.edited_at
+   FROM recording_comments c JOIN users u ON u.id = c.author_id
+  WHERE c.deleted_at IS NULL";
+
+/// A chave de ordem das sem marca temporal: no fim.
+const NO_TIMESTAMP_KEY: i32 = i32::MAX;
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = RecordingCommentPage)]
+pub struct CommentPage {
+    pub items: Vec<Comment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_page_token: Option<String>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+#[schema(as = RecordingCommentReq)]
+pub struct CreateCommentReq {
+    /// 1-2000 caracteres. Passa pelo DLP antes de ser guardado.
+    pub body: String,
+    /// Segundos desde o início; omisso = sobre a gravação inteira.
+    #[serde(default)]
+    pub at_secs: Option<i32>,
+}
+
+#[derive(Deserialize, Default, utoipa::ToSchema)]
+#[schema(as = RecordingCommentUpdateReq)]
+pub struct UpdateCommentReq {
+    pub body: Option<String>,
+    /// Muda a marca temporal. Não se retira a marca por aqui.
+    pub at_secs: Option<i32>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CommentCursor {
+    k: i32,
+    at: DateTime<Utc>,
+    id: Uuid,
+}
+
+/// Comentários, por marca temporal (os sem marca no fim) e depois por criação.
+/// Quem vê ou descarrega a gravação.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/comments", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path), PageQuery),
+    responses(
+        (status = 200, body = CommentPage),
+        (status = 400, body = crate::openapi::ErrorBody, description = "page_token inválido"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn list_comments(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Query(q): Query<PageQuery>,
+) -> Result<Json<CommentPage>, ApiError> {
+    seen_item(&state, id, auth.user_id).await?;
+    let page = PageRequest {
+        page_size: q.page_size,
+        page_token: q.page_token,
+    };
+    let size = page.size();
+    let cursor: Option<CommentCursor> = page.cursor()?;
+    let rows: Vec<Comment> = sqlx::query_as(&format!(
+        "{COMMENT_SELECT}
+            AND c.recording_id = $1
+            AND ($2::int IS NULL
+                 OR (COALESCE(c.at_secs, {NO_TIMESTAMP_KEY}), c.created_at, c.id) > ($2, $3, $4))
+          ORDER BY COALESCE(c.at_secs, {NO_TIMESTAMP_KEY}), c.created_at, c.id
+          LIMIT $5"
+    ))
+    .bind(id)
+    .bind(cursor.as_ref().map(|c| c.k))
+    .bind(cursor.as_ref().map(|c| c.at))
+    .bind(cursor.as_ref().map(|c| c.id).unwrap_or_default())
+    .bind(size as i64 + 1)
+    .fetch_all(&state.db)
+    .await?;
+    let p = Page::from_overfetch(rows, size, |c| CommentCursor {
+        k: c.at_secs.unwrap_or(NO_TIMESTAMP_KEY),
+        at: c.created_at,
+        id: c.id,
+    });
+    Ok(Json(CommentPage {
+        items: p.items,
+        next_page_token: p.next_page_token,
+    }))
+}
+
+async fn fetch_comment(
+    state: &AppState,
+    recording_id: Uuid,
+    comment_id: Uuid,
+) -> Result<Comment, ApiError> {
+    sqlx::query_as(&format!(
+        "{COMMENT_SELECT} AND c.id = $1 AND c.recording_id = $2"
+    ))
+    .bind(comment_id)
+    .bind(recording_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)
+}
+
+/// Um comentário escrito por outra pessoa não se altera nem se apaga.
+fn require_author(comment: &Comment, user_id: Uuid) -> Result<(), ApiError> {
+    if comment.author_id != user_id {
+        return Err(DomainError::forbidden("recording.not_comment_author")
+            .with_message("só quem escreveu o comentário o altera ou apaga")
+            .into());
+    }
+    Ok(())
+}
+
+/// Comenta a gravação, com ou sem marca temporal. O texto passa pelo DLP.
+#[utoipa::path(
+    post, path = "/api/recordings/{recording_id}/comments", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path)),
+    request_body = CreateCommentReq,
+    responses(
+        (status = 201, body = Comment, headers(("Location" = String))),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`recording.invalid_comment` / `recording.invalid_timestamp`"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn create_comment(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<CreateCommentReq>,
+) -> Result<Response, ApiError> {
+    let rec = seen_item(&state, id, auth.user_id).await?;
+    let body = rules::validate_comment_body(&req.body)?;
+    let at_secs = req
+        .at_secs
+        .map(|a| rules::validate_at_secs(a, rec.duration_secs))
+        .transpose()?;
+    // DLP antes de qualquer byte chegar à base: um comentário é lido por toda
+    // a gente que vê a gravação, e pode sair num export.
+    let body = crate::dlp::censor(&body);
+    let (comment_id,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO recording_comments (recording_id, at_secs, body, author_id)
+         VALUES ($1, $2, $3, $4) RETURNING id",
+    )
+    .bind(id)
+    .bind(at_secs)
+    .bind(&body)
+    .bind(auth.user_id)
+    .fetch_one(&state.db)
+    .await?;
+    let comment = fetch_comment(&state, id, comment_id).await?;
+    let location = format!("/api/recordings/{id}/comments/{comment_id}");
+    Ok((
+        StatusCode::CREATED,
+        [(header::LOCATION, location)],
+        Json(comment),
+    )
+        .into_response())
+}
+
+/// Um comentário. Quem vê ou descarrega a gravação.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/comments/{comment_id}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path), ("comment_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Comment),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, description = "Inexistente, apagado, ou sem acesso.", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn get_comment(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((id, comment_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Comment>, ApiError> {
+    seen_item(&state, id, auth.user_id).await?;
+    Ok(Json(fetch_comment(&state, id, comment_id).await?))
+}
+
+/// Altera o texto ou a marca temporal. Só o autor.
+#[utoipa::path(
+    patch, path = "/api/recordings/{recording_id}/comments/{comment_id}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path), ("comment_id" = Uuid, Path)),
+    request_body = UpdateCommentReq,
+    responses(
+        (status = 200, body = Comment),
+        (status = 400, body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`recording.not_comment_author`"),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn update_comment(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((id, comment_id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<UpdateCommentReq>,
+) -> Result<Json<Comment>, ApiError> {
+    let rec = seen_item(&state, id, auth.user_id).await?;
+    let comment = fetch_comment(&state, id, comment_id).await?;
+    require_author(&comment, auth.user_id)?;
+    let body = req
+        .body
+        .as_deref()
+        .map(rules::validate_comment_body)
+        .transpose()?
+        .map(|b| crate::dlp::censor(&b));
+    let at_secs = req
+        .at_secs
+        .map(|a| rules::validate_at_secs(a, rec.duration_secs))
+        .transpose()?;
+    sqlx::query(
+        "UPDATE recording_comments
+            SET body = COALESCE($3, body), at_secs = COALESCE($4, at_secs), edited_at = now()
+          WHERE id = $1 AND recording_id = $2 AND deleted_at IS NULL",
+    )
+    .bind(comment_id)
+    .bind(id)
+    .bind(body)
+    .bind(at_secs)
+    .execute(&state.db)
+    .await?;
+    Ok(Json(fetch_comment(&state, id, comment_id).await?))
+}
+
+/// Apaga (logicamente) um comentário. Só o autor. Apagar outra vez dá `404`.
+#[utoipa::path(
+    delete, path = "/api/recordings/{recording_id}/comments/{comment_id}", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path), ("comment_id" = Uuid, Path)),
+    responses(
+        (status = 204, description = "Apagado (deixa de aparecer)."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`recording.not_comment_author`"),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn delete_comment(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((id, comment_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    seen_item(&state, id, auth.user_id).await?;
+    let comment = fetch_comment(&state, id, comment_id).await?;
+    require_author(&comment, auth.user_id)?;
+    let r = sqlx::query(
+        "UPDATE recording_comments SET deleted_at = now()
+          WHERE id = $1 AND recording_id = $2 AND deleted_at IS NULL",
+    )
+    .bind(comment_id)
+    .bind(id)
+    .execute(&state.db)
+    .await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
 }

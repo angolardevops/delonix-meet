@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { CheckIcon } from '../icons'
 import { mfaActivar, mfaDesactivar, mfaEstado, mfaInscrever, MfaEstado } from '../api'
 
 /**
@@ -13,6 +15,7 @@ import { mfaActivar, mfaDesactivar, mfaEstado, mfaInscrever, MfaEstado } from '.
 type Passo = 'estado' | 'inscricao' | 'codigos'
 
 export default function MfaPanel() {
+  const { t } = useTranslation()
   const [estado, setEstado] = useState<MfaEstado | null>(null)
   const [passo, setPasso] = useState<Passo>('estado')
   const [segredo, setSegredo] = useState('')
@@ -50,7 +53,7 @@ export default function MfaPanel() {
       setPasso('codigos')
       await recarregar()
     } catch {
-      setErro('Código inválido. Confirma a hora do telemóvel e tenta o código seguinte.')
+      setErro(t('mfa.codigoInvalidoHora'))
     } finally { setOcupado(false) }
   }
 
@@ -61,20 +64,18 @@ export default function MfaPanel() {
       setCodigo('')
       await recarregar()
     } catch {
-      setErro('Código inválido. Usa o código do autenticador ou um de recuperação.')
+      setErro(t('mfa.codigoInvalidoRecuperacao'))
     } finally { setOcupado(false) }
   }
 
-  if (!estado) return <p className="muted">A carregar…</p>
+  if (!estado) return <p className="muted">{t('common.loading')}</p>
 
   // --- Passo 3: os códigos de recuperação, vistos uma única vez ---
   if (passo === 'codigos') {
     return (
       <div className="mfa-panel">
-        <h3>Guarda os códigos de recuperação</h3>
-        <p className="mfa-warn" role="alert">
-          Só os vês <strong>agora</strong>. Cada um serve <strong>uma vez</strong> e é a única
-          forma de entrar se perderes o telemóvel.
+        <h3>{t('mfa.guardaOsCodigos')}</h3>
+        <p className="mfa-warn" role="alert">{t('mfa.soOsVes')}<strong>agora</strong>{t('mfa.cadaUmServe')} <strong>{t('mfa.umaVez')}</strong>  {t('mfa.eEAUnica')}
         </p>
         <ul className="mfa-codes">
           {recuperacao.map((c) => <li key={c}><code>{c}</code></li>)}
@@ -101,9 +102,7 @@ export default function MfaPanel() {
           </button>
         </div>
         <label className="mfa-confirm">
-          <input type="checkbox" checked={guardados} onChange={(e) => setGuardados(e.target.checked)} />
-          Guardei os códigos num sítio seguro.
-        </label>
+          <input type="checkbox" checked={guardados} onChange={(e) => setGuardados(e.target.checked)} />{t('mfa.guardeiOsCodigos')}</label>
         <button className="btn-sm primary" disabled={!guardados} onClick={() => { setRecuperacao([]); setPasso('estado') }}>
           Concluir
         </button>
@@ -115,18 +114,14 @@ export default function MfaPanel() {
   if (passo === 'inscricao') {
     return (
       <div className="mfa-panel">
-        <h3>Liga o teu autenticador</h3>
+        <h3>{t('mfa.ligaOAutenticador')}</h3>
         <p className="muted">
-          Lê o código com o Google Authenticator, Aegis, 1Password ou outro — ou introduz a chave à mão.
+          {t('mfa.leOCodigoCom')}
         </p>
-        {qr && <div className="mfa-qr" aria-label="Código QR de inscrição" dangerouslySetInnerHTML={{ __html: qr }} />}
-        <label className="set-label">
-          Chave (se não conseguires ler o código)
-          <code className="mfa-secret">{segredo.match(/.{1,4}/g)?.join(' ')}</code>
+        {qr && <div className="mfa-qr" aria-label={t('mfa.codigoQr')} dangerouslySetInnerHTML={{ __html: qr }} />}
+        <label className="set-label">{t('mfa.chaveSeNaoLeres')}<code className="mfa-secret">{segredo.match(/.{1,4}/g)?.join(' ')}</code>
         </label>
-        <label className="set-label">
-          Código de 6 dígitos do autenticador
-          <input
+        <label className="set-label">{t('mfa.codigoDe6Digitos')}<input
             value={codigo}
             onChange={(e) => setCodigo(e.target.value.replace(/\D/g, '').slice(0, 6))}
             placeholder="000000"
@@ -137,7 +132,7 @@ export default function MfaPanel() {
         {erro && <p className="auth-error" role="alert">{erro}</p>}
         <div className="mfa-actions">
           <button className="btn-sm primary" disabled={ocupado || codigo.length !== 6} onClick={() => void activar()}>
-            {ocupado ? 'A verificar…' : 'Activar'}
+            {ocupado ? t('mfa.aVerificar') : 'Activar'}
           </button>
           <button className="btn-ghost small" onClick={() => { setPasso('estado'); setCodigo(''); setErro('') }}>
             Cancelar
@@ -150,17 +145,15 @@ export default function MfaPanel() {
   // --- Passo 1: estado ---
   return (
     <div className="mfa-panel">
-      <h3>Verificação em dois passos</h3>
+      <h3>{t('mfa.titulo')}</h3>
       {estado.enabled ? (
         <>
-          <p className="mfa-on">✓ Activa. O teu autenticador é pedido em cada início de sessão.</p>
+          <p className="mfa-on"><CheckIcon />{t('mfa.activa')}</p>
           <p className="muted">
-            Restam <strong>{estado.backup_codes_left}</strong> códigos de recuperação.
+            Restam <strong>{estado.backup_codes_left}</strong>  {t('mfa.codigosDeRecuperacao')}
             {estado.backup_codes_left <= 2 && ' Desactiva e volta a activar para gerar códigos novos.'}
           </p>
-          <label className="set-label">
-            Para desactivar, introduz um código actual
-            <input
+          <label className="set-label">{t('mfa.paraDesactivar')}<input
               value={codigo}
               onChange={(e) => setCodigo(e.target.value.replace(/[^0-9A-Za-z-]/g, '').slice(0, 11))}
               placeholder="000000"
@@ -179,15 +172,15 @@ export default function MfaPanel() {
       ) : (
         <>
           <p className="muted">
-            Acrescenta um código do telemóvel ao teu início de sessão. Uma password roubada deixa
-            de chegar para entrar na tua conta.
+            
+            {t('mfa.acrescentaUmCodigoDo')}
           </p>
           {estado.pending && (
-            <p className="muted">Há uma inscrição por concluir — recomeça para gerar uma chave nova.</p>
+            <p className="muted">{t('mfa.inscricaoPorConcluir')}</p>
           )}
           {erro && <p className="auth-error" role="alert">{erro}</p>}
           <button className="btn-sm primary" disabled={ocupado} onClick={() => void inscrever()}>
-            {ocupado ? 'A preparar…' : estado.pending ? 'Recomeçar inscrição' : 'Activar'}
+            {ocupado ? t('mfa.aPreparar') : estado.pending ? t('mfa.recomecarInscricao') : 'Activar'}
           </button>
         </>
       )}

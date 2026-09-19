@@ -33,8 +33,9 @@ import {
   savePlatformStorage,
   testPlatformStorage,
   StorageConfig,
+  ApiError,
 } from '../api'
-import { ClockIcon } from '../icons'
+import { ClockIcon, PlugIcon, KeyIcon, LockIcon, SaveIcon, SettingsIcon, ShareLinkIcon } from '../icons'
 
 /** Definições da organização (admin): domínio de produção + retenção. */
 function OrgSettings({ org, onSaved }: { org: OrgSummary; onSaved: () => void }) {
@@ -74,7 +75,7 @@ function OrgSettings({ org, onSaved }: { org: OrgSummary; onSaved: () => void })
   return (
     <div className="integ-panel">
       <header className="dash-card-head">
-        <h2>⚙️ {t('admin.settingsTitle')}</h2>
+        <h2><SettingsIcon /> {t('admin.settingsTitle')}</h2>
       </header>
       <label className="org-set-row">
         <span>
@@ -136,7 +137,7 @@ function OrgApiKeys({ orgId }: { orgId: string }) {
   return (
     <div className="integ-panel">
       <header className="dash-card-head">
-        <h2>🔑 {t('admin.apiKeysTitle')}</h2>
+        <h2><KeyIcon /> {t('admin.apiKeysTitle')}</h2>
         <a className="link small-link" href="#/api-docs" target="_blank" rel="noreferrer">{t('admin.apiDocsLink')}</a>
       </header>
       <p className="muted small">{t('admin.apiKeysSub')}</p>
@@ -233,7 +234,7 @@ function OrgSso({ orgId }: { orgId: string }) {
   return (
     <div className="integ-panel">
       <header className="dash-card-head">
-        <h2>🔐 {t('admin.ssoTitle')}</h2>
+        <h2><LockIcon /> {t('admin.ssoTitle')}</h2>
         <span className="muted small">{t('admin.ssoSub')}</span>
       </header>
 
@@ -293,7 +294,7 @@ function OrgSso({ orgId }: { orgId: string }) {
                   disabled={busy || !issuer.trim() || !clientId.trim()}
                   onClick={() => void save()}
                 >
-                  {busy ? '…' : t('common.save')}
+                  {busy ? '…' : <><SaveIcon /> {t('common.save')}</>}
                 </button>
                 {editing && (
                   <button className="btn-sm" onClick={() => { setEditing(false); setErr('') }}>
@@ -341,7 +342,7 @@ function OrgWebhooks({ orgId }: { orgId: string }) {
   return (
     <div className="integ-panel">
       <header className="dash-card-head">
-        <h2>🔗 {t('admin.webhooksTitle')}</h2>
+        <h2><ShareLinkIcon /> {t('admin.webhooksTitle')}</h2>
         <span className="muted small">{t('admin.webhooksSub')}</span>
       </header>
       {hooks.length === 0 && <p className="dash-empty">{t('admin.webhooksEmpty')}</p>}
@@ -546,6 +547,7 @@ function OrgOdooIntegration({ orgId }: { orgId: string }) {
 // ---------- Armazenamento remoto (TrueNAS NFS / Nextcloud WebDAV) ----------
 
 function PlatformStoragePanel() {
+  const { t } = useTranslation()
   const [cfg, setCfg] = useState<StorageConfig | null>(null)
   const [type, setType] = useState<'local' | 'nfs' | 'webdav'>('local')
   const [nfsServer, setNfsServer] = useState('')
@@ -557,6 +559,10 @@ function PlatformStoragePanel() {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [testMsg, setTestMsg] = useState('')
+  // O armazenamento é da PLATAFORMA, não da organização: só quem está declarado
+  // em `PLATFORM_ADMIN_USER_IDS` o vê. Um admin de org leva 403 — e em vez de
+  // um formulário que falha ao guardar, diz-se porquê (auditoria S1).
+  const [semPermissao, setSemPermissao] = useState(false)
 
   useEffect(() => {
     getPlatformStorage()
@@ -569,7 +575,9 @@ function PlatformStoragePanel() {
         setWdUser(s.webdav_user ?? '')
         setWdPath(s.webdav_path)
       })
-      .catch(() => {})
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 403) setSemPermissao(true)
+      })
   }, [])
 
   async function save() {
@@ -584,7 +592,7 @@ function PlatformStoragePanel() {
         webdav_password: wdPwd || undefined,
         webdav_path: wdPath || undefined,
       })
-      setMsg('✓ Configuração guardada'); setWdPwd('')
+      setMsg(t('room.sala.configuracaoGuardada')); setWdPwd('')
       setCfg((c) => c ? { ...c, storage_type: type, webdav_password_set: !!(c.webdav_password_set || wdPwd) } : c)
     } catch (e) { setMsg(`Erro: ${(e as Error).message}`) } finally { setBusy(false) }
   }
@@ -597,9 +605,17 @@ function PlatformStoragePanel() {
     } catch (e) { setTestMsg(`Erro: ${(e as Error).message}`) } finally { setBusy(false) }
   }
 
+  if (semPermissao) {
+    return (
+      <div className="odoo-panel">
+        <p className="odoo-desc">{t('admin.armazenamentoSoPlataforma')}</p>
+      </div>
+    )
+  }
+
   function downloadPvc() {
     const a = document.createElement('a')
-    a.href = '/api/v1/platform/storage/pvc-manifest'
+    a.href = '/api/operator/v1/storage/pvc-manifest'
     a.download = 'delonix-recordings-pv.yaml'
     a.click()
   }
@@ -607,41 +623,41 @@ function PlatformStoragePanel() {
   return (
     <div className="odoo-panel">
       <p className="odoo-desc">
-        Armazenamento para gravações e anexos. Por omissão as gravações ficam no volume local do pod.
-        Configura aqui TrueNAS (NFS) ou Nextcloud/SharePoint (WebDAV) para persistência partilhada em multi-réplica.
+        
+        {t('admin.armazenamentoParaGravacoesE')}
       </p>
 
       <div className="field-row">
-        <label className="field-label">Tipo de armazenamento</label>
+        <label className="field-label">{t('admin.tipoDeArmazenamento')}</label>
         <select value={type} onChange={(e) => setType(e.target.value as typeof type)} className="select-ctl">
-          <option value="local">💽 Local (padrão)</option>
-          <option value="nfs">🗄 TrueNAS / NFS</option>
-          <option value="webdav">☁ Nextcloud / WebDAV</option>
+          <option value="local">{t('admin.armazenamentoLocal')}</option>
+          <option value="nfs">TrueNAS / NFS</option>
+          <option value="webdav">Nextcloud / WebDAV</option>
         </select>
       </div>
 
       {type === 'nfs' && (
         <>
           <hr className="odoo-sep" />
-          <p className="odoo-hint">O K8s cria um PersistentVolume com este servidor NFS. Descarrega o manifesto abaixo e aplica com <code>kubectl apply</code>.</p>
+          <p className="odoo-hint">{t('admin.nfsManifesto')} <code>kubectl apply</code>.</p>
           <div className="field-row">
-            <label className="field-label">Servidor NFS</label>
+            <label className="field-label">{t('admin.servidorNfs')}</label>
             <input value={nfsServer} onChange={(e) => setNfsServer(e.target.value)} placeholder="192.168.1.10" />
           </div>
           <div className="field-row">
-            <label className="field-label">Path de exportação</label>
+            <label className="field-label">{t('admin.pathDeExportacao')}</label>
             <input value={nfsPath} onChange={(e) => setNfsPath(e.target.value)} placeholder="/mnt/pool/delonix" />
           </div>
-          <button className="secondary" onClick={downloadPvc} type="button">⬇ Descarregar manifesto K8s PVC</button>
+          <button className="secondary" onClick={downloadPvc} type="button">{t('admin.descarregarManifestoK8sPvc')}</button>
         </>
       )}
 
       {type === 'webdav' && (
         <>
           <hr className="odoo-sep" />
-          <p className="odoo-hint">Gravações enviadas por WebDAV após processamento. Compatível com Nextcloud, ownCloud e SharePoint.</p>
+          <p className="odoo-hint">{t('admin.webdavExplicacao')}</p>
           <div className="field-row">
-            <label className="field-label">URL base WebDAV</label>
+            <label className="field-label">{t('admin.urlBaseWebdav')}</label>
             <input value={wdUrl} onChange={(e) => setWdUrl(e.target.value)} placeholder="https://cloud.empresa.com" />
           </div>
           <div className="field-row">
@@ -649,11 +665,11 @@ function PlatformStoragePanel() {
             <input value={wdUser} onChange={(e) => setWdUser(e.target.value)} placeholder="delonix-service" />
           </div>
           <div className="field-row">
-            <label className="field-label">Password {cfg?.webdav_password_set && <span className="odoo-hint">(definida — deixa em branco para manter)</span>}</label>
+            <label className="field-label">Password {cfg?.webdav_password_set && <span className="odoo-hint">{t('admin.definidaDeixaEmBranco')}</span>}</label>
             <input type="password" value={wdPwd} onChange={(e) => setWdPwd(e.target.value)} placeholder={cfg?.webdav_password_set ? '••••••••' : 'nova password'} />
           </div>
           <div className="field-row">
-            <label className="field-label">Path remoto</label>
+            <label className="field-label">{t('admin.pathRemoto')}</label>
             <input value={wdPath} onChange={(e) => setWdPath(e.target.value)} placeholder="/remote.php/dav/files/{user}/Delonix" />
           </div>
         </>
@@ -661,10 +677,10 @@ function PlatformStoragePanel() {
 
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <button className="primary odoo-save" onClick={save} disabled={busy}>
-          {busy ? '…' : '💾 Guardar'}
+          {busy ? '…' : <><SaveIcon /> {t('common.save')}</>}
         </button>
         <button className="secondary" onClick={test} disabled={busy} type="button">
-          🔌 Testar ligação
+          <PlugIcon /> {t('admin.testarLigacao')}
         </button>
       </div>
       {msg && <p className={msg.startsWith('✓') ? 'odoo-sync-at' : 'error'} style={{ marginTop: 8 }}>{msg}</p>}
@@ -719,8 +735,13 @@ export default function Analytics() {
   }, [orgId])
 
   useEffect(() => {
+    // A análise de quarentena é por organização (e só para admin).
+    if (!orgId) {
+      setRows([])
+      return
+    }
     setLoading(true)
-    quarantineAnalytics(period, orgId || undefined)
+    quarantineAnalytics(period, orgId)
       .then(setRows)
       .catch(() => setRows([]))
       .finally(() => setLoading(false))
@@ -779,7 +800,15 @@ export default function Analytics() {
       ]
     : []
 
-  // Postura de segurança: o que é real está "Ativo"; SSO/SCIM/auditoria são o stub do protótipo.
+  // Postura de segurança. O comentário que aqui estava — «SSO/SCIM/auditoria
+  // são o stub do protótipo» — deixou de ser verdade e ficou a mentir ao
+  // contrário: o SSO lê o estado REAL da org (`ssoActive`) e a auditoria é a
+  // cadeia de hash verificável do `audit.rs`. Só o SCIM continua sem uma linha
+  // de código, e é o único que aparece como «em breve».
+  //
+  // A regra desta lista, e a razão de não ser cosmética: uma capacidade só pode
+  // dizer «Ativo» se houver caminho de código por trás. Um cliente lê isto como
+  // uma garantia de conformidade.
   const posture: { l: string; v: string; on: boolean }[] = [
     { l: t('admin.secItems.tls'), v: t('admin.active'), on: true },
     { l: t('admin.secItems.e2ee'), v: t('admin.available'), on: true },
@@ -896,13 +925,13 @@ export default function Analytics() {
                     {stats.pct_turn_relay != null && (
                       <div className="quality-stat">
                         <strong>{stats.pct_turn_relay}%</strong>
-                        <small>media via TURN relay</small>
+                        <small>{t('admin.mediaViaTurnRelay')}</small>
                       </div>
                     )}
                     {stats.pct_cpu_limited != null && (
                       <div className="quality-stat">
                         <strong>{stats.pct_cpu_limited}%</strong>
-                        <small>limitado por CPU do cliente</small>
+                        <small>{t('admin.limitadoPorCpuDo')}</small>
                       </div>
                     )}
                   </div>
@@ -1014,13 +1043,13 @@ export default function Analytics() {
           {isAdmin && currentOrg && (
             <section className="dash-card integrations-card">
               <header className="dash-card-head">
-                <h2>⚙️ {t('admin.integTitle', 'Integrações & Definições')}</h2>
+                <h2><SettingsIcon /> {t('admin.integTitle', 'Integrações & Definições')}</h2>
               </header>
               <nav className="integ-tabs">
                 {([
                   { key: 'settings', label: t('admin.settingsTitle', 'Definições') },
-                  { key: 'odoo', label: '🔗 Odoo' },
-                  { key: 'storage', label: '💾 Armazenamento' },
+                  { key: 'odoo', label: 'Odoo' },
+                  { key: 'storage', label: t('admin.tipoDeArmazenamento') },
                   { key: 'sso', label: t('admin.ssoTitle', 'SSO / OIDC') },
                   { key: 'webhooks', label: t('admin.webhooksTitle', 'Webhooks') },
                   { key: 'apikeys', label: t('admin.apiKeysTitle', 'API Keys') },

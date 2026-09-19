@@ -7,8 +7,15 @@
 #  distraído num directório que ainda não estava no `.gitignore`. Um portão
 #  automático apanha isso no minuto seguinte, em vez de meses depois.
 #
-#  Verifica só o que está SEGUIDO no índice (o que sai num clone). Ficheiros
-#  locais não seguidos são problema de ninguém.
+#  Os pontos 1–5 verificam o que está SEGUIDO no índice (o que sai num clone
+#  hoje). Ficheiros locais não seguidos são problema de ninguém.
+#
+#  O ponto 6 verifica o HISTÓRICO, e existe porque os pontos 1–5 não bastam:
+#  `git rm --cached` tira do índice e NÃO tira do histórico. A chave que já lá
+#  está continua alcançável em todos os commits que a levaram — e este
+#  repositório é público. Sem esta verificação, uma fuga desaparece do portão
+#  no instante em que alguém a «resolve» com um `git rm`, que é exactamente o
+#  que aconteceu em 3b80b8a.
 #
 #  Uso:  bash scripts/check-repo-hygiene.sh
 # ============================================================
@@ -104,28 +111,128 @@ if [ -f "$CAT" ]; then
   done
 fi
 
-# 5. Todo o ficheiro de `web/e2e/` ou CORRE no CI, ou declara-se no cabeçalho.
-#    O `estudio.mjs`, o `layout-consola.mjs` e o `offline.mjs` estiveram
-#    comprometidos sem correr uma única vez, e os seis jobs davam verde na
-#    mesma. Ligá-los destapou dois defeitos a sério — logo o que estava a
-#    falhar não era arrumação, era cobertura. Isto impede a repetição.
+# 6. Todo o teste ponta-a-ponta ou corre no CI, ou tem razão escrita.
+#    Um teste que existe e nunca corre não é portão nenhum — o `estudio.mjs`
+#    esteve comprometido sem correr uma única vez e os seis jobs davam verde
+#    na mesma (R72). Compara-se o inventário do que EXISTE com o do que CORRE.
 #
-#    Duas declarações válidas, ambas no cabeçalho do próprio ficheiro, que é
-#    onde quem o abre as lê:
-#      «NÃO CORRE NO CI» + razão   — deliberado (ex.: precisa de CAP_NET_ADMIN)
-#      «MÓDULO DE APOIO»           — não é um teste
+#    Duas saídas válidas, e são deliberadamente diferentes:
+#      - `scripts/e2e-fora-do-ci.txt` — para um TESTE que não corre, com a razão.
+#        Mesmo padrão do `rotas-publicas.txt`.
+#      - `MÓDULO DE APOIO` no cabeçalho — para o que NÃO é um teste. Fica no
+#        próprio ficheiro porque é lá que quem o abre a lê, e porque uma lista
+#        de nomes de módulos de apoio só cresce e ninguém a poda.
 WF=.github/workflows/ci.yml
+EXC=scripts/e2e-fora-do-ci.txt
 if [ -f "$WF" ] && [ -d web/e2e ]; then
   for f in web/e2e/*.mjs; do
     n=$(basename "$f")
-    grep -q "web/e2e/$n" "$WF" && continue
+    # Módulos de apoio, não testes — declarados no próprio cabeçalho.
+    case "$n" in pg.mjs|harness*.mjs) continue;; esac
     head -20 "$f" | grep -q "MÓDULO DE APOIO" && continue
-    head -20 "$f" | grep -q "NÃO CORRE NO CI" && continue
-    echo "✗ higiene: $n não corre no CI e não diz porquê no cabeçalho"
-    echo "   («NÃO CORRE NO CI: <razão>» ou «MÓDULO DE APOIO»)"
+    grep -q "web/e2e/$n" "$WF" && continue
+    grep -qE "^$n . .+" "$EXC" 2>/dev/null && continue
+    echo "✗ higiene: $n não corre no CI nem tem razão em $EXC"
     fail=1
   done
 fi
 
-[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados"
+# 6. Material de chave privada no HISTÓRICO, não só no índice.
+#
+#    O ponto 1 vê o que sai num clone HOJE. Este vê o que sai num `git log`, que
+#    é o que um atacante lê. As duas chaves de dev que já cá estiveram saíram do
+#    índice em 3b80b8a e continuam alcançáveis em quatro commits — o ponto 1
+#    ficou verde no minuto seguinte e a exposição não mudou nada.
+#
+#    Cada caminho encontrado tem de estar em scripts/leaked-keys-accepted.txt,
+#    com a razão e a data escritas. É o mesmo padrão do rustsec-accepted.txt: o
+#    portão não impede a decisão, impede a decisão SILENCIOSA.
+#
+#    Limite honesto desta verificação: procura por CAMINHO, não por conteúdo.
+#    Uma chave colada dentro de um `notas.txt` do histórico não é apanhada aqui
+#    — para o índice, é o ponto 2 que a apanha; para o histórico, seria preciso
+#    ler todos os blobs, e isso não cabe num portão de CI. Preferimos dizê-lo a
+#    dar uma garantia que não temos.
+LEDGER=scripts/leaked-keys-accepted.txt
+hist_keys=$(git rev-list --objects --all 2>/dev/null \
+            | sed 's/^[0-9a-f]\{40,\} //' \
+            | grep -iE '(^|/)(id_rsa|id_ed25519|id_ecdsa)[^/]*$|\.(key|pem|p12|pfx|jks)$' \
+            | sort -u || true)
+for p in $hist_keys; do
+  # `-F -x` porque o ledger guarda caminhos literais, um por linha; sem isto um
+  # `.` do caminho passava a curinga e um caminho novo podia casar com a linha
+  # de outro.
+  if ! grep -v '^#' "$LEDGER" 2>/dev/null | grep -qFx "$p"; then
+    echo "✗ higiene: CHAVE PRIVADA no histórico do git, sem decisão escrita: $p"
+    echo '     Um "git rm" NÃO a remove do histórico. Trata-a como comprometida:'
+    echo "     roda-a, e depois ou reescreves o histórico (force-push, parte todos"
+    echo "     os clones) ou acrescentas uma linha a $LEDGER com a razão."
+    fail=1
+  fi
+done
+
+# R119 — um SYMLINK para fora do repositório entrou na `main` e ficou lá.
+#
+# Era `web/node_modules -> /tmp/wtp2/web/node_modules`, o atalho que eu usava
+# para partilhar dependências entre worktrees. Um `git add -A web` levou-o, e o
+# `.gitignore` não o travou porque a linha era `web/node_modules/` — a barra
+# final faz o padrão casar só com um DIRECTÓRIO, e um symlink não é um
+# directório.
+#
+# Quem clonasse o repositório ficava com um link pendurado para um caminho que
+# não existe na máquina dele. O CI não deu por nada: o `npm ci` substitui a
+# pasta e segue.
+#
+# A regra é geral, não sobre `node_modules`: nenhum caminho versionado pode
+# apontar para fora da árvore. Um symlink relativo dentro do repositório é
+# legítimo; um absoluto, ou um que suba acima da raiz, é a máquina de alguém a
+# entrar no repositório.
+while IFS= read -r caminho; do
+  [ -z "$caminho" ] && continue
+  # O alvo lê-se do ÍNDICE (`:caminho`) e não do `HEAD`: um symlink acabado de
+  # adicionar ainda não está em commit nenhum, e era assim que ele entrava. O
+  # `readlink` é a rede se o índice não o tiver; `cat` não serve — segue o link
+  # e devolve vazio quando o alvo não existe, que é justamente o caso mau.
+  alvo=$(git cat-file -p ":$caminho" 2>/dev/null || readlink "$caminho" 2>/dev/null)
+  case "$alvo" in
+    /*)
+      echo "✗ higiene: SYMLINK ABSOLUTO versionado: $caminho -> $alvo"
+      echo "     Aponta para a máquina de quem o criou. Quem clonar fica com um"
+      echo "     link pendurado. Se era um atalho de trabalho, tem de sair do índice:"
+      echo "     git rm --cached $caminho"
+      fail=1
+      ;;
+    *../*|../*)
+      echo "✗ higiene: SYMLINK versionado a SAIR da árvore: $caminho -> $alvo"
+      fail=1
+      ;;
+  esac
+done <<EOF_SYMLINKS
+$(git ls-files -s | awk '$1 == "120000" { $1=$2=$3=""; sub(/^[ \t]+/,""); print }')
+EOF_SYMLINKS
+
+# R106 — um arnês de mutação morto a meio deixa o produto SABOTADO na árvore, e
+# o marcador é a única prova que sobrevive a um SIGKILL. Se ele está aqui, ou a
+# corrida ainda vai a meio (e ninguém devia estar a fazer commit), ou morreu e o
+# ficheiro que ele nomeia está mutado.
+if [ -f scripts/.mutante-em-voo.json ]; then
+  alvo=$(sed -n 's/.*"caminho":"\([^"]*\)".*/\1/p' scripts/.mutante-em-voo.json)
+  echo "✗ higiene: ha um mutante em voo — $alvo pode estar SABOTADO"
+  echo "     Corre \`node scripts/mutantes.mjs\` (restaura sozinho ao arrancar)"
+  echo "     ou devolve o ficheiro com \`git checkout $alvo\` e apaga o marcador."
+  fail=1
+fi
+
+# R189 — um merge resolvido só no primeiro bloco deixou marcadores de conflito
+# num .md empurrado, e nenhum portão reparou (o docs-drift lê tabelas, não o
+# ficheiro inteiro). Linha a começar por `<<<<<<< ` ou `>>>>>>> ` num ficheiro
+# seguido é sempre um conflito por resolver — em código compila mal, em docs passa.
+marcadores=$(git grep -nE '^(<<<<<<< |>>>>>>> )' -- . ':!scripts/check-repo-hygiene.sh' 2>/dev/null || true)
+if [ -n "$marcadores" ]; then
+  echo "✗ higiene: marcadores de conflito por resolver em ficheiros seguidos:"
+  echo "$marcadores" | head -10 | sed 's/^/     /'
+  fail=1
+fi
+
+[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem marcadores de conflito; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita"
 exit $fail
