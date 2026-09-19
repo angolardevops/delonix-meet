@@ -111,7 +111,7 @@ for caminho, mod, h in sorted(set(rotas)):
         (usadas.add(caminho) if caminho in publicas
          else invisiveis.append(f'{caminho} → handler inline (closure)'))
         continue
-    par = handlers.get((mod or 'main', h))
+    par = handlers.get((mod or os.path.basename(MAIN)[:-3], h))
     if par is None:
         cand = [v for (m2, h2), v in handlers.items() if h2 == h]
         par = cand[0] if len(cand) == 1 else None

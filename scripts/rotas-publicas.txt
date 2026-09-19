@@ -28,3 +28,5 @@
 /api/v1/openapi.json         Contrato OpenAPI da v1 pública. Igual ao commitado em docs/reference/openapi/.
 /api/operator/v1/openapi.json          Contrato OpenAPI da superfície de operador. Descreve rotas, não dados.
 /api/integrations/openapi.json         Contrato OpenAPI das integrações (Odoo, agente SMS). Descreve rotas, não dados.
+/api/invites/{token}         Pré-visualização pública de um convite por link: o token (256 bits, só o hash guardado) é a chave. Nunca traz org_id/id/token.
+/api/invites/{token}/accept  Aceitar um convite por link: o token é a chave; cria/associa a conta ao inquilino do convite.

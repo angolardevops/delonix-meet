@@ -212,6 +212,54 @@ if (chaveB.status >= 200 && chaveB.status < 300 && chaveB.json?.id) {
 await recusado('A lê o armazenamento da org B', `/api/orgs/${B.orgId}/storage-usage`, { token: A.token })
 
 // Destinos de emissão guardados (G1): a chave RTMP é credencial de terceiros.
+// Rotas de inquilino que o inventário (`check-isolamento-cobertura.sh`) apontou
+// como não exercitadas: papéis/permissões (RBAC), convites e ramais. A A nunca
+// as alcança na org B — ler, criar, alterar, apagar, decidir.
+console.log('\n--- RBAC, convites e ramais da org B ---')
+const fantasma = crypto.randomUUID()
+await recusado('A lista os papéis da org B', `/api/orgs/${B.orgId}/roles`, { token: A.token })
+await recusado('A cria um papel na org B', `/api/orgs/${B.orgId}/roles`, {
+  token: A.token, method: 'POST', body: { name: 'intruso', permissions: [] },
+})
+await recusado('A exporta os papéis da org B', `/api/orgs/${B.orgId}/roles/export.csv`, { token: A.token })
+await recusado('A altera um papel da org B', `/api/orgs/${B.orgId}/roles/${fantasma}`, {
+  token: A.token, method: 'PATCH', body: { name: 'x' },
+})
+await recusado('A apaga um papel da org B', `/api/orgs/${B.orgId}/roles/${fantasma}`, { token: A.token, method: 'DELETE' })
+await recusado('A duplica um papel da org B', `/api/orgs/${B.orgId}/roles/${fantasma}/duplicate`, {
+  token: A.token, method: 'POST', body: {},
+})
+await recusado('A atribui um papel a um membro da org B', `/api/orgs/${B.orgId}/members/${B.userId}/role`, {
+  token: A.token, method: 'PUT', body: { role_id: fantasma },
+})
+await recusado('A lista os pedidos de permissão da org B', `/api/orgs/${B.orgId}/permission-requests`, { token: A.token })
+await recusado('A decide um pedido de permissão da org B', `/api/orgs/${B.orgId}/permission-requests/${fantasma}/decide`, {
+  token: A.token, method: 'POST', body: { approve: true },
+})
+await recusado('A lê as permissões que tem na org B', `/api/orgs/${B.orgId}/permissions/me`, { token: A.token })
+await recusado('A lista os convites da org B', `/api/orgs/${B.orgId}/invites`, { token: A.token })
+await recusado('A cria um convite na org B', `/api/orgs/${B.orgId}/invites`, {
+  token: A.token, method: 'POST', body: { email: `intruso-${marca}@exemplo.local` },
+})
+await recusado('A cria convites em massa na org B', `/api/orgs/${B.orgId}/invites/bulk`, {
+  token: A.token, method: 'POST', body: { rows: [{ email: `massa-${marca}@exemplo.local` }] },
+})
+await recusado('A revoga um convite da org B', `/api/orgs/${B.orgId}/invites/${fantasma}`, { token: A.token, method: 'DELETE' })
+await recusado('A lista os ramais da org B', `/api/orgs/${B.orgId}/extensions`, { token: A.token })
+await recusado('A cria um ramal na org B', `/api/orgs/${B.orgId}/extensions`, {
+  token: A.token, method: 'POST', body: { extension: '9001', display_name: 'intruso' },
+})
+await recusado('A altera um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}`, {
+  token: A.token, method: 'PATCH', body: { display_name: 'x' },
+})
+await recusado('A apaga um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}`, { token: A.token, method: 'DELETE' })
+await recusado('A regenera a password de um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/regenerate-password`, {
+  token: A.token, method: 'POST', body: {},
+})
+await recusado('A atribui um DID a um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/did`, {
+  token: A.token, method: 'PUT', body: { did_id: fantasma },
+})
+
 // O segredo mais valioso desta família: com ele, qualquer um emite no canal
 // de YouTube da empresa. A provar: A não alcança os destinos da B (ler, rodar
 // a chave, alterar, apagar — e o de B sobrevive), a chave nunca volta em claro
@@ -242,6 +290,9 @@ if (destinoB.status === 201 && destinoB.json?.id) {
 
   await recusado('A lê um destino da org B', d, { token: A.token })
   await recusado('A roda a chave de um destino da org B', `${d}/rotate-key`, {
+    token: A.token, method: 'POST', body: { stream_key: 'roubada' },
+  })
+  await recusado('A roda a chave do destino da B pelo caminho da org B', `/api/orgs/${B.orgId}/stream-destinations/${idB}/rotate-key`, {
     token: A.token, method: 'POST', body: { stream_key: 'roubada' },
   })
   await recusado('A cria um destino na org B', `/api/orgs/${B.orgId}/stream-destinations`, {
