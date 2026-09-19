@@ -99,7 +99,7 @@ pub fn meeting_text(
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SkippedRecipient {
     pub user_id: Uuid,
     /// Código estável: `sms.recipient_opted_out`, `sms.recipient_no_phone`,
@@ -108,14 +108,14 @@ pub struct SkippedRecipient {
     pub reason: &'static str,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, utoipa::ToSchema)]
 pub struct Delivery {
     pub queued: usize,
     pub skipped: Vec<SkippedRecipient>,
 }
 
 /// O que o agendamento devolve sobre SMS.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MeetingSmsReport {
     pub invite: Option<Delivery>,
     pub reminder_min: Option<i32>,

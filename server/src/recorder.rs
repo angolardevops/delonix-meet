@@ -1005,6 +1005,11 @@ async fn finalize_inner(
     .execute(&state.db)
     .await?;
     tracing::info!(%room_id, %rec_id, size, "server recording pronta na biblioteca");
+    let code: String = sqlx::query_scalar("SELECT code FROM rooms WHERE id = $1")
+        .bind(room_id)
+        .fetch_optional(&state.db)
+        .await?
+        .unwrap_or_default();
     crate::notifications::recording_ready(state, session.by_user, rec_id, &filename, &code).await;
 
     let media = crate::media_probe::probe_and_store(state, rec_id, &final_path).await;

@@ -124,7 +124,7 @@ pub struct MeetingItem {
 }
 
 /// Opções de sessão de uma reunião (migração 0059).
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct SessionOptions {
     #[serde(default = "default_format")]
     pub format: String,

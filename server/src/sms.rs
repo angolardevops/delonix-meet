@@ -659,7 +659,8 @@ const MESSAGE_COLUMNS: &str = "id, to_e164, body, encoding, segments, route, ope
      status, error, provider_ref, created_at, sent_at, purpose, recipient_user_id, meeting_id,
      created_by";
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct PageQuery {
     page_size: Option<i64>,
 }
