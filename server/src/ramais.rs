@@ -187,7 +187,7 @@ pub async fn create_extension(
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateExtensionReq>,
 ) -> Result<Json<CreatedExtension>, ApiError> {
-    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
 
     let extension = req.extension.trim();
     validate_extension_format(extension)?;
@@ -302,7 +302,7 @@ pub async fn list_extensions(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<VoiceExtensionInfo>>, ApiError> {
-    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let rows: Vec<VoiceExtensionInfo> = sqlx::query_as(&format!(
         "{SELECT_EXTENSION_INFO} WHERE e.org_id = $1 ORDER BY e.extension"
     ))
@@ -329,7 +329,7 @@ pub async fn update_extension(
     Path((org_id, id)): Path<(Uuid, Uuid)>,
     Json(req): Json<UpdateExtensionReq>,
 ) -> Result<Json<VoiceExtensionInfo>, ApiError> {
-    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let label = req
         .label
         .map(|l| l.trim().chars().take(80).collect::<String>());
@@ -369,7 +369,7 @@ pub async fn regenerate_extension_password(
     auth: AuthUser,
     Path((org_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<CreatedExtension>, ApiError> {
-    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let sip_domain = sip_domain_for_org(&state, org_id).await?;
     let sip_username: String = sqlx::query_scalar(
         "SELECT sip_username FROM voice_extensions WHERE id = $1 AND org_id = $2",
@@ -422,7 +422,7 @@ pub async fn delete_extension(
     auth: AuthUser,
     Path((org_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
-    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let extension: Option<String> =
         sqlx::query_scalar("SELECT extension FROM voice_extensions WHERE id = $1 AND org_id = $2")
             .bind(id)
@@ -677,7 +677,7 @@ pub async fn assign_extension_did(
     Path((org_id, id)): Path<(Uuid, Uuid)>,
     Json(req): Json<AssignExtensionDidReq>,
 ) -> Result<Json<ExtensionDidInfo>, ApiError> {
-    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
 
     let ext_exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM voice_extensions WHERE id = $1 AND org_id = $2)",
@@ -770,7 +770,7 @@ pub async fn unassign_extension_did(
     auth: AuthUser,
     Path((org_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
-    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let ext_exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM voice_extensions WHERE id = $1 AND org_id = $2)",
     )

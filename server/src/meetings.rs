@@ -425,6 +425,8 @@ pub async fn create(
     if !(5..=1440).contains(&req.duration_min) {
         return Err(ApiError::BadRequest("duration must be 5-1440 min".into()));
     }
+    // `sessions.create` (ADR-0008 §1): o poder de criar, avaliado sobre o dono.
+    crate::org::require_session_create(&state, auth.user_id, None).await?;
     req.options.validate()?;
     if let Some(min) = req.sms_reminder_min {
         if !crate::sms_notify::REMINDER_MIN_RANGE.contains(&min) {

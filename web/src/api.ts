@@ -459,7 +459,7 @@ export async function downloadMyData(): Promise<void> {
 export const updateEmployee = (
   orgId: string,
   userId: string,
-  data: { role?: string; title?: string; branch_id?: string | null; suspended?: boolean },
+  data: { role?: string; title?: string; branch_id?: string | null },
 ) => request<Employee>(`/api/orgs/${orgId}/members/${userId}`, { method: 'PATCH', body: JSON.stringify(data) })
 
 export const shareRecording = (id: string, userId: string) =>
@@ -674,119 +674,12 @@ export interface Employee extends Partial<EmployeeSmsFields> {
   branch_id: string | null
   branch_name: string | null
   last_active?: string | null
-  /** Bloqueado por um admin (suspenso); continua membro. Ver migração 0054. */
-  suspended_at: string | null
 }
 export interface Group {
   id: string
   org_id: string
   name: string
   member_count: number
-}
-
-// ---------- Papéis e permissões (RBAC) ----------
-
-export interface PermissionCatalogEntry {
-  key: string
-  label: string
-}
-export interface PermissionGrant {
-  permission: string
-  requires_approval: boolean
-}
-export interface RbacRole {
-  id: string
-  name: string
-  is_system: boolean
-  parent_role_id: string | null
-  parent_role_name: string | null
-  member_count: number
-  /** Concessões directas deste papel. */
-  permissions: PermissionGrant[]
-  /** Concessões herdadas do pai (já não repetidas em `permissions`). */
-  inherited: PermissionGrant[]
-}
-export interface RbacRolesResp {
-  catalog: PermissionCatalogEntry[]
-  roles: RbacRole[]
-}
-export interface RbacPermissionInput {
-  permission: string
-  requires_approval?: boolean
-}
-export interface RbacPermissionRequest {
-  id: string
-  requester_id: string
-  requester_username: string
-  requester_email: string
-  permission: string
-  status: 'pending' | 'approved' | 'denied'
-  created_at: string
-  decided_at: string | null
-  expires_at: string | null
-}
-export interface MyPermissions {
-  admin: boolean
-  permissions: string[]
-  pending: string[]
-}
-
-export const listRoles = (orgId: string, signal?: AbortSignal) =>
-  request<RbacRolesResp>(`/api/orgs/${orgId}/roles`, { signal })
-
-export const createRole = (
-  orgId: string,
-  data: { name: string; parent_role_id?: string | null; permissions?: RbacPermissionInput[] },
-) => request<RbacRole>(`/api/orgs/${orgId}/roles`, { method: 'POST', body: JSON.stringify(data) })
-
-export const updateRole = (
-  orgId: string,
-  roleId: string,
-  data: { name?: string; parent_role_id?: string | null; permissions?: RbacPermissionInput[] },
-) => request<RbacRole>(`/api/orgs/${orgId}/roles/${roleId}`, { method: 'PATCH', body: JSON.stringify(data) })
-
-export const deleteRole = (orgId: string, roleId: string) =>
-  request<void>(`/api/orgs/${orgId}/roles/${roleId}`, { method: 'DELETE' })
-
-export const duplicateRole = (orgId: string, roleId: string) =>
-  request<RbacRole>(`/api/orgs/${orgId}/roles/${roleId}/duplicate`, { method: 'POST' })
-
-export const assignRole = (orgId: string, userId: string, roleId: string) =>
-  request<void>(`/api/orgs/${orgId}/members/${userId}/role`, {
-    method: 'PUT',
-    body: JSON.stringify({ role_id: roleId }),
-  })
-
-export const listPermissionRequests = (orgId: string, signal?: AbortSignal) =>
-  request<RbacPermissionRequest[]>(`/api/orgs/${orgId}/permission-requests`, { signal })
-
-export const decidePermissionRequest = (orgId: string, requestId: string, approve: boolean) =>
-  request<void>(`/api/orgs/${orgId}/permission-requests/${requestId}/decide`, {
-    method: 'POST',
-    body: JSON.stringify({ approve }),
-  })
-
-export const myPermissions = (orgId: string) => request<MyPermissions>(`/api/orgs/${orgId}/permissions/me`)
-
-/** Descarrega a matriz de papéis e permissões como CSV. */
-export async function downloadRolesCsv(orgId: string): Promise<void> {
-  const res = await fetch(`/api/orgs/${orgId}/roles/export.csv`, {
-    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
-    credentials: 'same-origin',
-  })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new ApiError(res.status, body, body?.error ?? res.statusText ?? 'request failed')
-  }
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'papeis-e-permissoes.csv'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
 }
 
 export interface WeekBucket {
@@ -884,98 +777,6 @@ export const addEmployee = (
 ) => request<Employee>(`/api/orgs/${orgId}/members`, { method: 'POST', body: JSON.stringify(body) })
 export const removeEmployee = (orgId: string, userId: string) =>
   request(`/api/orgs/${orgId}/members/${userId}`, { method: 'DELETE' })
-
-// ---------- Convites por link ("Utilizadores e convites") ----------
-//
-// Sem SMTP no servidor: o link não é enviado por email, é gerado e o admin
-// copia-o e partilha-o pelo canal que preferir — ver InviteDialog.tsx.
-
-export interface Invite {
-  id: string
-  org_id: string
-  email: string
-  role: 'admin' | 'member'
-  branch_id: string | null
-  branch_name: string | null
-  title: string
-  token: string
-  invited_by: string
-  invited_by_name: string
-  created_at: string
-  expires_at: string
-  accepted_at: string | null
-  revoked_at: string | null
-}
-
-export const listInvites = (orgId: string) => request<Invite[]>(`/api/orgs/${orgId}/invites`)
-
-export const createInvite = (
-  orgId: string,
-  body: { email: string; role?: string; branch_id?: string; title?: string },
-) => request<Invite>(`/api/orgs/${orgId}/invites`, { method: 'POST', body: JSON.stringify(body) })
-
-export interface BulkInviteRow {
-  email: string
-  title?: string
-  role?: string
-  /** Nome de uma filial existente da org (comparado sem maiúsculas/minúsculas). */
-  branch?: string
-}
-export interface BulkInviteResult {
-  email: string
-  ok: boolean
-  error: string | null
-  invite: Invite | null
-}
-export const bulkCreateInvites = (orgId: string, rows: BulkInviteRow[]) =>
-  request<BulkInviteResult[]>(`/api/orgs/${orgId}/invites/bulk`, { method: 'POST', body: JSON.stringify({ rows }) })
-
-export const revokeInvite = (orgId: string, inviteId: string) =>
-  request(`/api/orgs/${orgId}/invites/${inviteId}`, { method: 'DELETE' })
-
-/** Forma pública de um convite (sem sessão) — nunca traz `org_id`/`id`/`token`. */
-export interface InvitePublic {
-  org_name: string
-  email: string
-  role: string
-  title: string
-  expired: boolean
-  revoked: boolean
-  accepted: boolean
-}
-
-/** Sem sessão — como `getPublicShare`, `fetch` cru em vez de `request()` (não
- *  se quer a dança de renovação de sessão numa página que ninguém autenticou). */
-export async function getInvitePublic(token: string): Promise<InvitePublic> {
-  const res = await fetch(`/api/invites/${token}`, { credentials: 'same-origin' })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw Object.assign(new Error(body.error ?? 'request failed'), { status: res.status })
-  }
-  return res.json()
-}
-
-/**
- * Aceita o convite: cria a conta, entra na organização, e devolve a pessoa já
- * LOGADA — `saveSession` é a MESMA função que `registerOrg`/`login` usam, por
- * isso o resto da app (rota, `currentUser()`) não distingue esta entrada de
- * um registo normal.
- */
-export async function acceptInvite(token: string, body: { username: string; password: string }): Promise<User> {
-  const res = await fetch(`/api/invites/${token}/accept`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'same-origin',
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    const b = await res.json().catch(() => ({ error: res.statusText }))
-    throw new ApiError(res.status, b, b?.error ?? res.statusText ?? 'request failed')
-  }
-  const t: AuthOk = await res.json()
-  saveSession(t)
-  return t.user
-}
 
 export const listGroups = (orgId: string) => request<Group[]>(`/api/orgs/${orgId}/groups`)
 export const createGroup = (orgId: string, name: string, memberIds: string[]) =>

@@ -298,6 +298,12 @@ async fn issue_tokens(
     session: SessionMeta,
 ) -> Result<TokenPair, ApiError> {
     let access = access_token(state, user.id)?;
+    // Último acesso (ADR-0008 §7): escrito aqui, num só sítio, porque todas as
+    // entradas com sucesso emitem tokens por esta função.
+    let _ = sqlx::query("UPDATE users SET last_access_at = now() WHERE id = $1")
+        .bind(user.id)
+        .execute(&state.db)
+        .await;
     let (refresh, refresh_hash) = new_refresh_token();
     let expires = Utc::now() + chrono::Duration::seconds(state.config.refresh_ttl_secs);
     sqlx::query(
@@ -345,20 +351,6 @@ async fn issue_tokens(
     ))
 )]
 pub struct ApiDoc;
-
-/// Emite uma sessão NOVA (tokens + cookie de refresh) para `user`, com a
-/// MESMA resposta que `register`/`login` devolvem. Usado por quem acaba de
-/// aceitar um convite de organização (`org::accept_invite`): a conta acabada
-/// de nascer entra logada, sem ter de fazer login a seguir.
-pub(crate) async fn login_response(
-    state: &AppState,
-    user: crate::users::UserPublic,
-    headers: &HeaderMap,
-    ip: String,
-) -> Result<Response, ApiError> {
-    let session = SessionMeta::fresh(headers, ip);
-    Ok(auth_ok(state, issue_tokens(state, user, session).await?))
-}
 
 /// Registo de conta. O QUE acontece decide-o a política da instalação
 /// (`delonix_meet_domain::identity::registration`, ADR-0006 §2); aqui só se lê
@@ -470,28 +462,8 @@ pub async fn register(
                 _ => e.into(),
             })?;
 
-            // Os dois papéis de sistema nascem com a organização — ver rbac.rs.
-            let (admin_role_id,): (Uuid,) = sqlx::query_as(
-                "INSERT INTO org_roles (org_id, name, is_system) VALUES ($1, 'Administrador', TRUE) RETURNING id",
-            )
-            .bind(org_id)
-            .fetch_one(&mut *tx)
-            .await?;
-            sqlx::query(
-                "INSERT INTO org_roles (org_id, name, is_system) VALUES ($1, 'Membro', TRUE)",
-            )
-            .bind(org_id)
-            .execute(&mut *tx)
-            .await?;
-            crate::org::insert_member_with_role_tx(
-                &mut tx,
-                org_id,
-                user.id,
-                "admin",
-                admin_role_id,
-                "Administrador",
-            )
-            .await?;
+            crate::org::insert_member_tx(&mut tx, org_id, user.id, "admin", "Administrador")
+                .await?;
             (org_id, "org.created", name)
         }
         RegistrationPlan::JoinOrganization { org_id, as_admin } => {
@@ -1252,20 +1224,13 @@ pub async fn sso_callback(
             })?;
 
             // Adicionar como membro da org (role = member; admins são promovidos manualmente).
-            let membro_role_id: Option<(Uuid,)> = sqlx::query_as(
-                "SELECT id FROM org_roles WHERE org_id = $1 AND is_system = TRUE AND name = 'Membro'",
-            )
-            .bind(entry.org_id)
-            .fetch_optional(&mut *tx)
-            .await?;
             sqlx::query(
-                "INSERT INTO org_members (org_id, user_id, role, role_id, title)
-                 VALUES ($1, $2, 'member', $3, '')
+                "INSERT INTO org_members (org_id, user_id, role, title)
+                 VALUES ($1, $2, 'member', '')
                  ON CONFLICT DO NOTHING",
             )
             .bind(entry.org_id)
             .bind(new_user.id)
-            .bind(membro_role_id.map(|(id,)| id))
             .execute(&mut *tx)
             .await?;
 

@@ -221,7 +221,6 @@ await recusado('A lista os papéis da org B', `/api/orgs/${B.orgId}/roles`, { to
 await recusado('A cria um papel na org B', `/api/orgs/${B.orgId}/roles`, {
   token: A.token, method: 'POST', body: { name: 'intruso', permissions: [] },
 })
-await recusado('A exporta os papéis da org B', `/api/orgs/${B.orgId}/roles/export.csv`, { token: A.token })
 await recusado('A altera um papel da org B', `/api/orgs/${B.orgId}/roles/${fantasma}`, {
   token: A.token, method: 'PATCH', body: { name: 'x' },
 })
@@ -232,19 +231,6 @@ await recusado('A duplica um papel da org B', `/api/orgs/${B.orgId}/roles/${fant
 await recusado('A atribui um papel a um membro da org B', `/api/orgs/${B.orgId}/members/${B.userId}/role`, {
   token: A.token, method: 'PUT', body: { role_id: fantasma },
 })
-await recusado('A lista os pedidos de permissão da org B', `/api/orgs/${B.orgId}/permission-requests`, { token: A.token })
-await recusado('A decide um pedido de permissão da org B', `/api/orgs/${B.orgId}/permission-requests/${fantasma}/decide`, {
-  token: A.token, method: 'POST', body: { approve: true },
-})
-await recusado('A lê as permissões que tem na org B', `/api/orgs/${B.orgId}/permissions/me`, { token: A.token })
-await recusado('A lista os convites da org B', `/api/orgs/${B.orgId}/invites`, { token: A.token })
-await recusado('A cria um convite na org B', `/api/orgs/${B.orgId}/invites`, {
-  token: A.token, method: 'POST', body: { email: `intruso-${marca}@exemplo.local` },
-})
-await recusado('A cria convites em massa na org B', `/api/orgs/${B.orgId}/invites/bulk`, {
-  token: A.token, method: 'POST', body: { rows: [{ email: `massa-${marca}@exemplo.local` }] },
-})
-await recusado('A revoga um convite da org B', `/api/orgs/${B.orgId}/invites/${fantasma}`, { token: A.token, method: 'DELETE' })
 await recusado('A lista os ramais da org B', `/api/orgs/${B.orgId}/extensions`, { token: A.token })
 await recusado('A cria um ramal na org B', `/api/orgs/${B.orgId}/extensions`, {
   token: A.token, method: 'POST', body: { extension: '9001', display_name: 'intruso' },
@@ -1161,6 +1147,85 @@ if (gwB.status !== 201 || !gwB.json?.token?.startsWith('dlxg_') || gwA.status !=
     token: B.token, method: 'DELETE',
   })
   await recusado('o token revogado de B deixa de servir', '/api/integrations/sms-agent/v1/claim', { token: gwB.json.token, method: 'POST' })
+}
+
+console.log('\n--- papéis, permissões, utilizadores e convites (ADR-0008) ---')
+{
+  const X = '00000000-0000-4000-8000-000000000000'
+  const papeisB = await req(`/api/orgs/${B.orgId}/roles`, { token: B.token })
+  const membroB = (papeisB.json?.items ?? []).find((r) => r.key === 'member')?.id ?? X
+  const papelB = await req(`/api/orgs/${B.orgId}/roles`, {
+    token: B.token, method: 'POST', body: { name: 'Só da B', capabilities: { 'admin.view_audit': 'allow' } },
+  })
+  const rB = papelB.json?.id ?? X
+  if (papelB.status !== 201) nok('B cria um papel para o teste', `devolveu ${papelB.status}`)
+  const depB = await req(`/api/orgs/${B.orgId}/departments`, { token: B.token, method: 'POST', body: { name: 'Dep B' } })
+  const dB = depB.json?.id ?? X
+  const convB = await req(`/api/orgs/${B.orgId}/invitations`, {
+    token: B.token, method: 'POST', body: { email: `convidado-${Date.now()}@${B.email.split('@')[1]}`, role_id: membroB, delivery: 'code' },
+  })
+  const iB = convB.json?.id ?? X
+  const regraB = await req(`/api/orgs/${B.orgId}/sod-rules`, {
+    token: B.token, method: 'POST', body: { name: 'Regra B', capabilities: ['admin.view_audit', 'admin.manage_roles'] },
+  })
+  const sB = regraB.json?.id ?? X
+  const a = { token: A.token }
+  await recusado('A lista os papéis da org B', `/api/orgs/${B.orgId}/roles`, a)
+  await recusado('A cria um papel na org B', `/api/orgs/${B.orgId}/roles`, { ...a, method: 'POST', body: { name: 'intruso' } })
+  await recusado('A lê um papel da org B', `/api/orgs/${B.orgId}/roles/${rB}`, a)
+  await recusado('A altera um papel da org B', `/api/orgs/${B.orgId}/roles/${rB}`, { ...a, method: 'PATCH', body: { name: 'x' } })
+  await recusado('A apaga um papel da org B', `/api/orgs/${B.orgId}/roles/${rB}`, { ...a, method: 'DELETE' })
+  await recusado('A duplica um papel da org B', `/api/orgs/${B.orgId}/roles/${rB}/duplicate`, { ...a, method: 'POST', body: {} })
+  await recusado('A lê a coluna da matriz da org B', `/api/orgs/${B.orgId}/roles/${rB}/capabilities`, a)
+  await recusado('A reescreve a matriz da org B', `/api/orgs/${B.orgId}/roles/${rB}/capabilities`, { ...a, method: 'PUT', body: { values: {} } })
+  await recusado('A exporta a matriz da org B', `/api/orgs/${B.orgId}/permission-matrix`, a)
+  await recusado('A simula um utilizador da org B', `/api/orgs/${B.orgId}/authorization/evaluations`, { ...a, method: 'POST', body: { user_id: B.userId } })
+  await recusado('A lê as «minhas» capacidades na org B', `/api/orgs/${B.orgId}/members/me/capabilities`, a)
+  await recusado('A atribui papel a alguém da org B', `/api/orgs/${B.orgId}/members/${B.userId}/role`, { ...a, method: 'PUT', body: { role_id: membroB } })
+  await recusado('A lista regras SoD da org B', `/api/orgs/${B.orgId}/sod-rules`, a)
+  await recusado('A cria regra SoD na org B', `/api/orgs/${B.orgId}/sod-rules`, { ...a, method: 'POST', body: { name: 'z', capabilities: ['admin.view_audit', 'admin.manage_roles'] } })
+  await recusado('A lê uma regra SoD da org B', `/api/orgs/${B.orgId}/sod-rules/${sB}`, a)
+  await recusado('A altera uma regra SoD da org B', `/api/orgs/${B.orgId}/sod-rules/${sB}`, { ...a, method: 'PATCH', body: { name: 'w' } })
+  await recusado('A apaga uma regra SoD da org B', `/api/orgs/${B.orgId}/sod-rules/${sB}`, { ...a, method: 'DELETE' })
+  await recusado('A aceita risco na org B', `/api/orgs/${B.orgId}/sod-rules/${sB}/risk-acceptances`, { ...a, method: 'POST', body: { user_id: B.userId, justification: 'justificação longa' } })
+  await recusado('A lê violações SoD da org B', `/api/orgs/${B.orgId}/sod-violations`, a)
+  await recusado('A lista conflitos de papel da org B', `/api/orgs/${B.orgId}/role-conflicts`, a)
+  await recusado('A resolve um conflito da org B', `/api/orgs/${B.orgId}/role-conflicts/${X}/resolve`, { ...a, method: 'POST', body: { decision: 'keep_current' } })
+  await recusado('A lista aprovações da org B', `/api/orgs/${B.orgId}/approval-requests`, a)
+  await recusado('A lê uma aprovação da org B', `/api/orgs/${B.orgId}/approval-requests/${X}`, a)
+  await recusado('A aprova na org B', `/api/orgs/${B.orgId}/approval-requests/${X}/approve`, { ...a, method: 'POST', body: {} })
+  await recusado('A recusa na org B', `/api/orgs/${B.orgId}/approval-requests/${X}/reject`, { ...a, method: 'POST', body: { reason: 'x' } })
+  await recusado('A lista utilizadores da org B', `/api/orgs/${B.orgId}/users`, a)
+  await recusado('A suspende em massa na org B', `/api/orgs/${B.orgId}/users/bulk-actions`, { ...a, method: 'POST', body: { action: 'suspend', user_ids: [B.userId] } })
+  await recusado('A importa CSV na org B', `/api/orgs/${B.orgId}/users/imports`, { ...a, method: 'POST', body: { csv: 'email\nx@y.local' } })
+  await recusado('A lista convites da org B', `/api/orgs/${B.orgId}/invitations`, a)
+  await recusado('A convida para a org B', `/api/orgs/${B.orgId}/invitations`, { ...a, method: 'POST', body: { email: 'x@y.local', role_id: membroB } })
+  await recusado('A lê um convite da org B', `/api/orgs/${B.orgId}/invitations/${iB}`, a)
+  await recusado('A revoga um convite da org B', `/api/orgs/${B.orgId}/invitations/${iB}`, { ...a, method: 'DELETE' })
+  await recusado('A reenvia um convite da org B', `/api/orgs/${B.orgId}/invitations/${iB}/resend`, { ...a, method: 'POST', body: {} })
+  await recusado('A lista departamentos da org B', `/api/orgs/${B.orgId}/departments`, a)
+  await recusado('A cria departamento na org B', `/api/orgs/${B.orgId}/departments`, { ...a, method: 'POST', body: { name: 'x' } })
+  await recusado('A lê um departamento da org B', `/api/orgs/${B.orgId}/departments/${dB}`, a)
+  await recusado('A renomeia um departamento da org B', `/api/orgs/${B.orgId}/departments/${dB}`, { ...a, method: 'PATCH', body: { name: 'y' } })
+  await recusado('A apaga um departamento da org B', `/api/orgs/${B.orgId}/departments/${dB}`, { ...a, method: 'DELETE' })
+  await recusado('A lê os lugares da org B', `/api/orgs/${B.orgId}/seats`, a)
+  await recusado('A liberta lugares na org B', `/api/orgs/${B.orgId}/seats/release`, { ...a, method: 'POST', body: { inactive_days: 60 } })
+  await recusado('A lê o aprovisionamento da org B', `/api/orgs/${B.orgId}/provisioning`, a)
+  await recusado('A lê as regras de entrada da org B', `/api/orgs/${B.orgId}/entry-rules`, a)
+  await recusado('A reescreve as regras de entrada da org B', `/api/orgs/${B.orgId}/entry-rules`, { ...a, method: 'PUT', body: { create_account_on_first_login: false, approved_domains: [], suspend_on_odoo_exit: true, external_guest_ttl_hours: 24 } })
+  await recusado('A (admin de org) fixa o tecto de lugares da org B', `/api/operator/v1/organizations/${B.orgId}/seats`, { ...a, method: 'PUT', body: { max_seats: 1 } })
+  const codigo = convB.json?.token
+  if (codigo) {
+    await recusado('A aceita o convite da B com o código (correio de outra pessoa)', '/api/invitations/accept', { ...a, method: 'POST', body: { token: codigo } })
+    const aindaPendente = await req(`/api/orgs/${B.orgId}/invitations/${iB}`, { token: B.token })
+    if (aindaPendente.json?.status === 'pending') ok('e o convite da B CONTINUA pendente')
+    else nok('e o convite da B CONTINUA pendente', JSON.stringify(aindaPendente.json))
+  } else nok('B cria um convite para o teste', `devolveu ${convB.status}`)
+  const papelAinda = await req(`/api/orgs/${B.orgId}/roles/${rB}`, { token: B.token })
+  if (papelAinda.json?.name === 'Só da B') ok('e o papel da B CONTINUA igual')
+  else nok('e o papel da B CONTINUA igual', JSON.stringify(papelAinda.json))
+  // Controlo positivo: B lê o seu directório.
+  await permitido('controlo: B lê o seu directório', `/api/orgs/${B.orgId}/users`, { token: B.token })
 }
 
 console.log('\n--- sem autenticação nenhuma ---')

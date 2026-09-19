@@ -31,7 +31,6 @@ const Status = lazy(() => import('./pages/Status'))
 const ApiDocs = lazy(() => import('./pages/ApiDocs'))
 const Legal = lazy(() => import('./pages/Legal'))
 const SharePage = lazy(() => import('./pages/SharePage'))
-const AcceptInvite = lazy(() => import('./pages/AcceptInvite'))
 const Diagram = lazy(() => import('./pages/Diagram'))
 const RecordingPlayer = lazy(() => import('./pages/RecordingPlayer'))
 
@@ -49,7 +48,6 @@ type Route =
   | { kind: 'lobby'; code: string }
   | { kind: 'telemovel'; code: string }
   | { kind: 'share'; token: string }
-  | { kind: 'invite'; token: string }
   | { kind: 'diagram'; id: string | null }
   | { kind: 'player'; id: string }
 
@@ -65,8 +63,6 @@ function parseHash(): Route {
   if (telemovel) return { kind: 'telemovel', code: telemovel[1] }
   const share = h.match(/^#\/share\/([a-f0-9]+)$/)
   if (share) return { kind: 'share', token: share[1] }
-  const invite = h.match(/^#\/invite\/([a-f0-9]+)$/)
-  if (invite) return { kind: 'invite', token: invite[1] }
   const diagram = h.match(/^#\/whiteboards\/diagram(?:\/([A-Za-z0-9_-]+))?(?:\?.*)?$/)
   if (diagram) return { kind: 'diagram', id: diagram[1] ?? null }
   const player = h.match(/^#\/recordings\/([0-9a-f-]{36})(?:\?.*)?$/)
@@ -124,20 +120,6 @@ export default function App() {
   if (location.hash.startsWith('#/api-docs')) return <RouteFallback><ApiDocs /></RouteFallback>
   if (location.hash.startsWith('#/legal')) return <RouteFallback><Legal /></RouteFallback>
   if (route.kind === 'share') return <RouteFallback><SharePage token={route.token} /></RouteFallback>
-  if (route.kind === 'invite') {
-    return (
-      <RouteFallback>
-        <AcceptInvite
-          token={route.token}
-          onAccepted={(u) => {
-            setUser(u)
-            location.hash = '/'
-          }}
-        />
-      </RouteFallback>
-    )
-  }
-
   if (!user) {
     return (
       <Login

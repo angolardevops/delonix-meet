@@ -819,6 +819,7 @@ dependencies = [
  "delonix-meet-core",
  "hex",
  "serde",
+ "serde_json",
  "url",
  "uuid",
 ]

@@ -1478,6 +1478,44 @@ pub async fn ws_directo(
                 "sem organização: não pode usar destinos guardados".into(),
             );
         };
+        // `broadcast.public_destinations` (ADR-0008 §4) e o limite de destinos em
+        // simultâneo do papel (§8): quem pede tem de ter a capacidade.
+        match crate::org::require_capability_for(
+            &state,
+            org_id,
+            user_id,
+            delonix_meet_domain::identity::authorization::Capability::BroadcastPublicDestinations,
+            delonix_meet_domain::identity::authorization::ResourceScope::Organization,
+            &crate::org::Action {
+                name: "broadcast.start_saved_destinations",
+                target: serde_json::json!({"org_id": org_id, "room": codigo.to_lowercase(), "destination_ids": ids_guardados}),
+            },
+        )
+        .await
+        {
+            Ok(grant) => match crate::org::role_destination_limit(&state, grant.role_id).await {
+                Ok(Some(max)) if ids_guardados.len() > max as usize => {
+                    return recusa(
+                        ws,
+                        format!(
+                            "o seu papel permite {max} destinos em simultâneo e pediu {}",
+                            ids_guardados.len()
+                        ),
+                    )
+                }
+                Err(_) => return recusa(ws, "não foi possível ler o limite do papel".into()),
+                _ => {}
+            },
+            Err(ApiError::Domain(e)) if e.code == "authz.approval_required" => {
+                return recusa(ws, e.message)
+            }
+            Err(_) => {
+                return recusa(
+                    ws,
+                    "sem a capacidade broadcast.public_destinations nesta organização".into(),
+                )
+            }
+        }
         match crate::stream_destinations::resolve_for_broadcast(&state, org_id, &ids_guardados)
             .await
         {

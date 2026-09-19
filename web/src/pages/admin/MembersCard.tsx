@@ -5,17 +5,14 @@
  */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { listInvites, revokeInvite, updateEmployee } from '../../api'
-import type { Branch, Employee, Invite } from '../../api'
+import { updateEmployee } from '../../api'
+import type { Branch, Employee } from '../../api'
 import type { Async } from '../../components/AsyncSection'
-import { useAsync } from '../../components/AsyncSection'
 import { Alert, Avatar, Button, Card, Checkbox, IconButton, Select, Tag } from '../../ui/kit'
 import { SearchBar, SearchResults } from '../../ui/search/SearchResults'
 import { useResourceSearch } from '../../ui/search/useResourceSearch'
-import CsvImportDialog from './CsvImportDialog'
-import InviteDialog from './InviteDialog'
 import { AddMemberDialog, EditMemberDialog, RemoveMemberDialog } from './MemberDialogs'
-import { formatAgo, orgErrorMessage, refusalAware, useLocaleTag } from './orgShared'
+import { formatAgo, orgErrorMessage, useLocaleTag } from './orgShared'
 import { membersFallback } from './search'
 
 export default function MembersCard({
@@ -34,55 +31,22 @@ export default function MembersCard({
   const { t } = useTranslation()
   const locale = useLocaleTag()
   const rs = useResourceSearch<Employee>({ resource: 'members', orgId, ns: 'members.', fallback: membersFallback(orgId) })
-  const invites = useAsync(() => refusalAware(listInvites(orgId), t), [orgId])
   const [adding, setAdding] = useState(false)
-  const [inviting, setInviting] = useState(false)
-  const [importingCsv, setImportingCsv] = useState(false)
   const [editing, setEditing] = useState<Employee | null>(null)
   const [removing, setRemoving] = useState<Employee | null>(null)
   const [notice, setNotice] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
   const [bulkErr, setBulkErr] = useState('')
-  const [suspending, setSuspending] = useState<string | null>(null)
-  const [revoking, setRevoking] = useState<string | null>(null)
 
   const all = state.s === 'ready' ? state.d : []
-  const pendingInvites = invites.state.s === 'ready' ? invites.state.d : []
-  const activos = all.filter((m) => !m.suspended_at).length
-  const suspensos = all.filter((m) => m.suspended_at).length
+  const activos = all.length
+  const suspensos = 0
   const reloadAll = () => {
     reload()
     rs.reload()
-    invites.reload()
   }
 
-  async function toggleSuspend(m: Employee) {
-    setSuspending(m.user_id)
-    setBulkErr('')
-    try {
-      await updateEmployee(orgId, m.user_id, { suspended: !m.suspended_at })
-      setNotice(m.suspended_at ? t('org.membro.reactivado', { nome: m.username }) : t('org.membro.suspenso', { nome: m.username }))
-      reloadAll()
-    } catch (e) {
-      setBulkErr(orgErrorMessage(e, t, 'org.erro.guardar'))
-    } finally {
-      setSuspending(null)
-    }
-  }
-
-  async function revoke(inv: Invite) {
-    setRevoking(inv.id)
-    setBulkErr('')
-    try {
-      await revokeInvite(orgId, inv.id)
-      invites.reload()
-    } catch (e) {
-      setBulkErr(orgErrorMessage(e, t, 'org.erro.guardar'))
-    } finally {
-      setRevoking(null)
-    }
-  }
   function toggleOne(id: string) {
     setSelected((s) => {
       const next = new Set(s)
@@ -120,18 +84,12 @@ export default function MembersCard({
       title={t('org.membro.titulo')}
       eyebrow={
         state.s === 'ready'
-          ? t('org.membro.contagemDetalhe', { activos, convidados: pendingInvites.length, suspensos })
+          ? t('org.membro.contagemDetalhe', { activos, convidados: 0, suspensos })
           : undefined
       }
       flush
       actions={
         <span className="org-row-actions">
-          <Button variant="secondary" size="sm" icon="upload" onClick={() => setImportingCsv(true)}>
-            {t('org.csv.abrir')}
-          </Button>
-          <Button variant="secondary" size="sm" icon="link" onClick={() => setInviting(true)}>
-            {t('org.convidar.abrir')}
-          </Button>
           <Button variant="primary" size="sm" icon="userPlus" onClick={() => setAdding(true)}>
             {t('org.membro.adicionar')}
           </Button>
@@ -254,7 +212,6 @@ export default function MembersCard({
                               </strong>
                               <span className="dx-muted dx-num">{m.email}</span>
                             </span>
-                            {m.suspended_at && <Tag tone="live">{t('org.membro.suspensoBadge')}</Tag>}
                           </span>
                         </td>
                         <td>{m.role === 'admin' ? <Tag tone="accent">{t('org.papel.admin')}</Tag> : <Tag plain>{t('org.papel.membro')}</Tag>}</td>
@@ -264,15 +221,6 @@ export default function MembersCard({
                         <td>
                           <span className="org-row-actions">
                             <IconButton icon="edit" bare label={t('org.membro.editarA', { nome: m.username })} onClick={() => setEditing(m)} />
-                            {!self && (
-                              <IconButton
-                                icon={m.suspended_at ? 'play' : 'lock'}
-                                bare
-                                disabled={suspending === m.user_id}
-                                label={m.suspended_at ? t('org.membro.reactivarA', { nome: m.username }) : t('org.membro.suspenderA', { nome: m.username })}
-                                onClick={() => void toggleSuspend(m)}
-                              />
-                            )}
                             {!self && (
                               <IconButton icon="trash" bare label={t('org.membro.removerA', { nome: m.username })} onClick={() => setRemoving(m)} />
                             )}
@@ -287,33 +235,6 @@ export default function MembersCard({
           )}
         />
       </div>
-
-      {pendingInvites.length > 0 && (
-        <div className="org-card-pad org-invites">
-          <h3 className="org-invites__title">{t('org.convidar.pendentesTitulo', { count: pendingInvites.length })}</h3>
-          <ul className="org-simple">
-            {pendingInvites.map((inv) => (
-              <li key={inv.id}>
-                <span className="org-simple__main">
-                  <strong className="dx-num">{inv.email}</strong>
-                  <span className="dx-muted">
-                    {inv.role === 'admin' ? t('org.papel.admin') : t('org.papel.membro')}
-                    {' · '}
-                    {t('org.convidar.expiraEm', { data: new Date(inv.expires_at).toLocaleDateString() })}
-                  </span>
-                </span>
-                <IconButton
-                  icon="x"
-                  bare
-                  disabled={revoking === inv.id}
-                  label={t('org.convidar.revogarA', { email: inv.email })}
-                  onClick={() => void revoke(inv)}
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       {adding && (
         <AddMemberDialog
@@ -352,12 +273,6 @@ export default function MembersCard({
             reloadAll()
           }}
         />
-      )}
-      {inviting && (
-        <InviteDialog orgId={orgId} branches={branches} onClose={() => setInviting(false)} onInvited={() => invites.reload()} />
-      )}
-      {importingCsv && (
-        <CsvImportDialog orgId={orgId} onClose={() => setImportingCsv(false)} onImported={() => invites.reload()} />
       )}
     </Card>
   )

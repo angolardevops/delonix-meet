@@ -290,7 +290,7 @@ pub async fn list_gateways(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<GatewayInfo>>, ApiError> {
-    crate::rbac::require_permission(&state, org_id, auth.user_id, "sms.manage").await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let rows = sqlx::query_as::<_, GatewayInfo>(
         "SELECT id, name, token_prefix AS prefix, created_at, last_seen_at,
                 COALESCE(last_seen_at > now() - make_interval(secs => $2), false) AS online
@@ -338,7 +338,7 @@ pub async fn create_gateway(
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateGatewayReq>,
 ) -> Result<impl IntoResponse, ApiError> {
-    crate::rbac::require_permission(&state, org_id, auth.user_id, "sms.manage").await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let name: String = req.name.trim().chars().take(60).collect();
     let name = if name.is_empty() {
         "Gateway USB".to_string()
@@ -397,7 +397,7 @@ pub async fn revoke_gateway(
     auth: AuthUser,
     Path((org_id, gateway_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
-    crate::rbac::require_permission(&state, org_id, auth.user_id, "sms.manage").await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let mut tx = state.db.begin().await?;
     let done = sqlx::query(
         "UPDATE sms_gateway SET revoked_at = now()
@@ -471,7 +471,7 @@ pub async fn list_devices(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<DeviceInfo>>, ApiError> {
-    crate::rbac::require_permission(&state, org_id, auth.user_id, "sms.manage").await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let rows = sqlx::query_as::<_, DeviceInfo>(
         "SELECT d.id, d.gateway_id, g.name AS gateway_name, d.device_key, d.vendor_id,
                 d.product_id, d.manufacturer, d.product, d.serial, d.kind, d.transport,
@@ -527,7 +527,7 @@ pub async fn get_route(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<RouteInfo>, ApiError> {
-    crate::rbac::require_permission(&state, org_id, auth.user_id, "sms.manage").await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     Ok(Json(route_info(&state, org_id).await?))
 }
 
@@ -556,7 +556,7 @@ pub async fn put_route(
     Path(org_id): Path<Uuid>,
     Json(req): Json<PutRouteReq>,
 ) -> Result<Json<RouteInfo>, ApiError> {
-    crate::rbac::require_permission(&state, org_id, auth.user_id, "sms.manage").await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     if let Some(device_id) = req.device_id {
         // Só um dispositivo DESTA org, de um gateway não revogado. De outra org
         // é 404: não se confirma que existe.

@@ -306,6 +306,15 @@ pub struct OdooUserEntry {
     pub mobile_phone: Option<serde_json::Value>,
     #[serde(default)]
     pub work_phone: Option<serde_json::Value>,
+    /// Ids externos dos grupos (`modulo.nome`) — mapeiam papéis (ADR-0008 §9).
+    /// Ausente = não enviados: o papel não muda.
+    #[serde(default)]
+    pub groups: Option<Vec<String>>,
+    /// Departamento no Odoo (`hr.department`): o id e o nome.
+    #[serde(default)]
+    pub department_id: Option<i64>,
+    #[serde(default)]
+    pub department_name: Option<String>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -317,6 +326,10 @@ pub struct ProvisionReq {
     pub admin_email: String,
     #[serde(default)]
     pub users: Vec<OdooUserEntry>,
+    /// `true` = a lista é o directório COMPLETO: com «suspender ao sair do Odoo»
+    /// activo, quem não vem nela é suspenso (`odoo_exit`).
+    #[serde(default)]
+    pub full_directory: bool,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -331,6 +344,12 @@ pub struct ProvisionResult {
     /// Membros sincronizados cujo telefone do Odoo NÃO foi gravado (ex.: número
     /// fora de Angola, que o encaminhamento de SMS não serve). Aditivo à v1.
     pub phones_rejected: Vec<SkippedUser>,
+    /// Papéis mudados por grupo do Odoo.
+    pub role_changes: usize,
+    /// Conflitos de papel criados (a decidir na consola).
+    pub role_conflicts: usize,
+    /// Suspensos por saída do Odoo (`full_directory`).
+    pub suspended: usize,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -388,6 +407,8 @@ pub async fn provision(
             .await;
     }
 
+    let (mut role_changes, mut role_conflicts) = (0usize, 0usize);
+    let mut present = Vec::new();
     for u in &req.users {
         let email = u.email.trim().to_lowercase();
         let existed: bool =
@@ -396,6 +417,14 @@ pub async fn provision(
                 .fetch_one(&state.db)
                 .await?;
         let admin = email == admin_email || u.is_admin;
+        // Regras de entrada (ADR-0008 §11): uma conta NOVA só nasce se a org o permite.
+        if !existed && !crate::odoo_sso::may_create_account(&state, org_id, &email).await {
+            skipped.push(SkippedUser {
+                email,
+                reason: "as regras de entrada da organização não criam esta conta".into(),
+            });
+            continue;
+        }
 
         let user_id = match crate::odoo_sso::upsert_member(
             &state,
@@ -417,6 +446,25 @@ pub async fn provision(
             }
             Err(e) => return Err(e),
         };
+        present.push(user_id);
+        let groups: Option<std::collections::BTreeSet<String>> = u.groups.as_ref().map(|g| {
+            g.iter()
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect()
+        });
+        let dept_ref = u.department_id.map(|d| format!("hr.department:{d}"));
+        let dept = match (&dept_ref, u.department_name.as_deref().map(str::trim)) {
+            (Some(r), Some(n)) if !n.is_empty() => Some((r.as_str(), n)),
+            _ => None,
+        };
+        match crate::org::apply_odoo_attributes(&state, org_id, user_id, groups.as_ref(), dept)
+            .await?
+        {
+            crate::org::OdooApplied::RoleChanged => role_changes += 1,
+            crate::org::OdooApplied::Conflict => role_conflicts += 1,
+            crate::org::OdooApplied::Unchanged => {}
+        }
 
         let phone = crate::sms::phone_from_directory(
             &crate::sms::DirectoryField::from_json(u.mobile_phone.as_ref()),
@@ -454,10 +502,28 @@ pub async fn provision(
         }
     }
 
-    sqlx::query("UPDATE organizations SET odoo_synced_at = now() WHERE id = $1")
-        .bind(org_id)
-        .execute(&state.db)
-        .await?;
+    let suspended = if req.full_directory
+        && crate::directory::entry_rules_of(&state.db, org_id)
+            .await?
+            .suspend_on_odoo_exit
+    {
+        crate::org::suspend_odoo_leavers(&state, org_id, &present).await?
+    } else {
+        0
+    };
+    sqlx::query(
+        "UPDATE organizations SET odoo_synced_at = now(), odoo_last_sync = $2 WHERE id = $1",
+    )
+    .bind(org_id)
+    .bind(
+        serde_json::json!({"source": "provision", "at": chrono::Utc::now(), "created": created,
+            "updated": updated, "skipped": skipped.len(), "role_changes": role_changes,
+            "conflicts": role_conflicts, "suspended": suspended,
+            "groups_read": req.users.iter().any(|u| u.groups.is_some()),
+            "full_directory": req.full_directory}),
+    )
+    .execute(&state.db)
+    .await?;
 
     crate::audit::log(
         &state.db,
@@ -477,6 +543,9 @@ pub async fn provision(
         updated,
         skipped,
         phones_rejected,
+        role_changes,
+        role_conflicts,
+        suspended,
     }))
 }
 

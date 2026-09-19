@@ -27,7 +27,8 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{auth::AuthUser, error::ApiError, org::require_admin_pub, AppState};
+use crate::{auth::AuthUser, error::ApiError, AppState};
+use delonix_meet_domain::identity::authorization::{Capability, ResourceScope};
 
 /// Escreve um evento de auditoria. Não propaga erro — mas falha ALTO.
 pub async fn log(db: &PgPool, org_id: Option<Uuid>, actor_id: Uuid, action: &str, target: &str) {
@@ -204,7 +205,7 @@ pub async fn verificar_cadeia(db: &PgPool, org_id: Uuid) -> Result<VerificacaoCa
     responses(
         (status = 200, body = VerificacaoCadeia),
         (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
-        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Sem `admin.view_audit` (`authz.missing_capability`).", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -213,7 +214,14 @@ pub async fn verify(
     Path(org_id): Path<Uuid>,
     auth: AuthUser,
 ) -> Result<Json<VerificacaoCadeia>, ApiError> {
-    require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::org::require_capability(
+        &state,
+        org_id,
+        auth.user_id,
+        Capability::AdminViewAudit,
+        ResourceScope::Organization,
+    )
+    .await?;
     Ok(Json(verificar_cadeia(&state.db, org_id).await?))
 }
 
@@ -244,7 +252,7 @@ pub struct AuditQuery {
         (status = 200, body = Vec<AuditEntry>),
         (status = 400, description = "`limit` não numérico.", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
-        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Sem `admin.view_audit` (`authz.missing_capability`).", body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -254,7 +262,14 @@ pub async fn list(
     Query(q): Query<AuditQuery>,
     auth: AuthUser,
 ) -> Result<Json<Vec<AuditEntry>>, ApiError> {
-    require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::org::require_capability(
+        &state,
+        org_id,
+        auth.user_id,
+        Capability::AdminViewAudit,
+        ResourceScope::Organization,
+    )
+    .await?;
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     // LEFT JOIN e `actor_name` como recuo: com o INNER JOIN anterior, apagar
     // uma conta fazia os eventos DELA desaparecerem da vista do administrador —
