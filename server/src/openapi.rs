@@ -120,6 +120,7 @@ fn parts() -> Vec<utoipa::openapi::OpenApi> {
         crate::actions::ApiDoc::openapi(),
         crate::presence::ApiDoc::openapi(),
         crate::ai::ApiDoc::openapi(),
+        crate::net_probe::ApiDoc::openapi(),
         crate::rooms::ApiDoc::openapi(),
         crate::recordings::ApiDoc::openapi(),
         crate::whiteboards::ApiDoc::openapi(),

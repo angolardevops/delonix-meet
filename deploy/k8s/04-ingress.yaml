@@ -55,6 +55,12 @@ spec:
 # senão não trocam media (admissão/partilha/vídeo falham). O cliente envia
 # /ws?token=...&room=CODE. O /rtc (presença) fica no ingress principal — é
 # propagado por Redis e não precisa de afinidade.
+#
+# GET /api/rooms/{code}/waiting entra aqui também (regex, `use-regex`): a
+# fila de espera é a MESMA memória do SignalingHub do /ws, por sala — sem
+# esta linha, a rota no ingress principal (round-robin) responderia "ninguém
+# à espera" sempre que calhasse num pod diferente do que tem a sala. O
+# cliente já manda `?room=CODE` à espera disto (ver rooms::waiting).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -64,6 +70,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/upstream-hash-by: "$arg_room"
+    nginx.ingress.kubernetes.io/use-regex: "true"
 spec:
   ingressClassName: nginx
   tls:
@@ -79,5 +86,12 @@ spec:
             backend:
               service:
                 name: delonix-server-ws  # Service dedicado → backend próprio → hash aplica-se
+                port:
+                  number: 8180
+          - path: /api/rooms/[^/]+/waiting
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: delonix-server-ws
                 port:
                   number: 8180
