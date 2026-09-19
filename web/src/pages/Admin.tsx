@@ -30,6 +30,7 @@ import MembersCard from './admin/MembersCard'
 import OrgsCard from './admin/OrgsCard'
 import { RetentionCard, StorageCard } from './admin/PolicyCards'
 import { refusalAware, useOrgSelection } from './admin/orgShared'
+import RolesCard from './admin/RolesCard'
 import SettingsCard from './admin/SettingsCard'
 import SmsGatewayCard from './admin/SmsGatewayCard'
 import { BranchesCard, GroupsCard, RoomsCard } from './admin/StructureCards'
@@ -146,6 +147,7 @@ function AdminBody({
           <OrgsCard orgs={orgs} activeId={org.id} onSelect={onSelectOrg} />
           <AuditCard orgId={org.id} />
           <MembersCard orgId={org.id} meId={user.id} state={people.state} reload={reloadMembers} branches={branchList} />
+          <RolesCard orgId={org.id} />
           <VoiceCard orgId={org.id} />
           <ExtensionsCard orgId={org.id} people={peopleList} />
           <SmsGatewayCard orgId={org.id} />
