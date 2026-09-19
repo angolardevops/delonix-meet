@@ -1,3 +1,18 @@
+> **Estado em 2026-09-19: lado SFU implementado e testado
+> (`server/src/pstn_bridge.rs`, `server/src/voice.rs::activate_pstn_bridge_for`);
+> lado FreeSWITCH por confirmar.** A recomendação abaixo (Abordagem B) foi
+> seguida à letra: ingress/egress SRTP com chaves efémeras por sala, mistura
+> Opus real (decode→soma escalada→encode, sem clipping por desenho — ver os
+> testes de `pstn_bridge.rs`) dos participantes WebRTC para 1 stream PSTN. O
+> que ficou por confirmar é exactamente o "Plano de teste" abaixo pede — não
+> foi possível validar contra FreeSWITCH real nesta sandbox — E, mais
+> especificamente, qual é o mecanismo FreeSWITCH correcto para o dialplan/Lua
+> mandar/receber esse RTP/SRTP sem abrir um segundo diálogo SIP (ver o
+> comentário extenso no topo de `voice/freeswitch/scripts/dialin_ivr.lua`).
+> Até essa confirmação, o dial-in continua, em produção, a cair na
+> conferência local do FreeSWITCH (sem regressão) — a ponte SFU fica pronta
+> mas não ligada.
+
 # Delonix Meet — Ponte FreeSWITCH ↔ SFU (sub-fase 2b) · Design
 
 > Como o áudio **PSTN** (conferência do FreeSWITCH) e o áudio **WebRTC** (SFU

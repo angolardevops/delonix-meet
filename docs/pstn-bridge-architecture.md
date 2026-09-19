@@ -1,3 +1,17 @@
+> **SUPERSEDIDO em 2026-09-19.** Este documento descreve a Abordagem A
+> ("Phantom Tracks" / FreeSWITCH como participante WebRTC do SFU), que foi
+> **avaliada e REJEITADA** a favor da Abordagem B — ver
+> `docs/pstn-sfu-bridge-design.md` para a decisão e o porquê (menos
+> acoplamento: o FreeSWITCH não precisa de falar a sinalização WebRTC do SFU;
+> a complexidade nova fica confinada a um mixer de egress bem definido).
+> A Abordagem B foi implementada em `server/src/pstn_bridge.rs` (SRTP
+> genuíno, mistura Opus real — nada disto existia quando este documento foi
+> escrito). O esboço de código abaixo (`phantom_listeners`,
+> `spawn_phantom_listener`, `pstn_outbounds` em `sfu.rs`) era código morto —
+> sem SRTP, sem mistura, sem nenhum chamador — e foi removido do `sfu.rs`
+> nesse mesmo commit. Mantido aqui só para registo do porquê a Abordagem A
+> não foi o caminho escolhido; não usar como referência de implementação.
+
 # Arquitetura da Ponte de Media PSTN ↔ SFU (Fase 3)
 
 Para integrar utilizadores PSTN (chamadas telefónicas via SIP Trunk + FreeSWITCH) na mesma sala virtual que os clientes WebRTC, implementaremos uma abordagem de **RTP Inbound Mapping (Phantom Tracks)**.
