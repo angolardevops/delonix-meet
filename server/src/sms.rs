@@ -195,7 +195,12 @@ fn operator_link(state: &AppState, op: Operator) -> Option<SmppLink> {
         Operator::Movicel => state.config.sms_movicel_smpp.as_deref(),
         Operator::Africell => state.config.sms_africell_smpp.as_deref(),
     }?;
-    SmppLink::parse(raw).ok()
+    let ca_file = match op {
+        Operator::Unitel => state.config.sms_unitel_smpp_ca.clone(),
+        Operator::Movicel => state.config.sms_movicel_smpp_ca.clone(),
+        Operator::Africell => state.config.sms_africell_smpp_ca.clone(),
+    };
+    Some(SmppLink::parse(raw).ok()?.with_ca_file(ca_file))
 }
 
 #[derive(Serialize)]
@@ -1497,7 +1502,7 @@ pub fn spawn_worker(state: Arc<AppState>) {
         match raw.map(SmppLink::parse) {
             None => tracing::info!(operator = op.as_str(), "SMS: operador por contratar"),
             Some(Ok(link)) => {
-                tracing::info!(operator = op.as_str(), host = %link.host, "SMS: operador configurado")
+                tracing::info!(operator = op.as_str(), host = %link.host, tls = link.tls, "SMS: operador configurado")
             }
             Some(Err(e)) => {
                 tracing::error!(operator = op.as_str(), error = %e, "SMS: configuração SMPP inválida — operador desligado")

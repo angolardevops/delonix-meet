@@ -39,9 +39,21 @@ redis = { version = "0.27", default-features = false, features = ["tokio-comp", 
 regex = "1.13.0"
 # Limpeza de material de chave em memória (ver signaling::Secret).
 zeroize = "1"
+# SMPP sobre TLS (ADR-0005, smpps://). `rustls`/`tokio-rustls` e `webpki-roots`
+# já estavam na árvore (sqlx, reqwest/openidconnect via rustls-tls, e
+# hyper-rustls) — aqui só se tornam dependências directas para o handshake
+# `smpps://`. `pem` idem, já usado pelo `jsonwebtoken` e pelo `rcgen`, aqui
+# para ler a CA própria de um operador (`SMS_<OPERADOR>_SMPP_CA`).
+rustls = "0.23"
+tokio-rustls = "0.26"
+webpki-roots = "1"
+pem = "3"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
+# Certificado auto-assinado só para o SMSC falso do teste TLS (sms_smpp.rs);
+# já estava na árvore como dependência normal do `webrtc`/`dtls`.
+rcgen = "0.13"
 
 # webrtc-ice 0.17.1 com UMA alteração: responde 487 (Role Conflict) autenticado
 # a um pedido com o mesmo papel ICE que o do agente, em vez de o deitar fora

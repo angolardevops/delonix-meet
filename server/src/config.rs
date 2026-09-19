@@ -53,13 +53,23 @@ pub struct Config {
     /// de a conta nascer, e é o operador que o vai buscar.
     pub platform_admin_user_ids: Vec<uuid::Uuid>,
     /// Ligações SMPP aos operadores móveis (ADR-0005):
-    /// `smpp://system_id:password@host:2775?source_addr=DELONIX`. Ausente =>
+    /// `smpp://system_id:password@host:2775?source_addr=DELONIX` (texto
+    /// simples) ou `smpps://…` (a mesma sintaxe, envolvida em TLS antes do
+    /// bind — validação contra as raízes do sistema por omissão). Ausente =>
     /// operador por contratar, e o encaminhamento não o escolhe. São da
     /// PLATAFORMA (o contrato é da Delonix), por isso vêm do ambiente e não de
     /// uma tabela — não há cifra de segredos em repouso (S5).
     pub sms_unitel_smpp: Option<String>,
     pub sms_movicel_smpp: Option<String>,
     pub sms_africell_smpp: Option<String>,
+    /// Feixe de CA (PEM, um ou mais certificados) para validar o SMSC de cada
+    /// operador quando `smpps://` e a CA não é pública — carrega-se de um
+    /// ficheiro no disco, nunca em claro no ambiente. Sem isto e com
+    /// `smpps://`, valida-se contra as raízes do sistema (`webpki-roots`).
+    /// Ignorado com `smpp://` (texto simples).
+    pub sms_unitel_smpp_ca: Option<String>,
+    pub sms_movicel_smpp_ca: Option<String>,
+    pub sms_africell_smpp_ca: Option<String>,
     /// Tarifa estimada por minuto (inbound) para o cálculo de custo no CDR.
     pub voice_tariff_inbound: f64,
     /// Sufixo do domínio SIP dos ramais internos (`VOICE_RAMAIS_DOMAIN_SUFFIX`):
@@ -243,6 +253,15 @@ impl Config {
             sms_unitel_smpp: env::var("SMS_UNITEL_SMPP").ok().filter(|v| !v.is_empty()),
             sms_movicel_smpp: env::var("SMS_MOVICEL_SMPP").ok().filter(|v| !v.is_empty()),
             sms_africell_smpp: env::var("SMS_AFRICELL_SMPP").ok().filter(|v| !v.is_empty()),
+            sms_unitel_smpp_ca: env::var("SMS_UNITEL_SMPP_CA")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            sms_movicel_smpp_ca: env::var("SMS_MOVICEL_SMPP_CA")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            sms_africell_smpp_ca: env::var("SMS_AFRICELL_SMPP_CA")
+                .ok()
+                .filter(|v| !v.is_empty()),
             voice_tariff_inbound: env::var("VOICE_TARIFF_INBOUND")
                 .ok()
                 .and_then(|v| v.parse().ok())
