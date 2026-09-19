@@ -299,6 +299,14 @@ pub struct OdooUserEntry {
     pub email: String,
     #[serde(default)]
     pub is_admin: bool,
+    /// Telemóvel do directório. `serde_json::Value` e não `String`: o Odoo
+    /// manda `false` num campo vazio, e um integrador antigo nem manda o
+    /// campo — só `Value` distingue ausente de `false`/`""` (ver `sms::DirectoryField`).
+    #[serde(default)]
+    pub mobile_phone: Option<serde_json::Value>,
+    /// Telefone de serviço; usado se `mobile_phone` não der um número utilizável.
+    #[serde(default)]
+    pub work_phone: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -321,6 +329,9 @@ pub struct ProvisionResult {
     /// v1: um integrador antigo ignora o campo, e continua a receber `created`
     /// e `updated` com o mesmo significado.
     pub skipped: Vec<SkippedUser>,
+    /// Telefones do directório que não foram gravados (nenhum número utilizável
+    /// entre `mobile_phone`/`work_phone`). Aditivo à v1.
+    pub phones_rejected: Vec<SkippedUser>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -348,7 +359,9 @@ pub struct SkippedUser {
     description = "Provisiona o directório de utilizadores do Odoo na organização do token.\n\n\
 Autentica SÓ pelo token de integração `dlxo_` (a chave `dlx_` da organização recebe `401`), \
 em `Authorization: Bearer …` ou `X-Integration-Token: …`. Uma entrada cuja conta pertence a \
-outra organização ou é local não é aplicada e vem em `skipped`.",
+outra organização ou é local não é aplicada e vem em `skipped`. `mobile_phone`/`work_phone` \
+sincronizam o telefone do membro nesta org (`phone_source = odoo`, nunca sobrescreve um número \
+`manual`); um número que o encaminhamento não sabe usar vem em `phones_rejected`.",
     security(("api_key" = [])),
     request_body = ProvisionReq,
     responses(
@@ -366,6 +379,7 @@ pub async fn provision(
     let mut created = 0usize;
     let mut updated = 0usize;
     let mut skipped = Vec::new();
+    let mut phones_rejected = Vec::new();
     let admin_email = req.admin_email.trim().to_lowercase();
 
     // Actualizar nome da org para o nome da empresa Odoo
@@ -406,6 +420,24 @@ pub async fn provision(
             }
             Err(e) => return Err(e),
         };
+
+        let phone = crate::sms::phone_from_directory(
+            &crate::sms::DirectoryField::from_json(u.mobile_phone.as_ref()),
+            &crate::sms::DirectoryField::from_json(u.work_phone.as_ref()),
+        );
+        match phone {
+            crate::sms::DirectoryPhone::Untouched => {}
+            crate::sms::DirectoryPhone::Set(p) => {
+                crate::org::sync_member_phone_from_directory(&state, org_id, user_id, p.as_deref())
+                    .await?;
+            }
+            crate::sms::DirectoryPhone::Rejected(reason) => {
+                phones_rejected.push(SkippedUser {
+                    email: email.clone(),
+                    reason,
+                })
+            }
+        }
 
         if existed {
             // O nome acompanha o Odoo, mas só numa conta que ESTA org gere (o
@@ -449,6 +481,7 @@ pub async fn provision(
         created,
         updated,
         skipped,
+        phones_rejected,
     }))
 }
 
