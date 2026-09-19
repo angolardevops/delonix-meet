@@ -427,11 +427,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/extensions/{id}/regenerate-password",
             post(ramais::regenerate_extension_password),
         )
+        // ---- Fase 2: ramal alcançável do PSTN via DID dedicado ----
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/did",
+            axum::routing::put(ramais::assign_extension_did)
+                .delete(ramais::unassign_extension_did),
+        )
         // API interna do FreeSWITCH (X-Voice-Secret, igual à do dial-in PSTN)
         .route("/api/voice/ivr/directory", post(ramais::ivr_directory))
         .route(
             "/api/voice/ivr/resolve-extension",
             post(ramais::ivr_resolve_extension),
+        )
+        .route(
+            "/api/voice/ivr/dialplan-did",
+            post(ramais::ivr_dialplan_did),
         )
         // Gestão de chaves de API (admin da org, sessão)
         // Gateway de SMS (ADR-0005): consola da org (sessão, admin) e agente USB (token dlxg_).

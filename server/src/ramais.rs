@@ -6,12 +6,13 @@
 //! atribuído, nunca expira. Este módulo não toca em `voice_room`/PIN/dial-in;
 //! é infraestrutura aditiva e paralela (migração 0055).
 //!
-//! Fora de âmbito NESTA fase (fases seguintes do mesmo plano, não aqui):
-//! - um ramal alcançável a partir do PSTN (falta a ponte PSTN↔ramal);
-//! - um ramal ligado a uma sala de reunião em vídeo.
-//!
-//! Nenhuma UI ou mensagem deste módulo pode sugerir que qualquer das duas já
-//! funciona — é a mesma disciplina que `VoiceCard.tsx` já aplica ao SFU.
+//! Fase 2 (mesmo ficheiro, secção "Fase 2" mais abaixo): um ramal pode agora
+//! ser alcançado a partir do PSTN quando tem um DID dedicado atribuído
+//! (migração `0056_ramais_did.sql`, estende `voice_did`). Continua fora de
+//! âmbito: um ramal ligado a uma sala de reunião em vídeo — a ponte
+//! ramal↔SFU é fase seguinte do mesmo plano, e nenhuma UI ou mensagem deste
+//! módulo pode sugerir que já existe (mesma disciplina que `VoiceCard.tsx`
+//! já aplica à ponte FreeSWITCH↔SFU em falta).
 //!
 //! ## A fronteira Kamailio/FreeSWITCH (o que está e o que NÃO está verificado)
 //!
@@ -632,6 +633,297 @@ pub async fn ivr_resolve_extension(
     }
 }
 
+// ============================================================
+//  Fase 2 — ramal alcançável do PSTN (DID dedicado, sem PIN)
+// ============================================================
+//
+// Estende voice_did (migração 0014, server/src/voice.rs) com uma FK opcional
+// para voice_extensions (migração 0056_ramais_did.sql). Continua a não tocar
+// em voice_room/voice_participant/voice_cdr — o dial-in efémero por PIN
+// (voice.rs::ivr_validate_pin) e este DID-por-ramal são dois caminhos
+// PARALELOS que só partilham o inventário `voice_did`.
+//
+// Regra de atribuição (a mesma que voice.rs::create_room já aplica à escolha
+// implícita de um DID "dedicated"): só um DID cujo `org_id` é o da própria
+// org pode ser atribuído a um ramal dela — um número do pool partilhado
+// (`org_id IS NULL`) fica disponível para todas as orgs por definição, e
+// prendê-lo a UM ramal de UMA org quebraria essa promessa para as outras.
+//
+// Ainda fora de âmbito (fase seguinte do mesmo plano, não aqui): ponte para
+// uma sala de reunião em vídeo — um ramal com DID atribuído recebe VOZ
+// directa, não entra numa sala do SFU. Nenhuma UI ou mensagem adicionada
+// aqui pode sugerir o contrário — a mesma disciplina do cabeçalho acima.
+
+#[derive(Deserialize)]
+pub struct AssignExtensionDidReq {
+    pub did_id: Uuid,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExtensionDidInfo {
+    pub did_id: Uuid,
+    pub e164: String,
+}
+
+/// `PUT /api/orgs/{org_id}/extensions/{id}/did` (admin) — atribui um DID
+/// dedicado da própria org a um ramal. A partir de agora quem ligar para
+/// `e164` cai DIRECTAMENTE neste ramal (ver `ivr_dialplan_did`), sem PIN e
+/// sem IVR. Rejeita: DID inexistente/inactivo, DID do pool partilhado ou de
+/// outra org, DID já atribuído a outro ramal, DID em uso por uma voice_room
+/// activa (ver o comentário sobre não-atomicidade na migração 0056).
+pub async fn assign_extension_did(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((org_id, id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<AssignExtensionDidReq>,
+) -> Result<Json<ExtensionDidInfo>, ApiError> {
+    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
+
+    let ext_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM voice_extensions WHERE id = $1 AND org_id = $2)",
+    )
+    .bind(id)
+    .bind(org_id)
+    .fetch_one(&state.db)
+    .await?;
+    if !ext_exists {
+        return Err(ApiError::NotFound);
+    }
+
+    #[derive(sqlx::FromRow)]
+    struct DidRow {
+        org_id: Option<Uuid>,
+        active: bool,
+        extension_id: Option<Uuid>,
+        e164: String,
+    }
+    let did: Option<DidRow> =
+        sqlx::query_as("SELECT org_id, active, extension_id, e164 FROM voice_did WHERE id = $1")
+            .bind(req.did_id)
+            .fetch_optional(&state.db)
+            .await?;
+    let Some(did) = did else {
+        return Err(ApiError::BadRequest("DID não encontrado".into()));
+    };
+    if !did.active {
+        return Err(ApiError::BadRequest("DID inactivo".into()));
+    }
+    if did.org_id != Some(org_id) {
+        return Err(ApiError::BadRequest(
+            "só um DID dedicado a esta organização pode ser atribuído a um ramal dela \
+             — números do pool partilhado ficam disponíveis para todas as orgs"
+                .into(),
+        ));
+    }
+    if did.extension_id.is_some() {
+        return Err(ApiError::Conflict(
+            "este número já está atribuído a outro ramal".into(),
+        ));
+    }
+    let room_active: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM voice_room WHERE did_id = $1 AND status = 'active')",
+    )
+    .bind(req.did_id)
+    .fetch_one(&state.db)
+    .await?;
+    if room_active {
+        return Err(ApiError::Conflict(
+            "este número está em uso por uma sala de voz activa".into(),
+        ));
+    }
+
+    let res = sqlx::query("UPDATE voice_did SET extension_id = $1 WHERE id = $2")
+        .bind(id)
+        .bind(req.did_id)
+        .execute(&state.db)
+        .await;
+    match res {
+        Ok(_) => {}
+        Err(sqlx::Error::Database(dbe)) if dbe.is_unique_violation() => {
+            return Err(ApiError::Conflict(
+                "este ramal já tem outro número atribuído (pedido concorrente)".into(),
+            ))
+        }
+        Err(e) => return Err(e.into()),
+    }
+
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "ramal.did_atribuido",
+        &format!("{} → ramal {}", did.e164, id),
+    )
+    .await;
+
+    Ok(Json(ExtensionDidInfo {
+        did_id: req.did_id,
+        e164: did.e164,
+    }))
+}
+
+/// `DELETE /api/orgs/{org_id}/extensions/{id}/did` (admin) — desatribui o DID
+/// de um ramal; o número volta a ficar livre para outro ramal ou para uma
+/// sala de voz efémera. Idempotente: sem DID atribuído, não é um erro.
+pub async fn unassign_extension_did(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((org_id, id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
+    let ext_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM voice_extensions WHERE id = $1 AND org_id = $2)",
+    )
+    .bind(id)
+    .bind(org_id)
+    .fetch_one(&state.db)
+    .await?;
+    if !ext_exists {
+        return Err(ApiError::NotFound);
+    }
+    sqlx::query("UPDATE voice_did SET extension_id = NULL WHERE extension_id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "ramal.did_desatribuido",
+        &id.to_string(),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Campos candidatos que o `mod_xml_curl` do FreeSWITCH pode enviar no POST
+/// da secção "dialplan". Ao contrário da secção "directory" (onde `user`/
+/// `domain` são os nomes mais consensuais na documentação — ver
+/// `XmlCurlDirectoryReq` acima), os nomes aqui variam mais entre versões
+/// (prefixo `Caller-`/`Hunt-`, maiúscula em cada palavra) e **não foram
+/// confirmados contra uma instância real** — mesma ressalva do topo deste
+/// ficheiro. Por isso aceitamos várias chaves candidatas, por ordem de
+/// probabilidade, em vez de assumir uma única.
+const DIALPLAN_DESTINATION_KEYS: &[&str] = &[
+    "Caller-Destination-Number",
+    "Hunt-Destination-Number",
+    "destination_number",
+];
+
+fn first_present<'a>(
+    m: &'a std::collections::HashMap<String, String>,
+    keys: &[&str],
+) -> Option<&'a str> {
+    // `find_map` tem de decidir "presente" DENTRO do próprio fecho — um
+    // `.filter()` encadeado a seguir só se aplicaria ao primeiro resultado
+    // que o `find_map` já tivesse aceite, e uma chave presente mas em branco
+    // (`"   "`) já conta como aceite antes de lá chegar, parando a procura
+    // cedo demais em vez de cair para a chave candidata seguinte. Apanhado
+    // por `first_present_skips_blank_values_and_falls_through`.
+    keys.iter()
+        .find_map(|k| m.get(*k).map(|s| s.trim()).filter(|s| !s.is_empty()))
+}
+
+/// `POST /api/voice/ivr/dialplan-did` — segunda secção do MESMO `mod_xml_curl`
+/// que a directoria da Fase 1 (`ivr_directory`, mesmo `X-Voice-Secret`/
+/// `?secret=`): o FreeSWITCH pede aqui o dialplan dinâmico da secção
+/// "dialplan" quando uma chamada inbound precisa de ser encaminhada. Só
+/// respondemos quando o número discado é o DID DEDICADO de um ramal
+/// (`voice_did.extension_id`); para qualquer outro número devolvemos "não
+/// encontrado" — o FreeSWITCH cai então para o dialplan estático existente
+/// (`voice/freeswitch/dialplan/public/00_delonix_dialin.xml`, o dial-in por
+/// PIN), que este endpoint NUNCA deve interceptar. Nunca devolve erro HTTP
+/// por "não encontrado" pelo mesmo motivo que `ivr_directory`: um FreeSWITCH
+/// mal configurado não deve ver 500s, e "not found" é uma resposta XML
+/// válida, não uma falha.
+///
+/// **O que NÃO foi possível verificar aqui** (sem uma instância FreeSWITCH
+/// real): (1) os nomes exactos dos campos do POST — ver
+/// `DIALPLAN_DESTINATION_KEYS`; (2) a precedência real entre esta resposta
+/// dinâmica e o dialplan estático já carregado a partir de
+/// `dialplan/public/*.xml`. O pressuposto, herdado do mesmo padrão que a
+/// Fase 1 já assume para a secção "directory" (aceite ali sem instância real,
+/// ver o aviso no topo do ficheiro): o `mod_xml_curl` é consultado por
+/// chamada e "not found" faz o FreeSWITCH cair para o estático. Se isso NÃO
+/// se confirmar contra uma instância real, o sintoma seria "atribuir um DID
+/// a um ramal não muda o comportamento da chamada" (fica sempre no IVR por
+/// PIN) — nunca uma chamada perdida, porque a via antiga continua intacta.
+/// Confirmar com `debug="true"` em `xml_curl.conf.xml` antes de produção.
+pub async fn ivr_dialplan_did(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<DirectoryQuery>,
+    Form(fields): Form<std::collections::HashMap<String, String>>,
+) -> Result<Response, ApiError> {
+    // Mesmo segredo, mesmo esquema de fallback ?secret= que ivr_directory —
+    // ver o comentário lá sobre o custo conhecido (segredo em URL de acesso).
+    if check_media_secret(&state, &headers).is_err() {
+        check_media_secret_str(&state, q.secret.as_deref().unwrap_or(""))?;
+    }
+
+    let Some(raw_number) = first_present(&fields, DIALPLAN_DESTINATION_KEYS) else {
+        return Ok(xml_response(XML_NOT_FOUND.into()));
+    };
+
+    // O dialplan estático aceita "+" opcional (`^\+?\d{6,15}$` em
+    // 00_delonix_dialin.xml); voice_did.e164 é sempre guardado COM "+"
+    // (voice.rs::create_did valida isso na criação). Tenta as duas formas em
+    // vez de assumir qual delas o FreeSWITCH envia — não encontrar aqui é
+    // sempre seguro (cai no estático), nunca é um erro.
+    let with_plus = if raw_number.starts_with('+') {
+        raw_number.to_string()
+    } else {
+        format!("+{raw_number}")
+    };
+    let without_plus = raw_number.trim_start_matches('+').to_string();
+    let candidates = [with_plus, without_plus];
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        sip_username: String,
+        org_id: Uuid,
+    }
+    let mut row: Option<Row> = None;
+    for cand in &candidates {
+        row = sqlx::query_as(
+            "SELECT ve.sip_username, ve.org_id
+               FROM voice_did d JOIN voice_extensions ve ON ve.id = d.extension_id
+              WHERE d.e164 = $1 AND d.active AND ve.active",
+        )
+        .bind(cand)
+        .fetch_optional(&state.db)
+        .await?;
+        if row.is_some() {
+            break;
+        }
+    }
+    let Some(row) = row else {
+        return Ok(xml_response(XML_NOT_FOUND.into()));
+    };
+
+    let domain = sip_domain_for_org(&state, row.org_id).await?;
+    let sip_username_x = xml_escape(&row.sip_username);
+    let domain_x = xml_escape(&domain);
+    let dest_digits_x = xml_escape(raw_number.trim_start_matches('+'));
+    let body = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<document type="freeswitch/xml">
+  <section name="dialplan">
+    <context name="public">
+      <extension name="delonix_ramal_did">
+        <condition field="destination_number" expression="^\+?{dest_digits_x}$">
+          <action application="set" data="rtp_secure_media=mandatory"/>
+          <action application="set" data="hangup_after_bridge=true"/>
+          <action application="bridge" data="user/{sip_username_x}@{domain_x}"/>
+        </condition>
+      </extension>
+    </context>
+  </section>
+</document>"#
+    );
+    Ok(xml_response(body))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,5 +994,82 @@ mod tests {
     fn not_found_xml_is_well_formed_for_mod_xml_curl() {
         assert!(XML_NOT_FOUND.contains(r#"status="not found""#));
         assert!(XML_NOT_FOUND.starts_with("<?xml"));
+    }
+
+    // ---------- Fase 2: DID por ramal ----------
+
+    fn fields(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn first_present_picks_the_first_candidate_key_that_has_a_nonempty_value() {
+        let f = fields(&[("Hunt-Destination-Number", "244912345678")]);
+        assert_eq!(
+            first_present(&f, DIALPLAN_DESTINATION_KEYS),
+            Some("244912345678")
+        );
+    }
+
+    #[test]
+    fn first_present_prefers_earlier_keys_over_later_ones() {
+        let f = fields(&[
+            ("Caller-Destination-Number", "101"),
+            ("Hunt-Destination-Number", "102"),
+        ]);
+        assert_eq!(first_present(&f, DIALPLAN_DESTINATION_KEYS), Some("101"));
+    }
+
+    #[test]
+    fn first_present_skips_blank_values_and_falls_through() {
+        let f = fields(&[
+            ("Caller-Destination-Number", "   "),
+            ("destination_number", "+244912345678"),
+        ]);
+        assert_eq!(
+            first_present(&f, DIALPLAN_DESTINATION_KEYS),
+            Some("+244912345678")
+        );
+    }
+
+    #[test]
+    fn first_present_is_none_when_no_candidate_key_is_present() {
+        let f = fields(&[("section", "dialplan")]);
+        assert_eq!(first_present(&f, DIALPLAN_DESTINATION_KEYS), None);
+    }
+
+    #[test]
+    fn dialplan_did_xml_response_is_well_formed() {
+        // Mesma verificação estrutural que not_found_xml_is_well_formed_for_mod_xml_curl,
+        // mas para o corpo de sucesso — sem instância FreeSWITCH para validar
+        // contra o schema real, isto é o que se pode provar aqui: bem formado,
+        // secção/contexto/acções certas, número e AOR escapados.
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<document type="freeswitch/xml">
+  <section name="dialplan">
+    <context name="public">
+      <extension name="delonix_ramal_did">
+        <condition field="destination_number" expression="^\+?{dest}$">
+          <action application="set" data="rtp_secure_media=mandatory"/>
+          <action application="set" data="hangup_after_bridge=true"/>
+          <action application="bridge" data="user/{user}@{domain}"/>
+        </condition>
+      </extension>
+    </context>
+  </section>
+</document>"#,
+            dest = xml_escape("244912345678"),
+            user = xml_escape("ramal_abc123"),
+            domain = xml_escape("acme.ramais.delonix.meet"),
+        );
+        assert!(body.starts_with("<?xml"));
+        assert!(body.contains(r#"section name="dialplan""#));
+        assert!(body.contains(r#"context name="public""#));
+        assert!(body.contains("bridge"));
+        assert!(body.contains("user/ramal_abc123@acme.ramais.delonix.meet"));
     }
 }

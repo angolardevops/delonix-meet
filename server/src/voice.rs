@@ -84,6 +84,12 @@ pub struct VoiceDid {
     pub provider: String,
     pub active: bool,
     pub created_at: DateTime<Utc>,
+    /// Ramal a que este número está permanentemente atribuído (Fase 2, ver
+    /// `ramais.rs::assign_extension_did`) — `None` enquanto o número está
+    /// livre para dial-in por PIN ou por atribuir. Não é uma FK gerida por
+    /// `voice.rs`; só exposta aqui para a consola saber que números já não
+    /// estão disponíveis para uma sala de voz efémera.
+    pub extension_id: Option<Uuid>,
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -158,10 +164,16 @@ pub async fn create_room(
     let backend = MediaBackend::parse(&backend).as_str().to_string();
 
     // Resolver o DID: explícito (validado), dedicado da org, ou do pool partilhado.
+    // `extension_id IS NULL` nas três queries (migração 0056_ramais_did.sql):
+    // um DID já atribuído a um ramal (server/src/ramais.rs::assign_extension_did)
+    // é permanente e alcançado DIRECTAMENTE, sem PIN — não pode ser reaproveitado
+    // aqui para uma sala de voz efémera, ou o mesmo número passaria a ambiguar
+    // entre "toca o ramal" e "pede PIN".
     let did: Option<VoiceDid> = if let Some(id) = req.did_id {
         sqlx::query_as(
-            "SELECT id, org_id, e164, market, model, provider, active, created_at
-             FROM voice_did WHERE id = $1 AND active AND (org_id = $2 OR org_id IS NULL)",
+            "SELECT id, org_id, e164, market, model, provider, active, created_at, extension_id
+             FROM voice_did
+             WHERE id = $1 AND active AND extension_id IS NULL AND (org_id = $2 OR org_id IS NULL)",
         )
         .bind(id)
         .bind(org_id)
@@ -169,8 +181,10 @@ pub async fn create_room(
         .await?
     } else if did_model == "dedicated" {
         sqlx::query_as(
-            "SELECT id, org_id, e164, market, model, provider, active, created_at
-             FROM voice_did WHERE org_id = $1 AND active ORDER BY created_at LIMIT 1",
+            "SELECT id, org_id, e164, market, model, provider, active, created_at, extension_id
+             FROM voice_did
+             WHERE org_id = $1 AND active AND extension_id IS NULL
+             ORDER BY created_at LIMIT 1",
         )
         .bind(org_id)
         .fetch_optional(&state.db)
@@ -178,8 +192,9 @@ pub async fn create_room(
     } else {
         // Modelo partilhado: primeiro um dedicado da org, senão o pool partilhado.
         sqlx::query_as(
-            "SELECT id, org_id, e164, market, model, provider, active, created_at
-             FROM voice_did WHERE active AND (org_id = $1 OR org_id IS NULL)
+            "SELECT id, org_id, e164, market, model, provider, active, created_at, extension_id
+             FROM voice_did
+             WHERE active AND extension_id IS NULL AND (org_id = $1 OR org_id IS NULL)
              ORDER BY (org_id = $1) DESC, created_at LIMIT 1",
         )
         .bind(org_id)
@@ -349,7 +364,7 @@ pub async fn create_did(
     let did: VoiceDid = sqlx::query_as(
         "INSERT INTO voice_did (org_id, e164, market, model, provider)
          VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, org_id, e164, market, model, provider, active, created_at",
+         RETURNING id, org_id, e164, market, model, provider, active, created_at, extension_id",
     )
     .bind(if scoped { Some(org_id) } else { None })
     .bind(e164)
@@ -375,7 +390,7 @@ pub async fn list_dids(
 ) -> Result<Json<Vec<VoiceDid>>, ApiError> {
     crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
     let dids: Vec<VoiceDid> = sqlx::query_as(
-        "SELECT id, org_id, e164, market, model, provider, active, created_at
+        "SELECT id, org_id, e164, market, model, provider, active, created_at, extension_id
          FROM voice_did WHERE org_id = $1 OR org_id IS NULL ORDER BY created_at DESC",
     )
     .bind(org_id)

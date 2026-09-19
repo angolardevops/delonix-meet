@@ -98,6 +98,50 @@ real. Tudo o resto (modelo de dados, API REST de gestão, geração/regeneraçã
 de credenciais, UI de administração) foi corrido e verificado contra um
 Postgres real neste repositório.
 
+## Ramal alcançável do PSTN — DID dedicado (Fase 2, `server/src/ramais.rs`)
+
+Estende o fluxo acima: um ramal pode receber um DID (migração
+`0056_ramais_did.sql`, estende `voice_did`) e passa a ser alcançável
+DIRECTAMENTE do PSTN — quem ligar para esse número cai no ramal, sem PIN e
+sem IVR. Não toca em `voice_room`/PIN/dial-in nem na ponte para uma sala de
+reunião em vídeo (fase seguinte, continua por fazer).
+
+```
+Telefone → SIP Trunk → Kamailio → FreeSWITCH (contexto "public")
+                                       │
+                                       ▼  mod_xml_curl, secção "dialplan"
+                        POST /api/voice/ivr/dialplan-did ───► Control plane
+                        (X-Voice-Secret, número discado)   ◄── XML dialplan
+                                       │
+                          número é DID de ramal?
+                     sim → bridge directo ao ramal (SEM PIN)
+                     não → "not found" → cai no dialplan estático
+                           (00_delonix_dialin.xml, dial-in por PIN de sempre)
+```
+
+Reutiliza a MESMA ligação `mod_xml_curl` da Fase 1 (`xml_curl.conf.xml`) —
+uma segunda `<binding>`, secção "dialplan" em vez de "directory" — em vez de
+um mecanismo paralelo. `POST /api/orgs/{org}/extensions/{id}/did` (PUT/DELETE,
+admin) atribui/desatribui o DID; só um DID dedicado à MESMA org do ramal pode
+ser atribuído (um número do pool partilhado fica disponível para todas as
+orgs, atribuí-lo a um ramal quebraria isso para as outras), e fica bloqueado
+enquanto uma `voice_room` activa o estiver a usar.
+
+**O que NÃO foi possível verificar aqui** (sem uma instância FreeSWITCH real,
+mesma ressalva da Fase 1 acima, agora também para a secção "dialplan"): os
+nomes exactos dos campos do POST (`ramais.rs::DIALPLAN_DESTINATION_KEYS`
+aceita vários candidatos por não ter confirmação), e — mais importante — a
+PRECEDÊNCIA real entre esta resposta dinâmica e o dialplan estático já
+carregado de `dialplan/public/*.xml`: o pressuposto é que o `mod_xml_curl` é
+consultado por chamada e "not found" cai no estático (o mesmo padrão que a
+Fase 1 já assume, sem instância real, para a secção "directory"). Se isso não
+se confirmar, o sintoma esperado é inofensivo — um DID atribuído a um ramal
+continua simplesmente a pedir PIN como antes — nunca uma chamada perdida,
+porque a via antiga (`00_delonix_dialin.xml`) não foi tocada. Confirmar com
+`debug="true"` em `xml_curl.conf.xml` antes de produção. O modelo de dados,
+a API REST de atribuição e a UI foram corridos e verificados contra um
+Postgres real neste repositório.
+
 ## ⚠️ Integração que falta: ponte FreeSWITCH ↔ SFU (sub-fase 2b)
 Nesta sub-fase, os chamadores PSTN entram numa **conferência do FreeSWITCH**
 (`mod_conference`) — falam entre si. Para que o áudio PSTN e o áudio **WebRTC** (SFU
