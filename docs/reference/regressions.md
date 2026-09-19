@@ -2020,6 +2020,16 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Ficheiros.** `server/src/{signaling,room_tools,room_chat,rooms,auth,org,users,pubsub,metrics,lib}.rs`, `server/migrations/0050_room_chat_threads_reactions.sql`, `server/migrations/0051_room_chat_direct.sql`, `server/tests/room_chat.rs`.
 
+### R183 — Dois servidores com dois modelos de gravação: a UI nova falava com rotas e campos que a linha da main não tinha
+
+**Sintoma.** Medido no levantamento UI↔API de 2026-09-17: a UI nova lê `duration_ms`, `kind`, `state`, `transcript_status`, contagens, `description`, `tags` e `visibility` de cada gravação e chama `/details`, `/publish`, `/thumbnail`, `/views`, `/participants`, `/transcript` e `/captions/*`. A linha da main devolvia `duration_secs`, `category`, `title` e `processing_state`, e parte dessas rotas não existia: a biblioteca aparecia vazia de metadados e o leitor a falhar em silêncio.
+
+**Estado nesta linha (honesto).** Reconciliado em parte: as rotas do leitor (`recording_meta`, `recording_captions`, edição e geração de capítulos) convivem com o `recordings.rs` da main, que fica como modelo de dados (título/categoria, capítulos e comentários paginados). O que NÃO está reconciliado é o contrato de DADOS do item da biblioteca da UI nova (`state`, `kind`, `visibility`, `description`, `tags`): decidir qual dos dois modelos fica é uma decisão de produto, e o e2e `gravacoes-meta.mjs` está fora do CI por isso (ver `scripts/e2e-fora-do-ci.txt`).
+
+**Regra (o que já vale).** O worker de transcrição entrega os segmentos com tempos e a língua detectada, e é o SERVIDOR que aplica o DLP a tudo o que chega (`ai-worker/job_source.py`, `transcriber.py`) — um worker que gravasse direto contornaria o DLP.
+
+**Ficheiros.** `ai-worker/{transcriber,job_source,transcribe_worker}.py`, `server/src/{recording_meta,recording_captions,recording_chapters}.rs`, `web/e2e/isolamento.mjs`.
+
 ### R184 — Agendar uma reunião «videoaula» ou «gravar automaticamente» era ignorado: a sala nascia sempre normal, sem espera e sem gravação
 
 **Sintoma.** O formulário de agendar mostrava formato (reunião, videoaula, emissão, híbrida), sala de espera, «gravar automaticamente» e qualidade da gravação, mas `meetings::start` criava SEMPRE uma sala `normal`, sem sala de espera e sem gravação: a pessoa marcava uma emissão com gravação a 1080p e entrava numa reunião comum, sem que nada avisasse que os campos tinham sido descartados. Um campo que o cliente escreve e o sistema ignora é pior do que um campo que não existe.

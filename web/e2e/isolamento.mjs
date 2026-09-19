@@ -741,7 +741,7 @@ const upload = await fetch(`${API}/api/rooms/${salaA.code}/recordings?name=s3.we
 const gravacaoA = upload.ok ? (await upload.json()).id : null
 if (!gravacaoA) nok('A carrega uma gravação para o teste S3', `devolveu ${upload.status}`)
 
-console.log('\n--- Gravações (R183): metadados, publicação, capítulos, comentários, legendas de uma gravação REAL da A ---')
+console.log('\n--- Gravações: metadados, publicação, capítulos, comentários, legendas de uma gravação REAL da A ---')
 // Aqui o id é verdadeiro (a gravação acabou de ser carregada), por isso um
 // `404` para a B quer mesmo dizer «não é tua» — o controlo positivo é a A.
 if (gravacaoA) {
