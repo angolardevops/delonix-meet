@@ -573,7 +573,9 @@ mod tests {
     use crate::ai::fake_ollama::{self, Fake, Generate};
 
     fn client() -> reqwest::Client {
-        crate::webhooks::outbound_http_client()
+        crate::net_guard::Outbound::new(Vec::new())
+            .operator()
+            .clone()
     }
 
     const T: Duration = Duration::from_secs(5);

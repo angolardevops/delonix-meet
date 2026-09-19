@@ -463,15 +463,6 @@ pub(crate) async fn access(state: &AppState, id: Uuid, viewer: Uuid) -> Result<A
     }
 }
 
-/// Acesso a uma gravação para reproduzir (ver `sql_can_view`).
-async fn can_access(state: &AppState, rec: &Recording, user_id: Uuid) -> Result<bool, ApiError> {
-    match access(state, rec.id, user_id).await {
-        Ok(_) => Ok(true),
-        Err(ApiError::NotFound) => Ok(false),
-        Err(e) => Err(e),
-    }
-}
-
 // ---------- recording.ready ----------
 
 /// Uma gravação que ficou pronta, para o `recording.ready`.

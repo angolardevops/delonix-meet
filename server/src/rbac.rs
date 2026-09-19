@@ -101,7 +101,7 @@ pub async fn require_permission(
     user_id: Uuid,
     permission: &str,
 ) -> Result<(), ApiError> {
-    let row = crate::org::active_member_roles(&state, org_id, user_id).await?;
+    let row = crate::org::active_member_roles(state, org_id, user_id).await?;
     let Some((role, role_id)) = row else {
         return Err(ApiError::NotFound);
     };
@@ -250,7 +250,7 @@ async fn load_role(state: &AppState, org_id: Uuid, role_id: Uuid) -> Result<Role
         }
         None => None,
     };
-    let member_count: (i64,) = (crate::org::count_members_with_role_id(&state, id).await?,);
+    let member_count: (i64,) = (crate::org::count_members_with_role_id(state, id).await?,);
 
     let direct: Vec<(String, bool)> = sqlx::query_as(
         "SELECT permission, requires_approval FROM org_role_permissions WHERE role_id = $1",

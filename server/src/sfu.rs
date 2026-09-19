@@ -1031,11 +1031,10 @@ impl SfuState {
                                 crate::metrics::Metrics::inc(&state.metrics.sfu_pc_connected);
                             }
                         }
-                        RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
-                            if counted.swap(false, Relaxed) {
+                        RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed
+                            if counted.swap(false, Relaxed) => {
                                 crate::metrics::Metrics::dec(&state.metrics.sfu_pc_connected);
                             }
-                        }
                         _ => {}
                     }
                     if s == RTCPeerConnectionState::Failed {

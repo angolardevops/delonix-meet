@@ -333,7 +333,7 @@ pub fn spawn_mom_summary(state: Arc<AppState>, meeting_id: Uuid) {
                     state.clone(),
                     org_id,
                     crate::webhooks::Event {
-                        name: "meeting.mom_ready".into(),
+                        name: "meeting.mom_ready",
                         title: "Delonix Meet".into(),
                         text: format!("Ata pronta: {title}"),
                         payload: payload.clone(),
@@ -491,7 +491,9 @@ mod tests {
     use super::*;
 
     fn client() -> reqwest::Client {
-        crate::webhooks::outbound_http_client()
+        crate::net_guard::Outbound::new(Vec::new())
+            .operator()
+            .clone()
     }
 
     const T: Duration = Duration::from_secs(5);

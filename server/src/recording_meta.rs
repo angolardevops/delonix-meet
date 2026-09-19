@@ -112,7 +112,6 @@ pub(crate) fn paginate<T>(
 
 pub const MAX_TAGS: usize = 20;
 pub const MAX_TAG_CHARS: usize = 40;
-pub const MAX_DESCRIPTION_CHARS: usize = 8000;
 
 /// Normaliza etiquetas: sem `#`, minúsculas, sem espaços nas pontas, sem
 /// repetidas. Recusa em vez de cortar em silêncio.
@@ -143,55 +142,6 @@ pub(crate) fn normalize_tags(raw: &[String]) -> Result<Vec<String>, ApiError> {
         )));
     }
     Ok(out)
-}
-
-#[derive(Deserialize)]
-pub struct PatchRecordingReq {
-    #[serde(default)]
-    pub filename: Option<String>,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub tags: Option<Vec<String>>,
-}
-
-/// `PATCH /api/recordings/{id}` — título (nome), descrição e etiquetas.
-pub async fn patch(
-    State(state): State<Arc<AppState>>,
-    auth: AuthUser,
-    Path(id): Path<Uuid>,
-    Json(req): Json<PatchRecordingReq>,
-) -> Result<Json<RecordingItem>, ApiError> {
-    let a = access(&state, id, auth.user_id).await?;
-    a.require_manage()?;
-    let filename = match req.filename.as_deref().map(str::trim) {
-        Some(f) if f.is_empty() || f.chars().count() > 200 => {
-            return Err(ApiError::BadRequest("filename must be 1-200 chars".into()))
-        }
-        other => other.map(str::to_string),
-    };
-    let description = match req.description.as_deref().map(str::trim) {
-        Some(d) if d.chars().count() > MAX_DESCRIPTION_CHARS => {
-            return Err(ApiError::BadRequest(format!(
-                "a descrição tem no máximo {MAX_DESCRIPTION_CHARS} caracteres"
-            )))
-        }
-        other => other.map(str::to_string),
-    };
-    let tags = req.tags.as_deref().map(normalize_tags).transpose()?;
-    sqlx::query(
-        "UPDATE recordings SET filename = COALESCE($2, filename),
-                description = COALESCE($3, description),
-                tags = COALESCE($4, tags)
-         WHERE id = $1",
-    )
-    .bind(id)
-    .bind(filename)
-    .bind(description)
-    .bind(tags)
-    .execute(&state.db)
-    .await?;
-    item_for(&state, id, auth.user_id).await.map(Json)
 }
 
 // ---------- publicação ----------
@@ -482,93 +432,6 @@ pub async fn transcript(
     }))
 }
 
-// ---------- comentários ----------
-
-pub const MAX_COMMENT_CHARS: usize = 2000;
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct Comment {
-    pub id: Uuid,
-    pub recording_id: Uuid,
-    pub user_id: Uuid,
-    pub username: String,
-    pub t_ms: Option<i64>,
-    pub body: String,
-    pub created_at: DateTime<Utc>,
-    /// Quem pede pode apagar (autor do comentário ou gestor da gravação).
-    pub can_delete: bool,
-}
-
-const COMMENT_SELECT: &str = "SELECT c.id, c.recording_id, c.user_id, u.username, c.t_ms, c.body,
-        c.created_at, (c.user_id = $2 OR $3) AS can_delete
- FROM recording_comments c JOIN users u ON u.id = c.user_id";
-
-/// `GET /api/recordings/{id}/comments` — por ordem de criação, paginado.
-pub async fn list_comments(
-    State(state): State<Arc<AppState>>,
-    auth: AuthUser,
-    Path(id): Path<Uuid>,
-    Query(q): Query<PageQuery>,
-) -> Result<Json<Page<Comment>>, ApiError> {
-    let a = access(&state, id, auth.user_id).await?;
-    let size = q.size()?;
-    let cursor = q.cursor()?;
-    let rows: Vec<Comment> = sqlx::query_as(&format!(
-        "{COMMENT_SELECT}
-         WHERE c.recording_id = $1
-           AND ($4::timestamptz IS NULL OR (c.created_at, c.id) > ($4, $5))
-         ORDER BY c.created_at, c.id
-         LIMIT $6"
-    ))
-    .bind(id)
-    .bind(auth.user_id)
-    .bind(a.can_manage)
-    .bind(cursor.map(|c| c.0))
-    .bind(cursor.map(|c| c.1))
-    .bind(size + 1)
-    .fetch_all(&state.db)
-    .await?;
-    Ok(Json(paginate(rows, size, |c| (c.created_at, c.id))))
-}
-
-async fn comment_by_id(
-    state: &AppState,
-    rec: Uuid,
-    comment: Uuid,
-    viewer: Uuid,
-    can_manage: bool,
-) -> Result<Comment, ApiError> {
-    sqlx::query_as(&format!(
-        "{COMMENT_SELECT} WHERE c.recording_id = $1 AND c.id = $4"
-    ))
-    .bind(rec)
-    .bind(viewer)
-    .bind(can_manage)
-    .bind(comment)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)
-}
-
-/// `GET /api/recordings/{id}/comments/{comment_id}`.
-pub async fn get_comment(
-    State(state): State<Arc<AppState>>,
-    auth: AuthUser,
-    Path((id, comment_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<Comment>, ApiError> {
-    let a = access(&state, id, auth.user_id).await?;
-    comment_by_id(&state, id, comment_id, auth.user_id, a.can_manage)
-        .await
-        .map(Json)
-}
-
-#[derive(Deserialize)]
-pub struct CreateCommentReq {
-    pub body: String,
-    #[serde(default)]
-    pub t_ms: Option<i64>,
-}
-
 /// Valida o instante de um comentário/capítulo contra a duração medida.
 pub(crate) fn check_t_ms(t_ms: i64, duration_ms: Option<i64>) -> Result<(), ApiError> {
     if t_ms < 0 {
@@ -582,63 +445,6 @@ pub(crate) fn check_t_ms(t_ms: i64, duration_ms: Option<i64>) -> Result<(), ApiE
         }
     }
     Ok(())
-}
-
-/// `POST /api/recordings/{id}/comments` — quem vê a gravação pode comentar.
-pub async fn create_comment(
-    State(state): State<Arc<AppState>>,
-    auth: AuthUser,
-    Path(id): Path<Uuid>,
-    Json(req): Json<CreateCommentReq>,
-) -> Result<impl IntoResponse, ApiError> {
-    let a = access(&state, id, auth.user_id).await?;
-    let body = req.body.trim();
-    if body.is_empty() || body.chars().count() > MAX_COMMENT_CHARS {
-        return Err(ApiError::BadRequest(format!(
-            "body must be 1-{MAX_COMMENT_CHARS} chars"
-        )));
-    }
-    if let Some(t) = req.t_ms {
-        check_t_ms(t, a.duration_ms)?;
-    }
-    let (cid,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO recording_comments (recording_id, user_id, t_ms, body)
-         VALUES ($1, $2, $3, $4) RETURNING id",
-    )
-    .bind(id)
-    .bind(auth.user_id)
-    .bind(req.t_ms)
-    .bind(body)
-    .fetch_one(&state.db)
-    .await?;
-    let c = comment_by_id(&state, id, cid, auth.user_id, a.can_manage).await?;
-    Ok((
-        StatusCode::CREATED,
-        [(
-            header::LOCATION,
-            format!("/api/recordings/{id}/comments/{cid}"),
-        )],
-        Json(c),
-    ))
-}
-
-/// `DELETE /api/recordings/{id}/comments/{comment_id}` — autor ou gestor.
-pub async fn delete_comment(
-    State(state): State<Arc<AppState>>,
-    auth: AuthUser,
-    Path((id, comment_id)): Path<(Uuid, Uuid)>,
-) -> Result<StatusCode, ApiError> {
-    let a = access(&state, id, auth.user_id).await?;
-    let c = comment_by_id(&state, id, comment_id, auth.user_id, a.can_manage).await?;
-    if !c.can_delete {
-        return Err(ApiError::Forbidden);
-    }
-    sqlx::query("DELETE FROM recording_comments WHERE id = $1 AND recording_id = $2")
-        .bind(comment_id)
-        .bind(id)
-        .execute(&state.db)
-        .await?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]

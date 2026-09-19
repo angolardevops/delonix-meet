@@ -453,7 +453,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/recordings/{recording_id}/chapters/{chapter_id}",
-            get(recordings::get_chapter).delete(recordings::delete_chapter),
+            get(recordings::get_chapter)
+                .patch(recording_chapters::patch)
+                .delete(recordings::delete_chapter),
+        )
+        .route(
+            "/api/recordings/{recording_id}/chapters/generate",
+            post(recording_chapters::generate),
         )
         .route(
             "/api/recordings/{recording_id}/comments",
@@ -1142,7 +1148,7 @@ pub async fn run() {
     }
 
     // Cron: gravações — as presas em `processing` por um pod que morreu passam
-    // a `failed`.
+    // a `failed`, e as transcritas ganham capítulos automáticos (LLM local).
     {
         let state = state.clone();
         tokio::spawn(async move {
@@ -1151,6 +1157,7 @@ pub async fn run() {
             loop {
                 ticker.tick().await;
                 recorder::fail_stale_processing(&state).await;
+                recording_chapters::auto_chapters_sweep(&state).await;
             }
         });
     }

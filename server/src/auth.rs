@@ -950,7 +950,7 @@ pub async fn sso_login(
     .fetch_optional(&state.db)
     .await?;
 
-    let (org_id, issuer_url, client_id, client_secret) = sso.ok_or_else(|| ApiError::NotFound)?;
+    let (org_id, issuer_url, client_id, client_secret) = sso.ok_or(ApiError::NotFound)?;
     // Guardado cifrado (S5); o herdado em claro passa como está.
     let client_secret = crate::secrets_at_rest::open(
         &state.config,
@@ -982,7 +982,7 @@ pub async fn sso_login(
         .cors_origins
         .first()
         .map(|o| format!("{o}/api/auth/sso/callback"))
-        .unwrap_or_else(|| format!("http://localhost:8180/api/auth/sso/callback"));
+        .unwrap_or_else(|| "http://localhost:8180/api/auth/sso/callback".to_string());
 
     let client = CoreClient::from_provider_metadata(
         provider_metadata,
@@ -1113,7 +1113,7 @@ pub async fn sso_callback(
         .cors_origins
         .first()
         .map(|o| format!("{o}/api/auth/sso/callback"))
-        .unwrap_or_else(|| format!("http://localhost:8180/api/auth/sso/callback"));
+        .unwrap_or_else(|| "http://localhost:8180/api/auth/sso/callback".to_string());
 
     let client = CoreClient::from_provider_metadata(
         provider_metadata,

@@ -2240,21 +2240,6 @@ pub(crate) fn sql_active_admin_of(viewer: &str, subject: &str) -> String {
     )
 }
 
-/// Subconsulta `(id, name)` da organização de `subject` que se mostra a
-/// `viewer`: a que os dois partilham, se houver; senão a mais antiga do sujeito.
-/// Uso: `LEFT JOIN LATERAL (<isto>) alias ON true`.
-pub(crate) fn sql_lateral_org_of(subject: &str, viewer: &str) -> String {
-    format!(
-        "SELECT org.id, org.name FROM org_members om \
-         JOIN organizations org ON org.id = om.org_id \
-         WHERE om.user_id = {subject} \
-         ORDER BY EXISTS(SELECT 1 FROM org_members v WHERE v.org_id = om.org_id \
-                         AND v.user_id = {viewer} AND v.archived_at IS NULL) DESC, \
-                  om.created_at, org.id \
-         LIMIT 1"
-    )
-}
-
 /// user_ids dos membros de um grupo (para iniciar chamada de grupo).
 /// Organizações a que um utilizador pertence (para disparar webhooks dos
 /// eventos das suas reuniões/gravações).
@@ -2293,18 +2278,6 @@ pub(crate) async fn title_alongside(
     .await
     .ok()
     .flatten()
-}
-
-/// Organizações onde `user_id` é admin (para analytics/ações administrativas).
-pub async fn admin_orgs_of_user(state: &AppState, user_id: Uuid) -> Vec<Uuid> {
-    sqlx::query_as::<_, (Uuid,)>(
-        "SELECT org_id FROM org_members WHERE user_id = $1 AND role = 'admin' AND archived_at IS NULL",
-    )
-    .bind(user_id)
-    .fetch_all(&state.db)
-    .await
-    .map(|rows| rows.into_iter().map(|r| r.0).collect())
-    .unwrap_or_default()
 }
 
 /// Utilizadores que partilham pelo menos uma organização com `user_id` (exclui

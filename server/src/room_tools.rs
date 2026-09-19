@@ -60,7 +60,7 @@ impl SignalingHub {
                     && question.len() <= 200
                     && (2..=6).contains(&options.len())
                     && options.iter().all(|o| o.len() <= 80)
-                    && correct_option.map_or(true, |c| c < options.len())
+                    && correct_option.is_none_or(|c| c < options.len())
                 {
                     let by = self
                         .username_of(room_id, peer_id)
@@ -99,7 +99,7 @@ impl SignalingHub {
                 if let Some(mut room) = self.rooms.get_mut(&room_id) {
                     if let Some(p) = room.polls.iter_mut().find(|p| p.id == poll) {
                         // 1.5s de tolerância para latência no fim do quiz.
-                        let within_time = p.ends_at.map_or(true, |e| now_ms() <= e + 1500);
+                        let within_time = p.ends_at.is_none_or(|e| now_ms() <= e + 1500);
                         if p.open && within_time && option < p.options.len() {
                             p.votes.insert(peer_id, option);
                         }
@@ -497,13 +497,11 @@ impl SignalingHub {
                 // traços — quem reabrir volta a vê-los.
                 self.broadcast_all(room_id, ServerMsg::WbClose);
             }
-            ClientMsg::TimerClear => {
-                if self.is_host(room_id, peer_id) {
-                    if let Some(mut room) = self.rooms.get_mut(&room_id) {
-                        room.timer_ends_at = None;
-                    }
-                    self.broadcast_all(room_id, ServerMsg::Timer { ends_at: None });
+            ClientMsg::TimerClear if self.is_host(room_id, peer_id) => {
+                if let Some(mut room) = self.rooms.get_mut(&room_id) {
+                    room.timer_ends_at = None;
                 }
+                self.broadcast_all(room_id, ServerMsg::Timer { ends_at: None });
             }
             _ => {}
         }

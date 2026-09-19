@@ -12,8 +12,6 @@
 
 use axum::{
     extract::{Path, State},
-    http::{header, StatusCode},
-    response::IntoResponse,
     Json,
 };
 use chrono::{DateTime, Utc};
@@ -30,7 +28,6 @@ use crate::{
     AppState,
 };
 
-pub const MAX_CHAPTERS: i64 = 100;
 pub const MAX_CHAPTER_TITLE_CHARS: usize = 200;
 /// Tecto de capítulos que se aceitam de uma resposta do LLM.
 const MAX_AUTO_CHAPTERS: usize = 30;
@@ -78,26 +75,6 @@ async fn list_of(state: &AppState, rec: Uuid) -> Result<Vec<Chapter>, ApiError> 
     .await?)
 }
 
-/// `GET /api/recordings/{id}/chapters` — por ordem de tempo (no máximo 100).
-pub async fn list(
-    State(state): State<Arc<AppState>>,
-    auth: AuthUser,
-    Path(id): Path<Uuid>,
-) -> Result<Json<Vec<Chapter>>, ApiError> {
-    access(&state, id, auth.user_id).await?;
-    list_of(&state, id).await.map(Json)
-}
-
-/// `GET /api/recordings/{id}/chapters/{chapter_id}`.
-pub async fn get(
-    State(state): State<Arc<AppState>>,
-    auth: AuthUser,
-    Path((id, chapter_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<Chapter>, ApiError> {
-    access(&state, id, auth.user_id).await?;
-    by_id(&state, id, chapter_id).await.map(Json)
-}
-
 async fn by_id(state: &AppState, rec: Uuid, chapter: Uuid) -> Result<Chapter, ApiError> {
     sqlx::query_as(&format!(
         "SELECT {CHAPTER_COLS} FROM recording_chapters WHERE recording_id = $1 AND id = $2"
@@ -107,54 +84,6 @@ async fn by_id(state: &AppState, rec: Uuid, chapter: Uuid) -> Result<Chapter, Ap
     .fetch_optional(&state.db)
     .await?
     .ok_or(ApiError::NotFound)
-}
-
-#[derive(Deserialize)]
-pub struct CreateChapterReq {
-    pub t_ms: i64,
-    pub title: String,
-}
-
-/// `POST /api/recordings/{id}/chapters` — capítulo manual.
-pub async fn create(
-    State(state): State<Arc<AppState>>,
-    auth: AuthUser,
-    Path(id): Path<Uuid>,
-    Json(req): Json<CreateChapterReq>,
-) -> Result<impl IntoResponse, ApiError> {
-    let a = access(&state, id, auth.user_id).await?;
-    a.require_manage()?;
-    check_t_ms(req.t_ms, a.duration_ms)?;
-    let title = clean_title(&req.title)?;
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM recording_chapters WHERE recording_id = $1")
-            .bind(id)
-            .fetch_one(&state.db)
-            .await?;
-    if count >= MAX_CHAPTERS {
-        return Err(ApiError::Conflict(format!(
-            "no máximo {MAX_CHAPTERS} capítulos por gravação"
-        )));
-    }
-    let ch: Chapter = sqlx::query_as(&format!(
-        "INSERT INTO recording_chapters (recording_id, t_ms, title, source, created_by)
-         VALUES ($1, $2, $3, 'manual', $4) RETURNING {CHAPTER_COLS}"
-    ))
-    .bind(id)
-    .bind(req.t_ms)
-    .bind(&title)
-    .bind(auth.user_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(unique_to_conflict)?;
-    Ok((
-        StatusCode::CREATED,
-        [(
-            header::LOCATION,
-            format!("/api/recordings/{id}/chapters/{}", ch.id),
-        )],
-        Json(ch),
-    ))
 }
 
 #[derive(Deserialize)]
@@ -193,25 +122,6 @@ pub async fn patch(
     .await
     .map_err(unique_to_conflict)?;
     Ok(Json(ch))
-}
-
-/// `DELETE /api/recordings/{id}/chapters/{chapter_id}`.
-pub async fn delete(
-    State(state): State<Arc<AppState>>,
-    auth: AuthUser,
-    Path((id, chapter_id)): Path<(Uuid, Uuid)>,
-) -> Result<StatusCode, ApiError> {
-    let a = access(&state, id, auth.user_id).await?;
-    a.require_manage()?;
-    let res = sqlx::query("DELETE FROM recording_chapters WHERE recording_id = $1 AND id = $2")
-        .bind(id)
-        .bind(chapter_id)
-        .execute(&state.db)
-        .await?;
-    if res.rows_affected() == 0 {
-        return Err(ApiError::NotFound);
-    }
-    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------- geração automática ----------

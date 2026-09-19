@@ -1494,7 +1494,7 @@ pub async fn generate_instances(db: &sqlx::PgPool, parent: &Meeting, invitee_ids
         cursor = next_occurrence(cursor, freq, interval, &byday);
         if parent
             .recurrence_until
-            .map_or(false, |u| cursor.date_naive() > u)
+            .is_some_and(|u| cursor.date_naive() > u)
         {
             break;
         }
@@ -1596,7 +1596,7 @@ fn next_occurrence(
                 if byday.contains(&day_names[wd]) {
                     return next;
                 }
-                next = next + ChronoDuration::days(1);
+                next += ChronoDuration::days(1);
                 tried += 1;
                 // Quando completamos N semanas, só voltamos se passámos N semanas completas
             }

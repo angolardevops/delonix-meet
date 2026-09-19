@@ -792,7 +792,7 @@ pub(crate) async fn validate_pin(
     .await?;
     match row {
         Some((id, room_code, backend)) => {
-            let pstn_bridge = activate_pstn_bridge_for(&state, &room_code, &backend).await;
+            let pstn_bridge = activate_pstn_bridge_for(state, &room_code, &backend).await;
             Ok(ValidatePinResp {
                 voice_room_id: id,
                 room_code,

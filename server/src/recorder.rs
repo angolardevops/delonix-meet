@@ -114,10 +114,10 @@ impl Vp8IvfWriter {
         let is_key = payload[0] & 0x01 == 0;
         // Espera pelo primeiro keyframe; frames a meio sem início são descartados.
         if !self.seen_key {
-            if !(is_key && self.frame.is_empty() && depack.is_partition_head(&pkt.payload)) {
-                if !is_key {
-                    return Ok(());
-                }
+            if !(is_key && self.frame.is_empty() && depack.is_partition_head(&pkt.payload))
+                && !is_key
+            {
+                return Ok(());
             }
             self.seen_key = true;
         }
