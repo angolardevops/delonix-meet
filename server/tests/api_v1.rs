@@ -227,10 +227,30 @@ async fn v1_recordings_list_scoped_to_org(db: sqlx::PgPool) {
     assert_eq!(body, json!({"recordings": []}));
 
     let room = app.new_room(&a, "gravada").await;
-    let rec = app
+    // Ainda privada: uma chave da própria organização não a vê — v1
+    // representa a organização, não um colega com relação directa (R230).
+    let rec_privada = app
         .insert_recording(room["id"].as_str().unwrap(), &a.user_id)
         .await;
     let (_, body) = v1(&app, reqwest::Method::GET, "/recordings", &ka, None).await;
+    assert_eq!(body, json!({"recordings": []}), "privada não deve aparecer");
+
+    let rec = app
+        .insert_recording(room["id"].as_str().unwrap(), &a.user_id)
+        .await;
+    sqlx::query(
+        "UPDATE recordings SET visibility = 'org', published_at = now() WHERE id = $1::uuid",
+    )
+    .bind(&rec)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let (_, body) = v1(&app, reqwest::Method::GET, "/recordings", &ka, None).await;
+    assert_eq!(
+        body["recordings"].as_array().unwrap().len(),
+        1,
+        "só a publicada aparece, a privada ({rec_privada}) continua fora: {body}"
+    );
     let r = &body["recordings"][0];
     assert_eq!(r["id"], rec.as_str());
     assert_eq!(r["room_code"], room["code"]);

@@ -60,6 +60,13 @@
   `POST /api/v1/rooms/{room_code}/bots`, `GET /api/v1/recordings`,
   `GET/POST /api/v1/meetings`, `GET/PATCH/DELETE /api/v1/meetings/{meeting_id}`,
   `POST /api/v1/meetings/{meeting_id}/ring`, `GET /api/v1/meetings/{meeting_id}/minutes`.
+- **Opções de sessão das reuniões (R184)** — iguais na BFF e na v1, e devolvidas por ambas:
+  `format` (`meeting`|`training`|`broadcast`|`hybrid`, omissão `meeting`), `waiting_room`
+  (omissão `false`), `auto_record` (omissão `false`), `record_quality`
+  (`2160p`|`1080p`|`720p`|`audio`, omissão `1080p`). Valor fora da lista → `400
+  meeting.invalid_format` / `meeting.invalid_record_quality`; `auto_record` com `e2ee` →
+  `422 meeting.auto_record_e2ee`. No `PATCH /api/v1/meetings/{meeting_id}` a opção ausente
+  fica como está, e a sala da reunião acompanha a alteração.
 - **Marcador no código:** `server/src/lib.rs`, `let v1_routes = Router::new()…`.
 
 > **Separação feita a 2026-09-16** (reorganização sem aliases, `api-routes.md`): o

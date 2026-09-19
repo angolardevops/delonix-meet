@@ -1795,9 +1795,14 @@ pub async fn update_chapter(
         .t_ms
         .map(|t| rules::validate_t_ms(t, rec.duration_ms))
         .transpose()?;
+    // 'manual' só quando algo mudou de facto: um PATCH sem campos (resave da
+    // UI, retry) não pode converter em silêncio um capítulo automático,
+    // tirando-o para sempre da geração futura (ver o comentário da rota).
     let chapter: Chapter = sqlx::query_as(&format!(
         "UPDATE recording_chapters
-            SET t_ms = COALESCE($3, t_ms), title = COALESCE($4, title), source = 'manual'
+            SET t_ms = COALESCE($3, t_ms), title = COALESCE($4, title),
+                source = CASE WHEN $3 IS NOT NULL OR $4 IS NOT NULL
+                              THEN 'manual' ELSE source END
           WHERE id = $1 AND recording_id = $2
          RETURNING {CHAPTER_COLUMNS}"
     ))

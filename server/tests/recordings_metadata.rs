@@ -402,6 +402,25 @@ async fn publication_opens_to_active_org_members_only(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 201);
+    // Publicar dá reprodução, não a transcrição nem quem esteve na sala —
+    // um colega que nunca participou continua sem os ver (R230).
+    let (st, v) = app
+        .get(&format!("{item}/transcript"), Some(&f.duarte.token))
+        .await;
+    assert_eq!(st, 404, "publicar não abre a transcrição: {v}");
+    let (st, v) = app
+        .get(&format!("{item}/participants"), Some(&f.duarte.token))
+        .await;
+    assert_eq!(st, 404, "publicar não abre quem esteve na sala: {v}");
+    // Controlo: quem participou de facto continua a ver os dois.
+    let (st, _) = app
+        .get(&format!("{item}/transcript"), Some(&f.carla.token))
+        .await;
+    assert_eq!(st, 200, "participante continua a ver a transcrição");
+    let (st, _) = app
+        .get(&format!("{item}/participants"), Some(&f.carla.token))
+        .await;
+    assert_eq!(st, 200, "participante continua a ver quem esteve na sala");
 
     // Outra org: continua sem saber que existe.
     let (st, v) = app.get(&item, Some(&f.b.token)).await;
@@ -673,6 +692,20 @@ async fn chapters_crud_bounds_uniqueness_and_access(db: sqlx::PgPool) {
     assert_eq!(st, 200, "{v}");
     assert_eq!(v["t_ms"], 310_000);
     assert_eq!(v["source"], "manual", "corrigido à mão deixa de ser auto");
+
+    // PATCH sem campos (resave, retry) não converte um capítulo auto em
+    // manual — só uma correcção de facto o faz (R230).
+    sql(
+        app,
+        "UPDATE recording_chapters SET source = 'auto' WHERE id = $1::uuid",
+        location.rsplit('/').next().unwrap(),
+    )
+    .await;
+    let (st, v) = app.patch(&location, Some(&f.a.token), json!({})).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["source"], "auto", "PATCH vazio não mexe na origem");
+    assert_eq!(v["t_ms"], 310_000, "nem no resto");
+
     let (st, v) = app
         .patch(&location, Some(&f.a.token), json!({"t_ms": 999_999}))
         .await;

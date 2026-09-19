@@ -8,8 +8,7 @@
 //! - `POST /api/recordings/{id}/chapters/generate` e `…/captions/generate` —
 //!   trabalho assíncrono, capítulos `auto` sem tocar nos manuais, a resposta
 //!   sem JSON utilizável que NÃO marca a gravação (B12), a tradução com
-//!   progresso e o VTT a `409` enquanto gera ou se falhou;
-//! - `GET|POST /api/net-probe` — tamanhos, tecto, limite por IP.
+//!   progresso e o VTT a `409` enquanto gera ou se falhou.
 mod common;
 
 use std::time::Duration;
@@ -811,79 +810,4 @@ async fn captions_generate_same_language_translation_and_vtt_409(db: sqlx::PgPoo
         )
         .await;
     assert_eq!(st, 404, "nada fica criado");
-}
-
-// ---------------------------------------------------------------------------
-//  Sondagem de rede
-// ---------------------------------------------------------------------------
-
-#[sqlx::test(migrations = "./migrations")]
-async fn net_probe_sizes_ceiling_and_limit_per_ip(db: sqlx::PgPool) {
-    let app = TestApp::spawn(db).await;
-    let a = app.new_org("alfa-probe.test").await;
-
-    let (st, _) = app.get("/api/net-probe?bytes=10", None).await;
-    assert_eq!(st, 401);
-
-    let res = app
-        .http
-        .get(app.url("/api/net-probe?bytes=1000"))
-        .bearer_auth(&a.token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 200);
-    assert_eq!(res.headers()["content-type"], "application/octet-stream");
-    assert_eq!(res.headers()["cache-control"], "no-store");
-    assert_eq!(res.bytes().await.unwrap().len(), 1000);
-    // Acima do tecto fica no tecto.
-    let res = app
-        .http
-        .get(app.url("/api/net-probe?bytes=999999999"))
-        .bearer_auth(&a.token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.bytes().await.unwrap().len(), 1024 * 1024);
-
-    let up = |n: usize| {
-        app.http
-            .post(app.url("/api/net-probe"))
-            .bearer_auth(&a.token)
-            .header("content-type", "application/octet-stream")
-            .body(vec![7u8; n])
-            .send()
-    };
-    let res = up(5000).await.unwrap();
-    assert_eq!(res.status(), 200);
-    let v: Value = res.json().await.unwrap();
-    assert_eq!(v["bytes"], 5000);
-    assert!(v["server_ms"].as_f64().unwrap() >= 0.0);
-    // Sem dados pessoais: só contagens.
-    assert_eq!(v.as_object().unwrap().len(), 2, "{v}");
-    let res = up(1024 * 1024 + 1).await.unwrap();
-    assert_eq!(res.status(), 413);
-    let v: Value = res.json().await.unwrap();
-    assert_eq!(v["code"], "net_probe.too_large");
-
-    // 60 por IP por minuto: já foram 4; a 61.ª é recusada, com Retry-After.
-    let mut refused = None;
-    for i in 5..=61 {
-        let res = app
-            .http
-            .get(app.url("/api/net-probe?bytes=1"))
-            .bearer_auth(&a.token)
-            .send()
-            .await
-            .unwrap();
-        if res.status() == 429 {
-            refused = Some((i, res));
-            break;
-        }
-    }
-    let (i, res) = refused.expect("o limite por IP não travou");
-    assert_eq!(i, 61);
-    assert!(res.headers().contains_key("retry-after"));
-    let v: Value = res.json().await.unwrap();
-    assert_eq!(v["code"], "net_probe.rate_limited");
 }

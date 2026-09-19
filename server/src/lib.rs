@@ -23,7 +23,6 @@ mod metrics;
 mod mfa;
 mod mls;
 pub mod net_guard;
-mod net_probe;
 pub mod nodes;
 mod notifications;
 mod odoo;
@@ -135,8 +134,6 @@ pub struct AppState {
     /// Anti-força-bruta do código MFA na activação e na desactivação (por
     /// conta). Só conta falhas; trava também o código certo (R131).
     pub mfa_limiter: RateLimiter,
-    /// Sondagens de rede da pré-entrada por IP (`net_probe`).
-    pub net_probe_limiter: RateLimiter,
     /// Vagas do LLM local por organização (`AI_STUDIO_CONCURRENCY_PER_ORG`):
     /// sugestões do Estúdio, capítulos e legendas traduzidas contam juntos.
     pub ai_slots: ai_assist::OrgSlots,
@@ -346,6 +343,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // ---- Salas ----
         .route("/api/rooms", post(rooms::create_room))
         .route("/api/rooms/{room_code}", get(rooms::get_room))
+        // Estado vivo da emissão (G1) — rótulos, bytes, débito. Ver o /live
+        // (WebSocket) mais abaixo, que é o que a alimenta.
+        .route(
+            "/api/rooms/{room_code}/live/status",
+            get(broadcast::estado_directo),
+        )
         .route("/api/rooms/{room_code}/join", post(rooms::join_room))
         .route("/api/rooms/{room_code}/messages", get(rooms::room_chat))
         .route(
@@ -354,11 +357,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/rooms/{room_code}/invitations", post(rooms::invite_to_room))
         .route("/api/rooms/{room_code}/quality-samples", post(rooms::post_qos))
-        // Sondagem de rede da pré-entrada («qualidade prevista»): sessão, por IP.
-        .route(
-            "/api/net-probe",
-            get(net_probe::download).post(net_probe::upload),
-        )
         // Tempos de estabelecimento (um por sessão) — ver callTimings.ts.
         .route("/api/rooms/{room_code}/join-timings", post(rooms::post_timings))
         .route(
@@ -388,7 +386,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/meetings/check-conflicts", post(meetings::check_conflicts))
         .route(
             "/api/meetings/{meeting_id}",
-            get(meetings::get_one).delete(meetings::delete),
+            get(meetings::get_one)
+                .patch(meetings::patch)
+                .delete(meetings::delete),
         )
         .route("/api/meetings/{meeting_id}/start", post(meetings::start))
         .route("/api/meetings/{meeting_id}/calendar.ics", get(meetings::ics))
@@ -854,10 +854,6 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
         sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
         mfa_limiter: RateLimiter::new(5, Duration::from_secs(300)),
-        net_probe_limiter: RateLimiter::new(
-            net_probe::PROBES_PER_IP_PER_MINUTE,
-            Duration::from_secs(60),
-        ),
         ai_slots: ai_assist::OrgSlots::new(config.ai_studio_concurrency_per_org),
         outbound,
         config: config.clone(),
@@ -1067,13 +1063,13 @@ pub async fn run() {
     // Cron: retenção do chat da sala (G9) — até ao fim do dia UTC da última
     // mensagem da sala, a promessa da migração 0018.
     {
-        let db = state.db.clone();
+        let state = state.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(3600));
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 ticker.tick().await;
-                match room_chat::retention_sweep(&db).await {
+                match room_chat::retention_sweep(&state).await {
                     Ok(n) if n > 0 => tracing::info!(apagadas = n, "chat retention sweep"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, "chat retention sweep failed"),

@@ -187,9 +187,6 @@ await recusadoNaPorta('A pede sugestões à IA da org B', `/api/orgs/${B.orgId}/
     segments: [{ start_ms: 0, end_ms: 4000, text: 'Bom dia, tipo, vamos rever a rede de Luanda e o troço do Kilamba.' }],
   },
 })
-// A sondagem de rede não tem dados de ninguém: pede só sessão.
-await recusadoNaPorta('Sem sessão não há sondagem de rede', '/api/net-probe?bytes=16', {})
-await permitido('A faz uma sondagem de rede', '/api/net-probe?bytes=16', { token: A.token })
 
 // Os dois DELETE precisam de um recurso REAL. Com um UUID ao acaso, um `404`
 // contaria como recusa e não provaria autorização nenhuma — só que o recurso
@@ -328,6 +325,7 @@ await recusado('A reporta QoS na sala da B', `/api/rooms/${salaB.code}/quality-s
   token: A.token, method: 'POST', body: { rtt_ms: 1, loss_pct: 0, up_kbps: 1 },
 })
 await recusado('anónimo vê metadados da sala da B', `/api/rooms/${salaB.code}`, {})
+await recusado('anónimo vê o estado do directo da sala da B', `/api/rooms/${salaB.code}/live/status`, {})
 
 // REUNIÕES, GRAVAÇÕES E QUADROS da org B (R96).
 //

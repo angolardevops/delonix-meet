@@ -422,6 +422,30 @@ impl AccessFacts {
         self.can_view() || self.can_download()
     }
 
+    /// Ligação directa com a gravação — dono, admin activo da organização,
+    /// participante da sala, ou partilha explícita. **Não** inclui
+    /// `published_to_my_org`: publicar dá reprodução (`can_view`), não uma
+    /// relação com quem esteve na reunião. Usada por `can_see_transcript` e
+    /// `can_see_participants` — capacidades que "publicar para ver" não
+    /// devia abrir a um colega que nunca participou.
+    fn has_direct_relation(&self) -> bool {
+        !self.departed() && (self.is_uploader || self.org_admin || self.participant || self.shared)
+    }
+
+    /// Ler a transcrição (texto e segmentos). Mais estrito que `can_view`
+    /// pela mesma razão de `can_read_caption`: a transcrição pode conter
+    /// nomes e decisões que a dona não revisou antes de publicar para ver.
+    pub fn can_see_transcript(&self) -> bool {
+        self.has_direct_relation()
+    }
+
+    /// Ler quem esteve na sala (`room_participants`). Mesma regra e mesma
+    /// razão que `can_see_transcript`: publicar a gravação não é convite
+    /// para um colega nunca-presente saber quem esteve na reunião.
+    pub fn can_see_participants(&self) -> bool {
+        self.has_direct_relation()
+    }
+
     /// Partilhar com pessoas e gerir o link público: só o DONO, e activo. Um
     /// admin da organização gere metadados mas não decide a quem a gravação de
     /// outra pessoa é mostrada; e quem saiu da empresa já não a partilha (S3).
