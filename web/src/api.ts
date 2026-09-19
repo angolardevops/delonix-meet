@@ -460,7 +460,7 @@ export const updateEmployee = (
   orgId: string,
   userId: string,
   data: { role?: string; title?: string; branch_id?: string | null; suspended?: boolean },
-) => request<Employee>(`/api/orgs/${orgId}/members/${userId}`, { method: 'PATCH', body: JSON.stringify(data) })
+) => request<Employee>(`/api/orgs/${orgId}/employees/${userId}`, { method: 'PATCH', body: JSON.stringify(data) })
 
 export const shareRecording = (id: string, userId: string) =>
   request(`/api/recordings/${id}/shares`, { method: 'POST', body: JSON.stringify({ user_id: userId }) })
@@ -877,13 +877,13 @@ export const createOrg = (name: string) =>
 export const listBranches = (orgId: string) => request<Branch[]>(`/api/orgs/${orgId}/branches`)
 export const createBranch = (orgId: string, name: string, location: string) =>
   request<Branch>(`/api/orgs/${orgId}/branches`, { method: 'POST', body: JSON.stringify({ name, location }) })
-export const listEmployees = (orgId: string) => request<Employee[]>(`/api/orgs/${orgId}/members`)
+export const listEmployees = (orgId: string) => request<Employee[]>(`/api/orgs/${orgId}/employees`)
 export const addEmployee = (
   orgId: string,
   body: { email: string; username?: string; password?: string; title?: string; role?: string; branch_id?: string },
-) => request<Employee>(`/api/orgs/${orgId}/members`, { method: 'POST', body: JSON.stringify(body) })
+) => request<Employee>(`/api/orgs/${orgId}/employees`, { method: 'POST', body: JSON.stringify(body) })
 export const removeEmployee = (orgId: string, userId: string) =>
-  request(`/api/orgs/${orgId}/members/${userId}`, { method: 'DELETE' })
+  request(`/api/orgs/${orgId}/employees/${userId}`, { method: 'DELETE' })
 
 // ---------- Convites por link ("Utilizadores e convites") ----------
 //
@@ -1976,7 +1976,7 @@ export interface SmsMessage {
   created_by: string | null
 }
 
-/** Campos que `GET /api/orgs/{org_id}/members` acrescenta a cada `Employee`. */
+/** Campos que `GET /api/orgs/{org_id}/employees` acrescenta a cada `Employee`. */
 export interface EmployeeSmsFields {
   /** Só para admin ou o próprio; `null` para colegas. */
   phone: string | null
@@ -2113,7 +2113,7 @@ export const setMemberPhone = (
   change: { phone: string | null } | { follow_directory: true },
 ) =>
   request<{ user_id: string; phone: string | null; phone_source: 'manual' | null }>(
-    `/api/orgs/${orgId}/members/${userId}/phone`,
+    `/api/orgs/${orgId}/employees/${userId}/phone`,
     { method: 'PUT', body: JSON.stringify(change) },
   )
 
