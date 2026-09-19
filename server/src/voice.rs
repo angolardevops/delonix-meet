@@ -459,7 +459,7 @@ pub async fn billing_summary(
 //  Autenticada por segredo partilhado (X-Voice-Secret).
 // ============================================================
 
-fn check_media_secret(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+pub(crate) fn check_media_secret(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
     let cfg = state.config.voice_internal_secret.as_bytes();
     if cfg.is_empty() {
         return Err(ApiError::NotFound); // feature desativada => não revela nada

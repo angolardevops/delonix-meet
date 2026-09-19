@@ -22,6 +22,7 @@ mod odoo_sso;
 mod org;
 mod presence;
 mod pubsub;
+mod ramais;
 mod rate_limit;
 mod rbac;
 mod recorder;
@@ -413,6 +414,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // API interna de IVR (autenticada por segredo partilhado, usada pela media)
         .route("/api/voice/ivr/validate", post(voice::ivr_validate_pin))
         .route("/api/voice/ivr/cdr", post(voice::ivr_record_cdr))
+        // ---- Ramais internos (chamada ramal-a-ramal, Fase 1 — ver ramais.rs) ----
+        .route(
+            "/api/orgs/{org_id}/extensions",
+            get(ramais::list_extensions).post(ramais::create_extension),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}",
+            axum::routing::patch(ramais::update_extension).delete(ramais::delete_extension),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/regenerate-password",
+            post(ramais::regenerate_extension_password),
+        )
+        // API interna do FreeSWITCH (X-Voice-Secret, igual à do dial-in PSTN)
+        .route("/api/voice/ivr/directory", post(ramais::ivr_directory))
+        .route(
+            "/api/voice/ivr/resolve-extension",
+            post(ramais::ivr_resolve_extension),
+        )
         // Gestão de chaves de API (admin da org, sessão)
         // Gateway de SMS (ADR-0005): consola da org (sessão, admin) e agente USB (token dlxg_).
         .route("/api/orgs/{org_id}/sms/gateways", get(sms::list_gateways).post(sms::create_gateway))

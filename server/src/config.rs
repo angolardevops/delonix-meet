@@ -62,6 +62,12 @@ pub struct Config {
     pub sms_africell_smpp: Option<String>,
     /// Tarifa estimada por minuto (inbound) para o cálculo de custo no CDR.
     pub voice_tariff_inbound: f64,
+    /// Sufixo do domínio SIP dos ramais internos (`VOICE_RAMAIS_DOMAIN_SUFFIX`):
+    /// cada org fala em `<slug>.<sufixo>` (ex.: `acme.ramais.delonix.meet`).
+    /// O slug distingue as orgs — necessário porque `extension` só é única
+    /// DENTRO da org (ver migração 0055); sem isto, o ramal "101" da Acme e o
+    /// "101" da Zeta colidiriam no mesmo directório SIP.
+    pub voice_ramais_domain_suffix: String,
     /// Diretório onde as gravações são armazenadas (lido uma vez no arranque).
     pub recordings_dir: std::path::PathBuf,
     /// URL do Redis para pub/sub cross-nó (presença multi-instância).
@@ -241,6 +247,10 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
+            voice_ramais_domain_suffix: env::var("VOICE_RAMAIS_DOMAIN_SUFFIX")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "ramais.delonix.meet".into()),
             recordings_dir: env::var("RECORDINGS_DIR")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| std::path::PathBuf::from("recordings")),

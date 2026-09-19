@@ -761,6 +761,7 @@ dependencies = [
  "hex",
  "hmac",
  "jsonwebtoken",
+ "md-5",
  "openidconnect",
  "rand 0.8.6",
  "redis",

@@ -147,9 +147,18 @@ pub(crate) fn sha256_hex(s: &str) -> String {
 
 /// Token com prefixo legível e 256 bits de entropia do SO (`dlx_…`, `dlxg_…`).
 pub(crate) fn random_token(prefix: &str) -> String {
-    let mut bytes = [0u8; 32];
+    format!("{prefix}{}", random_hex(32))
+}
+
+/// `n` bytes de aleatoriedade do SO, em hex minúsculo. A primitiva por trás
+/// de `random_token` para quem precisa de outro comprimento — ex.: as
+/// credenciais SIP em `ramais.rs`, que não seguem o formato
+/// `<prefixo><64 hex>`. Mesma regra 4 do ADR-0004 §5: um só sítio a chamar
+/// `OsRng`/`fill_bytes`, para a catraca de arquitectura verificar.
+pub(crate) fn random_hex(n_bytes: usize) -> String {
+    let mut bytes = vec![0u8; n_bytes];
     OsRng.fill_bytes(&mut bytes);
-    format!("{prefix}{}", hex::encode(bytes))
+    hex::encode(bytes)
 }
 
 #[cfg(test)]
