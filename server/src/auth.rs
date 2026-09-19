@@ -477,10 +477,12 @@ pub async fn register(
             .bind(org_id)
             .fetch_one(&mut *tx)
             .await?;
-            sqlx::query("INSERT INTO org_roles (org_id, name, is_system) VALUES ($1, 'Membro', TRUE)")
-                .bind(org_id)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "INSERT INTO org_roles (org_id, name, is_system) VALUES ($1, 'Membro', TRUE)",
+            )
+            .bind(org_id)
+            .execute(&mut *tx)
+            .await?;
             sqlx::query(
                 "INSERT INTO org_members (org_id, user_id, role, role_id, title) VALUES ($1, $2, 'admin', $3, $4)",
             )

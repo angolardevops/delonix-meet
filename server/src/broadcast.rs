@@ -1475,7 +1475,10 @@ pub async fn ws_directo(
         .fetch_optional(&state.db)
         .await?;
         let Some(org_id) = org_id else {
-            return recusa(ws, "sem organização: não pode usar destinos guardados".into());
+            return recusa(
+                ws,
+                "sem organização: não pode usar destinos guardados".into(),
+            );
         };
         match crate::stream_destinations::resolve_for_broadcast(&state, org_id, &ids_guardados)
             .await
@@ -1485,13 +1488,11 @@ pub async fn ws_directo(
                     resolvidos.insert(id, (url, chave, label, kind));
                 }
             }
-            Err(_) => {
-                return recusa(
-                    ws,
-                    "um dos destinos guardados não existe, não é desta organização, ou não está pronto"
-                        .into(),
-                )
-            }
+            Err(_) => return recusa(
+                ws,
+                "um dos destinos guardados não existe, não é desta organização, ou não está pronto"
+                    .into(),
+            ),
         }
     }
     let mut destinos = Vec::with_capacity(brutos.len());

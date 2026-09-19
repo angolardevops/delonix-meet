@@ -511,7 +511,7 @@ pub async fn status(
     crate::org::require_member_pub(&state, org_id, auth.user_id).await?;
     Ok(Json(
         probe_status(
-            &state.webhook_client,
+            state.outbound.operator(),
             state.config.ollama_url.as_deref(),
             &state.config.ollama_model_studio,
             STATUS_TIMEOUT,
@@ -554,7 +554,7 @@ pub async fn suggestions(
     };
     let timeout = Duration::from_secs(state.config.ollama_timeout_secs);
     let out = run_task(
-        &state.webhook_client,
+        state.outbound.operator(),
         state.config.ollama_url.as_deref(),
         &state.config.ollama_model_studio,
         timeout,

@@ -339,8 +339,9 @@ impl Config {
             )),
             None => None,
         };
-        let ollama_model_summary =
-            src.var("OLLAMA_MODEL_SUMMARY").unwrap_or_else(|_| "qwen2.5:1.5b".into());
+        let ollama_model_summary = src
+            .var("OLLAMA_MODEL_SUMMARY")
+            .unwrap_or_else(|_| "qwen2.5:1.5b".into());
         Self {
             edition,
             registration_mode,
