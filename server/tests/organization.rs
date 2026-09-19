@@ -1102,22 +1102,13 @@ async fn odoo_token(app: &TestApp, org: &str, t: Option<&str>) -> String {
         .await;
     assert_eq!(st, 200);
     let (st, tok) = app
-        .post(
-            &org_path(org, "integrations/odoo/rotate-token"),
-            t,
-            json!({}),
-        )
+        .post(&org_path(org, "integrations/odoo/rotate-token"), t, json!({}))
         .await;
     assert_eq!(st, 200, "{tok}");
     tok["token"].as_str().unwrap().to_string()
 }
 
-async fn provision(
-    app: &TestApp,
-    token: &str,
-    admin_email: &str,
-    users: serde_json::Value,
-) -> Value {
+async fn provision(app: &TestApp, token: &str, admin_email: &str, users: serde_json::Value) -> Value {
     let r = app
         .raw(
             reqwest::Method::POST,
@@ -1146,18 +1137,10 @@ async fn odoo_sync_absent_phone_field_does_not_touch_existing_phone(db: sqlx::Pg
         json!([{"odoo_uid": 1, "name": "Carla", "email": carla.email, "mobile_phone": "923 000 111"}]),
     )
     .await;
-    assert!(
-        resp["phones_rejected"].as_array().unwrap().is_empty(),
-        "{resp}"
-    );
+    assert!(resp["phones_rejected"].as_array().unwrap().is_empty(), "{resp}");
     let (st, list) = app.get(&org_path(a.org(), "members"), t).await;
     assert_eq!(st, 200);
-    let row = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["user_id"] == carla.user_id)
-        .unwrap();
+    let row = list.as_array().unwrap().iter().find(|m| m["user_id"] == carla.user_id).unwrap();
     assert_eq!(row["phone"], "+244923000111");
     assert_eq!(row["phone_source"], "odoo");
 
@@ -1169,21 +1152,10 @@ async fn odoo_sync_absent_phone_field_does_not_touch_existing_phone(db: sqlx::Pg
         json!([{"odoo_uid": 1, "name": "Carla", "email": carla.email}]),
     )
     .await;
-    assert!(
-        resp["phones_rejected"].as_array().unwrap().is_empty(),
-        "{resp}"
-    );
+    assert!(resp["phones_rejected"].as_array().unwrap().is_empty(), "{resp}");
     let (_, list) = app.get(&org_path(a.org(), "members"), t).await;
-    let row = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["user_id"] == carla.user_id)
-        .unwrap();
-    assert_eq!(
-        row["phone"], "+244923000111",
-        "campo ausente não apaga o número"
-    );
+    let row = list.as_array().unwrap().iter().find(|m| m["user_id"] == carla.user_id).unwrap();
+    assert_eq!(row["phone"], "+244923000111", "campo ausente não apaga o número");
     assert_eq!(row["phone_source"], "odoo");
 }
 
@@ -1203,12 +1175,7 @@ async fn odoo_sync_false_or_empty_phone_clears_directory_number(db: sqlx::PgPool
     )
     .await;
     let (_, list) = app.get(&org_path(a.org(), "members"), t).await;
-    let row = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["user_id"] == carla.user_id)
-        .unwrap();
+    let row = list.as_array().unwrap().iter().find(|m| m["user_id"] == carla.user_id).unwrap();
     assert_eq!(row["phone"], "+244923000111");
 
     // O Odoo manda `false` num campo vazio: apaga o que lá estava.
@@ -1219,17 +1186,9 @@ async fn odoo_sync_false_or_empty_phone_clears_directory_number(db: sqlx::PgPool
         json!([{"odoo_uid": 1, "name": "Carla", "email": carla.email, "mobile_phone": false, "work_phone": ""}]),
     )
     .await;
-    assert!(
-        resp["phones_rejected"].as_array().unwrap().is_empty(),
-        "{resp}"
-    );
+    assert!(resp["phones_rejected"].as_array().unwrap().is_empty(), "{resp}");
     let (_, list) = app.get(&org_path(a.org(), "members"), t).await;
-    let row = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["user_id"] == carla.user_id)
-        .unwrap();
+    let row = list.as_array().unwrap().iter().find(|m| m["user_id"] == carla.user_id).unwrap();
     assert!(row["phone"].is_null(), "{row}");
     assert!(row["phone_source"].is_null(), "{row}");
 }
@@ -1261,17 +1220,9 @@ async fn odoo_sync_never_overwrites_a_manual_phone(db: sqlx::PgPool) {
         json!([{"odoo_uid": 1, "name": "Carla", "email": carla.email, "mobile_phone": "923999888"}]),
     )
     .await;
-    assert!(
-        resp["phones_rejected"].as_array().unwrap().is_empty(),
-        "{resp}"
-    );
+    assert!(resp["phones_rejected"].as_array().unwrap().is_empty(), "{resp}");
     let (_, list) = app.get(&org_path(a.org(), "members"), t).await;
-    let row = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["user_id"] == carla.user_id)
-        .unwrap();
+    let row = list.as_array().unwrap().iter().find(|m| m["user_id"] == carla.user_id).unwrap();
     assert_eq!(row["phone"], "+244923111222", "{row}");
     assert_eq!(row["phone_source"], "manual");
 }
@@ -1297,11 +1248,6 @@ async fn odoo_sync_reports_unusable_numbers_in_phones_rejected(db: sqlx::PgPool)
     assert_eq!(rejected.len(), 1, "{resp}");
     assert_eq!(rejected[0]["email"], carla.email.as_str());
     let (_, list) = app.get(&org_path(a.org(), "members"), t).await;
-    let row = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["user_id"] == carla.user_id)
-        .unwrap();
+    let row = list.as_array().unwrap().iter().find(|m| m["user_id"] == carla.user_id).unwrap();
     assert!(row["phone"].is_null(), "{row}");
 }

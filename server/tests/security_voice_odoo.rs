@@ -409,9 +409,9 @@ async fn odoo_falso_sem_modulo_hr() -> (u16, Arc<AtomicUsize>) {
                             .lines()
                             .find_map(|l| {
                                 let lower = l.to_ascii_lowercase();
-                                lower
-                                    .strip_prefix("content-length:")
-                                    .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                                lower.strip_prefix("content-length:").map(|v| {
+                                    v.trim().parse::<usize>().unwrap_or(0)
+                                })
                             })
                             .unwrap_or(0);
                         break (pos + 4, cl);
@@ -485,13 +485,7 @@ async fn directory_sync_falls_back_without_phone_fields_when_odoo_refuses(db: sq
     let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
     let a = app.new_org("hr-odoo.ao").await;
     let (port, call_kw_count) = odoo_falso_sem_modulo_hr().await;
-    apontar_odoo(
-        &app,
-        a.org(),
-        &a.user_id,
-        &format!("http://127.0.0.1:{port}"),
-    )
-    .await;
+    apontar_odoo(&app, a.org(), &a.user_id, &format!("http://127.0.0.1:{port}")).await;
 
     let (st, _) = app
         .post(
