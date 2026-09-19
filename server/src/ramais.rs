@@ -556,12 +556,18 @@ pub struct DirectoryQuery {
 /// Igual a `check_media_secret`, mas comparando com uma string já extraída
 /// (o `?secret=` do `mod_xml_curl`) em vez de um cabeçalho.
 fn check_media_secret_str(state: &AppState, provided: &str) -> Result<(), ApiError> {
+    // R154: um segredo ausente, curto ou publicado dá 503 com a razão, venha o
+    // valor que vier — o mesmo critério do cabeçalho `X-Voice-Secret`.
+    if let Some(reason) = state.config.voice_secret_refusal {
+        return Err(ApiError::ServiceUnavailable(format!(
+            "API interna de IVR desligada: {reason}"
+        )));
+    }
     let cfg = state.config.voice_internal_secret.as_bytes();
     if cfg.is_empty() {
         return Err(ApiError::NotFound);
     }
-    let got = provided.as_bytes();
-    if got.len() == cfg.len() && got.iter().zip(cfg).fold(0u8, |a, (x, y)| a | (x ^ y)) == 0 {
+    if delonix_meet_core::crypto::ct_eq(provided.as_bytes(), cfg) {
         Ok(())
     } else {
         Err(ApiError::Unauthorized)
